@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -217,6 +218,12 @@ func (c *DEXTVLCache) Refresh(ctx context.Context) error {
 	if err != nil && c.src.Logger != nil {
 		c.src.Logger.Warn("dex tvl cache refresh", "err", err)
 	}
+	outcome := "ok"
+	if err != nil {
+		outcome = "error"
+	}
+	obs.DEXTVLRefreshTotal.WithLabelValues(outcome).Inc()
+	obs.DEXTVLRefreshDurationSeconds.WithLabelValues(outcome).Observe(time.Since(now).Seconds())
 	return err
 }
 

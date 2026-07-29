@@ -469,3 +469,54 @@ groups:
             disk-full page that names the wrong subsystem, and the
             fail-open ends at an account takeover with no trace.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/login-code-lockout-table-growing.md
+
+      # v0.21.4 background cache workers. The DEX TVL refresher
+      # recomputes per-protocol TVL every 10 min; a failed protocol
+      # keeps its previous entry, so /v1/dexes + /v1/protocols keep
+      # LOOKING healthy while the figure ages — this alert is the only
+      # place sustained failure is visible before the data is hours
+      # old. Isolated errors during lake merges self-heal.
+      - alert: stellarindex_dex_tvl_refresh_failing
+        expr: |
+          sum(rate(stellarindex_dex_tvl_refresh_total{outcome="error"}[15m])) > 0
+            and
+          sum(rate(stellarindex_dex_tvl_refresh_total{outcome="ok"}[15m])) == 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-tvl-refresh-failing.md
+          summary: "DEX TVL snapshot refresher failing — TVL figures aging silently"
+          description: |
+            Every DEX TVL refresh in the last 15 min errored, sustained
+            30+ min, with zero successes interleaved. The served TVL on
+            /v1/dexes and the per-protocol pages is a carried-forward
+            snapshot growing stale behind an honest-looking page. Usual
+            causes: lake reserve reads failing (ClickHouse down / part
+            churn) or the served-tier prices_1m reads failing.
+
+      # The in-process SDEX order book behind /v1/sdex/orderbook.
+      # load_error repeating means the endpoint is stuck on its 503
+      # warming problem (user-visible); advance_error sustained means
+      # the served book is drifting from the live ledger while
+      # answering with an ever-older honest timestamp.
+      - alert: stellarindex_sdex_orderbook_maintain_failing
+        expr: |
+          sum(rate(stellarindex_sdex_orderbook_maintain_total{outcome=~"load_error|advance_error"}[15m])) > 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sdex-orderbook-maintain-failing.md
+          summary: "SDEX order-book maintenance failing (load or advance errors 30+ min)"
+          description: |
+            The live order book's lake reads (initial load or the 60s
+            incremental advance) have been failing for 30+ minutes.
+            If load_error: /v1/sdex/orderbook is serving 503 warming
+            problems. If advance_error: the book serves increasingly
+            stale depth with an honest as_of_ledger. Check ClickHouse
+            health and the ledger_entry_changes partition layout first.

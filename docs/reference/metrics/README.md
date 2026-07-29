@@ -2235,6 +2235,75 @@ the cache is coasting on a stale (but still valid) snapshot. No dedicated
 alert; the underlying Postgres-health alerts already cover the infra
 failure this reflects.
 
+## Background cache workers (API binary, v0.21.4)
+
+### `stellarindex_dex_tvl_refresh_total`
+
+Counter. Labels: `outcome` (`ok` | `error`).
+
+One increment per DEX TVL snapshot refresh (10-min cadence +
+startup). `error` means at least one protocol's read failed — that
+protocol carries its PREVIOUS entry forward, so the served figure
+ages invisibly. Look at this when a protocol page's TVL seems frozen:
+sustained `error` with no `ok` is exactly that, and is what the
+`stellarindex_dex_tvl_refresh_failing` alert fires on. Isolated
+errors during lake merges are normal.
+
+### `stellarindex_dex_tvl_refresh_duration_seconds`
+
+Histogram. Labels: `outcome` (matches the counter). Buckets 50 ms → 180 s.
+
+Wall time of one full refresh (all four protocols). Chart `ok` p95:
+a creeping value is the early warning that a reserve read lost its
+thread/memory pin (the 2026-07-29 40× read-amplification class)
+before it starts erroring at the 3-min timeout.
+
+### `stellarindex_sdex_orderbook_maintain_total`
+
+Counter. Labels: `outcome` (`load_ok` | `load_error` | `advance_ok` | `advance_error`).
+
+Maintenance attempts for the in-process SDEX order book behind
+`/v1/sdex/orderbook`. `load_*` is the once-per-process full-slice
+initial load (retried on the 60s ticker until it lands); `advance_*`
+is the 60s incremental change apply. Look here when the endpoint
+503s past startup (repeated `load_error`) or serves a stale
+`as_of_ledger` (`advance_error`). Pre-load advance ticks observe
+nothing by design — a healthy advance rate must not mask a stuck
+load.
+
+### `stellarindex_sdex_orderbook_maintain_duration_seconds`
+
+Histogram. Labels: `outcome` (matches the counter). Buckets 50 ms → 30 min.
+
+`advance_ok` p95 is the drift-risk signal as offer churn grows; the
+raw `load_ok` observation is the initial-load wall time the launch
+plan tracks as an acceptance item — compare it across deploys before
+it approaches the 30-min cap.
+
+### `stellarindex_explorer_swr_refresh_total`
+
+Counter. Labels: `cache` (`accounts_wealth` | `asset_holders` |
+`contracts_dir` | `op_type_stats` | `ttl_liveness`), `outcome`
+(`ok` | `error`).
+
+Detached stale-while-revalidate refresh outcomes for the explorer's
+five snapshot caches (route-sweep 2026-07-29). The SWR design makes
+refresh failures invisible at the API surface by construction —
+stale-but-real keeps serving with `flags.stale` — so this counter is
+the ONLY place a persistently dying refresher is visible before its
+data is hours old. Look here first when an explorer surface's
+`as_of` stops advancing.
+
+### `stellarindex_explorer_swr_refresh_duration_seconds`
+
+Histogram. Labels: `cache`, `outcome` (matches the counter). Buckets 50 ms → 300 s.
+
+Per-refresh wall time of the exact reads that used to time out
+inline at request deadlines. Chart each cache's `ok` p95 against its
+refresh timeout (90 s holders / 60 s op-stats / 3 min wealth / 5 min
+ttl-verdicts): p95 approaching the timeout predicts the stale-age
+growing user-visible before errors appear.
+
 ## Changelog
 
 - 2026-07-10 — `stellarindex_price_serve_declined_nonstandard_decimals_total`

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
@@ -181,9 +182,11 @@ func (h *Handler) refreshAssetHolders(asset string) *keyFlight {
 		return fl
 	}
 	go func() {
+		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), assetHoldersRefreshTimeout)
 		defer cancel()
 		holders, total, err := h.Reader.AssetHolders(rctx, asset, assetHoldersMaxLimit)
+		obs.ObserveExplorerSWRRefresh("asset_holders", start, err)
 		if err != nil {
 			// Keep the previous entry (if any) — old-but-real beats blank.
 			h.Logger.Warn("asset holders detached refresh failed", "asset", asset, "err", err)
@@ -328,10 +331,12 @@ func (h *Handler) refreshContractsDir(window int) *keyFlight {
 		return fl
 	}
 	go func() {
+		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), contractsDirRefreshTimeout)
 		defer cancel()
 		since := h.windowFloorLedger(rctx, window)
 		rows, err := h.Reader.RecentContracts(rctx, contractsDirMaxLimit, since)
+		obs.ObserveExplorerSWRRefresh("contracts_dir", start, err)
 		if err != nil {
 			// Keep the previous entry (if any) — old-but-real beats blank.
 			h.Logger.Warn("contracts directory detached refresh failed", "window_days", window, "err", err)

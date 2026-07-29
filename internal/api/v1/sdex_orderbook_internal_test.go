@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/obstest"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
@@ -161,5 +163,58 @@ func TestAggregateOrderBookSide_ExactLevelsAndInversion(t *testing.T) {
 		bookOffer("a3", 3, 20_000_000, "native", usdc, 3, 4, 3),
 	}, false, 1); len(capped) != 1 || capped[0].Price != "0.5000000" {
 		t.Errorf("depth cap wrong: %+v", capped)
+	}
+}
+
+// TestSDEXOrderBookCache_MaintainObservesMetrics pins the op-qualified
+// outcome labels: Load records load_ok/load_error, Advance records
+// advance_ok/advance_error, and the pre-Load Advance no-op records
+// NOTHING (counting it as ok would mask a stuck load behind a healthy
+// advance rate).
+func TestSDEXOrderBookCache_MaintainObservesMetrics(t *testing.T) {
+	count := func(outcome string) uint64 {
+		return obstest.HistogramSampleCount(t, obs.SDEXOrderBookMaintainDurationSeconds, "outcome", outcome)
+	}
+	loadOK, loadErr := count("load_ok"), count("load_error")
+	advOK, advErr := count("advance_ok"), count("advance_error")
+
+	reader := &stubOfferBookReader{loadErr: errors.New("lake down")}
+	c := NewSDEXOrderBookCache(reader, nil)
+
+	if err := c.Advance(context.Background()); err != nil {
+		t.Fatalf("pre-load Advance: %v", err)
+	}
+	if got := count("advance_ok"); got != advOK {
+		t.Errorf("pre-load Advance must not observe advance_ok (got %d, want %d)", got, advOK)
+	}
+
+	if err := c.Load(context.Background()); err == nil {
+		t.Fatal("Load should surface the reader error")
+	}
+	if got := count("load_error"); got != loadErr+1 {
+		t.Errorf("load_error observations = %d, want %d", got, loadErr+1)
+	}
+
+	reader.loadErr = nil
+	if err := c.Load(context.Background()); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := count("load_ok"); got != loadOK+1 {
+		t.Errorf("load_ok observations = %d, want %d", got, loadOK+1)
+	}
+
+	if err := c.Advance(context.Background()); err != nil {
+		t.Fatalf("Advance: %v", err)
+	}
+	if got := count("advance_ok"); got != advOK+1 {
+		t.Errorf("advance_ok observations = %d, want %d", got, advOK+1)
+	}
+
+	reader.changesErr = errors.New("lake down")
+	if err := c.Advance(context.Background()); err == nil {
+		t.Fatal("Advance should surface the reader error")
+	}
+	if got := count("advance_error"); got != advErr+1 {
+		t.Errorf("advance_error observations = %d, want %d", got, advErr+1)
 	}
 }

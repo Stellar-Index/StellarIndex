@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // AccountsWealthCacheTTL is how long a wealth ranking stays servable.
@@ -231,12 +233,14 @@ func (r *ExplorerReader) refreshAccountsWealth(assets []string, prices []float64
 	// outlive the request that noticed the miss.
 	go func() {
 		defer r.wealthCache.endFlight(ch)
+		start := time.Now()
 		ctx, cancel := context.WithTimeout(context.Background(), AccountsWealthRefreshTimeout)
 		defer cancel()
 		rows, err := r.AccountsByWealth(ctx, assets, prices, accountsWealthMaxLimit)
 		if err == nil {
 			rows = r.withLocked(ctx, rows)
 		}
+		obs.ObserveExplorerSWRRefresh("accounts_wealth", start, err)
 		if err != nil {
 			// Log rather than swallow: a persistently-failing refresh keeps
 			// /v1/accounts on its 503 warming state indefinitely, and a

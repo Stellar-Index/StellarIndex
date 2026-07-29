@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
@@ -187,9 +188,11 @@ func (h *Handler) refreshOpTypeStats() {
 		return
 	}
 	go func() {
+		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), opTypeStatsRefreshTimeout)
 		defer cancel()
 		stats, err := h.Reader.OperationTypeStats(rctx, 0)
+		obs.ObserveExplorerSWRRefresh("op_type_stats", start, err)
 		if err != nil {
 			// Keep the previous value — the panel degrades to slightly-old
 			// numbers, never to nothing.

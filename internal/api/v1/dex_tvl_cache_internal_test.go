@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/obstest"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -296,5 +298,32 @@ func TestTVLValuer_LegEdgeCases(t *testing.T) {
 	want := new(big.Rat).SetFrac(new(big.Int).Mul(huge, big.NewInt(2)), big.NewInt(10_000_000))
 	if usd.Cmp(want) != 0 {
 		t.Errorf("huge reserve usd = %s, want %s", usd.FloatString(4), want.FloatString(4))
+	}
+}
+
+// TestDEXTVLCache_RefreshObservesMetrics pins the paired
+// counter+histogram instrumentation: an all-protocols-ok refresh
+// records outcome="ok", a refresh with a failing protocol records
+// outcome="error" — using obstest because per-label histogram
+// children aren't reachable through testutil.CollectAndCount.
+func TestDEXTVLCache_RefreshObservesMetrics(t *testing.T) {
+	okBefore := obstest.HistogramSampleCount(t, obs.DEXTVLRefreshDurationSeconds, "outcome", "ok")
+	errBefore := obstest.HistogramSampleCount(t, obs.DEXTVLRefreshDurationSeconds, "outcome", "error")
+
+	src := tvlTestSources()
+	c := NewDEXTVLCache(src)
+	if err := c.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if got := obstest.HistogramSampleCount(t, obs.DEXTVLRefreshDurationSeconds, "outcome", "ok"); got != okBefore+1 {
+		t.Errorf("ok observations = %d, want %d", got, okBefore+1)
+	}
+
+	src.AquariusReserves.(*stubAquariusReserveReader).err = errors.New("boom")
+	if err := c.Refresh(context.Background()); err == nil {
+		t.Fatal("Refresh with failing protocol should error")
+	}
+	if got := obstest.HistogramSampleCount(t, obs.DEXTVLRefreshDurationSeconds, "outcome", "error"); got != errBefore+1 {
+		t.Errorf("error observations = %d, want %d", got, errBefore+1)
 	}
 }

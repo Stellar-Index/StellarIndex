@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // TTLVerdictCacheTTL bounds how old a served archived-pair verdict set may
@@ -158,9 +160,11 @@ func (c *ttlLivenessCache) kickRefresh(keys []string) *ttlFlight {
 	snapshot := make([]string, len(keys))
 	copy(snapshot, keys)
 	go func() {
+		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), ttlVerdictRefreshTimeout)
 		defer cancel()
 		verdicts, err := c.compute(rctx, snapshot)
+		obs.ObserveExplorerSWRRefresh("ttl_liveness", start, err)
 		if err == nil {
 			c.store(verdicts)
 		} else if c.onErr != nil {

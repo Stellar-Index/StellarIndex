@@ -70,6 +70,11 @@ func TestHandler_ExposesMetrics(t *testing.T) {
 		"stellarindex_aggregator_empty_windows_total",
 		"stellarindex_aggregator_dropped_trades_total",
 		"stellarindex_usage_rollup_sweeps_total",
+		// v0.21.4 background cache workers — the counters are seeded at
+		// register time, so they must be present in a fresh scrape.
+		"stellarindex_dex_tvl_refresh_total",
+		"stellarindex_sdex_orderbook_maintain_total",
+		"stellarindex_explorer_swr_refresh_total",
 		// Language-native + process metrics from collectors.
 		"go_goroutines",
 		"process_open_fds",

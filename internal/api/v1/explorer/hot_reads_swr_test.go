@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/obstest"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
@@ -206,5 +208,30 @@ func TestResolveOpTypeStats_NeverComputesInline(t *testing.T) {
 	}
 	if got := reader.statsCalls.Load(); got != 1 {
 		t.Errorf("warm resolve recomputed (%d calls)", got)
+	}
+}
+
+// TestSWRRefresh_ObservesMetrics pins the shared SWR instrumentation on the
+// asset_holders refresher (the other four caches route through the same
+// obs.ObserveExplorerSWRRefresh helper): a successful detached refresh
+// records {cache, ok}, a failing one records {cache, error}.
+func TestSWRRefresh_ObservesMetrics(t *testing.T) {
+	count := func(outcome string) uint64 {
+		return obstest.HistogramSampleCount(t, obs.ExplorerSWRRefreshDurationSeconds, "outcome", outcome)
+	}
+	okBefore, errBefore := count("ok"), count("error")
+
+	h, reader := newSWRHandler()
+	fl := h.refreshAssetHolders("asset-metrics-ok")
+	<-fl.done
+	if got := count("ok"); got != okBefore+1 {
+		t.Errorf("ok observations = %d, want %d", got, okBefore+1)
+	}
+
+	reader.fail.Store(true)
+	fl = h.refreshAssetHolders("asset-metrics-err")
+	<-fl.done
+	if got := count("error"); got != errBefore+1 {
+		t.Errorf("error observations = %d, want %d", got, errBefore+1)
 	}
 }
