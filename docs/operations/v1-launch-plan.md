@@ -127,7 +127,19 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
-- 2026-07-28 ~20:55Z — 🔧 **Loop-reliability root cause found + fixed:
+- 2026-07-29 ~01:25Z — 🎉 **D3 REPROJECT COMPLETE** (01:06:49Z,
+  `reproject [38000000,63683991) complete`, ~29.5h wall). v2 table:
+  3.448B rows, 96.7% with `intra_ledger_seq > 0`. **Cutover NOT yet
+  done** — the script's phases are explicit (reproject → verify →
+  cutover → finalize), and `verify` (v1-vs-v2 divergence sample) is now
+  RUNNING (`/var/log/d3-verify.log`). On a clean verify the loop
+  proceeds to `cutover` (drop MVs → double-RENAME → recreate MV →
+  catch-up; revertible until `finalize`, which stays DEFERRED — it is
+  the destructive DROP of old-v1). In parallel: the deferred
+  **50-account reconcile-balances baseline** is running uncontended
+  (`/var/log/reconcile-balances-50.log`) — acceptance target: 19/50
+  pre-ordinal mismatches → ~0. Chain after: ansible apply → v0.21.2 →
+  SAC delete+re-seed (approved). — 🔧 **Loop-reliability root cause found + fixed:
   the workstation was SLEEPING between turns.** Post-restart, no sleep
   assertion was held, so persistent Monitors died 4× (SSH tails killed
   by sleep) and one ScheduleWakeup was silently lost; the hourly cron
