@@ -127,6 +127,15 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-29 ~03:15Z — ✅ **ALL THREE PROJECTORS AT TIP** (63,696,834 =
+  lake tip exactly; the 14-day sep41 zero-writer hole is CLOSED on the
+  served tier). The three FULL compute-completeness runs launched
+  sequentially (timer stopped during; log
+  `/var/log/completeness-full-runs.log`; ~2h). SAC re-seed attempt 2
+  past its predecessor's failure point and grinding. After both:
+  supply-reconcile acceptance (PHO/AQUA/KALIEN) + route-sweep +
+  coverage check close the §1 completeness + supply gates.
+
 - 2026-07-29 ~03:25Z — 🔧 **SAC re-seed attempt 1 FAILED + fixed +
   relaunched.** `ClassifyTTLLiveness` batches 5,000 `unhex()` keys per
   IN-list ≈ 350 KiB of query text — over ClickHouse's 256 KiB
