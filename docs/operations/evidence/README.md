@@ -15,17 +15,17 @@ were ever produced until now).
 
 | Gate (§1) | Artifact | Verdict | Filed |
 |---|---|---|---|
-| Launch mechanics: route availability | [2026-07-28-route-sweep-pre-deploy.txt](2026-07-28-route-sweep-pre-deploy.txt) | ⚠️ **BASELINE, failing** — 21 server-5xx (known explorer outage, INBOX #1); acceptance = re-run post-deploy showing 0 | 2026-07-28 |
+| Launch mechanics: route availability | [pre-deploy](2026-07-28-route-sweep-pre-deploy.txt) → [post-serving-flip](2026-07-29-route-sweep-post-serving-flip.txt) | 🔵 21×5xx → **10×5xx** (serving-auth class fixed; residual = slow-read timeout class, §2.4 40× read-amplification investigation) | 2026-07-29 |
 | Capacity: cold-tier trim safety | [2026-07-28-soak-gate.md](2026-07-28-soak-gate.md) | ✅ PASSED + gate executed | 2026-07-28 |
 | Supply trustworthy: CS-102 regression guard | [2026-07-28-cs102-regression-redgreen.md](2026-07-28-cs102-regression-redgreen.md) | ✅ red/green proven | 2026-07-28 |
-| Supply trustworthy: vs external truth | [2026-07-28-supply-reconcile-horizon.md](2026-07-28-supply-reconcile-horizon.md) | ⚠️ 5/8 PASS — the 3 FAILs are dispositioned (2× CS-102 pending deploy, 1× SAC-seed pending INBOX #5) | 2026-07-28 |
-| Completeness green | — not yet filed | ⏳ 3 sources incomplete until v0.21.2 + replays | — |
-| reconcile-balances (50-account) | — not yet filed | ⏳ deferred until D3 releases the ClickHouse slot (partial 8-account signal: 0 mismatches) | — |
-| verify-lake / contiguity / hash-chain | — not yet filed | ⏳ queued behind D3 | — |
+| Supply trustworthy: vs external truth | [baseline](2026-07-28-supply-reconcile-horizon.md) → [post-fixes](2026-07-29-supply-reconcile-post-fixes.md) | ✅ **7/8 PASS** (PHO +157%→−0.0002%); USDC FAIL dispositioned (re-seed parked on diagnosed blocker) | 2026-07-29 |
+| reconcile-balances (50-account) | [2026-07-29-reconcile-balances-50.md](2026-07-29-reconcile-balances-50.md) | ✅ **0 mismatches** (was 38% pre-ordinal) — E1 met | 2026-07-29 |
+| Completeness green | tracked in plan loop-log (2026-07-29) | 🔵 sep41×2 `projection_ok=t` (hole closed); `complete=t` pending the timer's substrate pass; **redstone stays incomplete** — 866 undecodable events, code-side fix next release | — |
+| verify-lake / contiguity / hash-chain | — not yet filed | ⏳ next in queue post-completeness | — |
 | Prices vs CoinGecko/Chainlink top-50 | — not yet filed | ⏳ campaign B1 | — |
 | re-derive determinism | — not yet filed | ⏳ campaign E3 | — |
-| SEV-1/2 paging drill + rollback rehearsal | — not yet filed | ⏳ blocked on paging being wired (INBOX #3) | — |
-| verify-usd-volume calibration | — not yet filed | ⏳ first run post-deploy | — |
+| SEV-1/2 paging drill + rollback rehearsal | — not yet filed | ⏳ blocked on paging being wired (Ash item #1) | — |
+| verify-usd-volume calibration | — not yet filed | ⏳ post-deploy queue | — |
 
 Gaps are listed deliberately — an index that only shows what exists
 reads as "done" when it is not.
