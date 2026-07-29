@@ -7,6 +7,7 @@ import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
 import { SourceSparkline } from '@/components/SourceSparkline';
+import { useProtocolTvls, type ProtocolTvl } from './useProtocolTvls';
 
 interface VolumeBucket {
   hour: string;
@@ -54,6 +55,7 @@ export function DexProtocolsTable() {
   });
 
   const rows = q.data ?? [];
+  const tvls = useProtocolTvls().data ?? {};
 
   return (
     <Panel
@@ -67,6 +69,7 @@ export function DexProtocolsTable() {
           <thead>
             <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
               <Th>Protocol</Th>
+              <Th align="right">TVL</Th>
               <Th align="right">24h volume</Th>
               <Th>24h chart</Th>
               <Th align="right">24h trades</Th>
@@ -77,14 +80,14 @@ export function DexProtocolsTable() {
           <tbody className="divide-y divide-line-subtle">
             {q.isLoading && (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-sm text-ink-muted">
+                <td colSpan={7} className="px-4 py-6 text-center text-sm text-ink-muted">
                   Loading protocols…
                 </td>
               </tr>
             )}
             {!q.isLoading && rows.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-sm text-ink-muted">
+                <td colSpan={7} className="px-4 py-6 text-center text-sm text-ink-muted">
                   No DEX protocols reporting 24h activity.
                 </td>
               </tr>
@@ -101,6 +104,9 @@ export function DexProtocolsTable() {
                     >
                       {r.name}
                     </Link>
+                  </Td>
+                  <Td align="right">
+                    <TvlCell tvl={tvls[r.name]} />
                   </Td>
                   <Td align="right">
                     {vol != null && Number.isFinite(vol) && vol > 0 ? (
@@ -141,6 +147,25 @@ export function DexProtocolsTable() {
         </table>
       </div>
     </Panel>
+  );
+}
+
+/**
+ * TvlCell — TVL from the /v1/protocols snapshot. Protocols without an
+ * absolute reserve source have no snapshot entry and render "—" (an
+ * honest absence, never a fabricated zero); a snapshot with unpriced
+ * pools is a lower bound, flagged with a "≥" prefix and the basis as
+ * the hover title.
+ */
+function TvlCell({ tvl }: { tvl?: ProtocolTvl }) {
+  if (!tvl) return <span className="text-ink-faint">—</span>;
+  const v = Number(tvl.tvl_usd);
+  if (!Number.isFinite(v) || v <= 0) return <span className="text-ink-faint">—</span>;
+  const lowerBound = tvl.unpriced_pools > 0;
+  return (
+    <span className="font-mono tabular-nums" title={tvl.basis}>
+      {lowerBound ? '≥ ' : ''}${formatCompact(v)}
+    </span>
   );
 }
 

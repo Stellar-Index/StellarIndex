@@ -1058,6 +1058,10 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// reader through narrower seams, same nil-degrade posture.
 	var lakeWatermarkReader v1.LakeWatermarkReader
 	var tokenDecimalsReader v1.TokenDecimalsReader
+	// soroswapTVLReserves is the SAME concrete lake reader through the
+	// narrow current-pair-reserves seam the DEX TVL snapshot consumes.
+	// Same nil-degrade posture (soroswap TVL absent without the lake).
+	var soroswapTVLReserves v1.SoroswapTVLReserveReader
 	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
 		er, err := clickhouse.NewExplorerReaderAuth(rootCtx, addr, cfg.Storage.ClickHouseServingUser, cfg.Storage.ClickHouseServingPassword)
 		if err != nil {
@@ -1075,6 +1079,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			protocolActivityReader = er
 			lakeWatermarkReader = er
 			tokenDecimalsReader = er
+			soroswapTVLReserves = er
 			logger.Info("explorer reader wired (ClickHouse lake, ADR-0038)", "addr", addr)
 			// OBS-07 (audit-2026-07-23): ClickHouse was entirely absent
 			// from /v1/readyz, so a CH outage was invisible to the
@@ -1089,6 +1094,63 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			checks = append(checks, clickhouseChecker{r: er})
 		}
 	}
+
+	// DEX TVL snapshot cache — per-protocol pooled-liquidity USD value
+	// for /v1/protocols (+ the explorer's /dexes page). Reserve reads
+	// are one batched lake lookup (soroswap pair instance storage) +
+	// one served-tier scan (aquarius_reserves); legs are valued through
+	// the SAME VWAP USD tier system that stamps trades.usd_volume
+	// (peg → direct VWAP → XLM bridge), so TVL and volume figures on
+	// one page share a single pricing methodology. Refreshed in the
+	// background — handlers read an O(1) snapshot and omit the field
+	// until the first refresh completes (honest empty, never 503).
+	dexTVLSources := v1.DEXTVLSources{
+		SoroswapPairs:    store,
+		SoroswapReserves: soroswapTVLReserves,
+		AquariusReserves: store,
+		Logger:           logger.With("component", "dex-tvl"),
+	}
+	if fx, err := timescale.NewVWAPUSDFXResolver(store, timescale.VWAPUSDFXResolverOptions{
+		USDPegs: cfg.Trades.USDPeggedClassicAssets,
+	}); err != nil {
+		logger.Warn("dex tvl usd resolver unavailable; tvl legs will be unpriced", "err", err)
+	} else {
+		dexTVLSources.Pricer = fx
+	}
+	if len(cfg.Trades.USDPeggedClassicAssets) > 0 {
+		if spec, err := timescale.NewUSDVolumeQuoteSpec(cfg.Trades.USDPeggedClassicAssets, cfg.Supply.SACWrappers); err != nil {
+			logger.Warn("dex tvl usd-peg spec unavailable; pegged legs price via VWAP instead", "err", err)
+		} else {
+			dexTVLSources.PegInfo = spec
+		}
+	}
+	dexTVLCache := v1.NewDEXTVLCache(dexTVLSources)
+	go func() {
+		defer recoverBackgroundWorker(logger, "dex-tvl-cache")
+		// 3 min per refresh sits well below the 10-min interval so
+		// refreshes never stack; a refresh is one lake lookup + one
+		// served-tier scan + a bounded set of prices_1m point reads.
+		const dexTVLRefreshTimeout = 3 * time.Minute
+		initCtx, initCancel := context.WithTimeout(rootCtx, dexTVLRefreshTimeout)
+		defer initCancel()
+		if err := dexTVLCache.Refresh(initCtx); err != nil {
+			logger.Warn("dex tvl initial refresh", "err", err)
+		}
+		tick := time.NewTicker(v1.DEXTVLRefreshInterval)
+		defer tick.Stop()
+		for {
+			select {
+			case <-rootCtx.Done():
+				return
+			case <-tick.C:
+				refreshCtx, cancel := context.WithTimeout(rootCtx, dexTVLRefreshTimeout)
+				if err := dexTVLCache.Refresh(refreshCtx); err != nil {
+					logger.Warn("dex tvl periodic refresh", "err", err)
+				}
+				cancel()
+			}
+		}
+	}()
 
 	// Admin audit sink — durable "key.mint" rows for POST
 	// /v1/admin/keys. Wired whenever Postgres is reachable (same
@@ -1198,6 +1260,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		ProtocolBespoke:    store,
 		SoroswapPairs:      store,
 		ProtocolPoolTokens: store,
+		DEXTVL:             dexTVLCache,
 		NetworkStats:       cachedNetworkStats,
 		// Routers registry + routed-via 24h rollup (/v1/aggregators).
 		// Direct store read: the routed-trades scan rides the partial

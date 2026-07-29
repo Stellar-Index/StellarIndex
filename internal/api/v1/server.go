@@ -122,6 +122,7 @@ type Server struct {
 	protocolFastOK          bool
 	protocolBespoke         ProtocolBespokeReader
 	protocolPoolTokens      ProtocolPoolTokensReader
+	dexTVL                  *DEXTVLCache
 	// Per-server TTL + single-flight cache for the expensive
 	// /v1/protocols/{name} detail (lazy-init'd — see cachedProtocolDetail).
 	protoDetailMu     sync.Mutex
@@ -958,6 +959,16 @@ type Options struct {
 	// from a request. Nil leaves that section absent from the wire.
 	BackfillCoverage *CoverageCache
 
+	// DEXTVL, when non-nil, is the process-local snapshot of
+	// per-protocol DEX TVL (current pool reserves valued in USD),
+	// refreshed on a background goroutine every
+	// [DEXTVLRefreshInterval]. Powers the additive `tvl` field on
+	// `/v1/protocols` rows and `/v1/protocols/{name}` — per-request
+	// aggregation over the reserve tables is never acceptable on the
+	// explorer read path. Nil (or a cold, not-yet-refreshed cache)
+	// leaves the field absent from the wire.
+	DEXTVL *DEXTVLCache
+
 	// NonstandardDecimals, when non-nil, backs the read-time
 	// dex-nonstandard-decimals forward normalization: every
 	// price-shaped surface (/v1/price incl. batch/windowed, /v1/vwap,
@@ -1003,92 +1014,85 @@ func New(opts Options) *Server {
 		logger = slog.Default()
 	}
 	s := &Server{
-		logger:                  logger,
-		checks:                  opts.ReadyChecks,
-		assets:                  opts.Assets,
-		prices:                  opts.Prices,
-		history:                 opts.History,
-		markets:                 opts.Markets,
-		oracle:                  opts.Oracle,
-		sep1Cache:               opts.Sep1Cache,
-		accounts:                opts.Accounts,
-		accountKeyQuota:         opts.AccountKeyQuota,
-		platformAccounts:        opts.PlatformAccounts,
-		apiKeyBudgets:           opts.APIKeyBudgets,
-		statusNotices:           opts.StatusNotices,
-		signups:                 opts.Signups,
-		signupIPThrottle:        opts.SignupIPThrottle,
-		signupVerifier:          opts.SignupVerifier,
-		signupVerifyEmailer:     opts.SignupVerifyEmailer,
-		apiKeyEmailVerifier:     opts.APIKeyEmailVerifier,
-		stripe:                  opts.Stripe,
-		divergence:              opts.Divergence,
-		freeze:                  opts.Freeze,
-		supply:                  opts.Supply,
-		tokenSupply:             opts.TokenSupply,
-		tokenDecimals:           opts.TokenDecimals,
-		lakeWatermarkReader:     opts.LakeWatermark,
-		volume:                  opts.Volume,
-		change24h:               opts.Change24h,
-		priceAt:                 opts.PriceAt,
-		changesum:               opts.ChangeSummary,
-		assetsReader:            opts.AssetsReader,
-		issuers:                 opts.Issuers,
-		sep41Transfers:          opts.SEP41Transfers,
-		cursors:                 opts.Cursors,
-		coverageReader:          opts.CoverageReader,
-		completenessReader:      opts.CompletenessReader,
-		protocolContractsReader: opts.ProtocolContracts,
-		protocolStats:           opts.ProtocolStats,
-		protocolActivity:        opts.ProtocolActivity,
-		protocolBespoke:         opts.ProtocolBespoke,
-		protocolPoolTokens:      opts.ProtocolPoolTokens,
-		soroswapPairs:           opts.SoroswapPairs,
-		networkStats:            opts.NetworkStats,
-		aggregators:             opts.Aggregators,
-		marketSources:           opts.MarketSources,
-		sourcesStats:            opts.SourcesStats,
-		lending:                 opts.Lending,
-		mev:                     opts.MEV,
-		anomalies:               opts.Anomalies,
-		divergences:             opts.Divergences,
-		currencies:              opts.Currencies,
-		explorer:                opts.Explorer,
-		fxHistory:               opts.FXHistory,
-		sessionPeeker:           opts.SessionPeeker,
-		audit:                   opts.Audit,
-		sep10:                   opts.SEP10,
-		cors:                    opts.CORS,
-		auth:                    opts.Auth,
-		keyPolicy:               opts.KeyPolicy,
-		rateLimit:               opts.RateLimit,
-		monthlyQuota:            opts.MonthlyQuota,
-		touchUsage:              opts.TouchUsage,
-		requireEmailVerified:    opts.RequireEmailVerified,
-		usageTracker:            opts.UsageTracker,
-		usageReader:             opts.UsageReader,
-		usageRollupReader:       opts.UsageRollupReader,
-		hub:                     opts.Hub,
-		confidence:              opts.Confidence,
-		triangulated:            opts.Triangulated,
-		cdnEnabled:              opts.CDNEnabled,
-		statusBackend:           opts.StatusBackend,
-		archiveReportPath:       opts.ArchiveReportPath,
-		regionName:              valueOr(opts.RegionName, "unknown"),
-		regionDeployment:        valueOr(opts.RegionDeployment, "production"),
-		dashboardAuth:           opts.DashboardAuth,
-		dashboardKeys:           opts.DashboardKeys,
-		dashboardWebhooks:       opts.DashboardWebhooks,
-		dashboardPriceAlerts:    opts.DashboardPriceAlerts,
-		sessionAuth:             opts.SessionAuth,
-		verifiedCurrencies:      opts.VerifiedCurrencies,
-		backfillCoverage:        opts.BackfillCoverage,
-		nonstandardDecimals:     opts.NonstandardDecimals,
-		globalPrice:             opts.GlobalPrice,
-		globalPriceOpts:         globalPriceOptsWithDefaults(opts.GlobalPriceOpts),
-		sacWrappers:             opts.SACWrappers,
-		networkPassphrase:       opts.NetworkPassphrase,
-		usdPeggedClassics:       opts.USDPeggedClassics,
+		logger:               logger,
+		checks:               opts.ReadyChecks,
+		assets:               opts.Assets,
+		prices:               opts.Prices,
+		history:              opts.History,
+		markets:              opts.Markets,
+		oracle:               opts.Oracle,
+		sep1Cache:            opts.Sep1Cache,
+		accounts:             opts.Accounts,
+		accountKeyQuota:      opts.AccountKeyQuota,
+		platformAccounts:     opts.PlatformAccounts,
+		apiKeyBudgets:        opts.APIKeyBudgets,
+		statusNotices:        opts.StatusNotices,
+		signups:              opts.Signups,
+		signupIPThrottle:     opts.SignupIPThrottle,
+		signupVerifier:       opts.SignupVerifier,
+		signupVerifyEmailer:  opts.SignupVerifyEmailer,
+		apiKeyEmailVerifier:  opts.APIKeyEmailVerifier,
+		stripe:               opts.Stripe,
+		divergence:           opts.Divergence,
+		freeze:               opts.Freeze,
+		supply:               opts.Supply,
+		tokenSupply:          opts.TokenSupply,
+		tokenDecimals:        opts.TokenDecimals,
+		lakeWatermarkReader:  opts.LakeWatermark,
+		volume:               opts.Volume,
+		change24h:            opts.Change24h,
+		priceAt:              opts.PriceAt,
+		changesum:            opts.ChangeSummary,
+		assetsReader:         opts.AssetsReader,
+		issuers:              opts.Issuers,
+		sep41Transfers:       opts.SEP41Transfers,
+		cursors:              opts.Cursors,
+		coverageReader:       opts.CoverageReader,
+		networkStats:         opts.NetworkStats,
+		aggregators:          opts.Aggregators,
+		marketSources:        opts.MarketSources,
+		sourcesStats:         opts.SourcesStats,
+		lending:              opts.Lending,
+		mev:                  opts.MEV,
+		anomalies:            opts.Anomalies,
+		divergences:          opts.Divergences,
+		currencies:           opts.Currencies,
+		explorer:             opts.Explorer,
+		fxHistory:            opts.FXHistory,
+		sessionPeeker:        opts.SessionPeeker,
+		audit:                opts.Audit,
+		sep10:                opts.SEP10,
+		cors:                 opts.CORS,
+		auth:                 opts.Auth,
+		keyPolicy:            opts.KeyPolicy,
+		rateLimit:            opts.RateLimit,
+		monthlyQuota:         opts.MonthlyQuota,
+		touchUsage:           opts.TouchUsage,
+		requireEmailVerified: opts.RequireEmailVerified,
+		usageTracker:         opts.UsageTracker,
+		usageReader:          opts.UsageReader,
+		usageRollupReader:    opts.UsageRollupReader,
+		hub:                  opts.Hub,
+		confidence:           opts.Confidence,
+		triangulated:         opts.Triangulated,
+		cdnEnabled:           opts.CDNEnabled,
+		statusBackend:        opts.StatusBackend,
+		archiveReportPath:    opts.ArchiveReportPath,
+		regionName:           valueOr(opts.RegionName, "unknown"),
+		regionDeployment:     valueOr(opts.RegionDeployment, "production"),
+		dashboardAuth:        opts.DashboardAuth,
+		dashboardKeys:        opts.DashboardKeys,
+		dashboardWebhooks:    opts.DashboardWebhooks,
+		dashboardPriceAlerts: opts.DashboardPriceAlerts,
+		sessionAuth:          opts.SessionAuth,
+		verifiedCurrencies:   opts.VerifiedCurrencies,
+		backfillCoverage:     opts.BackfillCoverage,
+		nonstandardDecimals:  opts.NonstandardDecimals,
+		globalPrice:          opts.GlobalPrice,
+		globalPriceOpts:      globalPriceOptsWithDefaults(opts.GlobalPriceOpts),
+		sacWrappers:          opts.SACWrappers,
+		networkPassphrase:    opts.NetworkPassphrase,
+		usdPeggedClassics:    opts.USDPeggedClassics,
 		// 120s TTL on /v1/assets/{id} responses. MUST exceed the
 		// selfPrewarmAssetEndpoints cadence (60s) with margin — at the
 		// old 30s TTL the cache expired for 30 of every 60 seconds
@@ -1106,10 +1110,26 @@ func New(opts Options) *Server {
 		started:          time.Now().UTC(),
 		requestTimeout:   durationOr(opts.RequestTimeout, defaultRequestTimeout),
 	}
+	applyProtocolOptions(s, opts)
 	s.explorerHandler = explorerHandlerFor(s, opts, logger)
 	loadIncidents(s, logger)
 	s.mountRoutes()
 	return s
+}
+
+// applyProtocolOptions copies the Protocols-pillar reader options
+// (/v1/protocols*, /v1/coverage joins) onto the server. Split from New
+// for funlen — same rationale as loadIncidents; keep the group
+// together so the pillar's wiring stays a single auditable block.
+func applyProtocolOptions(s *Server, opts Options) {
+	s.completenessReader = opts.CompletenessReader
+	s.protocolContractsReader = opts.ProtocolContracts
+	s.protocolStats = opts.ProtocolStats
+	s.protocolActivity = opts.ProtocolActivity
+	s.protocolBespoke = opts.ProtocolBespoke
+	s.protocolPoolTokens = opts.ProtocolPoolTokens
+	s.dexTVL = opts.DEXTVL
+	s.soroswapPairs = opts.SoroswapPairs
 }
 
 // loadIncidents loads + caches the embedded incident corpus once at
