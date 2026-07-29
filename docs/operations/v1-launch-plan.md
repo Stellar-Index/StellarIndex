@@ -127,6 +127,22 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-29 ~05:50Z — 🏆 **SUPPLY GATE: 7/8 PASS**
+  (`evidence/2026-07-29-supply-reconcile-post-fixes.md`): **PHO +157% →
+  −0.0002%** (phantom rows were the whole error), EURC/KALE back inside
+  tolerance (CS-102, as predicted), AQUA +0.16% WITHOUT the seed. Sole
+  FAIL = USDC +1.12% — expected: the approved delete removed its 48,505
+  seeded dormant holders; restores when the re-seed lands.
+  **Re-seed PARKED after 5 attempts, fully diagnosed:** (1) IN-list >
+  256 KiB parse cap (fixed, codified), (2+3) classifier OOMs the
+  CLIENT-PINNED 10 GiB openRead cap — and the root measurement:
+  identical probe = **122 MiB on the old table vs 4.76 GiB on the
+  post-D3 table (~40× read amplification;** same ORDER BY, both merged,
+  cause unknown — NEW §2.4 INVESTIGATION, prime suspect for the 8s
+  route timeouts too). Fix rides the next release (classifier batch +
+  per-query settings); investigate the table regression first.
+  sep41_transfers completeness run still going (supply run exit=0).
+
 - 2026-07-29 ~03:40Z — 🔁 **Re-seed attempt 2 FAILED (10 GiB OOM in the
   TTL classifier's aggregation) → DECIDED (auto, revertible): switch to
   the CURRENT-STATE seed path (attempt 3, running).** Reasoning: the
