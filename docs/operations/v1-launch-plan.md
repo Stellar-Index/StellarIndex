@@ -127,6 +127,21 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-29 ~03:40Z — 🔁 **Re-seed attempt 2 FAILED (10 GiB OOM in the
+  TTL classifier's aggregation) → DECIDED (auto, revertible): switch to
+  the CURRENT-STATE seed path (attempt 3, running).** Reasoning: the
+  full-history path exists to recover balances below the current-state
+  coverage floor — but post-D3 that floor is 38M, and **SAC balances
+  are Soroban `contract_data`, which cannot predate protocol 20
+  (~ledger 50.5M) — every SAC balance's current state is therefore
+  inside the rebuilt table**. The current-state path is the
+  memory-bounded streaming one and was TTL-filtered in the same wave
+  (`7d9614c1`). Equivalence for SAC ≈ provable; acceptance = the
+  supply reconcile (AQUA must recover its dormant holders' ~0.17%).
+  **Post-launch code note (rides next release): the full-history
+  classifier needs both a smaller batch bound AND a bounded
+  aggregation — it OOMs regardless of query-size cap.**
+
 - 2026-07-29 ~03:15Z — ✅ **ALL THREE PROJECTORS AT TIP** (63,696,834 =
   lake tip exactly; the 14-day sep41 zero-writer hole is CLOSED on the
   served tier). The three FULL compute-completeness runs launched
