@@ -16,6 +16,25 @@ against.
 ## [Unreleased]
 
 ### Added
+- **SDEX order-book depth: `GET /v1/sdex/orderbook?selling=&buying=`,
+  spec 1.12.0.** Live classic bid/ask depth aggregated by EXACT price
+  level (reduced rationals; bid prices are the exact inverse of the
+  stored offer price — no float math; amounts as decimal strings, big
+  math for cumulative sums). Backed by an in-process live offer book:
+  the lake's `ledger_entries_current` offer slice carries assets only
+  inside `entry_xdr` (1.02B rows incl. dead offers — no per-pair
+  predicate possible), so the book loads ONCE at process start via a
+  work-shape-bounded FINAL stream (max_threads=4, 8 GiB cap; FINAL
+  chosen over GROUP BY/argMax because merge memory doesn't scale with
+  the ~100M+ distinct offer keys) and then advances every 60s from
+  partition-pruned `ledger_entry_changes` reads applied by version.
+  Honest states throughout: 503 problem until the initial load lands,
+  `as_of_ledger`/`snapshot_at` on every response, per-side offer
+  counts before the depth cap. Cache policy `public, max-age=30`
+  (pinned in cachecontrol tests); SDK-uncovered (explorer surface).
+  Explorer: an SDEX order-book panel on /markets/{pair} for classic
+  pairs (self-hides for Soroban assets; explicit loading/empty
+  states), with cumulative depth bars.
 - **Per-protocol DEX TVL on `/v1/protocols` (+ `{name}`), spec 1.11.0**
   (additive `tvl` object on `ProtocolRow`): a background-refreshed
   (10-min) snapshot values each protocol's ABSOLUTE pool reserves in

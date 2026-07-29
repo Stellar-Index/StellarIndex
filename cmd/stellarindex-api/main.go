@@ -1062,6 +1062,10 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// narrow current-pair-reserves seam the DEX TVL snapshot consumes.
 	// Same nil-degrade posture (soroswap TVL absent without the lake).
 	var soroswapTVLReserves v1.SoroswapTVLReserveReader
+	// sdexOfferBook is the SAME concrete lake reader through the live
+	// offer-book seam /v1/sdex/orderbook maintains itself from. Same
+	// nil-degrade posture (the endpoint 503s without the lake).
+	var sdexOfferBook v1.SDEXOfferBookReader
 	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
 		er, err := clickhouse.NewExplorerReaderAuth(rootCtx, addr, cfg.Storage.ClickHouseServingUser, cfg.Storage.ClickHouseServingPassword)
 		if err != nil {
@@ -1080,6 +1084,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			lakeWatermarkReader = er
 			tokenDecimalsReader = er
 			soroswapTVLReserves = er
+			sdexOfferBook = er
 			logger.Info("explorer reader wired (ClickHouse lake, ADR-0038)", "addr", addr)
 			// OBS-07 (audit-2026-07-23): ClickHouse was entirely absent
 			// from /v1/readyz, so a CH outage was invisible to the
@@ -1151,6 +1156,48 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			}
 		}
 	}()
+
+	// SDEX live order book (/v1/sdex/orderbook). The initial load
+	// streams the lake's whole live-offer slice ONCE per process start
+	// (work-shape-bounded FINAL scan — see
+	// clickhouse/sdex_offer_book_reader.go for the trade-off note);
+	// afterwards a 60s ticker applies partition-pruned incremental
+	// change reads. The endpoint serves an honest 503 problem until
+	// the initial load completes.
+	var sdexOrderBook *v1.SDEXOrderBookCache
+	if sdexOfferBook != nil {
+		sdexOrderBook = v1.NewSDEXOrderBookCache(sdexOfferBook, logger.With("component", "sdex-orderbook"))
+		go func() {
+			defer recoverBackgroundWorker(logger, "sdex-orderbook-cache")
+			// The initial full-slice load is minutes of streaming IO on a
+			// populated lake; 30 min is a hard stop against a wedged scan,
+			// not an expectation. Retry on the advance ticker if it fails
+			// (Load is idempotent and Advance no-ops until a Load lands).
+			const initialLoadTimeout = 30 * time.Minute
+			const advanceTimeout = 2 * time.Minute
+			loadCtx, loadCancel := context.WithTimeout(rootCtx, initialLoadTimeout)
+			loaded := sdexOrderBook.Load(loadCtx) == nil
+			loadCancel()
+			tick := time.NewTicker(v1.SDEXOrderBookAdvanceInterval)
+			defer tick.Stop()
+			for {
+				select {
+				case <-rootCtx.Done():
+					return
+				case <-tick.C:
+					ctx, cancel := context.WithTimeout(rootCtx, advanceTimeout)
+					if !loaded {
+						loadRetryCtx, retryCancel := context.WithTimeout(rootCtx, initialLoadTimeout)
+						loaded = sdexOrderBook.Load(loadRetryCtx) == nil
+						retryCancel()
+					} else if err := sdexOrderBook.Advance(ctx); err != nil {
+						logger.Warn("sdex order book advance", "err", err)
+					}
+					cancel()
+				}
+			}
+		}()
+	}
 
 	// Admin audit sink — durable "key.mint" rows for POST
 	// /v1/admin/keys. Wired whenever Postgres is reachable (same
@@ -1261,6 +1308,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		SoroswapPairs:      store,
 		ProtocolPoolTokens: store,
 		DEXTVL:             dexTVLCache,
+		SDEXOrderBook:      sdexOrderBook,
 		NetworkStats:       cachedNetworkStats,
 		// Routers registry + routed-via 24h rollup (/v1/aggregators).
 		// Direct store read: the routed-trades scan rides the partial

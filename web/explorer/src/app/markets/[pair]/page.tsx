@@ -7,6 +7,7 @@ import { serializeJsonLd, datasetJsonLd, ogImageFor } from '@/lib/seo';
 import { Breadcrumbs } from '@/components/ui';
 import { Suspense } from 'react';
 
+import { OrderBookPanel } from './OrderBookPanel';
 import { PairChart } from './PairChart';
 import { PairPathView } from './PairPathView';
 import { SourceBreakdown } from './SourceBreakdown';
@@ -458,6 +459,12 @@ export default async function PairPage({ params }: { params: Params }) {
       {sourceBreakdown.length > 0 && (
         <SourceBreakdownPanel rows={sourceBreakdown} />
       )}
+
+      {/* SDEX order-book depth — renders only for classic pairs
+          (the panel self-hides for Soroban assets, which have no
+          central order book). Client-side: the book is live data
+          advanced ~60s server-side, not build-time content. */}
+      <OrderBookPanel base={base} quote={quote} />
 
       {history.length > 0 ? (
         <Panel title="Recent trades" subtitle={`${history.length} most recent across all sources`}>
