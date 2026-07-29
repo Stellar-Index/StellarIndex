@@ -127,6 +127,19 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-29 ~06:00Z — 🔁 **Completeness runs 2+3 failed on a
+  NON-incident and were relaunched.** sep41_transfers (CH "query
+  cancelled" at 44 min) + redstone ("database system is shutting down")
+  both trace to ONE cause: **unattended-upgrades applied the libc6
+  security update at 06:24 local, restarting postgres** (routine Ubuntu
+  needrestart behavior, not a crash — no OOM, deliberate systemd stop/
+  start, PG healthy on the new libc). sep41_supply's run had already
+  PASSED (exit=0). Reruns for the two launched (setsid-detached this
+  time; log `/var/log/completeness-reruns.log`). Worth knowing:
+  unattended-upgrades CAN bounce postgres at any ~06:24 local — heavy
+  PG-dependent jobs should expect it (add to runbook lore at next doc
+  pass).
+
 - 2026-07-29 ~05:50Z — 🏆 **SUPPLY GATE: 7/8 PASS**
   (`evidence/2026-07-29-supply-reconcile-post-fixes.md`): **PHO +157% →
   −0.0002%** (phantom rows were the whole error), EURC/KALE back inside
