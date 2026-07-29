@@ -127,6 +127,26 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-29 ~10:45Z — 🔎 **redstone "866 undecodables" INVESTIGATED and
+  re-scoped — NOT a regression.** Findings, each measured against the
+  lake:
+  1. A **small REDSTONE event shape (data_xdr 140–180 bytes, ~1.5% of
+     events)** fails decode; the big shape (>300 bytes) decodes fine.
+  2. The small shape exists in EVERY ledger band back to the source's
+     genesis — nothing changed on-chain at the deploy window.
+  3. What changed is the VERIFIER: v0.21.2's honest-blind accounting
+     marks undecodable-but-matched ledgers as unverifiable instead of
+     silently passing them → projection_ok=f. The verifier is being
+     honest about a long-standing designed skip.
+  4. Red herring eliminated: `op_args_xdr` is 3 bytes for ALL 330k
+     redstone events ever — the working decode path never used it.
+  **v0.21.3 item (fresh-context task): classify the small shape**
+  (sample: ledger 63,699,567 contract CA526Y2N…, data_len 156) per the
+  EVERY-event binding, then redstone completeness goes green. Also
+  landed this hour: the TTL-classifier self-bounding fix (`5cdec8da`,
+  verify green) — the re-seed's only remaining gate is the v0.21.3
+  tag+deploy.
+
 - 2026-07-29 ~10:00Z — 🎯 **40× READ-AMPLIFICATION ROOT-CAUSED — it is
   thread scheduling, not the table.** Measured: the identical probe at
   `max_threads=4` costs **89 MiB on the NEW table vs 94 MiB on _old**
