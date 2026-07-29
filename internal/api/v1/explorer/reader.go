@@ -226,6 +226,14 @@ type Handler struct {
 	// C3-009, audit-2026-07-23).
 	assetHolders assetHoldersCache
 	contractsDir contractsDirCache
+
+	// contractDetail is the shared bounded-TTL, single-flighted cache in
+	// front of the three per-contract detail reads (recent events /
+	// interactions / code-history) — route-sweep 2026-07-30: all three
+	// ran inline on the request deadline, so a busy contract timed out on
+	// every request and no retry could land warm. Zero value ready; see
+	// contract_detail_cache.go.
+	contractDetail contractDetailCache
 }
 
 // writeJSONAt writes data with an explicit envelope as_of when the seam is
