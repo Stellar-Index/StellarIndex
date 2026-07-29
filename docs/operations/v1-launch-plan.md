@@ -127,6 +127,17 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-29 ~11:30Z — ✅ **redstone empty-batch fix LANDED (`78486ae6`,
+  verify green)** — decoded the 156-byte shape end-to-end: it is
+  `{updated_feeds: [], updater}` (Bytes-wrapped), the adapter's
+  freshness-dropped no-op push. Now decodes to zero updates with no
+  error; real-lake-bytes golden test (ledger 63,699,567) pins it.
+  **v0.21.3 is now code-complete on both headline items** (TTL
+  classifier `5cdec8da` + this). Next session: cut v0.21.3 → deploy →
+  redstone replay + full completeness (→ **17/17 complete**) → SAC
+  re-seed (→ USDC back → **supply 8/8**). Remaining v0.21.3-optional:
+  /accounts snapshot reader (the 10 route timeouts).
+
 - 2026-07-29 ~10:45Z — 🔎 **redstone "866 undecodables" INVESTIGATED and
   re-scoped — NOT a regression.** Findings, each measured against the
   lake:
