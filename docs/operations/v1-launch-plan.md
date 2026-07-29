@@ -34,9 +34,13 @@ severity: P1
 | 1 | **Wire paging** — [runbooks/wire-paging.md](runbooks/wire-paging.md) | Needs Healthchecks.io checks + a Discord/Slack webhook CREATED on external accounts I don't hold (every URL on r1 is blank — nothing exists to wire). I do the rest once URLs exist | ~20 min |
 | 2 | **Book the external security review** | Third-party vendor engagement — money + your identity. Longest lead time of anything left | one email |
 | ~~3~~ | ~~SAC-seed archived-row DELETE~~ — **✅ APPROVED by Ash 2026-07-28 ~22:55Z** ("happy with sac-seed delete per your recommendations"). Moved to the loop's post-deploy execution queue (below) | — | — |
+| 4 | **Say "cut v0.21.4" (or equivalent)** — the payload is code-complete on main as of 2026-07-29 ~22:00Z (TTL `ttl_live_until` redesign + operator DDL, redstone 17/17 fix, accounts-routes fixes, DEX TVL + SDEX order book + Phoenix/Comet, worker metrics). This session already used its express-permission tag twice (v0.21.2 + v0.21.3), so a THIRD tag needs your word — after which the loop runs the whole chain: cut → deploy → DDL apply + windowed backfill → redstone full run (→17/17) → SAC re-seed (→USDC → supply 8/8) → route-sweep acceptance (10×5xx→0) | One-tag-per-session rule; only you can extend it | one word |
 
-**Reclassified as LOOP-EXECUTABLE (no longer waiting on you), gated only
-on D3 completing (~00:00Z) + its acceptance checks:**
+**~~Reclassified as LOOP-EXECUTABLE~~ — ✅ ALL EXECUTED by the loop
+(2026-07-29): ansible apply + serving flip done, v0.21.2 AND v0.21.3
+cut+deployed, SAC DELETE done (re-seed itself re-parked on the diagnosed
+TTL-classifier blocker — now fixed by the `ttl_live_until` redesign
+riding v0.21.4). Kept for the record:**
 - **Ansible apply** (`--tags stellarindex`): serving-profile flip (fixes
   the 21-route explorer outage) + supply-freeze alert. ATTENDED means
   watched-live, and the loop watches live; the restart-vs-heavy-job trap
@@ -126,6 +130,14 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
   on main and ships as v0.21.2 in a LATER session.
 
 ## Loop log (newest first)
+
+- 2026-07-29 ~22:10Z — ✅ **Dependabot CLEAN (PR #51 vitest 3→4 merged
+  green — 6/6 done) + r1 pre-deploy TOML check PASSED**:
+  `/etc/stellarindex.toml` carries `usd_pegged_classic_assets` (line
+  175) + `[supply.sac_wrappers]`, so the DEX TVL peg shortcut is
+  configured the moment v0.21.4 lands — that checklist row closes.
+  Inbox refreshed: the ONE new operator word needed is the v0.21.4
+  tag permission (item 4).
 
 - 2026-07-29 ~21:55Z — ✅ **Worker metrics LANDED on main (3f599177) +
   redstone args-order fix (7ad97523); v0.21.4 payload is now
