@@ -62,7 +62,12 @@ var ttlLiveUntilExpr = fmt.Sprintf(
 )
 
 // ttlLivenessBatchSize caps how many key hashes ride in one IN list.
-const ttlLivenessBatchSize = 5_000
+// 1,500 keys ≈ 105 KiB of query text (each key renders as
+// `unhex('<64-hex>'), ` ≈ 70 bytes), safely inside ClickHouse's 256 KiB
+// default max_query_size. The original 5,000 produced ~350 KiB and
+// failed the parse cap on the first production run (2026-07-29) — the
+// tool must fit DEFAULT server limits, not depend on a users.d raise.
+const ttlLivenessBatchSize = 1_500
 
 // TTLKeyHash returns the TTL key hash governing the ledger entry whose
 // base64-encoded LedgerKey is keyXDR — i.e. sha256 over the DECODED key
@@ -154,13 +159,24 @@ func classifyTTLLivenessBatch(ctx context.Context, conn driver.Conn, keyXDRs []s
 		WHERE entry_type = 'ttl'
 		  AND length(base64Decode(key_xdr)) = %d
 		  AND substring(base64Decode(key_xdr), %d, %d) IN (%s)
-		GROUP BY key_hash`,
+		GROUP BY key_hash
+		SETTINGS max_threads = 4,
+		         max_memory_usage = 8000000000`,
 		ttlKeyHashOffset+1, ttlKeyHashLen, // 1-indexed
 		ttlLiveUntilExpr,
 		ttlLedgerKeyLen,
 		ttlKeyHashOffset+1, ttlKeyHashLen,
 		strings.Join(placeholders, ", "),
 	)
+	// SETTINGS rationale (2026-07-29, measured on r1): at default
+	// max_threads this scan fanned out over the post-D3 part layout to a
+	// 4.76 GiB peak — 40× the 94 MiB the SAME probe costs on the
+	// pre-cutover table — and OOM'd the caller's 10 GiB openRead ceiling
+	// on every full-seed attempt. At max_threads=4 the identical scan
+	// runs in ~89 MiB (parity with the old layout). Bound threads (the
+	// real lever) and carry a per-query memory ceiling well under the
+	// connection's, so a future layout shift fails THIS query loudly
+	// instead of starving the shared host.
 
 	rows, err := conn.Query(ctx, q, args...)
 	if err != nil {
