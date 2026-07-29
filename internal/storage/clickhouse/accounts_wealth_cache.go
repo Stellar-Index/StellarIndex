@@ -70,19 +70,25 @@ func newAccountsWealthCache() *accountsWealthCache {
 	return &accountsWealthCache{}
 }
 
-// get returns the cached ranking when it is fresh. A nil cache (a
-// zero-value ExplorerReader, as built in some tests) behaves as a
-// permanent miss rather than panicking.
-func (c *accountsWealthCache) get() ([]AccountWealth, bool) {
+// get returns the cached ranking and its fetch time whenever one has EVER
+// been stored — including past the TTL. Staleness is the CALLER's decision
+// now (2026-07-29): treating an expired entry as a hard miss meant one
+// window of failed refreshes blanked the route back to its 503 warming
+// state even though a perfectly real ranking sat in memory — serving it
+// with an honest as-of + degraded flag beats serving nothing. ok=false only
+// when nothing was ever stored. A nil cache (a zero-value ExplorerReader,
+// as built in some tests) behaves as a permanent miss rather than
+// panicking.
+func (c *accountsWealthCache) get() ([]AccountWealth, time.Time, bool) {
 	if c == nil {
-		return nil, false
+		return nil, time.Time{}, false
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.filled || time.Since(c.entry.cachedAt) > AccountsWealthCacheTTL {
-		return nil, false
+	if !c.filled {
+		return nil, time.Time{}, false
 	}
-	return c.entry.rows, true
+	return c.entry.rows, c.entry.cachedAt, true
 }
 
 func (c *accountsWealthCache) put(rows []AccountWealth, now time.Time) {
@@ -126,26 +132,34 @@ func (c *accountsWealthCache) endFlight(ch chan struct{}) {
 // AccountsByWealthCached serves the wealth ranking from cache, refreshing
 // in the background when stale.
 //
-// It NEVER runs the slow scan on the caller's deadline. On a cache miss it
-// returns ok=false immediately so the handler can render an honest
-// "warming up" state instead of hanging for the request timeout and then
-// failing — which is precisely the behaviour site-audit S3 recorded.
+// It NEVER runs the slow scan on the caller's deadline. Three states:
 //
-// A refresh is kicked off on miss (single-flight, detached context), so
-// the first caller after a cold start pays nothing and the entry is
-// present for subsequent ones. PrewarmAccountsByWealth exists so that in
-// practice nobody ever sees the cold state at all.
+//   - fresh entry (within AccountsWealthCacheTTL): served as-is.
+//   - STALE entry (TTL lapsed — e.g. the background refresh has been
+//     failing): served anyway, with its real asOf, and a detached
+//     single-flight refresh is kicked. The handler compares asOf against
+//     AccountsWealthCacheTTL to set the envelope's degraded (`stale`)
+//     flag — a real-but-old ranking with an honest timestamp beats a 503
+//     (route-sweep 2026-07-29: a window of refresh failures used to blank
+//     the route back to "warming up" indefinitely).
+//   - nothing ever stored: ok=false immediately so the handler can render
+//     an honest warming state instead of hanging for the request timeout
+//     and then failing — precisely the behaviour site-audit S3 recorded —
+//     and the same detached refresh is kicked.
+//
+// PrewarmAccountsByWealth exists so that in practice nobody ever sees the
+// cold state at all.
 func (r *ExplorerReader) AccountsByWealthCached(
 	ctx context.Context, assets []string, prices []float64, limit int,
-) ([]AccountWealth, bool) {
+) ([]AccountWealth, time.Time, bool) {
 	if limit <= 0 || limit > accountsWealthMaxLimit {
 		limit = 100
 	}
-	if rows, ok := r.wealthCache.get(); ok {
-		return clampWealth(rows, limit), true
+	rows, asOf, ok := r.wealthCache.get()
+	if ok && time.Since(asOf) <= AccountsWealthCacheTTL {
+		return clampWealth(rows, limit), asOf, true
 	}
-	// Miss: start a background refresh and tell the caller we have nothing
-	// yet. Deliberately does not block — see the godoc.
+	// Stale or cold: start a background refresh either way.
 	//
 	// contextcheck: the refresh must NOT inherit this request's context.
 	// Bound to the caller's 8s deadline it would be cancelled before the
@@ -153,7 +167,11 @@ func (r *ExplorerReader) AccountsByWealthCached(
 	// every request would keep paying the timeout — exactly the failure
 	// this cache exists to fix (site-audit S3).
 	r.refreshAccountsWealth(assets, prices) //nolint:contextcheck // intentional detach; see above
-	return nil, false
+	if ok {
+		// Stale-but-real: serve it with its honest timestamp.
+		return clampWealth(rows, limit), asOf, true
+	}
+	return nil, time.Time{}, false
 }
 
 // clampWealth returns the first `limit` rows of a cached ranking.

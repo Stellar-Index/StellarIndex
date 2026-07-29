@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	explorerpkg "github.com/Stellar-Index/StellarIndex/internal/api/v1/explorer"
 )
@@ -123,6 +124,9 @@ func explorerHandlerFor(s *Server, opts Options, logger *slog.Logger) *explorerp
 		ClientAborted:      clientAborted,
 		WriteJSON: func(w http.ResponseWriter, data any, stale bool) {
 			writeJSON(w, data, Flags{Stale: stale})
+		},
+		WriteJSONAt: func(w http.ResponseWriter, data any, stale bool, asOf time.Time) {
+			writeEnvelope(w, Envelope{Data: data, AsOf: asOf.UTC(), Flags: Flags{Stale: stale}})
 		},
 	}
 }
