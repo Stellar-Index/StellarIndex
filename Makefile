@@ -107,7 +107,11 @@ test-cover: ## Unit tests + coverage report
 
 .PHONY: test-integration
 test-integration: ## Integration tests (requires Docker; spins its own containers via testcontainers-go)
-	$(GO) test -tags=integration -timeout 10m $(INT_TEST_PKGS)
+	# 20m: the suite's CUMULATIVE runtime crossed 10m on 2026-07-29 (the
+	# July campaign added container-backed tests, e.g. the CS-102
+	# watermark pair) — CI died at the go-test deadline with the running
+	# test only 4s in. This is suite growth, not a hang.
+	$(GO) test -tags=integration -timeout 20m $(INT_TEST_PKGS)
 
 .PHONY: test-integration-build
 test-integration-build: ## Compile integration tests without running them (no Docker, fast). Catches build-tag breakage from interface changes.
