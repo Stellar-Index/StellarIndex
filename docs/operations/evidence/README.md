@@ -29,3 +29,20 @@ were ever produced until now).
 
 Gaps are listed deliberately — an index that only shows what exists
 reads as "done" when it is not.
+
+## RFP acceptance-criteria mapping (2026-07-29 re-verification)
+
+The original deliverable claim (2026-06-13) predates the July campaign;
+this maps the verbatim ACs (docs/archive/deliverable-readiness-plan.md
+§0) to CURRENT evidence:
+
+| AC | Criterion | Status 2026-07-29 |
+|---|---|---|
+| AC1 | staleness ≤30s | ✅ `/price/tip` via sla-probe (continuous); freshness definition published |
+| AC2 | p95 ≤200ms / p99 ≤500ms | ✅ k6 evidence (2026-06-13 origin-direct PASS) + weekly k6 cron restored 2026-07-06; re-run at launch load recommended post-snapshot-reader |
+| AC3 | history ≥1yr (ideally inception) | ✅✅ daily OHLC to 2015 AND the lake now hash-chain-verified to genesis ([lake verifiers](2026-07-29-lake-verifiers.md)) |
+| AC4 | ≥1000 req/min | ✅ k6 evidence + rate-limit tier configured |
+| AC5 | code public + reproducible | ✅ public repo (2026-07-03) under the `Stellar-Index` org (2026-07-15 — the previously-pending org step is DONE); `verify.sh` green continuously; fresh-clone reproducibility capture recommended for the launch pack |
+| AC6 | production ~10 weeks | ✅ r1 live + serving for months; single-box posture per the HA decision (§4) |
+| AC7 | API docs + self-service onboarding | ✅ docs.stellarindex.io live (HTTP 200 verified); signup/API-key flow shipped (rc.110/115 era) — one E2E onboarding walkthrough recommended at launch |
+| SEV | SEV-1 ≤15/≤30, SEV-2 ≤30/≤60 | ⏳ runbooks + playbook exist; the TIMED drill is gated on paging being wired (operator item #1) |

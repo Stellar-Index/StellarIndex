@@ -152,5 +152,15 @@ list is in the [launch-readiness backlog][backlog].
 If you want to follow the per-release ledger, the [changelog feed][feed]
 is also available as Atom.
 
+---
+
+**Update (2026-07-29):** most of the gaps above have since closed —
+the per-token USD valuation layer shipped in July (token↔token Soroban
+swaps now contribute to USD volume through a tiered valuation with an
+explicit estimated tier), per-pool reserves and DEX TVL are served for
+Soroswap and Aquarius (lower-bound-honest where legs are unpriceable),
+and SDEX order-book depth is live from the ledger's own offer entries.
+The daily-grain forex shim remains the honest remaining gap.
+
 [backlog]: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/architecture/launch-readiness-backlog.md
 [feed]: https://stellarindex.io/changelog.atom
