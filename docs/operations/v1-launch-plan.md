@@ -127,6 +127,19 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-29 ~13:40Z — 🚀 **v0.21.3 CUT + DEPLOYED (express operator
+  permission for the second same-session tag).** Version confirmed
+  live, services active, ops-ch refreshed, ingest 5s behind, external
+  smoke 13/13. The completion chain is running
+  (`/var/log/v0213-chain.log`): redstone FULL completeness (fixed
+  verifier re-judges the formerly-blind ledgers) → SAC re-seed
+  (self-bounding classifier). Acceptance after: coverage 17/17, supply
+  reconcile 8/8 (USDC restored), route-sweep. Also re-measured the 10
+  slow routes post-merge-settling: still failing → the /accounts
+  snapshot reader build IS needed (starts after the chain lands);
+  measured single-account keyed FINAL lookups are 0.08s, so the
+  snapshot work targets the LIST-shaped scans specifically.
+
 - 2026-07-29 ~13:00Z — ✅ **Pipeline steady-state confirmed healthy +
   a self-correction.** Live watermarks: trustline/lp/sac observations
   AT TIP; claimable −250 (normal); lake lag 8s; all projectors at tip;
