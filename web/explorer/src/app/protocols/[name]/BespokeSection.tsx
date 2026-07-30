@@ -1,13 +1,29 @@
 'use client';
 
+import { useMemo, useState } from 'react';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
+import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import type { RequestExample } from '@/api/client';
+import { apiGet, type RequestExample } from '@/api/client';
+import { cn } from '@/lib/cn';
 import { formatCompact } from '@/lib/format';
+import type { NamedLineSeries } from '@/components/charts/LineChart';
+import { CATEGORICAL_PALETTE } from '@/components/charts/DonutChart';
 import { CopyHash } from '../../explorer-shared';
 import { TimeSeriesChart, type ChartTone } from './TimeSeriesChart';
-import { BridgeShowcase, BreakdownDonuts } from './BridgeShowcase';
+import {
+  BridgeShowcase,
+  BreakdownDonuts,
+  LineLegend,
+  pointTime,
+} from './BridgeShowcase';
+
+const LineChart = dynamic(
+  () => import('@/components/charts/LineChart').then((m) => m.LineChart),
+  { ssr: false, loading: () => <div className="h-56 w-full" /> },
+);
 
 // ─── Wire shapes (mirror internal/api/v1/protocols.go ProtocolBespoke) ───
 //
@@ -87,12 +103,157 @@ function categoryLabel(category: string): string {
   return CATEGORY_LABEL[category] ?? 'Protocol analytics';
 }
 
+// ─── Section-level analytics window ──────────────────────────────────────
+//
+// The 24h/7d/30d/90d pills live at BespokeSection level (lifted out of the
+// bridge showcase, 2026-07-30) so EVERY category's whole bespoke block —
+// KPIs, series, donuts, tables — is window-reactive. Switching a pill
+// refetches `/v1/protocols/{name}?days=N`; the server keys its detail
+// cache on (name, days) and buckets the 24h window hourly.
+
+export const WINDOWS = [
+  { key: '24h', days: 1 },
+  { key: '7d', days: 7 },
+  { key: '30d', days: 30 },
+  { key: '90d', days: 90 },
+] as const;
+
+export type WindowDays = (typeof WINDOWS)[number]['days'];
+
+/** The page's initial fetch covers the server default window (90d). */
+export const DEFAULT_WINDOW_DAYS: WindowDays = 90;
+
+export function windowLabelFor(days: WindowDays): string {
+  return WINDOWS.find((w) => w.days === days)?.key ?? `${days}d`;
+}
+
+/** The shared 24h/7d/30d/90d pill row. */
+function WindowPills({
+  days,
+  onChange,
+}: {
+  days: WindowDays;
+  onChange: (d: WindowDays) => void;
+}) {
+  return (
+    <div role="group" aria-label="Analytics window" className="flex gap-1">
+      {WINDOWS.map((w) => (
+        <button
+          key={w.key}
+          type="button"
+          aria-pressed={days === w.days}
+          onClick={() => onChange(w.days)}
+          className={cn(
+            'rounded-sm px-2 py-0.5 font-mono text-[11px] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500/60',
+            days === w.days
+              ? 'bg-brand-100 text-brand-700'
+              : 'text-ink-muted hover:text-ink-body',
+          )}
+        >
+          {w.key}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ─── Series grouping ─────────────────────────────────────────────────────
+
+/**
+ * splitSeriesGroups — partition a bespoke series list into standalone
+ * series (one chart panel each) and prefix groups: series named
+ * "<Group> · <entity>" (the DEX "Top pairs · XLM/USDC" convention, same
+ * separator as the bridge's per-chain lines) fold into one multi-line
+ * panel per group so entity lines share a pane instead of exploding into
+ * five separate panels.
+ */
+export function splitSeriesGroups(series: BespokeSeries[]): {
+  standalone: BespokeSeries[];
+  groups: { title: string; series: BespokeSeries[] }[];
+} {
+  const standalone: BespokeSeries[] = [];
+  const groups: { title: string; series: BespokeSeries[] }[] = [];
+  const byTitle = new Map<string, { title: string; series: BespokeSeries[] }>();
+  for (const s of series) {
+    const idx = s.name.indexOf(' · ');
+    if (idx <= 0) {
+      standalone.push(s);
+      continue;
+    }
+    const title = s.name.slice(0, idx);
+    let g = byTitle.get(title);
+    if (!g) {
+      g = { title, series: [] };
+      byTitle.set(title, g);
+      groups.push(g);
+    }
+    g.series.push(s);
+  }
+  return { standalone, groups };
+}
+
+// GroupedSeriesPanel — one multi-line chart per series group, lines
+// palette-colored in the server's order (volume-descending for the DEX
+// top pairs) and labelled by the bare entity name.
+function GroupedSeriesPanel({
+  group,
+  source,
+  days,
+}: {
+  group: { title: string; series: BespokeSeries[] };
+  source: RequestExample;
+  days: WindowDays;
+}) {
+  const lines: NamedLineSeries[] = group.series.map((s, i) => ({
+    label: s.name.slice(group.title.length + ' · '.length),
+    tone: 'brand',
+    color: CATEGORICAL_PALETTE[i % CATEGORICAL_PALETTE.length],
+    data: s.points.map((p) => ({
+      time: pointTime(p.date),
+      value: toChartNumber(p.value),
+    })),
+  }));
+  const unit = group.series[0]?.unit;
+  const grainLabel = days === 1 ? 'hourly' : 'daily';
+  return (
+    <Panel
+      title={group.title}
+      hint={`${unit ? `Units: ${unit} · ` : ''}${grainLabel} · last ${windowLabelFor(days)}`}
+      source={source}
+    >
+      <div className="space-y-3">
+        <LineLegend lines={lines} />
+        <LineChart
+          data={[]}
+          series={lines}
+          height={224}
+          timeVisible={days === 1}
+          legend={{
+            valueLabel: lines[0]?.label ?? '',
+            formatValue: formatCompact,
+          }}
+          ariaLabel={`${group.title}: ${lines.length} series over the last ${windowLabelFor(days)}${unit ? `, in ${unit}` : ''}.`}
+        />
+      </div>
+    </Panel>
+  );
+}
+
 /**
  * BespokeSection — the category-specific, Dune-surpassing analytics block.
  * Renders ONLY the sub-parts the server populated; the whole section is
  * omitted upstream when `data.bespoke` is absent. Distinct visual treatment
  * (gradient header band + accent KPI cards) so it reads as the protocol's
  * tailored headline rather than the generic activity panels around it.
+ *
+ * The section OWNS the analytics window: the 24h/7d/30d/90d pills in the
+ * header refetch `/v1/protocols/{name}?days=N` and swap the WHOLE block
+ * (KPIs included — the server labels them "(7d)" etc. per window). The
+ * default window reuses the block the page already fetched — no duplicate
+ * request on first render. Bridge blocks delegate their chart suite to
+ * BridgeShowcase, which consumes this section-level window instead of
+ * owning pills (lifted 2026-07-30); its all-time cumulative headline stays
+ * pinned to the initial fetch across pill switches.
  */
 export function BespokeSection({
   bespoke,
@@ -101,27 +262,68 @@ export function BespokeSection({
 }: {
   bespoke: Bespoke;
   source: RequestExample;
-  /** Protocol slug — lets the bridge flow chart refetch per window. */
+  /** Protocol slug — the window refetch re-hits /v1/protocols/{name}. */
   name: string;
 }) {
+  const [days, setDays] = useState<WindowDays>(DEFAULT_WINDOW_DAYS);
+
+  // Non-default windows refetch the protocol detail with ?days=N.
+  const { data, isFetching, isError } = useQuery<Bespoke | null>({
+    queryKey: ['/v1/protocols/{name}', name, 'bespoke-window', days],
+    enabled: days !== DEFAULT_WINDOW_DAYS,
+    retry: false,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const env = await apiGet<{ data?: { bespoke?: Bespoke } }>(
+        `/v1/protocols/${encodeURIComponent(name)}?days=${days}`,
+      );
+      return env.data?.bespoke ?? null;
+    },
+  });
+
+  const loading = days !== DEFAULT_WINDOW_DAYS && isFetching;
+  const failed = days !== DEFAULT_WINDOW_DAYS && isError;
+  const active: Bespoke | null =
+    days === DEFAULT_WINDOW_DAYS
+      ? bespoke
+      : loading || failed
+        ? null
+        : (data ?? null);
+
+  const isBridge = bespoke.category === 'bridge';
+  const activeSeries = useMemo(() => active?.series ?? [], [active]);
+  const { standalone, groups } = useMemo(
+    () => splitSeriesGroups(activeSeries),
+    [activeSeries],
+  );
+
+  // Initial-block presence decides the layout (an empty refetched window
+  // must not collapse the section — the pills need to stay reachable).
   const hasKpis = (bespoke.kpis?.length ?? 0) > 0;
   const hasSeries = (bespoke.series?.length ?? 0) > 0;
   const hasBreakdowns = (bespoke.breakdowns?.length ?? 0) > 0;
   const hasTables = (bespoke.tables?.length ?? 0) > 0;
-  const hasNotes = (bespoke.notes?.length ?? 0) > 0;
-  const isBridge = bespoke.category === 'bridge';
+  const notes = active?.notes ?? bespoke.notes ?? [];
 
   // Nothing to show beyond the heading → don't render an empty band.
-  if (!hasKpis && !hasSeries && !hasBreakdowns && !hasTables && !hasNotes) {
+  if (
+    !hasKpis &&
+    !hasSeries &&
+    !hasBreakdowns &&
+    !hasTables &&
+    (bespoke.notes?.length ?? 0) === 0
+  ) {
     return null;
   }
+
+  const activeKpis = active?.kpis ?? [];
 
   return (
     <section
       aria-labelledby="bespoke-heading"
       className="space-y-4 rounded-xl border border-brand-100 bg-linear-to-b from-brand-50/60 to-transparent p-4"
     >
-      {/* ── Category chip + heading ── */}
+      {/* ── Category chip + heading + the shared window pills ── */}
       <div className="flex flex-wrap items-center gap-2">
         <span className="rounded-sm bg-brand-100 px-2 py-0.5 font-mono text-[11px] uppercase tracking-wider text-brand-700">
           {bespoke.category}
@@ -135,66 +337,114 @@ export function BespokeSection({
         <span className="text-xs text-ink-muted">
           tailored on-chain metrics for this protocol
         </span>
+        <div className="ml-auto">
+          <WindowPills days={days} onChange={setDays} />
+        </div>
       </div>
 
-      {/* ── Bespoke KPI cards ── */}
-      {hasKpis && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-          {bespoke.kpis!.map((k, i) => (
-            <BespokeKpiCard key={`${k.label}-${i}`} kpi={k} />
-          ))}
-        </div>
+      {/* ── Bespoke KPI cards (window-reactive with the rest) ── */}
+      {loading && hasKpis ? (
+        <div
+          aria-hidden
+          className="h-24 w-full animate-pulse rounded-lg bg-surface-subtle"
+          data-testid="bespoke-kpis-loading"
+        />
+      ) : (
+        activeKpis.length > 0 && (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            {activeKpis.map((k, i) => (
+              <BespokeKpiCard key={`${k.label}-${i}`} kpi={k} />
+            ))}
+          </div>
+        )
       )}
 
       {/* ── Bespoke charts ── */}
-      {/* Bridge blocks hand their whole window-reactive suite (flow series,
-          per-chain lines, donuts, cumulative net inflow, largest-transfers
-          table) to BridgeShowcase with 24h/7d/30d/90d pills; every other
-          category keeps one Panel per named series plus generic breakdown
-          donuts/tables. */}
+      {/* Bridge blocks hand their whole chart suite (flow series, per-chain
+          lines, donuts, cumulative net inflow, largest-transfers table) to
+          BridgeShowcase, driven by this section's window; every other
+          category renders standalone series one panel each, "<Group> ·
+          <entity>" series as one multi-line panel per group, plus generic
+          breakdown donuts/tables — all from the active window's block. */}
       {isBridge && (hasSeries || hasBreakdowns || hasTables) ? (
-        <BridgeShowcase name={name} initial={bespoke} source={source} />
+        <BridgeShowcase
+          initial={bespoke}
+          active={active}
+          days={days}
+          isFetching={loading}
+          isError={failed}
+          source={source}
+        />
+      ) : failed ? (
+        <p className="py-6 text-center text-sm text-ink-muted">
+          Couldn&apos;t load this window — retry, or pick another window.
+        </p>
+      ) : loading ? (
+        <div
+          aria-hidden
+          className="h-56 w-full animate-pulse rounded-md bg-surface-subtle"
+          data-testid="bespoke-window-loading"
+        />
+      ) : active === null ? (
+        <p className="py-6 text-center text-sm text-ink-muted">
+          No analytics in this window.
+        </p>
       ) : (
-        hasSeries &&
-        bespoke.series!.map((s, i) => (
-          <Panel
-            key={`${s.name}-${i}`}
-            title={s.name}
-            hint={s.unit ? `Units: ${s.unit}` : undefined}
-            source={source}
-          >
-            <TimeSeriesChart
-              points={s.points.map((p) => ({
-                date: p.date,
-                value: toChartNumber(p.value),
-              }))}
-              label={s.name}
-              unit={s.unit}
-              tone={SERIES_TONES[i % SERIES_TONES.length]}
-              gradientId={`bespokeSeries-${i}`}
+        <>
+          {standalone.map((s, i) => (
+            <Panel
+              key={`${s.name}-${i}`}
+              title={s.name}
+              hint={`${s.unit ? `Units: ${s.unit} · ` : ''}last ${windowLabelFor(days)}`}
+              source={source}
+            >
+              <TimeSeriesChart
+                points={s.points.map((p) => ({
+                  date: p.date,
+                  value: toChartNumber(p.value),
+                }))}
+                label={s.name}
+                unit={s.unit}
+                tone={SERIES_TONES[i % SERIES_TONES.length]}
+                gradientId={`bespokeSeries-${i}`}
+                timeVisible={days === 1}
+              />
+            </Panel>
+          ))}
+
+          {groups.map((g) => (
+            <GroupedSeriesPanel
+              key={g.title}
+              group={g}
+              source={source}
+              days={days}
             />
-          </Panel>
-        ))
-      )}
+          ))}
 
-      {/* ── Generic breakdown donuts (non-bridge categories that adopt the
-             breakdowns wire field) ── */}
-      {!isBridge && hasBreakdowns && (
-        <BreakdownDonuts breakdowns={bespoke.breakdowns!} source={source} />
-      )}
+          {/* ── Generic breakdown donuts (categories that adopt the
+                 breakdowns wire field — DEX ships "Volume by pair") ── */}
+          {(active.breakdowns?.length ?? 0) > 0 && (
+            <BreakdownDonuts
+              breakdowns={active.breakdowns!}
+              source={source}
+              windowLabel={windowLabelFor(days)}
+            />
+          )}
 
-      {/* ── Bespoke tables (one Panel per named top-N table; bridge tables
-             render inside the showcase so they stay window-reactive) ── */}
-      {!isBridge &&
-        hasTables &&
-        bespoke.tables!.map((t, i) => (
-          <BespokeTablePanel key={`${t.title}-${i}`} table={t} source={source} />
-        ))}
+          {(active.tables ?? []).map((t, i) => (
+            <BespokeTablePanel
+              key={`${t.title}-${i}`}
+              table={t}
+              source={source}
+            />
+          ))}
+        </>
+      )}
 
       {/* ── Notes / caveats ── */}
-      {hasNotes && (
+      {notes.length > 0 && (
         <ul className="space-y-1 px-1 text-xs text-ink-muted">
-          {bespoke.notes!.map((n, i) => (
+          {notes.map((n, i) => (
             <li key={i} className="flex gap-1.5">
               <span aria-hidden className="select-none text-ink-faint">
                 ·

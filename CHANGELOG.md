@@ -46,6 +46,22 @@ against.
   collision). Completeness flips at the post-deploy replay + verify.
 
 ### Added
+- **Explorer: the 24h/7d/30d/90d analytics window pills now live at
+  BespokeSection level, so EVERY protocol category's bespoke block —
+  KPIs included — is window-reactive.** Previously only the bridge
+  showcase owned pills (and its KPIs stayed pinned to 90d while its
+  charts switched). Switching a pill refetches
+  `/v1/protocols/{name}?days=N` and swaps the whole block;
+  BridgeShowcase now consumes the section-level window as props (its
+  all-time cumulative headline stays pinned to the initial fetch), and
+  non-bridge categories gain generic rendering for "<Group> · <entity>"
+  series — folded into one palette-colored multi-line panel per group
+  (the DEX "Top pairs · XLM/USDC" lines) instead of one panel per
+  series — plus window-labelled donuts/tables and honest
+  loading/empty/error states. TimeSeriesChart accepts the hourly
+  "YYYY-MM-DDTHH:MM" 24h-grain point dates with a time-of-day axis.
+  Vitest covers the lift for both paths: all categories refetch, the
+  bridge suite is unaffected.
 - **DEX/AMM protocol pages get the full visual analytics suite**
   (soroswap / aquarius / phoenix / comet / sdex; no spec change — every
   shape exists in 1.15.0). The bespoke block now serves: a "Volume by

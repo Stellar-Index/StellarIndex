@@ -1,11 +1,10 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import dynamic from 'next/dynamic';
-import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { apiGet, type RequestExample } from '@/api/client';
+import type { RequestExample } from '@/api/client';
 import { cn } from '@/lib/cn';
 import { formatCompact } from '@/lib/format';
 import type { NamedLineSeries, LineSeriesTone } from '@/components/charts/LineChart';
@@ -13,22 +12,25 @@ import { DonutChart, CATEGORICAL_PALETTE, type DonutSlice } from '@/components/c
 import {
   toChartNumber,
   BespokeTablePanel,
+  windowLabelFor,
   type Bespoke,
   type BespokeSeries,
   type BespokeBreakdown,
+  type WindowDays,
 } from './BespokeSection';
 
 // BridgeShowcase — the bridge protocols' window-reactive analytics suite.
 // For cctp it renders the full SDF-showcase: the all-time cumulative
 // net-inflow headline chart, the combined inbound/outbound flow chart,
 // side-by-side source/destination donuts, per-chain top-5 multi-line charts,
-// and the largest-transfers table — everything except the cumulative chart
-// scoped by shared 24h/7d/30d/90d window pills. For rozo (a single settled
-// series, no breakdowns) it degrades to the pills + one flow line.
+// and the largest-transfers table. The 24h/7d/30d/90d window pills and the
+// `?days=N` refetch live at BespokeSection level (lifted 2026-07-30 so
+// every category is window-reactive); this component consumes the section's
+// window + fetch state as props. For rozo (a single settled series, no
+// breakdowns) it degrades to one flow line.
 //
-// Switching a pill refetches `/v1/protocols/{name}?days=N` client-side; the
-// server buckets the 24h window HOURLY (daily otherwise) and keeps series
-// names window-stable so all pairing below is by exact name / prefix:
+// The server buckets the 24h window HOURLY (daily otherwise) and keeps
+// series names window-stable so all pairing below is by exact name/prefix:
 //   "Inbound (USDC)" / "Outbound (USDC)"   — the flow totals
 //   "Inbound · <chain>" / "Outbound · <chain>" — per-chain top-5
 //   "Cumulative net inflow (all-time)"     — window-independent headline
@@ -42,18 +44,6 @@ const LineChart = dynamic(
   { ssr: false, loading: () => <div className="h-56 w-full" /> },
 );
 
-const WINDOWS = [
-  { key: '24h', days: 1 },
-  { key: '7d', days: 7 },
-  { key: '30d', days: 30 },
-  { key: '90d', days: 90 },
-] as const;
-
-type WindowDays = (typeof WINDOWS)[number]['days'];
-
-/** The page's initial fetch covers the server default window (90d). */
-const DEFAULT_DAYS: WindowDays = 90;
-
 // Server-stable series names (mirror internal/storage/timescale
 // protocol_bespoke_cctp.go's cctpSeriesName* constants).
 const INBOUND_TOTAL = 'Inbound (USDC)';
@@ -64,7 +54,8 @@ const CUMULATIVE = 'Cumulative net inflow (all-time)';
 
 // pointTime — bespoke point date → unix seconds. Daily points are
 // "YYYY-MM-DD"; hourly points (the 24h window) are "YYYY-MM-DDTHH:MM".
-function pointTime(date: string): number {
+// Exported for BespokeSection's grouped multi-line panels.
+export function pointTime(date: string): number {
   const iso =
     date.length === 10 ? `${date}T00:00:00Z` : date.length === 16 ? `${date}:00Z` : date;
   const ms = Date.parse(iso);
@@ -212,8 +203,9 @@ export function BreakdownDonuts({
 }
 
 // LineLegend — the static legend row for a multi-line chart: one entry per
-// line with its hue swatch and window total.
-function LineLegend({ lines }: { lines: NamedLineSeries[] }) {
+// line with its hue swatch and window total. Exported for BespokeSection's
+// grouped multi-line panels.
+export function LineLegend({ lines }: { lines: NamedLineSeries[] }) {
   if (lines.length === 0) return null;
   return (
     <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-muted">
@@ -238,36 +230,26 @@ function LineLegend({ lines }: { lines: NamedLineSeries[] }) {
 }
 
 export function BridgeShowcase({
-  name,
   initial,
+  active,
+  days,
+  isFetching,
+  isError,
   source,
 }: {
-  /** Protocol slug ("cctp" / "rozo") for the window refetch. */
-  name: string;
   /** The bespoke block from the page's initial (90d) fetch. */
   initial: Bespoke;
+  /**
+   * The active window's block from BespokeSection (null while the window
+   * refetch is in flight or failed).
+   */
+  active: Bespoke | null;
+  /** The section-level analytics window driving every chart below. */
+  days: WindowDays;
+  isFetching: boolean;
+  isError: boolean;
   source: RequestExample;
 }) {
-  const [days, setDays] = useState<WindowDays>(DEFAULT_DAYS);
-
-  // Non-default windows refetch the protocol detail with ?days=N. The
-  // default window reuses the block the page already fetched — no
-  // duplicate request on first render.
-  const { data, isFetching, isError } = useQuery<Bespoke | null>({
-    queryKey: ['/v1/protocols/{name}', name, 'bespoke-window', days],
-    enabled: days !== DEFAULT_DAYS,
-    retry: false,
-    staleTime: 60_000,
-    queryFn: async () => {
-      const env = await apiGet<{ data?: { bespoke?: Bespoke } }>(
-        `/v1/protocols/${encodeURIComponent(name)}?days=${days}`,
-      );
-      return env.data?.bespoke ?? null;
-    },
-  });
-
-  const active: Bespoke | null =
-    days === DEFAULT_DAYS ? initial : isFetching || isError ? null : (data ?? null);
   const series = useMemo(() => active?.series ?? [], [active]);
 
   const lines = useMemo(() => flowLines(series), [series]);
@@ -286,7 +268,7 @@ export function BridgeShowcase({
   const dual = lines.length > 1;
   const unit = series.find((s) => !isAuxSeries(s))?.unit;
   const hasPoints = lines.some((l) => l.data.length > 0);
-  const windowLabel = WINDOWS.find((w) => w.days === days)?.key ?? `${days}d`;
+  const windowLabel = windowLabelFor(days);
   const grainLabel = days === 1 ? 'hourly' : 'daily';
 
   return (
@@ -310,34 +292,14 @@ export function BridgeShowcase({
         </Panel>
       )}
 
-      {/* ── Flow totals (window-reactive, carries the shared pills) ── */}
+      {/* ── Flow totals (driven by the section-level window pills) ── */}
       <Panel
         title={dual ? 'Bridge flows' : (lines[0]?.label ?? 'Bridge flows')}
         hint={`${unit ? `Units: ${unit} · ` : ''}${grainLabel} buckets · last ${windowLabel}${dual ? ' · window applies to the charts and table below' : ''}`}
         source={source}
       >
         <div className="space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div role="group" aria-label="Chart window" className="flex gap-1">
-              {WINDOWS.map((w) => (
-                <button
-                  key={w.key}
-                  type="button"
-                  aria-pressed={days === w.days}
-                  onClick={() => setDays(w.days)}
-                  className={cn(
-                    'rounded-sm px-2 py-0.5 font-mono text-[11px] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500/60',
-                    days === w.days
-                      ? 'bg-brand-100 text-brand-700'
-                      : 'text-ink-muted hover:text-ink-body',
-                  )}
-                >
-                  {w.key}
-                </button>
-              ))}
-            </div>
-            {hasPoints && <LineLegend lines={lines} />}
-          </div>
+          {hasPoints && <LineLegend lines={lines} />}
 
           {isError ? (
             <p className="py-6 text-center text-sm text-ink-muted">
