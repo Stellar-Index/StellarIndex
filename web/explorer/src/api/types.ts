@@ -5916,7 +5916,21 @@ export interface paths {
          */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /**
+                     * @description Trailing window (days) for the `bespoke` per-category analytics
+                     *     block (its KPIs, series, and tables). Whitelisted to 1, 7, 30, or
+                     *     90 (default 90) — each admitted window is a distinct cached scan,
+                     *     so arbitrary values are rejected with a 400 problem+json rather
+                     *     than clamped. At `days=1` the bridge flow series (cctp inbound /
+                     *     outbound, rozo settled volume) are bucketed HOURLY with
+                     *     `YYYY-MM-DD"T"HH24:00` point timestamps; longer windows are daily
+                     *     (`YYYY-MM-DD`). The lake-analytics fields (`activity_series`,
+                     *     `event_breakdown`, `events_total`, `activity_window_days`) always
+                     *     cover the fixed 90-day lookback regardless of this parameter.
+                     */
+                    days?: 1 | 7 | 30 | 90;
+                };
                 header?: never;
                 path: {
                     /** @description Canonical protocol name from the directory (`blend`, `soroswap`, …). */

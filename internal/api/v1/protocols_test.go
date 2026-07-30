@@ -442,15 +442,19 @@ func TestHandleProtocolDetail_ProjectionFallback(t *testing.T) {
 }
 
 // stubProtocolBespokeReader is a fake bespoke-block builder for the
-// per-protocol page's bespoke-section test — records call count so the
-// TTL-cache test can assert the build only runs once per cache window.
+// per-protocol page's bespoke-section test — records call count + the
+// windowDays of each call so the TTL-cache tests can assert the build only
+// runs once per (protocol, window) cache slot and receives the requested
+// window.
 type stubProtocolBespokeReader struct {
-	blocks map[string]*timescale.BespokeBlock
-	calls  int
+	blocks  map[string]*timescale.BespokeBlock
+	calls   int
+	windows []int
 }
 
-func (s *stubProtocolBespokeReader) BuildProtocolBespoke(_ context.Context, source, _ string, _ int) (*timescale.BespokeBlock, error) {
+func (s *stubProtocolBespokeReader) BuildProtocolBespoke(_ context.Context, source, _ string, windowDays int) (*timescale.BespokeBlock, error) {
 	s.calls++
+	s.windows = append(s.windows, windowDays)
 	return s.blocks[source], nil
 }
 
@@ -557,6 +561,65 @@ func TestHandleProtocolDetail_AquariusRewardsBespoke(t *testing.T) {
 	}
 	if bespoke.calls != 1 {
 		t.Errorf("BuildProtocolBespoke called %d times, want 1 (TTL cache should collapse the 2nd request)", bespoke.calls)
+	}
+}
+
+// ?days= is whitelist-validated: anything outside {1, 7, 30, 90} is a 400
+// problem+json (no-store, per the error-caching contract) — never a silent
+// clamp to the default, and never a cache write.
+func TestHandleProtocolDetail_InvalidDays400(t *testing.T) {
+	bespoke := &stubProtocolBespokeReader{}
+	srv := v1.New(v1.Options{ProtocolBespoke: bespoke})
+	ts := httpTestServer(t, srv)
+
+	for _, days := range []string{"13", "0", "-1", "365", "abc", "1.5"} {
+		resp := mustGet(t, ts.URL+"/v1/protocols/cctp?days="+days)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("days=%s status = %d, want 400", days, resp.StatusCode)
+		}
+		if ct := resp.Header.Get("Content-Type"); ct != "application/problem+json" {
+			t.Errorf("days=%s Content-Type = %q, want application/problem+json", days, ct)
+		}
+		if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
+			t.Errorf("days=%s Cache-Control = %q, want no-store", days, cc)
+		}
+	}
+	if bespoke.calls != 0 {
+		t.Errorf("BuildProtocolBespoke called %d times on invalid days, want 0", bespoke.calls)
+	}
+}
+
+// The detail TTL cache keys on (protocol, window) — not the bare name —
+// so a ?days=1 request can never be served the cached 90d view (or vice
+// versa), while a repeat of the SAME window is a cache hit, and the
+// no-param default shares its slot with an explicit days=90.
+func TestHandleProtocolDetail_CacheKeyIncludesWindow(t *testing.T) {
+	bespoke := &stubProtocolBespokeReader{}
+	srv := v1.New(v1.Options{ProtocolBespoke: bespoke})
+	ts := httpTestServer(t, srv)
+
+	get := func(q string) {
+		t.Helper()
+		resp := mustGet(t, ts.URL+"/v1/protocols/cctp"+q)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s status = %d, want 200", q, resp.StatusCode)
+		}
+	}
+
+	get("")         // default → builds the 90d view
+	get("?days=90") // explicit 90 → same cache slot as the default, NO rebuild
+	if bespoke.calls != 1 {
+		t.Fatalf("default + explicit days=90 built %d times, want 1 (shared slot)", bespoke.calls)
+	}
+
+	get("?days=1") // new window → its own slot, rebuilds
+	get("?days=1") // repeat → cache hit
+	get("?days=7") // another window → rebuilds again
+	if bespoke.calls != 3 {
+		t.Errorf("BuildProtocolBespoke called %d times, want 3 (one per distinct window)", bespoke.calls)
+	}
+	if len(bespoke.windows) != 3 || bespoke.windows[0] != 90 || bespoke.windows[1] != 1 || bespoke.windows[2] != 7 {
+		t.Errorf("bespoke windows = %v, want [90 1 7]", bespoke.windows)
 	}
 }
 
