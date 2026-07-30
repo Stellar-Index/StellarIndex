@@ -131,6 +131,20 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-30 ~20:30Z — 🎨 **ALL-PROTOCOLS VISUAL SUITE COMPLETE**
+  (8199fe36; three parallel agents, all merged, full verify green).
+  Every protocol page is now a window-reactive showcase: bridges
+  (donuts/per-chain lines/cumulative net — earlier today), DEX/AMM
+  (volume-by-pair donuts, top-5 pair lines, traders, largest trades),
+  lending (pool/kind donuts, supply-vs-borrow + backstop + auction
+  series, flash loans), yield (vault flow lines + donut), oracles
+  (cadence, per-feed lines, feeds table, freshness). Window pills on
+  EVERY category. More honest-data catches by agent verification:
+  soroswap trades carry NO taker (0% coverage — omitted, not zeroed);
+  DEX "all-time" honestly floored at the 2026-03-18 rollup start;
+  sdex heavy surfaces bounded to 24h/7d with a note. Everything on
+  main for v0.21.7.
+
 - 2026-07-30 ~18:50Z — 🎨 **CCTP SDF showcase LANDED (merge) — and it
   CORRECTED the flow numbers.** The suite: verified chain attribution
   (the $66M mystery source = SOLANA — the token slice is the low 20
