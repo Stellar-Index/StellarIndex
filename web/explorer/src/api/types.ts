@@ -6023,6 +6023,19 @@ export interface paths {
                                  *     protocol integration (spec'd loosely on
                                  *     purpose, board #33 — x-stability:
                                  *     experimental per ADR-0042 applies).
+                                 *
+                                 *     Shared sub-shapes: `kpis` (label/value/
+                                 *     unit/hint cards), `series` (named
+                                 *     {date, value} time-series; values are
+                                 *     numeric STRINGS — ADR-0003), `tables`
+                                 *     (title/columns/rows), `notes` (caveat
+                                 *     lines), and — since 1.15.0 —
+                                 *     `breakdowns`: named composition datasets
+                                 *     for donut/pie rendering
+                                 *     ({title, unit, rows: [{label, value,
+                                 *     count}]}, value-sorted descending;
+                                 *     e.g. CCTP's "Inflows by source chain" /
+                                 *     "Outflows by destination chain").
                                  */
                                 bespoke?: {
                                     [key: string]: unknown;
