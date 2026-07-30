@@ -15,6 +15,22 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Every protocol category now ships a full visual suite** (the
+  "primary point for protocols to show their stats" directive) —
+  window-reactive (24h/7d/30d/90d pills now on EVERY protocol page,
+  hourly buckets at 24h): **Lending/Blend** — activity-by-pool +
+  event-kind donuts, supply-vs-borrow / backstop / auction series,
+  per-pool top-5 lines, flash-loan table (counts over mixed-asset
+  sums by policy); **SoroCredit** — positions + settlement series;
+  **Yield/DeFindex** — vault deposits-vs-withdrawals lines, flows-by-
+  vault donut, per-vault table (single-asset amounts only — the 2
+  multi-asset vaults honestly render "—"); **Oracles** (reflector ×3,
+  redstone, band) — update-cadence series, per-feed top-5 lines,
+  updates-by-feed donut, feeds table, freshness + median-interval
+  KPIs (counts and timestamps only — no price restatement). All new
+  SQL validated read-only on r1 with timings pinned in comments.
+
 ### Fixed
 - **CCTP flow volumes no longer double-count: transfers are deduplicated
   and `mint_and_forward` is excluded from sums.** Ground-truthed on r1
