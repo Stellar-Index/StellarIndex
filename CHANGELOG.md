@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.21.6] — 2026-07-30
+
 ### Fixed
 - **Account trustline + offer reads are primary-index range reads — 75×
   faster.** `/v1/accounts/{g}`'s trustline and offer queries rode the
