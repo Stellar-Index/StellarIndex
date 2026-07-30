@@ -891,13 +891,17 @@ func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, 
 // whale account's aggregation state into a disk-backed success instead
 // of an OOM (the same posture as the contracts-directory GROUP BY).
 //
-// explorerScanSettings: arm 1 is a bloom-skip-index probe over the whole
-// operations table — granule-pruned but still scan-shaped, squarely in
-// the thread-fan-out memory class the pin bounds.
+// Arm 1's keys come from the slim stellar.ops_by_source projection
+// (2026-07-30, same rewrite as accountOperationsQuery — the bloom probe
+// over the whole operations table measured 6.17s; the PK-prefixed slim
+// read is ms). The sentinel op_index rows (tx-sourced) are excluded:
+// this aggregate counts OPERATIONS the account sourced.
 const accountOpTypeCountsQuery = `SELECT op_type, toInt64(sum(c)) AS n FROM (
 		(SELECT op_type, uniqExact((ledger_seq, tx_index, op_index)) AS c
 		   FROM stellar.operations
-		  WHERE source_account = ?
+		  WHERE (ledger_seq, tx_index, op_index) IN (
+		        SELECT ledger_seq, tx_index, op_index FROM stellar.ops_by_source
+		        WHERE source_account = ? AND op_index != 4294967295)
 		  GROUP BY op_type)
 		UNION ALL
 		(SELECT op_type, uniqExact((ledger_seq, tx_index, op_index)) AS c
@@ -915,6 +919,9 @@ const accountOpTypeCountsQuery = `SELECT op_type, toInt64(sum(c)) AS n FROM (
 // backfill). Whole-history scan-shaped — callers run it under a
 // detached stale-while-revalidate budget, never a request deadline.
 func (r *ExplorerReader) AccountOperationTypeCounts(ctx context.Context, account string) ([]OpTypeCount, error) {
+	if !r.opsBySourceAvailable(ctx) {
+		return nil, errOpsBySourceMissing
+	}
 	rows, err := r.conn.Query(ctx, accountOpTypeCountsQuery, account, account)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: account %s op-type counts: %w", account, err)
