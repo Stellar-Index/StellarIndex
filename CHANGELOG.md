@@ -15,6 +15,18 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **Soroswap trades now carry their trader (`taker`) — and a replay
+  backfills all history.** `SwapEvent.to` (the swap recipient) is
+  on-chain in every soroswap swap since genesis, but the decoder
+  dropped it — soroswap was the one venue with 0% `trades.taker`
+  coverage (every sibling: 100%), which excluded soroswap from the
+  per-address trades view and its page's trader metrics. Captured
+  best-effort (an unreadable recipient never drops the trade); the
+  trades upsert already carries `taker = EXCLUDED.taker`, so a
+  `projector-replay -source soroswap` retro-fills every historical
+  trade.
+
 ### Added
 - **Every protocol category now ships a full visual suite** (the
   "primary point for protocols to show their stats" directive) —

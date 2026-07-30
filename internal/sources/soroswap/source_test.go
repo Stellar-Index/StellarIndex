@@ -7,6 +7,8 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
+
+	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
 func TestClassify(t *testing.T) {
@@ -341,4 +343,37 @@ func mustClosed(t *testing.T, e *events.Event) time.Time {
 		t.Fatalf("fixture has unparseable LedgerClosedAt %q: %v", e.LedgerClosedAt, err)
 	}
 	return ts
+}
+
+// TestDecodeSwapTaker pins the SwapEvent.to capture (2026-07-30: soroswap
+// was the one venue with 0% trades.taker coverage — the decoder dropped
+// the on-chain recipient; a replay backfills it via taker=EXCLUDED.taker).
+func TestDecodeSwapTaker(t *testing.T) {
+	var aid xdr.AccountId
+	if err := aid.SetAddress("GA3GJGKCUKPOPL6NYPMSBK7LMFYNW7SJMAJ7ZGWR3KGSHJWJHQRQZA3L"); err != nil {
+		t.Fatal(err)
+	}
+	toVal := xdr.ScVal{
+		Type: xdr.ScValTypeScvAddress,
+		Address: &xdr.ScAddress{
+			Type:      xdr.ScAddressTypeScAddressTypeAccount,
+			AccountId: &aid,
+		},
+	}
+	sym := func(s string) xdr.ScVal {
+		ss := xdr.ScSymbol(s)
+		return xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &ss}
+	}
+	m := xdr.ScMap{{Key: sym("to"), Val: toVal}}
+	body := xdr.ScVal{Type: xdr.ScValTypeScvMap, Map: &[]*xdr.ScMap{&m}[0]}
+	b64, err := xdr.MarshalBase64(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := decodeSwapTaker(b64); got != "GA3GJGKCUKPOPL6NYPMSBK7LMFYNW7SJMAJ7ZGWR3KGSHJWJHQRQZA3L" {
+		t.Fatalf("taker = %q, want the to address", got)
+	}
+	if got := decodeSwapTaker("not-xdr"); got != "" {
+		t.Fatalf("malformed body must yield empty taker, got %q", got)
+	}
 }

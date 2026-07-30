@@ -119,6 +119,13 @@ func decodeSwap(r RawPair, tok0, tok1 canonical.Asset) (canonical.Trade, error) 
 	if err != nil {
 		return canonical.Trade{}, fmt.Errorf("%w: %w", ErrMalformedPayload, err)
 	}
+	// Taker: SwapEvent.to — the swap recipient, on-chain in EVERY
+	// soroswap swap since genesis but dropped by this decoder until
+	// 2026-07-30 (found by the address-intelligence build: soroswap was
+	// the ONE venue with 0% trades.taker coverage while every sibling
+	// had 100%). Best-effort per the Trade.Taker contract: a decode
+	// failure leaves it empty rather than failing the trade.
+	taker := decodeSwapTaker(r.Swap.Value)
 
 	// Trade direction: whichever side had non-zero `in` is the base
 	// asset the trader sold; the other side is what they bought.
@@ -158,7 +165,31 @@ func decodeSwap(r RawPair, tok0, tok1 canonical.Asset) (canonical.Trade, error) 
 		Pair:        pair,
 		BaseAmount:  baseAmt,
 		QuoteAmount: quoteAmt,
+		Taker:       taker,
 	}, nil
+}
+
+// decodeSwapTaker pulls SwapEvent.to as a strkey. Empty on any failure —
+// Taker is optional on canonical.Trade and an unreadable recipient must
+// not drop the trade itself.
+func decodeSwapTaker(valueB64 string) string {
+	sv, err := scval.Parse(valueB64)
+	if err != nil {
+		return ""
+	}
+	entries, err := scval.AsMap(sv)
+	if err != nil {
+		return ""
+	}
+	toSv, ok := scval.MapField(entries, "to")
+	if !ok {
+		return ""
+	}
+	addr, err := scval.AsAddressStrkey(toSv)
+	if err != nil {
+		return ""
+	}
+	return addr
 }
 
 // swapAmounts holds the four i128 amounts from a SwapEvent body.
