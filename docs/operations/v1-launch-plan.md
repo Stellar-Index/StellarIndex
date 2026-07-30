@@ -131,6 +131,22 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-30 ~10:45Z — 🚀 **v0.21.5 CUT + DEPLOYED (Ash's word); final
+  acceptance nearly closed.** Deploy green (all 5 binaries; smoke
+  13/13; one transient gh-watch network blip — the run itself
+  succeeded). **Route-sweep: 94 routes → 93 clean.** The spill fix
+  proved out live (contracts_dir refreshed successfully in production
+  for the first time — 27 straight OOMs before); contract detail ×3 +
+  holders all land warm on retry exactly per the SWR contract. The
+  final holdout (/accounts whale) exposed one more layer: the fill
+  now SUCCEEDS (probed 200) but the 30s TTL hard-missed expired
+  entries, so the warm window was ~30s per fill → **fixed on main
+  (714a72a6, stale-serve past TTL — the wealth cache's contract
+  applied), rides the next tag**. Redstone replay running with the
+  subset-attribution decode: cursor 59.50M → tip 63.72M at ~12k
+  ledgers/min, ETA ~16:30Z, then the chain auto-runs the full verify
+  → 17/17 expected. Waiter armed.
+
 - 2026-07-30 ~02:20Z — ✅ **usd_volume history FULLY CLEAN: 13.3M rows
   re-stamped, all 66 dirty days re-verify at 0 violations** (evidence
   updated in `2026-07-30-verify-usd-volume-30d.md`). The path found its
