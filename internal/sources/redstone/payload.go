@@ -162,45 +162,67 @@ func medianAt(pkgs []payloadPackage, tsMS uint64) (*big.Int, bool) {
 
 // attributeSubset maps each surviving updated_feeds entry to exactly one
 // of the op-args feed_ids by matching the entry's price against each
-// candidate feed's payload median at the entry's package_timestamp.
-// Returns one feed id per price, positionally aligned with prices.
+// candidate feed's payload median at the entry's package_timestamp —
+// under the ORDER-PRESERVING constraint: the adapter builds
+// updated_feeds in a single pass over feed_ids (that is also why the
+// equal-arity case zips positionally), so the surviving entries are a
+// SUBSEQUENCE of feed_ids in order. Attribution is therefore an
+// alignment of prices onto an ordered subsequence of candidates, and
+// the constraint can only DISAMBIGUATE relative to the unordered rule
+// (any true assignment is order-preserving by construction) — it can
+// never misattribute. It resolved the 2026-07-30 residual class where
+// one price matched two feeds' medians simultaneously (170 ledgers,
+// first 60104689: a price matching both iBENJI_ETHEREUM_FUNDAMENTAL
+// and SolvBTC.BBN_FUNDAMENTAL) that the unordered rule refused.
 //
-// Refusal cases (error → the event stays honest-blind):
-//   - a price matches zero candidates (unknown aggregation rule or a
-//     feed outside the payload), or
-//   - a price matches MORE than one candidate (two feeds with identical
-//     medians — e.g. two USD-stables pinned to 1e8), or
-//   - two prices resolve to the same feed (bijection violation).
+// The alignment count is computed by DP; refusal cases (error → the
+// event stays honest-blind):
+//   - zero complete alignments (a price matches no candidate at its
+//     slot — unknown aggregation rule or a feed outside the payload);
+//   - MORE than one complete alignment (order cannot disambiguate).
 func attributeSubset(prices []priceDataDecoded, feedIDs []string, payload []byte) ([]string, error) {
 	byFeed, err := parsePayload(payload)
 	if err != nil {
 		return nil, err
 	}
-	assigned := make([]string, len(prices))
-	used := make(map[string]bool, len(prices))
-	for i, pd := range prices {
-		match := ""
-		for _, feed := range feedIDs {
-			m, ok := medianAt(byFeed[feed], pd.PackageTimestamp)
-			if !ok || m.Cmp(pd.Price.BigInt()) != 0 {
-				continue
+	n, m := len(prices), len(feedIDs)
+	match := alignmentMatches(prices, feedIDs, byFeed)
+	ways := alignmentWays(match, n, m)
+	switch ways[0][0] {
+	case 0:
+		return nil, fmt.Errorf("%w: no order-preserving alignment of %d prices onto %d feed_ids",
+			ErrAmbiguousSubset, n, m)
+	case 1:
+		// Unique — walk the DP to recover it. Invariant: along the walk
+		// ways[i][j] == 1, and ways[i][j] = take + skip where
+		// take = match[i][j] ? ways[i+1][j+1] : 0 and skip = ways[i][j+1],
+		// so exactly ONE of the two branches is live at every step.
+		assigned := make([]string, n)
+		i, j := 0, 0
+		for i < n {
+			if j >= m {
+				return nil, fmt.Errorf("%w: alignment walk overran candidates", ErrAmbiguousSubset)
 			}
-			if match != "" {
-				return nil, fmt.Errorf("%w: updated_feeds[%d] price matches both %q and %q",
-					ErrAmbiguousSubset, i, match, feed)
+			take := 0
+			if match[i][j] {
+				take = ways[i+1][j+1]
 			}
-			match = feed
+			switch {
+			case take > 0 && ways[i][j+1] == 0:
+				assigned[i] = feedIDs[j]
+				i, j = i+1, j+1
+			case take == 0 && ways[i][j+1] > 0:
+				j++
+			default:
+				// Unreachable when ways[0][0]==1; refuse rather than guess.
+				return nil, fmt.Errorf("%w: alignment walk lost uniqueness", ErrAmbiguousSubset)
+			}
 		}
-		if match == "" {
-			return nil, fmt.Errorf("%w: updated_feeds[%d] price matches no candidate feed", ErrAmbiguousSubset, i)
-		}
-		if used[match] {
-			return nil, fmt.Errorf("%w: feed %q matched twice", ErrAmbiguousSubset, match)
-		}
-		used[match] = true
-		assigned[i] = match
+		return assigned, nil
+	default:
+		return nil, fmt.Errorf("%w: %d order-preserving alignments of %d prices onto %d feed_ids",
+			ErrAmbiguousSubset, ways[0][0], n, m)
 	}
-	return assigned, nil
 }
 
 // ErrAmbiguousSubset is returned when a subset-filtered batch cannot be
@@ -218,4 +240,45 @@ func be24(b []byte) uint32 {
 func be48(b []byte) uint64 {
 	return uint64(b[0])<<40 | uint64(b[1])<<32 | uint64(b[2])<<24 |
 		uint64(b[3])<<16 | uint64(b[4])<<8 | uint64(b[5])
+}
+
+// alignmentMatches builds match[i][j]: prices[i] could be feedIDs[j]
+// (median at the entry's package_timestamp equals the entry's price
+// exactly).
+func alignmentMatches(prices []priceDataDecoded, feedIDs []string, byFeed map[string][]payloadPackage) [][]bool {
+	match := make([][]bool, len(prices))
+	for i, pd := range prices {
+		match[i] = make([]bool, len(feedIDs))
+		for j, feed := range feedIDs {
+			mv, ok := medianAt(byFeed[feed], pd.PackageTimestamp)
+			match[i][j] = ok && mv.Cmp(pd.Price.BigInt()) == 0
+		}
+	}
+	return match
+}
+
+// alignmentWays counts, for every suffix pair, the order-preserving
+// alignments of prices[i:] onto feedIDs[j:], capped at 2 (all the caller
+// needs is 0 / 1 / many).
+func alignmentWays(match [][]bool, n, m int) [][]int {
+	ways := make([][]int, n+1)
+	for i := range ways {
+		ways[i] = make([]int, m+1)
+	}
+	for j := 0; j <= m; j++ {
+		ways[n][j] = 1 // no prices left: exactly one (empty) alignment
+	}
+	for i := n - 1; i >= 0; i-- {
+		for j := m - 1; j >= 0; j-- {
+			w := ways[i][j+1] // skip feedIDs[j] (freshness-dropped)
+			if match[i][j] {
+				w += ways[i+1][j+1] // assign prices[i] = feedIDs[j]
+			}
+			if w > 2 {
+				w = 2
+			}
+			ways[i][j] = w
+		}
+	}
+	return ways
 }

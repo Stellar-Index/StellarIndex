@@ -15,6 +15,21 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **Redstone subset attribution is order-preserving — the residual 170
+  blind ledgers resolve.** The v0.21.5 full verify cut the blind class
+  1,626 → 170; the residue was prices matching TWO candidates' medians
+  simultaneously, which the unordered rule refused. The adapter builds
+  `updated_feeds` in a single pass over `feed_ids` (the same fact that
+  makes the equal-arity case a positional zip), so the surviving
+  entries are an ordered SUBSEQUENCE — attribution is now a
+  DP-counted subsequence alignment that attributes only a UNIQUE
+  complete alignment. Order can only disambiguate, never misattribute
+  (any true assignment is order-preserving by construction); genuinely
+  ambiguous events still refuse. Golden-pinned on the real
+  ledger-60104689 event (7 feeds → 5 survivors with a shared-median
+  collision). Completeness flips at the post-deploy replay + verify.
+
 ### Added
 - **Bridge pages show USDC-denominated in/out FLOWS, not just counts.**
   `/v1/protocols/cctp` gains directional volumes (inbound = mints from
