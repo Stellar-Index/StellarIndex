@@ -102,6 +102,42 @@ func (s *Store) bespokeBridge(ctx context.Context, source string, windowDays int
 	return nil, nil
 }
 
+// bridgeSeriesGrain returns the date_trunc grain + to_char timestamp format
+// for the bridge flow series. windowDays == 1 buckets by HOUR — a daily
+// bucket would collapse the 24h window into a single point, useless for a
+// chart — with the hour spelled out ("2026-07-29T14:00") so a consumer can
+// tell the grain apart from the date-only daily shape. Longer windows stay
+// daily. (In to_char patterns double-quoted text is emitted literally, so
+// "T" renders as the ISO 'T' separator.)
+func bridgeSeriesGrain(windowDays int) (trunc, format string) {
+	if windowDays == 1 {
+		return "hour", `YYYY-MM-DD"T"HH24:00`
+	}
+	return "day", "YYYY-MM-DD"
+}
+
+// cctpFlowSeriesQuery builds the directional CCTP flow-series SQL at the
+// window's grain. Division is exact NUMERIC — never a float literal
+// (ADR-0003); cctp_events.amount is canonical 6-decimal USDC.
+func cctpFlowSeriesQuery(windowDays int, directionFilter string) string {
+	trunc, format := bridgeSeriesGrain(windowDays)
+	return `
+		SELECT to_char(date_trunc('` + trunc + `', ts), '` + format + `'), (COALESCE(sum(amount),0) / 1000000::numeric)::numeric(24,6)::text
+		FROM cctp_events WHERE ts > now() - $1::interval AND amount IS NOT NULL AND ` + directionFilter + `
+		GROUP BY 1 ORDER BY 1 ASC`
+}
+
+// rozoSettledSeriesQuery builds the Rozo settled-volume series SQL at the
+// window's grain. Division is exact NUMERIC (ADR-0003); rozo_events.amount
+// is 7-decimal SAC stroops.
+func rozoSettledSeriesQuery(windowDays int) string {
+	trunc, format := bridgeSeriesGrain(windowDays)
+	return `
+		SELECT to_char(date_trunc('` + trunc + `', ts), '` + format + `'), (COALESCE(sum(amount),0) / 10000000::numeric)::numeric(24,7)::text
+		FROM rozo_events WHERE ts > now() - $1::interval AND amount IS NOT NULL AND event_type = 'payment'
+		GROUP BY 1 ORDER BY 1 ASC`
+}
+
 // bespokeBridgeCCTP — direction map: deposit_for_burn = OUTBOUND (Stellar
 // USDC burned for a remote mint); mint_and_withdraw + mint_and_forward =
 // INBOUND (remote burn minted on Stellar). message_sent/received and the
@@ -131,14 +167,15 @@ func (s *Store) bespokeBridgeCCTP(ctx context.Context, since string, windowDays 
 		BespokeKPI{Label: fmt.Sprintf("Transfers in / out (%dd)", windowDays), Value: inCount + " / " + outCount},
 	)
 
+	// Series names are direction-stable ("Inbound (USDC)" / "Outbound
+	// (USDC)") across every window so the frontend can pair the two lines;
+	// the grain (hourly for the 24h window, daily otherwise) lives in the
+	// point timestamps, not the name.
 	for _, dir := range []struct{ name, filter string }{
-		{"Daily inbound (USDC)", `event_type IN ('mint_and_withdraw','mint_and_forward')`},
-		{"Daily outbound (USDC)", `event_type = 'deposit_for_burn'`},
+		{"Inbound (USDC)", `event_type IN ('mint_and_withdraw','mint_and_forward')`},
+		{"Outbound (USDC)", `event_type = 'deposit_for_burn'`},
 	} {
-		series, err := s.scanDailySeries(ctx, `
-			SELECT to_char(date_trunc('day', ts), 'YYYY-MM-DD'), (COALESCE(sum(amount),0) / 1000000::numeric)::numeric(24,6)::text
-			FROM cctp_events WHERE ts > now() - $1::interval AND amount IS NOT NULL AND `+dir.filter+`
-			GROUP BY 1 ORDER BY 1 ASC`, since)
+		series, err := s.scanDailySeries(ctx, cctpFlowSeriesQuery(windowDays, dir.filter), since)
 		if err != nil {
 			return nil, err
 		}
@@ -184,15 +221,14 @@ func (s *Store) bespokeBridgeRozo(ctx context.Context, since string, windowDays 
 		BespokeKPI{Label: fmt.Sprintf("Settled volume (%dd)", windowDays), Value: vol, Unit: "USDC", Hint: "summed payment_event amounts settled on Stellar"},
 		BespokeKPI{Label: fmt.Sprintf("Payments (%dd)", windowDays), Value: cnt},
 	)
-	series, err := s.scanDailySeries(ctx, `
-		SELECT to_char(date_trunc('day', ts), 'YYYY-MM-DD'), (COALESCE(sum(amount),0) / 10000000::numeric)::numeric(24,7)::text
-		FROM rozo_events WHERE ts > now() - $1::interval AND amount IS NOT NULL AND event_type = 'payment'
-		GROUP BY 1 ORDER BY 1 ASC`, since)
+	// Name is window-stable ("Settled volume (USDC)") — see the cctp series
+	// comment; the grain (hourly at 24h, daily otherwise) is in the points.
+	series, err := s.scanDailySeries(ctx, rozoSettledSeriesQuery(windowDays), since)
 	if err != nil {
 		return nil, err
 	}
 	if len(series) > 0 {
-		blk.Series = append(blk.Series, BespokeSeries{Name: "Daily settled volume (USDC)", Unit: "USDC", Points: series})
+		blk.Series = append(blk.Series, BespokeSeries{Name: "Settled volume (USDC)", Unit: "USDC", Points: series})
 	}
 	return blk, nil
 }

@@ -138,7 +138,9 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
       </div>
 
       {/* ── Bespoke per-category analytics (the headline block) ── */}
-      {data.bespoke && <BespokeSection bespoke={data.bespoke} source={source} />}
+      {data.bespoke && (
+        <BespokeSection bespoke={data.bespoke} source={source} name={name} />
+      )}
 
       {/* ── Activity chart ── */}
       <Panel

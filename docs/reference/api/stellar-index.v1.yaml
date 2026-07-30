@@ -18,7 +18,7 @@
 openapi: 3.1.0
 info:
   title: Stellar Index API
-  version: "1.13.0"
+  version: "1.14.0"
   summary: The Stellar network — explorer, history, supply, analytics, and prices.
   description: |
     The Stellar Index API exposes the Stellar network as one
@@ -4248,6 +4248,21 @@ paths:
           required: true
           description: Canonical protocol name from the directory (`blend`, `soroswap`, …).
           schema: { type: string, example: blend }
+        - name: days
+          in: query
+          required: false
+          description: |
+            Trailing window (days) for the `bespoke` per-category analytics
+            block (its KPIs, series, and tables). Whitelisted to 1, 7, 30, or
+            90 (default 90) — each admitted window is a distinct cached scan,
+            so arbitrary values are rejected with a 400 problem+json rather
+            than clamped. At `days=1` the bridge flow series (cctp inbound /
+            outbound, rozo settled volume) are bucketed HOURLY with
+            `YYYY-MM-DD"T"HH24:00` point timestamps; longer windows are daily
+            (`YYYY-MM-DD`). The lake-analytics fields (`activity_series`,
+            `event_breakdown`, `events_total`, `activity_window_days`) always
+            cover the fixed 90-day lookback regardless of this parameter.
+          schema: { type: integer, enum: [1, 7, 30, 90], default: 90 }
       responses:
         "200":
           description: The protocol's full detail view.
