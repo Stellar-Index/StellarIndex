@@ -15,8 +15,11 @@ export type DonutSlice = {
 
 // Categorical palette — distinct hues tuned for the dark canvas (brighter /
 // more saturated than mid-tones so segments read against near-black). Used for
-// composition breakdowns (reserves, source classes, protocol mix).
-const PALETTE = [
+// composition breakdowns (reserves, source classes, protocol mix). Exported so
+// companion charts (e.g. the bridge per-chain lines) can keep one entity on
+// one hue across a donut + line pairing; the final slot is the neutral
+// tail for "Others"/unknown buckets.
+export const CATEGORICAL_PALETTE = [
   '#4c7dff', // brand blue
   '#31c48d', // green (up)
   '#e0a63c', // amber
@@ -83,7 +86,7 @@ export function DonutChart({
     const frac = s.value / total;
     return {
       ...s,
-      color: s.color ?? PALETTE[i % PALETTE.length],
+      color: s.color ?? CATEGORICAL_PALETTE[i % CATEGORICAL_PALETTE.length],
       frac,
       dash: frac * c,
       offset: -cumulativeBefore[i] * c,

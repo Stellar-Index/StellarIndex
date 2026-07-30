@@ -7,7 +7,7 @@ import type { RequestExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
 import { CopyHash } from '../../explorer-shared';
 import { TimeSeriesChart, type ChartTone } from './TimeSeriesChart';
-import { BridgeFlowsChart } from './BridgeFlowsChart';
+import { BridgeShowcase, BreakdownDonuts } from './BridgeShowcase';
 
 // ─── Wire shapes (mirror internal/api/v1/protocols.go ProtocolBespoke) ───
 //
@@ -41,10 +41,23 @@ export interface BespokeTable {
   rows: string[][];
 }
 
+export interface BespokeBreakdownRow {
+  label: string;
+  value: string; // numeric string — Number() for geometry only.
+  count: number;
+}
+
+export interface BespokeBreakdown {
+  title: string;
+  unit?: string;
+  rows: BespokeBreakdownRow[];
+}
+
 export interface Bespoke {
   category: string;
   kpis?: BespokeKpi[];
   series?: BespokeSeries[];
+  breakdowns?: BespokeBreakdown[];
   tables?: BespokeTable[];
   notes?: string[];
 }
@@ -93,11 +106,15 @@ export function BespokeSection({
 }) {
   const hasKpis = (bespoke.kpis?.length ?? 0) > 0;
   const hasSeries = (bespoke.series?.length ?? 0) > 0;
+  const hasBreakdowns = (bespoke.breakdowns?.length ?? 0) > 0;
   const hasTables = (bespoke.tables?.length ?? 0) > 0;
   const hasNotes = (bespoke.notes?.length ?? 0) > 0;
+  const isBridge = bespoke.category === 'bridge';
 
   // Nothing to show beyond the heading → don't render an empty band.
-  if (!hasKpis && !hasSeries && !hasTables && !hasNotes) return null;
+  if (!hasKpis && !hasSeries && !hasBreakdowns && !hasTables && !hasNotes) {
+    return null;
+  }
 
   return (
     <section
@@ -130,11 +147,13 @@ export function BespokeSection({
       )}
 
       {/* ── Bespoke charts ── */}
-      {/* Bridge blocks combine their flow series (inbound + outbound, or the
-          single settled series) into ONE windowed chart with 24h/7d/30d/90d
-          pills; every other category keeps one Panel per named series. */}
-      {hasSeries && bespoke.category === 'bridge' ? (
-        <BridgeFlowsChart name={name} initial={bespoke} source={source} />
+      {/* Bridge blocks hand their whole window-reactive suite (flow series,
+          per-chain lines, donuts, cumulative net inflow, largest-transfers
+          table) to BridgeShowcase with 24h/7d/30d/90d pills; every other
+          category keeps one Panel per named series plus generic breakdown
+          donuts/tables. */}
+      {isBridge && (hasSeries || hasBreakdowns || hasTables) ? (
+        <BridgeShowcase name={name} initial={bespoke} source={source} />
       ) : (
         hasSeries &&
         bespoke.series!.map((s, i) => (
@@ -158,8 +177,16 @@ export function BespokeSection({
         ))
       )}
 
-      {/* ── Bespoke tables (one Panel per named top-N table) ── */}
-      {hasTables &&
+      {/* ── Generic breakdown donuts (non-bridge categories that adopt the
+             breakdowns wire field) ── */}
+      {!isBridge && hasBreakdowns && (
+        <BreakdownDonuts breakdowns={bespoke.breakdowns!} source={source} />
+      )}
+
+      {/* ── Bespoke tables (one Panel per named top-N table; bridge tables
+             render inside the showcase so they stay window-reactive) ── */}
+      {!isBridge &&
+        hasTables &&
         bespoke.tables!.map((t, i) => (
           <BespokeTablePanel key={`${t.title}-${i}`} table={t} source={source} />
         ))}
@@ -220,7 +247,7 @@ function BespokeKpiCard({ kpi }: { kpi: BespokeKpi }) {
 
 // ─── Bespoke table — scannable, mono+linked contract ids, right-aligned nums ─
 
-function BespokeTablePanel({
+export function BespokeTablePanel({
   table,
   source,
 }: {
@@ -319,6 +346,16 @@ function Cell({ value }: { value: string }) {
       </Link>
     );
   }
+  if (isTxHash(value)) {
+    return (
+      <Link
+        href={`/transactions/${encodeURIComponent(value)}/`}
+        className="text-brand-600 hover:underline"
+      >
+        <CopyHash value={value} head={8} tail={6} />
+      </Link>
+    );
+  }
   // Long non-strkey id (e.g. "USDC-G…" canonical asset) — shorten + copy, no
   // link (no asset-by-id route). Short labels ("native", codes) pass through.
   if (value.length > 28) {
@@ -333,7 +370,7 @@ function Cell({ value }: { value: string }) {
 // geometry only (values can exceed 2^53 — ADR-0003; never use the result as
 // a served amount). Strips $ / , / % decoration the server may include so
 // the shape still plots; non-finite (a label, an em-dash) → 0 so the chart
-// stays continuous. Exported for BridgeFlowsChart, which shares the wire
+// stays continuous. Exported for BridgeShowcase, which shares the wire
 // shape.
 export function toChartNumber(v: string): number {
   if (!v) return 0;
@@ -350,6 +387,11 @@ function isContractId(v: string): boolean {
 // isAccountId — a Stellar G-strkey account address: 'G', 56 chars, base32.
 function isAccountId(v: string): boolean {
   return v.length === 56 && v[0] === 'G' && /^[A-Z2-7]+$/.test(v);
+}
+
+// isTxHash — a Stellar transaction hash: 64 lowercase hex chars.
+function isTxHash(v: string): boolean {
+  return v.length === 64 && /^[0-9a-f]+$/.test(v);
 }
 
 // looksNumeric — a cell is "numeric" for alignment if, once common money/count
