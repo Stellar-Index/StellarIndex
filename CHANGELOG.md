@@ -46,6 +46,29 @@ against.
   collision). Completeness flips at the post-deploy replay + verify.
 
 ### Added
+- **DEX/AMM protocol pages get the full visual analytics suite**
+  (soroswap / aquarius / phoenix / comet / sdex; no spec change — every
+  shape exists in 1.15.0). The bespoke block now serves: a "Volume by
+  pair" composition (top 8 pairs by USD volume + a SQL-side "Others"
+  fold, so SDEX's ~99k window pairs never cross the wire); USD-volume,
+  trade-count and unique-trader time-series plus top-5-pairs-by-volume
+  multi-series ("Top pairs · XLM/USDC", …), hourly-grained at the 24h
+  window via the real-time `source_volume_1h` rollup; avg-trade-size
+  (exact NUMERIC division by the PRICED trade count) and unique-trader
+  KPIs; honest "since 2026-03-18" lifetime totals labelled by the daily
+  rollup's materialization floor (never "all-time" — raw SDEX history
+  reaches 2018); and a window-scoped "Largest trades" top-10 table with
+  tx links. Pair labels resolve token contracts through the verified-
+  currency catalogue's derived SAC addresses (XLM/USDC, …); unverified
+  tokens show truncated contract ids, never guessed symbols. Every
+  query was validated read-only on r1 (2026-07-30): two deliberate
+  SQL shapes keep SDEX's 90d window sub-second (hash-agg pair count
+  0.67s vs 6.0s naive; direct CAGG join for top-5 series 0.87s vs
+  19.8s), and raw-trades-derived surfaces (traders / avg size / largest
+  trades) are gated to ≤7d windows on SDEX with the omission Noted on
+  the block — soroswap's trader metrics are omitted honestly too (its
+  decoder captures no taker). Shape tests pin the grain, the window
+  bounds, the ADR-0003 NUMERIC rules and both perf-critical shapes.
 - **CCTP SDF-showcase analytics suite: where USDC comes from and where
   it goes** (spec 1.15.0, additive). `/v1/protocols/cctp`'s bespoke
   block gains a generic `breakdowns` field (named composition datasets
