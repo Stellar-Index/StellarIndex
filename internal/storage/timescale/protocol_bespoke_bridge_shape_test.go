@@ -157,15 +157,15 @@ func TestCCTPAggregateQueriesShape(t *testing.T) {
 		t.Error("cumulative series must be a running sum over days")
 	}
 
-	alltime := cctpAllTimeKPIQuery()
-	if strings.Contains(alltime, "$1") {
+	lifetime := cctpAllTimeKPIQuery()
+	if strings.Contains(lifetime, "$1") {
 		t.Error("all-time KPIs must not be window-bounded")
 	}
-	assertCCTPNumericSafe(t, alltime)
-	if !strings.Contains(alltime, "DISTINCT depositor") {
+	assertCCTPNumericSafe(t, lifetime)
+	if !strings.Contains(lifetime, "DISTINCT depositor") {
 		t.Error("all-time KPIs must count distinct depositors")
 	}
-	if !strings.Contains(alltime, "forward_recipient") || !strings.Contains(alltime, "mint_recipient") {
+	if !strings.Contains(lifetime, "forward_recipient") || !strings.Contains(lifetime, "mint_recipient") {
 		t.Error("all-time KPIs must resolve recipients per transfer (forward_recipient over mint_recipient)")
 	}
 }
