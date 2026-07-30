@@ -131,6 +131,23 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-30 ~18:50Z — 🎨 **CCTP SDF showcase LANDED (merge) — and it
+  CORRECTED the flow numbers.** The suite: verified chain attribution
+  (the $66M mystery source = SOLANA — the token slice is the low 20
+  bytes of the 32-byte burnToken; Solana's USDC mint tail matches
+  byte-exactly; Aptos + Starknet also identified; every EVM tail maps
+  to Circle-published addresses; one 1-cent residual honestly
+  "Unverified"), donuts in/out, per-chain lines, cumulative net
+  headline chart, largest transfers, unique-wallet KPIs. **Material
+  correction (agent ground-truthed all 52,205 rows): phase-1 formulas
+  over-counted** — legacy duplicate rows + mint_and_forward RESTATING
+  mint_and_withdraw at 10× (7-dec vs 6-dec). Honest all-time flows:
+  **inbound $11.87M / outbound $3.87M / net +$8.00M USDC; 851
+  depositors, 8,803 recipients** (my earlier "$148.6M" quote was the
+  inflated formula — corrected to Ash). Spec 1.15.0. Operator
+  cleanup candidate: drop the stale legacy duplicate rows (queries
+  are safe regardless).
+
 - 2026-07-30 ~17:15Z — 🎯 **Verify: blind 1,626→170; ORDER-PRESERVING
   attribution resolves the residue (84ee3e05).** The v0.21.5 chain
   completed (replay hit tip; verify rc=0): the subset fix cleared ~90%
