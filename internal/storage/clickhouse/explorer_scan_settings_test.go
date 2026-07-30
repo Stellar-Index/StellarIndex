@@ -33,6 +33,7 @@ func TestExplorerScanQueries_CarryBoundedSettings(t *testing.T) {
 		"recentOperationsQuery(first page)":     recentOperationsQuery(false),
 		"recentOperationsQuery(cursor)":         recentOperationsQuery(true),
 		"opTypeStatsQuery":                      opTypeStatsQuery,
+		"accountOpTypeCountsQuery":              accountOpTypeCountsQuery,
 		"accountTransactionsQuery(first page)":  accountTransactionsQuery(false),
 		"accountTransactionsQuery(cursor)":      accountTransactionsQuery(true),
 		"accountOperationsQuery(first page)":    accountOperationsQuery(false),

@@ -264,3 +264,29 @@ func TestUnionArmTopN_MatchesUnboundedMerge(t *testing.T) {
 		})
 	}
 }
+
+// TestAccountOpTypeCounts_QueryShape pins the aggregate variant
+// (accountOpTypeCountsQuery, GET /v1/accounts/{g}/activity) to the same
+// two-arm discipline as the row listings: sourced arm on the
+// source_account skip-index, participant arm resolved on the operations
+// primary key — never an `OR … IN (…)` (which defeats the skip-index and
+// full-scans the multi-billion-row table), and uniqExact-deduped per arm
+// (a plain count() over ReplacingMergeTree inflates on un-merged
+// duplicate parts).
+func TestAccountOpTypeCounts_QueryShape(t *testing.T) {
+	arm1, arm2 := armBodies(t, accountOpTypeCountsQuery)
+	if !strings.Contains(arm1, "source_account = ?") {
+		t.Errorf("arm 1 must probe the source_account skip-index:\n%s", arm1)
+	}
+	if !strings.Contains(arm2, "operation_participants WHERE account = ?") {
+		t.Errorf("arm 2 must resolve via the account-prefixed participant index:\n%s", arm2)
+	}
+	for i, arm := range []string{arm1, arm2} {
+		if !strings.Contains(arm, "uniqExact((ledger_seq, tx_index, op_index))") {
+			t.Errorf("arm %d must uniqExact-dedup the RMT primary key:\n%s", i+1, arm)
+		}
+		if strings.Contains(arm, " OR ") {
+			t.Errorf("arm %d must not OR predicates (skip-index defeat):\n%s", i+1, arm)
+		}
+	}
+}
