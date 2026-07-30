@@ -131,6 +131,28 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-30 ~16:10Z — 🕵️ **"Missing data" investigation closed + the
+  address-intelligence build LANDED.** (1) The GDVJM "Partial Coverage"
+  banner was the frontend's honest 503 copy, not missing data — all 4
+  routes serve; the 6s sourced-arm fix (ops_by_source) ships next tag.
+  (2) **REAL gap found via the lake: CCTP's projected history started
+  121k ledgers (~8 days) AFTER the contract's first on-chain event** —
+  86 head events unprojected. Cursor rewound to true genesis 62,146,641;
+  head is landing (min(ledger) already correct). GDVJM still unmatched —
+  either in the remaining head window or its "CCTP usage" is via a
+  forwarder (the activity endpoint's bridge note documents that
+  structural limit). (3) Agent build merged (4f6e87d7): /accounts/{g}/
+  trades + /activity + explorer UI, spec 1.13.0, migration 0123
+  (taker/maker partial indexes — build CONCURRENTLY on r1). **Agent
+  falsified my premise: trades has NO source_account column (my
+  "99.9998%" was a stderr-swallowed artifact — 2>/dev/null ate a psql
+  error and I read the wrong number). Attribution is taker/maker;
+  soroswap captures neither (decoder drops SwapEvent.to) — follow-up
+  candidate.** Aggregate op-counts arm aligned to ops_by_source
+  (7afebd7d). v0.21.7 payload now: ops_by_source readers + both new
+  endpoints + UI. r1 queue: replay → k6 → ops_by_source backfills +
+  0123 CONCURRENT indexes → deploy.
+
 - 2026-07-30 ~15:30Z — 🔬 **Ash's GDVJM report root-caused + fixed in
   code: the account-history sourced arm was a 6-second bloom probe.**
   The account has only 328 ops — the cost was the READ SHAPE, not the
