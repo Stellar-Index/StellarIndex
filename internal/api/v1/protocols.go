@@ -139,6 +139,13 @@ func bespokeFromStore(b *timescale.BespokeBlock) *ProtocolBespoke {
 		}
 		out.Series = append(out.Series, BespokeSeries{Name: s.Name, Unit: s.Unit, Points: pts})
 	}
+	for _, bd := range b.Breakdowns {
+		rows := make([]BespokeBreakdownRow, 0, len(bd.Rows))
+		for _, r := range bd.Rows {
+			rows = append(rows, BespokeBreakdownRow{Label: r.Label, Value: r.Value, Count: r.Count})
+		}
+		out.Breakdowns = append(out.Breakdowns, BespokeBreakdown{Title: bd.Title, Unit: bd.Unit, Rows: rows})
+	}
 	for _, t := range b.Tables {
 		out.Tables = append(out.Tables, BespokeTable{Title: t.Title, Columns: t.Columns, Rows: t.Rows})
 	}
@@ -304,6 +311,9 @@ type ProtocolBespoke struct {
 	KPIs []BespokeKPI `json:"kpis,omitempty"`
 	// Series are named time-series for the charts (e.g. "USD volume", "TVL").
 	Series []BespokeSeries `json:"series,omitempty"`
+	// Breakdowns are named composition datasets for donut/pie rendering
+	// (e.g. CCTP's "Inflows by source chain"), value-sorted descending.
+	Breakdowns []BespokeBreakdown `json:"breakdowns,omitempty"`
 	// Tables are named top-N tables (e.g. "Top pairs", "Supplied by asset").
 	Tables []BespokeTable `json:"tables,omitempty"`
 	// Notes are caveats/provenance lines rendered under the block.
@@ -331,6 +341,23 @@ type BespokeSeries struct {
 type BespokeSeriesPt struct {
 	Date  string `json:"date"`
 	Value string `json:"value"`
+}
+
+// BespokeBreakdown is a named composition dataset (the donut/pie complement
+// to Series): value-weighted rows, window-scoped, sorted descending by the
+// server. Generic — any category can adopt it.
+type BespokeBreakdown struct {
+	Title string                `json:"title"`
+	Unit  string                `json:"unit,omitempty"`
+	Rows  []BespokeBreakdownRow `json:"rows"`
+}
+
+// BespokeBreakdownRow is one composition slice. Value is a numeric STRING
+// (ADR-0003); Count is the number of contributing transfers/events.
+type BespokeBreakdownRow struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+	Count int64  `json:"count"`
 }
 
 // BespokeTable is a named top-N table — columns + string rows (the server
