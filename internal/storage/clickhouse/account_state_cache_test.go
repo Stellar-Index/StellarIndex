@@ -9,19 +9,22 @@ func TestAccountStateCache(t *testing.T) {
 	t.Parallel()
 	c := newAccountStateCache()
 
-	if _, ok := c.get("G1"); ok {
+	if _, ok, _ := c.get("G1"); ok {
 		t.Fatal("empty cache returned a hit")
 	}
 	c.put("G1", AccountState{Exists: true, Balance: 42}, time.Now())
-	got, ok := c.get("G1")
-	if !ok || got.Balance != 42 {
-		t.Fatalf("get after put = (%+v, %t), want balance 42 hit", got, ok)
+	got, ok, fresh := c.get("G1")
+	if !ok || !fresh || got.Balance != 42 {
+		t.Fatalf("get after put = (%+v, %t, %t), want fresh balance-42 hit", got, ok, fresh)
 	}
 
-	// Expiry.
-	c.put("G2", AccountState{Exists: true}, time.Now().Add(-2*AccountStateCacheTTL))
-	if _, ok := c.get("G2"); ok {
-		t.Error("expired entry returned as fresh")
+	// Expiry: a stale entry is STILL SERVED (ok=true) with fresh=false —
+	// staleness is the caller's judgment (route-sweep 2026-07-30: a hard
+	// miss past the 30s TTL kept whale accounts on a near-permanent 503).
+	c.put("G2", AccountState{Exists: true, Balance: 7}, time.Now().Add(-2*AccountStateCacheTTL))
+	got, ok, fresh = c.get("G2")
+	if !ok || fresh || got.Balance != 7 {
+		t.Errorf("expired entry = (%+v, %t, %t), want stale-but-served", got, ok, fresh)
 	}
 }
 
@@ -48,7 +51,7 @@ func TestAccountStateCacheBounded(t *testing.T) {
 func TestAccountStateCacheNilSafe(t *testing.T) {
 	t.Parallel()
 	var c *accountStateCache
-	if _, ok := c.get("G"); ok {
+	if _, ok, _ := c.get("G"); ok {
 		t.Error("nil cache reported a hit")
 	}
 	c.put("G", AccountState{}, time.Now()) // must not panic

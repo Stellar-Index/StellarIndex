@@ -42,19 +42,25 @@ func newAccountStateCache() *accountStateCache {
 	return &accountStateCache{entries: make(map[string]accountStateEntry)}
 }
 
-// get returns a fresh cached state. Nil-safe (a zero-value reader in tests
-// behaves as a permanent miss).
-func (c *accountStateCache) get(account string) (AccountState, bool) {
+// get returns the cached state whenever one exists — INCLUDING past the
+// TTL (fresh=false). Staleness is the CALLER's judgment (route-sweep
+// 2026-07-30): treating an expired entry as a hard miss meant a whale
+// account whose scan outruns the request budget was warm for only the
+// 30s after each detached fill and 503'd the rest of the time — the
+// same failure shape the wealth cache fixed on 2026-07-29. ok=false only
+// when the account was never computed. Nil-safe (a zero-value reader in
+// tests behaves as a permanent miss).
+func (c *accountStateCache) get(account string) (st AccountState, ok, fresh bool) {
 	if c == nil {
-		return AccountState{}, false
+		return AccountState{}, false, false
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	e, ok := c.entries[account]
-	if !ok || time.Since(e.cachedAt) > AccountStateCacheTTL {
-		return AccountState{}, false
+	e, present := c.entries[account]
+	if !present {
+		return AccountState{}, false, false
 	}
-	return e.state, true
+	return e.state, true, time.Since(e.cachedAt) <= AccountStateCacheTTL
 }
 
 func (c *accountStateCache) put(account string, st AccountState, now time.Time) {
@@ -104,7 +110,15 @@ var errAccountStateRefreshFailed = errors.New(
 // Now the scan runs on its own bounded budget and outlives any caller that
 // gives up; the timed-out request 503s honestly and the retry lands warm.
 func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string) (AccountState, error) {
-	if st, ok := r.stateCache.get(account); ok {
+	if st, ok, fresh := r.stateCache.get(account); ok {
+		if !fresh {
+			// Serve the STALE entry immediately while ONE detached
+			// refresh runs — old-but-real beats a 503, and for a whale
+			// account whose scan outruns the request budget this is the
+			// only way the route answers at all outside the short
+			// post-fill window (route-sweep 2026-07-30).
+			r.refreshAccountState(account) //nolint:contextcheck // intentional detach — see refreshAccountState
+		}
 		return st, nil
 	}
 	// Not single-flighted across accounts on purpose — distinct accounts
@@ -113,7 +127,7 @@ func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string)
 	ch := r.refreshAccountState(account) //nolint:contextcheck // intentional detach — the fill must outlive a caller that times out (see doc above)
 	select {
 	case <-ch:
-		if st, ok := r.stateCache.get(account); ok {
+		if st, ok, _ := r.stateCache.get(account); ok {
 			return st, nil
 		}
 		return AccountState{}, errAccountStateRefreshFailed

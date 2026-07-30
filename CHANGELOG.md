@@ -15,6 +15,16 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **`GET /v1/accounts/{g}` whale accounts no longer 503 outside the
+  30-second post-fill window.** The v0.21.5 detached account-state fill
+  fixed the cache-never-fills problem, but the 30s `AccountStateCacheTTL`
+  still treated an expired entry as a hard miss — so an account whose
+  scan outruns the request budget was warm for only ~30s after each
+  fill and cold the rest of the time (the final route-sweep holdout).
+  An expired entry is now SERVED while one detached refresh runs —
+  the same stale-serving contract the wealth cache adopted 2026-07-29.
+
 ## [v0.21.5] — 2026-07-30
 
 ### Fixed
