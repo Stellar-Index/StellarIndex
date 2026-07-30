@@ -88,7 +88,7 @@ WHERE source_account != '';
 --
 --   SELECT countIf(a != b) FROM (
 --     SELECT
---       (SELECT count() FROM stellar.transactions WHERE source_account = t.sa) AS a,
+--       (SELECT countDistinct(ledger_seq, tx_index) FROM stellar.transactions WHERE source_account = t.sa) AS a,  -- countDistinct, NOT count(): raw counts include un-merged RMT duplicate parts (first verify run 2026-07-30 flagged 20/20 'mismatches' that were exactly this)
 --       (SELECT countDistinct(ledger_seq, tx_index) FROM stellar.ops_by_source
 --         WHERE source_account = t.sa AND op_index = 4294967295) AS b,
 --       sa
