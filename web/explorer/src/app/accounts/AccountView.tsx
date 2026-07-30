@@ -11,6 +11,8 @@ import { Breadcrumbs } from '@/components/ui';
 import { AccountPositions } from './AccountPositions';
 import { AccountMovementsPanel } from './AccountMovements';
 import { AccountDefiPositionsPanel } from './AccountDefiPositions';
+import { AccountActivitySummaryPanel } from './AccountActivitySummary';
+import { AccountTradesPanel } from './AccountTrades';
 import { useIssuers } from '@/api/hooks';
 import { apiGet, asExample } from '@/api/client';
 import {
@@ -188,6 +190,8 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
         </p>
       </Panel>
 
+      <AccountActivitySummaryPanel id={id} />
+
       <AccountPositions id={id} />
 
       <AccountStatePanel id={id} state={stateQ.data} isLoading={stateQ.isLoading} isError={stateQ.isError} />
@@ -195,6 +199,8 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
       <AccountMovementsPanel id={id} />
 
       <AccountDefiPositionsPanel id={id} />
+
+      <AccountTradesPanel id={id} />
 
       <TransactionsPanel
         id={id}
