@@ -131,6 +131,20 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-30 ~14:40Z — 🔧 **k6/AC2 path unblocked; run queued behind the
+  replay.** The GH k6-weekly workflow had failed SILENTLY since the org
+  migration ate its secrets; restored the load key (freshly minted
+  kid_b5425b41bc16f133, 5000/min) but discovered the suite's deliberate
+  prod-host guard refuses api.stellarindex.io — the historical AC2
+  evidence (p95 54.4ms) was captured ON r1 against localhost. Staged
+  exactly that method (/root/k6-run.sh, k6 v0.50.0 binary + shallow
+  checkout on r1; deleted the K6_TARGET_STAGING secret I briefly set so
+  the weekly cron keeps its designed skip-until-staging behavior).
+  Runs AFTER the replay frees the box. Hygiene flag: first mint attempt
+  left an orphan key (plaintext never displayed to anyone — unusable;
+  revoke in the ops sweep); /root/StellarIndex-k6 checkout + /root/k6
+  binary are ephemeral, remove post-run.
+
 - 2026-07-30 ~12:30Z — 🏁 **ROUTE GATE CLOSED: 0×5xx across all 94
   routes** (evidence: `evidence/2026-07-30-route-sweep-zero.md`),
   taken deliberately under replay saturation minutes after a restart.
