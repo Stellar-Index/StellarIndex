@@ -22,30 +22,34 @@ type protoDetailEntry struct {
 	at   time.Time
 }
 
-// cachedProtocolDetail returns a TTL-cached detail view for `name`,
+// cachedProtocolDetail returns a TTL-cached detail view for `key`,
 // computing it via build() at most once per TTL across concurrent
-// callers. Per-server (the maps live on Server, lazy-init'd) so it never
+// callers. The key is the full request-shape key from
+// protocolDetailCacheKey — protocol name AND bespoke window — NOT the
+// bare name: the bespoke block's content varies with ?days=, so a
+// name-only key would serve one window's numbers to another window's
+// request. Per-server (the maps live on Server, lazy-init'd) so it never
 // leaks across test instances. Returns ok=false only when the caller's
 // context is cancelled while waiting on another caller's in-flight
 // build. A build that runs to completion is cached; one that returns
 // under a cancelled context (the 25s ceiling fired) is returned but NOT
 // cached, so a partial result can't stick for the full TTL.
-func (s *Server) cachedProtocolDetail(ctx context.Context, name string, build func(context.Context) ProtocolDetailView) (ProtocolDetailView, bool) {
+func (s *Server) cachedProtocolDetail(ctx context.Context, key string, build func(context.Context) ProtocolDetailView) (ProtocolDetailView, bool) {
 	s.protoDetailMu.Lock()
 	if s.protoDetailCache == nil {
 		s.protoDetailCache = map[string]protoDetailEntry{}
 		s.protoDetailFlight = map[string]chan struct{}{}
 	}
-	if e, ok := s.protoDetailCache[name]; ok && time.Since(e.at) < protocolDetailTTL {
+	if e, ok := s.protoDetailCache[key]; ok && time.Since(e.at) < protocolDetailTTL {
 		s.protoDetailMu.Unlock()
 		return e.view, true
 	}
-	if ch, inflight := s.protoDetailFlight[name]; inflight {
+	if ch, inflight := s.protoDetailFlight[key]; inflight {
 		s.protoDetailMu.Unlock()
 		select {
 		case <-ch:
 			s.protoDetailMu.Lock()
-			e, ok := s.protoDetailCache[name]
+			e, ok := s.protoDetailCache[key]
 			s.protoDetailMu.Unlock()
 			return e.view, ok
 		case <-ctx.Done():
@@ -53,7 +57,7 @@ func (s *Server) cachedProtocolDetail(ctx context.Context, name string, build fu
 		}
 	}
 	done := make(chan struct{})
-	s.protoDetailFlight[name] = done
+	s.protoDetailFlight[key] = done
 	s.protoDetailMu.Unlock()
 
 	view := build(ctx)
@@ -61,12 +65,21 @@ func (s *Server) cachedProtocolDetail(ctx context.Context, name string, build fu
 
 	s.protoDetailMu.Lock()
 	if complete {
-		s.protoDetailCache[name] = protoDetailEntry{view: view, at: time.Now()}
+		s.protoDetailCache[key] = protoDetailEntry{view: view, at: time.Now()}
 	}
-	delete(s.protoDetailFlight, name)
+	delete(s.protoDetailFlight, key)
 	s.protoDetailMu.Unlock()
 	close(done)
 	return view, true
+}
+
+// protocolDetailCacheKey is the single cache-key grammar for the protocol
+// detail TTL cache — every dimension that changes the response (today: the
+// protocol name and the bespoke ?days= window) goes through here, so a
+// handler and any future prewarm path are physically incapable of keying
+// the same request differently (the feedback_prewarm_handler_drift class).
+func protocolDetailCacheKey(name string, windowDays int) string {
+	return newCacheKey("protocolDetail").str(name).int(windowDays).build()
 }
 
 // protocolActivityWindowDays is the lookback for the windowed per-protocol
@@ -402,9 +415,39 @@ func (s *Server) handleProtocolsList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, view, Flags{})
 }
 
+// protocolBespokeWindowDays parses the optional ?days= query param that
+// windows the bespoke analytics block (the lake-analytics fields keep the
+// fixed protocolActivityWindowDays lookback regardless). The whitelist is
+// deliberate — each admitted window is a distinct cached scan over the
+// projected tables on an unauthenticated endpoint, so arbitrary values
+// would be an amplification surface (the same reasoning as the explorer
+// contracts ladder, C3-009). ok=false ⇒ a problem+json 400 was written.
+func protocolBespokeWindowDays(w http.ResponseWriter, r *http.Request) (int, bool) {
+	raw := r.URL.Query().Get("days")
+	switch raw {
+	case "":
+		return protocolActivityWindowDays, true
+	case "1":
+		return 1, true
+	case "7":
+		return 7, true
+	case "30":
+		return 30, true
+	case "90":
+		return 90, true
+	}
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/invalid-window",
+		"Invalid days", http.StatusBadRequest,
+		"days must be one of 1, 7, 30, 90")
+	return 0, false
+}
+
 // handleProtocolDetail serves GET /v1/protocols/{name} — everything
 // the directory row carries plus the contract registry, event-kind
-// vocabulary and verification page. Unknown names 404.
+// vocabulary and verification page. Unknown names 404. The optional
+// ?days= param (1/7/30/90, default 90) windows the bespoke analytics
+// block; anything else 400s.
 func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 	meta, ok := protocolByName(r.PathValue("name"))
 	if !ok {
@@ -412,6 +455,10 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 			"https://api.stellarindex.io/errors/protocol-not-found",
 			"Protocol not found", http.StatusNotFound,
 			"unknown protocol name; GET /v1/protocols lists every known protocol")
+		return
+	}
+	windowDays, ok := protocolBespokeWindowDays(w, r)
+	if !ok {
 		return
 	}
 
@@ -424,7 +471,11 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 	// is tracked in docs/archive/page-audit-2026-06-19/REMAINING.md.)
 	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 	defer cancel()
-	view, ok := s.cachedProtocolDetail(ctx, meta.Name, func(c context.Context) ProtocolDetailView {
+	// The cache key carries the bespoke window alongside the name — a
+	// name-only key would let a ?days=7 hit serve the cached 90d view (or
+	// vice versa). The no-param default builds the same key as an explicit
+	// days=90, so the common path stays a single cached entry.
+	view, ok := s.cachedProtocolDetail(ctx, protocolDetailCacheKey(meta.Name, windowDays), func(c context.Context) ProtocolDetailView {
 		contracts := s.protocolRoster(c, meta)
 		classifyContractKinds(contracts, meta.Factories)
 		s.enrichContractTokens(c, meta, contracts)
@@ -436,7 +487,7 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 		}
 		attachProtocolTVL(&v.ProtocolView, s.protocolTVLs())
 		s.enrichProtocolAnalytics(c, meta, &v)
-		s.enrichBespoke(c, meta, &v)
+		s.enrichBespoke(c, meta, &v, windowDays)
 		return v
 	})
 	if !ok {
@@ -451,13 +502,14 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, view, Flags{})
 }
 
-// enrichBespoke attaches the category-specific bespoke analytics block,
-// degrading to absent when the reader is nil or errors.
-func (s *Server) enrichBespoke(ctx context.Context, meta ProtocolMeta, view *ProtocolDetailView) {
+// enrichBespoke attaches the category-specific bespoke analytics block over
+// the request's ?days= window (default protocolActivityWindowDays), degrading
+// to absent when the reader is nil or errors.
+func (s *Server) enrichBespoke(ctx context.Context, meta ProtocolMeta, view *ProtocolDetailView, windowDays int) {
 	if s.protocolBespoke == nil {
 		return
 	}
-	blk, err := s.protocolBespoke.BuildProtocolBespoke(ctx, meta.Name, meta.Category, protocolActivityWindowDays)
+	blk, err := s.protocolBespoke.BuildProtocolBespoke(ctx, meta.Name, meta.Category, windowDays)
 	if err != nil {
 		s.logger.Warn("protocol bespoke build failed", "source", meta.Name, "category", meta.Category, "err", err)
 		return

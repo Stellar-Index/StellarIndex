@@ -7,6 +7,7 @@ import type { RequestExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
 import { CopyHash } from '../../explorer-shared';
 import { TimeSeriesChart, type ChartTone } from './TimeSeriesChart';
+import { BridgeFlowsChart } from './BridgeFlowsChart';
 
 // ─── Wire shapes (mirror internal/api/v1/protocols.go ProtocolBespoke) ───
 //
@@ -83,9 +84,12 @@ function categoryLabel(category: string): string {
 export function BespokeSection({
   bespoke,
   source,
+  name,
 }: {
   bespoke: Bespoke;
   source: RequestExample;
+  /** Protocol slug — lets the bridge flow chart refetch per window. */
+  name: string;
 }) {
   const hasKpis = (bespoke.kpis?.length ?? 0) > 0;
   const hasSeries = (bespoke.series?.length ?? 0) > 0;
@@ -125,8 +129,14 @@ export function BespokeSection({
         </div>
       )}
 
-      {/* ── Bespoke charts (one Panel per named series) ── */}
-      {hasSeries &&
+      {/* ── Bespoke charts ── */}
+      {/* Bridge blocks combine their flow series (inbound + outbound, or the
+          single settled series) into ONE windowed chart with 24h/7d/30d/90d
+          pills; every other category keeps one Panel per named series. */}
+      {hasSeries && bespoke.category === 'bridge' ? (
+        <BridgeFlowsChart name={name} initial={bespoke} source={source} />
+      ) : (
+        hasSeries &&
         bespoke.series!.map((s, i) => (
           <Panel
             key={`${s.name}-${i}`}
@@ -137,7 +147,7 @@ export function BespokeSection({
             <TimeSeriesChart
               points={s.points.map((p) => ({
                 date: p.date,
-                value: toNumber(p.value),
+                value: toChartNumber(p.value),
               }))}
               label={s.name}
               unit={s.unit}
@@ -145,7 +155,8 @@ export function BespokeSection({
               gradientId={`bespokeSeries-${i}`}
             />
           </Panel>
-        ))}
+        ))
+      )}
 
       {/* ── Bespoke tables (one Panel per named top-N table) ── */}
       {hasTables &&
@@ -318,10 +329,13 @@ function Cell({ value }: { value: string }) {
 
 // ─── helpers ─────────────────────────────────────────────────────────────
 
-// toNumber — parse a bespoke series string to a JS number for chart geometry
-// only. Strips $ / , / % decoration the server may include so the shape still
-// plots; non-finite (a label, an em-dash) → 0 so the chart stays continuous.
-function toNumber(v: string): number {
+// toChartNumber — parse a bespoke series string to a JS number for chart
+// geometry only (values can exceed 2^53 — ADR-0003; never use the result as
+// a served amount). Strips $ / , / % decoration the server may include so
+// the shape still plots; non-finite (a label, an em-dash) → 0 so the chart
+// stays continuous. Exported for BridgeFlowsChart, which shares the wire
+// shape.
+export function toChartNumber(v: string): number {
   if (!v) return 0;
   const cleaned = v.replace(/[$,%\s]/g, '').replace(/[a-zA-Z]+$/, '');
   const n = Number(cleaned);

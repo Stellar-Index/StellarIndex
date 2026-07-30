@@ -31,6 +31,17 @@ against.
   collision). Completeness flips at the post-deploy replay + verify.
 
 ### Added
+- **`/v1/protocols/{name}` accepts `?days=` (1/7/30/90, default 90) to
+  window the bespoke analytics block** (spec 1.14.0, additive). Anything
+  outside the whitelist is a 400 problem+json (never a silent clamp);
+  the detail TTL cache now keys on (protocol, window) so window switches
+  can't serve another window's cached numbers. At `days=1` the bridge
+  flow series bucket HOURLY (a daily bucket collapses 24h to one point);
+  series names dropped their grain prefix and are now window-stable —
+  cctp "Inbound (USDC)" / "Outbound (USDC)", rozo "Settled volume
+  (USDC)". Lake-analytics fields keep their fixed 90-day lookback. The
+  explorer's bridge pages (cctp/rozo) render the flows as one combined
+  inbound/outbound line chart with 24h/7d/30d/90d window pills.
 - **Bridge pages show USDC-denominated in/out FLOWS, not just counts.**
   `/v1/protocols/cctp` gains directional volumes (inbound = mints from
   remote burns, outbound = deposit_for_burn), daily in/out series, and
