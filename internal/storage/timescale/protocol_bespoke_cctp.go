@@ -338,11 +338,7 @@ func (s *Store) cctpPerChainSeries(ctx context.Context, blk *BespokeBlock, since
 		{cctpPerChainPrefixIn, "Inbound", true},
 		{cctpPerChainPrefixOut, "Outbound", false},
 	} {
-		rows, err := s.db.QueryContext(ctx, cctpPerChainSeriesQuery(windowDays, dir.inbound), since)
-		if err != nil {
-			return fmt.Errorf("timescale: bespokeBridge cctp per-chain series: %w", err)
-		}
-		series, err := collectPerChainSeries(rows, dir.direction, dir.prefix)
+		series, err := s.collectPerChainSeries(ctx, cctpPerChainSeriesQuery(windowDays, dir.inbound), since, dir.direction, dir.prefix)
 		if err != nil {
 			return err
 		}
@@ -351,10 +347,14 @@ func (s *Store) cctpPerChainSeries(ctx context.Context, blk *BespokeBlock, since
 	return nil
 }
 
-// collectPerChainSeries folds ordered (chain_key, bucket, value) rows into
-// per-chain BespokeSeries, preserving the query's volume-descending chain
-// order. rows is closed before returning.
-func collectPerChainSeries(rows sqlRows, direction, prefix string) ([]BespokeSeries, error) {
+// collectPerChainSeries runs a per-chain series query and folds its ordered
+// (chain_key, bucket, value) rows into per-chain BespokeSeries, preserving
+// the query's volume-descending chain order.
+func (s *Store) collectPerChainSeries(ctx context.Context, query, since, direction, prefix string) ([]BespokeSeries, error) {
+	rows, err := s.db.QueryContext(ctx, query, since)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: bespokeBridge cctp per-chain series: %w", err)
+	}
 	defer func() { _ = rows.Close() }()
 	var (
 		out     []BespokeSeries
@@ -373,15 +373,6 @@ func collectPerChainSeries(rows sqlRows, direction, prefix string) ([]BespokeSer
 		out[len(out)-1].Points = append(out[len(out)-1].Points, pt)
 	}
 	return out, rows.Err()
-}
-
-// sqlRows is the minimal row-iteration seam collectPerChainSeries needs
-// (satisfied by *sql.Rows).
-type sqlRows interface {
-	Next() bool
-	Scan(dest ...any) error
-	Close() error
-	Err() error
 }
 
 // cctpCumulativeSeries appends the all-time cumulative net-inflow series.
@@ -406,31 +397,39 @@ func (s *Store) cctpBreakdowns(ctx context.Context, blk *BespokeBlock, since str
 		{"Inflows by source chain", "Inbound", cctpInboundBreakdownQuery()},
 		{"Outflows by destination chain", "Outbound", cctpOutboundBreakdownQuery()},
 	} {
-		rows, err := s.db.QueryContext(ctx, b.query, since)
+		bd, err := s.collectBreakdown(ctx, b.title, b.direction, b.query, since)
 		if err != nil {
-			return fmt.Errorf("timescale: bespokeBridge cctp breakdown %q: %w", b.title, err)
-		}
-		bd := BespokeBreakdown{Title: b.title, Unit: "USDC"}
-		for rows.Next() {
-			var key string
-			var row BespokeBreakdownRow
-			if err := rows.Scan(&key, &row.Value, &row.Count); err != nil {
-				_ = rows.Close()
-				return fmt.Errorf("timescale: bespokeBridge cctp breakdown scan: %w", err)
-			}
-			row.Label = cctpChainLabel(b.direction, key)
-			bd.Rows = append(bd.Rows, row)
-		}
-		errClose := rows.Err()
-		_ = rows.Close()
-		if errClose != nil {
-			return fmt.Errorf("timescale: bespokeBridge cctp breakdown rows: %w", errClose)
+			return err
 		}
 		if len(bd.Rows) > 0 {
 			blk.Breakdowns = append(blk.Breakdowns, bd)
 		}
 	}
 	return nil
+}
+
+// collectBreakdown runs one composition query and labels its (chain_key,
+// value, count) rows via the verified chain maps.
+func (s *Store) collectBreakdown(ctx context.Context, title, direction, query, since string) (BespokeBreakdown, error) {
+	bd := BespokeBreakdown{Title: title, Unit: "USDC"}
+	rows, err := s.db.QueryContext(ctx, query, since)
+	if err != nil {
+		return bd, fmt.Errorf("timescale: bespokeBridge cctp breakdown %q: %w", title, err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var key string
+		var row BespokeBreakdownRow
+		if err := rows.Scan(&key, &row.Value, &row.Count); err != nil {
+			return bd, fmt.Errorf("timescale: bespokeBridge cctp breakdown scan: %w", err)
+		}
+		row.Label = cctpChainLabel(direction, key)
+		bd.Rows = append(bd.Rows, row)
+	}
+	if err := rows.Err(); err != nil {
+		return bd, fmt.Errorf("timescale: bespokeBridge cctp breakdown rows: %w", err)
+	}
+	return bd, nil
 }
 
 // cctpLargestTransfers fills the window's top-10 transfers table. Amounts
