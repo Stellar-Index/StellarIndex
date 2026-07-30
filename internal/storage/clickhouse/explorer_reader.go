@@ -952,11 +952,25 @@ func (r *ExplorerReader) AccountOperationTypeCounts(ctx context.Context, account
 // table are unchanged. found=false only after the scan also comes up empty.
 func (r *ExplorerReader) TransactionByHash(ctx context.Context, hash string) (TxSummary, bool, error) {
 	if r.txHashIndexAvailable(ctx) {
-		if tx, found, err := r.txByHashIndexed(ctx, hash); err == nil && found {
+		tx, found, indexHit, err := r.txByHashIndexed(ctx, hash)
+		switch {
+		case err == nil && found:
 			return tx, true, nil
+		case err == nil && !indexHit:
+			// The INDEX had no row — authoritative absence (2026-07-30
+			// account-filter class audit): tx_hash_index covers
+			// genesis→tip (20.78B rows from ledger 3, verified on r1 —
+			// the old "pre-backfill history" caveat is stale; that
+			// backfill completed). Falling through to the scan here
+			// turned every unknown/garbage hash into an unauthenticated
+			// bloom probe over the full 10.5B-row transactions table —
+			// the same non-sort-key filter disease as the account-
+			// history arms, plus a free DoS lever.
+			return TxSummary{}, false, nil
 		}
-		// Miss (pre-backfill history / unknown hash) or index-path error:
-		// graceful fallback to the scan — no correctness regression.
+		// Index-path error, or an index/base INCONSISTENCY (index row
+		// present, base row missing — a mis-seeded index): the scan is
+		// still the availability-preserving answer for those.
 	}
 	return r.txByHashScan(ctx, hash)
 }
@@ -1070,21 +1084,27 @@ func (r *ExplorerReader) probeSchema(ctx context.Context, p *schemaProbe, query 
 // txByHashIndexed is the two-step fast path: hash → ledger_seq via the
 // ordered index, then the ledger-scoped summary read. found=false on an
 // index miss (the caller falls back to the scan).
-func (r *ExplorerReader) txByHashIndexed(ctx context.Context, hash string) (TxSummary, bool, error) {
+// indexHit distinguishes the two "not found" kinds: false = the INDEX had
+// no row for the hash (authoritative absence — the index covers
+// genesis→tip); true+!found = the index pointed at a ledger whose base row
+// is missing (an index/base inconsistency the caller may still resolve via
+// the scan).
+func (r *ExplorerReader) txByHashIndexed(ctx context.Context, hash string) (tx TxSummary, found, indexHit bool, err error) {
 	rows, err := r.conn.Query(ctx,
 		`SELECT ledger_seq FROM stellar.tx_hash_index WHERE tx_hash = ? LIMIT 1`, hash)
 	if err != nil {
-		return TxSummary{}, false, fmt.Errorf("clickhouse: tx index %s: %w", hash, err)
+		return TxSummary{}, false, false, fmt.Errorf("clickhouse: tx index %s: %w", hash, err)
 	}
 	defer func() { _ = rows.Close() }()
 	if !rows.Next() {
-		return TxSummary{}, false, rows.Err()
+		return TxSummary{}, false, false, rows.Err()
 	}
 	var seq uint32
 	if err := rows.Scan(&seq); err != nil {
-		return TxSummary{}, false, fmt.Errorf("clickhouse: scan tx index: %w", err)
+		return TxSummary{}, false, true, fmt.Errorf("clickhouse: scan tx index: %w", err)
 	}
-	return r.txByLedgerAndHash(ctx, seq, hash)
+	tx, found, err = r.txByLedgerAndHash(ctx, seq, hash)
+	return tx, found, true, err
 }
 
 // txByLedgerAndHash reads the authoritative stellar.transactions row for a

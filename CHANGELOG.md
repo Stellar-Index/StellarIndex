@@ -16,6 +16,17 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **Unknown tx hashes no longer trigger a 10.5B-row scan.**
+  `TransactionByHash` fell through to the full-table bloom probe on
+  every index miss — written when `tx_hash_index` was partially
+  backfilled. The index now covers genesis→tip (20.78B rows from
+  ledger 3, verified on r1), so an index miss is an authoritative
+  not-found; the scan remains only for index-path errors and
+  index/base inconsistencies (both pinned by tests). Closes the last
+  serving-path instance of the non-sort-key filter class — and an
+  unauthenticated multi-second-per-request lever.
+
+### Fixed
 - **Account history (tx + ops) sourced arms are primary-index reads —
   the 6-second bloom probe is gone.** `/v1/accounts/{g}/transactions`
   and `/operations` resolved "transactions this account SOURCED" via
