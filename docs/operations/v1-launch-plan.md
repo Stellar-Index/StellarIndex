@@ -131,6 +131,21 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-30 ~12:30Z — 🏁 **ROUTE GATE CLOSED: 0×5xx across all 94
+  routes** (evidence: `evidence/2026-07-30-route-sweep-zero.md`),
+  taken deliberately under replay saturation minutes after a restart.
+  The closing move came from Ash's architectural instinct ("don't we
+  have near-instant access to balances?"): account trustline/offer
+  reads rode the account_id bloom index — rewritten as key_xdr
+  PK-prefix ranges (**5.18s → 0.069s measured, 75×**), so account
+  detail is INTERACTIVE for every account (top-20 wealth accounts
+  probed 200 @ ~0.25s each). v0.21.6 cut+deployed carrying that +
+  stale-serve past TTL + flags.stale honesty (85f706e1, 714a72a6).
+  Compression backlog from the re-stamp is self-draining (2 chunks
+  left, policy green). k6 launch-load re-run triggered (AC2).
+  Remaining: 17/17 verdict when the replay lands (~16:30Z, waiter
+  armed) + k6 result + the operator-only list.
+
 - 2026-07-30 ~10:45Z — 🚀 **v0.21.5 CUT + DEPLOYED (Ash's word); final
   acceptance nearly closed.** Deploy green (all 5 binaries; smoke
   13/13; one transient gh-watch network blip — the run itself
