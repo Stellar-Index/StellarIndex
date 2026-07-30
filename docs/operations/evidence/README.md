@@ -15,7 +15,7 @@ were ever produced until now).
 
 | Gate (§1) | Artifact | Verdict | Filed |
 |---|---|---|---|
-| Launch mechanics: route availability | [pre-deploy](2026-07-28-route-sweep-pre-deploy.txt) → [post-serving-flip](2026-07-29-route-sweep-post-serving-flip.txt) | 🔵 21×5xx → **10×5xx** (serving-auth class fixed; residual = slow-read timeout class, §2.4 40× read-amplification investigation) | 2026-07-29 |
+| Launch mechanics: route availability | [pre-deploy](2026-07-28-route-sweep-pre-deploy.txt) → [post-serving-flip](2026-07-29-route-sweep-post-serving-flip.txt) → [**ZERO**](2026-07-30-route-sweep-zero.md) | ✅ 21→10→8→5→2→**0×5xx** at v0.21.6, taken during replay saturation; top-20 wealth accounts probed 200 @ ~0.25s (75× PK-prefix read) | 2026-07-30 |
 | Capacity: cold-tier trim safety | [2026-07-28-soak-gate.md](2026-07-28-soak-gate.md) | ✅ PASSED + gate executed | 2026-07-28 |
 | Supply trustworthy: CS-102 regression guard | [2026-07-28-cs102-regression-redgreen.md](2026-07-28-cs102-regression-redgreen.md) | ✅ red/green proven | 2026-07-28 |
 | Supply trustworthy: vs external truth | [baseline](2026-07-28-supply-reconcile-horizon.md) → [post-fixes](2026-07-29-supply-reconcile-post-fixes.md) → [**post-re-seed**](2026-07-30-supply-reconcile-8of8.md) | ✅ **8/8 PASS** (USDC +0.14% after the TTL-gated full-history re-seed restored its 46,035 dormant holders) | 2026-07-30 |
