@@ -124,39 +124,35 @@ func TestTransactionByHashFastPath(t *testing.T) {
 	}
 }
 
-func TestTransactionByHashIndexMissFallsBackToScan(t *testing.T) {
-	// txByHashScan is now TWO steps (audit DAT-10, deterministic ingested_at
-	// tiebreak): step 1 (isBloomScan) only locates the ledger; step 2
-	// (isLedgerScopedRead, FINAL) reads the authoritative row.
+func TestTransactionByHashIndexMissIsAuthoritativeNotFound(t *testing.T) {
+	// 2026-07-30 (account-filter class audit): the index covers
+	// genesis→tip, so an INDEX miss is an authoritative "no such hash" —
+	// the reader must NOT fall through to the 10.5B-row bloom scan
+	// (which turned every garbage hash into an unauthenticated
+	// multi-second probe). The scan remains reachable only for an
+	// index-path ERROR or an index/base inconsistency (see the sibling
+	// tests).
 	conn := &stubConn{}
 	conn.respond = func(q string) (driver.Rows, error) {
 		switch {
 		case isIndexProbe(q):
 			return &stubRows{}, nil
 		case isIndexLookup(q):
-			return &stubRows{}, nil // pre-backfill history: not in the index
+			return &stubRows{}, nil // no index row: the hash does not exist
 		case isBloomScan(q):
-			return &stubRows{data: [][]any{{uint32(50_000_000)}}}, nil // step 1: locate the ledger only
-		case isLedgerScopedRead(q):
-			return &stubRows{data: [][]any{txRowFor(50_000_000, testTxHash)}}, nil // step 2: FINAL point read
+			return nil, fmt.Errorf("bloom scan must not run on an authoritative index miss: %s", q)
 		default:
 			return nil, fmt.Errorf("unexpected query: %s", q)
 		}
 	}
 	r := &ExplorerReader{conn: conn}
 
-	tx, found, err := r.TransactionByHash(context.Background(), testTxHash)
-	if err != nil || !found {
-		t.Fatalf("TransactionByHash = (found=%v, err=%v), want scan fallback hit", found, err)
+	_, found, err := r.TransactionByHash(context.Background(), testTxHash)
+	if err != nil || found {
+		t.Fatalf("TransactionByHash = (found=%v, err=%v), want authoritative not-found with no error", found, err)
 	}
-	if tx.Seq != 50_000_000 {
-		t.Fatalf("tx.Seq = %d, want the scan's 50000000", tx.Seq)
-	}
-	if n := countQueries(conn.queries, isBloomScan); n != 1 {
-		t.Fatalf("scan fallback issued %d bloom scan(s); want 1 (queries: %v)", n, conn.queries)
-	}
-	if n := countQueries(conn.queries, isLedgerScopedRead); n != 1 {
-		t.Fatalf("scan fallback issued %d ledger-scoped FINAL read(s); want 1 (queries: %v)", n, conn.queries)
+	if n := countQueries(conn.queries, isBloomScan); n != 0 {
+		t.Fatalf("index miss issued %d bloom scan(s); want 0 (queries: %v)", n, conn.queries)
 	}
 }
 
