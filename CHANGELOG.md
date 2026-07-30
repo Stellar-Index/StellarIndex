@@ -15,6 +15,22 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **Account history (tx + ops) sourced arms are primary-index reads —
+  the 6-second bloom probe is gone.** `/v1/accounts/{g}/transactions`
+  and `/operations` resolved "transactions this account SOURCED" via
+  the `source_account` bloom skip-index over the full 23B/34B-row
+  tables — granule-pruned but scan-shaped (measured on r1: 6.17 s for
+  the sourced arm vs 0.056 s for the participant arm on the SAME
+  328-op account), which is what pushed heavy-history accounts into
+  the 8s 503 class under load. New slim projection
+  `stellar.ops_by_source` (the `ttl_live_until` fix class:
+  deploy/clickhouse/ops_by_source.sql — table + MVs from BOTH
+  operations and transactions so op-source overrides stay exact, plus
+  windowed backfills) turns both sourced arms into PK-prefix reads.
+  Fail-loud without the table (no scan fallback); deploy order:
+  DDL + backfill before the binary.
+
 ## [v0.21.6] — 2026-07-30
 
 ### Fixed

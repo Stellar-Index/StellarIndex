@@ -615,3 +615,35 @@ CREATE TABLE IF NOT EXISTS stellar.account_movements
 ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY intDiv(ledger, 1000000)
 ORDER BY (address, ledger, tx_hash, op_index, leg_index, direction);
+
+-- ── ops_by_source: slim sourced-history projection (2026-07-30) ─────────────
+-- (source_account → ledger/tx/op keys) from BOTH stellar.operations (op-
+-- effective source, real op_index) and stellar.transactions (tx source,
+-- sentinel op_index 4294967295). The account-history readers' sourced arms
+-- read this via PK prefix instead of the source_account bloom probe over the
+-- full 23B/34B-row tables (measured 6.17s → PK-shaped; explorer_reader.go).
+-- The v0.21.7+ binary REFUSES account-history reads without this table — no
+-- scan fallback. Keep in lockstep with the operator migration artifact
+-- deploy/clickhouse/ops_by_source.sql (which also carries the Step-2
+-- windowed backfills a fresh MV-only deployment still needs for history).
+CREATE TABLE IF NOT EXISTS stellar.ops_by_source
+(
+    source_account String,
+    ledger_seq     UInt32,
+    tx_index       UInt32,
+    op_index       UInt32
+)
+ENGINE = ReplacingMergeTree
+ORDER BY (source_account, ledger_seq, tx_index, op_index);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS stellar.ops_by_source_ops_mv
+TO stellar.ops_by_source AS
+SELECT source_account, ledger_seq, tx_index, op_index
+FROM stellar.operations
+WHERE source_account != '';
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS stellar.ops_by_source_tx_mv
+TO stellar.ops_by_source AS
+SELECT source_account, ledger_seq, tx_index, 4294967295 AS op_index
+FROM stellar.transactions
+WHERE source_account != '';

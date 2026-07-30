@@ -58,7 +58,7 @@ func TestAccountOperations_BoundsEachUnionArm(t *testing.T) {
 	if _, err := r.AccountOperations(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
 		t.Fatalf("AccountOperations: %v", err)
 	}
-	q := conn.queries[0]
+	q := conn.queries[len(conn.queries)-1]
 	arm1, arm2 := armBodies(t, q)
 
 	// Both arms must ORDER BY the full sort key and take their own LIMIT.
@@ -79,8 +79,8 @@ func TestAccountOperations_BoundsEachUnionArm(t *testing.T) {
 	}
 	// Three bound page sizes: one per arm + the outer merge LIMIT. A per-arm
 	// limit SMALLER than the outer one would silently drop rows at the seam.
-	if n := countPerArmLimitArgs(conn.args[0], limit); n != 3 {
-		t.Errorf("bound page-size args = %d, want 3 (arm1, arm2, outer) — each arm must be bounded by the SAME page size as the outer merge; args: %v", n, conn.args[0])
+	if n := countPerArmLimitArgs(conn.args[len(conn.args)-1], limit); n != 3 {
+		t.Errorf("bound page-size args = %d, want 3 (arm1, arm2, outer) — each arm must be bounded by the SAME page size as the outer merge; args: %v", n, conn.args[len(conn.args)-1])
 	}
 }
 
@@ -95,7 +95,7 @@ func TestAccountTransactions_BoundsEachUnionArm(t *testing.T) {
 	if _, err := r.AccountTransactions(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
 		t.Fatalf("AccountTransactions: %v", err)
 	}
-	q := conn.queries[0]
+	q := conn.queries[len(conn.queries)-1]
 	arm1, arm2 := armBodies(t, q)
 
 	for i, arm := range []string{arm1, arm2} {
@@ -106,8 +106,8 @@ func TestAccountTransactions_BoundsEachUnionArm(t *testing.T) {
 			t.Errorf("arm %d must dedup on the primary key and then take its own LIMIT — otherwise an un-merged duplicate part consumes a slot and the page comes back short: %s", i+1, arm)
 		}
 	}
-	if n := countPerArmLimitArgs(conn.args[0], limit); n != 3 {
-		t.Errorf("bound page-size args = %d, want 3 (arm1, arm2, outer); args: %v", n, conn.args[0])
+	if n := countPerArmLimitArgs(conn.args[len(conn.args)-1], limit); n != 3 {
+		t.Errorf("bound page-size args = %d, want 3 (arm1, arm2, outer); args: %v", n, conn.args[len(conn.args)-1])
 	}
 	// The cross-arm dedup must survive: a tx can be BOTH sourced by the
 	// account and carry it as a non-source participant.
@@ -135,7 +135,7 @@ func TestAccountOperations_PerArmLimitPreservesCursorArgOrder(t *testing.T) {
 		"GTEST", cur.Ledger, cur.A, cur.B, limit, // arm 2: same
 		limit, // outer merge
 	}
-	got := conn.args[0]
+	got := conn.args[len(conn.args)-1]
 	if len(got) != len(want) {
 		t.Fatalf("bound %d args, want %d: %v", len(got), len(want), got)
 	}
@@ -203,7 +203,7 @@ func TestUnionArmTopN_MatchesUnboundedMerge(t *testing.T) {
 	if _, err := r.AccountOperations(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
 		t.Fatalf("AccountOperations: %v", err)
 	}
-	args := conn.args[0]
+	args := conn.args[len(conn.args)-1]
 	armLimit, ok := args[1].(int) // arm 1: [account, LIMIT]
 	if !ok {
 		t.Fatalf("arm-1 limit arg is %T, want int (args: %v)", args[1], args)
