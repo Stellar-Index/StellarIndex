@@ -131,6 +131,24 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-30 ~17:15Z — 🎯 **Verify: blind 1,626→170; ORDER-PRESERVING
+  attribution resolves the residue (84ee3e05).** The v0.21.5 chain
+  completed (replay hit tip; verify rc=0): the subset fix cleared ~90%
+  of the blind class; the 170 residual = prices matching TWO feeds'
+  medians (real fixture: iBENJI vs SolvBTC.BBN). Insight: the adapter
+  builds updated_feeds in ONE PASS over feed_ids → survivors are an
+  ordered SUBSEQUENCE → attribution is a DP-counted alignment (unique
+  → attribute; else refuse). Order can only disambiguate, never
+  misattribute. The residual event now decodes (golden-pinned).
+  **17/17 needs one more post-v0.21.7 replay pass** (the projector
+  must write those rows with the new rule). ALSO: bridge-flows chart
+  landed (merge e1e4cbde — ?days windows, hourly 24h grain,
+  window-keyed cache, dual-line chart + pills, spec 1.14.0); phase-2
+  SDF visual suite agent launched (pies by chain, per-chain lines,
+  cumulative net-inflow, largest transfers, verified chain maps).
+  **Heavy queue running: k6 (AC2) → ops_by_source backfills**
+  (/root/postreplay-queue.log, waiter armed).
+
 - 2026-07-30 ~16:10Z — 🕵️ **"Missing data" investigation closed + the
   address-intelligence build LANDED.** (1) The GDVJM "Partial Coverage"
   banner was the frontend's honest 503 copy, not missing data — all 4
