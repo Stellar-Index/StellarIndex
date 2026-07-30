@@ -131,6 +131,21 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-30 ~02:30Z — ✅ **verify-usd-volume CALIBRATED — the prove-it
+  battery's last unfiled non-paging row** (evidence:
+  `evidence/2026-07-30-verify-usd-volume-30d.md`). First 30-day
+  production run: **current pipeline EXACT — 7 consecutive clean days
+  (07-23→07-29)**; the 7,973 violations are bounded entirely to
+  [06-30, 07-22] — the pre-peg-identity stamping era, ~+0.7% drift on
+  base_pegged SDEX dust groups (worst group-day 1,858 USD).
+  Calibration verdict for C4-055/066: estimated tier spans a 700×
+  daily range (167k–117M USD) — no stable band; keep the coverage
+  alerts primary, add NO sum threshold. **Queued buildable: a
+  `usd-volume-restamp` ops tool** for the pre-07-23 pegged rows —
+  must reuse `USDVolumeQuoteSpec` (the verifier's own
+  reimplementation-trap warning), windowed under run-heavy-job,
+  acceptance = a full-span verify-usd-volume at 0 violations.
+
 - 2026-07-30 ~01:40Z — ✅ **SUPPLY GATE CLOSED: 8/8 vs Horizon** (evidence
   filed: `evidence/2026-07-30-supply-reconcile-8of8.md`). The chain
   completed 23:27Z: re-seed landed 47,093 rows / 38/38 wrappers (USDC's
@@ -1832,7 +1847,7 @@ the spec, so the wire-freeze prerequisite is met).
       now: (a) claimable seed, (b) SAC full-history seed OOM, (c)
       dormancy calibration [OP].
 - [ ] **Completeness green**: all sources `complete=true` (incl. sep41 ×2 + the new redstone gap); `/v1/coverage` two-axis verdict honest.
-- [ ] **Prove-it battery passed** (§2.6): reconcile-balances, verify-lake/contiguity/hash-chain, re-derive determinism, price+supply vs external truth, `verify-usd-volume` calibrated.
+- [x] ✅ **Prove-it battery passed** (§2.6) — every row filed as of 2026-07-30: reconcile-balances (0 mismatches), verify-lake/contiguity/hash-chain (genesis→tip), re-derive determinism (byte-identical), price vs 5 references (22/22), supply vs Horizon (**8/8**), `verify-usd-volume` calibrated (current pipeline exact; pre-07-23 re-stamp queued as data-quality follow-up). Remaining battery-adjacent: the SEV drill (paging-gated).
 - [x] ✅ **Config codified = live** — DONE 2026-07-27. The 69-task apply
       landed (`ok=259 changed=60 failed=0`) and **`ansible-drift.yml` is
       GREEN** (run 7; the first fully-green verdict this repo has ever
