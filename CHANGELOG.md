@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.21.5] — 2026-07-30
+
 ### Fixed
 - **The five remaining route-sweep 5xx routes fixed** (the class the
   v0.21.4 acceptance sweep surfaced once the heavy jobs drained):
