@@ -48,7 +48,7 @@ func TestRecentOperations_DedupsPerPrimaryKey(t *testing.T) {
 	if len(conn.queries) != 1 {
 		t.Fatalf("issued %d queries, want 1", len(conn.queries))
 	}
-	q := conn.queries[0]
+	q := conn.queries[len(conn.queries)-1]
 	// audit DAT-10: without a dedup construct a re-ingested op leaves an
 	// un-merged duplicate part and this directory listing serves it twice.
 	if !strings.Contains(q, "LIMIT 1 BY ledger_seq, tx_index, op_index") {
@@ -80,7 +80,7 @@ func TestAccountOperations_DedupsPerPrimaryKeyInBothArms(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("rows = %d, want 1", len(rows))
 	}
-	q := conn.queries[0]
+	q := conn.queries[len(conn.queries)-1]
 	// audit DAT-10: opCols carries body_xdr (KB-scale) so an outer DISTINCT
 	// (AccountTransactions' approach) is the wrong tool here — each UNION arm
 	// must dedup on the narrow primary key BEFORE the union, not after.
@@ -103,7 +103,7 @@ func TestOperationsByTx_UsesFinal(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("rows = %d, want 1", len(rows))
 	}
-	q := conn.queries[0]
+	q := conn.queries[len(conn.queries)-1]
 	// audit DAT-10: ledger+tx_hash-scoped so FINAL stays cheap (partition +
 	// primary-key-prefix bounded), matching the sibling OperationsByLedger.
 	if !strings.Contains(q, "FROM stellar.operations FINAL") {

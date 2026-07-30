@@ -119,6 +119,13 @@ type ExplorerReader struct {
 	// bloom-skip-index scan, exactly as before the index existed.
 	txIndexProbe schemaProbe
 
+	// opsBySourceProbe probes whether stellar.ops_by_source (the slim
+	// sourced-history projection, deploy/clickhouse/ops_by_source.sql)
+	// exists. The account-history readers REFUSE without it — a silent
+	// bloom-scan fallback would quietly restore the 6s sourced arm, and a
+	// silent empty arm would hide the account's own transactions.
+	opsBySourceProbe schemaProbe
+
 	// lecVersionProbe probes whether stellar.ledger_entries_current carries a
 	// `version` column — the (ledger_seq<<32)|intra_ledger_seq RMT version
 	// that the D3 reproject introduces (deploy/clickhouse/
@@ -669,13 +676,19 @@ func (c ExplorerCursor) IsSet() bool { return c.Ledger > 0 }
 // accountTransactionsQuery builds AccountTransactions' SQL.
 //
 // Two index-friendly arms UNION'd, NOT `source_account = ? OR … IN (…)`:
-// an OR with a subquery defeats the source_account skip-index and
-// full-scans the 23 B-row table. Arm 1 (sourced) uses the
-// source_account index; arm 2 (participant) matches transactions on its
-// PRIMARY KEY (ledger_seq, tx_index) via op-keys from the account-
-// prefixed operation_participants — both stay index-bounded. DISTINCT
-// dedups the rare tx that is BOTH sourced by the account AND has it as a
-// non-source participant of one of its ops.
+// an OR with a subquery defeats index use and full-scans the 23 B-row
+// table. BOTH arms are now PK-shaped (2026-07-30): arm 1 (sourced) gets
+// its (ledger, tx) keys from the slim stellar.ops_by_source projection
+// (deploy/clickhouse/ops_by_source.sql — its tx-MV rows carry the
+// sentinel op_index, its ops-MV rows real ones; the DISTINCT prefix read
+// covers both, so a tx surfaces whether the account sourced the tx or any
+// op in it); arm 2 (participant) via the account-prefixed
+// operation_participants. The old arm 1 rode the source_account bloom
+// skip-index over the whole table — granule-pruned but scan-shaped,
+// measured 6.17 s vs 0.056 s for the participant arm on the SAME account
+// (r1, 2026-07-30) — the whole reason these routes sat in the 8s 503
+// class. DISTINCT dedups the rare tx that is BOTH sourced by the account
+// AND has it as a non-source participant of one of its ops.
 //
 // The cursor tuple comparison is strictly older than the (ledger, tx_index)
 // last served — never re-emits a served row, never skips an unserved one.
@@ -712,7 +725,8 @@ func accountTransactionsQuery(hasCursor bool) string {
 	}
 	return `SELECT DISTINCT ` + txCols + ` FROM (
 		(SELECT ` + txCols + ` FROM stellar.transactions
-		   WHERE source_account = ?` + cursorClause + `
+		   WHERE (ledger_seq, tx_index) IN (
+		        SELECT DISTINCT ledger_seq, tx_index FROM stellar.ops_by_source WHERE source_account = ?)` + cursorClause + `
 		   ORDER BY ledger_seq DESC, tx_index DESC LIMIT 1 BY ledger_seq, tx_index LIMIT ?)
 		UNION ALL
 		(SELECT ` + txCols + ` FROM stellar.transactions
@@ -736,6 +750,9 @@ func accountTransactionsQuery(hasCursor bool) string {
 func (r *ExplorerReader) AccountTransactions(ctx context.Context, account string, limit int, cur ExplorerCursor) ([]TxSummary, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
+	}
+	if !r.opsBySourceAvailable(ctx) {
+		return nil, errOpsBySourceMissing
 	}
 	var cursorArgs []any
 	if cur.IsSet() {
@@ -803,7 +820,9 @@ func accountOperationsQuery(hasCursor bool) string {
 	}
 	return `SELECT ` + opCols + ` FROM (
 		(SELECT ` + opCols + ` FROM stellar.operations
-		   WHERE source_account = ?` + cursorClause + `
+		   WHERE (ledger_seq, tx_index, op_index) IN (
+		        SELECT ledger_seq, tx_index, op_index FROM stellar.ops_by_source
+		        WHERE source_account = ? AND op_index != 4294967295)` + cursorClause + `
 		   ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC
 		   LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?)
 		UNION ALL
@@ -825,6 +844,9 @@ func accountOperationsQuery(hasCursor bool) string {
 func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, limit int, cur ExplorerCursor) ([]OpRow, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
+	}
+	if !r.opsBySourceAvailable(ctx) {
+		return nil, errOpsBySourceMissing
 	}
 	var cursorArgs []any
 	if cur.IsSet() {
@@ -876,6 +898,22 @@ func (r *ExplorerReader) TransactionByHash(ctx context.Context, hash string) (Tx
 func (r *ExplorerReader) txHashIndexAvailable(ctx context.Context) bool {
 	return r.probeSchema(ctx, &r.txIndexProbe,
 		`SELECT ledger_seq FROM stellar.tx_hash_index LIMIT 1`)
+}
+
+// errOpsBySourceMissing — the sourced-history projection has not been
+// provisioned on this ClickHouse. Fail-loud by design (same contract as
+// ttl_live_until): the pre-projection bloom-scan arm is DELETED, and a
+// silent fallback or empty arm would either restore the 6-second read or
+// hide the account's own history.
+var errOpsBySourceMissing = errors.New(
+	"clickhouse: stellar.ops_by_source does not exist — apply deploy/clickhouse/ops_by_source.sql " +
+		"(table + both MVs, then its Step-2 windowed backfills) before serving account history; " +
+		"there is no scan fallback")
+
+// opsBySourceAvailable reports whether stellar.ops_by_source exists.
+func (r *ExplorerReader) opsBySourceAvailable(ctx context.Context) bool {
+	return r.probeSchema(ctx, &r.opsBySourceProbe,
+		`SELECT ledger_seq FROM stellar.ops_by_source LIMIT 1`)
 }
 
 // ledgerEntriesVersioned reports whether stellar.ledger_entries_current has
