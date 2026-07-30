@@ -30,6 +30,37 @@ against.
   windowed backfills) turns both sourced arms into PK-prefix reads.
   Fail-loud without the table (no scan fallback); deploy order:
   DDL + backfill before the binary.
+### Added
+- **`GET /v1/accounts/{g}/trades` — per-address historic trades.** The
+  served-tier `trades` hypertable read per-address: newest first,
+  keyset-paged by an opaque `(ts, ledger, tx_hash, op_index)` cursor,
+  limit clamped to 200, amounts/usd_volume as decimal strings
+  (ADR-0003). Attribution rides the table's real account columns —
+  `taker` (acting account: sdex/aquarius/phoenix/comet) and `maker`
+  (resting sdex offer) via a two-arm UNION so each arm walks its own
+  account-leading partial index (migration 0123,
+  `trades_taker_ts_idx`/`trades_maker_ts_idx` — build CONCURRENTLY by
+  hand on r1 first, see the migration header); a static `note`
+  discloses the venues that structurally cannot attribute (soroswap
+  records no acting account; off-chain CEX/FX rows have no Stellar
+  account). Spec 1.13.0; explorer account page gains a Trades panel.
+- **`GET /v1/accounts/{g}/activity` — segmented "what has this address
+  been doing" breakdown.** One aggregate payload: all-time per-op-type
+  counts involving the account (ClickHouse — the same two
+  skip-index/participant UNION arms as `/operations`, aggregated with
+  per-arm `uniqExact` so un-merged ReplacingMergeTree parts can't
+  inflate counts, under the `explorerScanSettings` pin), attributed
+  trades total, per-(protocol, action) DeFi event counts
+  (blend/blend_backstop/blend_auctions/phoenix_stake/defindex/
+  sorocredit/aquarius — only tables that genuinely carry a per-account
+  column), and rozo + cctp bridge-transfer counts (cctp parties matched
+  inside the `attributes` jsonb; the matching limits are documented on
+  the wire in `bridge_transfers.note`). Whole-history aggregates never
+  run on the request path: the payload is served through the shared
+  contract-detail stale-while-revalidate cache (`act:` key, existing
+  `contract_detail` SWR metric label), with per-segment honest degrade
+  via `coverage_note`. Explorer account page gains an Activity summary
+  panel.
 
 ## [v0.21.6] — 2026-07-30
 

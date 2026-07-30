@@ -112,6 +112,11 @@ type ExplorerReader interface {
 	ContractCodeHistory(ctx context.Context, contractID string) ([]clickhouse.ContractCodeVersion, error)
 	AccountTransactions(ctx context.Context, account string, limit int, cur clickhouse.ExplorerCursor) ([]clickhouse.TxSummary, error)
 	AccountOperations(ctx context.Context, account string, limit int, cur clickhouse.ExplorerCursor) ([]clickhouse.OpRow, error)
+	// AccountOperationTypeCounts is the whole-history aggregate variant
+	// of AccountOperations (same two UNION arms, GROUP BY op_type) —
+	// scan-shaped, so callers must run it under a detached budget (the
+	// activity endpoint's SWR cache), never a request deadline.
+	AccountOperationTypeCounts(ctx context.Context, account string) ([]clickhouse.OpTypeCount, error)
 	AccountState(ctx context.Context, account string) (clickhouse.AccountState, error)
 	// AccountStateCached serves account state from a bounded TTL cache;
 	// a cold miss waits on a DETACHED fill bounded by the caller's
@@ -182,6 +187,20 @@ type Handler struct {
 	// (the "DeFi positions" view) — six per-protocol Postgres folds.
 	// Nil 503s the endpoint (positions.go).
 	Positions PositionsReader
+
+	// Activity, when non-nil, backs the Postgres segments of GET
+	// /v1/accounts/{g}/activity (trades_total / defi_actions /
+	// bridge_transfers); the ops_by_type segment reads the ClickHouse
+	// lake via Reader. Either seam may be nil independently — the
+	// endpoint degrades segment-wise with an honest coverage_note and
+	// only 503s when BOTH are nil (activity.go).
+	Activity ActivityReader
+
+	// Trades, when non-nil, backs GET /v1/accounts/{g}/trades — the
+	// per-address historic-trades listing over the Postgres `trades`
+	// hypertable (taker/maker attribution). Nil 503s the endpoint
+	// (account_trades.go).
+	Trades TradesReader
 
 	// PoolTokens, when non-nil, best-effort resolves a pool-based
 	// protocol's venue to a human asset-pair label on the positions

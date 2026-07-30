@@ -11948,6 +11948,215 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/accounts/{g_strkey}/trades": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The address's historic trades (taker or maker side), newest first.
+         * @description Per-address historic trades out of the served-tier `trades`
+         *     hypertable, newest first, keyset-paged with `?cursor=<opaque>`
+         *     (echo back `next_cursor`); the cursor is the composite
+         *     `(ts, ledger, tx_hash, op_index)`.
+         *
+         *     ATTRIBUTION SCOPE (see the always-present `note`): the trades
+         *     table attributes accounts via its taker/maker columns — `taker`
+         *     is the acting account (the op/tx source for sdex; the user
+         *     address for aquarius, phoenix, comet), `maker` is the resting
+         *     sdex offer owner. Soroswap swaps do not record the acting
+         *     account and off-chain CEX/FX trades carry no Stellar account,
+         *     so neither can appear here; an empty page therefore means "no
+         *     ATTRIBUTED trades", not "this address never traded anywhere".
+         *
+         *     Amounts are raw integer amounts at each asset's own on-chain
+         *     scale, as decimal strings (ADR-0003). There is deliberately no
+         *     price field: the table stores no price and deriving one needs
+         *     per-asset decimals. `usd_volume` is present only when the
+         *     aggregator valued the trade at ingest time — absent means
+         *     "unknown", never zero.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Maximum rows to return (1-200, default 50). Out-of-range values return 400. */
+                    limit?: number;
+                    /** @description Opaque keyset cursor from a prior response's next_cursor. */
+                    cursor?: string;
+                };
+                header?: never;
+                path: {
+                    /** @description G-strkey account id. */
+                    g_strkey: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The account's attributed trades. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "account": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                         *         "trades": [
+                         *           {
+                         *             "ts": "2026-07-29T12:00:00Z",
+                         *             "source": "sdex",
+                         *             "base_asset": "native",
+                         *             "quote_asset": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                         *             "base_amount": "10000000",
+                         *             "quote_amount": "1234567",
+                         *             "usd_volume": "0.12345600",
+                         *             "tx_hash": "be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36",
+                         *             "ledger": 63000001,
+                         *             "op_index": 0,
+                         *             "role": "taker"
+                         *           }
+                         *         ],
+                         *         "next_cursor": "1785340800000000000.63000001.be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36.0",
+                         *         "note": "On-chain trades where this address is recorded as the acting account (taker) or the resting sdex offer owner (maker). Coverage: sdex, aquarius, phoenix, comet. Soroswap swaps do not yet record the acting account and off-chain CEX/FX trades carry no Stellar account, so neither can appear here."
+                         *       },
+                         *       "as_of": "2026-07-30T22:39:31.01258567Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
+                        "application/json": {
+                            data?: components["schemas"]["AccountTrades"];
+                        };
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/{g_strkey}/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Segmented "what has this address been doing" breakdown (all-time counts).
+         * @description One aggregate object per address: all-time per-op-type operation
+         *     counts (sourced + participant, from the certified ClickHouse
+         *     lake), attributed-trade total, per-(protocol, action) DeFi event
+         *     counts, and bridge-transfer counts (Postgres served tier).
+         *
+         *     CACHING: every segment is a whole-history aggregate, so the
+         *     payload is served stale-while-revalidate — an expired entry is
+         *     served immediately with `flags.stale: true` and its real `as_of`
+         *     while one detached recompute runs; a never-computed address may
+         *     503 its first request (retry lands warm). The envelope's `as_of`
+         *     is the payload's computation time, not now.
+         *
+         *     HONESTY CONTRACT: a segment that could not be read is ABSENT
+         *     from the response and named in `coverage_note` — never
+         *     zero-filled. `bridge_transfers.note` documents exactly how
+         *     bridge rows attribute to an address (and which directions
+         *     structurally cannot).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description G-strkey account id. */
+                    g_strkey: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The account's segmented activity breakdown. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "account": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                         *         "ops_by_type": [
+                         *           {
+                         *             "op_type": "payment",
+                         *             "count": 120
+                         *           },
+                         *           {
+                         *             "op_type": "manage_buy_offer",
+                         *             "count": 14
+                         *           }
+                         *         ],
+                         *         "trades_total": 77,
+                         *         "defi_actions": [
+                         *           {
+                         *             "protocol": "blend",
+                         *             "action": "supply",
+                         *             "count": 3
+                         *           },
+                         *           {
+                         *             "protocol": "aquarius",
+                         *             "action": "position_update",
+                         *             "count": 9
+                         *           }
+                         *         ],
+                         *         "bridge_transfers": {
+                         *           "rozo_outbound_payments": 1,
+                         *           "rozo_inbound_payments": 0,
+                         *           "cctp_outbound_burns": 2,
+                         *           "cctp_inbound_mints": 0,
+                         *           "note": "rozo matches payment from_addr (outbound) / destination (inbound). cctp matches deposit_for_burn depositor (outbound) and the Stellar-side mint_and_withdraw mint recipient (inbound) — an inbound mint delivered via a forwarder contract attributes to that contract, not the end user, and an outbound burn's destination-chain recipient is not a Stellar account so it is never matched."
+                         *         }
+                         *       },
+                         *       "as_of": "2026-07-30T22:39:31.01258567Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
+                        "application/json": {
+                            data?: components["schemas"]["AccountActivity"];
+                        };
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/search": {
         parameters: {
             query?: never;
@@ -12194,6 +12403,87 @@ export interface components {
             };
         };
         /**
+         * @description Segmented all-time activity breakdown for one address. Segments
+         *     that could not be read are ABSENT (never zero-filled) and named
+         *     in coverage_note.
+         */
+        AccountActivity: {
+            /** @description The G-strkey this breakdown is for. */
+            account: string;
+            /**
+             * @description All-time per-op-type operation counts INVOLVING the account
+             *     — both sourced and non-source-participant (participant-side
+             *     coverage tracks the lake's participant-index capture +
+             *     backfill, same caveat as /accounts/{g_strkey}/operations).
+             *     Sorted by count desc.
+             */
+            ops_by_type?: components["schemas"]["AccountOpTypeCount"][];
+            /**
+             * Format: int64
+             * @description All-time attributed trade count (taker or maker side) — the
+             *     same attribution scope /accounts/{g_strkey}/trades documents
+             *     (soroswap + off-chain trades carry no account and are not
+             *     counted). Absent = the segment could not be read, not zero.
+             */
+            trades_total?: number;
+            /**
+             * @description Per-(protocol, action) DeFi event counts over the served-tier
+             *     tables that genuinely carry a per-account column: blend
+             *     money-market, blend_backstop, blend_auctions, phoenix_stake,
+             *     defindex (vault layer), sorocredit (positions opened), and
+             *     aquarius rewards. Tables with no per-account column
+             *     (phoenix/aquarius/comet pool-level liquidity, soroswap) are
+             *     honestly out of scope, not zero.
+             */
+            defi_actions?: components["schemas"]["AccountDefiActionCount"][];
+            bridge_transfers?: components["schemas"]["AccountBridgeTransfers"];
+            /**
+             * @description ABSENT on a fully-successful read. Present when one or more
+             *     segments could not be read — those segments are MISSING from
+             *     this response, not zero. Mirrors the coverage_note contract
+             *     on the movements/positions siblings.
+             */
+            coverage_note?: string;
+        };
+        /** @description One op-type's all-time count for the account. */
+        AccountOpTypeCount: {
+            op_type: string;
+            /** Format: int64 */
+            count: number;
+        };
+        /** @description One (protocol, action) DeFi event count for the account. */
+        AccountDefiActionCount: {
+            /**
+             * @description Which per-protocol table the count comes from — blend,
+             *     blend_backstop, blend_auctions, phoenix_stake, defindex,
+             *     sorocredit, or aquarius.
+             */
+            protocol: string;
+            /** @description The table's own action/event-kind discriminator (e.g. supply, borrow, bond, deposit, position_update). */
+            action: string;
+            /** Format: int64 */
+            count: number;
+        };
+        /** @description Per-bridge, per-direction transfer counts for the account. */
+        AccountBridgeTransfers: {
+            /** Format: int64 */
+            rozo_outbound_payments: number;
+            /** Format: int64 */
+            rozo_inbound_payments: number;
+            /** Format: int64 */
+            cctp_outbound_burns: number;
+            /** Format: int64 */
+            cctp_inbound_mints: number;
+            /**
+             * @description Always present — documents exactly how bridge rows attribute
+             *     to an address, including the structural non-matches (an
+             *     outbound CCTP burn's destination-chain recipient is not a
+             *     Stellar account; an inbound mint delivered via a forwarder
+             *     contract attributes to that contract, not the end user).
+             */
+            note: string;
+        };
+        /**
          * @description An account's unified movement feed (ADR-0048 D5) — the ClickHouse
          *     pre-P23 classic-movement archive (stellar.account_movements)
          *     merged, at read time, with the Postgres sep41_transfers post-P23
@@ -12324,6 +12614,63 @@ export interface components {
              *     same field on GET /accounts/{g_strkey}/movements.
              */
             coverage_note?: string;
+        };
+        /**
+         * @description One attributed trade for the address. Amounts are raw integer
+         *     amounts at each asset's own on-chain scale, as decimal strings
+         *     (ADR-0003). No price field is served — the underlying table
+         *     stores none and deriving one needs per-asset decimals.
+         */
+        AccountTrade: {
+            /** Format: date-time */
+            ts: string;
+            /** @description The venue the trade executed on (sdex, aquarius, phoenix, comet). */
+            source: string;
+            /** @description Canonical base asset id (native | CODE-ISSUER | C…). */
+            base_asset: string;
+            /** @description Canonical quote asset id. */
+            quote_asset: string;
+            /** @description Decimal string */
+            base_amount: string;
+            /** @description Decimal string */
+            quote_amount: string;
+            /**
+             * @description USD-equivalent volume as a decimal string, when the
+             *     aggregator valued the trade at ingest. ABSENT = unknown
+             *     (never zero-filled).
+             */
+            usd_volume?: string;
+            tx_hash: string;
+            ledger: number;
+            op_index: number;
+            /**
+             * @description Which side of the trade this address was recorded on.
+             * @enum {string}
+             */
+            role: "taker" | "maker";
+            /** @description The other recorded account, when the venue recorded one (sdex only, today). */
+            counterparty?: string;
+            /** @description Router contract attribution (migration 0025), when present. */
+            routed_via?: string;
+        };
+        /**
+         * @description An address's attributed historic trades, newest first,
+         *     keyset-paged. Always carries `note` — the taker/maker
+         *     attribution-scope contract applies even to an empty result.
+         */
+        AccountTrades: {
+            /** @description The G-strkey this listing is for. */
+            account: string;
+            trades: components["schemas"]["AccountTrade"][];
+            /** @description Opaque composite cursor (ts.ledger.tx_hash.op_index) for the next older page; absent on the last page. */
+            next_cursor?: string;
+            /**
+             * @description Always present. States which venues CAN attribute trades to
+             *     an account (sdex/aquarius/phoenix/comet via taker/maker) and
+             *     which structurally cannot (soroswap, off-chain CEX/FX) — an
+             *     empty page means "no attributed trades", not "never traded".
+             */
+            note: string;
         };
         /**
          * @description Dashboard view of an API key. Plaintext is NEVER on this

@@ -41,6 +41,12 @@ type (
 	AccountMovementsView     = explorerpkg.AccountMovementsView
 	AccountMovementEntry     = explorerpkg.AccountMovementEntry
 	AccountPositionsView     = explorerpkg.AccountPositionsView
+	AccountTradesView        = explorerpkg.AccountTradesView
+	AccountTradeEntry        = explorerpkg.AccountTradeEntry
+	AccountActivityView      = explorerpkg.AccountActivityView
+	OpTypeCountView          = explorerpkg.OpTypeCountView
+	DefiActionView           = explorerpkg.DefiActionView
+	BridgeTransfersView      = explorerpkg.BridgeTransfersView
 	PositionEntry            = explorerpkg.PositionEntry
 	PositionLastActivity     = explorerpkg.PositionLastActivity
 	ContractEventView        = explorerpkg.ContractEventView
@@ -114,6 +120,8 @@ func explorerHandlerFor(s *Server, opts Options, logger *slog.Logger) *explorerp
 		PricingEnabled:     opts.Prices != nil,
 		SEP41Movements:     opts.SEP41Movements,
 		Positions:          opts.Positions,
+		Trades:             opts.AccountTrades,
+		Activity:           opts.AccountActivity,
 		PoolTokens:         opts.ProtocolPoolTokens,
 		LookupUSDPrice:     s.lookupUSDPrice,
 		IsKnownSAC:         s.isKnownSAC,
