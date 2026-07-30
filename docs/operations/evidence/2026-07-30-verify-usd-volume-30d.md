@@ -2,7 +2,7 @@
 title: verify-usd-volume — first 30-day production report (calibration input)
 captured: 2026-07-30 ~00:20Z on r1 (v0.21.4 ops binary)
 command: stellarindex-ops verify-usd-volume -config /etc/stellarindex.toml -days 30
-verdict: 🔵 current pipeline EXACT (7 consecutive clean days); 7,973 violations all bounded to the pre-2026-07-23 stamping era — historical re-stamp recommended, not an active bug
+verdict: ✅ FULLY CLEAN — current pipeline exact AND the historical era re-stamped 2026-07-30 (13.3M rows): all 66 formerly-dirty days re-verify at 0 violations
 ---
 
 # verify-usd-volume — 30-day production report
@@ -61,3 +61,29 @@ trends up.
   `stellarindex_{cex,onchain}_usd_volume_coverage_low` alerts' job,
   not this check's.
 - The pre-07-23 window is flagged, not yet fixed.
+
+## 2026-07-30 follow-up: historical re-stamp EXECUTED — 0 violations remain
+
+The recommended re-stamp ran the same night. Full-history day-sweep first
+mapped the true dirty era: **[2026-05-12, 2026-07-22], 66 dirty days,
+24,396 violating group-days** (not just the 30-day window above; 2026-05-01
+and earlier are clean). Every violation was one homogeneous class —
+`[base_pegged] sdex` with base `USDC-GA5Z…` — so tier 2b's identity
+(`usd_volume = base_amount / 10^7`, DEX classic decimals) applied as a
+scoped day-chunked SQL UPDATE is exactly the verifier's own `expected`,
+with no waterfall reimplementation (the single-entry peg list makes
+quote-side precedence unreachable for these rows).
+
+Result: **13,308,993 rows re-stamped across 72 days; acceptance sweep of
+all 66 formerly-dirty days = 0 exact-tier violations** (`/root/restamp-sql.log`).
+
+Route not taken, for the record: `ch-rebuild -sources sdex -sdex` is the
+general-purpose correction (derive_generation upsert) and was tried first,
+but measured ~47 h for this span (620 rows/s upserting into the
+compressed-chunk era) — and taught three operational lessons: the sdex op
+read OOMs the 10 GiB client pin above ~50k-ledger windows (tx-set then
+join); failed `run-heavy-job.sh` runs can leave stale locks that silently
+SKIP a relaunched window (use unique job names per attempt); and DML on
+compressed Timescale chunks needs
+`SET timescaledb.max_tuples_decompressed_per_dml_transaction = 0`
+per-session (default cap 100k tuples, a single day needed 265k).

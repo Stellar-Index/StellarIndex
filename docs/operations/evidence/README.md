@@ -25,7 +25,7 @@ were ever produced until now).
 | Prices vs independent references | [2026-07-29-price-divergence.md](2026-07-29-price-divergence.md) | ✅ 22/22 clear across 5 references (worst −0.55%); top-50 broadening needs the CG Pro key [OP] | 2026-07-29 |
 | re-derive determinism | [2026-07-29-rederive-determinism.md](2026-07-29-rederive-determinism.md) | ✅ byte-identical (phoenix 50k-ledger window, 239 rows, same md5) | 2026-07-29 |
 | SEV-1/2 paging drill + rollback rehearsal | — not yet filed | ⏳ blocked on paging being wired (Ash item #1) | — |
-| verify-usd-volume calibration | [2026-07-30-verify-usd-volume-30d.md](2026-07-30-verify-usd-volume-30d.md) | ✅ current pipeline EXACT (7 clean days); 7,973 violations bounded to pre-2026-07-23 stamping (re-stamp recommended); estimated-tier spread measured → keep coverage alerts, no sum threshold | 2026-07-30 |
+| verify-usd-volume calibration | [2026-07-30-verify-usd-volume-30d.md](2026-07-30-verify-usd-volume-30d.md) | ✅ **FULLY CLEAN** — pipeline exact + historical era re-stamped (13.3M rows, 66/66 dirty days → 0 violations); estimated-tier spread measured → keep coverage alerts, no sum threshold | 2026-07-30 |
 
 Gaps are listed deliberately — an index that only shows what exists
 reads as "done" when it is not.
