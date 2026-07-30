@@ -131,6 +131,22 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-30 ~15:30Z — 🔬 **Ash's GDVJM report root-caused + fixed in
+  code: the account-history sourced arm was a 6-second bloom probe.**
+  The account has only 328 ops — the cost was the READ SHAPE, not the
+  account: `source_account = ?` bloom-probes the whole 23B/34B-row
+  table (6.17s) while the participant arm is PK (0.056s). Fix =
+  `stellar.ops_by_source` slim projection (ttl_live_until class; MVs
+  from BOTH operations + transactions with a sentinel op_index so
+  op-source overrides stay exact) — both arms now PK reads, fail-loud
+  without the table (16e9a03c). **Step-1 DDL + MVs applied on r1 at
+  tip 63,718,785** (live capture running); Step-2 windowed backfills
+  queue behind the replay. ALSO: address-intelligence build delegated
+  (agent, worktree): /v1/accounts/{g}/trades (565.5M trades already
+  carry source_account, 99.9998%) + /v1/accounts/{g}/activity
+  (segmented op/DeFi/bridge breakdown) + explorer UI — Ash's "see
+  everything every address has been doing" directive.
+
 - 2026-07-30 ~14:40Z — 🔧 **k6/AC2 path unblocked; run queued behind the
   replay.** The GH k6-weekly workflow had failed SILENTLY since the org
   migration ate its secrets; restored the load key (freshly minted
