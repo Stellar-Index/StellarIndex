@@ -35259,6 +35259,472 @@
                   }
                 }
               ]
+            },
+            {
+              "name": "trades",
+              "description": "",
+              "item": [
+                {
+                  "name": "The address's historic trades (taker or maker side), newest first.",
+                  "request": {
+                    "name": "The address's historic trades (taker or maker side), newest first.",
+                    "description": {
+                      "content": "Per-address historic trades out of the served-tier `trades`\nhypertable, newest first, keyset-paged with `?cursor=<opaque>`\n(echo back `next_cursor`); the cursor is the composite\n`(ts, ledger, tx_hash, op_index)`.\n\nATTRIBUTION SCOPE (see the always-present `note`): the trades\ntable attributes accounts via its taker/maker columns — `taker`\nis the acting account (the op/tx source for sdex; the user\naddress for aquarius, phoenix, comet), `maker` is the resting\nsdex offer owner. Soroswap swaps do not record the acting\naccount and off-chain CEX/FX trades carry no Stellar account,\nso neither can appear here; an empty page therefore means \"no\nATTRIBUTED trades\", not \"this address never traded anywhere\".\n\nAmounts are raw integer amounts at each asset's own on-chain\nscale, as decimal strings (ADR-0003). There is deliberately no\nprice field: the table stores no price and deriving one needs\nper-asset decimals. `usd_volume` is present only when the\naggregator valued the trade at ingest time — absent means\n\"unknown\", never zero.\n",
+                      "type": "text/plain"
+                    },
+                    "url": {
+                      "path": [
+                        "accounts",
+                        ":g_strkey",
+                        "trades"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Maximum rows to return (1-200, default 50). Out-of-range values return 400.",
+                            "type": "text/plain"
+                          },
+                          "key": "limit",
+                          "value": "50"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Opaque keyset cursor from a prior response's next_cursor.",
+                            "type": "text/plain"
+                          },
+                          "key": "cursor",
+                          "value": "<string>"
+                        }
+                      ],
+                      "variable": [
+                        {
+                          "type": "any",
+                          "value": "<string>",
+                          "key": "g_strkey",
+                          "disabled": false,
+                          "description": {
+                            "content": "(Required) G-strkey account id.",
+                            "type": "text/plain"
+                          }
+                        }
+                      ]
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {},
+                    "auth": null
+                  },
+                  "response": [
+                    {
+                      "name": "The account's attributed trades.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "accounts",
+                            ":g_strkey",
+                            "trades"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Maximum rows to return (1-200, default 50). Out-of-range values return 400.",
+                                "type": "text/plain"
+                              },
+                              "key": "limit",
+                              "value": "50"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Opaque keyset cursor from a prior response's next_cursor.",
+                                "type": "text/plain"
+                              },
+                              "key": "cursor",
+                              "value": "<string>"
+                            }
+                          ],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) G-strkey account id.",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<string>",
+                              "key": "g_strkey"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/json"
+                          }
+                        ],
+                        "method": "GET",
+                        "body": {}
+                      },
+                      "status": "OK",
+                      "code": 200,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/json"
+                        }
+                      ],
+                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"trades\": [\n      {\n        \"ts\": \"<dateTime>\",\n        \"source\": \"<string>\",\n        \"base_asset\": \"<string>\",\n        \"quote_asset\": \"<string>\",\n        \"base_amount\": \"<string>\",\n        \"quote_amount\": \"<string>\",\n        \"tx_hash\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"role\": \"maker\",\n        \"usd_volume\": \"<string>\",\n        \"counterparty\": \"<string>\",\n        \"routed_via\": \"<string>\"\n      },\n      {\n        \"ts\": \"<dateTime>\",\n        \"source\": \"<string>\",\n        \"base_asset\": \"<string>\",\n        \"quote_asset\": \"<string>\",\n        \"base_amount\": \"<string>\",\n        \"quote_amount\": \"<string>\",\n        \"tx_hash\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"role\": \"taker\",\n        \"usd_volume\": \"<string>\",\n        \"counterparty\": \"<string>\",\n        \"routed_via\": \"<string>\"\n      }\n    ],\n    \"note\": \"<string>\",\n    \"next_cursor\": \"<string>\"\n  }\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "Client-supplied parameters didn't validate.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "accounts",
+                            ":g_strkey",
+                            "trades"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Maximum rows to return (1-200, default 50). Out-of-range values return 400.",
+                                "type": "text/plain"
+                              },
+                              "key": "limit",
+                              "value": "50"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Opaque keyset cursor from a prior response's next_cursor.",
+                                "type": "text/plain"
+                              },
+                              "key": "cursor",
+                              "value": "<string>"
+                            }
+                          ],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) G-strkey account id.",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<string>",
+                              "key": "g_strkey"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          }
+                        ],
+                        "method": "GET",
+                        "body": {}
+                      },
+                      "status": "Bad Request",
+                      "code": 400,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "accounts",
+                            ":g_strkey",
+                            "trades"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Maximum rows to return (1-200, default 50). Out-of-range values return 400.",
+                                "type": "text/plain"
+                              },
+                              "key": "limit",
+                              "value": "50"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Opaque keyset cursor from a prior response's next_cursor.",
+                                "type": "text/plain"
+                              },
+                              "key": "cursor",
+                              "value": "<string>"
+                            }
+                          ],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) G-strkey account id.",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<string>",
+                              "key": "g_strkey"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          }
+                        ],
+                        "method": "GET",
+                        "body": {}
+                      },
+                      "status": "Service Unavailable",
+                      "code": 503,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    }
+                  ],
+                  "event": [],
+                  "protocolProfileBehavior": {
+                    "disableBodyPruning": true
+                  }
+                }
+              ]
+            },
+            {
+              "name": "activity",
+              "description": "",
+              "item": [
+                {
+                  "name": "Segmented \"what has this address been doing\" breakdown (all-time counts).",
+                  "request": {
+                    "name": "Segmented \"what has this address been doing\" breakdown (all-time counts).",
+                    "description": {
+                      "content": "One aggregate object per address: all-time per-op-type operation\ncounts (sourced + participant, from the certified ClickHouse\nlake), attributed-trade total, per-(protocol, action) DeFi event\ncounts, and bridge-transfer counts (Postgres served tier).\n\nCACHING: every segment is a whole-history aggregate, so the\npayload is served stale-while-revalidate — an expired entry is\nserved immediately with `flags.stale: true` and its real `as_of`\nwhile one detached recompute runs; a never-computed address may\n503 its first request (retry lands warm). The envelope's `as_of`\nis the payload's computation time, not now.\n\nHONESTY CONTRACT: a segment that could not be read is ABSENT\nfrom the response and named in `coverage_note` — never\nzero-filled. `bridge_transfers.note` documents exactly how\nbridge rows attribute to an address (and which directions\nstructurally cannot).\n",
+                      "type": "text/plain"
+                    },
+                    "url": {
+                      "path": [
+                        "accounts",
+                        ":g_strkey",
+                        "activity"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [],
+                      "variable": [
+                        {
+                          "type": "any",
+                          "value": "<string>",
+                          "key": "g_strkey",
+                          "disabled": false,
+                          "description": {
+                            "content": "(Required) G-strkey account id.",
+                            "type": "text/plain"
+                          }
+                        }
+                      ]
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {},
+                    "auth": null
+                  },
+                  "response": [
+                    {
+                      "name": "The account's segmented activity breakdown.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "accounts",
+                            ":g_strkey",
+                            "activity"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) G-strkey account id.",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<string>",
+                              "key": "g_strkey"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/json"
+                          }
+                        ],
+                        "method": "GET",
+                        "body": {}
+                      },
+                      "status": "OK",
+                      "code": 200,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/json"
+                        }
+                      ],
+                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"ops_by_type\": [\n      {\n        \"op_type\": \"<string>\",\n        \"count\": \"<long>\"\n      },\n      {\n        \"op_type\": \"<string>\",\n        \"count\": \"<long>\"\n      }\n    ],\n    \"trades_total\": \"<long>\",\n    \"defi_actions\": [\n      {\n        \"protocol\": \"<string>\",\n        \"action\": \"<string>\",\n        \"count\": \"<long>\"\n      },\n      {\n        \"protocol\": \"<string>\",\n        \"action\": \"<string>\",\n        \"count\": \"<long>\"\n      }\n    ],\n    \"bridge_transfers\": {\n      \"rozo_outbound_payments\": \"<long>\",\n      \"rozo_inbound_payments\": \"<long>\",\n      \"cctp_outbound_burns\": \"<long>\",\n      \"cctp_inbound_mints\": \"<long>\",\n      \"note\": \"<string>\"\n    },\n    \"coverage_note\": \"<string>\"\n  }\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "Client-supplied parameters didn't validate.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "accounts",
+                            ":g_strkey",
+                            "activity"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) G-strkey account id.",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<string>",
+                              "key": "g_strkey"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          }
+                        ],
+                        "method": "GET",
+                        "body": {}
+                      },
+                      "status": "Bad Request",
+                      "code": 400,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "accounts",
+                            ":g_strkey",
+                            "activity"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) G-strkey account id.",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<string>",
+                              "key": "g_strkey"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          }
+                        ],
+                        "method": "GET",
+                        "body": {}
+                      },
+                      "status": "Service Unavailable",
+                      "code": 503,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    }
+                  ],
+                  "event": [],
+                  "protocolProfileBehavior": {
+                    "disableBodyPruning": true
+                  }
+                }
+              ]
             }
           ]
         }
@@ -35347,7 +35813,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"data\": {\n    \"query\": \"<string>\",\n    \"kind\": \"unknown\",\n    \"canonical\": \"<string>\",\n    \"href\": \"<string>\",\n    \"supported\": \"<boolean>\",\n    \"note\": \"<string>\"\n  }\n}",
+              "body": "{\n  \"data\": {\n    \"query\": \"<string>\",\n    \"kind\": \"transaction\",\n    \"canonical\": \"<string>\",\n    \"href\": \"<string>\",\n    \"supported\": \"<boolean>\",\n    \"note\": \"<string>\"\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
