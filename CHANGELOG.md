@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.21.7] — 2026-07-30
+
 ### Fixed
 - **Soroswap trades now carry their trader (`taker`) — and a replay
   backfills all history.** `SwapEvent.to` (the swap recipient) is
