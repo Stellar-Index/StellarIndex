@@ -23,8 +23,22 @@ const LineChart = dynamic(
 );
 
 export interface ChartPoint {
-  date: string; // YYYY-MM-DD
+  date: string; // YYYY-MM-DD, or YYYY-MM-DDTHH:MM for hourly (24h-window) series
   value: number;
+}
+
+// chartPointTime — tolerant date → unix-seconds parse shared by the daily
+// ("YYYY-MM-DD") and hourly ("YYYY-MM-DDTHH:MM", the bespoke 24h-window
+// grain) point shapes. Non-parsable input → 0 so the chart stays continuous.
+function chartPointTime(date: string): number {
+  const iso =
+    date.length === 10
+      ? `${date}T00:00:00Z`
+      : date.length === 16
+        ? `${date}:00Z`
+        : date;
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : 0;
 }
 
 export type ChartTone = 'emerald' | 'brand' | 'violet' | 'amber' | 'indigo';
@@ -33,6 +47,7 @@ export function TimeSeriesChart({
   points,
   label,
   unit,
+  timeVisible,
 }: {
   /** The series to plot; `value` is already a JS number (geometry only). */
   points: ChartPoint[];
@@ -40,6 +55,8 @@ export function TimeSeriesChart({
   label: string;
   /** Optional unit appended to the peak/avg figures (e.g. "USD", "events"). */
   unit?: string;
+  /** Show time-of-day on the x-axis (hourly 24h-window series). */
+  timeVisible?: boolean;
   /** Palette key — accepted for call-site compatibility; tone now derives
    *  from the series trend (up green / down red) like every other chart. */
   tone?: ChartTone;
@@ -50,7 +67,7 @@ export function TimeSeriesChart({
   const linePoints = useMemo(
     () =>
       points.map((p) => ({
-        time: Math.floor(Date.parse(`${p.date}T00:00:00Z`) / 1000),
+        time: chartPointTime(p.date),
         value: p.value,
       })),
     [points],
@@ -97,7 +114,12 @@ export function TimeSeriesChart({
           </span>
         </span>
       </div>
-      <LineChart data={linePoints} height={224} ariaLabel={ariaLabel} />
+      <LineChart
+        data={linePoints}
+        height={224}
+        ariaLabel={ariaLabel}
+        timeVisible={timeVisible}
+      />
     </div>
   );
 }

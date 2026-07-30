@@ -2,13 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-import {
-  BridgeShowcase,
-  flowLines,
-  perChainLines,
-  donutSlices,
-  chainColor,
-} from './BridgeShowcase';
+import { flowLines, perChainLines, donutSlices, chainColor } from './BridgeShowcase';
+import { BespokeSection } from './BespokeSection';
 import type { Bespoke, BespokeBreakdown } from './BespokeSection';
 
 vi.mock('@/api/client', async () => {
@@ -134,11 +129,18 @@ const rozoBespoke: Bespoke = {
   ],
 };
 
+// The bridge suite renders through BespokeSection: the 24h/7d/30d/90d
+// pills + the ?days= refetch live at section level (lifted 2026-07-30) and
+// BridgeShowcase consumes the section's window as props.
 function renderIt(name: string, initial: Bespoke) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <BridgeShowcase name={name} initial={initial} source={asExample(`/v1/protocols/${name}`)} />
+      <BespokeSection
+        bespoke={initial}
+        name={name}
+        source={asExample(`/v1/protocols/${name}`)}
+      />
     </QueryClientProvider>,
   );
 }
