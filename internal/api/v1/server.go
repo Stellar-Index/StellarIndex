@@ -708,6 +708,21 @@ type Options struct {
 	// roster pair-label work already wired.
 	Positions explorerpkg.PositionsReader
 
+	// AccountTrades, when non-nil, backs GET /v1/accounts/{g}/trades —
+	// the per-address historic-trades listing over the Postgres
+	// `trades` hypertable (taker/maker attribution — see
+	// timescale/account_trades.go for what the table can and cannot
+	// attribute). timescale.Store satisfies it. Nil 503s the endpoint.
+	AccountTrades explorerpkg.TradesReader
+
+	// AccountActivity, when non-nil, backs the Postgres segments of
+	// GET /v1/accounts/{g}/activity (trades_total / defi_actions /
+	// bridge_transfers); ops_by_type reads the ClickHouse lake via
+	// Explorer. timescale.Store satisfies it. Nil degrades those
+	// segments with an honest coverage_note; the endpoint 503s only
+	// when Explorer is ALSO nil.
+	AccountActivity explorerpkg.ActivityReader
+
 	// FXHistory, when non-nil, lets /v1/chart serve fiat:fiat pairs
 	// from the fx_quotes hypertable for ranges beyond 7d. Leave nil
 	// to keep /v1/chart fiat:fiat in 7d-only mode.
@@ -1467,6 +1482,8 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/operations", s.explorerHandler.AccountOperations)
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/movements", s.explorerHandler.AccountMovements)
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/positions", s.explorerHandler.AccountPositions)
+	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/trades", s.explorerHandler.AccountTrades)
+	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/activity", s.explorerHandler.AccountActivity)
 
 	s.mux.HandleFunc("GET /v1/incidents", s.handleIncidents)
 	s.mux.HandleFunc("GET /v1/incidents.atom", s.handleIncidentsAtom)

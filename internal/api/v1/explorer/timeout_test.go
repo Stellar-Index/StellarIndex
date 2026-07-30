@@ -85,6 +85,11 @@ func (r *capReader) OperationTypeStats(ctx context.Context, _ uint32) ([]clickho
 	return nil, nil
 }
 
+func (r *capReader) AccountOperationTypeCounts(ctx context.Context, _ string) ([]clickhouse.OpTypeCount, error) {
+	r.probe.record(ctx)
+	return nil, nil
+}
+
 func (r *capReader) NetworkThroughput(ctx context.Context, _ int) ([]clickhouse.ThroughputBucket, error) {
 	r.probe.record(ctx)
 	return nil, nil

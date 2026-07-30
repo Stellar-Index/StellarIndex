@@ -846,6 +846,69 @@ func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, 
 	return scanOps(rows)
 }
 
+// accountOpTypeCountsQuery is AccountOperationTypeCounts' SQL.
+//
+// The SAME two index-friendly arms as accountOperationsQuery — sourced
+// via the source_account skip-index, participant via an account-prefixed
+// operation_participants lookup resolved on the operations PRIMARY KEY —
+// UNION'd, NOT `source_account = ? OR … IN (…)`: an OR with a subquery
+// defeats the source_account skip-index and full-scans the multi-billion-
+// row table (see accountTransactionsQuery's doc comment). The arms never
+// overlap (an op is sourced XOR has the account as a NON-source
+// participant — participants exclude the op's own source), so the outer
+// sum() over both arms counts every involving op exactly once.
+//
+// uniqExact over the 3-column primary key, not count(): stellar.operations
+// is ReplacingMergeTree(ingested_at), so a re-ingested op leaves an
+// un-merged duplicate PART until a background merge — a plain count()
+// would inflate per-type totals (the aggregate twin of the per-row
+// LIMIT 1 BY dedup accountOperationsQuery carries; FINAL is the wrong
+// tool here for the same O(table)-merge reason recentOperationsQuery
+// documents). uniqExact's state is bounded by the ACCOUNT's own op
+// count, and the explorerScanSettings external-spill pair converts a
+// whale account's aggregation state into a disk-backed success instead
+// of an OOM (the same posture as the contracts-directory GROUP BY).
+//
+// explorerScanSettings: arm 1 is a bloom-skip-index probe over the whole
+// operations table — granule-pruned but still scan-shaped, squarely in
+// the thread-fan-out memory class the pin bounds.
+const accountOpTypeCountsQuery = `SELECT op_type, toInt64(sum(c)) AS n FROM (
+		(SELECT op_type, uniqExact((ledger_seq, tx_index, op_index)) AS c
+		   FROM stellar.operations
+		  WHERE source_account = ?
+		  GROUP BY op_type)
+		UNION ALL
+		(SELECT op_type, uniqExact((ledger_seq, tx_index, op_index)) AS c
+		   FROM stellar.operations
+		  WHERE (ledger_seq, tx_index, op_index) IN (
+		        SELECT ledger_seq, tx_index, op_index FROM stellar.operation_participants WHERE account = ?)
+		  GROUP BY op_type)
+	) GROUP BY op_type ORDER BY n DESC` + explorerScanSettings
+
+// AccountOperationTypeCounts returns the all-time per-op-type counts of
+// operations INVOLVING an account — both those it sourced and those
+// where it's a non-source participant — sorted by count desc. The
+// aggregate variant of AccountOperations (same two arms, same coverage
+// caveat: participant-side counts track the participant-index capture +
+// backfill). Whole-history scan-shaped — callers run it under a
+// detached stale-while-revalidate budget, never a request deadline.
+func (r *ExplorerReader) AccountOperationTypeCounts(ctx context.Context, account string) ([]OpTypeCount, error) {
+	rows, err := r.conn.Query(ctx, accountOpTypeCountsQuery, account, account)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: account %s op-type counts: %w", account, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []OpTypeCount
+	for rows.Next() {
+		var c OpTypeCount
+		if err := rows.Scan(&c.OpType, &c.Count); err != nil {
+			return nil, fmt.Errorf("clickhouse: scan account op-type count: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // TransactionByHash looks up a single transaction by its hex hash.
 //
 // Fast path (perf-todo §4): when stellar.tx_hash_index exists, the hash

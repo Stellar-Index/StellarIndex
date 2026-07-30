@@ -1312,6 +1312,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		SEP41Transfers:       store,
 		SEP41Movements:       store,
 		Positions:            store,
+		AccountTrades:        store,
+		AccountActivity:      store,
 		Cursors:              store,
 		CoverageReader:       store,
 		CompletenessReader:   store,

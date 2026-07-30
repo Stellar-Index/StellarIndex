@@ -70,6 +70,10 @@ func (s *stubExplorerReader) OperationTypeStats(_ context.Context, _ uint32) ([]
 	return s.opTypeStats, s.err
 }
 
+func (s *stubExplorerReader) AccountOperationTypeCounts(_ context.Context, _ string) ([]clickhouse.OpTypeCount, error) {
+	return s.opTypeStats, s.err
+}
+
 func (s *stubExplorerReader) NetworkThroughput(_ context.Context, _ int) ([]clickhouse.ThroughputBucket, error) {
 	return s.throughput, s.err
 }
