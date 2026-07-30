@@ -77,60 +77,122 @@ func (s *Store) BuildProtocolBespoke(ctx context.Context, source, category strin
 	return nil, nil
 }
 
-// bespokeBridge builds the bridge (CCTP / Rozo) bespoke block from cctp_events:
-// total + daily cross-chain transfer volume and a by-destination-domain table.
-// Reference implementation for the per-category pattern.
+// bespokeBridge builds the bridge bespoke block: DIRECTIONAL (in/out)
+// USDC-denominated flow volumes, daily series, and per-domain tables.
+//
+// Amount scales are per-bridge and DIFFERENT — both ground-truthed
+// 2026-07-30 against the USDC SAC leg of a real tx (the external-scaling
+// trap class, CLAUDE.md):
+//   - cctp_events.amount is CANONICAL 6-decimal USDC (event 172,719,938 vs
+//     SAC mint 1,727,199,380 — exactly 10× — matching the on-chain
+//     token_decimal_config {canonical:6, local:7} fixture);
+//   - rozo_events.amount is LOCAL 7-decimal SAC stroops (event and SAC
+//     transfer byte-identical: 2,500,000).
+//
+// Values are rendered as decimal USDC strings via exact NUMERIC division —
+// never floats (ADR-0003).
 func (s *Store) bespokeBridge(ctx context.Context, source string, windowDays int) (*BespokeBlock, error) {
-	// Only cctp_events carries the domain + amount shape today; rozo_events is
-	// empty. Keep this scoped to cctp; other bridges omit the block.
-	if source != "cctp" {
-		return nil, nil
-	}
 	since := fmt.Sprintf("%d days", windowDays)
+	switch source {
+	case "cctp":
+		return s.bespokeBridgeCCTP(ctx, since, windowDays)
+	case "rozo":
+		return s.bespokeBridgeRozo(ctx, since, windowDays)
+	}
+	return nil, nil
+}
+
+// bespokeBridgeCCTP — direction map: deposit_for_burn = OUTBOUND (Stellar
+// USDC burned for a remote mint); mint_and_withdraw + mint_and_forward =
+// INBOUND (remote burn minted on Stellar). message_sent/received and the
+// admin/config events carry no value and are excluded from flow sums.
+func (s *Store) bespokeBridgeCCTP(ctx context.Context, since string, windowDays int) (*BespokeBlock, error) {
 	blk := &BespokeBlock{
 		Category: "bridge",
 		Notes: []string{
-			"Volume is the summed CCTP event amount (USDC, 6-decimal units) over the window; deposit_for_burn + mint_and_withdraw legs both count.",
+			"Flows are USDC (canonical 6-decimal event amounts, verified against the SAC leg on-chain). Inbound = mint_and_withdraw + mint_and_forward; outbound = deposit_for_burn.",
 		},
 	}
-
-	// KPIs: total volume + transfer count over the window.
-	var totalVol, txCount string
+	var inVol, inCount, outVol, outCount string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT COALESCE(sum(amount),0)::text, count(*)::text
+		SELECT
+		  COALESCE(sum(amount) FILTER (WHERE event_type IN ('mint_and_withdraw','mint_and_forward')) / 1000000::numeric, 0)::numeric(24,6)::text,
+		  (count(*) FILTER (WHERE event_type IN ('mint_and_withdraw','mint_and_forward')))::text,
+		  COALESCE(sum(amount) FILTER (WHERE event_type = 'deposit_for_burn') / 1000000::numeric, 0)::numeric(24,6)::text,
+		  (count(*) FILTER (WHERE event_type = 'deposit_for_burn'))::text
 		FROM cctp_events WHERE ts > now() - $1::interval AND amount IS NOT NULL`, since).
-		Scan(&totalVol, &txCount)
+		Scan(&inVol, &inCount, &outVol, &outCount)
 	if err != nil {
-		return nil, fmt.Errorf("timescale: bespokeBridge KPIs: %w", err)
+		return nil, fmt.Errorf("timescale: bespokeBridge cctp KPIs: %w", err)
 	}
 	blk.KPIs = append(blk.KPIs,
-		BespokeKPI{Label: fmt.Sprintf("Transfer volume (%dd)", windowDays), Value: totalVol, Unit: "USDC-units", Hint: "summed event amount in 6-decimal USDC units"},
-		BespokeKPI{Label: fmt.Sprintf("Transfers (%dd)", windowDays), Value: txCount},
+		BespokeKPI{Label: fmt.Sprintf("Inbound volume (%dd)", windowDays), Value: inVol, Unit: "USDC", Hint: "USDC minted on Stellar from remote burns (mint_and_withdraw + mint_and_forward)"},
+		BespokeKPI{Label: fmt.Sprintf("Outbound volume (%dd)", windowDays), Value: outVol, Unit: "USDC", Hint: "Stellar USDC burned for remote mints (deposit_for_burn)"},
+		BespokeKPI{Label: fmt.Sprintf("Transfers in / out (%dd)", windowDays), Value: inCount + " / " + outCount},
 	)
 
-	// Daily volume series.
-	series, err := s.scanDailySeries(ctx, `
-		SELECT to_char(date_trunc('day', ts), 'YYYY-MM-DD'), COALESCE(sum(amount),0)::text
-		FROM cctp_events WHERE ts > now() - $1::interval AND amount IS NOT NULL
-		GROUP BY 1 ORDER BY 1 ASC`, since)
-	if err != nil {
-		return nil, err
-	}
-	if len(series) > 0 {
-		blk.Series = append(blk.Series, BespokeSeries{Name: "Daily transfer volume", Unit: "USDC-units", Points: series})
+	for _, dir := range []struct{ name, filter string }{
+		{"Daily inbound (USDC)", `event_type IN ('mint_and_withdraw','mint_and_forward')`},
+		{"Daily outbound (USDC)", `event_type = 'deposit_for_burn'`},
+	} {
+		series, err := s.scanDailySeries(ctx, `
+			SELECT to_char(date_trunc('day', ts), 'YYYY-MM-DD'), (COALESCE(sum(amount),0) / 1000000::numeric)::numeric(24,6)::text
+			FROM cctp_events WHERE ts > now() - $1::interval AND amount IS NOT NULL AND `+dir.filter+`
+			GROUP BY 1 ORDER BY 1 ASC`, since)
+		if err != nil {
+			return nil, err
+		}
+		if len(series) > 0 {
+			blk.Series = append(blk.Series, BespokeSeries{Name: dir.name, Unit: "USDC", Points: series})
+		}
 	}
 
-	// By counterparty domain.
 	tbl, err := s.scanTable(ctx,
-		BespokeTable{Title: "By counterparty domain", Columns: []string{"Domain", "Transfers", "Volume (USDC-units)"}},
-		`SELECT COALESCE(counterparty_domain::text,'—'), count(*)::text, COALESCE(sum(amount),0)::text
-		   FROM cctp_events WHERE ts > now() - $1::interval
+		BespokeTable{Title: "By counterparty domain", Columns: []string{"Domain", "Transfers", "Volume (USDC)"}},
+		`SELECT COALESCE(counterparty_domain::text,'—'), count(*)::text, (COALESCE(sum(amount),0) / 1000000::numeric)::numeric(24,6)::text
+		   FROM cctp_events WHERE ts > now() - $1::interval AND amount IS NOT NULL
 		  GROUP BY counterparty_domain ORDER BY count(*) DESC LIMIT 25`, since)
 	if err != nil {
 		return nil, err
 	}
 	if len(tbl.Rows) > 0 {
 		blk.Tables = append(blk.Tables, tbl)
+	}
+	return blk, nil
+}
+
+// bespokeBridgeRozo — payment settlement volume. rozo_events.amount is
+// 7-decimal SAC stroops (see bespokeBridge doc); payment_event rows carry
+// the value, flush_event rows are admin sweeps of already-counted funds
+// and are excluded to avoid double-counting.
+func (s *Store) bespokeBridgeRozo(ctx context.Context, since string, windowDays int) (*BespokeBlock, error) {
+	blk := &BespokeBlock{
+		Category: "bridge",
+		Notes: []string{
+			"Volume is USDC settled through Rozo payment events (7-decimal SAC amounts, verified against the SAC transfer leg on-chain). Admin flush sweeps are excluded — they re-move already-counted funds.",
+		},
+	}
+	var vol, cnt string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT (COALESCE(sum(amount),0) / 10000000::numeric)::numeric(24,7)::text, count(*)::text
+		FROM rozo_events WHERE ts > now() - $1::interval AND amount IS NOT NULL AND event_type = 'payment'`, since).
+		Scan(&vol, &cnt)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: bespokeBridge rozo KPIs: %w", err)
+	}
+	blk.KPIs = append(blk.KPIs,
+		BespokeKPI{Label: fmt.Sprintf("Settled volume (%dd)", windowDays), Value: vol, Unit: "USDC", Hint: "summed payment_event amounts settled on Stellar"},
+		BespokeKPI{Label: fmt.Sprintf("Payments (%dd)", windowDays), Value: cnt},
+	)
+	series, err := s.scanDailySeries(ctx, `
+		SELECT to_char(date_trunc('day', ts), 'YYYY-MM-DD'), (COALESCE(sum(amount),0) / 10000000::numeric)::numeric(24,7)::text
+		FROM rozo_events WHERE ts > now() - $1::interval AND amount IS NOT NULL AND event_type = 'payment'
+		GROUP BY 1 ORDER BY 1 ASC`, since)
+	if err != nil {
+		return nil, err
+	}
+	if len(series) > 0 {
+		blk.Series = append(blk.Series, BespokeSeries{Name: "Daily settled volume (USDC)", Unit: "USDC", Points: series})
 	}
 	return blk, nil
 }

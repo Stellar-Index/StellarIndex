@@ -15,6 +15,20 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Bridge pages show USDC-denominated in/out FLOWS, not just counts.**
+  `/v1/protocols/cctp` gains directional volumes (inbound = mints from
+  remote burns, outbound = deposit_for_burn), daily in/out series, and
+  per-domain volumes; `/v1/protocols/rozo` gains its first bespoke
+  block (settled payment volume + daily series; admin flush sweeps
+  excluded to avoid double-counting). Amount scales ground-truthed
+  on-chain against the USDC SAC leg of real transactions — and they
+  DIFFER: CCTP events are canonical 6-decimal, Rozo events are local
+  7-decimal SAC stroops (the documented external-scaling trap class).
+  Exact NUMERIC division end-to-end. Registry genesis labels corrected
+  to lake-derived exact first events (cctp 62,403,000→62,146,641 —
+  the re-projected head; rozo 62,403,000→60,829,397).
+
 ### Fixed
 - **Unknown tx hashes no longer trigger a 10.5B-row scan.**
   `TransactionByHash` fell through to the full-table bloom probe on

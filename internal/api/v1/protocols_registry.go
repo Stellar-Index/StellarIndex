@@ -158,17 +158,23 @@ var protocolRegistry = []ProtocolMeta{
 		VerificationPage: "docs/protocols/defindex.md",
 	},
 	{
-		Name:          "cctp",
-		Category:      "bridge",
-		Description:   "Circle CCTP v2 — canonical burn-and-mint USDC bridging between Stellar and other chains.",
-		GenesisLedger: 62_403_000,
+		Name:        "cctp",
+		Category:    "bridge",
+		Description: "Circle CCTP v2 — canonical burn-and-mint USDC bridging between Stellar and other chains.",
+		// Lake-derived exact genesis (2026-07-30): the MessageTransmitter's
+		// first on-chain event. The old 62_403_000 was the ingestion-config
+		// floor, ~121k ledgers late — the head has since been re-projected
+		// from here (density-genesis precision rule).
+		GenesisLedger: 62_146_641,
 		EventKinds:    []string{"cctp.event"},
 	},
 	{
-		Name:          "rozo",
-		Category:      "bridge",
-		Description:   "Rozo — intent-bridge payment settlement on Stellar (v1 Payment contract).",
-		GenesisLedger: 62_403_000,
+		Name:        "rozo",
+		Category:    "bridge",
+		Description: "Rozo — intent-bridge payment settlement on Stellar (v1 Payment contract).",
+		// Lake-derived exact genesis (2026-07-30): first event across all
+		// four Rozo contracts; rozo_events is projected to exactly here.
+		GenesisLedger: 60_829_397,
 		EventKinds:    []string{"rozo.event"},
 	},
 	{
