@@ -42,6 +42,18 @@ type AccountBalanceSnapshot struct {
 // zero rows — outside our coverage, not a zero balance (a real
 // zero-balance account still has at least one 'created'/'updated'
 // row).
+//
+// SHAPE NOTE (2026-07-30 account-filter class audit): this is the ONE
+// remaining `account_id = ?` bloom-shaped filter in the package, and it
+// is deliberate — this function backs ONLY the `reconcile-balances`
+// operator diagnostic (internal/ops/chops), never a serving path, and
+// its aggregate over the account's FULL change history in the append
+// log is the tool's whole purpose (a key_xdr point read against
+// ledger_entries_current would answer a different question). Every
+// SERVING account read rides a primary-key shape: key_xdr point/prefix
+// (account state), the table's own sort key (account_movements), or
+// the ops_by_source / operation_participants projections (history).
+// Do not copy this filter shape into a handler path.
 func QueryAccountBalance(ctx context.Context, addr, accountID string) (snap AccountBalanceSnapshot, found bool, err error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
