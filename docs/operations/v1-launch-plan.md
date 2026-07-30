@@ -131,6 +131,22 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-30 ~02:20Z — ✅ **usd_volume history FULLY CLEAN: 13.3M rows
+  re-stamped, all 66 dirty days re-verify at 0 violations** (evidence
+  updated in `2026-07-30-verify-usd-volume-30d.md`). The path found its
+  final form after three course-corrections: the general
+  `ch-rebuild -sdex` route measured ~47h (620 rows/s into compressed
+  chunks) and was killed for a scoped SQL identity UPDATE — valid
+  because the day-sweep proved every violation is ONE homogeneous
+  class ([base_pegged] sdex, USDC base → `base_amount/1e7`, the
+  verifier's own `expected`). Ops lessons banked in the artifact:
+  sdex ch-rebuild windows OOM the 10 GiB client pin above ~50k
+  ledgers; failed run-heavy-job runs leave stale locks that silently
+  SKIP relaunched windows (unique job names per attempt); compressed-
+  chunk DML needs the per-session decompression-cap raise. **Every
+  data-quality item in the plan is now closed**; the only remaining
+  loop-executable work is the v0.21.5 chain, on Ash's word.
+
 - 2026-07-30 ~02:30Z — ✅ **verify-usd-volume CALIBRATED — the prove-it
   battery's last unfiled non-paging row** (evidence:
   `evidence/2026-07-30-verify-usd-volume-30d.md`). First 30-day

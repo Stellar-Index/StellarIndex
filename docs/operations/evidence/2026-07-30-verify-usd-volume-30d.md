@@ -60,7 +60,7 @@ trends up.
 - Coverage (rows with NULL usd_volume) is the standing
   `stellarindex_{cex,onchain}_usd_volume_coverage_low` alerts' job,
   not this check's.
-- The pre-07-23 window is flagged, not yet fixed.
+- ~~The pre-07-23 window is flagged, not yet fixed.~~ FIXED — see the follow-up below.
 
 ## 2026-07-30 follow-up: historical re-stamp EXECUTED — 0 violations remain
 
