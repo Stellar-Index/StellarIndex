@@ -113,11 +113,12 @@ type ExplorerReader interface {
 	AccountTransactions(ctx context.Context, account string, limit int, cur clickhouse.ExplorerCursor) ([]clickhouse.TxSummary, error)
 	AccountOperations(ctx context.Context, account string, limit int, cur clickhouse.ExplorerCursor) ([]clickhouse.OpRow, error)
 	AccountState(ctx context.Context, account string) (clickhouse.AccountState, error)
-	// AccountStateCached serves account state from a bounded TTL cache,
-	// falling through to a live read on a miss. Detail handlers should use
-	// this (site-audit follow-up): the underlying scan of the 4.2B-row
-	// current-state table contends into 8s under concurrent detail load.
-	AccountStateCached(ctx context.Context, account string) (clickhouse.AccountState, error)
+	// AccountStateCached serves account state from a bounded TTL cache;
+	// a cold miss waits on a DETACHED fill bounded by the caller's
+	// deadline, and an EXPIRED entry is served immediately with
+	// stale=true while one detached refresh runs (route-sweep
+	// 2026-07-30) — pair stale with flags.stale in the envelope.
+	AccountStateCached(ctx context.Context, account string) (clickhouse.AccountState, bool, error)
 	AssetHolders(ctx context.Context, asset string, limit int) ([]clickhouse.AssetHolder, int64, error)
 	AccountsByWealth(ctx context.Context, assets []string, prices []float64, limit int) ([]clickhouse.AccountWealth, error)
 	// AccountsByWealthCached serves the ranking from a background-refreshed
