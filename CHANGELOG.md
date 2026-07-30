@@ -16,6 +16,21 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **CCTP flow volumes no longer double-count: transfers are deduplicated
+  and `mint_and_forward` is excluded from sums.** Ground-truthed on r1
+  (2026-07-30, all 52,205 cctp_events rows): (1) rows decoded before
+  event_index landed (migration 0112) coexist with their re-derived
+  copies — 12,139 (tx, op, type) groups hold a legacy event_index-0 row
+  plus the true-index row with identical amounts — so every flow query
+  now collapses to one row per (tx_hash, op_index) transfer; (2) every
+  `mint_and_forward` op also emits `mint_and_withdraw` for the SAME
+  funds (0 forward-only ops), with the forward amount exactly 10× on
+  all 13,651 pairs — it restates the canonical 6-decimal value at the
+  local 7-decimal scale, so summing both inflated a forwarded transfer
+  11×. Inbound sums now use deduplicated `mint_and_withdraw` only.
+  Shape tests pin both rules. (The stale legacy rows themselves remain
+  in the table; queries are dedupe-safe regardless — an operator
+  cleanup can drop them independently.)
 - **Redstone subset attribution is order-preserving — the residual 170
   blind ledgers resolve.** The v0.21.5 full verify cut the blind class
   1,626 → 170; the residue was prices matching TWO candidates' medians
@@ -31,6 +46,24 @@ against.
   collision). Completeness flips at the post-deploy replay + verify.
 
 ### Added
+- **CCTP SDF-showcase analytics suite: where USDC comes from and where
+  it goes** (spec 1.15.0, additive). `/v1/protocols/cctp`'s bespoke
+  block gains a generic `breakdowns` field (named composition datasets
+  for donut rendering) carrying "Inflows by source chain" / "Outflows by
+  destination chain"; per-chain top-5 inbound + outbound time-series
+  ("Inbound · Base", …); an all-time daily "Cumulative net inflow"
+  series; all-time inbound/outbound/net KPIs plus unique depositor and
+  recipient counts; and a window-scoped "Largest transfers" table.
+  Source chains are attributed from the burn-side USDC token embedded in
+  each transfer's CCTP BurnMessage; destinations via Circle's public
+  domain registry — both maps verified against Circle's primary docs
+  (USDC contract addresses + domain list, 2026-07-30), including the
+  32-byte-address tails for Solana / Aptos / Starknet. Unrecognised
+  tokens/domains are labelled "Unverified (0x…)" / "Domain N" — never
+  guessed. The explorer's CCTP page renders the suite: side-by-side
+  source/destination donuts, per-chain multi-line charts, the headline
+  cumulative net-inflow chart, and largest transfers linking to
+  `/transactions/{hash}`, all reactive to the existing window pills.
 - **`/v1/protocols/{name}` accepts `?days=` (1/7/30/90, default 90) to
   window the bespoke analytics block** (spec 1.14.0, additive). Anything
   outside the whitelist is a 400 problem+json (never a silent clamp);
