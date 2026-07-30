@@ -109,17 +109,19 @@ var errAccountStateRefreshFailed = errors.New(
 // timeout again — a permanent 503 for exactly the accounts people look up.
 // Now the scan runs on its own bounded budget and outlives any caller that
 // gives up; the timed-out request 503s honestly and the retry lands warm.
-func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string) (AccountState, error) {
+func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string) (AccountState, bool, error) {
 	if st, ok, fresh := r.stateCache.get(account); ok {
 		if !fresh {
 			// Serve the STALE entry immediately while ONE detached
 			// refresh runs — old-but-real beats a 503, and for a whale
 			// account whose scan outruns the request budget this is the
 			// only way the route answers at all outside the short
-			// post-fill window (route-sweep 2026-07-30).
+			// post-fill window (route-sweep 2026-07-30). The stale bool
+			// lets the handler pair the serve with flags.stale, matching
+			// the wealth ranking's honesty contract.
 			r.refreshAccountState(account) //nolint:contextcheck // intentional detach — see refreshAccountState
 		}
-		return st, nil
+		return st, !fresh, nil
 	}
 	// Not single-flighted across accounts on purpose — distinct accounts
 	// genuinely need distinct scans. Only the exact-same-account burst is
@@ -128,11 +130,11 @@ func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string)
 	select {
 	case <-ch:
 		if st, ok, _ := r.stateCache.get(account); ok {
-			return st, nil
+			return st, false, nil
 		}
-		return AccountState{}, errAccountStateRefreshFailed
+		return AccountState{}, false, errAccountStateRefreshFailed
 	case <-ctx.Done():
-		return AccountState{}, ctx.Err()
+		return AccountState{}, false, ctx.Err()
 	}
 }
 

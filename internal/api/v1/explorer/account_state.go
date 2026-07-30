@@ -281,7 +281,7 @@ func (h *Handler) AccountState(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	st, err := h.Reader.AccountStateCached(ctx, g)
+	st, snapStale, err := h.Reader.AccountStateCached(ctx, g)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -324,7 +324,10 @@ func (h *Handler) AccountState(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
-	h.WriteJSON(w, out, stale)
+	// snapStale: the served state came from an expired cache entry while a
+	// detached refresh runs (whale-account stale-serve, route-sweep
+	// 2026-07-30) — surfaced on the same flags.stale the watermark uses.
+	h.WriteJSON(w, out, stale || snapStale)
 }
 
 // AssetHoldersView is the wire response for GET /v1/assets/{asset_id}/holders.

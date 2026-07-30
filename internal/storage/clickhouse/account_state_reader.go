@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"fmt"
 
@@ -143,19 +144,25 @@ func (r *ExplorerReader) AccountState(ctx context.Context, account string) (Acco
 	return st, nil
 }
 
-// accountTrustlinesQuery rides the idx_lecur_account_id bloom skip-index —
-// scan-shaped over the current-state table (account_id is not a sort-key
-// column), hence the explorerScanSettings pin: under the post-D3 part layout
-// the default-thread fan-out is the 40× memory trap, and this query runs on
-// the request path behind /v1/accounts/{g} (8s 503 class, route-sweep
-// 2026-07-29).
+// accountTrustlinesQuery is a PRIMARY-INDEX range read: an account's
+// trustline LedgerKeys share a fixed key_xdr prefix (accountEntryKeyPrefix),
+// so `key_xdr LIKE '<prefix>%'` prunes to the account's contiguous slice of
+// the (entry_type, key_xdr) sort order; the exact account_id equality closes
+// the prefix's one-byte residual. Measured on r1 (2026-07-30, whale
+// account): 5.18s via the old account_id bloom skip-index → 0.069s. The
+// scan-settings pin stays as a guard rail, not load-bearing tuning.
 const accountTrustlinesQuery = `SELECT asset, entry_xdr AS ex, balance AS bal
 		FROM stellar.ledger_entries_current FINAL
-		WHERE account_id = ? AND entry_type = 'trustline' AND change_type != 'removed'
+		WHERE entry_type = 'trustline' AND key_xdr LIKE ?
+		  AND account_id = ? AND change_type != 'removed'
 		ORDER BY bal DESC` + explorerScanSettings
 
 func (r *ExplorerReader) accountTrustlines(ctx context.Context, account string) ([]TrustlineState, error) {
-	rows, err := r.conn.Query(ctx, accountTrustlinesQuery, account)
+	prefix, err := accountEntryKeyPrefix(account, xdr.LedgerEntryTypeTrustline)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.conn.Query(ctx, accountTrustlinesQuery, prefix+"%", account)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: account trustlines: %w", err)
 	}
@@ -180,14 +187,20 @@ func (r *ExplorerReader) accountTrustlines(ctx context.Context, account string) 
 	return out, rows.Err()
 }
 
-// accountOffersQuery — same bloom-index scan shape + pin rationale as
-// accountTrustlinesQuery.
+// accountOffersQuery — same PK-prefix range shape + rationale as
+// accountTrustlinesQuery (offer LedgerKeys start with the seller's
+// AccountId after the discriminant).
 const accountOffersQuery = `SELECT entry_xdr AS ex
 		FROM stellar.ledger_entries_current FINAL
-		WHERE account_id = ? AND entry_type = 'offer' AND change_type != 'removed'` + explorerScanSettings
+		WHERE entry_type = 'offer' AND key_xdr LIKE ?
+		  AND account_id = ? AND change_type != 'removed'` + explorerScanSettings
 
 func (r *ExplorerReader) accountOffers(ctx context.Context, account string) ([]OfferState, error) {
-	rows, err := r.conn.Query(ctx, accountOffersQuery, account)
+	prefix, err := accountEntryKeyPrefix(account, xdr.LedgerEntryTypeOffer)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.conn.Query(ctx, accountOffersQuery, prefix+"%", account)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: account offers: %w", err)
 	}
@@ -455,4 +468,43 @@ func accountKeyXDR(gStrkey string) (string, error) {
 		return "", fmt.Errorf("clickhouse: marshal account key: %w", err)
 	}
 	return b64, nil
+}
+
+// accountEntryKeyPrefix returns a base64 STRING prefix that matches every
+// ledger_entries_current key_xdr of the given LedgerEntryType belonging to
+// the account — the PK-range form of "this account's trustlines/offers".
+//
+// Why it works: both LedgerKey shapes start
+// [type discriminant (4B)] [AccountId: key type (4B) + 32 raw key bytes],
+// so an account's entries of one type share a fixed 40-byte binary prefix
+// and are CONTIGUOUS under the table's ORDER BY (entry_type, key_xdr).
+// key_xdr is stored as base64 TEXT, and base64 is prefix-stable only at
+// 3-byte boundaries, so the prefix is cut at 39 bytes (52 base64 chars) —
+// one raw byte short of the full account. That residual ambiguity (a
+// neighbour key differing only in the last account byte) is closed by the
+// caller keeping its exact `account_id = ?` filter; the prefix's job is
+// only to turn the read into a primary-index range.
+//
+// Measured on r1 (2026-07-30, the route-sweep whale account): trustline
+// read 5.18s via the account_id bloom skip-index → 0.069s via this prefix
+// — the difference between /v1/accounts/{g} needing the whole
+// stale-serving apparatus and answering interactively.
+func accountEntryKeyPrefix(gStrkey string, entryType xdr.LedgerEntryType) (string, error) {
+	var aid xdr.AccountId
+	if err := aid.SetAddress(gStrkey); err != nil {
+		return "", fmt.Errorf("clickhouse: account key prefix %q: %w", gStrkey, err)
+	}
+	raw := make([]byte, 0, 40)
+	raw = append(raw,
+		byte(uint32(entryType)>>24), byte(uint32(entryType)>>16),
+		byte(uint32(entryType)>>8), byte(uint32(entryType)))
+	aidBytes, err := aid.MarshalBinary()
+	if err != nil {
+		return "", fmt.Errorf("clickhouse: marshal account id: %w", err)
+	}
+	raw = append(raw, aidBytes...)
+	if len(raw) < 39 {
+		return "", fmt.Errorf("clickhouse: account key prefix: unexpected %d-byte key head", len(raw))
+	}
+	return base64.StdEncoding.EncodeToString(raw[:39]), nil
 }

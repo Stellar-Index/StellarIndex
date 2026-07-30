@@ -302,7 +302,7 @@ func (s *Server) enrichIssuerFromAccountState(ctx context.Context, gStrkey strin
 	if s.explorer == nil {
 		return
 	}
-	st, err := s.explorer.AccountStateCached(ctx, gStrkey)
+	st, _, err := s.explorer.AccountStateCached(ctx, gStrkey)
 	if err != nil || !st.Exists {
 		return
 	}

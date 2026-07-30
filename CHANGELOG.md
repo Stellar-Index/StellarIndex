@@ -16,6 +16,19 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **Account trustline + offer reads are primary-index range reads — 75×
+  faster.** `/v1/accounts/{g}`'s trustline and offer queries rode the
+  `account_id` bloom skip-index (scan-shaped over the 43.6M-row
+  current-state table; the whale account's trustline read alone measured
+  5.18 s). An account's trustline/offer LedgerKeys share a fixed
+  `key_xdr` byte prefix and sit contiguous in the table's
+  (entry_type, key_xdr) sort order, so both reads now prune by a
+  52-char base64 PK prefix (`accountEntryKeyPrefix`; exact
+  `account_id` equality closes the prefix's one-byte residual) —
+  0.069 s measured on the same whale. Account detail is now
+  interactive for every account, including the top wealth-ranked
+  ones; the stale-serving layer below remains as the belt-and-braces
+  for pathological cases.
 - **`GET /v1/accounts/{g}` whale accounts no longer 503 outside the
   30-second post-fill window.** The v0.21.5 detached account-state fill
   fixed the cache-never-fills problem, but the 30s `AccountStateCacheTTL`
@@ -23,7 +36,10 @@ against.
   scan outruns the request budget was warm for only ~30s after each
   fill and cold the rest of the time (the final route-sweep holdout).
   An expired entry is now SERVED while one detached refresh runs —
-  the same stale-serving contract the wealth cache adopted 2026-07-29.
+  the same stale-serving contract the wealth cache adopted 2026-07-29 —
+  and the stale serve is surfaced honestly on the envelope's
+  `flags.stale` (AccountStateCached now returns the staleness so the
+  handler can pair the serve with the flag).
 
 ## [v0.21.5] — 2026-07-30
 
