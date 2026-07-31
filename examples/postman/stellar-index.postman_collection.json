@@ -1748,11 +1748,11 @@
               "description": "",
               "item": [
                 {
-                  "name": "Top holders of an asset by trustline balance.",
+                  "name": "Top holders of an asset by current balance.",
                   "request": {
-                    "name": "Top holders of an asset by trustline balance.",
+                    "name": "Top holders of an asset by current balance.",
                     "description": {
-                      "content": "The accounts holding the largest balances of an asset, plus the total\ncount of holders with a positive balance — reconstructed from the\nlatest `ledger_entry_changes` trustline per account (ADR-0038 Phase C).\n`asset_id` is the canonical form (`CODE-ISSUER`, or `native`). Balances\nare strings (ADR-0003). Coverage grows with the entry-change capture\nwindow; full once the Phase-C backfill lands.\n\nFreshness (ADR-0041): `as_of_ledger` is the lake watermark the read\nis fresh to; `flags.stale` fires when the watermark's close time\ntrails now by more than 300s.\n",
+                      "content": "The accounts holding the largest balances of an asset, plus the total\ncount of holders with a positive balance — reconstructed from the\nlatest `ledger_entry_changes` state per account (ADR-0038 Phase C).\nFor issued assets the balance is the holder's trustline balance; for\nnative XLM — which has no trustlines — it is the account's own XLM\nbalance, and `holder_count` is the exact number of funded accounts.\n`asset_id` is the canonical form (`CODE-ISSUER`, or `native`; the\n`crypto:XLM` alias serves the native board, echoed as\n`asset: \"native\"`). Balances are strings (ADR-0003). Coverage grows\nwith the entry-change capture window; full once the Phase-C backfill\nlands.\n\nFreshness (ADR-0041): `as_of_ledger` is the lake watermark the read\nis fresh to; `flags.stale` fires when the watermark's close time\ntrails now by more than 300s.\n",
                       "type": "text/plain"
                     },
                     "url": {

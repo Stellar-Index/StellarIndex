@@ -15,12 +15,20 @@ type HoldersResp = NonNullable<
 >;
 
 /**
- * HoldersTabPanel — top holders of an asset by current trustline balance,
- * plus the total holder count. Client-fetched at runtime (GET
+ * HoldersTabPanel — top holders of an asset by current balance, plus the
+ * total holder count. Issued assets rank by trustline balance; native XLM
+ * (which has no trustlines) ranks by account balance, so its holder count
+ * is the number of funded accounts. Client-fetched at runtime (GET
  * /v1/assets/{id}/holders) so it reflects live state rather than a
  * build-time snapshot. Coverage grows with the entry-change capture
  * window; full once the Phase-C backfill lands.
  */
+
+/** The asset_id spellings that serve the native XLM (account-balance) board. */
+function isNativeAssetID(assetID: string): boolean {
+  return assetID === 'native' || assetID === 'crypto:XLM' || assetID.toUpperCase() === 'XLM';
+}
+
 export function HoldersTabPanel({ assetID, decimals = 7 }: { assetID: string; decimals?: number }) {
   const { data, isLoading, isError } = useQuery<HoldersResp>({
     queryKey: ['/v1/assets/{id}/holders', assetID],
@@ -51,8 +59,13 @@ export function HoldersTabPanel({ assetID, decimals = 7 }: { assetID: string; de
         <p className="px-4 text-sm text-down-strong">Failed to load holders.</p>
       ) : holders.length === 0 ? (
         <p className="px-4 text-sm text-ink-muted">
-          No holders in the captured ledger window yet — asset trustline state
-          fills in as the entry-change backfill progresses.
+          {isNativeAssetID(assetID)
+            ? // Native has no trustlines — its board ranks account balances,
+              // so an empty result here is a warming/availability state, NOT
+              // a backfill gap. The old copy blamed "trustline state …
+              // backfill" for XLM, which was simply false.
+              'XLM holder data is not available right now — the account-balance ranking may still be warming; retry shortly.'
+            : 'No holders in the captured ledger window yet — asset trustline state fills in as the entry-change backfill progresses.'}
         </p>
       ) : (
         <div className="overflow-x-auto">

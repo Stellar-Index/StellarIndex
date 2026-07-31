@@ -1133,13 +1133,18 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Top holders of an asset by trustline balance.
+         * Top holders of an asset by current balance.
          * @description The accounts holding the largest balances of an asset, plus the total
          *     count of holders with a positive balance — reconstructed from the
-         *     latest `ledger_entry_changes` trustline per account (ADR-0038 Phase C).
-         *     `asset_id` is the canonical form (`CODE-ISSUER`, or `native`). Balances
-         *     are strings (ADR-0003). Coverage grows with the entry-change capture
-         *     window; full once the Phase-C backfill lands.
+         *     latest `ledger_entry_changes` state per account (ADR-0038 Phase C).
+         *     For issued assets the balance is the holder's trustline balance; for
+         *     native XLM — which has no trustlines — it is the account's own XLM
+         *     balance, and `holder_count` is the exact number of funded accounts.
+         *     `asset_id` is the canonical form (`CODE-ISSUER`, or `native`; the
+         *     `crypto:XLM` alias serves the native board, echoed as
+         *     `asset: "native"`). Balances are strings (ADR-0003). Coverage grows
+         *     with the entry-change capture window; full once the Phase-C backfill
+         *     lands.
          *
          *     Freshness (ADR-0041): `as_of_ledger` is the lake watermark the read
          *     is fresh to; `flags.stale` fires when the watermark's close time

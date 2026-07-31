@@ -47,6 +47,8 @@ func TestExplorerScanQueries_CarryBoundedSettings(t *testing.T) {
 		"accountOffersQuery":                    accountOffersQuery,
 		"assetHoldersQuery":                     assetHoldersQuery,
 		"assetHoldersCountQuery":                assetHoldersCountQuery,
+		"nativeHoldersQuery":                    nativeHoldersQuery,
+		"nativeHoldersCountQuery":               nativeHoldersCountQuery,
 		"accountsUnspendableQuery":              accountsUnspendableQuery,
 		"accountMovementsQuery(bare)":           accountMovementsQuery(AccountMovementFilter{}, false),
 		"accountMovementsQuery(filter+cursor)": accountMovementsQuery(AccountMovementFilter{
@@ -126,5 +128,36 @@ func TestExplorerScanQueries_ShapePreserved(t *testing.T) {
 	curIdx := strings.Index(mq, "(ledger, tx_hash, op_index, leg_index) < (?, ?, ?, ?)")
 	if !(kindIdx >= 0 && dirIdx > kindIdx && assetIdx > dirIdx && curIdx > assetIdx) {
 		t.Errorf("accountMovementsQuery clause order does not match arg order:\n%s", mq)
+	}
+}
+
+// TestNativeHoldersQueries_Shape pins the native arm of AssetHolders
+// (2026-07-31: /v1/assets/native/holders served {"holder_count":0} by
+// construction because native has no trustlines). The load-bearing facts:
+// both native queries read the ACCOUNT entry range — entry_type is the
+// FIRST ORDER BY column, so this is a primary-index range read, and losing
+// the predicate (or reintroducing a trustline/asset one) silently restores
+// the empty board — exclude removed entries, and count only funded
+// accounts.
+func TestNativeHoldersQueries_Shape(t *testing.T) {
+	for name, q := range map[string]string{
+		"nativeHoldersQuery":      nativeHoldersQuery,
+		"nativeHoldersCountQuery": nativeHoldersCountQuery,
+	} {
+		for _, s := range []string{
+			"entry_type = 'account'",
+			"change_type != 'removed'",
+			"balance > 0",
+		} {
+			if !strings.Contains(q, s) {
+				t.Errorf("%s missing %q:\n%s", name, s, q)
+			}
+		}
+		if strings.Contains(q, "trustline") || strings.Contains(q, "asset = ?") {
+			t.Errorf("%s must not carry a trustline/asset predicate — native has no trustlines:\n%s", name, q)
+		}
+	}
+	if !strings.Contains(nativeHoldersQuery, "ORDER BY balance DESC") {
+		t.Errorf("nativeHoldersQuery lost its balance ranking:\n%s", nativeHoldersQuery)
 	}
 }
