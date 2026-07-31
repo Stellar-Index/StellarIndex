@@ -1437,12 +1437,17 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// 5-minute TTL exactly matches this cadence. All calls are cheap
 	// no-ops when already warm — each returns as soon as it sees a live
 	// entry, and only kicks off its detached refresh on a miss.
+	// PrewarmOpTypeStats also rides this loop (task #13, 2026-07-31): the
+	// /v1/operations op-type panel had SWR + detached refresh but nothing
+	// warmed it at boot, so the first directory hit after every deploy
+	// rendered without it. Its 5-minute TTL matches this cadence exactly.
 	go func() {
 		defer recoverBackgroundWorker(logger, "prewarm-supply-wealth")
 		const cadence = 5 * time.Minute
 		apiSrv.PrewarmClassicSupply(rootCtx)
 		apiSrv.PrewarmAccountsWealth(rootCtx)
 		apiSrv.PrewarmContractsDirectory(rootCtx)
+		apiSrv.PrewarmOpTypeStats(rootCtx)
 		t := time.NewTicker(cadence)
 		defer t.Stop()
 		for {
@@ -1453,6 +1458,31 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 				apiSrv.PrewarmClassicSupply(rootCtx)
 				apiSrv.PrewarmAccountsWealth(rootCtx)
 				apiSrv.PrewarmContractsDirectory(rootCtx)
+				apiSrv.PrewarmOpTypeStats(rootCtx)
+			}
+		}
+	}()
+
+	// Protocol-detail prewarm: its own goroutine (NOT the 5-minute loop
+	// above — a full sweep is minutes of serial build work and must never
+	// delay the cheap prewarms). Sweeps ALL protocols × bespoke windows
+	// one build at a time so every /v1/protocols/{name} page + ?days=
+	// window is warm before anyone asks (2026-07-31: under replay load
+	// every on-demand bespoke build died at the request deadline and
+	// pages lost their visual suites). The sweep re-runs 10 minutes after
+	// the previous sweep ENDS (sleep, not a ticker, so sweeps can never
+	// overlap); with a measured sweep cost of ~3–6 min that refreshes
+	// every entry every ~13–16 min, comfortably inside the cache's
+	// 20-minute stale horizon (protocolDetailTTL).
+	go func() {
+		defer recoverBackgroundWorker(logger, "prewarm-protocol-details")
+		const betweenSweeps = 10 * time.Minute
+		for {
+			apiSrv.PrewarmProtocolDetails(rootCtx)
+			select {
+			case <-rootCtx.Done():
+				return
+			case <-time.After(betweenSweeps):
 			}
 		}
 	}()

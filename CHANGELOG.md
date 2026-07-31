@@ -15,6 +15,36 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Protocol analytics are warm by construction, and degradation is
+  now explicit on the wire (spec 1.16.0).** Under replay load every
+  on-demand `/v1/protocols/{name}` bespoke build died at the request
+  deadline ("protocol bespoke build failed", 2026-07-31), pages lost
+  their visual suites, and the omitted block was indistinguishable
+  from a protocol with no data. Three changes: (1) a dedicated API
+  prewarm worker sweeps ALL registry protocols × `?days=` windows
+  (one build at a time, 2 s pause, re-swept 10 min after each sweep
+  ends — sized from r1 timings under replay: soroswap 90d bespoke
+  ~1.9 s, cctp ~0.4 s) so every protocol page + window is built
+  before anyone asks, with the detail cache now stale-serving past
+  its (raised, 20 min) TTL — a previously-built view is served with
+  `flags.stale` while ONE detached rebuild (own 90 s budget, never a
+  request deadline) refreshes it, and a failed/timed-out rebuild
+  keeps the old entry instead of blanking the block; (2) a new
+  `analytics: {status: ok|stale|unavailable, as_of}` object on the
+  detail view so clients can tell fresh / stale-but-served / degraded
+  apart from real zeros — the explorer renders an explicit
+  "temporarily unavailable" hint from the status instead of inferring
+  from field absence; (3) the `/v1/operations` op-type panel joins
+  the API's 5-minute prewarm loop (it had SWR + detached refresh but
+  nothing warmed it at boot, so the first directory hit after every
+  deploy rendered without it; the aggregate measured ~70 ms warm on
+  r1). New paired metrics
+  `stellarindex_protocol_detail_refresh_{total,duration_seconds}`
+  (`ok|degraded|timeout`) cover the prewarm sweep and request-kicked
+  revalidations; `/v1/assets/{id}/holders` was audited as already
+  stale-serving (never hard-misses a previously-seen asset).
+
 ### Fixed
 - **Explorer honesty sweep: absent API data no longer renders as a
   zero or a "no data exists" claim.** The API omits analytics blocks

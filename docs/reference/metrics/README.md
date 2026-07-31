@@ -2305,6 +2305,36 @@ refresh timeout (90 s holders / 60 s op-stats / 3 min wealth / 5 min
 ttl-verdicts): p95 approaching the timeout predicts the stale-age
 growing user-visible before errors appear.
 
+### `stellarindex_protocol_detail_refresh_total`
+
+Counter. Labels: `outcome` (`ok` | `degraded` | `timeout`).
+
+One increment per detached `/v1/protocols/{name}` detail rebuild —
+both the prewarm sweep (every protocol × `?days=` window, re-swept 10
+minutes after each sweep ends) and request-kicked stale revalidations
+share the single-flight and count here. `ok` means the lake analytics
+AND the bespoke block both built (`analytics.status="ok"` on the
+wire); `degraded` means the build completed but some analytics
+component failed/was skipped (served with
+`analytics.status="unavailable"`); `timeout` means the build outran
+its 90 s detached budget — a previously built entry is kept, so the
+page stale-serves rather than blanking. Look here when protocol pages
+lose their visual suites (the 2026-07-31 replay-load failure): a
+sustained `degraded`/`timeout` rate with no `ok` means every page is
+running on old snapshots. Bursts during lake merges/replays self-heal
+on the next sweep.
+
+### `stellarindex_protocol_detail_refresh_duration_seconds`
+
+Histogram. Labels: `outcome` (matches the counter). Buckets 50 ms → 90 s.
+
+Wall time of one detail rebuild (roster/verdict joins + three parallel
+lake reads + the category's bespoke query battery; measured on r1
+under replay load 2026-07-31: soroswap 90d bespoke ~1.9 s, cctp
+~0.4 s). Chart `ok` p95 — a creep is the early warning that a bespoke
+query lost its rollup (the raw-trades-scan class) before builds start
+hitting the 90 s top bucket, which is the hard budget, not headroom.
+
 ## Changelog
 
 - 2026-07-10 — `stellarindex_price_serve_declined_nonstandard_decimals_total`

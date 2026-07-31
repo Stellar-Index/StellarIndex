@@ -6004,7 +6004,11 @@ export interface paths {
                          *           }
                          *         ],
                          *         "activity_window_days": 90,
-                         *         "events_total": 332561
+                         *         "events_total": 332561,
+                         *         "analytics": {
+                         *           "status": "ok",
+                         *           "as_of": "2026-07-03T22:38:12Z"
+                         *         }
                          *       },
                          *       "as_of": "2026-07-03T22:38:49.052946129Z",
                          *       "flags": {
@@ -6111,6 +6115,36 @@ export interface paths {
                                     /** Format: int64 */
                                     events?: number;
                                 }[];
+                                /**
+                                 * @description Explicit health of the view's analytics halves
+                                 *     (the lake-derived fields above and `bespoke`) —
+                                 *     since 1.16.0. Distinguishes a degraded build
+                                 *     from genuinely-empty data: `ok` means every
+                                 *     analytics component built successfully (an
+                                 *     absent `bespoke` under `ok` is a category with
+                                 *     none — a real absence); `stale` means the view
+                                 *     is real but served past its freshness horizon
+                                 *     while a background rebuild runs (`as_of` says
+                                 *     how old; `flags.stale` is set on the envelope
+                                 *     too); `unavailable` means at least one
+                                 *     component failed or was skipped — absent
+                                 *     blocks and zero-valued analytics fields then
+                                 *     mean DEGRADATION, not zero activity, and
+                                 *     clients should render a hint rather than the
+                                 *     values.
+                                 */
+                                analytics?: {
+                                    /**
+                                     * @description Health of the analytics in this view.
+                                     * @enum {string}
+                                     */
+                                    status: "ok" | "stale" | "unavailable";
+                                    /**
+                                     * Format: date-time
+                                     * @description When this view's analytics were built.
+                                     */
+                                    as_of?: string;
+                                };
                             };
                         };
                     };

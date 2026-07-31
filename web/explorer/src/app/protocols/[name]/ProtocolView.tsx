@@ -11,6 +11,7 @@ import { formatCompact } from '@/lib/format';
 import { CopyHash, relativeAge, formatTimestamp } from '../../explorer-shared';
 import { categoryTone } from '../registry';
 import { TimeSeriesChart } from './TimeSeriesChart';
+import { AnalyticsStatusNote, BespokeUnavailable } from './AnalyticsStatusNote';
 import { BespokeSection, type Bespoke } from './BespokeSection';
 import type { paths } from '@/api/types';
 
@@ -137,10 +138,19 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
         />
       </div>
 
-      {/* ── Bespoke per-category analytics (the headline block) ── */}
-      {data.bespoke && (
+      {/* ── Analytics health (explicit server status — never inferred
+             from field absence; absence alone is ambiguous) ── */}
+      <AnalyticsStatusNote analytics={data.analytics} />
+
+      {/* ── Bespoke per-category analytics (the headline block).
+             Absent + status "unavailable" ⇒ the build degraded — say so
+             instead of silently rendering nothing; absent under "ok" ⇒
+             the category genuinely has no suite. ── */}
+      {data.bespoke ? (
         <BespokeSection bespoke={data.bespoke} source={source} name={name} />
-      )}
+      ) : data.analytics?.status === 'unavailable' ? (
+        <BespokeUnavailable />
+      ) : null}
 
       {/* ── Activity chart ── */}
       <Panel

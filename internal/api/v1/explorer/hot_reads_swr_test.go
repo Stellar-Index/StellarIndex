@@ -190,6 +190,36 @@ func TestPrewarmContractsDirectory_WarmsDefaultRung(t *testing.T) {
 	}
 }
 
+// TestPrewarmOpTypeStats_FillsColdCacheThenNoops pins the boot-warmth
+// contract (task #13, 2026-07-31): the op-type panel is built by the
+// prewarm loop BEFORE any request, so a cold first /v1/operations load
+// never renders without it; a fresh panel makes prewarm a no-op, and a
+// reader-less/cancelled handler is safe.
+func TestPrewarmOpTypeStats_FillsColdCacheThenNoops(t *testing.T) {
+	h, reader := newSWRHandler()
+	h.PrewarmOpTypeStats(context.Background())
+	waitFlightIdle(t, &h.opTypeStats.flight, "stats")
+	if got := reader.statsCalls.Load(); got != 1 {
+		t.Fatalf("prewarm ran the aggregation %d times, want 1", got)
+	}
+	if stats, fresh := h.opTypeStats.get(); !fresh || len(stats) != 1 {
+		t.Fatalf("after prewarm: fresh=%v stats=%v, want a fresh 1-row panel", fresh, stats)
+	}
+
+	// Fresh panel → no-op.
+	h.PrewarmOpTypeStats(context.Background())
+	waitFlightIdle(t, &h.opTypeStats.flight, "stats")
+	if got := reader.statsCalls.Load(); got != 1 {
+		t.Errorf("prewarm on a fresh panel re-ran the aggregation (%d calls)", got)
+	}
+
+	// Nil reader / cancelled context: safe no-ops.
+	(&Handler{}).PrewarmOpTypeStats(context.Background())
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	h.PrewarmOpTypeStats(cancelled)
+}
+
 func TestResolveOpTypeStats_NeverComputesInline(t *testing.T) {
 	h, reader := newSWRHandler()
 	// Cold: returns nothing (panel omitted — op_type_stats is omitempty),
