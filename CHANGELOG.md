@@ -16,6 +16,46 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **Carried-claim invalidation gap: a projector-replay below the watermark
+  now forces re-reconciliation** (migration 0125 +
+  `internal/ops/ingest/projector.go` + `internal/ops/chops/compute_completeness.go`).
+  The daily completeness driver reconciles each source only from its prior
+  watermark to tip and CARRIES the prior clean projection claim for the older
+  prefix (projectionClaim rule 3 / INV-5) — sound only while the served tier
+  below the watermark is immutable. A `projector-replay` rewind rewrites
+  exactly that region, and nothing forced a re-check: the carried claim kept
+  certifying rows the replay had changed, which is how the 07-30 cctp
+  replay's 19,366 over-projected event_index-0 twin rows (62.27M–63.55M)
+  escaped the verifier. `projector-replay` now records a per-source dirty
+  window (`projection_dirty_windows`, widened LEAST/GREATEST on overlap)
+  BEFORE rewinding the cursor — refusing to rewind if the record fails —
+  `projected-rebuild -write` records the same window before its first write
+  (same invalidation, bulk path), and
+  `compute-completeness` fails closed on reading the table, extends its
+  projection reconcile floor over any pending window regardless of `-from`,
+  and clears the window only after a CLEAN projection verdict whose scope
+  covered it (bounded delete, race-safe against a concurrent widening replay).
+- **cctp + rozo reconciliation-catalogue genesis floors corrected to the
+  lake-derived exact first events** (`internal/ops/chops/reconciliation_catalogue.go`),
+  mirroring the 07-30 `protocols_registry.go` fix: cctp 62_403_000 →
+  62_146_641 (410 real served rows sat permanently BELOW the verify floor,
+  structurally out of every verdict), rozo 62_403_000 → 60_829_397. All other
+  catalogue entries audited against the registry — no further drift.
+  (`DefaultGapDetectorTargets` in `per_source_gaps.go` still carries the old
+  floors — supporting signal only, owned by another change.)
+- **cctp bespoke reader post-twin-deletion cleanup**
+  (`internal/storage/timescale/protocol_bespoke_cctp.go`). The flow CTEs
+  collapsed per (tx_hash, op_index) with `max(amount)` — a workaround for the
+  legacy event_index-0 twin rows deleted from r1 on 2026-07-31 — which would
+  silently HALVE a future genuine batched double-transfer in one op (the 0112
+  class: same-op same-type groups are proven on the wire by admin events).
+  Value-carrying CTEs (deposit_for_burn / mint_and_withdraw) now read raw
+  per-event rows; the message_received CTE keeps its one-body-per-op group
+  (join semantics — a second body row would fan out every joined mint row),
+  and the mint_and_forward restatement exclusion (a real semantic rule, not
+  twin dedup) is untouched. Also: the all-time "Unique recipients" KPI now
+  counts `DISTINCT` recipient addresses as labelled — it previously counted
+  recipient-bearing ops.
 - **Explorer honesty wave — cold-audit findings across `web/explorer/src`.**
   Eight fabrication/robustness classes fixed in the explorer only (no
   API/server changes): (1) `/lending` pools table: an API failure now

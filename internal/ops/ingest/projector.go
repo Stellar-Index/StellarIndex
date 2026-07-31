@@ -91,9 +91,34 @@ func projectorReplay(args []string) error {
 	}
 	if *dryRun {
 		_, _ = fmt.Fprintf(os.Stdout,
-			"dry-run: would UpsertCursor(projector, %q, %d)\n", *source, rewindTo)
+			"dry-run: would RecordProjectionDirtyWindow(%q, [%d,%d]) then UpsertCursor(projector, %q, %d)\n",
+			*source, target, currentLedger, *source, rewindTo)
 		return nil
 	}
+	// Record the dirty window BEFORE the rewind, and FAIL the replay if the
+	// record cannot be written. This closes the carried-claim invalidation
+	// gap (2026-07-31): the daily compute-completeness driver reconciles
+	// only [watermark, tip] and CARRIES the prior clean projection claim for
+	// the older prefix — a rewind that rewrites served rows below the
+	// watermark silently invalidates that carried claim, which is exactly
+	// how the 07-30 cctp replay's 19,366 event_index-0 twins at
+	// 62.27M–63.55M escaped the verifier. The window [target, currentLedger]
+	// is the below-cursor range about to be rewritten; compute-completeness
+	// extends its reconcile floor to cover it and clears it only on a clean
+	// verdict. Record-then-rewind is the fail-closed order: a crash between
+	// the two leaves a spurious window (one clean verify clears it), never a
+	// rewind with no record.
+	if err := store.RecordProjectionDirtyWindow(ctx, timescale.ProjectionDirtyWindow{
+		Source: *source,
+		From:   target,
+		To:     currentLedger,
+		Reason: fmt.Sprintf("projector-replay rewind %d -> %d", currentLedger, target),
+	}); err != nil {
+		return fmt.Errorf("record dirty window (refusing to rewind without it — the completeness verifier would carry a stale claim over the rewritten range): %w", err)
+	}
+	_, _ = fmt.Fprintf(os.Stdout,
+		"recorded projection dirty window source=%q [%d,%d] — compute-completeness will force a re-reconcile of this range before carrying any projection claim over it\n",
+		*source, target, currentLedger)
 	// RewindCursor, NOT UpsertCursor: the upsert path carries a
 	// monotonic-forward guard (F-0020) that silently no-ops on a
 	// backward write — which made this whole subcommand a no-op that

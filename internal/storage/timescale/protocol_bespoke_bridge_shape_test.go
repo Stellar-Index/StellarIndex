@@ -45,16 +45,48 @@ func assertCCTPNumericSafe(t *testing.T, q string) {
 	}
 }
 
-// assertCCTPDeduped guards the duplicate-row rule: every flow query must
-// collapse the legacy event_index-0 duplicates to one row per (tx, op)
-// transfer (r1 2026-07-30: 12,139 doubled groups with identical amounts).
-func assertCCTPDeduped(t *testing.T, q string) {
+// assertCCTPRawValueReads guards the post-deletion honesty rule (file-doc
+// rule 1): the legacy event_index-0 twins were DELETED on 2026-07-31, so
+// value-carrying flow queries read RAW per-event rows. The old per-(tx, op)
+// collapse with max(amount) was a workaround for those twins, and keeping
+// it would silently HALVE a future genuine batched double-transfer in one
+// op (the 0112 class — admin events already prove same-op same-type groups
+// occur on the wire: attester_enabled ×2, remote_token_messenger_added ×23
+// in single ops on the 2026-07-31 lake census). max(amount) is the
+// fingerprint of that collapse — cctpRecvCTE's legitimate one-body-per-op
+// group uses min(body), so its presence in a full query is unambiguous.
+func assertCCTPRawValueReads(t *testing.T, q string) {
 	t.Helper()
-	if !strings.Contains(q, "GROUP BY tx_hash, op_index") {
-		t.Error("cctp flow query must deduplicate to one row per (tx_hash, op_index) transfer")
+	if strings.Contains(q, "max(amount)") {
+		t.Error("cctp value rows must be read RAW — the per-(tx, op) max(amount) collapse was twin dedup whose reason (the deleted legacy event_index-0 twins) is gone, and it would halve a genuine same-op double-transfer")
 	}
-	if !strings.Contains(q, "max(amount)") {
-		t.Error("cctp dedup must take max(amount) over the identical duplicate pair")
+}
+
+// TestCCTPValueCTEsReadRawRows pins file-doc rule 1 at the CTE level: the
+// value-carrying subqueries (mints, burns) carry NO grouping at all, while
+// the receive-side CTE keeps its per-(tx, op) group — that one is join
+// semantics (one BurnMessage body per op so mint rows never fan out), not
+// twin dedup, and must survive.
+func TestCCTPValueCTEsReadRawRows(t *testing.T) {
+	for name, cte := range map[string]string{
+		"mints windowed": cctpMintsCTE(true),
+		"mints all-time": cctpMintsCTE(false),
+		"burns windowed": cctpBurnsCTE(true),
+		"burns all-time": cctpBurnsCTE(false),
+	} {
+		if strings.Contains(cte, "GROUP BY") {
+			t.Errorf("%s CTE must read raw per-event rows (no GROUP BY): %s", name, cte)
+		}
+		if strings.Contains(cte, "max(") || strings.Contains(cte, "min(") {
+			t.Errorf("%s CTE must not aggregate value columns: %s", name, cte)
+		}
+	}
+	recv := cctpRecvCTE()
+	if !strings.Contains(recv, "GROUP BY tx_hash, op_index") {
+		t.Error("recv CTE must keep one body row per (tx_hash, op_index) — the inbound join fans out mint rows otherwise")
+	}
+	if !strings.Contains(recv, "min(attributes->>'message_body')") {
+		t.Error("recv CTE must collapse to a single deterministic body per op")
 	}
 }
 
@@ -82,7 +114,7 @@ func TestCCTPFlowSeriesQueryShape(t *testing.T) {
 
 	for _, q := range []string{hourly, daily} {
 		assertCCTPNumericSafe(t, q)
-		assertCCTPDeduped(t, q)
+		assertCCTPRawValueReads(t, q)
 		if !strings.Contains(q, "'mint_and_withdraw'") {
 			t.Error("inbound query must source mint_and_withdraw")
 		}
@@ -96,7 +128,7 @@ func TestCCTPFlowSeriesQueryShape(t *testing.T) {
 
 	out := cctpFlowSeriesQuery(90, false)
 	assertCCTPNumericSafe(t, out)
-	assertCCTPDeduped(t, out)
+	assertCCTPRawValueReads(t, out)
 	if !strings.Contains(out, "'deposit_for_burn'") {
 		t.Error("outbound query must source deposit_for_burn")
 	}
@@ -120,7 +152,7 @@ func TestCCTPAggregateQueriesShape(t *testing.T) {
 			t.Errorf("%s must be window-bounded", name)
 		}
 		assertCCTPNumericSafe(t, q)
-		assertCCTPDeduped(t, q)
+		assertCCTPRawValueReads(t, q)
 	}
 
 	for name, q := range map[string]string{
@@ -149,7 +181,7 @@ func TestCCTPAggregateQueriesShape(t *testing.T) {
 		t.Error("cumulative net-inflow series is an ALL-TIME chart and must not be window-bounded")
 	}
 	assertCCTPNumericSafe(t, cum)
-	assertCCTPDeduped(t, cum)
+	assertCCTPRawValueReads(t, cum)
 	if !strings.Contains(cum, "-amount") {
 		t.Error("cumulative series must subtract outbound from inbound")
 	}

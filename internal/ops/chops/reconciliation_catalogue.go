@@ -136,7 +136,13 @@ type reconSource struct {
 func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.Decoder, error) {
 	soroswapDec := soroswap.NewDecoder()
 
-	// genesis values mirror DefaultGapDetectorTargets (WASM-audit sourced).
+	// genesis values mirror internal/api/v1/protocols_registry.go (the
+	// WASM-audit / lake-derived exact-first-event authority; checked
+	// against it 2026-07-31 — cctp + rozo were corrected here after the
+	// registry's 07-30 lake-derived fix). DefaultGapDetectorTargets
+	// (timescale/per_source_gaps.go) still carries the old cctp/rozo
+	// 62_403_000 floors — a supporting signal only, but drift to fix when
+	// that file's owner touches it next.
 	cat := []reconSource{
 		{name: "soroswap", genesis: 50_746_266, dec: soroswapDec, targets: []reconTarget{
 			{"trades", "source = 'soroswap'", []string{"soroswap.trade"}},
@@ -181,7 +187,14 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			},
 		},
 		{
-			name: "cctp", genesis: 62_403_000, dec: cctp.NewDecoder(),
+			// Lake-derived exact genesis (2026-07-30, mirrors
+			// internal/api/v1/protocols_registry.go): the
+			// MessageTransmitter's first on-chain event. The old
+			// 62_403_000 was the ingestion-config floor, ~256k ledgers
+			// late — it left 410 real served rows permanently BELOW the
+			// verify floor, structurally out of every verdict
+			// (density-genesis precision rule).
+			name: "cctp", genesis: 62_146_641, dec: cctp.NewDecoder(),
 			// contractIDs pins recognition attribution (board #31):
 			// without it an unhandled cctp topic (mint_and_forward
 			// was one until 2026-07-02) fell into the system-wide
@@ -191,7 +204,11 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 				{"cctp_events", "", []string{"cctp.event"}},
 			},
 		},
-		{name: "rozo", genesis: 62_403_000, dec: rozo.NewDecoder(), targets: []reconTarget{
+		// Lake-derived exact genesis (2026-07-30, mirrors
+		// protocols_registry.go): first event across all four Rozo
+		// contracts; rozo_events is projected to exactly here. The old
+		// 62_403_000 ingestion-config floor sat ~1.57M ledgers late.
+		{name: "rozo", genesis: 60_829_397, dec: rozo.NewDecoder(), targets: []reconTarget{
 			{"rozo_events", "", []string{"rozo.event"}},
 		}},
 		{
