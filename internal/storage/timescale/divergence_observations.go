@@ -155,3 +155,82 @@ func (s *Store) ListDivergenceLatest(ctx context.Context, sinceDays int, firingO
 	}
 	return out, nil
 }
+
+// DivergenceSeriesPoint is one downsampled bucket of a single
+// (asset, quote, reference) divergence history. Values are the
+// LAST observation inside the bucket (the board semantics, not an
+// average — averaging would smooth exactly the spikes the chart
+// exists to show); Firing is true when ANY observation in the
+// bucket breached threshold, so a brief breach can't disappear
+// into its bucket. Decimal strings (ADR-0003).
+type DivergenceSeriesPoint struct {
+	Bucket   time.Time
+	DeltaPct string
+	OurPrice string
+	RefPrice string
+	Firing   bool
+}
+
+// DivergenceSeriesBucket maps a whitelisted window to its bucket
+// width. Widths are chosen so a series is always ≤ ~360 points
+// regardless of the worker's tick cadence — the read budget is
+// enforced here, not assumed from config. Exported so the API
+// handler can surface the effective bucket width on the wire.
+func DivergenceSeriesBucket(days int) time.Duration {
+	switch {
+	case days <= 1:
+		return 5 * time.Minute // 288 buckets/day
+	case days <= 7:
+		return 30 * time.Minute // 336 buckets/7d
+	default:
+		return 2 * time.Hour // 360 buckets/30d
+	}
+}
+
+// ListDivergenceSeries returns the bucketed Δ% history for ONE
+// (asset, quote, reference) triple over the trailing `sinceDays`
+// window, ascending by bucket. The sibling of ListDivergenceLatest:
+// same access path minus the DISTINCT ON.
+//
+// Index reasoning: divergence_observations_pair_ref_idx
+// (asset_id, quote_id, reference, observed_at DESC) covers the
+// three equality predicates + the observed_at range, so this is a
+// single index range scan over one triple's window (hypertable
+// chunk exclusion applies via the bare observed_at bound — the
+// column is never wrapped in a function in WHERE; time_bucket
+// appears only in SELECT/GROUP BY). The GROUP BY then folds ≤
+// window rows into ≤ ~360 buckets.
+func (s *Store) ListDivergenceSeries(ctx context.Context, assetID, quoteID, reference string, sinceDays int) ([]DivergenceSeriesPoint, error) {
+	if sinceDays <= 0 {
+		sinceDays = 7
+	}
+	bucket := DivergenceSeriesBucket(sinceDays)
+	const q = `
+		SELECT time_bucket(($4 || ' seconds')::interval, observed_at) AS bucket,
+		       last(delta_pct, observed_at)::text,
+		       last(our_price, observed_at)::text,
+		       last(ref_price, observed_at)::text,
+		       bool_or(status = 'firing')
+		  FROM divergence_observations
+		 WHERE asset_id = $1 AND quote_id = $2 AND reference = $3
+		   AND observed_at > now() - ($5 || ' days')::interval
+		 GROUP BY bucket
+		 ORDER BY bucket ASC`
+	rows, err := s.db.QueryContext(ctx, q, assetID, quoteID, reference, int64(bucket.Seconds()), sinceDays)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: ListDivergenceSeries: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []DivergenceSeriesPoint
+	for rows.Next() {
+		var p DivergenceSeriesPoint
+		if err := rows.Scan(&p.Bucket, &p.DeltaPct, &p.OurPrice, &p.RefPrice, &p.Firing); err != nil {
+			return nil, fmt.Errorf("timescale: ListDivergenceSeries scan: %w", err)
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: ListDivergenceSeries rows: %w", err)
+	}
+	return out, nil
+}

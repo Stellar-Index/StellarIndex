@@ -148,49 +148,50 @@ type Server struct {
 	// issuer's cached sep1_payload in one scan. Backs the image fill on
 	// the /v1/assets listing so the homepage grid renders real logos
 	// instead of fallback avatars — see cachedSep1Images.
-	sep1ImagesMu         sync.Mutex
-	sep1ImagesCache      map[string]string
-	sep1ImagesAt         time.Time
-	sep1ImagesFlight     chan struct{}
-	soroswapPairs        SoroswapPairsReader
-	networkStats         NetworkStatsReader
-	aggregators          AggregatorsReader
-	marketSources        MarketSourceReader
-	sourcesStats         SourcesStatsReader
-	lending              LendingReader
-	mev                  MEVReader
-	anomalies            AnomalyReader
-	divergences          DivergenceReader
-	currencies           CurrenciesReader
-	explorer             ExplorerReader
-	explorerHandler      *explorerpkg.Handler // network-explorer endpoints (ADR-0038); see explorer.go
-	fxHistory            FXHistoryReader
-	sessionPeeker        SessionPeeker
-	incidents            []incidents.Incident
-	sep10                auth.SEP10Validator
-	cors                 middleware.Middleware
-	auth                 middleware.Middleware
-	keyPolicy            middleware.Middleware
-	rateLimit            middleware.Middleware
-	monthlyQuota         middleware.Middleware
-	touchUsage           middleware.Middleware
-	requireEmailVerified middleware.Middleware
-	usageTracker         middleware.Middleware
-	usageReader          UsageReader
-	usageRollupReader    UsageRollupReader
-	hub                  *streaming.Hub
-	confidence           ConfidenceLooker
-	triangulated         TriangulatedPriceLooker
-	cdnEnabled           bool
-	statusBackend        StatusBackend
-	archiveReportPath    string
-	regionName           string
-	regionDeployment     string
-	dashboardAuth        DashboardAuthMounter
-	dashboardKeys        DashboardAuthMounter
-	dashboardWebhooks    DashboardAuthMounter
-	dashboardPriceAlerts DashboardAuthMounter
-	sessionAuth          middleware.Middleware
+	sep1ImagesMu           sync.Mutex
+	sep1ImagesCache        map[string]string
+	sep1ImagesAt           time.Time
+	sep1ImagesFlight       chan struct{}
+	soroswapPairs          SoroswapPairsReader
+	networkStats           NetworkStatsReader
+	aggregators            AggregatorsReader
+	marketSources          MarketSourceReader
+	sourcesStats           SourcesStatsReader
+	lending                LendingReader
+	mev                    MEVReader
+	anomalies              AnomalyReader
+	divergences            DivergenceReader
+	divergenceThresholdPct float64
+	currencies             CurrenciesReader
+	explorer               ExplorerReader
+	explorerHandler        *explorerpkg.Handler // network-explorer endpoints (ADR-0038); see explorer.go
+	fxHistory              FXHistoryReader
+	sessionPeeker          SessionPeeker
+	incidents              []incidents.Incident
+	sep10                  auth.SEP10Validator
+	cors                   middleware.Middleware
+	auth                   middleware.Middleware
+	keyPolicy              middleware.Middleware
+	rateLimit              middleware.Middleware
+	monthlyQuota           middleware.Middleware
+	touchUsage             middleware.Middleware
+	requireEmailVerified   middleware.Middleware
+	usageTracker           middleware.Middleware
+	usageReader            UsageReader
+	usageRollupReader      UsageRollupReader
+	hub                    *streaming.Hub
+	confidence             ConfidenceLooker
+	triangulated           TriangulatedPriceLooker
+	cdnEnabled             bool
+	statusBackend          StatusBackend
+	archiveReportPath      string
+	regionName             string
+	regionDeployment       string
+	dashboardAuth          DashboardAuthMounter
+	dashboardKeys          DashboardAuthMounter
+	dashboardWebhooks      DashboardAuthMounter
+	dashboardPriceAlerts   DashboardAuthMounter
+	sessionAuth            middleware.Middleware
 	// verifiedCurrencies is the loaded *currency.Catalogue — the
 	// cross-chain currency seed (USDC, USDT, BTC, ETH, …) plus per-
 	// network identities. Powers the `unverified_warning` body +
@@ -670,8 +671,17 @@ type Options struct {
 	Anomalies AnomalyReader
 
 	// Divergences, when non-nil, backs /v1/divergence (the
-	// per-reference divergence board). Nil → empty payload.
+	// per-reference divergence board) and /v1/divergence/series
+	// (one pair×reference Δ% history). Nil → empty payload.
 	Divergences DivergenceReader
+
+	// DivergenceThresholdPct is the operator's divergence alert
+	// threshold (config divergence.threshold_pct), surfaced on
+	// /v1/divergence/series so charts can shade the alert band
+	// from the SAME number the worker fires on. Zero → the field
+	// is omitted from the wire (no band drawn); serving a made-up
+	// default here would fabricate policy.
+	DivergenceThresholdPct float64
 
 	// Currencies, when non-nil, supplies the world fiat-currency
 	// rates snapshot used by /v1/assets fiat rows + chart fiat:fiat
@@ -1038,85 +1048,86 @@ func New(opts Options) *Server {
 		logger = slog.Default()
 	}
 	s := &Server{
-		logger:               logger,
-		checks:               opts.ReadyChecks,
-		assets:               opts.Assets,
-		prices:               opts.Prices,
-		history:              opts.History,
-		markets:              opts.Markets,
-		oracle:               opts.Oracle,
-		sep1Cache:            opts.Sep1Cache,
-		accounts:             opts.Accounts,
-		accountKeyQuota:      opts.AccountKeyQuota,
-		platformAccounts:     opts.PlatformAccounts,
-		apiKeyBudgets:        opts.APIKeyBudgets,
-		statusNotices:        opts.StatusNotices,
-		signups:              opts.Signups,
-		signupIPThrottle:     opts.SignupIPThrottle,
-		signupVerifier:       opts.SignupVerifier,
-		signupVerifyEmailer:  opts.SignupVerifyEmailer,
-		apiKeyEmailVerifier:  opts.APIKeyEmailVerifier,
-		stripe:               opts.Stripe,
-		divergence:           opts.Divergence,
-		freeze:               opts.Freeze,
-		supply:               opts.Supply,
-		tokenSupply:          opts.TokenSupply,
-		tokenDecimals:        opts.TokenDecimals,
-		lakeWatermarkReader:  opts.LakeWatermark,
-		volume:               opts.Volume,
-		change24h:            opts.Change24h,
-		priceAt:              opts.PriceAt,
-		changesum:            opts.ChangeSummary,
-		assetsReader:         opts.AssetsReader,
-		issuers:              opts.Issuers,
-		sep41Transfers:       opts.SEP41Transfers,
-		cursors:              opts.Cursors,
-		coverageReader:       opts.CoverageReader,
-		networkStats:         opts.NetworkStats,
-		aggregators:          opts.Aggregators,
-		marketSources:        opts.MarketSources,
-		sourcesStats:         opts.SourcesStats,
-		lending:              opts.Lending,
-		mev:                  opts.MEV,
-		anomalies:            opts.Anomalies,
-		divergences:          opts.Divergences,
-		currencies:           opts.Currencies,
-		explorer:             opts.Explorer,
-		fxHistory:            opts.FXHistory,
-		sessionPeeker:        opts.SessionPeeker,
-		audit:                opts.Audit,
-		sep10:                opts.SEP10,
-		cors:                 opts.CORS,
-		auth:                 opts.Auth,
-		keyPolicy:            opts.KeyPolicy,
-		rateLimit:            opts.RateLimit,
-		monthlyQuota:         opts.MonthlyQuota,
-		touchUsage:           opts.TouchUsage,
-		requireEmailVerified: opts.RequireEmailVerified,
-		usageTracker:         opts.UsageTracker,
-		usageReader:          opts.UsageReader,
-		usageRollupReader:    opts.UsageRollupReader,
-		hub:                  opts.Hub,
-		confidence:           opts.Confidence,
-		triangulated:         opts.Triangulated,
-		cdnEnabled:           opts.CDNEnabled,
-		statusBackend:        opts.StatusBackend,
-		archiveReportPath:    opts.ArchiveReportPath,
-		regionName:           valueOr(opts.RegionName, "unknown"),
-		regionDeployment:     valueOr(opts.RegionDeployment, "production"),
-		dashboardAuth:        opts.DashboardAuth,
-		dashboardKeys:        opts.DashboardKeys,
-		dashboardWebhooks:    opts.DashboardWebhooks,
-		dashboardPriceAlerts: opts.DashboardPriceAlerts,
-		sessionAuth:          opts.SessionAuth,
-		verifiedCurrencies:   opts.VerifiedCurrencies,
-		backfillCoverage:     opts.BackfillCoverage,
-		nonstandardDecimals:  opts.NonstandardDecimals,
-		globalPrice:          opts.GlobalPrice,
-		globalPriceOpts:      globalPriceOptsWithDefaults(opts.GlobalPriceOpts),
-		sacWrappers:          opts.SACWrappers,
-		networkPassphrase:    opts.NetworkPassphrase,
-		usdPeggedClassics:    opts.USDPeggedClassics,
+		logger:                 logger,
+		checks:                 opts.ReadyChecks,
+		assets:                 opts.Assets,
+		prices:                 opts.Prices,
+		history:                opts.History,
+		markets:                opts.Markets,
+		oracle:                 opts.Oracle,
+		sep1Cache:              opts.Sep1Cache,
+		accounts:               opts.Accounts,
+		accountKeyQuota:        opts.AccountKeyQuota,
+		platformAccounts:       opts.PlatformAccounts,
+		apiKeyBudgets:          opts.APIKeyBudgets,
+		statusNotices:          opts.StatusNotices,
+		signups:                opts.Signups,
+		signupIPThrottle:       opts.SignupIPThrottle,
+		signupVerifier:         opts.SignupVerifier,
+		signupVerifyEmailer:    opts.SignupVerifyEmailer,
+		apiKeyEmailVerifier:    opts.APIKeyEmailVerifier,
+		stripe:                 opts.Stripe,
+		divergence:             opts.Divergence,
+		freeze:                 opts.Freeze,
+		supply:                 opts.Supply,
+		tokenSupply:            opts.TokenSupply,
+		tokenDecimals:          opts.TokenDecimals,
+		lakeWatermarkReader:    opts.LakeWatermark,
+		volume:                 opts.Volume,
+		change24h:              opts.Change24h,
+		priceAt:                opts.PriceAt,
+		changesum:              opts.ChangeSummary,
+		assetsReader:           opts.AssetsReader,
+		issuers:                opts.Issuers,
+		sep41Transfers:         opts.SEP41Transfers,
+		cursors:                opts.Cursors,
+		coverageReader:         opts.CoverageReader,
+		networkStats:           opts.NetworkStats,
+		aggregators:            opts.Aggregators,
+		marketSources:          opts.MarketSources,
+		sourcesStats:           opts.SourcesStats,
+		lending:                opts.Lending,
+		mev:                    opts.MEV,
+		anomalies:              opts.Anomalies,
+		divergences:            opts.Divergences,
+		divergenceThresholdPct: opts.DivergenceThresholdPct,
+		currencies:             opts.Currencies,
+		explorer:               opts.Explorer,
+		fxHistory:              opts.FXHistory,
+		sessionPeeker:          opts.SessionPeeker,
+		audit:                  opts.Audit,
+		sep10:                  opts.SEP10,
+		cors:                   opts.CORS,
+		auth:                   opts.Auth,
+		keyPolicy:              opts.KeyPolicy,
+		rateLimit:              opts.RateLimit,
+		monthlyQuota:           opts.MonthlyQuota,
+		touchUsage:             opts.TouchUsage,
+		requireEmailVerified:   opts.RequireEmailVerified,
+		usageTracker:           opts.UsageTracker,
+		usageReader:            opts.UsageReader,
+		usageRollupReader:      opts.UsageRollupReader,
+		hub:                    opts.Hub,
+		confidence:             opts.Confidence,
+		triangulated:           opts.Triangulated,
+		cdnEnabled:             opts.CDNEnabled,
+		statusBackend:          opts.StatusBackend,
+		archiveReportPath:      opts.ArchiveReportPath,
+		regionName:             valueOr(opts.RegionName, "unknown"),
+		regionDeployment:       valueOr(opts.RegionDeployment, "production"),
+		dashboardAuth:          opts.DashboardAuth,
+		dashboardKeys:          opts.DashboardKeys,
+		dashboardWebhooks:      opts.DashboardWebhooks,
+		dashboardPriceAlerts:   opts.DashboardPriceAlerts,
+		sessionAuth:            opts.SessionAuth,
+		verifiedCurrencies:     opts.VerifiedCurrencies,
+		backfillCoverage:       opts.BackfillCoverage,
+		nonstandardDecimals:    opts.NonstandardDecimals,
+		globalPrice:            opts.GlobalPrice,
+		globalPriceOpts:        globalPriceOptsWithDefaults(opts.GlobalPriceOpts),
+		sacWrappers:            opts.SACWrappers,
+		networkPassphrase:      opts.NetworkPassphrase,
+		usdPeggedClassics:      opts.USDPeggedClassics,
 		// 120s TTL on /v1/assets/{id} responses. MUST exceed the
 		// selfPrewarmAssetEndpoints cadence (60s) with margin — at the
 		// old 30s TTL the cache expired for 30 of every 60 seconds
@@ -1647,6 +1658,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// divergence board (ADR-0019).
 	s.mux.HandleFunc("GET /v1/anomalies", s.handleAnomalies)
 	s.mux.HandleFunc("GET /v1/divergence", s.handleDivergence)
+	s.mux.HandleFunc("GET /v1/divergence/series", s.handleDivergenceSeries)
 
 	// Source catalogue — every venue the aggregator knows about,
 	// with class + IncludeInVWAP metadata.

@@ -201,10 +201,12 @@ export default function DivergencesPage() {
           negative means our VWAP sits below the reference.
         </p>
         <p>
-          Per-incident time-series drill-downs (delta % over time for one
-          pair/reference) are the next addition — the{' '}
+          The Δ% history chart at the top plots one (pair, reference) over
+          time from the same{' '}
           <code className="font-mono text-xs">divergence_observations</code>{' '}
-          hypertable already holds every tick. Methodology rationale lives in{' '}
+          hypertable — click any board row to drill into its trail, with the
+          operator&apos;s alert threshold drawn as the dashed band.
+          Methodology rationale lives in{' '}
           <Link
             href="/research/adr/0019"
             className="underline decoration-dotted"

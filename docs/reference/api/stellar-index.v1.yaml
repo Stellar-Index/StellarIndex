@@ -18,7 +18,7 @@
 openapi: 3.1.0
 info:
   title: Stellar Index API
-  version: "1.16.1"
+  version: "1.17.0"
   summary: The Stellar network — explorer, history, supply, analytics, and prices.
   description: |
     The Stellar Index API exposes the Stellar network as one
@@ -2565,12 +2565,16 @@ paths:
 
         `?firing=true` restricts the event list to currently-firing
         pairs; `?window_days=` scopes the reason tally (default 30);
-        `?limit=` (default 100, max 500). 200 + empty payload when the
-        reader isn't wired.
+        `?limit=` (default 100, max 500); `?include=daily` adds the
+        day×reason tally over the same window (`daily`, the calendar-
+        heatmap block — `null` when not requested, `[]` when requested
+        and the window holds zero freezes). 200 + empty payload when
+        the reader isn't wired.
       parameters:
         - { name: firing, in: query, description: "true → only currently-firing events.", schema: { type: boolean } }
         - { name: window_days, in: query, description: "Trailing lookback in days for the freeze-event list and the per-reason tally (1-365, default 30).", schema: { type: integer, minimum: 1, maximum: 365, default: 30 } }
         - { name: limit, in: query, description: "Maximum rows to return (1-500, default 100). Out-of-range values return 400.", schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+        - { name: include, in: query, description: "`daily` → also return the per-(UTC day, reason) freeze tally over the same window.", schema: { type: string, enum: [daily] } }
       responses:
         "200":
           description: Freeze timeline + firing count + reason tally.
@@ -2581,6 +2585,7 @@ paths:
                   firing_count: 0
                   reason_tally: []
                   events: []
+                  daily: null
                 as_of: '2026-07-03T22:38:02.319192694Z'
                 flags:
                   stale: false
@@ -2617,6 +2622,22 @@ paths:
                             recovered_at_ledger: { type: integer, format: int64, nullable: true }
                             firing:              { type: boolean }
                             detail:              { type: object }
+                      daily:
+                        type: array
+                        nullable: true
+                        description: >-
+                          Per-(UTC day, reason) freeze tally over the same
+                          window as reason_tally — only populated when
+                          `?include=daily` was requested. `null` means "not
+                          requested"; `[]` means "requested, zero freezes in
+                          the window". Days with zero freezes carry no
+                          entries.
+                        items:
+                          type: object
+                          properties:
+                            day:    { type: string, format: date }
+                            reason: { type: string }
+                            count:  { type: integer, format: int64 }
         "400": { $ref: "#/components/responses/BadRequest" }
 
   /divergence:
@@ -2693,6 +2714,102 @@ paths:
                             ref_price:          { type: string }
                             delta_pct:          { type: string }
                             status:             { type: string, enum: [clear, firing] }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /divergence/series:
+    get:
+      tags: [analytics]
+      summary: Δ% time-series for one (pair, reference).
+      description: |
+        The history companion to the `/v1/divergence` board: the
+        bucketed Δ% series for ONE (asset, quote, reference) triple
+        from `divergence_observations`. Each point is the LAST
+        observation inside its bucket (last-value downsampling — the
+        board semantics, not an average); `firing` is true when ANY
+        observation in the bucket breached its threshold, so a brief
+        breach never disappears into a bucket. `bucket_seconds`
+        reports the effective resolution (1d → 5 min, 7d → 30 min,
+        30d → 2 h; every response is ≤ ~360 points).
+
+        `threshold_pct` is the operator's configured alert threshold
+        (`divergence.threshold_pct`) — the band a chart shades;
+        omitted when the deployment has none configured (draw no
+        band). `?pair=` is `<asset_id>~<quote_id>` (the markets slug
+        convention); `?reference=` one of the board's reference
+        names; `?days=` ∈ {1, 7, 30} (default 7) — other values
+        return 400. 200 + empty `points` when the reader isn't wired
+        or the triple has no observations in the window.
+      parameters:
+        - { name: pair, in: query, required: true, description: "`<asset_id>~<quote_id>`, e.g. `crypto:BTC~fiat:USD`.", schema: { type: string } }
+        - { name: reference, in: query, required: true, description: "External reference to plot against.", schema: { type: string, enum: [chainlink, coingecko, reflector-cex, reflector-fx, reflector-dex, redstone, band] } }
+        - { name: days, in: query, description: "Trailing window; whitelisted to 1, 7 or 30 (default 7).", schema: { type: integer, enum: [1, 7, 30], default: 7 } }
+      responses:
+        "200":
+          description: Bucketed divergence series for the triple.
+          content:
+            application/json:
+              example:
+                data:
+                  asset_id: crypto:BTC
+                  quote_id: fiat:USD
+                  reference: coingecko
+                  days: 7
+                  bucket_seconds: 1800
+                  threshold_pct: 5
+                  points:
+                  - t: '2026-07-29T12:00:00Z'
+                    delta_pct: '-0.104909'
+                    our_price: '62543.07358731602'
+                    ref_price: '62608.75585288'
+                  - t: '2026-07-29T12:30:00Z'
+                    delta_pct: '6.412000'
+                    our_price: '66623.11'
+                    ref_price: '62608.75'
+                    firing: true
+                as_of: '2026-07-29T12:31:03.478937272Z'
+                flags:
+                  stale: false
+                  reduced_redundancy: false
+                  triangulated: false
+                  divergence_warning: false
+                  divergence_checked: false
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      asset_id:       { type: string }
+                      quote_id:       { type: string }
+                      reference:      { type: string, enum: [chainlink, coingecko, reflector-cex, reflector-fx, reflector-dex, redstone, band] }
+                      days:           { type: integer }
+                      bucket_seconds:
+                        type: integer
+                        description: >-
+                          Downsampling bucket width. Each point is the last
+                          observation inside its bucket; render the series at
+                          this resolution, not as raw ticks.
+                      threshold_pct:
+                        type: number
+                        description: >-
+                          The operator's divergence alert threshold (percent) —
+                          the same number the worker fires on. Omitted when
+                          unconfigured; draw no band in that case.
+                      points:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            t:         { type: string, format: date-time }
+                            delta_pct: { type: string }
+                            our_price: { type: string }
+                            ref_price: { type: string }
+                            firing:
+                              type: boolean
+                              description: >-
+                                True when ANY observation in the bucket breached
+                                its threshold at observation time. Omitted when
+                                false.
         "400": { $ref: "#/components/responses/BadRequest" }
 
   /oracle/streams:
@@ -4749,11 +4866,16 @@ paths:
       description: |
         Per-day network counts over the trailing `?window_days=`
         (default 30, max 365), ascending by day: ledgers closed,
-        transactions, operations, and Soroban contract-events.
-        Aggregated from the certified `stellar.ledgers` lake (which
-        carries the per-ledger counts), bounded to the tip so it stays
-        partition-pruned. The time-series companion to the snapshot at
-        `/v1/network/stats`; backs the explorer `/network` charts.
+        transactions, operations, and Soroban contract-events — plus
+        end-of-day chain state off each day's last ledger: the
+        cumulative fee pool and total XLM (stroop strings — the
+        values exceed 2^53) and the protocol version in force.
+        `fee_pool` is cumulative; daily fee burn is the delta between
+        consecutive COMPLETE days. Aggregated from the certified
+        `stellar.ledgers` lake (which carries the per-ledger counts),
+        bounded to the tip so it stays partition-pruned. The
+        time-series companion to the snapshot at `/v1/network/stats`;
+        backs the explorer `/network` charts.
       parameters:
         - { name: window_days, in: query, description: "Number of trailing days in the per-day series (1-365, default 30).", schema: { type: integer, minimum: 1, maximum: 365, default: 30 } }
       responses:
@@ -4770,16 +4892,25 @@ paths:
                     txs: 5210044
                     ops: 10981233
                     events: 7498112
+                    fee_pool: '48231457220441231'
+                    total_coins: '1054439020873472922'
+                    protocol_version: 23
                   - day: '2026-06-26'
                     ledgers: 14791
                     txs: 5232968
                     ops: 11025463
                     events: 7512422
+                    fee_pool: '48231989301127744'
+                    total_coins: '1054439020873472922'
+                    protocol_version: 23
                   - day: '2026-06-27'
                     ledgers: 8934
                     txs: 3160221
                     ops: 6655109
                     events: 4537880
+                    fee_pool: '48232301518824410'
+                    total_coins: '1054439020873472922'
+                    protocol_version: 23
                     partial: true
                 as_of: '2026-07-03T22:38:51.364370254Z'
                 flags:
@@ -4805,6 +4936,22 @@ paths:
                             txs:     { type: integer, format: int64 }
                             ops:     { type: integer, format: int64 }
                             events:  { type: integer, format: int64 }
+                            fee_pool:
+                              type: string
+                              description: >-
+                                Cumulative network fee pool at the day's last
+                                ledger, in stroops (decimal string — exceeds
+                                2^53). Daily fee burn = the delta between
+                                consecutive COMPLETE days.
+                            total_coins:
+                              type: string
+                              description: >-
+                                Total XLM in existence at the day's last
+                                ledger, in stroops (decimal string — exceeds
+                                2^53).
+                            protocol_version:
+                              type: integer
+                              description: Protocol version in force at the day's last ledger.
                             partial:
                               type: boolean
                               description: >-

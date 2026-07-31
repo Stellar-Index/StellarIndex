@@ -3817,8 +3817,11 @@ export interface paths {
          *
          *     `?firing=true` restricts the event list to currently-firing
          *     pairs; `?window_days=` scopes the reason tally (default 30);
-         *     `?limit=` (default 100, max 500). 200 + empty payload when the
-         *     reader isn't wired.
+         *     `?limit=` (default 100, max 500); `?include=daily` adds the
+         *     day×reason tally over the same window (`daily`, the calendar-
+         *     heatmap block — `null` when not requested, `[]` when requested
+         *     and the window holds zero freezes). 200 + empty payload when
+         *     the reader isn't wired.
          */
         get: {
             parameters: {
@@ -3829,6 +3832,8 @@ export interface paths {
                     window_days?: number;
                     /** @description Maximum rows to return (1-500, default 100). Out-of-range values return 400. */
                     limit?: number;
+                    /** @description `daily` → also return the per-(UTC day, reason) freeze tally over the same window. */
+                    include?: "daily";
                 };
                 header?: never;
                 path?: never;
@@ -3847,7 +3852,8 @@ export interface paths {
                          *       "data": {
                          *         "firing_count": 0,
                          *         "reason_tally": [],
-                         *         "events": []
+                         *         "events": [],
+                         *         "daily": null
                          *       },
                          *       "as_of": "2026-07-03T22:38:02.319192694Z",
                          *       "flags": {
@@ -3884,6 +3890,14 @@ export interface paths {
                                     firing?: boolean;
                                     detail?: Record<string, never>;
                                 }[];
+                                /** @description Per-(UTC day, reason) freeze tally over the same window as reason_tally — only populated when `?include=daily` was requested. `null` means "not requested"; `[]` means "requested, zero freezes in the window". Days with zero freezes carry no entries. */
+                                daily?: {
+                                    /** Format: date */
+                                    day?: string;
+                                    reason?: string;
+                                    /** Format: int64 */
+                                    count?: number;
+                                }[] | null;
                             };
                         };
                     };
@@ -3997,6 +4011,126 @@ export interface paths {
                                     delta_pct?: string;
                                     /** @enum {string} */
                                     status?: "clear" | "firing";
+                                }[];
+                            };
+                        };
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/divergence/series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Δ% time-series for one (pair, reference).
+         * @description The history companion to the `/v1/divergence` board: the
+         *     bucketed Δ% series for ONE (asset, quote, reference) triple
+         *     from `divergence_observations`. Each point is the LAST
+         *     observation inside its bucket (last-value downsampling — the
+         *     board semantics, not an average); `firing` is true when ANY
+         *     observation in the bucket breached its threshold, so a brief
+         *     breach never disappears into a bucket. `bucket_seconds`
+         *     reports the effective resolution (1d → 5 min, 7d → 30 min,
+         *     30d → 2 h; every response is ≤ ~360 points).
+         *
+         *     `threshold_pct` is the operator's configured alert threshold
+         *     (`divergence.threshold_pct`) — the band a chart shades;
+         *     omitted when the deployment has none configured (draw no
+         *     band). `?pair=` is `<asset_id>~<quote_id>` (the markets slug
+         *     convention); `?reference=` one of the board's reference
+         *     names; `?days=` ∈ {1, 7, 30} (default 7) — other values
+         *     return 400. 200 + empty `points` when the reader isn't wired
+         *     or the triple has no observations in the window.
+         */
+        get: {
+            parameters: {
+                query: {
+                    /** @description `<asset_id>~<quote_id>`, e.g. `crypto:BTC~fiat:USD`. */
+                    pair: string;
+                    /** @description External reference to plot against. */
+                    reference: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band";
+                    /** @description Trailing window; whitelisted to 1, 7 or 30 (default 7). */
+                    days?: 1 | 7 | 30;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Bucketed divergence series for the triple. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "asset_id": "crypto:BTC",
+                         *         "quote_id": "fiat:USD",
+                         *         "reference": "coingecko",
+                         *         "days": 7,
+                         *         "bucket_seconds": 1800,
+                         *         "threshold_pct": 5,
+                         *         "points": [
+                         *           {
+                         *             "t": "2026-07-29T12:00:00Z",
+                         *             "delta_pct": "-0.104909",
+                         *             "our_price": "62543.07358731602",
+                         *             "ref_price": "62608.75585288"
+                         *           },
+                         *           {
+                         *             "t": "2026-07-29T12:30:00Z",
+                         *             "delta_pct": "6.412000",
+                         *             "our_price": "66623.11",
+                         *             "ref_price": "62608.75",
+                         *             "firing": true
+                         *           }
+                         *         ]
+                         *       },
+                         *       "as_of": "2026-07-29T12:31:03.478937272Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
+                        "application/json": {
+                            data?: {
+                                asset_id?: string;
+                                quote_id?: string;
+                                /** @enum {string} */
+                                reference?: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band";
+                                days?: number;
+                                /** @description Downsampling bucket width. Each point is the last observation inside its bucket; render the series at this resolution, not as raw ticks. */
+                                bucket_seconds?: number;
+                                /** @description The operator's divergence alert threshold (percent) — the same number the worker fires on. Omitted when unconfigured; draw no band in that case. */
+                                threshold_pct?: number;
+                                points?: {
+                                    /** Format: date-time */
+                                    t?: string;
+                                    delta_pct?: string;
+                                    our_price?: string;
+                                    ref_price?: string;
+                                    /** @description True when ANY observation in the bucket breached its threshold at observation time. Omitted when false. */
+                                    firing?: boolean;
                                 }[];
                             };
                         };
@@ -6589,11 +6723,16 @@ export interface paths {
          * Daily network throughput time-series.
          * @description Per-day network counts over the trailing `?window_days=`
          *     (default 30, max 365), ascending by day: ledgers closed,
-         *     transactions, operations, and Soroban contract-events.
-         *     Aggregated from the certified `stellar.ledgers` lake (which
-         *     carries the per-ledger counts), bounded to the tip so it stays
-         *     partition-pruned. The time-series companion to the snapshot at
-         *     `/v1/network/stats`; backs the explorer `/network` charts.
+         *     transactions, operations, and Soroban contract-events — plus
+         *     end-of-day chain state off each day's last ledger: the
+         *     cumulative fee pool and total XLM (stroop strings — the
+         *     values exceed 2^53) and the protocol version in force.
+         *     `fee_pool` is cumulative; daily fee burn is the delta between
+         *     consecutive COMPLETE days. Aggregated from the certified
+         *     `stellar.ledgers` lake (which carries the per-ledger counts),
+         *     bounded to the tip so it stays partition-pruned. The
+         *     time-series companion to the snapshot at `/v1/network/stats`;
+         *     backs the explorer `/network` charts.
          */
         get: {
             parameters: {
@@ -6623,14 +6762,20 @@ export interface paths {
                          *             "ledgers": 14832,
                          *             "txs": 5210044,
                          *             "ops": 10981233,
-                         *             "events": 7498112
+                         *             "events": 7498112,
+                         *             "fee_pool": "48231457220441231",
+                         *             "total_coins": "1054439020873472922",
+                         *             "protocol_version": 23
                          *           },
                          *           {
                          *             "day": "2026-06-26",
                          *             "ledgers": 14791,
                          *             "txs": 5232968,
                          *             "ops": 11025463,
-                         *             "events": 7512422
+                         *             "events": 7512422,
+                         *             "fee_pool": "48231989301127744",
+                         *             "total_coins": "1054439020873472922",
+                         *             "protocol_version": 23
                          *           },
                          *           {
                          *             "day": "2026-06-27",
@@ -6638,6 +6783,9 @@ export interface paths {
                          *             "txs": 3160221,
                          *             "ops": 6655109,
                          *             "events": 4537880,
+                         *             "fee_pool": "48232301518824410",
+                         *             "total_coins": "1054439020873472922",
+                         *             "protocol_version": 23,
                          *             "partial": true
                          *           }
                          *         ]
@@ -6666,6 +6814,12 @@ export interface paths {
                                     ops?: number;
                                     /** Format: int64 */
                                     events?: number;
+                                    /** @description Cumulative network fee pool at the day's last ledger, in stroops (decimal string — exceeds 2^53). Daily fee burn = the delta between consecutive COMPLETE days. */
+                                    fee_pool?: string;
+                                    /** @description Total XLM in existence at the day's last ledger, in stroops (decimal string — exceeds 2^53). */
+                                    total_coins?: string;
+                                    /** @description Protocol version in force at the day's last ledger. */
+                                    protocol_version?: number;
                                     /** @description True when this bucket does not cover a whole UTC day — in practice only today, which is still accumulating. Render it distinctly and EXCLUDE it from window totals; every other bucket is a complete day (the window is day-aligned). Omitted when false. */
                                     partial?: boolean;
                                 }[];

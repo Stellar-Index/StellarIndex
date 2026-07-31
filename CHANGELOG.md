@@ -16,6 +16,35 @@ against.
 ## [Unreleased]
 
 ### Added
+- **Visuals wave 3 — /network chain economics, /divergences Δ% history,
+  /anomalies visual pack (spec 1.17.0).** Three M-effort items off the
+  visuals survey, each a small backend addition + charts over it:
+  (1) `/v1/network/throughput` buckets now carry end-of-day chain state
+  off each day's last ledger — `fee_pool` + `total_coins` (stroop
+  strings, ADR-0003) and `protocol_version` — added as `argMax`
+  aggregates inside the SAME bounded partition-pruned
+  `stellar.ledgers` scan; `/network` charts daily fee burn (delta of
+  consecutive complete days), a total-XLM line, and protocol-upgrade
+  step markers on the throughput chart (via a new optional
+  `markers`/`priceLines` extension to the shared `LineChart`).
+  (2) New `GET /v1/divergence/series?pair=&reference=&days=` — the Δ%
+  history for one (pair, reference) from `divergence_observations`,
+  the same `(asset, quote, reference, observed_at)` index scan as the
+  board minus the `DISTINCT ON`, last-observation-per-bucket
+  downsampled (5m/30m/2h for the whitelisted 1/7/30-day windows, ≤
+  ~360 points; `firing` is bucket-wide any-breach) with the
+  operator's real `divergence.threshold_pct` on the wire;
+  `/divergences` plots the selected board row's history with dashed
+  ±threshold lines plus a signed |Δ%| bar list of the current board.
+  (3) `/v1/anomalies?include=daily` adds a per-(UTC day, reason)
+  freeze tally (`daily`: `null` = not requested, `[]` = zero freezes
+  — degraded ≠ zero) via a new chunk-pruned `FreezeDailyReasonCounts`
+  reader; `/anomalies` renders a reason-composition donut, a
+  freeze-duration histogram over the recovered events served, the
+  previously-fetched-never-rendered `detail.deviation_pct` as a
+  table column, and a day×reason calendar heatmap (new token-driven
+  `ReasonHeatmap`, sequential single-hue). API minor → 1.17.0; all
+  three spec artifacts regenerated.
 - **Explorer visuals — quick-win wave over data already on the wire.**
   Five under-visualized surfaces now chart what their pages already
   fetch, reusing the shared chart system plus three new bar

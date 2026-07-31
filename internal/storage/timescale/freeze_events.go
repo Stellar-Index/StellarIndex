@@ -537,6 +537,51 @@ func (s *Store) FreezeReasonCounts(ctx context.Context, sinceDays int) ([]Freeze
 	return out, rows.Err()
 }
 
+// FreezeDailyReasonCount is one (UTC day, reason) cell of the
+// /anomalies day×reason calendar heatmap.
+type FreezeDailyReasonCount struct {
+	Day    time.Time
+	Reason string
+	Count  int64
+}
+
+// FreezeDailyReasonCounts tallies freezes per (UTC day, reason) over
+// the trailing `sinceDays` days — FreezeReasonCounts with a day
+// dimension. Days with zero freezes have no rows (the chart renders
+// the absence, it is not fabricated here).
+//
+// Index reasoning: same access path as FreezeReasonCounts — the
+// WHERE keeps frozen_at bare (no function on the column), so
+// hypertable chunk exclusion prunes to the window's chunks;
+// date_trunc appears only in SELECT/GROUP BY. sinceDays is capped
+// by the handler's parseWindowDays (≤365), bounding the scan.
+func (s *Store) FreezeDailyReasonCounts(ctx context.Context, sinceDays int) ([]FreezeDailyReasonCount, error) {
+	if sinceDays <= 0 {
+		sinceDays = 30
+	}
+	const q = `
+		SELECT date_trunc('day', frozen_at AT TIME ZONE 'UTC') AS day,
+		       reason, count(*)::bigint
+		  FROM freeze_events
+		 WHERE frozen_at > now() - ($1 || ' days')::interval
+		 GROUP BY day, reason
+		 ORDER BY day ASC, reason ASC`
+	rows, err := s.db.QueryContext(ctx, q, sinceDays)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: FreezeDailyReasonCounts: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []FreezeDailyReasonCount
+	for rows.Next() {
+		var c FreezeDailyReasonCount
+		if err := rows.Scan(&c.Day, &c.Reason, &c.Count); err != nil {
+			return nil, fmt.Errorf("timescale: FreezeDailyReasonCounts scan: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // encodeFreezeDetail captures the Decision's diagnostic context as
 // the freeze_events.detail jsonb. Loose schema by design — different
 // freeze paths (Phase 1 class-deviation, Phase 2 multi-signal) carry
