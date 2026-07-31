@@ -1,6 +1,9 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
+import { SdexOrderBookSection } from './SdexOrderBookSection';
+import { SdexVolumeSection } from './SdexVolumeSection';
+
 export const metadata: Metadata = {
   title: 'SDEX — the Stellar Decentralized Exchange',
   description:
@@ -30,6 +33,12 @@ export default function SdexPage() {
           volume contributes to the same aggregate VWAP as every other venue.
         </p>
       </section>
+
+      {/* Live data: the in-process order book (cumulative depth + spread
+          for headline classic pairs) and the daily USD volume series from
+          the protocol analytics endpoint. */}
+      <SdexOrderBookSection />
+      <SdexVolumeSection />
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Link href="/protocols/sdex" className="rounded-xl border border-line bg-surface p-5 hover:border-brand-300 hover:bg-surface-subtle">

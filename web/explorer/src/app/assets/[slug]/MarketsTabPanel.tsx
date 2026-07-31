@@ -6,6 +6,7 @@ import { useMemo } from 'react';
 
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
+import { SourceSparkline } from '@/components/SourceSparkline';
 import { useMarkets, type Market } from '@/api/hooks';
 import { formatCompact, formatRelative } from '@/lib/format';
 
@@ -28,7 +29,12 @@ import { formatCompact, formatRelative } from '@/lib/format';
  * existing per-asset_id stream.
  */
 export function MarketsTabPanel({ assetID }: { assetID: string }) {
-  const markets = useMarkets(100, 'volume_24h_usd_desc', { asset: assetID });
+  // sparkline: per-row 24h hourly USD-volume buckets (?include=sparkline)
+  // for the chart column; rows the flag returns nothing for render "—".
+  const markets = useMarkets(100, 'volume_24h_usd_desc', {
+    asset: assetID,
+    sparkline: true,
+  });
 
   // Sort client-side by trade_count_24h desc as a secondary order
   // — the API returns the fanned-out merge already sorted by
@@ -92,6 +98,7 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
               <Th>Pair</Th>
               <Th align="right">24h volume</Th>
               <Th align="right">24h trades</Th>
+              <Th>24h chart</Th>
               <Th align="right">Last trade</Th>
             </tr>
           </thead>
@@ -148,6 +155,9 @@ function Row({ m, assetID }: { m: Market; assetID: string }) {
         <span className="font-mono tabular-nums">
           {formatCompact(m.trade_count_24h)}
         </span>
+      </Td>
+      <Td>
+        <SourceSparkline buckets={m.volume_history_24h} />
       </Td>
       <Td align="right">
         <span className="font-mono tabular-nums text-xs text-ink-muted">

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -23,6 +23,14 @@ function renderPanel(base: string, quote: string) {
 }
 
 describe('OrderBookPanel', () => {
+  // vi.fn() module mocks are NOT touched by the config's restoreMocks
+  // (that only restores vi.spyOn spies), so call history leaked across
+  // tests and the "never fetches for a Soroban pair" assertion below
+  // was failing on the PREVIOUS test's call. Reset explicitly.
+  beforeEach(() => {
+    vi.mocked(apiGet).mockReset();
+  });
+
   it('renders bid/ask depth for a classic pair', async () => {
     vi.mocked(apiGet).mockResolvedValue({
       data: {
@@ -54,11 +62,23 @@ describe('OrderBookPanel', () => {
 
     renderPanel('native', USDC);
     expect(await screen.findByText('SDEX order book')).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText('0.5')).toBeInTheDocument());
-    expect(screen.getByText('0.49')).toBeInTheDocument();
-    expect(screen.getByText('Bids')).toBeInTheDocument();
-    expect(screen.getByText('Asks')).toBeInTheDocument();
+    // Prices now appear in both the level tables and the depth stat
+    // strip — assert presence, not uniqueness.
+    await waitFor(() =>
+      expect(screen.getAllByText('0.5').length).toBeGreaterThan(0),
+    );
+    expect(screen.getAllByText('0.49').length).toBeGreaterThan(0);
+    // Table side headers AND the depth-chart side labels both render.
+    expect(screen.getAllByText('Bids').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Asks').length).toBeGreaterThan(0);
     expect(screen.getByText(/as of ledger/)).toBeInTheDocument();
+    // The cumulative depth chart + spread strip over the same book.
+    expect(screen.getByText('Best bid')).toBeInTheDocument();
+    expect(screen.getByText('Best ask')).toBeInTheDocument();
+    expect(screen.getByText(/bps/)).toBeInTheDocument();
+    expect(
+      screen.getByRole('img', { name: /Cumulative order-book depth chart/ }),
+    ).toBeInTheDocument();
   });
 
   it('renders nothing for a Soroban pair and an honest state while the snapshot loads', async () => {

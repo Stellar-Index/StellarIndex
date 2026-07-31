@@ -45,6 +45,27 @@ against.
   and `/yield` swaps its static `CategoryHub` for the live
   `ProtocolsIndex lockedCategory="yield"` directory (the `/bridges`
   pattern).
+- **Explorer flagship visuals: SDEX cumulative depth chart + asset
+  visual pack.** `/markets/[pair]` and `/sdex` gain a mirrored
+  step-area cumulative depth chart with a best-bid/ask + mid/spread
+  stat strip over the served `/v1/sdex/orderbook` levels (new
+  `DepthChart` component; a crossed snapshot renders an explicit
+  warning instead of a negative spread, and `/sdex` — previously a
+  static brochure — now shows the live book for four headline classic
+  pairs plus the daily USD-volume series + KPIs from
+  `/v1/protocols/sdex`). `/assets/[slug]` gains the asset visual
+  pack: the volume-by-source donut (`/v1/markets/sources?asset=`,
+  handler + component both existed unwired), per-market 24h volume
+  sparklines in the Markets tab (`?include=sparkline`), a live
+  1h/24h/7d/30d change strip + streak + honestly-labelled
+  "low since indexed" chip from the previously consumer-less
+  `/v1/changes/coin/{id}` endpoint (absent windows render "—"), a
+  holders concentration donut explicitly scoped to the served top-100
+  rows, and mint/burn/clawback comparison bars in the Supply tab.
+  Also fixes the `/markets/[pair]` build-time `/v1/chart` fetch
+  discarding ~95% of its series (now rendered as a 24h VWAP sparkline
+  + summed 24h volume stat) and the OrderBookPanel test's cross-test
+  mock leak.
 - **Protocol analytics are warm by construction, and degradation is
   now explicit on the wire (spec 1.16.0).** Under replay load every
   on-demand `/v1/protocols/{name}` bespoke build died at the request

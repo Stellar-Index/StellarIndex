@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { formatCompact, formatPriceSmall } from '@/lib/format';
 import { isSafeHomeDomain } from '@/lib/safe-domain';
 import { AssetConverter } from './AssetConverter';
+import { ChangeSummaryStrip } from './ChangeSummaryStrip';
 import { SidebarAssetIcon } from './SidebarAssetIcon';
 
 // Loosely-typed mirror of the page's fetched shapes — only the fields
@@ -120,6 +121,10 @@ export function AssetSidebar({
             </span>
           )}
         </div>
+        {/* Live 1h/24h/7d/30d strip + streak + low-water from the
+            change-summary worker; renders nothing when the worker has
+            no row for this asset. */}
+        <ChangeSummaryStrip assetID={coin.asset_id} className="mt-3" />
       </div>
 
       {/* Market + supply stats */}

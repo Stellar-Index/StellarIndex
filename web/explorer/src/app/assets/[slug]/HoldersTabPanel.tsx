@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
+import { DonutChart, CATEGORICAL_PALETTE } from '@/components/charts/DonutChart';
 import { formatCompact } from '@/lib/format';
 import type { paths } from '@/api/types';
 
@@ -69,6 +70,7 @@ export function HoldersTabPanel({ assetID, decimals = 7 }: { assetID: string; de
         </p>
       ) : (
         <div className="overflow-x-auto">
+          <HoldersConcentration holders={holders} decimals={decimals} />
           <table className="min-w-full divide-y divide-line text-sm">
             <thead>
               <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
@@ -100,5 +102,57 @@ export function HoldersTabPanel({ assetID, decimals = 7 }: { assetID: string; de
         </div>
       )}
     </Panel>
+  );
+}
+
+/**
+ * HoldersConcentration — top-10 share of the SERVED holder rows, as a
+ * two-slice donut. The endpoint returns the top-N (100) accounts by
+ * balance plus an exact holder_count, NOT every balance — so this is
+ * concentration within the served top rows only, and both the title and
+ * hint say so rather than implying a full-supply share. Skipped when 10
+ * or fewer rows are served (top-10 vs itself is meaningless).
+ */
+function HoldersConcentration({
+  holders,
+  decimals,
+}: {
+  holders: { account_id?: string; balance?: string }[];
+  decimals: number;
+}) {
+  if (holders.length <= 10) return null;
+  const scaled = holders.map((h) => {
+    const n = Number(h.balance ?? '');
+    return Number.isFinite(n) && n > 0 ? n / 10 ** decimals : 0;
+  });
+  const top10 = scaled.slice(0, 10).reduce((a, b) => a + b, 0);
+  const rest = scaled.slice(10).reduce((a, b) => a + b, 0);
+  const total = top10 + rest;
+  if (total <= 0) return null;
+  return (
+    <div className="border-b border-line-subtle px-4 pb-4">
+      <h4 className="mb-2 text-[11px] uppercase tracking-wider text-ink-muted">
+        Concentration — within the served top {holders.length}
+      </h4>
+      <DonutChart
+        data={[
+          { label: 'Top 10 holders', value: top10, color: CATEGORICAL_PALETTE[0] },
+          {
+            label: `Ranks 11–${holders.length}`,
+            value: rest,
+            color: CATEGORICAL_PALETTE[CATEGORICAL_PALETTE.length - 1],
+          },
+        ]}
+        size={128}
+        thickness={18}
+        centerLabel={`${((top10 / total) * 100).toFixed(0)}%`}
+        centerSub="top 10"
+        formatValue={(n) => formatCompact(n)}
+      />
+      <p className="mt-2 text-[11px] text-ink-faint">
+        Share of the balance held by the served top-{holders.length} rows only —
+        not of total supply (the full holder set isn&rsquo;t served here).
+      </p>
+    </div>
   );
 }
