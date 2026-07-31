@@ -4,6 +4,11 @@ import { useQuery } from '@tanstack/react-query';
 
 import { apiGet } from '@/api/client';
 import type { components } from '@/api/types';
+import {
+  DepthChart,
+  OrderBookStatStrip,
+  computeBookStats,
+} from '@/components/charts/DepthChart';
 
 type OrderBook = components['schemas']['SDEXOrderBook'];
 type Level = components['schemas']['SDEXOrderBookLevel'];
@@ -80,9 +85,27 @@ export function OrderBookPanel({ base, quote }: { base: string; quote: string })
       )}
 
       {book && !empty && (
-        <div className="grid gap-4 sm:grid-cols-2">
-          <DepthTable side="Bids" levels={book.bids} tone="up" truncated={book.bid_offers} />
-          <DepthTable side="Asks" levels={book.asks} tone="down" truncated={book.ask_offers} />
+        <div className="space-y-4">
+          {/* Cumulative depth — the flagship trader visual: how much
+              base-asset size sits between here and N bps of slippage.
+              Levels come straight from the served book's
+              cum_base_amount/cum_quote_amount; the strip's spread/mid
+              are derived from the top-of-book and refuse a crossed
+              snapshot rather than printing a negative spread. */}
+          <OrderBookStatStrip
+            stats={computeBookStats(book.bids, book.asks)}
+            quoteLabel={shortCode(book.buying)}
+          />
+          <DepthChart
+            bids={book.bids}
+            asks={book.asks}
+            baseLabel={shortCode(book.selling)}
+            quoteLabel={shortCode(book.buying)}
+          />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <DepthTable side="Bids" levels={book.bids} tone="up" truncated={book.bid_offers} />
+            <DepthTable side="Asks" levels={book.asks} tone="down" truncated={book.ask_offers} />
+          </div>
         </div>
       )}
     </section>
@@ -146,6 +169,13 @@ function DepthTable({
       </table>
     </div>
   );
+}
+
+/** shortCode — "USDC-GA5Z…" → "USDC", "native" → "XLM". */
+function shortCode(canonical: string): string {
+  if (canonical === 'native') return 'XLM';
+  const dashIx = canonical.indexOf('-');
+  return dashIx === -1 ? canonical : canonical.slice(0, dashIx);
 }
 
 /** trimTrailingZeros — "10.5000000" → "10.5", "0.5000000" → "0.5". */

@@ -5,6 +5,7 @@ import { buildFetchData, requireRows } from '@/lib/buildFetch';
 import { formatCompact } from '@/lib/format';
 import { serializeJsonLd, datasetJsonLd, ogImageFor } from '@/lib/seo';
 import { Breadcrumbs } from '@/components/ui';
+import { Sparkline } from '@/components/primitives';
 import { Suspense } from 'react';
 
 import { OrderBookPanel } from './OrderBookPanel';
@@ -311,6 +312,17 @@ export default async function PairPage({ params }: { params: Params }) {
     points.length >= 2 && points[0]?.p && points[points.length - 1]?.p
       ? ((Number(points[points.length - 1].p) / Number(points[0].p) - 1) * 100)
       : null;
+  // Render the rest of the fetched /v1/chart series instead of
+  // discarding it (visuals survey bug #7): the hourly VWAP trend as a
+  // build-time SVG sparkline, and the summed 24h USD volume across
+  // the hourly buckets.
+  const trend24h = points
+    .map((pt) => Number(pt.p))
+    .filter((n) => Number.isFinite(n));
+  const volume24hUsd = points.reduce((acc, pt) => {
+    const v = pt.v_usd != null ? Number(pt.v_usd) : NaN;
+    return Number.isFinite(v) ? acc + v : acc;
+  }, 0);
 
   // Schema.org BreadcrumbList — Home → Markets → BASE/QUOTE.
   const breadcrumbLD = {
@@ -427,7 +439,18 @@ export default async function PairPage({ params }: { params: Params }) {
                 value={formatUsd(Number(points[points.length - 1].v_usd))}
               />
             )}
+            {volume24hUsd > 0 && (
+              <Stat label="24h USD vol" value={formatUsd(volume24hUsd)} />
+            )}
           </dl>
+          {trend24h.length >= 2 && (
+            <div className="mt-3 border-t border-line-subtle pt-3">
+              <div className="mb-1 text-[11px] uppercase tracking-wider text-ink-muted">
+                24h hourly VWAP
+              </div>
+              <Sparkline values={trend24h} width={220} height={36} />
+            </div>
+          )}
         </Panel>
       </section>
 

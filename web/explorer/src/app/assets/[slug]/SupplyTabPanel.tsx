@@ -8,6 +8,7 @@ import { apiGet, asExample } from '@/api/client';
 import { useAsset, useAssetSupply, type AssetSupply } from '@/api/hooks';
 import { formatCompact } from '@/lib/format';
 import { type Envelope } from '../../explorer-shared';
+import { SupplyFlowsBar, buildSupplyFlowRows } from './SupplyFlowsBar';
 
 // Lazy-load the chart (~155 KB lightweight-charts) — only the supply
 // tab needs it, and only when there's market-cap history to draw.
@@ -248,6 +249,11 @@ function OnChainSupply({ data, decimals }: { data: AssetSupply; decimals: number
           </>
         )}
       </div>
+      {!native && (
+        <div className="mt-3">
+          <SupplyFlowsBar rows={buildSupplyFlowRows(data, decimals)} />
+        </div>
+      )}
       <p className="mt-2 text-[11px] text-up/80">
         {native
           ? 'Native XLM total from the ledger header — current to the latest ledger.'

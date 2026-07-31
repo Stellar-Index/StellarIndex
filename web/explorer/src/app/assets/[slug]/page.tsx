@@ -16,6 +16,7 @@ import {
 } from '@/components/ui';
 import { AssetClientFallback } from './AssetClientFallback';
 import { AssetSidebar } from './AssetSidebar';
+import { SourceBreakdown } from '../../markets/[pair]/SourceBreakdown';
 import { AssetTabs, ActiveTabSlot } from './AssetTabs';
 import { AssetAbout } from './AssetAbout';
 import { AssetFAQ, assetFaqFor } from './AssetFAQ';
@@ -1026,6 +1027,12 @@ function OverviewBody({
           </dl>
         </Panel>
       </div>
+
+      {/* Volume-by-source donut — the ?asset= variant of the same
+          /v1/markets/sources aggregate the pair pages chart. The
+          component renders nothing when no source has priced USD
+          volume for this asset. */}
+      <SourceBreakdown asset={coin.asset_id} />
 
       <Panel
         title="External views"
