@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/obstest"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
@@ -19,7 +21,11 @@ type stubOfferBookReader struct {
 	nextCursor uint32
 	changesErr error
 
+	removed   map[string]struct{} // keys OfferRemovedAt reports dead
+	verifyErr error
+
 	lastFrom uint32
+	lastRefs []clickhouse.OfferRemovalRef
 }
 
 func (s *stubOfferBookReader) LoadLiveOffers(context.Context) ([]clickhouse.LiveOffer, uint32, error) {
@@ -29,6 +35,20 @@ func (s *stubOfferBookReader) LoadLiveOffers(context.Context) ([]clickhouse.Live
 func (s *stubOfferBookReader) OfferChangesSince(_ context.Context, from uint32) ([]clickhouse.OfferChange, uint32, error) {
 	s.lastFrom = from
 	return s.changes, s.nextCursor, s.changesErr
+}
+
+func (s *stubOfferBookReader) OfferRemovedAt(_ context.Context, refs []clickhouse.OfferRemovalRef) (map[string]struct{}, error) {
+	s.lastRefs = refs
+	if s.verifyErr != nil {
+		return nil, s.verifyErr
+	}
+	dead := map[string]struct{}{}
+	for _, ref := range refs {
+		if _, ok := s.removed[ref.KeyXDR]; ok {
+			dead[ref.KeyXDR] = struct{}{}
+		}
+	}
+	return dead, nil
 }
 
 func bookOffer(key string, id, amount int64, selling, buying string, n, d int32, version uint64) clickhouse.LiveOffer {
@@ -42,11 +62,13 @@ func bookOffer(key string, id, amount int64, selling, buying string, n, d int32,
 
 func TestSDEXOrderBookCache_LoadAdvanceAndVersionDiscipline(t *testing.T) {
 	const usdc = "USDC-GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
+	// Versions carry a nonzero intra_ledger_seq — intra 0 marks the
+	// version-tie quarantine class, covered by its own test below.
 	reader := &stubOfferBookReader{
 		offers: []clickhouse.LiveOffer{
-			bookOffer("k1", 1, 100, "native", usdc, 1, 2, 10<<32),
-			bookOffer("k2", 2, 200, usdc, "native", 3, 1, 10<<32),
-			bookOffer("k3", 3, 0, "native", usdc, 1, 1, 10<<32), // zero amount — dropped defensively
+			bookOffer("k1", 1, 100, "native", usdc, 1, 2, 10<<32|7),
+			bookOffer("k2", 2, 200, usdc, "native", 3, 1, 10<<32|8),
+			bookOffer("k3", 3, 0, "native", usdc, 1, 1, 10<<32|9), // zero amount — dropped defensively
 		},
 		cursor: 10,
 	}
@@ -216,5 +238,177 @@ func TestSDEXOrderBookCache_MaintainObservesMetrics(t *testing.T) {
 	}
 	if got := count("advance_error"); got != advErr+1 {
 		t.Errorf("advance_error observations = %d, want %d", got, advErr+1)
+	}
+}
+
+// TestSDEXOrderBookCache_ZombieQuarantineAndVerify pins the 2026-07-31
+// crossed-book fix: a loaded offer whose version carries
+// intra_ledger_seq == 0 (the version-tie-ambiguous class — its
+// same-ledger `removed` sibling may have lost the ReplacingMergeTree
+// merge arbitrarily) is NOT served until the change-stream probe
+// proves no removal exists at its ledger. Proven-dead zombies are
+// dropped for good; proven-live offers graduate into the served book.
+func TestSDEXOrderBookCache_ZombieQuarantineAndVerify(t *testing.T) {
+	const usdc = "USDC-GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
+	reader := &stubOfferBookReader{
+		offers: []clickhouse.LiveOffer{
+			// Trusted modern ask at 0.5 USDC/XLM (nonzero intra).
+			bookOffer("ask", 1, 100, "native", usdc, 1, 2, 63_000_000<<32|41),
+			// Zombie bid from 2021: sells USDC at 2.31 XLM/USDC → implied
+			// bid 0.4327 USDC/XLM, CROSSING the 0.5 ask... except it was
+			// consumed on-chain; only a version tie kept it "live".
+			bookOffer("zombie", 2, 500, usdc, "native", 5777499, 2500000, 38_224_736<<32),
+			// Genuine old resting bid at 4 XLM/USDC → 0.25 USDC/XLM (not
+			// crossing) — also intra 0, must come back after verification.
+			bookOffer("resting", 3, 700, usdc, "native", 4, 1, 40_000_000<<32),
+		},
+		cursor:  63_000_001,
+		removed: map[string]struct{}{"zombie": {}},
+	}
+	c := NewSDEXOrderBookCache(reader, nil)
+	if err := c.Load(context.Background()); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Quarantine: only the trusted ask is served; the intra-0 offers are
+	// pending; the served book is NOT crossed (the zombie is unserved).
+	asks, bids, _, _, _ := c.snapshotPair("native", usdc)
+	if len(asks) != 1 || len(bids) != 0 {
+		t.Fatalf("post-Load asks/bids = %d/%d, want 1/0 (intra-0 offers quarantined)", len(asks), len(bids))
+	}
+	if got := testutil.ToFloat64(obs.SDEXOrderBookPendingOffers); got != 2 {
+		t.Errorf("pending gauge = %v, want 2", got)
+	}
+	if got := testutil.ToFloat64(obs.SDEXOrderBookCrossedPairs); got != 0 {
+		t.Errorf("crossed gauge = %v, want 0 (zombie must not be served)", got)
+	}
+
+	// Verify: the zombie is proven dead and discarded; the genuine
+	// resting offer graduates into the served book.
+	if err := c.VerifyPending(context.Background(), 10); err != nil {
+		t.Fatalf("VerifyPending: %v", err)
+	}
+	if len(reader.lastRefs) != 2 {
+		t.Fatalf("verify probed %d refs, want 2", len(reader.lastRefs))
+	}
+	asks, bids, _, _, _ = c.snapshotPair("native", usdc)
+	if len(asks) != 1 || len(bids) != 1 {
+		t.Fatalf("post-verify asks/bids = %d/%d, want 1/1 (zombie dead, resting restored)", len(asks), len(bids))
+	}
+	if bids[0].KeyXDR != "resting" {
+		t.Errorf("served bid = %q, want the genuine resting offer", bids[0].KeyXDR)
+	}
+	if got := testutil.ToFloat64(obs.SDEXOrderBookPendingOffers); got != 0 {
+		t.Errorf("pending gauge = %v, want 0 after the drain", got)
+	}
+
+	// Empty-quarantine verify is a no-op that touches nothing.
+	reader.lastRefs = nil
+	if err := c.VerifyPending(context.Background(), 10); err != nil {
+		t.Fatalf("empty VerifyPending: %v", err)
+	}
+	if reader.lastRefs != nil {
+		t.Error("empty quarantine must not probe the lake")
+	}
+}
+
+// TestSDEXOrderBookCache_AdvanceSupersedesPendingAndCrossedGauge pins
+// two behaviours: (1) a tip-forward change resolves a quarantined
+// key's fate without waiting for verification, and (2) the
+// crossed-pairs gauge fires when the SERVED book itself is crossed
+// (the residual class verification cannot disprove).
+func TestSDEXOrderBookCache_AdvanceSupersedesPendingAndCrossedGauge(t *testing.T) {
+	const usdc = "USDC-GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
+	reader := &stubOfferBookReader{
+		offers: []clickhouse.LiveOffer{
+			bookOffer("ask", 1, 100, "native", usdc, 1, 2, 63_000_000<<32|3), // 0.5 USDC/XLM
+			bookOffer("suspect", 2, 500, usdc, "native", 4, 1, 40_000_000<<32),
+		},
+		cursor: 63_000_001,
+	}
+	c := NewSDEXOrderBookCache(reader, nil)
+	if err := c.Load(context.Background()); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// A live change for the suspect key supersedes its quarantined
+	// pre-load state: here a fresh, CROSSING bid (sells USDC at 1.25
+	// XLM/USDC → implied bid 0.8 USDC/XLM >= 0.5 ask).
+	reader.changes = []clickhouse.OfferChange{{
+		KeyXDR: "suspect", Version: 63_000_002 << 32, Ledger: 63_000_002,
+		Offer: bookOffer("suspect", 2, 500, usdc, "native", 5, 4, 63_000_002<<32),
+	}}
+	reader.nextCursor = 63_000_002
+	if err := c.Advance(context.Background()); err != nil {
+		t.Fatalf("Advance: %v", err)
+	}
+	if got := testutil.ToFloat64(obs.SDEXOrderBookPendingOffers); got != 0 {
+		t.Errorf("pending gauge = %v, want 0 (Advance resolves the suspect)", got)
+	}
+	if got := testutil.ToFloat64(obs.SDEXOrderBookCrossedPairs); got != 1 {
+		t.Errorf("crossed gauge = %v, want 1 (served book bid 0.8 vs ask 0.5)", got)
+	}
+
+	// Verification must not resurrect the superseded pre-load state.
+	if err := c.VerifyPending(context.Background(), 10); err != nil {
+		t.Fatalf("VerifyPending: %v", err)
+	}
+	_, bids, _, _, _ := c.snapshotPair("native", usdc)
+	if len(bids) != 1 || bids[0].Version != 63_000_002<<32 {
+		t.Fatalf("bids = %+v, want only the Advance-applied version", bids)
+	}
+
+	// The crossing clears when the stale bid is removed.
+	reader.changes = []clickhouse.OfferChange{{KeyXDR: "suspect", Version: 63_000_003 << 32, Ledger: 63_000_003, Removed: true}}
+	reader.nextCursor = 63_000_003
+	if err := c.Advance(context.Background()); err != nil {
+		t.Fatalf("Advance: %v", err)
+	}
+	if got := testutil.ToFloat64(obs.SDEXOrderBookCrossedPairs); got != 0 {
+		t.Errorf("crossed gauge = %v, want 0 after the crossing bid is removed", got)
+	}
+}
+
+// TestSDEXOrderBookCache_VerifyObservesMetrics pins the verify_ok /
+// verify_error maintain outcomes; an empty-quarantine tick observes
+// nothing (steady state must not drown the load/advance signal).
+func TestSDEXOrderBookCache_VerifyObservesMetrics(t *testing.T) {
+	count := func(outcome string) uint64 {
+		return obstest.HistogramSampleCount(t, obs.SDEXOrderBookMaintainDurationSeconds, "outcome", outcome)
+	}
+	vOK, vErr := count("verify_ok"), count("verify_error")
+
+	const usdc = "USDC-GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
+	reader := &stubOfferBookReader{
+		offers: []clickhouse.LiveOffer{bookOffer("s1", 1, 100, usdc, "native", 4, 1, 40_000_000<<32)},
+		cursor: 63_000_001,
+	}
+	c := NewSDEXOrderBookCache(reader, nil)
+	if err := c.Load(context.Background()); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	reader.verifyErr = errors.New("lake down")
+	if err := c.VerifyPending(context.Background(), 10); err == nil {
+		t.Fatal("VerifyPending should surface the probe error")
+	}
+	if got := count("verify_error"); got != vErr+1 {
+		t.Errorf("verify_error observations = %d, want %d", got, vErr+1)
+	}
+
+	reader.verifyErr = nil
+	if err := c.VerifyPending(context.Background(), 10); err != nil {
+		t.Fatalf("VerifyPending: %v", err)
+	}
+	if got := count("verify_ok"); got != vOK+1 {
+		t.Errorf("verify_ok observations = %d, want %d", got, vOK+1)
+	}
+
+	// Quarantine now empty — a further verify observes nothing.
+	if err := c.VerifyPending(context.Background(), 10); err != nil {
+		t.Fatalf("empty VerifyPending: %v", err)
+	}
+	if got := count("verify_ok"); got != vOK+1 {
+		t.Errorf("empty verify must not observe (got %d, want %d)", got, vOK+1)
 	}
 }

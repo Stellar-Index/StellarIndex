@@ -2260,16 +2260,21 @@ before it starts erroring at the 3-min timeout.
 
 ### `stellarindex_sdex_orderbook_maintain_total`
 
-Counter. Labels: `outcome` (`load_ok` | `load_error` | `advance_ok` | `advance_error`).
+Counter. Labels: `outcome` (`load_ok` | `load_error` | `advance_ok` |
+`advance_error` | `verify_ok` | `verify_error`).
 
 Maintenance attempts for the in-process SDEX order book behind
 `/v1/sdex/orderbook`. `load_*` is the once-per-process full-slice
 initial load (retried on the 60s ticker until it lands); `advance_*`
-is the 60s incremental change apply. Look here when the endpoint
-503s past startup (repeated `load_error`) or serves a stale
-`as_of_ledger` (`advance_error`). Pre-load advance ticks observe
-nothing by design — a healthy advance rate must not mask a stuck
-load.
+is the 60s incremental change apply; `verify_*` is the per-tick
+quarantine drain that lake-verifies version-tie suspect offers
+(2026-07-31 crossed-book fix) — unobserved when the quarantine is
+empty. Look here when the endpoint 503s past startup (repeated
+`load_error`), serves a stale `as_of_ledger` (`advance_error`), or
+serves thinner-than-real depth while
+`stellarindex_sdex_orderbook_pending_offers` stays high
+(`verify_error`). Pre-load advance ticks observe nothing by design —
+a healthy advance rate must not mask a stuck load.
 
 ### `stellarindex_sdex_orderbook_maintain_duration_seconds`
 
@@ -2278,7 +2283,38 @@ Histogram. Labels: `outcome` (matches the counter). Buckets 50 ms → 30 min.
 `advance_ok` p95 is the drift-risk signal as offer churn grows; the
 raw `load_ok` observation is the initial-load wall time the launch
 plan tracks as an acceptance item — compare it across deploys before
-it approaches the 30-min cap.
+it approaches the 30-min cap. `verify_ok` should sit in the
+single-digit seconds (one bounded batch of partition-pruned point
+probes per tick).
+
+### `stellarindex_sdex_orderbook_crossed_pairs`
+
+Gauge.
+
+Asset pairs whose SERVED order book is crossed (best bid >= best
+ask). Stellar's DEX executes crossing offers at submission, so a
+resting book can never be crossed on-chain — this is the book's
+data-quality invariant and it should read 0. Any sustained non-zero
+value means phantom offers are being served: the founding case
+(2026-07-31) was 4.7-year-dead XLM/USDC bids kept "live" by
+ReplacingMergeTree version ties on intra-less backfill rows, serving
+a 0.4327 best bid against a 0.1722 best ask. The quarantine +
+verification path removes that class; what this gauge catches is the
+residual — an offer whose removal the lake never ingested at all,
+i.e. an entry-change coverage gap to chase with the completeness
+tooling, not a serving bug.
+
+### `stellarindex_sdex_orderbook_pending_offers`
+
+Gauge.
+
+Offers loaded from `ledger_entries_current` but quarantined from the
+served book until the change-stream probe proves no removal exists at
+their winning ledger (the `intra_ledger_seq == 0` version-tie suspect
+class). Drains at 2,500/tick after every process start — a populated
+quarantine right after a deploy is normal and converges in hours.
+Stuck high alongside `verify_error` means the served book is honest
+but thinner than the real chain state.
 
 ### `stellarindex_explorer_swr_refresh_total`
 

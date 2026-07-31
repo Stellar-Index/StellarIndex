@@ -205,6 +205,8 @@ func registerAppMetricsTail() {
 		DEXTVLRefreshDurationSeconds,
 		SDEXOrderBookMaintainTotal,
 		SDEXOrderBookMaintainDurationSeconds,
+		SDEXOrderBookCrossedPairs,
+		SDEXOrderBookPendingOffers,
 		ExplorerSWRRefreshTotal,
 		ExplorerSWRRefreshDurationSeconds,
 		ProtocolDetailRefreshTotal,
@@ -3130,7 +3132,7 @@ var DEXTVLRefreshDurationSeconds = prometheus.NewHistogramVec(
 )
 
 // SDEXOrderBookMaintainTotal — per-outcome counter for the in-process
-// SDEX live order book behind /v1/sdex/orderbook. Two operation
+// SDEX live order book behind /v1/sdex/orderbook. Three operation
 // classes share the label space because they share a failure surface
 // (the lake) but have wildly different costs:
 //
@@ -3139,16 +3141,22 @@ var DEXTVLRefreshDurationSeconds = prometheus.NewHistogramVec(
 //     streaming IO.
 //   - `advance_ok` / `advance_error` — the 60s incremental
 //     partition-pruned change apply.
+//   - `verify_ok` / `verify_error`   — the per-tick quarantine drain:
+//     batched (ledger, key) removal probes that graduate version-tie
+//     suspect offers into the served book or discard them as
+//     proven-dead zombies. Unobserved when the quarantine is empty.
 //
 // Sustained `advance_error` means the served book is drifting from
 // the live ledger while the endpoint keeps answering (it serves the
 // last applied state, honestly timestamped). Repeated `load_error`
 // means the endpoint is stuck on its 503 warming problem — that is
-// the louder, user-visible failure.
+// the louder, user-visible failure. Repeated `verify_error` means the
+// served book stays thinner than the real chain state (quarantined
+// offers can't graduate).
 var SDEXOrderBookMaintainTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_sdex_orderbook_maintain_total",
-		Help: "SDEX live order-book maintenance outcomes (load_ok|load_error|advance_ok|advance_error).",
+		Help: "SDEX live order-book maintenance outcomes (load_ok|load_error|advance_ok|advance_error|verify_ok|verify_error).",
 	},
 	[]string{"outcome"},
 )
@@ -3164,10 +3172,42 @@ var SDEXOrderBookMaintainTotal = prometheus.NewCounterVec(
 var SDEXOrderBookMaintainDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name:    "stellarindex_sdex_orderbook_maintain_duration_seconds",
-		Help:    "SDEX order-book maintenance latency, labelled by outcome (load_ok|load_error|advance_ok|advance_error).",
+		Help:    "SDEX order-book maintenance latency, labelled by outcome (load_ok|load_error|advance_ok|advance_error|verify_ok|verify_error).",
 		Buckets: []float64{0.05, 0.25, 1, 5, 15, 60, 300, 900, 1800},
 	},
 	[]string{"outcome"},
+)
+
+// SDEXOrderBookCrossedPairs — the order book's data-quality invariant
+// tripwire. Stellar's DEX executes crossing offers at submission, so a
+// RESTING classic book can never have best bid >= best ask; a crossed
+// pair in the SERVED in-process book means phantom offers (the
+// 2026-07-31 zombie class: version-tie survivors of intra-less
+// backfill rows served 4.7-year-dead XLM/USDC bids at 0.4327 against
+// a 0.1722 ask). The book maintainer quarantines + lake-verifies the
+// suspect class, so this should sit at 0; sustained non-zero means a
+// zombie whose removal the lake never ingested at all (verification
+// cannot disprove it) — a coverage gap to chase, not a serving bug.
+var SDEXOrderBookCrossedPairs = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_sdex_orderbook_crossed_pairs",
+		Help: "Asset pairs whose served SDEX order book is crossed (best bid >= best ask); any sustained non-zero value is phantom-offer data corruption.",
+	},
+)
+
+// SDEXOrderBookPendingOffers — offers loaded from the lake's
+// current-state projection but quarantined from the served book until
+// the change-stream removal probe proves them live (version-tie
+// suspect class, intra_ledger_seq == 0). Drains at
+// SDEXOrderBookVerifyBatch per advance tick after every process
+// start; a value stuck high with verify_error in the maintain
+// counters means the book is serving thinner-than-real depth because
+// verification can't reach the lake.
+var SDEXOrderBookPendingOffers = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_sdex_orderbook_pending_offers",
+		Help: "SDEX offers quarantined from the served book awaiting lake removal-verification.",
+	},
 )
 
 // ExplorerSWRRefreshTotal — per-cache, per-outcome counter for the

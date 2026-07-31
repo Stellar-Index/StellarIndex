@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 
@@ -188,6 +189,83 @@ func (r *ExplorerReader) OfferChangesSince(ctx context.Context, fromLedger uint3
 // (ledger_seq << 32) | intra_ledger_seq.
 func offerVersion(ledger, intra uint32) uint64 {
 	return uint64(ledger)<<32 | uint64(intra)
+}
+
+// OfferRemovalRef identifies one version-tie-suspect book entry: an
+// offer's LedgerKey plus the ledger its winning current-state row was
+// recorded at.
+type OfferRemovalRef struct {
+	KeyXDR string
+	Ledger uint32
+}
+
+// offerRemovalProbeBatch bounds one OfferRemovedAt query. Each ref
+// prunes to its own ledger's granules via the (ledger_seq, …) primary
+// key, so per-batch cost is ~linear in refs; 500 scattered old-era
+// refs measured 0.77s / trivial memory on r1 (2026-07-31).
+const offerRemovalProbeBatch = 500
+
+// OfferRemovedAt reports which of the given offers have a `removed`
+// change row AT THE SAME LEDGER as their winning current-state row.
+//
+// Why this exists — the zombie-offer class (2026-07-31): historical
+// backfill wrote ledger_entry_changes rows with intra_ledger_seq = 0,
+// so every same-ledger change to one key ties on
+// ledger_entries_current's ReplacingMergeTree version and an ARBITRARY
+// row survives the merge. An offer that was updated then fully
+// consumed within one ledger can survive as `updated` — a phantom
+// "live" offer years after it left the chain (founding case: XLM/USDC
+// offers 845025288/845025425/845025699/845028065, consumed 2021-11-10
+// at ledger 38224736+, still "live" in the book on 2026-07-31 and
+// serving a crossed best bid 0.4327 vs best ask 0.1722). The losing
+// `removed` row is physically gone from ledger_entries_current after
+// the merge, but ledger_entry_changes still holds it — this probe
+// recovers the truth with a partition-pruned point read.
+//
+// The same-ledger check is sufficient for winners of the current-state
+// FINAL scan: an offer LedgerKey embeds the protocol offer ID and is
+// never reused, so a removal at a LATER ledger would itself have been
+// the higher-version winner (no tie), and a removal at an EARLIER
+// ledger is impossible. Refs whose change rows are absent entirely
+// (never-ingested windows) simply come back "not removed" — that
+// residual class is what the crossed-pairs gauge watches.
+func (r *ExplorerReader) OfferRemovedAt(ctx context.Context, refs []OfferRemovalRef) (map[string]struct{}, error) {
+	removed := make(map[string]struct{})
+	for start := 0; start < len(refs); start += offerRemovalProbeBatch {
+		batch := refs[start:min(start+offerRemovalProbeBatch, len(refs))]
+		var b strings.Builder
+		args := make([]any, 0, len(batch)*2)
+		for i, ref := range batch {
+			if i > 0 {
+				b.WriteString(",")
+			}
+			b.WriteString("(?,?)")
+			args = append(args, ref.Ledger, ref.KeyXDR)
+		}
+		q := `SELECT DISTINCT key_xdr
+			FROM stellar.ledger_entry_changes
+			WHERE entry_type = 'offer' AND change_type = 'removed'
+			  AND (ledger_seq, key_xdr) IN (` + b.String() + `)
+			SETTINGS max_threads = 2, max_memory_usage = 4294967296`
+		rows, err := r.conn.Query(ctx, q, args...)
+		if err != nil {
+			return nil, fmt.Errorf("clickhouse: offer removal probe: %w", err)
+		}
+		for rows.Next() {
+			var key string
+			if err := rows.Scan(&key); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("clickhouse: scan offer removal: %w", err)
+			}
+			removed[key] = struct{}{}
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return nil, fmt.Errorf("clickhouse: offer removal rows: %w", err)
+		}
+	}
+	return removed, nil
 }
 
 // offerFromEntryXDR decodes one offer LedgerEntry. ok=false for

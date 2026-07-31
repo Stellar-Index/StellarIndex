@@ -25,16 +25,23 @@ func (s *stubSDEXOfferBookReader) OfferChangesSince(_ context.Context, from uint
 	return nil, from, nil
 }
 
+func (s *stubSDEXOfferBookReader) OfferRemovedAt(context.Context, []clickhouse.OfferRemovalRef) (map[string]struct{}, error) {
+	return nil, nil
+}
+
 func orderBookServer(t *testing.T, load bool) *testServer {
 	t.Helper()
 	cache := v1.NewSDEXOrderBookCache(&stubSDEXOfferBookReader{
 		offers: []clickhouse.LiveOffer{
+			// Versions carry nonzero intra_ledger_seq — intra 0 would put
+			// an offer in the version-tie quarantine (unserved until the
+			// lake removal probe clears it; see the internal tests).
 			// Ask: sell 10 XLM at 0.5 USDC/XLM.
-			{KeyXDR: "k1", OfferID: 1, Amount: 100_000_000, Selling: "native", Buying: obUSDC, PriceN: 1, PriceD: 2, Version: 5 << 32},
+			{KeyXDR: "k1", OfferID: 1, Amount: 100_000_000, Selling: "native", Buying: obUSDC, PriceN: 1, PriceD: 2, Version: 5<<32 | 1},
 			// Bid: sell 6 USDC at 2 XLM/USDC → 0.5 USDC/XLM.
-			{KeyXDR: "k2", OfferID: 2, Amount: 60_000_000, Selling: obUSDC, Buying: "native", PriceN: 2, PriceD: 1, Version: 5 << 32},
+			{KeyXDR: "k2", OfferID: 2, Amount: 60_000_000, Selling: obUSDC, Buying: "native", PriceN: 2, PriceD: 1, Version: 5<<32 | 2},
 			// Unrelated pair — must not leak into the requested book.
-			{KeyXDR: "k3", OfferID: 3, Amount: 70_000_000, Selling: "native", Buying: "EURC-GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ", PriceN: 1, PriceD: 1, Version: 5 << 32},
+			{KeyXDR: "k3", OfferID: 3, Amount: 70_000_000, Selling: "native", Buying: "EURC-GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ", PriceN: 1, PriceD: 1, Version: 5<<32 | 3},
 		},
 		cursor: 63_400_000,
 	}, nil)
