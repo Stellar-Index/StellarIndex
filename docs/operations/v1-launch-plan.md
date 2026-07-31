@@ -131,6 +131,20 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-31 ~14:15Z — 🔥 **PREWARM/STALE-SERVE LANDED (#13, spec
+  1.16.0): no request ever pays for an analytics build.** Background
+  sweep warms all 15 protocols × 4 windows (~13–16 min cycle, 20-min
+  TTL, stale-serve + single-flight detached rebuild past TTL — a
+  previously-built page never blanks); op-mix prewarmed at boot + in
+  the 5-min loop; new `analytics{status, as_of}` wire field so
+  degraded ≠ zero (frontend renders from status, not absence);
+  paired refresh metrics. Measurement settled intrinsic-vs-starved:
+  worst bespoke battery ~1.9s / op-mix ~70ms even UNDER replay load —
+  the live failures were saturation × request budgets, now removed
+  from the user path. Holders cache verified already stale-serving.
+  All four of Ash's live-site reports now have merged fixes riding
+  v0.21.8 (Go) + CF (web). §2.6b pass 3 substantially advanced.
+
 - 2026-07-31 ~12:30Z — 🧹 **Morning batch: both live-site bug classes
   FIXED + two alerts closed + key hygiene.** (1) Frontend honesty
   sweep merged (7 panels rendered absent-as-zero — roster "0 events",
