@@ -131,6 +131,23 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-31 ~05:15Z — 🔵 **COMPLETENESS 16/17; redstone blind ladder
+  1,626 → 170 → 15.** The v0.21.7 redstone replay reached tip and the
+  scoped verify ran: the order-preserving rule cleared 91% of the
+  residue. The surviving 15 ledgers (first 62,056,824, probed against
+  the live decoder) are a PROVABLY ambiguous class — a single
+  surviving price matching TWO feeds' signer medians, where order
+  adds nothing. The verifier refuses by design (honest-blind beats
+  misattributed). Evidence: `evidence/2026-07-31-completeness-verdicts.md`.
+  **The exact closure is designed, not hacked**: the adapter's
+  write_prices STORES each accepted feed — the tx's ledger-entry
+  write keys name the accepted feed set exactly. Plumbing state-write
+  keys through the dispatcher into `events.Event` (the OpArgs
+  pattern, PR 166) gives attribution with zero heuristics; unit
+  delegated to a build agent this morning. Meanwhile: soroswap taker
+  replay continues (chain waiter re-runs the all-source verify);
+  mixed3 k6 queued for the quiet box after it.
+
 - 2026-07-30 ~20:30Z — 🎨 **ALL-PROTOCOLS VISUAL SUITE COMPLETE**
   (8199fe36; three parallel agents, all merged, full verify green).
   Every protocol page is now a window-reactive showcase: bridges
