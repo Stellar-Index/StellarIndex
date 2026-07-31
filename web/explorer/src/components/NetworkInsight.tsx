@@ -36,13 +36,23 @@ export type ThroughputMetric = 'ops' | 'txs' | 'events' | 'ledgers';
  * directory page adds insight with one JSX line.
  */
 
-/** useOpTypeStats — the trailing-24h per-op-type counts. */
+/**
+ * useOpTypeStats — the trailing-24h per-op-type counts.
+ *
+ * `op_type_stats` is omitempty on the wire and ABSENT on a cold first
+ * load (the server returns the listing without the aggregate and kicks
+ * a detached refresh — internal/api/v1/explorer/operations.go
+ * resolveOpTypeStats). Absent is preserved as `null` — NOT coerced to
+ * `[]` — so the panel can distinguish "stats not computed yet" from a
+ * genuine "zero operations in the window" and never fabricate the
+ * latter claim.
+ */
 export function useOpTypeStats() {
-  return useQuery<OpTypeStat[]>({
+  return useQuery<OpTypeStat[] | null>({
     queryKey: ['/v1/operations', 'type-mix'],
     queryFn: async () =>
       (await apiGet<Envelope<OperationsResp>>('/v1/operations', { limit: 1 })).data
-        .op_type_stats ?? [],
+        .op_type_stats ?? null,
     staleTime: 60_000,
     retry: false,
   });
@@ -71,7 +81,14 @@ export function OperationMixPanel({ linkRows = true }: { linkRows?: boolean }) {
       {isError && (
         <p className="text-sm text-ink-muted">Operation stats are unavailable right now.</p>
       )}
-      {!isLoading && !isError && sorted.length === 0 && (
+      {/* Absent (null) ≠ empty ([]): the aggregate simply isn't computed
+          yet on a cold load — never claim "no operations" for it. */}
+      {!isLoading && !isError && stats == null && (
+        <p className="text-sm text-ink-muted">
+          Operation stats unavailable — computing, refresh shortly.
+        </p>
+      )}
+      {!isLoading && !isError && stats != null && sorted.length === 0 && (
         <EmptyState title="No operations in the last 24h." />
       )}
       {sorted.map((st) => {

@@ -55,6 +55,17 @@ export function DexProtocolsTable() {
   });
 
   const rows = q.data ?? [];
+  // `?include=stats` soft-fails server-side and every stats column is
+  // omitempty — on that degrade EVERY row arrives bare. Detect wholesale
+  // absence so cells render '—' rather than a fabricated "0 trades /
+  // 0 pools" claim; with the join present, a bare field is a genuine
+  // present-and-zero (omitempty drops 0).
+  const statsAvailable = rows.some(
+    (r) =>
+      r.volume_24h_usd != null ||
+      r.trade_count_24h != null ||
+      r.markets_count_24h != null,
+  );
   const tvls = useProtocolTvls().data ?? {};
 
   return (
@@ -122,14 +133,18 @@ export function DexProtocolsTable() {
                     <span className="font-mono tabular-nums text-ink-body">
                       {r.trade_count_24h && r.trade_count_24h > 0
                         ? formatCompact(r.trade_count_24h)
-                        : '0'}
+                        : statsAvailable
+                          ? '0'
+                          : '—'}
                     </span>
                   </Td>
                   <Td align="right">
                     <span className="font-mono tabular-nums text-ink-body">
                       {r.markets_count_24h && r.markets_count_24h > 0
                         ? formatCompact(r.markets_count_24h)
-                        : '0'}
+                        : statsAvailable
+                          ? '0'
+                          : '—'}
                     </span>
                   </Td>
                   <Td align="right">

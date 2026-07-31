@@ -56,6 +56,18 @@ export function ExchangesView() {
   });
 
   const rows = q.data ?? [];
+  // `?include=stats` soft-fails server-side (internal/api/v1/sources.go:
+  // "serve the registry without stats") and every stats column is
+  // omitempty — on that degrade EVERY row arrives bare. Detect the
+  // wholesale absence so the page renders '—', not a fabricated
+  // "$0 across 0 trades" claim. When any row carries stats, a bare field
+  // on another row is a genuine present-and-zero (omitempty drops 0).
+  const statsAvailable = rows.some(
+    (r) =>
+      r.volume_24h_usd != null ||
+      r.trade_count_24h != null ||
+      r.markets_count_24h != null,
+  );
   const totalVol = rows.reduce((s, r) => s + (r.volume_24h_usd ? Number(r.volume_24h_usd) : 0), 0);
   const totalTrades = rows.reduce((s, r) => s + (r.trade_count_24h ?? 0), 0);
   const totalMarkets = rows.reduce((s, r) => s + (r.markets_count_24h ?? 0), 0);
@@ -82,13 +94,13 @@ export function ExchangesView() {
       {rows.length > 0 && (
         <StatGrid cols={3}>
           <StatCell>
-            <Stat label="24h volume" value={`$${formatCompact(totalVol)}`} />
+            <Stat label="24h volume" value={statsAvailable ? `$${formatCompact(totalVol)}` : '—'} />
           </StatCell>
           <StatCell>
-            <Stat label="24h trades" value={formatCompact(totalTrades)} />
+            <Stat label="24h trades" value={statsAvailable ? formatCompact(totalTrades) : '—'} />
           </StatCell>
           <StatCell>
-            <Stat label="Pairs covered" value={totalMarkets.toLocaleString()} />
+            <Stat label="Pairs covered" value={statsAvailable ? totalMarkets.toLocaleString() : '—'} />
           </StatCell>
         </StatGrid>
       )}
@@ -96,9 +108,11 @@ export function ExchangesView() {
       <Panel
         title={`${rows.length} centralised exchanges`}
         hint={
-          rows.length > 0
+          rows.length > 0 && statsAvailable
             ? `Total 24h: $${formatCompact(totalVol)} across ${formatCompact(totalTrades)} trades on ${totalMarkets} pairs`
-            : 'Source: /v1/sources?include=stats'
+            : rows.length > 0
+              ? '24h stats unavailable — refreshing'
+              : 'Source: /v1/sources?include=stats'
         }
         source={asExample('/v1/sources', { include: 'stats' })}
         bodyClassName="-mx-4"
@@ -161,12 +175,16 @@ export function ExchangesView() {
                     </Td>
                     <Td align="right">
                       <span className="font-mono tabular-nums text-ink-body">
-                        {r.trade_count_24h && r.trade_count_24h > 0 ? formatCompact(r.trade_count_24h) : '0'}
+                        {r.trade_count_24h && r.trade_count_24h > 0
+                          ? formatCompact(r.trade_count_24h)
+                          : statsAvailable
+                            ? '0'
+                            : '—'}
                       </span>
                     </Td>
                     <Td align="right">
                       <span className="font-mono tabular-nums text-ink-body">
-                        {r.markets_count_24h ?? 0}
+                        {statsAvailable ? (r.markets_count_24h ?? 0) : '—'}
                       </span>
                     </Td>
                     <Td align="right">
