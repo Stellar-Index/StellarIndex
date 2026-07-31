@@ -213,6 +213,28 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	fmt.Fprintf(os.Stderr, "projected-rebuild: source=%s range=[%d,%d] window=%d workers=%d mode=%s ch=%s\n",
 		*sourceName, fromLedger, toLedger, windowSize, numWorkers, writeModeLabel(*write), *chAddr)
 
+	// A -write run rewrites served rows below the live watermark — the same
+	// carried-claim invalidation projector-replay has (2026-07-31; migration
+	// 0124): compute-completeness would otherwise keep carrying a prior clean
+	// projection claim over the range this rebuild just changed. Record the
+	// dirty window BEFORE writing anything and refuse to run without it —
+	// the fail-closed order (a crash after the record leaves a spurious
+	// window one clean verify clears; the opposite order leaves rewritten
+	// rows certified by stale evidence). Dry-run writes nothing and records
+	// nothing.
+	if *write {
+		if derr := store.RecordProjectionDirtyWindow(ctx, timescale.ProjectionDirtyWindow{
+			Source: *sourceName,
+			From:   fromLedger,
+			To:     toLedger,
+			Reason: fmt.Sprintf("projected-rebuild -write [%d,%d]", fromLedger, toLedger),
+		}); derr != nil {
+			return fmt.Errorf("record dirty window (refusing to write without it — the completeness verifier would carry a stale claim over the rewritten range): %w", derr)
+		}
+		fmt.Fprintf(os.Stderr, "projected-rebuild: recorded projection dirty window [%d,%d] — compute-completeness will re-reconcile this range before carrying any projection claim over it\n",
+			fromLedger, toLedger)
+	}
+
 	result, runErr := RunProjectedRebuild(ctx, ProjectedRebuildOptions{
 		Store:   store,
 		ChAddr:  *chAddr,

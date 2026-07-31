@@ -62,6 +62,40 @@ func TestBuildReconciliationCatalogue_PromotesSEP41WhenWatched(t *testing.T) {
 	}
 }
 
+// TestBuildReconciliationCatalogue_GenesisMirrorsProtocolRegistry pins the
+// lake-derived exact genesis values for the two sources whose catalogue
+// floors had drifted (2026-07-31): cctp's true first on-chain event is
+// ledger 62,146,641 (the MessageTransmitter's first event; the stale
+// 62_403_000 ingestion-config floor left 410 real served rows permanently
+// BELOW the verify floor, structurally out of every verdict) and rozo's is
+// 60,829,397 (first event across all four Rozo contracts). The values
+// mirror internal/api/v1/protocols_registry.go (fixed there 07-30) —
+// spelled as literals here so this test cannot agree with a re-drifted
+// catalogue.
+func TestBuildReconciliationCatalogue_GenesisMirrorsProtocolRegistry(t *testing.T) {
+	want := map[string]uint32{
+		"cctp": 62_146_641,
+		"rozo": 60_829_397,
+	}
+	cat, _, err := buildReconciliationCatalogue(testConfigWithAllSources())
+	if err != nil {
+		t.Fatalf("buildReconciliationCatalogue: %v", err)
+	}
+	for _, src := range cat {
+		g, ok := want[src.name]
+		if !ok {
+			continue
+		}
+		delete(want, src.name)
+		if src.genesis != g {
+			t.Errorf("%s: genesis = %d, want %d (lake-derived exact first event, mirrors protocols_registry.go) — a late floor leaves real served rows below the verify floor, permanently out-of-verdict", src.name, src.genesis, g)
+		}
+	}
+	for name := range want {
+		t.Errorf("catalogue missing source %s", name)
+	}
+}
+
 // TestBuildReconciliationCatalogue_NoSEP41WithoutWatchedSet asserts the
 // promotion is silent-skip, not an error, for a deployment that never
 // opted into SEP-41 capture — mirroring the dispatcher's own

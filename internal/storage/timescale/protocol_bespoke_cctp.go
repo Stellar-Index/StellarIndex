@@ -13,38 +13,50 @@ import (
 // message_sent/received and the admin/config events carry no value and are
 // excluded from flow sums.
 //
-// Two data-honesty rules every query below encodes (both ground-truthed on
-// r1, 2026-07-30, over all 52,205 cctp_events rows):
+// Two data-honesty rules every query below encodes:
 //
-//  1. DEDUPLICATION. Rows decoded before event_index was plumbed (migration
-//     0112) coexist with their re-derived copies: 12,139 (tx, op, type)
-//     groups hold exactly 2 rows — one legacy row at event_index 0 plus the
-//     re-derived row at the true index — with IDENTICAL amounts (0 groups
-//     with differing amounts, 0 groups of 3+). Every flow query therefore
-//     collapses to one row per (tx_hash, op_index) transfer via GROUP BY
-//     with max(amount) (identical across the pair, so max = the value).
+//  1. VALUE ROWS ARE READ RAW — one transfer per stored event row, no
+//     per-(tx, op) collapse. An earlier vintage of this file collapsed
+//     every flow CTE to one row per (tx_hash, op_index) with max(amount):
+//     a workaround for the 19,366 legacy event_index-0 twin rows (the
+//     pre-migration-0112 decode vintage duplicated by the 07-30 replay).
+//     Those twins were DELETED from r1 on 2026-07-31 (lake-grounded twin
+//     investigation; comet/blend/sep41 verified clean the same night), so
+//     the dedup rule's reason is gone — and keeping it would silently
+//     HALVE a future genuine batched double-transfer in one op (the 0112
+//     class exists on the wire: the lake census that night found
+//     same-op same-type groups among admin events — attester_enabled ×2,
+//     remote_token_messenger_added ×23 in single ops — so value events
+//     CAN legitimately double up too, even though none do today). A dedup
+//     rule must not outlive its reason: cctp_events' PK now discriminates
+//     on event_index, the projector writes one row per event, and every
+//     row is a real transfer.
 //
 //  2. mint_and_forward IS NOT A SEPARATE TRANSFER. Every mint_and_forward
 //     op also emits mint_and_withdraw for the SAME funds (0 forward-only
 //     ops), and the forward amount is exactly 10× the withdraw amount on
-//     all 13,651 pairs — the forward event restates the value at the LOCAL
-//     7-decimal SAC scale while mint_and_withdraw carries the CANONICAL
-//     6-decimal amount the SAC leg was verified against. Inbound sums use
-//     mint_and_withdraw ONLY; summing both would count the same transfer
-//     11× over.
+//     all 13,651 pairs (r1, 2026-07-30) — the forward event restates the
+//     value at the LOCAL 7-decimal SAC scale while mint_and_withdraw
+//     carries the CANONICAL 6-decimal amount the SAC leg was verified
+//     against. Inbound sums use mint_and_withdraw ONLY; summing both
+//     would count the same transfer 11× over. This is a real semantic
+//     rule about the protocol's event vocabulary, NOT twin dedup — it
+//     survives the raw-read change above.
 //
 // Source-chain attribution (inbound): the same-op message_received row's
 // message_body carries the CCTP BurnMessage; hex chars 33..72 are the low
 // 20 bytes of the burn-side USDC token, resolved via cctpBurnTokenChains
-// (see cctp_chains.go for the verification trail). Destination attribution
-// (outbound): counterparty_domain via Circle's domain registry.
+// (see cctp_chains.go for the verification trail). The receive side is the
+// ONE place a per-(tx, op) group survives: the join needs exactly one body
+// row per op or every mint row it joins would fan out per body (see
+// cctpRecvCTE). Destination attribution (outbound): counterparty_domain
+// via Circle's domain registry.
 //
 // All division is exact NUMERIC — never a float literal (ADR-0003). Every
 // query is either window-bounded (ts > now() - $1::interval) or an
 // explicitly all-time aggregate over the tiny cctp_events table
-// (52,205 rows total on r1, 2026-07-30 — full scans are trivially cheap,
-// and the whole block is built under the window-keyed protocol-detail
-// cache).
+// (~33k rows post-deletion — full scans are trivially cheap, and the whole
+// block is built under the window-keyed protocol-detail cache).
 
 // cctpSeriesNameInbound / …Outbound are the direction-stable total-series
 // names the frontend pairs on; cctpPerChainPrefix* prefix the per-chain
@@ -57,49 +69,60 @@ const (
 	cctpSeriesNameCumulative = "Cumulative net inflow (all-time)"
 )
 
-// cctpMintsCTE returns the deduplicated-inbound-transfers subquery: one row
-// per (tx_hash, op_index) mint_and_withdraw transfer (see the dedup rule in
-// the file doc). windowed appends the $1::interval bound.
+// cctpMintsCTE returns the inbound-transfers subquery: one RAW row per
+// stored mint_and_withdraw event (see file-doc rule 1 — the legacy twins
+// are deleted, and collapsing per (tx, op) would halve a genuine batched
+// double-transfer in one op). windowed appends the $1::interval bound.
 func cctpMintsCTE(windowed bool) string {
-	q := `SELECT tx_hash, op_index, min(ts) AS ts, max(amount) AS amount
+	q := `SELECT tx_hash, op_index, ts, amount
 	   FROM cctp_events
 	  WHERE event_type = 'mint_and_withdraw' AND amount IS NOT NULL`
 	if windowed {
 		q += ` AND ts > now() - $1::interval`
 	}
-	return q + ` GROUP BY tx_hash, op_index`
+	return q
 }
 
-// cctpBurnsCTE returns the deduplicated-outbound-transfers subquery: one row
-// per (tx_hash, op_index) deposit_for_burn, carrying the destination domain
-// and depositor (identical across a legacy/re-derived pair; min is the value).
+// cctpBurnsCTE returns the outbound-transfers subquery: one RAW row per
+// stored deposit_for_burn event, carrying the destination domain and
+// depositor (file-doc rule 1 — no per-(tx, op) collapse).
 func cctpBurnsCTE(windowed bool) string {
-	q := `SELECT tx_hash, op_index, min(ts) AS ts, max(amount) AS amount,
-	         min(counterparty_domain) AS domain,
-	         min(attributes->>'depositor') AS depositor
+	q := `SELECT tx_hash, op_index, ts, amount,
+	         counterparty_domain AS domain,
+	         attributes->>'depositor' AS depositor
 	   FROM cctp_events
 	  WHERE event_type = 'deposit_for_burn' AND amount IS NOT NULL`
 	if windowed {
 		q += ` AND ts > now() - $1::interval`
 	}
-	return q + ` GROUP BY tx_hash, op_index`
+	return q
 }
 
-// cctpRecvCTE returns the deduplicated message_received subquery: one
-// BurnMessage body per (tx_hash, op_index) — the inbound join side for
-// source-chain attribution.
-func cctpRecvCTE(windowed bool) string {
-	q := `SELECT tx_hash, op_index, min(attributes->>'message_body') AS body
+// cctpRecvCTE returns the message_received subquery: one BurnMessage body
+// per (tx_hash, op_index) — the inbound join side for source-chain
+// attribution.
+//
+// This is the ONE place the per-(tx, op) GROUP BY deliberately survives
+// the raw-read change (file-doc rule 1), because here the JOIN — not twin
+// dedup — needs exactly one row per op: every mint row of the op joins
+// this body row, so a second body row would fan each mint out into a
+// double-counted attribution row. The residual approximation is honest
+// and bounded: if one op ever carried TWO received messages, min(body)
+// attributes all of that op's mints to one message's source chain —
+// totals stay conserved (each mint row still appears exactly once), only
+// the per-chain split within that op can be off.
+//
+// Always window-bounded: every consumer joins it against a windowed value
+// CTE (the all-time aggregates never need source attribution).
+func cctpRecvCTE() string {
+	return `SELECT tx_hash, op_index, min(attributes->>'message_body') AS body
 	   FROM cctp_events
-	  WHERE event_type = 'message_received'`
-	if windowed {
-		q += ` AND ts > now() - $1::interval`
-	}
-	return q + ` GROUP BY tx_hash, op_index`
+	  WHERE event_type = 'message_received' AND ts > now() - $1::interval
+	  GROUP BY tx_hash, op_index`
 }
 
 // cctpFlowSeriesQuery builds the directional total flow series at the
-// window's grain over the deduplicated transfers.
+// window's grain over the raw per-event transfers.
 func cctpFlowSeriesQuery(windowDays int, inbound bool) string {
 	trunc, format := bridgeSeriesGrain(windowDays)
 	cte := cctpBurnsCTE(true)
@@ -114,7 +137,7 @@ func cctpFlowSeriesQuery(windowDays int, inbound bool) string {
 }
 
 // cctpWindowKPIQuery is the windowed inbound/outbound volume + transfer
-// counts over the deduplicated transfers.
+// counts over the raw per-event transfers.
 func cctpWindowKPIQuery() string {
 	return `
 		WITH m AS (` + cctpMintsCTE(true) + `), b AS (` + cctpBurnsCTE(true) + `)
@@ -126,9 +149,15 @@ func cctpWindowKPIQuery() string {
 }
 
 // cctpAllTimeKPIQuery is the all-time inbound / outbound / net volumes plus
-// the unique-participant counts. Recipients resolve per transfer to the
+// the unique-participant counts. Recipients resolve per op to the
 // forward_recipient when the op forwarded (the final beneficiary) and the
-// mint_recipient otherwise; DISTINCT collapses the legacy duplicate rows.
+// mint_recipient otherwise — the per-(tx, op) GROUP BY here is the
+// forward-restatement pairing of file-doc rule 2 (a mint_and_forward row
+// restates its sibling mint_and_withdraw, so the pair must resolve to ONE
+// recipient), not twin dedup, and it survives the raw-read change.
+// count(DISTINCT r) then makes the "unique recipients" KPI genuinely
+// distinct addresses (the pre-fix count(*) counted recipient-bearing OPS,
+// mislabelled as unique addresses).
 func cctpAllTimeKPIQuery() string {
 	return `
 		WITH m AS (` + cctpMintsCTE(false) + `), b AS (` + cctpBurnsCTE(false) + `)
@@ -137,21 +166,22 @@ func cctpAllTimeKPIQuery() string {
 		  COALESCE((SELECT sum(amount) FROM b) / 1000000::numeric, 0)::numeric(24,6)::text,
 		  ((COALESCE((SELECT sum(amount) FROM m), 0) - COALESCE((SELECT sum(amount) FROM b), 0)) / 1000000::numeric)::numeric(24,6)::text,
 		  (SELECT count(DISTINCT depositor) FROM b WHERE depositor IS NOT NULL AND depositor <> '')::text,
-		  (SELECT count(*) FROM (
+		  (SELECT count(DISTINCT r) FROM (
 		     SELECT COALESCE(max(attributes->>'forward_recipient'), max(attributes->>'mint_recipient')) AS r
 		       FROM cctp_events
 		      WHERE event_type IN ('mint_and_withdraw','mint_and_forward')
 		      GROUP BY tx_hash, op_index) q WHERE r IS NOT NULL AND r <> '')::text`
 }
 
-// cctpInboundBreakdownQuery groups the window's deduplicated inbound
-// transfers by burn-token tail (source chain), USDC-weighted descending.
-// LEFT JOIN keeps a transfer whose receive row is missing or malformed in
-// the total (as an empty tail → "Unknown source") so the breakdown always
-// sums to the inbound KPI.
+// cctpInboundBreakdownQuery groups the window's inbound transfers by
+// burn-token tail (source chain), USDC-weighted descending. LEFT JOIN
+// keeps a transfer whose receive row is missing or malformed in the total
+// (as an empty tail → "Unknown source") so the breakdown always sums to
+// the inbound KPI; the receive side is one row per op (cctpRecvCTE), so
+// no mint row fans out.
 func cctpInboundBreakdownQuery() string {
 	return `
-		WITH r AS (` + cctpRecvCTE(true) + `), m AS (` + cctpMintsCTE(true) + `)
+		WITH r AS (` + cctpRecvCTE() + `), m AS (` + cctpMintsCTE(true) + `)
 		SELECT substr(COALESCE(r.body, ''), 33, 40),
 		       (sum(m.amount) / 1000000::numeric)::numeric(24,6)::text,
 		       count(*)
@@ -159,8 +189,8 @@ func cctpInboundBreakdownQuery() string {
 		GROUP BY 1 ORDER BY sum(m.amount) DESC`
 }
 
-// cctpOutboundBreakdownQuery groups the window's deduplicated outbound
-// transfers by destination domain, USDC-weighted descending.
+// cctpOutboundBreakdownQuery groups the window's outbound transfers by
+// destination domain, USDC-weighted descending.
 func cctpOutboundBreakdownQuery() string {
 	return `
 		WITH b AS (` + cctpBurnsCTE(true) + `)
@@ -177,7 +207,7 @@ func cctpPerChainSeriesQuery(windowDays int, inbound bool) string {
 	trunc, format := bridgeSeriesGrain(windowDays)
 	var j string
 	if inbound {
-		j = `WITH r AS (` + cctpRecvCTE(true) + `), m AS (` + cctpMintsCTE(true) + `),
+		j = `WITH r AS (` + cctpRecvCTE() + `), m AS (` + cctpMintsCTE(true) + `),
 		 j AS (SELECT m.ts, m.amount, substr(COALESCE(r.body, ''), 33, 40) AS chain_key
 		         FROM m LEFT JOIN r USING (tx_hash, op_index))`
 	} else {
@@ -219,7 +249,7 @@ func cctpCumulativeNetInflowQuery() string {
 // amount across both directions, with the chain key for Go-side labelling.
 func cctpLargestTransfersQuery() string {
 	return `
-		WITH r AS (` + cctpRecvCTE(true) + `), m AS (` + cctpMintsCTE(true) + `), b AS (` + cctpBurnsCTE(true) + `)
+		WITH r AS (` + cctpRecvCTE() + `), m AS (` + cctpMintsCTE(true) + `), b AS (` + cctpBurnsCTE(true) + `)
 		SELECT direction, chain_key, (amount / 1000000::numeric)::numeric(24,6)::text, tx_hash, day FROM (
 		  SELECT 'Inbound' AS direction,
 		         substr(COALESCE(r.body, ''), 33, 40) AS chain_key,
@@ -256,7 +286,7 @@ func (s *Store) bespokeBridgeCCTP(ctx context.Context, since string, windowDays 
 	blk := &BespokeBlock{
 		Category: "bridge",
 		Notes: []string{
-			"Flows are USDC (canonical 6-decimal event amounts, verified against the SAC leg on-chain). Inbound = mint_and_withdraw transfers, deduplicated per (tx, op); mint_and_forward restates the same funds at the 7-decimal local scale and is excluded from sums. Outbound = deduplicated deposit_for_burn.",
+			"Flows are USDC (canonical 6-decimal event amounts, verified against the SAC leg on-chain). Inbound = mint_and_withdraw transfer events; mint_and_forward restates the same funds at the 7-decimal local scale and is excluded from sums. Outbound = deposit_for_burn events.",
 			"Source chains are attributed from the burn-side USDC token inside each transfer's CCTP message body; destinations from Circle's public domain registry. Both maps were verified against Circle's published USDC contract addresses and domain list (2026-07-30). Anything unrecognised is labelled Unverified / Domain N — never guessed.",
 		},
 	}
@@ -297,8 +327,8 @@ func (s *Store) cctpKPIs(ctx context.Context, blk *BespokeBlock, since string, w
 		return fmt.Errorf("timescale: bespokeBridge cctp all-time KPIs: %w", err)
 	}
 	blk.KPIs = append(blk.KPIs,
-		BespokeKPI{Label: fmt.Sprintf("Inbound volume (%dd)", windowDays), Value: inVol, Unit: "USDC", Hint: "USDC minted on Stellar from remote burns (deduplicated mint_and_withdraw transfers)"},
-		BespokeKPI{Label: fmt.Sprintf("Outbound volume (%dd)", windowDays), Value: outVol, Unit: "USDC", Hint: "Stellar USDC burned for remote mints (deduplicated deposit_for_burn transfers)"},
+		BespokeKPI{Label: fmt.Sprintf("Inbound volume (%dd)", windowDays), Value: inVol, Unit: "USDC", Hint: "USDC minted on Stellar from remote burns (mint_and_withdraw transfer events)"},
+		BespokeKPI{Label: fmt.Sprintf("Outbound volume (%dd)", windowDays), Value: outVol, Unit: "USDC", Hint: "Stellar USDC burned for remote mints (deposit_for_burn transfer events)"},
 		BespokeKPI{Label: fmt.Sprintf("Transfers in / out (%dd)", windowDays), Value: inCount + " / " + outCount},
 		BespokeKPI{Label: "All-time inbound", Value: allIn, Unit: "USDC", Hint: "Total USDC ever minted onto Stellar through CCTP"},
 		BespokeKPI{Label: "All-time outbound", Value: allOut, Unit: "USDC", Hint: "Total USDC ever burned off Stellar through CCTP"},

@@ -798,6 +798,96 @@ func TestSubstrateClaim_SkipSubstrateCarriesRatherThanAsserts(t *testing.T) {
 	}
 }
 
+// ─── Replay-rewind dirty windows (the carried-claim invalidation gap) ───
+
+// TestDirtyReconcileFloor_ReplayRewindForcesTheRangeBackIntoScope pins the
+// 2026-07-31 finding: a projector-replay that rewinds BELOW a source's
+// watermark rewrites served rows the carried projection claim
+// (projectionClaim rule 3) still certifies, and the daily driver's
+// `-from = min(watermark)` never re-examines them — which is exactly how
+// the 07-30 cctp replay's 19,366 event_index-0 twins at 62.27M–63.55M
+// escaped the verifier while the soroswap twins (caught by a full-range
+// run) did not. A pending dirty window must FORCE the run's reconcile
+// floor down over the rewound range, regardless of -from.
+func TestDirtyReconcileFloor_ReplayRewindForcesTheRangeBackIntoScope(t *testing.T) {
+	const (
+		genesis   = uint32(62_146_641) // cctp exact genesis
+		tip       = uint32(63_600_000)
+		watermark = uint32(63_550_000) // the daily driver's -from
+	)
+	// The 07-30 replay shape: rewound to 62.27M with the cursor at 63.55M.
+	dirty := timescale.ProjectionDirtyWindow{Source: "cctp", From: 62_270_000, To: 63_550_000}
+
+	// Pre-fix behaviour, for contrast: the incremental floor alone sits at
+	// the watermark, so targetScope excludes the entire rewound range and
+	// projectionClaim rule 3 carries the stale prior claim over it.
+	preFix := targetScope(genesis, true, genesis, watermark, tip)
+	if preFix.From != watermark {
+		t.Fatalf("fixture invalid: without the dirty window the scope must start at -from %d, got %d", watermark, preFix.From)
+	}
+
+	floor := dirtyReconcileFloor(watermark, genesis, dirty)
+	if floor != dirty.From {
+		t.Fatalf("dirtyReconcileFloor = %d, want the window bottom %d — the rewound range must re-enter the reconcile scope", floor, dirty.From)
+	}
+	scope := targetScope(genesis, true, genesis, floor, tip)
+	if scope.From > dirty.From || scope.To < dirty.To {
+		t.Fatalf("verify scope [%d,%d] does not include the rewound range [%d,%d]", scope.From, scope.To, dirty.From, dirty.To)
+	}
+
+	// A window bottom below the source's genesis clamps to genesis —
+	// nothing exists below it to re-verify.
+	if got := dirtyReconcileFloor(watermark, genesis, timescale.ProjectionDirtyWindow{From: 2, To: 63_000_000}); got != genesis {
+		t.Errorf("a sub-genesis window bottom must clamp to genesis %d, got %d", genesis, got)
+	}
+
+	// A window ABOVE the run's own floor never raises it (the run is
+	// already reconciling deeper ground than the replay touched).
+	if got := dirtyReconcileFloor(62_000_000, genesis, dirty); got != 62_000_000 {
+		t.Errorf("a dirty window must only ever LOWER the floor, got %d from projFrom=62000000", got)
+	}
+}
+
+// TestDirtyWindowSatisfied_OnlyACleanCoveringRunClears — the window is an
+// obligation, and only a run that actually discharged it may delete it: the
+// projection verdict must be CLEAN and the run's reconcile scope must have
+// covered the whole window. A failing verdict, a floor that stopped above
+// the window bottom, or a watermark that stopped below its top all leave
+// the window pending so the next run keeps re-checking.
+func TestDirtyWindowSatisfied_OnlyACleanCoveringRunClears(t *testing.T) {
+	const genesis = uint32(62_146_641)
+	dirty := timescale.ProjectionDirtyWindow{Source: "cctp", From: 62_270_000, To: 63_550_000}
+
+	cases := []struct {
+		name   string
+		projOK bool
+		floor  uint32
+		hi     uint32
+		want   bool
+	}{
+		{"clean run covering the window clears it", true, 62_270_000, 63_600_000, true},
+		{"clean run from below the window bottom clears it", true, genesis, 63_600_000, true},
+		{"a DIRTY verdict must not clear the obligation", false, genesis, 63_600_000, false},
+		{"a floor above the window bottom proved nothing about the rewound prefix", true, 62_300_000, 63_600_000, false},
+		{"a watermark short of the window top leaves rewound ground unverified", true, genesis, 63_500_000, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := dirtyWindowSatisfied(dirty, tc.projOK, tc.floor, genesis, tc.hi); got != tc.want {
+				t.Fatalf("dirtyWindowSatisfied(projOK=%v, floor=%d, hi=%d) = %v, want %v",
+					tc.projOK, tc.floor, tc.hi, got, tc.want)
+			}
+		})
+	}
+
+	// Sub-genesis window bottom: a run whose floor reached genesis covered
+	// everything that can exist — it must be able to clear.
+	subGenesis := timescale.ProjectionDirtyWindow{Source: "cctp", From: 2, To: 63_000_000}
+	if !dirtyWindowSatisfied(subGenesis, true, genesis, genesis, 63_600_000) {
+		t.Error("a genesis-floor clean run must clear a window whose bottom lies below genesis")
+	}
+}
+
 // ─── C4-059: the ContractCall census is per-row blind too ────────
 
 // stubContractCallDecoder owns every call and fails Decode on one named

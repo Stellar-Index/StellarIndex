@@ -264,6 +264,20 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		return fmt.Errorf("durable projection floors (failing closed — cannot distinguish served-tier loss from never-projected without them): %w", err)
 	}
 
+	// Pending replay-rewind dirty windows (migration 0125). A
+	// projector-replay that rewound BELOW a source's watermark rewrote
+	// served rows the carried projection claim (projectionClaim rule 3)
+	// still certifies — the carry's evidence is invalid until the rewound
+	// range is re-reconciled. Loaded once, FAILING CLOSED like the two
+	// reads above: a run blind to pending windows would republish carried
+	// claims over ranges a replay has rewritten, which is exactly how the
+	// 07-30 cctp replay's 19,366 over-projected rows escaped the verifier
+	// (the 2026-07-31 carried-claim invalidation gap).
+	dirtyWindows, err := store.ProjectionDirtyWindows(ctx)
+	if err != nil {
+		return fmt.Errorf("pending replay-rewind dirty windows (failing closed — carrying a projection claim over a rewound range is the invalidation this record exists to prevent): %w", err)
+	}
+
 	// ── Per-source watermark ────────────────────────────────────────
 	for _, src := range catalogue {
 		if *only != "" && src.name != *only {
@@ -358,6 +372,14 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		if uint32(*fromLedger) > projFrom { //nolint:gosec // ledger seq fits uint32
 			projFrom = uint32(*fromLedger) //nolint:gosec // ledger seq fits uint32
 		}
+		// A pending replay-rewind window overrides the incremental floor:
+		// the replay rewrote served rows below the watermark, so the range
+		// MUST be re-reconciled before any claim — carried or fresh — may
+		// cover it. -from can never skip past it.
+		dirtyWin, hasDirty := dirtyWindows[src.name]
+		if hasDirty {
+			projFrom = dirtyReconcileFloor(projFrom, genesis, dirtyWin)
+		}
 		if *useCH {
 			if srW.Ledger >= projFrom {
 				streamer := clickhouse.ReconcileEventStreamer{Addr: *chAddr, NeedOpArgs: src.needsOpArgs, NeedStateWriteKeys: src.needsStateWriteKeys}
@@ -443,6 +465,31 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			w = completeness.ComputeWatermark(genesis, tip, problems)
 		}
 
+		// Replay-rewind window disposition. The clear is earned by the
+		// reconcile itself, not the carry: only a run whose CLEAN projection
+		// verdict actually covered the whole window may delete it. A dirty or
+		// short run leaves the window pending so every subsequent run keeps
+		// extending its floor over the rewound range until one verifies it.
+		var dirtyCleared bool
+		if hasDirty {
+			reconcileFloor := projFrom
+			if !*useCH {
+				// The legacy PG path always reconciles the full
+				// [genesis, watermark] range — its floor is genesis.
+				reconcileFloor = genesis
+			}
+			dirtyCleared = dirtyWindowSatisfied(dirtyWin, projOK, reconcileFloor, genesis, srW.Ledger)
+			if dirtyCleared {
+				detail = append(detail, fmt.Sprintf(
+					"projection: replay-rewind window [%d,%d] re-verified clean this run — clearing it",
+					dirtyWin.From, dirtyWin.To))
+			} else {
+				detail = append(detail, fmt.Sprintf(
+					"projection: replay-rewind window [%d,%d] PENDING re-verification — the reconcile floor stays extended over it until a clean run covers it",
+					dirtyWin.From, dirtyWin.To))
+			}
+		}
+
 		if len(detail) == 0 {
 			detail = append(detail, "complete: substrate + recognition + projection verified to tip")
 		}
@@ -455,6 +502,15 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			Detail: strings.Join(detail, "; "),
 		}); err != nil {
 			return fmt.Errorf("%s: upsert snapshot: %w", src.name, err)
+		}
+		if dirtyCleared {
+			// Bounded delete (ClearProjectionDirtyWindow's WHERE): if a
+			// concurrent replay WIDENED the window between this run's read
+			// and now, the widened row survives and the next run re-checks
+			// the new ground.
+			if cerr := store.ClearProjectionDirtyWindow(ctx, src.name, dirtyWin.From, dirtyWin.To); cerr != nil {
+				return fmt.Errorf("%s: clear replay-rewind dirty window: %w", src.name, cerr)
+			}
 		}
 		fmt.Fprintf(os.Stderr, "compute-completeness: %-14s watermark=%d coverage=%.4f complete=%v lake_complete=%v (%s)\n",
 			src.name, w.Ledger, w.CoveragePct, w.Complete, lakeComplete, strings.Join(detail, "; "))
@@ -834,6 +890,53 @@ func projectionClaim(servedFrom, runFrom, hi uint32, runClean bool, runDetail st
 	default:
 		return true, fmt.Sprintf("projection: verified [%d,%d]; %s carried from the prior clean verdict (tip=%d), not re-verified this run", runFrom, hi, skipped, prior.tip)
 	}
+}
+
+// dirtyReconcileFloor lowers an incremental run's projection reconcile floor
+// to cover a pending replay-rewind dirty window (migration 0125) — the
+// structural fix for the carried-claim invalidation gap (2026-07-31).
+//
+// projectionClaim rule 3 lets an incremental run CARRY the prior clean
+// verdict for the prefix its -from floor skipped. That carry's premise is
+// that the served tier below the floor is immutable. A projector-replay
+// rewind breaks the premise: it rewrites served rows below the watermark,
+// so the prior verdict's evidence no longer describes what the tables hold —
+// yet nothing re-examined the range, because the daily driver's -from
+// (min(watermark)) sits above it forever. The 07-30 cctp replay wrote
+// 19,366 duplicate rows at 62.27M–63.55M and every subsequent incremental
+// run carried the pre-replay clean claim right over them.
+//
+// The floor therefore extends DOWN to the window's genesis-clamped bottom,
+// regardless of -from: the rewound range re-enters the reconcile scope and
+// the claim is re-earned rather than carried. Ground the replay did not
+// touch (below dirty.From) keeps the normal carry semantics. Pure —
+// unit-testable.
+func dirtyReconcileFloor(projFrom, genesis uint32, w timescale.ProjectionDirtyWindow) uint32 {
+	lo := w.From
+	if lo < genesis {
+		lo = genesis // nothing exists below the source's genesis to re-verify
+	}
+	if lo < projFrom {
+		return lo
+	}
+	return projFrom
+}
+
+// dirtyWindowSatisfied reports whether THIS run earned the right to clear a
+// pending replay-rewind window: its projection verdict is CLEAN (projOK —
+// which per projectionClaim requires this run's own reconcile to have found
+// nothing, never a carried claim over an unchecked range) AND the run's
+// reconcile floor reached the window's genesis-clamped bottom AND the
+// reconciled range reached the window's top. Anything less keeps the window
+// pending — a failing verdict must not erase the obligation, and a run whose
+// scope stopped short of the window proved nothing about it. Pure —
+// unit-testable.
+func dirtyWindowSatisfied(w timescale.ProjectionDirtyWindow, projOK bool, reconcileFloor, genesis, hi uint32) bool {
+	lo := w.From
+	if lo < genesis {
+		lo = genesis
+	}
+	return projOK && reconcileFloor <= lo && hi >= w.To
 }
 
 // substrateClaim gates what a run is ALLOWED to publish on the LAKE
