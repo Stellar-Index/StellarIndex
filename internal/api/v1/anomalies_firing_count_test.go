@@ -18,6 +18,7 @@ import (
 // population rather than against a page length.
 type fakeAnomalyReader struct {
 	firing int64
+	daily  []timescale.FreezeDailyReasonCount
 }
 
 func (f *fakeAnomalyReader) ListFreezeEvents(_ context.Context, firingOnly bool, limit int) ([]timescale.FreezeEventRow, error) {
@@ -46,6 +47,10 @@ func (f *fakeAnomalyReader) ListFreezeEvents(_ context.Context, firingOnly bool,
 
 func (f *fakeAnomalyReader) FreezeReasonCounts(context.Context, int) ([]timescale.FreezeReasonCount, error) {
 	return nil, nil
+}
+
+func (f *fakeAnomalyReader) FreezeDailyReasonCounts(context.Context, int) ([]timescale.FreezeDailyReasonCount, error) {
+	return f.daily, nil
 }
 
 func (f *fakeAnomalyReader) CountFiringFreezes(context.Context) (int64, error) {

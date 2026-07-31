@@ -93,6 +93,17 @@ export function NetworkView() {
     value: b[metric] ?? 0,
   }));
   const total = completeBuckets.reduce((s, b) => s + (b[metric] ?? 0), 0);
+  // Protocol-upgrade step markers: a marker on the day the end-of-day
+  // protocol_version first differs from the previous complete day's.
+  // Empty when the API doesn't serve protocol_version yet (no
+  // fabricated upgrade dates) or no upgrade fell inside the window.
+  const upgradeMarkers = completeBuckets.flatMap((b, i) => {
+    if (i === 0) return [];
+    const prev = completeBuckets[i - 1].protocol_version;
+    const cur = b.protocol_version;
+    if (prev == null || cur == null || cur === prev) return [];
+    return [{ time: Math.floor(Date.parse(`${b.day ?? ''}T00:00:00Z`) / 1000), label: `protocol v${cur}` }];
+  });
 
   const s = statsQ.data;
   const tip = ledgersQ.data?.ledgers?.[0];
@@ -165,11 +176,24 @@ export function NetworkView() {
               data={points}
               height={320}
               positive
-              ariaLabel={`Daily ${metric} on the Stellar network over the last ${windowDays} days`}
+              markers={upgradeMarkers}
+              ariaLabel={`Daily ${metric} on the Stellar network over the last ${windowDays} days${
+                upgradeMarkers.length > 0 ? `, with ${upgradeMarkers.length} protocol upgrade marker(s)` : ''
+              }`}
             />
+            {upgradeMarkers.length > 0 && (
+              <p className="text-xs text-ink-muted">
+                Protocol upgrades in this window:{' '}
+                {upgradeMarkers
+                  .map((m) => `${m.label} on ${new Date(m.time * 1000).toISOString().slice(0, 10)}`)
+                  .join(' · ')}
+              </p>
+            )}
           </>
         )}
       </Panel>
+
+      <ChainEconomics buckets={completeBuckets} windowDays={windowDays} />
 
       <div className="grid gap-6 lg:grid-cols-2">
         <OperationMixPanel />
@@ -184,6 +208,105 @@ export function NetworkView() {
       <NetworkComposition />
 
       <DigDeeper />
+    </div>
+  );
+}
+
+// ChainEconomics — the chain-state series that ride the same
+// /v1/network/throughput scan: daily fee burn (the delta of the
+// cumulative fee_pool between consecutive COMPLETE days — fee_pool
+// only ever grows post-inflation-removal, so the delta is the XLM
+// the network burned in fees that day) and total XLM in existence.
+// Buckets are stroop strings past 2^53 (ADR-0003): divide as BigInt
+// first, then convert the safely-small quotient/delta to a JS
+// number for chart geometry only. Renders an honest note instead of
+// charts when the API doesn't serve the fields yet.
+function ChainEconomics({
+  buckets,
+  windowDays,
+}: {
+  buckets: ThroughputResp['buckets'];
+  windowDays: number;
+}) {
+  const rows = buckets ?? [];
+  const isStroops = (s: string | undefined): s is string => !!s && /^\d+$/.test(s);
+  const dayEpoch = (day: string | undefined) => Math.floor(Date.parse(`${day ?? ''}T00:00:00Z`) / 1000);
+
+  const served = rows.some((b) => isStroops(b.fee_pool) || isStroops(b.total_coins));
+
+  const feeBurn: { time: number; value: number }[] = [];
+  for (let i = 1; i < rows.length; i++) {
+    const prev = rows[i - 1].fee_pool;
+    const cur = rows[i].fee_pool;
+    if (!isStroops(prev) || !isStroops(cur)) continue;
+    // Delta in stroops is small (daily fees) — exact in a JS number.
+    feeBurn.push({ time: dayEpoch(rows[i].day), value: Number(BigInt(cur) - BigInt(prev)) / 1e7 });
+  }
+
+  const totalCoins = rows
+    .filter((b) => isStroops(b.total_coins))
+    .map((b) => ({
+      time: dayEpoch(b.day),
+      // BigInt divide to XLM first (truncates sub-XLM), then the ~5e10
+      // quotient is float-safe.
+      value: Number(BigInt(b.total_coins as string) / 10_000_000n),
+    }));
+
+  return (
+    <div className="grid gap-6 lg:grid-cols-2">
+      <Panel
+        title="Daily fee burn"
+        hint="XLM paid in transaction fees per complete UTC day — the day-over-day delta of the cumulative network fee pool, off each day's last ledger."
+        source={asExample('/v1/network/throughput', { window_days: windowDays })}
+      >
+        {!served && (
+          <p className="text-sm text-ink-muted">
+            Chain-state series unavailable — the API isn&apos;t serving fee-pool buckets yet.
+          </p>
+        )}
+        {served && feeBurn.length === 0 && (
+          <p className="text-sm text-ink-muted">Not enough complete days in this window to compute a delta.</p>
+        )}
+        {feeBurn.length > 0 && (
+          <LineChart
+            data={feeBurn}
+            height={220}
+            positive
+            legend={{
+              valueLabel: 'XLM burned',
+              formatValue: (n) => `${n.toLocaleString(undefined, { maximumFractionDigits: 0 })} XLM`,
+            }}
+            ariaLabel={`Daily XLM fee burn over the last ${windowDays} days`}
+          />
+        )}
+      </Panel>
+      <Panel
+        title="Total XLM"
+        hint="Total lumens in existence at each day's last ledger. Flat is the expected shape — XLM has no ongoing issuance."
+        source={asExample('/v1/network/throughput', { window_days: windowDays })}
+      >
+        {!served && (
+          <p className="text-sm text-ink-muted">
+            Chain-state series unavailable — the API isn&apos;t serving total-coins buckets yet.
+          </p>
+        )}
+        {served && totalCoins.length === 0 && (
+          <p className="text-sm text-ink-muted">No complete days in this window.</p>
+        )}
+        {totalCoins.length > 0 && (
+          <LineChart
+            data={totalCoins}
+            height={220}
+            positive
+            area={false}
+            legend={{
+              valueLabel: 'Total XLM',
+              formatValue: (n) => `${formatCompact(n)} XLM`,
+            }}
+            ariaLabel={`Total XLM in existence over the last ${windowDays} days`}
+          />
+        )}
+      </Panel>
     </div>
   );
 }

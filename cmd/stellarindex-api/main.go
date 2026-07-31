@@ -1347,13 +1347,16 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		MEV:          store,
 		Anomalies:    store,
 		Divergences:  store,
-		Currencies:   newForexAdapter(forexCache),
-		FXHistory:    &fxHistoryReader{store: store},
-		SEP10:        sep10Validator,
-		Hub:          hub,
-		CORS:         cors,
-		Auth:         authMW,
-		KeyPolicy:    middleware.KeyPolicy(),
+		// Surfaces the SAME threshold the divergence worker fires on,
+		// so /v1/divergence/series charts shade the real alert band.
+		DivergenceThresholdPct: cfg.Divergence.Threshold,
+		Currencies:             newForexAdapter(forexCache),
+		FXHistory:              &fxHistoryReader{store: store},
+		SEP10:                  sep10Validator,
+		Hub:                    hub,
+		CORS:                   cors,
+		Auth:                   authMW,
+		KeyPolicy:              middleware.KeyPolicy(),
 		// F-1226 (codex audit-2026-05-12): monthly-quota enforcer.
 		// Reads month-to-date counters from the same Redis Counter
 		// the UsageTracker writes. Only Postgres-backed Subjects

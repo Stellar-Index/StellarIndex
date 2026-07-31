@@ -3,6 +3,7 @@ package explorer
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -312,6 +313,14 @@ type ThroughputBucketV struct {
 	Txs     int64  `json:"txs"`
 	Ops     int64  `json:"ops"`
 	Events  int64  `json:"events"`
+	// End-of-day chain state from the day's last ledger. FeePool and
+	// TotalCoins are XLM stroops as decimal strings — total_coins is
+	// ~117× past 2^53, so a JSON number would silently lose precision
+	// (ADR-0003). fee_pool is CUMULATIVE: daily fee burn is the delta
+	// between consecutive complete days.
+	FeePool         string `json:"fee_pool"`
+	TotalCoins      string `json:"total_coins"`
+	ProtocolVersion uint32 `json:"protocol_version"`
 	// Partial is true for a bucket that does not cover a whole UTC day — in
 	// practice only today, still accumulating. Clients should render it
 	// distinctly and exclude it from window totals; every other bucket is a
@@ -354,7 +363,10 @@ func (h *Handler) NetworkThroughput(w http.ResponseWriter, r *http.Request) {
 		out.Buckets[i] = ThroughputBucketV{
 			Day:     b.Day.UTC().Format("2006-01-02"),
 			Ledgers: b.Ledgers, Txs: b.Txs, Ops: b.Ops, Events: b.Events,
-			Partial: b.Partial,
+			FeePool:         strconv.FormatInt(b.FeePool, 10),
+			TotalCoins:      strconv.FormatInt(b.TotalCoins, 10),
+			ProtocolVersion: b.ProtocolVersion,
+			Partial:         b.Partial,
 		}
 	}
 	h.WriteJSON(w, out, false)

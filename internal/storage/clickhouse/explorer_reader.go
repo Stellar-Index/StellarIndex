@@ -546,6 +546,16 @@ type ThroughputBucket struct {
 	Txs     int64
 	Ops     int64
 	Events  int64
+	// End-of-day chain state, taken from the day's LAST ledger
+	// (argMax over ledger_seq): the cumulative fee pool and total
+	// XLM in stroops, and the protocol version in force. Stroop
+	// totals exceed 2^53 so the API serialises them as strings
+	// (ADR-0003). fee_pool is cumulative — daily fee burn is the
+	// delta between consecutive complete days, computed by the
+	// caller.
+	FeePool         int64
+	TotalCoins      int64
+	ProtocolVersion uint32
 	// Partial marks a bucket that does NOT cover a whole UTC day — in
 	// practice only TODAY, which is still accumulating. Callers must render
 	// it distinctly (dashed/faded) and EXCLUDE it from window totals, or the
@@ -602,7 +612,14 @@ func (r *ExplorerReader) NetworkThroughput(ctx context.Context, windowDays int) 
 		toInt64(count())                  AS ledgers,
 		toInt64(sum(tx_count))            AS txs,
 		toInt64(sum(op_count))            AS ops,
-		toInt64(sum(soroban_event_count)) AS events
+		toInt64(sum(soroban_event_count)) AS events,
+		-- End-of-day chain state: the value at the day's LAST ledger.
+		-- argMax reads columns already materialised for this scan's
+		-- granules — no extra predicate, no extra scan; the query stays
+		-- the same bounded partition-pruned pass over the window.
+		argMax(fee_pool, ledger_seq)         AS fee_pool,
+		argMax(total_coins, ledger_seq)      AS total_coins,
+		argMax(protocol_version, ledger_seq) AS protocol_version
 		-- FINAL: stellar.ledgers is ReplacingMergeTree(ingested_at); without it
 		-- an un-merged re-ingested ledger contributes TWO parts, so count() and
 		-- every sum(*_count) double-count until a background merge (audit
@@ -623,7 +640,8 @@ func (r *ExplorerReader) NetworkThroughput(ctx context.Context, windowDays int) 
 	var out []ThroughputBucket
 	for rows.Next() {
 		var b ThroughputBucket
-		if err := rows.Scan(&b.Day, &b.Ledgers, &b.Txs, &b.Ops, &b.Events); err != nil {
+		if err := rows.Scan(&b.Day, &b.Ledgers, &b.Txs, &b.Ops, &b.Events,
+			&b.FeePool, &b.TotalCoins, &b.ProtocolVersion); err != nil {
 			return nil, fmt.Errorf("clickhouse: scan throughput: %w", err)
 		}
 		// Only today can be incomplete — every earlier bucket is a whole UTC

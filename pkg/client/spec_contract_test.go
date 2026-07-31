@@ -163,6 +163,7 @@ var uncoveredOperations = map[string]string{
 	"GET /mev":                           "MEV feed — explorer surface",
 	"GET /anomalies":                     "anomaly feed — explorer surface",
 	"GET /divergence":                    "divergence feed — explorer surface",
+	"GET /divergence/series":             "divergence history chart feed — explorer surface",
 	"GET /coverage":                      "coverage verdict — explorer/status surface",
 	"GET /diagnostics/ingestion":         "operator diagnostics",
 	"GET /diagnostics/archive":           "operator diagnostics — archive-completeness report, explorer surface",
