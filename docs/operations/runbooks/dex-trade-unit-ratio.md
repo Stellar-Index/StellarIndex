@@ -24,8 +24,13 @@ emitted from `internal/storage/timescale`'s `InsertTrade` +
 exactly once, regardless of whether it arrived via the dispatcher's live
 batch path, the projector's per-event sink, or a `stellarindex-ops
 ch-rebuild` / backfill re-derive. This alert fires when one source
-produces a **sustained stream** of these — an occasional equal-value
-cross-asset fill is normal, so the threshold tolerates that noise.
+produces these as a **majority of its flow** — the decode-bug
+fingerprint makes EVERY trade 1:1. Genuine 1:1 trades are common and
+can arrive in bursts (yUSDC/USDC and yETH/ETH wrapper redemptions,
+EUR-stable crosses like EURC/EURMTL — a busy wrapper morning on sdex
+tripped the original absolute-count threshold on 2026-07-31 at ~2% of
+flow), so the alert requires BOTH >25 unit-ratio trades in 30m AND
+>50% of the source's total inserts in the same window.
 
 ## At a glance
 
@@ -42,7 +47,9 @@ cross-asset fill is normal, so the threshold tolerates that noise.
 - The alert names a `source` (the on-chain DEX connector — soroswap /
   aquarius / phoenix / comet / sdex).
 - `sum by (source) (increase(stellarindex_dex_trade_unit_ratio_total[30m]))`
-  is above 25 and climbing for that source.
+  is above 25 AND above 50% of
+  `sum by (source) (increase(stellarindex_trade_inserts_total[30m]))`
+  for that source.
 - Prices for pairs traded predominantly on that source look "too close to
   1" relative to other sources or reference prices (cross-check
   `price-divergence.md`).
@@ -101,7 +108,8 @@ frequent equal-value fills is the known false-positive pattern below.
       ones. Don't merge fixed and corrupted rows for the same range.
 - [ ] Verification:
       `increase(stellarindex_dex_trade_unit_ratio_total{source="<source>"}[30m])`
-      drops back under the 25 threshold and stays there.
+      drops back under the 25-count / 50%-of-flow thresholds and
+      stays there.
 
 ## Root cause analysis
 
@@ -117,7 +125,7 @@ recomputation after the re-derive.
 - **Genuine equal-value cross-asset fills.** A source that legitimately
   trades near-1:1 pairs (e.g. two USD-pegged stablecoins) can produce a
   real `base_amount == quote_amount` trade occasionally. The
-  25-per-30-minute threshold is sized to absorb this; a source crossing
+  50%-of-flow fraction is sized to absorb this; a source crossing
   it repeatedly across *multiple, unrelated* pairs — not one recurring
   stablecoin pair — is the real signal.
 - **Dust / extreme-edge amounts** rounding to equal integers by
