@@ -131,6 +131,30 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-31 ~12:30Z — 🧹 **Morning batch: both live-site bug classes
+  FIXED + two alerts closed + key hygiene.** (1) Frontend honesty
+  sweep merged (7 panels rendered absent-as-zero — roster "0 events",
+  /network "no operations", protocols-index fallback, exchanges/dex
+  stats, composition, cross-anchor badge — now "—"/"unavailable";
+  CF auto-deploys). (2) Native XLM holders fixed (trustline-shaped
+  query was empty by construction; native arm ranks account entries
+  by balance — PK-range read via the existing SWR cache, exact 9.9M
+  count, alias-folded; rides v0.21.8). (3) `dex_trade_unit_ratio`
+  root-caused BENIGN (yUSDC/USDC + yETH/ETH wrapper parity, ~2% of
+  flow) → alert rewritten fraction-based (>25 AND >50% of inserts),
+  both trees + runbook, applied to r1, now inactive.
+  (4) `config_assertion_failed` = the DAT-03 nag working as designed:
+  run `add-missing-compression-policies.sql` post-mixed3 (backfill
+  precondition met; sequenced after k6 to keep latency evidence
+  clean). (5) Key hygiene: weekly-k6 GH secret rotated to the
+  high-rate key (its default scenario needs >20k/min), both 5000/min
+  keys revoked (verified 401), on-disk plaintext scrubbed.
+  Remaining alerts: freeze family (inbox [DECIDE]), completeness
+  (v0.21.8), projector-lag + compression-lag + usd-coverage
+  (replay-induced, clears-check post-replay), supply cross-check ×3
+  + nonstandard-decimals ×5 (dispositioned; silence-with-annotation
+  sweep pre-launch).
+
 - 2026-07-31 ~08:45Z — 🔑 **STATE-WRITE ATTRIBUTION LANDED ON MAIN**
   (squash of the build agent's 9b919be8; verify green; 20 files,
   +1,220). Ground truth CORRECTED the design premise: write_prices
