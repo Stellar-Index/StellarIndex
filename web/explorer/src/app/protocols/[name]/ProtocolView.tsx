@@ -535,6 +535,20 @@ function ContractRoster({
   const [sortKey, setSortKey] = useState<'events' | 'last_seen'>('events');
   const [expanded, setExpanded] = useState(false);
 
+  // The per-contract analytics (events / last_seen) are a SEPARATE lake
+  // fill from the window-level analytics (fillProtocolContractActivity vs
+  // fillProtocolSeries in internal/api/v1/protocols.go) — either can
+  // degrade alone, and `events` is omitempty on the wire, so a degraded
+  // fill leaves every roster row bare ({contract_id, kind} only) even
+  // when activity_window_days is set. Rendering '0' for those rows would
+  // claim "this contract emitted nothing", which we cannot know. Only
+  // when at least one row carries the analytics fields did the fill run —
+  // then a bare `events` is a genuine present-and-zero (omitempty
+  // dropped the zero).
+  const rosterHasActivity = contracts.some(
+    (c) => c.events != null || c.last_seen != null,
+  );
+
   const { factories, instances } = useMemo(() => {
     const f = contracts.filter((c) => c.kind === 'factory');
     const cmp =
@@ -574,7 +588,7 @@ function ContractRoster({
   return (
     <Panel
       title={`Contract roster (${contracts.length})`}
-      hint={`${factories.length} ${factories.length === 1 ? 'factory' : 'factories'} · ${instances.length} instances${analyticsAvailable ? ' · events over the analytics window' : ''}`}
+      hint={`${factories.length} ${factories.length === 1 ? 'factory' : 'factories'} · ${instances.length} instances${analyticsAvailable && rosterHasActivity ? ' · events over the analytics window' : ' · per-contract event counts unavailable'}`}
       source={source}
       bodyClassName="-mx-4"
     >
@@ -649,7 +663,7 @@ function ContractRoster({
                     formatCompact(c.events)
                   ) : (
                     <span className="text-ink-faint">
-                      {analyticsAvailable ? '0' : '—'}
+                      {analyticsAvailable && rosterHasActivity ? '0' : '—'}
                     </span>
                   )}
                 </td>

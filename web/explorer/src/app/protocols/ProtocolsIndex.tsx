@@ -26,7 +26,10 @@ interface ProtocolCard {
   genesis_ledger: number;
   factories: string[];
   contract_count: number;
-  events_24h: number;
+  // Present on every live /v1/protocols row; left undefined on the
+  // static-registry fallback cards (API unreachable) so the cells render
+  // '—' rather than a fabricated "0 events" claim.
+  events_24h?: number;
   completeness?: { complete: boolean; watermark_ledger: number };
 }
 
@@ -82,7 +85,10 @@ export function ProtocolsIndex({
   });
 
   // Fall back to the static registry so the grid renders even if the API
-  // is down (stats degrade to zero, the cards + links still work).
+  // is down (the cards + links still work). Live stats are NOT fabricated
+  // on the fallback: events_24h stays undefined and renders '—' — an
+  // unreachable directory is not "0 events".
+  const live = !!(data && data.length > 0);
   const cards: ProtocolCard[] = useMemo(() => {
     if (data && data.length > 0) return data;
     return PROTOCOLS.map((p) => ({
@@ -92,7 +98,6 @@ export function ProtocolsIndex({
       genesis_ledger: 0,
       factories: [],
       contract_count: 0,
-      events_24h: 0,
     }));
   }, [data]);
 
@@ -127,13 +132,13 @@ export function ProtocolsIndex({
         <StatCell>
           <Stat
             label="Verified complete"
-            value={verifiedCount.toLocaleString()}
+            value={live ? verifiedCount.toLocaleString() : '—'}
           />
         </StatCell>
         <StatCell>
           <Stat
             label="Events · last 24h"
-            value={formatCompact(totalEvents24h)}
+            value={live ? formatCompact(totalEvents24h) : '—'}
           />
         </StatCell>
       </StatGrid>
@@ -231,7 +236,7 @@ function ProtocolCardView({ card, poolsBySource }: { card: ProtocolCard; poolsBy
               Events · 24h
             </dt>
             <dd className="mt-0.5 font-mono tnum text-ink-body">
-              {formatCompact(card.events_24h)}
+              {card.events_24h != null ? formatCompact(card.events_24h) : '—'}
             </dd>
           </div>
         </dl>

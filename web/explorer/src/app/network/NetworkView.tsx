@@ -471,6 +471,12 @@ function ActiveSources() {
 // Derived from the same /v1/sources?include=stats the directory uses.
 function NetworkComposition() {
   const { data, isLoading, isError } = useSources(undefined, true);
+  // `?include=stats` soft-fails server-side ("serve the registry without
+  // stats") and volume_24h_usd is omitempty — on that degrade every row
+  // arrives without it. Distinguish "stats join absent" from a genuine
+  // zero-volume day so we never claim "no on-chain volume" off missing
+  // data.
+  const statsAvailable = (data ?? []).some((s) => s.volume_24h_usd != null);
   const slices = (data ?? [])
     .filter(isOnChainSource)
     .map((s) => ({ label: s.name, value: Number(s.volume_24h_usd ?? 0) }))
@@ -486,7 +492,12 @@ function NetworkComposition() {
     >
       {isLoading && <Skeleton className="h-40 w-full" />}
       {isError && <p className="text-sm text-ink-muted">Composition is unavailable right now.</p>}
-      {!isLoading && !isError && slices.length === 0 && (
+      {!isLoading && !isError && !statsAvailable && (
+        <p className="text-sm text-ink-muted">
+          Volume stats unavailable — refreshing.
+        </p>
+      )}
+      {!isLoading && !isError && statsAvailable && slices.length === 0 && (
         <EmptyState title="No on-chain volume in the last 24h." />
       )}
       {slices.length > 0 && (

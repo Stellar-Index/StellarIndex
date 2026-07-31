@@ -17,7 +17,7 @@ vi.mock('@/components/charts/LineChart', () => ({
 }));
 
 import { apiGet } from '@/api/client';
-import { ThroughputPanel } from './NetworkInsight';
+import { OperationMixPanel, ThroughputPanel } from './NetworkInsight';
 
 // UXP-16: the API's own contract for GET /v1/network/throughput says a
 // `partial: true` bucket (today, still accumulating) must be EXCLUDED
@@ -50,5 +50,54 @@ describe('ThroughputPanel', () => {
     // Chart series: only the two complete-day points, not the partial one.
     const chart = await screen.findByTestId('line-chart');
     expect(JSON.parse(chart.textContent ?? '[]')).toEqual([1000, 2000]);
+  });
+});
+
+// Frontend-honesty sweep: `op_type_stats` is omitempty on the wire and
+// ABSENT on a cold first load (the server kicks a detached refresh and
+// returns the listing without the aggregate). Absent must render an
+// "unavailable" state — NEVER the empirical claim "No operations in the
+// last 24h", which is reserved for a present-and-empty array.
+describe('OperationMixPanel', () => {
+  function renderPanel() {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={client}>
+        <OperationMixPanel />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('renders the unavailable state, not "no operations", when op_type_stats is absent', async () => {
+    vi.mocked(apiGet).mockResolvedValue({ data: { operations: [] } });
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByText(/Operation stats unavailable/)).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/No operations in the last 24h/)).not.toBeInTheDocument();
+  });
+
+  it('renders the genuine empty state when op_type_stats is present and empty', async () => {
+    vi.mocked(apiGet).mockResolvedValue({ data: { operations: [], op_type_stats: [] } });
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByText(/No operations in the last 24h/)).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/Operation stats unavailable/)).not.toBeInTheDocument();
+  });
+
+  it('renders the ranked bars when op_type_stats carries counts', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: {
+        operations: [],
+        op_type_stats: [
+          { type: 'payment', count: 900 },
+          { type: 'manage_sell_offer', count: 100 },
+        ],
+      },
+    });
+    renderPanel();
+    await waitFor(() => expect(screen.getByText('payment')).toBeInTheDocument());
+    expect(screen.getByText('manage_sell_offer')).toBeInTheDocument();
   });
 });

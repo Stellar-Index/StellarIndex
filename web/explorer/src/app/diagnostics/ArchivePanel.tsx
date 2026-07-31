@@ -46,8 +46,11 @@ export function ArchivePanel() {
     );
   }
 
+  // cross_anchor is omitempty on the wire — a report without the block
+  // means the cross-anchor scan is ABSENT, not that zero checkpoints are
+  // missing. Never render the green "complete" badge off missing data.
   const ca = data.cross_anchor;
-  const clean = (ca?.missing_count ?? 0) === 0;
+  const clean = ca != null && ca.missing_count === 0;
   const scannedAgeHours =
     dataUpdatedAt > 0
       ? (dataUpdatedAt - new Date(data.scanned_at).getTime()) / 3_600_000
@@ -62,10 +65,18 @@ export function ArchivePanel() {
           </h3>
           <span
             className={`rounded-sm px-2 py-0.5 font-mono text-xs ${
-              clean ? 'bg-up-subtle text-up' : 'bg-down-subtle text-down'
+              ca == null
+                ? 'bg-surface-subtle text-ink-muted'
+                : clean
+                  ? 'bg-up-subtle text-up'
+                  : 'bg-down-subtle text-down'
             }`}
           >
-            {clean ? 'complete' : `${ca?.missing_count ?? '?'} missing`}
+            {ca == null
+              ? 'no cross-anchor scan'
+              : clean
+                ? 'complete'
+                : `${ca.missing_count} missing`}
           </span>
           {scannedAgeHours > 48 && (
             <span className="rounded-sm bg-warn-50 px-2 py-0.5 text-[11px] uppercase tracking-wider text-warn-700">

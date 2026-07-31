@@ -16,6 +16,26 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **Explorer honesty sweep: absent API data no longer renders as a
+  zero or a "no data exists" claim.** The API omits analytics blocks
+  when a reader degrades (`omitempty` — e.g. the protocol roster's
+  per-contract fill missing the lake budget, `op_type_stats` absent
+  on a cold SWR load, `?include=stats` soft-failing wholesale), but
+  several explorer panels coerced that absence into false empirical
+  claims. Now absent renders an honest unavailable state ('—' inline;
+  a muted "unavailable — refreshing" note for panels) while
+  present-and-empty keeps the genuine empty copy: the protocol
+  contract-roster Events column ('0 events' per contract),
+  `/network` + `/operations` operation-mix ("No operations in the
+  last 24h"), `/network` volume-by-venue ("No on-chain volume in the
+  last 24h"), `/exchanges` headline + per-row 24h stats
+  ("$0 across 0 trades"), `/dexes` per-protocol trades/pools
+  columns, the `/protocols` directory's static fallback cards
+  ("0 events · 24h" when the API is unreachable), and
+  `/diagnostics`' cross-anchor archive badge (green "complete" when
+  the scan block was absent). Regression tests pin absent ≠ empty for
+  the operation-mix panel.
+
 - **Redstone's last 15 provably-ambiguous blind ledgers now attribute
   exactly, via ledger-entry state-write keys.** `events.Event` gains
   `StateWriteKeys` — the LedgerKeys of the contract-data entries whose
