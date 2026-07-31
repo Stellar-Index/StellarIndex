@@ -21,9 +21,10 @@
 -- account — the op/tx source for sdex, the user address for
 -- aquarius/phoenix/comet) and `maker` (the resting-offer account,
 -- sdex only). Both are NULL for off-chain CEX/FX rows (no Stellar
--- account exists) and for soroswap (its decoder does not capture the
--- SwapEvent `to` field) — hence the partial predicates: the indexes
--- only carry rows that can ever match a per-account lookup.
+-- account exists) — hence the partial predicates: the indexes only
+-- carry rows that can ever match a per-account lookup. (soroswap rows
+-- were also NULL until fda0aea0 taught its decoder the SwapEvent `to`
+-- field; the historical replay retro-fills them via the upsert.)
 --
 -- The index column list mirrors the query's full ORDER BY (including
 -- the tx_hash tie-breaker — two same-account trades can share
@@ -33,13 +34,18 @@
 -- ── APPLYING TO AN ALREADY-POPULATED DATABASE (e.g. r1) ──
 -- Same drill as migration 0037: `trades` holds ~548M rows and a plain
 -- in-transaction CREATE INDEX write-locks the table for the whole
--- build, so ON A LIVE NODE build both by hand FIRST:
+-- build, so ON A LIVE NODE build both by hand FIRST. NOTE: hypertables
+-- REJECT `CREATE INDEX CONCURRENTLY` ("hypertables do not support
+-- concurrent index creation" — hit on r1 2026-07-30); the Timescale
+-- equivalent is per-chunk transactions, which lock one chunk at a time:
 --
---   CREATE INDEX CONCURRENTLY trades_taker_ts_idx
+--   CREATE INDEX trades_taker_ts_idx
 --       ON trades (taker, ts DESC, ledger DESC, tx_hash DESC, op_index DESC)
+--       WITH (timescaledb.transaction_per_chunk)
 --       WHERE taker IS NOT NULL;
---   CREATE INDEX CONCURRENTLY trades_maker_ts_idx
+--   CREATE INDEX trades_maker_ts_idx
 --       ON trades (maker, ts DESC, ledger DESC, tx_hash DESC, op_index DESC)
+--       WITH (timescaledb.transaction_per_chunk)
 --       WHERE maker IS NOT NULL;
 --
 -- then run `stellarindex-migrate up` — IF NOT EXISTS makes the
