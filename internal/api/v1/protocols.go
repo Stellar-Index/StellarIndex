@@ -6,71 +6,193 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// protocolDetailTTL caches the expensive /v1/protocols/{name} detail
-// (lake-analytics + bespoke scans run ~15s) per-process for 60s with
-// single-flight, so concurrent requests collapse to one query instead
-// of pegging CPU (2026-06-19 incident). The proper fix — a CAGG so the
-// scan is fast — is tracked in docs/archive/page-audit-2026-06-19/.
-const protocolDetailTTL = 60 * time.Second
+// protocolDetailTTL is the freshness horizon of a cached
+// /v1/protocols/{name} detail. Past it the entry is NOT dropped: it is
+// served STALE (flags.stale + analytics.status="stale") while a detached
+// single-flight rebuild runs — a previously-built page must never blank
+// back to a cold 503 (2026-07-31: under replay load every on-demand
+// build died at the request ceiling and pages lost their visual suites).
+// 20 minutes pairs with the prewarm sweep in cmd/stellarindex-api (a
+// full registry × windows sweep measured ~3–6 min of build work; the
+// worker re-sweeps 10 min after each sweep ends, so entries are
+// normally refreshed every ~13–16 min and requests almost always see a
+// fresh copy). The analytics are 90d/windowed aggregates — minutes of
+// staleness is immaterial.
+const protocolDetailTTL = 20 * time.Minute
+
+// protocolDetailRefreshTimeout bounds one detached detail rebuild.
+// Measured on r1 UNDER replay load (2026-07-31, upper bounds): the
+// bespoke tier is ~1.9s for soroswap 90d (raw-KPI 0.96s + window-KPI
+// 0.48s dominant) and ~0.4s for cctp; the lake-analytics fills are
+// seconds-class. 90s is generous headroom for contention spikes while
+// still bounding a wedged query so it can't pin the single-flight.
+const protocolDetailRefreshTimeout = 90 * time.Second
 
 type protoDetailEntry struct {
 	view ProtocolDetailView
 	at   time.Time
 }
 
-// cachedProtocolDetail returns a TTL-cached detail view for `key`,
-// computing it via build() at most once per TTL across concurrent
-// callers. The key is the full request-shape key from
-// protocolDetailCacheKey — protocol name AND bespoke window — NOT the
-// bare name: the bespoke block's content varies with ?days=, so a
-// name-only key would serve one window's numbers to another window's
-// request. Per-server (the maps live on Server, lazy-init'd) so it never
-// leaks across test instances. Returns ok=false only when the caller's
-// context is cancelled while waiting on another caller's in-flight
-// build. A build that runs to completion is cached; one that returns
-// under a cancelled context (the 25s ceiling fired) is returned but NOT
-// cached, so a partial result can't stick for the full TTL.
-func (s *Server) cachedProtocolDetail(ctx context.Context, key string, build func(context.Context) ProtocolDetailView) (ProtocolDetailView, bool) {
-	s.protoDetailMu.Lock()
+// protoDetailInitLocked lazy-creates the cache maps. Caller holds
+// protoDetailMu.
+func (s *Server) protoDetailInitLocked() {
 	if s.protoDetailCache == nil {
 		s.protoDetailCache = map[string]protoDetailEntry{}
 		s.protoDetailFlight = map[string]chan struct{}{}
 	}
-	if e, ok := s.protoDetailCache[key]; ok && time.Since(e.at) < protocolDetailTTL {
-		s.protoDetailMu.Unlock()
-		return e.view, true
-	}
-	if ch, inflight := s.protoDetailFlight[key]; inflight {
-		s.protoDetailMu.Unlock()
-		select {
-		case <-ch:
-			s.protoDetailMu.Lock()
-			e, ok := s.protoDetailCache[key]
+}
+
+// cachedProtocolDetail returns the detail view for `key` with
+// stale-while-revalidate semantics:
+//
+//   - fresh entry → served as-is (stale=false).
+//   - entry past protocolDetailTTL → served immediately (stale=true)
+//     while ONE detached rebuild runs on its own budget — a
+//     previously-built page is never blanked by a slow/failing rebuild.
+//   - never built → wait for the detached single-flight build up to the
+//     caller's deadline. The build itself is NOT bound to that deadline
+//     (the 2026-07-31 failure: builds bound to request contexts died
+//     under replay load and the cache never filled), so a request that
+//     times out 503s but the build completes and the retry lands warm.
+//
+// The key is the full request-shape key from protocolDetailCacheKey —
+// protocol name AND bespoke window — NOT the bare name: the bespoke
+// block's content varies with ?days=, so a name-only key would serve one
+// window's numbers to another window's request. Per-server (the maps
+// live on Server, lazy-init'd) so it never leaks across test instances.
+// ok=false only when the caller's context is cancelled (or the build
+// produced no cacheable entry) on the cold path.
+func (s *Server) cachedProtocolDetail(ctx context.Context, key string, build func(context.Context) ProtocolDetailView) (view ProtocolDetailView, stale, ok bool) {
+	s.protoDetailMu.Lock()
+	s.protoDetailInitLocked()
+	if e, has := s.protoDetailCache[key]; has {
+		if time.Since(e.at) < protocolDetailTTL {
 			s.protoDetailMu.Unlock()
-			return e.view, ok
-		case <-ctx.Done():
-			return ProtocolDetailView{}, false
+			return e.view, false, true
 		}
+		s.protoDetailRefreshLocked(key, build) //nolint:contextcheck // intentional detach — the rebuild must outlive this request (see protoDetailRefreshLocked)
+		s.protoDetailMu.Unlock()
+		return e.view, true, true
+	}
+	done := s.protoDetailRefreshLocked(key, build) //nolint:contextcheck // intentional detach — a request that times out must not kill the fill
+	s.protoDetailMu.Unlock()
+	select {
+	case <-done:
+		s.protoDetailMu.Lock()
+		e, has := s.protoDetailCache[key]
+		s.protoDetailMu.Unlock()
+		return e.view, false, has
+	case <-ctx.Done():
+		return ProtocolDetailView{}, false, false
+	}
+}
+
+// protoDetailRefreshLocked kicks ONE detached rebuild for key (returning
+// the existing flight's done channel when one is already up). Caller
+// holds protoDetailMu. The rebuild runs on its own background context +
+// protocolDetailRefreshTimeout — NEVER a request deadline — and on
+// completion:
+//
+//   - a build that finished within budget replaces the entry;
+//   - a timed-out (partial) build is cached ONLY when no entry exists at
+//     all (registry-only beats 503 for a stone-cold key) — an existing
+//     good entry is kept, so a run of failed rebuilds degrades to
+//     old-but-real data, never to a blanked block.
+//
+// Every rebuild (request-kicked or prewarm) observes the paired
+// stellarindex_protocol_detail_refresh_{total,duration_seconds} metrics.
+func (s *Server) protoDetailRefreshLocked(key string, build func(context.Context) ProtocolDetailView) chan struct{} {
+	if ch, inflight := s.protoDetailFlight[key]; inflight {
+		return ch
 	}
 	done := make(chan struct{})
 	s.protoDetailFlight[key] = done
-	s.protoDetailMu.Unlock()
+	go func() {
+		start := time.Now()
+		rctx, cancel := context.WithTimeout(context.Background(), protocolDetailRefreshTimeout)
+		defer cancel()
+		view := build(rctx)
 
-	view := build(ctx)
-	complete := ctx.Err() == nil
+		outcome := "ok"
+		switch {
+		case rctx.Err() != nil:
+			outcome = "timeout"
+		case view.Analytics != nil && view.Analytics.Status != protocolAnalyticsOK:
+			outcome = "degraded"
+		}
 
-	s.protoDetailMu.Lock()
-	if complete {
-		s.protoDetailCache[key] = protoDetailEntry{view: view, at: time.Now()}
+		s.protoDetailMu.Lock()
+		_, exists := s.protoDetailCache[key]
+		if rctx.Err() == nil || !exists {
+			s.protoDetailCache[key] = protoDetailEntry{view: view, at: time.Now()}
+		}
+		delete(s.protoDetailFlight, key)
+		s.protoDetailMu.Unlock()
+
+		if outcome != "ok" && s.logger != nil {
+			s.logger.Warn("protocol detail refresh degraded", "key", key, "outcome", outcome)
+		}
+		// Observe BEFORE closing done: waiters (incl. the prewarm sweep)
+		// use the close as the completion edge, so observing after it
+		// would let a sweep finish with its last observation unrecorded.
+		obs.ProtocolDetailRefreshTotal.WithLabelValues(outcome).Inc()
+		obs.ProtocolDetailRefreshDurationSeconds.WithLabelValues(outcome).Observe(time.Since(start).Seconds())
+		close(done)
+	}()
+	return done
+}
+
+// protocolDetailPrewarmPause is the gap between consecutive prewarm
+// builds — one protocol-window at a time with a breather, so the sweep
+// never stampedes the served tier / lake (it must be safe to run DURING
+// replays; the whole point is that replay load is when cold builds die).
+// A var only so the sweep regression test can shrink it; production
+// never mutates it.
+var protocolDetailPrewarmPause = 2 * time.Second
+
+// protocolBespokeWindows is every window the ?days= whitelist admits
+// (protocolBespokeWindowDays), default-first so the most-requested key
+// (the no-param 90d page) warms before the drill-down windows.
+var protocolBespokeWindows = []int{protocolActivityWindowDays, 1, 7, 30}
+
+// PrewarmProtocolDetails refreshes EVERY (protocol, window) detail cache
+// entry — all of protocolRegistry × protocolBespokeWindows — one build at
+// a time with protocolDetailPrewarmPause between builds. Driven by
+// cmd/stellarindex-api's dedicated prewarm goroutine (initial sweep at
+// boot, then re-swept on a fixed sleep after each sweep completes), so
+// every protocol page + window is warm BEFORE anyone asks and no user
+// request ever pays for a cold analytics build. Refreshes
+// unconditionally (no freshness check): the sweep cadence is chosen
+// against protocolDetailTTL so entries are always fresh, and the load is
+// deterministic. Shares the request path's single-flight, so an
+// overlapping request-kicked refresh collapses into the same build.
+func (s *Server) PrewarmProtocolDetails(ctx context.Context) {
+	for _, meta := range protocolRegistry {
+		for _, w := range protocolBespokeWindows {
+			if ctx.Err() != nil {
+				return
+			}
+			s.protoDetailMu.Lock()
+			s.protoDetailInitLocked()
+			done := s.protoDetailRefreshLocked(protocolDetailCacheKey(meta.Name, w), s.protocolDetailBuilder(meta, w)) //nolint:contextcheck // intentional detach — prewarm builds run on the refresh budget, not the sweep ctx
+			s.protoDetailMu.Unlock()
+			select {
+			case <-done:
+			case <-ctx.Done():
+				return
+			}
+			select {
+			case <-time.After(protocolDetailPrewarmPause):
+			case <-ctx.Done():
+				return
+			}
+		}
 	}
-	delete(s.protoDetailFlight, key)
-	s.protoDetailMu.Unlock()
-	close(done)
-	return view, true
 }
 
 // protocolDetailCacheKey is the single cache-key grammar for the protocol
@@ -374,6 +496,34 @@ type ProtocolActivityPointView struct {
 	Events int64  `json:"events"`
 }
 
+// Analytics-status vocabulary for ProtocolAnalyticsStatus.Status.
+const (
+	// protocolAnalyticsOK: every analytics component (lake analytics +
+	// bespoke) built successfully in this view's build.
+	protocolAnalyticsOK = "ok"
+	// protocolAnalyticsStale: the view was built healthy but is being
+	// served past protocolDetailTTL while a background rebuild runs.
+	protocolAnalyticsStale = "stale"
+	// protocolAnalyticsUnavailable: at least one analytics component
+	// failed or was skipped in this build — some analytics fields are
+	// absent/zero because of DEGRADATION, not because the data is zero.
+	protocolAnalyticsUnavailable = "unavailable"
+)
+
+// ProtocolAnalyticsStatus makes analytics degradation explicit on the
+// wire. Before it, a failed bespoke build or lake fill silently omitted
+// the block / zeroed events fields — indistinguishable client-side from
+// a protocol with genuinely no activity (the 2026-07-31 replay-load
+// failure). Clients: "ok" → trust the analytics; "stale" → real data, a
+// refresh is in flight (AsOf says how old); "unavailable" → absence
+// means degraded, render a hint, not a zero.
+type ProtocolAnalyticsStatus struct {
+	// Status is ok | stale | unavailable.
+	Status string `json:"status"`
+	// AsOf is when this view's analytics were built (RFC3339).
+	AsOf string `json:"as_of,omitempty"`
+}
+
 // ProtocolDetailView is the envelope data field of
 // GET /v1/protocols/{name}: the directory row plus the contract
 // registry, decoded event vocabulary and verification write-up path.
@@ -414,7 +564,14 @@ type ProtocolDetailView struct {
 	// Bespoke is the category-specific analytics block (TVL/volume/AUM/…) —
 	// the Dune-surpassing, tailored-per-protocol content. Absent when no
 	// bespoke reader is wired or the category has no bespoke metrics yet.
+	// Check Analytics.Status to distinguish "legitimately none" (ok) from
+	// "build degraded" (unavailable).
 	Bespoke *ProtocolBespoke `json:"bespoke,omitempty"`
+
+	// Analytics reports whether the analytics halves of this view (the
+	// lake-derived fields + Bespoke) are fresh, stale-but-served, or
+	// degraded — see ProtocolAnalyticsStatus.
+	Analytics *ProtocolAnalyticsStatus `json:"analytics,omitempty"`
 }
 
 // handleProtocolsList serves GET /v1/protocols — the protocol
@@ -489,34 +646,19 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Hard ceiling on the lake-derived analytics + bespoke scans. They
-	// run ~15s warm but were observed ballooning to MINUTES under
-	// concurrent load (2026-06-19 incident), pegging CPU because nothing
-	// cancelled the runaway. 25s is generous for the normal path yet
-	// caps the runaway; the enrich* helpers degrade gracefully when the
-	// context is cancelled. (The real fix — a CAGG so these are fast —
-	// is tracked in docs/archive/page-audit-2026-06-19/REMAINING.md.)
+	// This ceiling now only bounds how long a STONE-COLD request waits
+	// for the detached build (built entries stale-serve instantly and
+	// the build itself runs on protocolDetailRefreshTimeout, detached).
+	// The prewarm sweep keeps every key built, so hitting this is the
+	// exception (boot instant / brand-new deployment), and even then the
+	// detached build survives the 503 so the retry lands warm.
 	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 	defer cancel()
 	// The cache key carries the bespoke window alongside the name — a
 	// name-only key would let a ?days=7 hit serve the cached 90d view (or
 	// vice versa). The no-param default builds the same key as an explicit
 	// days=90, so the common path stays a single cached entry.
-	view, ok := s.cachedProtocolDetail(ctx, protocolDetailCacheKey(meta.Name, windowDays), func(c context.Context) ProtocolDetailView {
-		contracts := s.protocolRoster(c, meta)
-		classifyContractKinds(contracts, meta.Factories)
-		s.enrichContractTokens(c, meta, contracts)
-		v := ProtocolDetailView{
-			ProtocolView:     buildProtocolView(meta, len(contracts), s.protocolEvents24h(c), s.protocolVerdicts(c)),
-			Contracts:        contracts,
-			EventKinds:       append([]string{}, meta.EventKinds...),
-			VerificationPage: meta.VerificationPage,
-		}
-		attachProtocolTVL(&v.ProtocolView, s.protocolTVLs())
-		s.enrichProtocolAnalytics(c, meta, &v)
-		s.enrichBespoke(c, meta, &v, windowDays)
-		return v
-	})
+	view, stale, ok := s.cachedProtocolDetail(ctx, protocolDetailCacheKey(meta.Name, windowDays), s.protocolDetailBuilder(meta, windowDays))
 	if !ok {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/protocol-detail-timeout",
@@ -524,24 +666,85 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 			"the protocol analytics are being recomputed; retry in a few seconds")
 		return
 	}
+	if stale {
+		view = staleProtocolDetail(view)
+	}
 
 	w.Header().Set("Cache-Control", "public, max-age=60")
-	writeJSON(w, view, Flags{})
+	writeJSON(w, view, Flags{Stale: stale})
+}
+
+// protocolDetailBuilder returns the one build closure both the request
+// path and the prewarm sweep use for (meta, windowDays) — a single
+// construction site so the two paths are physically incapable of
+// building different views for the same cache key (the
+// feedback_prewarm_handler_drift class).
+func (s *Server) protocolDetailBuilder(meta ProtocolMeta, windowDays int) func(context.Context) ProtocolDetailView {
+	return func(c context.Context) ProtocolDetailView {
+		return s.buildProtocolDetail(c, meta, windowDays)
+	}
+}
+
+// buildProtocolDetail assembles the full detail view and stamps its
+// analytics status: "ok" only when BOTH analytics halves (the lake
+// analytics and the bespoke block) built healthy under a live context;
+// otherwise "unavailable" — so a degraded build is explicit on the wire
+// instead of masquerading as present zeros / silent absence.
+func (s *Server) buildProtocolDetail(ctx context.Context, meta ProtocolMeta, windowDays int) ProtocolDetailView {
+	contracts := s.protocolRoster(ctx, meta)
+	classifyContractKinds(contracts, meta.Factories)
+	s.enrichContractTokens(ctx, meta, contracts)
+	v := ProtocolDetailView{
+		ProtocolView:     buildProtocolView(meta, len(contracts), s.protocolEvents24h(ctx), s.protocolVerdicts(ctx)),
+		Contracts:        contracts,
+		EventKinds:       append([]string{}, meta.EventKinds...),
+		VerificationPage: meta.VerificationPage,
+	}
+	attachProtocolTVL(&v.ProtocolView, s.protocolTVLs())
+	lakeOK := s.enrichProtocolAnalytics(ctx, meta, &v)
+	bespokeOK := s.enrichBespoke(ctx, meta, &v, windowDays)
+	status := protocolAnalyticsOK
+	if !lakeOK || !bespokeOK || ctx.Err() != nil {
+		status = protocolAnalyticsUnavailable
+	}
+	v.Analytics = &ProtocolAnalyticsStatus{Status: status, AsOf: time.Now().UTC().Format(time.RFC3339)}
+	return v
+}
+
+// staleProtocolDetail is the serve-time overlay for an entry past its
+// TTL: a shallow copy whose analytics status is downgraded ok→stale
+// (an unavailable build stays unavailable — worst state wins). The
+// cached entry itself is never mutated.
+func staleProtocolDetail(v ProtocolDetailView) ProtocolDetailView {
+	if v.Analytics == nil {
+		return v
+	}
+	a := *v.Analytics
+	if a.Status == protocolAnalyticsOK {
+		a.Status = protocolAnalyticsStale
+	}
+	v.Analytics = &a
+	return v
 }
 
 // enrichBespoke attaches the category-specific bespoke analytics block over
 // the request's ?days= window (default protocolActivityWindowDays), degrading
-// to absent when the reader is nil or errors.
-func (s *Server) enrichBespoke(ctx context.Context, meta ProtocolMeta, view *ProtocolDetailView, windowDays int) {
+// to absent when the reader is nil or errors. Returns whether the bespoke
+// half is HEALTHY: true when the block built — or when the category
+// legitimately has none (nil block, nil error) — false when no reader is
+// wired or the build errored (absence then means degradation, and the
+// caller marks the view's analytics status accordingly).
+func (s *Server) enrichBespoke(ctx context.Context, meta ProtocolMeta, view *ProtocolDetailView, windowDays int) bool {
 	if s.protocolBespoke == nil {
-		return
+		return false
 	}
 	blk, err := s.protocolBespoke.BuildProtocolBespoke(ctx, meta.Name, meta.Category, windowDays)
 	if err != nil {
 		s.logger.Warn("protocol bespoke build failed", "source", meta.Name, "category", meta.Category, "err", err)
-		return
+		return false
 	}
 	view.Bespoke = bespokeFromStore(blk)
+	return true
 }
 
 // classifyContractKinds tags each roster contract as "factory" (it is one of
@@ -600,14 +803,19 @@ func (s *Server) protocolRoster(ctx context.Context, meta ProtocolMeta) []Protoc
 // view: the event-type breakdown, the daily activity series, and per-contract
 // event counts merged onto the roster. Degrades to leaving the fields empty
 // when the activity reader is nil or any query errors (same contract as the
-// other optional joins — the directory + registry still serve).
-func (s *Server) enrichProtocolAnalytics(ctx context.Context, meta ProtocolMeta, view *ProtocolDetailView) {
+// other optional joins — the directory + registry still serve). Returns
+// whether the lake half is HEALTHY: true only when every fill completed
+// (an empty roster is healthy — there is genuinely nothing to scope to);
+// false on nil reader / unreadable tip / any failed fill, so the caller
+// can mark the view's analytics status "unavailable" instead of letting
+// the absent fields read as real zeros.
+func (s *Server) enrichProtocolAnalytics(ctx context.Context, meta ProtocolMeta, view *ProtocolDetailView) bool {
 	if s.protocolActivity == nil {
-		return
+		return false
 	}
 	ids := protocolContractIDs(view.Contracts, meta.Factories)
 	if len(ids) == 0 {
-		return
+		return true
 	}
 	// All three analytics are bounded to the recent window: bounding by
 	// ledger_seq prunes partitions, keeping each query well under the lake
@@ -616,24 +824,29 @@ func (s *Server) enrichProtocolAnalytics(ctx context.Context, meta ProtocolMeta,
 	// skip the analytics entirely (degrade, don't serve partial/timed-out).
 	since := s.protocolActivitySince(ctx)
 	if since == 0 {
-		return
+		return false
 	}
 	view.ActivityWindowDays = protocolActivityWindowDays
 	// The three lake reads are independent (~5s each on a cold cache) and
 	// write disjoint fields of the view (ActivitySeries+EventsTotal /
 	// EventBreakdown / Contracts[].Events), so run them concurrently rather
-	// than serially — cutting the cold-path from ~15s to ~5s and keeping it
-	// well under the 25s request ceiling under load (audit 2026-06-19 item 8;
-	// the cache makes repeat hits instant, this fixes the cold hit). The
-	// breakdown's "untyped" reconciling bucket needs EventsTotal (from the
-	// series), so it's appended single-threaded after the barrier.
+	// than serially — cutting the cold-path from ~15s to ~5s (audit
+	// 2026-06-19 item 8; the cache + prewarm make repeat hits instant, this
+	// keeps the detached rebuild fast). The breakdown's "untyped"
+	// reconciling bucket needs EventsTotal (from the series), so it's
+	// appended single-threaded after the barrier.
 	var wg sync.WaitGroup
+	var seriesOK, breakdownOK, contractsOK bool
 	wg.Add(3)
-	go func() { defer wg.Done(); s.fillProtocolSeries(ctx, meta.Name, ids, since, view) }()
-	go func() { defer wg.Done(); s.fillProtocolBreakdown(ctx, meta.Name, ids, since, view) }()
-	go func() { defer wg.Done(); s.fillProtocolContractActivity(ctx, meta.Name, ids, since, view) }()
+	go func() { defer wg.Done(); seriesOK = s.fillProtocolSeries(ctx, meta.Name, ids, since, view) }()
+	go func() { defer wg.Done(); breakdownOK = s.fillProtocolBreakdown(ctx, meta.Name, ids, since, view) }()
+	go func() {
+		defer wg.Done()
+		contractsOK = s.fillProtocolContractActivity(ctx, meta.Name, ids, since, view)
+	}()
 	wg.Wait()
 	reconcileProtocolBreakdown(view)
+	return seriesOK && breakdownOK && contractsOK
 }
 
 // reconcileProtocolBreakdown appends the synthetic "untyped" bucket so the
@@ -689,11 +902,11 @@ func protocolContractIDs(contracts []ProtocolContractView, factories []string) [
 // (which fillProtocolSeries sets from the unfiltered count), append a
 // synthetic "untyped" bucket carrying the remainder. EventsTotal must
 // already be set (series is filled first in enrichProtocolAnalytics).
-func (s *Server) fillProtocolBreakdown(ctx context.Context, name string, ids []string, since uint32, view *ProtocolDetailView) {
+func (s *Server) fillProtocolBreakdown(ctx context.Context, name string, ids []string, since uint32, view *ProtocolDetailView) bool {
 	breakdown, err := s.protocolBreakdown(ctx, ids, since)
 	if err != nil {
 		s.logger.Warn("protocol event breakdown failed", "source", name, "err", err)
-		return
+		return false
 	}
 	view.EventBreakdown = make([]ProtocolEventTypeView, 0, len(breakdown)+1)
 	for _, b := range breakdown {
@@ -702,6 +915,7 @@ func (s *Server) fillProtocolBreakdown(ctx context.Context, name string, ids []s
 	// The reconciling "untyped" remainder bucket is appended by
 	// reconcileProtocolBreakdown after the parallel reads complete (it needs
 	// EventsTotal, which fillProtocolSeries sets concurrently).
+	return true
 }
 
 // fillProtocolSeries populates the daily ActivitySeries + EventsTotal
@@ -709,11 +923,11 @@ func (s *Server) fillProtocolBreakdown(ctx context.Context, name string, ids []s
 // over the window (the sum of the daily points), which is the
 // authoritative total the breakdown reconciles against — NOT the typed
 // breakdown sum, which excludes non-Symbol-topic'd events.
-func (s *Server) fillProtocolSeries(ctx context.Context, name string, ids []string, since uint32, view *ProtocolDetailView) {
+func (s *Server) fillProtocolSeries(ctx context.Context, name string, ids []string, since uint32, view *ProtocolDetailView) bool {
 	series, err := s.protocolSeries(ctx, ids, since)
 	if err != nil {
 		s.logger.Warn("protocol daily activity failed", "source", name, "err", err)
-		return
+		return false
 	}
 	view.ActivitySeries = make([]ProtocolActivityPointView, 0, len(series))
 	var total int64
@@ -722,15 +936,16 @@ func (s *Server) fillProtocolSeries(ctx context.Context, name string, ids []stri
 		total += int64(p.Events)
 	}
 	view.EventsTotal = total
+	return true
 }
 
 // fillProtocolContractActivity merges per-contract event counts + last-seen onto
 // the roster (degrades on error).
-func (s *Server) fillProtocolContractActivity(ctx context.Context, name string, ids []string, since uint32, view *ProtocolDetailView) {
+func (s *Server) fillProtocolContractActivity(ctx context.Context, name string, ids []string, since uint32, view *ProtocolDetailView) bool {
 	act, err := s.protocolActivity.ProtocolContractActivity(ctx, ids, since)
 	if err != nil {
 		s.logger.Warn("protocol contract activity failed", "source", name, "err", err)
-		return
+		return false
 	}
 	byID := make(map[string]clickhouse.ProtocolContractActivity, len(act))
 	for _, a := range act {
@@ -746,6 +961,7 @@ func (s *Server) fillProtocolContractActivity(ctx context.Context, name string, 
 			view.Contracts[i].LastSeen = a.LastSeen.UTC().Format(time.RFC3339)
 		}
 	}
+	return true
 }
 
 // protocolActivitySince returns the ledger cutoff for the windowed activity

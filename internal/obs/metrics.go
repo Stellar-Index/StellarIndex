@@ -207,6 +207,8 @@ func registerAppMetricsTail() {
 		SDEXOrderBookMaintainDurationSeconds,
 		ExplorerSWRRefreshTotal,
 		ExplorerSWRRefreshDurationSeconds,
+		ProtocolDetailRefreshTotal,
+		ProtocolDetailRefreshDurationSeconds,
 	)
 
 	seedBoundedLabelSeries()
@@ -3213,6 +3215,53 @@ var ExplorerSWRRefreshDurationSeconds = prometheus.NewHistogramVec(
 		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300},
 	},
 	[]string{"cache", "outcome"},
+)
+
+// ProtocolDetailRefreshTotal — per-outcome counter for detached
+// /v1/protocols/{name} detail rebuilds (internal/api/v1's
+// protoDetail cache): both the boot/steady-state prewarm sweep
+// (Server.PrewarmProtocolDetails — every protocol × ?days= window) and
+// request-kicked stale revalidations share the single-flight and are
+// counted here. Labels:
+//
+//   - `ok`       — the view built fully: lake analytics + bespoke both
+//     healthy (analytics.status="ok" on the wire).
+//   - `degraded` — the build completed but at least one analytics
+//     component failed/was skipped (the served view carries
+//     analytics.status="unavailable"; the page still renders its
+//     registry/roster halves).
+//   - `timeout`  — the build outran its detached budget. A previously
+//     built entry is KEPT (old-but-real beats blank); only a
+//     stone-cold key caches the partial view.
+//
+// Operators: a sustained `degraded`/`timeout` rate means protocol pages
+// are serving without their analytics suites — exactly the 2026-07-31
+// replay-load failure this worker exists to prevent. Bursts during lake
+// merges / replays self-heal on the next sweep.
+var ProtocolDetailRefreshTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_protocol_detail_refresh_total",
+		Help: "Detached protocol-detail cache rebuild outcomes (ok|degraded|timeout), covering the prewarm sweep and request-kicked stale revalidations.",
+	},
+	[]string{"outcome"},
+)
+
+// ProtocolDetailRefreshDurationSeconds — latency histogram for one
+// detached protocol-detail rebuild, labelled like the counter. One
+// rebuild is the roster/verdict joins + three parallel lake reads + the
+// category's bespoke query battery (measured 2026-07-31 on r1 UNDER
+// replay load: soroswap 90d bespoke ~1.9s, cctp ~0.4s). Buckets span
+// 50 ms → 90 s — the top bucket is the rebuild's hard budget
+// (protocolDetailRefreshTimeout), not headroom. Chart `ok` p95: a creep
+// here is the early warning that a bespoke query lost its rollup (the
+// raw-trades-scan class) before builds start timing out.
+var ProtocolDetailRefreshDurationSeconds = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "stellarindex_protocol_detail_refresh_duration_seconds",
+		Help:    "Detached protocol-detail rebuild latency, labelled by outcome (ok|degraded|timeout).",
+		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 90},
+	},
+	[]string{"outcome"},
 )
 
 // ObserveExplorerSWRRefresh records one detached stale-while-revalidate

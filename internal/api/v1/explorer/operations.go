@@ -179,6 +179,26 @@ func (h *Handler) resolveOpTypeStats(_ context.Context, _ *http.Request) []OpTyp
 	return cached          // stale (or nil on a cold process — panel appears next request)
 }
 
+// PrewarmOpTypeStats primes the trailing-24h op-type breakdown so a cold
+// process never serves /v1/operations without the panel (pre-prewarm, the
+// FIRST directory hit after every deploy got `op_type_stats` omitted —
+// absence as the cold-start default rather than the rare exception).
+// Called from the API's 5-minute prewarm loop
+// (cmd/stellarindex-api/main.go), which matches opTypeStatsTTL, so the
+// panel stays permanently fresh. Kicks the same detached single-flight
+// refresh the request path uses; a still-fresh panel is a no-op. The
+// aggregate itself measured ~70ms warm on r1 under replay load
+// (2026-07-31) — the refresh's 1-minute budget is contention headroom.
+func (h *Handler) PrewarmOpTypeStats(ctx context.Context) {
+	if h.Reader == nil || ctx.Err() != nil {
+		return
+	}
+	if _, fresh := h.opTypeStats.get(); fresh {
+		return
+	}
+	h.refreshOpTypeStats() //nolint:contextcheck // intentional detach — prewarm kicks the same background compute
+}
+
 // refreshOpTypeStats kicks ONE detached op-type aggregation (no-op when a
 // flight is already up). Detached: the aggregate must never share a
 // request's deadline (see resolveOpTypeStats).
