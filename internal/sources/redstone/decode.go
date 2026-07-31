@@ -65,7 +65,7 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 	// 1,624 ledgers "undecodable-but-matched" even after the first
 	// empty-batch fix landed BELOW the OpArgs gate. Order matters:
 	// body → empty short-circuit → args for the non-empty path only.
-	prices, err := sdkDecodeBody(e.Value)
+	prices, bodyUpdater, err := sdkDecodeBody(e.Value)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrMalformedPayload, err)
 	}
@@ -93,6 +93,21 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 	feedIDs, updater, err := feedIDsFromOpArgs(e.OpArgs)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrMalformedPayload, err)
+	}
+	// Bind the args to THIS event: write_prices publishes its own
+	// updater argument in the event body, so body.updater must equal
+	// args[0]. A body without the field (unknown historical WASM
+	// shape) is tolerated — the check can't be attacker-suppressed,
+	// because the current adapter always emits it.
+	if bodyUpdater != "" && bodyUpdater != updater {
+		return nil, fmt.Errorf("%w: body %s, args[0] %s", ErrUpdaterMismatch, bodyUpdater, updater)
+	}
+	// A genuine write_prices carries no duplicate feeds (the
+	// redstone-core SDK refuses them before the adapter can emit —
+	// see ErrDuplicateFeedIDs). Refusing here also removes the
+	// duplicate-inflation lever over the subset arity math below.
+	if dup, has := firstDuplicate(feedIDs); has {
+		return nil, fmt.Errorf("%w: %q", ErrDuplicateFeedIDs, dup)
 	}
 
 	// Positional zip requires matching arity. When the adapter's
@@ -216,15 +231,19 @@ type priceDataDecoded struct {
 // body that's already a Map (e.g. a future contract upgrade that
 // drops the custom to_xdr), the fallback path still works.
 //
-// We only return the updated_feeds list — the updater is pulled
-// from the op args instead (the event's updater and args' updater
-// must agree by contract, and args are authoritative for observer
-// attribution since they include the full strkey regardless of
-// muxed variants).
-func sdkDecodeBody(valueB64 string) ([]priceDataDecoded, error) {
+// The op args stay authoritative for OBSERVER attribution (they carry
+// the full strkey regardless of muxed variants), but the body's own
+// `updater` field is ALSO returned so decodeWritePrices can enforce
+// the body↔args agreement the contract guarantees (write_prices
+// publishes its own updater argument) — the cross-check that binds a
+// set of attached args to the event they claim to describe. updater is
+// "" when the body carries no decodable field (tolerated: an unknown
+// historical WASM shape; the current adapter always emits it, so an
+// attacker cannot suppress the check).
+func sdkDecodeBody(valueB64 string) ([]priceDataDecoded, string, error) {
 	body, err := scval.Parse(valueB64)
 	if err != nil {
-		return nil, fmt.Errorf("parse body: %w", err)
+		return nil, "", fmt.Errorf("parse body: %w", err)
 	}
 	// Unwrap the Bytes-wrapped XDR payload if present. The adapter
 	// uses `to_xdr().to_val()` which produces ScVal::Bytes holding
@@ -233,31 +252,37 @@ func sdkDecodeBody(valueB64 string) ([]priceDataDecoded, error) {
 	if raw, bytesErr := scval.AsBytes(body); bytesErr == nil {
 		inner, parseErr := scval.ParseBytes(raw)
 		if parseErr != nil {
-			return nil, fmt.Errorf("unwrap Bytes body: %w", parseErr)
+			return nil, "", fmt.Errorf("unwrap Bytes body: %w", parseErr)
 		}
 		body = inner
 	}
 	entries, err := scval.AsMap(body)
 	if err != nil {
-		return nil, fmt.Errorf("body not a Map: %w", err)
+		return nil, "", fmt.Errorf("body not a Map: %w", err)
 	}
 	updsSv, err := scval.MustMapField(entries, "updated_feeds")
 	if err != nil {
-		return nil, fmt.Errorf("body map missing updated_feeds: %w", err)
+		return nil, "", fmt.Errorf("body map missing updated_feeds: %w", err)
 	}
 	items, err := scval.AsVec(updsSv)
 	if err != nil {
-		return nil, fmt.Errorf("updated_feeds not a Vec: %w", err)
+		return nil, "", fmt.Errorf("updated_feeds not a Vec: %w", err)
 	}
 	out := make([]priceDataDecoded, 0, len(items))
 	for i, item := range items {
 		pd, err := decodePriceData(item)
 		if err != nil {
-			return nil, fmt.Errorf("updated_feeds[%d]: %w", i, err)
+			return nil, "", fmt.Errorf("updated_feeds[%d]: %w", i, err)
 		}
 		out = append(out, pd)
 	}
-	return out, nil
+	updater := ""
+	if updSv, uerr := scval.MustMapField(entries, "updater"); uerr == nil {
+		if s, aerr := sdkDecodeAddress(updSv); aerr == nil {
+			updater = s
+		}
+	}
+	return out, updater, nil
 }
 
 // decodePriceData decodes one PriceData map entry:
@@ -307,19 +332,23 @@ func decodePriceData(sv scval.ScVal) (priceDataDecoded, error) {
 //
 // We enforce arity ≥ 3 (extra args from a contract upgrade would
 // surface here). We do NOT verify the function name was write_prices
-// — the dispatcher only plumbs the Args slice, not the function name
-// (see the WriteFnName note and the body comment below) — so this
-// leans on the dispatcher's contract-ID scoping instead.
+// — the dispatcher only plumbs the Args slice, not the function name.
+// What substitutes for it is the four-layer binding documented at
+// [WriteFnName]: the dispatcher/lake OpArgs PROVENANCE gate (args are
+// attached ONLY when the op's invoked contract IS the event's own
+// contract — a wrapper-invoked adapter event arrives with no args and
+// refuses via ErrMissingOpArgs), this function's structural signature
+// check, the body↔args updater cross-check, and the state-write feed
+// corroboration.
 func feedIDsFromOpArgs(opArgs []string) (feedIDs []string, updater string, err error) {
 	// The InvokeContract wire layout stores the function name OUTSIDE
 	// the Args slice (it lives alongside them in InvokeContractArgs).
-	// Our dispatcher currently only plumbs through Args — the
-	// function-name check is a separate concern. For now we trust the
-	// dispatcher's contract-ID scoping: a decoder only runs when the
-	// event's contract_id matches the configured Adapter, and the
-	// Adapter only emits REDSTONE from write_prices. If that contract
-	// emits a new REDSTONE-topic event in a future WASM, this
-	// position-based decode would need to re-verify — covered by
+	// The dispatcher plumbs only Args, but ONLY for a direct top-level
+	// call into this event's own contract (the provenance gate,
+	// internal/dispatcher/dispatcher.go + the lake twin in
+	// internal/storage/clickhouse/extract.go). The adapter only emits
+	// REDSTONE from write_prices; a future WASM that emits it from
+	// another entry point is covered by
 	// docs/architecture/contract-schema-evolution.md's per-WASM-hash
 	// audit gate.
 	if len(opArgs) < 3 {
@@ -414,8 +443,28 @@ func sdkDecodeAddress(sv scval.ScVal) (string, error) {
 //
 // A LONGER updated_feeds cannot come from freshness filtering and is
 // refused as genuinely malformed.
+//
+// EQUAL arity is additionally CORROBORATED against the state writes
+// when they are plumbed (2026-07-31 hardening): equal arity means the
+// adapter accepted every requested feed, and an accepted feed's stored
+// PriceData always changes — so the op's value-changed feed-keyed
+// writes must equal the feed_ids set exactly (order-insensitive;
+// feed_ids are duplicate-free by the decodeWritePrices gate). A
+// mismatch refuses the whole event (ErrStateWriteFeedMismatch): the
+// claimed names are uncorroborated by what the contract actually
+// stored, and a positional zip onto them would be exactly the
+// misattribution this file exists to prevent. When no keys were
+// plumbed (stellar-rpc fixtures, non-opted readers) the positional zip
+// stands alone, as before — absence is "unknown", not "no writes".
 func resolveFeedAttribution(prices []priceDataDecoded, feedIDs []string, e *events.Event) ([]string, error) {
 	if len(feedIDs) == len(prices) {
+		if len(e.StateWriteKeys) > 0 {
+			written := writtenFeedSet(e.StateWriteKeys, e.ContractID)
+			if !feedSetEqual(feedIDs, written) {
+				return nil, fmt.Errorf("%w: %d feed_ids vs %d changed feed keys",
+					ErrStateWriteFeedMismatch, len(feedIDs), len(written))
+			}
+		}
 		return feedIDs, nil
 	}
 	if len(prices) > len(feedIDs) {
@@ -455,6 +504,30 @@ func subsetFromStateWrites(feedIDs, stateWriteKeys []string, contractID string) 
 	if len(stateWriteKeys) == 0 {
 		return nil
 	}
+	written := writtenFeedSet(stateWriteKeys, contractID)
+	var sub []string
+	for _, f := range feedIDs {
+		if written[f] {
+			sub = append(sub, f)
+			// Count each WRITTEN feed once (audit F2): feed_ids are
+			// duplicate-free by the decodeWritePrices gate, but this
+			// projection must never let a repeated candidate inflate
+			// the subset's arity into a spurious match — belt to that
+			// gate's braces.
+			delete(written, f)
+		}
+	}
+	return sub
+}
+
+// writtenFeedSet parses the plumbed value-changed contract-data keys
+// and returns the SET of feed ids written by the event's own contract:
+// ScString keys owned by contractID. Non-string keys (any other
+// adapter storage) and unparseable keys are skipped, not fatal — the
+// callers compare arity/set membership and refuse or fall back on any
+// disagreement, so a partial read can only cause a refusal/fallback,
+// never a misattribution.
+func writtenFeedSet(stateWriteKeys []string, contractID string) map[string]bool {
 	written := make(map[string]bool, len(stateWriteKeys))
 	for _, kb64 := range stateWriteKeys {
 		owner, key, err := scval.ParseContractDataKey(kb64)
@@ -467,11 +540,31 @@ func subsetFromStateWrites(feedIDs, stateWriteKeys []string, contractID string) 
 		}
 		written[feed] = true
 	}
-	var sub []string
+	return written
+}
+
+// feedSetEqual reports whether feedIDs (duplicate-free) and the written
+// set contain exactly the same feeds.
+func feedSetEqual(feedIDs []string, written map[string]bool) bool {
+	if len(written) != len(feedIDs) {
+		return false
+	}
 	for _, f := range feedIDs {
-		if written[f] {
-			sub = append(sub, f)
+		if !written[f] {
+			return false
 		}
 	}
-	return sub
+	return true
+}
+
+// firstDuplicate returns the first repeated entry of feedIDs, if any.
+func firstDuplicate(feedIDs []string) (string, bool) {
+	seen := make(map[string]bool, len(feedIDs))
+	for _, f := range feedIDs {
+		if seen[f] {
+			return f, true
+		}
+		seen[f] = true
+	}
+	return "", false
 }

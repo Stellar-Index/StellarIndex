@@ -62,11 +62,26 @@ const DefaultResolutionSeconds = 24 * 60 * 60
 // WriteFnName is the adapter contract's update entry point and the
 // only path that emits a REDSTONE-topic event. The dispatcher plumbs
 // only the InvokeContract Args slice (not the function name), so the
-// decoder cannot assert the call targeted this function directly —
-// it relies on the dispatcher's contract-ID scoping plus the
-// per-WASM-hash audit gate (see feedIDsFromOpArgs and
-// docs/architecture/contract-schema-evolution.md). Kept as
-// documentation of the invariant the contract-ID scoping leans on.
+// decoder cannot assert the call targeted this function BY NAME.
+// What stands in for the literal name check, layered (2026-07-31
+// hardening):
+//
+//  1. the dispatcher/lake OpArgs PROVENANCE gate — args are attached
+//     only when the op's invoked contract IS the event's own contract,
+//     so the args describe a direct call INTO the adapter, never a
+//     wrapper's free-chosen top-level args;
+//  2. structural validation of the write_prices signature
+//     (Address, Vec<String>, Bytes — feedIDsFromOpArgs);
+//  3. the body-vs-args updater cross-check (the event's `updater`
+//     field must equal args[0] — decodeWritePrices);
+//  4. the state-write corroboration: when the op's value-changed
+//     contract-data keys are plumbed, the claimed feed set must match
+//     the actually-written feed set (resolveFeedAttribution).
+//
+// A same-contract non-write_prices function that passes all four while
+// emitting a REDSTONE event would be a new adapter WASM — covered by
+// docs/architecture/contract-schema-evolution.md's per-WASM-hash audit
+// gate. Kept as documentation of the invariant this layering leans on.
 const WriteFnName = "write_prices"
 
 // Event-topic constants.
@@ -116,6 +131,40 @@ var (
 	// specific feeds. Skip the whole event rather than risk
 	// assigning a BTC price to ETH.
 	ErrFeedIDCountMismatch = errors.New("redstone: feed_ids arity doesn't match updated_feeds; cannot safely zip")
+
+	// ErrDuplicateFeedIDs — the op-args feed_ids vector contains a
+	// repeated feed. A genuine write_prices can never carry one: the
+	// redstone-core SDK's Config::try_new rejects duplicated feed_ids
+	// outright (check_no_duplicates → Error::ConfigReoccurringFeedId,
+	// .discovery-repos/redstone-rust-sdk/crates/redstone/src/core/
+	// config.rs), so the adapter's get_prices_from_payload errors
+	// before any event is emitted. Duplicates in args we're asked to
+	// decode therefore mean the args did NOT drive the emitting call —
+	// and pre-refusal they were an attribution-steering lever: a
+	// duplicated feed inflated the state-write subset's arity
+	// (audit F2), forcing the payload fallback on attacker-shaped
+	// candidates. Refuse the whole event.
+	ErrDuplicateFeedIDs = errors.New("redstone: duplicate feed_ids in op args")
+
+	// ErrUpdaterMismatch — the event body's `updater` field disagrees
+	// with the op args' updater (args[0]). write_prices publishes its
+	// OWN updater argument in the event, so a disagreement means the
+	// attached args belong to some other call than the one that
+	// emitted this event. Refuse rather than attribute.
+	ErrUpdaterMismatch = errors.New("redstone: event-body updater disagrees with op-args updater")
+
+	// ErrStateWriteFeedMismatch — the op's value-changed contract-data
+	// keys (events.Event.StateWriteKeys) name a feed set different
+	// from the op-args feed_ids on an EQUAL-ARITY batch. An equal
+	// arity means the adapter accepted every requested feed, and an
+	// accepted feed's stored PriceData always changes — so the changed
+	// feed-keyed writes must equal the feed_ids set exactly. A
+	// mismatch means the args' feed identities don't describe what
+	// the contract actually stored (steering, or a storage-shape
+	// change) — refuse the whole event, never zip positionally on
+	// uncorroborated names. Same honest-blind arm as
+	// ErrAmbiguousSubset.
+	ErrStateWriteFeedMismatch = errors.New("redstone: op-args feed_ids disagree with the op's value-changed state-write feed set")
 
 	// ErrEventIndexOverflow — e.EventIndex exceeded eventFanoutStride
 	// (DAT-06/trap-15, audit-2026-07-23). The synthetic OpIndex packs

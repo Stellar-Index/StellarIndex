@@ -45,6 +45,23 @@ import (
 // Signatures are deliberately NOT verified here: the payload was already
 // accepted on-chain by the adapter (the event is the proof); this parser
 // only needs the (feed, value, timestamp) triples the contract aggregated.
+//
+// ACCEPTED RESIDUAL RISK (2026-07-31 hardening review): because we do
+// not vendor redstone-core's signer filtering, this parser aggregates
+// EVERY package in the payload, whereas the on-chain adapter first
+// discards packages from non-trusted signers and enforces its
+// unique-signer threshold. The two medians can therefore disagree when
+// a payload carries extra non-trusted packages: our candidate median
+// simply matches no surviving price and the event refuses into the
+// honest-blind class (never a misattribution — the match must be
+// byte-exact per feed AND form a unique order-preserving bijection).
+// The inverse — an attacker steering attribution by appending garbage
+// packages — additionally requires the ADAPTER to have accepted the
+// payload on-chain, where the signer filter did run. Verifying signer
+// recovery here would mean vendoring redstone-core's secp256k1
+// recovery + the trusted-updater roster and keeping both in lockstep
+// with contract upgrades; the refusal-on-disagreement arm makes that
+// cost unnecessary for correctness, at the price of some refusals.
 var redstoneMarker = []byte{0x00, 0x00, 0x02, 0xed, 0x57, 0x01, 0x1e, 0x00, 0x00}
 
 const (

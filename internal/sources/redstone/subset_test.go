@@ -207,6 +207,26 @@ func TestDecode_OrderPreservingAlignment_DisambiguatesSharedMedians(t *testing.T
 	if len(out) != 5 {
 		t.Fatalf("got %d updates, want 5 (7 requested, 2 freshness-dropped)", len(out))
 	}
+	// Pin the exact attribution, not just the count: the unique
+	// order-preserving alignment drops ETH and BTC (the first two
+	// candidates) and maps the five surviving prices onto the
+	// remaining feed_ids IN ORDER. A regression that found a different
+	// (wrong) unique alignment would still pass a len-only assertion.
+	wantPairs := []struct{ asset, quote string }{
+		{"crypto:PYUSD", "fiat:USD"},
+		{"crypto:USDC", "fiat:USD"},
+		{"crypto:EUROC", "fiat:EUR"}, // the EUROC/EUR feed — EUR-quoted
+		{"rwa:iBENJI", "fiat:USD"},
+		{"crypto:SolvBTC.BBN_FUNDAMENTAL", "fiat:USD"},
+	}
+	for i, want := range wantPairs {
+		if got := out[i].Asset.String(); got != want.asset {
+			t.Errorf("out[%d].Asset = %s, want %s", i, got, want.asset)
+		}
+		if got := out[i].Quote.String(); got != want.quote {
+			t.Errorf("out[%d].Quote = %s, want %s", i, got, want.quote)
+		}
+	}
 }
 
 func TestAttributeSubset_OrderDisambiguates(t *testing.T) {

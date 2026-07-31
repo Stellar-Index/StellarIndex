@@ -180,6 +180,64 @@ against.
   reconcile. The build now derives one plan from a single checked tip
   read; an unreadable tip degrades the analytics honestly (status
   `unavailable`).
+### Security
+- **Redstone attribution chain hardened end-to-end (OpArgs provenance +
+  cross-corroboration; cold-audit wave 2026-07-31).** The dispatcher
+  attached an op's top-level InvokeContract args to EVERY event the op
+  produced — including events emitted by OTHER contracts reached as
+  sub-invocations — so a wrapper contract could call
+  `adapter.write_prices` with the genuine signed payload while its own
+  attacker-chosen top-level args supplied the `feed_ids` redstone zips
+  prices onto (feed-attribution steering). Defense in depth, all layers
+  refusal-first (honest-blind beats misattributed):
+  - **Provenance gate (dispatcher + lake twin):** args now attach only
+    when the op's invoked contract IS the event's own contract
+    (`internal/dispatcher/dispatcher.go`;
+    `internal/storage/clickhouse/extract.go` applies the identical rule
+    at lake-write time, so re-derives stay in parity). Wrapper-invoked
+    adapter events arrive with no args and refuse cleanly via
+    `ErrMissingOpArgs`, counted through the per-source decode-error
+    counter.
+  - **Body↔args binding:** the event body's `updater` must equal the
+    op-args updater (`ErrUpdaterMismatch`), and duplicate `feed_ids`
+    are refused outright (`ErrDuplicateFeedIDs`) — a genuine
+    `write_prices` cannot carry them (redstone-core `Config::try_new`
+    rejects `ConfigReoccurringFeedId` before the adapter can emit), and
+    pre-refusal they were a subset-arity inflation lever (audit F2);
+    `subsetFromStateWrites` additionally counts each written feed once.
+  - **Equal-arity corroboration:** when the op's value-changed
+    state-write keys are plumbed, even the equal-arity positional zip
+    is cross-checked — the changed feed-key set must equal the
+    `feed_ids` set (order-insensitive), else the whole event refuses
+    (`ErrStateWriteFeedMismatch`).
+  - The residual external assumption (redstone-core signer filtering is
+    not vendored; disagreement lands in the honest-blind class, never a
+    misattribution) is documented as an accepted risk in
+    `internal/sources/redstone/payload.go`.
+
+### Fixed
+- **CH state-write reader: parse failure now excludes the KEY, not the
+  row.** An unparseable `entry_xdr` in
+  `internal/storage/clickhouse/state_write_keys.go` dropped only that
+  ROW, so a lost pre-image promoted an identical-value rewrite
+  (adapter-REJECTED feed) to "changed" — violating the documented
+  "parse failure excludes the key" rule the dispatcher twin already
+  enforced. The key is now poisoned via a per-key bad-set, mirroring
+  the dispatcher.
+- **CH state-write reader: ReplacingMergeTree dedup keeps the LATEST
+  version.** Duplicate un-merged rows per `(op, change_index)` were
+  deduped first-read-wins; `ReplacingMergeTree(ingested_at)` semantics
+  say highest version wins, so a re-ingested correction could lose to
+  its stale predecessor depending on read order. The lookup now selects
+  `ingested_at` and keeps the max-version row.
+
+### Changed
+- **State-write enrichment is lazy on the ingest hot path.** The
+  dispatcher computed every event-bearing op's value-changed
+  contract-data keys unconditionally; it now resolves them once per op
+  and only for events whose contract a registered decoder declared via
+  the new optional `dispatcher.StateWriteKeyConsumer` interface
+  (redstone is the only current implementer).
 
 ## [v0.21.8] — 2026-07-31
 

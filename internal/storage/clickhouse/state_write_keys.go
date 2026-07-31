@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/stellar/go-stellar-sdk/strkey"
@@ -37,10 +38,13 @@ import (
 // firehose-scale source would pay the lookups for keys its decoder never
 // reads — today only redstone opts in.
 //
-// ReplacingMergeTree note: duplicate un-merged parts repeat whole rows
-// with identical (ledger_seq, tx_hash, op_index, change_index) keys; the
-// scan below dedups by change_index within each op, so no FINAL is
-// needed.
+// ReplacingMergeTree note: duplicate un-merged parts repeat rows with
+// identical (ledger_seq, tx_hash, op_index, change_index) keys; the scan
+// below dedups by change_index within each op, keeping the row with the
+// LATEST ingested_at — the same row a FINAL merge would keep
+// (ReplacingMergeTree(ingested_at): highest version wins) — so no FINAL
+// is needed and a re-ingested correction row beats its stale
+// predecessor regardless of read order.
 
 // stateWriteKeyBatch is how many streamed events accumulate before one
 // ledger_entry_changes lookup resolves their changed-write keys.
@@ -135,31 +139,64 @@ func fetchOpEntryChanges(ctx context.Context, conn driver.Conn, batch []events.E
 	}
 	defer func() { _ = rows.Close() }()
 
-	out := make(map[opRef][]entryChangeLite, len(refs))
-	lastIdx := make(map[opRef]uint32, len(refs))
+	acc := newOpChangeAccumulator(len(refs))
 	for rows.Next() {
 		var (
-			ledger  uint32
-			txHash  string
-			opIndex int32
-			lite    entryChangeLite
+			ledger     uint32
+			txHash     string
+			opIndex    int32
+			ingestedAt time.Time
+			lite       entryChangeLite
 		)
-		if serr := rows.Scan(&ledger, &txHash, &opIndex, &lite.ChangeIndex, &lite.ChangeType, &lite.KeyXDR, &lite.EntryXDR); serr != nil {
+		if serr := rows.Scan(&ledger, &txHash, &opIndex, &lite.ChangeIndex, &lite.ChangeType, &lite.KeyXDR, &lite.EntryXDR, &ingestedAt); serr != nil {
 			return nil, fmt.Errorf("clickhouse: scan state write keys: %w", serr)
 		}
-		ref := opRef{Ledger: ledger, TxHash: txHash, OpIndex: int(opIndex)}
-		// Rows arrive ORDER BY change_index within an op; a repeated
-		// change_index is an un-merged duplicate part of the same row.
-		if prev, ok := lastIdx[ref]; ok && prev == lite.ChangeIndex {
-			continue
-		}
-		lastIdx[ref] = lite.ChangeIndex
-		out[ref] = append(out[ref], lite)
+		acc.add(opRef{Ledger: ledger, TxHash: txHash, OpIndex: int(opIndex)}, lite, ingestedAt)
 	}
 	if rerr := rows.Err(); rerr != nil {
 		return nil, fmt.Errorf("clickhouse: state write keys rows: %w", rerr)
 	}
-	return out, nil
+	return acc.out, nil
+}
+
+// opChangeAccumulator folds ORDER BY change_index rows into per-op
+// change lists, deduping repeated change_index rows from un-merged
+// ReplacingMergeTree parts by keeping the row with the LATEST
+// ingested_at — the exact FINAL-merge semantics of
+// ReplacingMergeTree(ingested_at). Keeping the FIRST-seen row (the
+// pre-2026-07-31 behaviour) could resurrect a stale pre-correction row
+// after a re-ingest, because read order among duplicate parts is not
+// version order. Split out pure for unit tests.
+type opChangeAccumulator struct {
+	out     map[opRef][]entryChangeLite
+	lastIdx map[opRef]uint32
+	lastIng map[opRef]time.Time
+}
+
+func newOpChangeAccumulator(sizeHint int) *opChangeAccumulator {
+	return &opChangeAccumulator{
+		out:     make(map[opRef][]entryChangeLite, sizeHint),
+		lastIdx: make(map[opRef]uint32, sizeHint),
+		lastIng: make(map[opRef]time.Time, sizeHint),
+	}
+}
+
+// add folds one row. Rows arrive ORDER BY change_index within an op, so
+// duplicates of one logical row are adjacent; a repeated change_index
+// replaces the just-appended row when its version (ingested_at) is
+// strictly newer. Ties keep the first-read row — duplicate parts with
+// equal versions carry identical logical content.
+func (a *opChangeAccumulator) add(ref opRef, lite entryChangeLite, ingestedAt time.Time) {
+	if prev, ok := a.lastIdx[ref]; ok && prev == lite.ChangeIndex {
+		if ingestedAt.After(a.lastIng[ref]) {
+			a.out[ref][len(a.out[ref])-1] = lite
+			a.lastIng[ref] = ingestedAt
+		}
+		return
+	}
+	a.lastIdx[ref] = lite.ChangeIndex
+	a.lastIng[ref] = ingestedAt
+	a.out[ref] = append(a.out[ref], lite)
 }
 
 // stateWriteKeysQuery renders the batched change-row lookup. The ledger
@@ -181,7 +218,7 @@ func stateWriteKeysQuery(refs []opRef) string {
 		tuples = append(tuples, fmt.Sprintf("(%d,%s,%d)", r.Ledger, sqlQuoteEscaped(r.TxHash), r.OpIndex))
 	}
 	return fmt.Sprintf(`
-		SELECT ledger_seq, tx_hash, op_index, change_index, change_type, key_xdr, entry_xdr
+		SELECT ledger_seq, tx_hash, op_index, change_index, change_type, key_xdr, entry_xdr, ingested_at
 		FROM stellar.ledger_entry_changes
 		WHERE ledger_seq BETWEEN %d AND %d
 		  AND entry_type = 'contract_data'
@@ -203,7 +240,26 @@ func changedWriteKeysForContract(rows []entryChangeLite, contractID string) []st
 	var order []string
 	states := make(map[string]*lakeKeyState)
 	for _, r := range rows {
-		owner, val, ok := contractDataEntryVal(r.EntryXDR)
+		owner, val, ok, decodable := contractDataEntryVal(r.EntryXDR)
+		if !decodable {
+			// Unparseable entry_xdr: the row's OWNER is unknowable, but
+			// its KEY is not — key_xdr is a separate column. Poison the
+			// KEY rather than dropping the ROW: dropping the row silently
+			// discards a pre-image, which promotes an unchanged
+			// identical-rewrite key to "changed" (a misattribution
+			// vector), violating the documented "parse failure excludes
+			// the key" rule the dispatcher twin already enforces via its
+			// bad-set. Keys of other contracts embed their own contract
+			// address in the LedgerKey, so a foreign row's poison can
+			// never collide with this contract's keys.
+			ks := states[r.KeyXDR]
+			if ks == nil {
+				ks = &lakeKeyState{}
+				states[r.KeyXDR] = ks
+			}
+			ks.bad = true
+			continue
+		}
 		if !ok || owner != contractID {
 			continue
 		}
@@ -269,29 +325,33 @@ func (ks *lakeKeyState) valueChanged() bool {
 
 // contractDataEntryVal parses a ledger_entry_changes entry_xdr and
 // returns the owning contract's C-strkey plus the ContractDataEntry.Val
-// bytes. ok=false when the entry is not contract-data (or is
-// account-owned); a nil val with ok=true signals a marshal failure on a
-// genuine contract-data entry — callers exclude that key.
-func contractDataEntryVal(entryB64 string) (contractID string, val []byte, ok bool) {
+// bytes. decodable=false means the entry_xdr itself failed to
+// unmarshal — the caller cannot even learn the owner and must poison the
+// row's KEY (see changedWriteKeysForContract) rather than drop the row.
+// With decodable=true: ok=false when the entry is not contract-data (or
+// is account-owned) — genuinely not ours, skip; a nil val with ok=true
+// signals a Val marshal failure on a genuine contract-data entry —
+// callers exclude that key.
+func contractDataEntryVal(entryB64 string) (contractID string, val []byte, ok, decodable bool) {
 	var entry xdr.LedgerEntry
 	if err := xdr.SafeUnmarshalBase64(entryB64, &entry); err != nil {
-		return "", nil, false
+		return "", nil, false, false
 	}
 	if entry.Data.Type != xdr.LedgerEntryTypeContractData {
-		return "", nil, false
+		return "", nil, false, true
 	}
 	cd, cok := entry.Data.GetContractData()
 	if !cok || cd.Contract.Type != xdr.ScAddressTypeScAddressTypeContract {
-		return "", nil, false
+		return "", nil, false, true
 	}
 	cid := cd.Contract.MustContractId()
 	strk, err := strkey.Encode(strkey.VersionByteContract, cid[:])
 	if err != nil {
-		return "", nil, false
+		return "", nil, false, true
 	}
 	valBytes, err := cd.Val.MarshalBinary()
 	if err != nil {
-		return strk, nil, true
+		return strk, nil, true, true
 	}
-	return strk, valBytes, true
+	return strk, valBytes, true, true
 }

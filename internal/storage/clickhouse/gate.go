@@ -90,7 +90,15 @@ func openRead(ctx context.Context, addr string) (driver.Conn, error) {
 		// while the consumer is busy writing each event to Postgres; the default
 		// (~5 min) trips with "i/o timeout" mid-stream. 1h tolerates the longest
 		// inter-block gap for full-history reprojection windows.
-		ReadTimeout:     time.Hour,
+		ReadTimeout: time.Hour,
+		// DO NOT lower MaxOpenConns below 2 (audit F7). The
+		// state-write-key enricher (state_write_keys.go, reached via
+		// StreamContractEventsFiltered withStateWriteKeys=true) issues
+		// its batched ledger_entry_changes lookups MID-STREAM, while
+		// the event stream still holds one connection open on this same
+		// conn — at MaxOpenConns=1 that lookup blocks forever waiting
+		// for the connection the stream won't release until the lookup
+		// completes: a self-deadlock, not a slow query.
 		MaxOpenConns:    2,
 		MaxIdleConns:    1,
 		ConnMaxLifetime: time.Hour,

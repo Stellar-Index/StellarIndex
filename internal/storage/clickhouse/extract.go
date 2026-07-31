@@ -120,14 +120,26 @@ func extractTx(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, clos
 	extractEvents(ext, tx, seq, closeTime, txHash, opArgsByIndex(tx.Envelope.Operations()), tx.Result.Successful())
 }
 
-// opArgsByIndex returns the base64-SCVal InvokeContract args per operation
+// opInvokeArgs is one operation's top-level InvokeContract snapshot:
+// the invoked contract's C-strkey plus its base64-SCVal args. The
+// contract identity is what lets extractEvents apply the OpArgs
+// provenance gate (args attach only to events the CALLEE itself
+// emitted — the lake-side twin of the dispatcher's gate).
+type opInvokeArgs struct {
+	ContractID string
+	Args       []string
+}
+
+// opArgsByIndex returns the top-level InvokeContract call per operation
 // index (nil for non-InvokeContract ops). Mirrors the OpArgs side of
 // dispatcher.extractInvokeContractCalls exactly (same MarshalBinary +
 // base64.Std), so an event's op_args_xdr equals events.Event.OpArgs — which
 // decoders that need the invoking call's args read (Redstone zips feed_ids
-// from here; the event body carries none).
-func opArgsByIndex(ops []xdr.Operation) [][]string {
-	out := make([][]string, len(ops))
+// from here; the event body carries none). A slot whose contract address
+// can't be strkey-encoded yields nil (no args rather than args with
+// unverifiable provenance).
+func opArgsByIndex(ops []xdr.Operation) []*opInvokeArgs {
+	out := make([]*opInvokeArgs, len(ops))
 	for i := range ops {
 		if ops[i].Body.Type != xdr.OperationTypeInvokeHostFunction {
 			continue
@@ -138,6 +150,14 @@ func opArgsByIndex(ops []xdr.Operation) [][]string {
 		}
 		ic, ok := ihf.HostFunction.GetInvokeContract()
 		if !ok {
+			continue
+		}
+		if ic.ContractAddress.Type != xdr.ScAddressTypeScAddressTypeContract {
+			continue // account-typed target is protocol-invalid; skip defensively
+		}
+		callee := ic.ContractAddress.MustContractId()
+		calleeStr, serr := strkey.Encode(strkey.VersionByteContract, callee[:])
+		if serr != nil {
 			continue
 		}
 		args := make([]string, 0, len(ic.Args))
@@ -151,7 +171,7 @@ func opArgsByIndex(ops []xdr.Operation) [][]string {
 			args = append(args, base64.StdEncoding.EncodeToString(raw))
 		}
 		if argsOK && len(args) > 0 {
-			out[i] = args
+			out[i] = &opInvokeArgs{ContractID: calleeStr, Args: args}
 		}
 	}
 	return out
@@ -222,8 +242,15 @@ func appendOpResult(ext *LedgerExtract, seq uint32, txHash string, opIndex uint3
 }
 
 // extractEvents appends one tx's eligible contract-event rows. opArgs holds
-// the InvokeContract args per operation index (from opArgsByIndex); events of
-// op i carry opArgs[i] so Redstone/Band-class decoders can read them from CH.
+// the top-level InvokeContract call per operation index (from opArgsByIndex);
+// an event of op i carries opArgs[i].Args ONLY when the event's own contract
+// IS opArgs[i].ContractID — the OpArgs provenance gate, identical to the
+// dispatcher's (dispatcher.ProcessLedger): the top-level args belong to the
+// callee, and attaching them to events emitted by OTHER contracts in the same
+// op (sub-invocations under a wrapper) hands attacker-chosen wrapper args to
+// decoders like Redstone that read feed identity out of them. Wrapper-reached
+// events land with empty op_args_xdr, so an args-requiring decoder refuses
+// honestly at projection time instead of misattributing.
 //
 // TX-SUCCESS GATE (C2-010 sibling, audit-2026-07-23). `successful` is
 // tx.Result.Successful(); a failed transaction contributes nothing. Pre-fix
@@ -250,7 +277,7 @@ func appendOpResult(ext *LedgerExtract, seq uint32, txHash string, opIndex uint3
 // mint/burn amounts from transactions that never applied — a money-visible
 // error for a fidelity gain in events the protocol does not actually emit
 // (see the note in ExtractLedger's own doc on failed-tx meta shape).
-func extractEvents(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, closeTime time.Time, txHash string, opArgs [][]string, successful bool) {
+func extractEvents(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, closeTime time.Time, txHash string, opArgs []*opInvokeArgs, successful bool) {
 	if !successful {
 		return
 	}
@@ -265,12 +292,12 @@ func extractEvents(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, 
 		return
 	}
 	for opIdx, opEvents := range txEvents.OperationEvents {
-		var args []string
+		var call *opInvokeArgs
 		if opIdx < len(opArgs) {
-			args = opArgs[opIdx]
+			call = opArgs[opIdx]
 		}
 		for evIdx := range opEvents {
-			row, ok := eventRow(opEvents[evIdx], seq, closeTime, txHash, opIdx, evIdx, args)
+			row, ok := eventRow(opEvents[evIdx], seq, closeTime, txHash, opIdx, evIdx, call)
 			if !ok {
 				continue
 			}
@@ -304,7 +331,7 @@ func extractEvents(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, 
 // capture-eligibility gate as dispatcher.captureEligible (Type=Contract,
 // ContractId set, body V0, ≥1 topic). Returns ok=false to skip ineligible
 // events so the row count matches the census oracle.
-func eventRow(ce xdr.ContractEvent, seq uint32, closeTime time.Time, txHash string, opIdx, evIdx int, opArgs []string) (ContractEventRow, bool) {
+func eventRow(ce xdr.ContractEvent, seq uint32, closeTime time.Time, txHash string, opIdx, evIdx int, call *opInvokeArgs) (ContractEventRow, bool) {
 	if ce.Type != xdr.ContractEventTypeContract || ce.ContractId == nil || ce.Body.V != 0 {
 		return ContractEventRow{}, false
 	}
@@ -332,6 +359,13 @@ func eventRow(ce xdr.ContractEvent, seq uint32, closeTime time.Time, txHash stri
 	if sym, sok := v0.Topics[0].GetSym(); sok {
 		topic0Sym = string(sym)
 	}
+	// OpArgs provenance gate (see extractEvents' doc): the producing
+	// op's top-level args are stored only on events the invoked contract
+	// itself emitted.
+	var opArgs []string
+	if call != nil && call.ContractID == cid {
+		opArgs = call.Args
+	}
 	return ContractEventRow{
 		LedgerSeq:  seq,
 		CloseTime:  closeTime,
@@ -344,7 +378,7 @@ func eventRow(ce xdr.ContractEvent, seq uint32, closeTime time.Time, txHash stri
 		Topic0Sym:  topic0Sym,
 		TopicsXDR:  topics,
 		DataXDR:    base64.StdEncoding.EncodeToString(dataRaw),
-		OpArgsXDR:  opArgs, // InvokeContract args of the producing op (Redstone feed_ids, etc.)
+		OpArgsXDR:  opArgs, // callee-only InvokeContract args (Redstone feed_ids, etc.)
 		// Constant 1 is now a STATEMENT OF FACT, not an assumption: the only
 		// caller, extractEvents, returns early for a failed transaction
 		// (C2-010 sibling, audit-2026-07-23). Pre-fix this literal was
