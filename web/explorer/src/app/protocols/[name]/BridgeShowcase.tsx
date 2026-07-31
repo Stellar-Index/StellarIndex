@@ -7,6 +7,7 @@ import { Panel } from '@/components/reveal';
 import type { RequestExample } from '@/api/client';
 import { cn } from '@/lib/cn';
 import { formatCompact } from '@/lib/format';
+import { dropPartialTrailingDay, seriesPointTime } from '@/lib/series';
 import type { NamedLineSeries, LineSeriesTone } from '@/components/charts/LineChart';
 import { DonutChart, CATEGORICAL_PALETTE, type DonutSlice } from '@/components/charts/DonutChart';
 import {
@@ -52,16 +53,6 @@ const PER_CHAIN_IN = 'Inbound · ';
 const PER_CHAIN_OUT = 'Outbound · ';
 const CUMULATIVE = 'Cumulative net inflow (all-time)';
 
-// pointTime — bespoke point date → unix seconds. Daily points are
-// "YYYY-MM-DD"; hourly points (the 24h window) are "YYYY-MM-DDTHH:MM".
-// Exported for BespokeSection's grouped multi-line panels.
-export function pointTime(date: string): number {
-  const iso =
-    date.length === 10 ? `${date}T00:00:00Z` : date.length === 16 ? `${date}:00Z` : date;
-  const ms = Date.parse(iso);
-  return Number.isFinite(ms) ? Math.floor(ms / 1000) : 0;
-}
-
 function toLine(
   s: BespokeSeries,
   label: string,
@@ -72,7 +63,15 @@ function toLine(
     label,
     tone,
     color,
-    data: s.points.map((p) => ({ time: pointTime(p.date), value: toChartNumber(p.value) })),
+    // Today's accumulating daily bucket is dropped (phantom-cliff honesty;
+    // hourly 24h-window points keep the live day); points with a
+    // non-parsable date or non-numeric value are dropped rather than
+    // plotted at 1970 / as fabricated zeros (see @/lib/series).
+    data: dropPartialTrailingDay(s.points).flatMap((p) => {
+      const time = seriesPointTime(p.date);
+      const value = toChartNumber(p.value);
+      return time == null || value == null ? [] : [{ time, value }];
+    }),
   };
 }
 
@@ -140,8 +139,10 @@ export function perChainLines(series: BespokeSeries[], prefix: string): NamedLin
 // via Number() for geometry only).
 export function donutSlices(b: BespokeBreakdown): DonutSlice[] {
   const rows = b.rows
-    .map((r) => ({ label: r.label, value: toChartNumber(r.value) }))
-    .filter((r) => Number.isFinite(r.value) && r.value > 0)
+    .flatMap((r) => {
+      const value = toChartNumber(r.value);
+      return value == null || value <= 0 ? [] : [{ label: r.label, value }];
+    })
     .sort((a, x) => x.value - a.value);
   const top = rows.slice(0, 6).map((r) => ({ ...r, color: chainColor(r.label) }));
   const rest = rows.slice(6);
@@ -281,10 +282,11 @@ export function BridgeShowcase({
           source={source}
         >
           <LineChart
-            data={cumulative.points.map((p) => ({
-              time: pointTime(p.date),
-              value: toChartNumber(p.value),
-            }))}
+            data={cumulative.points.flatMap((p) => {
+              const time = seriesPointTime(p.date);
+              const value = toChartNumber(p.value);
+              return time == null || value == null ? [] : [{ time, value }];
+            })}
             height={224}
             legend={{ valueLabel: 'Net inflow', formatValue: formatCompact }}
             ariaLabel={`Cumulative net USDC inflow onto Stellar since the bridge launched${cumulative.unit ? `, in ${cumulative.unit}` : ''}.`}

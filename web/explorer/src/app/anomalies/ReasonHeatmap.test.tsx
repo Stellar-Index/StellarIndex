@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-import { ReasonHeatmap, levelFor, windowDaysUTC } from './ReasonHeatmap';
+import { ReasonHeatmap, levelFor, servedDaysUTC } from './ReasonHeatmap';
 
 describe('ReasonHeatmap', () => {
   it('renders one labeled row per reason with per-cell titles carrying exact counts', () => {
@@ -41,8 +41,23 @@ describe('ReasonHeatmap', () => {
     expect(levelFor(1, 1)).toBe(1);
   });
 
-  it('builds a UTC day axis ending today', () => {
-    const days = windowDaysUTC(3, new Date('2026-07-31T05:00:00Z'));
-    expect(days).toEqual(['2026-07-29', '2026-07-30', '2026-07-31']);
+  it('derives the day axis from the served data range, not the client clock', () => {
+    // The axis spans min..max of the SERVED days — interior gaps are real
+    // zeros and stay as columns; no columns are minted beyond the data.
+    const days = servedDaysUTC(
+      [{ day: '2026-07-28' }, { day: '2026-07-30' }, { day: '2026-07-28' }],
+      30,
+    );
+    expect(days).toEqual(['2026-07-28', '2026-07-29', '2026-07-30']);
+  });
+
+  it('caps the axis at the window length ending on the newest served day', () => {
+    // A single garbage far-past date must not explode the grid.
+    const days = servedDaysUTC([{ day: '1970-01-01' }, { day: '2026-07-30' }], 3);
+    expect(days).toEqual(['2026-07-28', '2026-07-29', '2026-07-30']);
+  });
+
+  it('ignores malformed day strings when deriving the axis', () => {
+    expect(servedDaysUTC([{ day: 'not-a-day' }], 30)).toEqual([]);
   });
 });

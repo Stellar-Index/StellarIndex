@@ -88,46 +88,105 @@ const BLEND_POOL_META: Record<string, PoolMeta> = {
   },
 };
 
-export function LendingPoolsTable() {
+// One /v1/lending/pools/{pool}/reserves reserve row (the fields this table uses).
+interface PoolReserve {
+  supplied_usd?: string;
+  borrowed_usd?: string;
+  supply_apr?: number;
+  borrow_apr?: number;
+}
+
+// parseUsd — a served USD decimal string → finite number, or null when the
+// field is absent/garbage. Absence means UNPRICED, never zero: coercing it
+// to 0 inside sums and weighted averages fabricated pool-level percentages.
+function parseUsd(s: string | undefined): number | null {
+  if (s == null || s === '') return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+// sumPresent — sum a field over the reserves where it is actually served;
+// null when NO reserve carries it (an all-absent basis is not a zero).
+function sumPresent(reserves: PoolReserve[], pick: (r: PoolReserve) => number | null): {
+  sum: number | null;
+  count: number;
+} {
+  let sum = 0;
+  let count = 0;
+  for (const r of reserves) {
+    const v = pick(r);
+    if (v == null) continue;
+    sum += v;
+    count += 1;
+  }
+  return { sum: count > 0 ? sum : null, count };
+}
+
+// weightedAvg — weight-averaged rate over the reserves where BOTH the
+// weight and the rate are served; null when the priced weight basis is 0.
+function weightedAvg(
+  reserves: PoolReserve[],
+  weight: (r: PoolReserve) => number | null,
+  rate: (r: PoolReserve) => number | undefined,
+): number | null {
+  let num = 0;
+  let den = 0;
+  for (const r of reserves) {
+    const w = weight(r);
+    const a = rate(r);
+    if (w == null || typeof a !== 'number' || !Number.isFinite(a)) continue;
+    num += w * a;
+    den += w;
+  }
+  return den > 0 ? num / den : null;
+}
+
 /**
  * PoolRealStats — TVL (USD) + true utilization from the pool-storage
  * reader via /v1/lending/pools/{pool}/reserves (site audit S-013: the
  * list used to render window event proxies in raw base-units —
  * "578.1T supplied", "222.4% util" — impossible numbers presented as
  * real ones while the real ones existed one endpoint over).
+ *
+ * All derived figures are computed over PRICED reserves only — an
+ * unpriced reserve is excluded from the basis, never counted as $0
+ * (that coerced-zero fabricated the percentages) — and each cell's
+ * title labels that basis. No priced reserve at all renders "—".
+ * Module-scope (not nested in LendingPoolsTable) so React keeps one
+ * component identity across parent re-renders.
  */
 function PoolRealStats({ pool }: { pool: string }) {
   const q = useQuery<{
     tvl_usd?: string;
-    reserves?: { supplied_usd?: string; borrowed_usd?: string; supply_apr?: number; borrow_apr?: number }[];
+    reserves?: PoolReserve[];
   }>({
     queryKey: ['/v1/lending/pools/{pool}/reserves', pool],
     staleTime: 300_000,
     retry: false,
     queryFn: async () =>
       (
-        await apiGet<{ data: { tvl_usd?: string; reserves?: { supplied_usd?: string; borrowed_usd?: string; supply_apr?: number; borrow_apr?: number }[] } }>(
+        await apiGet<{ data: { tvl_usd?: string; reserves?: PoolReserve[] } }>(
           `/v1/lending/pools/${encodeURIComponent(pool)}/reserves`,
           {},
         )
       ).data,
   });
-  const tvl = q.data?.tvl_usd ? Number(q.data.tvl_usd) : null;
-  const supplied = (q.data?.reserves ?? []).reduce((s, r) => s + Number(r.supplied_usd ?? 0), 0);
-  const borrowed = (q.data?.reserves ?? []).reduce((s, r) => s + Number(r.borrowed_usd ?? 0), 0);
-  const util = supplied > 0 ? (borrowed / supplied) * 100 : null;
+  const reserves = q.data?.reserves ?? [];
+  const tvl = parseUsd(q.data?.tvl_usd);
+  const supplied = sumPresent(reserves, (r) => parseUsd(r.supplied_usd));
+  const borrowed = sumPresent(reserves, (r) => parseUsd(r.borrowed_usd));
+  const util =
+    supplied.sum != null && supplied.sum > 0 && borrowed.sum != null
+      ? (borrowed.sum / supplied.sum) * 100
+      : null;
   // BACKLOG #30: supplied-weighted average APRs from the same reserves
   // the row already fetched — no extra request.
-  const wSupplyAPR =
-    supplied > 0
-      ? (q.data?.reserves ?? []).reduce(
-          (s, r) => s + Number(r.supplied_usd ?? 0) * (r.supply_apr ?? 0), 0) / supplied
-      : null;
-  const wBorrowAPR =
-    borrowed > 0
-      ? (q.data?.reserves ?? []).reduce(
-          (s, r) => s + Number(r.borrowed_usd ?? 0) * (r.borrow_apr ?? 0), 0) / borrowed
-      : null;
+  const wSupplyAPR = weightedAvg(reserves, (r) => parseUsd(r.supplied_usd), (r) => r.supply_apr);
+  const wBorrowAPR = weightedAvg(reserves, (r) => parseUsd(r.borrowed_usd), (r) => r.borrow_apr);
+  const basisNote = (count: number) =>
+    reserves.length > 0 && count < reserves.length
+      ? `Priced reserves only (${count} of ${reserves.length})`
+      : 'Priced reserves only';
   const fmtUsd = (n: number) =>
     n >= 1e9 ? `$${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `$${(n / 1e6).toFixed(2)}M` : `$${Math.round(n).toLocaleString()}`;
   return (
@@ -138,17 +197,26 @@ function PoolRealStats({ pool }: { pool: string }) {
         </span>
       </Td>
       <Td align="right">
-        <span className="font-mono tabular-nums text-ink-body">
+        <span
+          className="font-mono tabular-nums text-ink-body"
+          title={util != null ? basisNote(Math.min(supplied.count, borrowed.count)) : undefined}
+        >
           {q.isLoading ? '…' : util != null ? `${util.toFixed(1)}%` : '—'}
         </span>
       </Td>
       <Td align="right">
-        <span className="font-mono tabular-nums text-up-strong">
+        <span
+          className="font-mono tabular-nums text-up-strong"
+          title={wSupplyAPR != null ? basisNote(supplied.count) : undefined}
+        >
           {q.isLoading ? '…' : wSupplyAPR != null ? `${(wSupplyAPR * 100).toFixed(2)}%` : '—'}
         </span>
       </Td>
       <Td align="right">
-        <span className="font-mono tabular-nums text-ink-body">
+        <span
+          className="font-mono tabular-nums text-ink-body"
+          title={wBorrowAPR != null ? basisNote(borrowed.count) : undefined}
+        >
           {q.isLoading ? '…' : wBorrowAPR != null ? `${(wBorrowAPR * 100).toFixed(2)}%` : '—'}
         </span>
       </Td>
@@ -156,6 +224,7 @@ function PoolRealStats({ pool }: { pool: string }) {
   );
 }
 
+export function LendingPoolsTable() {
   const q = useQuery<LendingPool[]>({
     queryKey: ['/v1/lending/pools'],
     queryFn: async () => {
@@ -234,7 +303,16 @@ function PoolRealStats({ pool }: { pool: string }) {
                 </td>
               </tr>
             )}
-            {!q.isLoading && rows.length === 0 && (
+            {/* A failed fetch is an availability problem, not an empty
+                chain state — the two must never share one message. */}
+            {!q.isLoading && q.isError && (
+              <tr>
+                <td colSpan={11} className="px-4 py-6 text-center text-sm text-ink-muted">
+                  The pools list is unavailable right now — retry shortly.
+                </td>
+              </tr>
+            )}
+            {!q.isLoading && !q.isError && rows.length === 0 && (
               <tr>
                 <td colSpan={11} className="px-4 py-6 text-center text-sm text-ink-muted">
                   No Blend pools have emitted auction events yet.

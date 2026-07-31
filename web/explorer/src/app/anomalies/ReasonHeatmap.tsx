@@ -26,12 +26,31 @@ export function levelFor(count: number, max: number): number {
   return LEVELS[idx];
 }
 
-/** The window's UTC day strings (YYYY-MM-DD), oldest → today. */
-export function windowDaysUTC(windowDays: number, today = new Date()): string[] {
+/**
+ * servedDaysUTC — the day axis (YYYY-MM-DD, oldest → newest) derived from
+ * the SERVED cells' date range, never the client clock: a skewed client
+ * clock (or a server window not ending today) previously minted columns
+ * the reader never scanned — fabricated zeros — and could push served
+ * days off the grid entirely. Days BETWEEN served cells are real zeros
+ * (the reader scanned the whole served window), so the range is
+ * enumerated densely; `maxDays` caps the axis at the window length
+ * (ending on the newest served day) so one garbage far-past date can't
+ * explode the grid.
+ */
+export function servedDaysUTC(cells: { day: string }[], maxDays: number): string[] {
+  const days = cells
+    .map((c) => c.day)
+    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+    .sort();
+  if (days.length === 0) return [];
+  const endMs = Date.parse(`${days[days.length - 1]}T00:00:00Z`);
+  const startMs = Math.max(
+    Date.parse(`${days[0]}T00:00:00Z`),
+    endMs - (maxDays - 1) * 86_400_000,
+  );
   const out: string[] = [];
-  const end = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
-  for (let i = windowDays - 1; i >= 0; i--) {
-    out.push(new Date(end - i * 86_400_000).toISOString().slice(0, 10));
+  for (let ms = startMs; ms <= endMs; ms += 86_400_000) {
+    out.push(new Date(ms).toISOString().slice(0, 10));
   }
   return out;
 }
@@ -41,7 +60,7 @@ export function ReasonHeatmap({ cells, windowDays }: { cells: HeatCell[]; window
   if (clean.length === 0) {
     return <p className="text-sm text-ink-muted">No freezes in the last {windowDays} days.</p>;
   }
-  const days = windowDaysUTC(windowDays);
+  const days = servedDaysUTC(clean, windowDays);
   // Row order: heaviest reason first (stable, entity-bound — not
   // repainted by filters; there is no categorical hue to preserve).
   const totals = new Map<string, number>();

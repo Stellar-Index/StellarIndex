@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
+import { dropPartialTrailingDay } from '@/lib/series';
 
 // Lazy-load lightweight-charts (~155 KB) — only this section needs it.
 const VolumeLineChart = dynamic(
@@ -55,8 +56,11 @@ export function SdexVolumeSection() {
   });
 
   const series = q.data?.bespoke?.series?.find((s) => s.name === 'USD volume');
-  const points = (series?.points ?? [])
+  // Today's accumulating UTC bucket is dropped (it would plot as a phantom
+  // cliff); non-parsable points are dropped rather than plotted at 1970/NaN.
+  const points = dropPartialTrailingDay(series?.points ?? [])
     .map((pt) => ({
+      date: pt.date,
       time: Math.floor(Date.parse(`${pt.date}T00:00:00Z`) / 1000),
       value: Number(pt.value),
     }))
@@ -86,9 +90,22 @@ export function SdexVolumeSection() {
         </dl>
       )}
       {q.isLoading && <div className="h-[240px]" />}
-      {!q.isLoading && points.length < 2 && (
+      {/* "Unavailable" is reserved for a series the server did NOT serve —
+          a served short series is insufficient history, not unavailability. */}
+      {!q.isLoading && points.length === 0 && (
         <p className="text-sm text-ink-muted">
-          The SDEX volume series is unavailable right now.
+          {series
+            ? 'No complete daily volume buckets to chart yet.'
+            : 'The SDEX volume series is unavailable right now.'}
+        </p>
+      )}
+      {!q.isLoading && points.length === 1 && (
+        <p className="text-sm text-ink-muted">
+          One complete day of volume so far —{' '}
+          <span className="font-mono tabular-nums text-ink">
+            {points[0].date}: ${formatCompact(points[0].value)}
+          </span>
+          . The chart appears once a second complete day lands.
         </p>
       )}
       {points.length >= 2 && (

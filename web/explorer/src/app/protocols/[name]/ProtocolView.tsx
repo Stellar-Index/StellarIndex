@@ -8,6 +8,7 @@ import { ArrowLeft, ExternalLink } from 'lucide-react';
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample, API_BASE_URL } from '@/api/client';
 import { formatCompact } from '@/lib/format';
+import { dropPartialTrailingDay } from '@/lib/series';
 import { CopyHash, relativeAge, formatTimestamp } from '../../explorer-shared';
 import { categoryTone } from '../registry';
 import { TimeSeriesChart } from './TimeSeriesChart';
@@ -164,7 +165,9 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
           <EmptyAnalytics text="No on-chain activity in the window." />
         ) : (
           <TimeSeriesChart
-            points={(data.activity_series ?? []).map((p) => ({
+            // Today's accumulating UTC bucket is dropped — a partial day
+            // plotted as a full one ends the series on a phantom cliff.
+            points={dropPartialTrailingDay(data.activity_series ?? []).map((p) => ({
               date: p.date ?? '',
               value: p.events ?? 0,
             }))}

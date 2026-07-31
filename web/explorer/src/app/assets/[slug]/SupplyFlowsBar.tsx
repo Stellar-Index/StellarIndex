@@ -1,6 +1,6 @@
 'use client';
 
-import { formatCompact } from '@/lib/format';
+import { formatCompact, scaleBaseUnits } from '@/lib/format';
 
 export type SupplyFlowRow = {
   label: string;
@@ -24,11 +24,10 @@ export function buildSupplyFlowRows(
   },
   decimals: number,
 ): SupplyFlowRow[] {
-  const scale = (s: string | null | undefined): number | null => {
-    if (s == null) return null;
-    const n = Number(s);
-    return Number.isFinite(n) ? n / 10 ** decimals : null;
-  };
+  // BigInt-divide-first (ADR-0003): flow totals are smallest-unit integer
+  // strings that can exceed 2^53 — Number()-then-divide would round them.
+  const scale = (s: string | null | undefined): number | null =>
+    scaleBaseUnits(s, decimals);
   return [
     { label: 'Minted', value: scale(totals.mint_total), direction: 'add' },
     { label: 'Burned', value: scale(totals.burn_total), direction: 'remove' },

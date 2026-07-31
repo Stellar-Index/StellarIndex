@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-import { BespokeSection, splitSeriesGroups } from './BespokeSection';
+import { BespokeSection, splitSeriesGroups, toChartNumber } from './BespokeSection';
 import type { Bespoke } from './BespokeSection';
 
 vi.mock('@/api/client', async () => {
@@ -136,6 +136,50 @@ describe('splitSeriesGroups', () => {
     ]);
     expect(standalone).toHaveLength(1);
     expect(groups).toHaveLength(0);
+  });
+});
+
+describe('toChartNumber', () => {
+  it('parses plain and money/percent-decorated numeric strings', () => {
+    expect(toChartNumber('1234.56')).toBe(1234.56);
+    expect(toChartNumber('$1,234.56')).toBe(1234.56);
+    expect(toChartNumber('12.5%')).toBe(12.5);
+  });
+
+  it('refuses non-numeric values instead of fabricating zeros', () => {
+    expect(toChartNumber('')).toBeNull();
+    expect(toChartNumber('—')).toBeNull();
+    expect(toChartNumber('n/a')).toBeNull();
+  });
+
+  it('refuses compact-suffixed figures instead of mis-scaling them', () => {
+    // "1.2M" stripped of its suffix used to plot as 1.2 — a 10^6 error.
+    expect(toChartNumber('1.2M')).toBeNull();
+    expect(toChartNumber('3.4K')).toBeNull();
+  });
+});
+
+describe('BespokeSection (partial trailing daily bucket)', () => {
+  it("drops today's accumulating UTC bucket from daily series charts", async () => {
+    const d = (offset: number) =>
+      new Date(Date.now() - offset * 86_400_000).toISOString().slice(0, 10);
+    renderIt('soroswap', {
+      category: 'dex',
+      series: [
+        {
+          name: 'USD volume',
+          unit: 'USD',
+          points: [
+            { date: d(2), value: '1' },
+            { date: d(1), value: '2' },
+            { date: d(0), value: '3' }, // today — still accumulating
+          ],
+        },
+      ],
+    });
+    await waitFor(() => expect(screen.getAllByTestId('line-chart').length).toBeGreaterThan(0));
+    // Only the two COMPLETE days plot; the partial day is not a cliff.
+    expect(screen.getAllByTestId('line-chart')[0].getAttribute('data-points')).toBe('2');
   });
 });
 

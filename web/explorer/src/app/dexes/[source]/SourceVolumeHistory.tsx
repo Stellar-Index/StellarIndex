@@ -4,8 +4,9 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
+import { dropPartialTrailingDay } from '@/lib/series';
 import { TimeSeriesChart } from '@/app/protocols/[name]/TimeSeriesChart';
-import type { Bespoke, BespokeSeries } from '@/app/protocols/[name]/BespokeSection';
+import { toChartNumber, type Bespoke, type BespokeSeries } from '@/app/protocols/[name]/BespokeSection';
 
 /**
  * isUsdVolumeSeries — matches the DEX bespoke block's standalone USD-volume
@@ -57,7 +58,13 @@ export function SourceVolumeHistory({ source }: { source: string }) {
 
   const series: BespokeSeries | null =
     q.data?.series?.find((s) => isUsdVolumeSeries(s.name)) ?? null;
-  if (!series || series.points.length === 0) return null;
+  // Today's accumulating UTC bucket is dropped (phantom-cliff honesty) and
+  // non-numeric values are dropped, not plotted as fabricated zeros.
+  const points = dropPartialTrailingDay(series?.points ?? []).flatMap((p) => {
+    const value = toChartNumber(p.value);
+    return value == null ? [] : [{ date: p.date, value }];
+  });
+  if (!series || points.length === 0) return null;
 
   return (
     <Panel
@@ -66,7 +73,7 @@ export function SourceVolumeHistory({ source }: { source: string }) {
       source={asExample(`/v1/protocols/${source}`)}
     >
       <TimeSeriesChart
-        points={series.points.map((p) => ({ date: p.date, value: Number(p.value) }))}
+        points={points}
         label="daily USD volume"
         unit="USD"
       />

@@ -67,6 +67,30 @@ describe('formatRelative', () => {
   });
 });
 
+describe('scaleBaseUnits / formatBaseUnits', () => {
+  it('BigInt-divides smallest-unit integer strings past 2^53 without mis-scaling', () => {
+    // 554421152474348098 stroops ≈ 5.54e17 — past 2^53, where a
+    // Number()-then-divide path silently rounds the integer first.
+    expect(format.formatBaseUnits('554421152474348098', 7)).toBe('55,442,115,247.4348');
+    expect(format.scaleBaseUnits('554421152474348098', 7)).toBeCloseTo(55442115247.43481, 3);
+  });
+
+  it('keeps absent/garbage values as "—"/null — never NaN or a fabricated zero', () => {
+    expect(format.formatBaseUnits(undefined, 7)).toBe('—');
+    expect(format.formatBaseUnits('', 7)).toBe('—');
+    expect(format.formatBaseUnits('not-a-number', 7)).toBe('—');
+    expect(format.scaleBaseUnits(null, 7)).toBeNull();
+    expect(format.scaleBaseUnits('garbage', 7)).toBeNull();
+  });
+
+  it('handles zero, negatives, and fraction trimming', () => {
+    expect(format.formatBaseUnits('0', 7)).toBe('0');
+    expect(format.formatBaseUnits('-25000000', 7)).toBe('-2.5');
+    expect(format.formatBaseUnits('10000000000', 7)).toBe('1,000');
+    expect(format.scaleBaseUnits('2500000000', 7)).toBe(250);
+  });
+});
+
 describe('truncateMiddle', () => {
   it('keeps short strings whole', () => {
     expect(truncateMiddle('short')).toBe('short');
