@@ -404,6 +404,13 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 			"asset_id must be a canonical asset_id (e.g. 'native', 'USDC-G…'); got "+asset+" ("+err.Error()+")")
 		return
 	}
+	// Normalize to the canonical spelling BEFORE the cache and the lake
+	// query: ParseAsset also admits the Horizon "CODE:ISSUER" spelling
+	// (and bare "XLM"), but the lake stores canonical "CODE-ISSUER" —
+	// keying/querying the raw request string would scan for a spelling
+	// that never matches and cache the resulting authoritative-looking
+	// EMPTY board under a duplicate key.
+	asset = parsed.String()
 	// Fold XLM's alias forms to the one canonical board key BEFORE the
 	// cache: "native" and "crypto:XLM" are the same asset (assetAliases
 	// dual-form rule), and keying them separately would run two identical
@@ -432,8 +439,8 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 		if h.ClientAborted(r, err) {
 			return
 		}
-		if readTimedOut(ctx, err) {
-			h.Logger.Warn("explorer AssetHolders deadline exceeded (cold asset; detached refresh continues)", "asset", asset)
+		if retryableColdMiss(ctx, err) {
+			h.Logger.Warn("explorer AssetHolders deadline/saturation on cold asset", "asset", asset, "err", err)
 			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/asset-holders-timeout",
 				"Asset holders timed out")
 			return

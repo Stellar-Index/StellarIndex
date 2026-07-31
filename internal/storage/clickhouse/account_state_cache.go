@@ -147,7 +147,18 @@ func (r *ExplorerReader) refreshAccountState(account string) chan struct{} {
 	if !owner {
 		return ch
 	}
+	// Global bound across keys (audit 2026-07-31): the per-account flight
+	// collapses same-account bursts, but the account space is
+	// attacker-chosen (fabricated G-addresses), so without this gate key
+	// churn queued one unbounded detached scan per key on the 8-conn
+	// pool. On saturation SKIP — the waiter misses honestly and a later
+	// request re-kicks — never queue (see RefreshGate).
+	if !r.refreshGate.TryAcquire() {
+		r.stateFlight.end(account, ch)
+		return ch
+	}
 	go func() {
+		defer r.refreshGate.Release()
 		defer r.stateFlight.end(account, ch)
 		rctx, cancel := context.WithTimeout(context.Background(), accountStateRefreshTimeout)
 		defer cancel()

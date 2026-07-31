@@ -90,8 +90,8 @@ func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 		if h.ClientAborted(r, err) {
 			return
 		}
-		if readTimedOut(ctx, err) {
-			h.Logger.Warn("explorer ContractEventsRecent deadline exceeded (detached refresh continues)", "contract", cid)
+		if retryableColdMiss(ctx, err) {
+			h.Logger.Warn("explorer ContractEventsRecent deadline/saturation", "contract", cid, "err", err)
 			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/contract-detail-timeout",
 				"Contract detail timed out")
 			return

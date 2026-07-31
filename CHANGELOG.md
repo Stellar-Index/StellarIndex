@@ -52,6 +52,94 @@ against.
   from the served data's date range, not the client clock; a bespoke
   block's notes no longer caption other windows' data after a failed
   window refetch.
+- **Daily-grain protocol/bespoke series exclude the current (partial)
+  UTC day server-side.** Every bespoke daily series (DEX activity/
+  traders/top-pairs, lending sides/backstop/auctions/per-pool, credit,
+  oracle, defindex, CCTP flows + cumulative net inflow, rozo) and the
+  protocol activity series/breakdown included today's still-accumulating
+  bucket with no marker — the UXP-16 "phantom cliff" class, previously
+  fixed only on /network. Daily-grain SQL now bounds at the day start
+  (shared `completeDaysOnly` fragment; ClickHouse readers bound
+  `close_time`/`day` likewise — the event breakdown shares the bound so
+  `sum(event_breakdown) == events_total` still reconciles). The 24h
+  window's hourly grain keeps its live edge.
+- **Three small honesty guards (audit 2026-07-31).** (a) The SDEX
+  order-book reader no longer silently skips a non-removed offer change
+  whose XDR fails to decode — each skip freezes that key's prior served
+  state, so it now logs a warn line and increments the new
+  `stellarindex_sdex_orderbook_undecodable_offers_total` counter.
+  (b) `mapFreezeReason` no longer defaults unrecognized automated
+  freeze decisions to `manual` (the operator-initiated reason) — they
+  record as the new `other` reason (migration 0124 extends the CHECK;
+  spec 1.18.0 adds the enum value).
+  (c) A soroswap swap with all FOUR amounts non-zero satisfied both
+  direction arms and silently decoded as 0→1, dropping the 1→0 leg —
+  now refused whole as `ErrAmbiguousSwapDirection` (wraps
+  `ErrNonDirectionalSwap`, so it stays a recognized no-op for ADR-0033
+  completeness).
+- **Blend bespoke block no longer sums token amounts across assets.**
+  The headline "Net supplied/borrowed" KPIs and the per-pool table's
+  cross-asset sums + "Util %" ratio added `token_amount` across tokens
+  with different decimals — a meaningless number under an authoritative
+  label (the sibling count-first suite in `bespoke_lending.go` documents
+  exactly why). KPIs are now count-first (active users, flash loans,
+  alongside the existing side-event/pool counts), the per-pool table
+  serves supply/borrow-side event + user counts, and amount sums survive
+  only where scoped to a single asset (the per-asset table).
+- **Stale "soroswap has no taker" claims removed from the wire.** The
+  soroswap decoder captures the SwapEvent `to` recipient since
+  2026-07-30 (100% taker coverage on new rows), but the
+  `/v1/accounts/{g}/trades` scope note still excluded soroswap and the
+  DEX bespoke block carried a hard-coded "0% taker coverage" note. The
+  scope note now includes soroswap (with the pre-2026-07-30 caveat) and
+  the bespoke omission note is data-driven — emitted only when the
+  served window observably has zero taker-stamped trades.
+- **`usd_volume` no longer hard-codes the off-chain 1e8 amount scale.**
+  The FX pollers stamp trades at 1e6 (registry `AmountDecimals: 6`),
+  but both the insert-path stamper (`tradeUSDVolume`/`tradeUSDVolumeViaFX`)
+  and `ClassifyUSDVolumeTier` (the `verify-usd-volume` checker, which
+  would have certified the error) divided by a hard-coded 1e8 — a latent
+  100× under-valuation the moment FX trades re-enable. Both now consult
+  the source's registered `AmountScaleDecimals` (CS-040).
+- **Explorer detached SWR refreshes are now globally bounded.** The
+  stale-while-revalidate caches (account state, asset holders, contracts
+  directory, contract detail) single-flighted per key but were unbounded
+  ACROSS keys — and the key space is attacker-chosen on unauthenticated
+  routes, so churning fabricated G-/C-addresses queued one detached
+  multi-minute lake scan per key onto the 8-connection serving pool. A
+  shared semaphore (`clickhouse.RefreshGate`, limit 4 — half the pool)
+  now bounds all detached refreshes; on saturation the refresh is
+  skipped, never queued: stale entries keep serving, cold keys 503 with
+  the retryable timeout contract.
+- **`/v1/assets/{asset_id}/holders` normalizes the asset spelling before
+  the cache and the lake query.** ParseAsset admits the Horizon
+  `CODE:ISSUER` spelling, but the raw request string was used as both
+  the SWR cache key and the query asset — the colon spelling scanned
+  for a value the lake never stores and cached an authoritative-looking
+  empty board under a duplicate key. Both spellings now share one
+  canonical (`CODE-ISSUER`) cache entry and query.
+- **Protocol-detail cache: a degraded fast-failing rebuild can no longer
+  displace a good cached entry.** The keep-old-entry guard only checked
+  the rebuild context's timeout, so a build that failed FAST (ClickHouse
+  down → every enrich errors in ms) replaced the previously-good view
+  with an analytics-empty one stamped fresh — one prewarm sweep during a
+  store outage would blank every protocol page. A non-ok build now only
+  populates cold/degraded keys (registry-only beats 503) and never
+  displaces a healthy entry, which stale-serves instead.
+- **Protocol daily-pre-aggregation probe no longer latches a transient
+  error for the process lifetime.** The fast-activity availability probe
+  was cached with a `sync.Once`, so one ClickHouse blip at first build
+  pinned the raw 12B-row scans forever. Per the schemaProbe precedent
+  (C1-048) only DEFINITIVE answers are cached (table missing = false,
+  rows found = true); transient errors degrade that call and re-probe.
+- **Protocol analytics window integrity: one shared tip read + fast/raw
+  decision.** Each analytics fill re-read the lake tip discarding the
+  error — a failed read (tip=0) made the fast path serve a 1-day window
+  still labeled 90d — and the three concurrent fills could split across
+  the fast/raw sources, breaking the sum(event_breakdown)==events_total
+  reconcile. The build now derives one plan from a single checked tip
+  read; an unreadable tip degrades the analytics honestly (status
+  `unavailable`).
 
 ## [v0.21.8] — 2026-07-31
 

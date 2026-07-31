@@ -95,7 +95,8 @@ func oracleUpdatesSeriesQuery(windowDays int) string {
 	trunc, format := bridgeSeriesGrain(windowDays)
 	return `
 		SELECT to_char(date_trunc('` + trunc + `', ts), '` + format + `'), count(*)::text
-		FROM oracle_updates WHERE source = $1 AND ts > now() - $2::interval
+		FROM oracle_updates WHERE source = $1 AND ts > now() - $2::interval` +
+		completeDaysOnly(windowDays, "ts") + `
 		GROUP BY 1 ORDER BY 1 ASC`
 }
 
@@ -115,7 +116,8 @@ func oraclePerFeedSeriesQuery(windowDays int) string {
 		       to_char(date_trunc('` + trunc + `', u.ts), '` + format + `'),
 		       count(*)::text
 		FROM oracle_updates u JOIN top t ON t.asset = u.asset AND t.quote = u.quote
-		WHERE u.source = $1 AND u.ts > now() - $2::interval
+		WHERE u.source = $1 AND u.ts > now() - $2::interval` +
+		completeDaysOnly(windowDays, "u.ts") + `
 		GROUP BY 1, 2, t.n
 		ORDER BY t.n DESC, 1, 2 ASC`
 }

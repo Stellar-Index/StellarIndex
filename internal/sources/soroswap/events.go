@@ -7,6 +7,7 @@ package soroswap
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
@@ -165,4 +166,18 @@ var (
 	// Treating it as a decode error held the ADR-0033 completeness
 	// re-derive blind (undecodable-but-matched) on that ledger.
 	ErrNonDirectionalSwap = errors.New("soroswap: non-directional swap (no cross-token exchange)")
+
+	// ErrAmbiguousSwapDirection — ALL FOUR amounts are non-zero, so BOTH
+	// direction arms hold at once (audit 2026-07-31). The old switch
+	// silently took the first arm (0→1) and decoded a trade that ignored
+	// the 1→0 leg entirely — a half-decoded row presented as a clean
+	// trade. Like the single-sided case above, pair.swap() accepts any
+	// argument combination that keeps K non-decreasing, so this shape
+	// can settle on-chain; there is no single derivable (base, quote,
+	// price), so we refuse the whole event rather than half-decode it.
+	// Wraps ErrNonDirectionalSwap so [Decoder.Decode]'s recognized-no-op
+	// handling (zero projected rows, nil error out — the ADR-0033
+	// completeness re-derive counts it as expected-zero) covers it via
+	// errors.Is without a second dispatch arm.
+	ErrAmbiguousSwapDirection = fmt.Errorf("%w: ambiguous direction (all four amounts non-zero)", ErrNonDirectionalSwap)
 )

@@ -137,6 +137,36 @@ func TestAssetHolders_AliasFormsShareTheNativeBoard(t *testing.T) {
 	}
 }
 
+// TestAssetHolders_HorizonSpellingNormalized (audit 2026-07-31): ParseAsset
+// admits the Horizon "CODE:ISSUER" spelling, but the lake stores canonical
+// "CODE-ISSUER". Before the fix the RAW request string was used as both the
+// cache key and the query asset — the colon spelling ran a scan that matched
+// nothing and cached an authoritative-looking EMPTY board under a duplicate
+// key. Both spellings must normalize to one canonical key: one reader scan,
+// one shared cache entry, canonical echo on the wire.
+func TestAssetHolders_HorizonSpellingNormalized(t *testing.T) {
+	reader := &holdersKeyReader{capReader: &capReader{probe: &deadlineProbe{}}}
+	h := newProbeHandler(reader, nil)
+
+	canon := "USDC-" + validTestAccount
+	var view AssetHoldersView
+	for _, spelling := range []string{"USDC:" + validTestAccount, canon} {
+		view = AssetHoldersView{}
+		if code := getHolders(t, h, &view, spelling); code != http.StatusOK {
+			t.Fatalf("%s holders status = %d, want 200", spelling, code)
+		}
+		if view.Asset != canon {
+			t.Errorf("%s response echoes asset %q, want canonical %q", spelling, view.Asset, canon)
+		}
+		if view.HolderCount != 9915982 {
+			t.Errorf("%s holder_count = %d, want the board (9915982), not an empty duplicate", spelling, view.HolderCount)
+		}
+	}
+	if got := reader.seen(); len(got) != 1 || got[0] != canon {
+		t.Fatalf("reader keys across both spellings = %v, want exactly [%s] (one shared cache entry)", got, canon)
+	}
+}
+
 // TestAssetHolders_SACFormKeepsItsOwnBoard: the XLM SAC wrapper's C-address
 // is NOT folded to native — it identifies the wrapper's own balance domain
 // and must reach the reader under its own key.

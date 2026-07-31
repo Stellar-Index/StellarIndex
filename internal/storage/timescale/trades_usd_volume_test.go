@@ -78,11 +78,22 @@ func TestTradeUSDVolume_PopulatedForExternalUSDPaths(t *testing.T) {
 			want:   "1.00000000",
 		},
 		{
-			name:   "polygon-forex + fiat:USD → $0.005",
+			// FX pollers stamp 1e6, NOT the CEX 1e8 (registry
+			// AmountDecimals: 6; CS-040 / audit 2026-07-31): 500_000
+			// raw units are $0.50. The pre-fix hard-coded 8 valued
+			// this 100× low ($0.005).
+			name:   "polygon-forex + fiat:USD → 1e6 → $0.50",
 			source: "polygon-forex",
 			quote:  usd,
 			amt:    500_000,
-			want:   "0.00500000",
+			want:   "0.50000000",
+		},
+		{
+			name:   "exchangeratesapi + fiat:USD → 1e6 → $1.00",
+			source: "exchangeratesapi",
+			quote:  usd,
+			amt:    1_000_000,
+			want:   "1.00000000",
 		},
 		{
 			name:   "kraken + crypto:USDC peg → $42.50",

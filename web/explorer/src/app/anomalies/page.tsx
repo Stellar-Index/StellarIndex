@@ -37,6 +37,12 @@ const REASONS: { name: string; trigger: string; meaning: string }[] = [
     meaning:
       'An operator triggered the freeze via a Redis-direct write — used during incident response to halt serving for one pair without taking the whole API down.',
   },
+  {
+    name: 'other',
+    trigger: 'Unclassified automated freeze',
+    meaning:
+      'An automated freeze whose decision shape the recorder did not recognize. Should be rare; distinct from "manual" so automated events are never mislabeled as operator actions.',
+  },
 ];
 
 export default function AnomaliesPage() {

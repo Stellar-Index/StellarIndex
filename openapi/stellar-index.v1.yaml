@@ -18,7 +18,7 @@
 openapi: 3.1.0
 info:
   title: Stellar Index API
-  version: "1.17.0"
+  version: "1.18.0"
   summary: The Stellar network — explorer, history, supply, analytics, and prices.
   description: |
     The Stellar Index API exposes the Stellar network as one
@@ -2616,7 +2616,7 @@ paths:
                             quote_id:            { type: string }
                             frozen_at:           { type: string, format: date-time }
                             frozen_at_ledger:    { type: integer, format: int64 }
-                            reason:              { type: string, enum: [single_source, divergence, outlier_storm, manual] }
+                            reason:              { type: string, enum: [single_source, divergence, outlier_storm, manual, other] }
                             frozen_value:        { type: string }
                             recovered_at:        { type: string, format: date-time, nullable: true }
                             recovered_at_ledger: { type: integer, format: int64, nullable: true }

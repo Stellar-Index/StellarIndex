@@ -118,12 +118,17 @@ type Server struct {
 	protocolContractsReader ProtocolContractsReader
 	protocolStats           ProtocolStatsReader
 	protocolActivity        ProtocolActivityReader
-	protocolFastOnce        sync.Once
-	protocolFastOK          bool
-	protocolBespoke         ProtocolBespokeReader
-	protocolPoolTokens      ProtocolPoolTokensReader
-	dexTVL                  *DEXTVLCache
-	sdexOrderBook           *SDEXOrderBookCache
+	// protocolFast{Mu,Settled,OK} cache the daily-pre-aggregation probe —
+	// but only once it produced a DEFINITIVE answer (see fastActivity).
+	// Deliberately NOT a sync.Once: Once would latch a transient first-probe
+	// error as "unavailable" for the process lifetime (the C1-048 class).
+	protocolFastMu      sync.Mutex
+	protocolFastSettled bool
+	protocolFastOK      bool
+	protocolBespoke     ProtocolBespokeReader
+	protocolPoolTokens  ProtocolPoolTokensReader
+	dexTVL              *DEXTVLCache
+	sdexOrderBook       *SDEXOrderBookCache
 	// Per-server TTL + single-flight cache for the expensive
 	// /v1/protocols/{name} detail (lazy-init'd — see cachedProtocolDetail).
 	protoDetailMu     sync.Mutex

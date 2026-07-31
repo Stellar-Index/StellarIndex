@@ -98,8 +98,13 @@ func (r *ExplorerReader) ProtocolEventBreakdown(ctx context.Context, contractIDs
 		-- FINAL: stellar.contract_events is ReplacingMergeTree(ingested_at); an
 		-- un-merged re-ingested event double-counts here until a merge (audit
 		-- C2-12). Contract-scoped, so FINAL stays bounded.
+		-- Complete days only: the daily activity series excludes the current
+		-- (partial) day (UXP-16 phantom cliff), and EventsTotal is derived
+		-- from that series — the breakdown must share the bound or
+		-- sum(EventBreakdown) != EventsTotal breaks the reconcile.
 		FROM stellar.contract_events FINAL
-		WHERE contract_id IN (?) AND event_type = 'contract'`
+		WHERE contract_id IN (?) AND event_type = 'contract'
+		  AND close_time < toStartOfDay(now())`
 	args := []any{contractIDs}
 	if sinceLedger > 0 {
 		q += ` AND ledger_seq >= ?`
@@ -217,7 +222,11 @@ func decodeTopicName(b64 string) (string, bool) {
 
 // ProtocolDailyActivity returns daily contract-event counts for a protocol's
 // contracts from sinceLedger forward (sinceLedger>0 required for performance —
-// the caller passes tip − window). Ascending by date.
+// the caller passes tip − window). Ascending by date. Complete days only:
+// the current (still-accumulating) day is excluded — its partial bucket
+// renders as a phantom activity cliff on every daily chart (the UXP-16
+// class, audit 2026-07-31). ProtocolEventBreakdown shares the same bound
+// so sum(breakdown) keeps reconciling with the series-derived total.
 func (r *ExplorerReader) ProtocolDailyActivity(ctx context.Context, contractIDs []string, sinceLedger uint32) ([]ProtocolDailyPoint, error) {
 	if len(contractIDs) == 0 {
 		return nil, nil
@@ -225,6 +234,7 @@ func (r *ExplorerReader) ProtocolDailyActivity(ctx context.Context, contractIDs 
 	const q = `SELECT toString(toDate(close_time)) AS d, count() AS c
 		FROM stellar.contract_events FINAL
 		WHERE contract_id IN (?) AND event_type = 'contract' AND ledger_seq >= ?
+		  AND close_time < toStartOfDay(now())
 		GROUP BY d ORDER BY d ASC`
 	rows, err := r.conn.Query(ctx, q, contractIDs, sinceLedger)
 	if err != nil {
@@ -287,15 +297,29 @@ func (r *ExplorerReader) ProtocolContractActivity(ctx context.Context, contractI
 // the table hasn't been created/backfilled on a deployment yet.
 
 // DailyActivityAvailable reports whether the pre-aggregation exists
-// (and has any rows) on this ClickHouse.
-func (r *ExplorerReader) DailyActivityAvailable(ctx context.Context) bool {
+// (and has any rows) on this ClickHouse. definitive=true only when the
+// server actually ANSWERED the question — the table is missing (a schema
+// verdict, see isSchemaAbsent) or the probe found rows. A transport
+// error / deadline / resource blip is NOT an answer (definitive=false):
+// callers must not cache it, or one ClickHouse hiccup at first probe
+// would latch the raw 12B-row scans for the process lifetime (the same
+// class as C1-048; see schemaProbe for the founding precedent). An empty
+// table is also non-definitive — it exists but hasn't been backfilled
+// yet, and the probe is a LIMIT 1 read cheap enough to re-ask.
+func (r *ExplorerReader) DailyActivityAvailable(ctx context.Context) (available, definitive bool) {
 	rows, err := r.conn.Query(ctx,
 		`SELECT 1 FROM stellar.contract_events_daily LIMIT 1`)
 	if err != nil {
-		return false
+		if isSchemaAbsent(err) {
+			return false, true
+		}
+		return false, false
 	}
 	defer func() { _ = rows.Close() }()
-	return rows.Next()
+	if rows.Next() {
+		return true, true
+	}
+	return false, false
 }
 
 // ProtocolDailyActivityFast is ProtocolDailyActivity over the daily
@@ -308,6 +332,7 @@ func (r *ExplorerReader) ProtocolDailyActivityFast(ctx context.Context, contract
 	const q = `SELECT toString(day) AS d, uniqCombinedMerge(17)(events) AS c
 		FROM stellar.contract_events_daily
 		WHERE contract_id IN (?) AND event_type = 'contract' AND day >= ?
+		  AND day < toDate(now())
 		GROUP BY day ORDER BY day ASC`
 	rows, err := r.conn.Query(ctx, q, contractIDs, sinceDay)
 	if err != nil {
@@ -336,6 +361,7 @@ func (r *ExplorerReader) ProtocolEventBreakdownFast(ctx context.Context, contrac
 	const q = `SELECT topic_0_sym, t1_xdr, t0_xdr, toUInt64(uniqCombinedMerge(17)(events)) AS c
 		FROM stellar.contract_events_daily
 		WHERE contract_id IN (?) AND event_type = 'contract' AND day >= ?
+		  AND day < toDate(now())
 		GROUP BY topic_0_sym, t1_xdr, t0_xdr ORDER BY c DESC LIMIT 200`
 	rows, err := r.conn.Query(ctx, q, contractIDs, sinceDay)
 	if err != nil {

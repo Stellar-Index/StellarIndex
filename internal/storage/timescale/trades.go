@@ -20,12 +20,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
-// externalUSDVolumeDecimals is the off-chain quote-amount scale.
-// Every CEX/FX source stamps amounts at the uniform 10^8 decimal
-// convention per
-// `internal/sources/external/<venue>::externalAmountDecimals`, so a
-// quote amount of 4_250_000_000 means $42.50.
-const externalUSDVolumeDecimals = 8
+// Off-chain amount scaling is NOT uniform (CLAUDE.md; CS-040): CEX and
+// reference-aggregator sources stamp amounts at 10^8, but the FX pollers
+// (ecb / exchangeratesapi / polygon-forex / massive) stamp 10^6. The
+// per-source authority is external.Registry's AmountDecimals, read via
+// Metadata.AmountScaleDecimals() — the USD-volume paths below consult it
+// instead of a hard-coded 8, which mis-valued FX trades 100×.
 
 // USDVolumeFXResolver returns the asset's USD price as of `at` as
 // a decimal string ("0.07127", "1.00", …) for use by
@@ -64,8 +64,8 @@ type USDVolumeFXResolver interface {
 //
 //  1. Off-chain CEX/FX source AND quote is fiat:USD or a
 //     USD-pegged stablecoin per `aggregate.FiatProxy`
-//     (USDC/USDT/DAI/PYUSD/USDP). Decimals: 8 (uniform external
-//     scale).
+//     (USDC/USDT/DAI/PYUSD/USDP). Decimals: the source's registered
+//     AmountScaleDecimals (8 for CEX, 6 for the FX pollers — CS-040).
 //
 //  2. On-chain DEX source AND `quoteSpec` recognises the quote
 //     asset as USD-pegged (operator-declared classic credits +
@@ -139,7 +139,7 @@ func tradeUSDVolume(ctx context.Context, t canonical.Trade, quoteSpec *USDVolume
 		// sneaks one in.
 		return nil
 	}
-	if decimals, ok := usdVolumeDecimals(t.Pair.Quote, md.Subclass, quoteSpec); ok {
+	if decimals, ok := usdVolumeDecimals(t.Pair.Quote, md, quoteSpec); ok {
 		denom := scaleDenominator(decimals)
 		// FloatString(8) gives a fixed-precision decimal — Postgres
 		// NUMERIC accepts the form directly with no precision loss
@@ -151,7 +151,7 @@ func tradeUSDVolume(ctx context.Context, t canonical.Trade, quoteSpec *USDVolume
 	// Tier 2b — the BASE leg is USD-pegged. Same exactness class as
 	// tiers 1/2 (a declared peg, no market lookup), so it belongs here,
 	// ahead of the estimated FX tiers.
-	if v := tradeUSDVolumeViaUSDBase(t, md.Subclass, quoteSpec); v != nil {
+	if v := tradeUSDVolumeViaUSDBase(t, md, quoteSpec); v != nil {
 		return v
 	}
 	// Phase 2 fallback — only when the operator wired an FX
@@ -160,7 +160,7 @@ func tradeUSDVolume(ctx context.Context, t canonical.Trade, quoteSpec *USDVolume
 	if fxResolver == nil {
 		return nil
 	}
-	if v := tradeUSDVolumeViaFX(ctx, t, md.Subclass, fxResolver); v != nil {
+	if v := tradeUSDVolumeViaFX(ctx, t, md, fxResolver); v != nil {
 		return v
 	}
 	// Tier 4 (L7.6) — quote-side resolution declined; try the
@@ -194,8 +194,8 @@ func tradeUSDVolume(ctx context.Context, t canonical.Trade, quoteSpec *USDVolume
 // Deliberately does NOT re-check the quote leg: the caller only
 // reaches here after [usdVolumeDecimals] declined the quote, so a
 // both-legs-pegged trade has already been valued quote-side.
-func tradeUSDVolumeViaUSDBase(t canonical.Trade, subclass external.Subclass, quoteSpec *USDVolumeQuoteSpec) *string {
-	decimals, ok := usdVolumeDecimals(t.Pair.Base, subclass, quoteSpec)
+func tradeUSDVolumeViaUSDBase(t canonical.Trade, md external.Metadata, quoteSpec *USDVolumeQuoteSpec) *string {
+	decimals, ok := usdVolumeDecimals(t.Pair.Base, md, quoteSpec)
 	if !ok {
 		return nil
 	}
@@ -208,7 +208,8 @@ func tradeUSDVolumeViaUSDBase(t canonical.Trade, subclass external.Subclass, quo
 }
 
 // tradeUSDVolumeViaFX is the L2.2 Phase 2 multiplication path.
-// Picks the right scale per source class (CEX/FX = 8, DEX = 7),
+// Picks the right scale per source (off-chain: the source's registered
+// AmountScaleDecimals — 8 for CEX, 6 for the FX pollers; DEX = 7),
 // asks the resolver for the quote asset's USD price at the trade
 // time, and renders quote_amount × usdRate / 10^decimals as a
 // fixed-precision NUMERIC string.
@@ -217,7 +218,7 @@ func tradeUSDVolumeViaUSDBase(t canonical.Trade, subclass external.Subclass, quo
 // nil so the trade still inserts with NULL `usd_volume`, and the
 // caller (InsertTrade) doesn't fail the row. Operators read the
 // fall-through rate via [TradeInsertsTotal]'s no-label series.
-func tradeUSDVolumeViaFX(ctx context.Context, t canonical.Trade, subclass external.Subclass, r USDVolumeFXResolver) *string {
+func tradeUSDVolumeViaFX(ctx context.Context, t canonical.Trade, md external.Metadata, r USDVolumeFXResolver) *string {
 	if r == nil {
 		return nil
 	}
@@ -230,9 +231,11 @@ func tradeUSDVolumeViaFX(ctx context.Context, t canonical.Trade, subclass extern
 		return nil
 	}
 	var decimals int
-	switch subclass {
+	switch md.Subclass {
 	case external.SubclassCEX, external.SubclassFX:
-		decimals = externalUSDVolumeDecimals
+		// Per-source registered scale (CS-040): CEXes stamp 1e8, the FX
+		// pollers stamp 1e6 — assuming 8 valued FX trades 100× low/high.
+		decimals = md.AmountScaleDecimals()
 	case external.SubclassDEX:
 		decimals = stellarClassicDecimals
 	default:
@@ -425,15 +428,17 @@ func (s *Store) WouldPopulateUSDVolume(ctx context.Context, t canonical.Trade) b
 // this asset USD-pegged, and at what scale". [tradeUSDVolume] calls it
 // for the quote leg (tier 1/2) and [tradeUSDVolumeViaUSDBase] calls it
 // for the base leg (tier 2b).
-func usdVolumeDecimals(asset canonical.Asset, subclass external.Subclass, quoteSpec *USDVolumeQuoteSpec) (int, bool) {
-	switch subclass {
+func usdVolumeDecimals(asset canonical.Asset, md external.Metadata, quoteSpec *USDVolumeQuoteSpec) (int, bool) {
+	switch md.Subclass {
 	case external.SubclassCEX, external.SubclassFX:
-		// Off-chain — uniform externalAmountDecimals, peg via the
-		// crypto-ticker FiatProxy.
+		// Off-chain — the SOURCE's registered amount scale (CS-040:
+		// CEXes stamp 1e8 but the FX pollers stamp 1e6, so the old
+		// hard-coded 8 was a latent 100× error for FX trades), peg via
+		// the crypto-ticker FiatProxy.
 		if !quoteIsUSDOrUSDPegged(asset) {
 			return 0, false
 		}
-		return externalUSDVolumeDecimals, true
+		return md.AmountScaleDecimals(), true
 	case external.SubclassDEX:
 		// On-chain (Stellar SDEX, Soroswap, Aquarius, Phoenix,
 		// Comet) — peg + decimals come from the operator's
@@ -472,10 +477,10 @@ func ClassifyUSDVolumeTier(source, baseID, quoteID string, spec *USDVolumeQuoteS
 	}
 	// Quote leg first — tradeUSDVolume checks it first, and tier 2b is only
 	// reached when the quote declined.
-	if decimals, ok := usdVolumeDecimals(quote, md.Subclass, spec); ok {
+	if decimals, ok := usdVolumeDecimals(quote, md, spec); ok {
 		return TierQuotePegged, decimals, nil
 	}
-	if decimals, ok := usdVolumeDecimals(base, md.Subclass, spec); ok {
+	if decimals, ok := usdVolumeDecimals(base, md, spec); ok {
 		return TierBasePegged, decimals, nil
 	}
 	return TierEstimated, 0, nil

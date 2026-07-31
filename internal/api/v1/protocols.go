@@ -98,11 +98,17 @@ func (s *Server) cachedProtocolDetail(ctx context.Context, key string, build fun
 // protocolDetailRefreshTimeout — NEVER a request deadline — and on
 // completion:
 //
-//   - a build that finished within budget replaces the entry;
-//   - a timed-out (partial) build is cached ONLY when no entry exists at
-//     all (registry-only beats 503 for a stone-cold key) — an existing
-//     good entry is kept, so a run of failed rebuilds degrades to
-//     old-but-real data, never to a blanked block.
+//   - a build that finished HEALTHY (analytics status "ok") replaces the
+//     entry;
+//   - a non-ok build — timed out OR degraded, including a FAST failure
+//     (e.g. ClickHouse down makes every enrich error in milliseconds,
+//     with rctx.Err() still nil) — is cached only when no HEALTHY entry
+//     exists (registry-only beats 503 for a stone-cold key, and a
+//     degraded entry may be refreshed by another degraded build). A
+//     previously-good entry is NEVER displaced by a degraded build:
+//     before this guard covered fast failures, one prewarm sweep during
+//     a ClickHouse outage blanked every protocol page's analytics while
+//     stamping the entries fresh.
 //
 // Every rebuild (request-kicked or prewarm) observes the paired
 // stellarindex_protocol_detail_refresh_{total,duration_seconds} metrics.
@@ -127,8 +133,13 @@ func (s *Server) protoDetailRefreshLocked(key string, build func(context.Context
 		}
 
 		s.protoDetailMu.Lock()
-		_, exists := s.protoDetailCache[key]
-		if rctx.Err() == nil || !exists {
+		existing, exists := s.protoDetailCache[key]
+		// Only a genuinely-ok build may displace an existing HEALTHY entry.
+		// Checking rctx.Err() alone is not enough: a fast-failing build
+		// (store down → enrich errors in ms) has rctx.Err()==nil but an
+		// analytics-empty view — caching it over good data would blank the
+		// page and stamp the blank fresh.
+		if outcome == "ok" || !exists || !protoDetailEntryHealthy(existing) {
 			s.protoDetailCache[key] = protoDetailEntry{view: view, at: time.Now()}
 		}
 		delete(s.protoDetailFlight, key)
@@ -145,6 +156,13 @@ func (s *Server) protoDetailRefreshLocked(key string, build func(context.Context
 		close(done)
 	}()
 	return done
+}
+
+// protoDetailEntryHealthy reports whether a cached detail entry was built
+// healthy (analytics status "ok") — the only entries a degraded rebuild
+// must never displace.
+func protoDetailEntryHealthy(e protoDetailEntry) bool {
+	return e.view.Analytics != nil && e.view.Analytics.Status == protocolAnalyticsOK
 }
 
 // protocolDetailPrewarmPause is the gap between consecutive prewarm
@@ -228,10 +246,14 @@ type ProtocolActivityReader interface {
 
 // protocolFastActivityReader is the OPTIONAL capability the daily
 // pre-aggregation adds (BACKLOG #43). The handler type-asserts for it
-// and probes availability once; deployments without the
-// contract_events_daily table stay on the raw scans transparently.
+// and probes availability (caching only definitive answers — see
+// fastActivity); deployments without the contract_events_daily table
+// stay on the raw scans transparently.
 type protocolFastActivityReader interface {
-	DailyActivityAvailable(ctx context.Context) bool
+	// DailyActivityAvailable reports whether the pre-aggregation is
+	// usable. definitive=false means the probe got no authoritative
+	// answer (transient store error) and the result must not be cached.
+	DailyActivityAvailable(ctx context.Context) (available, definitive bool)
 	ProtocolDailyActivityFast(ctx context.Context, contractIDs []string, sinceDay time.Time) ([]clickhouse.ProtocolDailyPoint, error)
 	ProtocolEventBreakdownFast(ctx context.Context, contractIDs []string, sinceDay time.Time) ([]clickhouse.ProtocolEventTypeCount, error)
 }
@@ -820,29 +842,35 @@ func (s *Server) enrichProtocolAnalytics(ctx context.Context, meta ProtocolMeta,
 	// All three analytics are bounded to the recent window: bounding by
 	// ledger_seq prunes partitions, keeping each query well under the lake
 	// reader's 30s budget even for the busiest protocols (an all-time scan ran
-	// ~33s for blend / would be far worse for soroswap). 0 ⇒ tip unreadable ⇒
-	// skip the analytics entirely (degrade, don't serve partial/timed-out).
-	since := s.protocolActivitySince(ctx)
-	if since == 0 {
+	// ~33s for blend / would be far worse for soroswap). An unreadable tip
+	// skips the analytics entirely (degrade honestly, don't serve a
+	// mislabeled window — a zero tip would make the fast path's day cutoff
+	// collapse to yesterday while still claiming ActivityWindowDays).
+	tip, err := s.protocolActivity.LakeTipLedger(ctx)
+	if err != nil {
+		s.logger.Warn("protocol activity tip read failed", "err", err)
 		return false
 	}
+	plan := s.protocolActivityPlanFor(ctx, tip)
 	view.ActivityWindowDays = protocolActivityWindowDays
 	// The three lake reads are independent (~5s each on a cold cache) and
 	// write disjoint fields of the view (ActivitySeries+EventsTotal /
 	// EventBreakdown / Contracts[].Events), so run them concurrently rather
 	// than serially — cutting the cold-path from ~15s to ~5s (audit
 	// 2026-06-19 item 8; the cache + prewarm make repeat hits instant, this
-	// keeps the detached rebuild fast). The breakdown's "untyped"
-	// reconciling bucket needs EventsTotal (from the series), so it's
-	// appended single-threaded after the barrier.
+	// keeps the detached rebuild fast). All three share ONE plan (one tip
+	// read, one fast-vs-raw decision) so the series and breakdown can't
+	// split across the fast/raw sources and de-reconcile. The breakdown's
+	// "untyped" reconciling bucket needs EventsTotal (from the series), so
+	// it's appended single-threaded after the barrier.
 	var wg sync.WaitGroup
 	var seriesOK, breakdownOK, contractsOK bool
 	wg.Add(3)
-	go func() { defer wg.Done(); seriesOK = s.fillProtocolSeries(ctx, meta.Name, ids, since, view) }()
-	go func() { defer wg.Done(); breakdownOK = s.fillProtocolBreakdown(ctx, meta.Name, ids, since, view) }()
+	go func() { defer wg.Done(); seriesOK = s.fillProtocolSeries(ctx, meta.Name, ids, plan, view) }()
+	go func() { defer wg.Done(); breakdownOK = s.fillProtocolBreakdown(ctx, meta.Name, ids, plan, view) }()
 	go func() {
 		defer wg.Done()
-		contractsOK = s.fillProtocolContractActivity(ctx, meta.Name, ids, since, view)
+		contractsOK = s.fillProtocolContractActivity(ctx, meta.Name, ids, plan.sinceLedger, view)
 	}()
 	wg.Wait()
 	reconcileProtocolBreakdown(view)
@@ -902,8 +930,8 @@ func protocolContractIDs(contracts []ProtocolContractView, factories []string) [
 // (which fillProtocolSeries sets from the unfiltered count), append a
 // synthetic "untyped" bucket carrying the remainder. EventsTotal must
 // already be set (series is filled first in enrichProtocolAnalytics).
-func (s *Server) fillProtocolBreakdown(ctx context.Context, name string, ids []string, since uint32, view *ProtocolDetailView) bool {
-	breakdown, err := s.protocolBreakdown(ctx, ids, since)
+func (s *Server) fillProtocolBreakdown(ctx context.Context, name string, ids []string, plan protocolActivityPlan, view *ProtocolDetailView) bool {
+	breakdown, err := s.protocolBreakdown(ctx, ids, plan)
 	if err != nil {
 		s.logger.Warn("protocol event breakdown failed", "source", name, "err", err)
 		return false
@@ -923,8 +951,8 @@ func (s *Server) fillProtocolBreakdown(ctx context.Context, name string, ids []s
 // over the window (the sum of the daily points), which is the
 // authoritative total the breakdown reconciles against — NOT the typed
 // breakdown sum, which excludes non-Symbol-topic'd events.
-func (s *Server) fillProtocolSeries(ctx context.Context, name string, ids []string, since uint32, view *ProtocolDetailView) bool {
-	series, err := s.protocolSeries(ctx, ids, since)
+func (s *Server) fillProtocolSeries(ctx context.Context, name string, ids []string, plan protocolActivityPlan, view *ProtocolDetailView) bool {
+	series, err := s.protocolSeries(ctx, ids, plan)
 	if err != nil {
 		s.logger.Warn("protocol daily activity failed", "source", name, "err", err)
 		return false
@@ -964,18 +992,21 @@ func (s *Server) fillProtocolContractActivity(ctx context.Context, name string, 
 	return true
 }
 
-// protocolActivitySince returns the ledger cutoff for the windowed activity
-// series (tip − window). 0 when the tip can't be read (caller skips the series).
-func (s *Server) protocolActivitySince(ctx context.Context) uint32 {
-	tip, err := s.protocolActivity.LakeTipLedger(ctx)
-	if err != nil {
-		s.logger.Warn("protocol activity tip read failed", "err", err)
-		return 0
+// protocolActivityPlanFor derives the shared analytics plan from ONE lake
+// tip read: the ledger cutoff (tip − window) plus, when the daily
+// pre-aggregation is usable, the fast reader and its day-grain cutoff.
+// The caller has already verified tip was read successfully.
+func (s *Server) protocolActivityPlanFor(ctx context.Context, tip uint32) protocolActivityPlan {
+	since := uint32(1) // whole chain inside the window
+	if tip > protocolActivityWindowLedgers {
+		since = tip - protocolActivityWindowLedgers
 	}
-	if tip <= protocolActivityWindowLedgers {
-		return 1 // whole chain is inside the window
+	plan := protocolActivityPlan{sinceLedger: since}
+	if fast := s.fastActivity(ctx); fast != nil {
+		plan.fast = fast
+		plan.sinceDay = protocolSinceDay(since, tip)
 	}
-	return tip - protocolActivityWindowLedgers
+	return plan
 }
 
 // buildProtocolView projects one registry entry + the dynamic joins
@@ -1148,41 +1179,71 @@ func protocolSinceDay(sinceLedger, tip uint32) time.Time {
 }
 
 // fastActivity returns the fast reader when the pre-aggregation is
-// available on this deployment (probed once, cached).
+// available on this deployment. The probe answer is cached only when it
+// is DEFINITIVE (table missing, or rows found) — a transient ClickHouse
+// blip on the FIRST probe must not latch the raw 12B-row scans for the
+// process lifetime (the C1-048 class; the schemaProbe in
+// internal/storage/clickhouse is the founding precedent for why a
+// sync.Once is the wrong primitive here). A non-definitive answer
+// degrades THIS call to the raw readers and re-probes next time.
 func (s *Server) fastActivity(ctx context.Context) protocolFastActivityReader {
 	fast, ok := s.protocolActivity.(protocolFastActivityReader)
 	if !ok {
 		return nil
 	}
-	s.protocolFastOnce.Do(func() {
-		s.protocolFastOK = fast.DailyActivityAvailable(ctx)
-	})
+	s.protocolFastMu.Lock()
+	defer s.protocolFastMu.Unlock()
+	if !s.protocolFastSettled {
+		avail, definitive := fast.DailyActivityAvailable(ctx)
+		if definitive {
+			s.protocolFastSettled = true
+			s.protocolFastOK = avail
+		}
+		if !avail {
+			return nil
+		}
+		return fast
+	}
 	if !s.protocolFastOK {
 		return nil
 	}
 	return fast
 }
 
-func (s *Server) protocolBreakdown(ctx context.Context, ids []string, since uint32) ([]clickhouse.ProtocolEventTypeCount, error) {
-	if fast := s.fastActivity(ctx); fast != nil {
-		tip, _ := s.protocolActivity.LakeTipLedger(ctx)
-		out, err := fast.ProtocolEventBreakdownFast(ctx, ids, protocolSinceDay(since, tip))
+// protocolActivityPlan is the ONE shared fast-vs-raw decision + window
+// derivation for a detail build's three concurrent analytics fills.
+// Before it, each fill probed fastActivity and re-read the lake tip
+// independently — discarding the tip error, so a failed read (tip==0)
+// made protocolSinceDay silently serve a 1-day window labeled 90d, and
+// two fills could take DIFFERENT fast/raw paths, breaking the
+// sum(EventBreakdown)==EventsTotal reconcile.
+type protocolActivityPlan struct {
+	// sinceLedger is the raw readers' cutoff (tip − window), always set.
+	sinceLedger uint32
+	// fast is non-nil when the daily pre-aggregation serves this build;
+	// sinceDay is then its day-grain cutoff (derived from the same tip).
+	fast     protocolFastActivityReader
+	sinceDay time.Time
+}
+
+func (s *Server) protocolBreakdown(ctx context.Context, ids []string, plan protocolActivityPlan) ([]clickhouse.ProtocolEventTypeCount, error) {
+	if plan.fast != nil {
+		out, err := plan.fast.ProtocolEventBreakdownFast(ctx, ids, plan.sinceDay)
 		if err == nil {
 			return out, nil
 		}
 		s.logger.Warn("fast breakdown failed; raw fallback", "err", err)
 	}
-	return s.protocolActivity.ProtocolEventBreakdown(ctx, ids, since)
+	return s.protocolActivity.ProtocolEventBreakdown(ctx, ids, plan.sinceLedger)
 }
 
-func (s *Server) protocolSeries(ctx context.Context, ids []string, since uint32) ([]clickhouse.ProtocolDailyPoint, error) {
-	if fast := s.fastActivity(ctx); fast != nil {
-		tip, _ := s.protocolActivity.LakeTipLedger(ctx)
-		out, err := fast.ProtocolDailyActivityFast(ctx, ids, protocolSinceDay(since, tip))
+func (s *Server) protocolSeries(ctx context.Context, ids []string, plan protocolActivityPlan) ([]clickhouse.ProtocolDailyPoint, error) {
+	if plan.fast != nil {
+		out, err := plan.fast.ProtocolDailyActivityFast(ctx, ids, plan.sinceDay)
 		if err == nil {
 			return out, nil
 		}
 		s.logger.Warn("fast series failed; raw fallback", "err", err)
 	}
-	return s.protocolActivity.ProtocolDailyActivity(ctx, ids, since)
+	return s.protocolActivity.ProtocolDailyActivity(ctx, ids, plan.sinceLedger)
 }

@@ -613,7 +613,13 @@ func mapFreezeReason(decision anomaly.Decision) string {
 	if decision.Action == anomaly.ActionFreeze {
 		return "outlier_storm"
 	}
-	return "manual"
+	// Defensive fall-through for a decision shape this mapper doesn't
+	// recognize. 'other', NOT 'manual' (audit 2026-07-31): 'manual' is
+	// reserved for genuinely operator-initiated freezes, so defaulting
+	// to it recorded any unrecognized automated decision as a human
+	// action on the anomalies timeline. Vocabulary extended by
+	// migration 0124.
+	return "other"
 }
 
 // noteForLogger returns nil because the log-on-failure semantics are

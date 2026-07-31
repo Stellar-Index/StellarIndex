@@ -35,9 +35,9 @@ const (
 // The `trades` table attributes accounts via its taker/maker columns —
 // see timescale/account_trades.go's file header for the evidence.
 const accountTradesScopeNote = "On-chain trades where this address is recorded as the acting account " +
-	"(taker) or the resting sdex offer owner (maker). Coverage: sdex, aquarius, phoenix, comet. " +
-	"Soroswap swaps do not yet record the acting account and off-chain CEX/FX trades carry no " +
-	"Stellar account, so neither can appear here."
+	"(taker) or the resting sdex offer owner (maker). Coverage: sdex, soroswap, aquarius, phoenix, comet " +
+	"(soroswap records the taker for trades from 2026-07-30 onward; earlier soroswap rows carry none). " +
+	"Off-chain CEX/FX trades carry no Stellar account, so they cannot appear here."
 
 // AccountTradeEntry is one row in the wire response. Amounts and
 // usd_volume are decimal strings (ADR-0003); usd_volume is absent when

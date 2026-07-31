@@ -5,14 +5,18 @@ package timescale
 // types (BespokeBlock/KPI/Series/Table/Breakdown) + the dispatcher + the
 // scan helpers stay in protocol_bespoke.go.
 
-// bespokeLending builds the Blend lending bespoke block: per-asset net
+// bespokeLending builds the Blend lending bespoke block: PER-ASSET net
 // supplied (supply + supply_collateral − withdraw − withdraw_collateral) and
 // net borrowed (borrow − repay) from blend_positions, plus auction and
 // backstop activity. blend_positions amounts are unsigned magnitudes — the
 // sign is the event_kind, not the value — so net positions are signed sums of
-// the gross magnitudes. Confirmed on r1: event_kind ∈ {supply, withdraw,
-// supply_collateral, withdraw_collateral, borrow, repay, flash_loan};
-// token_amount + b_or_d_amount are both ≥ 0.
+// the gross magnitudes, and they are only ever summed WITHIN one asset
+// (cross-asset sums mix per-token decimals — see the count-first block
+// comment below; the old headline cross-asset "Net supplied/borrowed" KPIs
+// and per-pool Util% were dropped 2026-07-31 for exactly that reason).
+// Confirmed on r1: event_kind ∈ {supply, withdraw, supply_collateral,
+// withdraw_collateral, borrow, repay, flash_loan}; token_amount +
+// b_or_d_amount are both ≥ 0.
 import (
 	"context"
 	"fmt"
@@ -34,9 +38,9 @@ func (s *Store) bespokeLending(ctx context.Context, source string, windowDays in
 	blk := &BespokeBlock{
 		Category: "lending",
 		Notes: []string{
-			"Net supplied / net borrowed are signed running sums of unsigned blend_positions.token_amount over the window — supply/supply_collateral add, withdraw/withdraw_collateral subtract for supplied; borrow adds, repay subtracts for borrowed. They are WINDOW deltas, not all-time TVL (the served tier is retention-scoped); flash_loan is excluded.",
+			"Per-asset net supplied / net borrowed are signed running sums of unsigned blend_positions.token_amount over the window — supply/supply_collateral add, withdraw/withdraw_collateral subtract for supplied; borrow adds, repay subtracts for borrowed. They are WINDOW deltas scoped to ONE asset each, not all-time TVL (the served tier is retention-scoped); flash_loan is excluded. Amounts are never summed across assets: tokens carry different decimals, so a cross-asset sum would be a meaningless number.",
 			"Asset is a Soroban token contract id, shown shortened; amounts are in the token's base units (per-asset decimals).",
-			"Per-pool 'Util %' is the window borrow/supply ratio — a coarse proxy, not on-chain utilisation (which is current reserve borrowed/supplied). Real current-state TVL + supply/borrow APYs need the Soroban pool-storage reader (reserve b_rate/d_rate + totals from contract storage); this block is event-derived and window-scoped until that ships.",
+			"Pool-level figures are event/user COUNTS only. Real current-state TVL, utilisation and supply/borrow APYs need the Soroban pool-storage reader (reserve b_rate/d_rate + totals from contract storage); this block is event-derived and window-scoped until that ships.",
 		},
 	}
 
@@ -116,7 +120,8 @@ func lendingSideSeriesQuery(windowDays int, kinds string) string {
 		SELECT to_char(date_trunc('` + trunc + `', ledger_close_time), '` + format + `'), count(*)::text
 		  FROM blend_positions
 		 WHERE ledger_close_time > now() - $1::interval
-		   AND event_kind IN (` + kinds + `)
+		   AND event_kind IN (` + kinds + `)` +
+		completeDaysOnly(windowDays, "ledger_close_time") + `
 		 GROUP BY 1 ORDER BY 1 ASC`
 }
 
@@ -129,7 +134,8 @@ func lendingBackstopFlowSeriesQuery(windowDays int, kinds string) string {
 		SELECT to_char(date_trunc('` + trunc + `', ledger_close_time), '` + format + `'), count(*)::text
 		  FROM blend_backstop_events
 		 WHERE ledger_close_time > now() - $1::interval
-		   AND event_kind IN (` + kinds + `)
+		   AND event_kind IN (` + kinds + `)` +
+		completeDaysOnly(windowDays, "ledger_close_time") + `
 		 GROUP BY 1 ORDER BY 1 ASC`
 }
 
@@ -141,7 +147,8 @@ func lendingAuctionSeriesQuery(windowDays int) string {
 	return `
 		SELECT to_char(date_trunc('` + trunc + `', ts), '` + format + `'), count(*)::text
 		  FROM blend_auctions
-		 WHERE ts > now() - $1::interval
+		 WHERE ts > now() - $1::interval` +
+		completeDaysOnly(windowDays, "ts") + `
 		 GROUP BY 1 ORDER BY 1 ASC`
 }
 
@@ -161,7 +168,8 @@ func lendingPerPoolSeriesQuery(windowDays int) string {
 		       to_char(date_trunc('` + trunc + `', p.ledger_close_time), '` + format + `'),
 		       count(*)::text
 		  FROM blend_positions p JOIN top USING (pool)
-		 WHERE p.ledger_close_time > now() - $1::interval
+		 WHERE p.ledger_close_time > now() - $1::interval` +
+		completeDaysOnly(windowDays, "p.ledger_close_time") + `
 		 GROUP BY p.pool, 2, top.events
 		 ORDER BY top.events DESC, 2 ASC`
 }
@@ -490,7 +498,8 @@ func creditSettlementSeriesQuery(windowDays int) string {
 	trunc, format := bridgeSeriesGrain(windowDays)
 	return `
 		SELECT to_char(date_trunc('` + trunc + `', ledger_close_time), '` + format + `'), COALESCE(sum(settled_amount),0)::text
-		FROM credit_settlements WHERE ledger_close_time > now() - $1::interval
+		FROM credit_settlements WHERE ledger_close_time > now() - $1::interval` +
+		completeDaysOnly(windowDays, "ledger_close_time") + `
 		GROUP BY 1 ORDER BY 1 ASC`
 }
 
@@ -501,7 +510,8 @@ func creditPositionsOpenedSeriesQuery(windowDays int) string {
 	trunc, format := bridgeSeriesGrain(windowDays)
 	return `
 		SELECT to_char(date_trunc('` + trunc + `', ledger_close_time), '` + format + `'), count(*)::text
-		FROM credit_positions WHERE ledger_close_time > now() - $1::interval
+		FROM credit_positions WHERE ledger_close_time > now() - $1::interval` +
+		completeDaysOnly(windowDays, "ledger_close_time") + `
 		GROUP BY 1 ORDER BY 1 ASC`
 }
 
