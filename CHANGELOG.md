@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.21.8] — 2026-07-31
+
 ### Added
 - **Visuals wave 3 — /network chain economics, /divergences Δ% history,
   /anomalies visual pack (spec 1.17.0).** Three M-effort items off the
@@ -125,6 +127,11 @@ against.
   stale-serving (never hard-misses a previously-seen asset).
 
 ### Fixed
+- **`stellarindex_dex_trade_unit_ratio_detected` alerts on the FRACTION
+  of a source's flow (>50% AND >25 count), not absolute count** — a busy
+  wrapper-redemption morning (yUSDC/USDC, yETH/ETH parity pairs) tripped
+  the old threshold at ~2% of sdex flow; the decode-bug fingerprint the
+  alert exists for makes EVERY trade 1:1. Both rule trees + runbook.
 - **soroswap: non-directional swaps are recognized no-ops, not decode
   errors — closes the last soroswap undecodable-but-matched blind
   ledger (57,403,300).** The lake disproves the "a well-formed swap
