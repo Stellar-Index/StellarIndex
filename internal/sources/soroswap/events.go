@@ -32,6 +32,20 @@ const (
 
 	// Emitted by the factory contract.
 	EventNewPair = "new_pair"
+
+	// EventPairToken is the classify() kind for the pair contract's
+	// LP-SHARE (pair-token) SEP-41 events: `transfer` / `mint` /
+	// `burn` / `approve` with Symbol topic[0] (NOT the
+	// String-"SoroswapPair"-prefixed protocol namespace). A Soroswap
+	// pair IS a SEP-41 token for its LP shares, and the lake proves
+	// registered pairs emit these (2026-07-31 sweep over all 230
+	// registered pairs: 1,622 mint / 907 transfer / 333 burn events
+	// all-time; `approve` is in the token interface but has never
+	// fired). Enumerated here so classify() covers every topic the
+	// gated pair WASM can emit (the EVERY-event principle) — but the
+	// soroswap Decoder deliberately does NOT claim them: see the
+	// EventPairToken arm in [Decoder.Matches].
+	EventPairToken = "pair_token"
 )
 
 // Topic-prefix string values (topic[0]). Soroswap uses String-typed
@@ -107,6 +121,13 @@ var (
 	TopicSymbolWithdraw = scval.MustEncodeSymbol(EventWithdraw) // topic[1]
 	TopicSymbolSkim     = scval.MustEncodeSymbol(EventSkim)     // topic[1]
 	TopicSymbolNewPair  = scval.MustEncodeSymbol(EventNewPair)  // topic[1] on factory
+
+	// LP-share (pair-token) SEP-41 event names — topic[0] Symbols, not
+	// the String protocol prefix. See EventPairToken.
+	TopicSymbolLPTransfer = scval.MustEncodeSymbol("transfer") // topic[0]
+	TopicSymbolLPMint     = scval.MustEncodeSymbol("mint")     // topic[0]
+	TopicSymbolLPBurn     = scval.MustEncodeSymbol("burn")     // topic[0]
+	TopicSymbolLPApprove  = scval.MustEncodeSymbol("approve")  // topic[0]
 )
 
 // Errors returned by the decode path. Callers classify via
@@ -126,4 +147,22 @@ var (
 	// ErrMalformedPayload — event fields don't match the expected
 	// Soroswap schema (arity, types, contract).
 	ErrMalformedPayload = errors.New("soroswap: malformed event payload")
+
+	// ErrNonDirectionalSwap — the swap event's four amounts decoded
+	// cleanly but carry NO cross-token exchange: neither (0_in>0 &&
+	// 1_out>0) nor (1_in>0 && 0_out>0) holds. The old assumption
+	// ("a well-formed Soroswap swap has exactly one in/out pair
+	// non-zero — never both") is disproven by the lake: pair.swap()
+	// is directly invokable Uniswap-v2-style, and any argument
+	// combination that keeps K non-decreasing succeeds — e.g. mainnet
+	// ledger 57,403,300 (pair CAM7DY…, tx be7028b9…) settled with
+	// amount_1_in=265, amount_1_out=70 and both token0 amounts zero:
+	// value moved within ONE token side only. That is a real,
+	// recognized on-chain event but NOT a trade — there is no (base,
+	// quote, price) to derive — so [Decoder.Decode] treats this error
+	// as a RECOGNIZED NO-OP (zero projected rows, nil error out),
+	// mirroring redstone's empty write_prices batches (78486ae6).
+	// Treating it as a decode error held the ADR-0033 completeness
+	// re-derive blind (undecodable-but-matched) on that ledger.
+	ErrNonDirectionalSwap = errors.New("soroswap: non-directional swap (no cross-token exchange)")
 )

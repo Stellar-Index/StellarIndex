@@ -87,6 +87,16 @@ func classify(e *events.Event) string {
 	if e.Topic[0] == TopicPrefixFactory && e.Topic[1] == TopicSymbolNewPair {
 		return EventNewPair
 	}
+	// LP-share (pair-token) SEP-41 events: a Soroswap pair is also the
+	// SEP-41 token of its own LP shares and emits Symbol-topic[0]
+	// transfer/mint/burn/approve alongside the String-prefixed protocol
+	// namespace above. Enumerated so classify() covers the pair WASM's
+	// full event surface (EVERY-event principle) — Matches() maps this
+	// kind to false on purpose; see its EventPairToken arm.
+	switch e.Topic[0] {
+	case TopicSymbolLPTransfer, TopicSymbolLPMint, TopicSymbolLPBurn, TopicSymbolLPApprove:
+		return EventPairToken
+	}
 	return ""
 }
 
@@ -128,9 +138,15 @@ func decodeSwap(r RawPair, tok0, tok1 canonical.Asset) (canonical.Trade, error) 
 	taker := decodeSwapTaker(r.Swap.Value)
 
 	// Trade direction: whichever side had non-zero `in` is the base
-	// asset the trader sold; the other side is what they bought.
-	// (A well-formed Soroswap swap has exactly one in/out pair
-	// non-zero — either 0→1 or 1→0 — never both.)
+	// asset the trader sold; the other side is what they bought. A
+	// PRICE-FORMING swap has a cross-token pair non-zero — 0→1 or
+	// 1→0. The chain does NOT guarantee that shape: pair.swap() is
+	// directly invokable (Uniswap-v2-style) and accepts any argument
+	// combination that keeps K non-decreasing, so a swap whose value
+	// movement is confined to one token side settles successfully
+	// (real case: ledger 57,403,300). Those decode cleanly but are
+	// not trades — surfaced as ErrNonDirectionalSwap, which Decode
+	// treats as a recognized no-op rather than a decode error.
 	var base, quote canonical.Asset
 	var baseAmt, quoteAmt canonical.Amount
 	switch {
@@ -141,8 +157,8 @@ func decodeSwap(r RawPair, tok0, tok1 canonical.Asset) (canonical.Trade, error) 
 		base, baseAmt = tok1, amounts.Amount1In
 		quote, quoteAmt = tok0, amounts.Amount0Out
 	default:
-		return canonical.Trade{}, fmt.Errorf("%w: no directional swap — in=(%s,%s) out=(%s,%s)",
-			ErrMalformedPayload,
+		return canonical.Trade{}, fmt.Errorf("%w: in=(%s,%s) out=(%s,%s)",
+			ErrNonDirectionalSwap,
 			amounts.Amount0In, amounts.Amount1In,
 			amounts.Amount0Out, amounts.Amount1Out)
 	}
