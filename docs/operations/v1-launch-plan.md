@@ -131,6 +131,21 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-31 ~23:00Z — 🚀 **v0.21.8 CUT + DEPLOYED on Ash's word**
+  ("you can cut and deploy whenever you want"). Release build green
+  (11 assets), deploy green, smoke 13/13, live version v0.21.8.
+  Payload: redstone state-write attribution + soroswap
+  non-directional recognition (the 17/17 pair) + native XLM holders
+  + prewarm/stale-serve/analytics-status + all three visuals waves
+  (specs → 1.17.0) + crossed-book quarantine fix + the
+  fraction-based unit-ratio alert. Post-deploy chain running
+  detached (/root/postdeploy-0218.log): redstone rewind from
+  62,056,000 → tip → scoped verifies (redstone/soroswap/aquarius)
+  → verdict table (**17/17 EXPECTED — the first ever**) → mixed4 k6
+  on the quiet box (the definitive AC2 mixed number). Inbox #4 is
+  now CLOSED — no operator word outstanding except the standing
+  three (paging, security review, and the decisions list).
+
 - 2026-07-31 ~22:30Z — 🏁 **TAIL CHAIN DONE: soroswap taker coverage
   100.00% (554,221/554,221).** Full evidence:
   `evidence/2026-07-31-taker-coverage-and-verify.md`. Verify came
