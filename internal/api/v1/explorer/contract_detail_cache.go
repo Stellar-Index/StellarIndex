@@ -94,7 +94,16 @@ func (h *Handler) refreshContractDetail(key string, compute func(context.Context
 	if !owner {
 		return fl
 	}
+	// Bounded globally across keys — contract ids are attacker-mintable
+	// (any shape-valid C-address is a distinct cold key); on saturation
+	// skip, don't queue (see detachedGate).
+	gate := h.detachedGate()
+	if !gate.TryAcquire() {
+		h.contractDetail.flight.end(key, fl, errRefreshSaturated)
+		return fl
+	}
 	go func() {
+		defer gate.Release()
 		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), contractDetailRefreshTimeout)
 		defer cancel()

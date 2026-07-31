@@ -109,7 +109,8 @@ func cctpFlowSeriesQuery(windowDays int, inbound bool) string {
 	return `
 		WITH t AS (` + cte + `)
 		SELECT to_char(date_trunc('` + trunc + `', ts), '` + format + `'), (COALESCE(sum(amount),0) / 1000000::numeric)::numeric(24,6)::text
-		FROM t GROUP BY 1 ORDER BY 1 ASC`
+		FROM t WHERE true` + completeDaysOnly(windowDays, "ts") + `
+		GROUP BY 1 ORDER BY 1 ASC`
 }
 
 // cctpWindowKPIQuery is the windowed inbound/outbound volume + transfer
@@ -189,6 +190,7 @@ func cctpPerChainSeriesQuery(windowDays int, inbound bool) string {
 		       to_char(date_trunc('` + trunc + `', j.ts), '` + format + `'),
 		       (sum(j.amount) / 1000000::numeric)::numeric(24,6)::text
 		FROM j JOIN top USING (chain_key)
+		WHERE true` + completeDaysOnly(windowDays, "j.ts") + `
 		GROUP BY j.chain_key, 2, top.vol
 		ORDER BY top.vol DESC, 2 ASC`
 }
@@ -204,6 +206,9 @@ func cctpCumulativeNetInflowQuery() string {
 		     SELECT ts, amount AS amt FROM m
 		     UNION ALL
 		     SELECT ts, -amount AS amt FROM b) x
+		   -- Complete days only: today's partial increment would render
+		   -- as a phantom flattening/cliff on the running sum (UXP-16).
+		   WHERE x.ts < ` + completeDayCutoffSQL + `
 		   GROUP BY 1)
 		SELECT to_char(day, 'YYYY-MM-DD'),
 		       (sum(net) OVER (ORDER BY day) / 1000000::numeric)::numeric(24,6)::text

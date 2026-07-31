@@ -149,6 +149,18 @@ func decodeSwap(r RawPair, tok0, tok1 canonical.Asset) (canonical.Trade, error) 
 	// treats as a recognized no-op rather than a decode error.
 	var base, quote canonical.Asset
 	var baseAmt, quoteAmt canonical.Amount
+	// All four amounts non-zero satisfies BOTH arms below — decoding it
+	// as 0→1 would silently drop the 1→0 leg (first-arm bias, audit
+	// 2026-07-31). No single direction is derivable, so refuse the whole
+	// event as a recognized no-op (see ErrAmbiguousSwapDirection) —
+	// honest-blind beats half-decoded.
+	if amounts.Amount0In.Sign() > 0 && amounts.Amount1Out.Sign() > 0 &&
+		amounts.Amount1In.Sign() > 0 && amounts.Amount0Out.Sign() > 0 {
+		return canonical.Trade{}, fmt.Errorf("%w: in=(%s,%s) out=(%s,%s)",
+			ErrAmbiguousSwapDirection,
+			amounts.Amount0In, amounts.Amount1In,
+			amounts.Amount0Out, amounts.Amount1Out)
+	}
 	switch {
 	case amounts.Amount0In.Sign() > 0 && amounts.Amount1Out.Sign() > 0:
 		base, baseAmt = tok0, amounts.Amount0In

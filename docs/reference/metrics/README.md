@@ -2316,6 +2316,21 @@ quarantine right after a deploy is normal and converges in hours.
 Stuck high alongside `verify_error` means the served book is honest
 but thinner than the real chain state.
 
+### `stellarindex_sdex_orderbook_undecodable_offers_total`
+
+Counter.
+
+Offer-entry change rows the order-book reader SKIPPED because their
+`entry_xdr` failed to decode (audit 2026-07-31). A skipped non-removed
+change silently FREEZES that offer key's previously-applied state in
+the served book — the price/amount update it carried is lost until the
+key's next decodable change. Offer entries are core-emitted XDR, so
+this should read 0; each skip also logs a warn line with the key and
+ledger. Sustained increments point at a lake ingestion/schema problem
+upstream of the book, and mean served depth is quietly stale for the
+affected keys — treat like an entry-change coverage gap, not a serving
+bug.
+
 ### `stellarindex_explorer_swr_refresh_total`
 
 Counter. Labels: `cache` (`accounts_wealth` | `asset_holders` |

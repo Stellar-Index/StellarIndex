@@ -93,7 +93,8 @@ func defindexVaultCountSeriesQuery(windowDays int) string {
 	return `
 		SELECT direction, to_char(date_trunc('` + trunc + `', ledger_close_time), '` + format + `'), count(*)::text
 		FROM defindex_flows
-		WHERE ledger_close_time > now() - $1::interval AND layer = 'vault'
+		WHERE ledger_close_time > now() - $1::interval AND layer = 'vault'` +
+		completeDaysOnly(windowDays, "ledger_close_time") + `
 		GROUP BY 1, 2 ORDER BY 1, 2 ASC`
 }
 
@@ -105,7 +106,8 @@ func defindexStrategyVolumeSeriesQuery(windowDays int) string {
 	return `
 		SELECT to_char(date_trunc('` + trunc + `', ledger_close_time), '` + format + `'), COALESCE(sum(amount),0)::text
 		FROM defindex_flows
-		WHERE ledger_close_time > now() - $1::interval AND layer = 'strategy'
+		WHERE ledger_close_time > now() - $1::interval AND layer = 'strategy'` +
+		completeDaysOnly(windowDays, "ledger_close_time") + `
 		GROUP BY 1 ORDER BY 1 ASC`
 }
 
@@ -116,7 +118,8 @@ func defindexStrategyEventsSeriesQuery(windowDays int) string {
 	return `
 		SELECT to_char(date_trunc('` + trunc + `', ledger_close_time), '` + format + `'), count(*)::text
 		FROM defindex_flows
-		WHERE ledger_close_time > now() - $1::interval AND layer = 'strategy'
+		WHERE ledger_close_time > now() - $1::interval AND layer = 'strategy'` +
+		completeDaysOnly(windowDays, "ledger_close_time") + `
 		GROUP BY 1 ORDER BY 1 ASC`
 }
 

@@ -3881,7 +3881,7 @@ export interface paths {
                                     /** Format: int64 */
                                     frozen_at_ledger?: number;
                                     /** @enum {string} */
-                                    reason?: "single_source" | "divergence" | "outlier_storm" | "manual";
+                                    reason?: "single_source" | "divergence" | "outlier_storm" | "manual" | "other";
                                     frozen_value?: string;
                                     /** Format: date-time */
                                     recovered_at?: string | null;

@@ -3,10 +3,12 @@ package clickhouse
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
@@ -170,6 +172,15 @@ func (r *ExplorerReader) OfferChangesSince(ctx context.Context, fromLedger uint3
 		if !ch.Removed {
 			o, ok := offerFromEntryXDR(entryXDR)
 			if !ok {
+				// A skipped non-removed change FREEZES this key's
+				// previously-applied state in the served book (the update
+				// it carried is lost until the key's next decodable
+				// change) — surface it instead of dropping it silently
+				// (audit 2026-07-31). Offer entries are core-emitted XDR,
+				// so any increment here points at a lake problem upstream.
+				slog.Warn("sdex order book: undecodable non-removed offer change skipped; key's prior state frozen",
+					"key_xdr", keyXDR, "ledger", ledger)
+				obs.SDEXOrderBookUndecodableOffersTotal.Inc()
 				continue
 			}
 			o.KeyXDR = keyXDR

@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -59,6 +60,15 @@ func readTimedOut(callCtx context.Context, err error) bool {
 		return true
 	}
 	return callCtx.Err() == context.DeadlineExceeded
+}
+
+// retryableColdMiss reports whether a cold-path SWR-cache error is the
+// capacity class the handlers map to the retryable 503: the request
+// deadline expired waiting for the detached compute, or the shared
+// detached-refresh gate was saturated and the refresh was skipped
+// (errRefreshSaturated) — both "try again shortly", neither a bug.
+func retryableColdMiss(callCtx context.Context, err error) bool {
+	return readTimedOut(callCtx, err) || errors.Is(err, errRefreshSaturated)
 }
 
 // writeReadTimeout writes the standard response for a lake read that blew
@@ -254,6 +264,35 @@ type Handler struct {
 	// every request and no retry could land warm. Zero value ready; see
 	// contract_detail_cache.go.
 	contractDetail contractDetailCache
+
+	// refreshGate bounds this handler's DETACHED cache refreshes globally
+	// across keys AND cache kinds (audit 2026-07-31): per-key
+	// single-flight alone leaves the key space attacker-chosen on these
+	// unauthenticated routes, so fabricated-key churn could queue one
+	// unbounded lake scan per key on the shared 8-conn pool. Resolved
+	// lazily by detachedGate() — shared with the lake reader's own
+	// account-state gate when the Reader exposes one, so the whole
+	// explorer surface has ONE bound.
+	refreshGateOnce sync.Once
+	refreshGate     *clickhouse.RefreshGate
+}
+
+// detachedGate returns the shared bound for detached refreshes: the lake
+// reader's own gate when it exposes one (production — one global bound
+// across account-state + holders + contracts-dir + contract-detail
+// refreshes), else a handler-local gate with the same limit (test stubs).
+func (h *Handler) detachedGate() *clickhouse.RefreshGate {
+	h.refreshGateOnce.Do(func() {
+		if p, ok := h.Reader.(interface {
+			DetachedRefreshGate() *clickhouse.RefreshGate
+		}); ok {
+			h.refreshGate = p.DetachedRefreshGate()
+		}
+		if h.refreshGate == nil {
+			h.refreshGate = clickhouse.NewRefreshGate(clickhouse.DefaultDetachedRefreshLimit)
+		}
+	})
+	return h.refreshGate
 }
 
 // writeJSONAt writes data with an explicit envelope as_of when the seam is

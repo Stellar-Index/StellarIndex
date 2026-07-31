@@ -266,6 +266,67 @@ func TestSWRRefresh_ObservesMetrics(t *testing.T) {
 	}
 }
 
+// ── shared detached-refresh gate (audit 2026-07-31) ───────────────────
+
+// TestDetachedRefreshGate_SaturationSkipsNotQueues pins the global bound
+// across cache keys: per-key single-flight alone let attacker-chosen key
+// churn (fabricated addresses/assets — every one a distinct cold key)
+// queue one unbounded detached lake scan per key on the shared 8-conn
+// pool. On saturation the refresh is SKIPPED — stale entries keep
+// serving, cold keys miss honestly with a retryable error — and refreshes
+// resume once capacity frees.
+func TestDetachedRefreshGate_SaturationSkipsNotQueues(t *testing.T) {
+	h, reader := newSWRHandler()
+	gate := h.detachedGate()
+	held := 0
+	for gate.TryAcquire() {
+		held++
+		if held > 1000 {
+			t.Fatal("gate never saturates")
+		}
+	}
+	if held == 0 {
+		t.Fatal("gate refused its first slot")
+	}
+
+	// Cold key under saturation: skipped, not queued — no scan runs and
+	// the waiter gets the retryable sentinel (mapped to 503 upstream).
+	_, _, _, _, err := h.assetHoldersCached(context.Background(), "native", 10)
+	if !errors.Is(err, errRefreshSaturated) {
+		t.Fatalf("cold miss under saturation err = %v, want errRefreshSaturated", err)
+	}
+	if got := reader.holdersCalls.Load(); got != 0 {
+		t.Fatalf("saturated gate still launched %d scans", got)
+	}
+
+	// Stale key under saturation: the old entry still serves (degraded),
+	// the skipped refresh never blanks it.
+	staleAt := time.Now().Add(-2 * assetHoldersTTL)
+	h.assetHolders.put("USDC-"+validTestAccount, assetHoldersEntry{
+		holders: []clickhouse.AssetHolder{{AccountID: validTestAccount, Balance: 1}},
+		total:   1, cachedAt: staleAt,
+	})
+	holders, total, _, degraded, err := h.assetHoldersCached(context.Background(), "USDC-"+validTestAccount, 10)
+	if err != nil || total != 1 || len(holders) != 1 || !degraded {
+		t.Fatalf("stale serve under saturation: holders=%d total=%d degraded=%v err=%v", len(holders), total, degraded, err)
+	}
+	if got := reader.holdersCalls.Load(); got != 0 {
+		t.Fatalf("stale-path refresh ran under saturation (%d scans)", got)
+	}
+
+	// Capacity freed → the next cold miss fills normally.
+	for ; held > 0; held-- {
+		gate.Release()
+	}
+	holders, total, _, degraded, err = h.assetHoldersCached(context.Background(), "native", 10)
+	if err != nil || total != 1 || len(holders) != 1 || degraded {
+		t.Fatalf("post-release cold fill: holders=%d total=%d degraded=%v err=%v", len(holders), total, degraded, err)
+	}
+	if got := reader.holdersCalls.Load(); got != 1 {
+		t.Fatalf("post-release fill ran %d scans, want 1", got)
+	}
+}
+
 // ── contract-detail SWR cache (route-sweep 2026-07-30) ────────────────
 
 func TestContractDetailCached_ColdWaitsThenServes(t *testing.T) {

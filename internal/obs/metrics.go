@@ -207,6 +207,7 @@ func registerAppMetricsTail() {
 		SDEXOrderBookMaintainDurationSeconds,
 		SDEXOrderBookCrossedPairs,
 		SDEXOrderBookPendingOffers,
+		SDEXOrderBookUndecodableOffersTotal,
 		ExplorerSWRRefreshTotal,
 		ExplorerSWRRefreshDurationSeconds,
 		ProtocolDetailRefreshTotal,
@@ -3207,6 +3208,21 @@ var SDEXOrderBookPendingOffers = prometheus.NewGauge(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_sdex_orderbook_pending_offers",
 		Help: "SDEX offers quarantined from the served book awaiting lake removal-verification.",
+	},
+)
+
+// SDEXOrderBookUndecodableOffersTotal — offer-entry rows the order-book
+// reader could not decode (audit 2026-07-31). A non-removed change row
+// whose entry_xdr fails to decode is SKIPPED, which silently FREEZES the
+// offer key's previously-applied state in the served book (the price/
+// amount update it carried is lost until the next decodable change for
+// that key). Should sit at 0 — offer entries are core-emitted XDR;
+// sustained increments mean a lake ingestion/schema problem upstream of
+// the book, and the served depth is quietly stale for the affected keys.
+var SDEXOrderBookUndecodableOffersTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_sdex_orderbook_undecodable_offers_total",
+		Help: "Offer-entry rows skipped by the SDEX order-book reader because their entry XDR failed to decode; each skip freezes that offer key's previously-applied state.",
 	},
 )
 

@@ -139,6 +139,29 @@ func bridgeSeriesGrain(windowDays int) (trunc, format string) {
 	return "day", "YYYY-MM-DD"
 }
 
+// completeDayCutoffSQL is the SQL expression for the start of the current
+// day — the exclusive upper bound [completeDaysOnly] applies. Evaluated in
+// the session timezone (UTC in production), the SAME zone
+// date_trunc('day', …) buckets in, so the excluded bucket is exactly the
+// one that would render partial.
+const completeDayCutoffSQL = `date_trunc('day', now())`
+
+// completeDaysOnly returns a WHERE-clause fragment (leading " AND ") that
+// excludes the current, still-accumulating day from a DAILY-grain series —
+// the UXP-16 "phantom cliff" class (audit 2026-07-31): today's partial
+// bucket renders as a plummeting final point on every daily chart,
+// indistinguishable from a real activity collapse. Empty at the 24h
+// window, whose HOURLY grain keeps its live edge (a partial current hour
+// reads as "now", not as a cliff). col is a code-owned column name, never
+// request input. Applies to the POINT-producing scan only — top-N ranking
+// CTEs may keep the live day (selection, not display).
+func completeDaysOnly(windowDays int, col string) string {
+	if windowDays == 1 {
+		return ""
+	}
+	return " AND " + col + " < " + completeDayCutoffSQL
+}
+
 // rozoSettledSeriesQuery builds the Rozo settled-volume series SQL at the
 // window's grain. Division is exact NUMERIC (ADR-0003); rozo_events.amount
 // is 7-decimal SAC stroops.
@@ -146,7 +169,8 @@ func rozoSettledSeriesQuery(windowDays int) string {
 	trunc, format := bridgeSeriesGrain(windowDays)
 	return `
 		SELECT to_char(date_trunc('` + trunc + `', ts), '` + format + `'), (COALESCE(sum(amount),0) / 10000000::numeric)::numeric(24,7)::text
-		FROM rozo_events WHERE ts > now() - $1::interval AND amount IS NOT NULL AND event_type = 'payment'
+		FROM rozo_events WHERE ts > now() - $1::interval AND amount IS NOT NULL AND event_type = 'payment'` +
+		completeDaysOnly(windowDays, "ts") + `
 		GROUP BY 1 ORDER BY 1 ASC`
 }
 
@@ -689,32 +713,31 @@ func (s *Store) lendingEmissionKPIs(ctx context.Context, blk *BespokeBlock, wind
 	return nil
 }
 
-// lendingPositionBlocks fills the net-supplied / net-borrowed KPIs, the
-// per-asset net-position table, and the daily position-event series.
+// lendingPositionBlocks fills the position-activity KPIs, the per-asset
+// net-position table, the per-pool activity table, and the daily
+// position-event series.
+//
+// COUNT-first (audit 2026-07-31, aligning with the bespoke_lending.go
+// visual-suite rationale): blend_positions rows mix many tokens at
+// per-asset decimals with no USD valuation at this layer, so the old
+// headline "Net supplied/borrowed" KPIs — token_amount summed ACROSS
+// assets — and the per-pool cross-asset sums + their "Util %" ratio were
+// meaningless numbers with authoritative labels. Amount sums survive only
+// where scoped to a single asset (the per-asset table).
 func (s *Store) lendingPositionBlocks(ctx context.Context, blk *BespokeBlock, since string, windowDays int) error {
-	var netSupplied, netBorrowed, users, flashLoans string
+	var users, flashLoans string
 	err := s.db.QueryRowContext(ctx, `
 		SELECT
-		  COALESCE(sum(CASE
-		    WHEN event_kind IN ('supply','supply_collateral')    THEN token_amount
-		    WHEN event_kind IN ('withdraw','withdraw_collateral') THEN -token_amount
-		    ELSE 0 END),0)::text,
-		  COALESCE(sum(CASE
-		    WHEN event_kind = 'borrow' THEN token_amount
-		    WHEN event_kind = 'repay'  THEN -token_amount
-		    ELSE 0 END),0)::text,
 		  count(DISTINCT user_address)::text,
 		  count(*) FILTER (WHERE event_kind = 'flash_loan')::text
 		FROM blend_positions
 		WHERE ledger_close_time > now() - $1::interval`, since).
-		Scan(&netSupplied, &netBorrowed, &users, &flashLoans)
+		Scan(&users, &flashLoans)
 	if err != nil {
 		return fmt.Errorf("timescale: bespokeLending position KPIs: %w", err)
 	}
 	blk.KPIs = append(blk.KPIs,
-		BespokeKPI{Label: fmt.Sprintf("Net supplied (%dd)", windowDays), Value: netSupplied, Unit: "token-units", Hint: "supply+collateral minus withdrawals, summed across assets (base units)"},
-		BespokeKPI{Label: fmt.Sprintf("Net borrowed (%dd)", windowDays), Value: netBorrowed, Unit: "token-units", Hint: "borrow minus repay, summed across assets (base units)"},
-		BespokeKPI{Label: fmt.Sprintf("Active users (%dd)", windowDays), Value: users},
+		BespokeKPI{Label: fmt.Sprintf("Active users (%dd)", windowDays), Value: users, Hint: "distinct user addresses with at least one position event in the window"},
 		BespokeKPI{Label: fmt.Sprintf("Flash loans (%dd)", windowDays), Value: flashLoans},
 	)
 
@@ -741,29 +764,16 @@ func (s *Store) lendingPositionBlocks(ctx context.Context, blk *BespokeBlock, si
 		blk.Tables = append(blk.Tables, tbl)
 	}
 
+	// Per-pool table is COUNT-only: a pool holds positions in several
+	// assets, so any per-pool amount sum (and a Util% ratio of two such
+	// sums) mixes decimals across tokens. Side counts use the same kind
+	// partition as bespoke_lending.go's lendingSupplySideKinds /
+	// lendingBorrowSideKinds.
 	poolTbl, err := s.scanTable(ctx,
-		BespokeTable{Title: "Net position by pool", Columns: []string{"Pool", "Net supplied", "Net borrowed", "Util %", "Users", "Events"}},
+		BespokeTable{Title: "Activity by pool", Columns: []string{"Pool", "Supply-side events", "Borrow-side events", "Users", "Events"}},
 		`SELECT pool,
-		   COALESCE(sum(CASE
-		     WHEN event_kind IN ('supply','supply_collateral')    THEN token_amount
-		     WHEN event_kind IN ('withdraw','withdraw_collateral') THEN -token_amount
-		     ELSE 0 END),0)::text,
-		   COALESCE(sum(CASE
-		     WHEN event_kind = 'borrow' THEN token_amount
-		     WHEN event_kind = 'repay'  THEN -token_amount
-		     ELSE 0 END),0)::text,
-		   CASE WHEN COALESCE(sum(CASE
-		         WHEN event_kind IN ('supply','supply_collateral')    THEN token_amount
-		         WHEN event_kind IN ('withdraw','withdraw_collateral') THEN -token_amount
-		         ELSE 0 END),0) > 0
-		     THEN round(100.0 * COALESCE(sum(CASE
-		         WHEN event_kind = 'borrow' THEN token_amount
-		         WHEN event_kind = 'repay'  THEN -token_amount
-		         ELSE 0 END),0) / sum(CASE
-		         WHEN event_kind IN ('supply','supply_collateral')    THEN token_amount
-		         WHEN event_kind IN ('withdraw','withdraw_collateral') THEN -token_amount
-		         ELSE 0 END), 2)::text
-		     ELSE '—' END,
+		   count(*) FILTER (WHERE event_kind IN (`+lendingSupplySideKinds+`))::text,
+		   count(*) FILTER (WHERE event_kind IN (`+lendingBorrowSideKinds+`))::text,
 		   count(DISTINCT user_address)::text,
 		   count(*)::text
 		 FROM blend_positions
@@ -779,7 +789,8 @@ func (s *Store) lendingPositionBlocks(ctx context.Context, blk *BespokeBlock, si
 
 	series, err := s.scanDailySeries(ctx, `
 		SELECT to_char(date_trunc('day', ledger_close_time), 'YYYY-MM-DD'), count(*)::text
-		FROM blend_positions WHERE ledger_close_time > now() - $1::interval
+		FROM blend_positions WHERE ledger_close_time > now() - $1::interval`+
+		completeDaysOnly(windowDays, "ledger_close_time")+`
 		GROUP BY 1 ORDER BY 1 ASC`, since)
 	if err != nil {
 		return err

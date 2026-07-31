@@ -163,6 +163,13 @@ type ExplorerReader struct {
 	// scales, so they are served stale-while-revalidate. Non-nil for every
 	// reader built by the constructors.
 	ttlVerdicts *ttlLivenessCache
+
+	// refreshGate bounds concurrently-running detached cache refreshes
+	// (account state here + the API-layer explorer caches via
+	// DetachedRefreshGate) — see refresh_gate.go. Non-nil for every
+	// reader built by the constructors; nil (test-built readers) admits
+	// everything.
+	refreshGate *RefreshGate
 }
 
 // SetWealthRefreshErrorHandler installs a callback for background
@@ -221,6 +228,7 @@ func NewExplorerReaderAuth(ctx context.Context, addr, username, password string)
 		wealthCache: newAccountsWealthCache(),
 		stateCache:  newAccountStateCache(),
 		stateFlight: newPerKeyFlight(),
+		refreshGate: NewRefreshGate(DefaultDetachedRefreshLimit),
 		ttlVerdicts: newTTLLivenessCache(func(ctx context.Context, keys []string) (map[string]TTLLiveness, error) {
 			// Verdicts are judged at the lake's tip AS OF compute time —
 			// "current" means current relative to what the lake holds now.

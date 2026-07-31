@@ -328,9 +328,10 @@ func TestClickHouseProtocolBreakdownT0XDR(t *testing.T) {
 	t.Cleanup(func() { _ = er.Close() })
 
 	// The contract_events_daily materialized view populates synchronously on the
-	// insert above, so the fast path is available.
-	if !er.DailyActivityAvailable(ctx) {
-		t.Fatal("DailyActivityAvailable = false after insert — contract_events_daily MV did not populate")
+	// insert above, so the fast path is available — and the answer is
+	// DEFINITIVE (rows found), so callers may cache it.
+	if avail, definitive := er.DailyActivityAvailable(ctx); !avail || !definitive {
+		t.Fatalf("DailyActivityAvailable = (%v,%v) after insert, want (true,true) — contract_events_daily MV did not populate", avail, definitive)
 	}
 
 	// Raw-scan path (stellar.contract_events): recovers "swap" from topic[0] XDR.
@@ -657,8 +658,8 @@ func TestClickHouseProtocolDailyActivityDedup(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = er.Close() })
 
-	if !er.DailyActivityAvailable(ctx) {
-		t.Fatal("DailyActivityAvailable = false after insert — contract_events_daily MV did not populate")
+	if avail, definitive := er.DailyActivityAvailable(ctx); !avail || !definitive {
+		t.Fatalf("DailyActivityAvailable = (%v,%v) after insert, want (true,true) — contract_events_daily MV did not populate", avail, definitive)
 	}
 
 	sinceDay := closeTime.AddDate(0, 0, -1)

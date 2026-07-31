@@ -14,15 +14,16 @@ import (
 // schema, 2026-07-30). The per-row account attribution is:
 //
 //   taker — the acting account: the tx-level source for sdex, the
-//           user/sender address for aquarius, phoenix, and comet.
+//           user/sender address for aquarius, phoenix, and comet, and
+//           the SwapEvent `to` recipient for soroswap (captured since
+//           the 2026-07-30 decoder fix; verified 100% taker coverage on
+//           new rows 2026-07-31 — soroswap rows ingested BEFORE that
+//           date carry NULL unless re-derived).
 //   maker — the resting-offer account (sdex only).
 //
 // Both are NULL for off-chain CEX/FX rows (ledger=0 — no Stellar
-// account exists to attribute) and for soroswap (its decoder does not
-// capture the SwapEvent `to` field — a documented coverage gap the
-// endpoint's static note discloses, not something this reader can
-// conjure). The read therefore serves "trades where this address is
-// recorded as taker or maker".
+// account exists to attribute). The read therefore serves "trades
+// where this address is recorded as taker or maker".
 //
 // QUERY SHAPE: two index-friendly arms UNION'd, not `taker = $1 OR
 // maker = $1` — an OR across two columns can't ride a single

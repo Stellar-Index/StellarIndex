@@ -1,6 +1,7 @@
 package soroswap
 
 import (
+	"errors"
 	"math/big"
 	"testing"
 	"time"
@@ -157,6 +158,48 @@ func TestDecodeSwap_withFakeDecoder(t *testing.T) {
 	}
 	if trade.QuoteAmount.Cmp(canonical.NewAmount(big.NewInt(42))) != 0 {
 		t.Errorf("quote amount = %s", trade.QuoteAmount)
+	}
+}
+
+// TestDecodeSwap_AmbiguousBothDirectionsRefused (audit 2026-07-31): a
+// swap whose FOUR amounts are all non-zero satisfies both direction
+// arms; the old switch silently decoded it as 0→1, dropping the 1→0
+// leg. It must be refused as ErrAmbiguousSwapDirection — which wraps
+// ErrNonDirectionalSwap, so the dispatcher's recognized-no-op handling
+// covers it — never half-decoded into a trade.
+func TestDecodeSwap_AmbiguousBothDirectionsRefused(t *testing.T) {
+	prev := decodeSwapAmounts
+	defer func() { decodeSwapAmounts = prev }()
+	decodeSwapAmounts = func(_ string) (swapAmounts, error) {
+		amt := func(n int64) canonical.Amount { return canonical.NewAmount(big.NewInt(n)) }
+		return swapAmounts{
+			Amount0In:  amt(100),
+			Amount1In:  amt(265),
+			Amount0Out: amt(70),
+			Amount1Out: amt(42),
+		}, nil
+	}
+
+	xlm := canonical.NativeAsset()
+	usdc, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := RawPair{
+		Ledger: 100, TxHash: "cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe", OpIndex: 0,
+		ClosedAt: time.Now().UTC().Truncate(time.Second),
+		Swap:     &events.Event{Value: "stub"},
+		Sync:     &events.Event{Value: "stub"},
+	}
+	_, err = decodeSwap(r, xlm, usdc)
+	if err == nil {
+		t.Fatal("all-four-amounts swap decoded as a trade — first-arm bias half-decoded it")
+	}
+	if !errors.Is(err, ErrAmbiguousSwapDirection) {
+		t.Fatalf("err = %v, want ErrAmbiguousSwapDirection", err)
+	}
+	if !errors.Is(err, ErrNonDirectionalSwap) {
+		t.Fatalf("err = %v, must wrap ErrNonDirectionalSwap so Decode treats it as a recognized no-op", err)
 	}
 }
 

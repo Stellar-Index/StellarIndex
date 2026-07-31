@@ -170,6 +170,12 @@ func (c *assetHoldersCache) put(asset string, e assetHoldersEntry) {
 // entry (the underlying error was already logged by the refresh goroutine).
 var errRefreshFailed = errors.New("explorer: detached cache refresh produced no entry")
 
+// errRefreshSaturated is returned to a COLD-path waiter when the shared
+// detached-refresh gate is saturated and the refresh was skipped rather
+// than queued (see clickhouse.RefreshGate). Handlers map it to the same
+// retryable 503 as a read timeout — it is a capacity condition, not a bug.
+var errRefreshSaturated = errors.New("explorer: detached refresh capacity saturated; retry shortly")
+
 // refreshAssetHolders kicks ONE detached holders scan for asset (no-op when
 // a flight is already up) and returns the flight to optionally wait on.
 // Detached on purpose: bound to a request's 8s deadline the scan for a huge
@@ -181,7 +187,16 @@ func (h *Handler) refreshAssetHolders(asset string) *keyFlight {
 	if !owner {
 		return fl
 	}
+	// Bounded globally across keys — the asset space is attacker-mintable
+	// (any CODE-ISSUER combination parses); on saturation skip, don't
+	// queue (see detachedGate).
+	gate := h.detachedGate()
+	if !gate.TryAcquire() {
+		h.assetHolders.flight.end(asset, fl, errRefreshSaturated)
+		return fl
+	}
 	go func() {
+		defer gate.Release()
 		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), assetHoldersRefreshTimeout)
 		defer cancel()
@@ -330,7 +345,17 @@ func (h *Handler) refreshContractsDir(window int) *keyFlight {
 	if !owner {
 		return fl
 	}
+	// Same global bound as the sibling refreshers. The window ladder caps
+	// this cache's own key space at 5, but its scans still contend on the
+	// shared pool with the attacker-keyed caches, so it draws from the
+	// same gate; the prewarm loop re-kicks within one TTL if skipped.
+	gate := h.detachedGate()
+	if !gate.TryAcquire() {
+		h.contractsDir.flight.end(key, fl, errRefreshSaturated)
+		return fl
+	}
 	go func() {
+		defer gate.Release()
 		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), contractsDirRefreshTimeout)
 		defer cancel()

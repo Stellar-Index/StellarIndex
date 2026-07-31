@@ -43,9 +43,12 @@ package timescale
 //     so raw-derived surfaces are gated OFF for sdex beyond 7 days
 //     (dexRawWindowOK) and the omission is Noted on the block.
 //
-// taker coverage (r1, full 90d): aquarius/phoenix/comet/sdex stamp taker
-// on 100% of rows; soroswap stamps NONE (its decoder never captured the
-// taker), so soroswap's trader metrics are omitted with an honest Note.
+// taker coverage: aquarius/phoenix/comet/sdex stamp taker on 100% of
+// rows; soroswap has stamped taker since its 2026-07-30 decoder fix
+// (verified 100% on new rows, 2026-07-31) — rows ingested before that
+// date carry NULL unless re-derived, so trader metrics stay DATA-DRIVEN:
+// served when the window has taker-stamped rows, omitted (with a Note)
+// when it observably has none.
 //
 // All USD figures come ONLY from trades.usd_volume (or its CAGG sums) —
 // never ad-hoc pricing. NULL-usd trades are excluded from USD sums and
@@ -101,7 +104,8 @@ func dexActivitySeriesQuery(windowDays int) string {
 	}
 	return `
 		SELECT to_char(bucket, 'YYYY-MM-DD'), COALESCE(sum(vol),0)::text, COALESCE(sum(trades),0)::text
-		FROM dex_volume_by_pair_1d WHERE source = $1 AND bucket > now() - $2::interval
+		FROM dex_volume_by_pair_1d WHERE source = $1 AND bucket > now() - $2::interval` +
+		completeDaysOnly(windowDays, "bucket") + `
 		GROUP BY 1 ORDER BY 1 ASC`
 }
 
@@ -149,7 +153,8 @@ func dexTradersSeriesQuery(windowDays int) string {
 	trunc, format := bridgeSeriesGrain(windowDays)
 	return `
 		SELECT to_char(date_trunc('` + trunc + `', ts), '` + format + `'), count(DISTINCT taker)::text
-		FROM trades WHERE source = $1 AND ts > now() - $2::interval AND taker IS NOT NULL
+		FROM trades WHERE source = $1 AND ts > now() - $2::interval AND taker IS NOT NULL` +
+		completeDaysOnly(windowDays, "ts") + `
 		GROUP BY 1 ORDER BY 1 ASC`
 }
 
@@ -213,7 +218,8 @@ func dexTopPairsSeriesQuery(windowDays int) string {
 		   GROUP BY 1, 2 ORDER BY total DESC NULLS LAST LIMIT 5)
 		SELECT t.base_asset, t.quote_asset, to_char(t.bucket, 'YYYY-MM-DD'), COALESCE(t.vol,0)::text
 		FROM dex_volume_by_pair_1d t JOIN top USING (base_asset, quote_asset)
-		WHERE t.source = $1 AND t.bucket > now() - $2::interval
+		WHERE t.source = $1 AND t.bucket > now() - $2::interval` +
+		completeDaysOnly(windowDays, "t.bucket") + `
 		ORDER BY top.total DESC NULLS LAST, t.base_asset, t.quote_asset, t.bucket ASC`
 }
 
@@ -385,8 +391,10 @@ func (s *Store) dexWindowBlocks(ctx context.Context, blk *BespokeBlock, source, 
 		BespokeKPI{Label: fmt.Sprintf("USD volume (%dd)", windowDays), Value: vol, Unit: "USD", Hint: "summed usd_volume of priced trades over the window"},
 		BespokeKPI{Label: fmt.Sprintf("Trades (%dd)", windowDays), Value: trades},
 	)
+	var takersZero bool
 	if raw {
-		if err := s.dexRawKPIs(ctx, blk, source, since, windowDays, &pairs); err != nil {
+		var err error
+		if takersZero, err = s.dexRawKPIs(ctx, blk, source, since, windowDays, &pairs); err != nil {
 			return err
 		}
 	}
@@ -407,7 +415,7 @@ func (s *Store) dexWindowBlocks(ctx context.Context, blk *BespokeBlock, source, 
 	if err := s.dexPairTables(ctx, blk, source, since, windowDays, raw); err != nil {
 		return err
 	}
-	s.dexOmissionNotes(blk, source, windowDays, raw)
+	s.dexOmissionNotes(blk, windowDays, raw, takersZero)
 	return nil
 }
 
@@ -427,14 +435,17 @@ func (s *Store) dexWindowKPIs(ctx context.Context, source, since string, windowD
 }
 
 // dexRawKPIs adds the raw-trades-derived KPI cards: unique traders (when
-// the source captures takers — soroswap does not), avg trade size over
-// priced trades, and the active-pairs fallback for the 24h grain.
-func (s *Store) dexRawKPIs(ctx context.Context, blk *BespokeBlock, source, since string, windowDays int, pairs *string) error {
+// the window has taker-stamped rows — data-driven, since taker coverage
+// varies by source AND ingest date), avg trade size over priced trades,
+// and the active-pairs fallback for the 24h grain. takersZero reports
+// whether the window observably has NO taker-stamped trades, so
+// dexOmissionNotes can disclose the omission honestly.
+func (s *Store) dexRawKPIs(ctx context.Context, blk *BespokeBlock, source, since string, windowDays int, pairs *string) (takersZero bool, err error) {
 	var takers, priced, rawPairs, avg string
-	err := s.db.QueryRowContext(ctx, dexRawKPIQuery(), source, since).
+	err = s.db.QueryRowContext(ctx, dexRawKPIQuery(), source, since).
 		Scan(&takers, &priced, &rawPairs, &avg)
 	if err != nil {
-		return fmt.Errorf("timescale: bespokeDEX raw KPIs: %w", err)
+		return false, fmt.Errorf("timescale: bespokeDEX raw KPIs: %w", err)
 	}
 	if *pairs == "" {
 		*pairs = rawPairs
@@ -447,12 +458,12 @@ func (s *Store) dexRawKPIs(ctx context.Context, blk *BespokeBlock, source, since
 		blk.KPIs = append(blk.KPIs,
 			BespokeKPI{Label: fmt.Sprintf("Avg trade size (%dd)", windowDays), Value: avg, Unit: "USD", Hint: "window USD volume ÷ priced trades (exact NUMERIC division; unpriced trades excluded from both sides)"})
 	}
-	return nil
+	return takers == "0", nil
 }
 
 // dexActivitySeries appends the volume + trade-count series (one scan) and
-// the unique-traders series (raw, when servable and the source captures
-// takers).
+// the unique-traders series (raw, when servable and the window's rows
+// carry taker addresses — empty otherwise, data-driven).
 func (s *Store) dexActivitySeries(ctx context.Context, blk *BespokeBlock, source, since string, windowDays int) error {
 	volPts, tradePts, err := s.scanDexActivitySeries(ctx, dexActivitySeriesQuery(windowDays), source, since)
 	if err != nil {
@@ -652,12 +663,17 @@ func (s *Store) dexSinceTotalsKPIs(ctx context.Context, blk *BespokeBlock, sourc
 }
 
 // dexOmissionNotes appends the honest omission notes for surfaces this
-// source/window combination cannot serve.
-func (s *Store) dexOmissionNotes(blk *BespokeBlock, source string, windowDays int, raw bool) {
-	if source == "soroswap" {
-		blk.Notes = append(blk.Notes,
-			"Unique-trader metrics are unavailable for Soroswap: its trade decoder does not capture the taker address (0% taker coverage on r1), so trader counts would be dishonest zeros rather than data.",
-		)
+// source/window combination cannot serve. The trader-metrics note is
+// DATA-DRIVEN (takersZero — observed from the window's rows), not a
+// static per-source claim: the old hard-coded "soroswap captures no
+// taker" note went stale the day the decoder fix landed (2026-07-30,
+// 100% coverage on new rows verified 2026-07-31) and would have
+// disclaimed real data on the wire indefinitely.
+func (s *Store) dexOmissionNotes(blk *BespokeBlock, windowDays int, raw, takersZero bool) {
+	if raw && takersZero {
+		blk.Notes = append(blk.Notes, fmt.Sprintf(
+			"Unique-trader metrics are unavailable at the %dd window: none of its trades carries a taker address (rows ingested before the venue's decoder captured takers — e.g. soroswap rows predating 2026-07-30 — are not attributed unless re-derived).", windowDays,
+		))
 	}
 	if !raw {
 		blk.Notes = append(blk.Notes,
