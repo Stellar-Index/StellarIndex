@@ -15,6 +15,26 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **Redstone's last 15 provably-ambiguous blind ledgers now attribute
+  exactly, via ledger-entry state-write keys.** `events.Event` gains
+  `StateWriteKeys` — the LedgerKeys of the contract-data entries whose
+  VALUE the event's operation changed — populated by the dispatcher
+  from LCM tx meta and by the ClickHouse readers from the lake's
+  `ledger_entry_changes` (batched point lookups; per-source opt-in
+  like `OpArgs`, only redstone opts in). Ground truth (r1 ledger
+  62056824): `write_prices` rewrites every REQUESTED feed's entry
+  byte-identical when the freshness verifier rejects it, and only
+  ACCEPTED feeds' stored PriceData changes — so the value-changed keys
+  name the accepted subset with zero heuristics, resolving the class
+  where one surviving price matches two feeds' payload medians (the
+  BENJI/iBENJI twins) that order-preserving median alignment provably
+  cannot. Payload-median alignment stays as the fallback when keys are
+  absent, and `ErrAmbiguousSubset` still refuses anything unresolved —
+  keys can cause a fallback, never a misattribution. Golden fixture
+  from the real ledger-62056824 event + change rows pins the exact
+  path, the keys-absent ambiguity, and the arity-mismatch fallback.
+
 ## [v0.21.7] — 2026-07-30
 
 ### Fixed

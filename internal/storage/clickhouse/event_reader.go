@@ -148,12 +148,29 @@ func forEachLedgerWindow(from, to, stride uint32, fn func(lo, hi uint32) error) 
 // and reading it across the CAP-67 classic-token firehose was one of the two
 // legs of the 2026-07-08 sep41 completeness OOMs — pass false unless the
 // consuming decoder actually reads OpArgs.
-func StreamContractEventsFiltered(ctx context.Context, addr string, from, to uint32, contractIDs, topic0Syms, excludeTopic0Syms []string, useFinal, withOpArgs bool, fn func(events.Event) error) error {
+//
+// withStateWriteKeys additionally resolves each event's
+// events.Event.StateWriteKeys from stellar.ledger_entry_changes (batched
+// point lookups — see state_write_keys.go). Per-source opt-in exactly like
+// withOpArgs, and for the same reason: today only redstone's decoder reads
+// the keys (exact accepted-feed subset attribution), and a firehose-scale
+// source would pay the lookups for nothing.
+func StreamContractEventsFiltered(ctx context.Context, addr string, from, to uint32, contractIDs, topic0Syms, excludeTopic0Syms []string, useFinal, withOpArgs, withStateWriteKeys bool, fn func(events.Event) error) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = conn.Close() }()
+
+	emit := fn
+	var enricher *stateWriteKeyEnricher
+	if withStateWriteKeys {
+		// openRead's MaxOpenConns=2 leaves one underlying connection free
+		// for the enricher's batch lookups while the event stream holds
+		// the other.
+		enricher = newStateWriteKeyEnricher(ctx, conn, fn)
+		emit = enricher.add
+	}
 
 	q := contractEventsFilteredQuery(contractIDs, topic0Syms, excludeTopic0Syms, useFinal, withOpArgs)
 	rows, err := conn.Query(ctx, q, from, to)
@@ -161,7 +178,13 @@ func StreamContractEventsFiltered(ctx context.Context, addr string, from, to uin
 		return fmt.Errorf("clickhouse: query contract_events filtered [%d,%d]: %w", from, to, err)
 	}
 	defer func() { _ = rows.Close() }()
-	return scanContractEvents(rows, withOpArgs, fn)
+	if err := scanContractEvents(rows, withOpArgs, emit); err != nil {
+		return err
+	}
+	if enricher != nil {
+		return enricher.flush()
+	}
+	return nil
 }
 
 // contractEventsFilteredQuery builds the StreamContractEventsFiltered query

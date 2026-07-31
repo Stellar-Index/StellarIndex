@@ -79,6 +79,14 @@ type reconSource struct {
 	// compute-completeness OOMs.
 	needsOpArgs bool
 
+	// needsStateWriteKeys marks the decoder class that consumes
+	// events.Event.StateWriteKeys — the operation's written contract-data
+	// keys, resolved from the lake's ledger_entry_changes (redstone's
+	// exact accepted-feed subset attribution). Opt-in like needsOpArgs:
+	// the -ch reconcile skips the batched key lookups for every other
+	// source.
+	needsStateWriteKeys bool
+
 	// aggregateReconcile, when non-empty, makes the -ch projection
 	// reconcile compare WINDOW TOTALS instead of strict per-ledger
 	// counts, and documents why. Per-ledger is the default (CS-084:
@@ -271,8 +279,9 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 		cat = append(cat, reconSource{
 			name:               "redstone",
 			aggregateReconcile: "oracle_updates ledger keying differs across write vintages (legacy backfills keyed by oracle-timestamp ledger; live keys by event ledger) — strict per-ledger would false-flag the vintage boundary; aggregate accepts the CS-084 netting residual on this source", genesis: 58_758_722, dec: redstone.NewDecoder(a), contractIDs: []string{a},
-			needsOpArgs: true, // redstone reads feed_ids from the write_prices op args (events.Event.OpArgs, PR 166)
-			targets:     []reconTarget{{"oracle_updates", "source = 'redstone'", []string{"redstone.update"}}},
+			needsOpArgs:         true, // redstone reads feed_ids from the write_prices op args (events.Event.OpArgs, PR 166)
+			needsStateWriteKeys: true, // exact subset attribution from the op's written per-feed contract-data keys
+			targets:             []reconTarget{{"oracle_updates", "source = 'redstone'", []string{"redstone.update"}}},
 		})
 	}
 

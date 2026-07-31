@@ -720,11 +720,18 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 				if opIdx < len(invokeCalls) && invokeCalls[opIdx] != nil {
 					args = invokeCalls[opIdx].Args
 				}
+				// State-write enrichment (sibling of the OpArgs plumb
+				// above): the contract-data entries whose VALUE this op
+				// changed, from tx meta — filtered per event to the
+				// event's own contract below. Redstone's exact subset
+				// attribution reads them; see state_write_keys.go.
+				opWrites := opContractDataWriteKeys(tx, opIdx)
 				for evIdx, ce := range opEvents {
 					ev := contractEventToEventsEvent(ce, ledgerSeq, txHash, opIdx, evIdx, closedAt, args)
 					if ev == nil {
 						continue
 					}
+					ev.StateWriteKeys = stateWriteKeysFor(opWrites, ev.ContractID)
 					outs, err := d.dispatchOne(*ev)
 					if err != nil {
 						continue

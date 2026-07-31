@@ -1,6 +1,6 @@
 ---
 title: Ingest pipeline — the one canonical data path
-last_verified: 2026-07-10
+last_verified: 2026-07-31
 status: binding
 ---
 
@@ -167,6 +167,40 @@ matching the four shapes of on-chain data:
 It is the ONLY place where contract-event byte-matching, classic-op
 walking, contract-call matching, and ledger-entry-change routing
 happen, and where per-source correlation state is fed.
+
+**Event enrichment — decoders stay pure, the dispatcher supplies
+inputs.** Two `events.Event` fields carry per-operation context a
+decoder cannot derive from the event body alone, both populated by the
+dispatcher from the LCM on the production path and reconstructed
+byte-identically by the ClickHouse lake readers on the re-derive paths
+(projector CH feed-switch, `compute-completeness -ch`,
+`projected-rebuild`):
+
+- **`OpArgs`** — the producing InvokeContract call's argument vector
+  (base64 SCVals). Consumer: Redstone, whose `write_prices` event body
+  carries prices but no feed ids (the feed ids live in the op args).
+  Lake source: `contract_events.op_args_xdr`; per-source opt-in on
+  wide reads (`NeedOpArgs`).
+- **`StateWriteKeys`** — the base64 XDR LedgerKeys of the contract-data
+  entries whose VALUE the same operation changed (created, or updated
+  with a different `ContractDataEntry.Val` than the op's pre-image —
+  identical-value rewrites don't count), filtered to the event's own
+  contract. Consumer: Redstone's exact subset attribution — the adapter
+  rewrites every REQUESTED feed's entry but only ACCEPTED feeds' stored
+  PriceData changes (r1 ground truth, ledger 62056824), so the changed
+  keys name the accepted subset exactly when the freshness verifier
+  shortens `updated_feeds` below the op-args feed_ids; payload-median
+  alignment remains the fallback when keys are absent. Lake source:
+  `ledger_entry_changes` (batched `(ledger_seq, tx_hash, op_index)`
+  point lookups, `internal/storage/clickhouse/state_write_keys.go`);
+  per-source opt-in (`NeedStateWriteKeys` /
+  `projector.Source.NeedsStateWriteKeys`). The rule lives in
+  `internal/dispatcher/state_write_keys.go` and MUST stay in lockstep
+  on both paths.
+
+Any future decoder needing tx-scoped inputs follows the same pattern:
+plumb through `events.Event`, populate in the dispatcher AND the lake
+reader, keep the decoder a pure function of its `events.Event`.
 
 Adding a new source means:
 - Adding its decoder package under `internal/sources/<venue>/`.

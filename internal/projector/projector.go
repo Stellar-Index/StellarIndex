@@ -162,6 +162,15 @@ type Source struct {
 	// DO consume those topics (sep41_*) or already prefilter by contract
 	// (reflector/redstone).
 	ExcludeTopic0Syms []string
+
+	// NeedsStateWriteKeys opts the source into events.Event.StateWriteKeys
+	// enrichment on the CH read path (batched ledger_entry_changes point
+	// lookups — internal/storage/clickhouse/state_write_keys.go). Opt-in
+	// per source like the completeness reconcile's NeedOpArgs: only a
+	// decoder that reads the written contract-data keys pays for the
+	// lookups. Today only redstone (exact accepted-feed subset attribution
+	// for freshness-filtered write_prices batches).
+	NeedsStateWriteKeys bool
 }
 
 // Registry is the set of sources the projector handles. Built
@@ -537,8 +546,9 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		// idempotent downstream writes absorb any duplicate.
 		err = clickhouse.StreamContractEventsFiltered(cycleCtx, p.chAddr, fromLedger, toLedger,
 			src.ContractIDs, src.Topic0Syms, src.ExcludeTopic0Syms,
-			false, // no FINAL: idempotent writes absorb dups
-			true,  // withOpArgs: the projector routes every source, incl. OpArgs consumers (redstone); windows are BatchLimit-small
+			false,                   // no FINAL: idempotent writes absorb dups
+			true,                    // withOpArgs: the projector routes every source, incl. OpArgs consumers (redstone); windows are BatchLimit-small
+			src.NeedsStateWriteKeys, // per-source: only redstone reads written contract-data keys
 			func(ev events.Event) error {
 				rowsScanned++
 				if ev.Ledger > lastSeenLedger {

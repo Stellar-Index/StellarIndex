@@ -98,14 +98,17 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 	// Positional zip requires matching arity. When the adapter's
 	// freshness verifier dropped ≥1 feed (updated_feeds SHORTER than
 	// feed_ids — a real, ongoing class: 1,626 events blind on the
-	// 2026-07-29 full verify, still occurring at tip), the payload in
-	// args[2] recovers the mapping: the adapter stores each accepted
-	// feed's signer-value MEDIAN, so a surviving price must equal
-	// exactly one candidate feed's payload median at its
-	// package_timestamp (verified byte-exact on the ledger-59258375
-	// event). Anything non-unique refuses the whole event — better
-	// honest-blind than misattributed.
-	attributed, err := resolveFeedAttribution(prices, feedIDs, e.OpArgs)
+	// 2026-07-29 full verify, still occurring at tip), the accepted
+	// subset is recovered EXACTLY from the op's value-changing
+	// contract-data writes when available (only accepted feeds' stored
+	// PriceData changes — events.Event.StateWriteKeys), falling back
+	// to the signed payload in args[2]: the adapter
+	// stores each accepted feed's signer-value MEDIAN, so a surviving
+	// price must equal exactly one candidate feed's payload median at
+	// its package_timestamp (verified byte-exact on the
+	// ledger-59258375 event). Anything non-unique refuses the whole
+	// event — better honest-blind than misattributed.
+	attributed, err := resolveFeedAttribution(prices, feedIDs, e)
 	if err != nil {
 		return nil, err
 	}
@@ -388,11 +391,30 @@ func sdkDecodeAddress(sv scval.ScVal) (string, error) {
 
 // resolveFeedAttribution maps updated_feeds entries to feed ids. Equal
 // arity zips positionally (the common case). A SHORTER updated_feeds is
-// the freshness-filtered subset class: attribution is recovered from the
-// signed payload's per-feed signer medians (see payload.go); anything
-// non-unique refuses the whole event. A LONGER updated_feeds cannot come
-// from freshness filtering and is refused as genuinely malformed.
-func resolveFeedAttribution(prices []priceDataDecoded, feedIDs []string, opArgs []string) ([]string, error) {
+// the freshness-filtered subset class, resolved in preference order:
+//
+//  1. EXACT — the operation's VALUE-CHANGING contract-data write keys
+//     (events.Event.StateWriteKeys): write_prices stores each feed's
+//     PriceData under ScString(feed_id) and rewrites REJECTED feeds
+//     byte-identical, so only ACCEPTED feeds' entries change (r1 ground
+//     truth, ledger 62056824) — the changed keys ∩ feed_ids (in
+//     feed_ids order — updated_feeds is built in a single pass over
+//     feed_ids) IS the accepted subset. Zero heuristics; used whenever
+//     the plumbed keys yield a subset of matching arity. This is what
+//     resolves the value-collision residue the median rule provably
+//     cannot (ledger 62056824: one surviving price 1.00000000 matching
+//     both BENJI_ETHEREUM_FUNDAMENTAL twins).
+//  2. FALLBACK — payload-median alignment (see payload.go), for events
+//     whose reader did not plumb state-write keys (stellar-rpc fixture
+//     captures, pre-plumb stored events) or where the changed-key
+//     subset's arity disagrees with updated_feeds (e.g. a restored
+//     entry with no visible pre-image, or a storage-shape change —
+//     fall back rather than trust it). Anything non-unique refuses the
+//     whole event.
+//
+// A LONGER updated_feeds cannot come from freshness filtering and is
+// refused as genuinely malformed.
+func resolveFeedAttribution(prices []priceDataDecoded, feedIDs []string, e *events.Event) ([]string, error) {
 	if len(feedIDs) == len(prices) {
 		return feedIDs, nil
 	}
@@ -400,7 +422,10 @@ func resolveFeedAttribution(prices []priceDataDecoded, feedIDs []string, opArgs 
 		return nil, fmt.Errorf("%w: %d feed_ids, %d updated_feeds",
 			ErrFeedIDCountMismatch, len(feedIDs), len(prices))
 	}
-	payload, err := payloadFromOpArgs(opArgs)
+	if sub := subsetFromStateWrites(feedIDs, e.StateWriteKeys, e.ContractID); len(sub) == len(prices) {
+		return sub, nil
+	}
+	payload, err := payloadFromOpArgs(e.OpArgs)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %d feed_ids, %d updated_feeds; %w",
 			ErrFeedIDCountMismatch, len(feedIDs), len(prices), err)
@@ -411,4 +436,42 @@ func resolveFeedAttribution(prices []priceDataDecoded, feedIDs []string, opArgs 
 			ErrFeedIDCountMismatch, len(feedIDs), len(prices), err)
 	}
 	return attributed, nil
+}
+
+// subsetFromStateWrites derives the accepted-feed subset from the
+// operation's value-changing contract-data write keys: parse each
+// plumbed LedgerKey,
+// keep ScString keys owned by the event's own contract (the plumbing
+// already filters by contract; re-checking here is defence-in-depth
+// against a future reader that forgets), collect the written feed-id
+// set, and project feedIDs onto it PRESERVING feed_ids order — the
+// same order updated_feeds is built in. Non-string keys (any other
+// adapter storage) and unparseable keys are skipped, not fatal: the
+// caller compares the subset's arity against updated_feeds and falls
+// back to payload alignment on any disagreement, so a partial read can
+// only cause a fallback, never a misattribution. Nil when no keys were
+// plumbed.
+func subsetFromStateWrites(feedIDs, stateWriteKeys []string, contractID string) []string {
+	if len(stateWriteKeys) == 0 {
+		return nil
+	}
+	written := make(map[string]bool, len(stateWriteKeys))
+	for _, kb64 := range stateWriteKeys {
+		owner, key, err := scval.ParseContractDataKey(kb64)
+		if err != nil || owner != contractID {
+			continue
+		}
+		feed, err := scval.AsString(key)
+		if err != nil {
+			continue
+		}
+		written[feed] = true
+	}
+	var sub []string
+	for _, f := range feedIDs {
+		if written[f] {
+			sub = append(sub, f)
+		}
+	}
+	return sub
 }
