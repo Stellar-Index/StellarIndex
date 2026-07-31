@@ -87,6 +87,45 @@ type Decoder interface {
 	Decode(ev events.Event) ([]consumer.Event, error)
 }
 
+// StateWriteKeyConsumer is an OPTIONAL interface a [Decoder]
+// additionally implements to declare that its Decode reads
+// events.Event.StateWriteKeys for events of specific contracts.
+// StateWriteContracts returns the contract C-strkeys whose events need
+// the enrichment (typically the decoder's own gated contract set).
+//
+// ProcessLedger resolves an operation's value-changing contract-data
+// write keys (state_write_keys.go) ONLY for events whose contract is in
+// some registered decoder's declared set — the meta walk + per-entry
+// XDR marshalling is measurable overhead, and computing it for every
+// event-bearing op taxed the whole ledger walk for a signal exactly one
+// decoder (redstone) consumes. Events outside every declared set carry
+// nil StateWriteKeys, which consumers already must treat as "unknown",
+// not "no writes" (events.Event.StateWriteKeys doc).
+type StateWriteKeyConsumer interface {
+	StateWriteContracts() []string
+}
+
+// stateWriteContracts collects the union of every registered decoder's
+// declared [StateWriteKeyConsumer] contract set. Recomputed per
+// ProcessLedger call — the decoder list is tiny and fixed after
+// startup, so this is a handful of type asserts per ledger.
+func (d *Dispatcher) stateWriteContracts() map[string]bool {
+	var set map[string]bool
+	for _, dec := range d.decoders {
+		swc, ok := dec.(StateWriteKeyConsumer)
+		if !ok {
+			continue
+		}
+		for _, cid := range swc.StateWriteContracts() {
+			if set == nil {
+				set = make(map[string]bool)
+			}
+			set[cid] = true
+		}
+	}
+	return set
+}
+
 // OpDecoder is the contract for decoders that operate on classic
 // Stellar operations (ManageOffer, PathPayment, …) rather than
 // Soroban contract events. SDEX is the primary user; any future
@@ -688,7 +727,9 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 		// Walk operations once, build an invokeCalls slice keyed by
 		// opIdx. This powers three downstream consumers:
 		//   1. events.Event.OpArgs for event-path decoders that
-		//      need the tx's args (Redstone).
+		//      need the tx's args (Redstone) — scoped by the OpArgs
+		//      provenance gate below to events of the invoked
+		//      contract itself.
 		//   2. ContractCallDecoder routing (Band and any future
 		//      source that doesn't emit events).
 		//   3. No-op for non-InvokeContract ops (classic, wasm
@@ -715,23 +756,57 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 			d.txEventReadErrors++
 			d.statsMu.Unlock()
 		case len(txEvents.OperationEvents) > 0:
+			needsWrites := d.stateWriteContracts()
 			for opIdx, opEvents := range txEvents.OperationEvents {
-				var args []string
-				if opIdx < len(invokeCalls) && invokeCalls[opIdx] != nil {
-					args = invokeCalls[opIdx].Args
+				var call *invokeCall
+				if opIdx < len(invokeCalls) {
+					call = invokeCalls[opIdx]
 				}
 				// State-write enrichment (sibling of the OpArgs plumb
-				// above): the contract-data entries whose VALUE this op
+				// below): the contract-data entries whose VALUE this op
 				// changed, from tx meta — filtered per event to the
-				// event's own contract below. Redstone's exact subset
+				// event's own contract. Redstone's exact subset
 				// attribution reads them; see state_write_keys.go.
-				opWrites := opContractDataWriteKeys(tx, opIdx)
+				// Resolved LAZILY, once per op, and only when an event's
+				// contract belongs to a decoder that declared interest
+				// via [StateWriteKeyConsumer] — the meta walk + XDR
+				// marshalling is pure overhead for every other op.
+				var opWrites []contractDataWrite
+				opWritesResolved := false
 				for evIdx, ce := range opEvents {
-					ev := contractEventToEventsEvent(ce, ledgerSeq, txHash, opIdx, evIdx, closedAt, args)
+					ev := contractEventToEventsEvent(ce, ledgerSeq, txHash, opIdx, evIdx, closedAt, nil)
 					if ev == nil {
 						continue
 					}
-					ev.StateWriteKeys = stateWriteKeysFor(opWrites, ev.ContractID)
+					// ─── OpArgs provenance gate ──────────────────
+					// The op's top-level InvokeContract args belong to
+					// the CALLEE of that top-level call and to nobody
+					// else. Attach them only to events emitted by the
+					// invoked contract itself. Events emitted by OTHER
+					// contracts in the same op (sub-invocations reached
+					// through a wrapper/aggregator) get NO args: a
+					// wrapper's top-level args are attacker-chosen free
+					// text relative to the sub-call that actually
+					// emitted the event, and pre-gate they were attached
+					// to every event the op produced — letting a wrapper
+					// call adapter.write_prices with the real payload
+					// while steering redstone's feed_ids attribution via
+					// its own top-level args. Post-gate an args-requiring
+					// decoder refuses honestly (redstone:
+					// ErrMissingOpArgs, counted via the decode-error
+					// counter) instead of trusting foreign args.
+					// The lake extractor applies the identical rule at
+					// write time (clickhouse/extract.go opArgsByIndex).
+					if call != nil && call.ContractID == ev.ContractID {
+						ev.OpArgs = call.Args
+					}
+					if needsWrites[ev.ContractID] {
+						if !opWritesResolved {
+							opWrites = opContractDataWriteKeys(tx, opIdx)
+							opWritesResolved = true
+						}
+						ev.StateWriteKeys = stateWriteKeysFor(opWrites, ev.ContractID)
+					}
 					outs, err := d.dispatchOne(*ev)
 					if err != nil {
 						continue
@@ -1197,8 +1272,12 @@ func (d *Dispatcher) dispatchOne(ev events.Event) ([]consumer.Event, error) {
 // we drop them before routing rather than handing them through.
 //
 // opArgs carries the base64-encoded SCVal arguments of the
-// InvokeContract call that produced this op's events, if any; left
-// empty for non-InvokeContract ops.
+// InvokeContract call that produced this op's events, if any.
+// ProcessLedger passes nil and attaches args AFTER conversion, once the
+// event's own contract is known — args are attached only when the op's
+// invoked contract equals the emitting contract (the OpArgs provenance
+// gate; see the ProcessLedger event loop). The parameter remains for
+// callers that have already established provenance.
 //
 // evIdx is the position of this event within the operation's
 // contract-event list (the caller's range index). It becomes

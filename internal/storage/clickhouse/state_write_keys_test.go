@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -14,6 +15,7 @@ func TestStateWriteKeysQuery_Shape(t *testing.T) {
 		{Ledger: 62056830, TxHash: "ab'cd", OpIndex: 2},
 	})
 	for _, want := range []string{
+		"change_type, key_xdr, entry_xdr, ingested_at", // version column: RMT latest-wins dedup needs it
 		"FROM stellar.ledger_entry_changes",
 		"ledger_seq BETWEEN 62056824 AND 62056830",
 		"entry_type = 'contract_data'",
@@ -97,4 +99,79 @@ func TestChangedWriteKeysForContract(t *testing.T) {
 	if keys := changedWriteKeysForContract(nil, strA); keys != nil {
 		t.Fatalf("empty rows got %v, want nil", keys)
 	}
+}
+
+// A corrupt entry_xdr on a row that SHARES its key with parseable rows
+// must exclude the KEY, not just drop the ROW. Pre-fix the corrupt
+// pre-image (`state`) row below was silently skipped, so the
+// identical-value rewrite looked like a no-pre-image write and the key
+// was promoted to "changed" — the documented "parse failure excludes
+// the key" rule (which the dispatcher twin enforces via its bad-set)
+// was violated exactly where it matters: a lost pre-image can turn an
+// adapter-REJECTED feed into an "accepted" one.
+func TestChangedWriteKeysForContract_CorruptPreImageExcludesSharedKey(t *testing.T) {
+	cidA := xdr.ContractId{0xAA, 0x01}
+	strA, err := strkey.Encode(strkey.VersionByteContract, cidA[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	kShared, eGood := swkEntry(t, cidA, "PYUSD", 7)
+	kOther, ePre := swkEntry(t, cidA, "iBENJI", 1)
+	_, ePost := swkEntry(t, cidA, "iBENJI", 2)
+
+	rows := []entryChangeLite{
+		// Good key_xdr, CORRUPT entry_xdr pre-image…
+		{ChangeIndex: 1, ChangeType: "state", KeyXDR: kShared, EntryXDR: "corrupt-entry!!"},
+		// …followed by a parseable identical-value rewrite of the SAME key.
+		{ChangeIndex: 2, ChangeType: "updated", KeyXDR: kShared, EntryXDR: eGood},
+		// Control: an untainted genuinely-changed key still reports.
+		{ChangeIndex: 3, ChangeType: "state", KeyXDR: kOther, EntryXDR: ePre},
+		{ChangeIndex: 4, ChangeType: "updated", KeyXDR: kOther, EntryXDR: ePost},
+	}
+	keys := changedWriteKeysForContract(rows, strA)
+	if len(keys) != 1 || keys[0] != kOther {
+		t.Fatalf("keys = %v, want only iBENJI — the corrupt pre-image must poison PYUSD's key, not promote it to changed", keys)
+	}
+}
+
+// opChangeAccumulator must keep the LATEST-ingested row per
+// (op, change_index) — ReplacingMergeTree(ingested_at) semantics — not
+// the first-read one, regardless of the order duplicate un-merged parts
+// stream back in.
+func TestOpChangeAccumulator_KeepsLatestVersionPerChangeIndex(t *testing.T) {
+	ref := opRef{Ledger: 62056824, TxHash: "40758bde", OpIndex: 0}
+	t0 := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	t1 := t0.Add(time.Hour)
+
+	mk := func(idx uint32, entry string) entryChangeLite {
+		return entryChangeLite{ChangeIndex: idx, ChangeType: "updated", KeyXDR: "k", EntryXDR: entry}
+	}
+
+	t.Run("newer duplicate replaces older", func(t *testing.T) {
+		acc := newOpChangeAccumulator(1)
+		acc.add(ref, mk(5, "stale"), t0)
+		acc.add(ref, mk(5, "fresh"), t1)
+		got := acc.out[ref]
+		if len(got) != 1 || got[0].EntryXDR != "fresh" {
+			t.Fatalf("rows = %+v, want the t1 (latest ingested_at) row only", got)
+		}
+	})
+	t.Run("older duplicate cannot displace newer", func(t *testing.T) {
+		acc := newOpChangeAccumulator(1)
+		acc.add(ref, mk(5, "fresh"), t1)
+		acc.add(ref, mk(5, "stale"), t0)
+		got := acc.out[ref]
+		if len(got) != 1 || got[0].EntryXDR != "fresh" {
+			t.Fatalf("rows = %+v, want the t1 row kept against a later-read older version", got)
+		}
+	})
+	t.Run("distinct change indexes both kept in order", func(t *testing.T) {
+		acc := newOpChangeAccumulator(1)
+		acc.add(ref, mk(5, "a"), t0)
+		acc.add(ref, mk(6, "b"), t0)
+		got := acc.out[ref]
+		if len(got) != 2 || got[0].EntryXDR != "a" || got[1].EntryXDR != "b" {
+			t.Fatalf("rows = %+v, want [a b]", got)
+		}
+	})
 }

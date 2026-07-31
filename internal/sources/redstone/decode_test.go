@@ -670,9 +670,13 @@ func TestDecode_RealMainnetEvent_BytesWrappedBody(t *testing.T) {
 
 	// OpArgs built to match the real tx's write_prices(updater,
 	// feed_ids, payload) call with feed_ids=["XLM"] — matching the
-	// single entry in updated_feeds.
+	// single entry in updated_feeds. args[0] is the REAL relayer
+	// address from the tx (GASNOA72…, the same SCVal bytes the body's
+	// `updater` field carries): the decoder now enforces body↔args
+	// updater agreement, so a synthetic mismatched updater here would
+	// (correctly) refuse.
 	args := []string{
-		encodeAddressArg(t, relayerG),
+		"AAAAEgAAAAAAAAAAJNcD+hEEOmemJRXrFQ2QJEN6O7YyHQyaEYdP4R8wtQc=",
 		encodeStringVecArg(t, []string{"XLM"}),
 		encodePayloadArg(t),
 	}

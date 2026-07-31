@@ -29,6 +29,15 @@ func NewDecoder(adapterContractID string) *Decoder {
 // Name implements [dispatcher.Decoder].
 func (d *Decoder) Name() string { return SourceName }
 
+// StateWriteContracts implements the dispatcher's optional
+// StateWriteKeyConsumer interface: decodeWritePrices reads
+// events.Event.StateWriteKeys for adapter events — both for exact
+// subset attribution and for the equal-arity corroboration
+// (resolveFeedAttribution) — so the dispatcher resolves the op's
+// value-changed contract-data keys for events of this contract, and
+// only this contract (the walk is skipped for every other op).
+func (d *Decoder) StateWriteContracts() []string { return []string{d.contractID} }
+
 // Matches implements [dispatcher.Decoder]. Byte-equality on
 // topic[0] and string equality on the event's contract ID — both
 // cheap, no SCVal parsing on the hot path.
