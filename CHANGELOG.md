@@ -125,6 +125,35 @@ against.
   stale-serving (never hard-misses a previously-seen asset).
 
 ### Fixed
+- **`/v1/sdex/orderbook` served CROSSED books — zombie offers dead
+  since 2021 quarantined out and lake-verified.** The live XLM/USDC
+  book quoted best bid 0.4327 vs best ask 0.1722 and carried ~46k
+  bids / ~40k asks where the real pair book is a few hundred offers.
+  Root cause: historical entry-change backfill wrote
+  `intra_ledger_seq = 0` on every row, so all same-ledger changes to
+  one offer key TIE on `ledger_entries_current`'s ReplacingMergeTree
+  version and an arbitrary row survives the merge — an offer updated
+  then fully consumed within one ledger can survive as `updated`
+  forever (founding zombies: offers 845025288 / 845025425 / 845025699
+  / 845028065, consumed at ledger 38,224,736± on 2021-11-10, still
+  "live" on 2026-07-31; their losing `removed` rows are physically
+  gone from `ledger_entries_current` but intact in
+  `ledger_entry_changes`). Class fix in the book maintainer: loaded
+  offers whose winning version carries intra 0 (the tie-ambiguous
+  class) are quarantined out of the served book and drained at
+  2,500/tick by a new batched, partition-pruned
+  `OfferRemovedAt(ledger, key)` probe against the change stream —
+  proven-dead offers are dropped for good (offer LedgerKeys are never
+  reused, so a same-ledger removal is conclusive), proven-live ones
+  graduate back in (~1.5 ms/key measured on r1; a fully zombie-laden
+  book converges in hours while serving honestly from the first
+  snapshot). New gauges `stellarindex_sdex_orderbook_crossed_pairs`
+  (the invariant tripwire — a resting book can never be crossed
+  on-chain; sustained non-zero now means a removal the lake never
+  ingested, i.e. a coverage gap) and
+  `stellarindex_sdex_orderbook_pending_offers` (quarantine depth),
+  plus `verify_ok|verify_error` outcomes on the existing maintain
+  metrics.
 - **Six defects from the 2026-07-31 visuals survey.** (1) The
   `/dexes/*` 90d volume panel silently rendered null on all five DEX
   pages: `SourceVolumeHistory` looked up series `'Daily USD volume'`

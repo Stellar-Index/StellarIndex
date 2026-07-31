@@ -1207,8 +1207,17 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 						loadRetryCtx, retryCancel := context.WithTimeout(rootCtx, initialLoadTimeout)
 						loaded = sdexOrderBook.Load(loadRetryCtx) == nil
 						retryCancel()
-					} else if err := sdexOrderBook.Advance(ctx); err != nil {
-						logger.Warn("sdex order book advance", "err", err)
+					} else {
+						if err := sdexOrderBook.Advance(ctx); err != nil {
+							logger.Warn("sdex order book advance", "err", err)
+						}
+						// Drain a bounded batch of the version-tie quarantine:
+						// suspect offers stay unserved until the lake's change
+						// stream proves no removal exists at their own ledger
+						// (the 2026-07-31 crossed-book zombie class).
+						if err := sdexOrderBook.VerifyPending(ctx, v1.SDEXOrderBookVerifyBatch); err != nil {
+							logger.Warn("sdex order book verify", "err", err)
+						}
 					}
 					cancel()
 				}
