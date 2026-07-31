@@ -34,7 +34,7 @@ severity: P1
 | 1 | **Wire paging** — [runbooks/wire-paging.md](runbooks/wire-paging.md) | Needs Healthchecks.io checks + a Discord/Slack webhook CREATED on external accounts I don't hold (every URL on r1 is blank — nothing exists to wire). I do the rest once URLs exist | ~20 min |
 | 2 | **Book the external security review** | Third-party vendor engagement — money + your identity. Longest lead time of anything left | one email |
 | ~~3~~ | ~~SAC-seed archived-row DELETE~~ — **✅ APPROVED by Ash 2026-07-28 ~22:55Z** ("happy with sac-seed delete per your recommendations"). Moved to the loop's post-deploy execution queue (below) | — | — |
-| 4 | ~~v0.21.4~~ **✅ CUT + DEPLOYED 2026-07-29 ("you can cut it"); chain ran.** NEW ASK: **say "cut v0.21.5"** — carries the redstone subset-attribution fix (f51e414d, the REAL 17/17 blocker: the v0.21.4 empty-batch fix addressed a different, already-cleared class). On your word the loop runs: cut → deploy → `projector-replay -source redstone -from 59258375` → full verify → **17/17**. Everything else in v0.21.4's chain is running/done | Fourth tag of the session | one word |
+| 4 | ~~v0.21.4/5/6/7 all cut+deployed on your word; chains ran.~~ NEW ASK (2026-07-31): **say "cut v0.21.8"** — carries the state-write attribution plumbing (landed on main, verify green): exact accepted-feed attribution from value-changing contract-data write keys, closing the LAST 15 blind ledgers (1,626→170→15 this week; the residue is provably unresolvable from event+payload alone). On your word: cut → deploy → `projector-replay -source redstone -from 62056000` → verify → **17/17**. Until then the verdict honestly reads 16/17 (evidence: `evidence/2026-07-31-completeness-verdicts.md`) | One-tag-per-session budget — needs your word | one word |
 
 **~~Reclassified as LOOP-EXECUTABLE~~ — ✅ ALL EXECUTED by the loop
 (2026-07-29): ansible apply + serving flip done, v0.21.2 AND v0.21.3
@@ -130,6 +130,24 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
   on main and ships as v0.21.2 in a LATER session.
 
 ## Loop log (newest first)
+
+- 2026-07-31 ~08:45Z — 🔑 **STATE-WRITE ATTRIBUTION LANDED ON MAIN**
+  (squash of the build agent's 9b919be8; verify green; 20 files,
+  +1,220). Ground truth CORRECTED the design premise: write_prices
+  rewrites EVERY requested feed's entry — the accepted set is the
+  VALUE-CHANGING writes (pre-image Val != post-image Val), verified
+  against all three tx classes at ledger 62056824. Plumbed as
+  `events.Event.StateWriteKeys` from both paths (dispatcher: per-op
+  LedgerEntryChanges; CH re-derive: batched PK lookups on
+  ledger_entry_changes with replacing-parts dedup), per-source opt-in
+  like OpArgs. Redstone attribution now: exact-subset first
+  (arity-checked), payload-median fallback, honest refusal last.
+  Golden fixture pins 62056824 → rwa:iBENJI (the price matched both
+  BENJI twins' medians — unresolvable before). **The 17/17 flip is
+  now one deploy away: inbox #4 asks for the word on v0.21.8.**
+  Meanwhile the r1 tail chain (soroswap wait → all-source verify →
+  taker coverage → mixed3 k6) runs detached; overnight note: the
+  original chain waiter timed out before the verify — replaced.
 
 - 2026-07-31 ~05:15Z — 🔵 **COMPLETENESS 16/17; redstone blind ladder
   1,626 → 170 → 15.** The v0.21.7 redstone replay reached tip and the
