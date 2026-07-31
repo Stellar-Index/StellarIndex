@@ -131,6 +131,27 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-31 ~17:30Z — 📊 **VISUALS PASS COMPLETE: survey top-10 =
+  10/10 BUILT + merged (3 agent waves, specs 1.16.1→1.17.0).**
+  Survey found 10 ranked opportunities + 7 defects; all built same
+  day: order-book depth chart (/markets + /sdex goes live), asset
+  visual pack (source donut/sparklines/change strip/concentration/
+  mint-burn), dexes bespoke suite render (+ the series-name bug that
+  NULLED the 90d volume panel on all 5 DEX pages), protocol TVL bars
+  (lower-bound hatched), pool depth curves, account chart pack,
+  lending/yield real bars, /network chain economics (fee-burn,
+  total-XLM, protocol-upgrade markers — stroop strings, ADR-0003),
+  divergence Δ% series endpoint + threshold band, anomalies
+  donut/histogram/day×reason heatmap. §2.6b pass 2 DONE. New finding
+  → task: /v1/sdex/orderbook serves CROSSED books (stale rows in the
+  in-process live_offers feed) — UI defends, Go investigation queued.
+  ⚠️ LIVE OPS in parallel: the soroswap taker replay LIVELOCKED at
+  63.058M — retro-fill upserts into a compressed trades chunk blew
+  write deadlines (373k retried inserts/h, all recoverable); fix =
+  decompress the 4 compressed chunks between cursor and tip (69GB
+  uncompressed monster chunk grinding, ETA evening; the 22:45Z
+  policy recompresses automatically). Tail chain resumes after.
+
 - 2026-07-31 ~14:15Z — 🔥 **PREWARM/STALE-SERVE LANDED (#13, spec
   1.16.0): no request ever pays for an analytics build.** Background
   sweep warms all 15 protocols × 4 windows (~13–16 min cycle, 20-min
