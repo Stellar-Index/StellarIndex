@@ -2619,6 +2619,18 @@ doesn't serve that)**, first `verify-usd-volume -days 30` → calibrate the
 C4-055/066 alert. Also: SEV-1/2 paging drill + rollback rehearsal —
 evidence files have never been produced across three generations of plans.
 
+### 2.6b Final pre-launch passes (added 2026-07-31, Ash's ask)
+1. **Full audit pass** — one more cold adversarial sweep over the
+   whole surface (post-all-the-July-changes; the last full audit was
+   2026-07-01, and ~40 tags have shipped since).
+2. **Visuals-opportunity pass** — walk every endpoint + explorer page
+   asking "what useful chart/graph/pie is possible from data we
+   already serve but don't visualize?"; build the winners.
+3. **Complete-page load-time pass** — measure EVERY page to FULLY
+   POPULATED (all panels, not just first paint), using COLD random
+   addresses/assets/contracts drawn from the lake so no measurement
+   is a cache hit; fix what misses budget.
+
 ### 2.7 Security + launch hardening
 - Rotate `ratesengine-admin` + MinIO creds (session-exposed); confirm vault
   passphrase rotation; re-enable restore-drill timer.
