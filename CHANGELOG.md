@@ -15,6 +15,44 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **Explorer honesty wave — cold-audit findings across `web/explorer/src`.**
+  Eight fabrication/robustness classes fixed in the explorer only (no
+  API/server changes): (1) `/lending` pools table: an API failure now
+  renders an explicit unavailable state instead of the fabricated
+  "No Blend pools have emitted auction events yet" empty-state, and
+  `PoolRealStats` (hoisted to module scope — it was re-created every
+  parent render) computes TVL/utilization/weighted APRs over PRICED
+  reserves only with the basis labelled, instead of coercing absent
+  `supplied_usd`/`borrowed_usd`/APRs to 0 inside sums and weighted
+  averages; (2) partial trailing daily bucket: a new shared
+  `@/lib/series` helper (`dropPartialTrailingDay`) drops today's
+  accumulating UTC bucket from every daily-grain chart mapper
+  (BespokeSection standalone + grouped panels, BridgeShowcase lines,
+  ProtocolView activity, SourceVolumeHistory, SdexVolumeSection;
+  hourly 24h series keep the live day) and `TimeSeriesChart` headlines
+  "Latest" from the last COMPLETE point; (3) `/network`
+  protocol-upgrade markers now require BOTH sides of a step to be a
+  real (>0) version — lake sentinel rows minted phantom "protocol v0/vN"
+  markers (the field is a uint32 without omitempty, so null-guards never
+  fired); (4) `/anomalies` freeze durations render "—" instead of
+  "NaNd" for missing/garbage timestamps; (5) holder balances render via
+  a BigInt-divide-first `formatBaseUnits`/`scaleBaseUnits`
+  (`@/lib/format`, ADR-0003) instead of `Number()` on >2^53
+  smallest-unit strings (absent → "—", not NaN); SupplyFlowsBar shares
+  the same scaler; (6) `toChartNumber` returns null — the point is
+  dropped — for non-numeric series values (previously plotted as
+  fabricated 0s) and for compact-suffixed figures ("1.2M" previously
+  mis-scaled 10^6× to 1.2); (7) non-parsable point dates are dropped
+  before `setData` instead of the epoch-0 fallback that plotted 1970
+  points and could crash lightweight-charts on duplicate time:0;
+  (8) small honesty items: SdexVolumeSection renders a served 1-point
+  series as the point ("insufficient history"), not a false
+  "unavailable"; the anomalies ReasonHeatmap derives its day columns
+  from the served data's date range, not the client clock; a bespoke
+  block's notes no longer caption other windows' data after a failed
+  window refetch.
+
 ## [v0.21.8] — 2026-07-31
 
 ### Added

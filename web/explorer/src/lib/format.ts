@@ -90,3 +90,64 @@ export function formatRelative(iso: string | null | undefined): string {
 export function formatRelativeTitle(iso: string | null | undefined): string {
   return iso ?? '';
 }
+
+// ── Base-unit (smallest-unit integer string) scaling — ADR-0003 ──────────
+//
+// Balance/supply strings arrive as smallest-unit integers that can exceed
+// 2^53 (stroops, Soroban i128 token units). Number()-then-divide silently
+// rounds them; the repo idiom is BigInt-divide FIRST (see explorer-shared's
+// stroopsToXlm), only letting the already-scaled quotient touch float land.
+
+/**
+ * scaleBaseUnits — smallest-unit integer string → whole-unit JS number
+ * via the BigInt-divide-first path, or null for an absent/garbage value
+ * (callers render "—", never a fabricated zero or NaN). The result is a
+ * float for geometry/compact display; any sub-float precision loss is in
+ * invisible digits, never a mis-scaled magnitude.
+ */
+export function scaleBaseUnits(
+  raw: string | null | undefined,
+  decimals: number,
+): number | null {
+  if (raw == null || raw === '') return null;
+  const t = raw.trim();
+  if (/^-?\d+$/.test(t)) {
+    const scale = 10n ** BigInt(decimals);
+    const v = BigInt(t);
+    return Number(v / scale) + Number(v % scale) / Number(scale);
+  }
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * formatBaseUnits — smallest-unit integer string → grouped whole-unit
+ * display string with up to `maxFrac` fractional digits (trailing zeros
+ * trimmed). Exact BigInt path for integer strings so arbitrarily large
+ * balances keep every displayed digit faithful to the wire; "—" for
+ * absent/garbage.
+ */
+export function formatBaseUnits(
+  raw: string | null | undefined,
+  decimals: number,
+  maxFrac = 4,
+): string {
+  if (raw == null || raw === '') return '—';
+  const t = raw.trim();
+  if (!/^-?\d+$/.test(t)) {
+    const n = scaleBaseUnits(t, decimals);
+    if (n == null) return '—';
+    return n.toLocaleString('en-US', { maximumFractionDigits: maxFrac });
+  }
+  const neg = t.startsWith('-');
+  const abs = BigInt(neg ? t.slice(1) : t);
+  const scale = 10n ** BigInt(decimals);
+  const wholeStr = (abs / scale).toLocaleString('en-US');
+  const fracStr = (abs % scale)
+    .toString()
+    .padStart(decimals, '0')
+    .slice(0, maxFrac)
+    .replace(/0+$/, '');
+  const out = fracStr ? `${wholeStr}.${fracStr}` : wholeStr;
+  return neg ? `-${out}` : out;
+}

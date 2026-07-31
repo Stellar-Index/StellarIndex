@@ -97,11 +97,15 @@ export function NetworkView() {
   // protocol_version first differs from the previous complete day's.
   // Empty when the API doesn't serve protocol_version yet (no
   // fabricated upgrade dates) or no upgrade fell inside the window.
+  // protocol_version is a uint32 with no omitempty, so it is never absent
+  // on the wire — the real "unknown" sentinel is 0 (lake sentinel rows),
+  // which must not mint phantom "protocol v0"/"vN" markers: both sides of
+  // a step must be a real (>0) version.
   const upgradeMarkers = completeBuckets.flatMap((b, i) => {
     if (i === 0) return [];
     const prev = completeBuckets[i - 1].protocol_version;
     const cur = b.protocol_version;
-    if (prev == null || cur == null || cur === prev) return [];
+    if (prev == null || cur == null || prev <= 0 || cur <= 0 || cur === prev) return [];
     return [{ time: Math.floor(Date.parse(`${b.day ?? ''}T00:00:00Z`) / 1000), label: `protocol v${cur}` }];
   });
 

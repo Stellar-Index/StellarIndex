@@ -29,6 +29,9 @@ function fmtTs(iso: string): string {
 function duration(from: string, to: string | null): string {
   const start = new Date(from).getTime();
   const end = to ? new Date(to).getTime() : Date.now();
+  // Missing/garbage timestamps must render "—", never "NaNd" (same
+  // finite-guard as lib/format's formatRelative).
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return '—';
   const s = Math.max(0, Math.round((end - start) / 1000));
   if (s < 90) return `${s}s`;
   if (s < 5400) return `${Math.round(s / 60)}m`;

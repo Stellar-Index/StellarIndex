@@ -11,13 +11,13 @@ import { cn } from '@/lib/cn';
 import { formatCompact } from '@/lib/format';
 import type { NamedLineSeries } from '@/components/charts/LineChart';
 import { CATEGORICAL_PALETTE } from '@/components/charts/DonutChart';
+import { dropPartialTrailingDay, seriesPointTime } from '@/lib/series';
 import { CopyHash } from '../../explorer-shared';
 import { TimeSeriesChart, type ChartTone } from './TimeSeriesChart';
 import {
   BridgeShowcase,
   BreakdownDonuts,
   LineLegend,
-  pointTime,
 } from './BridgeShowcase';
 
 const LineChart = dynamic(
@@ -208,10 +208,14 @@ function GroupedSeriesPanel({
     label: s.name.slice(group.title.length + ' · '.length),
     tone: 'brand',
     color: CATEGORICAL_PALETTE[i % CATEGORICAL_PALETTE.length],
-    data: s.points.map((p) => ({
-      time: pointTime(p.date),
-      value: toChartNumber(p.value),
-    })),
+    // Today's accumulating daily bucket is dropped (phantom-cliff honesty);
+    // points with a non-parsable date or non-numeric value are dropped, not
+    // plotted as 1970/zero fabrications.
+    data: dropPartialTrailingDay(s.points).flatMap((p) => {
+      const time = seriesPointTime(p.date);
+      const value = toChartNumber(p.value);
+      return time == null || value == null ? [] : [{ time, value }];
+    }),
   }));
   const unit = group.series[0]?.unit;
   const grainLabel = days === 1 ? 'hourly' : 'daily';
@@ -314,7 +318,10 @@ export function BespokeSection({
   const hasSeries = (bespoke.series?.length ?? 0) > 0;
   const hasBreakdowns = (bespoke.breakdowns?.length ?? 0) > 0;
   const hasTables = (bespoke.tables?.length ?? 0) > 0;
-  const notes = active?.notes ?? bespoke.notes ?? [];
+  // Notes belong to the ACTIVE window's block only — the initial (90d)
+  // block's caveats must not silently caption another window's data
+  // (they vanish while a refetch is in flight or failed, which is honest).
+  const notes = active?.notes ?? [];
 
   // Nothing to show beyond the heading → don't render an empty band.
   if (
@@ -410,10 +417,10 @@ export function BespokeSection({
               source={source}
             >
               <TimeSeriesChart
-                points={s.points.map((p) => ({
-                  date: p.date,
-                  value: toChartNumber(p.value),
-                }))}
+                points={dropPartialTrailingDay(s.points).flatMap((p) => {
+                  const value = toChartNumber(p.value);
+                  return value == null ? [] : [{ date: p.date, value }];
+                })}
                 label={s.name}
                 unit={s.unit}
                 tone={SERIES_TONES[i % SERIES_TONES.length]}
@@ -630,14 +637,17 @@ function Cell({ value }: { value: string }) {
 // toChartNumber — parse a bespoke series string to a JS number for chart
 // geometry only (values can exceed 2^53 — ADR-0003; never use the result as
 // a served amount). Strips $ / , / % decoration the server may include so
-// the shape still plots; non-finite (a label, an em-dash) → 0 so the chart
-// stays continuous. Exported for BridgeShowcase, which shares the wire
-// shape.
-export function toChartNumber(v: string): number {
-  if (!v) return 0;
-  const cleaned = v.replace(/[$,%\s]/g, '').replace(/[a-zA-Z]+$/, '');
+// the shape still plots. Returns null — callers DROP the point — for a
+// non-numeric value (a label, an em-dash: plotting it as 0 fabricated data)
+// and for compact-suffixed figures ("1.2M"): stripping the suffix mis-scaled
+// them 10^6 off, and a silently-wrong point is worse than a missing one.
+// Exported for BridgeShowcase, which shares the wire shape.
+export function toChartNumber(v: string): number | null {
+  if (!v) return null;
+  const cleaned = v.replace(/[$,%\s]/g, '');
+  if (cleaned === '' || /[a-zA-Z]/.test(cleaned)) return null;
   const n = Number(cleaned);
-  return Number.isFinite(n) ? n : 0;
+  return Number.isFinite(n) ? n : null;
 }
 
 // isContractId — a Soroban C-strkey: starts with 'C', 56 chars, base32 body.

@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import dynamic from 'next/dynamic';
 
 import { formatCompact } from '@/lib/format';
+import { isPartialTodayDate, seriesPointTime } from '@/lib/series';
 
 // TimeSeriesChart — the per-protocol time-series card (on-chain activity +
 // every bespoke `series` entry). Now rendered with TradingView Lightweight
@@ -25,20 +26,6 @@ const LineChart = dynamic(
 export interface ChartPoint {
   date: string; // YYYY-MM-DD, or YYYY-MM-DDTHH:MM for hourly (24h-window) series
   value: number;
-}
-
-// chartPointTime — tolerant date → unix-seconds parse shared by the daily
-// ("YYYY-MM-DD") and hourly ("YYYY-MM-DDTHH:MM", the bespoke 24h-window
-// grain) point shapes. Non-parsable input → 0 so the chart stays continuous.
-function chartPointTime(date: string): number {
-  const iso =
-    date.length === 10
-      ? `${date}T00:00:00Z`
-      : date.length === 16
-        ? `${date}:00Z`
-        : date;
-  const ms = Date.parse(iso);
-  return Number.isFinite(ms) ? Math.floor(ms / 1000) : 0;
 }
 
 export type ChartTone = 'emerald' | 'brand' | 'violet' | 'amber' | 'indigo';
@@ -64,12 +51,15 @@ export function TimeSeriesChart({
    *  gradient id). */
   gradientId?: string;
 }) {
+  // Points with a non-parsable date are dropped before setData — the old
+  // time-0 fallback plotted them at 1970 and two of them fed
+  // lightweight-charts duplicate times (an ascending-order crash).
   const linePoints = useMemo(
     () =>
-      points.map((p) => ({
-        time: chartPointTime(p.date),
-        value: p.value,
-      })),
+      points.flatMap((p) => {
+        const time = seriesPointTime(p.date);
+        return time == null ? [] : [{ time, value: p.value }];
+      }),
     [points],
   );
 
@@ -85,7 +75,10 @@ export function TimeSeriesChart({
   const peak = points.reduce((best, p) => (p.value > best.value ? p : best), points[0]);
   const total = points.reduce((s, p) => s + p.value, 0);
   const avg = total / points.length;
-  const latest = points[points.length - 1].value;
+  // "Latest" headlines the last COMPLETE point: callers drop today's
+  // accumulating daily bucket upstream (dropPartialTrailingDay), and this
+  // guard keeps the headline honest even for a caller that didn't.
+  const lastComplete = [...points].reverse().find((p) => !isPartialTodayDate(p.date)) ?? null;
   const ariaLabel = `${label}: ${points.length} points, peak ${formatCompact(peak.value)}${unitSuffix} on ${peak.date}, average ${formatCompact(Math.round(avg))}${unitSuffix} over the window.`;
 
   return (
@@ -109,8 +102,8 @@ export function TimeSeriesChart({
         <span>
           Latest{' '}
           <span className="font-mono tabular-nums text-ink-body">
-            {formatCompact(latest)}
-            {unitSuffix}
+            {lastComplete != null ? formatCompact(lastComplete.value) : '—'}
+            {lastComplete != null ? unitSuffix : ''}
           </span>
         </span>
       </div>

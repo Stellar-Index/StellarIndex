@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
 import { DonutChart, CATEGORICAL_PALETTE } from '@/components/charts/DonutChart';
-import { formatCompact } from '@/lib/format';
+import { formatBaseUnits, formatCompact, scaleBaseUnits } from '@/lib/format';
 import type { paths } from '@/api/types';
 
 // GET /v1/assets/{id}/holders response body from the generated OpenAPI
@@ -93,7 +93,10 @@ export function HoldersTabPanel({ assetID, decimals = 7 }: { assetID: string; de
                     </Link>
                   </td>
                   <td className="px-4 py-3 text-right font-mono tabular-nums text-ink-body">
-                    {(Number(h.balance) / 10 ** decimals).toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                    {/* Balances are smallest-unit integer strings that can
+                        exceed 2^53 (ADR-0003) — BigInt-divide first, never
+                        Number(); an absent balance renders "—", not NaN. */}
+                    {formatBaseUnits(h.balance, decimals)}
                   </td>
                 </tr>
               ))}
@@ -121,9 +124,11 @@ function HoldersConcentration({
   decimals: number;
 }) {
   if (holders.length <= 10) return null;
+  // Donut geometry only — but still BigInt-divide-first (scaleBaseUnits)
+  // so a >2^53 whale balance isn't rounded before scaling (ADR-0003).
   const scaled = holders.map((h) => {
-    const n = Number(h.balance ?? '');
-    return Number.isFinite(n) && n > 0 ? n / 10 ** decimals : 0;
+    const n = scaleBaseUnits(h.balance, decimals);
+    return n != null && n > 0 ? n : 0;
   });
   const top10 = scaled.slice(0, 10).reduce((a, b) => a + b, 0);
   const rest = scaled.slice(10).reduce((a, b) => a + b, 0);
