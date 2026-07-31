@@ -405,14 +405,24 @@ groups:
       # internal/storage/timescale InsertTrade + BatchInsertTrades)
       # bumps per landed ON-CHAIN trade whose base_amount exactly
       # equals quote_amount (CEX/FX excluded — they scale amounts
-      # differently). Occasional legitimate 1:1 trades exist
-      # (equal-value cross-asset fills), so the threshold tolerates
-      # noise: >25 in a 30-minute window from a SINGLE source is a
-      # sustained stream, not an occasional coincidence. Ticket, not
-      # page — this is a data-quality signal, not an outage.
+      # differently). Legitimate 1:1 trades are COMMON on parity pairs
+      # (yUSDC/USDC, yETH/ETH wrapper redemptions; EUR-stable crosses
+      # — 2026-07-31: a busy wrapper morning tripped the old absolute
+      # threshold on sdex with ~2% of flow). The decode-bug fingerprint
+      # this alert exists for (2026-07-07 Phoenix field-mapping) makes
+      # EVERY trade 1:1, so alert on the FRACTION of the source's flow
+      # (>50%) with a >25 min-volume guard. Ticket, not page — a
+      # data-quality signal, not an outage.
       - alert: stellarindex_dex_trade_unit_ratio_detected
         expr: |
-          sum by (source) (increase(stellarindex_dex_trade_unit_ratio_total[30m])) > 25
+          (
+            sum by (source) (increase(stellarindex_dex_trade_unit_ratio_total[30m])) > 25
+          )
+          and
+          (
+            sum by (source) (increase(stellarindex_dex_trade_unit_ratio_total[30m]))
+              / sum by (source) (increase(stellarindex_trade_inserts_total[30m])) > 0.5
+          )
         for: 5m
         labels:
           severity: ticket
