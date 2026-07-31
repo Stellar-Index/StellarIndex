@@ -360,7 +360,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		}
 		if *useCH {
 			if srW.Ledger >= projFrom {
-				streamer := clickhouse.ReconcileEventStreamer{Addr: *chAddr, NeedOpArgs: src.needsOpArgs}
+				streamer := clickhouse.ReconcileEventStreamer{Addr: *chAddr, NeedOpArgs: src.needsOpArgs, NeedStateWriteKeys: src.needsStateWriteKeys}
 				scopes, servedMins, servedFrom, runFrom, serr := projectionScopes(ctx, store, src, genesis, projFrom, srW.Ledger)
 				if serr != nil {
 					return fmt.Errorf("%s: served floor: %w", src.name, serr)

@@ -283,6 +283,12 @@ func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string,
 			Name:        redstone.SourceName,
 			Decoder:     redstone.NewDecoder(oracle.Redstone.AdapterContract),
 			ContractIDs: []string{oracle.Redstone.AdapterContract},
+			// write_prices stores each ACCEPTED feed's PriceData under a
+			// per-feed contract-data key; the decoder attributes
+			// freshness-filtered batches exactly from those write keys
+			// (events.Event.StateWriteKeys) before falling back to
+			// payload-median alignment.
+			NeedsStateWriteKeys: true,
 		}, true, nil
 	default:
 		// Out of scope per ADR-0032 (sdex, band, soroswap-router,

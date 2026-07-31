@@ -20,6 +20,12 @@ type ReconcileEventStreamer struct {
 	// leg of the 2026-07-08 sep41 completeness OOMs — leave false unless the
 	// source's decoder reads OpArgs.
 	NeedOpArgs bool
+	// NeedStateWriteKeys additionally resolves events.Event.StateWriteKeys
+	// from stellar.ledger_entry_changes (batched point lookups — see
+	// state_write_keys.go). Same opt-in rationale as NeedOpArgs; today only
+	// redstone's decoder reads the keys (exact accepted-feed subset
+	// attribution for freshness-filtered write_prices batches).
+	NeedStateWriteKeys bool
 }
 
 // reconcileStreamWindow is the per-query ledger span for the reconcile event
@@ -43,7 +49,7 @@ const reconcileStreamWindow = 250_000
 // OPTIMIZE needed.
 func (s ReconcileEventStreamer) StreamContractEvents(ctx context.Context, from, to uint32, contractIDs, topic0Syms []string, fn func(events.Event) error) error {
 	return forEachLedgerWindow(from, to, reconcileStreamWindow, func(lo, hi uint32) error {
-		return StreamContractEventsFiltered(ctx, s.Addr, lo, hi, contractIDs, topic0Syms, nil, false, s.NeedOpArgs, fn)
+		return StreamContractEventsFiltered(ctx, s.Addr, lo, hi, contractIDs, topic0Syms, nil, false, s.NeedOpArgs, s.NeedStateWriteKeys, fn)
 	})
 }
 

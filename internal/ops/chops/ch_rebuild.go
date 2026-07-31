@@ -358,6 +358,7 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 				sep41Contracts, sep41Topic0, nil,
 				true,  // FINAL: the dry-run COUNTS (see above)
 				false, // no op_args_xdr: the sep41 decoders decode from topics+data, never OpArgs
+				false, // no state-write keys: sep41 decoders never read them
 				func(ev events.Event) error {
 					for _, src := range sep41Cat {
 						if !enabled(src.name) || !src.dec.Matches(ev) {
