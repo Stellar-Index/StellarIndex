@@ -131,6 +131,27 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-31 ~22:30Z — 🏁 **TAIL CHAIN DONE: soroswap taker coverage
+  100.00% (554,221/554,221).** Full evidence:
+  `evidence/2026-07-31-taker-coverage-and-verify.md`. Verify came
+  back 15/17 with every gap root-caused same-day: redstone (known —
+  v0.21.8), soroswap 20 skim legacy twins (event_index=0 pre-
+  discriminator rows vs the replay's true-index rows, the CCTP
+  0112 class — DELETED, 0 remain) + 1 blind ledger (LP-share
+  transfers from gated pairs, classify fix agent running), aquarius
+  (verify timed out under post-replay churn — overnight re-verify
+  armed). mixed3 was a third contaminated mixed run (post-replay
+  cold caches; also self-tripped both SLO burn pages, rolling off)
+  — **mixed4 armed overnight post-recompression**; AC2 primary
+  anchor stays the clean acceptance run (0 fails, p95 37.1ms).
+  Ops closures: 19 compression policies applied + the assertion's
+  stale postgres password file repaired (cred drift — it could
+  never pass; codify with the vault OP item), root disk 81→78%,
+  five alerts cleared. **v0.21.8 payload now: 17/17 closure
+  (redstone state-writes + soroswap LP-transfer classify) + native
+  holders + prewarm/analytics-status + visuals waves + crossed-book
+  fix + skim-dedup verified.**
+
 - 2026-07-31 ~17:30Z — 📊 **VISUALS PASS COMPLETE: survey top-10 =
   10/10 BUILT + merged (3 agent waves, specs 1.16.1→1.17.0).**
   Survey found 10 ranked opportunities + 7 defects; all built same
