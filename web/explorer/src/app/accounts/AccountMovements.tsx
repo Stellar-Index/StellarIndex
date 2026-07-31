@@ -18,6 +18,7 @@ import {
   THead,
   TR,
 } from '@/components/ui';
+import { DivergingColumns, type DivergingBucket } from '@/components/charts/Bars';
 import { apiGet, asExample } from '@/api/client';
 import type { components } from '@/api/types';
 import {
@@ -31,6 +32,36 @@ type AccountMovementsResp = components['schemas']['AccountMovements'];
 type AccountMovement = components['schemas']['AccountMovement'];
 
 const PAGE_SIZE = 25;
+
+const DAY_FMT = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  timeZone: 'UTC',
+});
+
+/**
+ * buildMovementFlow — daily in/out COUNTS from the loaded movement rows
+ * (received up, sent down; `self` legs touch neither direction). Counts,
+ * not amounts: rows span different assets, and summing e.g. XLM stroops
+ * with USDC units into one bar would be a fabricated total. Exported for
+ * its test.
+ */
+export function buildMovementFlow(movements: AccountMovement[]): DivergingBucket[] {
+  const byDay = new Map<string, { pos: number; neg: number; ms: number }>();
+  for (const m of movements) {
+    const ms = Date.parse(m.ledger_close_time);
+    if (!Number.isFinite(ms)) continue;
+    const day = new Date(ms).toISOString().slice(0, 10);
+    const b = byDay.get(day) ?? { pos: 0, neg: 0, ms };
+    if (m.direction === 'received') b.pos += 1;
+    else if (m.direction === 'sent') b.neg += 1;
+    b.ms = Math.min(b.ms, ms);
+    byDay.set(day, b);
+  }
+  return Array.from(byDay.entries())
+    .sort(([x], [y]) => (x < y ? -1 : 1))
+    .map(([, b]) => ({ label: DAY_FMT.format(new Date(b.ms)), pos: b.pos, neg: b.neg }));
+}
 
 const G_RE = /^G[A-Z2-7]{55}$/;
 
@@ -182,6 +213,7 @@ export function AccountMovementsPanel({ id }: { id: string }) {
   }
 
   const movements = data.movements ?? [];
+  const flow = buildMovementFlow(movements);
 
   return (
     <Panel
@@ -201,6 +233,22 @@ export function AccountMovementsPanel({ id }: { id: string }) {
         <Callout tone="warn" title="Partial coverage">
           {data.coverage_note}
         </Callout>
+      )}
+
+      {movements.length > 0 && flow.length >= 2 && (
+        <div className="space-y-1">
+          <div className="text-[11px] uppercase tracking-wider text-ink-muted">
+            Daily flow — the {movements.length} loaded movements (counts, not
+            value)
+          </div>
+          <DivergingColumns
+            buckets={flow}
+            posLabel="Received"
+            negLabel="Sent"
+            height={110}
+            ariaLabel={`Daily in/out movement counts across the ${movements.length} loaded movements.`}
+          />
+        </div>
       )}
 
       {movements.length === 0 ? (

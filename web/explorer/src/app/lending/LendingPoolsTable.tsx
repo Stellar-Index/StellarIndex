@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
+import { HBarList } from '@/components/charts/Bars';
 import { apiGet, asExample } from '@/api/client';
 import { formatRelative } from '@/lib/format';
 import type { paths } from '@/api/types';
@@ -165,7 +166,43 @@ function PoolRealStats({ pool }: { pool: string }) {
 
   const rows = q.data ?? [];
 
+  // Liquidation-auction distribution across pools — same fetched rows,
+  // no extra request. Renders only when at least one pool has auctions.
+  const auctionRows = rows
+    .filter((p) => (p.auctions_total ?? 0) > 0)
+    .sort((x, y) => (y.auctions_total ?? 0) - (x.auctions_total ?? 0));
+
   return (
+    <>
+      {auctionRows.length > 0 && (
+        <Panel
+          title="Liquidation auctions by pool — all time"
+          hint="Auction events from the indexed Blend event stream; the risk view of which pools actually liquidate."
+          source={asExample('/v1/lending/pools', {})}
+        >
+          <HBarList
+            ariaLabel={`All-time liquidation auctions per pool: ${auctionRows
+              .map(
+                (p) =>
+                  `${BLEND_POOL_META[p.pool ?? '']?.label ?? p.pool} ${(p.auctions_total ?? 0).toLocaleString()}`,
+              )
+              .join(', ')}`}
+            items={auctionRows.map((p) => ({
+              label:
+                BLEND_POOL_META[p.pool ?? '']?.label ??
+                `${(p.pool ?? '').slice(0, 6)}…${(p.pool ?? '').slice(-4)}`,
+              value: p.auctions_total ?? 0,
+              display: (p.auctions_total ?? 0).toLocaleString(),
+              annotation:
+                (p.auctions_24h ?? 0) > 0
+                  ? `${(p.auctions_24h ?? 0).toLocaleString()} in 24h`
+                  : undefined,
+              title: p.pool ?? undefined,
+            }))}
+          />
+        </Panel>
+      )}
+
     <Panel
       title={`Pools${rows.length > 0 ? ` (${rows.length})` : ''}`}
       hint="One row per Blend pool. TVL + utilization read live from pool storage (per-reserve USD); auctions and users from the indexed event stream."
@@ -279,6 +316,7 @@ function PoolRealStats({ pool }: { pool: string }) {
         </table>
       </div>
     </Panel>
+    </>
   );
 }
 

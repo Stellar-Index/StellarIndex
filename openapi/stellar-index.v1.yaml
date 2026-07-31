@@ -18,7 +18,7 @@
 openapi: 3.1.0
 info:
   title: Stellar Index API
-  version: "1.16.0"
+  version: "1.16.1"
   summary: The Stellar network — explorer, history, supply, analytics, and prices.
   description: |
     The Stellar Index API exposes the Stellar network as one
@@ -11253,18 +11253,20 @@ components:
           items:
             type: object
             properties:
-              hour:       { type: string, format: date-time }
-              volume_usd: { type: string, description: "Decimal string." }
-            required: [hour, volume_usd]
+              hour:        { type: string, format: date-time }
+              volume_usd:  { type: string, description: "Decimal string." }
+              trade_count: { type: integer, format: int64, description: "Number of trades in the hour (0 on zero-filled buckets). Powers the trade-count line above the $-volume bars on source charts." }
+            required: [hour, volume_usd, trade_count]
         volume_history_7d:
           type: array
           description: "Same per-hour shape over the trailing 7 days (168 buckets). Populated only when the request includes `sparkline7d`."
           items:
             type: object
             properties:
-              hour:       { type: string, format: date-time }
-              volume_usd: { type: string, description: "Decimal string." }
-            required: [hour, volume_usd]
+              hour:        { type: string, format: date-time }
+              volume_usd:  { type: string, description: "Decimal string." }
+              trade_count: { type: integer, format: int64, description: "Number of trades in the hour (0 on zero-filled buckets)." }
+            required: [hour, volume_usd, trade_count]
       required: [name, class, include_in_vwap, paid, backfill_available, backfill_safe, default_weight, on_chain]
 
     Methodology:

@@ -82,14 +82,16 @@ export function NetworkView() {
   });
 
   const buckets = tpQ.data?.buckets ?? [];
-  const points = buckets.map((b) => ({
+  // Today's bucket is still accumulating (`partial`) — the API contract
+  // (GET /network/throughput) says to exclude it. Pre-fix the chart
+  // plotted it anyway, ending every daily series on a phantom cliff;
+  // drop it from BOTH the series and the headline total (same UXP-16
+  // pattern as NetworkInsight).
+  const completeBuckets = buckets.filter((b) => !b.partial);
+  const points = completeBuckets.map((b) => ({
     time: Math.floor(Date.parse(`${b.day ?? ''}T00:00:00Z`) / 1000),
     value: b[metric] ?? 0,
   }));
-  // Today's bucket is still accumulating (`partial`), so including it in the
-  // headline total under-reports the daily rate and misstates the span. Sum
-  // only whole days and label the total with the count actually summed.
-  const completeBuckets = buckets.filter((b) => !b.partial);
   const total = completeBuckets.reduce((s, b) => s + (b[metric] ?? 0), 0);
 
   const s = statsQ.data;

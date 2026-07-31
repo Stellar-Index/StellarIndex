@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { Badge } from '@/components/ui';
+import { HBarList, PairedBars } from '@/components/charts/Bars';
 import { apiGet, asExample } from '@/api/client';
 import type { components } from '@/api/types';
 import { type Envelope } from '../explorer-shared';
@@ -121,17 +122,25 @@ export function AccountActivitySummaryPanel({ id }: { id: string }) {
 
       {ops.length > 0 && (
         <div>
-          <div className="mb-1 text-[11px] uppercase tracking-wider text-ink-muted">
-            Operations by type
+          <div className="mb-2 text-[11px] uppercase tracking-wider text-ink-muted">
+            Operations by type — all time
           </div>
-          <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-            {ops.map((c) => (
-              <li key={c.op_type} className="flex items-center gap-1.5">
-                <span className="text-ink-body">{c.op_type}</span>
-                <span className="font-mono tabular-nums text-ink-muted">{numFmt.format(c.count)}</span>
-              </li>
-            ))}
-          </ul>
+          {/* The account's operational fingerprint: is this a payment
+              processor (payments dominate), a market maker (manage_offer),
+              or a DeFi user (invoke_host_function)? Bars share one linear
+              scale, largest first. */}
+          <HBarList
+            ariaLabel={`Operations by type: ${ops
+              .map((c) => `${c.op_type} ${numFmt.format(c.count)}`)
+              .join(', ')}`}
+            items={[...ops]
+              .sort((x, y) => y.count - x.count)
+              .map((c) => ({
+                label: c.op_type,
+                value: c.count,
+                display: numFmt.format(c.count),
+              }))}
+          />
         </div>
       )}
 
@@ -160,37 +169,38 @@ export function AccountActivitySummaryPanel({ id }: { id: string }) {
 
       {bridge && bridgeTotal > 0 && (
         <div>
-          <div className="mb-1 text-[11px] uppercase tracking-wider text-ink-muted">
-            Bridge transfers
+          <div className="mb-2 text-[11px] uppercase tracking-wider text-ink-muted">
+            <Link href="/bridges" className="hover:text-brand-600">
+              Bridge transfers
+            </Link>{' '}
+            — inbound vs outbound
           </div>
-          <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-body">
-            <li>
-              <Link href="/bridges" className="hover:text-brand-600">
-                Rozo
-              </Link>{' '}
-              out{' '}
-              <span className="font-mono tabular-nums text-ink-muted">
-                {numFmt.format(bridge.rozo_outbound_payments)}
-              </span>{' '}
-              / in{' '}
-              <span className="font-mono tabular-nums text-ink-muted">
-                {numFmt.format(bridge.rozo_inbound_payments)}
-              </span>
-            </li>
-            <li>
-              <Link href="/bridges" className="hover:text-brand-600">
-                CCTP
-              </Link>{' '}
-              burns{' '}
-              <span className="font-mono tabular-nums text-ink-muted">
-                {numFmt.format(bridge.cctp_outbound_burns)}
-              </span>{' '}
-              / mints{' '}
-              <span className="font-mono tabular-nums text-ink-muted">
-                {numFmt.format(bridge.cctp_inbound_mints)}
-              </span>
-            </li>
-          </ul>
+          {/* Paired per-bridge bars on one shared count scale: inbound
+              (Rozo inbound payments / CCTP mints) vs outbound (Rozo
+              outbound payments / CCTP burns). */}
+          <PairedBars
+            ariaLabel={`Bridge transfers: Rozo in ${bridge.rozo_inbound_payments}, out ${bridge.rozo_outbound_payments}; CCTP mints ${bridge.cctp_inbound_mints}, burns ${bridge.cctp_outbound_burns}`}
+            aLabel="Inbound"
+            bLabel="Outbound"
+            aColor="var(--color-up)"
+            bColor="var(--color-down)"
+            rows={[
+              {
+                label: 'Rozo',
+                a: bridge.rozo_inbound_payments,
+                b: bridge.rozo_outbound_payments,
+                aDisplay: `${numFmt.format(bridge.rozo_inbound_payments)} in`,
+                bDisplay: `${numFmt.format(bridge.rozo_outbound_payments)} out`,
+              },
+              {
+                label: 'CCTP',
+                a: bridge.cctp_inbound_mints,
+                b: bridge.cctp_outbound_burns,
+                aDisplay: `${numFmt.format(bridge.cctp_inbound_mints)} mints`,
+                bDisplay: `${numFmt.format(bridge.cctp_outbound_burns)} burns`,
+              },
+            ]}
+          />
           <p className="mt-1 text-[11px] text-ink-faint">{bridge.note}</p>
         </div>
       )}

@@ -90,6 +90,9 @@ interface CoinPriceRow {
   // supply and market cap are the canonical issuer questions.
   circulating_supply?: string | null;
   market_cap_usd?: string | null;
+  // Per-asset display scale for circulating_supply (classic assets are
+  // 7; SEP-41 tokens vary). Served on every AssetDetail row.
+  decimals?: number;
 }
 
 async function fetchIssuerCoins(gStrkey: string): Promise<Map<string, CoinPriceRow>> {
@@ -498,8 +501,14 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
                       </Td>
                       <Td align="right">
                         <span className="font-mono tabular-nums">
+                          {/* Scale by the asset's OWN decimals — the old
+                              /1e7 hardcode misstated supply for any
+                              non-7-decimals SEP-41 asset. */}
                           {coin?.circulating_supply
-                            ? formatCompact(Number(coin.circulating_supply) / 1e7)
+                            ? formatCompact(
+                                Number(coin.circulating_supply) /
+                                  10 ** (coin.decimals ?? 7),
+                              )
                             : '—'}
                         </span>
                       </Td>

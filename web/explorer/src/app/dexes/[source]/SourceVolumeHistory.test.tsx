@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-import { SourceVolumeHistory } from './SourceVolumeHistory';
+import { SourceVolumeHistory, isUsdVolumeSeries } from './SourceVolumeHistory';
 
 vi.mock('@/api/client', async () => {
   const actual = await vi.importActual<typeof import('@/api/client')>('@/api/client');
@@ -20,15 +20,35 @@ function renderIt(source = 'soroswap') {
   );
 }
 
+describe('isUsdVolumeSeries', () => {
+  it('matches the REAL wire name ("USD volume", bespoke_dex.go dexSeriesVolume)', () => {
+    expect(isUsdVolumeSeries('USD volume')).toBe(true);
+  });
+
+  it('survives cosmetic label edits (case / prefix)', () => {
+    expect(isUsdVolumeSeries('Daily USD volume')).toBe(true);
+    expect(isUsdVolumeSeries('usd Volume')).toBe(true);
+  });
+
+  it('never matches grouped per-pair series or unrelated series', () => {
+    expect(isUsdVolumeSeries('Top pairs · XLM/USDC')).toBe(false);
+    expect(isUsdVolumeSeries('Trades')).toBe(false);
+    expect(isUsdVolumeSeries('Unique traders')).toBe(false);
+  });
+});
+
 describe('SourceVolumeHistory', () => {
-  it('renders the 90d USD-volume chart from the protocol bespoke series', async () => {
+  it('renders the 90d USD-volume chart from the protocol bespoke series (wire name "USD volume")', async () => {
     vi.mocked(apiGet).mockResolvedValue({
       data: {
         bespoke: {
           category: 'dex',
           series: [
             {
-              name: 'Daily USD volume',
+              // The REAL wire name — internal/storage/timescale/bespoke_dex.go
+              // emits "USD volume". The pre-fix test mocked 'Daily USD volume'
+              // and green-lit a panel that rendered null in production.
+              name: 'USD volume',
               unit: 'USD',
               points: [
                 { date: '2026-07-27', value: '1000.50' },

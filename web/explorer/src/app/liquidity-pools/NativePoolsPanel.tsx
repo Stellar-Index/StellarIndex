@@ -5,62 +5,19 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
+import {
+  PoolDepthDetail,
+  type PoolDepthRow,
+  assetLabel,
+  displayUnits,
+} from './PoolDepthDetail';
 
-interface ReserveSide {
-  asset: string;
-  decimals: number;
-  reserve: string;
-}
-
-interface DepthSide {
-  max_input: string;
-  output: string;
-}
-
-interface DepthLevel {
-  slippage_pct: string;
-  asset_a_in: DepthSide;
-  asset_b_in: DepthSide;
-}
-
-interface LiquidityPoolRow {
-  pool: string;
+interface LiquidityPoolRow extends PoolDepthRow {
   pool_hex: string;
   model: string;
-  fee_bps: number;
-  as_of_ledger: number;
   trustlines: number;
   total_shares: string;
-  reserve_a: ReserveSide;
-  reserve_b: ReserveSide;
   mid_price_a_in_b: string | null;
-  mid_price_b_in_a: string | null;
-  depth: DepthLevel[];
-}
-
-/**
- * Scale an exact base-unit integer string by 10^decimals for DISPLAY.
- * The API keeps reserves as exact decimal strings (ADR-0003); floats
- * appear only here, at the presentation edge.
- */
-function displayUnits(baseUnits: string, decimals: number): string {
-  if (!/^\d+$/.test(baseUnits)) return '—';
-  const padded = baseUnits.padStart(decimals + 1, '0');
-  const whole = padded.slice(0, padded.length - decimals) || '0';
-  const frac = decimals > 0 ? padded.slice(padded.length - decimals) : '';
-  const n = Number(`${whole}.${frac || '0'}`);
-  if (!Number.isFinite(n)) return `${whole}`;
-  if (n >= 1000) {
-    return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(n);
-  }
-  return new Intl.NumberFormat('en-US', { maximumSignificantDigits: 6 }).format(n);
-}
-
-/** Short label for a canonical asset_id ("native" → XLM; "CODE-ISSUER" → CODE). */
-function assetLabel(id: string): string {
-  if (id === 'native') return 'XLM';
-  const dash = id.indexOf('-');
-  return dash > 0 ? id.slice(0, dash) : id;
 }
 
 function midPriceLabel(mid: string | null): string {
@@ -212,44 +169,7 @@ export function NativePoolsPanel() {
                     {open && (
                       <tr className="border-b border-line/60 bg-surface-subtle/50">
                         <td colSpan={7} className="px-3 py-3">
-                          {row.depth.length === 0 ? (
-                            <p className="text-xs text-ink-muted">
-                              One side of this pool is empty — no meaningful depth.
-                            </p>
-                          ) : (
-                            <div className="space-y-2">
-                              <table className="w-full max-w-2xl text-xs">
-                                <thead>
-                                  <tr className="text-left text-ink-muted">
-                                    <th className="py-1 pr-3 font-medium">Within slippage</th>
-                                    <th className="py-1 pr-3 text-right font-medium">Sell {a} → get {b}</th>
-                                    <th className="py-1 text-right font-medium">Sell {b} → get {a}</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {row.depth.map((lvl) => (
-                                    <tr key={lvl.slippage_pct} className="border-t border-line/40">
-                                      <td className="py-1 pr-3">{lvl.slippage_pct}%</td>
-                                      <td className="py-1 pr-3 text-right tabular-nums">
-                                        {displayUnits(lvl.asset_a_in.max_input, row.reserve_a.decimals)} {a} →{' '}
-                                        {displayUnits(lvl.asset_a_in.output, row.reserve_b.decimals)} {b}
-                                      </td>
-                                      <td className="py-1 text-right tabular-nums">
-                                        {displayUnits(lvl.asset_b_in.max_input, row.reserve_b.decimals)} {b} →{' '}
-                                        {displayUnits(lvl.asset_b_in.output, row.reserve_a.decimals)} {a}
-                                      </td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                              <p className="text-[11px] leading-relaxed text-ink-muted">
-                                Largest trade whose average execution price stays within the tier of the mid
-                                price, under the constant-product model ({row.fee_bps} bps fee on input),
-                                from reserves as of ledger {row.as_of_ledger.toLocaleString('en-US')}.
-                                Pool id {row.pool}.
-                              </p>
-                            </div>
-                          )}
+                          <PoolDepthDetail row={row} />
                         </td>
                       </tr>
                     )}
