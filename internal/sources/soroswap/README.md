@@ -47,9 +47,12 @@ after any reserves-changing operation — this is hard-coded in the
 pair contract's `update()` function (verified in
 `contracts/pair/src/lib.rs`).
 
-Our decoder groups events by `(ledger, tx_hash, op_index)` and
-expects `swap` + `sync` in that order. Missing sync = reject the
-swap with a metric counter; never emit an incomplete trade.
+Our decoder groups events by `(ledger, tx_hash, op_index, pair)`
+and completes the pair in EITHER arrival order — mainnet has real
+cases of `sync` preceding `swap` within the op (e.g. ledger
+57,403,300 tx `be7028b9…`, sync at event_index 6, swap at 7).
+Missing sync = reject the swap with a metric counter; never emit an
+incomplete trade.
 
 ### Q2 — `sync` also fires without a swap
 
@@ -69,6 +72,32 @@ Post-P23 (CAP-67), Soroban contracts that also emit classic asset
 events may use the unified 4-topic shape. Soroswap's own events
 remain 2-topic `(<event_name>, <pair_contract>)` — unrelated to
 CAP-67. The 4-topic shape never appears on Soroswap pair contracts.
+
+### Q5 — a successful `swap` event is NOT always a trade
+
+`pair.swap()` is directly invokable (Uniswap-v2-style) and accepts
+any argument combination that keeps K non-decreasing — including
+value movement confined to ONE token side. Real mainnet case:
+ledger 57,403,300 settled `amount_1_in=265, amount_1_out=70` with
+both token0 amounts zero. No cross-token exchange means no (base,
+quote, price), so the decoder classifies it a RECOGNIZED NO-OP
+(`ErrNonDirectionalSwap` internally; zero projected rows, nil error)
+rather than a decode error — a decode error there held the ADR-0033
+completeness re-derive blind (undecodable-but-matched) on that
+ledger.
+
+### Q6 — the pair is ALSO the SEP-41 token of its own LP shares
+
+Registered pairs emit Symbol-topic[0] `transfer` / `mint` / `burn`
+(lake-verified 2026-07-31: 1,622 mint / 907 transfer / 333 burn
+all-time across the 230 registered pairs; `approve` is in the token
+interface but has never fired) alongside the String-prefixed
+protocol namespace. `classify()` enumerates them (`EventPairToken`,
+EVERY-event principle) but `Matches()` deliberately does NOT claim
+them: they belong to the sep41_transfers/sep41_supply domain, and
+the dispatcher is first-match-wins — claiming them here would
+silently swallow any LP-share token an operator later adds to
+`watched_sep41_contracts`.
 
 ## Event topic reference
 

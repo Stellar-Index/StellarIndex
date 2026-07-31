@@ -1,6 +1,7 @@
 package soroswap
 
 import (
+	"errors"
 	"sync"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -38,6 +39,9 @@ type PairTokens struct {
 //
 // Other pair-contract events (deposit/withdraw) match but produce
 // no output — they're not trades and have their own follow-ups.
+// The pair's LP-SHARE SEP-41 token events (transfer/mint/burn/
+// approve, Symbol topic[0]) are classified but NOT claimed — see
+// the EventPairToken arm in Matches.
 //
 // Per docs/architecture/ingest-pipeline.md the dispatcher is
 // serial, but the mutex is belt-and-braces and also lets operator
@@ -65,6 +69,10 @@ type Decoder struct {
 	// SourceDecodeErrorsTotal in PR 165d.
 	evictedOrphans     int
 	skippedUnknownPair int
+	// skippedNonDirectional counts completed swap+sync pairs whose
+	// swap carried no cross-token exchange (ErrNonDirectionalSwap) —
+	// recognized no-ops, not decode errors.
+	skippedNonDirectional int
 }
 
 // NewDecoder constructs a Soroswap Decoder with empty state.
@@ -156,6 +164,19 @@ func (d *Decoder) Matches(ev events.Event) bool {
 	if kind == "" {
 		return false
 	}
+	// LP-share (pair-token) SEP-41 events are classified (the pair WASM
+	// emits them — EVERY-event enumeration) but deliberately NOT
+	// claimed: they are the sep41_transfers/sep41_supply domain, and
+	// the dispatcher routes each event to the FIRST decoder whose
+	// Matches returns true — claiming them here would silently swallow
+	// the events of any LP-share token an operator later adds to
+	// [supply] watched_sep41_contracts. Soroswap projects nothing from
+	// them either way (expected-zero), so not claiming them is the
+	// honest AND safe arm. (Verified 2026-07-31: no watched SEP-41
+	// contract is a registered pair, so nothing changes today.)
+	if kind == EventPairToken {
+		return false
+	}
 	if kind == EventNewPair {
 		// Soroswap has more than one factory (the primary + launch-era
 		// ones); gate on the full verified set so no factory's pairs are
@@ -233,7 +254,13 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	if len(completed) == 0 {
 		return nil, nil // still buffering
 	}
+	return d.emitCompleted(completed)
+}
 
+// emitCompleted turns completed swap+sync pairs into TradeEvents,
+// skipping (with counters) the two recognized non-trade classes:
+// unknown-pair token mappings and non-directional swaps.
+func (d *Decoder) emitCompleted(completed []RawPair) ([]consumer.Event, error) {
 	out := make([]consumer.Event, 0, len(completed))
 	for _, r := range completed {
 		d.mu.RLock()
@@ -252,6 +279,21 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		}
 		trade, err := decodeSwap(r, tokens.Token0, tokens.Token1)
 		if err != nil {
+			// Non-directional swap: the body decoded cleanly but moved
+			// value within one token side only (direct pair.swap()
+			// invocation — see ErrNonDirectionalSwap). A real,
+			// recognized on-chain event that is NOT a trade: project
+			// zero rows and return nil so the ADR-0033 completeness
+			// re-derive counts it as expected-zero instead of going
+			// blind (undecodable-but-matched) on its ledger. Same
+			// recognized-no-op contract as redstone's empty
+			// write_prices batches.
+			if errors.Is(err, ErrNonDirectionalSwap) {
+				d.mu.Lock()
+				d.skippedNonDirectional++
+				d.mu.Unlock()
+				continue
+			}
 			return nil, err
 		}
 		out = append(out, TradeEvent{Trade: trade})
@@ -273,4 +315,13 @@ func (d *Decoder) SkippedUnknownPair() int {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.skippedUnknownPair
+}
+
+// SkippedNonDirectional is the count of completed swap+sync pairs
+// whose swap carried no cross-token exchange (recognized no-ops;
+// see ErrNonDirectionalSwap).
+func (d *Decoder) SkippedNonDirectional() int {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.skippedNonDirectional
 }

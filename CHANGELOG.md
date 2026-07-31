@@ -125,6 +125,28 @@ against.
   stale-serving (never hard-misses a previously-seen asset).
 
 ### Fixed
+- **soroswap: non-directional swaps are recognized no-ops, not decode
+  errors — closes the last soroswap undecodable-but-matched blind
+  ledger (57,403,300).** The lake disproves the "a well-formed swap
+  has exactly one in/out pair non-zero" assumption: `pair.swap()` is
+  directly invokable (Uniswap-v2-style) and accepts any argument
+  combination keeping K non-decreasing, so a swap can settle with all
+  value movement confined to ONE token side (the real case: pair
+  CAM7DY…, tx be7028b9…, `amount_1_in=265, amount_1_out=70`, both
+  token0 amounts zero). That is a real, recognized on-chain event but
+  NOT a trade — no (base, quote, price) exists — so `decodeSwap` now
+  surfaces `ErrNonDirectionalSwap` and the Decoder projects zero rows
+  with nil error (same recognized-no-op contract as redstone's empty
+  `write_prices` batches), flipping the blind ledger to verifiable
+  expected-zero under the ADR-0033 honest-blind accounting. Golden
+  test pins the real lake bytes. Alongside, `classify()` now
+  enumerates the pair WASM's LP-share SEP-41 token events
+  (`transfer`/`mint`/`burn`/`approve`, lake-verified: 1,622/907/333/0
+  across all 230 registered pairs) as `EventPairToken` — classified
+  per the EVERY-event principle but deliberately NOT claimed by
+  `Matches()`: they are the sep41 domain, and the dispatcher is
+  first-match-wins, so claiming them would silently swallow any
+  LP-share token later added to `watched_sep41_contracts`.
 - **`/v1/sdex/orderbook` served CROSSED books — zombie offers dead
   since 2021 quarantined out and lake-verified.** The live XLM/USDC
   book quoted best bid 0.4327 vs best ask 0.1722 and carried ~46k
