@@ -43,8 +43,11 @@ interface CurrencyDetail {
   rate_usd: number; // 1 USD = N {from}
   inverse_usd: number; // 1 {from} = N USD
   cross_rates: Record<string, number>; // {to: 1 {from} = N {to}}
-  published_at?: string;
-  source?: string;
+  // NOTE: no `source`/`published_at` here — neither endpoint this page
+  // reads serves per-rate provenance, and the old declared-but-never-
+  // populated fields left a permanently blank "Source: …" line (survey
+  // 2026-07-31 defect #5). Re-add only when a real provenance field
+  // exists on the wire.
 }
 
 interface VerifiedCurrencyEntry {
@@ -234,12 +237,6 @@ export default async function ConvertPage({ params }: { params: Params }) {
             1 {t} = {formatRate(inverse)} {f}
           </p>
         )}
-        {detail?.source && (
-          <p className="text-xs text-ink-muted">
-            Source: {detail.source}
-            {detail.published_at && ` · published ${formatDate(detail.published_at)}`}
-          </p>
-        )}
       </header>
 
       <ConvertPair from={f} to={t} initialRate={rate} initialInverse={inverse} />
@@ -268,7 +265,7 @@ export default async function ConvertPage({ params }: { params: Params }) {
           </div>
           <p className="mt-4 text-xs text-ink-muted">
             All values calculated at the current mid-market rate of 1 {f} = {formatRate(rate)} {t}.
-            Rates update on each {detail?.source ?? 'forex source'} refresh tick.
+            Rates update on each forex-source refresh tick.
           </p>
         </section>
       )}
@@ -313,12 +310,3 @@ function formatRateForMeta(n: number): string {
   return n.toFixed(6);
 }
 
-function formatDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString(undefined, {
-      year: 'numeric', month: 'short', day: 'numeric',
-    });
-  } catch {
-    return iso;
-  }
-}

@@ -259,11 +259,19 @@ export function BespokeSection({
   bespoke,
   source,
   name,
+  omitSeries,
 }: {
   bespoke: Bespoke;
   source: RequestExample;
   /** Protocol slug — the window refetch re-hits /v1/protocols/{name}. */
   name: string;
+  /**
+   * Optional series filter: series whose name matches are NOT rendered
+   * (applies to window refetches too). Used by the /dexes/[source] host,
+   * which renders the standalone USD-volume series in its own panel and
+   * would otherwise show it twice.
+   */
+  omitSeries?: (name: string) => boolean;
 }) {
   const [days, setDays] = useState<WindowDays>(DEFAULT_WINDOW_DAYS);
 
@@ -291,7 +299,10 @@ export function BespokeSection({
         : (data ?? null);
 
   const isBridge = bespoke.category === 'bridge';
-  const activeSeries = useMemo(() => active?.series ?? [], [active]);
+  const activeSeries = useMemo(() => {
+    const all = active?.series ?? [];
+    return omitSeries ? all.filter((s) => !omitSeries(s.name)) : all;
+  }, [active, omitSeries]);
   const { standalone, groups } = useMemo(
     () => splitSeriesGroups(activeSeries),
     [activeSeries],

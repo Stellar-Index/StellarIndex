@@ -17,6 +17,7 @@ import {
 } from '@/components/ui';
 import { DonutChart } from '@/components/charts/DonutChart';
 import { categoryTone, protocolMeta, PROTOCOLS } from './registry';
+import { ProtocolTvlPanel, type ProtocolTvl } from './ProtocolTvlPanel';
 
 // Mirrors internal/api/v1/protocols.go ProtocolView.
 interface ProtocolCard {
@@ -31,6 +32,8 @@ interface ProtocolCard {
   // '—' rather than a fabricated "0 events" claim.
   events_24h?: number;
   completeness?: { complete: boolean; watermark_ledger: number };
+  // Served on rows with a TVL derivation (the AMMs); absent elsewhere.
+  tvl?: ProtocolTvl | null;
 }
 
 /**
@@ -161,6 +164,11 @@ export function ProtocolsIndex({
           />
         </div>
       )}
+
+      {/* TVL bar — renders only when a visible protocol carries a served
+          TVL (the AMMs); the static-registry fallback and TVL-less
+          categories get NO chart rather than fabricated zeros. */}
+      <ProtocolTvlPanel rows={visible} />
 
       {!lockedCategory && categories.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 text-xs">

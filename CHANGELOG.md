@@ -16,6 +16,35 @@ against.
 ## [Unreleased]
 
 ### Added
+- **Explorer visuals — quick-win wave over data already on the wire.**
+  Five under-visualized surfaces now chart what their pages already
+  fetch, reusing the shared chart system plus three new bar
+  primitives (`web/explorer/src/components/charts/Bars.tsx`:
+  `HBarList`, `PairedBars`, `DivergingColumns`): (1) `/dexes/[source]`
+  renders the full `/v1/protocols/{name}` bespoke DEX suite (KPI
+  cards, trades + unique-traders series, top-pairs multi-line,
+  volume-by-pair donut, window pills) via a shared `BespokeSection`
+  with the standalone USD-volume series de-duplicated against the
+  page's own 90d volume panel; (2) `/protocols` (and every locked
+  category page over `ProtocolsIndex`) charts per-protocol TVL as a
+  bar list with the priced/unpriced honesty split — "≥" prefix +
+  hatched tail + `pools_priced/pools_total` on lower-bound rows, the
+  server's `basis` as the tooltip, and NO bar for protocols without a
+  TVL derivation; (3) `/liquidity-pools` expanded rows replace the
+  nested depth tables with per-direction slippage/depth bars (one
+  chart per direction — different units never share an axis) and a
+  reserve-composition donut valued at the pool's own mid price;
+  (4) `/accounts/[g]` gains an account-character pack: ops-by-type
+  bars, cumulative-USD trade area + volume-by-venue donut over the
+  loaded priced trades, daily in/out diverging movement counts
+  (counts, not cross-asset amount sums), and inbound-vs-outbound
+  bridge bars; (5) `/lending/[pool]` reserves get real
+  supplied-vs-borrowed, fixed-scale utilization (near-cap flagged),
+  and supply-vs-borrow APR bars replacing the 16px CSS strips, the
+  `/lending` index gets an all-time liquidation-auctions-by-pool bar,
+  and `/yield` swaps its static `CategoryHub` for the live
+  `ProtocolsIndex lockedCategory="yield"` directory (the `/bridges`
+  pattern).
 - **Protocol analytics are warm by construction, and degradation is
   now explicit on the wire (spec 1.16.0).** Under replay load every
   on-demand `/v1/protocols/{name}` bespoke build died at the request
@@ -46,6 +75,32 @@ against.
   stale-serving (never hard-misses a previously-seen asset).
 
 ### Fixed
+- **Six defects from the 2026-07-31 visuals survey.** (1) The
+  `/dexes/*` 90d volume panel silently rendered null on all five DEX
+  pages: `SourceVolumeHistory` looked up series `'Daily USD volume'`
+  but the backend emits `"USD volume"` (`bespoke_dex.go`
+  `dexSeriesVolume`) — and its test mocked the wrong name, green-
+  lighting the blank. Now matched case-insensitively by substring
+  (grouped `"Top pairs · …"` names excluded) with the test pinned to
+  the real wire name. (2) `/network`'s throughput chart plotted
+  today's still-accumulating `partial` bucket — a phantom end-of-
+  series cliff daily — despite the API contract saying to exclude it;
+  the series now drops it like `NetworkInsight` (UXP-16) always did.
+  (3) OpenAPI drift (spec 1.16.1): `Source.volume_history_24h[]` /
+  `volume_history_7d[]` items were missing the `trade_count` field
+  the server has always emitted (`sources.go` `VolumeBucket`) and the
+  venue chart consumes — added to the spec + all three generated
+  artifacts. (4) `/issuers/[g]` scaled circulating supply with a
+  hardcoded `/1e7` — wrong for any non-7-decimals SEP-41 asset; now
+  `10 ** decimals` from the same `AssetDetail` row. (5) `/convert`
+  carried a declared-but-never-populated `detail.source` /
+  `published_at` pair whose "Source: … published …" line could never
+  render — dead fields + dead JSX removed. (6) `/aggregators`'
+  routed-volume table filtered to `kind === 'router'`, silently
+  dropping every `aggregator-vault` row the endpoint returns — all
+  registry rows now render with a Kind column; vault rows show an
+  honest "n/a — holds capital, doesn't route trades" instead of the
+  endpoint's placeholder zeros.
 - **Explorer honesty sweep: absent API data no longer renders as a
   zero or a "no data exists" claim.** The API omits analytics blocks
   when a reader degrades (`omitempty` — e.g. the protocol roster's

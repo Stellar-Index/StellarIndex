@@ -14415,6 +14415,11 @@ export interface components {
                 hour: string;
                 /** @description Decimal string. */
                 volume_usd: string;
+                /**
+                 * Format: int64
+                 * @description Number of trades in the hour (0 on zero-filled buckets). Powers the trade-count line above the $-volume bars on source charts.
+                 */
+                trade_count: number;
             }[];
             /** @description Same per-hour shape over the trailing 7 days (168 buckets). Populated only when the request includes `sparkline7d`. */
             volume_history_7d?: {
@@ -14422,6 +14427,11 @@ export interface components {
                 hour: string;
                 /** @description Decimal string. */
                 volume_usd: string;
+                /**
+                 * Format: int64
+                 * @description Number of trades in the hour (0 on zero-filled buckets).
+                 */
+                trade_count: number;
             }[];
         };
         Methodology: {

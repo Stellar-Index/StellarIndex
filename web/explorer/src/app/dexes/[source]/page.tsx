@@ -5,6 +5,7 @@ import { ExternalLink } from 'lucide-react';
 
 import { Breadcrumbs } from '@/components/ui';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, serializeJsonLd } from '@/lib/seo';
+import { DexAnalyticsSection } from './DexAnalyticsSection';
 import { PairReservesPanel } from './PairReservesPanel';
 import { PoolsTable } from './PoolsTable';
 import { SourceStatsPanel } from './SourceStatsPanel';
@@ -132,6 +133,12 @@ export default async function SourceDetailPage({
       </header>
 
       <SourceStatsPanel source={source} />
+
+      {/* Per-DEX bespoke analytics suite (KPIs, trades/traders series,
+          top-pairs multi-line, volume-by-pair donut) — the same
+          /v1/protocols/{source} block the protocol page renders; absent
+          when the API serves no bespoke block. */}
+      <DexAnalyticsSection source={source} />
 
       <SourceTopChart source={source} sourceName={info.name} />
 

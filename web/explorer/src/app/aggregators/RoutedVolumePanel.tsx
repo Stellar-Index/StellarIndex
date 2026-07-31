@@ -38,9 +38,12 @@ function fmtAgo(iso: string | null): string {
  * RoutedVolumePanel — live routed-via attribution from
  * /v1/aggregators: how many trades (and how much USD volume)
  * reached the underlying DEX pairs via each registered router over
- * the trailing 24 h. Vault-kind entries never accrue per-tx tags
- * (their capital state lives on the protocol pages), so this table
- * shows routers only.
+ * the trailing 24 h. EVERY registry row renders — pre-fix this
+ * filtered to kind === 'router' and silently dropped the
+ * aggregator-vault entries the endpoint returns (survey 2026-07-31
+ * defect #6). Vault-kind entries never accrue per-tx routing tags
+ * (their capital state lives on the protocol pages), so their
+ * routed columns render "n/a" — not a zero-claim.
  */
 export function RoutedVolumePanel() {
   const q = useQuery<AggregatorRow[]>({
@@ -52,12 +55,15 @@ export function RoutedVolumePanel() {
     refetchInterval: 60_000,
   });
 
-  const routers = (q.data ?? []).filter((r) => r.kind === 'router');
+  // Routers first (they carry the live numbers), then vaults.
+  const rows = [...(q.data ?? [])].sort((a, b) =>
+    a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'router' ? -1 : 1,
+  );
 
   return (
     <Panel
       title="Routed volume (24h)"
-      hint="Trades tagged routed_via — same-tx attribution of router invocations to underlying pair trades"
+      hint="Trades tagged routed_via — same-tx attribution of router invocations to underlying pair trades; vault entries are listed for completeness (they don't accrue per-tx tags)"
       source={asExample('/v1/aggregators')}
       bodyClassName="-mx-4"
     >
@@ -65,7 +71,8 @@ export function RoutedVolumePanel() {
         <table className="min-w-full divide-y divide-line text-sm">
           <thead>
             <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
-              <Th>Router</Th>
+              <Th>Aggregator</Th>
+              <Th>Kind</Th>
               <Th>Protocol</Th>
               <Th align="right">Routed trades</Th>
               <Th align="right">Routed volume</Th>
@@ -75,26 +82,26 @@ export function RoutedVolumePanel() {
           <tbody className="divide-y divide-line-subtle">
             {q.isLoading && (
               <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-sm text-ink-muted">
+                <td colSpan={6} className="px-4 py-6 text-center text-sm text-ink-muted">
                   Loading attribution…
                 </td>
               </tr>
             )}
             {q.isError && (
               <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-sm text-ink-muted">
+                <td colSpan={6} className="px-4 py-6 text-center text-sm text-ink-muted">
                   Attribution rollup unavailable.
                 </td>
               </tr>
             )}
-            {!q.isLoading && !q.isError && routers.length === 0 && (
+            {!q.isLoading && !q.isError && rows.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-sm text-ink-muted">
-                  No routers registered.
+                <td colSpan={6} className="px-4 py-6 text-center text-sm text-ink-muted">
+                  No aggregators registered.
                 </td>
               </tr>
             )}
-            {routers.map((r) => (
+            {rows.map((r) => (
               <tr key={r.contract_id} className="hover:bg-surface-muted">
                 <Td>
                   <Link
@@ -123,6 +130,11 @@ export function RoutedVolumePanel() {
                   )}
                 </Td>
                 <Td>
+                  <span className="rounded-sm bg-surface-subtle px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-ink-body">
+                    {r.kind}
+                  </span>
+                </Td>
+                <Td>
                   <Link
                     href={`/protocols/${r.protocol}`}
                     className="text-brand-600 hover:underline"
@@ -130,15 +142,30 @@ export function RoutedVolumePanel() {
                     {r.protocol}
                   </Link>
                 </Td>
-                <Td align="right">
-                  <span className="font-mono text-xs">{r.routed_trades_24h.toLocaleString()}</span>
-                </Td>
-                <Td align="right">
-                  <span className="font-mono text-xs">{fmtVolume(r.routed_volume_24h_usd)}</span>
-                </Td>
-                <Td align="right">
-                  <span className="text-xs text-ink-muted">{fmtAgo(r.last_routed_at)}</span>
-                </Td>
+                {r.kind === 'router' ? (
+                  <>
+                    <Td align="right">
+                      <span className="font-mono text-xs">{r.routed_trades_24h.toLocaleString()}</span>
+                    </Td>
+                    <Td align="right">
+                      <span className="font-mono text-xs">{fmtVolume(r.routed_volume_24h_usd)}</span>
+                    </Td>
+                    <Td align="right">
+                      <span className="text-xs text-ink-muted">{fmtAgo(r.last_routed_at)}</span>
+                    </Td>
+                  </>
+                ) : (
+                  // Vault kinds don't route per-tx trades — "n/a" is the
+                  // honest cell, not the endpoint's placeholder zeros.
+                  <Td align="right" colSpan={3}>
+                    <span
+                      className="text-xs text-ink-faint"
+                      title="Vault-kind entries hold + deploy capital; they never accrue per-tx routed_via tags. See the protocol page for their capital state."
+                    >
+                      n/a — holds capital, doesn&apos;t route trades
+                    </span>
+                  </Td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -173,8 +200,18 @@ function Th({ children, align }: { children: React.ReactNode; align?: 'left' | '
   );
 }
 
-function Td({ children, align }: { children: React.ReactNode; align?: 'left' | 'right' }) {
+function Td({
+  children,
+  align,
+  colSpan,
+}: {
+  children: React.ReactNode;
+  align?: 'left' | 'right';
+  colSpan?: number;
+}) {
   return (
-    <td className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}>{children}</td>
+    <td colSpan={colSpan} className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}>
+      {children}
+    </td>
   );
 }
