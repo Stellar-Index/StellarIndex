@@ -248,14 +248,54 @@ const (
 		WHERE entry_type = 'trustline' AND asset = ? AND change_type != 'removed' AND balance > 0` + explorerScanSettings
 )
 
-// AssetHolders returns the top holders of an asset by current trustline
-// balance, plus the total count of holders with a positive balance. Pure SQL
-// over the asset skip-index + balance column — no per-holder XDR decode.
+// nativeHoldersQuery / nativeHoldersCountQuery are the NATIVE-XLM arm of
+// AssetHolders. Native XLM has NO trustlines — every account holds XLM in
+// its AccountEntry balance — so the trustline-shaped queries above return
+// an empty board with holder_count 0 BY CONSTRUCTION for it (live bug,
+// 2026-07-31: /v1/assets/native/holders served {"holder_count":0} instantly
+// while every issued asset's board did real work). The native board ranks
+// the ACCOUNT range instead. entry_type is the FIRST column of the table's
+// ORDER BY (entry_type, key_xdr), so this is a primary-index RANGE read
+// over the account rows (30.7M of the 43.6M current-state total), not a
+// whole-table scan — measured on r1 2026-07-31 under this exact SETTINGS
+// pin: 2.36s ranking + 2.11s count (9,915,982 funded accounts). Same cost
+// class as a large issued asset's trustline board, and like every holders
+// board it is served exclusively through the explorer's SWR cache
+// (hot_reads.go) — the scans run on the detached 90s refresh budget, never
+// a request deadline once warm.
+const (
+	nativeHoldersQuery = `SELECT account_id, balance
+		FROM stellar.ledger_entries_current FINAL
+		WHERE entry_type = 'account' AND change_type != 'removed' AND balance > 0
+		ORDER BY balance DESC
+		LIMIT ?` + explorerScanSettings
+	nativeHoldersCountQuery = `SELECT toInt64(count())
+		FROM stellar.ledger_entries_current FINAL
+		WHERE entry_type = 'account' AND change_type != 'removed' AND balance > 0` + explorerScanSettings
+)
+
+// AssetHolders returns the top holders of an asset by current balance, plus
+// the total count of holders with a positive balance. For issued assets the
+// balance is the holder's trustline balance; for `asset == "native"` it is
+// the AccountEntry XLM balance (see nativeHoldersQuery — native has no
+// trustlines) and the count is the number of funded accounts. Pure SQL —
+// no per-holder XDR decode. Callers pass the CANONICAL board key: the
+// handler folds XLM's alias forms (crypto:XLM — canonical.AssetAliases)
+// down to "native" before reaching here.
 func (r *ExplorerReader) AssetHolders(ctx context.Context, asset string, limit int) ([]AssetHolder, int64, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	rows, err := r.conn.Query(ctx, assetHoldersQuery, asset, limit)
+	if asset == "native" {
+		return r.holdersBoard(ctx, nativeHoldersQuery, []any{limit}, nativeHoldersCountQuery, nil)
+	}
+	return r.holdersBoard(ctx, assetHoldersQuery, []any{asset, limit}, assetHoldersCountQuery, []any{asset})
+}
+
+// holdersBoard runs one (ranking, count) holders-query pair — the shared
+// scan/aggregate shape of the trustline and native arms of AssetHolders.
+func (r *ExplorerReader) holdersBoard(ctx context.Context, holdersQ string, holdersArgs []any, countQ string, countArgs []any) ([]AssetHolder, int64, error) {
+	rows, err := r.conn.Query(ctx, holdersQ, holdersArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("clickhouse: asset holders: %w", err)
 	}
@@ -273,7 +313,7 @@ func (r *ExplorerReader) AssetHolders(ctx context.Context, asset string, limit i
 	}
 
 	var total int64
-	if err := r.conn.QueryRow(ctx, assetHoldersCountQuery, asset).Scan(&total); err != nil {
+	if err := r.conn.QueryRow(ctx, countQ, countArgs...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("clickhouse: asset holder count: %w", err)
 	}
 	return out, total, nil

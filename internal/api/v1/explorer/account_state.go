@@ -346,10 +346,41 @@ type AssetHolderV struct {
 	Balance   string `json:"balance"`
 }
 
+// isNativeHoldersAsset reports whether a requested asset form serves the
+// native-XLM holders board. Native has no trustlines — every account holds
+// XLM in its AccountEntry balance — so the board is computed from the
+// account-balance ranking under the single key "native", and every non-SAC
+// member of XLM's alias family (`native`, `crypto:XLM`, plus ParseAsset's
+// "XLM" shorthand — the CLAUDE.md native ↔ crypto:XLM dual-form rule) folds
+// down to it: one cache entry, one detached flight, one reader arm.
+//
+// The family's THIRD member — the SAC wrapper C-address (CAS3J7GY…) — is
+// deliberately NOT folded in: a caller naming the C-address is asking about
+// the wrapper's own contract-balance domain (Soroban `Balance(addr)`
+// entries), which is a genuinely different holder set from classic
+// AccountEntry balances. It keeps the (currently empty) trustline read
+// rather than being mislabelled as the account board.
+func isNativeHoldersAsset(a canonical.Asset) bool {
+	if a.Type == canonical.AssetSoroban {
+		return false
+	}
+	for _, alias := range canonical.AssetAliases(a) {
+		if alias.Type == canonical.AssetNative {
+			return true
+		}
+	}
+	return false
+}
+
 // AssetHolders serves GET /v1/assets/{asset_id}/holders — the top holders
-// of an asset by current trustline balance, plus the total holder count.
-// asset_id is the canonical form ("CODE-ISSUER" / "native"). Lake-backed
-// (ledger_entry_changes trustlines).
+// of an asset by current balance, plus the total holder count. asset_id is
+// the canonical form ("CODE-ISSUER" / "native"). Lake-backed
+// (ledger_entry_changes): trustline balances for issued assets; for native
+// XLM (and its crypto:XLM alias) the AccountEntry balance ranking, with
+// holder_count = the exact number of funded accounts — native has no
+// trustlines, so the trustline read served {"holder_count":0} for it by
+// construction (fixed 2026-07-31). The response's `asset` echoes the
+// canonical board key ("native" for any XLM alias form).
 func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -366,11 +397,19 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 	// ledger_entries_current FINAL scans before any 400. ParseAsset is the
 	// same validator the sibling /v1/pools?asset= (markets.go) enforces —
 	// reject genuinely-malformed input here, cheaply.
-	if _, err := canonical.ParseAsset(asset); err != nil {
+	parsed, err := canonical.ParseAsset(asset)
+	if err != nil {
 		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/invalid-asset-id",
 			"Invalid asset", http.StatusBadRequest,
 			"asset_id must be a canonical asset_id (e.g. 'native', 'USDC-G…'); got "+asset+" ("+err.Error()+")")
 		return
+	}
+	// Fold XLM's alias forms to the one canonical board key BEFORE the
+	// cache: "native" and "crypto:XLM" are the same asset (assetAliases
+	// dual-form rule), and keying them separately would run two identical
+	// account-range scans and split the SWR cache.
+	if isNativeHoldersAsset(parsed) {
+		asset = canonical.NativeAsset().String()
 	}
 	limit, ok := h.ParseLimit(w, r, 100, 500)
 	if !ok {

@@ -36,6 +36,22 @@ against.
   the scan block was absent). Regression tests pin absent ≠ empty for
   the operation-mix panel.
 
+- **`/v1/assets/native/holders` now serves the real XLM holders board
+  instead of `holder_count: 0`.** The holders read was trustline-shaped
+  and native XLM has no trustlines — every account holds XLM in its
+  AccountEntry balance — so the native board was empty BY CONSTRUCTION
+  while every issued asset's worked. `AssetHolders` gains a native arm
+  that ranks the lake's account range (a primary-index range read —
+  `entry_type` is the first ORDER BY column; measured on r1: 2.4s
+  ranking + 2.1s exact funded-account count under the standard scan
+  pin, served through the existing holders SWR cache, never on a
+  request deadline once warm). The handler folds XLM's alias forms
+  (`crypto:XLM`, the `XLM` shorthand — the `native ↔ crypto:XLM`
+  dual-form rule) to the one `native` board key so all spellings share
+  a single cache entry; the SAC C-address deliberately keeps its own
+  (contract-balance) domain. The explorer's holders panel no longer
+  blames the trustline backfill for an empty native board — that copy
+  was false for XLM; issued assets keep it (there it's accurate).
 - **Redstone's last 15 provably-ambiguous blind ledgers now attribute
   exactly, via ledger-entry state-write keys.** `events.Event` gains
   `StateWriteKeys` — the LedgerKeys of the contract-data entries whose
