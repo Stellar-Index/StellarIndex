@@ -2620,6 +2620,22 @@ C4-055/066 alert. Also: SEV-1/2 paging drill + rollback rehearsal —
 evidence files have never been produced across three generations of plans.
 
 ### 2.6b Final pre-launch passes (added 2026-07-31, Ash's ask)
+**Grounding incident (2026-07-31 ~09:45Z, Ash's live-site reports):**
+CCTP page missing its visual suite + roster "0 events" + /network/
+first-load "no operations in 24h" are ONE pattern: on-demand
+analytics builds miss the request budget on cold/loaded paths
+(`protocol bespoke build failed … context deadline exceeded` — the
+suite IS in deployed v0.21.7), the API honestly omits the block, and
+the frontend renders ABSENT as ZERO ("0 events", "no operations") —
+a false empirical claim. Fix class, queued as the concrete start of
+pass 3: (a) move every expensive block (protocol bespoke, network
+op-mix, roster per-contract counts) to the established
+prewarm/SWR/stale-serve pattern (CoverageCache / DEXTVLCache /
+wealth-cache contract) so first loads are warm by construction;
+(b) frontend honesty sweep — absent field renders "—", never 0/"no
+X in 24h" (the agents' own omitted-not-zeroed principle, violated
+by these panels). Re-verify bespoke build budgets on the quiet box
+post-replay before concluding anything is intrinsically slow.
 1. **Full audit pass** — one more cold adversarial sweep over the
    whole surface (post-all-the-July-changes; the last full audit was
    2026-07-01, and ~40 tags have shipped since).
