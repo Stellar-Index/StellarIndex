@@ -159,10 +159,18 @@ type Guard struct {
 	// Resolution errors and not-derivable declarations are deliberately NOT
 	// cached, so a token whose instance is captured later is still checked.
 	resolved map[string]uint32
-	// fired dedups the counter to one increment per (source, asset) per
-	// process — the signal is "this landmine exists", latched, not a
-	// per-trade rate.
-	fired map[string]struct{}
+	// alarmed dedups the OBSERVABILITY alarm (metric increment + ERROR log)
+	// to one per (source, asset) per process — the signal is "this landmine
+	// exists", latched, not a per-trade rate. The alarm is a pure in-memory
+	// emit that cannot fail, so it latches on first observation.
+	alarmed map[string]struct{}
+	// persisted dedups the DURABLE write (UpsertNonstandardDecimalsAsset)
+	// that feeds the API read-time correction. Unlike alarmed it latches
+	// ONLY after the write SUCCEEDS: a transient write failure leaves the key
+	// UNSET so the next Sweep/Backfill observation RETRIES it, rather than
+	// stranding a non-7-decimal token on a 10^(7-decimals)-skewed served
+	// price until process restart (the latch-before-fallible-write class).
+	persisted map[string]struct{}
 }
 
 // Options configures a Guard.
@@ -213,7 +221,8 @@ func New(reader TradeReader, resolver DecimalsResolver, opts Options) *Guard {
 		backfillThrottle: backfillThrottle,
 		logger:           logger,
 		resolved:         make(map[string]uint32),
-		fired:            make(map[string]struct{}),
+		alarmed:          make(map[string]struct{}),
+		persisted:        make(map[string]struct{}),
 	}
 }
 
@@ -370,43 +379,60 @@ func (g *Guard) classify(ctx context.Context, asset string) (decimals uint32, co
 	return d, true
 }
 
-// report increments the landmine counter (once per source+asset per
-// process), logs the detail the runbook needs, and — when a Writer is
-// wired — persists the confirmation so the API's read-time serving guard
-// picks it up on its next cache refresh (~60s) and declines pricing for
-// pairs touching this asset.
+// report raises the landmine alarm (metric increment + ERROR log, once per
+// source+asset per process) and — when a Writer is wired — persists the
+// confirmation so the API's read-time serving guard picks it up on its next
+// cache refresh (~60s) and normalizes pricing for pairs touching this asset.
+//
+// The two effects latch INDEPENDENTLY. The alarm is a pure in-memory emit
+// that cannot fail, so it latches on first observation. The durable write CAN
+// fail transiently, so it latches ONLY after a successful upsert: a failed
+// write leaves the asset unlatched so the next sweep RETRIES it, rather than
+// marking it handled while the corrective row was never written — which would
+// strand a non-7-decimal token on a 10^(7-decimals)-skewed served price until
+// process restart. The upsert is idempotent (INSERT … ON CONFLICT (asset) DO
+// UPDATE), so a retry — or a benign concurrent double-fire — is safe.
 func (g *Guard) report(ctx context.Context, ref timescale.SorobanDEXTradeRef, decimals uint32) {
 	key := ref.Source + "\x00" + ref.Asset
+
 	g.mu.Lock()
-	if _, seen := g.fired[key]; seen {
-		g.mu.Unlock()
-		return
+	_, alarmed := g.alarmed[key]
+	_, persisted := g.persisted[key]
+	if !alarmed {
+		g.alarmed[key] = struct{}{}
 	}
-	g.fired[key] = struct{}{}
 	g.mu.Unlock()
 
-	obs.DEXTradeNonstandardDecimalsTotal.WithLabelValues(ref.Source, ref.Asset).Inc()
-	g.logger.Error(
-		"DEX trade for a non-7-decimal Soroban token — served price for pairs involving "+
-			"this asset is silently skewed by 10^(7-decimals); apply decimals normalization "+
-			"(runbook: dex-nonstandard-decimals.md)",
-		"source", ref.Source,
-		"asset", ref.Asset,
-		"decimals", decimals,
-		"price_skew_decades", skewDecades(decimals),
-	)
+	// Observability alarm: fires exactly once per (source, asset).
+	if !alarmed {
+		obs.DEXTradeNonstandardDecimalsTotal.WithLabelValues(ref.Source, ref.Asset).Inc()
+		g.logger.Error(
+			"DEX trade for a non-7-decimal Soroban token — served price for pairs involving "+
+				"this asset is silently skewed by 10^(7-decimals); apply decimals normalization "+
+				"(runbook: dex-nonstandard-decimals.md)",
+			"source", ref.Source,
+			"asset", ref.Asset,
+			"decimals", decimals,
+			"price_skew_decades", skewDecades(decimals),
+		)
+	}
 
-	if g.writer == nil {
+	// Durable write: retried until it succeeds, latched only on success.
+	if g.writer == nil || persisted {
 		return
 	}
 	if err := g.writer.UpsertNonstandardDecimalsAsset(ctx, ref.Asset, decimals, ref.Source); err != nil {
 		g.logger.Warn(
 			"decimals-guard: failed to persist confirmed nonstandard-decimals asset — "+
-				"the API read-time serving guard will NOT decline this pair until a later "+
-				"sweep succeeds (metric + log alarm above are unaffected)",
+				"leaving it UNLATCHED so the next sweep retries; the API read-time serving "+
+				"guard stays unfed until a write succeeds (metric + log alarm above are unaffected)",
 			"source", ref.Source, "asset", ref.Asset, "decimals", decimals, "err", err,
 		)
+		return
 	}
+	g.mu.Lock()
+	g.persisted[key] = struct{}{}
+	g.mu.Unlock()
 }
 
 // skewDecades is the order-of-magnitude the served ratio is off for a pair
