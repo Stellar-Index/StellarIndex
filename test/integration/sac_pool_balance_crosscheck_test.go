@@ -58,7 +58,7 @@ func TestSupplyCrossCheckConvergesAfterPoolBalanceRecovery(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	reader := supply.NewStorageClassicSupplyReader(store)
+	reader := supply.NewStorageClassicSupplyReader(store, supply.ClassicSupplyReaderOptions{})
 	computer, err := supply.NewClassicComputer(supply.Policy{}, reader)
 	if err != nil {
 		t.Fatalf("NewClassicComputer: %v", err)

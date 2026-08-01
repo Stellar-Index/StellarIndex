@@ -986,7 +986,7 @@ func buildClassicRefreshers(cfg config.Config, store *timescale.Store, closeTime
 	if err != nil {
 		return nil, err
 	}
-	classicReader := supply.NewStorageClassicSupplyReader(store, logger)
+	classicReader := supply.NewStorageClassicSupplyReader(store, supply.ClassicSupplyReaderOptions{Logger: logger})
 	classicComputer, err := supply.NewClassicComputer(policy, classicReader)
 	if err != nil {
 		return nil, fmt.Errorf("classic computer: %w", err)

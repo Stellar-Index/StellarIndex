@@ -63,12 +63,22 @@ type StorageClassicSupplyReader struct {
 	logger *slog.Logger
 }
 
-// NewStorageClassicSupplyReader constructs the reader. Pass nil for
-// logger to default to [slog.Default] — the logger is only used to
-// surface the fail-permissive MinClassicComponentLedger error path
-// (F-1236), so a nil default keeps the blast radius small for callers
-// that don't wire one.
-func NewStorageClassicSupplyReader(store ClassicSupplyStore, logger *slog.Logger) *StorageClassicSupplyReader {
+// ClassicSupplyReaderOptions configures a StorageClassicSupplyReader.
+// The Logger rides here (the canonical idiom — a logger is never a
+// positional constructor param; see docs/architecture/lexicon.md).
+type ClassicSupplyReaderOptions struct {
+	// Logger surfaces the fail-permissive MinClassicComponentLedger error
+	// path (F-1236); it is the only thing the reader logs. A nil Logger
+	// defaults to [slog.Default], keeping the blast radius small for
+	// callers that don't wire one.
+	Logger *slog.Logger
+}
+
+// NewStorageClassicSupplyReader constructs the reader. A zero
+// ClassicSupplyReaderOptions (nil Logger) defaults the logger to
+// [slog.Default].
+func NewStorageClassicSupplyReader(store ClassicSupplyStore, opts ClassicSupplyReaderOptions) *StorageClassicSupplyReader {
+	logger := opts.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
