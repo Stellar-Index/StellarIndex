@@ -940,6 +940,9 @@ func (o *Orchestrator) refreshPairWindow(
 	// + source-count threshold (the L2.4 stop-gap). On freeze we
 	// keep the previous bucket's value in cache (don't overwrite)
 	// and emit a freeze marker so flags.frozen=true on the next read.
+	// evaluateAndMaybeFreeze stands down while THIS window already holds
+	// an active freeze (W3-freeze-3), so the Phase 2 lifecycle below stays
+	// the sole release authority once frozen.
 	stateKey := pair.String() + ":" + window.String()
 	if action, ok := o.evaluateAndMaybeFreeze(ctx, pair, window, vwap, trades, stateKey, now); !ok {
 		_ = action
@@ -1157,6 +1160,35 @@ func (o *Orchestrator) evaluateAndMaybeFreeze(
 	if o.cfg.Anomaly == nil {
 		return anomaly.ActionAllow, true
 	}
+
+	// W3-freeze-3: once THIS window holds an active freeze, Phase 1 stands
+	// down and the ADR-0019 lifecycle (driven by the Phase 2 confidence
+	// step in refreshPairWindow) becomes the SOLE release authority.
+	//
+	// Why it must: Phase 1's deviation is measured against prevVWAPs, the
+	// last-known-good comparator, which is deliberately held fixed for the
+	// whole hold (frozen buckets skip the prevVWAPs update). So a price
+	// that settles at any residual level past the class FreezePct — even
+	// one that is statistically normal for the asset — keeps Phase 1 firing
+	// on every bucket. Each such fire returns ok=false to refreshPairWindow,
+	// which short-circuits BEFORE the Phase 2 confidence step; and the
+	// auto-unfreeze streak that releases a freeze is produced ONLY by that
+	// step (Scored=true, healthy). A live freeze whose Phase 1 keeps firing
+	// could therefore never accumulate the streak — it extended to
+	// escalation and pinned the last-known-good price indefinitely, even
+	// after the anomaly cleared and every bucket met the auto-unfreeze
+	// condition (z < 3 AND confidence > 0.30).
+	//
+	// Standing down does NOT weaken the freeze: returning ok=true here only
+	// lets the caller reach the Phase 2 lifecycle step, which keeps the
+	// bucket refused for as long as the lifecycle stays Active and re-fires
+	// its own 3-signal AND on a still-anomalous bucket (resetting the
+	// streak). A fresh, not-yet-frozen pair is unaffected — Phase 1 still
+	// engages the class-deviation freeze below.
+	if o.freezeStates[stateKey].Active() {
+		return anomaly.ActionAllow, true
+	}
+
 	prev := o.prevVWAPs[stateKey]
 	decision := o.cfg.Anomaly.Evaluate(anomaly.Observation{
 		Pair:        pair,
