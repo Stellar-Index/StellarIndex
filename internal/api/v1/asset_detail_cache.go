@@ -80,6 +80,20 @@ func (c *assetDetailResponseCache) get(assetID string) (*assetDetailEntry, bool)
 	return e, true
 }
 
+// assetDetailCacheMaxEntries hard-bounds the response cache. Fabricated
+// asset_ids 404 before put (handleAssetGet), so growth is driven by the
+// REAL-asset universe — but that universe is large (every classic asset
+// with any trade/oracle observation, ~10^5+). Without a cap a crawler or
+// an attacker walking known asset_ids would add a permanent ~1-4 KB entry
+// per distinct id — TTL-expiry only checks freshness at READ time and
+// never removes anything — climbing resident memory to hundreds of MB / a
+// slow OOM on a long-lived API instance (audit W6-perf-1). Every sibling
+// response cache is bounded (accountStateCacheMax=4096, assetHoldersCacheMax
+// =512); this makes the asset-detail cache match. The verified-currency set
+// + native + the realistic exotic-classic tail sits well under the cap; it
+// only engages under adversarial/crawler id churn.
+const assetDetailCacheMaxEntries = 4096
+
 // put stores a freshly-rendered response under assetID. Existing
 // entries are replaced (last-write-wins; concurrent requests for
 // the same asset may both compute, both write — accepted as a
@@ -94,19 +108,45 @@ func (c *assetDetailResponseCache) put(assetID string, body []byte) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if _, exists := c.entries[assetID]; !exists && len(c.entries) >= assetDetailCacheMaxEntries {
+		c.evictLocked()
+	}
 	c.entries[assetID] = &assetDetailEntry{
 		body:     body,
 		cachedAt: time.Now(),
 	}
 }
 
-// (Future janitor: a goroutine that periodically calls a purgeExpired
-//  method to bound map size if/when ad-hoc asset_id queries grow the
-//  cache beyond the verified-currency set + native. For now the
-//  cache is bounded in practice by the unique-asset-id query mix —
-//  primarily the ~10 verified currencies + native + a small tail of
-//  exotic classics. Add the janitor only when monitoring shows the
-//  map growing unbounded.)
+// evictLocked reclaims room when the cache is at capacity. It first drops
+// every expired entry (cheap, TTL-based — the common case, since the prewarm
+// cadence keeps the hot set fresh and everything else ages out); only if the
+// whole map is still fresh does it evict the single oldest entry so a new one
+// can be admitted. Both passes are O(n) but n is capped at
+// assetDetailCacheMaxEntries and eviction runs only at capacity, so it is off
+// every hot path. Caller must hold c.mu.
+func (c *assetDetailResponseCache) evictLocked() {
+	before := len(c.entries)
+	now := time.Now()
+	for id, e := range c.entries {
+		if now.Sub(e.cachedAt) > c.ttl {
+			delete(c.entries, id)
+		}
+	}
+	if len(c.entries) < before {
+		return // expired-purge freed space
+	}
+	// All entries fresh — evict the oldest to keep the map bounded.
+	var oldestID string
+	var oldestAt time.Time
+	for id, e := range c.entries {
+		if oldestID == "" || e.cachedAt.Before(oldestAt) {
+			oldestID, oldestAt = id, e.cachedAt
+		}
+	}
+	if oldestID != "" {
+		delete(c.entries, oldestID)
+	}
+}
 
 // renderAssetDetailEnvelope builds the wire bytes for an AssetDetail
 // response and returns them. Mirrors writeJSON / writeEnvelope so
