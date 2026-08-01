@@ -10,11 +10,12 @@
 #
 # ── money-column detail ──
 #
-# Money is NUMERIC — never BIGINT / INT8 / DOUBLE PRECISION / FLOAT /
-# REAL (JSON numbers are IEEE-754 doubles; i128 amounts overflow both
-# int64 and 2^53). For every migrations/*.up.sql this flags a column
-# definition whose name looks monetary next to a non-NUMERIC numeric
-# type.
+# Money is NUMERIC — never BIGINT / INTEGER / SMALLINT / INT8 / INT4 /
+# INT2 / INT / MONEY / DOUBLE PRECISION / FLOAT[n] / REAL (JSON numbers
+# are IEEE-754 doubles; i128 amounts overflow both int64 and 2^53, and a
+# narrower integer/money type loses even more). For every
+# migrations/*.up.sql this flags a column definition whose name looks
+# monetary next to a non-NUMERIC numeric type.
 #
 # Escape hatch: append `-- lint-money:ok <reason>` on the flagged
 # line. Reasons are mandatory — every escape is a design decision
@@ -33,10 +34,29 @@ fail=0
 # Monetary column-name stems. `_usd` matches only as a suffix of the
 # column name (value_usd, volume_usd, …) so `usda`-style codes don't
 # trip it. stroop/wei/circulating/market_cap carried over from the
-# original lint-i128.sh name set.
-name='[a-z0-9_]*(amount|price|supply|balance|volume|reserve|fee|stroop|wei|circulating|market_cap)[a-z0-9_]*|[a-z0-9_]*_usd'
-# Non-NUMERIC numeric types that must never hold money.
-type='bigint|int8|double precision|float[0-9]*|real'
+# original lint-i128.sh name set; twap/vwap/tvl/wealth added 2026-08
+# (a time/volume-weighted-average PRICE and total-value-locked / net-
+# worth aggregate are money — must be NUMERIC, never float).
+#
+# Deliberately NOT in the stem set (each would false-positive on
+# legitimate existing NON-money columns, and a stem that flags real
+# code is worse than the gap it closes):
+#   - median / mad — the volatility_baseline columns hold a *median
+#     bucket-to-bucket VWAP percent-change return* + its MAD (0007/
+#     0008): dimensionless statistics, correctly DOUBLE PRECISION, not
+#     amounts. There is no genuine money-median column in the tree.
+#   - rate — money rates already match via the `_usd` suffix rule
+#     (rate_usd); bare `rate` would flag rate_limit_per_min (a request
+#     count, 0027).
+#   - cap — market cap already matches via `market_cap`; bare `cap`
+#     would flag capacity/capture/…-style names.
+name='[a-z0-9_]*(amount|price|supply|balance|volume|reserve|fee|stroop|wei|circulating|market_cap|twap|vwap|tvl|wealth)[a-z0-9_]*|[a-z0-9_]*_usd'
+# Non-NUMERIC numeric types that must never hold money. Both the
+# 128-bit-overflowing wide ints (bigint/int8) AND the narrower ints
+# (integer/smallint/int4/int2/int) AND floats (double precision/float[n]
+# /real) AND `money` (a fixed 2-decimal locale-dependent type — never
+# correct for an i128 amount). NUMERIC is the only allowed home.
+type='bigint|integer|smallint|int8|int4|int2|int|money|double precision|float[0-9]*|real'
 
 for f in migrations/*.up.sql; do
   hits=$(grep -nEi "(^|[[:space:](,])\"?(${name})\"?[[:space:]]+(${type})\b" "$f" \
