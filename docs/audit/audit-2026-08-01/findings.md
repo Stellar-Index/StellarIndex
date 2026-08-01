@@ -153,5 +153,149 @@ Skeptic a58/config: CONFIRMED mechanism, exposure GATED (recalibrated HIGH→LOW
 
 ---
 
+## WAVE-1 (decoders/sources) findings
+
+### W1-external — CEX/FX connectors (finder a4f1)
+- **DOUBLE-FIND of M-C** (raises confidence): FX AmountScaleDecimals default-8 with
+  DEX-ONLY guard (framework.go:200-205; onchain_decimals_test.go:30-34 covers only
+  SubclassDEX). No current FX source mis-scaled (massive/polygon/exchangeratesapi/ecb
+  all correctly 6) — the missing LOCK is the finding, CS-040 re-openable. MED-latent.
+  FIX: add a test asserting SubclassFX⇒6 ∧ SubclassCEX⇒8, or make AmountDecimals
+  mandatory (0 → registry-load panic).
+- W1-ext-2 LOW: massive forex client errIsEOF matches substring "EOF"
+  (forex/client.go:269) → io.ErrUnexpectedEOF (mid-body truncation) treated as clean
+  EOF, returns partial body. Bounded: truncated JSON fails unmarshal → stale cache
+  kept, no corruption. FIX: errors.Is(err, io.EOF) not substring.
+- W1-ext-3 LOW/INFO: Chainlink inverted-feed reciprocal uses truncating big.Int.Quo
+  (chainlink/poller.go:239) not round-half-up scale.InvertScaled → 1-ulp downward
+  bias per round. Cosmetic (Chainlink is ClassOracle, IncludeInVWAP:false,
+  divergence-panel only). FIX: use InvertScaled.
+- EXAMINED-SOUND: CEX money math (binance/kraken/coinbase/bitstamp parse+backfill all
+  big.Int quote=base*price/1e8, dust-filtered, no float on integer path); registry
+  VWAP gating fail-closed (only ClassExchange IncludeInVWAP:true); reconnect/backpressure
+  (ping-watchdog, jittered backoff, ctx teardown, bounded channels); synthetic-txhash
+  truncation harmless (ts in the ON CONFLICT unique key). Observation: forex/fx_quotes
+  stores FX RATES as float64 (ADR-0003-adjacent, pre-framework architectural choice).
+- NOT-EXAMINED (finder-declared): chainlink/{client,backfill,defaults,events}.go,
+  frankfurter/client.go, forex/circulation.go, cmc/cryptocompare pollers (spot-checked
+  scaling+class only), streamer.go internals (wiring only), ~40 test fixtures.
+  → re-queue chainlink/frankfurter in a dry-wave.
+
+### W1-amm — Soroswap/Aquarius/Phoenix/Comet decoders (finder a2ee) — no crit/high; well-defended
+- W1-amm-1 MED-latent: phoenix pool_stable 6-field swap silently orphaned if such a
+  pool is gated without the 6-field decoder (decode.go:43-52 Complete() requires 8/8;
+  README:164-172 pool_stable emits 6). Not reachable (no mainnet pool_stable),
+  documented. FIX: ship the 6-field variant before gating any pool_stable.
+- W1-amm-2 LOW: soroswap_router CallSig omits op/event position (events.go:175-182) →
+  two identical-param router calls in one op hash-collide, one dropped. Bounded
+  (log-only intent record, not IsProjectedEvent; per-pair Trade rows still land).
+- W1-amm-3 LOW: soroswap gates trade on a trailing Sync it then DISCARDS (consumer.go:29
+  requires Swap+Sync; decode.go never reads r.Sync reserves) → a swap ever lacking its
+  Sync is dropped with zero benefit. Safe only via the Uniswap-v2 _update→Sync invariant.
+- W1-amm-4/5 INFO: aquarius classify() recognizes 11 topics Matches() never claims
+  (recognition≠claimed set, weakens ADR-0033 gap signal, no data loss); phoenix group
+  key omits the pool contract (hardening inconsistency vs soroswap's COR-08 key).
+- EXAMINED-SOUND: i128 never truncates (all big.Int via scval→canonical; grep for
+  int64()/.Lo/Int64() on value paths = none); gating CLOSED (registry set-membership,
+  no wildcard/default-true; hostile look-alike rejected fail-closed); FanoutOpIndex
+  PK correct (op<<16|ev, panics >0xFFFF, per-op-unique); direction/price consistent
+  (NewPair preserves base/quote); recognized-no-op returns (nil,nil)+counter.
+- NOT-EXAMINED: soroswap factory_seed.go genesis-walk completeness (load-bearing for
+  the fail-closed gate — does the seeder enumerate every factory child? depends on
+  ops code); aquarius decode_admin.go body (governance, non-money). → re-queue seeder
+  completeness.
+
+### W1-supply — supply observers (finder a866) — 1 MED CONFIRMED
+- **W1-supply-1 — MED, CONFIRMED-by-inspection (orchestrator verified the asymmetry
+  directly).** sac_balances observer stamps the asset_key VERBATIM
+  (dispatcher_adapter.go:46-61 NewObserver: `cleaned[cid]=ak`, no canonicalization)
+  while its 3 sibling classic observers ALL call supply.CanonicalizeWatchedClassic
+  (trustlines:42, claimable_balances:65, liquidity_pools:65). The supply reader queries
+  COLON form (storage_classic_reader.go:101 → AssetKey → Code+":"+Issuer, key.go:29).
+  So a hand-edited `sac_wrappers = {"C…":"USDC-GA…"}` (DASH) stores SAC balances under a
+  key SumSACBalancesAtOrBefore("USDC:GA…") never matches → 0 SAC-wrapped component →
+  ClassicComputer under-reports total/circulating supply + market cap by the ENTIRE
+  contract-held portion, no error, no startup rejection. This is the documented "USDC
+  40M vs 266M real, 85% under-read" incident class (key.go:45 comment). Config-gated:
+  example.toml:504 uses colon so copy-paste is safe; bites hand-edited dash configs.
+  SupplyConfig.Validate (config.go:1417) only checks non-empty. FIX: call
+  CanonicalizeWatchedClassic in NewObserver (one line, matches siblings) OR validate
+  the sac_wrappers form + that it matches a watched_classic_assets entry.
+- Notes (below threshold): sep41_supply couples amount to counterparty metadata
+  (decodeCounterparty error drops the whole event — latent, no reachable failing shape);
+  classic.go:24 Trustline docstring wrong (behavior correct); classicmovements omits
+  Inflation (deliberate, historical explorer feature not supply).
+- EXAMINED-SOUND: i128/stroop never truncates (all big.Int; two's-complement negative
+  composition verified); i128-OR-map type-test-before-extract in all 3 sites; CAP-67 vs
+  legacy topic-index branch correct (all 2/3/4-topic shapes); sum overflow (big.Int) +
+  negative/clamp guards (CS-038); removal absorbing-state + latest-wins DISTINCT ON +
+  ledger-scoped pre-image memo; classicmovements recognition-guarded op coverage;
+  sorobanevents capture/reconstruct/async-sink backpressure.
+- NOT-EXAMINED: ClickHouse toInt256 SEP-41 sum widening (outside 9-dir scope — recon
+  ingest noted it as the overflow guard, cross-ref sound); dispatcher decode-error
+  accounting (whether a dropped mint/burn is counted/alerted). → re-queue.
+
+### W1-substrate — scval/xdrjson/events/contractid/canonical (finder ae6f) — well-hardened, 1 latent-availability pair
+- **W1-sub-1 — LOW→MED as a pair (latent availability): scval.AsBool panics on a
+  zero-value ScVal + dispatcher has NO recover() around Decode.** ScvBool==0==zero
+  value, so AsBool's guard (scval.go:298 `sv.Type != ScvBool`) passes on xdr.ScVal{}
+  then nil-derefs *sv.B — the ONLY accessor that does (every other expects nonzero
+  type → clean ErrScValType). MapField (scval.go:468) returns exactly xdr.ScVal{},false
+  on a miss, so the package hands out the one value that panics its own AsBool. No
+  current caller reaches it (all 6 AsBool sites gate on ok). BUT a future
+  `v,_:=MapField(...); b,_:=AsBool(v)` (ignoring ok, which the 2-value sig invites) on
+  a map missing the key → panic → dispatcher.go:1253-1264 has NO recover() → ingest
+  goroutine HALTS. Same root in display.go:74 MustB. FIX: (a) AsBool guard also checks
+  sv.B != nil; (b) add recover() around dec.Decode in the dispatch loop (defense in
+  depth — makes substrate panic-safety not load-bearing on every decoder).
+- W1-sub-2/3/4 INFO: Display renders U256/I256/Error/NonceKey/ContractInstance as bare
+  type-name (cosmetic, explorer rows); MapField first-match on dup keys (not exploitable
+  — Soroban host enforces map canonicity on emit); ParseContractDataKey drops Durability
+  (not exploitable in single-consumer redstone use, set-dedup + fallback).
+- EXAMINED-SOUND: every scval accessor panic-safe against PARSEABLE XDR (SDK allocates
+  every union arm on decode — verified for ScVal + ScAddress); i128/u128/u256 → big.Int
+  no truncation (FromInt128Parts two's-complement -1 case checked); safetime bounds u64
+  BEFORE the int64 cast (defeats >MaxInt64 wrap-negative); AsAddressStrkey all 5 CAP-67
+  variants SDK-checksummed; xdrjson all Must* under type-switch on unmarshaled data;
+  contractid Seed guarded by IsFactory in Matches, production Matches→Decode pairing.
+- NOT-EXAMINED / RE-QUEUE: (1) the genesis-seed/ADR-0033 reconcile PRE-SEED walk —
+  does it filter creation events by factory EMITTER before Seed? A walk seeding on
+  creation-topic alone would let a forged creation inject a gated child. PAIRS with the
+  AMM finder's soroswap factory_seed re-queue → ONE targeted gating-seed finder.
+  (2) ClickHouse StateWriteKeys/OpArgs second-populator byte-parity vs the live
+  dispatcher rule (drift risk documented but not tested — event.go:88-95). [recon F-6
+  refuted on runtime-window grounds, but the PARITY-TEST-ABSENCE stands as a separate
+  hardening gap.]
+
+### W1-defi — lending/bridge/oracle/sdex decoders (finder a610)
+- **W1-defi-1 — MED, CONFIRMED-by-inspection: SDEX one-side-zero fills fail the whole
+  batch INSERT.** sdex.decodeClaimAtom drops ONLY both-zero (decode.go:176 `sold<=0 &&
+  bought<=0`); a one-side-zero fill is KEPT with BaseAmount=amountFromInt64(0). trades
+  CHECK(base_amount>0)/(quote_amount>0) (migration 0001:30-31, active) always rejects
+  it. Single-row InsertTrade Validate()s (trades.go:629); the BATCH builder does NOT
+  (no per-row Validate/Sign>0 skip; the only Sign() at :1484 is usd_volume). So one
+  zero-leg fill in a 200-row batch → 23514 CHECK violation → non-infra "do not retry"
+  (errors.go:74) → flushTradeBatch isolates the ENTIRE batch per-row (trade_sink.go:255)
+  → 1 INSERT becomes 201 + a Warn + Error log + SourceInsertErrorsTotal{sdex} increment
+  (feeds the decode/insert-error runbook → spurious alert on normal SDEX traffic). Valid
+  rows recovered (no data loss); the decoder's "captured for completeness" claim is FALSE
+  (the row is always dropped). LIVE on live-ingest + ch-rebuild. FIX: drop one-side-zero
+  in the decoder (like both-zero) OR add a per-row Validate/skip in the batch builder.
+- W1-defi-2 LOW: sorocredit statement ts uses raw time.Unix(int64(tsUnix)) (decode.go:181)
+  not canonical.SafeUnixSeconds (the >MaxInt64 wrap-negative guard band/reflector use).
+  Gated emitter → not adversarially reachable; consistency/hardening gap.
+- EXAMINED-SOUND: CCTP source-chain substr(message_body,33,40) offset math CORRECT
+  (hex pos 33 len 40 = low 20 bytes of the right-aligned burn token); mint_and_forward
+  EXCLUDED from inbound sums (no 10× double-count); decimal scales CCTP 1e6/Rozo 1e7/
+  Band E9/Reflector E14 all consistent; gating on ContractID never topic-alone across
+  all 10; i128 no truncation; SDEX direction self-consistent (no cdp-pipeline swap
+  inherited).
+
+## WAVE-1 COMPLETE (5/5 finders). Net: 0 crit/high; 1 MED confirmed (W1-supply-1
+sac_balances canonicalization), 1 MED-latent pair (W1-sub-1), rest LOW/INFO. The
+decoder/source/substrate ingest surface is solid — i128 discipline holds everywhere,
+gating is fail-closed. Re-queues: gating-seed-walk (forged-creation), chainlink/
+frankfurter, live/lake state-write parity test.
+
 ## PLAUSIBLE / PENDING
 (skeptic verdicts for the DoS cluster R2/R3/R10, ingest W-1/F-6/F-4, money M-A/M-B/F-2 still in flight)
