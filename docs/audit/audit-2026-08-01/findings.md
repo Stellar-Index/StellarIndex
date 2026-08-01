@@ -687,5 +687,109 @@ downgraded MED, freeze-1 CONFIRMED HIGH, F-2 class confirmed ≥4 tools.
 usd_volume NULL) both PENDING SKEPTIC; freeze cluster (miss + stuck-frozen + spec) + F-2
 extensions + decimalsguard money + wasm-extract. Destructive/verify ops surface largely SOUND.
 
+## WAVE-5 (non-Go) findings
+
+### W5-ci — CI gates + workflows + ops scripts (finder a370) — a "false-green" cluster
+- **W5-ci-1 — MED (recalibrated from finder-HIGH; latent gate gap, NO live violation): the
+  SQL money-lint has blind spots on BOTH axes.** lint-migrations.sh:37-42 type regex omits
+  integer/int/int4/smallint/int2/money; name regex omits vwap/twap/open/high/low/close/median/
+  mad/notional/total/cost/value. Empirically: `protocol_fee integer`, `vwap double precision`,
+  `open double precision` all slip through; it's the SOLE SQL-side ADR-0003 gate (deep guard
+  is Go-only). MED not HIGH: NO current violation (W4-migrations confirmed all money cols
+  NUMERIC) — a latent gate weakness needing a future mistake. Consolidates M-A/W4-mig-2 guard-
+  scope-gap class. FIX: widen both regexes; add int32/16/8 to lint-i128.
+- **W5-ci-2 — MED: gitleaks secret scanner self-bypassable.** ci.yml:500 `gitleaks detect`
+  auto-discovers PR-head .gitleaks.toml; neither .gitleaks.toml nor .gitleaksignore is in
+  lint-baseline-growth's watch set or the CID-03 base-ref restore → a PR can allowlist a path
+  + commit a live secret in the SAME diff, judged by its own weakened config, persists forever.
+  FIX: add both files to the anti-bypass tripwire (base-ref restore or baseline-growth watch).
+- **W5-ci-3 — MED: route-sweep.sh counts HTTP 000 as "ok".** route-sweep.sh:90-95 curl exit
+  ignored, `*) verdict=ok` catches 000 (connection-refused/DNS/TLS/timeout) → a hard-down
+  subsystem (systemd unit dead → refused, not 503) gives server_5xx=0, exit 0. The tool built
+  to detect dark subsystems is blind to the darkest failure (r1-smoke.sh:125 does it right).
+  FIX: treat curl error / 000 as FAIL.
+- **W5-ci-4 — MED: reconcile-supply-vs-horizon.sh treats a Horizon outage as PASS.** :62
+  `curl || echo '{}'` → htot=0 → SKIP(zero) branch, not counted as fail → exit 0 with ZERO
+  assets reconciled. A real supply understatement coincident with a Horizon blip goes
+  unreported (the AQUA-class defect it exists to catch). FIX: fail on fetch error / all-skipped.
+- **W5-ci-5 — MED: lint-i128.sh (Go ADR-0003 gate) NOT base-ref-restored** (ci.yml:270 restores
+  only lint-migrations + baseline-growth; lint-i128 at :303 runs PR-head) → self-bypassable in
+  one PR (extends recon M-E); grep pattern misses int32/int16/int8(...Lo). go/types backstop
+  also PR-head. FIX: add to the base-ref restore set + widen the grep.
+- W5-ci-6 INFO: verify.sh green ≠ CI green — runs test-integration-BUILD (compile-only, :107),
+  never `make test-integration`, never check-main-ci-health.sh → the exact gap that let main go
+  red 2026-07-30 undetected. FIX: verify.sh warns if main CI is already red (gh, token-free).
+- Minor: lint-protocol-registry-sync fail-opens on BOTH files missing (total-rename); config-
+  assertions stale-password → false config_assertion page (memoried).
+- EXAMINED-SOUND: deploy.yml + release.yml + all 19 workflows INJECTION-CLEAN (inputs via env:,
+  no ${{ github.event.*.title/body/head_ref }} in run:); cut-release.sh no exit-masking pipe;
+  r1-smoke fail-closed on curl error; lint-actions-pinning (supply-chain) IS base-restored;
+  check-deploy-protection + check-main-ci-health + migration-compat --staged all fail-closed.
+- THEME: several verification tools have FALSE-GREEN paths (lint blind spots, gitleaks bypass,
+  route-sweep 000, horizon-fail, verify≠CI). Recipe: "audit every gate/monitor for what it
+  PASSES when it should fail" — the audit's own emphasis, validated 5×.
+
+### W5-monitoring — alert rules + ansible + systemd + caddy (finder a2c5) — 3 dead-alert MEDs
+- **W5-mon-1 — MED (finder-HIGH; a dead page alert, launch-relevant): supply_refresh_stalled
+  is STRUCTURALLY DEAD.** supply-refresh.yml:37 `time()-timestamp(supply_refresh_total{ok})>1800`
+  — timestamp() = SCRAPE time not last-increment, ≈now forever → never >1800; dead process →
+  empty selector → still no fire. A page-tier detector for a wedged supply-refresh goroutine
+  (documented deadlock mode) is inert. Sibling supply-snapshot uses the CORRECT idiom
+  (time()-last_success_timestamp gauge). Partial compensation: supply_assets_stale (ticket).
+  FIX: emit a last-success unix gauge + alert on it.
+- **W5-mon-2 — MED: config_assertions_stale is dead.** storage.yml:248 time()-timestamp(textfile
+  gauge)>7200 — node_exporter re-stamps the .prom file every scrape → ≈0 forever even if the
+  hourly config-assertions.timer is dead for days → the incident-fix drift guards go unmonitored.
+  FIX: alert on node_textfile_mtime_seconds.
+- **W5-mon-3 — MED: ledgerstream_tier_both_missing dead in prod + routed to a no-op receiver.**
+  ledgerstream-tier.yml:17 page; the metric registers only when Config.Registry!=nil which prod
+  leaves nil → never exported → can't fire. Its compensating metrics_registry_absent is
+  severity:informational → alertmanager routes informational→silent receiver with NO webhook
+  → literally no delivery. A genuine dual-tier ingest read failure pages nobody.
+- W5-mon-4/5 LOW: galexie_catchup_refused + host_swap_activity use bare relative-path runbook_url
+  (galexie-archive.yml:117,130) → non-clickable in Discord (all siblings use full https://);
+  host_swap_activity points at galexie-catchup-refused.md (wrong runbook; no host-swap runbook exists).
+- W5-mon-6 INFO: dex_nonstandard_decimals_detected + hashdb_drift_detected are bare-counter >0 →
+  latch until process restart, never send `resolved` (alert fatigue).
+- ROOT CAUSE (recipe): only 5 of 30 rule files have promtool rule-tests; the two files holding
+  dead alerts (storage.yml, supply-refresh.yml) have NONE → F1/F2 persisted. FIX: promtool test
+  every rule file, especially timestamp()/absent()-based alerts (assert they FIRE on the condition).
+- EXAMINED-SOUND: two rule trees equivalent (only 2 intended env-diffs, both sound); galexie
+  resource protection codified (MemoryLow=16G + run-heavy-job MemoryMax=20G, matches CLAUDE.md);
+  caddy /metrics 404 + maintenance 503 + client_ip spoofing gated, no auth-bypass; systemd
+  Restart/ordering; ansible idempotent (1 command task correctly when:-gated); deadmansswitch correct.
+
+### W5-web — web/explorer + status component correctness (finder aff7)
+- **W5-web-1 — MED: /diagnostics IngestThroughputChart plots today's PARTIAL bucket as a full
+  day** (IngestThroughputChart.tsx:47, no !b.partial filter) → a false "pipeline falling behind"
+  dip every day before UTC midnight, and the chart's own hint reads it as an incident. The
+  server contract says exclude it (operations.go:324); two SIBLING charts do (NetworkView:90,
+  NetworkInsight:176, UXP-16). The partial-bucket class the fix-wave patched on /network, missed
+  on /diagnostics. Confirmed, not latent. FIX: filter !b.partial (use lib/series dropPartialTrailingDay).
+- W5-web-2 LOW: MarketChart (flagship OHLC) hands /v1/ohlc bars to lightweight-charts with NO
+  sort/dedup/NaN-time guard (MarketChart.tsx:104) → crash (not degrade) on duplicate/descending/
+  unparseable time; lib/series helpers exist to prevent this but MarketChart bypasses them
+  (AccountTrades.tsx:51 defends against exactly this). Latent (depends on endpoint ordering).
+- W5-web-3 LOW: MarketChart volume histogram Number(v_quote) on raw stroop-sum >2^53 → cosmetic
+  bar-height distortion (no numeric label). Recon v_quote class. W5-web-4 LOW: PriceSparklines
+  hardcodes emerald/rose vs up/down tokens (hygiene).
+- Same-class NOTE: MarketCapChart/SourceActivityChart/ConvertChart build time without a dedup/
+  NaN-time guard (rely on server ascending-unique stamps). NetworkView ChainEconomics gets
+  completeBuckets (partial-filtered) — NO bug there (initial suspicion cleared).
+- EXAMINED-SOUND (broad): format.ts BigInt-first; series.ts partial-day+epoch helpers; ALL
+  chart primitives (CandleChart/LineChart/DepthChart/DonutChart/Bars/Sparkline) empty/single/
+  NaN-safe; dozens of panels/tables correct absent-"—"/lower-bound-"≥"/guarded-division/
+  same-second-fold/stable-sort-no-tie-drop.
+- NOT-EXAMINED: dashboard/* (usage div-by-zero spot-checked sound), status/StatusPageClient,
+  detail views (ledger/tx/contract/oracle), embed/* (customer money display — plausible
+  further absent-as-zero/stroop spot). → dry-wave residual.
+
+## WAVE-5 COMPLETE (3/3). CI+monitoring+web. The verification-layer cluster (dead alerts,
+false-green monitors, self-bypassable lints) is the most launch-relevant of the sweep.
+
+## ═══ ALL 5 WAVES COMPLETE. See executive-summary.md for the full tally + launch verdict. ═══ CI + monitoring both surfaced
+"verification-layer has gaps" clusters — dead alerts + false-green monitors + self-bypassable
+lints. THIS is the most launch-relevant cluster: the first-24h watch depends on these firing.
+
 ## PLAUSIBLE / PENDING
 (skeptic verdicts for the DoS cluster R2/R3/R10, ingest W-1/F-6/F-4, money M-A/M-B/F-2 still in flight)
