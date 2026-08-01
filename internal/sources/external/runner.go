@@ -12,6 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // dustFloorUSDMicros is the dust threshold the streamer guard
@@ -261,6 +262,11 @@ func Run(
 	for _, r := range launched {
 		wg.Add(1)
 		go func(name string, ch <-chan canonical.Trade) {
+			// A panic while forwarding one streamer's trades must not crash
+			// the whole ingest process — it unwinds this connector's
+			// goroutine (logged at Error with its stack); the other
+			// connectors keep running.
+			defer worker.Recover(logger, "external-forward:"+name)
 			defer wg.Done()
 			forwardTrades(streamerCtx, name, ch, sink, logger)
 		}(r.name, r.ch)
@@ -281,6 +287,10 @@ func Run(
 		}
 		wg.Add(1)
 		go func(spec PollerSpec) {
+			// A panic inside a poller's tick must not crash the whole
+			// ingest process — it unwinds this poller's goroutine (logged
+			// at Error with its stack); the other connectors keep running.
+			defer worker.Recover(logger, "external-poller:"+spec.Poller.Name())
 			defer wg.Done()
 			// REL-05 (audit-2026-07-23): streamerCtx, not the raw
 			// parent ctx. teardown() (used when a LATER poller in
