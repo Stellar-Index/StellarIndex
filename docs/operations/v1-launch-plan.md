@@ -131,6 +131,17 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-08-01 ~08:45Z — 🏆 **17/17. EVERY SOURCE COMPLETE — FIRST TIME
+  EVER.** The aquarius full-range verify (75 min, quiet box) returned
+  `complete=true` and the verdict table reads t across all seventeen
+  sources; public `/v1/coverage` serves it (17 sources, 0 incomplete,
+  two-axis details per source). The dirty-window hardening cleared its
+  first production window in the same verdict line. Evidence:
+  `evidence/2026-08-01-completeness-17of17.md`. The completeness
+  go-live gate row is CLOSED. Remaining gate rows are operator-only
+  (paging→SEV drill, security posture, DR decision, announcement).
+
+
 - 2026-08-01 ~07:45Z — 🔧 **v0.21.12 HOTFIX: the aquarius replay wedge
   was a REAL projector bug — sink-side budget exhaustion never shrank
   the adaptive window** (the missing half of the 2026-07-10 fix, which
@@ -2163,12 +2174,13 @@ the spec, so the wire-freeze prerequisite is met).
       EURC, partial_wrap) dispositioned — our values Horizon-verified;
       external references count wrapped supply differently. Pre-launch:
       convert dispositions to annotated silences.
-- [ ] **Completeness green** — 16/17 as of 2026-08-01: redstone +
-      soroswap FLIPPED GREEN (blind ladder 1,626→0; taker 100%). Last
-      red = aquarius (first full-range reconcile surfaced 41 old-WASM
-      blind events + 482 pre-gating over-projected trades; unit in
-      flight on the proven playbook). `/v1/coverage` two-axis verdict
-      honest throughout.
+- [x] ✅ **Completeness green — 17/17, DONE 2026-08-01 08:33Z, first
+      time ever** (evidence `2026-08-01-completeness-17of17.md`).
+      Every source `complete=t` AND `lake_complete=t`, publicly served
+      on `/v1/coverage`, with no carried claims — the final three
+      (redstone/soroswap/aquarius) re-verified full-range within 24h
+      and replay rewinds now force re-verification (dirty windows,
+      proven in this very verdict).
 - [x] ✅ **Prove-it battery passed** (§2.6) — every row filed as of 2026-07-30: reconcile-balances (0 mismatches), verify-lake/contiguity/hash-chain (genesis→tip), re-derive determinism (byte-identical), price vs 5 references (22/22), supply vs Horizon (**8/8**), `verify-usd-volume` calibrated (current pipeline exact; pre-07-23 re-stamp queued as data-quality follow-up). Remaining battery-adjacent: the SEV drill (paging-gated).
 - [x] ✅ **Config codified = live** — DONE 2026-07-27. The 69-task apply
       landed (`ok=259 changed=60 failed=0`) and **`ansible-drift.yml` is
