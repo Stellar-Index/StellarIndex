@@ -101,3 +101,13 @@ findings.md under informational.
 R4 HIGH→MED (Caddy access log is a parallel detection surface; throttle intact).
 R7 HIGH→LOW/MED (GATED on a prior host foothold; subsumed by the secret access it
 requires). Both kept in findings.md at recalibrated severity.
+
+## W2-pricing-F1 — /v1/observations unbounded detached full-scan DoS — REFUTED (DoS part)
+Finder ab49 claimed each distinct-pair observations request spawns a detached 30s
+full-trades-hypertable scan → pool exhaustion. Orchestrator refuted: migration 0037
+added trades_pair_source_ts_idx (base_asset,quote_asset,source,ts DESC,ledger DESC),
+which EXACTLY matches LatestTradePerSource's WHERE base=$1 AND quote=$2 ORDER BY
+source,ts DESC,ledger DESC → an empty/nonexistent pair is a fast index SEEK to zero
+rows, not a scan. The ">60s empty" measurement predates 0037; observations.go:115's own
+comment says "index-covered". No connection-pool amplification. The residual
+unbounded-MEMORY-growth (no cache eviction) is carried as W2-pricing-1 LOW.

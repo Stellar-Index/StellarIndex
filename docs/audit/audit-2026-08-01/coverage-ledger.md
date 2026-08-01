@@ -21,4 +21,13 @@ NOT-EXAMINED. RECON = deep-covered in the recon phase (recon/*.md). WAVE-n = fin
 git ls-files = 3,321. Reconciliation appended per wave (every file → ≥1 unit or explicit NOT-EXAMINED).
 
 ## Dispositions (appended per wave completion)
-[WAVE-1 in flight]
+WAVE-1 DONE (5 finders): sources/external (47), sources/{soroswap,soroswap_router,
+aquarius,phoenix,comet}, sources/{blend*,sorocredit,defindex,cctp,rozo,band,reflector,
+sdex}, sources/{sep41_*,trustlines,accounts,claimable_balances,sac_balances,
+liquidity_pools,classicmovements,sorobanevents}, scval/xdrjson/events/contractid/
+canonical. Net 0 crit/high; 3 MED (W1-supply-1 sac_balances canon under-report,
+W1-defi-1 sdex zero-leg batch failure, W1-sub-1 AsBool-panic+no-recover pair); LOW/INFO
+rest. Re-queues: gating-seed-walk (forged-creation), chainlink/frankfurter,
+live/lake state-write parity test, blend/storage.go+consumer.go, migration PK 0058/0063.
+
+[WAVE-2 in flight: api/v1 handlers, auth, ratelimit, streaming, platform/billing/webhooks]
