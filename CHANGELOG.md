@@ -15,6 +15,25 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Cycle-level regression test for the v0.21.12 sink-side adaptive
+  shrink** (`internal/projector/cycle_wedge_test.go`): drives
+  `cycleOneSource` under an already-expired cycle budget with a sink
+  fast-failing on `context.DeadlineExceeded` and pins that the window
+  pointer halves per cycle, floors at `MinBatchLimit`, the cursor holds
+  (no advance-past-loss, no quarantine), and a healthy cycle then
+  commits + doubles the window back. The fix previously had only the
+  `shrinkWindow` unit test.
+- **`tx_hash_index_parity` config assertion**
+  (`scripts/ops/config-assertions.sh`): hourly sampled parity probe —
+  500 random tx hashes from the trailing 10k ledgers must all resolve
+  in `stellar.tx_hash_index` via primary-key point lookups. The
+  explorer treats an index miss as an authoritative 404 and the index
+  was parity-verified genesis→tip only once (2026-07-30); this catches
+  future divergence (MV drop/recreate windows, ATTACH-style loads that
+  bypass the MV). Runbook row added to
+  `docs/operations/runbooks/config-assertion-failed.md`.
+
 ### Fixed
 - **Gap-detector genesis for cctp (62,146,641) and rozo (60,829,397)**
   now mirrors the registry/catalogue — the stale 62,403,000 floor left

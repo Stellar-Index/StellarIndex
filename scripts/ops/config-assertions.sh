@@ -142,6 +142,59 @@ compression_policies_applied() {
 }
 assert_cmd compression_policies_applied compression_policies_applied
 
+# ── tx_hash_index parity probe (explorer 404 authority, 2026-08-01) ──
+# GET /v1/tx/{hash} treats a stellar.tx_hash_index MISS as an
+# AUTHORITATIVE not-found (the bloom-scan fallback for index misses was
+# retired in the 2026-07-30 account-filter class audit, once the 10.2B
+# ch-txindex-backfill verified genesis→tip parity — a one-time check).
+# The index is maintained by a materialized view over
+# stellar.transactions, and NOTHING re-detects future divergence: a
+# tx_hash_index_mv DROP/recreate window, or any load path that inserts
+# into stellar.transactions without firing MVs (ATTACH-PARTITION-style
+# loads), silently turns real transactions into 404s.
+#
+# Probe shape: sampled parity over the trailing 10k ledgers, NOT a
+# windowed count comparison — tx_hash_index is ORDER BY tx_hash with no
+# ledger_seq index, so "count rows WHERE ledger_seq > tip-10k" on the
+# index side is an unbounded full-column scan over 20B+ rows, exactly
+# the read class the index exists to avoid. Instead: draw 500 random
+# tx hashes from the window's transactions partitions (partition-pruned,
+# sub-second) and require EVERY one to resolve in the index via
+# primary-key point lookups (µs each; 500 scattered lookups measured
+# 0.77s on r1). A dropped-MV window of W ledgers inside the probe window
+# escapes one run with probability (1-W/10000)^500 — negligible by the
+# second hourly run for any outage worth catching. DISTINCT on the
+# sample because transactions is a ReplacingMergeTree (unmerged
+# duplicate rows must not double-count). CH via HTTP :8123 with curl —
+# dependency-light, and the clickhouse-client default native port on r1
+# famously hits MinIO (:9000), not CH (:9300).
+# shellcheck disable=SC2329  # invoked indirectly via assert_cmd's "${@:2}"
+tx_hash_index_parity() {
+  local ch="http://127.0.0.1:8123/"
+  local tip floor sample n in_list found
+  tip=$(curl -sS --max-time 15 "$ch" --data-binary \
+    'SELECT max(ledger_seq) FROM stellar.ledgers') || return 1
+  [[ "$tip" =~ ^[0-9]+$ && "$tip" -gt 10000 ]] || return 1
+  floor=$((tip - 10000))
+  sample=$(curl -sS --max-time 60 "$ch" --data-binary "
+    SELECT DISTINCT tx_hash FROM stellar.transactions
+    WHERE ledger_seq > ${floor}
+    ORDER BY rand() LIMIT 500
+    SETTINGS max_threads = 4, max_memory_usage = 4294967296") || return 1
+  # An empty sample means the lake has no transactions in the trailing
+  # 10k ledgers — itself never-true on mainnet, so fail loud.
+  n=$(printf '%s\n' "$sample" | grep -cE '^[0-9a-f]{64}$')
+  [[ "$n" -gt 0 ]] || return 1
+  in_list=$(printf '%s\n' "$sample" | grep -E '^[0-9a-f]{64}$' \
+    | sed "s/.*/'&'/" | paste -sd, -)
+  found=$(curl -sS --max-time 60 "$ch" --data-binary "
+    SELECT uniqExact(tx_hash) FROM stellar.tx_hash_index
+    WHERE tx_hash IN (${in_list})
+    SETTINGS max_threads = 4, max_memory_usage = 4294967296") || return 1
+  [[ "$found" == "$n" ]]
+}
+assert_cmd tx_hash_index_parity tx_hash_index_parity
+
 mv "$TMP" "$OUT"
 chmod 644 "$OUT"
 echo "config-assertions: $fails failure(s)" >&2

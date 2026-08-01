@@ -29,6 +29,7 @@ severity: P3
 | `redis_maxmemory` | 2026-06-16 uncapped-Redis fix | `maxmemory 1gb` in `/etc/redis/redis.conf`; restart redis-server |
 | `supply_reserve_accounts` / `_nonempty` | CS-010 circulating-supply config | restore `[supply]` from `inventory/r1.yml` vars (16 accounts + balances); restart indexer + aggregator |
 | `galexie_writer_creds_valid` | MinIO credential-rotation drift (BACKLOG #66, 2026-07-03 follow-up) — `/etc/default/galexie`'s creds must still authenticate against the live MinIO galexie-writer user | see [credential-rotation.md](../credential-rotation.md#minio) — regenerate the galexie-writer secret in the vault AND `--tags minio` re-apply so both sides move together; then restart `galexie` |
+| `tx_hash_index_parity` | `GET /v1/tx/{hash}` treats a `stellar.tx_hash_index` miss as an authoritative 404 (2026-07-30 audit); the index is MV-maintained and was parity-verified genesis→tip only ONCE. This probe samples 500 recent tx hashes hourly and requires all to resolve in the index — a FAIL means the MV was dropped/recreated with a gap, or rows entered `stellar.transactions` without firing MVs (ATTACH-style load) | find the divergence window (compare per-ledger presence around the FAIL's sample hashes), then re-run the windowed backfill: `stellarindex-ops ch-txindex-backfill -ch-addr 127.0.0.1:9300 -from <window start> -to <window end> -window 5000000` (idempotent — ReplacingMergeTree collapses re-inserts); verify `tx_hash_index_mv` exists |
 
 ## Diagnosis
 

@@ -138,7 +138,11 @@ func newWedgeHarness(t *testing.T, name string, rows []sorobanevents.Row, tip ui
 }
 
 func (h *wedgeHarness) cycle() {
-	h.proj.cycleOneSource(context.Background(), h.src, &h.window, &h.tracker)
+	h.cycleCtx(context.Background())
+}
+
+func (h *wedgeHarness) cycleCtx(ctx context.Context) {
+	h.proj.cycleOneSource(ctx, h.src, &h.window, &h.tracker)
 }
 
 // ledgerEchoDecoder matches every row and emits one consumer.Event carrying
@@ -365,6 +369,76 @@ func TestCycle_GlobalFailureDoesNotShedRows(t *testing.T) {
 	}
 	if got := decodedCount(t, source, "sink_quarantined") - beforeQuarantined; got != 0 {
 		t.Errorf("sink_quarantined delta = %v, want 0 (no health proof ⇒ no quarantine on the short budget)", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Sink-side adaptive shrink (v0.21.12, 2026-08-01 incident): the cycle-level
+// half of the shrinkWindow unit test. A window whose CH scan FINISHES but
+// whose per-event sink writes exhaust PerSourceTimeout ends the cycle with a
+// dead cycleCtx and held transient rows; pre-fix the window pointer never
+// moved, so the identical dense range was retried forever (aquarius reserves
+// wedged 3.5h at ledger 63,488,687).
+// ---------------------------------------------------------------------------
+
+// TestCycle_SinkBudgetExhaustionShrinksWindowAndHoldsCursor drives
+// cycleOneSource under an already-expired cycle budget with a sink that
+// fast-fails every write with context.DeadlineExceeded — exactly what the
+// wedge looked like from inside the projector. Each cycle must halve the
+// adaptive window pointer, flooring at MinBatchLimit over repeated cycles,
+// while the cursor holds (a deadline is dispositionRetry — never a skip, never
+// a quarantine, never an advance-past-loss).
+func TestCycle_SinkBudgetExhaustionShrinksWindowAndHoldsCursor(t *testing.T) {
+	const source = "sink-budget-shrink"
+	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2)}
+	beforeQuarantined := decodedCount(t, source, "sink_quarantined")
+
+	h := newWedgeHarness(t, source, rows, 2000, func(consumer.Event) error {
+		// Every write fast-fails on the spent cycle budget, the shape the
+		// sink sees once cycleCtx is dead mid-batch.
+		return context.DeadlineExceeded
+	})
+
+	// The parent context is already past its deadline, so cycleCtx (derived
+	// via WithTimeout in cycleOneSource) is born expired — the fake store
+	// ignores ctx, so the scan still completes and only the sink "spends"
+	// the budget, isolating the sink-side shrink arm from the stream-side
+	// one (which needs the stream itself to return DeadlineExceeded).
+	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	want := uint32(BatchLimit)
+	for i := 0; i < 10; i++ {
+		h.cycleCtx(expired)
+		if next := want / 2; next >= MinBatchLimit {
+			want = next
+		} else if want > MinBatchLimit {
+			want = MinBatchLimit
+		}
+		if h.window != want {
+			t.Fatalf("cycle %d: window = %d, want %d (budget-exhausted sink writes must halve the window toward the floor)", i+1, h.window, want)
+		}
+		if got := h.store.cursor(); got != 100 {
+			t.Fatalf("cycle %d: cursor = %d, want 100 (a deadline fault must hold the cursor, never advance past held rows)", i+1, got)
+		}
+	}
+	if h.window != MinBatchLimit {
+		t.Fatalf("window = %d after repeated exhausted cycles, want the MinBatchLimit floor %d", h.window, MinBatchLimit)
+	}
+	if got := decodedCount(t, source, "sink_quarantined") - beforeQuarantined; got != 0 {
+		t.Errorf("sink_quarantined delta = %v, want 0 (deadline faults are dispositionRetry — never quarantined)", got)
+	}
+
+	// Once the dense stretch clears (healthy budget, healthy sink) the cycle
+	// commits and the window recovers by doubling — the retry converged
+	// instead of wedging, which is the whole point of the shrink.
+	h.proj.sink = func(context.Context, consumer.Event) error { return nil }
+	h.cycle()
+	if got := h.store.cursor(); got != 101+MinBatchLimit {
+		t.Fatalf("recovery cycle: cursor = %d, want %d (fromLedger 101 + the floored window)", got, 101+MinBatchLimit)
+	}
+	if h.window != 2*MinBatchLimit {
+		t.Fatalf("recovery cycle: window = %d, want %d (success doubles back toward BatchLimit)", h.window, 2*MinBatchLimit)
 	}
 }
 
