@@ -150,6 +150,10 @@ gcp-key*.json
 # ── LOCAL-ONLY: audit/remediation findings (public-repo incident 2026-07-24) ──
 # These enumerate live/unpatched security detail — NEVER publish. Kept local +
 # backed up at ~/code/stellarindex-audit-private/. Do not remove these ignores.
+# EVERY new audit-<date>/ dir MUST be added here in the same session it is
+# created — the 2026-08-01 dir was missed and leaked (re-occurrence of the
+# 2026-07-24 incident); do not repeat.
 /docs/operations/production-remediation-ledger-2026-07-23.md
 /docs/operations/production-confidence-campaign-2026-07-23.md
 /docs/audit/audit-2026-07-23/
+/docs/audit/audit-2026-08-01/
