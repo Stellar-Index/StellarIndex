@@ -11,7 +11,7 @@
 -- the (never-observed) fall-through; there is no way to distinguish
 -- them after the fact, so no backfill is attempted.
 
-ALTER TABLE freeze_events DROP CONSTRAINT freeze_events_reason_check;
-ALTER TABLE freeze_events ADD CONSTRAINT freeze_events_reason_check
+ALTER TABLE freeze_events DROP CONSTRAINT freeze_events_reason_check;  -- migration-compat:ok widening the reason enum only; every value the old binary writes remains valid
+ALTER TABLE freeze_events ADD CONSTRAINT freeze_events_reason_check  -- migration-compat:ok superset CHECK: adds 'other', removes nothing; old binaries never write it and render it as opaque text
     CHECK (reason IN ('single_source','divergence',
                       'outlier_storm','manual','other'));

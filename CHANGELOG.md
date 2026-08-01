@@ -15,6 +15,14 @@ against.
 
 ## [Unreleased]
 
+## [v0.21.10] — 2026-08-01
+
+### Fixed
+- **v0.21.9's deploy was blocked by the migration rollback-safety gate**
+  on 0124's CHECK rebuild (rule 9). The change is a pure enum widening
+  — every value an old binary writes remains valid — now annotated
+  `migration-compat:ok` inline. No code changes vs v0.21.9.
+
 ## [v0.21.9] — 2026-08-01
 
 ### Fixed
