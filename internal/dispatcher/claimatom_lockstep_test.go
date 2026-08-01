@@ -58,6 +58,44 @@ func lsOrderBookClaim(t *testing.T, soldAsset, boughtAsset xdr.Asset, sold, boug
 	}
 }
 
+// lsLiquidityPoolClaim builds a classic-LP claim atom (counterparty is a
+// classic liquidity pool, not the Soroban AMMs). Same sold/bought shape as
+// OrderBook, different discriminant — the decoder handles all three.
+func lsLiquidityPoolClaim(t *testing.T, soldAsset, boughtAsset xdr.Asset, sold, bought int64) xdr.ClaimAtom {
+	t.Helper()
+	var pool xdr.PoolId
+	pool[0] = 0x42
+	return xdr.ClaimAtom{
+		Type: xdr.ClaimAtomTypeClaimAtomTypeLiquidityPool,
+		LiquidityPool: &xdr.ClaimLiquidityAtom{
+			LiquidityPoolId: pool,
+			AssetSold:       soldAsset,
+			AmountSold:      xdr.Int64(sold),
+			AssetBought:     boughtAsset,
+			AmountBought:    xdr.Int64(bought),
+		},
+	}
+}
+
+// lsV0Claim builds the legacy pre-CAP-27 V0 claim atom (F-1233): carries the
+// seller's raw ed25519 bytes rather than an AccountId discriminant.
+func lsV0Claim(t *testing.T, soldAsset, boughtAsset xdr.Asset, sold, bought int64) xdr.ClaimAtom {
+	t.Helper()
+	var seller xdr.Uint256
+	seller[0] = 7
+	return xdr.ClaimAtom{
+		Type: xdr.ClaimAtomTypeClaimAtomTypeV0,
+		V0: &xdr.ClaimOfferAtomV0{
+			SellerEd25519: seller,
+			OfferId:       xdr.Int64(1),
+			AssetSold:     soldAsset,
+			AmountSold:    xdr.Int64(sold),
+			AssetBought:   boughtAsset,
+			AmountBought:  xdr.Int64(bought),
+		},
+	}
+}
+
 // lsManageSellOfferOp wraps claims in the op shape all three counters
 // walk (dispatcher.claimAtomCount, clickhouse.claimAtomCount,
 // sdex.extractClaimAtoms).
@@ -131,6 +169,30 @@ func TestClaimAtomCount_LockStepWithDecoder(t *testing.T) {
 			atom:      lsOrderBookClaim(t, native, usdc, 0, 0),
 			wantTrade: false,
 			why:       "both-zero no-op claim; already dropped by both sides pre-fix (control for rule 2)",
+		},
+		{
+			name:      "one leg zero — sold only (OrderBook)",
+			atom:      lsOrderBookClaim(t, native, usdc, 100, 0),
+			wantTrade: true,
+			why:       "rule 2 is BOTH-zero; a fill whose bought leg rounded to 0 is a real trade and must be KEPT",
+		},
+		{
+			name:      "one leg zero — bought only (OrderBook)",
+			atom:      lsOrderBookClaim(t, native, usdc, 0, 100),
+			wantTrade: true,
+			why:       "sold leg rounded to 0 but bought>0: still a real trade, KEPT (sdexclaim.go:82 sold<=0 && bought<=0)",
+		},
+		{
+			name:      "one leg zero — LiquidityPool",
+			atom:      lsLiquidityPoolClaim(t, native, usdc, 100, 0),
+			wantTrade: true,
+			why:       "the one-leg-zero KEEP rule is atom-type-agnostic; LP fills must count identically to OrderBook",
+		},
+		{
+			name:      "one leg zero — V0",
+			atom:      lsV0Claim(t, native, usdc, 0, 100),
+			wantTrade: true,
+			why:       "legacy V0 atom, bought-only leg: KEPT — decoder and census must agree here too",
 		},
 		{
 			name:      "unknown atom type",

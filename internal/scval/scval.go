@@ -299,6 +299,14 @@ func AsBool(sv xdr.ScVal) (bool, error) {
 	if sv.Type != xdr.ScValTypeScvBool {
 		return false, fmt.Errorf("%w: want Bool, got %s", ErrScValType, sv.Type.String())
 	}
+	if sv.B == nil {
+		// ScValTypeScvBool == 0, so the zero-value ScVal reports
+		// Type==ScvBool while carrying a nil B pointer — as does any
+		// malformed value. Guard the deref here rather than panicking
+		// the decode goroutine (a malformed/zero contract value must
+		// fail this accessor, not crash ingest).
+		return false, fmt.Errorf("%w: Bool arm has nil value (malformed or zero ScVal)", ErrScValType)
+	}
 	return bool(*sv.B), nil
 }
 

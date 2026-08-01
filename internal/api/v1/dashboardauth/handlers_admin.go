@@ -78,7 +78,7 @@ func (h *Handlers) HandleAdminLookup(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		if h.cfg.Logger != nil {
-			h.cfg.Logger.Warn("admin lookup failed", "err", err, "actor", sc.User.Email)
+			h.cfg.Logger.Warn("admin lookup failed", "err", err, "actor", maskEmail(sc.User.Email))
 		}
 		writeProblem(w, http.StatusInternalServerError, "internal error", adminLookupInstance)
 		return
@@ -87,7 +87,7 @@ func (h *Handlers) HandleAdminLookup(w http.ResponseWriter, r *http.Request) {
 	users, _ := h.cfg.Users.ListUsersForAccount(r.Context(), acct.ID)
 	// Staff access to customer data is auditable — record who looked up what.
 	if h.cfg.Logger != nil {
-		h.cfg.Logger.Info("staff customer lookup", "actor", sc.User.Email, "account", acct.Slug)
+		h.cfg.Logger.Info("staff customer lookup", "actor", maskEmail(sc.User.Email), "account", acct.Slug)
 	}
 	h.recordAdminLookupAudit(r, sc, acct, lookupQueryKind(email), len(users))
 
@@ -168,7 +168,7 @@ func (h *Handlers) recordAdminLookupAudit(
 		// to make the missing row visible.
 		obs.AdminAuditWriteFailuresTotal.WithLabelValues(auditSurfaceStaffLookup).Inc()
 		h.cfg.Logger.Warn("staff customer lookup: audit append failed (best-effort)",
-			"err", err, "account_id", acct.ID, "actor", sc.User.Email)
+			"err", err, "account_id", acct.ID, "actor", maskEmail(sc.User.Email))
 	}
 }
 

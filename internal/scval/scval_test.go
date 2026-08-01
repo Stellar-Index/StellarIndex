@@ -436,6 +436,39 @@ func TestAsU64_wrongType(t *testing.T) {
 	}
 }
 
+func TestAsBool_roundtrip(t *testing.T) {
+	for _, want := range []bool{true, false} {
+		b := want
+		sv := xdr.ScVal{Type: xdr.ScValTypeScvBool, B: &b}
+		got, err := AsBool(sv)
+		if err != nil {
+			t.Fatalf("AsBool(%v): %v", want, err)
+		}
+		if got != want {
+			t.Errorf("AsBool = %v, want %v", got, want)
+		}
+	}
+}
+
+// TestAsBool_zeroValueDoesNotPanic pins the W1-sub-1 fix: ScValTypeScvBool
+// is 0, so a zero-value xdr.ScVal reports Type==ScvBool while carrying a nil
+// B pointer. Pre-fix AsBool dereferenced that nil and panicked the decode
+// goroutine on a malformed/zero contract value; it must now return
+// ErrScValType instead.
+func TestAsBool_zeroValueDoesNotPanic(t *testing.T) {
+	_, err := AsBool(xdr.ScVal{})
+	if !errors.Is(err, ErrScValType) {
+		t.Errorf("expected ErrScValType for zero-value ScVal, got %v", err)
+	}
+}
+
+func TestAsBool_wrongType(t *testing.T) {
+	_, err := AsBool(symScVal("not-bool"))
+	if !errors.Is(err, ErrScValType) {
+		t.Errorf("expected ErrScValType, got %v", err)
+	}
+}
+
 func TestAsBytes_roundtrip(t *testing.T) {
 	want := []byte{0xde, 0xad, 0xbe, 0xef}
 	b := xdr.ScBytes(want)
