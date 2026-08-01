@@ -32,6 +32,8 @@ package canonical
 import (
 	"fmt"
 	"go/ast"
+	"go/parser"
+	"go/printer"
 	"go/token"
 	"go/types"
 	"regexp"
@@ -220,6 +222,91 @@ func TestI128TruncationGuard(t *testing.T) {
 	for key, pos := range allMarkers {
 		if !usedMarkers[key] {
 			t.Errorf("%s: stale //i128:ok marker — it exempts no conversion on its own or the next line; remove it", pos)
+		}
+	}
+}
+
+// TestI128TruncationGuard_PositiveControl proves the DETECTOR still FIRES on
+// the exact KALIEN-class truncation it exists to catch. Without it,
+// TestI128TruncationGuard asserts only the ABSENCE of violations against the
+// live tree — so a silent rot of partTypes / partFields / mustAccessors /
+// isPartsType (an SDK field rename, a moved Int128Parts, a changed /xdr path)
+// would make the guard return "" for every site and pass on an effectively
+// empty tree: "detector works, tree clean" becomes indistinguishable from
+// "detector broken, finds nothing" (audit W6-tst-2, the "a guard that never
+// fails is decorative" class).
+//
+// It is fully self-contained — a synthetic package whose path ends in "/xdr"
+// with a locally-defined Int128Parts, so it needs no importer and cannot go
+// stale against the real SDK. It exercises every fragile table the real
+// detector depends on: partTypes (the struct name), partFields (Hi/Lo),
+// isPartsType (the /xdr suffix + Named-type resolution), the field-kind
+// comparison, and mustAccessors (the Must* branch).
+func TestI128TruncationGuard_PositiveControl(t *testing.T) {
+	const src = `package xdr
+
+type Int128Parts struct {
+	Hi int64
+	Lo uint64
+}
+
+type Amount struct{}
+
+func (Amount) MustI128() int64 { return 0 }
+
+func sink() {
+	var p Int128Parts
+	var a Amount
+	_ = int64(p.Lo)         // TRUNCATE: sign-reinterpret + is the KALIEN bug
+	_ = float64(p.Hi)       // TRUNCATE: precision loss above 2^53
+	_ = int32(p.Lo)         // TRUNCATE: narrowing
+	_ = uint64(p.Lo)        // OK: the correct FromInt128Parts low-word shape
+	_ = int64(p.Hi)         // OK: the correct FromInt128Parts high-word shape
+	_ = int64(a.MustI128()) // TRUNCATE: Must* result fed to a conversion
+}
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "xdr.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse synthetic source: %v", err)
+	}
+	info := &types.Info{
+		Types: map[ast.Expr]types.TypeAndValue{},
+		Defs:  map[*ast.Ident]types.Object{},
+		Uses:  map[*ast.Ident]types.Object{},
+	}
+	// The package PATH must end in "/xdr" so isPartsType's suffix check
+	// matches — this is one of the fragile predicates under test.
+	if _, err := (&types.Config{}).Check("example.test/fake/xdr", fset, []*ast.File{f}, info); err != nil {
+		t.Fatalf("type-check synthetic source: %v", err)
+	}
+
+	fired := map[string]bool{}
+	ast.Inspect(f, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		var b strings.Builder
+		if err := printer.Fprint(&b, fset, call); err != nil {
+			t.Fatalf("render call: %v", err)
+		}
+		fired[b.String()] = checkConversion(info, call) != ""
+		return true
+	})
+
+	mustFire := []string{"int64(p.Lo)", "float64(p.Hi)", "int32(p.Lo)", "int64(a.MustI128())"}
+	mustPass := []string{"uint64(p.Lo)", "int64(p.Hi)"}
+	for _, k := range mustFire {
+		if seen, ok := fired[k]; !ok {
+			t.Fatalf("positive-control expr %s never inspected — synthetic source drifted", k)
+		} else if !seen {
+			t.Errorf("DETECTOR ROT (W6-tst-2): checkConversion did NOT fire on %s — the i128 guard no longer catches the truncation class it exists for; check partTypes/partFields/mustAccessors/isPartsType against the current SDK", k)
+		}
+	}
+	for _, k := range mustPass {
+		if fired[k] {
+			t.Errorf("checkConversion FALSE-fired on the correct decode shape %s — it would reject valid FromInt128Parts code", k)
 		}
 	}
 }
