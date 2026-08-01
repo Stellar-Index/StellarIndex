@@ -240,6 +240,25 @@ never decoded in the first place).
    registry pool and a foreign pool).
 3. Verdict watch: one green `compute-completeness -ch` cycle for aquarius.
 
+### 2026-08-02 addendum — first full-range completeness reconcile closed
+
+The 2026-08-01 first full-range `compute-completeness` verdict surfaced
+two long-standing artifact classes; both are root-caused with lake-byte
+evidence in
+[docs/operations/evidence/2026-08-02-aquarius-artifact-classes.md](../operations/evidence/2026-08-02-aquarius-artifact-classes.md):
+
+1. **41 blind (undecodable-but-matched) events** = 40 zero-amount dust
+   swaps (`bought=0` — now a recognized decode no-op, `ErrZeroAmountTrade`)
+   + 1 `set_privileged_addrs` FIVE-element body (the post-57.7M WASM
+   generation — now decoded via an arity branch; every event from ledger
+   57,697,794 onward is the 5-element form, so the 4-element pin from the
+   2026-07-10 audit was sampling the older generation).
+2. **482 projection mismatches** = 480 stranded pre-gating trade rows
+   from CA7RQDMM-announced pools (the rollout step-2 cleanup above was
+   never executed — scoped DELETE now staged with exact keys) + 2
+   dropped rows from the 2026-07-09 P27 SEV window (tiny
+   `projector-replay` restores them).
+
 ### Remaining asks for the Aquarius team (ratification, no longer blockers)
 
 1. Confirm the router (`CBQDHNBF…`) is the sole official deployment and

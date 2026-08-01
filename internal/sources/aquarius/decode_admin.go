@@ -131,18 +131,25 @@ func decodeCommitUpgrade(e *events.Event, closedAt time.Time) (AdminEvent, error
 	return av, nil
 }
 
-// decodeSetPrivilegedAddrs decodes `set_privileged_addrs`.
+// decodeSetPrivilegedAddrs decodes `set_privileged_addrs` — BOTH wire
+// generations (contract-schema-evolution: pools/router upgrade in
+// place, and the body grew an element across a WASM upgrade):
 //
 //	topics: [Symbol("set_privileged_addrs")]  (topic_count=1)
-//	body:   Vec[Address, Address, Address, Vec[Address]]  (length 4)
+//	body v1: Vec[Address, Address, Address, Vec[Address]]           (length 4)
+//	body v2: Vec[Address, Address, Address, Vec[Address], Address]  (length 5)
 //
-// Verified against r1 lake bytes 2026-07-10: three plain Address
-// elements followed by a NESTED Vec of Address (observed length 1,
-// but not assumed fixed — decoded as a list). BEST-EFFORT: likely a
-// multi-role privileged-address set (e.g. emergency admin / rewards
-// admin / operations admin + a pauser list) — unconfirmed against
-// contract source. No single "target" column fits four addressed
-// entities, so all land in Attributes.
+// Lake census (2026-08-02, full history): every event at ledgers
+// ≤ 57,604,772 is the 4-element form; every event from 57,697,794
+// (2025-06-25) onward is the 5-element form — same first four
+// elements, plus ONE trailing plain Address. The 2026-07-10 audit
+// sampled a 4-element exemplar and pinned arity==4, which left the
+// canonical router's single 5-element event (ledger 57,711,797)
+// undecodable — one of the 41 blind events on aquarius's first
+// full-range completeness reconcile (2026-08-01). BEST-EFFORT
+// semantics as before: a multi-role privileged-address set; the v2
+// trailing address lands in Attributes["addr_3"]. Any other arity
+// still fails closed.
 func decodeSetPrivilegedAddrs(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 	body, err := scval.Parse(e.Value)
 	if err != nil {
@@ -152,8 +159,8 @@ func decodeSetPrivilegedAddrs(e *events.Event, closedAt time.Time) (AdminEvent, 
 	if err != nil {
 		return AdminEvent{}, fmt.Errorf("%w: set_privileged_addrs body not a vec: %w", ErrMalformedPayload, err)
 	}
-	if len(elts) != 4 {
-		return AdminEvent{}, fmt.Errorf("%w: set_privileged_addrs body length %d != 4", ErrMalformedPayload, len(elts))
+	if len(elts) != 4 && len(elts) != 5 {
+		return AdminEvent{}, fmt.Errorf("%w: set_privileged_addrs body length %d not in {4, 5}", ErrMalformedPayload, len(elts))
 	}
 	addrs := make([]string, 3)
 	for i := 0; i < 3; i++ {
@@ -180,6 +187,14 @@ func decodeSetPrivilegedAddrs(e *events.Event, closedAt time.Time) (AdminEvent, 
 	av.Attributes["addr_1"] = addrs[1]
 	av.Attributes["addr_2"] = addrs[2]
 	av.Attributes["addr_list"] = list
+	if len(elts) == 5 {
+		// v2 (post-57.7M WASM) trailing role address.
+		addr, err := scval.AsAddressStrkey(elts[4])
+		if err != nil {
+			return AdminEvent{}, fmt.Errorf("%w: set_privileged_addrs addr[4]: %w", ErrMalformedPayload, err)
+		}
+		av.Attributes["addr_3"] = addr
+	}
 	return av, nil
 }
 
