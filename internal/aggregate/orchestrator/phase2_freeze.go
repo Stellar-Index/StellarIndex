@@ -242,13 +242,13 @@ func (o *Orchestrator) stepFreezeLifecycle(
 ) bool {
 	prev, overridden := o.loadFreezeState(ctx, pair, stateKey)
 	if overridden {
-		o.releaseFreeze(ctx, pair, stateKey, prev, freeze.TransitionOverridden)
+		o.releaseFreeze(ctx, pair, window, stateKey, prev, freeze.TransitionOverridden)
 		return false
 	}
 
 	out := o.cfg.Phase2Thresholds.Lifecycle.Evaluate(prev, sig)
 	if !out.Frozen {
-		o.releaseFreeze(ctx, pair, stateKey, prev, out.Transition)
+		o.releaseFreeze(ctx, pair, window, stateKey, prev, out.Transition)
 		return false
 	}
 	o.engageFreeze(ctx, pair, window, stateKey, decision, prevVWAP, out)
@@ -427,9 +427,10 @@ func (o *Orchestrator) logFreezeTransition(
 	}
 }
 
-// releaseFreeze ends a freeze: drop the ladder, delete the marker so
-// `flags.frozen` clears immediately rather than after the remaining
-// hold's TTL, and count the release by mode.
+// releaseFreeze ends ONE window's freeze: drop that window's ladder,
+// count the release by mode, and — once no sibling window for the pair
+// is still frozen — delete the shared marker so `flags.frozen` clears
+// immediately rather than after the remaining hold's TTL.
 //
 // The state entry is kept present-but-inactive rather than deleted,
 // so [Orchestrator.loadFreezeState]'s hydrate-on-cold-key path stays
@@ -437,6 +438,7 @@ func (o *Orchestrator) logFreezeTransition(
 func (o *Orchestrator) releaseFreeze(
 	ctx context.Context,
 	pair canonical.Pair,
+	window time.Duration,
 	stateKey string,
 	prev freeze.State,
 	transition freeze.Transition,
@@ -453,6 +455,7 @@ func (o *Orchestrator) releaseFreeze(
 	obs.AnomalyFreezeReleasedTotal.WithLabelValues(mode).Inc()
 	o.logger.Info("freeze released",
 		"pair", pair.String(),
+		"window", window.String(),
 		"mode", mode,
 		"fired_at", prev.FiredAt,
 		"extensions_used", prev.ExtensionsUsed,
@@ -461,10 +464,57 @@ func (o *Orchestrator) releaseFreeze(
 	if o.cfg.FreezeWriter == nil {
 		return
 	}
+
+	// W3-freeze-1: the freeze marker AND the durable ladder are keyed by
+	// (asset, quote), but a pair's lifecycle runs independently per
+	// window ([DefaultWindows] is 5m/1h/24h). That shared marker's
+	// presence is the single flag the API serves as `flags.frozen` for
+	// the WHOLE pair, so it must stay set while ANY window is still
+	// frozen. Clearing it when a short window auto-releases mid-hold on a
+	// sibling deletes the marker out from under the still-frozen window;
+	// the next tick reads the absent marker as an operator override
+	// (loadFreezeState) and republishes that window's still-anomalous
+	// VWAP with flags.frozen=false — defeating the freeze in exactly the
+	// thin/single-source case it exists for, and it does not self-heal.
+	// So retire the shared marker + durable ladder only when the LAST
+	// frozen window for the pair releases.
+	//
+	// A genuine operator override is unaffected: `freeze-unfreeze`
+	// deletes the marker (and stamps recovered_at) out of band, and each
+	// window observes that independently in loadFreezeState — so every
+	// window releases regardless of which one's releaseFreeze reaches the
+	// Clear below.
+	if o.siblingWindowFrozen(pair, window) {
+		return
+	}
+
 	// An operator override already deleted the marker; clearing again
 	// is a harmless idempotent DEL and keeps the two paths identical.
 	if err := o.cfg.FreezeWriter.Clear(ctx, pair.Base, pair.Quote); err != nil {
 		o.logger.Warn("freeze marker clear failed — flags.frozen stays set until its TTL",
 			"pair", pair.String(), "err", err)
 	}
+}
+
+// siblingWindowFrozen reports whether any window OTHER than `window`
+// still holds a live freeze for `pair`. It is what keeps the shared
+// (asset, quote) freeze marker + durable ladder alive until the last
+// window releases (W3-freeze-1).
+//
+// Reads o.freezeStates on the single-Tick goroutine — the same
+// no-lock invariant loadFreezeState relies on. Reconstructs each
+// sibling's stateKey with the exact shape refreshPairWindow uses
+// (`pair:window`) rather than prefix-matching map keys, so an asset id
+// that itself contains the ':' separator (e.g. `fiat:USD`) can't
+// produce a false match.
+func (o *Orchestrator) siblingWindowFrozen(pair canonical.Pair, window time.Duration) bool {
+	for _, w := range o.cfg.Windows {
+		if w == window {
+			continue
+		}
+		if o.freezeStates[pair.String()+":"+w.String()].Active() {
+			return true
+		}
+	}
+	return false
 }

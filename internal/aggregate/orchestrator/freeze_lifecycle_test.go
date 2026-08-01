@@ -579,6 +579,202 @@ func TestFreezeLifecycle_Phase1SharesTheLadder(t *testing.T) {
 	}
 }
 
+// windowRoutedStore returns a different trade fixture per WINDOW,
+// keyed by the query range width (to - from, which refreshPairWindow
+// sets to exactly the window). The package's mockStore is per-PAIR
+// only, so it can't drive two windows of the same pair down divergent
+// freeze paths in one tick — which is precisely the W3-freeze-1
+// scenario.
+type windowRoutedStore struct {
+	byWindow map[time.Duration][]canonical.Trade
+}
+
+func (s *windowRoutedStore) TradesInRange(
+	_ context.Context, _ canonical.Pair, from, to time.Time, _ int,
+) ([]canonical.Trade, error) {
+	return s.byWindow[to.Sub(from)], nil
+}
+
+// newTwoWindowFreeze wires an orchestrator with two windows (5m, 1h)
+// for one pair, both seeded at the last-known-good, plus a per-window
+// store. Returned closures drive the shared clock and read state.
+func newTwoWindowFreeze(t *testing.T) (
+	orch *Orchestrator,
+	marker *recordingFreezeMarker,
+	feed func(shortQuote, longQuote int64),
+	tick func(d time.Duration),
+	served func(w time.Duration) string,
+	shortWindow, longWindow time.Duration,
+	pair canonical.Pair,
+) {
+	t.Helper()
+	shortWindow, longWindow = 5*time.Minute, time.Hour
+	pair = xlmUSDPair(t)
+	rdb, mr := newTestRedis(t)
+	marker = &recordingFreezeMarker{}
+	store := &windowRoutedStore{byWindow: map[time.Duration][]canonical.Trade{}}
+
+	orch = New(store, rdb, Config{
+		Pairs:        []canonical.Pair{pair},
+		Windows:      []time.Duration{shortWindow, longWindow},
+		Interval:     time.Hour,
+		FreezeWriter: marker,
+		Baselines: stubBaselineSource{
+			multi: baseline.MultiBaseline{
+				Day30: &baseline.Baseline{Median: 0, MAD: 0.001, N: 60_000},
+			},
+		},
+	})
+	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	orch.clock = func() time.Time { return now }
+
+	lkg := big.NewRat(lkgQuoteAmount, lkgBaseAmount)
+	for _, w := range []time.Duration{shortWindow, longWindow} {
+		orch.prevVWAPs[pair.String()+":"+w.String()] = new(big.Rat).Set(lkg)
+		k := cachekeys.VWAP(pair.Base, pair.Quote, w).String()
+		if err := rdb.Set(context.Background(), k, lkgFormatted, time.Hour).Err(); err != nil {
+			t.Fatalf("seed LKG for %v: %v", w, err)
+		}
+	}
+
+	feed = func(shortQuote, longQuote int64) {
+		ts := now.Add(-10 * time.Second)
+		store.byWindow[shortWindow] = []canonical.Trade{
+			makeXLMUSDTrade(t, "soroswap", lkgBaseAmount, shortQuote, ts),
+		}
+		store.byWindow[longWindow] = []canonical.Trade{
+			makeXLMUSDTrade(t, "soroswap", lkgBaseAmount, longQuote, ts),
+		}
+	}
+	tick = func(d time.Duration) {
+		now = now.Add(d)
+		if err := orch.Tick(context.Background()); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+	}
+	served = func(w time.Duration) string {
+		got, err := mr.Get(cachekeys.VWAP(pair.Base, pair.Quote, w).String())
+		if err != nil {
+			t.Fatalf("cached VWAP missing for %v: %v", w, err)
+		}
+		return got
+	}
+	return orch, marker, feed, tick, served, shortWindow, longWindow, pair
+}
+
+// TestFreezeLifecycle_SiblingWindowReleaseKeepsLongWindowFrozen is the
+// W3-freeze-1 regression: the freeze marker + durable ladder + serving
+// Looker are keyed by (asset, quote) but the freeze lifecycle runs per
+// WINDOW. When a short window auto-releases, it must NOT clear the
+// shared marker out from under a longer window that is still frozen —
+// otherwise the next tick reads the absent marker as an operator
+// override and republishes the still-manipulated long-window VWAP with
+// flags.frozen=false, defeating the freeze in exactly the
+// thin/single-source case it exists for.
+//
+// The attack shape: manipulate a pair so BOTH the 5m and 1h windows
+// freeze; recover the 5m print (short window earns its auto-unfreeze)
+// while parking the 1h price high. Pre-fix, the 5m release's Clear
+// deletes the pair-global marker and the still-frozen 1h window then
+// publishes the manipulated price unflagged.
+func TestFreezeLifecycle_SiblingWindowReleaseKeepsLongWindowFrozen(t *testing.T) {
+	orch, marker, feed, tick, served, shortWindow, longWindow, pair := newTwoWindowFreeze(t)
+	shortKey := pair.String() + ":" + shortWindow.String()
+	longKey := pair.String() + ":" + longWindow.String()
+	lkg := big.NewRat(lkgQuoteAmount, lkgBaseAmount)
+
+	// Tick 1: manipulated print on BOTH windows → both freeze.
+	feed(manipQuoteAmount, manipQuoteAmount)
+	tick(30 * time.Second)
+	if !orch.freezeStates[shortKey].Active() || !orch.freezeStates[longKey].Active() {
+		t.Fatalf("setup: both windows should freeze (short=%v long=%v)",
+			orch.freezeStates[shortKey].Active(), orch.freezeStates[longKey].Active())
+	}
+	if !marker.present {
+		t.Fatal("setup: freeze marker should be present after both windows froze")
+	}
+
+	// The short window recovers; the long window stays manipulated.
+	// Tick 2 lands past the 10-minute uncorroborated hold: short earns
+	// streak=1 (held), long extends — both still frozen.
+	feed(lkgQuoteAmount, manipQuoteAmount)
+	tick(freeze.DefaultUncorroboratedInitialHold + time.Minute)
+	if !orch.freezeStates[shortKey].Active() {
+		t.Fatal("short window released on a single healthy bucket; ADR-0019 needs two consecutive")
+	}
+	if !orch.freezeStates[longKey].Active() {
+		t.Fatal("long window released while still manipulated")
+	}
+
+	// Tick 3: the short window's SECOND consecutive healthy bucket →
+	// it auto-releases. The long window is still mid-hold and still
+	// firing on the manipulated print.
+	feed(lkgQuoteAmount, manipQuoteAmount)
+	tick(30 * time.Second)
+
+	// The short window releases in both the buggy and fixed code — that
+	// is not the defect.
+	if orch.freezeStates[shortKey].Active() {
+		t.Fatal("short window did not auto-release after two healthy buckets past the hold")
+	}
+
+	// W3-freeze-1: the long window is still frozen, so the shared marker
+	// the API reads for flags.frozen MUST still be present, the long
+	// window's lifecycle MUST still be Active, and the long window MUST
+	// NOT publish its manipulated VWAP.
+	if !marker.present {
+		t.Error("W3-freeze-1: short-window auto-release cleared the shared (asset,quote) freeze " +
+			"marker while the long window is still frozen — the API's FrozenForPair now serves " +
+			"flags.frozen=false for the still-frozen long window")
+	}
+	if !orch.freezeStates[longKey].Active() {
+		t.Error("W3-freeze-1: long window read the cleared marker as an operator override and " +
+			"dropped its still-live freeze")
+	}
+	if got := served(longWindow); got != lkgFormatted {
+		t.Errorf("W3-freeze-1: long window published %q; want the held last-known-good %q — the "+
+			"manipulated price was served with flags.frozen=false", got, lkgFormatted)
+	}
+	if orch.prevVWAPs[longKey].Cmp(lkg) != 0 {
+		t.Error("W3-freeze-1: long window's prev-VWAP comparator advanced off the LKG — the " +
+			"manipulation became the new baseline and the freeze cannot self-heal")
+	}
+}
+
+// TestFreezeLifecycle_OperatorOverrideReleasesAllWindows guards the
+// W3-freeze-1 fix's edge case: the sibling-active check on the shared
+// marker Clear must NOT block a genuine operator force-unfreeze.
+// Deleting the marker out of band is the ADR-0019 override, and it
+// releases EVERY window for the pair — each observes the missing marker
+// independently in loadFreezeState — not just whichever window's
+// releaseFreeze happens to reach the Clear.
+func TestFreezeLifecycle_OperatorOverrideReleasesAllWindows(t *testing.T) {
+	orch, marker, feed, tick, _, shortWindow, longWindow, pair := newTwoWindowFreeze(t)
+	shortKey := pair.String() + ":" + shortWindow.String()
+	longKey := pair.String() + ":" + longWindow.String()
+
+	feed(manipQuoteAmount, manipQuoteAmount)
+	tick(30 * time.Second)
+	if !orch.freezeStates[shortKey].Active() || !orch.freezeStates[longKey].Active() {
+		t.Fatal("setup: both windows should be frozen")
+	}
+
+	// Operator force-unfreezes the pair mid-hold: the marker is deleted
+	// out of band (recordingFreezeMarker models that as present=false).
+	marker.present = false
+
+	feed(manipQuoteAmount, manipQuoteAmount)
+	tick(30 * time.Second)
+
+	if orch.freezeStates[shortKey].Active() {
+		t.Error("operator override left the short window frozen")
+	}
+	if orch.freezeStates[longKey].Active() {
+		t.Error("operator override left the LONG window frozen — the sibling-active guard on the " +
+			"marker Clear must not block a genuine force-unfreeze")
+	}
+}
+
 // TestFreezeLifecycle_ActiveGaugeTracksHeldFreezes — the gauge the
 // freeze-active rule reads. It must fall back to zero on release,
 // not stay latched: an operator reading a stuck "1 frozen" would
