@@ -1,5 +1,27 @@
 # Audit №3 — findings (HEAD f8c099ee, 2026-08-01)
 
+## ★ TOP FINDING — CONFIRMED HIGH (LIVE, unauthenticated)
+
+### W4-obs-1 — HIGH, CONFIRMED (orchestrator traced every step): unauthenticated remote memory-exhaustion DoS via unbounded Prometheus method-label cardinality.
+`normalizeMethod` (internal/obs/http_middleware.go:212) returns UNRECOGNIZED HTTP methods
+UNCHANGED (not even upper-cased) — so "A0000001","A0000002",… are distinct labels.
+`method := normalizeMethod(r.Method)` (:69) feeds HTTPRequestsTotal.WithLabelValues(method,
+route,status) (:102) + HTTPRequestDuration (:115) + HTTPRequestSuccessDuration (:127). The
+middleware is 2nd-outermost (server.go:1246), BEFORE routing, so even 404/405 fire it; route
+is bounded ("unmatched") + status bounded, but **method is attacker-controlled + unbounded**.
+net/http accepts any RFC-7230 token as method; prometheus CounterVec/HistogramVec children are
+created on first WithLabelValues + retained for PROCESS LIFE, no cap. ATTACK: unauth `curl -X
+<random> https://api.stellarindex.io/` in a loop → millions of retained series → API heap growth
++ unbounded /metrics scrape payload → OOM of BOTH the API process AND the Prometheus server
+scraping it. LIVE, no operator/config dependency, no auth. The isSyntheticUA early-return (:98)
+only skips synthetic UAs; a normal attacker reaches :102. FIX (one line): normalizeMethod
+returns a bounded "other" for unrecognized methods. RESIDUAL to check (mitigation only, doesn't
+fix the API-side growth): a Prometheus scrape-config sample_limit/metric_relabel cap would bound
+the Prometheus side but NOT the API process's own heap. → the fix belongs in the API.
+
+---
+
+
 Skeptic-verified findings, exposure-then-severity ranked. Each carries a
 verdict (CONFIRMED = an independent skeptic traced the failure by static
 reasoning; PLAUSIBLE = needs runtime state; REFUTED → reviewed-not-carried.md).
@@ -553,6 +575,113 @@ label spoof (public unauth trusted-asset impersonation).
   (decimalsguard W3-guards-1, wasm-extract W3-archive-1, and the gen-0-blind-spot family).
   "any tool writing a reconcile-target table below the watermark must RecordProjectionDirtyWindow"
   now ≥4 offenders (ch-rebuild, backfill-router, backfill, resume-stalled).
+
+### SKEPTIC VERDICTS — freeze cluster (skeptic a98b)
+- **W3-freeze-1 — CONFIRMED HIGH (upheld).** Skeptic re-derived the full tick loop; every
+  exoneration failed: prod runs 3 windows (DefaultWindows [5m,1h,24h], main.go:455); marker
+  + durable ladder + serving Looker ALL pair-keyed not window (keys.go:400, freeze.go:141,
+  564); API FrozenForPair reads the pair-global marker (price.go:475) so Clear flips
+  flags.frozen=false for ALL windows at once; on the 5m-release tick the 1h window (still
+  Active, Phase-1 doesn't re-fire, marker gone → overridden) publishes the manipulated 1h
+  VWAP unflagged (phase2_freeze.go:244); no self-heal (prevVWAPs now holds it). Defeats the
+  freeze in exactly the thin/single-source scenario it exists for. FIX: window-scope the
+  marker+ladder+Looker, or skip Clear when a sibling window is still Active.
+- **W3-freeze-2 — DOWNGRADED MED/HIGH→LOW** (skeptic). Mechanism confirmed (z biased low on
+  long windows) but the harmful outcome is defended: the 4σ outlier filter removes spikes
+  from the long-window VWAP BEFORE it's computed (nothing to freeze), and sustained drift is
+  a DOCUMENTED deliberate route-to-confidence-not-freeze (a drift-gated freeze can't
+  self-clear). No materially-manipulated-yet-unfrozen long-window price in realistic cases.
+  Genuine calibration weakness, fail-SAFE direction. → LOW.
+
+### SKEPTIC VERDICTS — resume-stalled + F-2 extensions (skeptic a2bc)
+- **W3-ops-1 (resume-stalled) — CONFIRMED, DOWNGRADED HIGH→MED.** Every link traced+upheld
+  (gen 0, no resolver, DO UPDATE fires 0<=0, writes NULL, guard silent at gen 0, live rows
+  ARE gen-0 with correct usd_volume, plan-granularity gate re-walks non-gap ledgers within
+  an admitted plan, resume-stalled is live + documented to run ALONGSIDE live ingest). MED
+  not HIGH: writes NULL at gen 0 = LOWEST precedence → RECOVERABLE by any later backfill/
+  ch-rebuild at gen>0. Silent (no guard/log) + count-based verifier BLIND to value-only NULL.
+  Could hold HIGH if run during launch over live-overlapping ranges. FIX: mirror backfill's
+  SetDeriveGeneration + InstallUSDVolumeResolution in resumeStalled (:478).
+- **W3-ops-2/3 (backfill + backfill-router) — CONFIRMED MED, same class as ch-rebuild F-2.**
+  Both stamp gen>0 + rewrite reconcile-target rows (sdex trades / soroswap_router_swaps)
+  below watermark with NO RecordProjectionDirtyWindow; no compensating full-reconcile
+  (backfill has no live-watermark guard, unlike projected_rebuild). backfill_router.go:24
+  docstring "ON CONFLICT DO NOTHING idempotent" is STALE (real SQL DO UPDATE). The F-2 class
+  now spans ch-rebuild + backfill + backfill-router + resume-stalled — the recipe trap "any
+  below-watermark reconcile-target writer must RecordProjectionDirtyWindow first" is
+  CONFIRMED across ≥4 tools. FIX: the record-then-write guard on all of them (or a shared helper).
+
+### W4-cmd — cmd mains wiring/startup/lifecycle (finder a47a)
+- **W4-cmd-1 — MED: the AGGREGATOR has ZERO panic isolation** on its orchestrator (main.go:862
+  orch.Run) + ~13 bare `go func(){Run(rootCtx)}()` workers (no recover), while the API
+  deliberately wraps all 9 in recoverBackgroundWorker (api/main.go:103-131, +test). A panic
+  in MEV/decimals-guard/supply-refresher (lake reads, NUMERIC math, nil-NULL) → whole
+  aggregator dies → the SOLE writer of prices_*/VWAP/freeze markers → systemd crash-loop
+  flapping the price pipeline. The API's own docstring is the counter-argument this is wrong.
+  FIX: mirror recoverBackgroundWorker in the aggregator. (F2 LOW: indexer AUX workers same
+  gap — hot path IS isolated.)
+- W4-cmd-3 LOW: API -dry-run gate NOT before the first `go` — stripe-deadletter-gauge (main.go:572)
+  launches ~250 lines before the gate (:822) → a dry-run with Stripe configured issues a PG
+  CountOpenDeadLetters query + sets a gauge; the gate's "before the first go statement" comment
+  is FALSE (recon flagged the ordering; this is the concrete violation). FIX: move the gauge
+  goroutine below the gate.
+- W4-cmd-4 LOW: indexer + aggregator /metrics listeners have NO public-bind warning (main.go:1789,
+  1592, empty-string check only) while the API warns (warnUnsafeBind); metrics_listen=0.0.0.0
+  silently exposes per-source volumes/cursors unauthenticated. (recon metrics-no-loopback class.)
+- W4-cmd-5 INFO: API doesn't Wait for background workers on shutdown (aggregator does,
+  refresherWG.Wait) → SIGTERM abandons in-flight webhook/rollup (idempotent, bounded).
+- EXAMINED-SOUND: all 18 KnownSources ↔ BuildDispatcher (no built-but-unknown / known-but-unbuilt,
+  no VWAP-fail-close typo); SinkModeForProjector exhaustive + sep41 sole-writer holds; auth_mode
+  unknown-fallthrough UNREACHABLE (validate rejects at load); SSE clears the 30s WriteTimeout via
+  ResponseController; indexer shutdown LIFO + send-on-closed guard; InstallUSDVolumeResolution
+  pure in-memory (indexer dry-run doesn't mutate DB); migrate advisory-locked + DSN-required;
+  Divergence/Supply NewTicker(0) validators now wired.
+
+### W4-migrations — 120 up/down DDL pairs (finder a53d) — CLEAN, no high/critical
+- W4-mig-1 LOW: money NUMERIC cols with NO positivity CHECK — trades.usd_volume (0001:37,
+  = recon M-D), sdex price (0026:121), divergence our_price/ref_price (0019:48). Feeds
+  volume CAGGs; a negative would silently reduce reported USD volume. FIX: add CHECK(>=0).
+- W4-mig-2 INFO: lint-migrations.sh money-type regex misses integer/smallint/money/numeric(p,s)
+  — NO current violation (all money cols unbounded NUMERIC), a guard blind spot. W4-mig-3 INFO:
+  event_index down-migrations fail-LOUD on manual rollback once twins exist (deploy never
+  auto-runs downs).
+- EXAMINED-SOUND (whole set): every money/price/supply/balance/volume/reserve/fee/tvl/rate col
+  is unbounded NUMERIC (median/mad DOUBLE are dimensionless returns, correct); retention correctly
+  REMOVED from keep-forever tables (trades/prices/oracle_updates, no re-add); PK discriminators
+  collision-safe (oracle_updates synthetic op_index, all newer tables carry event_index from
+  creation, 0112 documents DEFAULT-0 no-twin); rollback-safety rule 9 enforced (no DROP COLUMN /
+  dangerous RENAME / NOT-NULL-no-default; destructive ups grandfathered with same-change
+  writer-removal). CLAUDE.md invariant #8 holds.
+
+### W4-storage — clickhouse/timescale remainder + redis (finder a881) — 1 MED
+- **W4-storage-1 — MED: ContractEventsRecent + EventsByTx serve DUPLICATE events (missing
+  RMT dedup).** Both read stellar.contract_events (ReplacingMergeTree) with NO FINAL /
+  LIMIT 1 BY / uniqExact (explorer_reader.go:1321,1539) → during the merge window (after
+  ch-live-catchup heal, ch-rebuild, or a partial-flush retry — all documented legitimate
+  dup-part states) they return each event TWICE. Every SIBLING dedups (recentOperationsQuery
+  LIMIT 1 BY :500, RecentContracts uniqExact :1398, and the byte-twin OperationsByTx FINAL
+  :1263 with the SAME "showed the operation twice" note). Wired live at contracts.go:87,141
+  (500-row export) + tx.go:98. Bounded: intra-page dup during merge, API doesn't aggregate,
+  keyset pagination stays correct. A client counting events / summing rendered amounts is
+  inflated. FIX: FINAL or uniqExact like the siblings.
+- Note LOW: sqlQuoteList inlines non-constant contract IDs unescaped (event_reader.go:41,196)
+  contradicting its "compile-time constants" doc; not exploitable (C-strkeys, projector-
+  internal) but a latent injection trap if a non-strkey id source is ever added. Use sqlQuoteEscaped.
+- EXAMINED-SOUND (high value): i128 NEVER truncated (int64 LP reserves are classic xdr.Int64,
+  correct; toInt256 SEP-41 sum overflow guard correct; oracle price canonical.Amount);
+  backpressure LiveSink drop BOUNDED (chan cap + maxBufferLedgers=4096) + genuinely HEALED
+  (ch-live-catchup gap-scans [LIVE_ERA,MAX] not tip-only; projector clamps to
+  ContiguousWatermark so a hole STALLS not loses); statement_timeout via post-connect SET;
+  ZERO SQL injection (every Sprintf-query is compile-time identifiers or bound args); RMT
+  FINAL discipline systematic (F1 sole exception); security stores (webhook FOR UPDATE SKIP
+  LOCKED, stripe advisory-lock, apikey quota lock, SSRF dial-validated-IP); rate-limit key parity.
+- NOT-EXAMINED (grep-scanned, no trap hits): wasm_lake_reader, ttl_liveness, contiguity/
+  hashchain/tx_index readers, pool state readers (reserve i128 spot-checked big.Int),
+  discovery/cursors/network_stats/decoder_stats. → dry-wave sample.
+
+## WAVE-4 COMPLETE (4/4). Net: 1 CONFIRMED HIGH (W4-obs-1 metric-cardinality DoS), 1 MED
+(aggregator panic isolation), 1 MED (dup events), migrations CLEAN. + resume-stalled
+downgraded MED, freeze-1 CONFIRMED HIGH, F-2 class confirmed ≥4 tools.
 
 ## WAVE-3 COMPLETE (4/4). Net: 2 HIGH candidates (freeze sibling-release, resume-stalled
 usd_volume NULL) both PENDING SKEPTIC; freeze cluster (miss + stuck-frozen + spec) + F-2
