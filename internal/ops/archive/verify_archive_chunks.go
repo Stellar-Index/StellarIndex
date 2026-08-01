@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
@@ -182,7 +183,7 @@ func verifyChunk(
 	progressMu *sync.Mutex,
 	startedAt time.Time,
 	progressEvery time.Duration,
-	totalVerified *int64,
+	totalVerified *atomic.Int64,
 ) (chunkResult, error) {
 	res := chunkResult{Idx: idx, From: chunk.From, To: chunk.To}
 	chunkLabel := strconv.Itoa(idx)
@@ -267,7 +268,7 @@ func verifyChunk(
 				// Aggregate verified across all chunks for the
 				// progress line — operators want one running total,
 				// not N independent counters.
-				agg := *totalVerified + int64(res.Verified)
+				agg := totalVerified.Load() + int64(res.Verified)
 				fmt.Fprintf(os.Stderr, "verify-archive: chunk[%d] ledger %d, agg %d verified, %.0f ledgers/s\n",
 					idx, seq, agg, float64(agg)/time.Since(startedAt).Seconds())
 				progressMu.Unlock()
@@ -342,8 +343,10 @@ func runVerifyChunks(
 	results := make([]chunkResult, len(chunks))
 	var (
 		progressMu    sync.Mutex
-		totalVerified int64
-		updateMu      sync.Mutex // guards totalVerified + results writes
+		totalVerified atomic.Int64 // cross-chunk running total; atomic — read
+		// under progressMu for the progress line, written after each chunk;
+		// the two mutexes don't mutually exclude, so the counter must be atomic.
+		updateMu sync.Mutex // guards the results[] writes
 	)
 
 	g, gctx := errgroup.WithContext(ctx)
@@ -357,9 +360,9 @@ func runVerifyChunks(
 				&progressMu, startedAt, progressEvery,
 				&totalVerified,
 			)
+			totalVerified.Add(int64(res.Verified))
 			updateMu.Lock()
 			results[i] = res
-			totalVerified += int64(res.Verified)
 			updateMu.Unlock()
 			// Mark Done in the state file only on clean completion
 			// — an errored chunk's partial-progress isn't durable
