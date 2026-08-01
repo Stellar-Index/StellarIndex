@@ -966,16 +966,19 @@ func (r *ExplorerReader) AccountOperationTypeCounts(ctx context.Context, account
 
 // TransactionByHash looks up a single transaction by its hex hash.
 //
-// Fast path (perf-todo §4): when stellar.tx_hash_index exists, the hash
-// resolves to its ledger via the hash-ORDERED lookup table (primary-key
-// binary search, µs) and the summary row is then read ledger-scoped
-// (partition-pruned, sub-100ms). An index MISS is NOT authoritative for
-// not-found — historical rows enter the index only as the operator backfill
-// (`stellarindex-ops ch-txindex-backfill`) covers them — so a miss (or any
-// index-path error) falls back to the pre-index behaviour: the tx_hash
+// Fast path (perf-todo §4): when stellar.tx_hash_index is available — it
+// exists AND holds rows, see [ExplorerReader.txHashIndexAvailable] — the
+// hash resolves to its ledger via the hash-ORDERED lookup table
+// (primary-key binary search, µs) and the summary row is then read
+// ledger-scoped (partition-pruned, sub-100ms). A per-hash MISS against
+// that non-empty index is AUTHORITATIVE absence (2026-07-30 account-filter
+// class audit; see the case comment below). Deployments without the index
+// table — and deployments where the index EXISTS but is EMPTY (the
+// MV-drop / truncation pathology; the availability probe treats that as
+// index-unavailable) — take the pre-index behaviour: the tx_hash
 // bloom-skip-index scan over stellar.transactions (~5s at 10.2B rows; the
-// bloom prunes granules but cannot seek). Deployments without the index
-// table are unchanged. found=false only after the scan also comes up empty.
+// bloom prunes granules but cannot seek). found=false only after the scan
+// also comes up empty.
 func (r *ExplorerReader) TransactionByHash(ctx context.Context, hash string) (TxSummary, bool, error) {
 	if r.txHashIndexAvailable(ctx) {
 		tx, found, indexHit, err := r.txByHashIndexed(ctx, hash)
@@ -1001,13 +1004,25 @@ func (r *ExplorerReader) TransactionByHash(ctx context.Context, hash string) (Tx
 	return r.txByHashScan(ctx, hash)
 }
 
-// txHashIndexAvailable reports whether stellar.tx_hash_index exists on this
-// ClickHouse. Availability is table EXISTENCE, not row count — an
-// empty/partially-backfilled index is fine because per-hash misses fall back
-// to the scan anyway.
+// txHashIndexAvailable reports whether stellar.tx_hash_index is USABLE on
+// this ClickHouse: the table exists AND holds at least one row.
+//
+// Row count matters here — unlike the other schema probes — because a
+// per-hash index MISS is treated as an AUTHORITATIVE not-found (the DoS
+// protection in TransactionByHash). Against an existing-but-EMPTY index
+// (the MV-drop / TRUNCATE pathology: transactions keeps flowing, the index
+// silently stops) that authority would turn EVERY hash lookup into a 404
+// for real transactions. "An empty table is not a definitive answer" —
+// the same convention as DailyActivityAvailable (protocol_reader.go):
+// emptiness is treated as index-unavailable (scan path) and is NOT cached,
+// so a later probe picks the index back up once it is repopulated; only
+// table-absent (schema verdict) and non-empty (rows seen) settle. The
+// complementary guard is the hourly tx_hash_index parity check — that
+// catches PARTIAL index/base divergence; this probe catches total loss.
+// A miss against a NON-EMPTY index remains authoritative.
 func (r *ExplorerReader) txHashIndexAvailable(ctx context.Context) bool {
 	return r.probeSchema(ctx, &r.txIndexProbe,
-		`SELECT ledger_seq FROM stellar.tx_hash_index LIMIT 1`)
+		`SELECT ledger_seq FROM stellar.tx_hash_index LIMIT 1`, true)
 }
 
 // errOpsBySourceMissing — the sourced-history projection has not been
@@ -1023,7 +1038,7 @@ var errOpsBySourceMissing = errors.New(
 // opsBySourceAvailable reports whether stellar.ops_by_source exists.
 func (r *ExplorerReader) opsBySourceAvailable(ctx context.Context) bool {
 	return r.probeSchema(ctx, &r.opsBySourceProbe,
-		`SELECT ledger_seq FROM stellar.ops_by_source LIMIT 1`)
+		`SELECT ledger_seq FROM stellar.ops_by_source LIMIT 1`, false)
 }
 
 // ledgerEntriesVersioned reports whether stellar.ledger_entries_current has
@@ -1031,7 +1046,7 @@ func (r *ExplorerReader) opsBySourceAvailable(ctx context.Context) bool {
 // callers use ledger_seq as the version key. See schemaProbe.
 func (r *ExplorerReader) ledgerEntriesVersioned(ctx context.Context) bool {
 	return r.probeSchema(ctx, &r.lecVersionProbe,
-		`SELECT version FROM stellar.ledger_entries_current LIMIT 1`)
+		`SELECT version FROM stellar.ledger_entries_current LIMIT 1`, false)
 }
 
 // probeSchema answers "does this schema object exist" and CACHES ONLY A
@@ -1058,12 +1073,21 @@ func (r *ExplorerReader) ledgerEntriesVersioned(ctx context.Context) bool {
 // [schemaProbeRetryAfter] so an outage doesn't turn every read into an
 // extra query.
 //
+// requireRows tightens "exists" to "exists AND is non-empty" — for probes
+// whose caller derives AUTHORITY from the object (txHashIndexAvailable:
+// an index miss is a definitive 404, which an empty index must never
+// grant). An existing-but-EMPTY object is treated like a non-answer:
+// unavailable NOW, not cached (it may be backfilled/repopulated later),
+// re-probed after the retry window — the same "empty table is not a
+// definitive answer" convention as DailyActivityAvailable. Only a
+// schema-absent verdict or an observed row settles a requireRows probe.
+//
 // The query runs OUTSIDE the mutex. sync.Mutex is not context-aware, so
 // holding it across a network round-trip would queue every concurrent
 // reader behind one slow probe and serialise the whole explorer read path
 // (C1-048, second review). The cost is that concurrent first-callers may
 // each issue a probe until one settles — bounded, and each is a LIMIT 1.
-func (r *ExplorerReader) probeSchema(ctx context.Context, p *schemaProbe, query string) bool {
+func (r *ExplorerReader) probeSchema(ctx context.Context, p *schemaProbe, query string, requireRows bool) bool {
 	p.mu.Lock()
 	if p.settled {
 		present := p.present
@@ -1078,7 +1102,15 @@ func (r *ExplorerReader) probeSchema(ctx context.Context, p *schemaProbe, query 
 	p.mu.Unlock()
 
 	rows, err := r.conn.Query(ctx, query)
+	empty := false
 	if err == nil {
+		if requireRows {
+			empty = !rows.Next()
+			if rerr := rows.Err(); rerr != nil {
+				// Row iteration died — no verdict on emptiness either.
+				err, empty = rerr, false
+			}
+		}
 		_ = rows.Close()
 	}
 
@@ -1089,7 +1121,7 @@ func (r *ExplorerReader) probeSchema(ctx context.Context, p *schemaProbe, query 
 		return p.present
 	}
 	switch {
-	case err == nil:
+	case err == nil && !empty:
 		p.settled, p.present = true, true
 		return true
 	case isSchemaAbsent(err):

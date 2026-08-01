@@ -167,7 +167,12 @@ func TestClickHouseLakeRoundTrip(t *testing.T) {
 
 // TestClickHouseTxHashIndexProbeFallback exercises ExplorerReader.TransactionByHash's
 // two-mode resolution (perf-todo §4): the hash-ordered stellar.tx_hash_index
-// fast path, and the tx_hash bloom-scan FALLBACK taken on an index miss. To make
+// fast path, and the tx_hash bloom-scan FALLBACK taken when the index EXISTS
+// but is EMPTY — the MV-drop / TRUNCATE pathology, in which the availability
+// probe must treat the index as unavailable rather than let its emptiness
+// mint authoritative 404s for every real hash (a per-hash miss against a
+// NON-EMPTY index stays authoritative; the unit tests in
+// internal/storage/clickhouse/tx_hash_index_test.go pin that arm). To make
 // the branch OBSERVABLE, two transactions share one hash at different ledgers
 // with a controlled ingested_at ordering:
 //   - the index maps hash → ledger A, so the fast path resolves to A;
@@ -253,7 +258,7 @@ func TestClickHouseTxHashIndexProbeFallback(t *testing.T) {
 	if err := conn.Exec(ctx, `TRUNCATE TABLE stellar.tx_hash_index`); err != nil {
 		t.Fatalf("truncate tx_hash_index (fallback): %v", err)
 	}
-	er2, err := chstore.NewExplorerReader(ctx, addr) // fresh probe; table still EXISTS (empty) → fast path attempted then misses
+	er2, err := chstore.NewExplorerReader(ctx, addr) // fresh probe; table EXISTS but is EMPTY → index treated as unavailable, scan path
 	if err != nil {
 		t.Fatalf("new explorer reader (fallback): %v", err)
 	}

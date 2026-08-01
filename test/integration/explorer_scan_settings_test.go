@@ -63,6 +63,75 @@ func TestExplorerScanQueries_ExecuteAgainstServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal account entry: %v", err)
 	}
+	// The trustline + offer rows carry GENUINE LedgerKey XDR: the reader's
+	// trustline/offer scans are PK-prefix range reads (`key_xdr LIKE
+	// '<52-char real-XDR prefix>%'`, accountEntryKeyPrefix), so a synthetic
+	// placeholder key can never match and would silently skip the very path
+	// under test (CI-red 2026-07-30: the old "e5-trustline-key" seed).
+	var issuerSeed [32]byte
+	issuerSeed[0] = 0xE6
+	issuer, err := strkey.Encode(strkey.VersionByteAccountID, issuerSeed[:])
+	if err != nil {
+		t.Fatalf("encode issuer strkey: %v", err)
+	}
+	var issuerAID xdr.AccountId
+	if err := issuerAID.SetAddress(issuer); err != nil {
+		t.Fatalf("set issuer address: %v", err)
+	}
+	var code4 [4]byte
+	copy(code4[:], "USDX")
+	tlAsset := xdr.TrustLineAsset{
+		Type:      xdr.AssetTypeAssetTypeCreditAlphanum4,
+		AlphaNum4: &xdr.AlphaNum4{AssetCode: code4, Issuer: issuerAID},
+	}
+	assetID := "USDX-" + issuer
+	tlKeyB64, err := xdr.MarshalBase64(xdr.LedgerKey{
+		Type:      xdr.LedgerEntryTypeTrustline,
+		TrustLine: &xdr.LedgerKeyTrustLine{AccountId: aid, Asset: tlAsset},
+	})
+	if err != nil {
+		t.Fatalf("marshal trustline key: %v", err)
+	}
+	tlEntryB64, err := xdr.MarshalBase64(xdr.LedgerEntry{
+		LastModifiedLedgerSeq: 71_000_001,
+		Data: xdr.LedgerEntryData{
+			Type: xdr.LedgerEntryTypeTrustline,
+			TrustLine: &xdr.TrustLineEntry{
+				AccountId: aid, Asset: tlAsset,
+				Balance: 42, Limit: 1_000_000,
+				Flags: xdr.Uint32(xdr.TrustLineFlagsAuthorizedFlag),
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal trustline entry: %v", err)
+	}
+	const offerID = xdr.Int64(9_001)
+	offerKeyB64, err := xdr.MarshalBase64(xdr.LedgerKey{
+		Type:  xdr.LedgerEntryTypeOffer,
+		Offer: &xdr.LedgerKeyOffer{SellerId: aid, OfferId: offerID},
+	})
+	if err != nil {
+		t.Fatalf("marshal offer key: %v", err)
+	}
+	offerEntryB64, err := xdr.MarshalBase64(xdr.LedgerEntry{
+		LastModifiedLedgerSeq: 71_000_001,
+		Data: xdr.LedgerEntryData{
+			Type: xdr.LedgerEntryTypeOffer,
+			Offer: &xdr.OfferEntry{
+				SellerId: aid, OfferId: offerID,
+				Selling: xdr.Asset{Type: xdr.AssetTypeAssetTypeNative},
+				Buying: xdr.Asset{
+					Type:      xdr.AssetTypeAssetTypeCreditAlphanum4,
+					AlphaNum4: &xdr.AlphaNum4{AssetCode: code4, Issuer: issuerAID},
+				},
+				Amount: 1_500, Price: xdr.Price{N: 3, D: 2},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal offer entry: %v", err)
+	}
 	closeTime := time.Date(2024, 2, 2, 0, 0, 0, 0, time.UTC)
 	rows := []chstore.LedgerEntryChangeRow{
 		{
@@ -73,8 +142,13 @@ func TestExplorerScanQueries_ExecuteAgainstServer(t *testing.T) {
 		{
 			LedgerSeq: 71_000_001, CloseTime: closeTime, TxHash: "e5a1", OpIndex: 1, ChangeIndex: 0,
 			IntraLedgerSeq: 2, ChangeType: "created", EntryType: "trustline",
-			KeyXDR: "e5-trustline-key", EntryXDR: "", AccountID: account,
-			Asset: "USDX-" + account, Balance: 42,
+			KeyXDR: tlKeyB64, EntryXDR: tlEntryB64, AccountID: account,
+			Asset: assetID, Balance: 42,
+		},
+		{
+			LedgerSeq: 71_000_001, CloseTime: closeTime, TxHash: "e5a1", OpIndex: 2, ChangeIndex: 0,
+			IntraLedgerSeq: 3, ChangeType: "created", EntryType: "offer",
+			KeyXDR: offerKeyB64, EntryXDR: offerEntryB64, AccountID: account,
 		},
 	}
 	if _, err := chstore.InsertEntryChanges(ctx, addr, rows, 0); err != nil {
@@ -145,7 +219,7 @@ func TestExplorerScanQueries_ExecuteAgainstServer(t *testing.T) {
 			return err
 		},
 		"AssetHolders": func() error {
-			_, _, err := r.AssetHolders(ctx, "USDX-"+account, 5)
+			_, _, err := r.AssetHolders(ctx, assetID, 5)
 			return err
 		},
 		"AccountsByWealth": func() error {
@@ -177,12 +251,17 @@ func TestExplorerScanQueries_ExecuteAgainstServer(t *testing.T) {
 	if !st.Exists || st.Balance != 5_000_000 {
 		t.Errorf("AccountState exists=%v balance=%d, want the seeded entry (true, 5000000)", st.Exists, st.Balance)
 	}
-	if len(st.Trustlines) != 1 || st.Trustlines[0].Balance != 42 {
-		t.Errorf("AccountState trustlines = %+v, want the seeded 42-balance trustline", st.Trustlines)
+	if len(st.Trustlines) != 1 || st.Trustlines[0].Balance != 42 || st.Trustlines[0].Limit != 1_000_000 {
+		t.Errorf("AccountState trustlines = %+v, want the seeded 42-balance / 1000000-limit trustline", st.Trustlines)
+	}
+	// The offer arm is the same PK-prefix range shape; the seeded offer's
+	// real LedgerKey must round-trip through it.
+	if len(st.Offers) != 1 || st.Offers[0].OfferID != 9_001 || st.Offers[0].Amount != 1_500 {
+		t.Errorf("AccountState offers = %+v, want the seeded offer 9001 (amount 1500)", st.Offers)
 	}
 
 	// The seeded trustline also proves the holders board end to end.
-	holders, total, err := r.AssetHolders(ctx, "USDX-"+account, 5)
+	holders, total, err := r.AssetHolders(ctx, assetID, 5)
 	if err != nil || total != 1 || len(holders) != 1 || holders[0].Balance != 42 {
 		t.Errorf("AssetHolders = %v total=%d err=%v, want the one seeded holder", holders, total, err)
 	}

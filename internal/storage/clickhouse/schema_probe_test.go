@@ -12,10 +12,23 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// probeRows is a driver.Rows stub — probeSchema only ever closes it.
-type probeRows struct{ driver.Rows }
+// probeRows is a driver.Rows stub with one row — probeSchema closes it,
+// and (for requireRows probes like txIndexProbe) iterates it once.
+type probeRows struct {
+	driver.Rows
+	consumed bool
+}
 
-func (probeRows) Close() error { return nil }
+func (r *probeRows) Next() bool {
+	if r.consumed {
+		return false
+	}
+	r.consumed = true
+	return true
+}
+
+func (r *probeRows) Err() error   { return nil }
+func (r *probeRows) Close() error { return nil }
 
 // probeConn returns a scripted result per Query call so a probe can be
 // driven through a transient failure and then a success.
@@ -31,7 +44,7 @@ func (c *probeConn) Query(context.Context, string, ...any) (driver.Rows, error) 
 	if i < len(c.results) && c.results[i] != nil {
 		return nil, c.results[i]
 	}
-	return probeRows{}, nil
+	return &probeRows{}, nil
 }
 
 // TestProbeSchema_TransientErrorDoesNotLatch pins C1-048
@@ -231,5 +244,5 @@ func (c *blockingProbeConn) Query(context.Context, string, ...any) (driver.Rows,
 		}
 		<-c.release
 	}
-	return probeRows{}, nil
+	return &probeRows{}, nil
 }
