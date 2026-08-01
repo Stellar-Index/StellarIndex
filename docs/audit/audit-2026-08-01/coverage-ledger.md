@@ -36,5 +36,18 @@ auth/mutating/billing surface, platform/usage/webhook/notify/incidents. Net 0 cr
 kill-switch cache [gated off-r1]); pricing DoS refuted (0037 index). Re-queue: ratelimit
 internals, status.go honesty, assets_f2 market-cap decimals, catalogue caches, streaming internals.
 
-[WAVE-3 in flight: aggregate freeze/anomaly/mev/confidence/baseline, divergence+domain+guards,
-ops ingest/chops destructive CLI, ops archive/diagnostics/supply CLI]
+WAVE-3 DONE (4 finders): aggregate freeze/anomaly/mev/confidence/baseline, divergence/domain/
+guards, ops ingest/chops CLI, ops archive/diagnostics/supply CLI. Net 2 HIGH candidates
+(freeze sibling-release, resume-stalled usd_volume NULL) → skeptics running; decimalsguard
+100× price MED; F-2 extended to backfill/router (≥4 offenders); destructive/verify ops SOUND.
+Re-queue: opsutil job_heartbeat, ch_gate/gated_recon_seed.
+
+WAVE-4 DONE (4 finders): migrations DDL (120 pairs), cmd mains wiring, storage clickhouse/
+timescale remainder + redis, pkg/client + ratelimit/streaming/ledgerstream/hashdb/metadata/
+currency/obs. Net 1 CONFIRMED HIGH (W4-obs-1 metric-cardinality DoS — the top finding),
+1 MED (aggregator panic isolation), 1 MED (dup events), migrations CLEAN, ratelimit fail-closed
+math SOUND, SSRF/streaming SOUND, pkg/client money-strings SOUND. SKEPTICS: freeze-1 CONFIRMED
+HIGH; resume-stalled CONFIRMED but DOWNGRADED MED (recoverable, gen-0); freeze-2 DOWNGRADED LOW.
+
+[WAVE-5 in flight: web/explorer+status component correctness, configs/ansible+caddy+prometheus+
+monitoring rules, scripts/ci gates + workflows + scripts/dev/ops. Then negative-space + dry-wave.]
