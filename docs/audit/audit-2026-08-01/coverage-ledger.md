@@ -49,5 +49,26 @@ currency/obs. Net 1 CONFIRMED HIGH (W4-obs-1 metric-cardinality DoS — the top 
 math SOUND, SSRF/streaming SOUND, pkg/client money-strings SOUND. SKEPTICS: freeze-1 CONFIRMED
 HIGH; resume-stalled CONFIRMED but DOWNGRADED MED (recoverable, gen-0); freeze-2 DOWNGRADED LOW.
 
-[WAVE-5 in flight: web/explorer+status component correctness, configs/ansible+caddy+prometheus+
-monitoring rules, scripts/ci gates + workflows + scripts/dev/ops. Then negative-space + dry-wave.]
+WAVE-5 DONE (3 finders): web/explorer+status component correctness, configs/ansible+caddy+
+prometheus+monitoring rules, scripts/ci gates + workflows + scripts/dev/ops. Net: CI+monitoring
+"verification-layer gaps" cluster (3 dead alerts, 5 false-green gates/monitors) — the most
+launch-relevant; web 1 MED (partial-bucket /diagnostics) + LOW chart-hardening; format/chart
+core + injection-clean workflows + rule-tree equivalence + destructive-ops-limits SOUND.
+
+═══ ALL 5 WAVES + RECON COMPLETE. 2 CONFIRMED HIGH, ~26 MED, 7 refuted. See executive-summary.md. ═══
+
+## Negative-space (what SHOULD exist but doesn't — surfaced across waves, verified)
+- Panic isolation on the aggregator (API has it; W4-cmd-1). recover() around dispatcher Decode
+  (W1-sub-1). A dirty-window guard on ALL below-watermark writers (≥4 miss it; recon F-2 + W3-ops).
+- promtool tests on the 25/30 untested rule files (dead alerts persisted for lack of them; W5-mon).
+- A frontend ADR-0003 lint (Go-only today; recon R9). A JSON-LD/react-no-danger gate (R6).
+  A vacuous-run guard on hubble-check (every sibling has one; W3-archive-2).
+- .gitleaks.toml/.gitleaksignore in the anti-bypass tripwire (W5-ci-2). A curl-error=FAIL in
+  route-sweep + reconcile-vs-horizon (W5-ci-3/4). verify.sh main-CI-health check (W5-ci-6).
+
+## Dry-wave / NOT-EXAMINED residual (documented; low expected yield; a future incremental pass)
+chainlink/frankfurter connectors; clickhouse readers grep-scanned no-trap (wasm/ttl/contiguity/
+hashchain/tx_index/pool-state); dashboard/detail/embed web views; ansible haproxy/patroni/loki/
+redis-sentinel/prometheus sub-roles; ~half the ci-lint internals; soroswap factory-seed genesis-walk
+completeness (gating-seed forged-creation question); live/lake state-write parity test; opsutil
+job_heartbeat; streaming/redispub. NO unexamined money/security FLOW left un-reasoned-about.
