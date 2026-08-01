@@ -123,9 +123,27 @@ func decodeTrade(e *events.Event, closedAt time.Time) (canonical.Trade, error) {
 		return canonical.Trade{}, fmt.Errorf("%w: %w", ErrMalformedPayload, err)
 	}
 
-	if amounts.SoldAmount.Sign() <= 0 || amounts.BoughtAmount.Sign() <= 0 {
-		return canonical.Trade{}, fmt.Errorf("%w: non-positive amounts sold=%s bought=%s",
+	// NEGATIVE amounts are a schema violation — refuse. ZERO amounts are
+	// NOT: the lake proves genuine dust swaps whose output (or input)
+	// rounds to zero — e.g. ledger 53,626,410 tx 3870e2fc… event 2, body
+	// (sold=2, bought=0, fee=0) from registered pool CCY2PXGM… — and the
+	// pool contract emits the trade event regardless. canonical.Trade
+	// forbids non-positive amounts (Validate: a zero side breaks price
+	// derivation), so a zero-amount swap can never become a served trade
+	// row; classifying it as an error made the completeness re-derive
+	// blind on those ledgers (40 of the 41 undecodable-but-matched events
+	// on the 2026-08-01 first full-range reconcile — the 41st was the
+	// set_privileged_addrs v2 arity, decode_admin.go). It is a RECOGNIZED
+	// NO-OP —
+	// same shape as redstone's empty write_prices batch: decode succeeds,
+	// zero rows project, the reconcile sees expected == served == 0.
+	if amounts.SoldAmount.Sign() < 0 || amounts.BoughtAmount.Sign() < 0 {
+		return canonical.Trade{}, fmt.Errorf("%w: negative amounts sold=%s bought=%s",
 			ErrMalformedPayload, amounts.SoldAmount, amounts.BoughtAmount)
+	}
+	if amounts.SoldAmount.Sign() == 0 || amounts.BoughtAmount.Sign() == 0 {
+		return canonical.Trade{}, fmt.Errorf("%w: sold=%s bought=%s",
+			ErrZeroAmountTrade, amounts.SoldAmount, amounts.BoughtAmount)
 	}
 
 	pair, err := canonical.NewPair(soldAsset, boughtAsset)

@@ -107,6 +107,71 @@ func TestDecodeSetPrivilegedAddrs_realFixture(t *testing.T) {
 	}
 }
 
+// TestDecodeSetPrivilegedAddrs_v2RealFixture pins the POST-57.7M wire
+// generation (contract-schema-evolution): the same shape plus ONE
+// trailing plain Address. Real r1-lake bytes — the canonical router's
+// single 5-element `set_privileged_addrs` event (ledger 57,711,797,
+// closed 2025-06-25), which was one of the 41 blind
+// undecodable-but-matched events on aquarius's first full-range
+// completeness reconcile (2026-08-01) while the decoder pinned
+// arity==4.
+func TestDecodeSetPrivilegedAddrs_v2RealFixture(t *testing.T) {
+	e := &events.Event{
+		ContractID: MainnetRouter,
+		Ledger:     57711797,
+		TxHash:     "767bc4de88834051edcb958ce3d56538b5f8946453136bf7d945d2bddaaaca8c",
+		EventIndex: 0,
+		Topic: []string{
+			"AAAADwAAABRzZXRfcHJpdmlsZWdlZF9hZGRycw==",
+		},
+		Value: "AAAAEAAAAAEAAAAFAAAAEgAAAAAAAAAAr4UDYWd/ywvTsSRB0NRM2w7KoisPZcPb4fpZk+XD67QAAAASAAAAAAAAAABrB99Lh3p1xYtFgkxWsF7lnsSvirC4yXmnLxRYF7aVBAAAABIAAAAAAAAAADzAe929VHnCmayZRVHmn90SJaJYM9yQ/RXerE7FSrO8AAAAEAAAAAEAAAABAAAAEgAAAAAAAAAAPMrM0BiS9+voAw3nyHOzk4mPbaTXHVu8AMIg4+5A+4oAAAASAAAAAAAAAAB7/A6mWvQQVdc774FmP/p4xb1sMlRWTophyo0AhpckYw==",
+	}
+	if got := classify(e); got != EventSetPrivilegedAddrs {
+		t.Fatalf("classify = %q, want %q", got, EventSetPrivilegedAddrs)
+	}
+	av, err := decodeAdminEvent(e, EventSetPrivilegedAddrs, rewardsClosedAtTest)
+	if err != nil {
+		t.Fatalf("decodeAdminEvent (v2 5-element body): %v", err)
+	}
+	if got := av.Attributes["addr_0"]; got != "GCXYKA3BM574WC6TWESEDUGUJTNQ5SVCFMHWLQ634H5FTE7FYPV3JH3X" {
+		t.Errorf("addr_0 = %v", got)
+	}
+	if got := av.Attributes["addr_1"]; got != "GBVQPX2LQ55HLRMLIWBEYVVQL3SZ5RFPRKYLRSLZU4XRIWAXW2KQIMMD" {
+		t.Errorf("addr_1 = %v", got)
+	}
+	if got := av.Attributes["addr_2"]; got != "GA6MA665XVKHTQUZVSMUKUPGT7OREJNCLAZ5ZEH5CXPKYTWFJKZ3YSEK" {
+		t.Errorf("addr_2 = %v", got)
+	}
+	list, ok := av.Attributes["addr_list"].([]string)
+	if !ok || len(list) != 1 || list[0] != "GA6MVTGQDCJPP27IAMG6PSDTWOJYTD3NUTLR2W54ADBCBY7OID5YUDSI" {
+		t.Errorf("addr_list = %v", av.Attributes["addr_list"])
+	}
+	if got := av.Attributes["addr_3"]; got != "GB57YDVGLL2BAVOXHPXYCZR77J4MLPLMGJKFMTUKMHFI2AEGS4SGGW7N" {
+		t.Errorf("addr_3 (v2 trailing role address) = %v", got)
+	}
+}
+
+// A 4-element (v1) body must NOT grow an addr_3 attribute, and any
+// other arity still fails closed.
+func TestDecodeSetPrivilegedAddrs_arityGuards(t *testing.T) {
+	// v1 real fixture from TestDecodeSetPrivilegedAddrs_realFixture.
+	e := &events.Event{
+		ContractID: "CA7RQDMMV6E53P5EDZA5GPWBZ33AMW2ZNO42XLI2RGRIAP4QXIARUOJQ",
+		Ledger:     54150744,
+		TxHash:     "123e9b76b6c9288eeeeb8eee3e8890b606df4bac34edca86fea07f2af3fee35d",
+		EventIndex: 0,
+		Topic:      []string{"AAAADwAAABRzZXRfcHJpdmlsZWdlZF9hZGRycw=="},
+		Value:      "AAAAEAAAAAEAAAAEAAAAEgAAAAAAAAAAdcoKqsEbsyr0vqtizcS1v/F9m86ZJaBsJIfsPrVq9c4AAAASAAAAAAAAAAA9wKBfw2ZvhidSVPc8cyXssqJE8elIez+Oy0nXRkV6CAAAABIAAAAAAAAAABDqOTDnu1sCH7swm1DeeaF2JZ2VREpGXUW2rPs9Xi5jAAAAEAAAAAEAAAABAAAAEgAAAAAAAAAAEOo5MOe7WwIfuzCbUN55oXYlnZVESkZdRbas+z1eLmM=",
+	}
+	av, err := decodeAdminEvent(e, EventSetPrivilegedAddrs, rewardsClosedAtTest)
+	if err != nil {
+		t.Fatalf("v1 decode: %v", err)
+	}
+	if _, present := av.Attributes["addr_3"]; present {
+		t.Error("v1 4-element body must not produce addr_3")
+	}
+}
+
 func TestDecodeApplyTransferOwnership_realFixture(t *testing.T) {
 	e := &events.Event{
 		ContractID: "CA7RQDMMV6E53P5EDZA5GPWBZ33AMW2ZNO42XLI2RGRIAP4QXIARUOJQ",

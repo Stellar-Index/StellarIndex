@@ -15,6 +15,37 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **Aquarius zero-amount trades are recognized no-ops, not decode errors**
+  (`internal/sources/aquarius/decode.go` + `dispatcher_adapter.go`). The
+  lake disproves the "every trade event has positive amounts" assumption:
+  genuine dust swaps whose output rounds to zero — first exemplar ledger
+  53,626,410, body `(sold=2, bought=0, fee=0)` from a registered pool —
+  still emit the `trade` event, and refusing them as malformed made the
+  ADR-0033 projection re-derive blind (40 of the 41
+  undecodable-but-matched events on aquarius's first full-range
+  completeness reconcile, 2026-08-01; all 40 are `bought=0` dust swaps,
+  ledgers 53.63M → 57.32M). `canonical.Trade.Validate` forbids
+  non-positive amounts, so these can never be served trade rows: decode
+  now succeeds with zero rows (new `ErrZeroAmountTrade` sentinel consumed
+  by the adapter), the reconcile sees expected == served == 0, and
+  negative amounts remain `ErrMalformedPayload`. Real-lake-bytes golden
+  tests pin both the no-op and the negative refusal. Same classification
+  pattern as redstone's empty `write_prices` batch.
+- **Aquarius `set_privileged_addrs` decodes BOTH wire generations**
+  (`internal/sources/aquarius/decode_admin.go`). Contract-schema
+  evolution: every lake event ≤ ledger 57,604,772 carries the 4-element
+  body `Vec[Address×3, Vec[Address]]`; every event from 57,697,794
+  (2025-06-25 WASM) onward carries 5 elements — the same four plus ONE
+  trailing role Address. The decoder pinned arity==4 (the 2026-07-10
+  audit sampled a v1 exemplar), leaving the canonical router's single
+  v2 event (ledger 57,711,797) as the 41st blind event. The v2 arm
+  decodes the trailing address into `Attributes["addr_3"]`; any other
+  arity still fails closed. Real-lake-bytes golden test pins the v2
+  shape. Post-deploy for both fixes: re-run
+  `compute-completeness -source aquarius` (no replay needed — neither
+  class changes served rows; expect blind 41 → 0).
+
 ## [v0.21.10] — 2026-08-01
 
 ### Fixed

@@ -194,6 +194,17 @@ var (
 var (
 	ErrUnknownEvent     = errors.New("aquarius: unknown event topic")
 	ErrMalformedPayload = errors.New("aquarius: malformed event payload")
+	// ErrZeroAmountTrade marks a well-formed `trade` event whose sold or
+	// bought amount is ZERO — a genuine on-chain dust swap (the pool
+	// accepted a tiny input and produced zero output, or vice versa;
+	// r1-lake ground truth: ledger 53,626,410). NOT a malformed payload:
+	// Decode treats it as a recognized no-op (nil, nil) because
+	// canonical.Trade.Validate forbids non-positive amounts — such an
+	// event can never form a served trade row, and refusing it as an
+	// error only blinds the ADR-0033 projection reconcile
+	// (undecodable-but-matched). Exposed so callers/tests can assert the
+	// classification; the dispatcher adapter consumes it internally.
+	ErrZeroAmountTrade = errors.New("aquarius: zero-amount trade (recognized no-op)")
 	// ErrConcentratedWIP is reserved for concentrated-pool trade
 	// events, which use a different body schema. Current mainnet
 	// has no concentrated pools live (feature-branch WIP at

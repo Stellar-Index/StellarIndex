@@ -1,6 +1,8 @@
 package aquarius
 
 import (
+	"errors"
+
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
@@ -161,6 +163,13 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		// through) decodes as a trade.
 		trade, err := decodeTrade(&ev, closedAt)
 		if err != nil {
+			if errors.Is(err, ErrZeroAmountTrade) {
+				// Recognized no-op: a genuine dust swap whose sold or
+				// bought side is zero. canonical.Trade forbids
+				// non-positive amounts, so there is no row to project —
+				// and no error to be blind on (see ErrZeroAmountTrade).
+				return nil, nil
+			}
 			return nil, err
 		}
 		return []consumer.Event{TradeEvent{Trade: trade}}, nil
