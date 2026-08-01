@@ -149,7 +149,7 @@ export function OperationsView() {
                         href={`/ledgers/${op.ledger}/`}
                         className="font-mono tabular-nums text-xs text-ink-body hover:text-brand-600"
                       >
-                        {(op.ledger ?? 0).toLocaleString()}
+                        {(op.ledger ?? 0).toLocaleString('en-US')}
                       </Link>
                     </td>
                     <td className="px-4 py-3">

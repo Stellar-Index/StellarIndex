@@ -37,6 +37,18 @@ describe('domain primitives — render without throwing', () => {
     expect(container.querySelector('svg')).not.toBeNull();
   });
 
+  it('Sparkline is exposed to AT as an img with its accessible name (W6-acc-2)', () => {
+    // Every chart primitive (LineChart/CandleChart/DonutChart/Bars/DepthChart)
+    // pairs role="img" with aria-label. Without the explicit role the <svg>'s
+    // accessible name is not reliably surfaced — getByRole('img') can only
+    // find it once role="img" is present, so this fails against the unfixed
+    // (aria-label-only) svg.
+    const { getByRole } = render(<Sparkline values={[1, 2, 1.5, 3, 2.8]} />);
+    expect(
+      getByRole('img', { name: /sparkline: 5 points, up overall/i }),
+    ).toBeInTheDocument();
+  });
+
   it('MultiWindowDelta renders its window labels', () => {
     const { container } = render(
       <MultiWindowDelta

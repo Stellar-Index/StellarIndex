@@ -212,9 +212,9 @@ function PositionRow({ p }: { p: AccountPosition }) {
       </Td>
       <Td>
         <div className="whitespace-nowrap text-xs text-ink-muted">
-          {p.last_activity.time ? new Date(p.last_activity.time).toLocaleString() : '—'}
+          {p.last_activity.time ? new Date(p.last_activity.time).toLocaleString('en-US') : '—'}
         </div>
-        <div className="text-[11px] text-ink-faint">#{p.last_activity.ledger.toLocaleString()}</div>
+        <div className="text-[11px] text-ink-faint">#{p.last_activity.ledger.toLocaleString('en-US')}</div>
         {/* amount_semantics + basis surfaced as visible subtext, not
             hidden — the tooltip carries the API's exact wording for
             anyone who hovers, but the short label is always visible. */}

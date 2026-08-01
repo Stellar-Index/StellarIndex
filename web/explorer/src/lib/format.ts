@@ -1,4 +1,7 @@
-// Number / date / currency formatters — Intl-aware, locale-respecting.
+// Number / date / currency formatters — Intl-based, pinned to en-US.
+// The product is monolingual English by design: every formatter here
+// and every call site passes 'en-US' explicitly so separators/grouping
+// stay identical for all users and match between SSG and hydration.
 
 const PRICE_FORMATTER = new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 2,

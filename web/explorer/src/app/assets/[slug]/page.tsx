@@ -964,7 +964,7 @@ function OverviewBody({
               label="Markets 24h"
               value={
                 coin.markets_count != null
-                  ? coin.markets_count.toLocaleString()
+                  ? coin.markets_count.toLocaleString('en-US')
                   : '—'
               }
             />
@@ -1011,7 +1011,7 @@ function OverviewBody({
               mono
               value={
                 coin.first_seen_ledger != null
-                  ? `#${coin.first_seen_ledger.toLocaleString()}`
+                  ? `#${coin.first_seen_ledger.toLocaleString('en-US')}`
                   : '—'
               }
             />
@@ -1020,7 +1020,7 @@ function OverviewBody({
               mono
               value={
                 coin.last_seen_ledger != null
-                  ? `#${coin.last_seen_ledger.toLocaleString()}`
+                  ? `#${coin.last_seen_ledger.toLocaleString('en-US')}`
                   : '—'
               }
             />

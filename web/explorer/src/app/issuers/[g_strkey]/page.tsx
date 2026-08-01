@@ -330,7 +330,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
               mono
               value={
                 detail.creation_ledger != null
-                  ? `#${detail.creation_ledger.toLocaleString()}`
+                  ? `#${detail.creation_ledger.toLocaleString('en-US')}`
                   : '—'
               }
             />
@@ -519,7 +519,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
                       </Td>
                       <Td align="right">
                         <span className="font-mono text-xs">
-                          #{a.first_seen_ledger.toLocaleString()}
+                          #{a.first_seen_ledger.toLocaleString('en-US')}
                         </span>
                       </Td>
                     </tr>

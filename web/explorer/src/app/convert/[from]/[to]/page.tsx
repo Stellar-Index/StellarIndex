@@ -255,7 +255,7 @@ export default async function ConvertPage({ params }: { params: Params }) {
                 className="flex items-baseline justify-between rounded-md bg-surface-muted px-3 py-2"
               >
                 <span className="font-mono tabular-nums text-ink-body">
-                  {amt.toLocaleString()} {f}
+                  {amt.toLocaleString('en-US')} {f}
                 </span>
                 <span className="font-mono tabular-nums font-medium text-ink">
                   {formatRate(amt * rate)} {t}

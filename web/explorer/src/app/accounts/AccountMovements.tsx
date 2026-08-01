@@ -319,7 +319,7 @@ function MovementRow({ m }: { m: AccountMovement }) {
           href={`/ledgers/${m.ledger}/`}
           className="ml-2 font-mono text-[11px] text-ink-faint hover:text-brand-600"
         >
-          #{m.ledger.toLocaleString()}
+          #{m.ledger.toLocaleString('en-US')}
         </Link>
       </Td>
       <Td>

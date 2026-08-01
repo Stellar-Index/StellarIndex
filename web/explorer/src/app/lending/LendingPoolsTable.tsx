@@ -188,7 +188,7 @@ function PoolRealStats({ pool }: { pool: string }) {
       ? `Priced reserves only (${count} of ${reserves.length})`
       : 'Priced reserves only';
   const fmtUsd = (n: number) =>
-    n >= 1e9 ? `$${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `$${(n / 1e6).toFixed(2)}M` : `$${Math.round(n).toLocaleString()}`;
+    n >= 1e9 ? `$${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `$${(n / 1e6).toFixed(2)}M` : `$${Math.round(n).toLocaleString('en-US')}`;
   return (
     <>
       <Td align="right">
@@ -253,7 +253,7 @@ export function LendingPoolsTable() {
             ariaLabel={`All-time liquidation auctions per pool: ${auctionRows
               .map(
                 (p) =>
-                  `${BLEND_POOL_META[p.pool ?? '']?.label ?? p.pool} ${(p.auctions_total ?? 0).toLocaleString()}`,
+                  `${BLEND_POOL_META[p.pool ?? '']?.label ?? p.pool} ${(p.auctions_total ?? 0).toLocaleString('en-US')}`,
               )
               .join(', ')}`}
             items={auctionRows.map((p) => ({
@@ -261,10 +261,10 @@ export function LendingPoolsTable() {
                 BLEND_POOL_META[p.pool ?? '']?.label ??
                 `${(p.pool ?? '').slice(0, 6)}…${(p.pool ?? '').slice(-4)}`,
               value: p.auctions_total ?? 0,
-              display: (p.auctions_total ?? 0).toLocaleString(),
+              display: (p.auctions_total ?? 0).toLocaleString('en-US'),
               annotation:
                 (p.auctions_24h ?? 0) > 0
-                  ? `${(p.auctions_24h ?? 0).toLocaleString()} in 24h`
+                  ? `${(p.auctions_24h ?? 0).toLocaleString('en-US')} in 24h`
                   : undefined,
               title: p.pool ?? undefined,
             }))}
@@ -368,18 +368,18 @@ export function LendingPoolsTable() {
                   </Td>
                   <Td align="right">
                     <span className="font-mono tabular-nums text-ink-body">
-                      {(p.auctions_24h ?? 0).toLocaleString()}
+                      {(p.auctions_24h ?? 0).toLocaleString('en-US')}
                     </span>
                   </Td>
                   <Td align="right">
                     <span className="font-mono tabular-nums text-ink-body">
-                      {(p.auctions_total ?? 0).toLocaleString()}
+                      {(p.auctions_total ?? 0).toLocaleString('en-US')}
                     </span>
                   </Td>
                   <PoolRealStats pool={p.pool ?? ''} />
                   <Td align="right">
                     <span className="font-mono tabular-nums text-ink-body">
-                      {(p.unique_users_30d ?? 0).toLocaleString()}
+                      {(p.unique_users_30d ?? 0).toLocaleString('en-US')}
                     </span>
                   </Td>
                   <Td align="right">

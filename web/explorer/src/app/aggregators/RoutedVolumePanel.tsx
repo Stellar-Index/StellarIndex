@@ -145,7 +145,7 @@ export function RoutedVolumePanel() {
                 {r.kind === 'router' ? (
                   <>
                     <Td align="right">
-                      <span className="font-mono text-xs">{r.routed_trades_24h.toLocaleString()}</span>
+                      <span className="font-mono text-xs">{r.routed_trades_24h.toLocaleString('en-US')}</span>
                     </Td>
                     <Td align="right">
                       <span className="font-mono text-xs">{fmtVolume(r.routed_volume_24h_usd)}</span>

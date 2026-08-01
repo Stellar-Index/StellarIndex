@@ -58,7 +58,7 @@ export function BackfillSummary() {
         label="Furthest along"
         value={
           summary.furthestLedger != null
-            ? `#${summary.furthestLedger.toLocaleString()}`
+            ? `#${summary.furthestLedger.toLocaleString('en-US')}`
             : '—'
         }
         sub="max ledger reached"

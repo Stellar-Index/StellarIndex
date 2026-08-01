@@ -181,7 +181,7 @@ export function MevFeed() {
                     </span>
                   )}
                   <span className="ml-auto font-mono text-[11px] text-ink-muted">
-                    ledger {e.detected_at_ledger.toLocaleString()}
+                    ledger {e.detected_at_ledger.toLocaleString('en-US')}
                   </span>
                 </div>
                 <div className="mt-1 flex flex-wrap gap-x-4 text-[11px] text-ink-muted">

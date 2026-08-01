@@ -201,7 +201,7 @@ export function AssetSidebar({
         <StatRow label="Observations" value={formatCompact(coin.observation_count)} />
         <StatRow
           label="Markets (24h)"
-          value={coin.markets_count != null ? coin.markets_count.toLocaleString() : '—'}
+          value={coin.markets_count != null ? coin.markets_count.toLocaleString('en-US') : '—'}
         />
       </div>
 

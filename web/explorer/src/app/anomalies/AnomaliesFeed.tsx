@@ -212,7 +212,7 @@ function AnomalyVisuals({ data, events }: { data?: AnomaliesResp; events: Freeze
           >
             <DonutChart
               data={donut}
-              centerLabel={donut.reduce((s, d) => s + d.value, 0).toLocaleString()}
+              centerLabel={donut.reduce((s, d) => s + d.value, 0).toLocaleString('en-US')}
               centerSub="freezes 30d"
             />
           </Panel>

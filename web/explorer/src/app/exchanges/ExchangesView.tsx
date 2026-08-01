@@ -100,7 +100,7 @@ export function ExchangesView() {
             <Stat label="24h trades" value={statsAvailable ? formatCompact(totalTrades) : '—'} />
           </StatCell>
           <StatCell>
-            <Stat label="Pairs covered" value={statsAvailable ? totalMarkets.toLocaleString() : '—'} />
+            <Stat label="Pairs covered" value={statsAvailable ? totalMarkets.toLocaleString('en-US') : '—'} />
           </StatCell>
         </StatGrid>
       )}

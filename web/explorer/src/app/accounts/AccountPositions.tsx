@@ -159,7 +159,7 @@ export function AccountPositions({ id }: { id: string }) {
           <Stat label="Portfolio value" value={total > 0 ? usdFmt.format(total) : '—'} />
         </StatCell>
         <StatCell>
-          <Stat label="Holdings" value={holdings.length.toLocaleString()} sub={`${pricedCount} priced`} />
+          <Stat label="Holdings" value={holdings.length.toLocaleString('en-US')} sub={`${pricedCount} priced`} />
         </StatCell>
         <StatCell>
           <Stat

@@ -77,7 +77,7 @@ export function IssuerPanel({ gStrkey }: { gStrkey: string }) {
             <Stat
               label="Creation ledger"
               mono
-              value={`#${data.creation_ledger.toLocaleString()}`}
+              value={`#${data.creation_ledger.toLocaleString('en-US')}`}
             />
           )}
           {data.sep1_resolved_at && (
@@ -155,12 +155,12 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
                 </Td>
                 <Td align="right">
                   <span className="font-mono tabular-nums text-xs text-ink-muted">
-                    #{(a.first_seen_ledger ?? 0).toLocaleString()}
+                    #{(a.first_seen_ledger ?? 0).toLocaleString('en-US')}
                   </span>
                 </Td>
                 <Td align="right">
                   <span className="font-mono tabular-nums text-xs text-ink-muted">
-                    #{(a.last_seen_ledger ?? 0).toLocaleString()}
+                    #{(a.last_seen_ledger ?? 0).toLocaleString('en-US')}
                   </span>
                 </Td>
               </tr>

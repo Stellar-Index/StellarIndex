@@ -217,7 +217,7 @@ export function SourcesTable() {
                         {typeof s.trade_count_24h === 'number' &&
                         s.trade_count_24h > 0 ? (
                           <span className="font-mono tabular-nums text-ink-body">
-                            {s.trade_count_24h.toLocaleString()}
+                            {s.trade_count_24h.toLocaleString('en-US')}
                           </span>
                         ) : (
                           <span className="text-[11px] text-ink-faint">
@@ -283,7 +283,7 @@ function CursorAgo({
         {formatLag(cursor.lag_seconds)} ago
       </div>
       <div className="font-mono text-[10px] text-ink-faint">
-        #{cursor.last_ledger.toLocaleString()}
+        #{cursor.last_ledger.toLocaleString('en-US')}
       </div>
     </div>
   );

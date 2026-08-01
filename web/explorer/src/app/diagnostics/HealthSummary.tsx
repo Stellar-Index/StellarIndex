@@ -52,7 +52,7 @@ export function HealthSummary() {
         label="Live tip"
         value={
           summary.liveTipLedger != null
-            ? `#${summary.liveTipLedger.toLocaleString()}`
+            ? `#${summary.liveTipLedger.toLocaleString('en-US')}`
             : '—'
         }
         sub="highest live ledger"

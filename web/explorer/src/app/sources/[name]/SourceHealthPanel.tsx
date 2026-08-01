@@ -43,17 +43,17 @@ export function SourceHealthPanel({ source }: { source: string }) {
         <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
           <HealthStat
             label="Events seen (24h)"
-            value={data.entries_24h.toLocaleString()}
-            tone={data.entries_24h > 0 ? 'ok' : 'warn'}
+            value={data.entries_24h?.toLocaleString('en-US') ?? '—'}
+            tone={data.entries_24h ? 'ok' : 'warn'}
             sub={
-              data.entries_24h > 0
+              data.entries_24h
                 ? 'decoded events, all types'
                 : 'no decoded events in 24h'
             }
           />
           <HealthStat
             label="Trades (24h)"
-            value={data.trade_count_24h.toLocaleString()}
+            value={data.trade_count_24h.toLocaleString('en-US')}
             sub="trades-table rows"
           />
           <HealthStat
@@ -67,7 +67,7 @@ export function SourceHealthPanel({ source }: { source: string }) {
           />
           <HealthStat
             label="Markets (24h)"
-            value={data.markets_count_24h.toLocaleString()}
+            value={data.markets_count_24h.toLocaleString('en-US')}
             sub="distinct pairs traded"
           />
         </dl>

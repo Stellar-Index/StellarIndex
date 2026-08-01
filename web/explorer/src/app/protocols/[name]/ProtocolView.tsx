@@ -134,7 +134,7 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
         <Kpi label="Factories" value={formatCompact(data.factories.length)} />
         <Kpi
           label="Genesis ledger"
-          value={`#${data.genesis_ledger.toLocaleString()}`}
+          value={`#${data.genesis_ledger.toLocaleString('en-US')}`}
           mono
         />
       </div>
@@ -303,7 +303,7 @@ function CompletenessBadge({
     return (
       <span
         className="rounded-sm bg-up-subtle px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider text-up-strong"
-        title={`Verified complete to ledger #${completeness.watermark_ledger.toLocaleString()} (ADR-0033 substrate + recognition + projection reconcile).`}
+        title={`Verified complete to ledger #${completeness.watermark_ledger.toLocaleString('en-US')} (ADR-0033 substrate + recognition + projection reconcile).`}
       >
         ✓ Verified complete
       </span>
@@ -312,7 +312,7 @@ function CompletenessBadge({
   return (
     <span
       className="rounded-sm bg-warn-50 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider text-warn-700"
-      title={`Partial coverage to ledger #${completeness.watermark_ledger.toLocaleString()}.`}
+      title={`Partial coverage to ledger #${completeness.watermark_ledger.toLocaleString('en-US')}.`}
     >
       Partial coverage
     </span>

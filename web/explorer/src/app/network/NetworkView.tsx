@@ -338,7 +338,7 @@ function HeroStats({ stats: s, tip }: { stats?: NetworkStats; tip?: Ledger }) {
       <StatCell>
         <Stat
           label="Latest ledger"
-          value={s ? `#${s.latest_ledger.toLocaleString()}` : '—'}
+          value={s ? `#${s.latest_ledger.toLocaleString('en-US')}` : '—'}
           sub={tip ? `${relativeAge(tip.close_time)} · protocol v${tip.protocol_version}` : undefined}
         />
       </StatCell>
@@ -369,7 +369,7 @@ function HeroStats({ stats: s, tip }: { stats?: NetworkStats; tip?: Ledger }) {
       <StatCell>
         <Stat
           label="Base fee"
-          value={tip?.base_fee != null ? `${tip.base_fee.toLocaleString()}` : '—'}
+          value={tip?.base_fee != null ? `${tip.base_fee.toLocaleString('en-US')}` : '—'}
           sub="stroops / op"
         />
       </StatCell>
@@ -437,12 +437,12 @@ function LatestLedgers({
                       href={`/ledgers/${l.sequence}/`}
                       className="font-mono tabular-nums text-brand-600 hover:underline"
                     >
-                      #{(l.sequence ?? 0).toLocaleString()}
+                      #{(l.sequence ?? 0).toLocaleString('en-US')}
                     </Link>
                   </Td>
-                  <Td align="right">{(l.tx_count ?? 0).toLocaleString()}</Td>
-                  <Td align="right">{(l.op_count ?? 0).toLocaleString()}</Td>
-                  <Td align="right">{(l.soroban_event_count ?? 0).toLocaleString()}</Td>
+                  <Td align="right">{(l.tx_count ?? 0).toLocaleString('en-US')}</Td>
+                  <Td align="right">{(l.op_count ?? 0).toLocaleString('en-US')}</Td>
+                  <Td align="right">{(l.soroban_event_count ?? 0).toLocaleString('en-US')}</Td>
                   <Td align="right" className="text-ink-muted">{relativeAge(l.close_time)}</Td>
                 </TR>
               ))}

@@ -92,15 +92,15 @@ export function ArchivePanel() {
       <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
         <ArchiveStat
           label="Ledger range"
-          value={`#${data.range.from.toLocaleString()} – #${data.range.to.toLocaleString()}`}
+          value={`#${data.range.from.toLocaleString('en-US')} – #${data.range.to.toLocaleString('en-US')}`}
         />
         <ArchiveStat
           label="Checkpoints expected"
-          value={ca ? ca.expected.toLocaleString() : '—'}
+          value={ca ? ca.expected.toLocaleString('en-US') : '—'}
         />
         <ArchiveStat
           label="Checkpoints found"
-          value={ca ? ca.found.toLocaleString() : '—'}
+          value={ca ? ca.found.toLocaleString('en-US') : '—'}
         />
         <ArchiveStat
           label="Last scan"
