@@ -1312,6 +1312,20 @@ type ContractActivityRow struct {
 
 // contractEventsRecentQuery builds ContractEventsRecent's SQL.
 //
+// LIMIT 1 BY the contract_events primary key (audit W4-storage-1, same class as
+// DAT-10): stellar.contract_events is ReplacingMergeTree(ingested_at), so a
+// re-ingested event (ch-live-catchup heal / ch-rebuild / partial-flush retry —
+// all documented legitimate dup-part states) leaves an un-merged duplicate PART,
+// byte-identical bar ingested_at, until a background merge — and without dedup
+// this per-row activity feed served the SAME event TWICE. LIMIT 1 BY, not FINAL:
+// FINAL would defeat the contract_id bloom skip-index and force ClickHouse to
+// merge every overlapping part for this bloom-probed, no-lower-bound scan — the
+// same O(table) trap recentOperationsQuery documents. LIMIT 1 BY dedups on the
+// table's full ORDER BY tuple (ledger_seq, tx_hash, op_index, event_index) and
+// composes with the existing ORDER BY, so it stays a cheap keyset/tip scan; run
+// BEFORE the page-size LIMIT (ClickHouse clause order) it also stops an un-merged
+// duplicate part from eating a page slot, mirroring the union-arm dedup.
+//
 // explorerScanSettings: the contract_id predicate rides a bloom skip-index
 // over the billions-row contract_events table — granule-pruned but
 // scan-shaped, and reading the wide topics_xdr/data_xdr columns per
@@ -1325,13 +1339,16 @@ func contractEventsRecentQuery(hasCursor bool) string {
 	if hasCursor {
 		q += ` AND (ledger_seq, op_index, event_index) < (?, ?, ?)`
 	}
-	return q + ` ORDER BY ledger_seq DESC, op_index DESC, event_index DESC LIMIT ?` + explorerScanSettings
+	return q + ` ORDER BY ledger_seq DESC, op_index DESC, event_index DESC` +
+		` LIMIT 1 BY ledger_seq, tx_hash, op_index, event_index LIMIT ?` + explorerScanSettings
 }
 
 // ContractEventsRecent returns a contract's most-recent events, descending.
 // Relies on the contract_id bloom skip-index (contract_events is
 // ORDER BY (ledger_seq, tx_hash, ...), so a contract_id predicate would
-// otherwise full-scan). NOT FINAL — FINAL would defeat the skip-index.
+// otherwise full-scan). NOT FINAL — FINAL would defeat the skip-index; the
+// RMT duplicate-part over-count is instead collapsed by the LIMIT 1 BY
+// primary-key dedup in contractEventsRecentQuery (audit W4-storage-1).
 // A set cursor keyset-pages to older events by the composite
 // (ledger_seq, op_index, event_index) — a contract can emit many events in one
 // ledger, so a ledger-only cursor would drop the rest of a straddled ledger.
@@ -1536,9 +1553,15 @@ type EventSummary struct {
 
 // EventsByTx returns a transaction's contract events (ledger-scoped — fast;
 // contract_events is ORDER BY (ledger_seq, tx_hash, op_index, event_index)).
+//
+// FINAL (audit W4-storage-1, same class as DAT-10): ledger+tx_hash-scoped, so
+// bounded to one partition and a primary-key prefix on ledger_seq — cheap, the
+// same reasoning as the byte-twin OperationsByTx's FINAL. Without it, a
+// re-ingested event left an un-merged duplicate ReplacingMergeTree part and this
+// tx-detail view showed the event twice.
 func (r *ExplorerReader) EventsByTx(ctx context.Context, seq uint32, hash string) ([]EventSummary, error) {
 	const q = `SELECT op_index, event_index, contract_id, event_type, topic_0_sym
-		FROM stellar.contract_events
+		FROM stellar.contract_events FINAL
 		WHERE ledger_seq = ? AND tx_hash = ? ORDER BY op_index, event_index`
 	rows, err := r.conn.Query(ctx, q, seq, hash)
 	if err != nil {
