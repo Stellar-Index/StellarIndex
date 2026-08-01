@@ -30,4 +30,11 @@ W1-defi-1 sdex zero-leg batch failure, W1-sub-1 AsBool-panic+no-recover pair); L
 rest. Re-queues: gating-seed-walk (forged-creation), chainlink/frankfurter,
 live/lake state-write parity test, blend/storage.go+consumer.go, migration PK 0058/0063.
 
-[WAVE-2 in flight: api/v1 handlers, auth, ratelimit, streaming, platform/billing/webhooks]
+WAVE-2 DONE (4 finders): api/v1 pricing+history handlers, catalogue+explorer+defi handlers,
+auth/mutating/billing surface, platform/usage/webhook/notify/incidents. Net 0 crit/high;
+4 MED (SAC-label spoof [security], movements filter-after-limit, usage over-count, postgres
+kill-switch cache [gated off-r1]); pricing DoS refuted (0037 index). Re-queue: ratelimit
+internals, status.go honesty, assets_f2 market-cap decimals, catalogue caches, streaming internals.
+
+[WAVE-3 in flight: aggregate freeze/anomaly/mev/confidence/baseline, divergence+domain+guards,
+ops ingest/chops destructive CLI, ops archive/diagnostics/supply CLI]
