@@ -1,8 +1,10 @@
 package supply
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"math/big"
 	"strings"
 	"testing"
@@ -26,6 +28,9 @@ type fakeClassicStore struct {
 	sacPerContract map[string]*big.Int
 
 	wantErrSum bool
+	// wantErrMinLedger makes MinClassicComponentLedger fail, exercising
+	// the fail-permissive freshness-gate path (F-1236 / W6-sweep-1).
+	wantErrMinLedger bool
 }
 
 func (f *fakeClassicStore) SumTrustlineBalancesAtOrBefore(_ context.Context, _ string, _ uint32) (*big.Int, error) {
@@ -66,6 +71,9 @@ func (f *fakeClassicStore) SACBalanceForContractAtOrBefore(_ context.Context, co
 // MinClassicComponentLedger — fakes a single per-asset value;
 // tests that don't care leave it at 0 (gate-skip).
 func (f *fakeClassicStore) MinClassicComponentLedger(_ context.Context, _ string, _ uint32) (uint32, error) {
+	if f.wantErrMinLedger {
+		return 0, errors.New("min-component-ledger boom")
+	}
 	return 0, nil
 }
 
@@ -87,7 +95,7 @@ func TestStorageClassicSupplyReader_HappyPath(t *testing.T) {
 		lpSum:        big.NewInt(20),
 		sacSum:       big.NewInt(30),
 	}
-	r := NewStorageClassicSupplyReader(store)
+	r := NewStorageClassicSupplyReader(store, nil)
 
 	asset := mustClassic(t, "USDC", tIssuer)
 	got, err := r.ClassicSupplyAt(context.Background(), asset, LockedSet{}, 100)
@@ -118,7 +126,7 @@ func TestStorageClassicSupplyReader_HappyPath(t *testing.T) {
 }
 
 func TestStorageClassicSupplyReader_RejectsNonClassic(t *testing.T) {
-	r := NewStorageClassicSupplyReader(&fakeClassicStore{})
+	r := NewStorageClassicSupplyReader(&fakeClassicStore{}, nil)
 	_, err := r.ClassicSupplyAt(context.Background(), canonical.NativeAsset(), LockedSet{}, 1)
 	if !errors.Is(err, ErrNotClassic) {
 		t.Errorf("err=%v want wrapping ErrNotClassic", err)
@@ -127,11 +135,50 @@ func TestStorageClassicSupplyReader_RejectsNonClassic(t *testing.T) {
 
 func TestStorageClassicSupplyReader_PropagatesSumError(t *testing.T) {
 	store := &fakeClassicStore{wantErrSum: true}
-	r := NewStorageClassicSupplyReader(store)
+	r := NewStorageClassicSupplyReader(store, nil)
 	asset := mustClassic(t, "USDC", tIssuer)
 	_, err := r.ClassicSupplyAt(context.Background(), asset, LockedSet{}, 1)
 	if err == nil || !strings.Contains(err.Error(), "trustline") {
 		t.Errorf("err=%v should mention trustline failure", err)
+	}
+}
+
+// TestStorageClassicSupplyReader_MinLedgerErrorWarnsAndStaysPermissive
+// pins W6-sweep-1: a MinClassicComponentLedger query error is
+// fail-permissive (MinComponentLedger=0, snapshot still returned) but
+// must no longer be silent — the reader emits a WARN so the operator
+// sees the stale-component gate drop to permissive.
+func TestStorageClassicSupplyReader_MinLedgerErrorWarnsAndStaysPermissive(t *testing.T) {
+	store := &fakeClassicStore{
+		trustlineSum:     big.NewInt(1000),
+		claimableSum:     big.NewInt(0),
+		lpSum:            big.NewInt(0),
+		sacSum:           big.NewInt(0),
+		wantErrMinLedger: true,
+	}
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	r := NewStorageClassicSupplyReader(store, logger)
+
+	asset := mustClassic(t, "USDC", tIssuer)
+	got, err := r.ClassicSupplyAt(context.Background(), asset, LockedSet{}, 100)
+	if err != nil {
+		t.Fatalf("ClassicSupplyAt: %v (must stay fail-permissive, not error)", err)
+	}
+	// Fail-permissive posture preserved: snapshot returned, gate open.
+	if got.MinComponentLedger != 0 {
+		t.Errorf("MinComponentLedger=%d want 0 (permissive on query error)", got.MinComponentLedger)
+	}
+	if got.Trustline.Int64() != 1000 {
+		t.Errorf("Trustline=%s want 1000 (snapshot still correct)", got.Trustline)
+	}
+	// The failure is now observable.
+	logged := buf.String()
+	if !strings.Contains(logged, "level=WARN") {
+		t.Errorf("expected a WARN log line, got: %q", logged)
+	}
+	if !strings.Contains(logged, "MinClassicComponentLedger") {
+		t.Errorf("WARN line should name the failing query, got: %q", logged)
 	}
 }
 
@@ -149,7 +196,7 @@ func TestStorageClassicSupplyReader_IssuerBalanceLookedUp(t *testing.T) {
 			tIssuer + ":" + assetKey: big.NewInt(123),
 		},
 	}
-	r := NewStorageClassicSupplyReader(store)
+	r := NewStorageClassicSupplyReader(store, nil)
 	asset := mustClassic(t, "USDC", tIssuer)
 	got, err := r.ClassicSupplyAt(context.Background(), asset, LockedSet{}, 1)
 	if err != nil {
@@ -178,7 +225,7 @@ func TestStorageClassicSupplyReader_LockedSetSummed(t *testing.T) {
 			"C_LOCKED_1:" + assetKey: big.NewInt(50),
 		},
 	}
-	r := NewStorageClassicSupplyReader(store)
+	r := NewStorageClassicSupplyReader(store, nil)
 	asset := mustClassic(t, "USDC", tIssuer)
 	locked := LockedSet{
 		Accounts:  []string{"G_LOCKED_1", "G_LOCKED_2"},

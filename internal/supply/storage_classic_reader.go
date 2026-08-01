@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"time"
 
@@ -58,12 +59,20 @@ type ClassicSupplyStore interface {
 // single-digit list sizes, so the per-entity round-trip cost is
 // dominated by the four big Sum* queries above.
 type StorageClassicSupplyReader struct {
-	store ClassicSupplyStore
+	store  ClassicSupplyStore
+	logger *slog.Logger
 }
 
-// NewStorageClassicSupplyReader constructs the reader.
-func NewStorageClassicSupplyReader(store ClassicSupplyStore) *StorageClassicSupplyReader {
-	return &StorageClassicSupplyReader{store: store}
+// NewStorageClassicSupplyReader constructs the reader. Pass nil for
+// logger to default to [slog.Default] — the logger is only used to
+// surface the fail-permissive MinClassicComponentLedger error path
+// (F-1236), so a nil default keeps the blast radius small for callers
+// that don't wire one.
+func NewStorageClassicSupplyReader(store ClassicSupplyStore, logger *slog.Logger) *StorageClassicSupplyReader {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &StorageClassicSupplyReader{store: store, logger: logger}
 }
 
 // ClassicSupplyAt implements [ClassicSupplyReader]. Performs the
@@ -126,8 +135,12 @@ func (r *StorageClassicSupplyReader) ClassicSupplyAt(ctx context.Context, asset 
 	minLedger, err := r.store.MinClassicComponentLedger(ctx, assetKey, ledger)
 	if err != nil {
 		// Don't bail — the snapshot is still correct, just
-		// without freshness metadata. Log + carry on.
-		_ = err
+		// without freshness metadata. WARN so the operator sees the
+		// stale-component gate silently drop to permissive
+		// (MinComponentLedger=0) instead of it happening invisibly.
+		r.logger.Warn("classic supply: MinClassicComponentLedger query failed; "+
+			"stale-component freshness gate is permissive for this tick",
+			"asset_key", assetKey, "ledger", ledger, "err", err)
 		minLedger = 0
 	}
 

@@ -1,11 +1,14 @@
 package dashboardauth
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -203,6 +206,49 @@ func TestAdminLookup_WritesDurableAuditRow(t *testing.T) {
 	// The count of user records disclosed — the size of the PII read.
 	if got, want := meta["users_returned"], float64(2); got != want {
 		t.Errorf("metadata.users_returned = %v, want %v", got, want)
+	}
+}
+
+// TestAdminLookup_MasksStaffEmailInLogSink pins W6-prv-3: the staff
+// actor's email must be masked before it reaches the app logger (which
+// ships to Loki), consistent with the package's maskEmail policy — while
+// the durable audit_log row keeps the FULL actor_email as the intended
+// tamper-evident trail.
+func TestAdminLookup_MasksStaffEmailInLogSink(t *testing.T) {
+	sink := &fakeAuditSink{}
+	f := newAdminLookupFixture(t, sink)
+
+	var buf bytes.Buffer
+	f.rig.cfg.Logger = slog.New(slog.NewTextHandler(&buf, nil))
+
+	rec := f.lookup(f.staffSC, "email=ceo@acme.example")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+
+	logged := buf.String()
+	// The log SINK must never carry the full staff email.
+	if strings.Contains(logged, "ops@stellarindex.io") {
+		t.Errorf("log sink leaked the full staff actor email (masking not applied):\n%s", logged)
+	}
+	// ...but it must still identify the actor in masked form.
+	masked := maskEmail("ops@stellarindex.io")
+	if !strings.Contains(logged, masked) {
+		t.Errorf("expected masked staff email %q in the log sink; got:\n%s", masked, logged)
+	}
+
+	// The durable audit row keeps the FULL actor email — the trail is not
+	// masked, only the log sink is.
+	entries := sink.all()
+	if len(entries) != 1 {
+		t.Fatalf("audit rows = %d, want 1", len(entries))
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(entries[0].Metadata, &meta); err != nil {
+		t.Fatalf("metadata is not JSON: %v", err)
+	}
+	if meta["actor_email"] != "ops@stellarindex.io" {
+		t.Errorf("audit row actor_email = %v, want the FULL email (tamper-evident trail)", meta["actor_email"])
 	}
 }
 
