@@ -152,8 +152,8 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// complete=t / coverage 1.0 — i.e. pure sparsity, not loss. Bumped
 	// to 200K (~14 days) to sit above the observed natural envelope.
 	// CCTP/Rozo are new (2026-05-20 deploy) so the genesis is recent.
-	{Source: "cctp", Table: "cctp_events", LedgerColumn: "ledger", Genesis: 62_403_000, MinGapSizeOverride: 200000},
-	{Source: "rozo", Table: "rozo_events", LedgerColumn: "ledger", Genesis: 62_403_000, MinGapSizeOverride: 100000},
+	{Source: "cctp", Table: "cctp_events", LedgerColumn: "ledger", Genesis: 62_146_641, MinGapSizeOverride: 200000},
+	{Source: "rozo", Table: "rozo_events", LedgerColumn: "ledger", Genesis: 60_829_397, MinGapSizeOverride: 100000},
 	// comet_liquidity: pool-events are sparse; 2026-05-29 find-data-
 	// gaps showed 17 natural gaps across cascade-era data with max
 	// 7826 ledgers (~11h of natural pool silence). 50K threshold.
