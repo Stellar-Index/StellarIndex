@@ -35,7 +35,31 @@ against.
   `docs/operations/runbooks/config-assertion-failed.md`.
 
 ### Fixed
-- **Gap-detector genesis for cctp (62,146,641) and rozo (60,829,397)**
+- **Empty `tx_hash_index` no longer grants authoritative 404s**
+  (`internal/storage/clickhouse/explorer_reader.go`): the tx-hash
+  availability probe now requires the index to be NON-EMPTY, not merely
+  to exist. An existing-but-empty index (the MV-drop / TRUNCATE
+  pathology: transactions keep flowing, the index silently stops) is
+  treated as index-unavailable — hash lookups take the bloom-scan path
+  and the verdict is not cached, so a repopulated index is picked back
+  up on re-probe ("empty table is not a definitive answer", the
+  `DailyActivityAvailable` convention). A per-hash miss against a
+  non-empty index remains an authoritative not-found (the DoS
+  protection), pinned by new unit tests
+  (`TestTransactionByHashEmptyIndexFallsBackToScan`,
+  `TestTransactionByHashRepopulatedIndexRegainsAuthority`). Complements
+  the hourly `tx_hash_index_parity` assertion, which catches PARTIAL
+  divergence. Un-reds `TestClickHouseTxHashIndexProbeFallback` in CI.
+- **Explorer scan-settings integration test seeds genuine LedgerKey
+  XDR** (`test/integration/explorer_scan_settings_test.go`): the
+  trustline seed carried a synthetic `"e5-trustline-key"` placeholder
+  that could never match the trustline/offer readers' real-XDR
+  PK-prefix `LIKE` ranges introduced in 85f706e1
+  (`accountEntryKeyPrefix`), so the test failed while production (real
+  keys) worked. The seed now marshals real trustline AND offer
+  `xdr.LedgerKey`s + entries for the seeded account, exercising both
+  prefix-range paths end-to-end (balance, limit, offer round-trip
+  asserted).
   now mirrors the registry/catalogue — the stale 62,403,000 floor left
   each source's true head range invisible to the supporting gap signal
   (the authoritative ADR-0033 verdict was already corrected on 07-31).

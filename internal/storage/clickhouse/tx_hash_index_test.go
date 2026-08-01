@@ -96,12 +96,20 @@ func txRowFor(seq uint32, hash string) []any {
 
 const testTxHash = "ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34"
 
+// probeHit is the availability probe's answer for a healthy, NON-EMPTY
+// index: `SELECT ledger_seq … LIMIT 1` returning one row. The probe
+// requires a row (requireRows) — an empty result means the index is
+// treated as unavailable (see TestTransactionByHashEmptyIndexFallsBackToScan).
+func probeHit() *stubRows {
+	return &stubRows{data: [][]any{{uint32(1)}}}
+}
+
 func TestTransactionByHashFastPath(t *testing.T) {
 	conn := &stubConn{}
 	conn.respond = func(q string) (driver.Rows, error) {
 		switch {
 		case isIndexProbe(q):
-			return &stubRows{}, nil
+			return probeHit(), nil
 		case isIndexLookup(q):
 			return &stubRows{data: [][]any{{uint32(62_000_001)}}}, nil
 		case isLedgerScopedRead(q):
@@ -125,18 +133,18 @@ func TestTransactionByHashFastPath(t *testing.T) {
 }
 
 func TestTransactionByHashIndexMissIsAuthoritativeNotFound(t *testing.T) {
-	// 2026-07-30 (account-filter class audit): the index covers
+	// 2026-07-30 (account-filter class audit): the NON-EMPTY index covers
 	// genesis→tip, so an INDEX miss is an authoritative "no such hash" —
 	// the reader must NOT fall through to the 10.5B-row bloom scan
 	// (which turned every garbage hash into an unauthenticated
 	// multi-second probe). The scan remains reachable only for an
-	// index-path ERROR or an index/base inconsistency (see the sibling
-	// tests).
+	// index-path ERROR, an index/base inconsistency, or an EMPTY index
+	// (see the sibling tests).
 	conn := &stubConn{}
 	conn.respond = func(q string) (driver.Rows, error) {
 		switch {
 		case isIndexProbe(q):
-			return &stubRows{}, nil
+			return probeHit(), nil // the index has rows: misses carry authority
 		case isIndexLookup(q):
 			return &stubRows{}, nil // no index row: the hash does not exist
 		case isBloomScan(q):
@@ -195,6 +203,93 @@ func TestTransactionByHashIndexTableAbsent(t *testing.T) {
 	}
 }
 
+func TestTransactionByHashEmptyIndexFallsBackToScan(t *testing.T) {
+	// The MV-drop / TRUNCATE pathology (CI-red 2026-07-30): the index table
+	// EXISTS but is EMPTY while stellar.transactions keeps flowing. If the
+	// probe granted authority off mere existence, every real hash would 404
+	// authoritatively. An empty index must instead read as index-UNAVAILABLE:
+	// the lookup takes the bloom-scan path and the index is never consulted.
+	// Emptiness is also NOT a settled verdict — the index may be repopulated
+	// (backfill / MV re-attach), so a later call must re-probe and pick it
+	// back up (same "empty table is not a definitive answer" convention as
+	// DailyActivityAvailable).
+	conn := &stubConn{}
+	conn.respond = func(q string) (driver.Rows, error) {
+		switch {
+		case isIndexProbe(q):
+			return &stubRows{}, nil // table exists, ZERO rows
+		case isIndexLookup(q):
+			return nil, fmt.Errorf("the empty index must not be consulted: %s", q)
+		case isBloomScan(q):
+			return &stubRows{data: [][]any{{uint32(64_000_000)}}}, nil
+		case isLedgerScopedRead(q):
+			return &stubRows{data: [][]any{txRowFor(64_000_000, testTxHash)}}, nil
+		default:
+			return nil, fmt.Errorf("unexpected query: %s", q)
+		}
+	}
+	r := &ExplorerReader{conn: conn, txIndexProbe: schemaProbe{retryAfter: -1}}
+
+	for i := range 2 {
+		tx, found, err := r.TransactionByHash(context.Background(), testTxHash)
+		if err != nil || !found {
+			t.Fatalf("call %d: TransactionByHash = (found=%v, err=%v), want scan hit despite empty index", i, found, err)
+		}
+		if tx.Seq != 64_000_000 {
+			t.Fatalf("call %d: tx.Seq = %d, want 64000000 (via the bloom scan)", i, tx.Seq)
+		}
+	}
+	if n := countQueries(conn.queries, isIndexLookup); n != 0 {
+		t.Fatalf("index lookups = %d, want 0 — an empty index must not answer (queries: %v)", n, conn.queries)
+	}
+	if n := countQueries(conn.queries, isBloomScan); n != 2 {
+		t.Fatalf("bloom scans = %d, want 2 (one per lookup)", n)
+	}
+	// Emptiness must not latch: with the negative cache disabled, the second
+	// lookup re-probed rather than trusting a cached "unavailable".
+	if n := countQueries(conn.queries, isIndexProbe); n != 2 {
+		t.Fatalf("probes = %d, want 2 — empty is not a settled verdict; the index must be re-probed", n)
+	}
+}
+
+func TestTransactionByHashRepopulatedIndexRegainsAuthority(t *testing.T) {
+	// The recovery half of the emptiness probe: once the truncated index is
+	// repopulated, a re-probe finds rows, settles true, and a per-hash miss
+	// is authoritative again (no bloom scan).
+	conn := &stubConn{}
+	probeCalls := 0
+	conn.respond = func(q string) (driver.Rows, error) {
+		switch {
+		case isIndexProbe(q):
+			probeCalls++
+			if probeCalls == 1 {
+				return &stubRows{}, nil // still empty
+			}
+			return probeHit(), nil // repopulated
+		case isIndexLookup(q):
+			return &stubRows{}, nil // hash genuinely absent
+		case isBloomScan(q):
+			return &stubRows{}, nil // scan path (first call only): unknown hash
+		default:
+			return nil, fmt.Errorf("unexpected query: %s", q)
+		}
+	}
+	r := &ExplorerReader{conn: conn, txIndexProbe: schemaProbe{retryAfter: -1}}
+
+	if _, found, err := r.TransactionByHash(context.Background(), testTxHash); err != nil || found {
+		t.Fatalf("call 1 (empty index) = (found=%v, err=%v), want scan-path not-found", found, err)
+	}
+	if _, found, err := r.TransactionByHash(context.Background(), testTxHash); err != nil || found {
+		t.Fatalf("call 2 (repopulated) = (found=%v, err=%v), want authoritative not-found", found, err)
+	}
+	if n := countQueries(conn.queries, isBloomScan); n != 1 {
+		t.Fatalf("bloom scans = %d, want 1 — after repopulation the index miss is authoritative again", n)
+	}
+	if n := countQueries(conn.queries, isIndexLookup); n != 1 {
+		t.Fatalf("index lookups = %d, want 1 (second call only)", n)
+	}
+}
+
 func TestTransactionByHashIndexRowWithoutBaseRowFallsBack(t *testing.T) {
 	// An index row whose ledger-scoped read comes up empty (shouldn't happen,
 	// but e.g. a partial re-derive) must fall through to the scan rather than
@@ -207,7 +302,7 @@ func TestTransactionByHashIndexRowWithoutBaseRowFallsBack(t *testing.T) {
 	conn.respond = func(q string) (driver.Rows, error) {
 		switch {
 		case isIndexProbe(q):
-			return &stubRows{}, nil
+			return probeHit(), nil
 		case isIndexLookup(q):
 			return &stubRows{data: [][]any{{uint32(61_000_000)}}}, nil
 		case isLedgerScopedRead(q):
