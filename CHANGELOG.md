@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.21.9] — 2026-08-01
+
 ### Fixed
 - **Carried-claim invalidation gap: a projector-replay below the watermark
   now forces re-reconciliation** (migration 0125 +
