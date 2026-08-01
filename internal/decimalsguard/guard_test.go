@@ -291,6 +291,63 @@ func TestSweep_WriterErrorDoesNotBlockDetection(t *testing.T) {
 	}
 }
 
+// TestReport_RetriesWriteAfterTransientFailure is the latch-before-fallible-
+// write regression (W3-guards-1, the 100×-price class). The persistence latch
+// must be set ONLY after a SUCCESSFUL write, so a transient DB failure leaves
+// the asset eligible for a retry on the next sweep — never marked "handled"
+// while the corrective row was never written, which would strand a
+// non-7-decimal token on a 10^(7-decimals)-skewed served price until the
+// process restarts. It also proves the retry stops once a write finally
+// succeeds (fire exactly once on SUCCESS), and that the observability alarm
+// still fires exactly once regardless of the write outcome.
+func TestReport_RetriesWriteAfterTransientFailure(t *testing.T) {
+	const (
+		src   = "soroswap"
+		asset = "fake-contract-18dp-retry"
+	)
+	before := counterVal(src, asset)
+
+	reader := &fakeReader{refs: []timescale.SorobanDEXTradeRef{{Source: src, Asset: asset}}}
+	resolver := &fakeResolver{decimals: map[string]uint32{asset: 18}}
+	writer := &fakeWriter{err: errors.New("connection refused")} // transient write failure.
+	g := New(reader, resolver, Options{Window: time.Minute, Writer: writer})
+
+	// Sweep 1: the write fails. The asset must NOT be latched.
+	if err := g.Sweep(context.Background()); err != nil {
+		t.Fatalf("sweep 1: %v", err)
+	}
+	if writer.calls != 1 {
+		t.Fatalf("writer.calls after failed sweep = %d, want 1 (attempted once)", writer.calls)
+	}
+
+	// The transient failure clears; the next observation MUST retry the write.
+	// Pre-fix (latch set before the write) this asset was already marked
+	// fired, so report() returned early and this retry never happened.
+	writer.err = nil
+	if err := g.Sweep(context.Background()); err != nil {
+		t.Fatalf("sweep 2: %v", err)
+	}
+	if writer.calls != 2 {
+		t.Fatalf("writer.calls after recovery sweep = %d, want 2 "+
+			"(a transient write failure must leave the asset UNLATCHED so it retries)", writer.calls)
+	}
+
+	// Sweep 3: the write has now succeeded once — it must be latched, no re-write.
+	if err := g.Sweep(context.Background()); err != nil {
+		t.Fatalf("sweep 3: %v", err)
+	}
+	if writer.calls != 2 {
+		t.Fatalf("writer.calls after third sweep = %d, want 2 "+
+			"(a successful write latches — fire exactly once on SUCCESS)", writer.calls)
+	}
+
+	// The observability alarm fired exactly once across all three sweeps,
+	// independent of the write retries.
+	if got := counterVal(src, asset) - before; got != 1 {
+		t.Fatalf("counter delta = %v, want 1 (alarm latches once, unaffected by write retries)", got)
+	}
+}
+
 // ─── Backfill (one-time startup self-seed pass) ────────────────────────────
 
 // TestBackfill_DormantOffenderGetsUpserted is the production scenario this
