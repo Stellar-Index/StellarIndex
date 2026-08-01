@@ -495,19 +495,57 @@ alerted by `stellarindex_ingestion_discovery_record_failures`.
 Gauge, label `component`. Value 0/1.
 
 Boot-time detectability gauge (audit-2026-07-16 C4-4): `1` when the
-named component was wired with a Prometheus Registry (its metrics +
-dependent alerts are live), `0` when it is running Registry-less (those
-metrics/alerts are DEAD — the source series never registers so the
-alert can never fire). Set per component at startup on the binaries
+named component was wired with a Prometheus Registry (its SDK-side
+metrics are live), `0` when it is running Registry-less (those SDK
+metrics never register). Set per component at startup on the binaries
 that build the affected config; an absent series means "component not
 used on this binary" and is not alerted. The concrete case is
 `component="ledgerstream"`: `pipeline.LedgerstreamConfig` deliberately
 leaves `Config.Registry` nil (the SDK's metric registration panics on
 the repeated `Stream` calls the archive→live→catch-up path makes), so
-`stellarindex_ledgerstream_tier_read_total` is dead in production and
-the `both_missing` page is inert. Alerted by
+the SDK `BufferedStorageBackend` buffer metrics
+(`buffer_fetch_latency_seconds` etc.) are not exported. Alerted by
 `stellarindex_metrics_registry_absent`; remediation in
 `runbooks/metrics-registry-absent.md`.
+
+**NOTE (W5-mon-3):** this gauge no longer implies the ledgerstream-tier
+`both_missing` page is dead. `stellarindex_ledgerstream_tier_read_total`
+and `stellarindex_ledgerstream_cold_read_duration_seconds` moved to
+`internal/obs` package-level (registered unconditionally at boot), so
+that page is live in production regardless of this gauge's value. The
+gauge now tracks only the SDK buffer-metric coverage.
+
+### `stellarindex_ledgerstream_tier_read_total`
+
+Counter, label `outcome` (`hot` / `cold` / `both_missing`).
+
+Tiered-datastore reads (ADR-0027 LCM cache tiering) partitioned by which
+tier served the request: `hot` = local `galexie-archive` MinIO, `cold` =
+`aws-public-blockchain` fallback after a hot miss, `both_missing` =
+neither tier had the object (the reader is stalled). A sustained
+`both_missing` increase is the **P1** data-integrity page
+`stellarindex_ledgerstream_tier_both_missing`
+(`runbooks/ledgerstream-tier-both-missing.md`); chart the `cold` rate as
+a proxy for "is the hot trim window sized right, or am I paying
+cross-Atlantic latency for ranges that should be hot?".
+
+Emitted by `internal/ledgerstream/tiered.go`'s `TieredDataStore` and
+registered unconditionally at boot in `internal/obs` — NOT gated on the
+per-`Stream` registry that `pipeline.LedgerstreamConfig` leaves nil
+(W5-mon-3; before that fix this metric was nil in production and the
+`both_missing` page could never fire).
+
+### `stellarindex_ledgerstream_cold_read_duration_seconds`
+
+Histogram, label `outcome` (`ok` = cold hit / `miss` = cold not-found,
+i.e. a `both_missing` read / `error` = cold transient failure).
+
+Latency of cold-tier (AWS public bucket) reads only — includes the hot
+miss → cold attempt, excludes hot-tier reads. Wider buckets than the
+default (5 ms → 30 s) because cold reads are cross-Atlantic
+whole-partition fetches. The paired-histogram sibling of
+`stellarindex_ledgerstream_tier_read_total`; same always-registered
+rationale.
 
 ### `stellarindex_source_insert_errors_total`
 

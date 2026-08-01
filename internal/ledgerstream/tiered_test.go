@@ -10,8 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stellar/go-stellar-sdk/support/datastore"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // fakeStore is a minimal DataStore used to assert TieredDataStore's
@@ -130,33 +132,38 @@ func readAllString(rc io.ReadCloser) string {
 	return string(b)
 }
 
-// TestNewTieredDataStore_TypedNilRegistry_DoesNotPanic is the
-// regression test for a typed-nil-interface footgun discovered
-// incidentally while adding streamTiered's cold-schema-parity check
-// (INT-01, audit-2026-07-23): Config.Registry is a concrete
-// *prometheus.Registry, so a caller with metrics disabled (a nil
-// *prometheus.Registry field) passes a NON-nil prometheus.Registerer
-// interface value wrapping that nil pointer — `registry != nil`
-// inside NewTieredDataStore was always true, so MustRegister ran on a
-// nil receiver and panicked. Every path that reaches
-// NewTieredDataStore with tiering enabled and no registry configured
-// (a realistic production shape — cold fallback without metrics
-// wiring) hit this.
-func TestNewTieredDataStore_TypedNilRegistry_DoesNotPanic(t *testing.T) {
-	t.Parallel()
+// TestTiered_GetFile_BothMissing_EmitsMetric is the W5-mon-3 regression
+// guard: a read that misses BOTH tiers must increment
+// obs.LedgerstreamTierReadTotal{outcome="both_missing"} — the metric the
+// ledgerstream-tier `both_missing` page reads. Before the fix this counter
+// was a per-TieredDataStore CounterVec that only registered when a registry
+// was passed to NewTieredDataStore, and the production builder passed nil,
+// so the increment was a nil-guarded no-op and the page could never fire.
+// Now the metric is obs package-level (always registered), so the emit is
+// live regardless of any per-instance wiring. This test asserts the
+// CORRECTED behaviour (counter goes up by exactly 1) against the live obs
+// metric — it fails against the pre-fix nil-gated emit.
+//
+// Not t.Parallel(): it asserts a delta on the process-global obs counter,
+// so it must not race other tests that also increment it.
+func TestTiered_GetFile_BothMissing_EmitsMetric(t *testing.T) {
 	hot := newFakeStore("hot")
 	cold := newFakeStore("cold")
 
-	var typedNilRegistry *prometheus.Registry // the exact shape Config.Registry has when unset
+	before := testutil.ToFloat64(obs.LedgerstreamTierReadTotal.WithLabelValues("both_missing"))
 
-	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("NewTieredDataStore panicked with a typed-nil *prometheus.Registry: %v", r)
-		}
-	}()
-	ts := NewTieredDataStore(hot, cold, typedNilRegistry)
-	if ts == nil {
-		t.Fatal("NewTieredDataStore returned nil")
+	ts := NewTieredDataStore(hot, cold)
+	_, _, err := ts.GetFile(context.Background(), "ledgers/00000.xdr")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !IsNotFound(err) {
+		t.Fatalf("expected IsNotFound, got %v", err)
+	}
+
+	after := testutil.ToFloat64(obs.LedgerstreamTierReadTotal.WithLabelValues("both_missing"))
+	if delta := after - before; delta != 1 {
+		t.Fatalf("both_missing counter delta = %v, want 1 (metric not emitted on the both-missing path)", delta)
 	}
 }
 
@@ -167,7 +174,7 @@ func TestTiered_GetFile_HotHit(t *testing.T) {
 	hot.files["ledgers/12345.xdr"] = "HOT-BODY"
 	cold.files["ledgers/12345.xdr"] = "COLD-BODY"
 
-	ts := NewTieredDataStore(hot, cold, nil)
+	ts := NewTieredDataStore(hot, cold)
 	rc, _, err := ts.GetFile(context.Background(), "ledgers/12345.xdr")
 	if err != nil {
 		t.Fatalf("GetFile: %v", err)
@@ -186,7 +193,7 @@ func TestTiered_GetFile_HotMissColdHit(t *testing.T) {
 	cold := newFakeStore("cold")
 	cold.files["ledgers/99999.xdr"] = "COLD-BODY"
 
-	ts := NewTieredDataStore(hot, cold, nil)
+	ts := NewTieredDataStore(hot, cold)
 	rc, _, err := ts.GetFile(context.Background(), "ledgers/99999.xdr")
 	if err != nil {
 		t.Fatalf("GetFile: %v", err)
@@ -204,7 +211,7 @@ func TestTiered_GetFile_BothMissing(t *testing.T) {
 	hot := newFakeStore("hot")
 	cold := newFakeStore("cold")
 
-	ts := NewTieredDataStore(hot, cold, nil)
+	ts := NewTieredDataStore(hot, cold)
 	_, _, err := ts.GetFile(context.Background(), "ledgers/00000.xdr")
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -227,7 +234,7 @@ func TestTiered_GetFile_HotTransientError_DoesNotFallThrough(t *testing.T) {
 	transient := errors.New("dial tcp: i/o timeout")
 	hot.getErr["ledgers/55555.xdr"] = transient
 
-	ts := NewTieredDataStore(hot, cold, nil)
+	ts := NewTieredDataStore(hot, cold)
 	_, _, err := ts.GetFile(context.Background(), "ledgers/55555.xdr")
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -246,7 +253,7 @@ func TestTiered_Exists_HotTrue(t *testing.T) {
 	cold := newFakeStore("cold")
 	hot.files["x"] = "y"
 
-	ts := NewTieredDataStore(hot, cold, nil)
+	ts := NewTieredDataStore(hot, cold)
 	ok, err := ts.Exists(context.Background(), "x")
 	if err != nil || !ok {
 		t.Fatalf("Exists: ok=%v err=%v", ok, err)
@@ -262,7 +269,7 @@ func TestTiered_Exists_FallsThrough(t *testing.T) {
 	cold := newFakeStore("cold")
 	cold.files["x"] = "y"
 
-	ts := NewTieredDataStore(hot, cold, nil)
+	ts := NewTieredDataStore(hot, cold)
 	ok, err := ts.Exists(context.Background(), "x")
 	if err != nil || !ok {
 		t.Fatalf("Exists: ok=%v err=%v", ok, err)
@@ -279,7 +286,7 @@ func TestTiered_ListFilePaths_UnionDedup(t *testing.T) {
 	hot.listPaths = []string{"a", "b", "shared"}
 	cold.listPaths = []string{"shared", "c", "d"}
 
-	ts := NewTieredDataStore(hot, cold, nil)
+	ts := NewTieredDataStore(hot, cold)
 	got, err := ts.ListFilePaths(context.Background(), datastore.ListFileOptions{})
 	if err != nil {
 		t.Fatalf("ListFilePaths: %v", err)
@@ -302,7 +309,7 @@ func TestTiered_ListFilePaths_ColdErrorFallback(t *testing.T) {
 	hot.listPaths = []string{"a", "b"}
 	cold.listErr = errors.New("cold-list-failed")
 
-	ts := NewTieredDataStore(hot, cold, nil)
+	ts := NewTieredDataStore(hot, cold)
 	got, err := ts.ListFilePaths(context.Background(), datastore.ListFileOptions{})
 	if err == nil {
 		t.Fatal("expected wrapped error, got nil")
@@ -322,7 +329,7 @@ func TestTiered_PutFile_HotOnly(t *testing.T) {
 	hot := newFakeStore("hot")
 	cold := newFakeStore("cold")
 
-	ts := NewTieredDataStore(hot, cold, nil)
+	ts := NewTieredDataStore(hot, cold)
 	if err := ts.PutFile(context.Background(), "k", strings.NewReader("v"), nil); err != nil {
 		t.Fatalf("PutFile: %v", err)
 	}

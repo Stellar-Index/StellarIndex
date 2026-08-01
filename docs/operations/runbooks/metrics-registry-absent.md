@@ -34,11 +34,9 @@ alerted.
 
 ## The known case: `component="ledgerstream"`
 
-`internal/ledgerstream` registers its buffer metrics (via the SDK's
-`WithMetrics` / `ApplyLedgerMetadata`) and its `TieredDataStore`
-metrics (`stellarindex_ledgerstream_tier_read_total`,
-`stellarindex_ledgerstream_cold_read_duration_seconds`) ONLY when
-`Config.Registry != nil`.
+`internal/ledgerstream` registers its SDK `BufferedStorageBackend`
+buffer metrics (`buffer_fetch_latency_seconds` etc., via the SDK's
+`WithMetrics` / `ApplyLedgerMetadata`) ONLY when `Config.Registry != nil`.
 
 The production builder `pipeline.LedgerstreamConfig` leaves `Registry`
 nil **on purpose**: the live indexer calls `ledgerstream.Stream`
@@ -47,47 +45,57 @@ tip-extend), and the SDK's metric registration is not idempotent — the
 second call with the same registry panics with a duplicate-registration
 error. Leaving the registry nil is the current way to avoid that panic.
 
-Consequence: `stellarindex_ledgerstream_tier_read_total` is never
-exported in production, so
-`deploy/monitoring/rules/ledgerstream-tier.yml`'s **P1**
-`stellarindex_ledgerstream_tier_both_missing` page is INERT. That page
-was designed to make the cold-tiering failure mode recoverable — but it
-cannot fire.
+Consequence: the SDK buffer metrics (`buffer_fetch_latency_seconds`
+etc.) are not exported in production. That is a low-value operational
+coverage gap, not a dead page.
+
+> **NOTE (W5-mon-3):** this alert USED to also mean the
+> `TieredDataStore` metrics were dead and the ledgerstream-tier
+> `both_missing` P1 page was inert. That is **no longer true.**
+> `stellarindex_ledgerstream_tier_read_total` and
+> `stellarindex_ledgerstream_cold_read_duration_seconds` are now
+> `internal/obs` package-level metrics registered unconditionally at
+> boot, so the `both_missing` page is **live in production regardless of
+> this gauge's value**. This alert now flags only the SDK buffer-metric
+> coverage gap.
 
 ## What to do
 
 1. Confirm which component: check the `component` label on the firing
    series (`stellarindex_metrics_registry_present == 0`).
-2. For `ledgerstream`, this is the known state, not a new regression.
-   The fix is a code change, not an ops action:
-   - Make the ledgerstream metric registration idempotent — register
-     the `TieredDataStore` collectors (and gate the SDK `WithMetrics`
-     call) behind a package-level `sync.Once` or an
-     `AlreadyRegisteredError`-tolerant register, so repeated `Stream`
-     calls don't panic.
+2. For `ledgerstream`, this is the known state, not a new regression,
+   and it now affects only the SDK buffer metrics (the `both_missing`
+   page is unaffected — see the note above). If you want the buffer
+   metrics too, the fix is a code change, not an ops action:
+   - Make the SDK metric registration idempotent — gate the SDK
+     `WithMetrics` / `ApplyLedgerMetadata` calls behind a package-level
+     `sync.Once` or an `AlreadyRegisteredError`-tolerant register, so
+     repeated `Stream` calls don't panic.
    - Then wire `obs.Registry` (+ a `RegistryNamespace`) through
      `pipeline.LedgerstreamConfig`.
    - After deploy, `stellarindex_metrics_registry_present{component="ledgerstream"}`
-     flips to `1`, this alert clears, and the `both_missing` page
-     becomes live.
+     flips to `1` and this alert clears.
 3. For any other component that starts reporting `0`, treat it as a
    wiring regression: something stopped passing the Registry into that
    component's constructor. Restore the wiring.
 
 ## Verifying the fix
 
-After the change, `curl` the indexer's `/metrics` and confirm both:
+After the change, `curl` the indexer's `/metrics` and confirm:
 
 - `stellarindex_metrics_registry_present{component="ledgerstream"} 1`
-- `stellarindex_ledgerstream_tier_read_total` is present (value may be
-  0 until the cold path runs — presence is what matters).
+- the SDK buffer metric `stellarindex_ledgerstream_buffer_fetch_latency_seconds`
+  (or the SDK's namespaced equivalent) is present.
+
+(`stellarindex_ledgerstream_tier_read_total` is present independent of
+this gauge — it is registered at boot regardless.)
 
 ## Related
 
-- `ledgerstream-tier-both-missing.md` — the P1 page that is INERT
-  while `component="ledgerstream"` reports `0`.
+- `ledgerstream-tier-both-missing.md` — the P1 page that is now LIVE
+  regardless of this gauge (W5-mon-3), no longer gated on it.
 - `internal/pipeline/datastore.go` — `LedgerstreamConfig`, the builder
-  that leaves `Registry` nil.
-- `internal/ledgerstream/tiered.go` / `ledgerstream.go` — where the
-  tier + buffer metrics register only when `Registry != nil`.
+  that leaves `Registry` nil (affects only the SDK buffer metrics now).
+- `internal/ledgerstream/tiered.go` — the `TieredDataStore`, whose tier
+  metrics are sourced from `internal/obs` (always registered).
 
