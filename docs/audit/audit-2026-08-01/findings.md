@@ -437,5 +437,126 @@ SECURITY), W2-explorer-2 (movements asset-filter-after-limit). Pricing DoS refut
 money-on-the-wire discipline + auth/billing/SSRF core are SOLID. Headliner = the SAC
 label spoof (public unauth trusted-asset impersonation).
 
+## WAVE-3 (aggregate/divergence/ops-cli) findings
+
+### W3-guards — divergence + decimalsguard + guards (finder a6bc) — 1 MED money
+- **W3-guards-1 — MED (money path), CONFIRMED-by-inspection: decimalsguard latches the
+  dedup flag BEFORE the DB write + never retries → a non-7dp token can serve a 100×-wrong
+  price indefinitely.** report() (guard.go:385) sets fired[key] before
+  UpsertNonstandardDecimalsAsset (:402); later Sweep/Backfill for the same (source,asset)
+  early-returns (:382) → NEVER re-attempts. The nonstandard_decimals_assets table is the
+  SOLE input to read-time AdjustPrice (decimals.go:101, feeds /v1/price,vwap,twap,ohlc,
+  price/at). A transient Postgres blip at first-detection → the row is never written →
+  every price for pairs touching that 9dp asset skewed ×100 with stale=FALSE, until
+  aggregator restart or hand-seed. The Warn log MISDIRECTS ("a later sweep will fix it" —
+  impossible via the early-return). Mitigated: one-shot detection metric+ERROR alert
+  fires (operator alerted), restart recovers, non-7dp assets rare. FIX: set fired[key]
+  only AFTER a successful write (or split metric-latch from write-success-latch).
+- W3-guards-2 LOW/MED: divergence compares a 5-min CLOSED-bucket VWAP vs reference SPOT
+  (divergence_refresh.go:61 shortest window; references use asOf=now) → a fast market
+  move produces a false divergence warning + edge-triggered customer webhook driven by
+  WINDOW LAG not data error. Transient, customer-visible, webhook-amplified. Same class
+  as the recon anomaly-freeze-on-correct-prices [DECIDE]. FIX: compare like-for-like
+  (tip price vs spot) or annotate window-lag vs true divergence.
+- W3-guards-3 LOW: 2-reference median has zero outlier robustness — one flaky vendor
+  (>threshold/2 off) fires a divergence warning even when the OTHER reference agrees
+  exactly (compare.go:204 + worker.go:305 OR's the median leg with agreement). Reachable
+  for pairs with exactly 2 responders (MinSourcesForWarning=2).
+- W3-guards-4 LOW: operator Chainlink FX feeds inherit the 3h crypto MaxAge
+  (chainlink.go:180) → go dark every weekend (FX heartbeats 24h, ages ~72h by Sunday;
+  built-in FX uses 76h but operator additions don't). FIX: default MaxAge by feed class.
+- EXAMINED-SOUND: sdexclaim drop-rules verified BYTE-FOR-BYTE vs sdex decodeClaimAtom;
+  domain money fields all *big.Int (float64 only on documented cross-check/statistical
+  shapes, not ADR-0003 value path); pricingguard exact-rational, empty-baseline fails
+  open no panic; coingecko/oracle/supply staleness gates fail-closed; chainlink round
+  decode word-offsets + two's-complement + int64 overflow guard correct.
+
+### W3-archive — ops archive/diagnostics/supply CLI (finder a6f3) — destructive ops SOUND
+- **W3-archive-1 — MED (audit tooling): extract-wasm-from-galexie reports success on a
+  FAILED write.** maybeWriteWasmCode sets found[hash]=outPath (wasm_extract.go:338) BEFORE
+  os.WriteFile (:341); on write error (ENOSPC/perms) it only prints stderr + returns, never
+  rolls back found → the report counts it extracted → exit 0 + -early-exit fires (:186),
+  violating the tool's own "exit non-zero on partial completion" contract (:221). The
+  WASM-history audit gate (for flipping BackfillSafe) proceeds believing <hash>.wasm is on
+  disk when it isn't. Same MARK-BEFORE-FALLIBLE-OP class as W3-guards-1 (decimalsguard) →
+  RECURRING (recipe trap). FIX: write first, mark found only on success.
+- W3-archive-2 LOW: hubble-check certifies "OK" exit 0 when it compared NOTHING (both
+  sides empty → zero diffs → "every ledger matches", hubble_check.go:191,384). The ONE
+  verifier missing the vacuous-run guard every sibling has (verify-rollup checked==0,
+  cross-region totalComparable==0, verify-archive verified==0/matches==0, archive-
+  completeness Vacuous). Memoried verification-blind-spot class. Bounded (both-empty).
+  FIX: add len(ours)+len(theirs)>0 guard.
+- EXAMINED-SOUND (high value — the destructive/verify surface): trim-galexie-archive
+  delete gate SOUND (dry-run default, --commit exclusive, --max-files cap, cold.Exists
+  fail-closed on error+absent, SEPARATE cold-tier upstream so presence-check is genuine);
+  supply seed-sac ARCHIVED-entry bug FIXED (both paths route through ClassifyTTLLiveness,
+  drop TTLArchived); verify-archive/cross-region/archive-completeness all have vacuous
+  guards; all supply seeds big.Int no truncation; rehydrate non-destructive. Notes:
+  hubble-soroban COUNT(DISTINCT xdr) undercounts identical events (diagnostic); verify-
+  decoders/external no exit semantics (documented dry harness); seed-sep41-genesis allows
+  genesis<boundary (deliberate override only).
+
+### W3-freeze — aggregate freeze/anomaly/mev/confidence (finder a490) — 1 HIGH (pending skeptic) + freeze cluster
+- **W3-freeze-1 — HIGH candidate (PENDING SKEPTIC): sibling-window auto-release publishes
+  a still-frozen window's manipulated price.** Marker key omits window (keys.go:401
+  freeze:asset:quote); lifecycle is per-(asset,quote,window) (orchestrator.go:943);
+  engage MarkHold + release Clear both by PAIR only (phase2_freeze.go:366,466);
+  loadFreezeState (phase2_freeze.go:309) returns overridden=true when the marker's gone.
+  So: manipulation freezes 5m+1h; 5m auto-releases ~10min later → Clear() deletes the
+  shared marker; next tick the 1h window (still Active, anomaly live) sees marker gone →
+  overridden=true → publishes the manipulated 1h VWAP with flags.frozen=FALSE. Auto-release
+  of ONE window force-unfreezes ALL windows + corrupts multi-window ladder rehydration on
+  restart. Mechanism VERIFIED by orchestrator; REACHABILITY (≥2 windows frozen concurrently
+  + release order) → skeptic. FIX: window in the marker key, or per-window markers.
+- W3-freeze-2 — MED/HIGH candidate (PENDING SKEPTIC): Phase-2 z-score compares a
+  rolling-window-VWAP tick-delta (confidence.go:95, prev=previous TICK's window VWAP) vs a
+  baseline calibrated on 1-MINUTE-bucket returns (baseline/refresh.go:138) → z biased LOW →
+  z>5 under-fires on 1h/24h → a genuinely manipulated price never Phase-2-freezes on longer
+  windows (a MISS, opposite of F1). Population mismatch. → skeptic.
+- W3-freeze-3 MED: a Phase-1 freeze with unscored buckets can never satisfy the
+  auto-unfreeze streak (lifecycle.go:426 resets on !Scored) → always escalates to
+  permanent operator-only even after price recovers; reachable for thin single-source
+  pairs with no baseline. Bounded: prod wires Baselines unconditionally (main.go:453).
+- W3-freeze-4 LOW: SourceCountFactor(1)=0.119 not the documented ~0.3 (factors.go:187) →
+  single-source confidence stricter than spec → compounds freeze-on-correct-single-source.
+- These interact with the recon anomaly-freeze [DECIDE] (sources=1 pages on correct prices).
+- EXAMINED-SOUND: MEV detectors are labeled candidate-generators (false-positives by
+  design, no event-DROP/ordering bug); anomaly decision/threshold guarded; confidence
+  score weighted-geomean + bootstrap cap; baseline MinMAD floor + NaN/Inf handling;
+  changesummary display-grade.
+
+### W3-ops — ops ingest/chops destructive CLI (finder a9ae) — 1 HIGH (pending skeptic) + F-2 extensions
+- **W3-ops-1 (F-A) — HIGH candidate (PENDING SKEPTIC): resume-stalled overwrites correct
+  usd_volume with NULL.** backfill() sets SetDeriveGeneration + InstallUSDVolumeResolution
+  (backfill.go:204-205); resume_stalled opens a BARE store (resume_stalled.go:478, neither,
+  no shared helper) then reuses runBackfillChunk → InsertTrade with gen=0. trades.go:668
+  DO UPDATE SET usd_volume=EXCLUDED.usd_volume WHERE gen<=EXCLUDED.gen → at gen 0 (0<=0
+  true) overwrites; with no resolver tradeUSDVolume returns nil → usd_volume=NULL. The
+  A-CRIT-1 guard (store.go:156) fires only at gen>0 → SILENT (its own comment warns of this
+  gen-0 blind spot). resume-stalled (167 cursors × ~100-150k ledgers) re-walks whole ranges
+  incl. already-correct rows → NULLs their usd_volume → every DEX-volume/venue/market-share
+  surface under-reports until re-derived. FIX: resume-stalled must SetDeriveGeneration +
+  InstallUSDVolumeResolution like backfill (or COALESCE usd_volume in the upsert). → skeptic.
+- W3-ops-2 (F-B) MED: backfill-router writes soroswap_router_swaps (catalogue source)
+  below-watermark with gen>0 but NO RecordProjectionDirtyWindow (backfill_router.go:79,153)
+  → F-2 class confirmed in-scope. W3-ops-3 (F-C) MED: main backfill writes sdex trades
+  below-watermark SinkModeAll, no dirty-window (backfill.go:204,397) → F-2 extension
+  (weaker: needs the re-walk to diverge from the LCM census). resume-stalled inherits F-C.
+- W3-ops-4 LOW: verify-recognition scans legacy Postgres soroban_events (verify_recognition.go:68)
+  not the CH lake (ch-recognition.go:86) → false-OK on a narrow slice; CH path covers it.
+- EXAMINED-SOUND (high value): projector-replay records dirty-window BEFORE rewind fail-closed;
+  trim-galexie gated (verified in W3-archive); census-backfill/state-snapshot/ch-backfill/
+  reproject/supply/txindex/participant/classic-movements all lake-idempotent (ReplacingMergeTree)
+  or gen-guarded; ALL verify-* (reconciliation/served-values/usd-volume/contiguity/hashchain/
+  lake/reconcile-balances) fail-closed on empty range/all-skipped; big.Int/big.Rat no truncation.
+- RECURRING CLASS (recipe): "mark/latch/count BEFORE the fallible side-effect" now 3×
+  (decimalsguard W3-guards-1, wasm-extract W3-archive-1, and the gen-0-blind-spot family).
+  "any tool writing a reconcile-target table below the watermark must RecordProjectionDirtyWindow"
+  now ≥4 offenders (ch-rebuild, backfill-router, backfill, resume-stalled).
+
+## WAVE-3 COMPLETE (4/4). Net: 2 HIGH candidates (freeze sibling-release, resume-stalled
+usd_volume NULL) both PENDING SKEPTIC; freeze cluster (miss + stuck-frozen + spec) + F-2
+extensions + decimalsguard money + wasm-extract. Destructive/verify ops surface largely SOUND.
+
 ## PLAUSIBLE / PENDING
 (skeptic verdicts for the DoS cluster R2/R3/R10, ingest W-1/F-6/F-4, money M-A/M-B/F-2 still in flight)
