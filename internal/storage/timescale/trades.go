@@ -784,17 +784,24 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 // per-source tally only by the number of rows actually written, so
 // re-runs don't inflate the count.
 //
-// Caller-side filtering: rows are NOT pre-validated by this
-// function — callers MUST `Validate` each trade before queueing it
-// into a batch (the sink layer already does). USD-volume is computed
-// per row from the store's USD-volume resolver, same as the single
-// row path.
+// Storability pre-filter: this is ONE all-or-nothing multi-row INSERT, so
+// a single row that violates a DB constraint aborts the whole statement —
+// which is exactly what an SDEX one-side-zero fill does (the decoder KEEPS
+// those rounding-artifact fills for the ADR-0033 census, but the served
+// tier's `base_amount > 0 AND quote_amount > 0` CHECK — INV-6, migration
+// 0001 — cannot hold a zero leg). [Store.filterStorableTrades] drops the
+// rows that would fail so they can never sink a batch of otherwise-good
+// trades. This mirrors the single-row [Store.InsertTrade] Validate gate and
+// the authoritative completeness reconcile's own Validate gate
+// (reDeriveSDEXCensusViaDecoder), so census/served/reconcile stay
+// consistent. USD-volume is computed per row from the store's USD-volume
+// resolver, same as the single row path.
 //
 // Returns nil on success; on any DB error the whole batch fails and
 // the caller's outcome metric should reflect that. The error is
 // best-effort wrapped with `timescale: BatchInsertTrades: %w`. There
-// is no partial-success semantic — either every row is attempted (and
-// individual rows may be duplicate-absorbed), or the whole batch
+// is no partial-success semantic — either every storable row is attempted
+// (and individual rows may be duplicate-absorbed), or the whole batch
 // fails.
 // tradeBatchValues builds the multi-row INSERT VALUES placeholder fragments and
 // the flat positional-arg slice for BatchInsertTrades. Each row contributes 13
@@ -908,6 +915,17 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 		return nil
 	}
 
+	// Drop rows the served tier cannot hold BEFORE building the
+	// all-or-nothing multi-row INSERT (see the godoc). A one-side-zero SDEX
+	// fill would otherwise trip the base/quote > 0 CHECK and roll back every
+	// good trade in the batch. When the whole batch is unstorable this
+	// returns early — there is nothing to insert, and the skips are already
+	// accounted for inside the filter.
+	storable := s.filterStorableTrades(trades)
+	if len(storable) == 0 {
+		return nil
+	}
+
 	// Deterministic PK order WITHIN the batch (2026-07-05 deadlock
 	// storm, 918 in one afternoon; recurred 2026-07-08 as a CEX-specific
 	// storm — ~15 deadlocks/5min, 40P01 2-/3-way ShareLock cycles between
@@ -938,7 +956,7 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 	// isolate-on-non-infra-error fallback in
 	// internal/pipeline/trade_sink.go::flushTradeBatch stays as
 	// belt-and-braces for whatever this doesn't catch.
-	sortTradesByConflictKey(trades)
+	sortTradesByConflictKey(storable)
 
 	// Collapse intra-batch PK duplicates BEFORE building the statement.
 	// The INV-3 fix (migration 0109) turns the batch `ON CONFLICT` into a
@@ -951,7 +969,7 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 	// latest copy. The original `trades` slice is left intact so the
 	// per-source "sent" tally below still counts the collapsed duplicate
 	// as a duplicate — the outcome metric is unchanged.
-	insertRows := dedupeSortedTradesByConflictKey(trades)
+	insertRows := dedupeSortedTradesByConflictKey(storable)
 
 	// Build VALUES placeholders + args slice (13 params/row incl.
 	// derive_generation) — extracted to keep this function under the length
@@ -1034,7 +1052,7 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 		return err
 	}
 
-	emitBatchTradeOutcomeMetrics(trades, perSourceNew, perSourceUnitRatio)
+	emitBatchTradeOutcomeMetrics(storable, perSourceNew, perSourceUnitRatio)
 
 	// C2-13b: auto-register the classic-asset / issuer registry from the
 	// LANDED trades — the same Phase-4 hook InsertTrade runs. The batch path
@@ -1064,6 +1082,73 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 		}
 	}
 	return nil
+}
+
+// filterStorableTrades returns the subset of a batch the served `trades`
+// tier can actually hold — the rows for which [canonical.Trade.Validate]
+// passes (in particular base_amount > 0 AND quote_amount > 0, the INV-6
+// CHECK from migration 0001). It exists because [Store.BatchInsertTrades]
+// issues ONE all-or-nothing multi-row INSERT: a single row that fails that
+// CHECK aborts the entire statement, rolling back every good trade in the
+// batch and forcing a slow per-row fallback that also counts the offending
+// row as an insert error (tripping stellarindex_source_insert_errors_total).
+//
+// The dominant — and only EXPECTED — unstorable row is the SDEX one-side-
+// zero fill: internal/sources/sdex.decodeClaimAtom KEEPS a fill whose base
+// OR quote leg rounded to 0 (it is a real on-chain trade effect the ADR-0033
+// census counts and the ClickHouse substrate retains), but that row has no
+// price and cannot satisfy the served tier's `> 0` CHECK. The authoritative
+// completeness reconcile (chops.reDeriveSDEXCensusViaDecoder) already
+// excludes these from the served-EXPECTED count through the identical
+// Validate gate, so dropping them here keeps census/served/reconcile
+// consistent rather than introducing a mismatch. Such a fill is a benign
+// no-op (DEBUG). Any OTHER validation failure is a genuine upstream/decoder
+// bug and stays loud (SourceInsertErrorsTotal + ERROR), exactly as the
+// single-row InsertTrade path surfaces it.
+//
+// The common case — an all-valid batch — allocates nothing and returns the
+// input slice unchanged.
+func (s *Store) filterStorableTrades(trades []canonical.Trade) []canonical.Trade {
+	firstBad := -1
+	for i := range trades {
+		if trades[i].Validate() != nil {
+			firstBad = i
+			break
+		}
+	}
+	if firstBad == -1 {
+		return trades
+	}
+	storable := make([]canonical.Trade, firstBad, len(trades))
+	copy(storable, trades[:firstBad])
+	for _, t := range trades[firstBad:] {
+		err := t.Validate()
+		if err == nil {
+			storable = append(storable, t)
+			continue
+		}
+		if isOneSideZeroFill(t) {
+			slog.Default().Debug("timescale: batch skipped one-side-zero fill (no served price; kept in CH substrate, census-counted — INV-6)",
+				"source", t.Source, "ledger", t.Ledger, "tx_hash", t.TxHash, "op_index", t.OpIndex,
+				"base", t.BaseAmount.String(), "quote", t.QuoteAmount.String())
+			continue
+		}
+		obs.SourceInsertErrorsTotal.WithLabelValues(t.Source, "trade").Inc()
+		slog.Default().Error("timescale: batch dropped invalid trade before insert",
+			"source", t.Source, "ledger", t.Ledger, "tx_hash", t.TxHash, "op_index", t.OpIndex, "err", err)
+	}
+	return storable
+}
+
+// isOneSideZeroFill reports whether t is the SDEX rounding artifact where
+// exactly one leg rounded to 0 while the other stayed positive — the single
+// [canonical.Trade.Validate] failure the ingest path expects and treats as a
+// benign no-op (see [Store.filterStorableTrades]). A both-zero atom is
+// already dropped in the decoder, and a negative leg is never a valid Stellar
+// amount, so neither qualifies.
+func isOneSideZeroFill(t canonical.Trade) bool {
+	bs, qs := t.BaseAmount.Sign(), t.QuoteAmount.Sign()
+	return bs >= 0 && qs >= 0 && (bs == 0) != (qs == 0)
 }
 
 // registryObservation is the highest-ledger observation of a landed asset
