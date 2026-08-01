@@ -62,6 +62,25 @@ type reader struct {
 
 func (r *reader) eof() bool { return r.i >= len(r.b) }
 
+// safeCap bounds a make() prealloc hint by the reader's remaining bytes. A
+// LEB128 count is attacker-influenced — a ~5-byte field encodes ~5e9 — so
+// `make([]T, 0, count)` would attempt a multi-GB allocation (or panic in
+// makeslice) BEFORE the read loop ever reaches errTruncated (audit W6-go-1).
+// Every element consumes at least one byte of input, so no section can
+// legitimately declare more entries than the bytes remaining; cap the hint
+// there. This only sizes the prealloc — a genuinely oversized count still
+// errors out normally when the loop runs past the end of the input.
+func (r *reader) safeCap(count uint64) int {
+	rem := len(r.b) - r.i
+	if rem < 0 {
+		return 0
+	}
+	if count > uint64(rem) {
+		return rem
+	}
+	return int(count)
+}
+
 func (r *reader) byte() (byte, error) {
 	if r.i >= len(r.b) {
 		return 0, errTruncated
@@ -176,7 +195,7 @@ func parseTypeSection(r *reader) ([]funcType, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]funcType, 0, count)
+	out := make([]funcType, 0, r.safeCap(count))
 	for i := uint64(0); i < count; i++ {
 		form, err := r.byte()
 		if err != nil {
@@ -203,7 +222,7 @@ func readValTypes(r *reader) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]string, 0, n)
+	out := make([]string, 0, r.safeCap(n))
 	for i := uint64(0); i < n; i++ {
 		b, err := r.byte()
 		if err != nil {
@@ -295,7 +314,7 @@ func parseFunctionSection(r *reader) ([]uint32, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]uint32, 0, count)
+	out := make([]uint32, 0, r.safeCap(count))
 	for i := uint64(0); i < count; i++ {
 		t, err := r.uvarint()
 		if err != nil {
@@ -311,7 +330,7 @@ func parseExportSection(r *reader) ([]rawExport, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]rawExport, 0, count)
+	out := make([]rawExport, 0, r.safeCap(count))
 	for i := uint64(0); i < count; i++ {
 		nm, err := r.name()
 		if err != nil {
