@@ -17,7 +17,11 @@
 # point of an oracle.
 #
 # Read-only. Exit code = number of assets outside tolerance (capped 255), so
-# cron/Healthchecks can consume it — the same convention as r1-smoke.sh.
+# cron/Healthchecks can consume it — the same convention as r1-smoke.sh. But
+# if the UPSTREAM oracle (Horizon) is unreachable or returns no usable record
+# for a tracked asset, the run is INCONCLUSIVE, not a pass: it exits with the
+# distinct code EXIT_INCONCLUSIVE (below) so an upstream outage can never read
+# as "supply reconciles" (W5-ci-4).
 #
 # Usage:
 #   scripts/ops/reconcile-supply-vs-horizon.sh [-t TOLERANCE_PCT] [-a API_BASE]
@@ -26,6 +30,13 @@ set -euo pipefail
 TOLERANCE_PCT="${TOLERANCE_PCT:-1.0}"
 API_BASE="${API_BASE_URL:-https://api.stellarindex.io}"
 HORIZON="${HORIZON_URL:-https://horizon.stellar.org}"
+
+# Distinct exit code for "the upstream oracle could not be consulted" — an
+# INCONCLUSIVE run, NOT a clean pass. Uses BSD sysexits.h EX_TEMPFAIL (75:
+# "temporary failure; the user is invited to retry"), deliberately OUTSIDE the
+# 0..len(ASSETS) tolerance-breach count band so cron/Healthchecks can tell
+# "Horizon down, retry" apart from "N assets actually drifted".
+readonly EXIT_INCONCLUSIVE=75
 
 while getopts "t:a:h" opt; do
   case "$opt" in
@@ -56,12 +67,34 @@ printf '%-6s %14s %14s %14s %14s %16s %16s %9s  %s\n' \
   ASSET TRUSTLINES CLAIMABLE POOLS CONTRACTS HORIZON_TOTAL OURS DELTA_PCT VERDICT
 
 fails=0
+inconclusive=0
 for a in "${ASSETS[@]}"; do
   code="${a%%:*}"; issuer="${a##*:}"
 
-  h=$(curl -s --max-time 30 "${HORIZON}/assets?asset_code=${code}&asset_issuer=${issuer}" || echo '{}')
-  read -r tl cb lp ct < <(echo "$h" | jq -r '
-    ._embedded.records[0] // {} |
+  # Fetch the Horizon record. `curl -f` turns an HTTP >=400 (e.g. a 5xx
+  # outage page) into a non-zero exit, and the `if !` also captures a
+  # network / TLS / timeout failure. A failed fetch must NOT fall through to
+  # an all-zero component sum that "reconciles" against nothing — that is
+  # exactly how an upstream outage used to read as a green pass (W5-ci-4).
+  h=""
+  if ! h=$(curl -sf --max-time 30 "${HORIZON}/assets?asset_code=${code}&asset_issuer=${issuer}"); then
+    h=""
+  fi
+  hrec=""
+  if [ -n "$h" ]; then
+    hrec=$(printf '%s' "$h" | jq -c '._embedded.records[0] // empty' 2>/dev/null || true)
+  fi
+  if [ -z "$hrec" ]; then
+    # Horizon unreachable, errored, returned non-JSON, or carried no record
+    # for an asset we DO track: the reference sum is unavailable, so the
+    # reconciliation cannot be certified. INCONCLUSIVE — not a pass.
+    printf '%-6s %14s %14s %14s %14s %16s %16s %9s  %s\n' \
+      "$code" "-" "-" "-" "-" "-" "-" "-" "INCONCLUSIVE(horizon)"
+    inconclusive=$((inconclusive + 1))
+    continue
+  fi
+
+  read -r tl cb lp ct < <(printf '%s' "$hrec" | jq -r '
     [ (.balances.authorized // "0"),
       (.claimable_balances_amount // "0"),
       (.liquidity_pools_amount // "0"),
@@ -95,6 +128,13 @@ for a in "${ASSETS[@]}"; do
 done
 
 echo
-echo "assets=${#ASSETS[@]} outside_tolerance=${fails}"
+echo "assets=${#ASSETS[@]} outside_tolerance=${fails} inconclusive=${inconclusive}"
+if [ "$inconclusive" -gt 0 ]; then
+  echo "INCONCLUSIVE: Horizon (the upstream reference oracle) was unreachable or" \
+       "returned no record for ${inconclusive}/${#ASSETS[@]} asset(s) — the" \
+       "reconciliation could NOT be certified. Exiting ${EXIT_INCONCLUSIVE}" \
+       "(retry) rather than reporting a pass."
+  exit "$EXIT_INCONCLUSIVE"
+fi
 [ "$fails" -gt 255 ] && fails=255
 exit "$fails"

@@ -55,6 +55,13 @@ mkrepo() {
     git config user.name t
     git config commit.gpgsign false
     printf 'existing-entry\n' > scripts/ci/demo.baseline
+    # Seed the two gitleaks allowlists so a later add reads as GROWTH,
+    # mirroring how they exist on the real default branch (W5-ci-2). The
+    # tripwire is a line-diff grep, not a TOML/fingerprint parser, so the
+    # minimal shapes below are enough to exercise it.
+    printf '# fingerprints\ncafe0000cafe0000cafe0000cafe0000cafe0000:x_test.go:generic-api-key:1\n' \
+      > .gitleaksignore
+    printf '[allowlist]\npaths = [\n  %s,\n]\n' "'''^docs/archive/'''" > .gitleaks.toml
     git add -A
     git commit -qm "base"
     BASE_OUT="$(git rev-parse HEAD)"
@@ -84,6 +91,44 @@ grow() {
   (
     cd "$TMP/repo" || exit 1
     printf 'existing-entry\nnewly-added-entry\n' > scripts/ci/demo.baseline
+    git add -A
+    printf '%s\n' "$1" > "$TMP/gmsg"
+    git commit -q -F "$TMP/gmsg"
+  )
+}
+
+# grow_ignore <commit-message> — add a secret-scan fingerprint to
+# .gitleaksignore (W5-ci-2: the "silence a real leak in-diff" attack).
+grow_ignore() {
+  (
+    cd "$TMP/repo" || exit 1
+    printf '%s\n' 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef:internal/leak_test.go:generic-api-key:12' \
+      >> .gitleaksignore
+    git add -A
+    printf '%s\n' "$1" > "$TMP/gmsg"
+    git commit -q -F "$TMP/gmsg"
+  )
+}
+
+# grow_toml <commit-message> — add a broad path allowlist entry to
+# .gitleaks.toml (a quote-prefixed array element that widens what the
+# scanner ignores).
+grow_toml() {
+  (
+    cd "$TMP/repo" || exit 1
+    printf '%s\n' "  '''internal/'''," >> .gitleaks.toml
+    git add -A
+    printf '%s\n' "$1" > "$TMP/gmsg"
+    git commit -q -F "$TMP/gmsg"
+  )
+}
+
+# comment_toml <commit-message> — a NON-widening .gitleaks.toml edit (a
+# comment line): must NOT be flagged as allowlist growth.
+comment_toml() {
+  (
+    cd "$TMP/repo" || exit 1
+    printf '%s\n' '# clarify why an existing path is allowlisted' >> .gitleaks.toml
     git add -A
     printf '%s\n' "$1" > "$TMP/gmsg"
     git commit -q -F "$TMP/gmsg"
@@ -154,6 +199,36 @@ mkrepo 40
 grow "$(printf 'feat: legitimate, large range\n\nBaseline-Growth: grandfathering a known set')"
 runGate
 expect "declared growth passes on a large commit range" 0 "growth declared"
+
+# --- 6. .gitleaksignore fingerprint growth is caught (W5-ci-2) -------
+# A PR that adds an ignore fingerprint to silence a real secret-scan hit,
+# undeclared, must fail — the gitleaks gate is otherwise self-bypassable.
+mkrepo 0
+grow_ignore "fix: quiet a scary-looking test string"
+runGate
+expect "gitleaksignore growth fails undeclared" 1 "ALLOWLIST GREW: .gitleaksignore"
+
+# --- 7. declared .gitleaksignore growth passes ----------------------
+# A genuine, reviewed false-positive suppression is still allowed — with
+# the same auditable trailer every other allowlist uses.
+mkrepo 0
+grow_ignore "$(printf 'fix: allowlist a public test fixture\n\nBaseline-Growth: public account id in a unit test, not a credential')"
+runGate
+expect "gitleaksignore growth passes when declared" 0 "growth declared"
+
+# --- 8. .gitleaks.toml allowlist widening is caught -----------------
+mkrepo 0
+grow_toml "chore: broaden the secret-scan allowlist"
+runGate
+expect "gitleaks.toml allowlist growth fails undeclared" 1 "ALLOWLIST GREW: .gitleaks.toml"
+
+# --- 9. a non-widening .gitleaks.toml edit (comment) passes ---------
+# The guard must fire on allowlist ENTRIES, not on every touch of the file,
+# or it would block harmless edits and get disabled.
+mkrepo 0
+comment_toml "docs: clarify an allowlist rationale"
+runGate
+expect "gitleaks.toml comment-only edit passes" 0 "no baseline/allowlist growth"
 
 echo
 echo "lint-baseline-growth-test: $pass passed, $fail failed"

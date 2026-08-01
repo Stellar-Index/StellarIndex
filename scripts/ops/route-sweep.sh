@@ -14,7 +14,10 @@
 # Routes whose params cannot be auto-filled are reported SKIP, never
 # silently dropped — an unswept route is exactly how this class hides.
 #
-# Read-only. Exit code = number of 5xx responses (capped 255).
+# Read-only. Exit code = number of unreachable + 5xx responses (capped 255):
+# a route curl could not even connect to (DNS/TLS/connection/timeout →
+# http_code 000) is a FAILURE, not a pass — "couldn't connect" must never
+# score the same as "connected and returned 2xx" (W5-ci-3).
 set -o pipefail  # NOT -u: fixture_for returns empty for unmapped params
 
 # NOTE: spec paths are relative to servers[].url, which already carries
@@ -72,7 +75,7 @@ PY
 printf '# route sweep — %s\n# api=%s\n\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$API"
 printf '%-6s %-8s %s\n' STATUS VERDICT ROUTE
 
-fivexx=0; skipped=0; ok=0; clienterr=0
+fivexx=0; skipped=0; ok=0; clienterr=0; unreach=0
 while read -r route; do
   [ -z "$route" ] && continue
   filled="$route"
@@ -88,6 +91,16 @@ while read -r route; do
     skipped=$((skipped+1)); continue
   fi
   code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 25 "${API}${filled}")
+  # A route curl could not reach — DNS/TLS/connection error or timeout —
+  # reports http_code 000 (and an empty/non-numeric status if the -w write
+  # itself produced nothing). That is a reachability FAILURE, not a pass:
+  # scoring "couldn't connect" as ok is exactly how a dark subsystem hides
+  # (W5-ci-3). Only an actually-reachable response falls through to the
+  # 2xx/3xx=ok, 4xx=client, 5xx=fail verdicts below.
+  if ! [[ "$code" =~ ^[0-9]{3}$ ]] || [ "$code" = "000" ]; then
+    printf '%-6s %-8s %s\n' "${code:-000}" "UNREACH" "$filled (curl could not connect)"
+    unreach=$((unreach+1)); sleep 0.15; continue
+  fi
   case "$code" in
     5*) verdict="FAIL"; fivexx=$((fivexx+1)) ;;
     4*) verdict="CLIENT"; clienterr=$((clienterr+1)) ;;
@@ -98,6 +111,10 @@ while read -r route; do
 done < /tmp/route-sweep-paths.txt
 
 echo
-echo "ok=${ok} client_4xx=${clienterr} server_5xx=${fivexx} skipped=${skipped}"
-[ "$fivexx" -gt 255 ] && fivexx=255
-exit "$fivexx"
+echo "ok=${ok} client_4xx=${clienterr} server_5xx=${fivexx} unreachable=${unreach} skipped=${skipped}"
+# Exit = failures the operator must act on: server errors AND unreachable
+# routes. A single reachable-but-broken sweep and a total-outage sweep must
+# never both read as exit 0.
+failures=$((fivexx + unreach))
+[ "$failures" -gt 255 ] && failures=255
+exit "$failures"
