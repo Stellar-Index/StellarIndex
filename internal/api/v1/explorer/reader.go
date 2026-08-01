@@ -65,10 +65,16 @@ func readTimedOut(callCtx context.Context, err error) bool {
 // retryableColdMiss reports whether a cold-path SWR-cache error is the
 // capacity class the handlers map to the retryable 503: the request
 // deadline expired waiting for the detached compute, or the shared
-// detached-refresh gate was saturated and the refresh was skipped
-// (errRefreshSaturated) — both "try again shortly", neither a bug.
+// detached-refresh gate was saturated and the refresh was skipped — both
+// "try again shortly", neither a bug. Two saturation sentinels are matched:
+// this package's errRefreshSaturated (asset-holders / contracts SWR caches)
+// and clickhouse.ErrRefreshSaturated, raised by the lake reader's own
+// account-state cache (AccountStateCached) — same condition, different
+// package (this one can't own a sentinel the clickhouse layer must return).
 func retryableColdMiss(callCtx context.Context, err error) bool {
-	return readTimedOut(callCtx, err) || errors.Is(err, errRefreshSaturated)
+	return readTimedOut(callCtx, err) ||
+		errors.Is(err, errRefreshSaturated) ||
+		errors.Is(err, clickhouse.ErrRefreshSaturated)
 }
 
 // writeReadTimeout writes the standard response for a lake read that blew

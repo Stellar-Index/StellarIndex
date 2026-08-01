@@ -286,8 +286,13 @@ func (h *Handler) AccountState(w http.ResponseWriter, r *http.Request) {
 		if h.ClientAborted(r, err) {
 			return
 		}
-		if readTimedOut(ctx, err) {
-			h.Logger.Warn("explorer AccountState deadline exceeded", "account", g)
+		if retryableColdMiss(ctx, err) {
+			// Either the read blew explorerReadTimeout or the shared
+			// detached-refresh gate was saturated (clickhouse.ErrRefreshSaturated,
+			// recon-R3) — both transient/retryable, so 503, not the 500 a real
+			// bug gets. Mirrors the sibling SWR handlers (AssetHolders,
+			// ContractDetail, ContractsList) which map the same class here.
+			h.Logger.Warn("explorer AccountState deadline/saturation", "account", g, "err", err)
 			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/account-state-timeout",
 				"Account state timed out")
 			return

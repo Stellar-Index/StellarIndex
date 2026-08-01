@@ -126,11 +126,19 @@ func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string)
 	// Not single-flighted across accounts on purpose — distinct accounts
 	// genuinely need distinct scans. Only the exact-same-account burst is
 	// worth collapsing, which the per-account flight handles.
-	ch := r.refreshAccountState(account) //nolint:contextcheck // intentional detach — the fill must outlive a caller that times out (see doc above)
+	ch, saturated := r.refreshAccountState(account) //nolint:contextcheck // intentional detach — the fill must outlive a caller that times out (see doc above)
 	select {
 	case <-ch:
 		if st, ok, _ := r.stateCache.get(account); ok {
 			return st, false, nil
+		}
+		if saturated {
+			// The gate was full, so no scan ran and the cache stayed
+			// empty — a transient backpressure condition, NOT a failed
+			// scan. Return the distinct retryable sentinel so the handler
+			// maps it to 503 (retry) instead of 500 (bug); a genuine scan
+			// failure below keeps errAccountStateRefreshFailed → 500.
+			return AccountState{}, false, ErrRefreshSaturated
 		}
 		return AccountState{}, false, errAccountStateRefreshFailed
 	case <-ctx.Done():
@@ -142,10 +150,16 @@ func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string)
 // existing flight's channel while one is up). Detached from any request
 // context on purpose — the whole point is to outlive the request that
 // noticed the miss (see AccountStateCached).
-func (r *ExplorerReader) refreshAccountState(account string) chan struct{} {
+//
+// saturated is true only when THIS call owned the flight and the shared
+// refresh gate was full, so the scan was skipped — the caller uses it to
+// tell a transient backpressure miss (retryable 503) apart from a genuine
+// refresh failure (500). A non-owner waiting on an in-flight scan, and an
+// owner that acquired the gate, both report saturated=false.
+func (r *ExplorerReader) refreshAccountState(account string) (ch chan struct{}, saturated bool) {
 	ch, owner := r.stateFlight.begin(account)
 	if !owner {
-		return ch
+		return ch, false
 	}
 	// Global bound across keys (audit 2026-07-31): the per-account flight
 	// collapses same-account bursts, but the account space is
@@ -155,7 +169,7 @@ func (r *ExplorerReader) refreshAccountState(account string) chan struct{} {
 	// request re-kicks — never queue (see RefreshGate).
 	if !r.refreshGate.TryAcquire() {
 		r.stateFlight.end(account, ch)
-		return ch
+		return ch, true
 	}
 	go func() {
 		defer r.refreshGate.Release()
@@ -171,7 +185,7 @@ func (r *ExplorerReader) refreshAccountState(account string) chan struct{} {
 		}
 		r.stateCache.put(account, st, time.Now())
 	}()
-	return ch
+	return ch, false
 }
 
 // perKeyFlight collapses concurrent work for the same key. Used for the
