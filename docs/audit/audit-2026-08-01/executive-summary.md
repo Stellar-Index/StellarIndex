@@ -1,22 +1,42 @@
 # Audit №3 — executive summary (HEAD f8c099ee, 2026-08-01)
 
 Third full cold, adversarial, systematic audit. Recon deep-dive over the highest-risk
-surface + a 5-wave file-by-file finder sweep over the remaining ~3,321 files, each finding
-independently skeptic-verified. Scale: ~18 finder agents + 7 skeptic agents.
+surface + a 5-wave file-by-file finder sweep over the remaining ~3,321 files + a **Wave-6
+gap-closure exhaustiveness pass** (the dimensions/process-steps/residual-files/prior-audits
+the first five waves hadn't dedicated-passed), each finding independently skeptic-verified.
+Scale: ~28 finder agents + 11 skeptic agents.
 
 ## The single most important number
 
 **Two CONFIRMED HIGH findings. Zero CONFIRMED critical. Zero confirmed fund-loss or
 served-data-corruption defect.** Both HIGHs have small, well-scoped fixes. Everything else
-is Medium or below.
+is Medium or below. **Wave 6 — which specifically hunted the cross-boundary / protocol-truth /
+dependency / privacy / test-integrity surfaces the subsystem sweep structurally misses — added
+ZERO new CONFIRMED HIGH.** Its two scariest candidates (VWAP scale-mixing; /v1/price freeze
+bypass) were both surfaced by an independent threat-first re-decomposition and then dissolved
+under adversarial verification (disjoint asset namespaces; the guard is in fact wired).
 
-## Verdict counts
-- CONFIRMED HIGH: **2** (metric-cardinality DoS; freeze sibling-release)
-- CONFIRMED MED: **~26** (grouped below)
-- CONFIRMED LOW/INFO: ~30
-- REFUTED by skeptics (reviewed-not-carried): **7** (R2, R10, M-A, F-6, F-4, W2-pricing-F1,
-  and W3-freeze-2/resume-stalled downgraded not refuted)
+## Verdict counts (through Wave 6)
+- CONFIRMED HIGH: **2** (metric-cardinality DoS; freeze sibling-release) — unchanged by Wave 6
+- CONFIRMED MED: **~34** (waves 1-5 ~26 + Wave-6 +8: PII-retention, no-GDPR-delete, WCAG-contrast,
+  staleness-const↔timer, unbounded asset-cache, runVerifyChunks-no-CI-test, i128-guard-no-positive-
+  control, /v1/price-empty-baseline-fail-open)
+- CONFIRMED LOW/INFO: **~44** (waves 1-5 ~30 + Wave-6 ~14)
+- REFUTED / DOWNGRADED by skeptics: **11** (waves 1-5: R2, R10, M-A, F-6, F-4, W2-pricing-F1, +
+  freeze-2/resume-stalled; Wave-6: W6-dom-1, W6-derive-2, W6-fresh-3 refuted + W6-fresh-1 downgraded)
 - FIXED during the audit: **1** (main CI red since 2026-07-30)
+
+## Wave 6 — what the exhaustiveness pass proved (see wave-6-findings.md)
+The gap-closure pass closed every gap vs a full formal audit-suite execution and PROVED SOUND the
+highest-anxiety unknowns: the **forged-creation contract-gating bypass does not exist** (all three
+attribution surfaces double-gate on factory identity); **i128 discipline + Stellar/Soroban protocol
+modeling are correct against the spec** (CAP-67 topics, ClaimAtom variants, SDEX orientation, SEP-40,
+all five strkey layouts, two's-complement composition); **all 16 prior HIGH/critical keystones from the
+earlier campaigns are still fixed**; the **PERF/CON hot surfaces and every security-critical mechanical
+sweep** (authz, secrets, injection, type-assertions, timeouts) are clean; **foreign-contract-rejection
+tests exist for all 6 gated protocols**; the **embed money widgets are hardened**. The new MEDs cluster
+in the genuinely-unpassed dimensions — privacy/GDPR, accessibility, test-integrity — which is exactly why
+the pass was warranted and why "done" should not have stood before it ran.
 
 ## The 2 CONFIRMED HIGHs — fix before announcement
 
@@ -96,13 +116,25 @@ genesis-walk completeness, and the live/lake state-write parity test. No unexami
 security flow* was left un-reasoned-about; the residual is lower-risk surface.
 
 ## Launch-readiness verdict
-**No launch-blocking data-corruption or fund-loss defect surfaced in three full audits.** The
-product core is sound. Recommended before announcement, in priority order:
+**No launch-blocking data-corruption or fund-loss defect surfaced in three full audits, now including
+the Wave-6 exhaustiveness pass.** The product core is sound. Recommended before announcement, in
+priority order:
 1. **W4-obs-1** (metric DoS, 1-line) — the only remotely-triggerable HIGH.
-2. **The verification-layer cluster** (theme A) — because the first-24h watch you're about to
-   staff literally depends on these alerts firing and these monitors not lying. Mostly quick fixes.
+2. **The verification-layer cluster** (theme A, now incl. DEP-1 pnpm-audit fail-open) — because the
+   first-24h watch you're about to staff literally depends on these alerts firing and these monitors
+   not lying. Mostly quick fixes.
 3. **W3-freeze-1** (freeze HIGH) + **W2-explorer-1** (SAC spoof) + **W3-guards-1** (decimalsguard
    100× price).
-Everything else (themes C/D/E residue, LOW/INFO) is post-launch-acceptable with the fixes tracked.
-The refutation rate and the breadth of EXAMINED-SOUND are themselves evidence the system is
-launch-ready once the short list above is closed.
+4. **The Wave-6 launch-relevant additions:** the two privacy/GDPR gaps (no data-subject deletion path
+   + indefinite session/magic-link PII retention — a product/legal + small-code task before a public EU
+   launch); W6-tst-2 (give the i128-truncation guard a positive control — a decorative guard on the #1
+   invariant); W6-fresh-4 + negative-space (e) (link the completeness-verdict staleness const to its
+   timer, or it silently recreates the "complete forever after the audit died" failure); W6-fresh-1
+   (close the /v1/price empty-baseline fail-open); W6-perf-1 (cap the unbounded asset-detail cache).
+5. **Negative-space (b): consider an operator global price kill-switch** — for a system whose top asset
+   is a served price, the only manipulation-incident lever today is per-pair freeze / aggregator restart.
+Everything else (themes C/D/E residue, the ACC/i18n/LOW/INFO tail) is post-launch-acceptable with the
+fixes tracked. The refutation rate (11 refuted/downgraded, ~100% of Wave-6's serious candidates), the
+breadth of EXAMINED-SOUND, and the fact that a dedicated cross-boundary + protocol-truth + dependency +
+privacy + test-integrity pass found **zero new HIGH**, are themselves the strongest evidence that the
+system is launch-ready once the short list above is closed.
