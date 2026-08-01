@@ -1,0 +1,75 @@
+---
+# promtool unit tests for stellarindex_config_assertions_stale
+# (W5-mon dead-alert fix), which lives in storage.yml.
+#
+#   promtool test rules deploy/monitoring/rule-tests/config-assertions_test.yml
+#
+# The alert was structurally unfireable before this wave: it used
+#   time() - timestamp(stellarindex_config_assertion_ok) > 7200
+# and timestamp() returns the SAMPLE's scrape time. Crucially, when the
+# hourly config-assertions.timer DIES, node_exporter's textfile collector
+# keeps re-exposing the SAME stale config_assertions.prom on every scrape —
+# so config_assertion_ok stays present with a fresh scrape timestamp and
+# time()-timestamp(...) stays ≈0 forever. The fix watches the file's real
+# mtime instead: node_textfile_mtime_seconds stops advancing the moment the
+# timer stops rewriting the file.
+#
+# The "stale" case below models exactly that pathology — config_assertion_ok
+# stays present the whole time while the mtime freezes — so it FAILS against
+# the pre-fix rule (no alert, proving the deadness) and PASSES against the
+# node_textfile_mtime_seconds form. Labels are post-scrape (job/instance from
+# the node_exporter scrape).
+
+rule_files:
+  - ../rules/storage.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── the checker went silent: the .prom stopped being rewritten ────
+  # mtime tracks wall-clock (file rewritten every scrape) up to t=60m
+  # then FREEZES (the timer died). config_assertion_ok stays present
+  # and 1 the whole time — the exact pre-fix false-negative. Once
+  # time()-mtime crosses 7200 (t>180m) and holds past the 30m `for`,
+  # the alert fires. (Note the pre-fix expr would still be ≈0 here.)
+  - interval: 1m
+    name: a dead config-assertions timer trips stale
+    input_series:
+      - series: 'node_textfile_mtime_seconds{file="config_assertions.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0+60x60 3600+0x300'
+      - series: 'stellarindex_config_assertion_ok{assertion="redis_maxmemory",instance="r1:9100",job="node_exporter"}'
+        values: '1+0x360'
+    alert_rule_test:
+      - eval_time: 215m
+        alertname: stellarindex_config_assertions_stale
+        exp_alerts:
+          - exp_labels:
+              file: config_assertions.prom
+              instance: r1:9100
+              job: node_exporter
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/config-assertion-failed.md
+              summary: "config-assertions has not run for 2h on r1:9100"
+              description: |
+                The hourly config-assertions.timer is not producing fresh
+                textfile output — a silent checker is the same class of
+                failure the checker exists to catch. systemctl status
+                config-assertions.timer.
+
+  # ── the checker is running: mtime keeps advancing ────────────────
+  # The .prom is rewritten every scrape, so time()-mtime stays ≈0 and
+  # the alert must stay silent.
+  - interval: 1m
+    name: a live config-assertions timer never trips stale
+    input_series:
+      - series: 'node_textfile_mtime_seconds{file="config_assertions.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0+60x360'
+      - series: 'stellarindex_config_assertion_ok{assertion="redis_maxmemory",instance="r1:9100",job="node_exporter"}'
+        values: '1+0x360'
+    alert_rule_test:
+      - eval_time: 215m
+        alertname: stellarindex_config_assertions_stale
+        exp_alerts: []

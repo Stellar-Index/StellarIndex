@@ -1,0 +1,86 @@
+---
+# promtool unit tests for stellarindex_aggregator_supply_refresh_stalled
+# (W5-mon dead-alert fix).
+#
+#   promtool test rules deploy/monitoring/rule-tests/supply-refresh_test.yml
+#
+# The alert was structurally unfireable before this wave: it used
+#   time() - max(timestamp(supply_refresh_total{outcome="ok"})) > 30*60
+# and timestamp() returns the SAMPLE's scrape time (≈now while the counter
+# series is still being scraped), so the age evaluated to ≈0 forever. These
+# tests are the positive control: the "stalled" case below FAILS against the
+# pre-fix rule (no alert) and PASSES against
+#   sum(changes(supply_refresh_total{outcome="ok"}[30m])) == 0.
+#
+# supply_refresh_total is a direct app-scrape counter (aggregator /metrics),
+# not a textfile — so no node_exporter honor_labels rewriting; series carry
+# their real labels, and sum() erases them, leaving only the rule's own
+# label block on the alert.
+
+rule_files:
+  - ../rules/supply-refresh.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── the refresher wedged: ok ticks stopped ───────────────────────
+  # The counter climbed for 30m (healthy) then froze at t=30m (the
+  # goroutine deadlocked / every asset now fails). By t=60m the 30m
+  # changes-window is entirely flat; held past the 5m `for` it fires.
+  - interval: 1m
+    name: a wedged refresher (no ok tick for 30m) trips stalled
+    input_series:
+      - series: 'stellarindex_aggregator_supply_refresh_total{asset_key="usdc",outcome="ok"}'
+        values: '0+1x30 30+0x60'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: stellarindex_aggregator_supply_refresh_stalled
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: supply
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-refresh-stalled.md
+              summary: "supply refresher has recorded no successful tick across any watched asset in the last 30m (cadence 5m)"
+              description: |
+                The aggregator-resident supply refresher emits
+                stellarindex_aggregator_supply_refresh_total{outcome="ok"}
+                on every successful per-asset tick. No `ok` increments
+                in 30+ minutes means either the goroutine is wedged
+                (aggregator deadlock), the orchestrator hasn't started,
+                or every recent tick across every watched asset has
+                failed. /v1/assets/{id}'s F2 fields go increasingly
+                stale. Runbook: check aggregator process health first;
+                inspect logs for recurring outcome labels; route to the
+                error_dominant runbook if every tick is genuinely
+                failing.
+
+  # ── the refresher is healthy: ok ticks keep coming ───────────────
+  # A counter that keeps incrementing has changes() > 0 over every
+  # 30m window — the alert must stay silent.
+  - interval: 1m
+    name: a healthy refresher never trips stalled
+    input_series:
+      - series: 'stellarindex_aggregator_supply_refresh_total{asset_key="usdc",outcome="ok"}'
+        values: '0+1x90'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: stellarindex_aggregator_supply_refresh_stalled
+        exp_alerts: []
+
+  # ── one asset stalled, a sibling still ticking ───────────────────
+  # Pins the fleet-wide sum(): asset aaa froze at t=30m but asset bbb
+  # keeps ticking, so the goroutine is alive — no fleet-wide stall.
+  # (A single asset failing 100% is _error_dominant's remit, not this.)
+  - interval: 1m
+    name: a healthy sibling asset keeps the fleet-wide stalled quiet
+    input_series:
+      - series: 'stellarindex_aggregator_supply_refresh_total{asset_key="aaa",outcome="ok"}'
+        values: '0+1x30 30+0x60'
+      - series: 'stellarindex_aggregator_supply_refresh_total{asset_key="bbb",outcome="ok"}'
+        values: '0+1x90'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: stellarindex_aggregator_supply_refresh_stalled
+        exp_alerts: []
