@@ -75,15 +75,42 @@ func GuardServedVWAP1m(
 	pair canonical.Pair,
 	candidate timescale.Vwap1mRow,
 ) timescale.Vwap1mRow {
+	served, _ := GuardServedVWAP1mConfidence(ctx, store, logger, pair, candidate)
+	return served
+}
+
+// GuardServedVWAP1mConfidence is [GuardServedVWAP1m] plus the
+// low-confidence signal a serving path needs for its stale flag.
+// lowConfidence is true when the served bucket had NO usable trailing
+// baseline to validate against (a pair's first-ever served minute):
+// [aggregate.GuardServedVWAP] FAILS OPEN there, so a single manipulated /
+// fat-finger print would otherwise be served with stale=false and no
+// volume floor (adversarial-review W6-fresh-1). The value is STILL served
+// (never a blackout of a legitimate new pair) — the caller surfaces it as
+// stale / low-confidence instead of a confident price.
+//
+// It is only ever true on a SUCCESSFUL trailing fetch that returned no
+// usable baseline; a transient fetch error still fails open with
+// lowConfidence=false (unchanged posture — a DB blip must not flag every
+// price stale). On a validated bucket (populated OR thin baseline)
+// lowConfidence is false and the row is byte-identical to
+// [GuardServedVWAP1m].
+func GuardServedVWAP1mConfidence(
+	ctx context.Context,
+	store TrailingReader,
+	logger *slog.Logger,
+	pair canonical.Pair,
+	candidate timescale.Vwap1mRow,
+) (served timescale.Vwap1mRow, lowConfidence bool) {
 	rows, err := store.RecentClosedVWAP1mCombined(ctx, pair, SampleFetch)
 	if err != nil {
 		if logger != nil {
 			logger.Warn("served-vwap guard: trailing fetch failed — serving candidate unguarded",
 				"pair", pair.String(), "err", err)
 		}
-		return candidate // fail-open
+		return candidate, false // fail-open (transient) — not low-confidence
 	}
-	served, rejected := SelectGuardedVWAP1m(candidate, rows)
+	served, rejected, lowConfidence := selectGuardedVWAP1m(candidate, rows)
 	if rejected && logger != nil {
 		logger.Warn("served-vwap guard: candidate bucket rejected as outlier — serving last-known-good",
 			"pair", pair.String(),
@@ -92,7 +119,13 @@ func GuardServedVWAP1m(
 			"served_bucket", served.Bucket,
 			"served_vwap", served.VWAP)
 	}
-	return served
+	if lowConfidence && logger != nil {
+		logger.Warn("served-vwap guard: empty baseline — serving pair's first bucket as low-confidence/stale",
+			"pair", pair.String(),
+			"candidate_bucket", candidate.Bucket,
+			"candidate_vwap", candidate.VWAP)
+	}
+	return served, lowConfidence
 }
 
 // SelectGuardedVWAP1m is the pure decision half of [GuardServedVWAP1m]:
@@ -103,9 +136,22 @@ func GuardServedVWAP1m(
 // selection + index-alignment logic is unit-testable without a database.
 // Exact-rational throughout (ADR-0003).
 func SelectGuardedVWAP1m(candidate timescale.Vwap1mRow, rows []timescale.Vwap1mRow) (served timescale.Vwap1mRow, rejected bool) {
+	served, rejected, _ = selectGuardedVWAP1m(candidate, rows)
+	return served, rejected
+}
+
+// selectGuardedVWAP1m is [SelectGuardedVWAP1m] plus the low-confidence
+// (empty-baseline) signal. lowConfidence is true only when the candidate
+// is ACCEPTED against an empty/unvalidated baseline
+// ([aggregate.ServedBaselineValidated] is false — the pair's first-ever
+// served minute, GuardServedVWAP's fail-open). A rejected candidate, an
+// unparseable candidate, and any accept validated against a populated or
+// thin baseline are all lowConfidence=false. Kept store-free so the
+// selection is unit-testable without a database. Exact-rational (ADR-0003).
+func selectGuardedVWAP1m(candidate timescale.Vwap1mRow, rows []timescale.Vwap1mRow) (served timescale.Vwap1mRow, rejected, lowConfidence bool) {
 	candRat, ok := new(big.Rat).SetString(candidate.VWAP)
 	if !ok {
-		return candidate, false // unparseable candidate → can't judge, serve as-is
+		return candidate, false, false // unparseable candidate → can't judge, serve as-is
 	}
 	// Trailing baseline = combined-direction closed buckets STRICTLY older
 	// than the candidate bucket, kept index-aligned with their rows so the
@@ -125,7 +171,9 @@ func SelectGuardedVWAP1m(candidate timescale.Vwap1mRow, rows []timescale.Vwap1mR
 	}
 	accept, lkgIdx := aggregate.GuardServedVWAP(candRat, trailing)
 	if accept {
-		return candidate, false // byte-identical to the pre-guard served value
+		// An accept against an empty baseline is an unvalidated fail-open —
+		// serve the value, but flag it low-confidence (W6-fresh-1).
+		return candidate, false, !aggregate.ServedBaselineValidated(trailing)
 	}
-	return trailingRows[lkgIdx], true
+	return trailingRows[lkgIdx], true, false
 }

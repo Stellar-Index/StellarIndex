@@ -290,6 +290,57 @@ func TestGuardServedVWAP1m_ThinHistoryWiderFiniteBand(t *testing.T) {
 	}
 }
 
+func TestGuardServedVWAP1mConfidence_EmptyBaselineFirstBucketIsLowConfidence(t *testing.T) {
+	// W6-fresh-1: a thin/new pair's FIRST-EVER served minute has no
+	// trailing baseline (the store returns only the candidate's own bucket,
+	// or nothing). The guard fails OPEN, so a lone manipulated print is
+	// served — but it must come back flagged low-confidence so /v1/price
+	// serves it stale, NOT as a confident stale=false price.
+	manip := mkRow(0, "999999.0") // a fat-finger first print
+	// Store returns no rows STRICTLY older than the candidate (only the
+	// candidate's own bucket) — the real first-bucket shape.
+	store := fakeTrailing{rows: []timescale.Vwap1mRow{mkRow(0, "999999.0")}}
+	served, lowConfidence := GuardServedVWAP1mConfidence(context.Background(), store, nil, testPair(t), manip)
+	// Still served (no blackout of a genuine new pair).
+	if served.VWAP != manip.VWAP || !served.Bucket.Equal(manip.Bucket) {
+		t.Fatalf("first bucket must still be served (no blackout); got %+v", served)
+	}
+	// But flagged low-confidence → the handler marks it stale.
+	if !lowConfidence {
+		t.Fatal("empty-baseline first bucket must be lowConfidence=true (served stale), not confident stale=false")
+	}
+	// The completely-empty store is the same case.
+	served, lowConfidence = GuardServedVWAP1mConfidence(context.Background(), store, nil, testPair(t), mkRow(0, "42.0"))
+	if served.VWAP != "42.0" || !lowConfidence {
+		t.Fatalf("empty baseline must serve the value low-confidence; got served=%s lowConfidence=%v", served.VWAP, lowConfidence)
+	}
+}
+
+func TestGuardServedVWAP1mConfidence_ValidatedBucketIsConfident(t *testing.T) {
+	// A normal bucket WITH trailing history must NOT be flagged: serve it
+	// byte-identical and confident (lowConfidence=false), or the fix would
+	// wrongly degrade every healthy pair.
+	candidate := mkRow(0, "1.01")
+	store := fakeTrailing{rows: steadyRows(12)}
+	served, lowConfidence := GuardServedVWAP1mConfidence(context.Background(), store, nil, testPair(t), candidate)
+	if served.VWAP != candidate.VWAP || lowConfidence {
+		t.Fatalf("validated bucket must be confident (lowConfidence=false), byte-identical; got served=%s lowConfidence=%v", served.VWAP, lowConfidence)
+	}
+	// Thin (but non-empty) history is still a validated centre → confident.
+	served, lowConfidence = GuardServedVWAP1mConfidence(context.Background(), store, nil, testPair(t), mkRow(0, "5.0"))
+	_ = served
+	if lowConfidence {
+		t.Fatal("thin-but-non-empty baseline must be confident (lowConfidence=false)")
+	}
+	// A transient fetch error fails open WITHOUT flagging stale (unchanged
+	// posture — a DB blip must not mark every price low-confidence).
+	errStore := fakeTrailing{err: errors.New("boom")}
+	_, lowConfidence = GuardServedVWAP1mConfidence(context.Background(), errStore, nil, testPair(t), mkRow(0, "100.0"))
+	if lowConfidence {
+		t.Fatal("transient fetch error must fail open with lowConfidence=false, not flag stale")
+	}
+}
+
 func TestGuardServedVWAP1m_TrailingFetchErrorFailsOpen(t *testing.T) {
 	// The baseline fetch failing must never drop a real price: serve the
 	// candidate unguarded even if it would otherwise look extreme.

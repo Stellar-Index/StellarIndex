@@ -3234,13 +3234,18 @@ func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 	// for a manipulated bucket.
 	row, err := r.s.LatestClosedVWAP1mForPair(ctx, pair)
 	if err == nil {
-		served := pricingguard.GuardServedVWAP1m(ctx, r.s, r.logger, pair, row)
+		served, lowConfidence := pricingguard.GuardServedVWAP1mConfidence(ctx, r.s, r.logger, pair, row)
 		// CS-017: the bucket closes at Bucket+1min; flag stale when that
 		// close is older than the freshness window, so a dormant pair's
 		// months-old VWAP is no longer served as stale=false. Applied to the
 		// bucket we actually serve (candidate, or the older last-known-good
 		// on a guard rejection — which is naturally staler).
-		stale := r.clock().Sub(served.Bucket.Add(time.Minute)) > r.freshnessWindow()
+		//
+		// W6-fresh-1: a pair's first-ever served minute has NO trailing
+		// baseline, so the guard fails OPEN (accepts any value, even a lone
+		// manipulated/fat-finger print). lowConfidence marks that unvalidated
+		// case; serve the value but as stale, never as a confident price.
+		stale := lowConfidence || r.clock().Sub(served.Bucket.Add(time.Minute)) > r.freshnessWindow()
 		return v1.VWAP1mToSnapshot(asset.String(), quote.String(), served.VWAP, served.Bucket),
 			served.Sources, stale, nil
 	}

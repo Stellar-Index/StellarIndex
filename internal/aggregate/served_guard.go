@@ -94,7 +94,13 @@ var (
 // Returns:
 //   - accept=true, lkgIdx=-1 → serve the candidate. Either it passed the
 //     robust band, or there was no usable baseline to judge it against
-//     (fail-open: favour serving a real price over over-filtering).
+//     (fail-open: favour serving a real price over over-filtering). These
+//     two acceptances are NOT equivalent: the second is an UNVALIDATED
+//     fail-open (a pair's first-ever served minute) that a single
+//     manipulated/fat-finger print would be served through with
+//     stale=false. accept alone cannot tell them apart — the serving path
+//     MUST consult [ServedBaselineValidated] on the same trailing slice
+//     and surface an unvalidated accept as low-confidence/stale (W6-fresh-1).
 //   - accept=false, lkgIdx>=0 → the candidate is grossly off the robust
 //     centre; serve trailing[lkgIdx] instead — the newest trailing value
 //     that IS within the band (last-known-good). Because the robust
@@ -119,6 +125,29 @@ func GuardServedVWAP(candidate *big.Rat, trailing []*big.Rat) (accept bool, lkgI
 	// safe fallback is to serve the candidate rather than 404 a pair that
 	// demonstrably has data.
 	return true, -1
+}
+
+// ServedBaselineValidated reports whether `trailing` provides a usable
+// robust centre to VALIDATE a served candidate against. It is the
+// companion signal to [GuardServedVWAP]'s fail-open: GuardServedVWAP
+// returns accept=true both when a candidate PASSED the robust band and
+// when there was NO baseline to judge it against (an empty baseline — a
+// pair's first-ever served minute, where robustBand is undefined). Those
+// two acceptances are indistinguishable from (accept, lkgIdx) alone, yet
+// only the first is a validated price; the second is an UNVALIDATED
+// fail-open a single manipulated/fat-finger print would otherwise be
+// served through with stale=false and no volume floor (adversarial-review
+// W6-fresh-1).
+//
+// A serving path consults this on the SAME trailing slice it passed to
+// [GuardServedVWAP] and, when it is false, surfaces the accepted value as
+// low-confidence/stale — never a blackout: a legitimate new pair's first
+// price is still served, only flagged. It shares robustBand's baseline
+// definition, so "validated here" is exactly "had a centre to judge
+// against there". Exact-rational (ADR-0003).
+func ServedBaselineValidated(trailing []*big.Rat) bool {
+	_, _, ok := robustBand(trailing)
+	return ok
 }
 
 // robustBand returns the acceptance interval [lo, hi] for a candidate,
