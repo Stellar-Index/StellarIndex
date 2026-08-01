@@ -1,5 +1,17 @@
 package clickhouse
 
+import "errors"
+
+// ErrRefreshSaturated is returned by a cache-fill method (AccountStateCached)
+// to a COLD-path waiter when the shared detached-refresh gate was saturated
+// and the refresh was SKIPPED rather than queued (TryAcquire returned false).
+// It is a TRANSIENT capacity/backpressure condition — the caller, and any HTTP
+// handler above it, must treat it as retryable (503 + retry), NOT as an
+// internal error (500). It is deliberately DISTINCT from
+// errAccountStateRefreshFailed, which signals a genuine refresh failure (the
+// scan ran and errored) and stays on the 500 path so an alert fires.
+var ErrRefreshSaturated = errors.New("clickhouse: detached refresh capacity saturated; retry shortly")
+
 // RefreshGate is a small non-blocking semaphore bounding how many DETACHED
 // cache refreshes may run concurrently against the explorer's lake pool
 // (audit 2026-07-31).

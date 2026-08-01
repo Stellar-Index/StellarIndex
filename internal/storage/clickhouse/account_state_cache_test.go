@@ -1,6 +1,8 @@
 package clickhouse
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -55,6 +57,47 @@ func TestAccountStateCacheNilSafe(t *testing.T) {
 		t.Error("nil cache reported a hit")
 	}
 	c.put("G", AccountState{}, time.Now()) // must not panic
+}
+
+// TestAccountStateCached_SaturationReturnsDistinctSentinel pins recon-R3:
+// when the shared detached-refresh gate is FULL, a cold-miss account-state
+// read must return the DISTINCT, retryable ErrRefreshSaturated sentinel —
+// NOT the generic errAccountStateRefreshFailed that a real scan failure
+// returns — so the API handler can map the transient backpressure to a
+// retryable 503 while a genuine failure stays a 500. The gate is pre-saturated
+// here, so refreshAccountState's TryAcquire fails and no scan (which would need
+// a live ClickHouse conn) ever runs.
+//
+// Red without the fix: pre-fix, refreshAccountState returned only the channel
+// and the cold-miss path returned errAccountStateRefreshFailed regardless of
+// why the cache stayed empty, so errors.Is(err, ErrRefreshSaturated) is false
+// and this test fails.
+func TestAccountStateCached_SaturationReturnsDistinctSentinel(t *testing.T) {
+	t.Parallel()
+	r := &ExplorerReader{
+		stateCache:  newAccountStateCache(),
+		stateFlight: newPerKeyFlight(),
+		refreshGate: NewRefreshGate(1),
+	}
+	// Saturate the single gate slot so the cold-miss refresh is SKIPPED.
+	if !r.refreshGate.TryAcquire() {
+		t.Fatal("could not acquire the only gate slot to set up saturation")
+	}
+
+	st, stale, err := r.AccountStateCached(context.Background(),
+		"GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+
+	if !errors.Is(err, ErrRefreshSaturated) {
+		t.Fatalf("saturated cold miss err = %v, want ErrRefreshSaturated (recon-R3)", err)
+	}
+	// Must NOT masquerade as the generic scan-failure sentinel — that one
+	// stays on the 500 path.
+	if errors.Is(err, errAccountStateRefreshFailed) {
+		t.Fatal("saturation error must be distinct from errAccountStateRefreshFailed, else it maps to 500")
+	}
+	if st.Exists || stale {
+		t.Fatalf("saturated miss returned state=%+v stale=%t, want zero value + not-stale", st, stale)
+	}
 }
 
 func TestPerKeyFlight(t *testing.T) {
