@@ -224,6 +224,64 @@ func TestObserver_DecodeRemoved(t *testing.T) {
 	}
 }
 
+// TestObserver_CanonicalizesDashFormAssetKey is the W1-supply-1
+// regression. An operator may configure a SAC wrapper's asset_key in
+// the documented canonical CODE-ISSUER (dash) wire form — the same form
+// [supply].watched_classic_assets uses for the trustline / claimable /
+// LP observers, which canonicalize to CODE:ISSUER (colon) via
+// supply.CanonicalizeWatchedClassic. Before the fix, NewObserver copied
+// the asset_key verbatim, so the emitted Observation carried the dash
+// form and the SAC-held slice never joined the same classic asset's
+// colon-form supply in derivation → the asset was UNDER-reported. The
+// observer must canonicalize the asset_key to the colon form the sibling
+// observers produce.
+func TestObserver_CanonicalizesDashFormAssetKey(t *testing.T) {
+	const (
+		usdcDash  = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+		usdcColon = "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	)
+	o, err := NewObserver(map[string]string{cSAC: usdcDash})
+	if err != nil {
+		t.Fatalf("NewObserver with dash-form asset_key: %v", err)
+	}
+	change := makeContractDataChange(t, cSAC, makeBalanceKey(t, gHolder), makeI128Val(266_000_000))
+	outs, err := o.Decode(dispatcher.LedgerEntryChangeContext{
+		Ledger: 1, Change: change, ClosedAt: time.Unix(1, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	obs := outs[0].(Observation)
+	if obs.AssetKey != usdcColon {
+		t.Errorf("AssetKey=%q, want canonical colon form %q — a dash-form SAC "+
+			"asset_key must canonicalize to match the classic asset's watched-set "+
+			"key, else its SAC-held supply is under-reported", obs.AssetKey, usdcColon)
+	}
+	// The observed balance/scale must be untouched by the key fix (ADR-0003).
+	if obs.Balance.Int64() != 266_000_000 {
+		t.Errorf("Balance=%s, want 266000000 (canonicalization must not alter the value)", obs.Balance)
+	}
+}
+
+// TestObserver_PureSEP41ContractIDPassesThrough guards the fix's
+// contract_id → contract_id branch: a pure SEP-41 wrapper maps a bare
+// C-strkey (not a classic CODE-ISSUER asset) and must pass through the
+// canonicalizer unchanged, not be rejected as a non-classic asset.
+func TestObserver_PureSEP41ContractIDPassesThrough(t *testing.T) {
+	o, err := NewObserver(map[string]string{cSAC: cSAC})
+	if err != nil {
+		t.Fatalf("NewObserver with contract_id asset_key: %v", err)
+	}
+	change := makeContractDataChange(t, cSAC, makeBalanceKey(t, gHolder), makeI128Val(42))
+	outs, err := o.Decode(dispatcher.LedgerEntryChangeContext{Ledger: 1, Change: change})
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if obs := outs[0].(Observation); obs.AssetKey != cSAC {
+		t.Errorf("AssetKey=%q, want %q (bare contract_id must pass through unchanged)", obs.AssetKey, cSAC)
+	}
+}
+
 func TestObserver_RoundTripThroughDispatcher(t *testing.T) {
 	o, _ := NewObserver(map[string]string{cSAC: "USDC:G..."})
 	disp := dispatcher.New()
