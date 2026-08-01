@@ -131,6 +131,27 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-08-01 ~02:50Z — 🟢🟢 **REDSTONE + SOROSWAP COMPLETE=TRUE; the
+  blind ladder ends 1,626 → 0.** The v0.21.8 chain landed both
+  targets: redstone projection verified full-range (state-write
+  attribution) and soroswap likewise (non-directional recognition +
+  skim dedup; taker 100.00%). Verdict table 16/17: **aquarius's
+  FIRST full-range reconcile** (prior verdicts carried) surfaced its
+  own long-standing backlog — 41 old-WASM blind events + 482
+  over-projected trade rows from an older decoder era — queued as
+  the next per-source unit on the proven playbook; NOT a regression.
+  Evidence: `evidence/2026-08-01-completeness-16of17-and-ac2.md`.
+  **AC2 final framing**: SLA scenario PASSES huge (0 fails, p95
+  37.1ms); the 400-VU mixed stress scenario consistently lands p95
+  ~5s / 4.4% across two differently-conditioned runs = the honest
+  single-box ceiling beyond rated load — filed as capacity datum for
+  the HA decision. ALSO tonight: the FULL AUDIT PASS closed (§2.6b
+  #1 — 4 cold audits, 3 fix waves + redstone security hardening +
+  completeness dirty-window hardening + 19,366 lake-classified cctp
+  twins deleted; specs → 1.18.0, migrations 0124+0125). §2.6b is now
+  COMPLETE (all three passes). v0.21.9 (audit payload) cutting now
+  under Ash's standing word.
+
 - 2026-07-31 ~23:00Z — 🚀 **v0.21.8 CUT + DEPLOYED on Ash's word**
   ("you can cut and deploy whenever you want"). Release build green
   (11 assets), deploy green, smoke 13/13, live version v0.21.8.
