@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.22.0] — 2026-08-01
+
 ### Added
 - **Cycle-level regression test for the v0.21.12 sink-side adaptive
   shrink** (`internal/projector/cycle_wedge_test.go`): drives
@@ -86,6 +88,130 @@ against.
   now mirrors the registry/catalogue — the stale 62,403,000 floor left
   each source's true head range invisible to the supporting gap signal
   (the authoritative ADR-0033 verdict was already corrected on 07-31).
+
+### Security
+- **Unauthenticated metric-cardinality DoS closed** (audit W4-obs-1;
+  `internal/obs/http_middleware.go`): unrecognized HTTP methods passed
+  through to the Prometheus `method` label verbatim; `net/http` accepts any
+  token, so `curl -X <random>` in a loop minted unbounded label children.
+  Unknown verbs now collapse to a bounded `"other"`.
+- **SSE price-bridge payloads validated + re-marshalled** (audit F2;
+  `internal/api/streaming/redispub`): the subscriber fanned the raw Redis
+  payload to all stream clients with only an asset/quote-non-empty check;
+  with no-AUTH Redis a host-adjacent `PUBLISH` could inject a forged price.
+  Now the decoded event is bounds-validated (exact `big.Rat` VWAP, sane
+  window, fresh timestamp) and the validated struct re-marshalled, dropping
+  injected fields.
+- **SAC/asset label cross-checked on `/movements`** (audit W2-explorer-1):
+  a hostile token could set a `sep0011` label impersonating a trusted asset
+  (e.g. Circle USDC) on the public feed. The fallback now derives the SAC
+  address and trusts the label only on a contract-id match (the check its
+  sibling `wasm_view` already had); also fixes `/v1/accounts/{g}/positions`
+  and the `?asset=` filter.
+- **WASM export-parser prealloc capped** (audit W6-go-1): a section's
+  attacker-influenced LEB128 count sized `make()` before any read, risking a
+  multi-GB allocation on adversarial WASM; the prealloc hint is now bounded
+  by the reader's remaining bytes (defensive — reachable only if an
+  un-validated WASM path is ever added).
+
+### Changed
+- **Cache-gate saturation now returns HTTP 503, not 500** (audit recon R3):
+  a saturated detached-refresh gate on a cold `/v1/accounts/{g}` read was
+  indistinguishable from a real error; a distinct `ErrRefreshSaturated`
+  sentinel now maps to the retryable 503 (already declared on the route),
+  while genuine scan failures stay 500.
+- **Anomaly-freeze now releases reliably** (audit W3-freeze-1 + W3-freeze-3):
+  (1) the shared freeze marker's `Clear` is deferred until the last frozen
+  window for a pair releases, so a short window auto-releasing no longer
+  unfreezes still-frozen sibling windows; (2) once a freeze is active Phase 1
+  stands down so the Phase 2 lifecycle (the sole auto-unfreeze authority) can
+  release it — a freeze whose price settled at a residual level past
+  `FreezePct` but statistically healthy could previously stay frozen forever.
+- **Divergence warning debounced** (audit W3-guards-2): comparing our
+  shortest-window VWAP against an instantaneous reference spot produced false
+  warnings on fast moves; the warning now fires only after the over-threshold
+  condition persists a full VWAP-window horizon (default 5m), so a transient
+  VWAP-vs-spot gap self-clears while a sustained genuine divergence still
+  fires.
+
+### Fixed
+- **decimalsguard retries the durable write** (audit W3-guards-1): it latched
+  `fired` before the DB upsert and never retried, so a transient write failure
+  left a non-7-decimal token serving a 10^(7-decimals)-skewed price until
+  restart. Split into an in-memory alarm latch (fire-once) and a `persisted`
+  latch set only on a successful upsert (retries otherwise).
+- **`/v1/price` first-ever bucket served as low-confidence** (audit W6-fresh-1):
+  the served-VWAP guard failed open (unbounded) on an empty baseline, so a
+  thin pair's first minute — a lone manipulated print — was served
+  `stale=false`. It is now flagged low-confidence/stale (value still served,
+  never a blackout).
+- **SAC-balance watched-asset keys canonicalized** (audit W1-supply-1): the
+  SAC-balance observer copied the asset_key verbatim, skipping the
+  `CanonicalizeWatchedClassic` its sibling observers apply, so a dash-form SAC
+  wrapper never matched the colon-form supply and its balances were
+  under-reported (same class as the 2026-07-02 trustline miss). (Historical
+  dash-form rows need a re-derive.)
+- **One-side-zero SDEX fills no longer sink the trades batch** (audit W1-defi-1):
+  a fill with one leg rounded to 0 (decoder-kept, census-counted) violated the
+  `base>0 AND quote>0` CHECK, rolling back the whole all-or-nothing batch and
+  firing a spurious `insert_errors` alert. They are now filtered before the
+  batch (consistent with the completeness reconcile, which already excludes
+  them); genuine Validate failures stay loud.
+- **Duplicate contract events no longer served during the RMT merge window**
+  (audit W4-storage-1): `ContractEventsRecent` (the `/v1/contracts/{id}` feed)
+  and `EventsByTx` read `contract_events` (a ReplacingMergeTree) without
+  dedup, returning re-ingested events twice until a background merge. Added
+  the package's per-shape idiom: `LIMIT 1 BY <sort-tuple>` and `FINAL` on the
+  bounded read respectively.
+- **Aggregator background workers panic-isolated** (audit W4-cmd-1): the
+  aggregator had zero panic recovery while the API isolates every worker, so
+  one worker panic crash-looped the price pipeline. Added a shared
+  `internal/worker.Recover` and wrapped all 14 workers + 3 inner fan-out
+  goroutines.
+- **Three dead alerts made fireable** (audit W5-mon, W5-mon-3):
+  `supply_refresh_stalled` + `config_assertions_stale` used `timestamp()`
+  (scrape freshness, always ~0) and never fired — rewritten to real age /
+  `changes()`; the ledgerstream `both_missing` page's counter was
+  nil-in-prod (registry-gated) and is now registered unconditionally in
+  `obs`. Each gained a promtool positive control.
+- **Unbounded asset-detail response cache bounded** (audit W6-perf-1): capped
+  at 4096 with opportunistic expired-purge / oldest-eviction (a crawler over
+  the real-asset universe could otherwise grow it without limit).
+- **Data race in archive verify-chunks** (audit W6-tst-1-race, surfaced by
+  bringing `runVerifyChunks` into CI coverage): `totalVerified` was written
+  under one mutex and read under another; now `atomic.Int64`.
+- **frankfurter truncated responses propagate as errors** (audit W6-go-2):
+  `errors.Is(io.EOF)` instead of a substring match that swallowed
+  `io.ErrUnexpectedEOF`.
+- **WCAG-AA contrast + four LOW frontend fixes** (audit W6-acc-1, W6-web-1/2,
+  W6-acc-2, W6-i18n-1): lifted `--color-ink-faint` to ≥4.5:1 on all surfaces
+  (used as text 254×); legible oracle-source chips; the status-page
+  deploy-skew render-throw guarded; `role="img"` on the Sparkline; 102 bare
+  `.toLocaleString()` sites pinned to `en-US`.
+- **Supply-reader observability + robustness** (audit W6-sweep-1, W6-prv-3,
+  W1-sub-1): the classic-supply reader now emits the promised WARN on a
+  component-freshness query error; staff actor emails are masked in the log
+  sink; `scval.AsBool` nil-guards a zero-value `ScvBool` instead of panicking.
+
+### CI / tooling
+- **verify.sh mirrors all CI import-checks + a parity guard** (audit W5-ci-6):
+  it ran only 5 of 13 gates; now runs all 13 with a self-testing parity check
+  so the drift can't recur, plus a best-effort main-CI-health warn.
+- **Money-lint + i128-lint blind spots closed** (audit W5-ci-1/5): the SQL
+  money-lint now covers `twap/vwap/tvl/wealth` names + `integer/smallint/money`
+  types; `lint-i128` catches `int32/16/8` narrowing and is base-restored.
+- **Three false-green gate paths fixed** (audit W5-ci-2/3/4): route-sweep
+  counts curl `000` as a failure; reconcile-vs-horizon exits inconclusive on
+  an upstream outage; the gitleaks-config allowlists are in the anti-bypass
+  tripwire.
+- **pnpm advisory-gate skip made visible** (audit DEP-1) and a **new lint
+  binds the completeness-verdict staleness consts to the timer cadence**
+  (audit W6-fresh-4).
+- **Test-integrity gaps closed** (audit W6-tst-1, W6-tst-2, W2-plat-1): the
+  i128-truncation guard gained a positive control; `runVerifyChunks` (archive
+  hash-chain verify) is now compiled+run by CI; the `usage_daily` rollup
+  idempotency invariant (GREATEST-merge — the over-count finding was refuted)
+  is now tested against real Postgres.
 
 ## [v0.21.12] — 2026-08-01
 
