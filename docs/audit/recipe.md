@@ -2,6 +2,29 @@
 
 > The project-specific overlay for `/audit`. Generic checklists know what *kinds* of bugs exist; this file knows where *this* project keeps them. Authored cold from primary evidence by five independent code-mapping agents (money/pricing · API/auth · ingest/storage/completeness · extraction-derived entry-points/config · web+plans) plus direct spot-verification. Re-verify every claim against current code before trusting it — this file drifts too.
 
+- ⚠ **REFRESHED 2026-08-01 (audit №3) against commit `f8c099ee` — read
+  `audit-2026-08-01/recon/*.md` FIRST; the six cold recon maps supersede §§1-6
+  below.** Load-bearing corrections the old §§1-6 get wrong: (1) **prod anon rate
+  limit is 6000/min, not 60** (toml.j2:238) — every DoS estimate must use 6000;
+  (2) **new authoritative in-process stores**: the SDEX order book (a Go map on
+  the API process, no durable backing) and `stellar.ops_by_source` (a ClickHouse
+  deploy-artifact DDL outside migrations/ that account-history readers fail closed
+  without); (3) **r1 runs the Redis auth backend** (not Postgres), and Redis has
+  no AUTH; (4) **PG `classic_movements` was dropped** (migration 0113) — ignore
+  every recipe line referencing it; (5) migrations 108→**120** (head 0125); (6) the
+  4 bug-concentration seams are now **6** (+ dual state-write-keys derivation, +
+  SWR/prewarm layer, + in-process order book); (7) ADR-0032 runs at **Phase-3
+  dual-write** (persist_per_source=true), not the "sole writer" end-state — safe
+  under deterministic decode; (8) all three OpenAPI generators are NOW CI-drift-gated
+  (**CLAUDE.md's OpenAPI section is factually stale**); (9) 46 web/explorer vitest
+  files **never run in CI** — dead security-regression gates. NEW traps to add: a
+  PK-discriminator migration with `DEFAULT 0` saying "no DELETE needed" arms a twin
+  for the next re-derive (0112 fired; 0059/0060 loaded but caught by strict
+  reconcile); any tool writing a reconcile-target table below the completeness
+  watermark must RecordProjectionDirtyWindow first (2 of ≥5 do). Audit №3 findings:
+  `audit-2026-08-01/{findings,executive-summary,reviewed-not-carried}.md` — 0 crit,
+  0 high, 5 confirmed MED. A full §§1-6 rewrite via `/audit-recipe` is still owed;
+  this banner + the recon maps are the interim authority.
 - **Last derived:** 2026-07-16 against commit `f84e2d0b`. **§7 traps 17-19, §8 RFC-9..12 and §9 hot spots were extended 2026-07-25 from the audit-2026-07-23 campaign and its remediation — but sections 1-6 have NOT been re-derived since `f84e2d0b`.** (An earlier revision of this line claimed "traps 17-25"; only 16 existed at the time. Corrected 2026-07-25 — and worth noting as its own lesson: a recipe can drift from itself, so count what it claims.)
 - ⚠ **STALENESS — read before trusting sections 1-6.** `git diff f84e2d0b b57e117d` is **743 files, +51,817/-7,088**: a second full audit (audit-2026-07-23, ~480 confirmed findings across 6 chunks) plus its remediation (9 PRs, 192 commits) landed in between. Architecture, entry points, money flows, trust boundaries and invariants are all likely to have moved. **Re-run `/audit-recipe` against current HEAD before the next audit** rather than trusting §§1-6; what follows below §7 is current, what precedes it is a 2026-07-16 snapshot.
 - **Prior derivation note (2026-07-16):** **HEAD later advanced to `4d034432`** (a concurrent agent's `feat(explorer): surface the two-axis completeness verdict on diagnostics`, pushed to main). `git diff f84e2d0b 4d034432` touches ONLY `CHANGELOG.md` + `web/explorer/src/app/diagnostics/{CoveragePanel,page}.tsx` — the money/ingest/api/auth/storage/ops surface is byte-identical, so all engine-side findings stand at HEAD. The one change: the "two-axis verdict UI MISSING" gap is now **CLOSED** by 4d034432 (reviewed sound — reads `lake_complete`/`lake_complete_sources`/`v.lake_complete` from the generated coverage types, correct ADR-0034 tooltips, `lake_complete=true/complete=false` handled honestly).
