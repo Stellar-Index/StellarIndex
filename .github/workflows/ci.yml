@@ -659,7 +659,27 @@ jobs:
             exit 0
           fi
           if echo "$audit_output" | grep -q "ERR_PNPM_AUDIT_BAD_RESPONSE"; then
-            echo "::warning::pnpm audit endpoint returned a bad response (registry-side) — not failing the build on this."
+            # DEP-1 (audit-2026-07-29): the npm advisory endpoint pnpm audit
+            # calls has returned ERR_PNPM_AUDIT_BAD_RESPONSE continuously since
+            # 2026-07-15 (registry-side). We still cannot hard-fail on it — that
+            # would red EVERY PR over an outage we do not own — but a silent
+            # exit-0 turns the HIGH-advisory gate into an invisible no-op. Make
+            # the skip LOUD + tracked: a ::warning:: annotation AND a job-summary
+            # line, so "gate skipped" shows in the PR checks UI instead of a bare
+            # green. Restoring real coverage via a backstop scanner (osv-scanner
+            # on pnpm-lock.yaml, or trivy-fs per-PR) is a tracked follow-up — not
+            # wired here to avoid reddening every PR on an unaudited scanner.
+            msg="pnpm audit advisory endpoint unreachable (ERR_PNPM_AUDIT_BAD_RESPONSE, registry-side since 2026-07-15) — HIGH-advisory gate SKIPPED, not enforced."
+            echo "::warning::${msg}"
+            if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+              {
+                echo "### ⚠️ pnpm audit advisory gate SKIPPED (not enforced)"
+                echo ""
+                echo "${msg}"
+                echo ""
+                echo "No HIGH-severity advisory check ran for this lockfile. Coverage is not enforced until the endpoint recovers or an OSV/trivy backstop is wired in (follow-up)."
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
             exit 0
           fi
           exit "$audit_exit"
@@ -707,7 +727,27 @@ jobs:
             exit 0
           fi
           if echo "$audit_output" | grep -q "ERR_PNPM_AUDIT_BAD_RESPONSE"; then
-            echo "::warning::pnpm audit endpoint returned a bad response (registry-side) — not failing the build on this."
+            # DEP-1 (audit-2026-07-29): the npm advisory endpoint pnpm audit
+            # calls has returned ERR_PNPM_AUDIT_BAD_RESPONSE continuously since
+            # 2026-07-15 (registry-side). We still cannot hard-fail on it — that
+            # would red EVERY PR over an outage we do not own — but a silent
+            # exit-0 turns the HIGH-advisory gate into an invisible no-op. Make
+            # the skip LOUD + tracked: a ::warning:: annotation AND a job-summary
+            # line, so "gate skipped" shows in the PR checks UI instead of a bare
+            # green. Restoring real coverage via a backstop scanner (osv-scanner
+            # on pnpm-lock.yaml, or trivy-fs per-PR) is a tracked follow-up — not
+            # wired here to avoid reddening every PR on an unaudited scanner.
+            msg="pnpm audit advisory endpoint unreachable (ERR_PNPM_AUDIT_BAD_RESPONSE, registry-side since 2026-07-15) — HIGH-advisory gate SKIPPED, not enforced."
+            echo "::warning::${msg}"
+            if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+              {
+                echo "### ⚠️ pnpm audit advisory gate SKIPPED (not enforced)"
+                echo ""
+                echo "${msg}"
+                echo ""
+                echo "No HIGH-severity advisory check ran for this lockfile. Coverage is not enforced until the endpoint recovers or an OSV/trivy backstop is wired in (follow-up)."
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
             exit 0
           fi
           exit "$audit_exit"

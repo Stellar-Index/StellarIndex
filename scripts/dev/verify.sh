@@ -9,6 +9,34 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
+# verify.sh ↔ CI parity (W5-ci-6). The #1 cause of "green locally, red in CI"
+# is this gate drifting behind CI's import-checks job. This deterministic
+# meta-check (no network) fails fast if CI runs a scripts/ci gate that the
+# steps below do not mirror — so a lint added to CI obligates adding it here.
+# The self-test runs first (the gate is only as trustworthy as its fixtures).
+echo "=== verify↔CI parity self-test ===" && ./scripts/ci/check-verify-parity-test.sh
+echo "=== verify.sh ↔ CI import-checks parity ===" && ./scripts/ci/check-verify-parity.sh
+
+# Best-effort awareness of main's CI health (W5-ci-6). ADVISORY ONLY: it needs
+# network + an authenticated gh, so it is fully wrapped and can NEVER affect
+# verify's exit code — it just warns when you're about to push onto a red main.
+if command -v gh >/dev/null 2>&1; then
+    echo "=== Main CI health (best-effort; never fails verify) ==="
+    main_ci_conclusion="$(gh run list --workflow ci.yml --branch main --status completed --limit 1 \
+        --json conclusion --jq '.[0].conclusion' 2>/dev/null || true)"
+    case "${main_ci_conclusion:-}" in
+        success)
+            echo "main CI: latest completed run is green." ;;
+        failure|timed_out|startup_failure)
+            echo "⚠️  main CI: latest completed run concluded '${main_ci_conclusion}'." \
+                 "You may be pushing on top of a RED main — check 'gh run list --workflow ci.yml --branch main'." ;;
+        *)
+            echo "main CI: no health signal (gh offline/unauthed, or no completed runs) — skipping." ;;
+    esac
+else
+    echo "=== Main CI health (skipped — gh not installed; 'brew install gh' for the push-onto-red-main warning) ==="
+fi
+
 echo "=== Format ==="        && make fmt
 echo "=== Vet ==="           && make vet
 echo "=== Lint ==="          && make lint
@@ -18,6 +46,19 @@ echo "=== Protocol registry sync ===" && ./scripts/ci/lint-protocol-registry-syn
 echo "=== Lexicon ==="       && ./scripts/ci/lint-lexicon.sh
 echo "=== i128/NUMERIC ===" && ./scripts/ci/lint-i128.sh
 echo "=== Migrations money ===" && ./scripts/ci/lint-migrations.sh
+# CI's import-checks job runs these gate scripts too; verify.sh must mirror
+# them or it issues a green CI won't honour (W5-ci-6, enforced by the parity
+# check above). All are deterministic + network-free.
+echo "=== Migration backward-compat ===" && ./scripts/ci/lint-migration-compat.sh
+echo "=== Migration backward-compat self-test ===" && ./scripts/ci/lint-migration-compat-test.sh
+echo "=== Completeness-staleness calibration ===" && ./scripts/ci/lint-completeness-staleness.sh
+echo "=== Deploy-protection self-test ===" && ./scripts/ci/check-deploy-protection-test.sh
+echo "=== Main-CI-health decision-core self-test ===" && ./scripts/ci/check-main-ci-health-test.sh
+echo "=== Ansible-drift decision-core self-test ===" && ./scripts/ci/check-ansible-drift-test.sh
+echo "=== Baseline-growth tripwire self-test ===" && ./scripts/ci/lint-baseline-growth-test.sh
+# BASE_SHA-gated: self-skips locally (no comparison base); runs for real in CI
+# with the PR/push base. Invoked here to keep verify↔CI parity honest.
+echo "=== Baseline-growth tripwire ===" && ./scripts/ci/lint-baseline-growth.sh
 echo "=== OpenAPI URLs ===" && go run ./scripts/ci/lint-openapi-urls openapi/stellar-index.v1.yaml
 echo "=== PK discriminators ===" && go run ./scripts/ci/lint-pk-discriminators
 # Structural rule-file lint — pure-Python (no promtool), so it runs even
