@@ -95,7 +95,7 @@ func TestStorageClassicSupplyReader_HappyPath(t *testing.T) {
 		lpSum:        big.NewInt(20),
 		sacSum:       big.NewInt(30),
 	}
-	r := NewStorageClassicSupplyReader(store, nil)
+	r := NewStorageClassicSupplyReader(store, ClassicSupplyReaderOptions{})
 
 	asset := mustClassic(t, "USDC", tIssuer)
 	got, err := r.ClassicSupplyAt(context.Background(), asset, LockedSet{}, 100)
@@ -126,7 +126,7 @@ func TestStorageClassicSupplyReader_HappyPath(t *testing.T) {
 }
 
 func TestStorageClassicSupplyReader_RejectsNonClassic(t *testing.T) {
-	r := NewStorageClassicSupplyReader(&fakeClassicStore{}, nil)
+	r := NewStorageClassicSupplyReader(&fakeClassicStore{}, ClassicSupplyReaderOptions{})
 	_, err := r.ClassicSupplyAt(context.Background(), canonical.NativeAsset(), LockedSet{}, 1)
 	if !errors.Is(err, ErrNotClassic) {
 		t.Errorf("err=%v want wrapping ErrNotClassic", err)
@@ -135,7 +135,7 @@ func TestStorageClassicSupplyReader_RejectsNonClassic(t *testing.T) {
 
 func TestStorageClassicSupplyReader_PropagatesSumError(t *testing.T) {
 	store := &fakeClassicStore{wantErrSum: true}
-	r := NewStorageClassicSupplyReader(store, nil)
+	r := NewStorageClassicSupplyReader(store, ClassicSupplyReaderOptions{})
 	asset := mustClassic(t, "USDC", tIssuer)
 	_, err := r.ClassicSupplyAt(context.Background(), asset, LockedSet{}, 1)
 	if err == nil || !strings.Contains(err.Error(), "trustline") {
@@ -158,7 +158,7 @@ func TestStorageClassicSupplyReader_MinLedgerErrorWarnsAndStaysPermissive(t *tes
 	}
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	r := NewStorageClassicSupplyReader(store, logger)
+	r := NewStorageClassicSupplyReader(store, ClassicSupplyReaderOptions{Logger: logger})
 
 	asset := mustClassic(t, "USDC", tIssuer)
 	got, err := r.ClassicSupplyAt(context.Background(), asset, LockedSet{}, 100)
@@ -196,7 +196,7 @@ func TestStorageClassicSupplyReader_IssuerBalanceLookedUp(t *testing.T) {
 			tIssuer + ":" + assetKey: big.NewInt(123),
 		},
 	}
-	r := NewStorageClassicSupplyReader(store, nil)
+	r := NewStorageClassicSupplyReader(store, ClassicSupplyReaderOptions{})
 	asset := mustClassic(t, "USDC", tIssuer)
 	got, err := r.ClassicSupplyAt(context.Background(), asset, LockedSet{}, 1)
 	if err != nil {
@@ -225,7 +225,7 @@ func TestStorageClassicSupplyReader_LockedSetSummed(t *testing.T) {
 			"C_LOCKED_1:" + assetKey: big.NewInt(50),
 		},
 	}
-	r := NewStorageClassicSupplyReader(store, nil)
+	r := NewStorageClassicSupplyReader(store, ClassicSupplyReaderOptions{})
 	asset := mustClassic(t, "USDC", tIssuer)
 	locked := LockedSet{
 		Accounts:  []string{"G_LOCKED_1", "G_LOCKED_2"},
