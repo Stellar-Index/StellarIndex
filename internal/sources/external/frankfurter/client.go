@@ -27,7 +27,9 @@ package frankfurter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -140,7 +142,14 @@ func (c *Client) get(ctx context.Context, url string) ([]byte, error) {
 			buf = append(buf, tmp[:n]...)
 		}
 		if rerr != nil {
-			if strings.Contains(rerr.Error(), "EOF") {
+			// Only a CLEAN io.EOF ends the body normally. A mid-stream
+			// truncation surfaces as io.ErrUnexpectedEOF ("unexpected EOF"),
+			// whose string also contains "EOF" — the old substring match
+			// treated a dropped connection as a complete body and returned
+			// the partial buffer (W6-go-2). errors.Is(rerr, io.EOF) is false
+			// for io.ErrUnexpectedEOF, so a truncated response now propagates
+			// as an error instead of a silently-short JSON document.
+			if errors.Is(rerr, io.EOF) {
 				break
 			}
 			return nil, rerr
