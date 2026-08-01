@@ -131,6 +131,25 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-08-01 ~11:30Z — 🎬 **LOOP WRAP: the engineering queue is EMPTY.**
+  Closing state: **17/17 completeness** (evidence filed, publicly
+  served), supply 8/8, prove-it battery filed, routes 0×5xx, taker
+  100%, §2.6b all three passes complete (audit + visuals 10/10 +
+  cold-load architecture), v0.21.12 live (12 releases this week:
+  v0.21.1→12), alert board clean (heartbeat + rolling-off burn +
+  4 annotated 14-day silences with per-asset/source matchers).
+  Final polish landed: sink-shrink cycle test, hourly
+  tx_hash_index_parity assertion (live+green on r1, ansible-codified),
+  intra_ledger_seq backfill plan (post-launch), decompress-first
+  replay runbook. Background: prices_* cagg refresh finishing.
+  **Everything remaining is YOURS, Ash** (in priority order): (1) wire
+  paging (~20 min turnkey) → I run the SEV drill on your word; (2)
+  book the external security review; (3) the decisions list (§3/§4:
+  accepted-risk sign-off, off-site backup, HA posture, freeze-paging
+  sources=1, CoinGecko key, cred rotation + gate re-arm); (4)
+  announcement copy + first-24h watch. The loop stops here — restart
+  it anytime with /loop.
+
 - 2026-08-01 ~08:45Z — 🏆 **17/17. EVERY SOURCE COMPLETE — FIRST TIME
   EVER.** The aquarius full-range verify (75 min, quiet box) returned
   `complete=true` and the verdict table reads t across all seventeen
