@@ -242,7 +242,13 @@ groups:
             for why this class exists.
 
       - alert: stellarindex_config_assertions_stale
-        expr: time() - timestamp(stellarindex_config_assertion_ok) > 7200
+        # Detects the checker itself going silent by watching the textfile's
+        # mtime, NOT time()-timestamp(config_assertion_ok): a dead checker's
+        # stale .prom is still re-scraped every interval, so timestamp() (the
+        # SAMPLE's scrape time) stays ≈now and the old form never fired
+        # (W5-mon). node_textfile_mtime_seconds reflects the file's real mtime
+        # and stops advancing the moment the timer stops rewriting it.
+        expr: time() - node_textfile_mtime_seconds{file="config_assertions.prom"} > 7200
         for: 30m
         labels:
           severity: ticket

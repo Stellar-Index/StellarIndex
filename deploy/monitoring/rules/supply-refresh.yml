@@ -35,11 +35,16 @@ groups:
     rules:
 
       - alert: stellarindex_aggregator_supply_refresh_stalled
+        # Fires when NO successful (ok) tick has been recorded across any
+        # watched asset in the last 30m. Uses changes()==0 on the counter,
+        # NOT time()-timestamp(...): timestamp() returns the SAMPLE's scrape
+        # time (≈now while the series is still scraped), so the old
+        # time()-timestamp(...) form evaluated to ≈0 and never fired (W5-mon).
+        # Fleet-wide sum() (not per-asset): a single healthy asset means the
+        # goroutine is alive; per-asset failure is _error_dominant's job. The
+        # "never ticked at all" case (series absent) is _never_initialized's.
         expr: |
-          (
-            time()
-            - max(timestamp(stellarindex_aggregator_supply_refresh_total{outcome="ok"}))
-          ) > (30 * 60)
+          sum(changes(stellarindex_aggregator_supply_refresh_total{outcome="ok"}[30m])) == 0
         for: 5m
         labels:
           severity: page
@@ -47,7 +52,7 @@ groups:
           component: supply
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-refresh-stalled.md
-          summary: "supply refresher hasn't recorded a successful tick in {{ $value | humanizeDuration }} (cadence 5m, threshold 30m)"
+          summary: "supply refresher has recorded no successful tick across any watched asset in the last 30m (cadence 5m)"
           description: |
             The aggregator-resident supply refresher emits
             stellarindex_aggregator_supply_refresh_total{outcome="ok"}
