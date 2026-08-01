@@ -15,6 +15,12 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **Gap-detector genesis for cctp (62,146,641) and rozo (60,829,397)**
+  now mirrors the registry/catalogue — the stale 62,403,000 floor left
+  each source's true head range invisible to the supporting gap signal
+  (the authoritative ADR-0033 verdict was already corrected on 07-31).
+
 ## [v0.21.12] — 2026-08-01
 
 ### Fixed
