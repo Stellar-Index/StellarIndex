@@ -798,3 +798,144 @@ func TestFreezeLifecycle_ActiveGaugeTracksHeldFreezes(t *testing.T) {
 		t.Errorf("AnomalyFreezeActive = %v after release, want 0", got)
 	}
 }
+
+// bandQuoteAmount is a price 2.5% above the last-known-good (LKG):
+// $12,730.50 over 100,000 XLM → 0.127305. Its role in the W3-freeze-3
+// regression is to sit in the band where the two freeze phases DISAGREE:
+//
+//   - Phase 1 (per-class deviation, FreezePct 2% via newAnomalyChecker):
+//     2.5% > 2% → FIRES on a single source.
+//   - Phase 2 (per-asset baseline, MAD 0.02): z = 0.025 / 0.02 = 1.25 <
+//     the auto-unfreeze bound 3.0, confidence ~0.49 > 0.30 → HEALTHY.
+//
+// i.e. a residual wobble that is statistically normal for a 2%-MAD asset
+// but still trips Phase 1's cruder class threshold.
+const bandQuoteAmount = 127_305_000_000 // 0.127305, +2.5% vs the 0.1242 LKG
+
+// TestFreezeLifecycle_Phase1FreezeReleasesWhenAnomalyClears is the
+// W3-freeze-3 regression: a Phase 1 freeze must still RELEASE once the
+// pair returns to statistical health, and must not stay frozen forever.
+//
+// The stuck condition (pre-fix): Phase 1's class-deviation is measured
+// against prevVWAPs, the last-known-good comparator, which is held FIXED
+// for the whole hold (frozen buckets skip the prevVWAPs update). So once
+// the manipulation ends and the price settles at a residual level still
+// past the class FreezePct — here 2.5% over the LKG, which is normal
+// noise for a 2%-MAD asset — Phase 1 re-fires on EVERY bucket. A Phase 1
+// fire short-circuits refreshPairWindow before the Phase 2 confidence
+// step, and ADR-0019's auto-unfreeze streak is produced ONLY by that step
+// (Scored=true, healthy). So the streak can never leave 0, the ladder
+// extends to escalation, and the pair serves the LKG indefinitely — even
+// though it meets the auto-unfreeze condition (z < 3 AND confidence >
+// 0.30) on every one of those buckets.
+//
+// The fix lets Phase 2 drive the lifecycle once a freeze is active, so
+// the streak accumulates and the freeze releases within a bounded number
+// of ticks. Protection is preserved: a genuinely-anomalous bucket fires
+// Phase 2's own 3-signal AND, which resets the streak.
+func TestFreezeLifecycle_Phase1FreezeReleasesWhenAnomalyClears(t *testing.T) {
+	pair := xlmUSDPair(t)
+	rdb, mr := newTestRedis(t)
+	marker := &recordingFreezeMarker{}
+	store := &mockStore{}
+
+	o := New(store, rdb, Config{
+		Pairs:        []canonical.Pair{pair},
+		Windows:      []time.Duration{freezeTestWindow},
+		Interval:     time.Hour,
+		Anomaly:      newAnomalyChecker(t, pair), // native forced to stablecoin: FreezePct 2%
+		FreezeWriter: marker,
+		Baselines: stubBaselineSource{
+			multi: baseline.MultiBaseline{
+				// MAD 0.02 (2%): a 2.5% return scores z = 1.25, comfortably
+				// below the auto-unfreeze bound, so the band bucket is
+				// statistically healthy while Phase 1 still flags it.
+				Day30: &baseline.Baseline{Median: 0, MAD: 0.02, N: 60_000},
+			},
+		},
+	})
+
+	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	o.clock = func() time.Time { return now }
+	stateKey := pair.String() + ":" + freezeTestWindow.String()
+	vwapKey := cachekeys.VWAP(pair.Base, pair.Quote, freezeTestWindow).String()
+
+	// Seed the LKG comparator + the cached value the API serves.
+	o.prevVWAPs[stateKey] = big.NewRat(lkgQuoteAmount, lkgBaseAmount)
+	if err := rdb.Set(context.Background(), vwapKey, lkgFormatted, time.Minute).Err(); err != nil {
+		t.Fatalf("seed LKG: %v", err)
+	}
+
+	feed := func(quote int64) {
+		store.trades = []canonical.Trade{
+			makeXLMUSDTrade(t, "soroswap", lkgBaseAmount, quote, now.Add(-10*time.Second)),
+		}
+	}
+	tick := func(d time.Duration) {
+		now = now.Add(d)
+		if err := o.Tick(context.Background()); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+	}
+	served := func() string {
+		got, err := mr.Get(vwapKey)
+		if err != nil {
+			t.Fatalf("cached VWAP missing: %v", err)
+		}
+		return got
+	}
+
+	// Bucket 1: a manipulated single-source spike → Phase 1 freezes.
+	feed(manipQuoteAmount)
+	tick(30 * time.Second)
+	if !o.freezeStates[stateKey].Active() {
+		t.Fatal("setup: manipulated single-source bucket did not enter a Phase 1 freeze")
+	}
+	if got := served(); got != lkgFormatted {
+		t.Fatalf("setup: freeze published %q, want the LKG %q held", got, lkgFormatted)
+	}
+
+	// The anomaly clears to a residual 2.5% above the LKG — healthy by the
+	// per-asset baseline (z = 1.25 < 3, confidence > 0.30) but still past
+	// Phase 1's 2% class threshold, so Phase 1 keeps firing every bucket.
+	// Feed healthy-band buckets and require a RELEASE within a bounded
+	// number of ticks. Each tick advances well into the hold/extension
+	// ladder so two consecutive healthy buckets straddle the initial hold.
+	const maxTicks = 8
+	released := false
+	for i := 0; i < maxTicks; i++ {
+		feed(bandQuoteAmount)
+		tick(6 * time.Minute)
+		if !o.freezeStates[stateKey].Active() {
+			released = true
+			break
+		}
+	}
+	if !released {
+		t.Fatalf("W3-freeze-3: Phase 1 freeze never released after the anomaly cleared to a "+
+			"statistically-healthy residual — stuck frozen after %d ticks (state=%+v). Pre-fix, "+
+			"Phase 1's stale-comparator fire short-circuits the confidence step every bucket, so "+
+			"the ADR-0019 auto-unfreeze streak can never accumulate and the freeze extends to "+
+			"escalation instead of releasing.", maxTicks, o.freezeStates[stateKey])
+	}
+
+	// Released: the live band price is served again (NOT the frozen LKG),
+	// the marker is cleared, and the comparator advances off the LKG so the
+	// freeze self-heals (Phase 1 no longer fires against a stale baseline).
+	wantBand := formatRatFixed(big.NewRat(bandQuoteAmount, lkgBaseAmount), 12)
+	if got := served(); got != wantBand {
+		t.Errorf("after release served %q, want the freshly published live price %q "+
+			"(still serving %q would mean the freeze released but kept pinning the LKG)",
+			got, wantBand, lkgFormatted)
+	}
+	if got := served(); got == lkgFormatted {
+		t.Error("after release the pair is still serving the frozen last-known-good price")
+	}
+	if marker.present {
+		t.Error("freeze marker still present after release — flags.frozen would stay true")
+	}
+	if o.prevVWAPs[stateKey].Cmp(big.NewRat(lkgQuoteAmount, lkgBaseAmount)) == 0 {
+		t.Error("prev-VWAP comparator still pinned to the LKG after release — Phase 1 would " +
+			"immediately re-fire against the stale baseline and the freeze could not self-heal")
+	}
+}
