@@ -88,6 +88,7 @@ func TestStablecoinDepeg_DivergenceWorkerFires(t *testing.T) {
 	svc, rdb, _ := newTestService(t, refs, divergence.ServiceOptions{
 		Threshold:            2.5, // depeg-grade threshold (matches r1 prod)
 		MinSourcesForWarning: 2,
+		WarningPersistence:   -1, // isolate the depeg-detection math from the W3-guards-2 debounce
 	})
 
 	// Step 5 — pretend the aggregator just refreshed the pair.

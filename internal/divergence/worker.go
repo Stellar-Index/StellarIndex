@@ -62,6 +62,16 @@ type CachedResult struct {
 	// DivergencePct of ~0, so total disagreement read as agreement.
 	// See [Service.RefreshPair] for why the leg is "nobody agrees"
 	// rather than "somebody disagrees".
+	//
+	// W3-guards-2: the raw condition above must additionally have
+	// PERSISTED for at least ServiceOptions.WarningPersistence (default
+	// 5m) before this flips true. OurPrice is a shortest-window VWAP
+	// while the references are instantaneous spot quotes, so on a fast
+	// price move the VWAP legitimately lags the spot and the raw
+	// condition trips for up to one window even though nothing is wrong;
+	// that transient self-clears as the average rolls past the move. A
+	// genuine divergence persists past the window and still fires. See
+	// [Service.warningPersists].
 	WarningFired bool `json:"warning_fired"`
 
 	// Sources / Failures mirror Result, kept for operator
@@ -125,6 +135,17 @@ type ObservationSink interface {
 // divergence.ObservationRecord is unaffected.
 type ObservationRecord = domain.DivergenceObservationRecord
 
+// DefaultWarningPersistence is the debounce window applied to
+// WarningFired when [ServiceOptions.WarningPersistence] is unset. It is
+// one shortest-window VWAP horizon — the same 5m as the default VWAP
+// window ([orchestrator.DefaultWindows][0]), [cachekeys.DivergenceTTL],
+// and the default divergence-refresh interval. That is exactly the
+// horizon over which a fast-move gap between our windowed VWAP and a
+// reference spot self-clears, so a divergence that outlives it is real
+// rather than the artefact of the two values pricing different instants
+// (W3-guards-2).
+const DefaultWarningPersistence = 5 * time.Minute
+
 // ServiceOptions configures a [Service].
 type ServiceOptions struct {
 	// References is the list of external sources to compare against.
@@ -145,6 +166,25 @@ type ServiceOptions struct {
 	// references required before WarningFired can be true. Default
 	// 2 — a single dissenting source isn't enough to call divergence.
 	MinSourcesForWarning int
+
+	// WarningPersistence is the minimum wall-clock duration a raw
+	// divergence (DivergencePct > Threshold, or nobody agreeing) must
+	// hold — across at least two refreshes — before WarningFired is
+	// published true. It debounces the structural mismatch between our
+	// side (a shortest-window VWAP) and the references (instantaneous
+	// spot quotes): on a fast price move the VWAP lags the spot by up
+	// to one window, so a legitimate move momentarily reads as a
+	// divergence that self-clears within a window, while a genuine
+	// divergence persists past it (W3-guards-2). It is a debounce, not
+	// a threshold bump, so it suppresses ONLY transient gaps and never
+	// blinds a sustained one — however small.
+	//
+	// Zero (unset) defaults to [DefaultWarningPersistence] (5m). A
+	// NEGATIVE value disables the gate (immediate firing, the
+	// pre-debounce behaviour) for operators who accept the
+	// false-positive trade-off, and for unit tests isolating the
+	// threshold/agreement logic from the debounce.
+	WarningPersistence time.Duration
 
 	// PerReferenceTimeout is forwarded to [Compare] via
 	// [CompareOptions]. Default 5s.
@@ -192,12 +232,13 @@ type WarningHook func(ctx context.Context, pair canonical.Pair, cached CachedRes
 // underlying Cache and References must also be concurrent-safe
 // (they all are by contract).
 type Service struct {
-	refs       []Reference
-	cache      Cache
-	threshold  float64
-	minSources int
-	timeout    time.Duration
-	sink       ObservationSink
+	refs        []Reference
+	cache       Cache
+	threshold   float64
+	minSources  int
+	timeout     time.Duration
+	persistence time.Duration
+	sink        ObservationSink
 	// logger is optional — nil-safe. When set, sink failures are
 	// logged at WARN per (pair, reference) instead of being
 	// silently dropped. Pre-2026-05-10 the missing-log meant
@@ -211,9 +252,16 @@ type Service struct {
 	// hook (F-1249 codex audit-2026-05-12). `warningState` maps
 	// pair.String() → most-recent WarningFired bool; the hook fires
 	// only on `false → true` transitions.
+	//
+	// firingSince (W3-guards-2) maps pair.String() → the comparison
+	// time of the first refresh in the current uninterrupted
+	// raw-firing streak, and powers the WarningPersistence debounce in
+	// [Service.warningPersists]. It is cleared the moment a refresh
+	// finds the raw condition clear. warningMu guards BOTH maps.
 	onWarning    WarningHook
 	warningMu    sync.Mutex
 	warningState map[string]bool
+	firingSince  map[string]time.Time
 }
 
 // NewService constructs a divergence service. Returns an error when
@@ -234,16 +282,27 @@ func NewService(opts ServiceOptions) (*Service, error) {
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
+	// WarningPersistence: 0 (unset) → default debounce; a NEGATIVE
+	// value is the explicit "disable the gate" opt-out and is left
+	// intact for warningPersists to treat as off. Unlike the fields
+	// above, 0 here is a meaningful value (= fire immediately), so we
+	// deliberately map it to the safe default rather than clamp-to-off.
+	persistence := opts.WarningPersistence
+	if persistence == 0 {
+		persistence = DefaultWarningPersistence
+	}
 	return &Service{
 		refs:         opts.References,
 		cache:        opts.Cache,
 		threshold:    threshold,
 		minSources:   minSources,
 		timeout:      timeout,
+		persistence:  persistence,
 		sink:         opts.ObservationSink,
 		logger:       opts.Logger,
 		onWarning:    opts.OnWarningFired,
 		warningState: map[string]bool{},
+		firingSince:  map[string]time.Time{},
 	}, nil
 }
 
@@ -297,12 +356,28 @@ func (s *Service) RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice
 	// per CS-087 — with no responses, AgreementCount == 0 means
 	// "unchecked", not "unanimous disagreement".
 	checked := res.SuccessCount >= s.minSources
+	rawFiring := checked && (res.DivergencePct > s.threshold || agreeing == 0)
+
+	// W3-guards-2: our value is a shortest-window VWAP; the references
+	// are instantaneous spot quotes. On a fast price move the VWAP lags
+	// the spot for up to one window, so rawFiring trips on a legitimate
+	// move that self-clears within that window. Only publish the warning
+	// once the raw condition has PERSISTED beyond that horizon — a
+	// genuine divergence does, a fast-move artefact does not. The
+	// comparison time (the instant each reference priced) is the clock;
+	// fall back to wall time when the caller supplies none.
+	gateAt := observedAt
+	if gateAt.IsZero() {
+		gateAt = time.Now().UTC()
+	}
+	warningFired := s.warningPersists(pair.String(), rawFiring, gateAt)
+
 	cached := CachedResult{
 		PairID:         pair.String(),
 		OurPrice:       ourPrice,
 		Median:         res.Median,
 		DivergencePct:  res.DivergencePct,
-		WarningFired:   checked && (res.DivergencePct > s.threshold || agreeing == 0),
+		WarningFired:   warningFired,
 		Sources:        res.Sources,
 		Failures:       res.Failures,
 		SuccessCount:   res.SuccessCount,
@@ -386,6 +461,39 @@ func (s *Service) RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice
 		return ErrNoReferenceResponded
 	}
 	return nil
+}
+
+// warningPersists is the W3-guards-2 debounce that separates a genuine
+// sustained divergence from the transient artefact of comparing our
+// shortest-window VWAP against an instantaneous reference spot. A raw
+// firing only becomes a published WarningFired once it has held for at
+// least s.persistence, measured on the comparison clock (`at`), across
+// at least two refreshes.
+//
+// It is time-based rather than tick-count based so the suppression is
+// robust to the aggregator's refresh cadence. A refresh that finds the
+// raw condition CLEAR resets the streak, so each fresh onset starts its
+// own persistence clock (and a real divergence that briefly dips below
+// threshold restarts, which is the conservative choice). Returns
+// rawFiring unchanged when the gate is disabled (s.persistence <= 0).
+func (s *Service) warningPersists(pairKey string, rawFiring bool, at time.Time) bool {
+	if s.persistence <= 0 {
+		return rawFiring
+	}
+	s.warningMu.Lock()
+	defer s.warningMu.Unlock()
+	if !rawFiring {
+		delete(s.firingSince, pairKey)
+		return false
+	}
+	since, ok := s.firingSince[pairKey]
+	if !ok || at.Before(since) {
+		// First firing of a new streak (or a non-monotonic comparison
+		// clock): start the persistence clock here and hold the warning.
+		s.firingSince[pairKey] = at
+		return false
+	}
+	return at.Sub(since) >= s.persistence
 }
 
 // flushObservations persists one durable row per (pair, reference)
