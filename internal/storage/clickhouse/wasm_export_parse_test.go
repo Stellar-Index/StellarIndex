@@ -93,3 +93,36 @@ func keys(m map[string]bool) []string {
 	}
 	return out
 }
+
+// uleb encodes v as unsigned LEB128 (test helper for hand-built modules).
+func uleb(v uint64) []byte {
+	var out []byte
+	for {
+		b := byte(v & 0x7f)
+		v >>= 7
+		if v != 0 {
+			b |= 0x80
+		}
+		out = append(out, b)
+		if v == 0 {
+			return out
+		}
+	}
+}
+
+// TestParseWasmExports_HugeCountDoesNotOOM is the regression proof for
+// W6-go-1: a section declaring a preposterous entry count in a tiny body must
+// fail cleanly (the read loop runs out of input) rather than attempt a
+// multi-GB prealloc from the attacker-influenced LEB128 count. safeCap bounds
+// make() by the reader's remaining bytes; reaching the assertion at all (no
+// OOM/panic on the prealloc) is itself the proof.
+func TestParseWasmExports_HugeCountDoesNotOOM(t *testing.T) {
+	body := uleb(1 << 33) // ~8.6e9 declared type-section entries, no entry bytes
+	section := append([]byte{secType}, uleb(uint64(len(body)))...)
+	section = append(section, body...)
+	module := append([]byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00}, section...)
+
+	if _, err := parseWasmExports(module); err == nil {
+		t.Fatal("expected a truncation error on an oversized declared count, got nil")
+	}
+}
