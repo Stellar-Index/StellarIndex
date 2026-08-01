@@ -83,4 +83,33 @@ Closing every gap vs the full formal audit-suite process:
   tx_index/pool-state), web dashboard/detail/embed, ansible haproxy/patroni/loki/redis-sentinel/
   prometheus, ci-lint internals, opsutil, streaming/redispub, factory-seed genesis-walk.
 - PRIOR AUDITS: re-derive prior HIGH/critical "fixed" findings vs current code.
-[WAVE-6 in flight]
+
+WAVE-6 DONE (10 finders + 4 skeptics). Full detail in wave-6-findings.md. Dispositions:
+- DEP (deps/supply-chain): cdp-pipeline non-inheritance / stellar-go-archived / mutable-tag / govulncheck
+  all CLEAN; 1 LOW (pnpm-audit fail-open → theme A) + 2 INFO.
+- DOM (protocol-truth): CAP-67/SDEX/SEP-40/i128-two's-complement/strkey/stablecoin-proxy/supply-formulas
+  all SOUND vs spec; 1 HIGH-cand (VWAP scale-mix) → skeptic REFUTED (disjoint namespaces); 1 INFO.
+- PERF+CON (systematic): orchestrator single-runner / freeze cross-proc / hub / ratelimit / SWR caches /
+  N+1 / non-sargable all SOUND; 1 MED (assetDetailResponseCache unbounded) + 1 LOW (fan-out 16/25).
+- PRV+ACC+I18N: 2 MED privacy (indefinite PII retention, no GDPR delete path) + 1 MED ACC (WCAG contrast
+  254×) + LOW (Sparkline role, i18n en-US, staff-email); ACC not absent (real a11y consideration).
+- TST (test-quality): money/gating/completeness coverage strong (6/6 gating-reject tests, supply-drift
+  fires, usd_volume asserts real value); 2 MED (runVerifyChunks no-CI, i128-guard no positive-control)
+  + 2 LOW (sdex one-leg-zero, webhook-SSRF-rebind untested).
+- MECHANICAL SWEEPS (10 named): authz/secret/injection/type-assert/timeout/unbounded/money-float all
+  CLEAN whole-tree; 1 LOW (promised-absent WARN) + goroutine-recover-inconsistency note.
+- RESIDUAL GO+ANSIBLE: forged-creation gating BYPASS DOES NOT EXIST (triple double-gate); i128 SOUND all
+  residual readers; patroni/haproxy/redis-sentinel SOUND; 1 INFO (WASM prealloc, MED-if-reachable) + 1 LOW.
+- RESIDUAL WEB: embed money widgets SOUND (BigInt-first, absent→"—"); 2 LOW (oracle chip contrast,
+  entries_24h deploy-skew render-throw).
+- PRIOR-AUDIT re-derivation: ALL 16 money/data/security keystones HELD; 1 second-source MED (M-B TWAP) +
+  ch-rebuild-dirty-window (=F-2) confirmed; open deferred items (C2-11 >4-topic, operator sequencing) → inbox.
+- FRESH-EYES decomposition + convergence-skeptic: 110 routes/59 CLI/7 CF-Functions/8 crons extracted; 7
+  cross-boundary blind spots surfaced (CF-Functions tier, Redis SSE bridge, price-bypass, const↔timer);
+  candidates went to skeptics — 2 HIGH-cand REFUTED/DOWNGRADED. Negative-space: no global price kill-switch,
+  no const↔timer lint.
+- SKEPTICS (4): W6-dom-1 REFUTED, W6-fresh-1 DOWNGRADED HIGH→LOW/MED (empty-baseline fail-open residual),
+  W6-derive-2 REFUTED (coverage-wrapper fail-closed), W6-fresh-3 REFUTED (six-condition predicate).
+
+═══ WAVE-6 COMPLETE. ZERO new CONFIRMED HIGH. +8 MED, +~14 LOW/INFO, 4 refuted/downgraded. ═══
+Running audit total: 2 CONFIRMED HIGH (unchanged), ~34 CONFIRMED MED, ~44 LOW/INFO, 11 refuted/downgraded.
