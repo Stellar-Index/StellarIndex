@@ -233,17 +233,22 @@ jobs:
         # a single PR could edit e.g. lint-migrations.sh to stop
         # flagging a BIGINT money column, add exactly that column in
         # the same diff, and be judged by its own weakened copy.
-        # lint-migrations.sh (money-column DDL scan) and
-        # lint-baseline-growth.sh (the anti-self-bypass tripwire for
-        # every OTHER baseline/allowlist — the one gate whose own
-        # sabotage would be hardest to notice) get the un-modified
-        # base-ref version restored over the PR-head one before they
-        # run; every step still evaluates PR-head CONTENT (the
-        # migrations/ tree, the git history lint-baseline-growth diffs)
-        # — only the checker's own source is pinned to the base.
+        # lint-migrations.sh (money-column DDL scan), lint-i128.sh (the
+        # Go-side i128-truncation grep — same self-weakening risk: a PR
+        # could broaden the pattern to stop matching int64(x.Lo) and add
+        # exactly that truncation in one diff) and lint-baseline-growth.sh
+        # (the anti-self-bypass tripwire for every OTHER baseline/
+        # allowlist — the one gate whose own sabotage would be hardest to
+        # notice) get the un-modified base-ref version restored over the
+        # PR-head one before they run; every step still evaluates PR-head
+        # CONTENT (the migrations/ tree, the internal/ + cmd/ + pkg/ Go
+        # source lint-i128 scans, the git history lint-baseline-growth
+        # diffs) — only the checker's own source is pinned to the base.
         #
-        # Deliberately scoped to these two (medium-severity CID-03
-        # scope) rather than every scripts/ci/*.sh: a blanket policy
+        # These three guard the #1 money + i128 ADR-0003 invariants (and
+        # the baseline-tripwire that guards everyone else); deliberately
+        # scoped to them (medium-severity CID-03 scope) rather than every
+        # scripts/ci/*.sh: a blanket policy
         # would also block a PR from ever exercising ITS OWN fix to
         # any other gate script in the same PR that adds the case it
         # fixes — a real workflow cost this repo does not currently
@@ -267,7 +272,7 @@ jobs:
             echo "::warning::BASE_SHA ${BASE_SHA} not in local history — running PR-head gate scripts (fetch-depth too shallow?)."
             exit 0
           fi
-          for f in scripts/ci/lint-migrations.sh scripts/ci/lint-baseline-growth.sh; do
+          for f in scripts/ci/lint-migrations.sh scripts/ci/lint-i128.sh scripts/ci/lint-baseline-growth.sh; do
             if git show "${BASE_SHA}:${f}" > "${f}.trusted" 2>/dev/null; then
               mv "${f}.trusted" "$f"
               chmod +x "$f"
