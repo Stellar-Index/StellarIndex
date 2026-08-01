@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.21.11] — 2026-08-01
+
 ### Fixed
 - **Aquarius zero-amount trades are recognized no-ops, not decode errors**
   (`internal/sources/aquarius/decode.go` + `dispatcher_adapter.go`). The
