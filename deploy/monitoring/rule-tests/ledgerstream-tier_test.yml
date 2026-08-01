@@ -1,0 +1,100 @@
+---
+# promtool unit tests for the ledgerstream cold-tiering alert family
+# (ADR-0027). Run via:
+#
+#   promtool test rules deploy/monitoring/rule-tests/ledgerstream-tier_test.yml
+#
+# These are the POSITIVE CONTROL the dead-alert class (W5-mon-3) lacked:
+# `stellarindex_ledgerstream_tier_both_missing` was structurally unable to
+# fire in production because its backing metric
+# (stellarindex_ledgerstream_tier_read_total) was a per-TieredDataStore
+# CounterVec that only registered when a Prometheus registry was passed —
+# and pipeline.LedgerstreamConfig deliberately passes nil. The metric is
+# now obs package-level (registered unconditionally), so the page is live.
+# The tests below pin BOTH directions: it FIRES on a real both_missing
+# increase, and stays SILENT when the series is flat-zero or when only the
+# hot/cold outcomes move (proving the {outcome="both_missing"} selector is
+# load-bearing, not decorative).
+#
+# Deliberately lives OUTSIDE deploy/monitoring/rules/ — everything in that
+# directory is globbed by `promtool check rules`, lint-rule-structure.py and
+# lint-metric-refs.sh, all of which require a top-level `groups:` key that a
+# unit-test file does not have.
+
+rule_files:
+  - ../rules/ledgerstream-tier.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Positive control ─────────────────────────────────────────────
+  # A TieredDataStore that keeps missing BOTH tiers: the counter climbs
+  # by one every minute, so increase([5m]) stays > 0 continuously and the
+  # `for: 5m` page fires. Pre-W5-mon-3 the series simply did not exist in
+  # production, so this alert produced zero samples and could never fire.
+  - interval: 1m
+    name: both_missing page fires on a sustained both-tiers-missing increase
+    input_series:
+      - series: 'stellarindex_ledgerstream_tier_read_total{outcome="both_missing"}'
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_ledgerstream_tier_both_missing
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: ledgerstream
+              outcome: both_missing
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ledgerstream-tier-both-missing.md
+              summary: "LCM read missed BOTH tiers in the last 5 min — indexer cannot progress"
+              description: |
+                The TieredDataStore tried to read at least one
+                LedgerCloseMeta object that returned "not found" from
+                BOTH the local galexie-archive (hot) AND the
+                aws-public-blockchain bucket (cold). The indexer or
+                backfill consumer that hit this is now stalled.
+
+                Most likely causes (runbook walks them):
+                  1. The hot range has been trimmed and the
+                     corresponding cold object is missing or
+                     inaccessible — AWS Open Data partition is in a
+                     transient miss state, or the partition naming
+                     drifted, or the AWS sponsorship has lapsed.
+                  2. A local trim ran too aggressively (the live
+                     cursor moved backwards onto a trimmed range).
+                  3. The MinIO endpoint, the AWS endpoint, or both,
+                     are mis-configured for this binary.
+
+  # ── Negative control: flat zero ──────────────────────────────────
+  # The seeded zero series (obs.seedBoundedLabelSeries) present but never
+  # incrementing — the steady state when tiering is enabled but no ledger
+  # is actually missing from both tiers. increase([5m]) == 0, so silent.
+  - interval: 1m
+    name: both_missing page stays silent while the counter is flat zero
+    input_series:
+      - series: 'stellarindex_ledgerstream_tier_read_total{outcome="both_missing"}'
+        values: '0+0x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_ledgerstream_tier_both_missing
+        exp_alerts: []
+
+  # ── Negative control: only hot/cold move ─────────────────────────
+  # Healthy tiering — every read is served by hot or cold, none by
+  # both_missing. Proves the {outcome="both_missing"} selector is
+  # load-bearing: a rule that dropped it would fire on ordinary traffic.
+  - interval: 1m
+    name: both_missing page stays silent when only hot/cold outcomes increase
+    input_series:
+      - series: 'stellarindex_ledgerstream_tier_read_total{outcome="hot"}'
+        values: '0+50x20'
+      - series: 'stellarindex_ledgerstream_tier_read_total{outcome="cold"}'
+        values: '0+7x20'
+      - series: 'stellarindex_ledgerstream_tier_read_total{outcome="both_missing"}'
+        values: '0+0x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_ledgerstream_tier_both_missing
+        exp_alerts: []

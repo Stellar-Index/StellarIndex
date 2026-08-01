@@ -8,8 +8,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stellar/go-stellar-sdk/support/datastore"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // TieredDataStore wraps a hot + cold [datastore.DataStore] in a
@@ -29,12 +30,21 @@ import (
 // as the operator's actual problem rather than being masked by
 // a slow cold fallback that succeeds for every read.
 //
-// Metrics (registered when Registry is non-nil):
+// Metrics (always emitted — package-level, registered once at boot):
 //
 //   - stellarindex_ledgerstream_tier_read_total
-//     {outcome="hot"|"cold"|"both_missing"}
+//     {outcome="hot"|"cold"|"both_missing"} (obs.LedgerstreamTierReadTotal)
 //   - stellarindex_ledgerstream_cold_read_duration_seconds
-//     {outcome="ok"|"miss"|"error"}
+//     {outcome="ok"|"miss"|"error"} (obs.LedgerstreamColdReadDurationSeconds)
+//
+// These are obs package-level metrics registered unconditionally at
+// process boot — NOT gated on a per-instance registry (W5-mon-3). The
+// production ledgerstream.Config leaves Registry nil (the SDK's
+// BufferedStorageBackend registration panics across the
+// archive→live→catch-up Stream calls), so a per-instance metric here
+// was nil in production and the `both_missing` page could never fire.
+// Sourcing them from obs decouples this observability from the SDK's
+// registry constraint.
 //
 // Operators chart `cold` rate as a proxy for "is the trim window
 // correctly sized, or am I paying cross-Atlantic latency for
@@ -43,58 +53,18 @@ import (
 type TieredDataStore struct {
 	hot  datastore.DataStore
 	cold datastore.DataStore
-
-	readTotal       *prometheus.CounterVec
-	coldDurationSec *prometheus.HistogramVec
 }
 
 // NewTieredDataStore builds a TieredDataStore wrapping hot + cold.
-// registry is optional — pass nil for no metrics; pass the same
-// registry used by [Stream] in production.
 //
-// Guards against the classic Go typed-nil-interface footgun: every
-// caller in this codebase stores its registry as a concrete
-// `*prometheus.Registry` (see Config.Registry) — passing a nil
-// *prometheus.Registry through this prometheus.Registerer-typed
-// parameter produces a non-nil INTERFACE value wrapping a nil
-// pointer, so a plain `registry != nil` check is always true and
-// MustRegister panics on the nil receiver. Discovered incidentally
-// while adding [streamTiered]'s cold-schema-parity check (INT-01,
-// audit-2026-07-23), whose regression test is the first path to
-// reach here with tiering enabled, both tiers healthy, and no
-// registry configured.
-func NewTieredDataStore(hot, cold datastore.DataStore, registry prometheus.Registerer) *TieredDataStore {
-	t := &TieredDataStore{hot: hot, cold: cold}
-	if r, ok := registry.(*prometheus.Registry); ok && r == nil {
-		registry = nil
-	}
-	if registry != nil {
-		t.readTotal = prometheus.NewCounterVec(
-			prometheus.CounterOpts{
-				Namespace: "stellarindex",
-				Subsystem: "ledgerstream",
-				Name:      "tier_read_total",
-				Help:      "Tiered datastore reads partitioned by which tier served the request. hot=local MinIO; cold=AWS public bucket fallback; both_missing=neither tier has the object.",
-			},
-			[]string{"outcome"},
-		)
-		t.coldDurationSec = prometheus.NewHistogramVec(
-			prometheus.HistogramOpts{
-				Namespace: "stellarindex",
-				Subsystem: "ledgerstream",
-				Name:      "cold_read_duration_seconds",
-				Help:      "Latency of cold-tier (AWS public bucket) reads. Includes hot miss → cold attempt; does not include hot-tier reads.",
-				// Wider buckets than the default — cold reads are
-				// cross-Atlantic + spread across whole-partition
-				// fetches. Range covers 5ms (cache-warm CDN hit) to
-				// 30s (transient AWS slowdown).
-				Buckets: []float64{0.005, 0.025, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
-			},
-			[]string{"outcome"},
-		)
-		registry.MustRegister(t.readTotal, t.coldDurationSec)
-	}
-	return t
+// Metrics are the obs package-level [obs.LedgerstreamTierReadTotal] /
+// [obs.LedgerstreamColdReadDurationSeconds], registered once at process
+// boot — so there is no per-instance registry to wire and no typed-nil
+// footgun (W5-mon-3). Repeated construction across the
+// archive→live→catch-up Stream calls is safe precisely because the
+// metrics are NOT re-registered here.
+func NewTieredDataStore(hot, cold datastore.DataStore) *TieredDataStore {
+	return &TieredDataStore{hot: hot, cold: cold}
 }
 
 // IsNotFound returns true when err is a missing-key error from any
@@ -267,21 +237,15 @@ func (t *TieredDataStore) Close() error {
 }
 
 func (t *TieredDataStore) observeHot() {
-	if t.readTotal != nil {
-		t.readTotal.WithLabelValues("hot").Inc()
-	}
+	obs.LedgerstreamTierReadTotal.WithLabelValues("hot").Inc()
 }
 
 func (t *TieredDataStore) bumpTotal(outcome string) {
-	if t.readTotal != nil {
-		t.readTotal.WithLabelValues(outcome).Inc()
-	}
+	obs.LedgerstreamTierReadTotal.WithLabelValues(outcome).Inc()
 }
 
 func (t *TieredDataStore) observeCold(outcome string, seconds float64) {
-	if t.coldDurationSec != nil {
-		t.coldDurationSec.WithLabelValues(outcome).Observe(seconds)
-	}
+	obs.LedgerstreamColdReadDurationSeconds.WithLabelValues(outcome).Observe(seconds)
 }
 
 // Compile-time assertion that TieredDataStore satisfies the SDK

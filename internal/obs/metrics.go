@@ -201,6 +201,9 @@ func registerAppMetricsTail() {
 		HashdbVerifyRunDurationSeconds,
 		HashdbDriftTotal,
 
+		LedgerstreamTierReadTotal,
+		LedgerstreamColdReadDurationSeconds,
+
 		DEXTVLRefreshTotal,
 		DEXTVLRefreshDurationSeconds,
 		SDEXOrderBookMaintainTotal,
@@ -301,6 +304,7 @@ func seedBoundedLabelSeries() {
 		HashdbVerifyRunsTotal.WithLabelValues(outcome)
 	}
 	HashdbVerifyRunsTotal.WithLabelValues("drift")
+	seedLedgerstreamTierSeries()
 	// ADR-0019 freeze-lifecycle release modes. Bounded set of two;
 	// `operator` in particular is the one an on-call reads as "the
 	// calibration is producing freezes humans keep undoing", and until
@@ -385,6 +389,20 @@ func seedBoundedLabelSeriesTail() {
 		for _, outcome := range []string{"ok", "error"} {
 			ExplorerSWRRefreshTotal.WithLabelValues(cache, outcome)
 		}
+	}
+}
+
+// seedLedgerstreamTierSeries pre-registers the ADR-0027 tiered-read
+// outcomes so the ledgerstream-tier `both_missing` page's
+// `increase(...) > 0` query reads a real zero (not "no data") before the
+// first cold read. Without this the both_missing series is absent until
+// the cold path first runs, which is precisely the "looks dead vs is
+// dead" ambiguity W5-mon-3 closed by making this metric always-registered.
+// Peeled into its own helper for the same gocognit ceiling that split
+// seedBoundedLabelSeries.
+func seedLedgerstreamTierSeries() {
+	for _, outcome := range []string{"hot", "cold", "both_missing"} {
+		LedgerstreamTierReadTotal.WithLabelValues(outcome)
 	}
 }
 
@@ -1036,27 +1054,74 @@ var DiscoveryRecordFailuresTotal = prometheus.NewCounter(
 
 // MetricsRegistryPresent — boot-time gauge (0/1) recording whether a
 // component that CAN run without a Prometheus Registry actually got one
-// wired (audit-2026-07-16 C4-4). The concrete case: ledgerstream's
-// buffer + TieredDataStore metrics (incl. stellarindex_ledgerstream_
-// tier_read_total, which deploy/monitoring/rules/ledgerstream-tier.yml
-// alerts on) only register when Config.Registry != nil. The production
-// builder (pipeline.LedgerstreamConfig) leaves it nil ON PURPOSE — the
+// wired (audit-2026-07-16 C4-4). The concrete case: ledgerstream's SDK
+// BufferedStorageBackend buffer metrics (buffer_fetch_latency_seconds
+// etc., registered via the SDK's WithMetrics / ApplyLedgerMetadata) only
+// register when Config.Registry != nil. The production builder
+// (pipeline.LedgerstreamConfig) leaves it nil ON PURPOSE — the
 // archive→live→catch-up path calls Stream repeatedly and the SDK's
-// WithMetrics / ApplyLedgerMetadata would panic on the second identical
-// registration — so those metrics are dead in production and the
-// dependent alert can NEVER fire. This gauge makes that silent state
-// observable: the indexer sets {component="ledgerstream"} to 1 when the
-// config carries a Registry, 0 when it doesn't, so an operator (and the
-// metrics-registry.yml alert) can see the dead-alert condition instead
-// of it lurking unnoticed. Only set on binaries that actually build the
-// affected config; absent series = "component not used here", not an
-// alert.
+// registration is not idempotent, so a second identical registration
+// panics — hence those SDK buffer metrics are absent in production. This
+// gauge makes that state observable: the indexer sets
+// {component="ledgerstream"} to 1 when the config carries a Registry, 0
+// when it doesn't. Only set on binaries that actually build the affected
+// config; absent series = "component not used here", not an alert.
+//
+// NOTE: the TieredDataStore's own tier_read_total +
+// cold_read_duration_seconds metrics are NO LONGER gated on this. They
+// are the package-level [LedgerstreamTierReadTotal] /
+// [LedgerstreamColdReadDurationSeconds] below, registered unconditionally
+// at boot, so the ledgerstream-tier `both_missing` page is live in
+// production regardless of this gauge's value (W5-mon-3 fix). This gauge
+// now tracks only the SDK buffer-metric coverage, which stays nil-gated.
 var MetricsRegistryPresent = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_metrics_registry_present",
-		Help: "1 if the named component was wired with a Prometheus Registry (its metrics + dependent alerts are live), 0 if it is running Registry-less (those metrics/alerts are DEAD). Set per component at boot.",
+		Help: "1 if the named component was wired with a Prometheus Registry (its SDK buffer metrics are live), 0 if it is running Registry-less (those SDK buffer metrics are absent). Set per component at boot.",
 	},
 	[]string{"component"},
+)
+
+// LedgerstreamTierReadTotal — tiered-datastore reads partitioned by which
+// tier served the request (ADR-0027). `outcome` is one of:
+//
+//	hot          — served from the local galexie-archive MinIO (hot tier).
+//	cold         — hot missed; served from the AWS public bucket (cold tier).
+//	both_missing — neither tier has the object; the reader is stalled.
+//
+// A sustained `both_missing` increase is a data-integrity page
+// (deploy/monitoring/rules/ledgerstream-tier.yml). This is a PACKAGE-LEVEL
+// metric registered unconditionally at boot — NOT gated on
+// ledgerstream.Config.Registry — because the production builder leaves
+// that registry nil (the SDK's non-idempotent registration panics across
+// the archive→live→catch-up Stream calls). Emitted by
+// internal/ledgerstream/tiered.go's TieredDataStore. Before W5-mon-3 this
+// lived as a per-TieredDataStore CounterVec that only registered when a
+// registry was passed, so it was nil in production and the `both_missing`
+// page could never fire.
+var LedgerstreamTierReadTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_ledgerstream_tier_read_total",
+		Help: "Tiered datastore reads partitioned by which tier served the request. hot=local MinIO; cold=AWS public bucket fallback; both_missing=neither tier has the object.",
+	},
+	[]string{"outcome"},
+)
+
+// LedgerstreamColdReadDurationSeconds — latency of cold-tier (AWS public
+// bucket) reads. `outcome` is `ok` (cold hit) / `miss` (cold not-found,
+// i.e. a both_missing read) / `error` (cold transient failure). The
+// paired-histogram sibling of [LedgerstreamTierReadTotal]; same
+// package-level, always-registered rationale (W5-mon-3).
+var LedgerstreamColdReadDurationSeconds = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name: "stellarindex_ledgerstream_cold_read_duration_seconds",
+		Help: "Latency of cold-tier (AWS public bucket) reads. Includes hot miss → cold attempt; does not include hot-tier reads.",
+		// Wider buckets than the default — cold reads are cross-Atlantic +
+		// spread across whole-partition fetches. Range covers 5ms
+		// (cache-warm CDN hit) to 30s (transient AWS slowdown).
+		Buckets: []float64{0.005, 0.025, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+	},
+	[]string{"outcome"},
 )
 
 // Sep1CacheOpsTotal — per-outcome counter for SEP-1 cache

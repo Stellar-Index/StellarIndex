@@ -543,27 +543,33 @@ func run(cfgPath string, dryRun bool) error {
 	archiveCfg := pipeline.LedgerstreamConfig(cfg, cfg.Storage.S3BucketArchive)
 	liveCfg := pipeline.LedgerstreamConfig(cfg, cfg.Storage.S3BucketLive)
 
-	// Detectability (audit-2026-07-16 C4-4): ledgerstream's buffer +
-	// TieredDataStore metrics — including
-	// stellarindex_ledgerstream_tier_read_total, which
-	// deploy/monitoring/rules/ledgerstream-tier.yml alerts on — only
-	// register when Config.Registry != nil. LedgerstreamConfig leaves it
-	// nil ON PURPOSE (the archive→live→catch-up path calls Stream
-	// repeatedly and the SDK's WithMetrics/ApplyLedgerMetadata panics on a
-	// second identical registration), so in production those metrics are
-	// DEAD and the dependent alert can never fire. Export a 0/1 gauge so
-	// that state is observable + alertable (metrics-registry.yml) instead
-	// of silently dead, and log it once at boot. If a future change wires a
-	// Registry safely (idempotent registration), this flips to 1 with no
-	// other edit.
+	// Detectability (audit-2026-07-16 C4-4): ledgerstream's SDK
+	// BufferedStorageBackend buffer metrics (buffer_fetch_latency_seconds
+	// etc., via the SDK's WithMetrics/ApplyLedgerMetadata) only register
+	// when Config.Registry != nil. LedgerstreamConfig leaves it nil ON
+	// PURPOSE (the archive→live→catch-up path calls Stream repeatedly and
+	// the SDK's registration is not idempotent — a second identical
+	// registration panics), so in production those SDK buffer metrics are
+	// absent. Export a 0/1 gauge so that state is observable + alertable
+	// (metrics-registry.yml) instead of silently absent, and log it once at
+	// boot. If a future change wires a Registry safely (idempotent
+	// registration), this flips to 1 with no other edit.
+	//
+	// NOTE (W5-mon-3): the TieredDataStore's OWN tier_read_total +
+	// cold_read_duration_seconds metrics are NO LONGER gated on this. They
+	// are obs package-level metrics (obs.LedgerstreamTierReadTotal /
+	// obs.LedgerstreamColdReadDurationSeconds) registered unconditionally at
+	// boot, so the ledgerstream-tier `both_missing` page is LIVE regardless
+	// of this gauge's value. This gauge now tracks ONLY the SDK
+	// buffer-metric coverage.
 	if liveCfg.Registry != nil {
 		obs.MetricsRegistryPresent.WithLabelValues("ledgerstream").Set(1)
 	} else {
 		obs.MetricsRegistryPresent.WithLabelValues("ledgerstream").Set(0)
 		logger.Warn("ledgerstream running WITHOUT a Prometheus Registry — "+
-			"its buffer + tier-read metrics are not registered, so "+
-			"stellarindex_ledgerstream_tier_read_total and its both_missing "+
-			"alert are DEAD (see audit C4-4)",
+			"its SDK BufferedStorageBackend buffer metrics are not registered "+
+			"(the tier_read_total / both_missing page is unaffected: that metric "+
+			"is obs package-level and always live — see audit C4-4 / W5-mon-3)",
 			"component", "ledgerstream",
 			"metric", "stellarindex_metrics_registry_present",
 		)

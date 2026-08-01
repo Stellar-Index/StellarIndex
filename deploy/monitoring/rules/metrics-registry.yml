@@ -2,15 +2,20 @@
 # Metrics-registry-present alerts (audit-2026-07-16 C4-4).
 #
 # Some components CAN run without a Prometheus Registry, in which case
-# their metrics — and every alert built on those metrics — silently go
-# DEAD (the source series is never registered, so the alert can never
-# fire). The concrete case that motivated this: ledgerstream's buffer +
-# TieredDataStore metrics register only when Config.Registry != nil, but
-# the production builder (pipeline.LedgerstreamConfig) deliberately
-# leaves it nil to avoid the SDK's re-registration panic across the
-# archive→live→catch-up Stream calls. Result: stellarindex_ledgerstream_
-# tier_read_total is not exported, so deploy/monitoring/rules/
-# ledgerstream-tier.yml's `both_missing` page can NEVER fire.
+# the SDK-side metrics they would register go absent (the source series
+# is never registered). The concrete case that motivated this:
+# ledgerstream's SDK BufferedStorageBackend buffer metrics register only
+# when Config.Registry != nil, but the production builder
+# (pipeline.LedgerstreamConfig) deliberately leaves it nil to avoid the
+# SDK's non-idempotent re-registration panic across the
+# archive→live→catch-up Stream calls. Result: those SDK buffer metrics
+# (buffer_fetch_latency_seconds etc.) are not exported in production.
+#
+# NOTE (W5-mon-3): the TieredDataStore's OWN tier_read_total /
+# cold_read_duration_seconds metrics are NO LONGER gated on this — they
+# moved to obs package-level (always registered), so the ledgerstream-
+# tier `both_missing` page is live regardless of this gauge. This alert
+# now flags only the SDK buffer-metric coverage gap.
 #
 # internal/obs/metrics.go exports stellarindex_metrics_registry_present
 # {component} — set to 1 at boot when the component got a Registry, 0
@@ -43,13 +48,16 @@ groups:
             any alert built on them can NEVER fire (a silent monitoring-
             coverage hole, not an active outage).
 
-            For component="ledgerstream" this means
-            stellarindex_ledgerstream_tier_read_total is dead, so the
-            ledgerstream-tier `both_missing` page is inert. This is the
-            known nil-Registry state (LedgerstreamConfig leaves Registry nil
-            to dodge the SDK's re-registration panic). Remediation is a code
-            fix — make the ledgerstream metric registration idempotent, then
-            wire obs.Registry through LedgerstreamConfig — after which this
-            gauge flips to 1 and the alert clears.
+            For component="ledgerstream" this means the SDK
+            BufferedStorageBackend buffer metrics
+            (buffer_fetch_latency_seconds etc.) are not exported. This is
+            the known nil-Registry state (LedgerstreamConfig leaves Registry
+            nil to dodge the SDK's re-registration panic). NOTE (W5-mon-3):
+            the ledgerstream-tier `both_missing` page is NOT affected —
+            stellarindex_ledgerstream_tier_read_total is obs package-level
+            and always live. Remediation for the buffer metrics is a code
+            fix — make the SDK registration idempotent, then wire
+            obs.Registry through LedgerstreamConfig — after which this gauge
+            flips to 1 and the alert clears.
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/metrics-registry-absent.md

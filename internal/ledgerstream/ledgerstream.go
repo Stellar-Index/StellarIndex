@@ -482,7 +482,7 @@ func streamTiered(
 			hotSchema.LedgersPerFile, hotSchema.FilesPerPartition, hotSchema.FileExtension)
 	}
 
-	tiered := NewTieredDataStore(hot, cold, cfg.Registry)
+	tiered := NewTieredDataStore(hot, cold)
 	return walkDataStore(ctx, cfg, tiered, ledgerRange, buffered, callback)
 }
 
