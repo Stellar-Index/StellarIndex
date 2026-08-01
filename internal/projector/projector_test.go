@@ -289,3 +289,20 @@ func TestAdaptiveWindow(t *testing.T) {
 		t.Fatalf("recovered to %d, want %d", w, BatchLimit)
 	}
 }
+
+// TestSinkSideShrink_BudgetExhaustedHalvesWindow pins the 2026-08-01
+// incident class: a window whose CH scan completes but whose sink writes
+// exhaust the cycle budget must SHRINK the adaptive window (the stream-side
+// shrink alone retried the identical dense range forever — aquarius
+// reserves wedged 3.5h at ledger 63,488,687).
+func TestSinkSideShrink_BudgetExhaustedHalvesWindow(t *testing.T) {
+	next, shrunk := shrinkWindow(BatchLimit, context.DeadlineExceeded)
+	if !shrunk || next != BatchLimit/2 {
+		t.Fatalf("expected halved window on deadline, got next=%d shrunk=%v", next, shrunk)
+	}
+	// The floor holds.
+	next, shrunk = shrinkWindow(MinBatchLimit, context.DeadlineExceeded)
+	if shrunk || next != MinBatchLimit {
+		t.Fatalf("expected floor hold, got next=%d shrunk=%v", next, shrunk)
+	}
+}

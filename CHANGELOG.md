@@ -15,6 +15,19 @@ against.
 
 ## [Unreleased]
 
+## [v0.21.12] — 2026-08-01
+
+### Fixed
+- **Projector: the adaptive window now also shrinks when the cycle budget
+  dies in SINK writes, not only in the CH scan.** The 2026-07-10 shrink
+  fired only on stream-level timeouts; a window dense enough that the scan
+  finishes but the per-event writes exhaust `PerSourceTimeout` retried the
+  identical range forever — the aquarius reserves replay wedged 3.5 h at
+  ledger 63,488,687 this way (every remaining write fast-failing on the
+  dead cycle context, cursor held, no shrink). Budget-exhausted cycles
+  with held transient rows now halve the window to the same
+  `MinBatchLimit` floor so the retry converges.
+
 ## [v0.21.11] — 2026-08-01
 
 ### Fixed

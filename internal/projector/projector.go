@@ -618,6 +618,24 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	}
 	sinkTransientFails := len(held)
 
+	// Adaptive shrink, SINK-side (2026-08-01 incident — the second half of
+	// the 2026-07-10 fix): the stream-level shrink above only fires when the
+	// CH scan itself times out. A window dense enough that the scan FINISHES
+	// but the per-event sink writes exhaust PerSourceTimeout mid-batch ends
+	// here instead — every remaining write (and the cursor upsert below)
+	// fast-fails on the dead cycleCtx, the cursor holds, and the IDENTICAL
+	// window retried forever (aquarius reserves at 63,488,687 wedged 3.5h
+	// this way). If the cycle budget is spent and rows are held as transient,
+	// halve the window with the same floor so the retry converges.
+	if cycleCtx.Err() != nil && sinkTransientFails > 0 {
+		if next, shrunk := shrinkWindow(*window, context.DeadlineExceeded); shrunk {
+			*window = next
+			p.logger.Warn("projector: cycle budget exhausted in sink writes — shrinking window",
+				"source", src.Name, "from", fromLedger, "to", toLedger,
+				"transient_fails", sinkTransientFails, "next_window", *window)
+		}
+	}
+
 	// Cursor watermark (audit-2026-07-16 C2-1): advance only to the highest
 	// ledger for which EVERY event fully committed. With nothing held that is
 	// `toLedger` — a source silent in a range still moves the cursor so we
