@@ -35,6 +35,29 @@ against.
   `docs/operations/runbooks/config-assertion-failed.md`.
 
 ### Fixed
+- **Served TWAP now folds the two stored market directions by minute
+  COVERAGE, not trade count** (audit finding M-B;
+  `internal/storage/timescale/aggregates.go`, migration
+  `0126_twap_sample_count`). SDEX stores each market in both
+  orientations, and `TWAPPointsInRange` merged them with a
+  trade-count-weighted mean of `{twap, 1.0/twap_flipped}`. But the
+  `twap_1h`/`twap_1d` CAGGs (migration 0081) define twap as
+  `avg(prices_1m.twap)` — equal per elapsed MINUTE, deliberately NOT per
+  trade — so the only correct merge weight is each direction's minute
+  coverage (how many `prices_1m` minute-buckets it contributed), which
+  the CAGGs did not store; count-weighting was exact only when trade
+  count happened to track coverage and wrong by an unbounded factor
+  otherwise. Migration 0126 adds `sample_count` (`count(*)`) to both
+  hierarchical TWAP CAGGs, and the read now folds in Go with the new
+  `combineDirTWAP`: `Σ(oriented_twap·sample_count)/Σ(sample_count)` in
+  exact `big.Rat`, flipped rows inverted as an exact `1/twap` (no
+  `1.0/twap` SQL rounding — ADR-0003). Pinned by
+  `internal/storage/timescale/twap_direction_combine_test.go`
+  (cannedConn) and `TestTWAPSampleCount_CoverageWeighted` (real
+  TimescaleDB). **⚠ DEPLOY: migration is `WITH NO DATA` — after applying
+  it the operator must re-materialize the two views:
+  `CALL refresh_continuous_aggregate('twap_1h', NULL, now());` then
+  `('twap_1d', NULL, now());` (run after `prices_1m` is whole).**
 - **Empty `tx_hash_index` no longer grants authoritative 404s**
   (`internal/storage/clickhouse/explorer_reader.go`): the tx-hash
   availability probe now requires the index to be NON-EMPTY, not merely

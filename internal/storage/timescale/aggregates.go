@@ -217,6 +217,88 @@ func combineDirVWAP(rows []dirVWAP) (string, bool) {
 	return formatCombinedVWAP(new(big.Rat).Quo(quoteLeg, baseLeg)), true
 }
 
+// dirTWAP is ONE stored market direction's contribution to a single TWAP
+// CAGG bucket (twap_1h / twap_1d), as scanned from twap_<granularity>.
+// Mirrors [dirVWAP], but the merge weight is the direction's minute
+// COVERAGE — the number of prices_1m minute-buckets it contributed
+// (migration 0126's `sample_count`) — not trade count (see [combineDirTWAP]).
+//
+//   - twapText is the row's `twap` NUMERIC column as text (ADR-0003 — no
+//     float round-trip), in THAT ROW's own orientation. Per migration 0081
+//     it is avg(prices_1m.twap) over the window's minute buckets.
+//   - sampleCount is the number of those minute buckets (migration 0126) —
+//     the exact denominator of the row's own avg, and the weight the
+//     union merge needs.
+//   - flipped marks a row stored (quote, base) relative to the orientation
+//     the caller asked for.
+type dirTWAP struct {
+	twapText    string
+	sampleCount int64
+	flipped     bool
+}
+
+// combineDirTWAP folds the stored market directions of ONE TWAP bucket
+// into the requested (base, quote) orientation, as a NUMERIC-shaped
+// decimal string.
+//
+// The twap_1h / twap_1d CAGGs (migration 0081) define twap =
+// avg(prices_1m.twap) over the minute buckets in the window — one equal
+// observation per elapsed MINUTE, deliberately NOT per trade (0081's
+// "time-weighted at 1-minute resolution"; a minute with 1000 dust prints
+// must not outvote 999 quiet minutes). Merging two stored directions
+// therefore has ONE correct weight: each direction's minute COVERAGE, i.e.
+// how many prices_1m minute-buckets it contributed. That count is
+// migration 0126's `sample_count`; it is why 0126 exists — it is not
+// recoverable from twap/trade_count/volume.
+//
+//	combined = Σ(oriented_twap · sample_count) / Σ(sample_count)
+//
+// A flipped row (stored quote/base relative to the request) is oriented by
+// an EXACT rational reciprocal 1/twap — never a SQL `1.0 / twap`, which
+// would round the inverted leg to whatever scale Postgres picked for that
+// division BEFORE it was ever weighted (ADR-0003).
+//
+// This replaces a TRADE-COUNT-weighted mean of {twap, 1/twap_flipped}.
+// Trade count is the weight 0081 exists to reject: count-weighting the
+// DIRECTION merge is exact only in the degenerate case where each
+// direction's trade count is proportional to its minute coverage, and
+// wrong by an unbounded factor otherwise. Equal-weighting the two
+// directions is ALSO wrong — it regresses the healthy, well-covered case —
+// so the coverage count is load-bearing.
+//
+// A single unflipped row is returned VERBATIM (its stored NUMERIC text),
+// keeping the served bytes byte-identical to a single-direction read.
+//
+// ok=false when no row carries a usable (parseable, positive) twap with a
+// positive sample_count; callers treat that as "no data for this bucket".
+func combineDirTWAP(rows []dirTWAP) (string, bool) {
+	if len(rows) == 1 && !rows[0].flipped {
+		if v, ok := new(big.Rat).SetString(rows[0].twapText); !ok || v.Sign() <= 0 {
+			return "", false
+		}
+		return rows[0].twapText, true
+	}
+	num, den := new(big.Rat), new(big.Rat)
+	for _, r := range rows {
+		twap, ok := new(big.Rat).SetString(r.twapText)
+		if !ok || twap.Sign() <= 0 || r.sampleCount <= 0 {
+			continue
+		}
+		oriented := twap
+		if r.flipped {
+			// Exact rational inverse — 1/twap, not a rounded SQL division.
+			oriented = new(big.Rat).Inv(twap)
+		}
+		w := new(big.Rat).SetInt64(r.sampleCount)
+		num.Add(num, new(big.Rat).Mul(oriented, w))
+		den.Add(den, w)
+	}
+	if num.Sign() <= 0 || den.Sign() <= 0 {
+		return "", false
+	}
+	return formatCombinedVWAP(new(big.Rat).Quo(num, den)), true
+}
+
 // appendSources appends src's entries to dst, skipping any already
 // present. The per-direction rows of one bucket carry their own
 // `sources` arrays; a served row's contributor list is their union.
@@ -533,8 +615,18 @@ func TWAPGranularitySupported(g HistoryGranularity) bool {
 // VWAP reads do (LatestClosedVWAP1mForPair, TimedVWAPsForPair1m,
 // OHLCSeries): the SDEX decoder records XLM/USDC and USDC/XLM as
 // separate rows, so reading only (base=$1, quote=$2) would use half the
-// liquidity. Flipped rows have their twap inverted (1/twap) and are
-// trade-count-weighted within the bucket. See canonical.Orient.
+// liquidity. The fold is [combineDirTWAP] in Go — exact rational money
+// math (ADR-0003): flipped rows are inverted as an EXACT 1/twap (not a
+// rounded SQL `1.0/twap`) and every direction is weighted by its minute
+// COVERAGE (`sample_count`, migration 0126), NOT trade count. Migration
+// 0081's twap is equal-per-minute, so the direction merge must weight by
+// minutes covered; the earlier trade-count weight let a burst of dust
+// prints on one side outvote the other. See canonical.Orient.
+//
+// Both stored directions are selected RAW (bucket, base_asset, twap,
+// sample_count, volume_usd) and folded per bucket by [scanTWAPPoints] —
+// the [scanHistoryPoints] shape, so `limit` is a BUCKET limit
+// ([bucketRowCap] fetches 2n+1 rows to deliver n complete buckets).
 //
 // Closed-bucket (ADR-0015): `bucket <= now() - <interval>` — the
 // SARGABLE form (a constant on the right, no function on the indexed
@@ -553,11 +645,10 @@ func (s *Store) TWAPPointsInRange(
 	}
 	table := "twap_" + string(granularity)
 	interval := granularity.closedBucketInterval()
-	// Both stored directions → requested ($1, $2) orientation. Flipped
-	// rows: invert the twap (1/twap) and trade-count-weight so every row
-	// expresses the price of $1 in $2. HAVING guards the (unreachable —
-	// a TWAP bucket always has ≥1 contributing trade) all-zero-weight
-	// case so the twap expression can never scan as NULL.
+	// Select BOTH stored directions RAW; the fold into the requested
+	// ($1, $2) orientation is [combineDirTWAP] in Go (exact big.Rat, no
+	// `1.0/twap` SQL rounding — ADR-0003). A bucket has at most two rows
+	// (one per stored direction), so this is a plain index-ordered scan.
 	args := []any{p.Base.String(), p.Quote.String()}
 	clauses := "((base_asset = $1 AND quote_asset = $2)\n         OR (base_asset = $2 AND quote_asset = $1))" +
 		"\n       AND bucket <= now() - INTERVAL '" + interval + "'"
@@ -572,19 +663,13 @@ func (s *Store) TWAPPointsInRange(
 	// #nosec G201 — table + interval derive from the validated
 	// twapGranularities set, not user input. See TWAPGranularitySupported.
 	q := fmt.Sprintf(`
-		SELECT bucket,
-		       (SUM((CASE WHEN base_asset = $1 THEN twap
-		                  ELSE 1.0 / NULLIF(twap, 0) END) * COALESCE(trade_count, 0))
-		          / NULLIF(SUM(COALESCE(trade_count, 0)), 0))::text AS twap,
-		       SUM(COALESCE(volume_usd, 0))::text                   AS volume_usd
+		SELECT bucket, base_asset, twap::text, COALESCE(sample_count, 0), volume_usd::text
 		  FROM %s
 		 WHERE %s
-		 GROUP BY bucket
-		HAVING SUM(COALESCE(trade_count, 0)) > 0
 		 ORDER BY bucket ASC
 	`, table, clauses)
-	if limit > 0 {
-		args = append(args, limit)
+	if rowCap := bucketRowCap(limit); rowCap > 0 {
+		args = append(args, rowCap)
 		q += fmt.Sprintf(" LIMIT $%d", len(args))
 	}
 	rows, err := s.db.QueryContext(ctx, q, args...)
@@ -593,21 +678,74 @@ func (s *Store) TWAPPointsInRange(
 	}
 	defer func() { _ = rows.Close() }()
 
+	return scanTWAPPoints(rows, p.Base.String(), limit,
+		fmt.Sprintf("TWAPPointsInRange[%s]", granularity))
+}
+
+// scanTWAPPoints folds the raw both-directions rows of a
+// twap_<granularity> read into one [HistoryPoint] per bucket (the VWAP
+// field carries the TWAP value), preserving the query's bucket ordering.
+// Rows of the same bucket are adjacent (the query orders by bucket), so
+// this is one pass with no map — the [scanHistoryPoints] shape, with
+// [combineDirTWAP]'s coverage-weighted fold in place of the volume-
+// weighted one and `sample_count` in place of `volume`.
+//
+// `base` is the requested pair's base asset id — a row whose base_asset
+// differs is the flipped storage of the same market. `limit` is the
+// caller's BUCKET limit (0 = unbounded); the query fetched [bucketRowCap]
+// rows, so the first `limit` buckets are complete and anything past them
+// is trimmed. `what` labels wrapped errors.
+func scanTWAPPoints(rows *sql.Rows, base string, limit int, what string) ([]HistoryPoint, error) {
 	out := make([]HistoryPoint, 0, 1024)
+	var (
+		curBucket time.Time
+		curDirs   []dirTWAP
+		curUSD    []sql.NullString
+		open      bool
+	)
+	flush := func() {
+		if !open {
+			return
+		}
+		open = false
+		twap, ok := combineDirTWAP(curDirs)
+		if !ok {
+			return
+		}
+		out = append(out, HistoryPoint{
+			Bucket:    curBucket,
+			VWAP:      twap,
+			VolumeUSD: sumUSDVolume(curUSD),
+		})
+	}
 	for rows.Next() {
-		var pt HistoryPoint
-		var vusd sql.NullString
-		if err := rows.Scan(&pt.Bucket, &pt.VWAP, &vusd); err != nil {
-			return nil, fmt.Errorf("timescale: TWAPPointsInRange[%s] scan: %w", granularity, err)
+		var (
+			bucket  time.Time
+			rowBase string
+			twap    string
+			sc      int64
+			vusd    sql.NullString
+		)
+		if err := rows.Scan(&bucket, &rowBase, &twap, &sc, &vusd); err != nil {
+			return nil, fmt.Errorf("timescale: %s scan: %w", what, err)
 		}
-		if vusd.Valid {
-			v := vusd.String
-			pt.VolumeUSD = &v
+		if !open || !bucket.Equal(curBucket) {
+			flush()
+			curBucket, curDirs, curUSD, open = bucket, curDirs[:0], curUSD[:0], true
 		}
-		out = append(out, pt)
+		curDirs = append(curDirs, dirTWAP{
+			twapText:    twap,
+			sampleCount: sc,
+			flipped:     rowBase != base,
+		})
+		curUSD = append(curUSD, vusd)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: TWAPPointsInRange[%s] rows: %w", granularity, err)
+		return nil, fmt.Errorf("timescale: %s rows: %w", what, err)
+	}
+	flush()
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
 	}
 	return out, nil
 }

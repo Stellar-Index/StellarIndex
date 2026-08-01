@@ -530,6 +530,26 @@ func applyMigrations(t *testing.T, dsn string) {
 	}
 }
 
+// quiesceCAGGRefreshPolicies unschedules every continuous-aggregate
+// refresh-policy background job. A test that drives refreshes explicitly
+// via `CALL refresh_continuous_aggregate(...)` otherwise races the policy
+// job TimescaleDB fires shortly after `add_continuous_aggregate_policy`,
+// and the two overlapping refreshes of one CAGG are rejected with 55P03
+// ("could not refresh continuous aggregate ... due to a concurrent
+// refresh"). Disabling the policy changes nothing the tests assert — they
+// materialize every view by hand — it just makes that manual refresh
+// deterministic. (Reproducible pre-existing flake: `go test -count=2 -run
+// TestTWAPPointsInRange_TimeWeighted`.)
+func quiesceCAGGRefreshPolicies(t *testing.T, ctx context.Context, db *sql.DB) {
+	t.Helper()
+	if _, err := db.ExecContext(ctx, `
+		SELECT alter_job(job_id, scheduled => false)
+		  FROM timescaledb_information.jobs
+		 WHERE proc_name = 'policy_refresh_continuous_aggregate'`); err != nil {
+		t.Fatalf("quiesce CAGG refresh policies: %v", err)
+	}
+}
+
 // TestTWAPPointsInRange_TimeWeighted proves the twap_1h CAGG (migration
 // 0081) + TWAPPointsInRange read is TIME-weighted at 1-minute
 // resolution, NOT trade-count-weighted. Two minutes in one hour:
@@ -595,6 +615,7 @@ func TestTWAPPointsInRange_TimeWeighted(t *testing.T) {
 		t.Fatalf("sql.Open: %v", err)
 	}
 	defer func() { _ = db.Close() }()
+	quiesceCAGGRefreshPolicies(t, ctx, db)
 	// prices_1m first (the twap CAGG's source), then the hierarchical
 	// twap_1h — order matters for a CAGG-on-CAGG refresh.
 	for _, cagg := range []string{"prices_1m", "twap_1h"} {
@@ -640,5 +661,138 @@ func TestTWAPPointsInRange_TimeWeighted(t *testing.T) {
 	// Unsupported grain must error (the storage-side gate).
 	if _, err := store.TWAPPointsInRange(ctx, pair, timescale.Granularity15m, time.Time{}, time.Time{}, 0); err == nil {
 		t.Error("TWAPPointsInRange(15m) = nil error, want unsupported-granularity error")
+	}
+}
+
+// TestTWAPSampleCount_CoverageWeighted proves migration 0126's
+// `sample_count` column materializes in the twap_1h CAGG AND that
+// TWAPPointsInRange folds the two stored market directions by minute
+// COVERAGE, not trade count (audit finding M-B). This is the on-Postgres
+// twin of the cannedConn unit test.
+//
+// One hour of a two-sided XLM/USDC market:
+//
+//   - direction A (XLM/USDC @ 0.5): 5 distinct minutes, 1 trade each
+//     → minute coverage 5, trade_count 5, oriented price 0.5
+//
+//   - direction B (USDC/XLM @ 5.0): 1 minute, 20 trades
+//     → minute coverage 1, trade_count 20, oriented price 1/5 = 0.2
+//
+//     coverage-weighted (CORRECT): (0.5·5 + 0.2·1)/(5+1) = 2.7/6 = 0.45
+//     trade-count-weighted (bug):  (0.5·5 + 0.2·20)/(5+20) = 6.5/25 = 0.26
+//     equal-weighted (regression): (0.5 + 0.2)/2 = 0.35
+func TestTWAPSampleCount_CoverageWeighted(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	usdc, err := c.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fwd, _ := c.NewPair(c.NativeAsset(), usdc) // XLM/USDC (requested)
+	rev, _ := c.NewPair(usdc, c.NativeAsset()) // USDC/XLM (flipped storage)
+
+	base := time.Now().UTC().Add(-48 * time.Hour).Truncate(time.Hour)
+	const stroops = 100_000_000 // 10 units
+	mk := func(pair c.Pair, ts time.Time, opIdx uint32, baseAmt, quoteAmt int64) c.Trade {
+		return c.Trade{
+			Source:      "sdex",
+			Ledger:      52_430_001,
+			TxHash:      "cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe",
+			OpIndex:     opIdx,
+			Timestamp:   ts,
+			Pair:        pair,
+			BaseAmount:  c.NewAmount(big.NewInt(baseAmt)),
+			QuoteAmount: c.NewAmount(big.NewInt(quoteAmt)),
+			Maker:       "maker-acc",
+			Taker:       "taker-acc",
+		}
+	}
+	var trades []c.Trade
+	var op uint32
+	// Direction A: 5 distinct minutes, 1 trade each, price 0.5.
+	for m := 0; m < 5; m++ {
+		trades = append(trades, mk(fwd, base.Add(time.Duration(m)*time.Minute), op, stroops, stroops/2))
+		op++
+	}
+	// Direction B: 1 minute, 20 trades, price 5.0 (USDC/XLM).
+	for k := 0; k < 20; k++ {
+		trades = append(trades, mk(rev, base.Add(10*time.Minute).Add(time.Duration(k)*time.Second), op, stroops, 5*stroops))
+		op++
+	}
+	for _, tr := range trades {
+		if err := store.InsertTrade(ctx, tr); err != nil {
+			t.Fatalf("InsertTrade: %v", err)
+		}
+	}
+
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	quiesceCAGGRefreshPolicies(t, ctx, db)
+	for _, cagg := range []string{"prices_1m", "twap_1h"} {
+		if _, err := db.ExecContext(ctx,
+			"CALL refresh_continuous_aggregate('"+cagg+"', NULL, NULL)"); err != nil {
+			t.Fatalf("refresh %s: %v", cagg, err)
+		}
+	}
+
+	// 1. sample_count materialized, and equals each direction's minute count.
+	for _, want := range []struct {
+		b, q string
+		n    int64
+	}{
+		{fwd.Base.String(), fwd.Quote.String(), 5},
+		{rev.Base.String(), rev.Quote.String(), 1},
+	} {
+		var sc int64
+		if err := db.QueryRowContext(ctx,
+			"SELECT sample_count FROM twap_1h WHERE base_asset = $1 AND quote_asset = $2 AND bucket = $3",
+			want.b, want.q, base,
+		).Scan(&sc); err != nil {
+			t.Fatalf("read twap_1h.sample_count for %s/%s: %v", want.b, want.q, err)
+		}
+		if sc != want.n {
+			t.Errorf("twap_1h.sample_count[%s/%s] = %d, want %d (minute coverage)", want.b, want.q, sc, want.n)
+		}
+	}
+
+	// 2. TWAPPointsInRange serves the coverage-weighted union, not the
+	//    trade-count-weighted (0.26) or equal-weighted (0.35) answer.
+	pts, err := store.TWAPPointsInRange(ctx, fwd, timescale.Granularity1h, time.Time{}, time.Time{}, 0)
+	if err != nil {
+		t.Fatalf("TWAPPointsInRange: %v", err)
+	}
+	if len(pts) != 1 {
+		t.Fatalf("got %d twap buckets, want 1 (both directions fold into one)", len(pts))
+	}
+	served, ok := new(big.Rat).SetString(pts[0].VWAP)
+	if !ok {
+		t.Fatalf("served twap %q not numeric", pts[0].VWAP)
+	}
+	near := func(want *big.Rat) bool {
+		d := new(big.Rat).Sub(served, want)
+		d.Abs(d)
+		return d.Cmp(big.NewRat(1, 1000)) <= 0
+	}
+	if !near(big.NewRat(45, 100)) {
+		t.Errorf("served TWAP = %s, want coverage-weighted 0.45", pts[0].VWAP)
+	}
+	if near(big.NewRat(26, 100)) {
+		t.Errorf("served TWAP = %s is the trade-count-weighted 0.26 — the M-B defect", pts[0].VWAP)
+	}
+	if near(big.NewRat(35, 100)) {
+		t.Errorf("served TWAP = %s is the equal-weighted 0.35 — coverage ignored", pts[0].VWAP)
 	}
 }
