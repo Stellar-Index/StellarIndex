@@ -67,7 +67,7 @@ export function HomeNetworkStrip() {
       <Cell
         label="Active markets"
         value={
-          activeMarkets != null ? activeMarkets.toLocaleString() : '—'
+          activeMarkets != null ? activeMarkets.toLocaleString('en-US') : '—'
         }
         sub="trading in last 24h"
         href="/markets"
@@ -111,7 +111,7 @@ export function HomeNetworkStrip() {
       ) : (
         <Cell
           label="Ledger tip"
-          value={tipLedger != null ? `#${tipLedger.toLocaleString()}` : '—'}
+          value={tipLedger != null ? `#${tipLedger.toLocaleString('en-US')}` : '—'}
           sub="ingest cursor"
           mono
           href="/diagnostics"

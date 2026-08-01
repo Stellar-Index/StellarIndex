@@ -40,7 +40,7 @@ export function NetworkLivePanel() {
 
         <div>
           <div className="font-mono text-sm tabular-nums">
-            {tipLedger !== null ? `#${tipLedger.toLocaleString()}` : '—'}
+            {tipLedger !== null ? `#${tipLedger.toLocaleString('en-US')}` : '—'}
           </div>
           <div className="text-[11px] text-ink-muted">current ingest tip</div>
         </div>

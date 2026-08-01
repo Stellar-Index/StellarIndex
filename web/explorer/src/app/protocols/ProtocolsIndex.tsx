@@ -130,12 +130,12 @@ export function ProtocolsIndex({
 
       <StatGrid cols={3}>
         <StatCell>
-          <Stat label="Protocols" value={cards.length.toLocaleString()} />
+          <Stat label="Protocols" value={cards.length.toLocaleString('en-US')} />
         </StatCell>
         <StatCell>
           <Stat
             label="Verified complete"
-            value={live ? verifiedCount.toLocaleString() : '—'}
+            value={live ? verifiedCount.toLocaleString('en-US') : '—'}
           />
         </StatCell>
         <StatCell>

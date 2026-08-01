@@ -154,7 +154,7 @@ export function CursorsTable() {
                   </Td>
                   <Td align="right">
                     <span className="font-mono tabular-nums text-xs">
-                      #{c.last_ledger.toLocaleString()}
+                      #{c.last_ledger.toLocaleString('en-US')}
                     </span>
                   </Td>
                   <Td align="right">

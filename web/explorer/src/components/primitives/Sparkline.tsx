@@ -61,6 +61,7 @@ export function Sparkline({
       height={height}
       viewBox={`0 0 ${width} ${height}`}
       className={twMerge('inline-block align-middle', className)}
+      role="img"
       aria-label={`sparkline: ${values.length} points, ${
         netDelta >= 0 ? 'up' : 'down'
       } overall`}

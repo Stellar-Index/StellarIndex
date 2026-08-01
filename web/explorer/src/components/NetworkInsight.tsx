@@ -118,7 +118,7 @@ export function OperationMixPanel({ linkRows = true }: { linkRows?: boolean }) {
             key={st.type}
             href="/operations"
             className="group block"
-            title={`${count.toLocaleString()} ${st.type} ops (${pct.toFixed(1)}%)`}
+            title={`${count.toLocaleString('en-US')} ${st.type} ops (${pct.toFixed(1)}%)`}
           >
             {row}
           </Link>
@@ -126,7 +126,7 @@ export function OperationMixPanel({ linkRows = true }: { linkRows?: boolean }) {
           <div
             key={st.type}
             className="group"
-            title={`${count.toLocaleString()} ${st.type} ops (${pct.toFixed(1)}%)`}
+            title={`${count.toLocaleString('en-US')} ${st.type} ops (${pct.toFixed(1)}%)`}
           >
             {row}
           </div>

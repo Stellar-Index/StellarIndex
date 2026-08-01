@@ -64,7 +64,7 @@ export function OrderBookPanel({ base, quote }: { base: string; quote: string })
         </h2>
         {book && (
           <span className="text-xs text-ink-faint">
-            as of ledger {book.as_of_ledger.toLocaleString()}
+            as of ledger {book.as_of_ledger.toLocaleString('en-US')}
           </span>
         )}
       </header>

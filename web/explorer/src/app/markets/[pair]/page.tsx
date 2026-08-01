@@ -428,7 +428,7 @@ export default async function PairPage({ params }: { params: Params }) {
 
         <Panel title="Recent activity" subtitle={`last ${history.length} trades`}>
           <dl className="grid grid-cols-2 gap-2 text-sm">
-            <Stat label="Trades in sample" value={history.length.toLocaleString()} />
+            <Stat label="Trades in sample" value={history.length.toLocaleString('en-US')} />
             <Stat
               label="Sources in sample"
               value={perSource.size.toString()}
@@ -473,7 +473,7 @@ export default async function PairPage({ params }: { params: Params }) {
             />
             <Stat
               label="Trades"
-              value={ohlc.trade_count.toLocaleString()}
+              value={ohlc.trade_count.toLocaleString('en-US')}
             />
           </dl>
         </Panel>

@@ -14,7 +14,7 @@ export type HBarItem = {
   label: string;
   /** Bar geometry (relative magnitude). */
   value: number;
-  /** Pre-formatted value label; falls back to value.toLocaleString(). */
+  /** Pre-formatted value label; falls back to value.toLocaleString('en-US'). */
   display?: string;
   /** Secondary annotation rendered after the value (muted). */
   annotation?: string;
@@ -41,7 +41,7 @@ const HATCH_BG =
  */
 export function HBarList({
   items,
-  formatValue = (n) => n.toLocaleString(),
+  formatValue = (n) => n.toLocaleString('en-US'),
   ariaLabel,
   max: maxProp,
   className,
@@ -118,7 +118,7 @@ export function PairedBars({
   bLabel,
   aColor = 'var(--color-brand-500)',
   bColor = 'var(--color-up)',
-  formatValue = (n) => n.toLocaleString(),
+  formatValue = (n) => n.toLocaleString('en-US'),
   ariaLabel,
   className,
 }: {
@@ -200,7 +200,7 @@ export function DivergingColumns({
   buckets,
   posLabel,
   negLabel,
-  formatValue = (n) => n.toLocaleString(),
+  formatValue = (n) => n.toLocaleString('en-US'),
   height = 120,
   ariaLabel,
   className,

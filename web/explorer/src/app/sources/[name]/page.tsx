@@ -316,7 +316,7 @@ export default async function SourceDetailPage({
                     {c.sub_source || '—'}
                   </td>
                   <td className="px-4 py-2 text-right font-mono tabular-nums">
-                    #{c.last_ledger.toLocaleString()}
+                    #{c.last_ledger.toLocaleString('en-US')}
                   </td>
                   <td className="px-4 py-2 text-right font-mono text-xs text-ink-muted">
                     {c.last_updated.replace('T', ' ').slice(0, 19)} UTC

@@ -288,7 +288,7 @@ function Stat({ label, value }: { label: string; value: number }) {
         {label}
       </div>
       <div className="mt-1 font-mono text-2xl tabular-nums text-ink">
-        {value.toLocaleString()}
+        {value.toLocaleString('en-US')}
       </div>
     </div>
   );

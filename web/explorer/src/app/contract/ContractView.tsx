@@ -427,7 +427,7 @@ function CodeDisclosure({ label, code }: { label: string; code: string }) {
       <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-ink-body marker:text-ink-faint hover:text-brand-600">
         {label}{' '}
         <span className="text-ink-faint">
-          ({code.split('\n').length.toLocaleString()} lines)
+          ({code.split('\n').length.toLocaleString('en-US')} lines)
         </span>
       </summary>
       <pre className="max-h-96 overflow-auto border-t border-line bg-surface-muted p-3 text-[11px] leading-relaxed text-ink-body">
@@ -512,7 +512,7 @@ function CodeHistoryPanel({ id }: { id: string }) {
                 <td className="px-4 py-3 font-mono text-xs text-ink-faint">{i + 1}</td>
                 <td className="px-4 py-3">
                   <Link href={`/ledgers/${v.ledger}/`} className="font-mono text-xs text-brand-600 hover:underline">
-                    #{(v.ledger ?? 0).toLocaleString()}
+                    #{(v.ledger ?? 0).toLocaleString('en-US')}
                   </Link>
                 </td>
                 <td className="px-4 py-3 text-xs text-ink-muted" title={formatTimestamp(v.close_time)}>
@@ -756,7 +756,7 @@ function InteractionsPanel({ id }: { id: string }) {
                   )}
                 </td>
                 <td className="px-4 py-3 text-right font-mono tabular-nums text-ink-body">
-                  {(e.shared_txs ?? 0).toLocaleString()}
+                  {(e.shared_txs ?? 0).toLocaleString('en-US')}
                 </td>
               </tr>
             ))}
@@ -849,7 +849,7 @@ function EventsPanel({
                     href={`/ledgers/${ev.ledger}/`}
                     className="font-mono text-xs text-brand-600 hover:underline"
                   >
-                    #{(ev.ledger ?? 0).toLocaleString()}
+                    #{(ev.ledger ?? 0).toLocaleString('en-US')}
                   </Link>
                 </Td>
                 <Td>

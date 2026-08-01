@@ -45,7 +45,7 @@ export function DonutChart({
   thickness = 22,
   centerLabel,
   centerSub,
-  formatValue = (n) => n.toLocaleString(),
+  formatValue = (n) => n.toLocaleString('en-US'),
   className,
 }: {
   data: DonutSlice[];

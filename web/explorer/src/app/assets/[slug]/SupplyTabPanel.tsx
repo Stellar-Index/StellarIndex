@@ -236,7 +236,7 @@ function OnChainSupply({ data, decimals }: { data: AssetSupply; decimals: number
         <Metric
           label="Total"
           value={total != null ? formatCompact(total) : '—'}
-          sublabel={native ? 'ledger total_coins' : `${data.flow_count.toLocaleString()} flows`}
+          sublabel={native ? 'ledger total_coins' : `${data.flow_count.toLocaleString('en-US')} flows`}
         />
         {!native && (
           <>

@@ -81,7 +81,7 @@ export function LedgerView({ seq: seqProp }: { seq?: string } = {}) {
           bodyClassName="text-sm text-ink-body"
         >
           <p>
-            No ledger <span className="font-mono">#{seq.toLocaleString()}</span>{' '}
+            No ledger <span className="font-mono">#{seq.toLocaleString('en-US')}</span>{' '}
             in the served tier, or the lookup failed:{' '}
             {ledgerQ.error instanceof Error
               ? ledgerQ.error.message
@@ -97,7 +97,7 @@ export function LedgerView({ seq: seqProp }: { seq?: string } = {}) {
     return (
       <Shell seq={seq}>
         <Panel
-          title={`Ledger #${seq.toLocaleString()}`}
+          title={`Ledger #${seq.toLocaleString('en-US')}`}
           source={asExample(`/v1/ledgers/${seq}`)}
           bodyClassName="text-sm text-ink-muted"
         >
@@ -115,7 +115,7 @@ export function LedgerView({ seq: seqProp }: { seq?: string } = {}) {
   return (
     <Shell seq={seq}>
       <Panel
-        title={`Ledger #${sequence.toLocaleString()}`}
+        title={`Ledger #${sequence.toLocaleString('en-US')}`}
         hint={formatTimestamp(l.close_time)}
         source={asExample(`/v1/ledgers/${seq}`)}
       >
@@ -123,7 +123,7 @@ export function LedgerView({ seq: seqProp }: { seq?: string } = {}) {
           <Field
             label="Sequence"
             mono
-            value={`#${sequence.toLocaleString()}`}
+            value={`#${sequence.toLocaleString('en-US')}`}
           />
           <Field label="Close time" value={formatTimestamp(l.close_time)} />
           <Field label="Protocol" mono value={String(l.protocol_version)} />
@@ -170,9 +170,9 @@ export function LedgerView({ seq: seqProp }: { seq?: string } = {}) {
                 <Link
                   href={`/ledgers/${sequence - 1}/`}
                   className="font-mono text-xs text-brand-600 hover:underline"
-                  title={`Ledger #${(sequence - 1).toLocaleString()}`}
+                  title={`Ledger #${(sequence - 1).toLocaleString('en-US')}`}
                 >
-                  ← #{(sequence - 1).toLocaleString()}
+                  ← #{(sequence - 1).toLocaleString('en-US')}
                 </Link>
                 <CopyHash value={l.prev_hash} head={12} tail={12} />
               </span>
@@ -208,7 +208,7 @@ function Shell({
           items={[
             { label: 'Home', href: '/' },
             { label: 'Ledgers', href: '/ledgers' },
-            { label: seq != null ? `#${seq.toLocaleString()}` : '—' },
+            { label: seq != null ? `#${seq.toLocaleString('en-US')}` : '—' },
           ]}
         />
         {seq != null && (

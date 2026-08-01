@@ -78,7 +78,7 @@ export function TransactionsView() {
               ← Newer
             </Link>
             <span className="font-mono text-ink-body">
-              Ledger #{seq.toLocaleString()}
+              Ledger #{seq.toLocaleString('en-US')}
             </span>
             <Link
               href={`/transactions?seq=${seq - 1}`}
@@ -141,7 +141,7 @@ function TxTable({
   if (rows.length === 0) {
     return (
       <Panel title="Transactions" source={source} bodyClassName="text-sm text-ink-muted">
-        Ledger #{seq?.toLocaleString()} closed no transactions. Try an older ledger.
+        Ledger #{seq?.toLocaleString('en-US')} closed no transactions. Try an older ledger.
       </Panel>
     );
   }

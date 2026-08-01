@@ -88,7 +88,7 @@ export function SourceStatsPanel({
         />
         <Stat
           label={`24h ${unitsLabel}`}
-          value={markets > 0 ? markets.toLocaleString() : '—'}
+          value={markets > 0 ? markets.toLocaleString('en-US') : '—'}
         />
         {showTvl && tvl && (
           <Stat

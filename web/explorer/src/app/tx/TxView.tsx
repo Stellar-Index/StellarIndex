@@ -145,7 +145,7 @@ export function TxView({ hash: hashProp }: { hash?: string } = {}) {
               href={`/ledgers/${tx.ledger}/`}
               className="font-mono text-xs text-brand-600 hover:underline"
             >
-              #{(tx.ledger ?? 0).toLocaleString()}
+              #{(tx.ledger ?? 0).toLocaleString('en-US')}
             </Link>
           </Field>
           <Field label="Close time" value={formatTimestamp(tx.close_time)} />

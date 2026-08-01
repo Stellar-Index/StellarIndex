@@ -92,7 +92,7 @@ export function LedgersTable() {
       title={`${ledgers.length} ledgers`}
       hint={
         newest != null && oldest != null
-          ? `#${oldest.toLocaleString()} → #${newest.toLocaleString()}`
+          ? `#${oldest.toLocaleString('en-US')} → #${newest.toLocaleString('en-US')}`
           : undefined
       }
       source={source}
@@ -120,7 +120,7 @@ export function LedgersTable() {
                     href={`/ledgers/${l.sequence}/`}
                     className="font-mono font-medium text-ink-body hover:text-brand-600"
                   >
-                    #{(l.sequence ?? 0).toLocaleString()}
+                    #{(l.sequence ?? 0).toLocaleString('en-US')}
                   </Link>
                 </Td>
                 <Td>

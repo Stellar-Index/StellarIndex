@@ -160,7 +160,7 @@ function VerdictRow({ v }: { v: CoverageVerdict }) {
         </span>
       </td>
       <td className="px-4 py-2 text-right font-mono text-xs tabular-nums">
-        #{v.watermark_ledger.toLocaleString()}
+        #{v.watermark_ledger.toLocaleString('en-US')}
       </td>
       <td className="px-4 py-2 text-right font-mono text-xs tabular-nums">
         {(v.coverage_pct * 100).toFixed(v.coverage_pct >= 1 ? 0 : 2)}%

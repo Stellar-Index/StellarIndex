@@ -140,7 +140,7 @@ export function IssuerPathView() {
                         </Link>
                         {typeof a.observation_count === 'number' && (
                           <span className="ml-2 font-mono text-xs tabular-nums text-ink-muted">
-                            {a.observation_count.toLocaleString()} observations
+                            {a.observation_count.toLocaleString('en-US')} observations
                           </span>
                         )}
                       </li>

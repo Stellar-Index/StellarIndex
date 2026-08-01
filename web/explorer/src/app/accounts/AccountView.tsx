@@ -637,7 +637,7 @@ function TransactionsPanel({
                     href={`/ledgers/${t.ledger}/`}
                     className="font-mono text-xs text-brand-600 hover:underline"
                   >
-                    #{(t.ledger ?? 0).toLocaleString()}
+                    #{(t.ledger ?? 0).toLocaleString('en-US')}
                   </Link>
                 </Td>
                 <Td align="right">
@@ -771,7 +771,7 @@ function OperationCard({ op }: { op: TxOperation }) {
             href={`/ledgers/${op.ledger}/`}
             className="font-mono text-[11px] text-ink-muted hover:text-brand-600"
           >
-            #{op.ledger.toLocaleString()}
+            #{op.ledger.toLocaleString('en-US')}
           </Link>
         )}
         {op.close_time && (

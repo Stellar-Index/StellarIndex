@@ -19,8 +19,8 @@ type OracleStream = components['schemas']['OracleReading'];
 
 const TONE: Record<string, string> = {
   'reflector-dex': 'bg-up-subtle text-up-strong',
-  'reflector-cex': 'bg-brand-100 text-brand-800',
-  'reflector-fx': 'bg-violet-100 text-violet-800',
+  'reflector-cex': 'bg-brand-50 text-brand-700',
+  'reflector-fx': 'bg-brand-100 text-brand-900',
   redstone: 'bg-down-subtle text-down-strong',
   band: 'bg-warn-50 text-warn-700',
 };

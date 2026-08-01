@@ -127,7 +127,10 @@ type IngestionSnapshot = Omit<
       // Evolving: entries_24h — universal trailing-24h per-source event
       // count (stellarindex_source_events_total). Non-zero for every
       // active source, unlike trade_count_24h (trades-table only).
-      entries_24h: number;
+      // Optional + guarded: an explorer deploy ahead of the API can
+      // receive a response that omits it — an unguarded render would
+      // throw and the segment error boundary would blank the page.
+      entries_24h?: number;
     }
   >;
 };
@@ -1525,7 +1528,7 @@ function LedgerCard({
         ) : null
       }
     >
-      <Row label="Latest ledger" value={latestLedger.toLocaleString()} mono />
+      <Row label="Latest ledger" value={latestLedger.toLocaleString('en-US')} mono />
       <Row
         label="Lag from tip"
         value={`${lagSeconds}s`}
@@ -1538,11 +1541,11 @@ function LedgerCard({
       />
       <Row
         label="Markets (24h)"
-        value={ledger.markets_count_24h.toLocaleString()}
+        value={ledger.markets_count_24h.toLocaleString('en-US')}
       />
       <Row
         label="Assets indexed"
-        value={ledger.assets_indexed.toLocaleString()}
+        value={ledger.assets_indexed.toLocaleString('en-US')}
       />
     </Panel>
   );
@@ -1560,8 +1563,8 @@ function FXBackfillCard({ fx }: { fx: IngestionSnapshot['fx_backfill'] }) {
         }
         mono
       />
-      <Row label="Currencies" value={fx.currencies_count.toLocaleString()} />
-      <Row label="Total quotes" value={fx.total_quotes.toLocaleString()} />
+      <Row label="Currencies" value={fx.currencies_count.toLocaleString('en-US')} />
+      <Row label="Total quotes" value={fx.total_quotes.toLocaleString('en-US')} />
     </Panel>
   );
 }
@@ -1574,11 +1577,11 @@ function SupplyCard({ supply }: { supply: IngestionSnapshot['supply'] }) {
     <Panel title="Supply observers">
       <Row
         label="Classic assets"
-        value={supply.classic_assets_with_supply.toLocaleString()}
+        value={supply.classic_assets_with_supply.toLocaleString('en-US')}
       />
       <Row
         label="SEP-41 assets"
-        value={supply.sep41_assets_with_supply.toLocaleString()}
+        value={supply.sep41_assets_with_supply.toLocaleString('en-US')}
       />
       <Row
         label="Latest snapshot"
@@ -1694,20 +1697,20 @@ function BackfillCoverageTable({
                     {r.source}
                   </td>
                   <td className="tnum px-3 py-2 text-right font-mono text-ink-muted">
-                    {r.genesis_ledger?.toLocaleString() ?? '—'}
+                    {r.genesis_ledger?.toLocaleString('en-US') ?? '—'}
                   </td>
                   <td className="tnum px-3 py-2 text-right font-mono text-ink-body">
-                    {r.earliest_ledger?.toLocaleString() ?? '—'}
+                    {r.earliest_ledger?.toLocaleString('en-US') ?? '—'}
                   </td>
                   <td className="tnum px-3 py-2 text-right font-mono text-ink-body">
-                    {r.latest_ledger?.toLocaleString() ?? '—'}
+                    {r.latest_ledger?.toLocaleString('en-US') ?? '—'}
                   </td>
                   <td
                     className="px-3 py-2 text-right"
                     title={
                       r.covered_ledgers !== undefined &&
                       r.expected_ledgers !== undefined
-                        ? `${r.covered_ledgers.toLocaleString()} / ${r.expected_ledgers.toLocaleString()} ledgers covered by completed backfill ranges`
+                        ? `${r.covered_ledgers.toLocaleString('en-US')} / ${r.expected_ledgers.toLocaleString('en-US')} ledgers covered by completed backfill ranges`
                         : undefined
                     }
                   >
@@ -1753,7 +1756,7 @@ function BackfillCoverageTable({
                     )}
                   </td>
                   <td className="tnum px-3 py-2 text-right text-ink-muted">
-                    {r.entries.toLocaleString()}
+                    {r.entries.toLocaleString('en-US')}
                   </td>
                 </tr>
               );
@@ -1768,7 +1771,7 @@ function BackfillCoverageTable({
                   off-chain — no Stellar ledger context
                 </td>
                 <td className="tnum px-3 py-2 text-right">
-                  {r.entries.toLocaleString()}
+                  {r.entries.toLocaleString('en-US')}
                 </td>
               </tr>
             ))}
@@ -1818,13 +1821,13 @@ function SourceHealthTable({ rows }: { rows: IngestionSnapshot['sources'] }) {
                       silent ? 'text-bad-700' : 'text-ink-body'
                     }`}
                   >
-                    {r.entries_24h.toLocaleString()}
+                    {r.entries_24h?.toLocaleString('en-US') ?? '—'}
                   </td>
                   <td className="tnum px-3 py-2 text-right text-ink-muted">
                     {r.volume_24h_usd ? formatUSD(r.volume_24h_usd) : '—'}
                   </td>
                   <td className="tnum px-3 py-2 text-right text-ink-muted">
-                    {r.markets_count_24h.toLocaleString()}
+                    {r.markets_count_24h.toLocaleString('en-US')}
                   </td>
                   <td className="px-3 py-2 text-center">
                     {r.include_in_vwap ? (

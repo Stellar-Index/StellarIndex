@@ -159,5 +159,5 @@ function formatRelativeTime(ms: number): string {
   if (diff < 5_000) return 'just now';
   if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`;
   if (diff < 3600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  return new Date(ms).toLocaleTimeString();
+  return new Date(ms).toLocaleTimeString('en-US');
 }
