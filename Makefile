@@ -33,12 +33,16 @@ BINARIES := \
   stellarindex-migrate \
   stellarindex-sla-probe
 
-# Packages that hold integration tests (gated by build tag). Includes
-# cmd/stellarindex-ops, which carries `//go:build integration` tests
-# (verify-archive chunk orchestration) — F-1334: omitting it let an
-# interface-signature change break the ops integration test undetected
-# (the build-check below only compiled ./test/integration/...).
-INT_TEST_PKGS := ./test/integration/... ./cmd/stellarindex-ops/...
+# Packages that hold integration tests (gated by build tag). Besides
+# ./test/integration/..., two packages carry `//go:build integration`
+# tests that a ./test/integration-only compile-check would miss:
+#   - cmd/stellarindex-ops   — F-1334: omitting it let an interface-signature
+#                              change break the ops integration test undetected.
+#   - internal/ops/archive   — W6-tst-1: the runVerifyChunks chunked
+#                              archive-verify test (hash-chain integrity,
+#                              ADR-0033/0016) had zero executing coverage
+#                              until this package was listed.
+INT_TEST_PKGS := ./test/integration/... ./cmd/stellarindex-ops/... ./internal/ops/archive/...
 
 # Default test-cover threshold per package (staticcheck in CI enforces the per-package floor)
 COVER_THRESHOLD := 70
