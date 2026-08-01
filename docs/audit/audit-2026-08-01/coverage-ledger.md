@@ -72,3 +72,15 @@ hashchain/tx_index/pool-state); dashboard/detail/embed web views; ansible haprox
 redis-sentinel/prometheus sub-roles; ~half the ci-lint internals; soroswap factory-seed genesis-walk
 completeness (gating-seed forged-creation question); live/lake state-write parity test; opsutil
 job_heartbeat; streaming/redispub. NO unexamined money/security FLOW left un-reasoned-about.
+
+## ═══ WAVE-6 (gap-closure — exhaustiveness pass, Ash-requested) ═══
+Closing every gap vs the full formal audit-suite process:
+- DIMENSIONS not dedicated-passed: DEP (deps/supply-chain), DOM (protocol-truth), PERF+CON
+  (systematic), PRV+ACC+I18N, TST (test quality).
+- PROCESS steps skipped: whole-tree mechanical sweeps, two-independent-decomposition merge,
+  dry-wave/convergence-skeptic.
+- RESIDUAL files: chainlink/frankfurter, clickhouse readers (wasm/ttl/contiguity/hashchain/
+  tx_index/pool-state), web dashboard/detail/embed, ansible haproxy/patroni/loki/redis-sentinel/
+  prometheus, ci-lint internals, opsutil, streaming/redispub, factory-seed genesis-walk.
+- PRIOR AUDITS: re-derive prior HIGH/critical "fixed" findings vs current code.
+[WAVE-6 in flight]
