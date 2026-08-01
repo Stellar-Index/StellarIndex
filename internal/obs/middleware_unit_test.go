@@ -26,14 +26,40 @@ func TestNormalizeMethod(t *testing.T) {
 		{"get", "GET"},
 		{"Post", "POST"},
 		{"PATCH", "PATCH"},
-		{"propfind", "propfind"}, // unknown verb passes through as-is
-		{"PROPFIND", "PROPFIND"}, // already-upper unknown verb same
-		{"", ""},
+		// Any verb outside the standard set collapses to the bounded
+		// "other" label. net/http accepts arbitrary tokens as methods,
+		// so passing them through verbatim was an unbounded metric-label
+		// cardinality DoS (audit W4-obs-1).
+		{"propfind", "other"},
+		{"PROPFIND", "other"},
+		{"", "other"},
 	}
 	for _, tc := range cases {
 		if got := normalizeMethod(tc.in); got != tc.want {
 			t.Errorf("normalizeMethod(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// TestNormalizeMethod_CardinalityIsBounded is the regression proof for
+// W4-obs-1: an attacker sending many distinct junk method tokens must NOT
+// be able to mint one metric-label child per token. Every unknown verb —
+// however many distinct ones — must map to the single "other" bucket.
+func TestNormalizeMethod_CardinalityIsBounded(t *testing.T) {
+	labels := map[string]struct{}{}
+	attacks := []string{
+		"AAAAAAAA", "BBBBBBBB", "\x01\x02random", "GETX", "PropFind",
+		"1234567890", "custom-verb", "get\x00", "🔥", "OPTIONS ",
+	}
+	for _, m := range attacks {
+		labels[normalizeMethod(m)] = struct{}{}
+	}
+	// All 10 distinct junk tokens must fold into exactly one label.
+	if len(labels) != 1 {
+		t.Fatalf("unknown methods produced %d distinct labels %v, want 1 (\"other\")", len(labels), labels)
+	}
+	if _, ok := labels["other"]; !ok {
+		t.Fatalf("unknown methods folded to %v, want \"other\"", labels)
 	}
 }
 

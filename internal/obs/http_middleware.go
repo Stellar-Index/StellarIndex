@@ -203,18 +203,25 @@ func RouteFromContext(ctx context.Context) string {
 	return rc.route
 }
 
-// normalizeMethod canonicalises the HTTP method label. HTTP's spec
-// treats method names as case-sensitive, but in practice standard
-// methods are always uppercase — a client sending "get" instead of
-// "GET" would otherwise double our method-label cardinality.
-// Unknown methods pass through as-is so legit custom verbs
-// (WebDAV PROPFIND, etc.) still work.
+// normalizeMethod canonicalises the HTTP method for use as a Prometheus
+// label. Standard methods are returned uppercased (a client sending "get"
+// instead of "GET" would otherwise double our method-label cardinality).
+//
+// Any method outside the known set collapses to the bounded label "other".
+// net/http accepts an ARBITRARY token as a request method, so passing
+// unknown verbs through verbatim (the old behaviour) let an unauthenticated
+// client mint unbounded metric label children — `curl -X <random>` in a
+// loop grows HTTPRequestsTotal without limit and OOMs the API + Prometheus
+// (metric-cardinality DoS, audit W4-obs-1). The label is telemetry only:
+// routing and handlers read the real r.Method, which is unaffected — so a
+// genuine custom verb (WebDAV PROPFIND, etc.) still WORKS, it just shares
+// the "other" bucket in the metric.
 func normalizeMethod(m string) string {
 	switch strings.ToUpper(m) {
 	case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "CONNECT", "TRACE":
 		return strings.ToUpper(m)
 	}
-	return m
+	return "other"
 }
 
 // routeFromPattern extracts just the path from a Go 1.22+ ServeMux
