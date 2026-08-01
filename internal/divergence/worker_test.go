@@ -106,6 +106,7 @@ func TestRefreshPair_OnWarningFiredEdgeOnly(t *testing.T) {
 	svc, _, _ := newTestService(t, refs, divergence.ServiceOptions{
 		Threshold:            5.0,
 		MinSourcesForWarning: 2,
+		WarningPersistence:   -1, // isolate the edge-latch behaviour from the W3-guards-2 debounce
 		OnWarningFired: func(_ context.Context, _ canonical.Pair, _ divergence.CachedResult) {
 			fired++
 		},
@@ -147,6 +148,7 @@ func TestRefreshPair_FiresWarning(t *testing.T) {
 	svc, rdb, _ := newTestService(t, refs, divergence.ServiceOptions{
 		Threshold:            5.0, // 5% threshold
 		MinSourcesForWarning: 2,
+		WarningPersistence:   -1, // isolate the threshold gate from the W3-guards-2 debounce
 	})
 
 	// Our price is 10% above the consensus.
@@ -214,7 +216,7 @@ func TestLookupCached_PresentEntry(t *testing.T) {
 		&stubReference{name: "a", price: 1.05},
 		&stubReference{name: "b", price: 1.05},
 	}
-	svc, _, _ := newTestService(t, refs, divergence.ServiceOptions{Threshold: 1.0, MinSourcesForWarning: 2})
+	svc, _, _ := newTestService(t, refs, divergence.ServiceOptions{Threshold: 1.0, MinSourcesForWarning: 2, WarningPersistence: -1})
 
 	pair := xlmUSD(t)
 	if err := svc.RefreshPair(context.Background(), pair, 1.00, time.Now()); err != nil {
@@ -322,6 +324,7 @@ func TestLookupCached_PerPairOR_OrderIndependent(t *testing.T) {
 			svc, _, _ := newTestService(t, refs, divergence.ServiceOptions{
 				Threshold:            5.0,
 				MinSourcesForWarning: 2,
+				WarningPersistence:   -1, // isolate the per-pair OR aggregation from the W3-guards-2 debounce
 			})
 			for _, s := range tc.order {
 				if err := svc.RefreshPair(ctx, s.pair, s.price, time.Now()); err != nil {
@@ -402,14 +405,29 @@ func TestRefreshPair_DefaultsApplied(t *testing.T) {
 		t.Errorf("4%% deviation should not fire under default 5%% threshold")
 	}
 
-	// 6% deviation → warning fires.
-	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.06, time.Now()); err != nil {
+	// 6% deviation → warning fires, but only once the divergence has
+	// PERSISTED past the default debounce window (W3-guards-2). The
+	// first refresh must NOT fire — that is the fast-move false-warning
+	// class the debounce removes; a sustained 6% gap must clear it.
+	t0 := time.Now()
+	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.06, t0); err != nil {
+		t.Fatalf("RefreshPair: %v", err)
+	}
+	body, _ = rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t)).String()).Bytes()
+	_ = json.Unmarshal(body, &cached)
+	if cached.WarningFired {
+		t.Errorf("6%% deviation should NOT fire on the first refresh under the default debounce")
+	}
+
+	// Second refresh, same 6% gap, one debounce window later → fires.
+	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.06,
+		t0.Add(divergence.DefaultWarningPersistence+time.Minute)); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
 	body, _ = rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t)).String()).Bytes()
 	_ = json.Unmarshal(body, &cached)
 	if !cached.WarningFired {
-		t.Errorf("6%% deviation should fire under default 5%% threshold")
+		t.Errorf("6%% deviation should fire under default 5%% threshold once it persists past the debounce")
 	}
 }
 

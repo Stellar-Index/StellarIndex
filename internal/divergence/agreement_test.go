@@ -207,6 +207,7 @@ func TestRefreshPair_SymmetricStraddleFiresWarning(t *testing.T) {
 	svc, rdb, _ := newTestService(t, refs, divergence.ServiceOptions{
 		Threshold:            5.0,
 		MinSourcesForWarning: 2,
+		WarningPersistence:   -1, // isolate the MNY-22 agreement leg from the W3-guards-2 debounce
 	})
 
 	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, time.Now()); err != nil {
