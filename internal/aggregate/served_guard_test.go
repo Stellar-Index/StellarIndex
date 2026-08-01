@@ -124,6 +124,42 @@ func TestGuardServedVWAP_EmptyBaselineFailsOpen(t *testing.T) {
 	}
 }
 
+func TestServedBaselineValidated_EmptyBaselineUnvalidatedButStillServed(t *testing.T) {
+	// W6-fresh-1: a pair's first-ever served minute has NO trailing
+	// baseline. GuardServedVWAP FAILS OPEN there (accepts any value — even
+	// a wildly-off, lone manipulated/fat-finger print). That is fine ONLY
+	// if the accept is paired with an UNVALIDATED signal so the serving
+	// path flags the value stale/low-confidence instead of serving it as a
+	// confident price. This proves BOTH halves: the value is still served
+	// (no blackout of a legitimate new pair) AND it reports unvalidated.
+	for _, empty := range [][]*big.Rat{nil, {}, {nil, nil}} {
+		// Half 1 — still served (no blackout): a 1,000,000x candidate on an
+		// empty baseline is accepted (there is no centre to reject against).
+		accept, lkg := GuardServedVWAP(rat(t, "1000000.0"), empty)
+		if !accept || lkg != -1 {
+			t.Fatalf("empty baseline must still SERVE the value (no blackout): accept=%v lkg=%d", accept, lkg)
+		}
+		// Half 2 — but UNVALIDATED: the companion signal must be false, so
+		// the caller marks it stale/low-confidence rather than confident.
+		// (Pre-fix this signal did not exist and the accept above was
+		// served with stale=false — the fail-open defect.)
+		if ServedBaselineValidated(empty) {
+			t.Fatalf("empty baseline must report UNVALIDATED (low-confidence); got validated=true — the fail-open defect")
+		}
+	}
+}
+
+func TestServedBaselineValidated_PopulatedAndThinAreValidated(t *testing.T) {
+	// The fix must not over-flag: a first bucket that DOES have trailing
+	// history is a confident (validated) price, populated or thin.
+	if !ServedBaselineValidated(repeatRat(t, "1.0", 10)) {
+		t.Fatal("populated baseline must report validated=true (confident)")
+	}
+	if !ServedBaselineValidated(repeatRat(t, "1.0", guardMinSamples-1)) {
+		t.Fatal("thin but non-empty baseline must report validated=true (confident)")
+	}
+}
+
 func TestGuardServedVWAP_NilCandidateFailsOpen(t *testing.T) {
 	trailing := repeatRat(t, "1.0", 10)
 	if accept, lkg := GuardServedVWAP(nil, trailing); !accept || lkg != -1 {
