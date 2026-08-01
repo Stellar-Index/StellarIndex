@@ -324,15 +324,29 @@ func (h *Handler) mapSEP41RowsToMovements(ctx context.Context, address string, r
 
 // resolveSEP41MovementAsset resolves a SEP-41 token contract_id to the
 // canonical display form: the wrapped classic asset's name when it's
-// a SAC (SACClassicAssetName, then the SACAssetFromEvents fallback for
-// a SAC whose wrap isn't captured in ledger_entries_current yet), else
-// the raw contract_id itself (a genuine Soroban-native token, which
-// has no classic-asset name to resolve to).
+// a SAC (SACClassicAssetName, then the derivation-cross-checked
+// event-topic fallback for a SAC whose wrap isn't captured in
+// ledger_entries_current yet), else the raw contract_id itself (a
+// genuine Soroban-native token, which has no classic-asset name to
+// resolve to).
+//
+// The event-topic hint is attacker-influenceable and MUST be
+// cross-checked (W2-explorer-1): sep41_transfers are ingested from ANY
+// token contract (not identity-gated), so a hostile non-SAC token can
+// emit a CAP-67 transfer whose trailing sep0011 topic claims a trusted
+// asset (e.g. Circle USDC) and — rendered verbatim — impersonate that
+// identity on this public, unauthenticated feed. So the fallback routes
+// through sacAssetViaEvents (the SAME helper wasm_view.go uses): it
+// re-derives the SAC address from the claimed asset and only trusts the
+// label when it matches contractID (the topic is influenceable, the
+// deterministic derivation is not). A non-matching claim falls through
+// to the raw contract_id — the spoof renders as itself, never as the
+// asset it impersonated.
 func (h *Handler) resolveSEP41MovementAsset(ctx context.Context, contractID string) string {
 	if name, ok, err := h.Reader.SACClassicAssetName(ctx, contractID); err == nil && ok {
 		return name
 	}
-	if name, ok, err := h.Reader.SACAssetFromEvents(ctx, contractID); err == nil && ok {
+	if name, ok := h.sacAssetViaEvents(ctx, contractID); ok {
 		return name
 	}
 	return contractID
