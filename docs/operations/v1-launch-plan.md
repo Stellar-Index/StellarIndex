@@ -131,6 +131,25 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-08-01 ~07:45Z — 🔧 **v0.21.12 HOTFIX: the aquarius replay wedge
+  was a REAL projector bug — sink-side budget exhaustion never shrank
+  the adaptive window** (the missing half of the 2026-07-10 fix, which
+  only covered stream-level timeouts). A reserves-dense window's scan
+  completed but its writes exhausted PerSourceTimeout mid-batch; every
+  remaining write fast-failed on the dead cycle context, the cursor
+  held, and the IDENTICAL 1,000-ledger window retried for 3.5h.
+  Diagnosis walked four layers (recompressed chunks — real but
+  insufficient, decompressed 8 chunks incl. the aquarius_* tables MY
+  19-policy application newly armed; pool/locks/disk — all clean;
+  restart — no effect; then the deterministic fast-fail signature).
+  Fix: budget-exhausted cycles with held transient rows now halve the
+  window to the MinBatchLimit floor. Cut+deployed v0.21.12; cursor
+  confirmed moving (63,487,686 → 63,491,691+). Ops lesson banked to
+  memory: replays through compressed history must decompress ALL
+  target tables' window chunks FIRST (runbook fix queued). Verify
+  chain re-armed with an honest long bound (the old one nearly fired
+  prematurely mid-wedge).
+
 - 2026-08-01 ~02:50Z — 🟢🟢 **REDSTONE + SOROSWAP COMPLETE=TRUE; the
   blind ladder ends 1,626 → 0.** The v0.21.8 chain landed both
   targets: redstone projection verified full-range (state-write
