@@ -311,6 +311,17 @@ jobs:
         # never BIGINT/INT8/DOUBLE PRECISION/FLOAT/REAL. Escapes need an
         # inline `-- lint-money:ok <reason>`.
         run: ./scripts/ci/lint-migrations.sh
+      - name: lint-completeness-staleness
+        # W6-fresh-4: the served coverage-verdict staleness constants
+        # (coverageVerdictStaleAge / coverageVerdictStaleLedgers in
+        # internal/api/v1/coverage_verdicts.go) are HAND-CALIBRATED to the
+        # daily completeness-audit timer but nothing cross-checked them.
+        # Change the timer cadence (daily -> weekly) and the /v1/coverage
+        # staleness flag silently never trips / flaps — recreating MNY-04
+        # ("served complete forever after the audit died"). This asserts
+        # the constants stay within [period+slack, 2*period) of the
+        # Ansible-deployed compute-completeness.timer.
+        run: ./scripts/ci/lint-completeness-staleness.sh
       - name: lint-migration-compat
         # CID-14 (audit-2026-07-23): migrations/README.md rule 9 —
         # every up-migration must be additive + old-binary-safe. The
