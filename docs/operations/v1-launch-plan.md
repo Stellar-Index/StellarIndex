@@ -2137,15 +2137,19 @@ the spec, so the wire-freeze prerequisite is met).
 
 ## 1. Go-live gate (all must be true)
 
-- [ ] **Supply trustworthy**: `supply_refresh_error_dominant` +
-      `supply_cross_check_divergence` clear (or per-asset justified);
-      AQUA/SEP-41 genesis-seed values spot-checked vs issuance truth.
-      **2026-07-27: the AQUA spot-check RAN and FAILED** — not the
-      expected +15.7% overstatement but a **−13.2% understatement** from
-      the unseeded claimable component (§2.4). Three distinct blockers
-      now: (a) claimable seed, (b) SAC full-history seed OOM, (c)
-      dormancy calibration [OP].
-- [ ] **Completeness green**: all sources `complete=true` (incl. sep41 ×2 + the new redstone gap); `/v1/coverage` two-axis verdict honest.
+- [x] ✅ **Supply trustworthy** — DONE 2026-07-30: full reconcile vs
+      Horizon **8/8 PASS** (evidence `2026-07-30-supply-reconcile-8of8.md`);
+      the claimable seed, SAC full-history seed, and dormancy-anchor fix
+      all landed. Residual: `supply_cross_check_divergence` ×3 (PHO/BLND/
+      EURC, partial_wrap) dispositioned — our values Horizon-verified;
+      external references count wrapped supply differently. Pre-launch:
+      convert dispositions to annotated silences.
+- [ ] **Completeness green** — 16/17 as of 2026-08-01: redstone +
+      soroswap FLIPPED GREEN (blind ladder 1,626→0; taker 100%). Last
+      red = aquarius (first full-range reconcile surfaced 41 old-WASM
+      blind events + 482 pre-gating over-projected trades; unit in
+      flight on the proven playbook). `/v1/coverage` two-axis verdict
+      honest throughout.
 - [x] ✅ **Prove-it battery passed** (§2.6) — every row filed as of 2026-07-30: reconcile-balances (0 mismatches), verify-lake/contiguity/hash-chain (genesis→tip), re-derive determinism (byte-identical), price vs 5 references (22/22), supply vs Horizon (**8/8**), `verify-usd-volume` calibrated (current pipeline exact; pre-07-23 re-stamp queued as data-quality follow-up). Remaining battery-adjacent: the SEV drill (paging-gated).
 - [x] ✅ **Config codified = live** — DONE 2026-07-27. The 69-task apply
       landed (`ok=259 changed=60 failed=0`) and **`ansible-drift.yml` is
