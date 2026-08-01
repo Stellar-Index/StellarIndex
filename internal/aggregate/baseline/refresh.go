@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // DefaultWindow is the size of the rolling training window per
@@ -185,6 +186,11 @@ loop:
 		}
 		wg.Add(1)
 		go func(pair canonical.Pair) {
+			// A panic in one pair's refresh must not crash the whole
+			// aggregator process — it unwinds this per-pair goroutine,
+			// releasing sem + wg via the defers below; the pair is simply
+			// absent from the summary (logged at Error with its stack).
+			defer worker.Recover(r.logger, "baseline-refresh:"+pair.String())
 			defer wg.Done()
 			defer func() { <-sem }()
 

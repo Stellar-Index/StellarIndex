@@ -294,3 +294,44 @@ func TestPublisher_NoPairsBlocksUntilCancel(t *testing.T) {
 		t.Fatal("Run did not return after cancel")
 	}
 }
+
+// panicReader panics on every LatestPrice call — simulates a
+// read/decode fault surfacing inside a per-pair poll loop.
+type panicReader struct{}
+
+func (panicReader) LatestPrice(context.Context, canonical.Asset, canonical.Asset) (v1.PriceSnapshot, []string, bool, error) {
+	panic("simulated reader fault in tickOnce")
+}
+
+// TestPublisher_Run_RecoversPanickingPollLoop proves the W4-cmd-1 fix:
+// a panic in one pair's poll goroutine (the Run fan-out at publisher.go)
+// is CONTAINED. The API binary's outer recoverBackgroundWorker wraps only
+// the goroutine that CALLS Run — it cannot catch a panic in the per-pair
+// goroutines Run itself spawns, which is exactly the gap this closes.
+//
+// Proven red: without the `defer worker.Recover(...)` in the per-pair
+// goroutine, the panic below is unrecovered in a DETACHED goroutine and
+// takes the whole test binary down. With the guard, the poll goroutine
+// unwinds cleanly and Run returns. (The recover's Error-level log is
+// asserted deterministically in internal/worker's helper test — asserting
+// it here would race Run's wg.Wait against the deferred log write.)
+func TestPublisher_Run_RecoversPanickingPollLoop(t *testing.T) {
+	hub := streaming.NewHub(0)
+	asset := mustParse(t, "native")
+	quote := mustParse(t, "fiat:USD")
+	pub := streampublish.New(hub, panicReader{}, time.Second, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- pub.Run(ctx, []canonical.Pair{{Base: asset, Quote: quote}}) }()
+
+	select {
+	case <-done:
+		// Run returned — the per-pair goroutine recovered its panic and
+		// exited instead of crashing the process.
+	case <-time.After(3 * time.Second):
+		t.Fatal("Publisher.Run did not return after its poll goroutine panicked — the per-pair recover is missing")
+	}
+}

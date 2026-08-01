@@ -29,6 +29,7 @@ import (
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // PriceReader is the narrow read-side dependency the publisher
@@ -121,6 +122,13 @@ func (p *Publisher) Run(ctx context.Context, pairs []canonical.Pair) error {
 	for _, pair := range pairs {
 		wg.Add(1)
 		go func(pair canonical.Pair) {
+			// A panic in one pair's poll loop must not crash the whole API
+			// process. The binary's outer recoverBackgroundWorker wraps
+			// only the goroutine that CALLS Run — it cannot catch a panic
+			// in these per-pair goroutines Run fans out, so each needs its
+			// own guard (logged at Error with its stack; that pair stops
+			// publishing, the others keep going).
+			defer worker.Recover(p.logger, "streampublish:"+pair.String())
 			defer wg.Done()
 			p.pollLoop(ctx, pair)
 		}(pair)

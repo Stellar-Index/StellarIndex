@@ -99,6 +99,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 	"github.com/Stellar-Index/StellarIndex/internal/version"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // Baseline-refresh tunables. Deliberately not surfaced as TOML knobs
@@ -533,6 +534,7 @@ func run(cfgPath string, dryRun bool) error {
 	var refresherWG sync.WaitGroup
 	refresherWG.Add(1)
 	go func() {
+		defer worker.Recover(logger, "baseline-refresh")
 		defer refresherWG.Done()
 		runBaselineRefresh(rootCtx, refresher, pairs, logger.With("component", "baseline-refresh"))
 	}()
@@ -554,6 +556,7 @@ func run(cfgPath string, dryRun bool) error {
 	}
 	refresherWG.Add(1)
 	go func() {
+		defer worker.Recover(logger, "change-summary")
 		defer refresherWG.Done()
 		_ = changeSummaryWorker.Run(rootCtx)
 	}()
@@ -571,6 +574,7 @@ func run(cfgPath string, dryRun bool) error {
 	})
 	refresherWG.Add(1)
 	go func() {
+		defer worker.Recover(logger, "protocol-events-rollup")
 		defer refresherWG.Done()
 		if err := protoEventsRollup.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("protocol-events rollup worker exited with error", "err", err)
@@ -589,6 +593,7 @@ func run(cfgPath string, dryRun bool) error {
 	})
 	refresherWG.Add(1)
 	go func() {
+		defer worker.Recover(logger, "asset-volume-rollup")
 		defer refresherWG.Done()
 		if err := assetVolRollup.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("asset-volume rollup worker exited with error", "err", err)
@@ -612,6 +617,7 @@ func run(cfgPath string, dryRun bool) error {
 		if len(cfg.Supply.WatchedSEP41Contracts) > 0 {
 			refresherWG.Add(1)
 			go func() {
+				defer worker.Recover(logger, "sep41-supply-rollup")
 				defer refresherWG.Done()
 				runSEP41SupplyRollup(rootCtx, store, cfg.Supply.WatchedSEP41Contracts,
 					cfg.Supply.AggregatorRefreshCadence, logger.With("component", "sep41-supply-rollup"))
@@ -640,6 +646,7 @@ func run(cfgPath string, dryRun bool) error {
 		for _, b := range bindings {
 			refresherWG.Add(1)
 			go func(binding supplyRefresherBinding) {
+				defer worker.Recover(logger, "supply-refresh")
 				defer refresherWG.Done()
 				runSupplyRefresh(rootCtx, binding.refresher, cfg.Supply.AggregatorRefreshCadence, binding.assetKey)
 			}(b)
@@ -659,6 +666,7 @@ func run(cfgPath string, dryRun bool) error {
 		if ccRefresher != nil {
 			refresherWG.Add(1)
 			go func() {
+				defer worker.Recover(logger, "supply-cross-check")
 				defer refresherWG.Done()
 				runCrossCheckRefresh(rootCtx, ccRefresher, cfg.Supply.AggregatorRefreshCadence)
 			}()
@@ -685,6 +693,7 @@ func run(cfgPath string, dryRun bool) error {
 		interval := time.Duration(cfg.Divergence.Supply.RefreshIntervalSeconds) * time.Second
 		refresherWG.Add(1)
 		go func() {
+			defer worker.Recover(logger, "supply-divergence")
 			defer refresherWG.Done()
 			runSupplyDivergenceRefresh(rootCtx, supplyDivSvc, interval)
 		}()
@@ -698,6 +707,7 @@ func run(cfgPath string, dryRun bool) error {
 	if freezeRecovery != nil {
 		refresherWG.Add(1)
 		go func() {
+			defer worker.Recover(logger, "freeze-recovery")
 			defer refresherWG.Done()
 			_ = freezeRecovery.Run(rootCtx)
 		}()
@@ -713,6 +723,7 @@ func run(cfgPath string, dryRun bool) error {
 	// inventory + manual SQL; now it pages.
 	refresherWG.Add(1)
 	go func() {
+		defer worker.Recover(logger, "gap-detector")
 		defer refresherWG.Done()
 		if err := timescale.RunGapDetector(rootCtx, store, logger.With("component", "gap-detector")); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("gap-detector exited with error", "err", err)
@@ -748,6 +759,7 @@ func run(cfgPath string, dryRun bool) error {
 	}
 	refresherWG.Add(1)
 	go func() {
+		defer worker.Recover(logger, "mev")
 		defer refresherWG.Done()
 		mevWorker := mev.NewWorker(store, store, mevCfg)
 		if err := mevWorker.Run(rootCtx, 5*time.Minute); err != nil && !errors.Is(err, context.Canceled) {
@@ -765,6 +777,7 @@ func run(cfgPath string, dryRun bool) error {
 	// detection sweep below.
 	refresherWG.Add(1)
 	go func() {
+		defer worker.Recover(logger, "decimals-cache")
 		defer refresherWG.Done()
 		decimalsLookup.run(rootCtx)
 	}()
@@ -808,6 +821,7 @@ func run(cfgPath string, dryRun bool) error {
 			})
 			refresherWG.Add(1)
 			go func() {
+				defer worker.Recover(logger, "decimals-guard")
 				defer refresherWG.Done()
 				// One-time startup self-seed: catches a non-7-decimal
 				// token that traded and then went DORMANT before the
@@ -849,6 +863,7 @@ func run(cfgPath string, dryRun bool) error {
 		)
 		refresherWG.Add(1)
 		go func() {
+			defer worker.Recover(logger, "price-alerts")
 			defer refresherWG.Done()
 			if err := paWorker.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
 				logger.Error("price-alert evaluator exited with error", "err", err)

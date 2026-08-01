@@ -287,6 +287,55 @@ func (s *perPairErrSource) TimedVWAPsForPair1m(ctx context.Context, pair canonic
 	return s.base.TimedVWAPsForPair1m(ctx, pair, from, to)
 }
 
+// panicSource panics for one pair, delegating the rest to a base
+// source. Used to simulate a decode/read fault that manifests as a
+// panic inside a per-pair RefreshAll goroutine.
+type panicSource struct {
+	base     *stubSource
+	panicFor string
+}
+
+func (s *panicSource) TimedVWAPsForPair1m(ctx context.Context, pair canonical.Pair, from, to time.Time) ([]baseline.TimedVWAP, error) {
+	if pair.String() == s.panicFor {
+		panic("simulated source fault in RefreshPair")
+	}
+	return s.base.TimedVWAPsForPair1m(ctx, pair, from, to)
+}
+
+// TestRefresher_RefreshAll_RecoversPanickingPair proves the W4-cmd-1
+// fix: a panic in one pair's per-pair goroutine (the RefreshAll fan-out
+// at refresh.go) is CONTAINED — the batch completes and the healthy pair
+// still upserts, instead of the panic crashing the whole aggregator.
+//
+// Proven red: without the `defer worker.Recover(...)` added to the
+// per-pair goroutine, the panic below is unrecovered in a DETACHED
+// goroutine and takes the entire test binary down — a Go panic in any
+// goroutine terminates the process and cannot be caught by RefreshAll's
+// caller. With the guard, RefreshAll returns and the healthy pair's
+// outcome is counted (OK == 1); the panicking pair is absent from the
+// summary rather than fatal.
+func TestRefresher_RefreshAll_RecoversPanickingPair(t *testing.T) {
+	now := time.Now().UTC()
+	pHappy := mustPair(t, "native", "fiat:USD")
+	pPanic := mustPair(t, "native", "fiat:EUR")
+
+	src := newStubSource()
+	src.set(pHappy, stableTimedSeries(now, 100))
+	psrc := &panicSource{base: src, panicFor: pPanic.String()}
+	sink := newStubSink()
+
+	r := baseline.NewRefresher(psrc, sink, 30*24*time.Hour, nil)
+	sum := r.RefreshAll(context.Background(),
+		[]canonical.Pair{pHappy, pPanic}, 2)
+
+	if sum.OK != 1 {
+		t.Errorf("OK = %d, want 1 (the healthy pair still upserts after its sibling panics)", sum.OK)
+	}
+	if sink.calls != 1 {
+		t.Errorf("sink.calls = %d, want 1 (only pHappy upserted; the panicking pair wrote nothing)", sink.calls)
+	}
+}
+
 // TestRefresher_RefreshAll_ConcurrencyClamp — concurrency <= 0
 // falls back to 1 (serial).
 func TestRefresher_RefreshAll_ConcurrencyClamp(t *testing.T) {
