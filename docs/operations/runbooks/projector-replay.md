@@ -112,6 +112,39 @@ replay is caught up to the live tip.
   Cursor still rewinds but the next cycle scans an empty range
   and advances back to the same toLedger.
 
+## Pre-flight: decompress the replay window FIRST (2026-08-01)
+
+Replays through compressed Timescale history **livelock** — twice on
+2026-07-31/08-01: retro-fill upserts into compressed `trades` and
+`aquarius_*` chunks blew write deadlines, the projector held the cursor
+and retry-stormed (100k+ abandoned inserts/hour), and the replay froze
+until the chunks were decompressed. Compressed-chunk upserts decompress
+segments per conflict; batch replays hit the same segments repeatedly.
+The nightly 22:45Z policies recompress, so a chunk decompressed
+yesterday re-blocks today — and any table newly given a policy joins
+the trap silently.
+
+**Before ANY replay whose window overlaps compressed chunks**,
+decompress every compressed chunk of EVERY table the source writes
+(`trades` plus its per-source hypertables) across the window's time
+range:
+
+```sql
+SELECT format('SELECT decompress_chunk(%L);',
+              c.chunk_schema||'.'||c.chunk_name)
+FROM timescaledb_information.chunks c
+WHERE c.hypertable_name IN ('trades', '<source tables…>')
+  AND c.is_compressed
+  AND c.range_end > '<window start ts>';
+```
+
+Run the emitted statements (large chunks under `run-heavy-job.sh`),
+then start the replay. The nightly policy recompresses afterwards —
+no manual re-compression needed. If a replay is ALREADY wedged, the
+signature is `Insert*: context deadline exceeded` storms with a frozen
+cursor; decompress the blocking chunk and (since v0.21.12) the
+sink-side adaptive shrink converges the window automatically.
+
 ## Related
 
 - ADR-0032 — per-source tables as projections.
@@ -133,3 +166,6 @@ replay is caught up to the live tip.
   `source_cursors`; `last_updated` not `updated_at`); normalise flag
   form to single-dash to match the binary.
 - 2026-05-29 — initial draft (ADR-0032 Phase 5 rc.97).
+- 2026-08-01 — decompress-first pre-flight added (two livelocks in 12h:
+  trades 69GB chunk + newly-policied aquarius tables); sink-side
+  adaptive shrink shipped in v0.21.12.
