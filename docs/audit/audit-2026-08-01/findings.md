@@ -297,5 +297,145 @@ decoder/source/substrate ingest surface is solid — i128 discipline holds every
 gating is fail-closed. Re-queues: gating-seed-walk (forged-creation), chainlink/
 frankfurter, live/lake state-write parity test.
 
+## WAVE-2 (api/auth/platform) findings
+
+### W2-auth — mutating+auth surface (finder adba) — NO crit/high exploitable; 1 MED (gated)
+- **W2-auth-1 — MED, CONFIRMED-by-finder, GATED on auth_backend=postgres (NOT live on
+  r1's redis backend): account kill-switch bypassed by the Postgres validator's
+  read-through cache.** apikey_postgres.go:221-287 cache-HIT re-checks only RevokedAt
+  (:239) + ExpiresAt (:242), NEVER account Status; cache-MISS DOES (:138-140 rejects
+  !=AccountActive) — the two paths disagree. admin_accounts.go:209-234 kill-switch calls
+  Update + clampKeysAfterTierChange, which early-returns unless the TIER ceiling drops
+  (:268-278) — a status-only change invalidates nothing. So on postgres backend, suspend/
+  close lets a recently-cached key authenticate for up to cacheTTL (1h) after the switch;
+  operator + audit believe it was immediate. Same root: quota/rate override lowering not
+  propagated to cached Subjects. r1 runs redis (accountActive fresh per-request,
+  apikey_redis.go:330) → not live. FIX before postgres cutover: invalidate the key cache
+  on status/override change, or re-check Status on the cache-hit path.
+- W2-auth-2 LOW: /v1/signup mints a usable 1000/min key for an UNOWNED email;
+  require_email_verification=FALSE by default (signup.go:216, require_email_verified.go:41).
+  Acknowledged in code, per-IP throttled, read-only API → accepted upstream. Bounded.
+- W2-auth-3 INFO: 6-digit login code c%10 over 32-symbol base32 → digits 0/5 at 4/32 vs
+  3/32 (auth.go:102). Negligible (5 attempts + durable lockout + constant-time compare).
+- EXAMINED-SOUND: IDOR on every {id} route (dashboardkeys/webhooks/pricealerts +
+  account self-service all scope id→account.ID, 404-on-mismatch); scope-prefix trap
+  (only mutating routes outside the 3 scoped prefixes are HMAC/anon/cookie, none
+  key-scoped user mutations); Stripe (HMAC over body, drift replay window, hmac.Equal,
+  empty-secret 503, dedupe+deadletter); SEP-10 (header pinned vs alg:none, iss+exp,
+  SETNX replay on canonical hash, fail-closed); session (login-intent browser-bind,
+  single-use Consume, HttpOnly+Secure+SameSite=Lax, next= open-redirect guarded,
+  suspended-session denial); CSRF RequireSameSiteWrite fail-closed; admin operator-gated
+  + X-Reason audited, closed PATCH struct (no mass-assignment); rate-limit fail posture.
+- NOT-EXAMINED / RE-QUEUE: internal/ratelimit/{bucket,fixedwindow,inprocess}.go dwell/
+  fail-closed math + Redis atomicity (every fail-closed claim above depends on the
+  sustained-outage→ErrThrottleUnavailable transition being correct); signup throttle
+  internals; streaming/{hub,periplimit,redispub} SSE caps. → Wave-4 small-pkgs finder.
+
+### W2-platform — billing/webhook/usage/notify (finder a98f) — NO crit/high; 1 MED
+- **W2-plat-1 — MED (data-integrity, permanent): usage_daily per-endpoint analytics
+  permanently over-counted by a Redis SCAN duplicate.** ScanDetail (counter.go:182-208)
+  appends readDetailHash for EVERY key SCAN yields, no visited-set; Redis SCAN may return
+  a key twice during rehash. groupDetails (rollup.go:147-169) folds dups with OK+=Count
+  (sum). usage_daily upsert is GREATEST(existing, new) (usage_daily.go:30-35) → an inflated
+  sweep locks in forever; once the day leaves the today/yesterday window it's never
+  re-swept → /v1/account/usage permanently ~2× for that endpoint/day. NOT the billing/quota
+  counter (MonthlyQuota uses separate legacy usage:<sub>:<day> keys, unaffected). No
+  adversary. FIX: visited-set dedup in ScanDetail (SCAN semantics), or a per-key idempotent
+  merge that survives duplicate emission.
+- W2-plat-2 LOW: customer-webhook at-most-one-in-flight violated under load — batch of 100
+  claimed once with a 5-min lease (webhook_store.go:297), processed serially at ≤10s each
+  (>16min worst) → during a 2-worker deploy instance B re-claims expired-lease tail rows A
+  hasn't delivered → double POST. Stable X-StellarIndex-Delivery-Id lets an idempotent
+  receiver dedup; the doc over-promises "never." FIX: per-row re-lease or shorter batch.
+- W2-plat-3 LOW: price-alert cooldown bypass — fanOut aborts mid-loop on an EnqueueDelivery
+  error after enqueuing earlier webhooks; evaluateOne skips MarkPriceAlertFired (only on
+  err==nil, worker.go:186) → next 30s sweep re-fires to already-served webhooks (cooldown
+  never stamped); dups carry DIFFERENT delivery-ids → evade receiver dedup. Requires an
+  enqueue failure; best-effort alerting. FIX: mark-fired for the webhooks that succeeded.
+- EXAMINED-SOUND: SSRF guard THOROUGH (169.254.169.254 via IsLinkLocalUnicast incl
+  IPv4-mapped, RFC1918/ULA, CGNAT 100.64, Oracle 192.0.0, NAT64 64:ff9b::/96 + ::1:/48,
+  dial-time resolve + pin ips[0] closes DNS-rebind, redirects disabled); HMAC (plaintext
+  256-bit secret shared signer/verifier, over ts.body); Stripe claim/lease/advisory-lock
+  dedupe (ErrEventInFlight not dup-acked → no money-in-nothing-provisioned); quota INCR/
+  HINCRBY int64 monotonic, key lock-step, fail-open intentional+counted; cross-account
+  isolation (fanout lists only ListWebhooksForAccount, payload own-fields only; global
+  fanout = public events only); email injection none (Resend JSON not raw SMTP,
+  html/template escaping); atomic token consume + per-email lockout; audit List parameterized.
+  GetSession revoked-not-expired gap is EXAMINED-SOUND (middleware.go:123 enforces
+  ExpiresAt.After(now) one layer up — verified by orchestrator).
+- NOT-EXAMINED: platform/postgresstore/{store.go,status_notice_store.go,invites}, platform
+  type-defs, apikey_postgres quota-cascade unmetered-default (by-design business-logic gap:
+  quota=0 + override=0 = unmetered, no per-tier default). Note: internal/platform/usage.go
+  = confirmed DEAD CODE (no writer).
+
+### W2-explorer — catalogue/explorer handlers (finder a6b7) — 1 MED SECURITY + 1 MED
+- **W2-explorer-1 — MED SECURITY, CONFIRMED-by-inspection (orchestrator verified the
+  asymmetry): /v1/accounts/{g}/movements can impersonate a trusted asset.**
+  resolveSEP41MovementAsset (movements.go:331-339) returns SACAssetFromEvents VERBATIM
+  with NO cross-check, while the sibling wasm_view.go:201-202 does
+  `derived,_:=asset.SacContractID(); if derived != contractID { return "",false }` and
+  the reader's own docstring (wasm_lake_reader.go:417-426) says "The caller MUST
+  cross-check … the topic is attacker-influenceable on non-SAC contracts." SEP-41
+  transfers are ingested from ANY token contract (not identity-gated). Attack: deploy a
+  non-SAC token emitting a 4-topic CAP-67 transfer with sep0011_asset ScString =
+  "USDC:GA5ZSEJYB…" (Circle USDC), airdrop 1 unit to a victim → victim's public unauth
+  movements render asset:"USDC:GA5Z…" impersonating Circle. Display-layer (not
+  money-moving, not cross-account leak); the "any contract can emit any topic" trap
+  CLAUDE.md warns about. Secondary LOW: events path returns colon-form CODE:GISSUER vs
+  canonical dash CODE-GISSUER (inconsistent, breaks ?asset= filter). FIX: mirror
+  wasm_view's SacContractID cross-check in resolveSEP41MovementAsset.
+- **W2-explorer-2 — MED: movements ?asset= filter applied in Go AFTER the SQL LIMIT.**
+  fetchSEP41MovementsTail → ListSEP41TransfersByAddress takes NO asset param
+  (sep41_transfers.go:389); the filter runs post-fetch (movements.go:289 `if asset !=
+  assetFilter continue`). Matching rows beyond page 1 unreachable; a page whose newest
+  25 transfers are a different asset → merged=[], no next_cursor, no coverage_note
+  (set only on nil-reader/error) → "no USDC movements" when there are many. Violates the
+  endpoint's own honest-degrade contract. FIX: push the asset filter into SQL, or emit
+  coverage_note + next_cursor on an underfilled filtered page.
+- EXAMINED-SOUND: /v1/assets/{slug} two-shape dispatch (GlobalAssetView vs AssetDetail,
+  Kind at single funnel); DEX TVL big.Rat lower-bound labeled (UnpricedPools/Basis);
+  analytics status ok/stale/unavailable degraded≠zero; coverage two-axis; oracle
+  scaledDecimalString big.Int; explorer ids validated (IsContractID/IsAccountID/txHashRe);
+  keyset cursors on full pages only (no tie-drop); search.go pure classification no
+  injection; issuers scam-suppression; NetworkThroughput stroops-as-strings.
+- Notes: changes.go:67 moneyStr(float64)+assets_global FormatFloat(InverseUSD) — display-
+  grade prices/FX <2^53, not ADR-0003 violations (trace if ever fed i128-scale).
+- NOT-EXAMINED: status.go/status_notices.go analytics-honesty, incidents/methodology/
+  currencies, assets_f2 populateMarketCap decimals-overlay, asset_catalogue caches.
+  → Wave-4/dry-wave.
+
+### W2-pricing — pricing/history handlers (finder ab49) — money discipline SOLID; DoS REFUTED
+- Pricing-F1 DoS amplification REFUTED (orchestrator): the finder's ">60s empty-pair
+  scan" relies on a STALE measurement predating migration 0037's composite index
+  `trades_pair_source_ts_idx (base_asset,quote_asset,source,ts DESC,ledger DESC)` — which
+  exactly matches LatestTradePerSource's WHERE base=$1 AND quote=$2 ORDER BY source,ts
+  DESC,ledger DESC → an empty pair is a fast index SEEK to zero rows, not a scan (code
+  comment observations.go:115 confirms "index-covered"). No connection-pool amplification.
+  → moved to reviewed-not-carried.
+- **W2-pricing-1 — LOW (merges pricing-F2 + markets_cache): history_cache + markets_cache
+  grow WITHOUT bound** — keyed on user-controllable asset/cursor/params, eviction ONLY on
+  cold-fill error (history_cache.go:200, markets_cache.go:242), no size cap/TTL sweep →
+  slow memory growth over process lifetime under distinct-key churn. FIX: LRU cap or TTL
+  eviction (the explorer caches already have maxEntries; apply the same here).
+- W2-pricing-2 LOW: /v1/observations/stream omits the fiat:USD short-circuit the sync
+  handler has (observations_stream.go:114 vs observations.go:116) → cold-key stream hits
+  the (now index-covered, 8s-bounded) scan. Minor.
+- W2-pricing-3 LOW: /v1/history/since-inception doesn't loop base aliases native↔crypto:XLM
+  (history.go:630,704 use literal pair.Base; contrast chart.go:646 loops assetAliases) →
+  ?asset=crypto:XLM returns empty where ?asset=native returns years. XLM-dual-form trap.
+  FIX: loop assetAliases like the other price surfaces.
+- EXAMINED-SOUND: ALL money/amount/OHLC/VWAP/TWAP/market-cap/pct-change on the wire are
+  decimal STRINGS with big.Rat/big.Int math (floats are confidence/z_score/share_pct
+  only); closed-bucket serving (ADR-0015) enforced; alias loops present on price/price_at/
+  price_changes/chart/ohlc; cursor full-PK; limits bounded. Sargability trap CLEARED (the
+  bucket+INTERVAL predicates are paired with selective equality — filter the in-progress
+  bucket off an index-pruned set, not range-defining).
+
+## WAVE-2 COMPLETE (4/4). Net: 0 crit/high; MED: W2-auth-1 (postgres kill-switch cache,
+GATED off-r1), W2-plat-1 (usage analytics over-count), W2-explorer-1 (SAC label spoof,
+SECURITY), W2-explorer-2 (movements asset-filter-after-limit). Pricing DoS refuted. The
+money-on-the-wire discipline + auth/billing/SSRF core are SOLID. Headliner = the SAC
+label spoof (public unauth trusted-asset impersonation).
+
 ## PLAUSIBLE / PENDING
 (skeptic verdicts for the DoS cluster R2/R3/R10, ingest W-1/F-6/F-4, money M-A/M-B/F-2 still in flight)
