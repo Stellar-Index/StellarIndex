@@ -4,13 +4,18 @@
 # The lint gates in this repo carry self-editable escape hatches:
 #   - scripts/ci/lint-imports.baseline   (grandfathered import violations)
 #   - scripts/ci/lint-metric-refs.sh     (the KNOWN_INERT allowlist array)
+#   - .gitleaksignore                     (per-finding secret-scan fingerprints)
+#   - .gitleaks.toml                      ([allowlist]/[[rules.allowlists]]
+#                                          path/regex exemptions)
 #
 # Each is designed to shrink monotonically, and the linters already
 # fail on STALE entries — but nothing stopped a commit from GROWING
 # the allowlist in the same change that introduces the violation it
-# hides (audit 2026-06-30, CS-098). This check closes that hole: any
-# commit range that ADDS entries to a baseline/allowlist fails unless
-# the commit message carries an explicit, auditable trailer:
+# hides (audit 2026-06-30, CS-098; the gitleaks pair added for W5-ci-2,
+# where a PR could add an ignore fingerprint or a broad path allowlist
+# that silences a REAL leak in the same diff). This check closes that
+# hole: any commit range that ADDS entries to a baseline/allowlist fails
+# unless the commit message carries an explicit, auditable trailer:
 #
 #     Baseline-Growth: <reason>
 #
@@ -53,15 +58,23 @@ added_entries() {
     | grep -E "$pattern" || true
 }
 
+# report_growth <banner> <added-lines> — print the banner, list every added
+# entry indented, and mark the run failed. One helper so every allowlist block
+# reports identically.
+report_growth() {
+  echo "$1"
+  local line
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && echo "  + $line"
+  done <<<"$2"
+  fail=1
+}
+
 # 1) *.baseline files: every non-comment line is an entry.
 for f in scripts/ci/*.baseline; do
   [[ -e "$f" ]] || continue
   added="$(added_entries "$f" '.')"
-  if [[ -n "$added" ]]; then
-    echo "BASELINE GREW: $f"
-    echo "$added" | sed 's/^/  + /'
-    fail=1
-  fi
+  [[ -n "$added" ]] && report_growth "BASELINE GREW: $f" "$added"
 done
 
 # 2) KNOWN_INERT allowlist inside lint-metric-refs.sh: entries are
@@ -70,11 +83,31 @@ done
 #    reformatting; a comment mentioning a metric is excluded by the
 #    comment filter above.
 added="$(added_entries scripts/ci/lint-metric-refs.sh '^\s*stellarindex_[a-z0-9_]+\s*$')"
-if [[ -n "$added" ]]; then
-  echo "ALLOWLIST GREW: scripts/ci/lint-metric-refs.sh KNOWN_INERT"
-  echo "$added" | sed 's/^/  + /'
-  fail=1
-fi
+[[ -n "$added" ]] && report_growth \
+  "ALLOWLIST GREW: scripts/ci/lint-metric-refs.sh KNOWN_INERT" "$added"
+
+# 3) .gitleaksignore: every non-comment line is a per-finding fingerprint
+#    (commit:path:rule:line) that exempts a secret-scan hit — the same
+#    shrink-only allowlist shape as a *.baseline (W5-ci-2). Adding one in
+#    the same change that introduces the leak it hides silently defeats the
+#    gitleaks gate, and the gate's own anti-self-bypass restore (ci.yml's
+#    import-checks job) pins THIS script to the base ref, so a PR cannot both
+#    add the fingerprint and weaken the check that catches it.
+added="$(added_entries .gitleaksignore '.')"
+[[ -n "$added" ]] && report_growth \
+  "ALLOWLIST GREW: .gitleaksignore (secret-scan fingerprint exemptions)" "$added"
+
+# 4) .gitleaks.toml: the [allowlist]/[[rules.allowlists]] path & regex
+#    exemptions. The file is "allowlists only, no custom rules" (its own
+#    header), so every array-element line — one beginning with a quote after
+#    optional whitespace — is an exemption that WIDENS what gitleaks ignores;
+#    table headers ([...]), key=value lines (description=, paths=, id=) and
+#    comments all start with a non-quote char and are excluded. A broad new
+#    path/regex here can blind the scanner to a live file (W5-ci-2).
+GITLEAKS_TOML_ENTRY=$'^[[:space:]]*[\x27"]'
+added="$(added_entries .gitleaks.toml "$GITLEAKS_TOML_ENTRY")"
+[[ -n "$added" ]] && report_growth \
+  "ALLOWLIST GREW: .gitleaks.toml (secret-scan path/regex exemptions)" "$added"
 
 if [[ "$fail" -eq 0 ]]; then
   echo "lint-baseline-growth: no baseline/allowlist growth."
