@@ -51,6 +51,15 @@ type AssetRow struct {
 	Change1hPct  *string
 	Change24hPct *string
 	Change7dPct  *string
+	// SourceCount is the number of DISTINCT venues that backed PriceUSD —
+	// array_length(prices_1m.sources) of the latest bucket the listing price
+	// came from. It is the liquidity signal the API's market-cap valuation
+	// guard reads (single-venue AND sub-floor volume → suppress the cap).
+	// Nil when the price wasn't derived from a per-asset bucket on this query
+	// (a triangulated native-XLM price, or the single-row slug/native queries
+	// which serve verified currencies that are never dust) — a nil count is
+	// treated as "unmeasured" and never suppresses.
+	SourceCount *int
 }
 
 // AssetsOrder controls the sort + cursor scheme used by ListAssets.
@@ -202,12 +211,13 @@ func scanAssetRow(scanner interface {
 		change1hPct             sql.NullString
 		change24hPct            sql.NullString
 		change7dPct             sql.NullString
+		sourceCount             sql.NullInt64
 	)
 	if err := scanner.Scan(
 		&r.Slug, &r.AssetID, &r.Code, &r.IssuerGStrkey,
 		&firstLedger, &lastLedger, &r.ObservationCount,
 		&priceUSD, &volume24hUSD, &marketCapUSD, &circulatingSupply,
-		&change1hPct, &change24hPct, &change7dPct,
+		&change1hPct, &change24hPct, &change7dPct, &sourceCount,
 	); err != nil {
 		return AssetRow{}, fmt.Errorf("timescale: scan asset: %w", err)
 	}
@@ -220,6 +230,10 @@ func scanAssetRow(scanner interface {
 	r.Change1hPct = nullStringPtr(change1hPct)
 	r.Change24hPct = nullStringPtr(change24hPct)
 	r.Change7dPct = nullStringPtr(change7dPct)
+	if sourceCount.Valid {
+		v := int(sourceCount.Int64)
+		r.SourceCount = &v
+	}
 	return r, nil
 }
 
@@ -272,7 +286,8 @@ const listAssetsBaseSelect = `
 		    FROM asset_volume_24h
 		),
 		direct_usd AS (
-		  SELECT DISTINCT ON (base_asset) base_asset AS asset_id, vwap
+		  SELECT DISTINCT ON (base_asset) base_asset AS asset_id, vwap,
+		         array_length(sources, 1) AS source_count
 		    FROM prices_1m
 		   WHERE quote_asset = 'fiat:USD'
 		     AND bucket >= now() - INTERVAL '7 days'
@@ -307,7 +322,8 @@ const listAssetsBaseSelect = `
 		   ORDER BY base_asset, bucket DESC
 		),
 		asset_vs_xlm AS (
-		  SELECT DISTINCT ON (base_asset) base_asset AS asset_id, vwap
+		  SELECT DISTINCT ON (base_asset) base_asset AS asset_id, vwap,
+		         array_length(sources, 1) AS source_count
 		    FROM prices_1m
 		   WHERE quote_asset = 'native'
 		     AND bucket >= now() - INTERVAL '7 days'
@@ -517,7 +533,14 @@ const listAssetsBaseSelect = `
 		                  / (vs_xlm_7d.vwap * (SELECT vwap FROM xlm_usd_7d))
 		                  - 1) * 100, 'FM999999990.00')
 		      ELSE NULL
-		    END                                   AS change_7d_pct
+		    END                                   AS change_7d_pct,
+		    -- Distinct venues backing price_usd (the latest per-asset bucket's
+		    -- prices_1m.sources) — the liquidity signal the API's market-cap
+		    -- valuation guard reads. NULL for native XLM (triangulated price,
+		    -- always liquid) and for any asset with no per-asset bucket.
+		    CASE WHEN ca.asset_id = 'native' THEN NULL::int
+		         ELSE COALESCE(direct.source_count, vs_xlm.source_count)
+		    END                                   AS source_count
 		  FROM classic_assets ca
 		  LEFT JOIN per_asset_24h_vol vol         ON vol.asset_id        = ca.asset_id
 		  LEFT JOIN direct_usd        direct      ON direct.asset_id     = ca.asset_id
@@ -1456,7 +1479,11 @@ const getAssetBySlugSQL = `
 		                  / ((SELECT vwap FROM asset_vs_xlm_7d) * (SELECT vwap FROM xlm_usd_7d))
 		                  - 1) * 100, 'FM999999990.00')
 		      ELSE NULL
-		    END                                   AS change_7d_pct
+		    END                                   AS change_7d_pct,
+		    -- Single-row slug lookup serves catalogue-verified currencies,
+		    -- which are never dust — leave source_count unmeasured so the
+		    -- valuation guard never suppresses here (shared scanAssetRow shape).
+		    NULL::int                             AS source_count
 		  FROM chosen
 		  JOIN classic_assets ca ON ca.asset_id = chosen.asset_id
 		  LEFT JOIN per_asset_24h_vol vol ON true
@@ -1643,7 +1670,10 @@ const getNativeAssetSQL = `
 		                  / (SELECT vwap FROM xlm_usd_7d) - 1) * 100,
 		                  'FM999999990.00')
 		      ELSE NULL
-		    END                                    AS change_7d_pct
+		    END                                    AS change_7d_pct,
+		    -- Native XLM is always deep-liquidity — leave source_count
+		    -- unmeasured (shared scanAssetRow shape); the guard never fires.
+		    NULL::int                              AS source_count
 		  FROM ledger_bounds lb
 		  LEFT JOIN per_asset_24h_vol vol ON true
 `

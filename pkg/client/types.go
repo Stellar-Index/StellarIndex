@@ -239,6 +239,14 @@ type AssetDetail struct {
 	// declaration) or when USD price is unavailable.
 	FDVUSD *string `json:"fdv_usd,omitempty"`
 
+	// MarketCapLowLiquidity is true when market_cap_usd (and fdv_usd) were
+	// deliberately suppressed — served null — because the backing price came
+	// from negligible liquidity (a single venue AND trailing-24h USD volume
+	// below the server's valuation-integrity floor). Distinguishes
+	// "suppressed on purpose" from "no supply/price data"; the price_usd
+	// itself still serves. Omitted (false) when a cap is present.
+	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
+
 	// SupplyBasis identifies which ADR-0011 policy produced the
 	// supply numbers (e.g. "issuer_exclusion", "admin_exclusion",
 	// "override"); null when no snapshot exists.
@@ -1050,6 +1058,12 @@ type GlobalAssetView struct {
 	CirculatingSupply *string `json:"circulating_supply,omitempty"`
 	SupplyDecimals    int     `json:"supply_decimals,omitempty"`
 	MarketCapUSD      *string `json:"market_cap_usd,omitempty"`
+
+	// MarketCapLowLiquidity is true when market_cap_usd was suppressed
+	// because the backing price came from negligible liquidity. Present for
+	// wire parity with AssetDetail; the fiat market cap (M2 × deep FX rate)
+	// is never dust-gated, so this stays false on catalogue rows today.
+	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
 }
 
 // VerifiedCurrencyListItem is one row in the response to

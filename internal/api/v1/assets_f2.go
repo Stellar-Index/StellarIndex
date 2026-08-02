@@ -135,9 +135,10 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	// pre-2026-05-04 bug passed the supply key and the volume
 	// lookup never matched the trade rows.
 	var (
-		snap     supply.Supply
-		haveSnap bool
-		wg       sync.WaitGroup
+		snap             supply.Supply
+		haveSnap         bool
+		priceSourceCount int
+		wg               sync.WaitGroup
 	)
 	run := func(fn func()) {
 		wg.Add(1)
@@ -160,8 +161,9 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	run(func() { s.populateChange24h(ctx, detail, asset) })
 	// F-1271: inline price_usd independent of supply availability so
 	// wallet UIs that just want the price don't pay a second /v1/price
-	// RT. populateMarketCap (phase 2) re-uses detail.PriceUSD.
-	run(func() { s.populatePriceUSD(ctx, detail, asset) })
+	// RT. populateMarketCap (phase 2) re-uses detail.PriceUSD, plus the
+	// venue count captured here for the dust-liquidity valuation guard.
+	run(func() { priceSourceCount = s.populatePriceUSD(ctx, detail, asset) })
 	// Supply snapshot only when a supply reader is wired and the
 	// asset has a supply key — off-chain assets (fiat / crypto-pure)
 	// have no snapshot, matching the pre-parallelisation early-return.
@@ -219,7 +221,7 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	// wg.Wait barrier makes both safely visible.
 	if haveSnap {
 		populateSupplyFields(detail, snap)
-		s.populateMarketCap(ctx, detail, asset, snap, key)
+		s.populateMarketCap(ctx, detail, asset, snap, key, priceSourceCount)
 	}
 }
 
@@ -307,16 +309,23 @@ func populateSupplyFields(detail *AssetDetail, snap supply.Supply) {
 // path. Idempotent: if the asset-catalogue overlay or another caller already
 // set PriceUSD, this is a no-op (the two paths can't fight). F-1271
 // (audit-2026-05-12).
-func (s *Server) populatePriceUSD(ctx context.Context, detail *AssetDetail, asset canonical.Asset) {
+//
+// Returns the number of DISTINCT venues that backed the price — the liquidity
+// signal populateMarketCap needs for the dust-liquidity valuation guard. 0
+// when no price was found or PriceUSD was already set by another path (on the
+// /v1/assets/{id} detail path this runs before any overlay, so a found price
+// always yields the real count).
+func (s *Server) populatePriceUSD(ctx context.Context, detail *AssetDetail, asset canonical.Asset) int {
 	if s.prices == nil || detail.PriceUSD != nil {
-		return
+		return 0
 	}
-	usdPrice, ok := s.lookupUSDPrice(ctx, asset)
+	usdPrice, sourceCount, ok := s.lookupUSDPriceWithSources(ctx, asset)
 	if !ok {
-		return
+		return 0
 	}
 	priceCopy := usdPrice
 	detail.PriceUSD = &priceCopy
+	return sourceCount
 }
 
 // populateMarketCap fills market_cap_usd + fdv_usd from the supply
@@ -324,7 +333,7 @@ func (s *Server) populatePriceUSD(ctx context.Context, detail *AssetDetail, asse
 // inlined price (set by populatePriceUSD or the asset-catalogue overlay path)
 // to avoid a second prices_1m lookup. Compute failures log at WARN;
 // the field stays nil so the rest of the body still serves cleanly.
-func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, asset canonical.Asset, snap supply.Supply, key string) {
+func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, asset canonical.Asset, snap supply.Supply, key string, priceSourceCount int) {
 	if detail.PriceUSD == nil {
 		// populatePriceUSD ran first and didn't find a price (no
 		// prices reader wired OR lookupUSDPrice returned !ok).
@@ -334,6 +343,17 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 	usdPrice := *detail.PriceUSD
 	_ = ctx
 	_ = asset
+	// Valuation-integrity guard: when the backing price came from a single
+	// venue AND the asset's trailing-24h USD volume is below the operator
+	// floor, suppress BOTH market_cap_usd and fdv_usd (leave them null) and
+	// flag it — one dust trade ("0.00001 of an asset for $10") must not
+	// present an obscure asset as worth billions. detail.VolumeUSD24h is
+	// populated by the concurrent populateVolume24h before this join. The
+	// price_usd itself still serves; we guard the valuation, not the price.
+	if dustLiquiditySuppressed(priceSourceCount, detail.VolumeUSD24h, s.minMarketCapVolumeUSD) {
+		detail.MarketCapLowLiquidity = true
+		return
+	}
 	if snap.CirculatingSupply != nil {
 		if mc, err := usdMarketValue(snap.CirculatingSupply, usdPrice, detail.Decimals); err != nil {
 			s.logger.Warn("market_cap_usd compute failed",
@@ -371,17 +391,28 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 // priceFallback isn't reachable (the supply / change-24h paths
 // bypass the /v1/price handler entirely).
 func (s *Server) lookupUSDPrice(ctx context.Context, asset canonical.Asset) (string, bool) {
+	price, _, ok := s.lookupUSDPriceWithSources(ctx, asset)
+	return price, ok
+}
+
+// lookupUSDPriceWithSources is [Server.lookupUSDPrice] plus the number of
+// DISTINCT venues that backed the returned price — the liquidity signal the
+// market-cap valuation guard needs (see [dustLiquiditySuppressed]). It is the
+// single implementation; lookupUSDPrice is the thin (price, ok) wrapper kept
+// for the callers (explorer seam, lending, change-24h) that don't need the
+// venue count. sourceCount is 0 when ok is false.
+func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.Asset) (string, int, bool) {
 	if s.prices == nil {
 		// Options documents Prices as independently optional ("nil →
 		// 503"); populatePriceUSD guards this, but populateChange24h
 		// reaches us via a different path. Guard here so a
 		// Prices==nil,Change24h!=nil wiring can't nil-panic.
-		return "", false
+		return "", 0, false
 	}
 	if asset.Equal(defaultPriceQuote) {
 		// fiat:USD priced against fiat:USD is meaningless;
 		// short-circuit before the reader rejects it.
-		return "", false
+		return "", 0, false
 	}
 	// Alias-aware read — the SAME resolution /v1/price uses. XLM
 	// surfaces in two canonical forms (`native` per-network and
@@ -393,7 +424,7 @@ func (s *Server) lookupUSDPrice(ctx context.Context, asset canonical.Asset) (str
 	// different pairs). readPriceWithAliases makes both dual-forms
 	// resolve to the same canonical USD price. Non-aliased assets are
 	// unaffected (assetAliases returns [asset] for everything else).
-	snap, _, _, err := s.readPriceWithAliases(ctx, s.prices, asset, defaultPriceQuote)
+	snap, sources, _, err := s.readPriceWithAliases(ctx, s.prices, asset, defaultPriceQuote)
 	if err == nil && snap.Price != "" {
 		// dex-nonstandard-decimals forward normalization (M2):
 		// readPriceWithAliases returns the RAW asset/fiat:USD ratio. This is
@@ -403,15 +434,15 @@ func (s *Server) lookupUSDPrice(ctx context.Context, asset canonical.Asset) (str
 		// fixes every one at once. Byte-identical no-op for a 7dp asset. (The
 		// proxy branch below self-normalizes inside tryStablecoinFiatProxy.)
 		s.normalizeRawPriceSnapshot(&snap, asset, defaultPriceQuote)
-		return snap.Price, true
+		return snap.Price, len(sources), true
 	}
 	// Read-time stablecoin-fiat proxy fallback (matches the
 	// handler-side fix in #1217 / tryStablecoinFiatProxy). Already
 	// decimals-normalized inside tryStablecoinFiatProxy — do NOT re-apply.
-	if proxy, _, ok := s.tryStablecoinFiatProxy(ctx, asset, defaultPriceQuote); ok && proxy.Price != "" {
-		return proxy.Price, true
+	if proxy, proxySources, ok := s.tryStablecoinFiatProxy(ctx, asset, defaultPriceQuote); ok && proxy.Price != "" {
+		return proxy.Price, len(proxySources), true
 	}
-	return "", false
+	return "", 0, false
 }
 
 // populateChange24h fills detail.Change24hPct via the

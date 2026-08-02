@@ -13645,10 +13645,12 @@ export interface components {
             price_usd?: string | null;
             /** @description Trailing-24h price change as a signed decimal percentage with two fractional digits (e.g. "+1.27", "-0.05", "0.00"). Null when the asset has no current USD price or no comparison bucket ~24h ago. */
             change_24h_pct?: string | null;
-            /** @description circulating_supply × USD price / 10^decimals, two fractional digits. Null when supply or USD price is unavailable. */
+            /** @description circulating_supply × USD price / 10^decimals, two fractional digits. Null when supply or USD price is unavailable, OR when suppressed as dust-liquidity (see market_cap_low_liquidity). */
             market_cap_usd?: string | null;
-            /** @description max_supply × USD price / 10^decimals, two fractional digits. Null when max_supply is null or USD price unavailable. */
+            /** @description max_supply × USD price / 10^decimals, two fractional digits. Null when max_supply is null, USD price unavailable, OR when suppressed as dust-liquidity (see market_cap_low_liquidity). */
             fdv_usd?: string | null;
+            /** @description True when market_cap_usd and fdv_usd were deliberately suppressed (served null) because the backing price came from negligible liquidity — a single venue AND trailing-24h USD volume below the server's aggregate.min_market_cap_volume_usd floor. Disambiguates 'suppressed on purpose' from 'no supply/price data'; the price_usd itself still serves — the guard is on the valuation, not the price. Omitted when a cap is present. */
+            market_cap_low_liquidity?: boolean;
             /**
              * @description Which ADR-0011 policy produced the supply numbers.
              *     Surfaced so consumers can decide how much to trust the
@@ -13864,6 +13866,8 @@ export interface components {
             supply_decimals?: number;
             /** @description Decimal string (2 fractional digits). Computed for fiat rows: M2 × current FX rate. Null for crypto/stablecoin (their market cap lives on the per-Stellar-asset F2 fields). */
             market_cap_usd?: string | null;
+            /** @description True when market_cap_usd was suppressed because the backing price came from negligible liquidity. Present for wire parity with the per-Stellar-asset Asset surface; the fiat market cap (M2 × deep FX rate) is never dust-gated, so this stays false on catalogue rows today. Omitted when false. */
+            market_cap_low_liquidity?: boolean;
         };
         GlobalAssetEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["GlobalAssetView"];

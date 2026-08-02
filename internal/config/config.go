@@ -989,6 +989,7 @@ type AggregateConfig struct {
 	VWAPWindowSeconds            int                        `toml:"vwap_window_seconds" doc:"Rolling VWAP window in seconds." default:"300"`
 	TWAPWindowSeconds            int                        `toml:"twap_window_seconds" doc:"Rolling TWAP window in seconds (fallback when volume below threshold)." default:"300"`
 	MinUSDVolume                 float64                    `toml:"min_usd_volume" doc:"Per-pair minimum USD volume within the window for VWAP eligibility." default:"10000"`
+	MinMarketCapVolumeUSD        float64                    `toml:"min_market_cap_volume_usd" doc:"Valuation-integrity floor (USD): a market cap / FDV is SUPPRESSED (served null with market_cap_low_liquidity=true) when its backing price came from a single venue AND the asset's trailing-24h USD volume is below this floor. The AND is load-bearing — a single-venue asset with real volume, or any multi-source asset, keeps its cap. Stops one dust trade ('0.00001 of an asset for $10') presenting an obscure asset as worth billions. 0 disables the guard." default:"1000"`
 	OutlierSigmaThreshold        float64                    `toml:"outlier_sigma_threshold" doc:"Reject trades priced more than N standard deviations from the per-window (unweighted) MEAN before VWAP. Implementation is mean+stdev computed per window (internal/aggregate/outliers.go), NOT a rolling median or MAD; 0 disables it and fewer than 3 valid prices is a no-op." default:"4"`
 	TriangulationEnabled         bool                       `toml:"triangulation_enabled" doc:"Master switch for the post-refresh triangulation pass. When true (default), the aggregator runs each aggregate.triangulations chain × window after the per-pair refresh, multiplying the leg VWAPs and writing the implied target price. When false, the pass is skipped entirely regardless of aggregate.triangulations entries — an operator-side kill-switch for the triangulation feature without having to clear the chain table." default:"true"`
 	IntervalSeconds              int                        `toml:"interval_seconds" doc:"Tick cadence — gap between successive (pair, window) refresh passes. 0 falls back to the library default (30s)." default:"30"`
@@ -1657,6 +1658,7 @@ func Default() Config {
 			VWAPWindowSeconds:            300,
 			TWAPWindowSeconds:            300,
 			MinUSDVolume:                 10_000,
+			MinMarketCapVolumeUSD:        1_000,
 			OutlierSigmaThreshold:        4,
 			TriangulationEnabled:         true,
 			IntervalSeconds:              30,
