@@ -10,7 +10,7 @@ func strptr(s string) *string { return &s }
 // TestDustLiquiditySuppressed pins the shared valuation-integrity predicate
 // that BOTH the listing path (fillMarketCapsFromSupply → computeMarketCapUSD)
 // and the detail path (populateMarketCap) gate on. The AND is load-bearing:
-// only a single backing venue AND sub-floor 24h volume suppresses.
+// only a single backing venue AND a POSITIVE sub-floor 24h volume suppresses.
 func TestDustLiquiditySuppressed(t *testing.T) {
 	const floor = 1000.0
 	cases := []struct {
@@ -21,9 +21,16 @@ func TestDustLiquiditySuppressed(t *testing.T) {
 		want        bool
 	}{
 		{"dust: 1 source, $10 vol", 1, strptr("10"), floor, true},
-		{"dust: 1 source, $0 vol", 1, strptr("0"), floor, true},
+		// M5: a parseable "0" is a BOGUS artifact (pure-Soroban SEP-41 plain
+		// reader, or a SorobanVolumeReader error fallback), not a real
+		// sub-floor reading — treat it as UNMEASURED → KEEP, identical to nil.
+		{"bogus zero volume → unmeasured (M5)", 1, strptr("0"), floor, false},
+		{"bogus zero.zero volume → unmeasured (M5)", 1, strptr("0.00"), floor, false},
+		{"negative volume → unmeasured (M5)", 1, strptr("-5"), floor, false},
 		{"single venue but liquid $100k", 1, strptr("100000"), floor, false},
 		{"single venue exactly at floor", 1, strptr("1000"), floor, false},
+		{"single venue above floor $2000", 1, strptr("2000"), floor, false},
+		{"single venue positive sub-floor $10 suppresses", 1, strptr("10"), floor, true},
 		{"multi-source thin $10", 2, strptr("10"), floor, false},
 		{"multi-source thin, 3 venues", 3, strptr("5"), floor, false},
 		{"floor disabled (0)", 1, strptr("10"), 0, false},

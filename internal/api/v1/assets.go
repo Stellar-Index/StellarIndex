@@ -979,7 +979,16 @@ func (s *Server) refreshClassicSupply(er classicSupplyReader, done chan struct{}
 // sourceCount == 0 means the venue count wasn't measured on this path (a
 // triangulated native-XLM price, or a catalogue-verified currency) — treated
 // as "not dust", so we never suppress without positive single-venue evidence.
-// A nil / empty / unparseable volume is likewise treated as unknown → KEPT.
+// A nil / empty / unparseable / non-positive (<= 0) volume is likewise treated
+// as UNMEASURED → KEPT: only a POSITIVE, parseable, sub-floor volume is genuine
+// dust. This matters because populateVolume24h (assets_f2.go) documents that the
+// plain reader reports a BOGUS "0" for pure-Soroban SEP-41 tokens (their
+// XLM-quoted trades never populate the insert-time usd_volume) and FALLS BACK
+// to it when the richer SorobanVolumeReader errors — so a genuinely liquid
+// Soroban token ($200k/24h) hitting a transient volume-reader error surfaces a
+// "0" that is an artifact, not a real sub-floor reading. Suppressing a market
+// cap on that "0" would be worse than the dust it guards against; a real
+// sub-floor volume is always strictly positive.
 func dustLiquiditySuppressed(sourceCount int, volume24hUSD *string, floor float64) bool {
 	if floor <= 0 || sourceCount != 1 {
 		return false
@@ -989,6 +998,11 @@ func dustLiquiditySuppressed(sourceCount int, volume24hUSD *string, floor float6
 	}
 	vol, ok := new(big.Float).SetPrec(128).SetString(strings.TrimSpace(*volume24hUSD))
 	if !ok {
+		return false
+	}
+	if vol.Sign() <= 0 {
+		// Non-positive volume is unmeasured (bogus "0" artifact / bad data),
+		// not a real sub-floor reading — mirror the nil / unparseable branch.
 		return false
 	}
 	return vol.Cmp(big.NewFloat(floor)) < 0
@@ -2593,10 +2607,15 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 			return
 		}
 		twin := []AssetDetail{assetDetailFromAssetRow(*twinRow)}
-		// Same supply-derived market-cap fill the classic phase gets —
-		// the raw listing row carries no mcap. Catalogue twins are
-		// verified currencies (never dust), so the guard's source-count map
-		// is a no-op here, but pass it for a single suppression path.
+		// Same supply-derived market-cap fill the classic phase gets — the
+		// raw listing row carries no mcap. The twin row comes from
+		// ListAssetsExt (listAssetsBaseSelect), which DOES populate
+		// source_count (COALESCE(direct, vs_xlm)), so the dust-liquidity
+		// guard CAN fire here: a verified currency whose listing price came
+		// from a single venue with sub-floor 24h volume is suppressed just
+		// like any classic row. mergeTwinStats carries the resulting
+		// market_cap_low_liquidity flag onto the catalogue-listing row so it
+		// matches the twin's classic row / detail page (M4).
 		s.fillMarketCapsFromSupply(statsCtx, twin, assetRowSourceCounts([]timescale.AssetRow{*twinRow}))
 		mergeTwinStats(&page[i], twin[0])
 	})
@@ -2656,6 +2675,20 @@ func mergeTwinStats(dst *AssetDetail, twin AssetDetail) {
 	}
 	if dst.MarketCapUSD == nil {
 		dst.MarketCapUSD = twin.MarketCapUSD
+	}
+	// M4: the dust-liquidity suppression flag must ride along with the
+	// (absent) cap. fillMarketCapsFromSupply trips the guard on a verified
+	// twin whose listing price came from a single venue with sub-floor
+	// volume, leaving twin.MarketCapUSD nil and twin.MarketCapLowLiquidity
+	// true. Copying the cap without the flag showed market_cap_low_liquidity
+	// on the twin's classic row / detail page but nothing on the
+	// catalogue-listing row. When suppressed, null the cap + FDV on dst too
+	// so a stale/overlay value can never coexist with the flag (they suppress
+	// together, exactly as on the detail path's populateMarketCap).
+	if twin.MarketCapLowLiquidity {
+		dst.MarketCapLowLiquidity = true
+		dst.MarketCapUSD = nil
+		dst.FDVUSD = nil
 	}
 }
 
