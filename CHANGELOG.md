@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.23.0] — 2026-08-02
+
 ### Added
 - **Multi-path rate router with anti-manipulation corroboration** — thin FX
   crosses (e.g. XLM/GBP served 100% from a single venue) can now be priced
