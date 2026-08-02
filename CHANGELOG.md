@@ -15,6 +15,53 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **Router serving is anchored to the highest-confidence route** (audit H1) —
+  a confidence-blind outlier omission ran *before* confidence-weighted serving,
+  so once a target resolved to ≥3 routes a divergent low-confidence majority
+  could evict the trusted route as a price-outlier and set the served composite.
+  `CombineRoutes` now serves the highest-confidence route(s) among all gated
+  routes, using a member-median (never an averaged midpoint), so a lower-
+  confidence route corroborates and can flag divergence but can never move the
+  served price. Outlier omission still computes the `diverged`/corroboration
+  signals. Single-route serving (the whole shipped config) is byte-identical.
+- **Corroboration requires a per-route confidence floor** (audit M2) — a route
+  counts toward the anomaly-freeze corroboration only if its weakest-link
+  confidence clears 0.5, so a thin route can't fake independence when
+  `min_route_confidence` ships at 0.
+- **Router staleness is immune to wall-clock steps** (audit M1) — the composite
+  corroboration timestamp retains its monotonic reading (`time.Now()`, not
+  `.UTC()`), so a backward NTP/VM clock step can't latch a stale freeze-
+  suppressing corroboration count.
+- **Undirected market dedup** (audit M3) — a market quoted in both orientations
+  (`XLM/USD` + `USD/XLM`) no longer produces duplicate edges / double-counted
+  routes.
+- **Frozen-leg reroute is gated + flagged like a dry-leg reroute** (audit H2) —
+  a reroute around a *frozen* chain leg is now subject to `rerouteMinConfidence`
+  and marked `Rerouted`; a target frozen on its own direct market withholds
+  (`frozen_leg`) rather than overwriting its frozen last-known-good.
+- **Dust guard no longer suppresses on a placeholder `"0"` volume** (audit M5) —
+  a Soroban SEP-41 volume-reader artifact (`"0"`) is treated as *unmeasured*
+  (like `nil`); only a positive sub-floor volume suppresses a market cap.
+- **Catalogue rows surface `market_cap_low_liquidity`** (audit M4) — the flag is
+  now propagated through `mergeTwinStats`, so a dust-suppressed verified-currency
+  twin no longer shows a null cap without the explaining flag.
+- **Native XLM is never dust-suppressed on the detail path** (audit L2) —
+  mirrors the listing path's existing carve-out.
+- **Negative market cap guard** — `usdMarketValue` omits a negative market cap
+  (a negative-supply data error) rather than serving it, matching the listing
+  path's `computeMarketCapUSD`.
+- Hardening: non-finite route confidence is sanitised and `medianRat` guards
+  empty input (audit L5); cached non-FX chain legs no longer enter the graph at
+  max confidence (audit L1); the single-Tick invariant on the orchestrator's
+  per-tick maps is documented (audit L4).
+
+### Added
+- **`/v1/price` router quality flags** (audit L3) — `flags.diverged` (the
+  composite came from disagreeing routes) and `flags.rerouted` (priced via a
+  substitute path around a dry configured leg) now surface the router quality
+  signal the aggregator already computed and persisted but that had no reader.
+
 ## [v0.23.0] — 2026-08-02
 
 ### Added

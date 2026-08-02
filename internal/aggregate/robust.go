@@ -30,7 +30,15 @@ var madToStd = big.NewRat(7413, 5000)
 // medianRat returns the exact median of vals (which must be non-empty)
 // as a fresh *big.Rat. Does not mutate its input. Even-length inputs
 // return the exact arithmetic mean of the two middle values.
+//
+// Empty input returns nil (defensive, L5): every caller here guards
+// non-empty, so this only ever fires if that invariant is violated —
+// returning nil rather than panicking with an index-out-of-range on the
+// served-price path (s[n/2] on a zero-length slice).
 func medianRat(vals []*big.Rat) *big.Rat {
+	if len(vals) == 0 {
+		return nil
+	}
 	s := make([]*big.Rat, len(vals))
 	copy(s, vals)
 	sort.Slice(s, func(i, j int) bool { return s[i].Cmp(s[j]) < 0 })
@@ -40,6 +48,29 @@ func medianRat(vals []*big.Rat) *big.Rat {
 	}
 	sum := new(big.Rat).Add(s[n/2-1], s[n/2])
 	return sum.Quo(sum, big.NewRat(2, 1))
+}
+
+// medianMemberRat returns a median-like centre that is ALWAYS one of the
+// input values — never an averaged midpoint of two disagreeing values. For
+// an odd count it is the exact median; for an even count it is the LOWER of
+// the two central values (the conservative, fail-low choice for a served
+// price). Does not mutate its input.
+//
+// Used for the SERVED cross-rate composite (see [highestConfidencePrice]) so
+// the published price is one a route ACTUALLY produced, not a blend of two
+// disagreeing co-equal routes — the bimodal/co-equal case where an averaging
+// median would serve an unproduced midpoint (H1). When the central values
+// are equal (agreeing routes) it coincides with medianRat exactly, so the
+// only observable difference is precisely the disagreement case it exists to
+// fix. Empty input returns nil (defensive; callers guard non-empty — L5).
+func medianMemberRat(vals []*big.Rat) *big.Rat {
+	if len(vals) == 0 {
+		return nil
+	}
+	s := make([]*big.Rat, len(vals))
+	copy(s, vals)
+	sort.Slice(s, func(i, j int) bool { return s[i].Cmp(s[j]) < 0 })
+	return new(big.Rat).Set(s[(len(s)-1)/2])
 }
 
 // madRat returns the exact (unscaled) median absolute deviation of

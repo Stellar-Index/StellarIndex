@@ -623,6 +623,15 @@ type Orchestrator struct {
 	// Tick is serialised (the ticker drops events that arrive while
 	// a previous Tick is still running), and refreshPairWindow runs
 	// sequentially within Tick — so this map needs no separate lock.
+	//
+	// WARNING (L4): this map is read+written LOCK-FREE, and that is safe
+	// ONLY because a single Tick runs at a time and its per-pair loop is
+	// strictly sequential. It is the canonical example the sibling per-Tick
+	// maps (frozenThisTick, tickEdgeQuotes, lastComposites, freezeStates)
+	// point back to. If you EVER parallelise the per-(pair, window) refresh
+	// loop — or add any other concurrent writer — you MUST guard every
+	// access to this map (and each of those siblings) with o.mu FIRST. Do
+	// not do one without the other.
 	prevVWAPs map[string]*big.Rat
 
 	// lastWriteAt tracks the wall-clock timestamp of the most recent
@@ -654,6 +663,12 @@ type Orchestrator struct {
 	// freeze keeps being re-decided. Same single-Tick-at-a-time
 	// invariant as prevVWAPs (refreshPairWindow and triangulateAll run
 	// sequentially inside one Tick), so no lock is needed.
+	//
+	// WARNING (L4): LOCK-FREE ONLY because Tick is strictly sequential. It
+	// is WRITTEN in the per-pair loop (markFrozenThisTick) and READ in the
+	// triangulation pass (frozenLeg); parallelising the refresh without
+	// adding o.mu here would race those two and could silently launder a
+	// frozen leg into a derived price. See prevVWAPs.
 	frozenThisTick map[string]struct{}
 
 	// tickEdgeQuotes accumulates, per window, the priced-pair VWAPs of
@@ -667,6 +682,11 @@ type Orchestrator struct {
 	// setting a confident cross (INV-11). Rebuilt at the top of every
 	// [Tick]; same single-Tick-at-a-time invariant as prevVWAPs, so no
 	// lock is needed.
+	//
+	// WARNING (L4): LOCK-FREE ONLY because Tick is strictly sequential —
+	// APPENDED by the per-pair loop, READ by the triangulation pass, both
+	// within one Tick. Parallelising refresh REQUIRES o.mu around every
+	// access here first (a concurrent append is a data race). See prevVWAPs.
 	tickEdgeQuotes map[time.Duration][]aggregate.Quote
 
 	// lastComposites holds the most recent composite (triangulated)
@@ -677,6 +697,11 @@ type Orchestrator struct {
 	// behind and why it feeds confidence but never the freeze's
 	// source-count leg. Same single-Tick-at-a-time invariant as
 	// prevVWAPs, so no lock is needed.
+	//
+	// WARNING (L4): LOCK-FREE ONLY because Tick is strictly sequential (it
+	// is written by this tick's chain pass and read by the next tick's
+	// confidence/freeze step, never concurrently). Parallelising refresh
+	// REQUIRES o.mu around every access here first. See prevVWAPs.
 	lastComposites map[string]compositeSample
 
 	// freezeStates holds the ADR-0019 freeze lifecycle state per
@@ -695,6 +720,11 @@ type Orchestrator struct {
 	// evaluation after a restart the ladder is re-hydrated from the
 	// Redis marker, so a deploy mid-freeze does not silently restart
 	// the 2-hour escalation clock.
+	//
+	// WARNING (L4): LOCK-FREE ONLY because Tick is strictly sequential.
+	// Parallelising the per-(pair, window) refresh — which both reads and
+	// mutates this ladder state — REQUIRES o.mu around every access here
+	// first. See prevVWAPs.
 	freezeStates map[string]freeze.State
 
 	// clock is the orchestrator's time source, injectable so the
