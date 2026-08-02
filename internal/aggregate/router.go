@@ -377,12 +377,15 @@ type scoredRoute struct {
 // shortest (fewest-hop) routes from base to quote, computes each
 // route's exact composite and weakest-link confidence, gates them on
 // minConfidence, rejects outlier composites (median-relative), and
-// combines the survivors into one price with the exact MEDIAN.
+// serves the price of the most-trusted surviving route(s).
 //
 // Returns:
 //
 //   - composite: the combined base→quote price (exact *big.Rat), the
-//     median of the surviving routes' composites. nil only with err.
+//     median of the HIGHEST-confidence surviving routes (see
+//     [highestConfidencePrice]) — a lower-confidence route corroborates
+//     and can trip diverged, but never moves the served price. nil only
+//     with err.
 //   - combinedConfidence: the confidence of the combined price — the
 //     MAXIMUM weakest-link confidence among the surviving routes (the
 //     best independent path sets the trust floor). Conservative: it
@@ -444,7 +447,7 @@ func CombineRoutes(
 	}
 	survivorPrices := pricesOf(survivors)
 
-	composite = medianRat(survivorPrices)
+	composite = highestConfidencePrice(survivors)
 	combinedConfidence = maxConfidence(survivors)
 	pathCount = len(survivors)
 	rejected := len(gated) - len(survivors)
@@ -502,6 +505,38 @@ func maxConfidence(scored []scoredRoute) float64 {
 		}
 	}
 	return best
+}
+
+// highestConfidencePrice is the SERVED composite: the median of the prices of
+// only the survivors whose weakest-link confidence equals the maximum. This is
+// what makes an added low-confidence route safe to serve alongside a trusted
+// one — a route through a thin, unguarded bridge market (e.g. XLM→BTC→GBP,
+// where the XLM/BTC leg escapes the USD-volume floor) CORROBORATES and can trip
+// the divergence flags, but can never move the served price: only the
+// most-trusted route(s) set it. Properties:
+//
+//   - single route → that route's price, byte-identical to the pre-multi-route
+//     median-of-one and to serving with no router at all.
+//   - one deep route (confidence ~1) + one thin bridge route (low weakest-link
+//     confidence) → the deep route's price, even when both survive the loose
+//     40% outlier band. The thin route's disagreement still sets diverged, so
+//     the composite is served FLAGGED, not silently blended.
+//   - several genuinely co-equal top-confidence routes → their median, so no
+//     single venue among equals dominates the blend.
+//
+// It is coherent with combinedConfidence = maxConfidence: we now serve the
+// price OF the route(s) whose confidence we report, not a blend the reported
+// confidence never described. best is always some survivor's confidence, so the
+// filtered set is never empty when survivors is non-empty.
+func highestConfidencePrice(survivors []scoredRoute) *big.Rat {
+	best := maxConfidence(survivors)
+	top := make([]*big.Rat, 0, len(survivors))
+	for _, s := range survivors {
+		if s.confidence == best {
+			top = append(top, s.price)
+		}
+	}
+	return medianRat(top)
 }
 
 // spreadExceeds reports whether the max−min spread of vals exceeds pct

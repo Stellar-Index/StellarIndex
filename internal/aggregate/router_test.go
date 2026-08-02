@@ -368,15 +368,20 @@ func TestRouter_LowConfidenceRouteExcluded(t *testing.T) {
 		t.Error("diverged = true, want false (single trusted survivor)")
 	}
 
-	// Control: WITHOUT the floor the bad route drags the median to a
-	// fantasy value — this is exactly what the floor prevents.
-	dragged, _, count0, _, diverged0, _, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0)
+	// Control: even WITHOUT the confidence floor the bad route can no longer
+	// drag the served price — highestConfidencePrice serves the MAX-confidence
+	// survivor (0.9 → 3/5), independently of the floor. The dust route still
+	// counts toward pathCount and sets diverged (so the composite is served
+	// FLAGGED), but it does not move the value. Two independent protections:
+	// the floor EXCLUDES it, confidence-weighted serving REFUSES to blend it.
+	served, _, count0, _, diverged0, _, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0)
 	if err != nil {
 		t.Fatalf("CombineRoutes (floor 0): %v", err)
 	}
-	eqRat(t, dragged, big.NewRat(33, 10), "un-gated composite") // median(3/5, 6) = 33/10
+	// NOT median(3/5, 6) = 33/10: served = the 0.9-confidence route alone.
+	eqRat(t, served, big.NewRat(3, 5), "un-gated composite")
 	if count0 != 2 {
-		t.Errorf("un-gated pathCount = %d, want 2", count0)
+		t.Errorf("un-gated pathCount = %d, want 2 (both routes survive)", count0)
 	}
 	if !diverged0 {
 		t.Error("un-gated diverged = false, want true (routes disagree widely)")
@@ -656,4 +661,50 @@ func TestRouter_CorroborationSingleRoute(t *testing.T) {
 	if pathCount != 1 || corroboration != 1 {
 		t.Errorf("(pathCount, corroborationCount) = (%d, %d), want (1, 1)", pathCount, corroboration)
 	}
+}
+
+// Step 3.5 — a lower-confidence route CORROBORATES but never moves the served
+// price. This is what makes enabling a thin, USD-volume-floor-EXEMPT bridge
+// (XLM→BTC→GBP, where the crypto-quoted XLM/BTC leg escapes dropForMinUSDVolume)
+// safe: it can widen the freeze source_count when it agrees, but a manipulator
+// wash-trading the thin leg cannot drag the served cross — the deep route sets
+// the price.
+func TestRouter_ServesHighestConfidenceRoute(t *testing.T) {
+	// Deep route A (conf 0.95) prices obscure/GBP at 3/5 = 0.6; thin bridge
+	// route B (conf 0.20) is 20% higher at 18/25 = 0.72 — inside the loose 40%
+	// outlier band, so both survive omission.
+	edges := mustEdges(t,
+		rq(obscure, xlm, 2, 1, 0.95), rq(xlm, gbp, 3, 10, 0.95), // A: 3/5,  conf 0.95
+		rq(obscure, usd, 3, 1, 0.20), rq(usd, gbp, 6, 25, 0.20), //  B: 18/25, conf 0.20
+	)
+	composite, conf, pathCount, corroboration, _, _, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0)
+	if err != nil {
+		t.Fatalf("CombineRoutes: %v", err)
+	}
+	// Served = the deep route's price, NOT median(3/5, 18/25). The thin route
+	// cannot move it.
+	eqRat(t, composite, big.NewRat(3, 5), "served = highest-confidence route")
+	if conf != 0.95 {
+		t.Errorf("combinedConfidence = %v, want 0.95 (the served route's confidence)", conf)
+	}
+	if pathCount != 2 {
+		t.Errorf("pathCount = %d, want 2 (both routes survive)", pathCount)
+	}
+	// 20% apart → outside the 3% tight band → they do not corroborate either.
+	if corroboration != 0 {
+		t.Errorf("corroborationCount = %d, want 0 (20%% apart, not tightly agreeing)", corroboration)
+	}
+
+	// Manipulation check: move the THIN route's price (as a manipulator
+	// wash-trading the unguarded bridge would). While it stays inside the band
+	// the served price is UNCHANGED — the deep route alone sets it.
+	moved := mustEdges(t,
+		rq(obscure, xlm, 2, 1, 0.95), rq(xlm, gbp, 3, 10, 0.95), // A: 3/5, conf 0.95
+		rq(obscure, usd, 3, 1, 0.20), rq(usd, gbp, 11, 50, 0.20), // B moved to 33/50 = 0.66
+	)
+	movedComposite, _, _, _, _, _, err := aggregate.CombineRoutes(moved, obscure, gbp, 2, 0)
+	if err != nil {
+		t.Fatalf("CombineRoutes (moved): %v", err)
+	}
+	eqRat(t, movedComposite, big.NewRat(3, 5), "served price unmoved by thin-route manipulation")
 }

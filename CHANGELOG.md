@@ -16,6 +16,24 @@ against.
 ## [Unreleased]
 
 ### Added
+- **Multi-path rate router with anti-manipulation corroboration** — thin FX
+  crosses (e.g. XLM/GBP served 100% from a single venue) can now be priced
+  and cross-checked through multiple independent routes over the XLM/BTC/USD
+  hub topology (`internal/aggregate/router.go`), modelled on the predecessor
+  Rates Engine. Shortest routes preferred; each route's price is an exact
+  `big.Rat` composite and its confidence the weakest link. The freeze's
+  `source_count` is widened only by routes that are INDEPENDENT
+  (edge-disjoint), TIGHTLY agreeing (within 3%, far tighter than the 40%
+  outlier band) and non-diverged — a manipulator cannot manufacture false
+  corroboration by wash-trading one shared leg (fail-closed: a divergent or
+  shared-bottleneck set drops *below* the single-path baseline). The SERVED
+  price is the median of only the highest-confidence surviving route(s), so a
+  lower-confidence route (e.g. through a thin, USD-volume-floor-exempt bridge)
+  corroborates and can flag divergence but can **never move the served value**.
+  New config `aggregate.max_hops` (default 3) + `aggregate.min_route_confidence`
+  (default 0.0). Single-route targets — the entire shipped config today — are
+  byte-identical to the pre-router behaviour; the machinery activates only when
+  a target has a second independent route configured.
 - **Valuation-integrity guard on market cap / FDV** — a market cap is no
   longer presented as authoritative when its backing price came from
   negligible liquidity (an obscure asset with one $10 SDEX trade must not
