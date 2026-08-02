@@ -98,13 +98,23 @@ func (o *Orchestrator) triangulateAll(ctx context.Context) {
 
 // chainLegStatus is the per-chain result of resolving that chain's legs
 // while building the window's edge graph: whether a leg was frozen this
-// tick (so an unreachable target inherits the freeze, MNY-22) and
-// whether a leg hard-failed (Redis/parse — the target can't be trusted
-// this tick).
+// tick (so an unreachable target inherits the freeze, MNY-22), whether a
+// leg hard-failed (Redis/parse — the target can't be trusted this tick),
+// and whether a configured leg was DRY (missing_leg) so any route the
+// router still finds to the target is a SUBSTITUTE path (a reroute), not
+// the documented direct chain.
 type chainLegStatus struct {
 	frozen    bool
 	frozenLeg canonical.Pair
 	hardErr   string // "redis_error" / "parse_error", or "" on success
+
+	// legDry is set when a configured chain leg had no price this tick
+	// (missing_leg). A target reached DESPITE a dry configured leg is a
+	// reroute/leg-substitution — the router walked around the gap through
+	// other markets — which R3 requires be confidence-gated on a sane
+	// floor and flagged, not silently published over the direct price.
+	legDry bool
+	dryLeg canonical.Pair
 }
 
 // legEdgeConfidence is the weakest-link confidence assigned to a chain
@@ -186,11 +196,30 @@ func (o *Orchestrator) resolveChainLegs(
 		case "missing_leg":
 			// Leg absent this tick — leave it out of the graph. The router
 			// may still reach the target via an alternative route, or
-			// report the target unreachable (missing_leg) below.
+			// report the target unreachable (missing_leg) below. Record the
+			// substitution so [routeTarget] can gate + flag any reroute (R3)
+			// rather than let a thin substitute path silently overwrite the
+			// direct price.
+			st.legDry = true
+			st.dryLeg = leg
 		}
 	}
 	return st
 }
+
+// rerouteMinConfidence is the SANE confidence floor a leg-substitution
+// reroute must clear before its composite may publish OVER the direct
+// price (R3). It applies IN ADDITION to (and independently of)
+// min_route_confidence — the shipped config leaves that knob at 0, so
+// without this floor a dry FX leg could silently reroute through thin
+// crypto cross-pairs and overwrite the direct price with an unvetted
+// substitute. A reroute below this floor does not publish: the direct
+// price serves and the reroute is flagged. It does NOT gate the ordinary
+// (all-legs-present) chain, only reroutes. 0.5 is the same weakest-link
+// floor the dust-edge guard uses (route_test.go): a substitute whose
+// flimsiest leg is below it is not trustworthy enough to displace a
+// direct market.
+const rerouteMinConfidence = 0.5
 
 // routeTarget prices ONE target through the window's edge graph and
 // returns the [obs.AggregatorTriangulationsTotal] outcome label.
@@ -202,8 +231,16 @@ func (o *Orchestrator) resolveChainLegs(
 // publishes "ok" (or "missing_leg" when its leg is dry, which the
 // triangulation-chains-dry alert reads); an unreachable target whose leg
 // was frozen inherits the freeze ("frozen_leg", MNY-22). "low_confidence"
-// is new: when no route clears min_route_confidence the composite is
-// flagged but NOT published over the direct price.
+// covers both "no route clears min_route_confidence" AND (R3) "a
+// leg-substitution reroute did not clear rerouteMinConfidence": in both
+// the composite is flagged but NOT published over the direct price.
+//
+// R3 — when a configured leg is DRY (st.legDry) but the router still
+// reaches the target, the composite came from a SUBSTITUTE path. The
+// reroute is kept (it is the multi-path robustness we want) but it is (a)
+// gated on rerouteMinConfidence so a thin substitute cannot silently
+// displace the direct price, and (b) flagged (compositeMeta.Rerouted) so
+// the substitution is observable rather than a silent behaviour change.
 func (o *Orchestrator) routeTarget(
 	ctx context.Context,
 	chain TriangulationChain,
@@ -218,7 +255,7 @@ func (o *Orchestrator) routeTarget(
 		return st.hardErr
 	}
 	routeEdges := excludeDirectEdge(edges, chain.Target)
-	composite, combinedConf, pathCount, diverged, lowConf, err := aggregate.CombineRoutes(
+	composite, combinedConf, pathCount, corroboration, diverged, lowConf, err := aggregate.CombineRoutes(
 		routeEdges, chain.Target.Base, chain.Target.Quote, o.cfg.MaxHops, o.cfg.MinRouteConfidence)
 	switch {
 	case errors.Is(err, aggregate.ErrNoRoute):
@@ -236,36 +273,53 @@ func (o *Orchestrator) routeTarget(
 			"chain", chain.Target.String(), "err", err)
 		return "parse_error"
 	}
-	if lowConf {
-		// Every route to this target runs through a dust/thin edge below
-		// min_route_confidence. Do NOT overwrite the direct price with a
-		// low-confidence cross (requirement (b)); carry the flag for Step 3
-		// and leave the direct value serving. Nothing is recorded as
-		// corroboration, so the freeze falls back to the direct source
-		// count.
+	rerouted := st.legDry // a configured leg was dry, yet a route was found
+	if lowConf || (rerouted && combinedConf < rerouteMinConfidence) {
+		// Either every route runs through a dust/thin edge below
+		// min_route_confidence, OR this is a leg-substitution reroute (R3)
+		// whose best route does not clear the sane reroute floor. In both
+		// cases: do NOT overwrite the direct price (requirement (b)); carry
+		// the flags for Step 3 and leave the direct value serving. Nothing
+		// is recorded as corroboration, so the freeze falls back to the
+		// direct source count.
+		if rerouted && !lowConf {
+			// Observability (R3b): a thin substitute was BLOCKED from
+			// displacing the direct price — surface which leg dried so it is
+			// not a silent behaviour change.
+			o.logger.Info("triangulation: leg-substitution reroute below floor — direct price serves",
+				"chain", chain.Target.String(),
+				"dry_leg", st.dryLeg.String(),
+				"window", window.String(),
+				"combined_confidence", combinedConf,
+				"floor", rerouteMinConfidence,
+			)
+		}
 		o.writeCompositeMeta(ctx, chain.Target, window, compositeMeta{
 			PathCount:          pathCount,
 			CombinedConfidence: combinedConf,
 			LowConfidence:      true,
 			Diverged:           diverged,
+			Rerouted:           rerouted,
 		})
 		return "low_confidence"
 	}
-	return o.publishComposite(ctx, chain, window, composite, pathCount, combinedConf, diverged)
+	return o.publishComposite(ctx, chain, window, composite, pathCount, corroboration, combinedConf, diverged, rerouted)
 }
 
 // publishComposite writes a CONFIDENT composite to the target's VWAP
 // cache key (replacing the direct print for the tick, provenance
 // stamped), records it as this tick's corroboration for the next tick,
-// and carries its quality flags for Step 3.
+// and carries its quality flags for Step 3. rerouted marks a publish that
+// came from a leg-substitution path (R3) — it cleared rerouteMinConfidence
+// so it publishes, but the substitution is flagged for observability.
 func (o *Orchestrator) publishComposite(
 	ctx context.Context,
 	chain TriangulationChain,
 	window time.Duration,
 	composite *big.Rat,
-	pathCount int,
+	pathCount, corroboration int,
 	combinedConf float64,
-	diverged bool,
+	diverged, rerouted bool,
 ) string {
 	value := formatRatFixed(composite, 12)
 	key := cachekeys.VWAP(chain.Target.Base, chain.Target.Quote, window)
@@ -277,12 +331,13 @@ func (o *Orchestrator) publishComposite(
 	}
 
 	// Corroboration input for the NEXT tick — both the freeze's
-	// source_count leg (via pathCount) and the confidence divergence
-	// factor ([Orchestrator.triangulationDivergencePct]). Recorded only on
-	// a confident publish: a low-confidence, missing-leg, frozen-leg or
+	// source_count leg (via the INDEPENDENT corroboration count, not the
+	// raw survivor pathCount) and the confidence divergence factor
+	// ([Orchestrator.triangulationDivergencePct]). Recorded only on a
+	// confident publish: a low-confidence, missing-leg, frozen-leg or
 	// failed target must leave no value behind for the next tick to treat
 	// as evidence.
-	o.recordComposite(chain.Target, window, composite, pathCount, combinedConf, diverged)
+	o.recordComposite(chain.Target, window, composite, corroboration, combinedConf, diverged)
 
 	// Provenance marker — lets the API set flags.triangulated=true on the
 	// Redis-fallback path. Unchanged from the static path; a failure here
@@ -300,6 +355,7 @@ func (o *Orchestrator) publishComposite(
 		CombinedConfidence: combinedConf,
 		LowConfidence:      false,
 		Diverged:           diverged,
+		Rerouted:           rerouted,
 	})
 	return "ok"
 }
@@ -368,6 +424,13 @@ type compositeMeta struct {
 	CombinedConfidence float64 `json:"combined_confidence"`
 	LowConfidence      bool    `json:"low_confidence"`
 	Diverged           bool    `json:"diverged"`
+	// Rerouted marks a composite whose route(s) substituted around a DRY
+	// configured chain leg (R3). true means the documented direct chain
+	// could not resolve and the router walked an alternative path; when it
+	// also failed rerouteMinConfidence the composite was NOT published over
+	// the direct price (LowConfidence is set too). Lets Step 3 / the API
+	// surface a leg-substitution instead of it being a silent change.
+	Rerouted bool `json:"rerouted,omitempty"`
 }
 
 // writeCompositeMeta persists a composite's quality flags for Step 3.
