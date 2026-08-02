@@ -13281,6 +13281,13 @@ export interface components {
          *       source. When `frozen=true` this is forced true (an LKG
          *       fallback is by definition single-sourced). Informational;
          *       combined with `frozen` this is the manipulation signature.
+         *     - `diverged` — set on a TRIANGULATED `/v1/price` response when
+         *       the composite came from routes that DISAGREED (the
+         *       aggregator's router divergence signal). Omitted when false.
+         *     - `rerouted` — set on a TRIANGULATED `/v1/price` response when
+         *       the composite SUBSTITUTED around a dry configured chain leg
+         *       — the price came via an alternative path, not the documented
+         *       direct chain. Omitted when false.
          *     - `unverified_ticker_collision` — fires on `/v1/assets/{id}`
          *       when the asset's code matches a verified currency's
          *       Stellar ticker but the issuer doesn't. The matching
@@ -13305,6 +13312,16 @@ export interface components {
             frozen: boolean;
             /** @default false */
             single_source: boolean;
+            /**
+             * @description Set on a TRIANGULATED /v1/price response when the composite came from routes that disagreed (the aggregator's router divergence signal). Omitted when false.
+             * @default false
+             */
+            diverged: boolean;
+            /**
+             * @description Set on a TRIANGULATED /v1/price response when the composite substituted around a dry configured chain leg — the price came via an alternative path, not the documented direct chain. Omitted when false.
+             * @default false
+             */
+            rerouted: boolean;
             /** @default false */
             unverified_ticker_collision: boolean;
         };

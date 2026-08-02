@@ -1,6 +1,7 @@
 package cachekeys
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -136,15 +137,21 @@ const VWAPProvenanceTriangulated = "triangulated"
 // TTL: matches the VWAP value key.
 //
 // Writer: aggregator's triangulation pass writes a JSON blob
-// ({path_count, combined_confidence, low_confidence, diverged}) when it
-// prices a target through the graph router. Sibling to the value +
-// provenance keys; carries the router corroboration count and quality
-// flags so downstream (Step 3: market-cap gating, /v1/price confidence
-// flags) can respect them without recomputing. Absent = the pair was
-// not priced through the router this cycle. A low_confidence marker is
-// written even when the composite is NOT published over the direct
-// price, so a consumer can distinguish "served direct because the only
-// routes were dust" from "no composite at all".
+// ({path_count, combined_confidence, low_confidence, diverged,
+// rerouted}) when it prices a target through the graph router. Sibling
+// to the value + provenance keys; carries the router corroboration
+// count and quality flags so downstream (Step 3: market-cap gating,
+// /v1/price flags) can respect them without recomputing. Absent = the
+// pair was not priced through the router this cycle. A low_confidence
+// marker is written even when the composite is NOT published over the
+// direct price, so a consumer can distinguish "served direct because
+// the only routes were dust" from "no composite at all".
+//
+// Reader: internal/api/v1's /v1/price handler decodes it via
+// [DecodeCompositeMeta] on the TRIANGULATED serve path to set
+// flags.diverged / flags.rerouted (best-effort — a miss / malformed
+// blob leaves those flags unset). Consumed through the optional
+// v1.CompositeMetaLooker capability on the wired triangulated looker.
 
 // VWAPCompositeMetaKey is the typed Redis key for the
 // `vwap:<base>:<quote>:<window>:composite_meta` family. Distinct from
@@ -160,6 +167,36 @@ func (k VWAPCompositeMetaKey) String() string { return string(k) }
 func VWAPCompositeMeta(base, quote canonical.Asset, window time.Duration) VWAPCompositeMetaKey {
 	return VWAPCompositeMetaKey(fmt.Sprintf("vwap:%s:%s:%d:composite_meta",
 		base.String(), quote.String(), int(window.Seconds())))
+}
+
+// CompositeMeta is the read-side view of the JSON blob the aggregator
+// writes to a [VWAPCompositeMeta] key. It models only the two
+// consumer-facing quality signals the /v1/price handler surfaces —
+// path_count / combined_confidence / low_confidence are written by the
+// aggregator but not read on this path, so they are intentionally
+// omitted (json.Unmarshal ignores them). Kept deliberately separate
+// from the aggregator's writer-side struct: this is the wire contract a
+// reader depends on, nothing more.
+type CompositeMeta struct {
+	// Diverged is true when the composite came from routes that
+	// disagreed (the router divergence signal).
+	Diverged bool `json:"diverged"`
+	// Rerouted is true when the composite substituted around a dry
+	// configured chain leg (R3 leg-substitution).
+	Rerouted bool `json:"rerouted"`
+}
+
+// DecodeCompositeMeta parses the JSON blob stored under a
+// [VWAPCompositeMeta] key into the reader-facing [CompositeMeta].
+// Best-effort by contract: an empty or malformed payload returns the
+// zero value plus a non-nil error the caller may log-and-ignore
+// (absent / bad meta → quality flags unset, never a request failure).
+func DecodeCompositeMeta(raw []byte) (CompositeMeta, error) {
+	var m CompositeMeta
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return CompositeMeta{}, fmt.Errorf("cachekeys: decode composite meta: %w", err)
+	}
+	return m, nil
 }
 
 // ─── Confidence — multi-factor score per (pair, window) ───────────
