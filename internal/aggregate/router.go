@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"math/bits"
 	"sort"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -81,6 +82,30 @@ const (
 	// result diverged even though no single route was rejected — the
 	// surviving routes still disagree by more than this much.
 	routerDivergenceSpreadPct = 40
+
+	// routerCorroborationAgreePct is the TIGHT pairwise-agreement band, in
+	// percent, two surviving routes' composites must fall within of each
+	// other before either is counted as CORROBORATING the other for the
+	// anomaly-freeze source_count leg (see corroboratingRouteCount /
+	// [CombineRoutes]'s corroborationCount return). It is deliberately
+	// MUCH tighter than routerOutlierPermitPct (40): merely surviving the
+	// loose outlier band is "not an outlier", NOT "agrees". Corroboration
+	// is an anti-manipulation control — "N routes agree" must mean the
+	// routes actually agree, not just that they are within 40% of the
+	// median — so the bar is a few percent. Measured against the SMALLER
+	// of the two prices (the conservative, fail-closed denominator).
+	// Serving is unaffected; this only tightens what COUNTS as
+	// corroboration for the freeze.
+	routerCorroborationAgreePct = 3
+
+	// maxCorroborationRoutes caps the brute-force set-packing / clique
+	// search corroboratingRouteCount runs over the surviving routes. The
+	// shortest-route set for a real target is a handful, so the exact
+	// 2^n enumeration is trivial; beyond this many survivors it falls
+	// back to a greedy (UNDER-counting, fail-closed) estimate rather than
+	// risk a pathological blow-up. Under-counting can only make the
+	// freeze fire MORE readily, never suppress it falsely.
+	maxCorroborationRoutes = 16
 )
 
 // RouteLeg is one directed edge of the exchange graph AND one hop of a
@@ -339,9 +364,11 @@ func omitOutlierIndices(rates []*big.Rat, permitDivergentPct int) []int {
 }
 
 // scoredRoute pairs a route's exact composite price with its
-// weakest-link confidence, so outlier omission and confidence gating
-// stay aligned to the same route.
+// weakest-link confidence AND the legs it was computed from, so outlier
+// omission, confidence gating, and the edge-disjointness test that backs
+// the corroboration count all stay aligned to the same route.
 type scoredRoute struct {
+	legs       []RouteLeg
 	price      *big.Rat
 	confidence float64
 }
@@ -361,11 +388,23 @@ type scoredRoute struct {
 //     best independent path sets the trust floor). Conservative: it
 //     never claims more than the single strongest surviving route, even
 //     though agreement across routes is itself corroborating.
-//   - pathCount: the number of surviving, mutually-agreeing routes that
-//     back the composite (survivors after outlier omission). This is the
-//     corroboration count Step 2 feeds into the anomaly-freeze
-//     source_count — 1 means "single unverified path", ≥ 2 means
-//     "independently corroborated".
+//   - pathCount: the number of surviving routes that back the SERVED
+//     composite (survivors after outlier omission). This is the serving
+//     multiplicity carried on the composite meta — NOT the number the
+//     freeze trusts. It stays 1 for a single-route target (the whole
+//     production config today), byte-identical to the pre-corroboration
+//     behaviour.
+//   - corroborationCount: the number of INDEPENDENT, TIGHTLY-AGREEING,
+//     NON-DIVERGED routes that back the composite — the anti-manipulation
+//     count Step 2 feeds into the anomaly-freeze source_count leg. This is
+//     STRICTLY tighter than pathCount: it is 0 when the result diverged;
+//     0 when no two survivors agree within routerCorroborationAgreePct
+//     (loosely-agreeing routes inside the 40% band do NOT corroborate);
+//     and, among the tightly-agreeing survivors, the size of the maximum
+//     set of PAIRWISE EDGE-DISJOINT routes (two routes that share ANY
+//     undirected edge {From,To} are one manipulable market, not two
+//     independent confirmations — so an all-through-one-bottleneck set
+//     counts as 1). 1 for a single route. See corroboratingRouteCount.
 //   - diverged: true if any route was rejected as an outlier OR the
 //     surviving routes still spread more than routerDivergenceSpreadPct
 //     of their median. A caller should treat a diverged composite as a
@@ -385,15 +424,15 @@ type scoredRoute struct {
 // "confident").
 func CombineRoutes(
 	edges []RouteLeg, base, quote canonical.Asset, maxHops int, minConfidence float64,
-) (composite *big.Rat, combinedConfidence float64, pathCount int, diverged, lowConfidence bool, err error) {
+) (composite *big.Rat, combinedConfidence float64, pathCount, corroborationCount int, diverged, lowConfidence bool, err error) {
 	routes := FindRoutes(edges, base, quote, maxHops, true)
 	if len(routes) == 0 {
-		return nil, 0, 0, false, false, ErrNoRoute
+		return nil, 0, 0, 0, false, false, ErrNoRoute
 	}
 
 	scored, serr := scoreRoutes(routes)
 	if serr != nil {
-		return nil, 0, 0, false, false, serr
+		return nil, 0, 0, 0, false, false, serr
 	}
 
 	gated, lowConf := gateByConfidence(scored, minConfidence)
@@ -410,7 +449,8 @@ func CombineRoutes(
 	pathCount = len(survivors)
 	rejected := len(gated) - len(survivors)
 	diverged = rejected > 0 || spreadExceeds(survivorPrices, routerDivergenceSpreadPct)
-	return composite, combinedConfidence, pathCount, diverged, lowConf, nil
+	corroborationCount = corroboratingRouteCount(survivors, diverged)
+	return composite, combinedConfidence, pathCount, corroborationCount, diverged, lowConf, nil
 }
 
 // scoreRoutes computes each route's exact composite and weakest-link
@@ -422,7 +462,7 @@ func scoreRoutes(routes [][]RouteLeg) ([]scoredRoute, error) {
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, scoredRoute{price: p, confidence: RouteConfidence(r)})
+		out = append(out, scoredRoute{legs: r, price: p, confidence: RouteConfidence(r)})
 	}
 	return out, nil
 }
@@ -489,4 +529,210 @@ func spreadExceeds(vals []*big.Rat, pct int) bool {
 	lhs := new(big.Rat).Mul(spread, big.NewRat(100, 1))
 	rhs := new(big.Rat).Mul(medAbs, big.NewRat(int64(pct), 1))
 	return lhs.Cmp(rhs) > 0
+}
+
+// corroboratingRouteCount is the anti-manipulation corroboration count:
+// the number of INDEPENDENT, tightly-agreeing, non-diverged routes that
+// back the composite. It is what [CombineRoutes] feeds the anomaly-freeze
+// source_count leg, and it is deliberately much stricter than the raw
+// survivor count so that "N routes agree" means "N genuinely independent
+// routes actually agree" — the property a manipulator must not be able to
+// fake by wash-trading a single shared leg.
+//
+// The rules, in order:
+//
+//   - diverged → 0. If the router saw an outlier route, or the survivors
+//     still spread past routerDivergenceSpreadPct, the picture is not
+//     clean enough to corroborate anything (fail closed).
+//   - 0 or 1 survivor → that count. A single route is the "one unverified
+//     path" baseline (1); MAX-ed against the direct source count in the
+//     orchestrator it can never raise it, so this is byte-identical to
+//     the pre-corroboration behaviour for the single-route production
+//     config.
+//   - ≥ 2 survivors that do NOT contain a tightly-agreeing pair (no two
+//     within routerCorroborationAgreePct) → 0. Two routes that merely
+//     fall inside the loose 40% outlier band but actively disagree are
+//     evidence of a PROBLEM, not corroboration — drop below the
+//     single-path baseline so a disagreeing cross cannot suppress the
+//     freeze.
+//   - otherwise → the size of the largest set of survivors that pairwise
+//     BOTH agree tightly AND are edge-disjoint. Routes sharing any
+//     undirected edge collapse to one independent confirmation, so an
+//     all-through-one-bottleneck agreeing set scores 1 (not suppressing),
+//     while genuinely edge-disjoint agreeing routes score their true
+//     multiplicity.
+func corroboratingRouteCount(survivors []scoredRoute, diverged bool) int {
+	if diverged {
+		return 0
+	}
+	n := len(survivors)
+	if n <= 1 {
+		return n
+	}
+
+	agree := func(i, j int) bool {
+		return pricesAgreeWithin(survivors[i].price, survivors[j].price, routerCorroborationAgreePct)
+	}
+	// Gate: at least two survivors must tightly agree, or nothing counts.
+	if maxCliqueSize(n, agree) < 2 {
+		return 0
+	}
+
+	edgeSets := make([]map[string]struct{}, n)
+	for i := range survivors {
+		edgeSets[i] = routeEdgeSet(survivors[i].legs)
+	}
+	agreeAndDisjoint := func(i, j int) bool {
+		return agree(i, j) && edgeSetsDisjoint(edgeSets[i], edgeSets[j])
+	}
+	return maxCliqueSize(n, agreeAndDisjoint)
+}
+
+// MaxEdgeDisjointRoutes returns the size of the maximum subset of routes
+// that are PAIRWISE edge-disjoint — the count of genuinely independent
+// paths in the set. Edge identity is the UNDIRECTED leg {From,To}: an
+// edge and its inverse are the same physical market and count as one, so
+// two routes that share any leg (in either direction) are NOT
+// independent. Shortest-route sets are tiny, so the maximum-set-packing
+// search is exact by brute force up to maxCorroborationRoutes routes and
+// a fail-closed (under-counting) greedy estimate beyond.
+//
+// This is the pure independence primitive behind the freeze's
+// corroboration count (see corroboratingRouteCount); exported so the
+// shared-bottleneck case can be pinned directly.
+func MaxEdgeDisjointRoutes(routes [][]RouteLeg) int {
+	n := len(routes)
+	if n <= 1 {
+		return n
+	}
+	edgeSets := make([]map[string]struct{}, n)
+	for i, r := range routes {
+		edgeSets[i] = routeEdgeSet(r)
+	}
+	disjoint := func(i, j int) bool { return edgeSetsDisjoint(edgeSets[i], edgeSets[j]) }
+	return maxCliqueSize(n, disjoint)
+}
+
+// pricesAgreeWithin reports whether two strictly-positive composite prices
+// are within pct percent of each other, measured against the SMALLER of
+// the two (the conservative denominator: it yields the larger relative
+// gap, so a borderline pair is rejected rather than accepted). Exact
+// rational compare — no float ever enters the agreement decision.
+func pricesAgreeWithin(a, b *big.Rat, pct int) bool {
+	if a == nil || b == nil || a.Sign() <= 0 || b.Sign() <= 0 {
+		return false
+	}
+	smaller := a
+	if b.Cmp(a) < 0 {
+		smaller = b
+	}
+	diff := new(big.Rat).Sub(a, b)
+	diff.Abs(diff)
+	lhs := new(big.Rat).Mul(diff, big.NewRat(100, 1))
+	rhs := new(big.Rat).Mul(new(big.Rat).Abs(smaller), big.NewRat(int64(pct), 1))
+	return lhs.Cmp(rhs) <= 0
+}
+
+// routeEdgeSet is a route's set of UNDIRECTED edge keys (see
+// undirectedEdgeKey). Used to test two routes for shared markets.
+func routeEdgeSet(route []RouteLeg) map[string]struct{} {
+	set := make(map[string]struct{}, len(route))
+	for _, leg := range route {
+		set[undirectedEdgeKey(leg.From, leg.To)] = struct{}{}
+	}
+	return set
+}
+
+// undirectedEdgeKey is the order-independent identity of the physical
+// market between two assets: A→B and B→A hash to the same key, because
+// they are the same market quoted in opposite directions. The NUL
+// separator cannot appear in a canonical asset string, so the join is
+// unambiguous.
+func undirectedEdgeKey(a, b canonical.Asset) string {
+	sa, sb := a.String(), b.String()
+	if sa <= sb {
+		return sa + "\x00" + sb
+	}
+	return sb + "\x00" + sa
+}
+
+// edgeSetsDisjoint reports whether two undirected-edge sets share no edge.
+func edgeSetsDisjoint(a, b map[string]struct{}) bool {
+	// Iterate the smaller set for the cheaper scan.
+	if len(b) < len(a) {
+		a, b = b, a
+	}
+	for k := range a {
+		if _, ok := b[k]; ok {
+			return false
+		}
+	}
+	return true
+}
+
+// maxCliqueSize returns the size of the largest subset of {0..n-1} in
+// which every pair is connected() — a maximum clique. n is tiny (a
+// shortest-route set), so up to maxCorroborationRoutes it enumerates
+// every subset exactly; beyond that it returns a greedy clique, which
+// can only UNDER-estimate (fail closed: fewer corroborating routes ⇒ the
+// freeze fires more readily, never less).
+func maxCliqueSize(n int, connected func(i, j int) bool) int {
+	if n <= 0 {
+		return 0
+	}
+	if n > maxCorroborationRoutes {
+		return greedyCliqueSize(n, connected)
+	}
+	best := 0
+	for mask := 1; mask < (1 << uint(n)); mask++ {
+		size := bits.OnesCount(uint(mask))
+		if size <= best {
+			continue // cannot beat the incumbent
+		}
+		if maskIsClique(mask, connected) {
+			best = size
+		}
+	}
+	return best
+}
+
+// maskIsClique reports whether every pair of set bits in mask is
+// connected().
+func maskIsClique(mask int, connected func(i, j int) bool) bool {
+	members := make([]int, 0, bits.OnesCount(uint(mask)))
+	for i := 0; mask>>uint(i) != 0; i++ {
+		if mask&(1<<uint(i)) != 0 {
+			members = append(members, i)
+		}
+	}
+	for a := 0; a < len(members); a++ {
+		for b := a + 1; b < len(members); b++ {
+			if !connected(members[a], members[b]) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// greedyCliqueSize is the fail-closed fallback for absurdly large route
+// sets: it grows a single clique greedily, adding a node only if it is
+// connected to every node already chosen. The result is a valid clique
+// but not necessarily the maximum — it can only under-count, which is the
+// safe direction for an anti-manipulation count.
+func greedyCliqueSize(n int, connected func(i, j int) bool) int {
+	chosen := make([]int, 0, n)
+	for i := 0; i < n; i++ {
+		ok := true
+		for _, j := range chosen {
+			if !connected(i, j) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			chosen = append(chosen, i)
+		}
+	}
+	return len(chosen)
 }

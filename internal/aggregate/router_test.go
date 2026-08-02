@@ -77,7 +77,7 @@ func TestRouter_TwoHopViaXLMHub(t *testing.T) {
 		t.Fatalf("route length = %d, want 2 legs", len(routes[0]))
 	}
 
-	composite, conf, count, diverged, low, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0)
+	composite, conf, count, _, diverged, low, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0)
 	if err != nil {
 		t.Fatalf("CombineRoutes: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestRouter_MultiPathCorroboration(t *testing.T) {
 		t.Fatalf("FindRoutes: got %d shortest routes, want 2", len(routes))
 	}
 
-	composite, conf, count, diverged, low, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0.5)
+	composite, conf, count, _, diverged, low, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0.5)
 	if err != nil {
 		t.Fatalf("CombineRoutes: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestRouter_OutlierRejection(t *testing.T) {
 		t.Fatalf("FindRoutes: got %d shortest routes, want 3", len(routes))
 	}
 
-	composite, _, count, diverged, low, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0.5)
+	composite, _, count, _, diverged, low, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0.5)
 	if err != nil {
 		t.Fatalf("CombineRoutes: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestRouter_FourHopObscureToObscure(t *testing.T) {
 	if got := aggregate.FindRoutes(edges, obsAsset, obsFiat, 3, true); got != nil {
 		t.Fatalf("FindRoutes maxHops=3: got %d routes, want none", len(got))
 	}
-	if _, _, _, _, _, err := aggregate.CombineRoutes(edges, obsAsset, obsFiat, 3, 0); !errors.Is(err, aggregate.ErrNoRoute) {
+	if _, _, _, _, _, _, err := aggregate.CombineRoutes(edges, obsAsset, obsFiat, 3, 0); !errors.Is(err, aggregate.ErrNoRoute) {
 		t.Fatalf("CombineRoutes maxHops=3: err = %v, want ErrNoRoute", err)
 	}
 
@@ -219,7 +219,7 @@ func TestRouter_FourHopObscureToObscure(t *testing.T) {
 		t.Fatalf("FindRoutes maxHops=4: got %d routes (first len %d), want 1 route of 4 legs",
 			len(routes), routeLen(routes))
 	}
-	composite, _, count, _, _, err := aggregate.CombineRoutes(edges, obsAsset, obsFiat, 4, 0)
+	composite, _, count, _, _, _, err := aggregate.CombineRoutes(edges, obsAsset, obsFiat, 4, 0)
 	if err != nil {
 		t.Fatalf("CombineRoutes maxHops=4: %v", err)
 	}
@@ -244,7 +244,7 @@ func TestRouter_InverseEdges(t *testing.T) {
 		rq(xlm, obscure, 1, 2, 0.9), // 1 XLM = 0.5 OBSCURE  ⇒ OBSCURE→XLM = 2
 		rq(xlm, gbp, 3, 10, 0.9),
 	)
-	composite, _, count, _, _, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0)
+	composite, _, count, _, _, _, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0)
 	if err != nil {
 		t.Fatalf("CombineRoutes: %v", err)
 	}
@@ -266,7 +266,7 @@ func TestRouter_NoCycleNoRoute(t *testing.T) {
 	if got := aggregate.FindRoutes(edges, obscure, gbp, 5, true); got != nil {
 		t.Fatalf("FindRoutes to disconnected quote: got %d routes, want none", len(got))
 	}
-	if _, _, _, _, _, err := aggregate.CombineRoutes(edges, obscure, gbp, 5, 0); !errors.Is(err, aggregate.ErrNoRoute) {
+	if _, _, _, _, _, _, err := aggregate.CombineRoutes(edges, obscure, gbp, 5, 0); !errors.Is(err, aggregate.ErrNoRoute) {
 		t.Fatalf("CombineRoutes to disconnected quote: err = %v, want ErrNoRoute", err)
 	}
 	// A reachable quote inside the cycle still resolves (proves the walk
@@ -299,7 +299,7 @@ func TestRouter_ExactRationalNoFloatDrift(t *testing.T) {
 
 	// Through the full CombineRoutes path as well.
 	edges := mustEdges(t, rq(obscure, xlm, 1, 3, 1.0), rq(xlm, gbp, 1, 3, 1.0))
-	composite, _, _, _, _, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0)
+	composite, _, _, _, _, _, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0)
 	if err != nil {
 		t.Fatalf("CombineRoutes: %v", err)
 	}
@@ -324,7 +324,7 @@ func TestRouter_WeakestLinkConfidence(t *testing.T) {
 		t.Errorf("RouteConfidence = %v, want 0.1 (weakest link)", rc)
 	}
 
-	composite, conf, count, _, low, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0.5)
+	composite, conf, count, _, _, low, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0.5)
 	if err != nil {
 		t.Fatalf("CombineRoutes: %v", err)
 	}
@@ -350,7 +350,7 @@ func TestRouter_LowConfidenceRouteExcluded(t *testing.T) {
 	)
 
 	// With the floor, only the trustworthy route backs the composite.
-	composite, conf, count, diverged, low, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0.5)
+	composite, conf, count, _, diverged, low, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0.5)
 	if err != nil {
 		t.Fatalf("CombineRoutes (floor 0.5): %v", err)
 	}
@@ -370,7 +370,7 @@ func TestRouter_LowConfidenceRouteExcluded(t *testing.T) {
 
 	// Control: WITHOUT the floor the bad route drags the median to a
 	// fantasy value — this is exactly what the floor prevents.
-	dragged, _, count0, diverged0, _, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0)
+	dragged, _, count0, _, diverged0, _, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0)
 	if err != nil {
 		t.Fatalf("CombineRoutes (floor 0): %v", err)
 	}
@@ -390,7 +390,7 @@ func TestRouter_AllRoutesBelowFloor(t *testing.T) {
 		rq(obscure, xlm, 2, 1, 0.10), rq(xlm, gbp, 3, 10, 0.10), // A: 3/5, conf 0.10
 		rq(obscure, usd, 3, 1, 0.15), rq(usd, gbp, 1, 5, 0.15), //  B: 3/5, conf 0.15
 	)
-	composite, conf, count, diverged, low, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0.5)
+	composite, conf, count, _, diverged, low, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0.5)
 	if err != nil {
 		t.Fatalf("CombineRoutes: %v", err)
 	}
@@ -492,5 +492,168 @@ func TestOmitOutliers_Semantics(t *testing.T) {
 func TestRouteConfidence_Empty(t *testing.T) {
 	if c := aggregate.RouteConfidence(nil); c != 0 {
 		t.Errorf("RouteConfidence(nil) = %v, want 0", c)
+	}
+}
+
+// ── corroboration integrity (R1/R2) ─────────────────────────────────
+//
+// The corroboration count CombineRoutes returns is the number fed to the
+// anomaly-freeze source_count leg. It must count only INDEPENDENT +
+// TIGHTLY-AGREEING + NON-DIVERGED routes, or a manipulator games the
+// freeze. These pin each of those three properties.
+
+// R2 core: the maximum edge-disjoint subset counts two routes that share
+// ANY undirected edge as ONE independent confirmation.
+func TestRouter_MaxEdgeDisjointRoutes(t *testing.T) {
+	// Two 3-hop routes that converge on the SAME final edge USD→GBP (the
+	// shared bottleneck): a single wash-traded USD/GBP market backs both,
+	// so there is really one independent confirmation, not two.
+	bottleneckA := []aggregate.RouteLeg{
+		rl(obscure, xlm, 2, 1, 0.9), rl(xlm, usd, 5, 1, 0.9), rl(usd, gbp, 3, 10, 0.9),
+	}
+	bottleneckB := []aggregate.RouteLeg{
+		rl(obscure, btc, 1, 1, 0.9), rl(btc, usd, 10, 1, 0.9), rl(usd, gbp, 3, 10, 0.9),
+	}
+	if got := aggregate.MaxEdgeDisjointRoutes([][]aggregate.RouteLeg{bottleneckA, bottleneckB}); got != 1 {
+		t.Errorf("shared-bottleneck routes: MaxEdgeDisjointRoutes = %d, want 1 "+
+			"(both funnel through USD→GBP — one manipulable market, not two)", got)
+	}
+
+	// Two 2-hop routes through DISTINCT hubs share no edge → 2 independent.
+	disjointA := []aggregate.RouteLeg{rl(obscure, xlm, 2, 1, 0.9), rl(xlm, gbp, 3, 10, 0.9)}
+	disjointB := []aggregate.RouteLeg{rl(obscure, usd, 3, 1, 0.9), rl(usd, gbp, 1, 5, 0.9)}
+	if got := aggregate.MaxEdgeDisjointRoutes([][]aggregate.RouteLeg{disjointA, disjointB}); got != 2 {
+		t.Errorf("edge-disjoint routes: MaxEdgeDisjointRoutes = %d, want 2", got)
+	}
+
+	// Undirected edge identity: A→B and B→A are the SAME market. A route
+	// using XLM→USD and one using USD→XLM are NOT independent.
+	fwdLeg := []aggregate.RouteLeg{rl(obscure, xlm, 2, 1, 0.9), rl(xlm, usd, 5, 1, 0.9)}
+	invLeg := []aggregate.RouteLeg{rl(gbp, usd, 4, 1, 0.9), rl(usd, xlm, 1, 5, 0.9)}
+	if got := aggregate.MaxEdgeDisjointRoutes([][]aggregate.RouteLeg{fwdLeg, invLeg}); got != 1 {
+		t.Errorf("inverse shared edge {XLM,USD}: MaxEdgeDisjointRoutes = %d, want 1 "+
+			"(an edge and its inverse are one physical market)", got)
+	}
+
+	// A single route is trivially 1; an empty set is 0.
+	if got := aggregate.MaxEdgeDisjointRoutes([][]aggregate.RouteLeg{disjointA}); got != 1 {
+		t.Errorf("single route: MaxEdgeDisjointRoutes = %d, want 1", got)
+	}
+	if got := aggregate.MaxEdgeDisjointRoutes(nil); got != 0 {
+		t.Errorf("empty set: MaxEdgeDisjointRoutes = %d, want 0", got)
+	}
+}
+
+// R1: two routes that survive the LOOSE 40% outlier band but disagree by
+// more than the tight corroboration band do NOT corroborate — the
+// corroboration count is 0 even though pathCount (the serving
+// multiplicity) is 2 and nothing diverged.
+func TestRouter_CorroborationRequiresTightAgreement(t *testing.T) {
+	edges := mustEdges(t,
+		rq(obscure, xlm, 10, 1, 0.9), rq(xlm, gbp, 10, 1, 0.9), // A: 100
+		rq(obscure, usd, 10, 1, 0.9), rq(usd, gbp, 23, 2, 0.9), //  B: 115  (+15%)
+	)
+	composite, _, pathCount, corroboration, diverged, low, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0)
+	if err != nil {
+		t.Fatalf("CombineRoutes: %v", err)
+	}
+	if low {
+		t.Fatal("lowConfidence=true, want false (both routes clear the 0 floor)")
+	}
+	if diverged {
+		t.Error("diverged=true, want false (100 vs 115 is inside the 40% loose band)")
+	}
+	if pathCount != 2 {
+		t.Errorf("pathCount=%d, want 2 (both routes still serve the median)", pathCount)
+	}
+	if corroboration != 0 {
+		t.Errorf("corroborationCount=%d, want 0 — routes 15%% apart are inside the loose "+
+			"band but NOT tightly agreeing, so neither corroborates the other", corroboration)
+	}
+	eqRat(t, composite, big.NewRat(215, 2), "served median") // median(100,115) = 107.5
+}
+
+// R1: a DIVERGED combine (an outlier route was rejected) never
+// corroborates, even though two clean survivors remain and agree.
+func TestRouter_CorroborationZeroWhenDiverged(t *testing.T) {
+	edges := mustEdges(t,
+		rq(obscure, xlm, 2, 1, 0.9), rq(xlm, gbp, 3, 10, 0.9), // 3/5
+		rq(obscure, usd, 3, 1, 0.9), rq(usd, gbp, 1, 5, 0.9), //  3/5
+		rq(obscure, btc, 1, 1, 0.9), rq(btc, gbp, 6, 1, 0.9), //  6/1  (outlier)
+	)
+	_, _, pathCount, corroboration, diverged, _, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0)
+	if err != nil {
+		t.Fatalf("CombineRoutes: %v", err)
+	}
+	if !diverged {
+		t.Fatal("diverged=false, want true (the 6/1 route is an outlier)")
+	}
+	if pathCount != 2 {
+		t.Errorf("pathCount=%d, want 2 (two clean survivors)", pathCount)
+	}
+	if corroboration != 0 {
+		t.Errorf("corroborationCount=%d, want 0 — a diverged combine is a manipulation "+
+			"signal and must not suppress the freeze even with agreeing survivors", corroboration)
+	}
+}
+
+// R2: two SHORTEST routes that agree tightly but share a bottleneck edge
+// count as ONE independent confirmation (corroborationCount=1), while
+// pathCount is 2. The shipped freeze needs ≥2 INDEPENDENT to suppress.
+func TestRouter_CorroborationSharedBottleneck(t *testing.T) {
+	// Only 3-hop routes reach GBP, and both funnel through USD→GBP.
+	edges := mustEdges(t,
+		rq(obscure, xlm, 2, 1, 0.9), rq(xlm, usd, 5, 1, 0.9), // obscure→USD via XLM = 10
+		rq(obscure, btc, 1, 1, 0.9), rq(btc, usd, 10, 1, 0.9), // obscure→USD via BTC = 10
+		rq(usd, gbp, 3, 10, 0.9), // the shared bottleneck into GBP
+	)
+	composite, _, pathCount, corroboration, diverged, _, err := aggregate.CombineRoutes(edges, obscure, gbp, 3, 0)
+	if err != nil {
+		t.Fatalf("CombineRoutes: %v", err)
+	}
+	eqRat(t, composite, big.NewRat(3, 1), "composite") // 10 × 3/10 = 3, both routes
+	if diverged {
+		t.Error("diverged=true, want false (routes agree exactly)")
+	}
+	if pathCount != 2 {
+		t.Errorf("pathCount=%d, want 2 (two surviving routes)", pathCount)
+	}
+	if corroboration != 1 {
+		t.Errorf("corroborationCount=%d, want 1 — both routes share the USD→GBP edge, so "+
+			"they are one independent confirmation, not two", corroboration)
+	}
+}
+
+// R2: two genuinely edge-disjoint, tightly-agreeing routes DO corroborate
+// (corroborationCount=2). Companion to the bottleneck case.
+func TestRouter_CorroborationEdgeDisjointAgreeing(t *testing.T) {
+	edges := mustEdges(t,
+		rq(obscure, xlm, 2, 1, 0.9), rq(xlm, gbp, 3, 10, 0.9), // A: 3/5
+		rq(obscure, usd, 3, 1, 0.9), rq(usd, gbp, 1, 5, 0.9), //  B: 3/5
+	)
+	_, _, pathCount, corroboration, diverged, _, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0)
+	if err != nil {
+		t.Fatalf("CombineRoutes: %v", err)
+	}
+	if diverged {
+		t.Error("diverged=true, want false")
+	}
+	if pathCount != 2 || corroboration != 2 {
+		t.Errorf("(pathCount, corroborationCount) = (%d, %d), want (2, 2) — two edge-disjoint "+
+			"agreeing routes are two independent confirmations", pathCount, corroboration)
+	}
+}
+
+// A single route corroborates nothing but reports 1 (the baseline that,
+// MAX-ed against the direct source count, can never raise it) — keeps the
+// single-route shipped config byte-identical.
+func TestRouter_CorroborationSingleRoute(t *testing.T) {
+	edges := mustEdges(t, rq(obscure, xlm, 2, 1, 0.9), rq(xlm, gbp, 3, 10, 0.9))
+	_, _, pathCount, corroboration, _, _, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0)
+	if err != nil {
+		t.Fatalf("CombineRoutes: %v", err)
+	}
+	if pathCount != 1 || corroboration != 1 {
+		t.Errorf("(pathCount, corroborationCount) = (%d, %d), want (1, 1)", pathCount, corroboration)
 	}
 }

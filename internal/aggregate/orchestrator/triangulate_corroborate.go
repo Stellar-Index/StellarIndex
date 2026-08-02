@@ -34,21 +34,28 @@ import (
 // The router's MULTI-ROUTE corroboration count is a distinct signal and
 // is treated differently, deliberately (Step 2, 2026-08). When the
 // graph router (internal/aggregate/router.go) reaches a target by ≥2
-// SHORTEST routes that (a) each clear the min_route_confidence floor and
-// (b) mutually AGREE (survive median-relative outlier omission), that
-// pathCount is genuine multi-path independence: distinct hub assets,
-// distinct intermediary markets, each edge already gated by its own
-// quality signal, and any single manipulated leg either drops out on
-// confidence or shows up as a divergent route the combiner rejects. So
-// pathCount ≥ 2 DOES widen the freeze's `source_count` leg (via
+// SHORTEST routes that (a) each clear the min_route_confidence floor,
+// (b) mutually AGREE within the TIGHT corroboration band
+// (routerCorroborationAgreePct — much tighter than the 40% outlier band;
+// merely surviving outlier omission is NOT agreement), (c) do not come
+// from a diverged combine, and (d) are genuinely INDEPENDENT — the count
+// is the maximum set of PAIRWISE EDGE-DISJOINT such routes, so a set that
+// all funnels through one shared (potentially wash-traded) leg collapses
+// to a single confirmation. That aggregate.CombineRoutes corroborationCount
+// (NOT the raw survivor pathCount) is genuine multi-path independence:
+// distinct hub assets, distinct intermediary markets, each edge already
+// gated by its own quality signal, and any single manipulated leg either
+// drops out on confidence, shows up as a divergent route the combiner
+// rejects, or is revealed as the shared bottleneck it is. So a
+// corroborationCount ≥ 2 DOES widen the freeze's `source_count` leg (via
 // [Orchestrator.effectiveSourceCount]) — but ONLY the freeze leg, never
 // [confidence.Inputs.SourceCount], and only as a MAX against the direct
-// trade-source count, so pathCount == 1 (the single-chain case, and the
-// whole production config today) can never RAISE it: the invariant above
-// still holds for one path. The signal is also staleness-bounded
-// ([compositeMaxAgeTicks]): if the corroborating routes dry up, the
-// widening ages out within two ticks and the freeze falls back to the
-// direct source count, exactly like the divergence factor.
+// trade-source count, so corroborationCount ≤ 1 (the single-chain case,
+// and the whole production config today) can never RAISE it: the
+// invariant above still holds for one path. The signal is also
+// staleness-bounded ([compositeMaxAgeTicks]): if the corroborating routes
+// dry up, the widening ages out within two ticks and the freeze falls
+// back to the direct source count, exactly like the divergence factor.
 
 // compositeSample is the most recent composite (triangulated) price the
 // chain pass published for one target (pair, window), with the
@@ -62,13 +69,16 @@ type compositeSample struct {
 	price *big.Rat
 	at    time.Time
 
-	// pathCount is the number of mutually-agreeing router routes that
-	// backed this composite (aggregate.CombineRoutes' survivor count) —
-	// the corroboration count [Orchestrator.effectiveSourceCount] reads
-	// (one tick behind, freshness-bounded) into the freeze's source_count
-	// leg. 1 for a single-route target (the whole production config
-	// today), so it never widens the freeze there.
-	pathCount int
+	// corroborationCount is the number of INDEPENDENT, tightly-agreeing,
+	// non-diverged router routes that backed this composite
+	// (aggregate.CombineRoutes' corroborationCount return — the maximum
+	// edge-disjoint subset of the routes that agree within the tight band,
+	// 0 when diverged or when no two routes tightly agree). This is the
+	// count [Orchestrator.effectiveSourceCount] reads (one tick behind,
+	// freshness-bounded) into the freeze's source_count leg. ≤ 1 for a
+	// single-route target (the whole production config today), so it never
+	// widens the freeze there.
+	corroborationCount int
 
 	// combinedConfidence / diverged are the router's quality flags for
 	// this composite, carried so downstream (Step 3: market-cap gating,
@@ -99,7 +109,7 @@ const compositeMaxAgeTicks = 2
 // price and never recorded, so a sample here always corroborates).
 func (o *Orchestrator) recordComposite(
 	target canonical.Pair, window time.Duration, price *big.Rat,
-	pathCount int, combinedConfidence float64, diverged bool,
+	corroborationCount int, combinedConfidence float64, diverged bool,
 ) {
 	if price == nil || price.Sign() <= 0 {
 		return
@@ -112,24 +122,29 @@ func (o *Orchestrator) recordComposite(
 		// working value and must not alias into next tick's comparison.
 		price:              new(big.Rat).Set(price),
 		at:                 time.Now().UTC(),
-		pathCount:          pathCount,
+		corroborationCount: corroborationCount,
 		combinedConfidence: combinedConfidence,
 		diverged:           diverged,
 	}
 }
 
-// routeCorroborationCount returns the number of independent, agreeing
-// router routes that backed (pair, window)'s composite on the chain
-// pass — the corroboration count [Orchestrator.effectiveSourceCount]
-// folds into the freeze's source_count leg.
+// routeCorroborationCount returns the number of INDEPENDENT, tightly-
+// agreeing, non-diverged router routes that backed (pair, window)'s
+// composite on the chain pass — the corroboration count
+// [Orchestrator.effectiveSourceCount] folds into the freeze's
+// source_count leg. This is aggregate.CombineRoutes' corroborationCount
+// (edge-disjoint + tight-agreement + non-diverged), NOT the raw survivor
+// pathCount: two routes that merely fall inside the loose outlier band,
+// or that share a single manipulable bottleneck leg, do not widen the
+// freeze here.
 //
 // Returns (_, false) — unchecked, fail-closed — under exactly the same
 // conditions [triangulationDivergencePct] rejects a composite: no chain
 // output recorded for this pair, or the last publish is older than
 // [compositeMaxAgeTicks]. Staleness must read as "no corroboration"
 // (fall back to the direct source count), never latch a freeze-
-// suppressing count after the corroborating routes have gone. pathCount
-// < 2 is returned as-is (a single route corroborates nothing and, being
+// suppressing count after the corroborating routes have gone. A count
+// ≤ 1 is returned as-is (a single route corroborates nothing and, being
 // MAX-ed against the direct count in effectiveSourceCount, cannot lower
 // it either).
 func (o *Orchestrator) routeCorroborationCount(pair canonical.Pair, window time.Duration) (int, bool) {
@@ -143,7 +158,7 @@ func (o *Orchestrator) routeCorroborationCount(pair canonical.Pair, window time.
 	if time.Since(sample.at) > compositeMaxAgeTicks*o.tickInterval() {
 		return 0, false
 	}
-	return sample.pathCount, true
+	return sample.corroborationCount, true
 }
 
 // effectiveSourceCount is the independence signal both freeze phases'
