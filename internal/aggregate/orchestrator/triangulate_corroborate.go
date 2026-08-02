@@ -20,23 +20,40 @@ import (
 // markets that are not thin, not single-venue, and not the venue an
 // attacker would pick.
 //
-// What it feeds and what it must not. The comparison feeds ONE
-// confidence factor ([confidence.Inputs.TriangulationDivergencePct]).
-// It deliberately does not touch [confidence.Inputs.SourceCount], and
-// therefore cannot touch the `source_count <= 1` leg of ADR-0019's
-// 3-signal freeze AND. A composite is not a second source: it re-uses
-// our own leg VWAPs, our own outlier/class filters and usually our own
-// upstream venues, so counting it as corroborating SOURCE would let a
-// derived path silently satisfy an independence test it does not meet —
-// on exactly the thin pairs where the freeze's `source_count` leg is
-// the only thing standing between a single manipulated venue and a
-// published price. The confidence leg is graded and self-correcting;
-// the source-count leg is a structural claim about independence. Only
-// the first is ours to move.
+// What it feeds and what it must not. The single-chain DIVERGENCE
+// comparison feeds ONE confidence factor
+// ([confidence.Inputs.TriangulationDivergencePct]). It deliberately
+// does not touch [confidence.Inputs.SourceCount]: a single composite is
+// not a second source — it re-uses our own leg VWAPs, our own
+// outlier/class filters and usually our own upstream venues, so counting
+// ONE derived path as a corroborating source would let it silently
+// satisfy an independence test it does not meet. The confidence leg is
+// graded and self-correcting; the source-count leg is a structural claim
+// about independence, and one derived path is not it.
+//
+// The router's MULTI-ROUTE corroboration count is a distinct signal and
+// is treated differently, deliberately (Step 2, 2026-08). When the
+// graph router (internal/aggregate/router.go) reaches a target by ≥2
+// SHORTEST routes that (a) each clear the min_route_confidence floor and
+// (b) mutually AGREE (survive median-relative outlier omission), that
+// pathCount is genuine multi-path independence: distinct hub assets,
+// distinct intermediary markets, each edge already gated by its own
+// quality signal, and any single manipulated leg either drops out on
+// confidence or shows up as a divergent route the combiner rejects. So
+// pathCount ≥ 2 DOES widen the freeze's `source_count` leg (via
+// [Orchestrator.effectiveSourceCount]) — but ONLY the freeze leg, never
+// [confidence.Inputs.SourceCount], and only as a MAX against the direct
+// trade-source count, so pathCount == 1 (the single-chain case, and the
+// whole production config today) can never RAISE it: the invariant above
+// still holds for one path. The signal is also staleness-bounded
+// ([compositeMaxAgeTicks]): if the corroborating routes dry up, the
+// widening ages out within two ticks and the freeze falls back to the
+// direct source count, exactly like the divergence factor.
 
 // compositeSample is the most recent composite (triangulated) price the
 // chain pass published for one target (pair, window), with the
-// wall-clock time it was published at.
+// wall-clock time it was published at and the router corroboration that
+// backed it.
 //
 // Mirrors [Orchestrator.prevVWAPs]: bounded by len(Triangulations) ×
 // len(Windows), read and written only from within a single Tick (which
@@ -44,6 +61,22 @@ import (
 type compositeSample struct {
 	price *big.Rat
 	at    time.Time
+
+	// pathCount is the number of mutually-agreeing router routes that
+	// backed this composite (aggregate.CombineRoutes' survivor count) —
+	// the corroboration count [Orchestrator.effectiveSourceCount] reads
+	// (one tick behind, freshness-bounded) into the freeze's source_count
+	// leg. 1 for a single-route target (the whole production config
+	// today), so it never widens the freeze there.
+	pathCount int
+
+	// combinedConfidence / diverged are the router's quality flags for
+	// this composite, carried so downstream (Step 3: market-cap gating,
+	// /v1/price flags) can respect them. A low-confidence composite is
+	// NOT recorded here at all — it is never published over the direct
+	// price — so a sample present in this map is always a CONFIDENT one.
+	combinedConfidence float64
+	diverged           bool
 }
 
 // compositeMaxAgeTicks bounds how old a recorded composite may be
@@ -60,9 +93,14 @@ type compositeSample struct {
 const compositeMaxAgeTicks = 2
 
 // recordComposite stores the composite price a chain just published for
-// (target, window). Called from [Orchestrator.triangulateOne] only on a
-// successful publish.
-func (o *Orchestrator) recordComposite(target canonical.Pair, window time.Duration, price *big.Rat) {
+// (target, window), together with the router corroboration that backed
+// it. Called from [Orchestrator.triangulateOne] only on a CONFIDENT
+// publish (a low-confidence composite is never published over the direct
+// price and never recorded, so a sample here always corroborates).
+func (o *Orchestrator) recordComposite(
+	target canonical.Pair, window time.Duration, price *big.Rat,
+	pathCount int, combinedConfidence float64, diverged bool,
+) {
 	if price == nil || price.Sign() <= 0 {
 		return
 	}
@@ -72,9 +110,57 @@ func (o *Orchestrator) recordComposite(target canonical.Pair, window time.Durati
 	o.lastComposites[compositeKey(target, window)] = compositeSample{
 		// Defensive copy: the caller's *big.Rat is the chain's own
 		// working value and must not alias into next tick's comparison.
-		price: new(big.Rat).Set(price),
-		at:    time.Now().UTC(),
+		price:              new(big.Rat).Set(price),
+		at:                 time.Now().UTC(),
+		pathCount:          pathCount,
+		combinedConfidence: combinedConfidence,
+		diverged:           diverged,
 	}
+}
+
+// routeCorroborationCount returns the number of independent, agreeing
+// router routes that backed (pair, window)'s composite on the chain
+// pass — the corroboration count [Orchestrator.effectiveSourceCount]
+// folds into the freeze's source_count leg.
+//
+// Returns (_, false) — unchecked, fail-closed — under exactly the same
+// conditions [triangulationDivergencePct] rejects a composite: no chain
+// output recorded for this pair, or the last publish is older than
+// [compositeMaxAgeTicks]. Staleness must read as "no corroboration"
+// (fall back to the direct source count), never latch a freeze-
+// suppressing count after the corroborating routes have gone. pathCount
+// < 2 is returned as-is (a single route corroborates nothing and, being
+// MAX-ed against the direct count in effectiveSourceCount, cannot lower
+// it either).
+func (o *Orchestrator) routeCorroborationCount(pair canonical.Pair, window time.Duration) (int, bool) {
+	if len(o.lastComposites) == 0 {
+		return 0, false
+	}
+	sample, ok := o.lastComposites[compositeKey(pair, window)]
+	if !ok {
+		return 0, false
+	}
+	if time.Since(sample.at) > compositeMaxAgeTicks*o.tickInterval() {
+		return 0, false
+	}
+	return sample.pathCount, true
+}
+
+// effectiveSourceCount is the independence signal both freeze phases'
+// `source_count` leg reads: the GREATER of the distinct contributing
+// trade sources and the router's corroboration count for this
+// (pair, window). Widening (never narrowing — it is a MAX) means a thin
+// direct print that is nonetheless reproduced by ≥2 agreeing,
+// confidence-gated router routes is no longer treated as single-source,
+// so the freeze stops false-firing on it. When the router has no fresh
+// corroboration (unchecked / stale / single-route), this is exactly the
+// legacy distinctSourceCount(trades).
+func (o *Orchestrator) effectiveSourceCount(pair canonical.Pair, window time.Duration, trades []canonical.Trade) int {
+	n := distinctSourceCount(trades)
+	if pc, ok := o.routeCorroborationCount(pair, window); ok && pc > n {
+		n = pc
+	}
+	return n
 }
 
 // compositeKey is the [Orchestrator.lastComposites] key. Its own key

@@ -333,6 +333,23 @@ type Config struct {
 	// downstream value.
 	Triangulations []TriangulationChain
 
+	// MaxHops bounds the router's cross-rate route length (LEGS, so a
+	// base→hub→quote route is 2 legs) when pricing a triangulation
+	// TARGET via the graph router (internal/aggregate/router.go). 0
+	// falls back to [DefaultMaxHops]; values outside [2,4] are clamped
+	// in [New] (config-load validation already rejects them, so the
+	// clamp only guards a struct assembled directly in a test).
+	MaxHops int
+
+	// MinRouteConfidence is the weakest-link confidence floor a router
+	// route must clear to be treated as CONFIDENT (see
+	// aggregate.CombineRoutes). Routes below it are excluded so a
+	// dust/thin edge can't set a confident cross; when NO route clears
+	// it the composite is flagged low-confidence and NOT published over
+	// the direct price. 0 (default) disables the floor — every route is
+	// confident, matching the pre-router static-chain behaviour.
+	MinRouteConfidence float64
+
 	// FreezeWriter, when non-nil and Anomaly is also non-nil, writes
 	// a freeze marker to Redis when Anomaly returns ActionFreeze.
 	// The API's freeze.Looker (#226) reads the same key to set
@@ -577,6 +594,18 @@ const DefaultInterval = 30 * time.Second
 // sustainedly.
 const DefaultMaxTradesPerWindow = 10_000
 
+// DefaultMaxHops is the router route-length cap used when
+// [Config.MaxHops] is unset (0). Three legs reaches every
+// crypto→USD→fiat cross in the default coverage set plus one extra
+// pivot; [maxRouterHops] clamps the accepted range to [2,4].
+const DefaultMaxHops = 3
+
+// maxRouterHops is the hard upper bound on [Config.MaxHops]. Four legs
+// is the obscure×obscure worst case (see aggregate.FindRoutes); beyond
+// it the acyclic-path search cost grows without buying reachability the
+// default coverage set needs.
+const maxRouterHops = 4
+
 // Orchestrator holds the wired dependencies and runs the tick loop.
 type Orchestrator struct {
 	store  Store
@@ -626,6 +655,19 @@ type Orchestrator struct {
 	// invariant as prevVWAPs (refreshPairWindow and triangulateAll run
 	// sequentially inside one Tick), so no lock is needed.
 	frozenThisTick map[string]struct{}
+
+	// tickEdgeQuotes accumulates, per window, the priced-pair VWAPs of
+	// the CURRENT tick as router edge inputs (aggregate.Quote). The
+	// per-pair refresh loop appends one entry per successfully-published
+	// (pair, window) — with the pair's exact VWAP and a confidence
+	// derived from its existing quality signals — and the triangulation
+	// pass that runs afterwards reads it to build the cross-rate graph
+	// for the tick. Frozen / dropped / empty windows contribute no edge,
+	// which is exactly how the min_usd_volume gate keeps a dust pair from
+	// setting a confident cross (INV-11). Rebuilt at the top of every
+	// [Tick]; same single-Tick-at-a-time invariant as prevVWAPs, so no
+	// lock is needed.
+	tickEdgeQuotes map[time.Duration][]aggregate.Quote
 
 	// lastComposites holds the most recent composite (triangulated)
 	// price the chain pass published per (target pair, window), so the
@@ -681,6 +723,18 @@ func New(store Store, cache Cache, cfg Config) *Orchestrator {
 	}
 	if cfg.MaxTradesPerWindow <= 0 {
 		cfg.MaxTradesPerWindow = DefaultMaxTradesPerWindow
+	}
+	// Router hop budget: 0 = "use default"; clamp anything out of the
+	// accepted [2,4] band. Config-load validation already rejects bad
+	// values, so this only guards a Config assembled directly in a test.
+	if cfg.MaxHops == 0 {
+		cfg.MaxHops = DefaultMaxHops
+	}
+	if cfg.MaxHops < 2 {
+		cfg.MaxHops = 2
+	}
+	if cfg.MaxHops > maxRouterHops {
+		cfg.MaxHops = maxRouterHops
 	}
 	logger := cfg.Logger
 	if logger == nil {
@@ -741,6 +795,10 @@ func (o *Orchestrator) Tick(ctx context.Context) error {
 
 	// Fresh per-tick freeze set — see [Orchestrator.frozenThisTick].
 	o.frozenThisTick = make(map[string]struct{})
+
+	// Fresh per-tick router edge inputs — see [Orchestrator.tickEdgeQuotes].
+	// The per-pair loop below fills it; triangulateAll reads it.
+	o.tickEdgeQuotes = make(map[time.Duration][]aggregate.Quote, len(o.cfg.Windows))
 
 	tickHadError := false
 	for _, pair := range o.cfg.Pairs {
@@ -966,8 +1024,15 @@ func (o *Orchestrator) refreshPairWindow(
 	// — an unscored bucket must not release a live freeze by default.
 	prevForConfidence := o.prevVWAPs[stateKey]
 	conf, confOK := o.computeConfidence(ctx, pair, window, vwap, prevForConfidence, trades)
+	// The freeze's source_count leg (ADR-0019 3-signal AND) reads the
+	// INDEPENDENCE signal, not just the direct trade sources: a pair
+	// reproduced by ≥2 mutually-agreeing, confidence-gated router routes
+	// is no longer single-source, so a thin FX cross stops false-firing
+	// the freeze (see [Orchestrator.effectiveSourceCount]). The
+	// confidence Inputs.SourceCount stays the raw trade count — only the
+	// freeze leg widens.
 	if o.stepPhase2Freeze(ctx, pair, window, stateKey, now,
-		conf, confOK, distinctSourceCount(trades), prevForConfidence) {
+		conf, confOK, o.effectiveSourceCount(pair, window, trades), prevForConfidence) {
 		return nil
 	}
 
@@ -1001,6 +1066,15 @@ func (o *Orchestrator) refreshPairWindow(
 	// next tick compares against the same baseline rather than
 	// drifting forward.
 	o.prevVWAPs[stateKey] = vwap
+
+	// Contribute this published pair as a router edge for the
+	// triangulation pass later in THIS tick. Only successfully-published
+	// windows reach here — a frozen / dropped / empty / below-floor
+	// window returned earlier and so contributes no edge, which is how a
+	// dust pair is kept out of the cross-rate graph (INV-11). The edge's
+	// weakest-link confidence reuses the pair's existing quality signal
+	// (see [Orchestrator.edgeConfidence]).
+	o.recordEdgeQuote(pair, window, vwap, conf, confOK, trades)
 
 	o.mu.Lock()
 	o.vwapWrites++
@@ -1191,10 +1265,15 @@ func (o *Orchestrator) evaluateAndMaybeFreeze(
 
 	prev := o.prevVWAPs[stateKey]
 	decision := o.cfg.Anomaly.Evaluate(anomaly.Observation{
-		Pair:        pair,
-		PrevVWAP:    prev,
-		CurrVWAP:    currVWAP,
-		SourceCount: distinctSourceCount(trades),
+		Pair:     pair,
+		PrevVWAP: prev,
+		CurrVWAP: currVWAP,
+		// Same independence widening as the Phase 2 leg: a pair
+		// corroborated by ≥2 agreeing router routes is not single-source,
+		// so Phase 1's `deviation > FreezePct AND source_count <= 1` guard
+		// also stops false-firing on thin corroborated crosses (see
+		// [Orchestrator.effectiveSourceCount]).
+		SourceCount: o.effectiveSourceCount(pair, window, trades),
 	})
 	if !decision.IsFrozen() {
 		if decision.IsWarn() {

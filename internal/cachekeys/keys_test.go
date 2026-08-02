@@ -224,6 +224,21 @@ func TestVWAPProvenance(t *testing.T) {
 	}
 }
 
+// TestVWAPCompositeMeta pins the composite-meta marker's wire shape: the
+// VWAP value key with `:composite_meta` suffixed. The aggregator writes
+// it alongside the value; a mismatched suffix would orphan the router
+// quality flags Step 3 reads.
+func TestVWAPCompositeMeta(t *testing.T) {
+	xlm := canonical.NativeAsset()
+	gbp := canonical.Asset{Type: canonical.AssetFiat, Code: "GBP"}
+
+	got := cachekeys.VWAPCompositeMeta(xlm, gbp, 5*time.Minute)
+	vwap := cachekeys.VWAP(xlm, gbp, 5*time.Minute)
+	if got.String() != vwap.String()+":composite_meta" {
+		t.Errorf("VWAPCompositeMeta %q is not VWAP %q + :composite_meta", got.String(), vwap.String())
+	}
+}
+
 // TestConfidence pins the wire shape + ConfidenceTTL parity with
 // VWAPTTL. The score is meaningless once the underlying VWAP
 // expires, so the two TTLs must move together.
