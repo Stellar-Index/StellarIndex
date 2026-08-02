@@ -34,6 +34,17 @@ type Flags struct {
 	DivergenceWarning bool `json:"divergence_warning"`
 	Frozen            bool `json:"frozen,omitempty"`
 	SingleSource      bool `json:"single_source,omitempty"`
+	// Diverged is set on a TRIANGULATED /v1/price response when the
+	// composite came from routes that disagreed (the aggregator's
+	// router divergence signal). Mirrors the server's envelope flag;
+	// omitempty hides it when false.
+	Diverged bool `json:"diverged,omitempty"`
+	// Rerouted is set on a TRIANGULATED /v1/price response when the
+	// composite substituted around a dry configured chain leg — the
+	// price came via an alternative path, not the documented direct
+	// chain. Mirrors the server's envelope flag; omitempty hides it
+	// when false.
+	Rerouted bool `json:"rerouted,omitempty"`
 	// UnverifiedTickerCollision fires on `/v1/assets/{id}` when the
 	// requested asset's code matches a verified currency's Stellar
 	// ticker but its issuer doesn't match the verified entry — i.e.

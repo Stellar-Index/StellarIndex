@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
+	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
@@ -278,6 +279,33 @@ type TriangulatedPriceLooker interface {
 	LookupTriangulatedVWAP(ctx context.Context, base, quote canonical.Asset, window time.Duration) (value string, isTriangulated, found bool, err error)
 }
 
+// CompositeMetaLooker is an OPTIONAL capability the wired
+// [TriangulatedPriceLooker] MAY additionally implement to expose the
+// aggregator's router-quality flags for a triangulated composite —
+// the `diverged` (contributing routes disagreed) and `rerouted` (a
+// configured chain leg was dry, the price came via a substitute path)
+// signals the aggregator persists to [cachekeys.VWAPCompositeMeta].
+// Those signals were written on every router-priced target but had NO
+// reader until now (the key's own doc comment falsely claimed this
+// handler consumed them).
+//
+// Modelled as an optional interface (the [proxyPairGate] idiom) rather
+// than an extension of [TriangulatedPriceLooker] so a looker that
+// doesn't provide it degrades cleanly to "flags unset" — surfacing the
+// flags is pure enrichment on top of the already-served price. The
+// handler type-asserts for it on the triangulated serve path.
+//
+// Best-effort throughout: a cache miss (found=false), a malformed meta
+// blob, or a read error leaves flags.diverged / flags.rerouted unset
+// and NEVER fails the request.
+type CompositeMetaLooker interface {
+	// LookupCompositeMeta returns the raw JSON meta blob the aggregator
+	// wrote under [cachekeys.VWAPCompositeMeta] for the (base, quote,
+	// window) composite. found=false on a cache miss (not an error);
+	// err carries a real read failure for logging only.
+	LookupCompositeMeta(ctx context.Context, base, quote canonical.Asset, window time.Duration) (raw []byte, found bool, err error)
+}
+
 // ─── Handler ──────────────────────────────────────────────────────
 
 // resolveAssetOrBaseParam reads `asset` and `base` from the query
@@ -472,6 +500,11 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	s.attachConfidence(r, &snapshot, asset, quote)
 
 	flags := Flags{Stale: stale, Triangulated: triangulated}
+	// Surface the router's composite-quality signals (diverged /
+	// rerouted) that the aggregator persists to
+	// cachekeys.VWAPCompositeMeta — a no-op unless the served value is a
+	// triangulated composite. Best-effort.
+	s.attachCompositeFlags(r, &flags, asset, quote, triangulated)
 	frozen := s.lookupFrozen(r, asset, quote)
 	flags.Frozen = frozen
 	// SingleSource is forced true when the snapshot is the LKG
@@ -1021,6 +1054,52 @@ func (s *Server) attachConfidence(r *http.Request, snap *PriceSnapshot, asset, q
 	snap.Confidence = &c
 	f := got.Factors
 	snap.ConfidenceFactors = &f
+}
+
+// attachCompositeFlags surfaces the aggregator's router-quality
+// signals — flags.diverged (contributing routes disagreed) and
+// flags.rerouted (the composite substituted around a dry configured
+// chain leg, R3) — on a TRIANGULATED /v1/price response. The aggregator
+// persists them to [cachekeys.VWAPCompositeMeta] on every router-priced
+// target; before this reader they were written and never read.
+//
+// Gated on the wired [TriangulatedPriceLooker] also implementing the
+// OPTIONAL [CompositeMetaLooker] capability — when it doesn't, both
+// flags stay unset (the price still serves). Best-effort throughout: a
+// cache miss, a malformed meta blob, or a read error leaves the flags
+// unset and never fails the request. A no-op when triangulated is false
+// — direct (non-triangulated) VWAP hits never carry composite meta. The
+// window matches the one the triangulated value was read under
+// ([triangulationLookupWindow]).
+func (s *Server) attachCompositeFlags(r *http.Request, flags *Flags, asset, quote canonical.Asset, triangulated bool) {
+	if !triangulated {
+		return
+	}
+	looker, ok := s.triangulated.(CompositeMetaLooker)
+	if !ok {
+		return
+	}
+	raw, found, err := looker.LookupCompositeMeta(r.Context(), asset, quote, triangulationLookupWindow)
+	if err != nil {
+		if !clientAborted(r, err) {
+			s.logger.Warn("composite meta lookup failed",
+				"err", err, "asset", asset.String(), "quote", quote.String())
+		}
+		return
+	}
+	if !found {
+		return // no router meta for this composite — leave flags unset
+	}
+	meta, err := cachekeys.DecodeCompositeMeta(raw)
+	if err != nil {
+		// A malformed blob is enrichment noise, not a serving failure —
+		// the price is already computed. Log and leave the flags unset.
+		s.logger.Warn("composite meta decode failed",
+			"err", err, "asset", asset.String(), "quote", quote.String())
+		return
+	}
+	flags.Diverged = meta.Diverged
+	flags.Rerouted = meta.Rerouted
 }
 
 // lookupFrozen consults the FrozenLooker (when wired) for the

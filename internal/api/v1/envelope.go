@@ -46,6 +46,13 @@ type Envelope struct {
 //   - SingleSource: the bucket had only one contributing source.
 //     Informational; combined with Frozen this is the manipulation
 //     signature.
+//   - Diverged: a TRIANGULATED composite came from routes that
+//     DISAGREED (the router's divergence signal). Only meaningful on
+//     the /v1/price triangulated serve path; omitted when false.
+//   - Rerouted: a TRIANGULATED composite SUBSTITUTED around a dry
+//     configured chain leg — the router walked an alternative path
+//     rather than the documented direct chain (R3). Only meaningful on
+//     the /v1/price triangulated serve path; omitted when false.
 type Flags struct {
 	Stale             bool `json:"stale"`
 	ReducedRedundancy bool `json:"reduced_redundancy"`
@@ -60,6 +67,16 @@ type Flags struct {
 	DivergenceChecked bool `json:"divergence_checked"`
 	Frozen            bool `json:"frozen,omitempty"`
 	SingleSource      bool `json:"single_source,omitempty"`
+	// Diverged marks a triangulated composite whose contributing routes
+	// disagreed (the aggregator's router divergence signal, persisted to
+	// cachekeys.VWAPCompositeMeta). Surfaced on the /v1/price
+	// triangulated serve path only; omitempty hides it when false.
+	Diverged bool `json:"diverged,omitempty"`
+	// Rerouted marks a triangulated composite that substituted around a
+	// DRY configured chain leg — the price came via an alternative path,
+	// not the documented direct chain (R3). Surfaced on the /v1/price
+	// triangulated serve path only; omitempty hides it when false.
+	Rerouted bool `json:"rerouted,omitempty"`
 	// UnverifiedTickerCollision fires on `/v1/assets/{id}` when the
 	// requested asset's code matches a verified currency's Stellar
 	// ticker but its issuer doesn't match the verified entry — i.e.

@@ -304,6 +304,123 @@ func TestPrice_RedisVWAPFallback_NotFoundPreserves404(t *testing.T) {
 	}
 }
 
+// stubCompositeMetaLooker implements BOTH v1.TriangulatedPriceLooker
+// and the optional v1.CompositeMetaLooker capability. It backs the
+// composite-quality-flag tests: a triangulated composite carries the
+// aggregator's router-quality meta (diverged / rerouted), which the
+// handler decodes and surfaces on the envelope Flags.
+type stubCompositeMetaLooker struct {
+	// triangulated-value behaviour (LookupTriangulatedVWAP)
+	value          string
+	isTriangulated bool
+	found          bool
+	// composite-meta behaviour (LookupCompositeMeta)
+	metaRaw   []byte
+	metaFound bool
+	metaErr   error
+}
+
+func (s *stubCompositeMetaLooker) LookupTriangulatedVWAP(
+	_ context.Context, _, _ canonical.Asset, _ time.Duration,
+) (string, bool, bool, error) {
+	return s.value, s.isTriangulated, s.found, nil
+}
+
+func (s *stubCompositeMetaLooker) LookupCompositeMeta(
+	_ context.Context, _, _ canonical.Asset, _ time.Duration,
+) ([]byte, bool, error) {
+	return s.metaRaw, s.metaFound, s.metaErr
+}
+
+// TestPrice_TriangulatedCompositeFlags pins the L3 fix: the aggregator
+// persists the router's composite-quality decomposition to
+// cachekeys.VWAPCompositeMeta on every router-priced triangulation
+// target, but /v1/price had NO reader — the `diverged` (routes
+// disagreed) and `rerouted` (a configured leg was dry, price came via a
+// substitute path) signals were silently dropped. The handler now reads
+// the meta on the triangulated serve path and surfaces both as
+// flags.diverged / flags.rerouted (omitempty — absent when false).
+func TestPrice_TriangulatedCompositeFlags(t *testing.T) {
+	t.Run("diverged and rerouted both surface", func(t *testing.T) {
+		reader := &stubPriceReader{err: v1.ErrPriceNotFound}
+		looker := &stubCompositeMetaLooker{
+			value:          "0.5500",
+			isTriangulated: true,
+			found:          true,
+			metaRaw:        []byte(`{"path_count":2,"combined_confidence":0.81,"low_confidence":false,"diverged":true,"rerouted":true}`),
+			metaFound:      true,
+		}
+		srv := v1.New(v1.Options{Prices: reader, Triangulated: looker})
+		ts := startHTTPTest(t, srv.Handler())
+
+		resp := mustGet(t, ts.URL+"/v1/price?asset=crypto:XLM&quote=fiat:EUR")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+		body, _ := readAll(resp)
+		for _, s := range []string{
+			`"triangulated":true`,
+			`"diverged":true`,
+			`"rerouted":true`,
+		} {
+			if !strings.Contains(body, s) {
+				t.Errorf("body missing %q: %s", s, body)
+			}
+		}
+	})
+
+	t.Run("diverged only — rerouted omitted when false", func(t *testing.T) {
+		reader := &stubPriceReader{err: v1.ErrPriceNotFound}
+		looker := &stubCompositeMetaLooker{
+			value:          "0.5500",
+			isTriangulated: true,
+			found:          true,
+			metaRaw:        []byte(`{"diverged":true,"rerouted":false}`),
+			metaFound:      true,
+		}
+		srv := v1.New(v1.Options{Prices: reader, Triangulated: looker})
+		ts := startHTTPTest(t, srv.Handler())
+
+		resp := mustGet(t, ts.URL+"/v1/price?asset=crypto:XLM&quote=fiat:EUR")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+		body, _ := readAll(resp)
+		if !strings.Contains(body, `"diverged":true`) {
+			t.Errorf("diverged flag not set: %s", body)
+		}
+		if strings.Contains(body, `"rerouted"`) {
+			t.Errorf("rerouted must be omitted when false (omitempty): %s", body)
+		}
+	})
+
+	t.Run("no meta — both flags omitted", func(t *testing.T) {
+		reader := &stubPriceReader{err: v1.ErrPriceNotFound}
+		looker := &stubCompositeMetaLooker{
+			value:          "0.5500",
+			isTriangulated: true,
+			found:          true,
+			// metaFound=false — the router did not price this pair this
+			// cycle (or the meta TTL'd out). Flags must stay unset.
+			metaFound: false,
+		}
+		srv := v1.New(v1.Options{Prices: reader, Triangulated: looker})
+		ts := startHTTPTest(t, srv.Handler())
+
+		resp := mustGet(t, ts.URL+"/v1/price?asset=crypto:XLM&quote=fiat:EUR")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+		body, _ := readAll(resp)
+		if !strings.Contains(body, `"triangulated":true`) {
+			t.Errorf("triangulated flag not set: %s", body)
+		}
+		if strings.Contains(body, `"diverged"`) || strings.Contains(body, `"rerouted"`) {
+			t.Errorf("composite flags must be absent when no meta exists: %s", body)
+		}
+	})
+}
+
 // TestPrice_StablecoinFiatProxy_FallsThroughToClassicPeg — the
 // fix for the production regression where /v1/price?asset=native&quote=fiat:USD
 // 404'd even though the aggregator had populated native/USDC-classic

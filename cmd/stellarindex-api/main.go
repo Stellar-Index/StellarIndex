@@ -2959,6 +2959,30 @@ func (r redisTriangulatedLooker) LookupTriangulatedVWAP(
 	return val, prov == cachekeys.VWAPProvenanceTriangulated, true, nil
 }
 
+// LookupCompositeMeta reads the router quality-flags blob the
+// aggregator writes alongside a triangulated composite
+// (cachekeys.VWAPCompositeMeta), satisfying the optional
+// v1.CompositeMetaLooker capability so /v1/price can surface
+// flags.diverged / flags.rerouted. Cache miss → (nil, false, nil);
+// read errors propagate. Best-effort: the handler leaves the flags
+// unset on any error, so a missing/failed meta never fails the request.
+func (r redisTriangulatedLooker) LookupCompositeMeta(
+	ctx context.Context, base, quote canonical.Asset, window time.Duration,
+) ([]byte, bool, error) {
+	if r.rdb == nil {
+		return nil, false, nil
+	}
+	key := cachekeys.VWAPCompositeMeta(base, quote, window)
+	val, err := r.rdb.Get(ctx, key.String()).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("composite meta cache get %s: %w", key, err)
+	}
+	return val, true, nil
+}
+
 // globalPriceReader adapts *timescale.Store + the existing Redis
 // triangulated looker to aggregate.GlobalPriceReader (R-018 Phase
 // 1.4a). Each method maps to one tier of ComputeGlobalPrice:
