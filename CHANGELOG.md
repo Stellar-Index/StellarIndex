@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.24.0] — 2026-08-02
+
 ### Fixed
 - **Router serving is anchored to the highest-confidence route** (audit H1) —
   a confidence-blind outlier omission ran *before* confidence-weighted serving,
