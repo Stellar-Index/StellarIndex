@@ -342,7 +342,6 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 	}
 	usdPrice := *detail.PriceUSD
 	_ = ctx
-	_ = asset
 	// Valuation-integrity guard: when the backing price came from a single
 	// venue AND the asset's trailing-24h USD volume is below the operator
 	// floor, suppress BOTH market_cap_usd and fdv_usd (leave them null) and
@@ -350,7 +349,28 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 	// present an obscure asset as worth billions. detail.VolumeUSD24h is
 	// populated by the concurrent populateVolume24h before this join. The
 	// price_usd itself still serves; we guard the valuation, not the price.
-	if dustLiquiditySuppressed(priceSourceCount, detail.VolumeUSD24h, s.minMarketCapVolumeUSD) {
+	//
+	// L2 — native carve-out for list/detail parity: the listing SQL forces
+	// native XLM's source_count to NULL (asset_catalogue.go: `WHEN
+	// ca.asset_id = 'native' THEN NULL::int`), so XLM — triangulated and
+	// definitionally liquid — is NEVER dust-suppressed there. Mirror that
+	// exactly here so /v1/assets/native and the /v1/assets listing can't
+	// disagree on the flag.
+	//
+	// Residual (documented, not silently assumed): for NON-native assets the
+	// two endpoints derive the guard's venue count from DIFFERENT fallback
+	// price routes. The detail path counts the venues that actually back its
+	// served price — direct fiat:USD via readPriceWithAliases, else the USDC
+	// stablecoin proxy in lookupUSDPriceWithSources — while the listing SQL
+	// COALESCEs direct-fiat:USD then asset/XLM triangulation. So an asset
+	// whose venue count differs across the USDC vs XLM route can still
+	// suppress on one endpoint and not the other; the detail path is
+	// deliberately the STRICTER (it gates on the venues behind the value it
+	// serves, and must not be weakened to match the listing's XLM-route
+	// count). Full parity requires unifying the two price bases at the
+	// aggregator/SQL layer — out of scope for these two API files.
+	if !asset.Equal(canonical.NativeAsset()) &&
+		dustLiquiditySuppressed(priceSourceCount, detail.VolumeUSD24h, s.minMarketCapVolumeUSD) {
 		detail.MarketCapLowLiquidity = true
 		return
 	}
@@ -604,6 +624,15 @@ func sep1DisplayToRawUnits(display string, decimals int) (string, bool) {
 // Returns an error when usdPriceStr isn't a parseable decimal or
 // decimals is negative. amountStroops==0 produces "0.00" (legitimate
 // "asset has no circulating supply" reading, not an error).
+//
+// A NEGATIVE result is rejected with an error — the same Sign()<0 guard
+// [computeMarketCapUSD] applies on the listing path (it returns ""). A
+// legitimate supply/price is never negative; a negative circulating supply
+// is a data error (Σburn > Σmint), and serving a negative market_cap_usd /
+// fdv_usd would be worse than omitting it. Every caller
+// (populateMarketCap, chart.go, lending.go) already leaves the field / point
+// unset on error, so a negative result surfaces as an OMITTED field, not a
+// negative one.
 func usdMarketValue(amountStroops *big.Int, usdPriceStr string, decimals int) (string, error) {
 	if amountStroops == nil {
 		return "", errors.New("usdMarketValue: amountStroops is nil")
@@ -623,6 +652,11 @@ func usdMarketValue(amountStroops *big.Int, usdPriceStr string, decimals int) (s
 	if decimals > 0 {
 		divisor := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
 		valueRat.Quo(valueRat, new(big.Rat).SetInt(divisor))
+	}
+
+	if valueRat.Sign() < 0 {
+		return "", fmt.Errorf("usdMarketValue: negative market value (amount=%s price=%s)",
+			amountStroops.String(), usdPriceStr)
 	}
 
 	return valueRat.FloatString(2), nil

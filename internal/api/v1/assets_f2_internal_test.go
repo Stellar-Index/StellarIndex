@@ -61,6 +61,28 @@ func TestUsdMarketValue_BadInputs(t *testing.T) {
 	}
 }
 
+// TestUsdMarketValue_NegativeSupplyRejected pins the finding-#4 guard: a
+// negative circulating supply (Σburn > Σmint data error) must NOT serve a
+// negative market_cap_usd on /v1/assets/{id}. usdMarketValue returns an
+// error — its callers (populateMarketCap, chart.go, lending.go) all leave the
+// field/point unset on error — so the field is OMITTED, not negative. Matches
+// computeMarketCapUSD's Sign()<0 → "" guard on the listing path.
+func TestUsdMarketValue_NegativeSupplyRejected(t *testing.T) {
+	// -1 XLM raw (10^7 stroops) × $0.50 → a $-0.50 value data error.
+	if got, err := usdMarketValue(mustBigIntInternal("-10000000"), "0.50", 7); err == nil {
+		t.Errorf("negative supply must be rejected (err), got %q", got)
+	}
+	// A negative price (equally impossible) is rejected the same way.
+	if got, err := usdMarketValue(mustBigIntInternal("10000000"), "-0.50", 7); err == nil {
+		t.Errorf("negative price must be rejected (err), got %q", got)
+	}
+	// Guard did not over-reach: an exact zero is still the legitimate
+	// "no circulating supply" reading, not an error.
+	if got, err := usdMarketValue(mustBigIntInternal("0"), "0.50", 7); err != nil || got != "0.00" {
+		t.Errorf(`zero supply = (%q, %v), want ("0.00", nil)`, got, err)
+	}
+}
+
 // TestComputeMarketCapUSD_ZeroSupplyMatchesUsdMarketValue is the
 // COR-03 regression: computeMarketCapUSD (the /v1/assets LISTING
 // path) and usdMarketValue (the /v1/assets/{id} DETAIL path, tested
