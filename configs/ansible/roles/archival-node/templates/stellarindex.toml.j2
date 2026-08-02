@@ -104,6 +104,17 @@ seed_rpc_endpoint = "https://mainnet.sorobanrpc.com"
 enable_stablecoin_fiat_proxy = true
 min_usd_volume = 10000  # per-pair USD-volume floor for VWAP publication (anti-manipulation + confidence). Re-enabled 2026-07-01: the CEX connectors landed and flow live volume (binance/coinbase/kraken/bitstamp, millions of trades), so fiat:USD pairs clear $10k/window easily while thin/manipulable pairs are gated. (Was 0 during the on-chain-only bootstrap.)
 
+# Graph-router cross-rate knobs (Step 2, 2026-08). The triangulation
+# targets below are now priced by the graph router (internal/aggregate/
+# router.go) over the edge set built from this tick's priced-pair VWAPs
+# plus the resolved chain legs. A target reachable by ONE route (the
+# current config, one chain per target) behaves exactly like the old
+# static single-chain multiply; a target reached by ≥2 agreeing,
+# confidence-gated routes is corroborated, and that pathCount widens the
+# anomaly-freeze's source_count leg so a thin FX cross stops false-firing.
+max_hops             = 3    # route length cap in LEGS (base→hub→quote = 2); accepted [2,4]
+min_route_confidence = 0.0  # weakest-link floor [0,1]; 0 keeps pre-router behaviour (dust USD pairs are already excluded from the graph by min_usd_volume). Raise to gate confident crosses on a route-quality floor.
+
 # ──────────────────────────────────────────────────────────────────
 # Composite (triangulated) rates — added 2026-07-25.
 #

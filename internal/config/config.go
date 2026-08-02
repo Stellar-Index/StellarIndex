@@ -998,7 +998,9 @@ type AggregateConfig struct {
 	EnableStablecoinFiatProxy    bool                       `toml:"enable_stablecoin_fiat_proxy" doc:"Expand fiat-denominated target pairs to include stablecoin backers (XLM/fiat:USD also pulls XLM/USDT/USDC/DAI/PYUSD/USDP and collapses onto the target). Off by default — N+1 TradesInRange calls per (pair, window)." default:"false"`
 	Pairs                        []string                   `toml:"pairs" doc:"Aggregator coverage set as canonical pair strings (\"crypto:XLM/fiat:USD\", \"native/USDC-G…\"). Empty leaves the binary's built-in default (XLM/BTC/ETH × USD/EUR/GBP). Each entry is parsed via canonical.ParseAsset on both sides; an unparseable entry fails Validate." default:"[]"`
 	Windows                      []string                   `toml:"windows" doc:"Per-window cadences as Go time.Duration strings (\"5m\", \"1h\", \"24h\"). Empty leaves the orchestrator's built-in default ([5m, 1h, 24h])." default:"[]"`
-	Triangulations               []TriangulationChainConfig `toml:"triangulations" doc:"Operator-configured chain pricing entries — each row defines a target pair plus an ordered chain of leg pairs. After the per-pair refresh runs, the orchestrator multiplies each leg's freshly-cached VWAP via aggregate.TriangulateChain and writes the implied target VWAP to its own cache key. Empty (default) skips triangulation entirely." default:"[]"`
+	Triangulations               []TriangulationChainConfig `toml:"triangulations" doc:"Operator-configured chain pricing entries — each row defines a target pair plus an ordered chain of leg pairs. After the per-pair refresh runs, the orchestrator prices each target via the graph-based cross-rate router (internal/aggregate/router.go) over the edge set built from this tick's priced-pair VWAPs plus the resolved chain legs, and writes the implied target VWAP to its own cache key. Empty (default) skips triangulation entirely." default:"[]"`
+	MaxHops                      int                        `toml:"max_hops" doc:"Maximum LEGS in a router cross-rate route (base→hub→quote is 2 legs). Bounds the graph search and the composite chain length. 0 falls back to the library default (3); values are accepted only in [2,4] (4 covers the obscure×obscure worst case). Applies to the triangulation targets priced via the router." default:"3"`
+	MinRouteConfidence           float64                    `toml:"min_route_confidence" doc:"Confidence floor in [0,1] a router route's weakest-link edge must clear to back a composite as CONFIDENT. Routes below it are excluded so a dust/thin edge can't set a confident cross; when NO route clears it the composite is served as low-confidence (flagged, not published over the direct price). 0 (default) disables the floor — every route is treated as confident, matching pre-router behaviour. Dust USD pairs are already excluded from the edge set by min_usd_volume regardless of this knob." default:"0"`
 }
 
 // TriangulationChainConfig is one row of the triangulation table.
@@ -1660,6 +1662,8 @@ func Default() Config {
 			IntervalSeconds:              30,
 			DivergenceMinIntervalSeconds: 300,
 			MaxTradesPerWindow:           10_000,
+			MaxHops:                      3,
+			MinRouteConfidence:           0,
 		},
 		Anomaly:    defaultAnomalyConfig(),
 		API:        defaultAPIConfig(),

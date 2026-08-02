@@ -63,7 +63,7 @@ func TestTriangulationDivergencePct_MeasuresDirectAgainstComposite(t *testing.T)
 	window := 5 * time.Minute
 	o := New(nil, nil, Config{Windows: []time.Duration{window}})
 
-	o.recordComposite(xlmEUR, window, ratOf(t, "0.0720"))
+	o.recordComposite(xlmEUR, window, ratOf(t, "0.0720"), 1, 0.8, false)
 
 	// Direct 0.0756 vs composite 0.0720 → |0.0756-0.0720|/0.0720 = 5%.
 	pct, ok := o.triangulationDivergencePct(xlmEUR, window, ratOf(t, "0.0756"))
@@ -93,7 +93,7 @@ func TestTriangulationDivergencePct_StaleCompositeIsUnchecked(t *testing.T) {
 	interval := 30 * time.Second
 	o := New(nil, nil, Config{Windows: []time.Duration{window}, Interval: interval})
 
-	o.recordComposite(xlmEUR, window, ratOf(t, "0.0720"))
+	o.recordComposite(xlmEUR, window, ratOf(t, "0.0720"), 1, 0.8, false)
 
 	// One tick old: still trusted.
 	o.lastComposites[compositeKey(xlmEUR, window)] = compositeSample{

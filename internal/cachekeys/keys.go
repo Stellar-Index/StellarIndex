@@ -130,6 +130,38 @@ func VWAPProvenance(base, quote canonical.Asset, window time.Duration) VWAPProve
 // typed-family treatment).
 const VWAPProvenanceTriangulated = "triangulated"
 
+// ─── VWAP Composite Meta — router quality flags for a composite ────
+//
+// Wire shape: `vwap:<base>:<quote>:<window-seconds>:composite_meta`
+// TTL: matches the VWAP value key.
+//
+// Writer: aggregator's triangulation pass writes a JSON blob
+// ({path_count, combined_confidence, low_confidence, diverged}) when it
+// prices a target through the graph router. Sibling to the value +
+// provenance keys; carries the router corroboration count and quality
+// flags so downstream (Step 3: market-cap gating, /v1/price confidence
+// flags) can respect them without recomputing. Absent = the pair was
+// not priced through the router this cycle. A low_confidence marker is
+// written even when the composite is NOT published over the direct
+// price, so a consumer can distinguish "served direct because the only
+// routes were dust" from "no composite at all".
+
+// VWAPCompositeMetaKey is the typed Redis key for the
+// `vwap:<base>:<quote>:<window>:composite_meta` family. Distinct from
+// [VWAPKey] / [VWAPProvenanceKey] — sibling markers read for different
+// purposes.
+type VWAPCompositeMetaKey string
+
+// String returns the wire-format key.
+func (k VWAPCompositeMetaKey) String() string { return string(k) }
+
+// VWAPCompositeMeta returns the cache key for a router-priced
+// composite's quality flags on the given (pair, window).
+func VWAPCompositeMeta(base, quote canonical.Asset, window time.Duration) VWAPCompositeMetaKey {
+	return VWAPCompositeMetaKey(fmt.Sprintf("vwap:%s:%s:%d:composite_meta",
+		base.String(), quote.String(), int(window.Seconds())))
+}
+
 // ─── Confidence — multi-factor score per (pair, window) ───────────
 //
 // Wire shape: `confidence:<base>:<quote>:<window-seconds>`

@@ -460,6 +460,8 @@ func run(cfgPath string, dryRun bool) error {
 		Anomaly:            checker,
 		FreezeWriter:       freezeWriter,
 		Triangulations:     triangulations,
+		MaxHops:            cfg.Aggregate.MaxHops,
+		MinRouteConfidence: cfg.Aggregate.MinRouteConfidence,
 		FXStore:            store, // X2.5: snap fiat-vs-fiat legs to bucket-end FX quote
 		Baselines:          baselineLookupAdapter{store: store},
 		Phase2Thresholds: orchestrator.Phase2Thresholds{

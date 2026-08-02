@@ -453,6 +453,20 @@ func (a AggregateConfig) validate() error {
 		return fmt.Errorf("%w: aggregate.outlier_sigma_threshold must be > 0",
 			ErrInvalidConfig)
 	}
+	// max_hops: 0 = "use library default (3)"; any other value must be
+	// in [2,4] (a route needs at least 2 legs to be a cross, and 4
+	// covers the obscure×obscure worst case — see internal/aggregate/
+	// router.go FindRoutes).
+	if a.MaxHops != 0 && (a.MaxHops < 2 || a.MaxHops > 4) {
+		return fmt.Errorf("%w: aggregate.max_hops must be 0 (default) or in [2,4], got %d",
+			ErrInvalidConfig, a.MaxHops)
+	}
+	// min_route_confidence is a weakest-link confidence floor in [0,1];
+	// 0 disables the gate.
+	if a.MinRouteConfidence < 0 || a.MinRouteConfidence > 1 {
+		return fmt.Errorf("%w: aggregate.min_route_confidence must be in [0,1], got %v",
+			ErrInvalidConfig, a.MinRouteConfidence)
+	}
 	for _, raw := range a.Pairs {
 		if _, err := parsePairString(raw); err != nil {
 			return fmt.Errorf("%w: aggregate.pairs entry %q: %w",

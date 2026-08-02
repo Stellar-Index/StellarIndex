@@ -248,7 +248,7 @@ func seedBoundedLabelSeries() {
 	// publish a derived price because a leg was frozen" was the one
 	// outcome an operator could not distinguish from "this metric is
 	// dead" until it first fired.
-	for _, outcome := range []string{"ok", "missing_leg", "parse_error", "redis_error", "frozen_leg"} {
+	for _, outcome := range []string{"ok", "missing_leg", "parse_error", "redis_error", "frozen_leg", "low_confidence"} {
 		AggregatorTriangulationsTotal.WithLabelValues(outcome)
 	}
 	for _, op := range []string{"get_account", "upsert_subscription", "account_update", "list_keys", "key_update", "key_cache_invalidate"} {
@@ -2554,7 +2554,7 @@ var StripeDeadLettersOpen = prometheus.NewGauge(prometheus.GaugeOpts{
 var AggregatorTriangulationsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_triangulations_total",
-		Help: "Aggregator triangulation outcomes per tick × chain × window. Outcome ∈ {ok, missing_leg, parse_error, redis_error, frozen_leg}.",
+		Help: "Aggregator triangulation outcomes per tick × chain × window (graph-router priced). Outcome ∈ {ok, missing_leg, parse_error, redis_error, frozen_leg, low_confidence}. low_confidence = no route cleared min_route_confidence, so the composite was flagged but NOT published over the direct price.",
 	},
 	[]string{"outcome"},
 )
