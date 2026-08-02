@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/baseline"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -396,7 +398,8 @@ func TestRouterTarget_FXDryRerouteGatedAndFlagged(t *testing.T) {
 	// a second chain that adds the USD↔EUR and EUR↔GBP edges. When
 	// thinXLMUSD is true the XLM/USD edge is a single-source priced pair
 	// (confidence ≈ 0.119, below the reroute floor); otherwise it is a
-	// cache leg (confidence 1.0, above the floor).
+	// cached NON-FX leg (confidence 0.5 = cachedLegConfidence, exactly AT the
+	// reroute floor, so `0.5 < 0.5` is false and the reroute publishes — L1).
 	buildO := func(t *testing.T, thinXLMUSD bool) (*Orchestrator, Cache) {
 		t.Helper()
 		store := &mockStore{}
@@ -486,6 +489,176 @@ func TestRouterTarget_FXDryRerouteGatedAndFlagged(t *testing.T) {
 		}
 		if meta.LowConfidence {
 			t.Error("composite_meta.low_confidence = true, want false — the reroute cleared the floor")
+		}
+	})
+}
+
+// TestRecordComposite_RetainsMonotonicClock is M1: recordComposite must stamp
+// the sample with a MONOTONIC clock reading (time.Now(), not time.Now().UTC()).
+// The staleness checks read it only through time.Since, so stripping the
+// monotonic reading drops them to wall-clock arithmetic where a backward
+// NTP/VM step can latch a stale, freeze-suppressing corroboration count.
+// A time.Time carrying a monotonic reading renders with a trailing " m=..."
+// field (documented in time.Time.String); .UTC() strips it.
+func TestRecordComposite_RetainsMonotonicClock(t *testing.T) {
+	window := time.Minute
+	o := New(nil, nil, Config{Windows: []time.Duration{window}})
+	pair := mkPair(t, "crypto", "XLM", "fiat", "GBP")
+
+	o.recordComposite(pair, window, big.NewRat(1, 2), 1, 0.9, false)
+
+	sample, ok := o.lastComposites[compositeKey(pair, window)]
+	if !ok {
+		t.Fatal("no composite recorded")
+	}
+	if !strings.Contains(sample.at.String(), " m=") {
+		t.Errorf("recordComposite stamped at=%q with NO monotonic reading — a backward wall-clock "+
+			"step would then make time.Since read short and latch a stale freeze-suppressing "+
+			"corroboration count. Store time.Now(), not time.Now().UTC() (M1).", sample.at.String())
+	}
+}
+
+// TestRouterTarget_CachedNonFXLegLimitsConfidence is L1: a chain leg resolved
+// from CACHE that is NOT an FX leg (crypto/fiat here) must enter the router at
+// the conservative cachedLegConfidence (0.5), so it can be the route's
+// limiting edge — not at the FX max of 1.0, which would let a stale cached
+// crypto leg ride through a hub at full confidence and never limit anything.
+func TestRouterTarget_CachedNonFXLegLimitsConfidence(t *testing.T) {
+	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD") // cached NON-FX leg
+	usdGBP := mkPair(t, "fiat", "USD", "fiat", "GBP")   // FX leg (stays 1.0)
+	xlmGBP := mkPair(t, "crypto", "XLM", "fiat", "GBP")
+	window := time.Minute
+
+	cache, _ := newTestRedis(t)
+	setLegVWAP(t, cache, xlmUSD, window, "0.100000000000")
+	setLegVWAP(t, cache, usdGBP, window, "0.800000000000")
+
+	o := New(nil, cache, Config{
+		Windows: []time.Duration{window},
+		Triangulations: []TriangulationChain{
+			{Target: xlmGBP, Legs: []canonical.Pair{xlmUSD, usdGBP}},
+		},
+	})
+	if err := o.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	meta, ok := readCompositeMeta(t, cache, xlmGBP, window)
+	if !ok {
+		t.Fatal("no composite_meta written for the published target")
+	}
+	// Route confidence = min(cachedLegConfidence 0.5, FX 1.0) = 0.5.
+	if meta.CombinedConfidence != cachedLegConfidence {
+		t.Errorf("CombinedConfidence = %v, want %v — a cached NON-FX leg (XLM/USD) must enter at "+
+			"the conservative cached-leg confidence so it can limit the route, not at the FX max "+
+			"of 1.0 (L1)", meta.CombinedConfidence, cachedLegConfidence)
+	}
+}
+
+// TestRouteTarget_FrozenLegRerouteRespectsFreeze is H2. Part (a): a leg frozen
+// this tick (st.frozen) that the router reaches the target AROUND is a
+// substitution just like a dry leg — a BELOW-FLOOR frozen-leg reroute must NOT
+// publish over the direct price and must be flagged Rerouted. Part (b): a
+// target frozen this tick on its OWN direct market must not have its frozen
+// last-known-good silently overwritten by a fresh composite.
+//
+// Both drive routeTarget directly with a constructed leg status, so the H2
+// logic is exercised without the full two-tick freeze machinery.
+func TestRouteTarget_FrozenLegRerouteRespectsFreeze(t *testing.T) {
+	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
+	xlmEUR := mkPair(t, "crypto", "XLM", "fiat", "EUR")
+	usdGBP := mkPair(t, "fiat", "USD", "fiat", "GBP")
+	eurGBP := mkPair(t, "fiat", "EUR", "fiat", "GBP")
+	xlmGBP := mkPair(t, "crypto", "XLM", "fiat", "GBP")
+	window := time.Minute
+	const directPrice = "0.050000000000"
+
+	// ── (a) below-floor frozen-leg reroute: direct serves, flagged ──
+	t.Run("below_floor_frozen_leg_reroute", func(t *testing.T) {
+		cache, _ := newTestRedis(t)
+		setLegVWAP(t, cache, xlmGBP, window, directPrice) // direct already serving
+		o := New(nil, cache, Config{Windows: []time.Duration{window}})
+
+		// Substitute route XLM→EUR→GBP; the XLM/EUR leg is thin (conf 0.2), so
+		// the route's weakest-link confidence (0.2) is below rerouteMinConfidence.
+		edges, err := aggregate.BuildEdges([]aggregate.Quote{
+			{Pair: xlmEUR, Price: big.NewRat(2, 1), Confidence: 0.2},
+			{Pair: eurGBP, Price: big.NewRat(3, 10), Confidence: 1.0},
+		})
+		if err != nil {
+			t.Fatalf("BuildEdges: %v", err)
+		}
+		chain := TriangulationChain{Target: xlmGBP, Legs: []canonical.Pair{xlmUSD, usdGBP}}
+		// A leg of this chain FROZE this tick, but the router still reached the
+		// target around it.
+		st := chainLegStatus{frozen: true, frozenLeg: xlmUSD}
+
+		outcome := o.routeTarget(context.Background(), chain, window, edges, st)
+		if outcome != "low_confidence" {
+			t.Errorf("outcome = %q, want low_confidence (a below-floor reroute is refused)", outcome)
+		}
+		got, err := cache.Get(context.Background(),
+			cachekeys.VWAP(xlmGBP.Base, xlmGBP.Quote, window).String()).Result()
+		if err != nil {
+			t.Fatalf("target VWAP read: %v", err)
+		}
+		if got != directPrice {
+			t.Errorf("target VWAP = %q, want the untouched direct price %q — a below-floor reroute "+
+				"AROUND a frozen leg must NOT publish over the direct price, exactly like a dry-leg "+
+				"reroute (H2)", got, directPrice)
+		}
+		meta, ok := readCompositeMeta(t, cache, xlmGBP, window)
+		if !ok {
+			t.Fatal("no composite_meta written for the frozen-leg reroute")
+		}
+		if !meta.Rerouted {
+			t.Error("composite_meta.rerouted = false, want true — a frozen-leg reroute is a " +
+				"substitution and must be flagged, not silent (H2)")
+		}
+		if !meta.LowConfidence {
+			t.Error("composite_meta.low_confidence = false, want true — the below-floor reroute " +
+				"was not published over direct")
+		}
+		if _, corroborated := o.routeCorroborationCount(xlmGBP, window); corroborated {
+			t.Error("a below-floor frozen-leg reroute was recorded as corroboration — it must not " +
+				"widen the freeze")
+		}
+	})
+
+	// ── (b) target frozen on its own market: LKG not overwritten ──
+	t.Run("target_frozen_not_overwritten", func(t *testing.T) {
+		cache, _ := newTestRedis(t)
+		setLegVWAP(t, cache, xlmGBP, window, directPrice)
+		o := New(nil, cache, Config{Windows: []time.Duration{window}})
+		// The target itself froze this tick on its own direct market.
+		o.markFrozenThisTick(xlmGBP, window)
+
+		// A high-confidence route that WOULD publish absent the target freeze.
+		edges, err := aggregate.BuildEdges([]aggregate.Quote{
+			{Pair: xlmEUR, Price: big.NewRat(2, 1), Confidence: 1.0},
+			{Pair: eurGBP, Price: big.NewRat(3, 10), Confidence: 1.0},
+		})
+		if err != nil {
+			t.Fatalf("BuildEdges: %v", err)
+		}
+		chain := TriangulationChain{Target: xlmGBP, Legs: []canonical.Pair{xlmUSD, usdGBP}}
+
+		outcome := o.routeTarget(context.Background(), chain, window, edges, chainLegStatus{})
+		if outcome != outcomeFrozenLeg {
+			t.Errorf("outcome = %q, want %q (a target frozen on its own market withholds the "+
+				"composite)", outcome, outcomeFrozenLeg)
+		}
+		got, err := cache.Get(context.Background(),
+			cachekeys.VWAP(xlmGBP.Base, xlmGBP.Quote, window).String()).Result()
+		if err != nil {
+			t.Fatalf("target VWAP read: %v", err)
+		}
+		if got != directPrice {
+			t.Errorf("target VWAP = %q, want the untouched frozen LKG %q — a fresh composite must "+
+				"not silently overwrite the value a freeze marker says is frozen (H2)", got, directPrice)
+		}
+		if _, corroborated := o.routeCorroborationCount(xlmGBP, window); corroborated {
+			t.Error("a withheld-for-target-freeze composite was recorded as corroboration")
 		}
 	})
 }

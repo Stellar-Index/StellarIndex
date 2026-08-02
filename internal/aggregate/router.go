@@ -3,6 +3,7 @@ package aggregate
 import (
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"math/bits"
 	"sort"
@@ -108,6 +109,18 @@ const (
 	maxCorroborationRoutes = 16
 )
 
+// corroborationMinConfidence is the weakest-link confidence floor a route
+// must clear before it may COUNT toward the anti-manipulation corroboration
+// count (see corroboratingRouteCount / [CombineRoutes]). min_route_confidence
+// ships at 0 so SERVING stays permissive, but corroboration is a structural
+// independence claim the anomaly-freeze source_count leg trusts: without a
+// floor a thin, dust-confidence route that merely happens to agree tightly
+// and be edge-disjoint would count as a full independent confirmation and
+// widen the freeze — exactly the fake the count exists to resist (M2). 0.5
+// mirrors the orchestrator's rerouteMinConfidence weakest-link floor: a route
+// too thin to displace a direct price is too thin to corroborate one.
+const corroborationMinConfidence = 0.5
+
 // RouteLeg is one directed edge of the exchange graph AND one hop of a
 // resolved route (an edge and a leg are the same object): 1 unit of
 // From is worth Price units of To, with a per-edge Confidence in [0,1].
@@ -149,8 +162,15 @@ type Quote struct {
 // same-asset "pairs" defensively (they cannot be a real market and
 // would be a self-loop in the graph). Output is sorted deterministically
 // so repeated builds — and any downstream route ordering — are stable.
+//
+// A market quoted in BOTH orientations (XLM/USD and USD/XLM) is deduped by
+// its UNDIRECTED key so it contributes ONE canonical quote (both directions
+// derived from it), never two double-counted directed edges (M3). A
+// non-finite quote confidence (NaN/±Inf) is clamped to 0 so it can never
+// win — or empty — the served highest-confidence tier (L5).
 func BuildEdges(quotes []Quote) ([]RouteLeg, error) {
 	edges := make([]RouteLeg, 0, len(quotes)*2)
+	seen := make(map[string]struct{}, len(quotes))
 	for _, q := range quotes {
 		if q.Price == nil || q.Price.Sign() <= 0 {
 			return nil, fmt.Errorf("%w: pair %s", ErrLegNonPositive, q.Pair)
@@ -158,11 +178,23 @@ func BuildEdges(quotes []Quote) ([]RouteLeg, error) {
 		if q.Pair.Base.Equal(q.Pair.Quote) {
 			continue
 		}
+		// Dedup by UNDIRECTED market key: XLM/USD and USD/XLM are the same
+		// physical market quoted opposite ways. Without this each seeds its
+		// own directed edges and the market is double-counted as two routes,
+		// inflating pathCount and the serving/omit population (M3). First
+		// quote seen for a market derives both directions; a later reverse-
+		// oriented duplicate is skipped.
+		mkey := undirectedEdgeKey(q.Pair.Base, q.Pair.Quote)
+		if _, dup := seen[mkey]; dup {
+			continue
+		}
+		seen[mkey] = struct{}{}
 		fwd := new(big.Rat).Set(q.Price)
 		inv := new(big.Rat).Inv(q.Price)
+		conf := sanitizeConfidence(q.Confidence)
 		edges = append(edges,
-			RouteLeg{From: q.Pair.Base, To: q.Pair.Quote, Price: fwd, Confidence: q.Confidence},
-			RouteLeg{From: q.Pair.Quote, To: q.Pair.Base, Price: inv, Confidence: q.Confidence},
+			RouteLeg{From: q.Pair.Base, To: q.Pair.Quote, Price: fwd, Confidence: conf},
+			RouteLeg{From: q.Pair.Quote, To: q.Pair.Base, Price: inv, Confidence: conf},
 		)
 	}
 	sort.SliceStable(edges, func(i, j int) bool {
@@ -304,6 +336,21 @@ func RouteConfidence(path []RouteLeg) float64 {
 	return minConf
 }
 
+// sanitizeConfidence clamps a non-finite confidence (NaN / ±Inf) to 0.
+// Fail-closed: a route whose confidence is not a real number is untrustworthy
+// and must never win — or, worse, EMPTY — the served highest-confidence tier.
+// A NaN would propagate through [maxConfidence] (NaN > x and x > NaN are both
+// false) and then never match `confidence == best` in [highestConfidencePrice],
+// leaving the top tier empty and panicking the served-price median. Applied
+// at both graph-construction ([BuildEdges]) and route-scoring ([scoreRoutes])
+// so a bad confidence cannot reach the serving path from either entry (L5).
+func sanitizeConfidence(c float64) float64 {
+	if math.IsNaN(c) || math.IsInf(c, 0) {
+		return 0
+	}
+	return c
+}
+
 // OmitOutliers rejects composites that diverge from the group's median
 // by more than permitDivergentPct percent, returning the survivors in
 // input order. Ported from the RE's OmitOutlierRates, with two
@@ -381,11 +428,12 @@ type scoredRoute struct {
 //
 // Returns:
 //
-//   - composite: the combined base→quote price (exact *big.Rat), the
-//     median of the HIGHEST-confidence surviving routes (see
-//     [highestConfidencePrice]) — a lower-confidence route corroborates
-//     and can trip diverged, but never moves the served price. nil only
-//     with err.
+//   - composite: the combined base→quote price (exact *big.Rat) — the
+//     MEMBER median of the highest-confidence tier of the GATED routes,
+//     selected BEFORE any price-median outlier omission (see
+//     [highestConfidencePrice]). A lower-confidence route corroborates and
+//     can trip diverged, but it can never evict the top-confidence route as
+//     a price "outlier" nor move the served price. nil only with err.
 //   - combinedConfidence: the confidence of the combined price — the
 //     MAXIMUM weakest-link confidence among the surviving routes (the
 //     best independent path sets the trust floor). Conservative: it
@@ -440,18 +488,31 @@ func CombineRoutes(
 
 	gated, lowConf := gateByConfidence(scored, minConfidence)
 
+	// SERVING ANCHOR (H1): the served composite is anchored to the
+	// highest-confidence tier of the GATED routes, chosen BEFORE any
+	// price-median outlier omission. This is the invariant a lower-confidence
+	// route must not defeat — at n≥3 a thin divergent MAJORITY would
+	// otherwise make the highest-confidence route the price-median outlier
+	// and evict it, letting the majority set the served price. Only the
+	// most-trusted route(s) set the value (see [highestConfidencePrice]); its
+	// confidence is the confidence we report.
+	composite = highestConfidencePrice(gated)
+	combinedConfidence = maxConfidence(gated)
+
+	// DIVERGENCE + CORROBORATION are computed over the full gated route set
+	// with the loose outlier band, unchanged: a lower-confidence route still
+	// corroborates and can trip diverged; it just cannot move the served
+	// price above. pathCount is the surviving serving multiplicity carried on
+	// the composite meta (NOT what the freeze trusts — that is
+	// corroborationCount).
 	keep := omitOutlierIndices(pricesOf(gated), routerOutlierPermitPct)
 	survivors := make([]scoredRoute, 0, len(keep))
 	for _, i := range keep {
 		survivors = append(survivors, gated[i])
 	}
-	survivorPrices := pricesOf(survivors)
-
-	composite = highestConfidencePrice(survivors)
-	combinedConfidence = maxConfidence(survivors)
 	pathCount = len(survivors)
 	rejected := len(gated) - len(survivors)
-	diverged = rejected > 0 || spreadExceeds(survivorPrices, routerDivergenceSpreadPct)
+	diverged = rejected > 0 || spreadExceeds(pricesOf(survivors), routerDivergenceSpreadPct)
 	corroborationCount = corroboratingRouteCount(survivors, diverged)
 	return composite, combinedConfidence, pathCount, corroborationCount, diverged, lowConf, nil
 }
@@ -465,7 +526,10 @@ func scoreRoutes(routes [][]RouteLeg) ([]scoredRoute, error) {
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, scoredRoute{legs: r, price: p, confidence: RouteConfidence(r)})
+		// sanitizeConfidence guards against a route whose weakest edge carries
+		// a non-finite confidence (e.g. an edge built directly rather than via
+		// BuildEdges) reaching the serving tier as NaN and emptying it (L5).
+		out = append(out, scoredRoute{legs: r, price: p, confidence: sanitizeConfidence(RouteConfidence(r))})
 	}
 	return out, nil
 }
@@ -507,36 +571,50 @@ func maxConfidence(scored []scoredRoute) float64 {
 	return best
 }
 
-// highestConfidencePrice is the SERVED composite: the median of the prices of
-// only the survivors whose weakest-link confidence equals the maximum. This is
-// what makes an added low-confidence route safe to serve alongside a trusted
-// one — a route through a thin, unguarded bridge market (e.g. XLM→BTC→GBP,
-// where the XLM/BTC leg escapes the USD-volume floor) CORROBORATES and can trip
-// the divergence flags, but can never move the served price: only the
-// most-trusted route(s) set it. Properties:
+// highestConfidencePrice is the SERVED composite: the MEMBER median of the
+// prices of only the routes whose weakest-link confidence equals the maximum
+// (the top-confidence TIER). It is called on the GATED route set BEFORE outlier
+// omission, so a lower-confidence route can never evict the top tier as a
+// price-median outlier and take over the served value (H1). This is what makes
+// an added low-confidence route safe to serve alongside a trusted one — a route
+// through a thin, unguarded bridge market (e.g. XLM→BTC→GBP, where the XLM/BTC
+// leg escapes the USD-volume floor) CORROBORATES and can trip the divergence
+// flags, but can never move the served price: only the most-trusted route(s)
+// set it. Properties:
 //
 //   - single route → that route's price, byte-identical to the pre-multi-route
 //     median-of-one and to serving with no router at all.
 //   - one deep route (confidence ~1) + one thin bridge route (low weakest-link
 //     confidence) → the deep route's price, even when both survive the loose
-//     40% outlier band. The thin route's disagreement still sets diverged, so
-//     the composite is served FLAGGED, not silently blended.
-//   - several genuinely co-equal top-confidence routes → their median, so no
-//     single venue among equals dominates the blend.
+//     40% outlier band, AND even when the thin route is a divergent majority
+//     that would evict the deep route from the outlier survivors. The thin
+//     route's disagreement still sets diverged, so the composite is served
+//     FLAGGED, not silently blended.
+//   - several genuinely co-equal top-confidence routes → the member median of
+//     their prices, so no single venue among equals dominates AND the served
+//     value is always a price a route actually produced (never an averaged
+//     midpoint of two disagreeing co-equal routes — the bimodal case, H1).
+//     Within the tier a divergent minority is dropped (median-relative, ≥3
+//     only) before the member median, so a clear majority in the tier wins.
 //
-// It is coherent with combinedConfidence = maxConfidence: we now serve the
+// It is coherent with combinedConfidence = maxConfidence(gated): we serve the
 // price OF the route(s) whose confidence we report, not a blend the reported
-// confidence never described. best is always some survivor's confidence, so the
-// filtered set is never empty when survivors is non-empty.
-func highestConfidencePrice(survivors []scoredRoute) *big.Rat {
-	best := maxConfidence(survivors)
-	top := make([]*big.Rat, 0, len(survivors))
-	for _, s := range survivors {
+// confidence never described. best is always some route's confidence (L5
+// sanitizes any non-finite confidence), so the top tier is never empty when
+// routes is non-empty.
+func highestConfidencePrice(routes []scoredRoute) *big.Rat {
+	best := maxConfidence(routes)
+	top := make([]*big.Rat, 0, len(routes))
+	for _, s := range routes {
 		if s.confidence == best {
 			top = append(top, s.price)
 		}
 	}
-	return medianRat(top)
+	// Within the co-equal top tier: drop a divergent minority for clean
+	// blending, then serve a value a route ACTUALLY produced (member median,
+	// never an averaged midpoint of two disagreeing routes).
+	top = OmitOutliers(top, routerOutlierPermitPct)
+	return medianMemberRat(top)
 }
 
 // spreadExceeds reports whether the max−min spread of vals exceeds pct
@@ -590,12 +668,18 @@ func spreadExceeds(vals []*big.Rat, pct int) bool {
 //     evidence of a PROBLEM, not corroboration — drop below the
 //     single-path baseline so a disagreeing cross cannot suppress the
 //     freeze.
-//   - otherwise → the size of the largest set of survivors that pairwise
-//     BOTH agree tightly AND are edge-disjoint. Routes sharing any
-//     undirected edge collapse to one independent confirmation, so an
-//     all-through-one-bottleneck agreeing set scores 1 (not suppressing),
-//     while genuinely edge-disjoint agreeing routes score their true
-//     multiplicity.
+//   - a route whose weakest-link confidence is below
+//     [corroborationMinConfidence] may NOT count toward corroboration at all,
+//     regardless of how tightly it agrees or how edge-disjoint it is (M2). A
+//     thin, dust-confidence route is not an independent confirmation just
+//     because min_route_confidence ships at 0 for serving — so it is excluded
+//     from every corroborating pair.
+//   - otherwise → the size of the largest set of confidence-clearing
+//     survivors that pairwise BOTH agree tightly AND are edge-disjoint.
+//     Routes sharing any undirected edge collapse to one independent
+//     confirmation, so an all-through-one-bottleneck agreeing set scores 1
+//     (not suppressing), while genuinely edge-disjoint agreeing routes score
+//     their true multiplicity.
 func corroboratingRouteCount(survivors []scoredRoute, diverged bool) int {
 	if diverged {
 		return 0
@@ -605,10 +689,19 @@ func corroboratingRouteCount(survivors []scoredRoute, diverged bool) int {
 		return n
 	}
 
-	agree := func(i, j int) bool {
-		return pricesAgreeWithin(survivors[i].price, survivors[j].price, routerCorroborationAgreePct)
+	// A route too thin to trust must not corroborate (M2): only routes whose
+	// weakest-link confidence clears the floor may be part of a corroborating
+	// pair, so a thin route that merely agrees + is edge-disjoint counts for
+	// nothing.
+	confident := func(i int) bool {
+		return survivors[i].confidence >= corroborationMinConfidence
 	}
-	// Gate: at least two survivors must tightly agree, or nothing counts.
+	agree := func(i, j int) bool {
+		return confident(i) && confident(j) &&
+			pricesAgreeWithin(survivors[i].price, survivors[j].price, routerCorroborationAgreePct)
+	}
+	// Gate: at least two confidence-clearing survivors must tightly agree, or
+	// nothing counts.
 	if maxCliqueSize(n, agree) < 2 {
 		return 0
 	}

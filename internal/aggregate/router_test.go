@@ -2,6 +2,7 @@ package aggregate_test
 
 import (
 	"errors"
+	"math"
 	"math/big"
 	"testing"
 
@@ -575,7 +576,11 @@ func TestRouter_CorroborationRequiresTightAgreement(t *testing.T) {
 		t.Errorf("corroborationCount=%d, want 0 — routes 15%% apart are inside the loose "+
 			"band but NOT tightly agreeing, so neither corroborates the other", corroboration)
 	}
-	eqRat(t, composite, big.NewRat(215, 2), "served median") // median(100,115) = 107.5
+	// Both routes are co-equal top confidence (0.9) but 15% apart — the
+	// bimodal/co-equal case. The served composite is a value a route ACTUALLY
+	// produced (the lower cluster, 100), NOT the unproduced midpoint 107.5 an
+	// averaging median would blend across two disagreeing routes (H1).
+	eqRat(t, composite, big.NewRat(100, 1), "served member = a produced value, not the blended midpoint")
 }
 
 // R1: a DIVERGED combine (an outlier route was rejected) never
@@ -707,4 +712,157 @@ func TestRouter_ServesHighestConfidenceRoute(t *testing.T) {
 		t.Fatalf("CombineRoutes (moved): %v", err)
 	}
 	eqRat(t, movedComposite, big.NewRat(3, 5), "served price unmoved by thin-route manipulation")
+}
+
+// ── serving anchor (H1) ─────────────────────────────────────────────
+
+// H1 (a): a deep, high-confidence route must set the served price even when
+// a thin low-confidence MAJORITY would evict it as a price-median outlier. At
+// n≥3 the median-relative outlier filter is confidence-blind, so before the
+// fix the two thin routes (the majority) evicted the deep route and served
+// their own 0.3; the served composite must instead be the deep route's 0.6.
+func TestRouter_DeepRouteProtectedFromThinMajority(t *testing.T) {
+	edges := mustEdges(t,
+		rq(obscure, xlm, 2, 1, 0.9), rq(xlm, gbp, 3, 10, 0.9), // A: 0.6, conf 0.9 (deep)
+		rq(obscure, usd, 3, 1, 0.1), rq(usd, gbp, 1, 10, 0.9), //  B: 0.3, conf 0.1 (thin)
+		rq(obscure, btc, 3, 1, 0.1), rq(btc, gbp, 1, 10, 0.9), //  C: 0.3, conf 0.1 (thin)
+	)
+	composite, conf, pathCount, corroboration, diverged, low, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0)
+	if err != nil {
+		t.Fatalf("CombineRoutes: %v", err)
+	}
+	// Served = the DEEP route's price (0.6), not the thin majority's 0.3.
+	eqRat(t, composite, big.NewRat(3, 5), "served = deep high-confidence route")
+	if conf != 0.9 {
+		t.Errorf("combinedConfidence = %v, want 0.9 (the served deep route's confidence, not the "+
+			"thin survivors' 0.1)", conf)
+	}
+	if low {
+		t.Error("lowConfidence = true, want false (the deep route clears the floor)")
+	}
+	// The thin majority still shapes the divergence/serving-population signals:
+	// the deep route is the median-relative outlier among the three, so it is
+	// dropped from survivors → pathCount 2, diverged true.
+	if pathCount != 2 {
+		t.Errorf("pathCount = %d, want 2 (two thin survivors after the deep route is omitted)", pathCount)
+	}
+	if !diverged {
+		t.Error("diverged = false, want true (the deep route diverges from the thin majority)")
+	}
+	// Thin routes (conf 0.1) are below the corroboration floor AND the combine
+	// diverged, so nothing corroborates.
+	if corroboration != 0 {
+		t.Errorf("corroborationCount = %d, want 0 (thin + diverged)", corroboration)
+	}
+}
+
+// H1 (b): two genuinely co-equal top-confidence routes that DISAGREE (two
+// clusters >40% apart) must serve a price ONE cluster actually produced, not
+// the averaged midpoint. Before the fix medianRat blended them into an
+// unproduced value.
+func TestRouter_BimodalCoEqualServesProducedValue(t *testing.T) {
+	edges := mustEdges(t,
+		rq(obscure, xlm, 2, 1, 0.9), rq(xlm, gbp, 3, 10, 0.9), // A: 0.6, conf 0.9
+		rq(obscure, usd, 2, 1, 0.9), rq(usd, gbp, 1, 2, 0.9), //  B: 1.0, conf 0.9
+	)
+	composite, conf, _, _, _, _, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0)
+	if err != nil {
+		t.Fatalf("CombineRoutes: %v", err)
+	}
+	// Served = the lower produced cluster (0.6), NOT median(0.6, 1.0) = 0.8.
+	eqRat(t, composite, big.NewRat(3, 5), "served = a produced cluster, not the midpoint")
+	if composite.Cmp(big.NewRat(4, 5)) == 0 {
+		t.Error("served the unproduced midpoint 0.8 — a blend of two disagreeing co-equal routes (H1)")
+	}
+	if conf != 0.9 {
+		t.Errorf("combinedConfidence = %v, want 0.9", conf)
+	}
+}
+
+// ── corroboration confidence floor (M2) ─────────────────────────────
+
+// M2: a thin route (weakest-link confidence below the corroboration floor)
+// that agrees tightly AND is edge-disjoint must NOT raise the corroboration
+// count. With min_route_confidence shipped at 0 the thin route still serves +
+// survives, but a route too thin to trust cannot be an independent
+// confirmation the freeze relies on.
+func TestRouter_CorroborationRequiresConfidenceFloor(t *testing.T) {
+	edges := mustEdges(t,
+		rq(obscure, xlm, 2, 1, 0.9), rq(xlm, gbp, 3, 10, 0.9), // A: 3/5, conf 0.9
+		rq(obscure, usd, 3, 1, 0.2), rq(usd, gbp, 1, 5, 0.9), //  B: 3/5, conf 0.2 (thin)
+	)
+	_, _, pathCount, corroboration, diverged, low, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0)
+	if err != nil {
+		t.Fatalf("CombineRoutes: %v", err)
+	}
+	if low {
+		t.Fatal("lowConfidence = true, want false (both routes clear the 0 floor)")
+	}
+	if diverged {
+		t.Error("diverged = true, want false (both routes are 3/5)")
+	}
+	if pathCount != 2 {
+		t.Errorf("pathCount = %d, want 2 (both routes still serve)", pathCount)
+	}
+	if corroboration != 0 {
+		t.Errorf("corroborationCount = %d, want 0 — route B's weakest leg (conf 0.2) is below the "+
+			"corroboration confidence floor, so a thin route must not count as an independent "+
+			"confirmation even though it agrees exactly and is edge-disjoint", corroboration)
+	}
+}
+
+// ── reverse-oriented market dedup (M3) ──────────────────────────────
+
+// M3: a market quoted in BOTH orientations (XLM/OBSCURE and OBSCURE/XLM) is
+// ONE physical market. The dedup must yield the same edge set + route set as
+// one orientation alone — not a double-counted market that becomes two routes.
+func TestBuildEdges_DedupsReverseOrientedMarket(t *testing.T) {
+	oneOrientation := mustEdges(t,
+		rq(obscure, xlm, 2, 1, 0.9),
+		rq(xlm, gbp, 3, 10, 0.9),
+	)
+	bothOrientations := mustEdges(t,
+		rq(obscure, xlm, 2, 1, 0.9),
+		rq(xlm, obscure, 1, 2, 0.9), // reverse of the SAME market — exact inverse
+		rq(xlm, gbp, 3, 10, 0.9),
+	)
+	if len(bothOrientations) != len(oneOrientation) {
+		t.Errorf("both-orientation graph has %d edges, want %d — a market quoted both ways is one "+
+			"market, not two (M3)", len(bothOrientations), len(oneOrientation))
+	}
+	// One 2-hop route to GBP, not two duplicate routes off the doubled edge.
+	routes := aggregate.FindRoutes(bothOrientations, obscure, gbp, 2, true)
+	if len(routes) != 1 {
+		t.Errorf("both-orientation graph yields %d routes to GBP, want 1 (the reverse-oriented "+
+			"duplicate must not become a second route)", len(routes))
+	}
+	_, _, pathCount, _, _, _, err := aggregate.CombineRoutes(bothOrientations, obscure, gbp, 2, 0)
+	if err != nil {
+		t.Fatalf("CombineRoutes: %v", err)
+	}
+	if pathCount != 1 {
+		t.Errorf("pathCount = %d, want 1 (the deduped market backs one route)", pathCount)
+	}
+}
+
+// ── non-finite confidence guard (L5) ────────────────────────────────
+
+// L5: a quote whose confidence is NaN must not panic the router. Pre-fix the
+// NaN propagated through RouteConfidence → maxConfidence, never matched
+// `== best`, emptied the served top tier and panicked the median. Post-fix
+// the confidence is clamped to 0 (fail-closed) and a sensible price is served.
+func TestRouter_NonFiniteConfidenceNoPanic(t *testing.T) {
+	edges := mustEdges(t,
+		aggregate.Quote{Pair: canonical.Pair{Base: obscure, Quote: xlm}, Price: big.NewRat(2, 1), Confidence: math.NaN()},
+		rq(xlm, gbp, 3, 10, 0.9),
+	)
+	composite, conf, _, _, _, _, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0)
+	if err != nil {
+		t.Fatalf("CombineRoutes: %v", err)
+	}
+	// Route confidence = min(clamped 0, 0.9) = 0; still serves the exact price.
+	eqRat(t, composite, big.NewRat(3, 5), "served composite despite a NaN edge confidence")
+	if math.IsNaN(conf) || math.IsInf(conf, 0) {
+		t.Errorf("combinedConfidence = %v, want a finite value (a NaN confidence must be clamped)", conf)
+	}
 }

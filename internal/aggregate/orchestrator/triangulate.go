@@ -117,17 +117,35 @@ type chainLegStatus struct {
 	dryLeg canonical.Pair
 }
 
-// legEdgeConfidence is the weakest-link confidence assigned to a chain
-// leg that is NOT one of this tick's priced pairs — in practice the
-// fiat/fiat FX legs, which resolve through the X2.5 forex-snap path
-// against the institutional FX feed (the authority-sanity reference).
-// It is a MINIMUM ceiling, not a claim of perfection: the router's
-// route confidence is the minimum across a route's edges, so a value of
-// 1.0 here simply means the FX reference is never the LIMITING edge —
-// the route's trust reflects the crypto/USD leg's own confidence score
-// (the genuinely less-certain leg). Priced-pair legs never use this;
-// they carry their real per-pair confidence from [recordEdgeQuote].
+// legEdgeConfidence is the weakest-link confidence assigned to an FX
+// (fiat/fiat) chain leg that is not one of this tick's priced pairs — the
+// legs that resolve through the X2.5 forex-snap path against the
+// institutional FX feed (the authority-sanity reference). It is a MINIMUM
+// ceiling, not a claim of perfection: the router's route confidence is the
+// minimum across a route's edges, so a value of 1.0 here simply means the FX
+// reference is never the LIMITING edge — the route's trust reflects the
+// crypto/USD leg's own confidence score (the genuinely less-certain leg).
+// Priced-pair legs never use this; they carry their real per-pair confidence
+// from [recordEdgeQuote].
+//
+// This applies ONLY to FX legs (isFXLeg). A cached NON-FX leg uses the
+// conservative [cachedLegConfidence] instead (L1): before the fix EVERY
+// cached leg entered at 1.0, so a stale cached crypto leg could never be a
+// route's weakest link.
 const legEdgeConfidence = 1.0
+
+// cachedLegConfidence is the weakest-link confidence assigned to a NON-FX
+// chain leg resolved from CACHE (a crypto/crypto or crypto/fiat leg that was
+// not one of this tick's priced pairs, so it carries no fresh per-pair quality
+// signal from [recordEdgeQuote]). Unlike an FX leg it has unknown freshness
+// and provenance, so it must be able to be the route's LIMITING edge rather
+// than silently entering at max trust and dragging a stale crypto price
+// through a hub at full confidence (L1). Set to the reroute/corroboration
+// floor (0.5): a cache-only route sits exactly at the trust boundary —
+// confident enough to publish + corroborate, but out-trusted by any priced
+// pair scoring above it, and correctly limiting any route that also carries a
+// thinner priced leg.
+const cachedLegConfidence = 0.5
 
 // buildWindowEdges assembles the cross-rate edge graph for one window:
 // this tick's priced-pair VWAPs (each with its real per-pair
@@ -185,7 +203,7 @@ func (o *Orchestrator) resolveChainLegs(
 		case "":
 			if _, seen := quoteByPair[leg.String()]; !seen {
 				quoteByPair[leg.String()] = aggregate.Quote{
-					Pair: leg, Price: price, Confidence: legEdgeConfidence,
+					Pair: leg, Price: price, Confidence: legConfidence(leg),
 				}
 			}
 		case outcomeFrozenLeg:
@@ -241,6 +259,15 @@ const rerouteMinConfidence = 0.5
 // gated on rerouteMinConfidence so a thin substitute cannot silently
 // displace the direct price, and (b) flagged (compositeMeta.Rerouted) so
 // the substitution is observable rather than a silent behaviour change.
+//
+// H2 — a leg FROZEN this tick (st.frozen) that the router still reaches the
+// target AROUND is the same kind of substitution as a dry leg, so it is gated
+// + flagged identically (rerouted := st.legDry || st.frozen). And a target
+// frozen this tick on its OWN direct market is left serving its frozen
+// last-known-good: a fresh composite must not silently overwrite the value a
+// freeze marker says is frozen (an honest value paired with a contradictory
+// state). Both respect the freeze consistently instead of letting
+// triangulation walk around it unflagged.
 func (o *Orchestrator) routeTarget(
 	ctx context.Context,
 	chain TriangulationChain,
@@ -273,7 +300,32 @@ func (o *Orchestrator) routeTarget(
 			"chain", chain.Target.String(), "err", err)
 		return "parse_error"
 	}
-	rerouted := st.legDry // a configured leg was dry, yet a route was found
+
+	// A leg was DRY, or a leg FROZE this tick and the router reached the
+	// target by walking AROUND it (st.frozen with a route found, not
+	// ErrNoRoute) — either way the composite came from a SUBSTITUTE path, so
+	// it is gated on rerouteMinConfidence and flagged Rerouted the same way
+	// (H2). A frozen leg's LKG was declined upstream; a reroute around it must
+	// not silently republish at max trust any more than a dry-leg reroute may.
+	rerouted := st.legDry || st.frozen
+
+	// The TARGET itself froze this tick on its own direct market. Respect that
+	// freeze: do NOT overwrite its frozen last-known-good with a fresh
+	// composite (the marker says frozen — overwriting the value contradicts
+	// it). Leave the LKG serving, flag the meta for Step 3, and record no
+	// corroboration. Reuses the frozen_leg outcome: "we refused to publish a
+	// derived price because [the target] was frozen" (H2).
+	if o.frozenLeg(chain.Target, window) {
+		o.writeCompositeMeta(ctx, chain.Target, window, compositeMeta{
+			PathCount:          pathCount,
+			CombinedConfidence: combinedConf,
+			LowConfidence:      lowConf,
+			Diverged:           diverged,
+			Rerouted:           rerouted,
+		})
+		return outcomeFrozenLeg
+	}
+
 	if lowConf || (rerouted && combinedConf < rerouteMinConfidence) {
 		// Either every route runs through a dust/thin edge below
 		// min_route_confidence, OR this is a leg-substitution reroute (R3)
@@ -459,6 +511,18 @@ func (o *Orchestrator) writeCompositeMeta(
 // the chained-fiat factor that ADR-0018 mandates be snapped.
 func isFXLeg(leg canonical.Pair) bool {
 	return leg.Base.Type == canonical.AssetFiat && leg.Quote.Type == canonical.AssetFiat
+}
+
+// legConfidence returns the weakest-link confidence for a CACHE-resolved
+// chain leg: [legEdgeConfidence] (1.0) for an FX leg (the authoritative snap
+// reference, never the limiting edge) and the conservative
+// [cachedLegConfidence] for a non-FX cached leg (unknown freshness — it must
+// be able to limit the route, L1).
+func legConfidence(leg canonical.Pair) float64 {
+	if isFXLeg(leg) {
+		return legEdgeConfidence
+	}
+	return cachedLegConfidence
 }
 
 // legPrice returns the price for one leg of a triangulation chain.

@@ -58,9 +58,14 @@ import (
 // back to the direct source count, exactly like the divergence factor.
 
 // compositeSample is the most recent composite (triangulated) price the
-// chain pass published for one target (pair, window), with the
-// wall-clock time it was published at and the router corroboration that
-// backed it.
+// chain pass published for one target (pair, window), with the time it was
+// published at and the router corroboration that backed it.
+//
+// `at` retains the process MONOTONIC clock reading (stamped with
+// time.Now(), NOT time.Now().UTC() — see [Orchestrator.recordComposite]): the
+// staleness checks below read it only through time.Since, which is immune to
+// a backward wall-clock (NTP/VM) step so long as the monotonic reading
+// survives (M1).
 //
 // Mirrors [Orchestrator.prevVWAPs]: bounded by len(Triangulations) ×
 // len(Windows), read and written only from within a single Tick (which
@@ -120,8 +125,13 @@ func (o *Orchestrator) recordComposite(
 	o.lastComposites[compositeKey(target, window)] = compositeSample{
 		// Defensive copy: the caller's *big.Rat is the chain's own
 		// working value and must not alias into next tick's comparison.
-		price:              new(big.Rat).Set(price),
-		at:                 time.Now().UTC(),
+		price: new(big.Rat).Set(price),
+		// time.Now(), NOT .UTC(): the staleness readers ([routeCorroborationCount],
+		// [triangulationDivergencePct]) compare this only via time.Since, so it
+		// must RETAIN the monotonic clock reading. .UTC() strips it, dropping
+		// those comparisons to wall-clock arithmetic where a backward NTP/VM
+		// step could latch a stale, freeze-suppressing corroboration count (M1).
+		at:                 time.Now(),
 		corroborationCount: corroborationCount,
 		combinedConfidence: combinedConfidence,
 		diverged:           diverged,
