@@ -15,6 +15,23 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Valuation-integrity guard on market cap / FDV** — a market cap is no
+  longer presented as authoritative when its backing price came from
+  negligible liquidity (an obscure asset with one $10 SDEX trade must not
+  read as worth billions). `market_cap_usd` and `fdv_usd` are now SUPPRESSED
+  (served null) with a new `market_cap_low_liquidity: true` flag on
+  `Asset` and `GlobalAssetView` when the backing price came from a single
+  venue AND the asset's trailing-24h USD volume is below the new
+  `aggregate.min_market_cap_volume_usd` floor (default 1000 USD). The AND is
+  load-bearing: a single-venue asset with real volume, or any multi-source
+  asset, keeps its cap; the `price_usd` itself is untouched — the guard is on
+  the valuation, not the price. Applies to both the `/v1/assets/{id}` detail
+  path (`populateMarketCap`) and the `/v1/assets` listing path
+  (`computeMarketCapUSD`); the fiat market cap (M2 × deep FX rate) is
+  deliberately not gated. New config knob `aggregate.min_market_cap_volume_usd`
+  (0 disables).
+
 ## [v0.22.0] — 2026-08-01
 
 ### Added

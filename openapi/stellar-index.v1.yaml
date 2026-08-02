@@ -10287,8 +10287,9 @@ components:
         max_supply:         { type: string, nullable: true, description: "Raw integer in asset's smallest unit. Null for uncapped issuers without operator override or SEP-1 declaration." }
         price_usd:          { type: string, nullable: true, description: "Current per-asset USD price as a fixed-precision decimal string — same value `/v1/price?asset=…&quote=fiat:USD` returns. Inlined so wallet UIs don't need a second round-trip. Null when no USD price can be derived." }
         change_24h_pct:     { type: string, nullable: true, description: "Trailing-24h price change as a signed decimal percentage with two fractional digits (e.g. \"+1.27\", \"-0.05\", \"0.00\"). Null when the asset has no current USD price or no comparison bucket ~24h ago." }
-        market_cap_usd:     { type: string, nullable: true, description: "circulating_supply × USD price / 10^decimals, two fractional digits. Null when supply or USD price is unavailable." }
-        fdv_usd:            { type: string, nullable: true, description: "max_supply × USD price / 10^decimals, two fractional digits. Null when max_supply is null or USD price unavailable." }
+        market_cap_usd:     { type: string, nullable: true, description: "circulating_supply × USD price / 10^decimals, two fractional digits. Null when supply or USD price is unavailable, OR when suppressed as dust-liquidity (see market_cap_low_liquidity)." }
+        fdv_usd:            { type: string, nullable: true, description: "max_supply × USD price / 10^decimals, two fractional digits. Null when max_supply is null, USD price unavailable, OR when suppressed as dust-liquidity (see market_cap_low_liquidity)." }
+        market_cap_low_liquidity: { type: boolean, description: "True when market_cap_usd and fdv_usd were deliberately suppressed (served null) because the backing price came from negligible liquidity — a single venue AND trailing-24h USD volume below the server's aggregate.min_market_cap_volume_usd floor. Disambiguates 'suppressed on purpose' from 'no supply/price data'; the price_usd itself still serves — the guard is on the valuation, not the price. Omitted when a cap is present." }
         supply_basis:
           type: string
           enum: [xlm_sdf_reserve_exclusion, xlm_total_only, issuer_exclusion, admin_exclusion, override, sep1_declared_max, sep41_lake_flows, no_metadata]
@@ -10475,6 +10476,7 @@ components:
         circulating_supply: { type: string, nullable: true, description: "Natural-unit amount in circulation. For fiat: M2 (broad money). Empty for crypto/stablecoin (the per-Stellar-asset F2 fields on /v1/assets/{asset_id} are the canonical source)." }
         supply_decimals:  { type: integer, description: "Exponent mapping circulating_supply to display value. 0 for fiat." }
         market_cap_usd:   { type: string, nullable: true, description: "Decimal string (2 fractional digits). Computed for fiat rows: M2 × current FX rate. Null for crypto/stablecoin (their market cap lives on the per-Stellar-asset F2 fields)." }
+        market_cap_low_liquidity: { type: boolean, description: "True when market_cap_usd was suppressed because the backing price came from negligible liquidity. Present for wire parity with the per-Stellar-asset Asset surface; the fiat market cap (M2 × deep FX rate) is never dust-gated, so this stays false on catalogue rows today. Omitted when false." }
       required: [kind, ticker, slug, name]
 
     GlobalAssetEnvelope:

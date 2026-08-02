@@ -167,6 +167,7 @@ type Server struct {
 	anomalies              AnomalyReader
 	divergences            DivergenceReader
 	divergenceThresholdPct float64
+	minMarketCapVolumeUSD  float64
 	currencies             CurrenciesReader
 	explorer               ExplorerReader
 	explorerHandler        *explorerpkg.Handler // network-explorer endpoints (ADR-0038); see explorer.go
@@ -688,6 +689,17 @@ type Options struct {
 	// default here would fabricate policy.
 	DivergenceThresholdPct float64
 
+	// MinMarketCapVolumeUSD is the valuation-integrity floor (config
+	// aggregate.min_market_cap_volume_usd, USD). A market_cap_usd / fdv_usd
+	// is SUPPRESSED (served null with market_cap_low_liquidity=true) when its
+	// backing price came from a single venue AND the asset's trailing-24h USD
+	// volume is below this floor — so one dust trade can't present an obscure
+	// asset as worth billions. The AND is load-bearing (see
+	// [dustLiquiditySuppressed]). Zero (the default here when a caller doesn't
+	// set it) disables the guard; the production binary wires the config value
+	// whose own default is 1000.
+	MinMarketCapVolumeUSD float64
+
 	// Currencies, when non-nil, supplies the world fiat-currency
 	// rates snapshot used by /v1/assets fiat rows + chart fiat:fiat
 	// fallback. The standalone /v1/currencies route was removed in
@@ -1096,6 +1108,7 @@ func New(opts Options) *Server {
 		anomalies:              opts.Anomalies,
 		divergences:            opts.Divergences,
 		divergenceThresholdPct: opts.DivergenceThresholdPct,
+		minMarketCapVolumeUSD:  opts.MinMarketCapVolumeUSD,
 		currencies:             opts.Currencies,
 		explorer:               opts.Explorer,
 		fxHistory:              opts.FXHistory,

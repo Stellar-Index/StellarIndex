@@ -697,7 +697,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"kind\": \"stellar_asset\",\n      \"asset_id\": \"<string>\",\n      \"type\": \"classic\",\n      \"code\": \"<string>\",\n      \"decimals\": \"<integer>\",\n      \"sep1_status\": \"unreachable\",\n      \"issuer\": \"<string>\",\n      \"contract_id\": \"<string>\",\n      \"home_domain\": \"<string>\",\n      \"name\": \"<string>\",\n      \"description\": \"<string>\",\n      \"image\": \"<string>\",\n      \"org_name\": \"<string>\",\n      \"anchor_asset\": \"<string>\",\n      \"anchor_asset_type\": \"<string>\",\n      \"conditions\": \"<string>\",\n      \"fixed_number\": \"<string>\",\n      \"max_number\": \"<string>\",\n      \"is_unlimited\": \"<boolean>\",\n      \"circulating_supply\": \"<string>\",\n      \"total_supply\": \"<string>\",\n      \"max_supply\": \"<string>\",\n      \"price_usd\": \"<string>\",\n      \"change_24h_pct\": \"<string>\",\n      \"market_cap_usd\": \"<string>\",\n      \"fdv_usd\": \"<string>\",\n      \"supply_basis\": \"admin_exclusion\",\n      \"volume_24h_usd\": \"<string>\",\n      \"slug\": \"<string>\",\n      \"class\": \"fiat\",\n      \"change_1h_pct\": \"<string>\",\n      \"change_7d_pct\": \"<string>\",\n      \"first_seen_ledger\": \"<long>\",\n      \"last_seen_ledger\": \"<long>\",\n      \"observation_count\": \"<long>\",\n      \"markets_count\": \"<integer>\",\n      \"trade_count_24h\": \"<integer>\",\n      \"price_history_24h\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"price_history_7d\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"ath\": {\n        \"usd\": \"<string>\",\n        \"at\": \"<dateTime>\"\n      },\n      \"top_markets\": [\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"base\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        },\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"quote\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        }\n      ],\n      \"issuer_scam_reason\": \"<string>\",\n      \"unverified_warning\": {\n        \"verified_slug\": \"<string>\",\n        \"verified_asset_id\": \"<string>\",\n        \"verified_name\": \"<string>\",\n        \"note\": \"<string>\",\n        \"verified_issuer\": \"<string>\"\n      },\n      \"unverified_ticker_collision\": false\n    },\n    {\n      \"kind\": \"stellar_asset\",\n      \"asset_id\": \"<string>\",\n      \"type\": \"global\",\n      \"code\": \"<string>\",\n      \"decimals\": \"<integer>\",\n      \"sep1_status\": \"no_match\",\n      \"issuer\": \"<string>\",\n      \"contract_id\": \"<string>\",\n      \"home_domain\": \"<string>\",\n      \"name\": \"<string>\",\n      \"description\": \"<string>\",\n      \"image\": \"<string>\",\n      \"org_name\": \"<string>\",\n      \"anchor_asset\": \"<string>\",\n      \"anchor_asset_type\": \"<string>\",\n      \"conditions\": \"<string>\",\n      \"fixed_number\": \"<string>\",\n      \"max_number\": \"<string>\",\n      \"is_unlimited\": \"<boolean>\",\n      \"circulating_supply\": \"<string>\",\n      \"total_supply\": \"<string>\",\n      \"max_supply\": \"<string>\",\n      \"price_usd\": \"<string>\",\n      \"change_24h_pct\": \"<string>\",\n      \"market_cap_usd\": \"<string>\",\n      \"fdv_usd\": \"<string>\",\n      \"supply_basis\": \"xlm_sdf_reserve_exclusion\",\n      \"volume_24h_usd\": \"<string>\",\n      \"slug\": \"<string>\",\n      \"class\": \"crypto\",\n      \"change_1h_pct\": \"<string>\",\n      \"change_7d_pct\": \"<string>\",\n      \"first_seen_ledger\": \"<long>\",\n      \"last_seen_ledger\": \"<long>\",\n      \"observation_count\": \"<long>\",\n      \"markets_count\": \"<integer>\",\n      \"trade_count_24h\": \"<integer>\",\n      \"price_history_24h\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"price_history_7d\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"ath\": {\n        \"usd\": \"<string>\",\n        \"at\": \"<dateTime>\"\n      },\n      \"top_markets\": [\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"quote\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        },\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"quote\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        }\n      ],\n      \"issuer_scam_reason\": \"<string>\",\n      \"unverified_warning\": {\n        \"verified_slug\": \"<string>\",\n        \"verified_asset_id\": \"<string>\",\n        \"verified_name\": \"<string>\",\n        \"note\": \"<string>\",\n        \"verified_issuer\": \"<string>\"\n      },\n      \"unverified_ticker_collision\": false\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"pagination\": {\n    \"next\": \"<string>\"\n  }\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"kind\": \"stellar_asset\",\n      \"asset_id\": \"<string>\",\n      \"type\": \"classic\",\n      \"code\": \"<string>\",\n      \"decimals\": \"<integer>\",\n      \"sep1_status\": \"verified\",\n      \"issuer\": \"<string>\",\n      \"contract_id\": \"<string>\",\n      \"home_domain\": \"<string>\",\n      \"name\": \"<string>\",\n      \"description\": \"<string>\",\n      \"image\": \"<string>\",\n      \"org_name\": \"<string>\",\n      \"anchor_asset\": \"<string>\",\n      \"anchor_asset_type\": \"<string>\",\n      \"conditions\": \"<string>\",\n      \"fixed_number\": \"<string>\",\n      \"max_number\": \"<string>\",\n      \"is_unlimited\": \"<boolean>\",\n      \"circulating_supply\": \"<string>\",\n      \"total_supply\": \"<string>\",\n      \"max_supply\": \"<string>\",\n      \"price_usd\": \"<string>\",\n      \"change_24h_pct\": \"<string>\",\n      \"market_cap_usd\": \"<string>\",\n      \"fdv_usd\": \"<string>\",\n      \"market_cap_low_liquidity\": \"<boolean>\",\n      \"supply_basis\": \"no_metadata\",\n      \"volume_24h_usd\": \"<string>\",\n      \"slug\": \"<string>\",\n      \"class\": \"fiat\",\n      \"change_1h_pct\": \"<string>\",\n      \"change_7d_pct\": \"<string>\",\n      \"first_seen_ledger\": \"<long>\",\n      \"last_seen_ledger\": \"<long>\",\n      \"observation_count\": \"<long>\",\n      \"markets_count\": \"<integer>\",\n      \"trade_count_24h\": \"<integer>\",\n      \"price_history_24h\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"price_history_7d\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"ath\": {\n        \"usd\": \"<string>\",\n        \"at\": \"<dateTime>\"\n      },\n      \"top_markets\": [\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"base\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        },\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"quote\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        }\n      ],\n      \"issuer_scam_reason\": \"<string>\",\n      \"unverified_warning\": {\n        \"verified_slug\": \"<string>\",\n        \"verified_asset_id\": \"<string>\",\n        \"verified_name\": \"<string>\",\n        \"note\": \"<string>\",\n        \"verified_issuer\": \"<string>\"\n      },\n      \"unverified_ticker_collision\": false\n    },\n    {\n      \"kind\": \"stellar_asset\",\n      \"asset_id\": \"<string>\",\n      \"type\": \"fiat\",\n      \"code\": \"<string>\",\n      \"decimals\": \"<integer>\",\n      \"sep1_status\": \"not_fetched\",\n      \"issuer\": \"<string>\",\n      \"contract_id\": \"<string>\",\n      \"home_domain\": \"<string>\",\n      \"name\": \"<string>\",\n      \"description\": \"<string>\",\n      \"image\": \"<string>\",\n      \"org_name\": \"<string>\",\n      \"anchor_asset\": \"<string>\",\n      \"anchor_asset_type\": \"<string>\",\n      \"conditions\": \"<string>\",\n      \"fixed_number\": \"<string>\",\n      \"max_number\": \"<string>\",\n      \"is_unlimited\": \"<boolean>\",\n      \"circulating_supply\": \"<string>\",\n      \"total_supply\": \"<string>\",\n      \"max_supply\": \"<string>\",\n      \"price_usd\": \"<string>\",\n      \"change_24h_pct\": \"<string>\",\n      \"market_cap_usd\": \"<string>\",\n      \"fdv_usd\": \"<string>\",\n      \"market_cap_low_liquidity\": \"<boolean>\",\n      \"supply_basis\": \"xlm_sdf_reserve_exclusion\",\n      \"volume_24h_usd\": \"<string>\",\n      \"slug\": \"<string>\",\n      \"class\": \"stablecoin\",\n      \"change_1h_pct\": \"<string>\",\n      \"change_7d_pct\": \"<string>\",\n      \"first_seen_ledger\": \"<long>\",\n      \"last_seen_ledger\": \"<long>\",\n      \"observation_count\": \"<long>\",\n      \"markets_count\": \"<integer>\",\n      \"trade_count_24h\": \"<integer>\",\n      \"price_history_24h\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"price_history_7d\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"ath\": {\n        \"usd\": \"<string>\",\n        \"at\": \"<dateTime>\"\n      },\n      \"top_markets\": [\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"base\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        },\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"base\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        }\n      ],\n      \"issuer_scam_reason\": \"<string>\",\n      \"unverified_warning\": {\n        \"verified_slug\": \"<string>\",\n        \"verified_asset_id\": \"<string>\",\n        \"verified_name\": \"<string>\",\n        \"note\": \"<string>\",\n        \"verified_issuer\": \"<string>\"\n      },\n      \"unverified_ticker_collision\": false\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"pagination\": {\n    \"next\": \"<string>\"\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -1164,7 +1164,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"ticker\": \"<string>\",\n      \"slug\": \"<string>\",\n      \"name\": \"<string>\",\n      \"class\": \"crypto\",\n      \"verified_issuer\": \"<string>\",\n      \"image\": \"<string>\",\n      \"coingecko_id\": \"<string>\",\n      \"coinmarketcap_id\": \"<string>\",\n      \"market_cap_usd\": \"<string>\",\n      \"circulating_supply\": \"<string>\",\n      \"supply_decimals\": \"<integer>\"\n    },\n    {\n      \"ticker\": \"<string>\",\n      \"slug\": \"<string>\",\n      \"name\": \"<string>\",\n      \"class\": \"fiat\",\n      \"verified_issuer\": \"<string>\",\n      \"image\": \"<string>\",\n      \"coingecko_id\": \"<string>\",\n      \"coinmarketcap_id\": \"<string>\",\n      \"market_cap_usd\": \"<string>\",\n      \"circulating_supply\": \"<string>\",\n      \"supply_decimals\": \"<integer>\"\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"ticker\": \"<string>\",\n      \"slug\": \"<string>\",\n      \"name\": \"<string>\",\n      \"class\": \"crypto\",\n      \"verified_issuer\": \"<string>\",\n      \"image\": \"<string>\",\n      \"coingecko_id\": \"<string>\",\n      \"coinmarketcap_id\": \"<string>\",\n      \"market_cap_usd\": \"<string>\",\n      \"circulating_supply\": \"<string>\",\n      \"supply_decimals\": \"<integer>\"\n    },\n    {\n      \"ticker\": \"<string>\",\n      \"slug\": \"<string>\",\n      \"name\": \"<string>\",\n      \"class\": \"stablecoin\",\n      \"verified_issuer\": \"<string>\",\n      \"image\": \"<string>\",\n      \"coingecko_id\": \"<string>\",\n      \"coinmarketcap_id\": \"<string>\",\n      \"market_cap_usd\": \"<string>\",\n      \"circulating_supply\": \"<string>\",\n      \"supply_decimals\": \"<integer>\"\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -1298,7 +1298,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"kind\": \"stellar_asset\",\n    \"asset_id\": \"<string>\",\n    \"type\": \"soroban\",\n    \"code\": \"<string>\",\n    \"decimals\": \"<integer>\",\n    \"sep1_status\": \"not_applicable\",\n    \"issuer\": \"<string>\",\n    \"contract_id\": \"<string>\",\n    \"home_domain\": \"<string>\",\n    \"name\": \"<string>\",\n    \"description\": \"<string>\",\n    \"image\": \"<string>\",\n    \"org_name\": \"<string>\",\n    \"anchor_asset\": \"<string>\",\n    \"anchor_asset_type\": \"<string>\",\n    \"conditions\": \"<string>\",\n    \"fixed_number\": \"<string>\",\n    \"max_number\": \"<string>\",\n    \"is_unlimited\": \"<boolean>\",\n    \"circulating_supply\": \"<string>\",\n    \"total_supply\": \"<string>\",\n    \"max_supply\": \"<string>\",\n    \"price_usd\": \"<string>\",\n    \"change_24h_pct\": \"<string>\",\n    \"market_cap_usd\": \"<string>\",\n    \"fdv_usd\": \"<string>\",\n    \"supply_basis\": \"issuer_exclusion\",\n    \"volume_24h_usd\": \"<string>\",\n    \"slug\": \"<string>\",\n    \"class\": \"stablecoin\",\n    \"change_1h_pct\": \"<string>\",\n    \"change_7d_pct\": \"<string>\",\n    \"first_seen_ledger\": \"<long>\",\n    \"last_seen_ledger\": \"<long>\",\n    \"observation_count\": \"<long>\",\n    \"markets_count\": \"<integer>\",\n    \"trade_count_24h\": \"<integer>\",\n    \"price_history_24h\": [\n      {\n        \"t\": \"<dateTime>\",\n        \"p\": \"<string>\"\n      },\n      {\n        \"t\": \"<dateTime>\",\n        \"p\": \"<string>\"\n      }\n    ],\n    \"price_history_7d\": [\n      {\n        \"t\": \"<dateTime>\",\n        \"p\": \"<string>\"\n      },\n      {\n        \"t\": \"<dateTime>\",\n        \"p\": \"<string>\"\n      }\n    ],\n    \"ath\": {\n      \"usd\": \"<string>\",\n      \"at\": \"<dateTime>\"\n    },\n    \"top_markets\": [\n      {\n        \"counterparty\": \"<string>\",\n        \"side\": \"quote\",\n        \"trade_count_24h\": \"<integer>\",\n        \"volume_24h_usd\": \"<string>\"\n      },\n      {\n        \"counterparty\": \"<string>\",\n        \"side\": \"base\",\n        \"trade_count_24h\": \"<integer>\",\n        \"volume_24h_usd\": \"<string>\"\n      }\n    ],\n    \"issuer_scam_reason\": \"<string>\",\n    \"unverified_warning\": {\n      \"verified_slug\": \"<string>\",\n      \"verified_asset_id\": \"<string>\",\n      \"verified_name\": \"<string>\",\n      \"note\": \"<string>\",\n      \"verified_issuer\": \"<string>\"\n    },\n    \"unverified_ticker_collision\": false\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"kind\": \"stellar_asset\",\n    \"asset_id\": \"<string>\",\n    \"type\": \"fiat\",\n    \"code\": \"<string>\",\n    \"decimals\": \"<integer>\",\n    \"sep1_status\": \"no_match\",\n    \"issuer\": \"<string>\",\n    \"contract_id\": \"<string>\",\n    \"home_domain\": \"<string>\",\n    \"name\": \"<string>\",\n    \"description\": \"<string>\",\n    \"image\": \"<string>\",\n    \"org_name\": \"<string>\",\n    \"anchor_asset\": \"<string>\",\n    \"anchor_asset_type\": \"<string>\",\n    \"conditions\": \"<string>\",\n    \"fixed_number\": \"<string>\",\n    \"max_number\": \"<string>\",\n    \"is_unlimited\": \"<boolean>\",\n    \"circulating_supply\": \"<string>\",\n    \"total_supply\": \"<string>\",\n    \"max_supply\": \"<string>\",\n    \"price_usd\": \"<string>\",\n    \"change_24h_pct\": \"<string>\",\n    \"market_cap_usd\": \"<string>\",\n    \"fdv_usd\": \"<string>\",\n    \"market_cap_low_liquidity\": \"<boolean>\",\n    \"supply_basis\": \"xlm_sdf_reserve_exclusion\",\n    \"volume_24h_usd\": \"<string>\",\n    \"slug\": \"<string>\",\n    \"class\": \"stablecoin\",\n    \"change_1h_pct\": \"<string>\",\n    \"change_7d_pct\": \"<string>\",\n    \"first_seen_ledger\": \"<long>\",\n    \"last_seen_ledger\": \"<long>\",\n    \"observation_count\": \"<long>\",\n    \"markets_count\": \"<integer>\",\n    \"trade_count_24h\": \"<integer>\",\n    \"price_history_24h\": [\n      {\n        \"t\": \"<dateTime>\",\n        \"p\": \"<string>\"\n      },\n      {\n        \"t\": \"<dateTime>\",\n        \"p\": \"<string>\"\n      }\n    ],\n    \"price_history_7d\": [\n      {\n        \"t\": \"<dateTime>\",\n        \"p\": \"<string>\"\n      },\n      {\n        \"t\": \"<dateTime>\",\n        \"p\": \"<string>\"\n      }\n    ],\n    \"ath\": {\n      \"usd\": \"<string>\",\n      \"at\": \"<dateTime>\"\n    },\n    \"top_markets\": [\n      {\n        \"counterparty\": \"<string>\",\n        \"side\": \"base\",\n        \"trade_count_24h\": \"<integer>\",\n        \"volume_24h_usd\": \"<string>\"\n      },\n      {\n        \"counterparty\": \"<string>\",\n        \"side\": \"base\",\n        \"trade_count_24h\": \"<integer>\",\n        \"volume_24h_usd\": \"<string>\"\n      }\n    ],\n    \"issuer_scam_reason\": \"<string>\",\n    \"unverified_warning\": {\n      \"verified_slug\": \"<string>\",\n      \"verified_asset_id\": \"<string>\",\n      \"verified_name\": \"<string>\",\n      \"note\": \"<string>\",\n      \"verified_issuer\": \"<string>\"\n    },\n    \"unverified_ticker_collision\": false\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -1489,7 +1489,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"asset_id\": \"<string>\",\n    \"sep1_status\": \"no_match\",\n    \"home_domain\": \"<string>\",\n    \"name\": \"<string>\",\n    \"description\": \"<string>\",\n    \"image\": \"<string>\",\n    \"org_name\": \"<string>\",\n    \"anchor_asset\": \"<string>\",\n    \"anchor_asset_type\": \"<string>\",\n    \"conditions\": \"<string>\",\n    \"fixed_number\": \"<string>\",\n    \"max_number\": \"<string>\",\n    \"is_unlimited\": \"<boolean>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"asset_id\": \"<string>\",\n    \"sep1_status\": \"not_fetched\",\n    \"home_domain\": \"<string>\",\n    \"name\": \"<string>\",\n    \"description\": \"<string>\",\n    \"image\": \"<string>\",\n    \"org_name\": \"<string>\",\n    \"anchor_asset\": \"<string>\",\n    \"anchor_asset_type\": \"<string>\",\n    \"conditions\": \"<string>\",\n    \"fixed_number\": \"<string>\",\n    \"max_number\": \"<string>\",\n    \"is_unlimited\": \"<boolean>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -2032,7 +2032,7 @@
                         "type": "text/plain"
                       },
                       "key": "asset_class",
-                      "value": "stablecoin"
+                      "value": "cryptocurrency"
                     }
                   ],
                   "variable": []
@@ -2085,7 +2085,7 @@
                             "type": "text/plain"
                           },
                           "key": "asset_class",
-                          "value": "stablecoin"
+                          "value": "cryptocurrency"
                         }
                       ],
                       "variable": []
@@ -2107,7 +2107,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"kind\": \"stellar_asset\",\n      \"asset_id\": \"<string>\",\n      \"type\": \"classic\",\n      \"code\": \"<string>\",\n      \"decimals\": \"<integer>\",\n      \"sep1_status\": \"unreachable\",\n      \"issuer\": \"<string>\",\n      \"contract_id\": \"<string>\",\n      \"home_domain\": \"<string>\",\n      \"name\": \"<string>\",\n      \"description\": \"<string>\",\n      \"image\": \"<string>\",\n      \"org_name\": \"<string>\",\n      \"anchor_asset\": \"<string>\",\n      \"anchor_asset_type\": \"<string>\",\n      \"conditions\": \"<string>\",\n      \"fixed_number\": \"<string>\",\n      \"max_number\": \"<string>\",\n      \"is_unlimited\": \"<boolean>\",\n      \"circulating_supply\": \"<string>\",\n      \"total_supply\": \"<string>\",\n      \"max_supply\": \"<string>\",\n      \"price_usd\": \"<string>\",\n      \"change_24h_pct\": \"<string>\",\n      \"market_cap_usd\": \"<string>\",\n      \"fdv_usd\": \"<string>\",\n      \"supply_basis\": \"admin_exclusion\",\n      \"volume_24h_usd\": \"<string>\",\n      \"slug\": \"<string>\",\n      \"class\": \"fiat\",\n      \"change_1h_pct\": \"<string>\",\n      \"change_7d_pct\": \"<string>\",\n      \"first_seen_ledger\": \"<long>\",\n      \"last_seen_ledger\": \"<long>\",\n      \"observation_count\": \"<long>\",\n      \"markets_count\": \"<integer>\",\n      \"trade_count_24h\": \"<integer>\",\n      \"price_history_24h\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"price_history_7d\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"ath\": {\n        \"usd\": \"<string>\",\n        \"at\": \"<dateTime>\"\n      },\n      \"top_markets\": [\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"base\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        },\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"quote\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        }\n      ],\n      \"issuer_scam_reason\": \"<string>\",\n      \"unverified_warning\": {\n        \"verified_slug\": \"<string>\",\n        \"verified_asset_id\": \"<string>\",\n        \"verified_name\": \"<string>\",\n        \"note\": \"<string>\",\n        \"verified_issuer\": \"<string>\"\n      },\n      \"unverified_ticker_collision\": false\n    },\n    {\n      \"kind\": \"stellar_asset\",\n      \"asset_id\": \"<string>\",\n      \"type\": \"global\",\n      \"code\": \"<string>\",\n      \"decimals\": \"<integer>\",\n      \"sep1_status\": \"no_match\",\n      \"issuer\": \"<string>\",\n      \"contract_id\": \"<string>\",\n      \"home_domain\": \"<string>\",\n      \"name\": \"<string>\",\n      \"description\": \"<string>\",\n      \"image\": \"<string>\",\n      \"org_name\": \"<string>\",\n      \"anchor_asset\": \"<string>\",\n      \"anchor_asset_type\": \"<string>\",\n      \"conditions\": \"<string>\",\n      \"fixed_number\": \"<string>\",\n      \"max_number\": \"<string>\",\n      \"is_unlimited\": \"<boolean>\",\n      \"circulating_supply\": \"<string>\",\n      \"total_supply\": \"<string>\",\n      \"max_supply\": \"<string>\",\n      \"price_usd\": \"<string>\",\n      \"change_24h_pct\": \"<string>\",\n      \"market_cap_usd\": \"<string>\",\n      \"fdv_usd\": \"<string>\",\n      \"supply_basis\": \"xlm_sdf_reserve_exclusion\",\n      \"volume_24h_usd\": \"<string>\",\n      \"slug\": \"<string>\",\n      \"class\": \"crypto\",\n      \"change_1h_pct\": \"<string>\",\n      \"change_7d_pct\": \"<string>\",\n      \"first_seen_ledger\": \"<long>\",\n      \"last_seen_ledger\": \"<long>\",\n      \"observation_count\": \"<long>\",\n      \"markets_count\": \"<integer>\",\n      \"trade_count_24h\": \"<integer>\",\n      \"price_history_24h\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"price_history_7d\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"ath\": {\n        \"usd\": \"<string>\",\n        \"at\": \"<dateTime>\"\n      },\n      \"top_markets\": [\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"quote\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        },\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"quote\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        }\n      ],\n      \"issuer_scam_reason\": \"<string>\",\n      \"unverified_warning\": {\n        \"verified_slug\": \"<string>\",\n        \"verified_asset_id\": \"<string>\",\n        \"verified_name\": \"<string>\",\n        \"note\": \"<string>\",\n        \"verified_issuer\": \"<string>\"\n      },\n      \"unverified_ticker_collision\": false\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"pagination\": {\n    \"next\": \"<string>\"\n  }\n}",
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"kind\": \"stellar_asset\",\n      \"asset_id\": \"<string>\",\n      \"type\": \"classic\",\n      \"code\": \"<string>\",\n      \"decimals\": \"<integer>\",\n      \"sep1_status\": \"verified\",\n      \"issuer\": \"<string>\",\n      \"contract_id\": \"<string>\",\n      \"home_domain\": \"<string>\",\n      \"name\": \"<string>\",\n      \"description\": \"<string>\",\n      \"image\": \"<string>\",\n      \"org_name\": \"<string>\",\n      \"anchor_asset\": \"<string>\",\n      \"anchor_asset_type\": \"<string>\",\n      \"conditions\": \"<string>\",\n      \"fixed_number\": \"<string>\",\n      \"max_number\": \"<string>\",\n      \"is_unlimited\": \"<boolean>\",\n      \"circulating_supply\": \"<string>\",\n      \"total_supply\": \"<string>\",\n      \"max_supply\": \"<string>\",\n      \"price_usd\": \"<string>\",\n      \"change_24h_pct\": \"<string>\",\n      \"market_cap_usd\": \"<string>\",\n      \"fdv_usd\": \"<string>\",\n      \"market_cap_low_liquidity\": \"<boolean>\",\n      \"supply_basis\": \"no_metadata\",\n      \"volume_24h_usd\": \"<string>\",\n      \"slug\": \"<string>\",\n      \"class\": \"fiat\",\n      \"change_1h_pct\": \"<string>\",\n      \"change_7d_pct\": \"<string>\",\n      \"first_seen_ledger\": \"<long>\",\n      \"last_seen_ledger\": \"<long>\",\n      \"observation_count\": \"<long>\",\n      \"markets_count\": \"<integer>\",\n      \"trade_count_24h\": \"<integer>\",\n      \"price_history_24h\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"price_history_7d\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"ath\": {\n        \"usd\": \"<string>\",\n        \"at\": \"<dateTime>\"\n      },\n      \"top_markets\": [\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"base\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        },\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"quote\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        }\n      ],\n      \"issuer_scam_reason\": \"<string>\",\n      \"unverified_warning\": {\n        \"verified_slug\": \"<string>\",\n        \"verified_asset_id\": \"<string>\",\n        \"verified_name\": \"<string>\",\n        \"note\": \"<string>\",\n        \"verified_issuer\": \"<string>\"\n      },\n      \"unverified_ticker_collision\": false\n    },\n    {\n      \"kind\": \"stellar_asset\",\n      \"asset_id\": \"<string>\",\n      \"type\": \"fiat\",\n      \"code\": \"<string>\",\n      \"decimals\": \"<integer>\",\n      \"sep1_status\": \"not_fetched\",\n      \"issuer\": \"<string>\",\n      \"contract_id\": \"<string>\",\n      \"home_domain\": \"<string>\",\n      \"name\": \"<string>\",\n      \"description\": \"<string>\",\n      \"image\": \"<string>\",\n      \"org_name\": \"<string>\",\n      \"anchor_asset\": \"<string>\",\n      \"anchor_asset_type\": \"<string>\",\n      \"conditions\": \"<string>\",\n      \"fixed_number\": \"<string>\",\n      \"max_number\": \"<string>\",\n      \"is_unlimited\": \"<boolean>\",\n      \"circulating_supply\": \"<string>\",\n      \"total_supply\": \"<string>\",\n      \"max_supply\": \"<string>\",\n      \"price_usd\": \"<string>\",\n      \"change_24h_pct\": \"<string>\",\n      \"market_cap_usd\": \"<string>\",\n      \"fdv_usd\": \"<string>\",\n      \"market_cap_low_liquidity\": \"<boolean>\",\n      \"supply_basis\": \"xlm_sdf_reserve_exclusion\",\n      \"volume_24h_usd\": \"<string>\",\n      \"slug\": \"<string>\",\n      \"class\": \"stablecoin\",\n      \"change_1h_pct\": \"<string>\",\n      \"change_7d_pct\": \"<string>\",\n      \"first_seen_ledger\": \"<long>\",\n      \"last_seen_ledger\": \"<long>\",\n      \"observation_count\": \"<long>\",\n      \"markets_count\": \"<integer>\",\n      \"trade_count_24h\": \"<integer>\",\n      \"price_history_24h\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"price_history_7d\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"ath\": {\n        \"usd\": \"<string>\",\n        \"at\": \"<dateTime>\"\n      },\n      \"top_markets\": [\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"base\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        },\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"base\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        }\n      ],\n      \"issuer_scam_reason\": \"<string>\",\n      \"unverified_warning\": {\n        \"verified_slug\": \"<string>\",\n        \"verified_asset_id\": \"<string>\",\n        \"verified_name\": \"<string>\",\n        \"note\": \"<string>\",\n        \"verified_issuer\": \"<string>\"\n      },\n      \"unverified_ticker_collision\": false\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"pagination\": {\n    \"next\": \"<string>\"\n  }\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -2148,7 +2148,7 @@
                             "type": "text/plain"
                           },
                           "key": "asset_class",
-                          "value": "stablecoin"
+                          "value": "cryptocurrency"
                         }
                       ],
                       "variable": []
@@ -2211,7 +2211,7 @@
                             "type": "text/plain"
                           },
                           "key": "asset_class",
-                          "value": "stablecoin"
+                          "value": "cryptocurrency"
                         }
                       ],
                       "variable": []
@@ -2310,7 +2310,7 @@
                             "type": "text/plain"
                           },
                           "key": "asset_class",
-                          "value": "stablecoin"
+                          "value": "cryptocurrency"
                         }
                       ],
                       "variable": []
@@ -2373,7 +2373,7 @@
                             "type": "text/plain"
                           },
                           "key": "asset_class",
-                          "value": "stablecoin"
+                          "value": "cryptocurrency"
                         }
                       ],
                       "variable": []
@@ -2494,7 +2494,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"kind\": \"catalogue\",\n    \"ticker\": \"<string>\",\n    \"slug\": \"<string>\",\n    \"name\": \"<string>\",\n    \"class\": \"stablecoin\",\n    \"description\": \"<string>\",\n    \"verified_issuer\": \"<string>\",\n    \"coingecko_id\": \"<string>\",\n    \"coinmarketcap_id\": \"<string>\",\n    \"price_usd\": \"<string>\",\n    \"price_authority\": \"vwap_native\",\n    \"price_sources\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"price_as_of\": \"<dateTime>\",\n    \"circulating_supply\": \"<string>\",\n    \"supply_decimals\": \"<integer>\",\n    \"market_cap_usd\": \"<string>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"kind\": \"catalogue\",\n    \"ticker\": \"<string>\",\n    \"slug\": \"<string>\",\n    \"name\": \"<string>\",\n    \"class\": \"crypto\",\n    \"description\": \"<string>\",\n    \"verified_issuer\": \"<string>\",\n    \"coingecko_id\": \"<string>\",\n    \"coinmarketcap_id\": \"<string>\",\n    \"price_usd\": \"<string>\",\n    \"price_authority\": \"triangulated\",\n    \"price_sources\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"price_as_of\": \"<dateTime>\",\n    \"circulating_supply\": \"<string>\",\n    \"supply_decimals\": \"<integer>\",\n    \"market_cap_usd\": \"<string>\",\n    \"market_cap_low_liquidity\": \"<boolean>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -2761,7 +2761,7 @@
                     "type": "text/plain"
                   },
                   "key": "window",
-                  "value": "3600"
+                  "value": "86400"
                 },
                 {
                   "disabled": false,
@@ -2813,7 +2813,7 @@
                         "type": "text/plain"
                       },
                       "key": "window",
-                      "value": "3600"
+                      "value": "86400"
                     },
                     {
                       "disabled": false,
@@ -2875,7 +2875,7 @@
                         "type": "text/plain"
                       },
                       "key": "window",
-                      "value": "3600"
+                      "value": "86400"
                     },
                     {
                       "disabled": false,
@@ -2937,7 +2937,7 @@
                         "type": "text/plain"
                       },
                       "key": "window",
-                      "value": "3600"
+                      "value": "86400"
                     },
                     {
                       "disabled": false,
@@ -2999,7 +2999,7 @@
                         "type": "text/plain"
                       },
                       "key": "window",
-                      "value": "3600"
+                      "value": "86400"
                     },
                     {
                       "disabled": false,
@@ -3097,7 +3097,7 @@
                         "type": "text/plain"
                       },
                       "key": "window",
-                      "value": "3600"
+                      "value": "86400"
                     },
                     {
                       "disabled": false,
@@ -3159,7 +3159,7 @@
                         "type": "text/plain"
                       },
                       "key": "window",
-                      "value": "3600"
+                      "value": "86400"
                     },
                     {
                       "disabled": false,
@@ -3571,7 +3571,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"asset_id\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"current_price\": \"<string>\",\n    \"current_price_type\": \"vwap\",\n    \"observed_at\": \"<dateTime>\",\n    \"resolution\": \"4h\",\n    \"1h\": {\n      \"change_pct\": \"<string>\",\n      \"reference_price\": \"<string>\",\n      \"reference_at\": \"<dateTime>\",\n      \"resolution\": \"<string>\",\n      \"available\": \"<boolean>\"\n    },\n    \"24h\": {\n      \"change_pct\": \"<string>\",\n      \"reference_price\": \"<string>\",\n      \"reference_at\": \"<dateTime>\",\n      \"resolution\": \"<string>\",\n      \"available\": \"<boolean>\"\n    },\n    \"7d\": {\n      \"change_pct\": \"<string>\",\n      \"reference_price\": \"<string>\",\n      \"reference_at\": \"<dateTime>\",\n      \"resolution\": \"<string>\",\n      \"available\": \"<boolean>\"\n    },\n    \"30d\": {\n      \"change_pct\": \"<string>\",\n      \"reference_price\": \"<string>\",\n      \"reference_at\": \"<dateTime>\",\n      \"resolution\": \"<string>\",\n      \"available\": \"<boolean>\"\n    }\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"asset_id\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"current_price\": \"<string>\",\n    \"current_price_type\": \"vwap\",\n    \"observed_at\": \"<dateTime>\",\n    \"resolution\": \"15m\",\n    \"1h\": {\n      \"change_pct\": \"<string>\",\n      \"reference_price\": \"<string>\",\n      \"reference_at\": \"<dateTime>\",\n      \"resolution\": \"<string>\",\n      \"available\": \"<boolean>\"\n    },\n    \"24h\": {\n      \"change_pct\": \"<string>\",\n      \"reference_price\": \"<string>\",\n      \"reference_at\": \"<dateTime>\",\n      \"resolution\": \"<string>\",\n      \"available\": \"<boolean>\"\n    },\n    \"7d\": {\n      \"change_pct\": \"<string>\",\n      \"reference_price\": \"<string>\",\n      \"reference_at\": \"<dateTime>\",\n      \"resolution\": \"<string>\",\n      \"available\": \"<boolean>\"\n    },\n    \"30d\": {\n      \"change_pct\": \"<string>\",\n      \"reference_price\": \"<string>\",\n      \"reference_at\": \"<dateTime>\",\n      \"resolution\": \"<string>\",\n      \"available\": \"<boolean>\"\n    }\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -5030,7 +5030,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"vwap\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\",\n        \"cross_oracle_checked\": \"<boolean>\",\n        \"cross_oracle_agreement\": \"<integer>\",\n        \"liquidity_measured\": \"<boolean>\",\n        \"triangulation_agreement\": \"<number>\",\n        \"triangulation_checked\": \"<boolean>\"\n      }\n    },\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"last_trade\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\",\n        \"cross_oracle_checked\": \"<boolean>\",\n        \"cross_oracle_agreement\": \"<integer>\",\n        \"liquidity_measured\": \"<boolean>\",\n        \"triangulation_agreement\": \"<number>\",\n        \"triangulation_checked\": \"<boolean>\"\n      }\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"peg\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\",\n        \"cross_oracle_checked\": \"<boolean>\",\n        \"cross_oracle_agreement\": \"<integer>\",\n        \"liquidity_measured\": \"<boolean>\",\n        \"triangulation_agreement\": \"<number>\",\n        \"triangulation_checked\": \"<boolean>\"\n      }\n    },\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"vwap\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\",\n        \"cross_oracle_checked\": \"<boolean>\",\n        \"cross_oracle_agreement\": \"<integer>\",\n        \"liquidity_measured\": \"<boolean>\",\n        \"triangulation_agreement\": \"<number>\",\n        \"triangulation_checked\": \"<boolean>\"\n      }\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -5379,7 +5379,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"vwap\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\",\n        \"cross_oracle_checked\": \"<boolean>\",\n        \"cross_oracle_agreement\": \"<integer>\",\n        \"liquidity_measured\": \"<boolean>\",\n        \"triangulation_agreement\": \"<number>\",\n        \"triangulation_checked\": \"<boolean>\"\n      }\n    },\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"last_trade\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\",\n        \"cross_oracle_checked\": \"<boolean>\",\n        \"cross_oracle_agreement\": \"<integer>\",\n        \"liquidity_measured\": \"<boolean>\",\n        \"triangulation_agreement\": \"<number>\",\n        \"triangulation_checked\": \"<boolean>\"\n      }\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"peg\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\",\n        \"cross_oracle_checked\": \"<boolean>\",\n        \"cross_oracle_agreement\": \"<integer>\",\n        \"liquidity_measured\": \"<boolean>\",\n        \"triangulation_agreement\": \"<number>\",\n        \"triangulation_checked\": \"<boolean>\"\n      }\n    },\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"vwap\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\",\n        \"cross_oracle_checked\": \"<boolean>\",\n        \"cross_oracle_agreement\": \"<integer>\",\n        \"liquidity_measured\": \"<boolean>\",\n        \"triangulation_agreement\": \"<number>\",\n        \"triangulation_checked\": \"<boolean>\"\n      }\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -7419,7 +7419,7 @@
                         "type": "text/plain"
                       },
                       "key": "granularity",
-                      "value": "15m"
+                      "value": "4h"
                     }
                   ],
                   "variable": []
@@ -7472,7 +7472,7 @@
                             "type": "text/plain"
                           },
                           "key": "granularity",
-                          "value": "15m"
+                          "value": "4h"
                         }
                       ],
                       "variable": []
@@ -7494,7 +7494,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"asset_id\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"price_type\": \"twap\",\n    \"granularity\": \"<string>\",\n    \"points\": [\n      {\n        \"t\": \"<dateTime>\",\n        \"p\": \"<string>\",\n        \"v_usd\": \"<string>\"\n      },\n      {\n        \"t\": \"<dateTime>\",\n        \"p\": \"<string>\",\n        \"v_usd\": \"<string>\"\n      }\n    ]\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"asset_id\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"price_type\": \"vwap\",\n    \"granularity\": \"<string>\",\n    \"points\": [\n      {\n        \"t\": \"<dateTime>\",\n        \"p\": \"<string>\",\n        \"v_usd\": \"<string>\"\n      },\n      {\n        \"t\": \"<dateTime>\",\n        \"p\": \"<string>\",\n        \"v_usd\": \"<string>\"\n      }\n    ]\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -7535,7 +7535,7 @@
                             "type": "text/plain"
                           },
                           "key": "granularity",
-                          "value": "15m"
+                          "value": "4h"
                         }
                       ],
                       "variable": []
@@ -7598,7 +7598,7 @@
                             "type": "text/plain"
                           },
                           "key": "granularity",
-                          "value": "15m"
+                          "value": "4h"
                         }
                       ],
                       "variable": []
@@ -7697,7 +7697,7 @@
                             "type": "text/plain"
                           },
                           "key": "granularity",
-                          "value": "15m"
+                          "value": "4h"
                         }
                       ],
                       "variable": []
@@ -7760,7 +7760,7 @@
                             "type": "text/plain"
                           },
                           "key": "granularity",
-                          "value": "15m"
+                          "value": "4h"
                         }
                       ],
                       "variable": []
@@ -7850,7 +7850,7 @@
                     "type": "text/plain"
                   },
                   "key": "granularity",
-                  "value": "15m"
+                  "value": "4h"
                 },
                 {
                   "disabled": false,
@@ -7920,7 +7920,7 @@
                         "type": "text/plain"
                       },
                       "key": "granularity",
-                      "value": "15m"
+                      "value": "4h"
                     },
                     {
                       "disabled": false,
@@ -7951,7 +7951,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"asset_id\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"timeframe\": \"1w\",\n    \"granularity\": \"1w\",\n    \"price_type\": \"vwap\",\n    \"points\": [\n      {\n        \"t\": \"<dateTime>\",\n        \"p\": \"<string>\",\n        \"v_usd\": \"<string>\"\n      },\n      {\n        \"t\": \"<dateTime>\",\n        \"p\": \"<string>\",\n        \"v_usd\": \"<string>\"\n      }\n    ],\n    \"truncated\": \"<boolean>\",\n    \"data_starts_at\": \"<dateTime>\",\n    \"requested_from\": \"<dateTime>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"asset_id\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"timeframe\": \"1h\",\n    \"granularity\": \"1w\",\n    \"price_type\": \"twap\",\n    \"points\": [\n      {\n        \"t\": \"<dateTime>\",\n        \"p\": \"<string>\",\n        \"v_usd\": \"<string>\"\n      },\n      {\n        \"t\": \"<dateTime>\",\n        \"p\": \"<string>\",\n        \"v_usd\": \"<string>\"\n      }\n    ],\n    \"truncated\": \"<boolean>\",\n    \"data_starts_at\": \"<dateTime>\",\n    \"requested_from\": \"<dateTime>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -8000,7 +8000,7 @@
                         "type": "text/plain"
                       },
                       "key": "granularity",
-                      "value": "15m"
+                      "value": "4h"
                     },
                     {
                       "disabled": false,
@@ -8080,7 +8080,7 @@
                         "type": "text/plain"
                       },
                       "key": "granularity",
-                      "value": "15m"
+                      "value": "4h"
                     },
                     {
                       "disabled": false,
@@ -8186,7 +8186,7 @@
                     "type": "text/plain"
                   },
                   "key": "interval",
-                  "value": "1h"
+                  "value": "5m"
                 },
                 {
                   "disabled": false,
@@ -8274,7 +8274,7 @@
                         "type": "text/plain"
                       },
                       "key": "interval",
-                      "value": "1h"
+                      "value": "5m"
                     },
                     {
                       "disabled": false,
@@ -8372,7 +8372,7 @@
                         "type": "text/plain"
                       },
                       "key": "interval",
-                      "value": "1h"
+                      "value": "5m"
                     },
                     {
                       "disabled": false,
@@ -8470,7 +8470,7 @@
                         "type": "text/plain"
                       },
                       "key": "interval",
-                      "value": "1h"
+                      "value": "5m"
                     },
                     {
                       "disabled": false,
@@ -8568,7 +8568,7 @@
                         "type": "text/plain"
                       },
                       "key": "interval",
-                      "value": "1h"
+                      "value": "5m"
                     },
                     {
                       "disabled": false,
@@ -8702,7 +8702,7 @@
                         "type": "text/plain"
                       },
                       "key": "interval",
-                      "value": "1h"
+                      "value": "5m"
                     },
                     {
                       "disabled": false,
@@ -8800,7 +8800,7 @@
                         "type": "text/plain"
                       },
                       "key": "interval",
-                      "value": "1h"
+                      "value": "5m"
                     },
                     {
                       "disabled": false,
@@ -14045,7 +14045,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"data\": {\n    \"firing_count\": \"<integer>\",\n    \"reason_tally\": [\n      {\n        \"reason\": \"<string>\",\n        \"count\": \"<long>\"\n      },\n      {\n        \"reason\": \"<string>\",\n        \"count\": \"<long>\"\n      }\n    ],\n    \"events\": [\n      {\n        \"asset_id\": \"<string>\",\n        \"quote_id\": \"<string>\",\n        \"frozen_at\": \"<dateTime>\",\n        \"frozen_at_ledger\": \"<long>\",\n        \"reason\": \"other\",\n        \"frozen_value\": \"<string>\",\n        \"recovered_at\": \"<dateTime>\",\n        \"recovered_at_ledger\": \"<long>\",\n        \"firing\": \"<boolean>\",\n        \"detail\": {}\n      },\n      {\n        \"asset_id\": \"<string>\",\n        \"quote_id\": \"<string>\",\n        \"frozen_at\": \"<dateTime>\",\n        \"frozen_at_ledger\": \"<long>\",\n        \"reason\": \"other\",\n        \"frozen_value\": \"<string>\",\n        \"recovered_at\": \"<dateTime>\",\n        \"recovered_at_ledger\": \"<long>\",\n        \"firing\": \"<boolean>\",\n        \"detail\": {}\n      }\n    ],\n    \"daily\": [\n      {\n        \"day\": \"<date>\",\n        \"reason\": \"<string>\",\n        \"count\": \"<long>\"\n      },\n      {\n        \"day\": \"<date>\",\n        \"reason\": \"<string>\",\n        \"count\": \"<long>\"\n      }\n    ]\n  }\n}",
+              "body": "{\n  \"data\": {\n    \"firing_count\": \"<integer>\",\n    \"reason_tally\": [\n      {\n        \"reason\": \"<string>\",\n        \"count\": \"<long>\"\n      },\n      {\n        \"reason\": \"<string>\",\n        \"count\": \"<long>\"\n      }\n    ],\n    \"events\": [\n      {\n        \"asset_id\": \"<string>\",\n        \"quote_id\": \"<string>\",\n        \"frozen_at\": \"<dateTime>\",\n        \"frozen_at_ledger\": \"<long>\",\n        \"reason\": \"other\",\n        \"frozen_value\": \"<string>\",\n        \"recovered_at\": \"<dateTime>\",\n        \"recovered_at_ledger\": \"<long>\",\n        \"firing\": \"<boolean>\",\n        \"detail\": {}\n      },\n      {\n        \"asset_id\": \"<string>\",\n        \"quote_id\": \"<string>\",\n        \"frozen_at\": \"<dateTime>\",\n        \"frozen_at_ledger\": \"<long>\",\n        \"reason\": \"outlier_storm\",\n        \"frozen_value\": \"<string>\",\n        \"recovered_at\": \"<dateTime>\",\n        \"recovered_at_ledger\": \"<long>\",\n        \"firing\": \"<boolean>\",\n        \"detail\": {}\n      }\n    ],\n    \"daily\": [\n      {\n        \"day\": \"<date>\",\n        \"reason\": \"<string>\",\n        \"count\": \"<long>\"\n      },\n      {\n        \"day\": \"<date>\",\n        \"reason\": \"<string>\",\n        \"count\": \"<long>\"\n      }\n    ]\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -14247,7 +14247,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"data\": {\n    \"observations\": [\n      {\n        \"asset_id\": \"<string>\",\n        \"quote_id\": \"<string>\",\n        \"reference\": \"coingecko\",\n        \"observed_at\": \"<dateTime>\",\n        \"observed_at_ledger\": \"<long>\",\n        \"our_price\": \"<string>\",\n        \"ref_price\": \"<string>\",\n        \"delta_pct\": \"<string>\",\n        \"status\": \"firing\"\n      },\n      {\n        \"asset_id\": \"<string>\",\n        \"quote_id\": \"<string>\",\n        \"reference\": \"reflector-fx\",\n        \"observed_at\": \"<dateTime>\",\n        \"observed_at_ledger\": \"<long>\",\n        \"our_price\": \"<string>\",\n        \"ref_price\": \"<string>\",\n        \"delta_pct\": \"<string>\",\n        \"status\": \"firing\"\n      }\n    ]\n  }\n}",
+              "body": "{\n  \"data\": {\n    \"observations\": [\n      {\n        \"asset_id\": \"<string>\",\n        \"quote_id\": \"<string>\",\n        \"reference\": \"reflector-cex\",\n        \"observed_at\": \"<dateTime>\",\n        \"observed_at_ledger\": \"<long>\",\n        \"our_price\": \"<string>\",\n        \"ref_price\": \"<string>\",\n        \"delta_pct\": \"<string>\",\n        \"status\": \"clear\"\n      },\n      {\n        \"asset_id\": \"<string>\",\n        \"quote_id\": \"<string>\",\n        \"reference\": \"band\",\n        \"observed_at\": \"<dateTime>\",\n        \"observed_at_ledger\": \"<long>\",\n        \"our_price\": \"<string>\",\n        \"ref_price\": \"<string>\",\n        \"delta_pct\": \"<string>\",\n        \"status\": \"firing\"\n      }\n    ]\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -14356,7 +14356,7 @@
                         "type": "text/plain"
                       },
                       "key": "reference",
-                      "value": "reflector-dex"
+                      "value": "band"
                     },
                     {
                       "disabled": false,
@@ -14409,7 +14409,7 @@
                             "type": "text/plain"
                           },
                           "key": "reference",
-                          "value": "reflector-dex"
+                          "value": "band"
                         },
                         {
                           "disabled": false,
@@ -14440,7 +14440,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"data\": {\n    \"asset_id\": \"<string>\",\n    \"quote_id\": \"<string>\",\n    \"reference\": \"reflector-cex\",\n    \"days\": \"<integer>\",\n    \"bucket_seconds\": \"<integer>\",\n    \"threshold_pct\": \"<number>\",\n    \"points\": [\n      {\n        \"t\": \"<dateTime>\",\n        \"delta_pct\": \"<string>\",\n        \"our_price\": \"<string>\",\n        \"ref_price\": \"<string>\",\n        \"firing\": \"<boolean>\"\n      },\n      {\n        \"t\": \"<dateTime>\",\n        \"delta_pct\": \"<string>\",\n        \"our_price\": \"<string>\",\n        \"ref_price\": \"<string>\",\n        \"firing\": \"<boolean>\"\n      }\n    ]\n  }\n}",
+                  "body": "{\n  \"data\": {\n    \"asset_id\": \"<string>\",\n    \"quote_id\": \"<string>\",\n    \"reference\": \"band\",\n    \"days\": \"<integer>\",\n    \"bucket_seconds\": \"<integer>\",\n    \"threshold_pct\": \"<number>\",\n    \"points\": [\n      {\n        \"t\": \"<dateTime>\",\n        \"delta_pct\": \"<string>\",\n        \"our_price\": \"<string>\",\n        \"ref_price\": \"<string>\",\n        \"firing\": \"<boolean>\"\n      },\n      {\n        \"t\": \"<dateTime>\",\n        \"delta_pct\": \"<string>\",\n        \"our_price\": \"<string>\",\n        \"ref_price\": \"<string>\",\n        \"firing\": \"<boolean>\"\n      }\n    ]\n  }\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -14472,7 +14472,7 @@
                             "type": "text/plain"
                           },
                           "key": "reference",
-                          "value": "reflector-dex"
+                          "value": "band"
                         },
                         {
                           "disabled": false,
@@ -15853,7 +15853,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"g_strkey\": \"<string>\",\n    \"home_domain\": \"<string>\",\n    \"org_name\": \"<string>\",\n    \"scam_reason\": \"<string>\",\n    \"org_verified\": \"<boolean>\",\n    \"auth_required\": \"<boolean>\",\n    \"auth_revocable\": \"<boolean>\",\n    \"auth_immutable\": \"<boolean>\",\n    \"auth_clawback\": \"<boolean>\",\n    \"sep1_resolved_at\": \"<dateTime>\",\n    \"sep1_payload\": {\n      \"key_0\": 7757.39633012563\n    },\n    \"creation_ledger\": \"<integer>\",\n    \"assets\": [\n      {\n        \"asset_id\": \"<string>\",\n        \"code\": \"<string>\",\n        \"slug\": \"<string>\",\n        \"first_seen_ledger\": \"<integer>\",\n        \"last_seen_ledger\": \"<integer>\",\n        \"observation_count\": \"<long>\"\n      },\n      {\n        \"asset_id\": \"<string>\",\n        \"code\": \"<string>\",\n        \"slug\": \"<string>\",\n        \"first_seen_ledger\": \"<integer>\",\n        \"last_seen_ledger\": \"<integer>\",\n        \"observation_count\": \"<long>\"\n      }\n    ]\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"g_strkey\": \"<string>\",\n    \"home_domain\": \"<string>\",\n    \"org_name\": \"<string>\",\n    \"scam_reason\": \"<string>\",\n    \"org_verified\": \"<boolean>\",\n    \"auth_required\": \"<boolean>\",\n    \"auth_revocable\": \"<boolean>\",\n    \"auth_immutable\": \"<boolean>\",\n    \"auth_clawback\": \"<boolean>\",\n    \"sep1_resolved_at\": \"<dateTime>\",\n    \"sep1_payload\": {\n      \"key_0\": 9091,\n      \"key_1\": 3786\n    },\n    \"creation_ledger\": \"<integer>\",\n    \"assets\": [\n      {\n        \"asset_id\": \"<string>\",\n        \"code\": \"<string>\",\n        \"slug\": \"<string>\",\n        \"first_seen_ledger\": \"<integer>\",\n        \"last_seen_ledger\": \"<integer>\",\n        \"observation_count\": \"<long>\"\n      },\n      {\n        \"asset_id\": \"<string>\",\n        \"code\": \"<string>\",\n        \"slug\": \"<string>\",\n        \"first_seen_ledger\": \"<integer>\",\n        \"last_seen_ledger\": \"<integer>\",\n        \"observation_count\": \"<long>\"\n      }\n    ]\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -16286,7 +16286,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"contract_id\": \"<string>\",\n    \"count\": \"<integer>\",\n    \"limit\": \"<integer>\",\n    \"decimals\": \"<integer>\",\n    \"transfers\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"event_kind\": \"set_authorized\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"event_index\": \"<integer>\",\n        \"from\": \"<string>\",\n        \"to\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"live_until_ledger\": \"<integer>\",\n        \"authorized\": \"<boolean>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"event_kind\": \"transfer\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"event_index\": \"<integer>\",\n        \"from\": \"<string>\",\n        \"to\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"live_until_ledger\": \"<integer>\",\n        \"authorized\": \"<boolean>\"\n      }\n    ],\n    \"from\": \"<string>\",\n    \"to\": \"<string>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"contract_id\": \"<string>\",\n    \"count\": \"<integer>\",\n    \"limit\": \"<integer>\",\n    \"decimals\": \"<integer>\",\n    \"transfers\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"event_kind\": \"set_admin\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"event_index\": \"<integer>\",\n        \"from\": \"<string>\",\n        \"to\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"live_until_ledger\": \"<integer>\",\n        \"authorized\": \"<boolean>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"event_kind\": \"approve\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"event_index\": \"<integer>\",\n        \"from\": \"<string>\",\n        \"to\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"live_until_ledger\": \"<integer>\",\n        \"authorized\": \"<boolean>\"\n      }\n    ],\n    \"from\": \"<string>\",\n    \"to\": \"<string>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -18306,7 +18306,7 @@
                         "type": "text/plain"
                       },
                       "key": "status",
-                      "value": "active"
+                      "value": "stale"
                     },
                     {
                       "disabled": false,
@@ -18359,7 +18359,7 @@
                             "type": "text/plain"
                           },
                           "key": "status",
-                          "value": "active"
+                          "value": "stale"
                         },
                         {
                           "disabled": false,
@@ -18422,7 +18422,7 @@
                             "type": "text/plain"
                           },
                           "key": "status",
-                          "value": "active"
+                          "value": "stale"
                         },
                         {
                           "disabled": false,
@@ -18473,7 +18473,7 @@
                             "type": "text/plain"
                           },
                           "key": "status",
-                          "value": "active"
+                          "value": "stale"
                         },
                         {
                           "disabled": false,
@@ -18572,7 +18572,7 @@
                             "type": "text/plain"
                           },
                           "key": "status",
-                          "value": "active"
+                          "value": "stale"
                         },
                         {
                           "disabled": false,
@@ -18635,7 +18635,7 @@
                             "type": "text/plain"
                           },
                           "key": "status",
-                          "value": "active"
+                          "value": "stale"
                         },
                         {
                           "disabled": false,
@@ -19188,7 +19188,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"incidents\": [\n      {\n        \"slug\": \"<string>\",\n        \"title\": \"<string>\",\n        \"severity\": \"SEV-2\",\n        \"status\": \"monitoring\",\n        \"started_at\": \"<dateTime>\",\n        \"body_markdown\": \"<string>\",\n        \"resolved_at\": \"<dateTime>\",\n        \"affected_components\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"postmortem\": \"<string>\"\n      },\n      {\n        \"slug\": \"<string>\",\n        \"title\": \"<string>\",\n        \"severity\": \"SEV-2\",\n        \"status\": \"identified\",\n        \"started_at\": \"<dateTime>\",\n        \"body_markdown\": \"<string>\",\n        \"resolved_at\": \"<dateTime>\",\n        \"affected_components\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"postmortem\": \"<string>\"\n      }\n    ],\n    \"count\": \"<integer>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"incidents\": [\n      {\n        \"slug\": \"<string>\",\n        \"title\": \"<string>\",\n        \"severity\": \"SEV-1\",\n        \"status\": \"investigating\",\n        \"started_at\": \"<dateTime>\",\n        \"body_markdown\": \"<string>\",\n        \"resolved_at\": \"<dateTime>\",\n        \"affected_components\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"postmortem\": \"<string>\"\n      },\n      {\n        \"slug\": \"<string>\",\n        \"title\": \"<string>\",\n        \"severity\": \"SEV-1\",\n        \"status\": \"monitoring\",\n        \"started_at\": \"<dateTime>\",\n        \"body_markdown\": \"<string>\",\n        \"resolved_at\": \"<dateTime>\",\n        \"affected_components\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"postmortem\": \"<string>\"\n      }\n    ],\n    \"count\": \"<integer>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -19585,7 +19585,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"protocols\": [\n      {\n        \"name\": \"<string>\",\n        \"category\": \"amm\",\n        \"description\": \"<string>\",\n        \"genesis_ledger\": \"<long>\",\n        \"factories\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"contract_count\": \"<integer>\",\n        \"events_24h\": \"<long>\",\n        \"completeness\": {\n          \"complete\": \"<boolean>\",\n          \"watermark_ledger\": \"<long>\"\n        },\n        \"tvl\": {\n          \"tvl_usd\": \"<string>\",\n          \"pools_total\": \"<integer>\",\n          \"pools_priced\": \"<integer>\",\n          \"unpriced_pools\": \"<integer>\",\n          \"as_of\": \"<dateTime>\",\n          \"basis\": \"<string>\"\n        }\n      },\n      {\n        \"name\": \"<string>\",\n        \"category\": \"oracle\",\n        \"description\": \"<string>\",\n        \"genesis_ledger\": \"<long>\",\n        \"factories\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"contract_count\": \"<integer>\",\n        \"events_24h\": \"<long>\",\n        \"completeness\": {\n          \"complete\": \"<boolean>\",\n          \"watermark_ledger\": \"<long>\"\n        },\n        \"tvl\": {\n          \"tvl_usd\": \"<string>\",\n          \"pools_total\": \"<integer>\",\n          \"pools_priced\": \"<integer>\",\n          \"unpriced_pools\": \"<integer>\",\n          \"as_of\": \"<dateTime>\",\n          \"basis\": \"<string>\"\n        }\n      }\n    ],\n    \"total_protocols\": \"<integer>\"\n  }\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"protocols\": [\n      {\n        \"name\": \"<string>\",\n        \"category\": \"token\",\n        \"description\": \"<string>\",\n        \"genesis_ledger\": \"<long>\",\n        \"factories\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"contract_count\": \"<integer>\",\n        \"events_24h\": \"<long>\",\n        \"completeness\": {\n          \"complete\": \"<boolean>\",\n          \"watermark_ledger\": \"<long>\"\n        },\n        \"tvl\": {\n          \"tvl_usd\": \"<string>\",\n          \"pools_total\": \"<integer>\",\n          \"pools_priced\": \"<integer>\",\n          \"unpriced_pools\": \"<integer>\",\n          \"as_of\": \"<dateTime>\",\n          \"basis\": \"<string>\"\n        }\n      },\n      {\n        \"name\": \"<string>\",\n        \"category\": \"lending\",\n        \"description\": \"<string>\",\n        \"genesis_ledger\": \"<long>\",\n        \"factories\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"contract_count\": \"<integer>\",\n        \"events_24h\": \"<long>\",\n        \"completeness\": {\n          \"complete\": \"<boolean>\",\n          \"watermark_ledger\": \"<long>\"\n        },\n        \"tvl\": {\n          \"tvl_usd\": \"<string>\",\n          \"pools_total\": \"<integer>\",\n          \"pools_priced\": \"<integer>\",\n          \"unpriced_pools\": \"<integer>\",\n          \"as_of\": \"<dateTime>\",\n          \"basis\": \"<string>\"\n        }\n      }\n    ],\n    \"total_protocols\": \"<integer>\"\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -19806,7 +19806,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"category\": \"dex\",\n    \"contract_count\": \"<integer>\",\n    \"contracts\": [\n      {\n        \"contract_id\": \"<string>\",\n        \"factory_id\": \"<string>\",\n        \"first_ledger\": \"<long>\",\n        \"token0\": \"<string>\",\n        \"token1\": \"<string>\",\n        \"tokens\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"token_symbols\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"pair\": \"<string>\",\n        \"kind\": \"module\",\n        \"events\": \"<long>\",\n        \"last_seen\": \"<dateTime>\"\n      },\n      {\n        \"contract_id\": \"<string>\",\n        \"factory_id\": \"<string>\",\n        \"first_ledger\": \"<long>\",\n        \"token0\": \"<string>\",\n        \"token1\": \"<string>\",\n        \"tokens\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"token_symbols\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"pair\": \"<string>\",\n        \"kind\": \"module\",\n        \"events\": \"<long>\",\n        \"last_seen\": \"<dateTime>\"\n      }\n    ],\n    \"description\": \"<string>\",\n    \"event_kinds\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"events_24h\": \"<long>\",\n    \"factories\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"genesis_ledger\": \"<long>\",\n    \"name\": \"<string>\",\n    \"completeness\": {\n      \"complete\": \"<boolean>\",\n      \"watermark_ledger\": \"<long>\"\n    },\n    \"tvl\": {\n      \"tvl_usd\": \"<string>\",\n      \"pools_total\": \"<integer>\",\n      \"pools_priced\": \"<integer>\",\n      \"unpriced_pools\": \"<integer>\",\n      \"as_of\": \"<dateTime>\",\n      \"basis\": \"<string>\"\n    },\n    \"bespoke\": {\n      \"key_0\": \"string\",\n      \"key_1\": \"string\"\n    },\n    \"verification_page\": \"<string>\",\n    \"activity_window_days\": \"<integer>\",\n    \"events_total\": \"<long>\",\n    \"event_breakdown\": [\n      {\n        \"event_type\": \"<string>\",\n        \"count\": \"<long>\"\n      },\n      {\n        \"event_type\": \"<string>\",\n        \"count\": \"<long>\"\n      }\n    ],\n    \"activity_series\": [\n      {\n        \"date\": \"<string>\",\n        \"events\": \"<long>\"\n      },\n      {\n        \"date\": \"<string>\",\n        \"events\": \"<long>\"\n      }\n    ],\n    \"analytics\": {\n      \"status\": \"stale\",\n      \"as_of\": \"<dateTime>\"\n    }\n  }\n}",
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"category\": \"yield\",\n    \"contract_count\": \"<integer>\",\n    \"contracts\": [\n      {\n        \"contract_id\": \"<string>\",\n        \"factory_id\": \"<string>\",\n        \"first_ledger\": \"<long>\",\n        \"token0\": \"<string>\",\n        \"token1\": \"<string>\",\n        \"tokens\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"token_symbols\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"pair\": \"<string>\",\n        \"kind\": \"instance\",\n        \"events\": \"<long>\",\n        \"last_seen\": \"<dateTime>\"\n      },\n      {\n        \"contract_id\": \"<string>\",\n        \"factory_id\": \"<string>\",\n        \"first_ledger\": \"<long>\",\n        \"token0\": \"<string>\",\n        \"token1\": \"<string>\",\n        \"tokens\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"token_symbols\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"pair\": \"<string>\",\n        \"kind\": \"factory\",\n        \"events\": \"<long>\",\n        \"last_seen\": \"<dateTime>\"\n      }\n    ],\n    \"description\": \"<string>\",\n    \"event_kinds\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"events_24h\": \"<long>\",\n    \"factories\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"genesis_ledger\": \"<long>\",\n    \"name\": \"<string>\",\n    \"completeness\": {\n      \"complete\": \"<boolean>\",\n      \"watermark_ledger\": \"<long>\"\n    },\n    \"tvl\": {\n      \"tvl_usd\": \"<string>\",\n      \"pools_total\": \"<integer>\",\n      \"pools_priced\": \"<integer>\",\n      \"unpriced_pools\": \"<integer>\",\n      \"as_of\": \"<dateTime>\",\n      \"basis\": \"<string>\"\n    },\n    \"bespoke\": {\n      \"key_0\": false,\n      \"key_1\": 7255\n    },\n    \"verification_page\": \"<string>\",\n    \"activity_window_days\": \"<integer>\",\n    \"events_total\": \"<long>\",\n    \"event_breakdown\": [\n      {\n        \"event_type\": \"<string>\",\n        \"count\": \"<long>\"\n      },\n      {\n        \"event_type\": \"<string>\",\n        \"count\": \"<long>\"\n      }\n    ],\n    \"activity_series\": [\n      {\n        \"date\": \"<string>\",\n        \"events\": \"<long>\"\n      },\n      {\n        \"date\": \"<string>\",\n        \"events\": \"<long>\"\n      }\n    ],\n    \"analytics\": {\n      \"status\": \"stale\",\n      \"as_of\": \"<dateTime>\"\n    }\n  }\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -20997,7 +20997,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"version\": \"<string>\",\n    \"aggregation\": {\n      \"price_method\": \"vwap\",\n      \"outlier_filter\": {\n        \"default_sigma\": \"<number>\",\n        \"endpoint\": \"<string>\",\n        \"note\": \"<string>\"\n      },\n      \"stablecoin_fiat_proxy\": [\n        {\n          \"asset_id\": \"<string>\",\n          \"pegs_to\": \"<string>\"\n        },\n        {\n          \"asset_id\": \"<string>\",\n          \"pegs_to\": \"<string>\"\n        }\n      ],\n      \"closed_bucket_window_seconds\": \"<integer>\"\n    },\n    \"source_classes\": [\n      {\n        \"name\": \"router\",\n        \"contributes_to_vwap\": \"<boolean>\",\n        \"description\": \"<string>\"\n      },\n      {\n        \"name\": \"exchange\",\n        \"contributes_to_vwap\": \"<boolean>\",\n        \"description\": \"<string>\"\n      }\n    ],\n    \"sources\": [\n      {\n        \"name\": \"<string>\",\n        \"class\": \"oracle\",\n        \"include_in_vwap\": \"<boolean>\",\n        \"paid\": \"<boolean>\",\n        \"backfill_available\": \"<boolean>\",\n        \"backfill_safe\": \"<boolean>\",\n        \"default_weight\": \"<integer>\",\n        \"on_chain\": \"<boolean>\",\n        \"subclass\": \"cex\",\n        \"trade_count_24h\": \"<integer>\",\n        \"volume_24h_usd\": \"<string>\",\n        \"markets_count_24h\": \"<integer>\",\n        \"volume_history_24h\": [\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          },\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          }\n        ],\n        \"volume_history_7d\": [\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          },\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          }\n        ]\n      },\n      {\n        \"name\": \"<string>\",\n        \"class\": \"bridge\",\n        \"include_in_vwap\": \"<boolean>\",\n        \"paid\": \"<boolean>\",\n        \"backfill_available\": \"<boolean>\",\n        \"backfill_safe\": \"<boolean>\",\n        \"default_weight\": \"<integer>\",\n        \"on_chain\": \"<boolean>\",\n        \"subclass\": \"fx\",\n        \"trade_count_24h\": \"<integer>\",\n        \"volume_24h_usd\": \"<string>\",\n        \"markets_count_24h\": \"<integer>\",\n        \"volume_history_24h\": [\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          },\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          }\n        ],\n        \"volume_history_7d\": [\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          },\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          }\n        ]\n      }\n    ],\n    \"references\": [\n      {\n        \"id\": \"<string>\",\n        \"title\": \"<string>\",\n        \"url\": \"<string>\"\n      },\n      {\n        \"id\": \"<string>\",\n        \"title\": \"<string>\",\n        \"url\": \"<string>\"\n      }\n    ]\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"version\": \"<string>\",\n    \"aggregation\": {\n      \"price_method\": \"vwap\",\n      \"outlier_filter\": {\n        \"default_sigma\": \"<number>\",\n        \"endpoint\": \"<string>\",\n        \"note\": \"<string>\"\n      },\n      \"stablecoin_fiat_proxy\": [\n        {\n          \"asset_id\": \"<string>\",\n          \"pegs_to\": \"<string>\"\n        },\n        {\n          \"asset_id\": \"<string>\",\n          \"pegs_to\": \"<string>\"\n        }\n      ],\n      \"closed_bucket_window_seconds\": \"<integer>\"\n    },\n    \"source_classes\": [\n      {\n        \"name\": \"exchange\",\n        \"contributes_to_vwap\": \"<boolean>\",\n        \"description\": \"<string>\"\n      },\n      {\n        \"name\": \"aggregator\",\n        \"contributes_to_vwap\": \"<boolean>\",\n        \"description\": \"<string>\"\n      }\n    ],\n    \"sources\": [\n      {\n        \"name\": \"<string>\",\n        \"class\": \"router\",\n        \"include_in_vwap\": \"<boolean>\",\n        \"paid\": \"<boolean>\",\n        \"backfill_available\": \"<boolean>\",\n        \"backfill_safe\": \"<boolean>\",\n        \"default_weight\": \"<integer>\",\n        \"on_chain\": \"<boolean>\",\n        \"subclass\": \"fx\",\n        \"trade_count_24h\": \"<integer>\",\n        \"volume_24h_usd\": \"<string>\",\n        \"markets_count_24h\": \"<integer>\",\n        \"volume_history_24h\": [\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          },\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          }\n        ],\n        \"volume_history_7d\": [\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          },\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          }\n        ]\n      },\n      {\n        \"name\": \"<string>\",\n        \"class\": \"bridge\",\n        \"include_in_vwap\": \"<boolean>\",\n        \"paid\": \"<boolean>\",\n        \"backfill_available\": \"<boolean>\",\n        \"backfill_safe\": \"<boolean>\",\n        \"default_weight\": \"<integer>\",\n        \"on_chain\": \"<boolean>\",\n        \"subclass\": \"dex\",\n        \"trade_count_24h\": \"<integer>\",\n        \"volume_24h_usd\": \"<string>\",\n        \"markets_count_24h\": \"<integer>\",\n        \"volume_history_24h\": [\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          },\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          }\n        ],\n        \"volume_history_7d\": [\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          },\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          }\n        ]\n      }\n    ],\n    \"references\": [\n      {\n        \"id\": \"<string>\",\n        \"title\": \"<string>\",\n        \"url\": \"<string>\"\n      },\n      {\n        \"id\": \"<string>\",\n        \"title\": \"<string>\",\n        \"url\": \"<string>\"\n      }\n    ]\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -21070,7 +21070,7 @@
                     "type": "text/plain"
                   },
                   "key": "class",
-                  "value": "oracle"
+                  "value": "lending"
                 },
                 {
                   "disabled": false,
@@ -21113,7 +21113,7 @@
                         "type": "text/plain"
                       },
                       "key": "class",
-                      "value": "oracle"
+                      "value": "lending"
                     },
                     {
                       "disabled": false,
@@ -21144,7 +21144,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"name\": \"<string>\",\n      \"class\": \"oracle\",\n      \"include_in_vwap\": \"<boolean>\",\n      \"paid\": \"<boolean>\",\n      \"backfill_available\": \"<boolean>\",\n      \"backfill_safe\": \"<boolean>\",\n      \"default_weight\": \"<integer>\",\n      \"on_chain\": \"<boolean>\",\n      \"subclass\": \"fx\",\n      \"trade_count_24h\": \"<integer>\",\n      \"volume_24h_usd\": \"<string>\",\n      \"markets_count_24h\": \"<integer>\",\n      \"volume_history_24h\": [\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        },\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        }\n      ],\n      \"volume_history_7d\": [\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        },\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        }\n      ]\n    },\n    {\n      \"name\": \"<string>\",\n      \"class\": \"router\",\n      \"include_in_vwap\": \"<boolean>\",\n      \"paid\": \"<boolean>\",\n      \"backfill_available\": \"<boolean>\",\n      \"backfill_safe\": \"<boolean>\",\n      \"default_weight\": \"<integer>\",\n      \"on_chain\": \"<boolean>\",\n      \"subclass\": \"fx\",\n      \"trade_count_24h\": \"<integer>\",\n      \"volume_24h_usd\": \"<string>\",\n      \"markets_count_24h\": \"<integer>\",\n      \"volume_history_24h\": [\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        },\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        }\n      ],\n      \"volume_history_7d\": [\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        },\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        }\n      ]\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"name\": \"<string>\",\n      \"class\": \"oracle\",\n      \"include_in_vwap\": \"<boolean>\",\n      \"paid\": \"<boolean>\",\n      \"backfill_available\": \"<boolean>\",\n      \"backfill_safe\": \"<boolean>\",\n      \"default_weight\": \"<integer>\",\n      \"on_chain\": \"<boolean>\",\n      \"subclass\": \"cex\",\n      \"trade_count_24h\": \"<integer>\",\n      \"volume_24h_usd\": \"<string>\",\n      \"markets_count_24h\": \"<integer>\",\n      \"volume_history_24h\": [\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        },\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        }\n      ],\n      \"volume_history_7d\": [\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        },\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        }\n      ]\n    },\n    {\n      \"name\": \"<string>\",\n      \"class\": \"exchange\",\n      \"include_in_vwap\": \"<boolean>\",\n      \"paid\": \"<boolean>\",\n      \"backfill_available\": \"<boolean>\",\n      \"backfill_safe\": \"<boolean>\",\n      \"default_weight\": \"<integer>\",\n      \"on_chain\": \"<boolean>\",\n      \"subclass\": \"cex\",\n      \"trade_count_24h\": \"<integer>\",\n      \"volume_24h_usd\": \"<string>\",\n      \"markets_count_24h\": \"<integer>\",\n      \"volume_history_24h\": [\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        },\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        }\n      ],\n      \"volume_history_7d\": [\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        },\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        }\n      ]\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -21166,7 +21166,7 @@
                         "type": "text/plain"
                       },
                       "key": "class",
-                      "value": "oracle"
+                      "value": "lending"
                     },
                     {
                       "disabled": false,
@@ -21219,7 +21219,7 @@
                         "type": "text/plain"
                       },
                       "key": "class",
-                      "value": "oracle"
+                      "value": "lending"
                     },
                     {
                       "disabled": false,
@@ -21308,7 +21308,7 @@
                         "type": "text/plain"
                       },
                       "key": "class",
-                      "value": "oracle"
+                      "value": "lending"
                     },
                     {
                       "disabled": false,
@@ -21698,7 +21698,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"contract_id\": \"<string>\",\n      \"name\": \"<string>\",\n      \"kind\": \"aggregator-vault\",\n      \"protocol\": \"<string>\",\n      \"auto_discovered\": \"<boolean>\",\n      \"routed_trades_24h\": \"<integer>\",\n      \"routed_volume_24h_usd\": \"<string>\",\n      \"last_routed_at\": \"<dateTime>\",\n      \"notes\": [\n        \"<string>\",\n        \"<string>\"\n      ]\n    },\n    {\n      \"contract_id\": \"<string>\",\n      \"name\": \"<string>\",\n      \"kind\": \"router\",\n      \"protocol\": \"<string>\",\n      \"auto_discovered\": \"<boolean>\",\n      \"routed_trades_24h\": \"<integer>\",\n      \"routed_volume_24h_usd\": \"<string>\",\n      \"last_routed_at\": \"<dateTime>\",\n      \"notes\": [\n        \"<string>\",\n        \"<string>\"\n      ]\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"contract_id\": \"<string>\",\n      \"name\": \"<string>\",\n      \"kind\": \"router\",\n      \"protocol\": \"<string>\",\n      \"auto_discovered\": \"<boolean>\",\n      \"routed_trades_24h\": \"<integer>\",\n      \"routed_volume_24h_usd\": \"<string>\",\n      \"last_routed_at\": \"<dateTime>\",\n      \"notes\": [\n        \"<string>\",\n        \"<string>\"\n      ]\n    },\n    {\n      \"contract_id\": \"<string>\",\n      \"name\": \"<string>\",\n      \"kind\": \"router\",\n      \"protocol\": \"<string>\",\n      \"auto_discovered\": \"<boolean>\",\n      \"routed_trades_24h\": \"<integer>\",\n      \"routed_volume_24h_usd\": \"<string>\",\n      \"last_routed_at\": \"<dateTime>\",\n      \"notes\": [\n        \"<string>\",\n        \"<string>\"\n      ]\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -21911,7 +21911,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"data\": {\n    \"key_0\": \"<string>\"\n  }\n}",
+              "body": "{\n  \"data\": {\n    \"key_0\": \"<string>\",\n    \"key_1\": \"<string>\"\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -22403,7 +22403,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"user\": {\n      \"key_0\": true,\n      \"key_1\": false,\n      \"key_2\": 1416\n    },\n    \"account\": {\n      \"key_0\": false,\n      \"key_1\": \"string\",\n      \"key_2\": 1822\n    },\n    \"key_id\": \"<string>\",\n    \"label\": \"<string>\",\n    \"key_prefix\": \"<string>\",\n    \"tier\": \"anonymous\",\n    \"rate_limit_per_min\": \"<integer>\",\n    \"created_at\": \"<dateTime>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"user\": {\n      \"key_0\": 5185\n    },\n    \"account\": {\n      \"key_0\": 5568,\n      \"key_1\": 1822\n    },\n    \"key_id\": \"<string>\",\n    \"label\": \"<string>\",\n    \"key_prefix\": \"<string>\",\n    \"tier\": \"anonymous\",\n    \"rate_limit_per_min\": \"<integer>\",\n    \"created_at\": \"<dateTime>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },

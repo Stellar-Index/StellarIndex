@@ -449,6 +449,10 @@ func (a AggregateConfig) validate() error {
 		return fmt.Errorf("%w: aggregate.min_usd_volume must be >= 0",
 			ErrInvalidConfig)
 	}
+	if a.MinMarketCapVolumeUSD < 0 {
+		return fmt.Errorf("%w: aggregate.min_market_cap_volume_usd must be >= 0",
+			ErrInvalidConfig)
+	}
 	if a.OutlierSigmaThreshold <= 0 {
 		return fmt.Errorf("%w: aggregate.outlier_sigma_threshold must be > 0",
 			ErrInvalidConfig)

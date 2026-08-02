@@ -77,6 +77,17 @@ type GlobalAssetView struct {
 	// unavailable (crypto/stablecoin market cap lives on the
 	// per-Stellar-asset /v1/assets/{asset_id} F2 fields).
 	MarketCapUSD *string `json:"market_cap_usd,omitempty"`
+
+	// MarketCapLowLiquidity is true when market_cap_usd was deliberately
+	// SUPPRESSED (served null) because the backing price came from negligible
+	// liquidity — a single venue AND trailing-24h USD volume below
+	// aggregate.min_market_cap_volume_usd. It disambiguates "suppressed on
+	// purpose" from "no supply/price data". Present here for wire parity with
+	// the per-Stellar-asset AssetDetail surface; the fiat market cap
+	// (fiatMarketCapUSD — M2 × deep FX rate) is never dust-gated, so today
+	// this stays false on this struct and flips true only if a future crypto
+	// catalogue market cap is added and trips the guard.
+	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
 }
 
 // buildGlobalAssetView composes a GlobalAssetView from a catalogue

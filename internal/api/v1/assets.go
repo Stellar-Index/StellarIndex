@@ -149,6 +149,16 @@ type AssetDetail struct {
 	// declaration) or when USD price is unavailable.
 	FDVUSD *string `json:"fdv_usd,omitempty"`
 
+	// MarketCapLowLiquidity is true when market_cap_usd (and fdv_usd) were
+	// deliberately SUPPRESSED — served null — because the backing USD price
+	// came from negligible liquidity (a single venue AND trailing-24h USD
+	// volume below aggregate.min_market_cap_volume_usd). It disambiguates
+	// "suppressed on purpose" from "no supply/price data" so consumers render
+	// "market cap unavailable — illiquid" rather than a fabricated headline.
+	// The price_usd itself still serves; we guard the VALUATION, not the
+	// price. Omitted (false) whenever a cap is present or unaffected.
+	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
+
 	// SupplyBasis identifies which ADR-0011 policy produced the
 	// supply numbers; null when no snapshot exists. Lets consumers
 	// decide how much to trust the absolute value (e.g. `override`
@@ -705,7 +715,7 @@ func (s *Server) handleAssetListFromAssets(
 		out = append(out, assetDetailFromAssetRow(row))
 	}
 	s.stampListingCollisions(out)
-	s.fillMarketCapsFromSupply(r.Context(), out)
+	s.fillMarketCapsFromSupply(r.Context(), out, assetRowSourceCounts(rows))
 	s.fillImagesFromSep1(r.Context(), out)
 	env := Envelope{Data: out, Flags: Flags{}}
 	if hasMore && len(out) > 0 {
@@ -725,7 +735,15 @@ func (s *Server) handleAssetListFromAssets(
 // 2026-06-19). This surfaces it for them; coverage grows as the supply
 // pipeline expands. Type-asserted so assetsReader readers without the method
 // (test stubs) simply skip — best-effort, never fails the response.
-func (s *Server) fillMarketCapsFromSupply(ctx context.Context, rows []AssetDetail) {
+//
+// sourceCounts maps asset_id → the number of distinct venues that backed the
+// listing row's USD price (from the catalogue SQL's array_length(sources)). It
+// drives the valuation-integrity guard: a row whose price came from a single
+// venue AND whose 24h volume is below aggregate.min_market_cap_volume_usd has
+// its market cap SUPPRESSED (left null, market_cap_low_liquidity=true) instead
+// of asserting a dust-backed headline. A missing entry is "unmeasured" → not
+// suppressed (see [dustLiquiditySuppressed]).
+func (s *Server) fillMarketCapsFromSupply(ctx context.Context, rows []AssetDetail, sourceCounts map[string]int) {
 	// Precise supply — the three-domain pipeline (supply_1d, ~9 assets).
 	// Authoritative (includes claimable + LP-locked holdings); preferred.
 	var precise map[string]string
@@ -746,24 +764,62 @@ func (s *Server) fillMarketCapsFromSupply(ctx context.Context, rows []AssetDetai
 		return
 	}
 	for i := range rows {
-		if rows[i].MarketCapUSD != nil || rows[i].PriceUSD == nil {
-			continue
+		s.fillRowMarketCap(&rows[i], precise, broad, sourceCounts)
+	}
+}
+
+// fillRowMarketCap fills one listing row's market cap from circulating supply,
+// applying the dust-liquidity valuation-integrity guard. Split out of
+// [Server.fillMarketCapsFromSupply] to keep that function under the gocognit
+// cap. A dust-liquidity price (single venue AND sub-floor 24h volume) must not
+// present an obscure asset as worth billions: the cap is SUPPRESSED (left null,
+// market_cap_low_liquidity=true) rather than asserting a fabricated headline.
+// The price_usd is untouched — we guard the valuation, not the price;
+// circulating_supply is a raw fact (not a valuation), so it still surfaces,
+// matching the detail path's populateSupplyFields.
+func (s *Server) fillRowMarketCap(row *AssetDetail, precise, broad map[string]string, sourceCounts map[string]int) {
+	if row.MarketCapUSD != nil || row.PriceUSD == nil {
+		return
+	}
+	circ := precise[row.AssetID]
+	if circ == "" {
+		circ = broad[row.AssetID]
+	}
+	if circ == "" {
+		return
+	}
+	if dustLiquiditySuppressed(sourceCounts[row.AssetID], row.VolumeUSD24h, s.minMarketCapVolumeUSD) {
+		row.MarketCapLowLiquidity = true
+		if row.CirculatingSupply == nil {
+			c := circ
+			row.CirculatingSupply = &c
 		}
-		circ := precise[rows[i].AssetID]
-		if circ == "" {
-			circ = broad[rows[i].AssetID]
-		}
-		if circ == "" {
-			continue
-		}
-		if mc := computeMarketCapUSD(circ, *rows[i].PriceUSD, rows[i].Decimals); mc != "" {
-			rows[i].MarketCapUSD = &mc
-			if rows[i].CirculatingSupply == nil {
-				c := circ
-				rows[i].CirculatingSupply = &c
-			}
+		return
+	}
+	if mc := computeMarketCapUSD(circ, *row.PriceUSD, row.Decimals); mc != "" {
+		row.MarketCapUSD = &mc
+		if row.CirculatingSupply == nil {
+			c := circ
+			row.CirculatingSupply = &c
 		}
 	}
+}
+
+// assetRowSourceCounts projects the distinct-venue count each AssetRow's
+// listing price was backed by (AssetRow.SourceCount, from the catalogue SQL's
+// array_length(sources)) into an asset_id → count map for the
+// [Server.fillMarketCapsFromSupply] valuation-integrity guard. Rows with an
+// unmeasured count (nil — a triangulated native-XLM price or a single-row
+// catalogue query) are omitted; a missing map entry reads as "unmeasured",
+// which never suppresses.
+func assetRowSourceCounts(rows []timescale.AssetRow) map[string]int {
+	m := make(map[string]int, len(rows))
+	for _, row := range rows {
+		if row.SourceCount != nil {
+			m[row.AssetID] = *row.SourceCount
+		}
+	}
+	return m
 }
 
 // classicSupplyTTL bounds how long the broad trustline-derived supply map
@@ -901,6 +957,43 @@ func (s *Server) refreshClassicSupply(er classicSupplyReader, done chan struct{}
 	}
 }
 
+// dustLiquiditySuppressed reports whether a market cap / FDV backed by
+// `sourceCount` distinct venue(s) and `volume24hUSD` trailing-24h USD volume
+// must be SUPPRESSED as dust-liquidity — i.e. the price came from negligible
+// liquidity, so multiplying it by a large supply would assert a headline
+// valuation the market can't support ("an obscure asset with one $10 SDEX
+// trade doesn't make the asset worth billions").
+//
+// The rule is `single backing venue AND sub-floor volume`; the AND is
+// load-bearing:
+//   - a single-venue asset with real volume (SDEX-only, $100k/day) is KEPT;
+//   - a multi-source asset is KEPT regardless of volume;
+//   - only single-venue AND sub-floor volume is suppressed.
+//
+// floor <= 0 disables the guard (the config default is 1000 USD; a deployment
+// that doesn't wire aggregate.min_market_cap_volume_usd gets no suppression).
+//
+// sourceCount is the number of DISTINCT venues that backed the served price.
+// Spec-faithfully this is "source_count <= 1"; in practice any actually-priced
+// asset has at least one backing venue, so the dust case is exactly one.
+// sourceCount == 0 means the venue count wasn't measured on this path (a
+// triangulated native-XLM price, or a catalogue-verified currency) — treated
+// as "not dust", so we never suppress without positive single-venue evidence.
+// A nil / empty / unparseable volume is likewise treated as unknown → KEPT.
+func dustLiquiditySuppressed(sourceCount int, volume24hUSD *string, floor float64) bool {
+	if floor <= 0 || sourceCount != 1 {
+		return false
+	}
+	if volume24hUSD == nil {
+		return false
+	}
+	vol, ok := new(big.Float).SetPrec(128).SetString(strings.TrimSpace(*volume24hUSD))
+	if !ok {
+		return false
+	}
+	return vol.Cmp(big.NewFloat(floor)) < 0
+}
+
 // computeMarketCapUSD = (circulating / 10^decimals) × priceUSD, as a
 // 2-dp decimal string. circulating is raw integer units (stroops-scale);
 // dividing by 10^decimals yields whole-asset units before the price
@@ -915,6 +1008,10 @@ func (s *Server) refreshClassicSupply(er classicSupplyReader, done chan struct{}
 // supply' reading, not an error" — the listing endpoint must agree,
 // or the same zero-supply asset shows market_cap_usd:"0.00" on its
 // detail page and a missing/null field on the listing.
+//
+// Dust-liquidity suppression is applied by the CALLER
+// ([Server.fillMarketCapsFromSupply]) via [dustLiquiditySuppressed] BEFORE
+// this runs — this function stays a pure value computer.
 func computeMarketCapUSD(circRaw, priceRaw string, decimals int) string {
 	circ, ok := new(big.Float).SetPrec(128).SetString(circRaw)
 	if !ok {
@@ -1674,7 +1771,7 @@ func (s *Server) fetchClassicUnifiedRows(w http.ResponseWriter, r *http.Request,
 	}
 	out = s.suppressCatalogueTwins(out)
 	s.stampListingCollisions(out)
-	s.fillMarketCapsFromSupply(r.Context(), out)
+	s.fillMarketCapsFromSupply(r.Context(), out, assetRowSourceCounts(rows))
 	s.fillImagesFromSep1(r.Context(), out)
 	s.attachSparkline7dIfRequested(r, out)
 	nextInner := ""
@@ -2497,8 +2594,10 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 		}
 		twin := []AssetDetail{assetDetailFromAssetRow(*twinRow)}
 		// Same supply-derived market-cap fill the classic phase gets —
-		// the raw listing row carries no mcap.
-		s.fillMarketCapsFromSupply(statsCtx, twin)
+		// the raw listing row carries no mcap. Catalogue twins are
+		// verified currencies (never dust), so the guard's source-count map
+		// is a no-op here, but pass it for a single suppression path.
+		s.fillMarketCapsFromSupply(statsCtx, twin, assetRowSourceCounts([]timescale.AssetRow{*twinRow}))
 		mergeTwinStats(&page[i], twin[0])
 	})
 }
