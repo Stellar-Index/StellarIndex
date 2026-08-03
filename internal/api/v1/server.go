@@ -1339,22 +1339,29 @@ func (s *Server) Handler() http.Handler {
 	if s.requireEmailVerified != nil {
 		stack = append(stack, s.requireEmailVerified)
 	}
+	// Usage tracker runs OUTSIDE both quota and rate-limit so it
+	// observes BOTH kinds of 429 rejection and records them under the
+	// per-endpoint `throttled` class. It used to sit INSIDE
+	// MonthlyQuota, so a quota denial — which returns without calling
+	// next — was counted nowhere at all, and a capped customer's usage
+	// report showed zero traffic instead of a wall of throttling (cold
+	// audit 2026-08-03; the comments here and in internal/usage
+	// claimed both 429 classes stayed visible). The LEGACY per-day
+	// total (the MonthlyQuota input) still excludes BOTH 429s and 5xx
+	// — the middleware skips it by response status, see
+	// middleware.billableClass (COR-05) — so a counted quota-429
+	// cannot feed back into the quota it was denied by, and neither a
+	// throttled request nor an outage on our side eats billing quota.
+	// Best-effort; failures log at debug and never block.
+	if s.usageTracker != nil {
+		stack = append(stack, s.usageTracker)
+	}
 	// MonthlyQuota runs AFTER auth/key-policy (so the Subject is
 	// on context) but BEFORE rate-limit (so a quota-rejected
 	// request doesn't also spend a per-minute token). F-1226
 	// (codex audit-2026-05-12).
 	if s.monthlyQuota != nil {
 		stack = append(stack, s.monthlyQuota)
-	}
-	// Usage tracker runs OUTSIDE rate-limit so it observes 429
-	// rejections and records them under the per-endpoint `throttled`
-	// class. The LEGACY per-day total (the MonthlyQuota input) still
-	// excludes BOTH 429s and 5xx — the middleware skips it by response
-	// status, see middleware.billableClass (COR-05) — so neither a
-	// throttled request nor an outage on our side eats billing quota.
-	// Best-effort; failures log at debug and never block.
-	if s.usageTracker != nil {
-		stack = append(stack, s.usageTracker)
 	}
 	if s.rateLimit != nil {
 		stack = append(stack, s.rateLimit)

@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/obstest"
 	"github.com/Stellar-Index/StellarIndex/internal/usage"
@@ -221,5 +223,55 @@ func TestNewRollup_NilDeps(t *testing.T) {
 	}
 	if usage.NewRollup(c, nil, time.Minute, nil) != nil {
 		t.Error("nil sink should yield nil Rollup")
+	}
+}
+
+// dupScanRedis wraps a real client and makes SCAN return every key
+// TWICE — the documented Redis behaviour when the keyspace rehashes
+// mid-cursor ("an element may be returned multiple times"). miniredis
+// never does this, which is why the cold-audit 2026-08-03 defect
+// survived: a duplicate re-read the same hash, groupDetails SUMMED
+// both, and usage_daily's GREATEST() merge froze the inflated count
+// into a CLOSED day permanently — a customer's usage history doubled
+// by a Redis implementation detail.
+type dupScanRedis struct {
+	redis.Cmdable
+}
+
+func (d dupScanRedis) Scan(ctx context.Context, cursor uint64, match string, count int64) *redis.ScanCmd {
+	keys, next, err := d.Cmdable.Scan(ctx, cursor, match, count).Result()
+	if err != nil {
+		return redis.NewScanCmdResult(nil, 0, err)
+	}
+	doubled := make([]string, 0, len(keys)*2)
+	for _, k := range keys {
+		doubled = append(doubled, k, k)
+	}
+	return redis.NewScanCmdResult(doubled, next, nil)
+}
+
+// TestScanDetail_DuplicateScanKeysCountOnce — a key SCAN returns more
+// than once must contribute its counts exactly once.
+func TestScanDetail_DuplicateScanKeysCountOnce(t *testing.T) {
+	_, rdb := newRedis(t)
+	clock := time.Date(2026, 7, 3, 10, 0, 0, 0, time.UTC)
+	c := usage.New(dupScanRedis{Cmdable: rdb}, usage.WithClock(func() time.Time { return clock }))
+	ctx := context.Background()
+
+	for i := 0; i < 5; i++ {
+		if err := c.IncrementDetail(ctx, "key:kid_1", "/v1/price", usage.ClassOK); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rows, err := c.ScanDetail(ctx, []string{"2026-07-03"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %+v, want exactly 1 (the duplicate SCAN hit must not produce a second row)", rows)
+	}
+	if rows[0].Count != 5 {
+		t.Errorf("count = %d, want 5 — a duplicated SCAN key double-counted the day", rows[0].Count)
 	}
 }
