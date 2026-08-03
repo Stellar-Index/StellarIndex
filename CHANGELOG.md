@@ -16,6 +16,25 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **Usage rollup no longer double-counts a closed day when Redis SCAN
+  repeats a key** (cold audit): `ScanDetail` had no dedup, so a rehash
+  mid-cursor (routine — this Redis is shared with the rate limiter's
+  high-churn per-minute keys) re-read the same hash, the rollup summed
+  both, and `usage_daily`'s `GREATEST()` merge froze the doubled count
+  into a closed day permanently. Now de-duplicated per date, with a
+  regression test that forces duplicate SCAN results (miniredis never
+  produces them, which is why this survived).
+- **Monthly-quota 429s are now counted** (cold audit): the usage
+  tracker sat INSIDE the quota middleware, which returns without
+  calling the next handler — so a capped customer's quota rejections
+  were counted nowhere and their usage report read as zero traffic,
+  despite comments in both packages claiming 429s stay visible. The
+  tracker now runs outside both 429 producers.
+- **Docs: per-endpoint `throttled` attribution corrected.** Both 429
+  producers reject before the router resolves a route pattern, so
+  throttled counts land under the `unmatched` endpoint — the spec
+  previously showed a per-route `throttled` value that production
+  cannot produce. `/v1/account/usage` now documents the real shape.
 - **Dashboard API-key issuance was broken against Postgres** (cold
   audit, HIGH — verified on r1): migration 0027 pinned
   `api_keys.key_prefix` to the pre-rebrand `^rek_[a-f0-9]{8}$`, but

@@ -51,15 +51,20 @@ const (
 	ClassOK = "ok"
 	// ClassClientError — 4xx except 429.
 	ClassClientError = "4xx"
-	// ClassThrottled — 429 rate-limit rejections. Kept out of the
-	// legacy per-day total, along with ClassServerError, so
-	// `requests` keeps meaning BILLABLE traffic — outcomes the
-	// CALLER caused (MonthlyQuota reads the legacy keys). A 429 is
-	// our throttle firing and a 5xx is our failure; charging either
-	// against a paid monthly cap means an outage or a rate-limit
-	// storm eats the customer's allowance (audit COR-05). Both are
-	// still counted in full in the per-endpoint detail hash, so
-	// neither becomes invisible — only unbillable.
+	// ClassThrottled — 429 rejections (rate-limit and monthly
+	// quota). Kept out of the legacy per-day total, along with
+	// ClassServerError, so `requests` keeps meaning BILLABLE
+	// traffic — outcomes the CALLER caused (MonthlyQuota reads the
+	// legacy keys). A 429 is our throttle firing and a 5xx is our
+	// failure; charging either against a paid monthly cap means an
+	// outage or a rate-limit storm eats the customer's allowance
+	// (audit COR-05). Both are still counted in full in the
+	// per-endpoint detail hash, so neither becomes invisible — only
+	// unbillable. Caveat on the ENDPOINT dimension: both 429
+	// producers reject before the router resolves a route pattern,
+	// so throttled counts land under the "unmatched" endpoint
+	// rather than the caller's target route (cold audit
+	// 2026-08-03; documented on /v1/account/usage in the spec).
 	ClassThrottled = "429"
 	// ClassServerError — 5xx.
 	ClassServerError = "5xx"
@@ -179,33 +184,66 @@ type DetailRow struct {
 // dates (YYYY-MM-DD) and returns the decoded counters. SCAN-based so
 // it never blocks Redis; the key population is bounded by (#active
 // subjects × len(dates)).
+//
+// Keys are de-duplicated per date. Redis SCAN guarantees only that
+// every key present for the whole iteration is returned AT LEAST once
+// — a rehash mid-cursor can return the same key again, and this Redis
+// is shared with the rate limiter's high-churn per-minute keys, so
+// rehashes are routine. Without the seen-set, one duplicate re-read
+// the same hash into a second DetailRow, the rollup's groupDetails
+// SUMMED both, and usage_daily's GREATEST() merge made the inflated
+// count PERMANENT for a closed day (no later sweep can produce a
+// larger true value to correct it) — a customer's usage history
+// doubled by a Redis implementation detail (cold audit 2026-08-03).
+// A repeat key is always a re-read of the same (subject, day) hash,
+// never distinct data, so keeping the first read is exact.
 func (c *Counter) ScanDetail(ctx context.Context, dates []string) ([]DetailRow, error) {
 	if c == nil {
 		return nil, nil
 	}
 	var out []DetailRow
 	for _, date := range dates {
-		match := c.keyPrefix + detailKeyInfix + "*:" + date
-		var cursor uint64
-		for {
-			keys, next, err := c.rdb.Scan(ctx, cursor, match, 200).Result()
-			if err != nil {
-				return nil, fmt.Errorf("usage: scan %s: %w", match, err)
-			}
-			for _, key := range keys {
-				rows, err := c.readDetailHash(ctx, key, date)
-				if err != nil {
-					return nil, err
-				}
-				out = append(out, rows...)
-			}
-			cursor = next
-			if cursor == 0 {
-				break
-			}
+		rows, err := c.scanDetailDate(ctx, date)
+		if err != nil {
+			return nil, err
 		}
+		out = append(out, rows...)
 	}
 	return out, nil
+}
+
+// scanDetailDate walks one date's detail hashes. Split out of
+// ScanDetail so the cursor walk, the de-duplication and the per-date
+// loop each stay individually readable (and under the gocognit
+// ceiling).
+func (c *Counter) scanDetailDate(ctx context.Context, date string) ([]DetailRow, error) {
+	match := c.keyPrefix + detailKeyInfix + "*:" + date
+	seen := make(map[string]struct{})
+	var (
+		out    []DetailRow
+		cursor uint64
+	)
+	for {
+		keys, next, err := c.rdb.Scan(ctx, cursor, match, 200).Result()
+		if err != nil {
+			return nil, fmt.Errorf("usage: scan %s: %w", match, err)
+		}
+		for _, key := range keys {
+			if _, dup := seen[key]; dup {
+				continue
+			}
+			seen[key] = struct{}{}
+			rows, err := c.readDetailHash(ctx, key, date)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, rows...)
+		}
+		cursor = next
+		if cursor == 0 {
+			return out, nil
+		}
+	}
 }
 
 // readDetailHash HGETALLs one detail hash and decodes its fields

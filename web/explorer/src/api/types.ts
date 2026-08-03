@@ -7743,10 +7743,17 @@ export interface paths {
          *     authenticated caller over the trailing 30 days: one row per
          *     (date, endpoint) with `requests` (allowed traffic),
          *     `errors` (4xx excluding 429, plus 5xx), and `throttled`
-         *     (429 rate-limit rejections — tallied separately and never
-         *     counted against monthly quota). `endpoint` is the route
-         *     PATTERN (e.g. `/v1/assets/{asset_id}`), never a raw URL.
+         *     (429 rejections — tallied separately and never counted
+         *     against monthly quota). `endpoint` is the route PATTERN
+         *     (e.g. `/v1/assets/{asset_id}`), never a raw URL.
          *     Sum `requests` grouped by `date` for daily totals.
+         *
+         *     Throttling attribution: a 429 is rejected BEFORE the router
+         *     resolves a route, so throttled counts are reported under the
+         *     `unmatched` endpoint rather than the route the caller was
+         *     aiming at. Sum `throttled` across endpoints for a caller's
+         *     true throttled total; do not read a per-route `throttled` of
+         *     zero as "this route was never throttled".
          *
          *     Pipeline: the usage middleware counts every authenticated
          *     request per (subject, route pattern, outcome class) in
@@ -7809,6 +7816,13 @@ export interface paths {
                          *           "endpoint": "/v1/price",
                          *           "requests": 20117,
                          *           "errors": 3,
+                         *           "throttled": 0
+                         *         },
+                         *         {
+                         *           "date": "2026-07-02",
+                         *           "endpoint": "unmatched",
+                         *           "requests": 0,
+                         *           "errors": 0,
                          *           "throttled": 41
                          *         },
                          *         {
@@ -14726,7 +14740,7 @@ export interface components {
             requests?: number;
             /** @description 4xx (excluding 429) + 5xx responses. */
             errors?: number;
-            /** @description 429 rate-limit rejections. */
+            /** @description 429 rejections (rate-limit and monthly-quota). Reported under the `unmatched` endpoint, not the caller's target route — the rejection happens before the router resolves a pattern. */
             throttled?: number;
         };
         UsageEnvelope: components["schemas"]["EnvelopeMeta"] & {
