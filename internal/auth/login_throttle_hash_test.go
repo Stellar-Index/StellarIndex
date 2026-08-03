@@ -30,3 +30,45 @@ func TestHashEmail_NormalisesBeforeHashing(t *testing.T) {
 		t.Errorf("hashEmail(distinct address) collided with %q — normalisation must not erase identity", canonical)
 	}
 }
+
+// Every RFC-5322 spelling of ONE inbox must share ONE throttle bucket.
+// Case+trim alone gave `<v@x.com>` and `"n" <v@x.com>` their own 5/hour
+// budgets while all of them deliver to the same mailbox, so the per-email
+// cap — whose entire purpose is bounding inbox-bombing — was bypassable by
+// re-spelling the target (cold audit 2026-08-03).
+func TestHashEmail_RFC5322SpellingsShareOneBucket(t *testing.T) {
+	t.Parallel()
+
+	want := hashEmail("victim@example.com")
+	for _, spelling := range []string{
+		"victim@example.com",
+		"  Victim@Example.COM  ",
+		"<victim@example.com>",
+		"<Victim@Example.com>",
+		`"Display Name" <victim@example.com>`,
+		`Display Name <victim@example.com>`,
+	} {
+		if got := hashEmail(spelling); got != want {
+			t.Errorf("hashEmail(%q) = %s, want %s — a re-spelling of the same inbox "+
+				"got its own throttle budget", spelling, got, want)
+		}
+	}
+
+	// Different inboxes must still separate.
+	if hashEmail("other@example.com") == want {
+		t.Error("distinct addresses collided into one bucket")
+	}
+}
+
+// Unparseable input must never panic or collapse to a shared bucket — it
+// falls back to case+trim, which is exactly the pre-fix behaviour.
+func TestHashEmail_UnparseableFallsBackToCaseTrim(t *testing.T) {
+	t.Parallel()
+
+	if hashEmail(" NOT-AN-ADDRESS ") != hashEmail("not-an-address") {
+		t.Error("unparseable input lost its case/trim normalisation")
+	}
+	if hashEmail("garbage-a") == hashEmail("garbage-b") {
+		t.Error("distinct unparseable inputs collapsed to one bucket")
+	}
+}

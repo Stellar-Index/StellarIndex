@@ -31,9 +31,11 @@ const DefaultSignupThrottleDwellTime = 30 * time.Second
 // Redis counter.
 //
 // The signup endpoint sees one request per attempted account; the
-// global anonymous rate limit caps at 60/min per IP — plenty for
+// global anonymous rate limit caps at 6000/min per IP (r1's
+// configured value; the 60/min this comment used to cite was a
+// 100x under-estimate that made bulk abuse look infeasible) — plenty for
 // browsing the public surfaces but lets a single IP bulk-mint
-// 60 accounts/min × 60 min = 3,600/hr of email→key_id pairs.
+// 6000 accounts/min × 60 min = 360,000/hr of email→key_id pairs.
 // The default 5/hour cap here closes that vector while still
 // letting a legitimate operator onboarding a small team through a
 // single shared egress complete normally; operators tune up via

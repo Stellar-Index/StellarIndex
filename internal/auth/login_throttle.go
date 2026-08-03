@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net/mail"
 	"strings"
 	"time"
 
@@ -16,7 +17,7 @@ import (
 // RedisLoginThrottle implements [dashboardauth.LoginThrottle] — the
 // magic-link send throttle (audit-2026-06-14 A12). The /v1/auth/login
 // endpoint fires an outbound email per accepted request, bounded only by
-// the global anonymous per-IP rate-limit (60/min). That lets a single IP
+// the global anonymous per-IP rate-limit (6000/min on r1). That lets a single IP
 // (a) bomb one victim inbox and (b) burn the deployment's email-send quota
 // / sender reputation. This adds two sliding-window caps — per IP and per
 // TARGET email — and denies the send when EITHER is exhausted.
@@ -173,14 +174,35 @@ func (t *RedisLoginThrottle) incrUnderCap(ctx context.Context, keyBase string, l
 	return int(count) <= limit, nil
 }
 
-// hashEmail returns a short stable digest of a lowercased, trimmed email for
-// use as a Redis key fragment — never the plaintext address. Normalisation
-// (lower-case + trim) is applied HERE so the per-target-email cap buckets
-// "Victim@X.com " and "victim@x.com" to the same key regardless of whether
-// the caller pre-normalised — the throttle invariant is self-enforcing rather
-// than a promise the caller must keep.
+// hashEmail returns a short stable digest of a canonicalised email for use as
+// a Redis key fragment — never the plaintext address. Normalisation is applied
+// HERE so the per-target-email cap buckets every spelling of one inbox to the
+// same key regardless of whether the caller pre-normalised — the throttle
+// invariant is self-enforcing rather than a promise the caller must keep.
+//
+// Canonicalisation is RFC-5322 aware, not just case+trim: the addr-spec is
+// extracted so `victim@x.com`, `<victim@x.com>` and `"display" <victim@x.com>`
+// share one bucket. Case+trim alone gave each spelling its OWN 5/hour budget
+// while all three deliver to the same inbox — so the per-email cap, whose
+// entire purpose is bounding inbox-bombing, was bypassable by re-spelling the
+// target (cold audit 2026-08-03). Unparseable input falls back to case+trim,
+// which is strictly no worse than the previous behaviour.
 func hashEmail(email string) string {
-	normalized := strings.ToLower(strings.TrimSpace(email))
+	normalized := canonicalEmail(email)
 	sum := sha256.Sum256([]byte(normalized))
 	return hex.EncodeToString(sum[:8])
+}
+
+// canonicalEmail reduces an address to its lower-cased addr-spec
+// ("user@host"), stripping any display name and angle brackets. Returns the
+// lower-cased, trimmed input when it does not parse as an address — callers
+// use this only for throttle-bucket identity, so a best-effort answer is
+// correct; it must never reject.
+func canonicalEmail(email string) string {
+	trimmed := strings.ToLower(strings.TrimSpace(email))
+	addr, err := mail.ParseAddress(trimmed)
+	if err != nil {
+		return trimmed
+	}
+	return strings.ToLower(strings.TrimSpace(addr.Address))
 }
