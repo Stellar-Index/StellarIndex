@@ -1,9 +1,12 @@
 package reflector
 
 import (
+	"bytes"
 	"encoding/base64"
 	"errors"
+	"log/slog"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -240,6 +243,69 @@ func TestRealDecoder_unknownSymbolSkippedPartialEventDecodes(t *testing.T) {
 	usdAsset, _ := canonical.NewFiatAsset("USD")
 	if !updates[0].Asset.Equal(usdAsset) {
 		t.Errorf("updates[0].Asset = %+v want %+v", updates[0].Asset, usdAsset)
+	}
+}
+
+// TestRealDecoder_nonPositivePriceSkippedIsObservable is the
+// regression for the LOW finding that a non-positive price entry was
+// skipped silently — no log, no counter — unlike the sibling
+// unknown-symbol skip. The skip BEHAVIOR is correct (Reflector filters
+// zero prices at the contract level; we skip defensively); the fix only
+// makes it observable via a WARN log so a partial event that loses a
+// zero/negative slot isn't invisible.
+func TestRealDecoder_nonPositivePriceSkippedIsObservable(t *testing.T) {
+	// Capture slog's default logger for the duration of this test.
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	// Mixed payload — one valid positive-price fiat entry (USD @ 1.0)
+	// plus one non-positive entry (EUR @ 0). EUR is a known fiat, so it
+	// decodes to a real PriceEntry (not a Skip) and hits the
+	// non-positive guard rather than the unknown-symbol path.
+	usd := xdr.ScSymbol("USD")
+	usdSv := xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &usd}
+	eur := xdr.ScSymbol("EUR")
+	eurSv := xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &eur}
+	bodyB64 := encodeUpdateBody(t,
+		[]xdr.ScVal{usdSv, eurSv},
+		[]*big.Int{big.NewInt(100_000_000_000_000), big.NewInt(0)},
+	)
+
+	e := &events.Event{
+		Topic:      []string{TopicSymbolReflector, TopicSymbolUpdate, encodeTimestampTopic(t, 1)},
+		Value:      bodyB64,
+		ContractID: "CBKGPWGKSKZF52CFHMTRR23TBWTPMRDIYZ4O2P5VS65BMHYH4DXMCJZC",
+		Ledger:     52_000_000,
+		TxHash:     "zeroprice",
+	}
+	updates, err := decodeUpdate(e, VariantFX, DefaultDecimals, "", time.Now())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Behavior unchanged: the zero slot is skipped, the USD slot lands.
+	if len(updates) != 1 {
+		t.Fatalf("expected 1 update (USD only), got %d", len(updates))
+	}
+	usdAsset, _ := canonical.NewFiatAsset("USD")
+	if !updates[0].Asset.Equal(usdAsset) {
+		t.Errorf("updates[0].Asset = %+v want %+v", updates[0].Asset, usdAsset)
+	}
+
+	// The skip must now be observable: exactly one WARN log for the
+	// single non-positive slot, attributed to this source. Without the
+	// fix the buffer is empty and both assertions fail (non-vacuous).
+	logged := buf.String()
+	if n := strings.Count(logged, "non-positive oracle price"); n != 1 {
+		t.Errorf("expected exactly 1 non-positive-price warning (only the zero slot), got %d; log = %q", n, logged)
+	}
+	if !strings.Contains(logged, "level=WARN") {
+		t.Errorf("non-positive price skip should log at WARN; log = %q", logged)
+	}
+	if !strings.Contains(logged, "source="+SourceFX) {
+		t.Errorf("log should attribute the source (%s); log = %q", SourceFX, logged)
 	}
 }
 

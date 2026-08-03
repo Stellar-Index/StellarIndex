@@ -55,9 +55,14 @@ Provenance details that matter for correctness:
 - **Price is an `i128` at contract-declared decimals** (the SEP-40
   `decimals()` method, typically 14). We store the raw `i128` plus the
   decimals; the display layer scales on read (never float — ADR-0003).
-- **Relayer identity** = the update tx's `source_account`, stashed on
-  `OracleUpdate.Observer` so divergence analysis can detect a single
-  relayer compromise.
+- **Relayer identity is NOT currently captured.** `OracleUpdate.Observer`
+  exists to carry the update tx's `source_account` (the relayer) so
+  divergence analysis *could* isolate a single compromised relayer, but
+  no production decoder populates it (`WithDecoderObserver` is unused in
+  `internal/pipeline/dispatcher.go`) and the tx source account is not yet
+  available to decoders (`internal/events/event.go` has no
+  tx-source-account field). Populating it is a noted follow-up, not a
+  current capability.
 
 ## What Reflector does NOT expose
 
