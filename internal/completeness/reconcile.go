@@ -166,6 +166,33 @@ func (t *BlindTracker) Result() BlindSpots {
 	return t.spots
 }
 
+// safeDecode runs dec.Decode under a per-event recover, converting a decoder
+// PANIC into a returned error so the caller's existing decode-error path
+// (blind.Undecodable + skip) handles it unchanged. It mirrors the projector's
+// processEventSafely, where a recovered panic and a returned decode error are
+// the SAME outcome — the row is dropped, the failure is counted, the cursor
+// advances.
+//
+// This matters because the projector RECOVERS panics on historical /
+// upgraded-WASM event shapes — a designed-for input ("backfill sees every
+// prior version") — so a panicking decoder silently drops rows from the served
+// tier. The completeness re-derive exists to make those drops VISIBLE
+// (projection_ok=false / a BlindSpots entry). If it let the panic escape, the
+// whole compute-completeness run would crash before writing any
+// completeness_snapshot: no verdict would flip false, EVERY source's verdict
+// would freeze, and the loss would surface only as a crash-looping ops job
+// instead of the blind spot it is. Funnelling the panic into the same error
+// path a returned decode error takes feeds it the SAME blind-spot accounting,
+// so `delta==0 && !blind.Any()` correctly stays false.
+func safeDecode(dec Decoder, ev events.Event) (outs []consumer.Event, err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			outs, err = nil, fmt.Errorf("decoder panicked on event shape: %v", rec)
+		}
+	}()
+	return dec.Decode(ev)
+}
+
 // ReDeriveOutputCounts re-runs the decoder over the raw events in
 // [from, to] and returns how many outputs it emits per ledger. Outputs
 // are attributed to the triggering row's ledger; because every
@@ -200,7 +227,7 @@ func ReDeriveOutputCounts(
 			if !dec.Matches(ev) {
 				return nil
 			}
-			outs, derr := dec.Decode(ev)
+			outs, derr := safeDecode(dec, ev)
 			if derr != nil {
 				blind.Undecodable(row.Ledger)
 				return nil //nolint:nilerr // deterministically-broken row; skip the count, pin the verdict.
@@ -265,7 +292,7 @@ func ReDeriveOutputCountsByKindFromEvents(
 			if !dec.Matches(ev) {
 				return nil
 			}
-			outs, derr := dec.Decode(ev)
+			outs, derr := safeDecode(dec, ev)
 			if derr != nil {
 				blind.Undecodable(ev.Ledger)
 				return nil //nolint:nilerr // deterministically-broken event; skip the count, pin the verdict.
@@ -316,7 +343,7 @@ func ReDeriveOutputCountsByKind(
 			if !dec.Matches(ev) {
 				return nil
 			}
-			outs, derr := dec.Decode(ev)
+			outs, derr := safeDecode(dec, ev)
 			if derr != nil {
 				blind.Undecodable(row.Ledger)
 				return nil //nolint:nilerr // deterministically-broken row; skip the count, pin the verdict.
