@@ -43,6 +43,23 @@ func TestBorrowRate_Vectors(t *testing.T) {
 	}
 }
 
+// BorrowRate must not panic on a degenerate zero-target config. The
+// contract guarantees Util>0 on-chain, but a corrupt/zero metadata row
+// used to divide by zero (fixedDivCeil → ceilDiv → QuoRem by 0) in the
+// under-target branch, panicking the request goroutine. With util==0 and
+// no utilization the scalar is 0, so the rate is the base rate × irMod.
+func TestBorrowRate_ZeroTargetNoPanic(t *testing.T) {
+	cfg := interestRefConfig()
+	cfg.Util = 0 // degenerate target utilization
+	irMod := big.NewInt(1_0000000)
+	// util==0 (no debt) with target==0 hits the under-target branch.
+	got := cfg.BorrowRate(big.NewInt(0), irMod)
+	// utilScalar==0 → baseRate == RBase → rate == RBase (× irMod=1.0).
+	if want := big.NewInt(int64(cfg.RBase)); got.Cmp(want) != 0 {
+		t.Errorf("BorrowRate(util=0, target=0) = %s, want %s (base rate)", got, want)
+	}
+}
+
 // Utilization mirrors reserve.rs: liabilities/supply, capped, 0 on no
 // debt. supplied = b_supply×b_rate/1e12; borrowed = d_supply×d_rate/1e12.
 func TestUtilization(t *testing.T) {

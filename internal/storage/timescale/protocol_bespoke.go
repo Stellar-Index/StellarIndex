@@ -838,15 +838,26 @@ func (s *Store) lendingAuctionBlocks(ctx context.Context, blk *BespokeBlock, sin
 // lendingBackstopKPIs fills the backstop deposit/withdraw volume KPIs (the
 // table is sparse — degrades to 0).
 func (s *Store) lendingBackstopKPIs(ctx context.Context, blk *BespokeBlock, since string, windowDays int) error {
+	// The `amount` column carries DIFFERENT units per event_kind:
+	// deposit/withdraw amounts are underlying TOKENS, but
+	// queue_withdrawal/dequeue_withdrawal amounts are backstop-LP SHARES
+	// and distribute/gulp_emissions/claim/donate amounts are BLND
+	// emissions. Summing across kinds produces a meaningless mixed-unit
+	// figure dominated by whichever kind is most frequent (per
+	// docs/protocols/blend.md that is queue_withdrawal — shares). This KPI
+	// is the deposit/withdraw *token* volume (per the function name +
+	// label), so restrict the sum to those two token-denominated kinds.
+	// The event COUNT stays unfiltered — it is a coherent all-kinds tally.
 	var backstopVol, backstopCount string
 	if err := s.db.QueryRowContext(ctx, `
-		SELECT COALESCE(sum(amount),0)::text, count(*)::text
+		SELECT COALESCE(sum(amount) FILTER (WHERE event_kind IN ('deposit','withdraw')),0)::text,
+		       count(*)::text
 		FROM blend_backstop_events WHERE ledger_close_time > now() - $1::interval`, since).
 		Scan(&backstopVol, &backstopCount); err != nil {
 		return fmt.Errorf("timescale: bespokeLending backstop KPIs: %w", err)
 	}
 	blk.KPIs = append(blk.KPIs,
-		BespokeKPI{Label: fmt.Sprintf("Backstop volume (%dd)", windowDays), Value: backstopVol, Unit: "token-units", Hint: "summed blend_backstop_events amount (base units)"},
+		BespokeKPI{Label: fmt.Sprintf("Backstop volume (%dd)", windowDays), Value: backstopVol, Unit: "token-units", Hint: "summed deposit+withdraw token amounts (base units); excludes share/emission kinds"},
 		BespokeKPI{Label: fmt.Sprintf("Backstop events (%dd)", windowDays), Value: backstopCount},
 	)
 	return nil
