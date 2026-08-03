@@ -16,6 +16,20 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **Band relays the contract silently rejected are no longer stamped in
+  the future** (cold audit): `relay()` applies an update only while
+  `resolve_time < ledger.timestamp + 3600` and otherwise NO-OPs while
+  the transaction still succeeds, so a rejected relay is
+  indistinguishable on the wire from an accepted one. The decoder used
+  the shared `SafeUnixSeconds` helper's generic +24h ceiling, so a
+  future-dated rejected relay was recorded and won every
+  `ORDER BY ts DESC` latest-read for up to a day — serving a Band price
+  Band never published. Now clamped to the contract's own +1h window.
+  Also corrected band's docs: the `OpIndex` fan-out formula was written
+  inverted, and `stellarindex_source_events_total{source="band"}` was
+  documented as reading zero by design when it in fact populates (r1
+  reads non-zero), which steered operators away from a working outage
+  signal.
 - **`/v1/markets` and `/v1/pools` asset filters no longer return an
   authoritative empty list for accepted alias spellings** (cold audit,
   confirmed on r1): both validated `?asset=`/`?base=`/`?quote=` with

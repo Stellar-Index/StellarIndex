@@ -87,7 +87,7 @@ far-future u64) fall back to the ledger close time.
 A single `relay` call produces N updates (one per
 `symbol_rates` entry). Each emitted `OracleUpdate` shares
 `(ledger, tx_hash, op_source)` but gets a unique
-`OpIndex = base + i*1024` so the `oracle_updates` table primary
+`OpIndex = base*1024 + i` so the `oracle_updates` table primary
 key stays distinct without colliding across batches.
 
 ## Files
@@ -105,12 +105,16 @@ key stays distinct without colliding across batches.
 - **Class**: Oracle (per `external.Registry`) —
   `IncludeInVWAP=false` by default. Surfaced via `/v1/sources`
   for transparency, excluded from VWAP.
-- **No event-based metrics.** Because Band emits no events,
-  `stellarindex_source_events_total{source="band"}` will read
-  zero. Use op-args ingestion counters
-  (`stellarindex_source_orphan_events_total{source="band"}`
-  reflects unmatched calls) and the standard cursor advance
-  metric to confirm the ContractCallDecoder is firing.
+- **Event metrics DO populate** (corrected 2026-08-03). Band
+  emits no CONTRACT events, but `dispatchContractCall` bumps
+  `stellarindex_source_events_total{source="band"}` per matched
+  call — r1 reads non-zero. The previous "will read zero" note
+  was wrong and steered operators away from a working outage
+  signal. Note the sibling claim about
+  `stellarindex_source_orphan_events_total{source="band"}` is
+  ALSO wrong: that series never populates, because the per-source
+  orphan counter comes only from decoders implementing
+  EvictedOrphans() and band implements none.
 - **Backfill**: supported. ContractCall observation works the
   same way over historical ledgers; the dispatcher routes
   InvokeContract ops to Band's adapter regardless of whether
