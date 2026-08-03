@@ -13,9 +13,12 @@ import (
 // then an unbounded read from `live` starting at seam.
 //
 // Behaviour:
-//   - seam == 0 → archive bucket is unused; the call degrades to a
+//   - seam <= 1 → archive bucket is unused; the call degrades to a
 //     plain unbounded Stream(live, from, 0, ...). This matches the
-//     pre-2026-04-26 indexer behaviour.
+//     pre-2026-04-26 indexer behaviour. (seam==1 is folded in with
+//     seam==0 because a bounded archive read of [from, seam-1]=[from,0]
+//     would hit Stream's to==0 UNBOUNDED sentinel and tail the archive
+//     forever — see the guard below.)
 //   - from >= seam → all wanted data lives in the live bucket; same
 //     degradation as above.
 //   - from < seam → bounded archive read then unbounded live read.
@@ -37,7 +40,14 @@ func StreamArchiveThenLive(
 	logger *slog.Logger,
 	callback func(xdr.LedgerCloseMeta) error,
 ) error {
-	if seam == 0 || from >= seam {
+	// seam <= 1 has no valid archive phase: the bounded archive range
+	// would be [from, seam-1] = [from, 0], and to==0 is Stream's
+	// UNBOUNDED sentinel — the archive read would tail the archive bucket
+	// forever and never hand off to live. Unreachable today
+	// (resolveStartLedger guarantees from >= 1, so from >= seam holds for
+	// seam==1), but guarded here so a future reuse with from==0 can't
+	// reintroduce the freeze (audit 2026-08-03).
+	if seam <= 1 || from >= seam {
 		if logger != nil {
 			logger.Info("ledgerstream: live-only", "from", from, "seam", seam)
 		}
