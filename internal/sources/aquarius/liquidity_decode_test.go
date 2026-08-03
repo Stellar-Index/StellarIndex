@@ -78,7 +78,7 @@ func TestDecodeReserves_realFixture(t *testing.T) {
 	if got := classify(e); got != EventUpdateReserves {
 		t.Fatalf("classify real update_reserves = %q, want %q", got, EventUpdateReserves)
 	}
-	rv, err := decodeReserves(e, closedAtTest)
+	rv, err := decodeReserves(e, closedAtTest, EventUpdateReserves)
 	if err != nil {
 		t.Fatalf("decodeReserves: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestDecodeReserves_i128Discipline(t *testing.T) {
 		Topic:      []string{realReservesTopic0},
 		Value:      encodeAmountVec(t, big1, big.NewInt(0)),
 	}
-	rv, err := decodeReserves(e, closedAtTest)
+	rv, err := decodeReserves(e, closedAtTest, EventUpdateReserves)
 	if err != nil {
 		t.Fatalf("decodeReserves: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestDecodeReserves_emptyVectorRejected(t *testing.T) {
 		Topic:      []string{realReservesTopic0},
 		Value:      encodeAmountVec(t),
 	}
-	if _, err := decodeReserves(e, closedAtTest); !errors.Is(err, ErrMalformedPayload) {
+	if _, err := decodeReserves(e, closedAtTest, EventUpdateReserves); !errors.Is(err, ErrMalformedPayload) {
 		t.Errorf("empty reserve vector: err = %v, want ErrMalformedPayload", err)
 	}
 }

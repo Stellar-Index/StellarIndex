@@ -64,9 +64,15 @@ type ReservesEvent struct {
 	// aquarius_reserves PK (same role as comet_liquidity.event_index).
 	EventIndex uint32
 	ObservedAt time.Time
-	// Reserves is the post-state reserve for each pool token, ordered
-	// by the pool's canonical token index. Length is the pool's token
-	// count. i128 per ADR-0003 (never truncates).
+	// Kind discriminates which reserve event this is: EventUpdateReserves
+	// (post-state reserves → aquarius_reserves) or EventReservesSync (the
+	// distinct reserves_sync signal → aquarius_reserves_sync). Empty is
+	// treated as update_reserves for backward compatibility.
+	Kind string
+	// Reserves is the per-pool-token value vector, ordered by the pool's
+	// canonical token index. For update_reserves it is the post-state
+	// reserves; for reserves_sync it is the synced value. Length is the
+	// pool's token count. i128 per ADR-0003 (never truncates).
 	Reserves []canonical.Amount
 }
 

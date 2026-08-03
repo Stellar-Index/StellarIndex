@@ -177,17 +177,22 @@ func decodeTrade(e *events.Event, closedAt time.Time) (canonical.Trade, error) {
 // [reserve_0, …, reserve_{n-1}]. n is the pool's token count (2 for a
 // volatile pool, N for stableswap), so we read a variable-length vec
 // rather than a fixed tuple.
-func decodeReserves(e *events.Event, closedAt time.Time) (ReservesEvent, error) {
+// decodeReserves decodes an Aquarius `update_reserves` or `reserves_sync`
+// event — both share a `Vec<i128>` body of per-token values. `kind` is
+// the classify() result (EventUpdateReserves | EventReservesSync); it is
+// carried onto the ReservesEvent so the sink routes it to the right table
+// and appears in error messages.
+func decodeReserves(e *events.Event, closedAt time.Time, kind string) (ReservesEvent, error) {
 	reserves, err := decodeAmountVec(e.Value)
 	if err != nil {
-		return ReservesEvent{}, fmt.Errorf("%w: update_reserves body: %w", ErrMalformedPayload, err)
+		return ReservesEvent{}, fmt.Errorf("%w: %s body: %w", ErrMalformedPayload, kind, err)
 	}
 	if len(reserves) == 0 {
-		return ReservesEvent{}, fmt.Errorf("%w: update_reserves empty reserve vector", ErrMalformedPayload)
+		return ReservesEvent{}, fmt.Errorf("%w: %s empty reserve vector", ErrMalformedPayload, kind)
 	}
 	for i, r := range reserves {
 		if r.Sign() < 0 {
-			return ReservesEvent{}, fmt.Errorf("%w: update_reserves reserve[%d] negative: %s", ErrMalformedPayload, i, r)
+			return ReservesEvent{}, fmt.Errorf("%w: %s reserve[%d] negative: %s", ErrMalformedPayload, kind, i, r)
 		}
 	}
 	return ReservesEvent{
@@ -197,6 +202,7 @@ func decodeReserves(e *events.Event, closedAt time.Time) (ReservesEvent, error) 
 		OpIndex:    uint32(e.OperationIndex), //nolint:gosec // OperationIndex is non-negative by Soroban spec.
 		EventIndex: uint32(e.EventIndex),     //nolint:gosec // EventIndex is non-negative by Soroban spec.
 		ObservedAt: closedAt,
+		Kind:       kind,
 		Reserves:   reserves,
 	}, nil
 }
