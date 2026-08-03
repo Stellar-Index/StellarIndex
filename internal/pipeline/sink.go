@@ -781,21 +781,22 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 
 	// Every arm RETURNS its persist result so the projector can gate its
 	// cursor on a sink failure (audit-2026-07-16 C2-1). Trade-shaped events
-	// are the one exception: persistTrade owns ADR-0041 block-and-retry
-	// (infra faults BLOCK the caller, data faults skip) so it never silently
-	// loses a write — those arms return nil and let that policy stand rather
-	// than double-gating it here.
+	// go through persistTrade's ADR-0041 block-and-retry (infra faults BLOCK
+	// the caller, data faults drop) and — since audit 2026-08-03 — RETURN
+	// its abandon error like every other arm, so a bounded-ctx caller (the
+	// projector's per-source cycle) cursor-gates trades too. Previously these
+	// arms swallowed the error (return nil), which let the projector advance
+	// the cursor past a trade abandoned when its 60s cycle ctx expired during
+	// a Postgres outage — the one projected class that didn't self-heal.
 	switch e := ev.(type) {
 	case soroswap.TradeEvent:
-		persistTrade(ctx, logger, store, e.Trade)
-		return nil
+		return persistTrade(ctx, logger, store, e.Trade)
 	case soroswap.SkimEvent:
 		return persistSoroswapSkim(ctx, logger, store, e)
 	case soroswap.LiquidityEvent:
 		return persistSoroswapLiquidity(ctx, logger, store, e)
 	case aquarius.TradeEvent:
-		persistTrade(ctx, logger, store, e.Trade)
-		return nil
+		return persistTrade(ctx, logger, store, e.Trade)
 	case aquarius.ReservesEvent:
 		return persistAquariusReserves(ctx, logger, store, e)
 	case aquarius.LiquidityEvent:
@@ -809,8 +810,7 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 	case aquarius.KillEvent:
 		return persistAquariusKill(ctx, logger, store, e)
 	case phoenix.TradeEvent:
-		persistTrade(ctx, logger, store, e.Trade)
-		return nil
+		return persistTrade(ctx, logger, store, e.Trade)
 	case phoenix.LiquidityEvent:
 		return persistPhoenixLiquidity(ctx, logger, store, e)
 	case phoenix.InitializeEvent:
@@ -820,13 +820,11 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 	case phoenix.StakeEvent:
 		return persistPhoenixStake(ctx, logger, store, e)
 	case comet.TradeEvent:
-		persistTrade(ctx, logger, store, e.Trade)
-		return nil
+		return persistTrade(ctx, logger, store, e.Trade)
 	case comet.LiquidityEvent:
 		return persistCometLiquidity(ctx, logger, store, e)
 	case sdex.TradeEvent:
-		persistTrade(ctx, logger, store, e.Trade)
-		return nil
+		return persistTrade(ctx, logger, store, e.Trade)
 	case reflector.UpdateEvent:
 		return persistOracle(ctx, logger, store, e.Update)
 	case redstone.UpdateEvent:
@@ -949,8 +947,7 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 		}
 		return nil
 	case external.TradeEvent:
-		persistTrade(ctx, logger, store, e.Trade)
-		return nil
+		return persistTrade(ctx, logger, store, e.Trade)
 	case external.UpdateEvent:
 		return persistOracle(ctx, logger, store, e.Update)
 	case blend.NewAuctionEvent:
@@ -1092,40 +1089,56 @@ func persistEventResilient(ctx context.Context, logger *slog.Logger, store *time
 // entirely on the success case, so a check here would silently miss
 // the majority of on-chain trades. See
 // timescale.isDexUnitRatioTrade's godoc for the actual choke point.
-func persistTrade(ctx context.Context, logger *slog.Logger, w tradeWriter, t canonical.Trade) {
-	// usd_volume coverage is counted inside InsertTrade /
-	// BatchInsertTrades (see timescale.usdPopulatedLabel), NOT here.
-	// This function is only one of the paths trades take — the
-	// dispatcher's primary batch path and every external connector
-	// bypass it — so a counter here measured a small, unrepresentative
-	// slice. Counting at the storage choke point also removes the
-	// second full resolution this used to run per trade.
+// persistTrade writes one trade via the ADR-0041 block-and-retry policy
+// (infra faults block, data faults drop) and RETURNS its abandon error so
+// a BOUNDED-ctx caller can cursor-gate on it.
+//
+// Return contract (audit 2026-08-03):
+//   - nil on success OR on a permanent data fault (the row is deterministically
+//     bad → dropped + counted; a held poison would loop a retrying caller).
+//   - the ctx error when the retry is abandoned because ctx was cancelled
+//     (shutdown, or the projector's per-source 60s cycle timeout). Returning
+//     it lets the projector HOLD the cursor and re-derive next cycle — trades
+//     were the ONE projected class whose HandleEvent arms swallowed this and
+//     let the cursor advance past an un-written row (the other projected
+//     classes already return their persist error). The dispatcher's INDEFINITE-
+//     ctx batch path never abandons except on real shutdown, where its own
+//     drain owns the re-derive; persistTradeRouted / retryOnChainBatchBlocking
+//     deliberately ignore this return.
+//
+// usd_volume coverage is counted inside InsertTrade / BatchInsertTrades (see
+// timescale.usdPopulatedLabel), NOT here — this is only one of the paths
+// trades take (the dispatcher's primary batch path bypasses it).
+func persistTrade(ctx context.Context, logger *slog.Logger, w tradeWriter, t canonical.Trade) error {
 	if err := retryInfra(ctx, logger, "insert_trade", func(c context.Context) error {
 		return w.InsertTrade(c, t)
 	}); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(t.Source, "trade").Inc()
 		if isCtxErr(err) {
-			// Shutdown mid-retry — the raw op is durable in the CH lake
-			// (ADR-0034), so this row is re-derivable; surface it loudly
-			// instead of dropping silently.
+			// Shutdown / cycle-timeout mid-retry — the raw op is durable in
+			// the CH lake (ADR-0034), so this row is re-derivable; surface it
+			// loudly AND return it so a bounded-ctx caller gates the cursor.
 			logger.Error("insert trade abandoned on shutdown — recoverable from the CH lake (ADR-0034); re-derive",
 				"source", t.Source, "ledger", t.Ledger, "tx_hash", t.TxHash, "op_index", t.OpIndex, "err", err)
-			return
+			return err
 		}
-		logger.Error("insert trade failed",
+		// Permanent data fault — deterministic for this row, so DROP it
+		// (return nil, do not gate): a held poison would loop the projector.
+		logger.Error("insert trade failed (permanent data fault — row skipped)",
 			"source", t.Source,
 			"ledger", t.Ledger,
 			"tx_hash", t.TxHash,
 			"op_index", t.OpIndex,
 			"err", err,
 		)
-		return
+		return nil
 	}
 	logger.Debug("trade ingested",
 		"source", t.Source,
 		"ledger", t.Ledger,
 		"pair", t.Pair.String(),
 	)
+	return nil
 }
 
 func persistOracle(ctx context.Context, logger *slog.Logger, store *timescale.Store, u canonical.OracleUpdate) error {
