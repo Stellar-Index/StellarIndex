@@ -107,19 +107,24 @@ type HistoryReader interface {
 	// This is the storage-side primitive for the ADR-0018 Surface 3
 	// `/v1/observations` endpoint. The production impl is a
 	// `DISTINCT ON (source) … WHERE base=$1 AND quote=$2
-	// ORDER BY source, ts DESC` scan with **no time bound**, so
-	// TimescaleDB cannot do chunk exclusion and probes every chunk
-	// of the `trades` hypertable — multiple seconds on a busy
-	// deployment even when the result is empty.
+	// ORDER BY source, ts DESC` scan with no time bound.
 	//
-	// NOTE: an earlier revision of this comment claimed a
-	// `(base_asset, quote_asset, source, ts DESC)` index made this
-	// O(num_sources). That index was never created (r1 has only
-	// `(base_asset, quote_asset, ts DESC)`), so the claim was false.
-	// Mitigation today: [CachedHistoryReader] SWR-caches this method
-	// (#29). The real query-cheapening fix — create that composite
-	// index (deferred: it is multi-GB on a 2.7B-row hypertable and
-	// r1 is disk-constrained) — is the durable root-cause follow-up.
+	// COST, re-measured on r1 2026-08-03 (this comment was wrong in
+	// BOTH directions before): `trades_pair_source_ts_idx` (migration
+	// 0037) DOES exist, and Timescale plans this as a Merge Append of
+	// per-chunk SkipScans over the compressed index — 49 ms execution
+	// across 249 chunks for native/fiat:USD, 289 ms for the heaviest
+	// pair measured, 47 ms to prove a novel pair empty. An earlier
+	// revision claimed the index was never created and that the scan
+	// "probes every chunk — multiple seconds"; both were false, and
+	// the deferred multi-GB index build recorded here as the "durable
+	// root-cause follow-up" is work that is already deployed. Do not
+	// re-schedule it. Note Postgres PLANNING (40-210 ms over 249
+	// chunks) can exceed execution on a novel key, since lib/pq uses
+	// unnamed statements and re-plans each time.
+	//
+	// [CachedHistoryReader] still SWR-caches this method (#29) to
+	// keep the status page's poll off the database entirely.
 	LatestTradePerSource(ctx context.Context, pair canonical.Pair, sourceFilter string) ([]canonical.Trade, error)
 }
 
