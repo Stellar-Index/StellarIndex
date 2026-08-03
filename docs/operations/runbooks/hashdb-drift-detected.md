@@ -131,12 +131,30 @@ has gone blind, as opposed to having found something. Common causes:
 - The bucket itself is unreachable (same underlying cause as a
   `galexie-archive-tip-lag` / MinIO connectivity incident — check
   those alerts too).
+- **An in-window object was rewritten to bytes that no longer
+  XDR-decode, or was deleted outright.** This is NOT blindness — it
+  is potentially the tamper/corruption class this detector exists
+  for, surfacing under the "couldn't check" alert because a garbage
+  or absent object can't be hashed at all. The sweep streams the
+  window strictly (missing objects are errors, never tolerated) and
+  aborts at the first bad object, so ledgers after it in the window
+  went unverified this pass. Read the WARN's error text BEFORE
+  assuming connectivity: a decode failure or "object … is missing"
+  naming a ledger the indexer already ingested (i.e. NOT mid-catch-up)
+  warrants the same three-way comparison as a drift hit. Note the
+  sweep reports drift with priority: if any drift was tallied before
+  the stream error, the run records `outcome="drift"` (with the
+  stream error attached to the log line), not `error`.
 
-Diagnosis: `journalctl -u stellarindex-indexer | grep "hashdb verify
-sweep failed"` — the WARN line includes the underlying error.
+Diagnosis: `journalctl -u stellarindex-indexer | grep -E "hashdb verify
+sweep (failed|incomplete)"` — the WARN line includes the underlying
+error (`incomplete` means the stream ended early without erroring:
+same triage as a missing object).
 Mitigation: fix the underlying connectivity/disk issue; the sweep
 retries every `[hashdb].verify_interval_minutes` (default 60) with no
-operator action needed once the cause clears.
+operator action needed once the cause clears. If the error text
+points at a specific in-window object instead, escalate per the
+drift checklist above.
 
 ## Why not P1/P2?
 

@@ -743,12 +743,16 @@ file (`internal/hashdb`). Emitted only when `[hashdb].enabled = true`
 When to look at it: `error` means a hashdb write failed (disk full,
 permission error) — this is failure-tolerant by design (never stalls
 or fails ingest), but a sustained `error` rate means the detector has
-gone silently blind: it's recording nothing, so the periodic verify
-sweep will find `missing`, not `drifted`, even if real drift is
-happening. There's no dedicated alert on this counter alone (a
-disabled detector is a silent no-op, not an incident) — treat a
-climbing `error` rate as "this region's hashdb coverage is a lie" and
-fix the underlying disk/permission issue.
+gone silently blind: it's recording nothing new. Worse, the verify
+sweep will NOT tell you: its window trails the append side's own
+last-recorded ledger, so when appends freeze the sweep keeps
+re-verifying the same fully-recorded stale window every hour with
+`outcome="ok"` — green sweeps while coverage stopped accruing. This
+counter's `error` rate is therefore the ONLY signal for append death.
+There's no dedicated alert on it (a deliberate call — a disabled
+detector is a silent no-op, not an incident) — treat a climbing
+`error` rate as "this region's hashdb coverage is a lie" and fix the
+underlying disk/permission issue.
 
 ### `stellarindex_hashdb_append_duration_seconds`
 

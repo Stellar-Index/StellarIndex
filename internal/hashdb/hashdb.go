@@ -116,6 +116,17 @@ func Create(path string, startLedger uint32) (*DB, error) {
 		_ = os.Remove(path)
 		return nil, fmt.Errorf("hashdb: write header: %w", err)
 	}
+	// Sync the header to disk before handing the DB out. Without this,
+	// a power-loss-class crash in the writeback window after first-ever
+	// Create can persist the inode with 0 bytes — and a 0-byte file
+	// fails Open on the next boot. Records themselves are deliberately
+	// not synced (see recordHashdb's rationale in the indexer); the
+	// header is a once-per-file cost.
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(path)
+		return nil, fmt.Errorf("hashdb: sync header: %w", err)
+	}
 	return &DB{f: f, startLedger: startLedger}, nil
 }
 
