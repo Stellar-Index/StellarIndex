@@ -340,6 +340,15 @@ func (s *Server) tipWindowVWAP(ctx context.Context, asset, quote canonical.Asset
 		return PriceSnapshot{}, nil, false
 	}
 
+	// Scale-normalize before VWAP: the alias loop above deliberately MERGES
+	// on-chain (native, 7dp) and CEX (crypto:XLM, 8dp) venues into one slice,
+	// so — exactly as on the fiat-combine point path — the raw Σquote/Σbase
+	// mean would weight each trade by its smallest-unit magnitude
+	// (real_volume × 10^scale) and over-weight the finer-scaled venue ~10×
+	// per decimal. Lift every trade to the common scale first. A single-venue
+	// window (the common case) is byte-identical (CS-040).
+	trades = aggregate.NormalizeAmountScale(trades, amountScaleDecimalsFor)
+
 	price, err := aggregate.VWAP(trades)
 	if err != nil {
 		// All-zero-volume input. The fallback path will produce a

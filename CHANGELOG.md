@@ -46,6 +46,19 @@ against.
   misleading "guard always wired" comments.
 
 ### Fixed
+- **VWAP no longer over-weights higher-scale sources on mixed-scale windows**
+  (aggregate audit) — the fiat-combine (`/v1/vwap`, single-bar `/v1/ohlc`) and
+  `/v1/price/tip` + SSE paths merge on-chain (7dp) and CEX (8dp) trades into one
+  volume-weighted average, but `aggregate.VWAP` summed raw smallest-unit amounts, so a
+  CEX trade was weighted ~10× its real volume vs an on-chain trade (100× vs an FX
+  poller), biasing the served price. New `aggregate.NormalizeAmountScale` rescales each
+  trade to the window's max per-source scale (exact integer multiply) before the
+  weighted sum, so the price reflects real volume. Byte-identical for uniform-scale
+  windows (the common case); only genuinely mixed-scale windows change (toward the true
+  price). The `/v1/price` orchestrator path is single-scale per target and unaffected;
+  the OHLC *series*-combine path (CAGG bars) has the same root cause via a different
+  mechanism and is a flagged follow-up. Also corrected the `outlier_sigma_threshold`
+  config doc (the filter is median+MAD, not mean+stdev).
 - **Phoenix multi-hop swap correlation is now contract-scoped** (phoenix audit) —
   the 8-events-per-swap reassembly buffer was keyed by `(ledger, tx_hash, op_index)`
   WITHOUT the pool `ContractID`, so in a multi-hop router op (several pools' swaps in
