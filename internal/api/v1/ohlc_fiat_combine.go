@@ -8,6 +8,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
 // ohlcSeriesFiatCombined builds a fiat-denominated (e.g. XLM/USD) OHLC
@@ -172,7 +173,30 @@ func (s *Server) fiatCombinedTrades(
 	if maxTrades > 0 && len(merged) > maxTrades {
 		merged = merged[len(merged)-maxTrades:]
 	}
+	// Scale-normalize before the callers (handleVWAP / handleTWAP /
+	// single-bar handleOHLC) feed this cross-source slice to
+	// aggregate.VWAP / aggregate.ComputeOHLC. usdPeggedConstituents merges
+	// on-chain legs (native/USDC-classic, 7dp) with CEX legs
+	// (crypto:XLM/crypto:USDT, 8dp) into one population, so without lifting
+	// every trade to a common smallest-unit scale the Σquote/Σbase weighted
+	// mean would over-weight the finer-scaled source ~10× per decimal of
+	// scale difference (CS-040 money-path). Uniform windows — all-CEX or
+	// all-on-chain, the common case — are returned byte-identical, so only
+	// genuinely mixed windows move, toward the true real-volume-weighted
+	// price. TWAP is time-weighted and thus unaffected either way (the
+	// per-trade ratio it weights is scale-invariant); normalizing is a
+	// no-op there, applied uniformly to keep one merge path.
+	merged = aggregate.NormalizeAmountScale(merged, amountScaleDecimalsFor)
 	return merged, proxied, nil
+}
+
+// amountScaleDecimalsFor resolves a trade source's smallest-unit scale from
+// the external registry (8 for CEX/aggregator, 7 for on-chain DEX, 6 for the
+// FX pollers — CS-040). Extracted as a package-level func so
+// aggregate.NormalizeAmountScale can stay free of an internal/sources/external
+// import (that package imports aggregate — the reverse edge is a cycle).
+func amountScaleDecimalsFor(source string) int {
+	return external.Lookup(source).AmountScaleDecimals()
 }
 
 // sortTradesChronological orders a merged multi-constituent trade set by
