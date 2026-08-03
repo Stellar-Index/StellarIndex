@@ -490,7 +490,8 @@ func supplyAudit(args []string) error {
 	}
 
 	if *crossCheck != "" {
-		if err := runSupplyCrossCheck(ctx, store, *crossCheck, primaryKey, primarySnap); err != nil {
+		if err := runSupplyCrossCheck(ctx, store, *crossCheck, primaryKey, primarySnap,
+			crossCheckWrapClass(cfg.Supply.FullyWrappedSACs, *crossCheck)); err != nil {
 			return err
 		}
 	}
@@ -573,12 +574,42 @@ func printSupplyHistory(ctx context.Context, store *timescale.Store, assetKey st
 	return nil
 }
 
-// runSupplyCrossCheck fetches the counterpart's snapshot and runs
-// supply.CrossCheck. Per ADR-0011 the two totals must agree within
-// 1 stroop; divergence > 1 surfaces with the same wording the
-// supply-cross-check-divergence runbook uses, so the operator can
-// pattern-match against the alert text.
-func runSupplyCrossCheck(ctx context.Context, store *timescale.Store, otherRaw, primaryKey string, primarySnap supply.Supply) error {
+// crossCheckWrapClass resolves which invariant the CLI should check
+// for this pair, mirroring the aggregator's derivation
+// (buildCrossCheckRefresher): a SAC the operator has attested is
+// 100% wrapped gets the strict ADR-0011 equality compare, everything
+// else gets the subset-bound compare.
+//
+// Without this the CLI ran WrapClassFull equality unconditionally,
+// which is a GUARANTEED failure for every partially-wrapped pair —
+// classic supply that never entered the SAC is exactly the gap the
+// subset bound exists to tolerate. Every r1 pair is partial_wrap, so
+// the runbook's own diagnostic command reported
+// "OVER TOLERANCE ✗ — investigate" and exited non-zero on healthy
+// data, and the runbook tells operators to chain
+// `|| operator-escalate` (cold audit 2026-08-03, BACKLOG #59 landed
+// in the refresher but not here).
+func crossCheckWrapClass(fullyWrapped []string, sacID string) supply.WrapClass {
+	for _, id := range fullyWrapped {
+		if id == sacID {
+			return supply.WrapClassFull
+		}
+	}
+	return supply.WrapClassPartial
+}
+
+// runSupplyCrossCheck fetches the counterpart's snapshot and runs the
+// wrap-class-appropriate cross-check. For a fully-wrapped pair the two
+// totals must agree within 1 stroop per ADR-0011; for a partially
+// wrapped one the SAC total must merely not EXCEED the classic total
+// (the subset bound). See [crossCheckWrapClass].
+func runSupplyCrossCheck(
+	ctx context.Context,
+	store *timescale.Store,
+	otherRaw, primaryKey string,
+	primarySnap supply.Supply,
+	wrapClass supply.WrapClass,
+) error {
 	otherAsset, err := canonical.ParseAsset(otherRaw)
 	if err != nil {
 		return fmt.Errorf("parse cross-check asset %q: %w", otherRaw, err)
@@ -593,12 +624,13 @@ func runSupplyCrossCheck(ctx context.Context, store *timescale.Store, otherRaw, 
 	}
 	printSupplySnapshot("CROSS-CHECK", otherRaw, otherKey, otherSnap)
 
-	result, err := supply.CrossCheck(primarySnap, otherSnap)
+	result, err := supply.CrossCheckForClass(primarySnap, otherSnap, wrapClass)
 	if err != nil {
-		return fmt.Errorf("CrossCheck: %w", err)
+		return fmt.Errorf("CrossCheckForClass(%s): %w", wrapClass, err)
 	}
 
 	fmt.Println("─── CROSS-CHECK RESULT ───")
+	fmt.Printf("  wrap_class:           %s\n", result.WrapClass)
 	fmt.Printf("  primary_total:        %s\n", result.ClassicTotal.String())
 	fmt.Printf("  counterpart_total:    %s\n", result.SACTotal.String())
 	fmt.Printf("  divergence_stroops:   %s\n", result.DivergenceStroops.String())

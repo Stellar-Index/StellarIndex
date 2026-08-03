@@ -16,6 +16,17 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **`stellarindex-ops supply audit -cross-check` no longer reports a
+  guaranteed failure on healthy data** (cold audit): the CLI ran the
+  strict ADR-0011 equality compare unconditionally, never dispatching on
+  wrap class the way the aggregator's cross-check refresher has since
+  BACKLOG #59. Every configured pair on r1 is `partial_wrap` — classic
+  supply that never entered the SAC is exactly the gap the subset bound
+  exists to tolerate — so the runbook's own diagnostic command printed
+  `OVER TOLERANCE ✗ — investigate` and exited non-zero every time, and
+  the runbook tells operators to chain `|| operator-escalate`. The CLI
+  now resolves wrap class from `[supply].fully_wrapped_sacs` exactly as
+  the refresher does and prints which invariant it applied.
 - **Band relays the contract silently rejected are no longer stamped in
   the future** (cold audit): `relay()` applies an update only while
   `resolve_time < ledger.timestamp + 3600` and otherwise NO-OPs while

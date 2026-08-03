@@ -405,9 +405,12 @@ Subcommands:
                           circulating / max / basis / observed_at /
                           ledger). When -cross-check is supplied,
                           fetches the counterpart's snapshot and
-                          runs the SAC-wrapped cross-check from
-                          PR #216 (asserts the two totals agree
-                          within 1 stroop per ADR-0011). When
+                          runs the wrap-class-appropriate
+                          cross-check: strict 1-stroop equality
+                          (ADR-0011) only for a SAC listed in
+                          [supply].fully_wrapped_sacs, else the
+                          subset bound (the SAC total must not
+                          EXCEED the classic total). When
                           -history-hours is set, also prints the
                           recent N-hour snapshot trail so an
                           operator can spot whether divergence is
