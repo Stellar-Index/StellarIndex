@@ -56,7 +56,16 @@ func RateLimit(bucket *ratelimit.Bucket, keyFn func(*http.Request) string, skip 
 		logger = slog.Default()
 	}
 	if keyFn == nil {
-		keyFn = func(r *http.Request) string { return RemoteIPFrom(r) }
+		// Default key: the forge-resistant, /64-masked throttle identity
+		// (remoteIPPrefixFor — the SAME resolver the production anon path
+		// uses, F-1338 / SEC-15) rather than the raw RemoteIPFrom context
+		// value. Keying on the full IPv6 /128 lets a caller rotate
+		// addresses within a single delegated /64 to mint unlimited
+		// distinct buckets and bypass the per-IP limit; masking to /64
+		// keys on the block an attacker actually controls. This middleware
+		// is test-only today, but the default MUST be bypass-resistant in
+		// case it is ever wired live with a nil keyFn.
+		keyFn = func(r *http.Request) string { return remoteIPPrefixFor(r) }
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
