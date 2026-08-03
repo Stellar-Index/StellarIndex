@@ -109,6 +109,22 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 			"Supply read failed", http.StatusBadGateway, "Could not read token supply.")
 		return
 	}
+	if sup.Incomplete {
+		// A negative lake-flows net total (Σ(burn+clawback) > Σmint) means
+		// this token's supply_flows are incompletely seeded — e.g. pre-Soroban
+		// SAC-wrapper mints not yet CAP-67-replayed — NOT that supply is
+		// negative. TotalSupply is a non-nullable wire string, so we can't
+		// omit it; REFUSE to serve the snapshot (the endpoint's existing 404
+		// "Supply not available" path) rather than publish a physically-
+		// impossible negative (ADR-0003; migration 0005 enforces
+		// total_supply >= 0). Mirrors SEP41Computer.Compute refusing a
+		// negative total. Seed the pre-Soroban baseline with
+		// `stellarindex-ops supply seed-sep41-genesis` to make it available.
+		writeProblem(w, r, "https://api.stellarindex.io/errors/supply-incomplete",
+			"Supply not available", http.StatusNotFound,
+			"This token's on-chain supply flows are incompletely seeded (recorded burns exceed recorded mints), so a total supply isn't available for it yet.")
+		return
+	}
 	mint, burn, clawback := sup.Mint.String(), sup.Burn.String(), sup.Clawback.String()
 	wmLedger, stale, _ := s.lakeWatermark(ctx)
 	writeJSON(w, AssetSupply{

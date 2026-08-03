@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,6 +99,30 @@ func TestAssetSupply_ContractIDDirect(t *testing.T) {
 	}
 	if got.MintTotal == nil || *got.MintTotal != "1000" {
 		t.Errorf("mint_total = %v, want 1000", got.MintTotal)
+	}
+}
+
+// TestAssetSupply_IncompleteFlowsRefused pins the serving guard: a token whose
+// lake-flows net total is negative (Σ(burn+clawback) > Σmint — incompletely
+// seeded flows, physically-impossible supply) must NEVER serve a negative
+// total_supply. total_supply is a NON-nullable wire string, so the handler
+// REFUSES via the endpoint's existing 404 "Supply not available" path rather
+// than publishing "-N" (ADR-0003; migration 0005 total_supply >= 0). Mirrors
+// SEP41Computer.Compute refusing a negative total.
+func TestAssetSupply_IncompleteFlowsRefused(t *testing.T) {
+	f := &fakeTokenSupply{supply: clickhouse.TokenSupply{
+		ContractID: supplyContractID,
+		Total:      big.NewInt(-50), Mint: big.NewInt(100), Burn: big.NewInt(150), Clawback: big.NewInt(0),
+		FlowCount:  3,
+		Incomplete: true,
+	}}
+	rec := serveSupply(t, f, nil, supplyContractID)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("incomplete flows: got %d, want 404 (body=%s)", rec.Code, rec.Body.String())
+	}
+	// The physically-impossible negative must not reach the wire in any form.
+	if strings.Contains(rec.Body.String(), "-50") {
+		t.Errorf("response leaked a negative supply: %s", rec.Body.String())
 	}
 }
 

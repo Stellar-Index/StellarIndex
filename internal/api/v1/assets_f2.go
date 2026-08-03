@@ -183,7 +183,17 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	// keep their Algorithm-2 snapshot), so it adds a CH read only for Soroban
 	// tokens.
 	if !haveSnap && s.tokenSupply != nil && asset.Type == canonical.AssetSoroban && asset.ContractID != "" {
-		if ts, terr := s.tokenSupply.TokenSupply(ctx, asset.ContractID); terr == nil && ts.Total != nil {
+		// ts.Incomplete means the lake-flows net total is negative
+		// (Σ(burn+clawback) > Σmint) — the token's supply_flows are
+		// incompletely seeded (e.g. pre-Soroban SAC-wrapper mints not yet
+		// CAP-67-replayed), NOT that supply is negative. Treat it as
+		// UNAVAILABLE: skip the fallback so total_supply/circulating_supply
+		// stay null (both are *string,omitempty), mirroring how
+		// SEP41Computer.Compute REFUSES a negative rather than publishing a
+		// physically-impossible reading. We deliberately do NOT clamp to 0 —
+		// that would read as a real "fully burned" supply and understate the
+		// token (ADR-0003; migration 0005's total_supply >= 0).
+		if ts, terr := s.tokenSupply.TokenSupply(ctx, asset.ContractID); terr == nil && ts.Total != nil && !ts.Incomplete {
 			snap = supply.Supply{
 				AssetKey:          asset.ContractID,
 				TotalSupply:       ts.Total,
