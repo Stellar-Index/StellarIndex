@@ -212,6 +212,10 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// sparse (40 events / 19 pools lake-wide; 0131, 2026-08-03). Huge
 	// override — pools deploy rarely, so long quiet stretches are normal.
 	{Source: "phoenix-initialize", Table: "phoenix_initialize", LedgerColumn: "ledger", Genesis: 51_572_016, MinGapSizeOverride: 2000000},
+	// phoenix-admin-events: admin rotations — 0 occurrences to date
+	// (0132, defensive). Max override so the empty table never alerts;
+	// the gap detector reports "no rows yet", not an outage.
+	{Source: "phoenix-admin-events", Table: "phoenix_admin_events", LedgerColumn: "ledger", Genesis: 51_572_016, MinGapSizeOverride: 100000000},
 	{Source: "phoenix-stake", Table: "phoenix_stake_events", LedgerColumn: "ledger", Genesis: 51_572_016, MinGapSizeOverride: 200000},
 	// aquarius-liquidity: deposit_liquidity / withdraw_liquidity are
 	// user-action-triggered and sparse (a few thousand events/month on

@@ -16,6 +16,14 @@ against.
 ## [Unreleased]
 
 ### Added
+- **Phoenix `admin` rotation events now project** to the new
+  `phoenix_admin_events` hypertable (migration 0132) — the four
+  `("XYK Pool: ", <phrase>)` steps mapped to slugs
+  (`replace_requested`/`replace_set`/`undo`/`accepted`), with the admin
+  address from the body when present. 0 mainnet occurrences to date —
+  built defensively so the first rotation lands rather than being
+  dropped. This completes the every-event projection pass across the
+  integrated AMMs (soroswap / aquarius / phoenix).
 - **Phoenix `initialize` events now project** to the new
   `phoenix_initialize` hypertable (migration 0131) — the two per-pool-
   deploy token announcements (`XYK LP token_a`/`token_b`), each carrying

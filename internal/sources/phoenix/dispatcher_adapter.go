@@ -125,12 +125,14 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		return d.decodeDistributeRewardsEvent(&ev, closedAt)
 	case actionInitialize:
 		return decodeInitializeEvent(&ev, fieldTopic, closedAt)
-	case actionUnknown, actionAdmin:
-		// Non-trade Phoenix actions (admin/unrecognised) — recognised so
-		// the dispatcher doesn't file them as unmatched, but they emit no
-		// projected row here. Explicit per the EVERY-event policy: a NEW
-		// phoenix action lands here and trips `exhaustive` until it's
-		// decided. (initialize is now projected — see above.)
+	case actionAdmin:
+		return decodeAdminEvent(&ev, fieldTopic, closedAt)
+	case actionUnknown:
+		// Unrecognised Phoenix action — recognised at the topic[0] level
+		// so the dispatcher doesn't file it as unmatched, but nothing to
+		// project. Explicit per the EVERY-event policy: a NEW phoenix
+		// action lands here and trips `exhaustive` until it's decided.
+		// (initialize + admin are now projected — see above.)
 		return nil, nil
 	}
 	return nil, nil
@@ -285,5 +287,36 @@ func decodeInitializeEvent(ev *events.Event, fieldTopic string, closedAt time.Ti
 		ObservedAt: closedAt,
 		TokenSlot:  slot,
 		Token:      token,
+	}}, nil
+}
+
+// decodeAdminEvent decodes a pool admin-rotation event into an
+// AdminEvent. The action slug comes from topic[1]; the admin address is
+// the event body when it carries one. DEFENSIVE — 0 occurrences on
+// mainnet, no lake sample confirms the exact body shape, so a
+// non-Address / absent body yields an empty Admin rather than an error
+// (the action + identity are still worth recording).
+func decodeAdminEvent(ev *events.Event, fieldTopic string, closedAt time.Time) ([]consumer.Event, error) {
+	slug, ok := adminActionByTopic[fieldTopic]
+	if !ok {
+		return nil, fmt.Errorf("%w: admin unrecognised rotation-phrase topic", ErrMalformedPayload)
+	}
+	// Best-effort admin address: parse the body as an Address when it is
+	// one; tolerate a void / other-shaped body (empty Admin).
+	var admin string
+	if sv, err := scval.Parse(ev.Value); err == nil {
+		if a, aerr := scval.AsAddressStrkey(sv); aerr == nil {
+			admin = a
+		}
+	}
+	return []consumer.Event{AdminEvent{
+		Pool:        ev.ContractID,
+		Ledger:      ev.Ledger,
+		TxHash:      ev.TxHash,
+		OpIndex:     uint32(ev.OperationIndex), //nolint:gosec // OperationIndex non-negative by Soroban spec.
+		EventIndex:  uint32(ev.EventIndex),     //nolint:gosec // EventIndex non-negative by Soroban spec.
+		ObservedAt:  closedAt,
+		AdminAction: slug,
+		Admin:       admin,
 	}}, nil
 }

@@ -456,7 +456,7 @@ func IsProjectedEvent(ev consumer.Event) bool {
 	case soroswap.TradeEvent, soroswap.SkimEvent, soroswap.LiquidityEvent,
 		aquarius.TradeEvent, aquarius.ReservesEvent, aquarius.LiquidityEvent,
 		aquarius.RewardsEvent, aquarius.AdminEvent, aquarius.FeeEvent, aquarius.KillEvent,
-		phoenix.TradeEvent, phoenix.LiquidityEvent, phoenix.StakeEvent, phoenix.InitializeEvent,
+		phoenix.TradeEvent, phoenix.LiquidityEvent, phoenix.StakeEvent, phoenix.InitializeEvent, phoenix.AdminEvent,
 		comet.TradeEvent, comet.LiquidityEvent,
 		reflector.UpdateEvent, redstone.UpdateEvent,
 		blend.NewAuctionEvent, blend.FillAuctionEvent, blend.DeleteAuctionEvent,
@@ -815,6 +815,8 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 		return persistPhoenixLiquidity(ctx, logger, store, e)
 	case phoenix.InitializeEvent:
 		return persistPhoenixInitialize(ctx, logger, store, e)
+	case phoenix.AdminEvent:
+		return persistPhoenixAdmin(ctx, logger, store, e)
 	case phoenix.StakeEvent:
 		return persistPhoenixStake(ctx, logger, store, e)
 	case comet.TradeEvent:
@@ -1989,6 +1991,30 @@ func persistPhoenixInitialize(ctx context.Context, logger *slog.Logger, store *t
 	logger.Debug("Phoenix initialize ingested",
 		"source", phoenix.SourceName, "pool", e.Pool, "ledger", e.Ledger,
 		"token_slot", e.TokenSlot, "token", e.Token)
+	return nil
+}
+
+func persistPhoenixAdmin(ctx context.Context, logger *slog.Logger, store *timescale.Store, e phoenix.AdminEvent) error {
+	if err := store.InsertPhoenixAdmin(ctx, timescale.PhoenixAdminEvent{
+		Pool:            e.Pool,
+		Ledger:          e.Ledger,
+		LedgerCloseTime: e.ObservedAt,
+		TxHash:          e.TxHash,
+		OpIndex:         e.OpIndex,
+		EventIndex:      e.EventIndex,
+		AdminAction:     e.AdminAction,
+		Admin:           e.Admin,
+	}); err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(phoenix.SourceName, "phoenix_admin_events").Inc()
+		logger.Error("insert Phoenix admin failed",
+			"pool", e.Pool, "ledger", e.Ledger, "tx_hash", e.TxHash,
+			"admin_action", e.AdminAction, "err", err)
+		return err
+	}
+	bumpEntryCount(ctx, logger, store, phoenix.SourceName)
+	logger.Debug("Phoenix admin ingested",
+		"source", phoenix.SourceName, "pool", e.Pool, "ledger", e.Ledger,
+		"admin_action", e.AdminAction, "admin", e.Admin)
 	return nil
 }
 
