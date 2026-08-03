@@ -86,8 +86,17 @@ groups:
                 lists the per-pair decisions with confidence + z-score.
               - `redis-cli KEYS 'freeze:*' | wc -l` — if this is 0
                 while the counter climbs, no marker is being written
-                (writer_wired=false in the log line) → no customer
-                impact, but the alert is still real signal.
+                (writer_wired=false in the log line). Do NOT read that
+                as "no customer impact": a freeze suppresses the VWAP
+                cache write and the SSE publish regardless of whether
+                the marker lands, so the pair is serving a pinned
+                last-known-good with flags.frozen=false. Since the
+                2026-08-03 fix the freeze step stands down entirely
+                when [anomaly] is disabled, so a marker-less freeze
+                now means the writer failed (Redis) rather than the
+                feature being half-wired — treat it as a real
+                customer-facing hold and check the aggregator log's
+                writer_wired field.
               - `SELECT COUNT(*) FROM freeze_events WHERE recovered_at IS NULL`
                 — durable mirror; should track Redis when both wire.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
