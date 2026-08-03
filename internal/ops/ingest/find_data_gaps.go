@@ -237,9 +237,61 @@ func writeFindDataGapsText(r findDataGapsReport) {
 				"      %2d  stellarindex-ops backfill --config /etc/stellarindex.toml --from %d --to %d --source sdex\n",
 				i+1, g.Start, g.End)
 		default:
+			// r.Source is the gap detector's per-TABLE target name,
+			// which is hyphenated (blend-backstop, sep41-transfers,
+			// soroswap-skim). projector-replay takes the projector
+			// SOURCE name, which is underscored — and only 11 of the
+			// ~42 targets happen to coincide. Emitting the raw target
+			// produced a command that silently did nothing (cold audit
+			// 2026-08-03: replay now refuses an unknown source, so a
+			// pasted command fails loudly rather than exiting 0). Map
+			// the ones we can and flag the rest for the operator.
+			src := projectorSourceForGapTarget(r.Source)
+			if src == "" {
+				_, _ = fmt.Fprintf(os.Stdout,
+					"      %2d  # target %q has no direct projector source — see internal/projector/registry.go\n"+
+						"          # for the source that writes this table, then:\n"+
+						"          # stellarindex-ops projector-replay --config /etc/stellarindex.toml --source <SOURCE> --from %d\n",
+					i+1, r.Source, g.Start)
+				continue
+			}
 			_, _ = fmt.Fprintf(os.Stdout,
 				"      %2d  stellarindex-ops projector-replay --config /etc/stellarindex.toml --source %s --from %d\n",
-				i+1, r.Source, g.Start)
+				i+1, src, g.Start)
 		}
 	}
+}
+
+// projectorSourceForGapTarget maps a gap-detector per-table target name
+// to the projector SOURCE that writes that table, or "" when the
+// mapping is not one-to-one.
+//
+// The two namespaces diverged: gap targets are per-table and hyphenated
+// (blend-backstop, blend-positions, aquarius-liquidity …) while
+// projector sources are per-decoder and underscored (blend_backstop,
+// blend, aquarius …). Several sources write multiple tables, so the
+// reverse direction is many-to-one; entries absent here get a manual
+// pointer rather than a wrong command.
+func projectorSourceForGapTarget(target string) string {
+	switch target {
+	case "blend-backstop":
+		return "blend_backstop"
+	case "blend-emitter":
+		return "blend_emitter"
+	case "blend-positions", "blend-auctions", "blend-admin", "blend-emissions":
+		return "blend"
+	case "sep41-transfers":
+		return "sep41_transfers"
+	case "sep41-supply":
+		return "sep41_supply"
+	case "aquarius-liquidity", "aquarius-reserves", "aquarius-rewards":
+		return "aquarius"
+	case "phoenix-stake", "phoenix-liquidity":
+		return "phoenix"
+	case "soroswap-skim", "soroswap-liquidity":
+		return "soroswap"
+	case "sorocredit-events":
+		return "sorocredit"
+	}
+	return ""
 }
