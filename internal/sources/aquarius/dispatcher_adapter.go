@@ -66,6 +66,8 @@ func (d *Decoder) Matches(ev events.Event) bool {
 	switch classify(&ev) {
 	case EventTrade, EventUpdateReserves, EventReservesSync, EventDepositLiquidity, EventWithdrawLiquidity,
 		EventSetProtocolFee, EventClaimProtocolFee,
+		EventKillDeposit, EventUnkillDeposit, EventKillSwap, EventUnkillSwap,
+		EventKillClaim, EventUnkillClaim, EventKillGaugesClaim, EventUnkillGaugesClaim,
 		EventPoolState, EventClaimReward, EventSetRewardsConfig, EventPositionUpdate,
 		EventGaugeDeposit, EventClaimFees, EventRewardsGaugeClaim, EventGaugeClaim,
 		EventRewardsGaugeScheduleReward, EventSetRewardsState, EventRewardsGaugeAdd:
@@ -133,6 +135,9 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		return []consumer.Event{rv}, nil
 	case EventSetProtocolFee, EventClaimProtocolFee:
 		return emitFee(&ev, closedAt, kind)
+	case EventKillDeposit, EventUnkillDeposit, EventKillSwap, EventUnkillSwap,
+		EventKillClaim, EventUnkillClaim, EventKillGaugesClaim, EventUnkillGaugesClaim:
+		return emitKill(&ev, closedAt, kind)
 	case EventDepositLiquidity:
 		lq, err := decodeLiquidity(&ev, LiquidityDeposit, closedAt)
 		if err != nil {
@@ -189,4 +194,21 @@ func emitFee(ev *events.Event, closedAt time.Time, kind string) ([]consumer.Even
 		return nil, err
 	}
 	return []consumer.Event{fe}, nil
+}
+
+// emitKill builds a KillEvent for a pool circuit-breaker toggle. These
+// events carry NO body (SCV_VOID) and a single topic, so there is
+// nothing to decode — the action (the classify() result) and the event
+// identity are the whole signal. Extracted from Decode to keep its
+// cognitive complexity under the gocognit ceiling.
+func emitKill(ev *events.Event, closedAt time.Time, kind string) ([]consumer.Event, error) {
+	return []consumer.Event{KillEvent{
+		ContractID: ev.ContractID,
+		Ledger:     ev.Ledger,
+		TxHash:     ev.TxHash,
+		OpIndex:    uint32(ev.OperationIndex), //nolint:gosec // OperationIndex non-negative by Soroban spec.
+		EventIndex: uint32(ev.EventIndex),     //nolint:gosec // EventIndex non-negative by Soroban spec.
+		ObservedAt: closedAt,
+		Action:     kind,
+	}}, nil
 }

@@ -258,6 +258,27 @@ func (FeeEvent) EventKind() string { return "aquarius.fee" }
 // Source implements [consumer.Event].
 func (FeeEvent) Source() string { return SourceName }
 
+// KillEvent is a pool circuit-breaker toggle — one of the eight
+// kill_/unkill_ actions an admin fires to pause / unpause a pool
+// operation. The event carries NO body (SCV_VOID) and a single topic;
+// it is fully identified by (contract, action, event identity). The
+// sink lands it in aquarius_kill_switches (migration 0130).
+type KillEvent struct {
+	ContractID string
+	Ledger     uint32
+	TxHash     string
+	OpIndex    uint32
+	EventIndex uint32
+	ObservedAt time.Time
+	Action     string // one of the eight EventKill*/EventUnkill* constants
+}
+
+// EventKind implements [consumer.Event].
+func (KillEvent) EventKind() string { return "aquarius.kill" }
+
+// Source implements [consumer.Event].
+func (KillEvent) Source() string { return SourceName }
+
 // Compile-time checks that the emitted types satisfy consumer.Event.
 var (
 	_ consumer.Event = TradeEvent{}
@@ -266,4 +287,5 @@ var (
 	_ consumer.Event = RewardsEvent{}
 	_ consumer.Event = AdminEvent{}
 	_ consumer.Event = FeeEvent{}
+	_ consumer.Event = KillEvent{}
 )
