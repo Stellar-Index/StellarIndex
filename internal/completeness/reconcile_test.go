@@ -314,6 +314,166 @@ func TestReDeriveOutputCounts_UnreconstructableRow(t *testing.T) {
 	}
 }
 
+// ─── recovered decoder PANIC == a blind spot, never a crash ─────
+
+// panicDecoder MATCHES every "MATCH" row and PANICS (rather than returning an
+// error) on rows in one specific ledger — the shape of a decoder that hits an
+// upgraded / historical WASM event shape it cannot parse. The projector
+// RECOVERS this exact panic in processEventSafely, drops the row, and advances
+// the cursor ("backfill sees every prior version"), so the served tier is
+// missing whatever that event would have produced. The re-derive — the
+// mechanism that exists to make such drops VISIBLE — must recover it the SAME
+// way (a blind spot); if it let the panic escape, the whole
+// compute-completeness run would crash before writing any completeness_snapshot
+// and EVERY source's verdict would freeze, hiding the loss behind a
+// crash-looping ops job.
+type panicDecoder struct{ panicLedger uint32 }
+
+func (panicDecoder) Matches(ev events.Event) bool { return ev.ContractID == "MATCH" }
+
+func (d panicDecoder) Decode(ev events.Event) ([]consumer.Event, error) {
+	if ev.Ledger == d.panicLedger {
+		panic("decode: nil-map read on upgraded WASM event shape")
+	}
+	return []consumer.Event{fakeOutput{}}, nil
+}
+
+// fakeEventStreamer feeds the ClickHouse-lake re-derive path
+// (ReDeriveOutputCountsByKindFromEvents), which streams events.Event directly
+// with no soroban_events Row round-trip.
+type fakeEventStreamer struct{ evs []events.Event }
+
+func (f fakeEventStreamer) StreamContractEvents(
+	_ context.Context, from, to uint32, _ []string, _ []string,
+	fn func(events.Event) error,
+) error {
+	for _, ev := range f.evs {
+		if ev.Ledger < from || ev.Ledger > to {
+			continue
+		}
+		if err := fn(ev); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func evAt(ledger uint32, contractID string, eventIndex int) events.Event {
+	return events.Event{
+		Ledger:         ledger,
+		ContractID:     contractID,
+		TxHash:         "tx",
+		OperationIndex: 0,
+		EventIndex:     eventIndex, // distinct so the CH-path adjacent-dup skip keeps each
+	}
+}
+
+// TestReDeriveOutputCounts_RecoversDecoderPanic proves the Postgres
+// soroban_events re-derive RECOVERS a decoder panic and records it as a blind
+// spot instead of propagating it. Without the safeDecode recover the panic
+// escapes ReDeriveOutputCounts and crashes the compute-completeness run — no
+// completeness_snapshot, projection_ok never flips false, the drop is invisible
+// and every source's verdict freezes. With it, the panic feeds the SAME
+// blind-spot path a returned decode error takes, so the loss is reported.
+func TestReDeriveOutputCounts_RecoversDecoderPanic(t *testing.T) {
+	const panicLedger uint32 = 101
+	s := fakeStreamer{rows: []sorobanevents.Row{
+		rowAt(100, "MATCH"),         // decodes normally → 1 output
+		rowAt(panicLedger, "MATCH"), // Decode PANICS → recovered as a blind spot
+		rowAt(panicLedger, "MATCH"), // Decode PANICS → recovered as a blind spot
+		rowAt(102, "MATCH"),         // decodes normally → 1 output
+	}}
+
+	// The load-bearing assertion is that this call RETURNS. Without the
+	// recover, the panic propagates out of ReDeriveOutputCounts and the test
+	// aborts here before any assertion runs (prove-red).
+	counts, blind, err := ReDeriveOutputCounts(
+		context.Background(), s, panicDecoder{panicLedger: panicLedger}, nil, nil, 100, 102)
+	if err != nil {
+		t.Fatalf("ReDeriveOutputCounts returned error: %v", err)
+	}
+
+	// A normal event still decodes — the recover is per-event, not a
+	// reconcile-wide abort.
+	if counts[100] != 1 || counts[102] != 1 {
+		t.Errorf("non-panicking ledgers = {100:%d,102:%d}, want {100:1,102:1}", counts[100], counts[102])
+	}
+	if counts[panicLedger] != 0 {
+		t.Errorf("panicking ledger contributed %d outputs, want 0", counts[panicLedger])
+	}
+
+	// The panic feeds the SAME blind-spot accounting a returned decode error
+	// does: two matched-but-undecodable rows on one ledger.
+	if !blind.Any() {
+		t.Fatal("recovered panic reported no blind spots: the drop would net to zero and certify the range complete")
+	}
+	if got, want := blind.UndecodableMatched, 2; got != want {
+		t.Errorf("UndecodableMatched = %d, want %d", got, want)
+	}
+	if got, want := blind.Unreconstructable, 0; got != want {
+		t.Errorf("Unreconstructable = %d, want %d", got, want)
+	}
+	if len(blind.Ledgers) != 1 || blind.Ledgers[0] != panicLedger {
+		t.Errorf("Ledgers = %v, want [%d]", blind.Ledgers, panicLedger)
+	}
+}
+
+// TestReDeriveOutputCountsByKind_RecoversDecoderPanic covers the multi-table
+// Postgres entry point (the compute-completeness Postgres branch + the
+// verify-reconciliation tool both call it), which had the same bare Decode.
+func TestReDeriveOutputCountsByKind_RecoversDecoderPanic(t *testing.T) {
+	const panicLedger uint32 = 200
+	s := fakeStreamer{rows: []sorobanevents.Row{
+		rowAt(199, "MATCH"),         // decodes normally → trade@199
+		rowAt(panicLedger, "MATCH"), // Decode PANICS → recovered as a blind spot
+	}}
+	byKind, blind, err := ReDeriveOutputCountsByKind(
+		context.Background(), s, panicDecoder{panicLedger: panicLedger}, nil, nil, 199, 200)
+	if err != nil {
+		t.Fatalf("ReDeriveOutputCountsByKind returned error: %v", err)
+	}
+	if byKind["trade"][199] != 1 {
+		t.Errorf("ledger 199 = %d trade outputs, want 1", byKind["trade"][199])
+	}
+	if byKind["trade"][panicLedger] != 0 {
+		t.Errorf("panicking ledger contributed %d outputs, want 0", byKind["trade"][panicLedger])
+	}
+	if got, want := blind.UndecodableMatched, 1; got != want {
+		t.Errorf("UndecodableMatched = %d, want %d", got, want)
+	}
+	if len(blind.Ledgers) != 1 || blind.Ledgers[0] != panicLedger {
+		t.Errorf("Ledgers = %v, want [%d]", blind.Ledgers, panicLedger)
+	}
+}
+
+// TestReDeriveOutputCountsByKindFromEvents_RecoversDecoderPanic covers the
+// ClickHouse-lake entry point — the one compute-completeness uses by default
+// (storage.clickhouse_projector_source). It had the same bare Decode.
+func TestReDeriveOutputCountsByKindFromEvents_RecoversDecoderPanic(t *testing.T) {
+	const panicLedger uint32 = 300
+	es := fakeEventStreamer{evs: []events.Event{
+		evAt(299, "MATCH", 0),         // decodes normally → trade@299
+		evAt(panicLedger, "MATCH", 0), // Decode PANICS → recovered as a blind spot
+	}}
+	byKind, blind, err := ReDeriveOutputCountsByKindFromEvents(
+		context.Background(), es, panicDecoder{panicLedger: panicLedger}, nil, nil, 299, 300)
+	if err != nil {
+		t.Fatalf("ReDeriveOutputCountsByKindFromEvents returned error: %v", err)
+	}
+	if byKind["trade"][299] != 1 {
+		t.Errorf("ledger 299 = %d trade outputs, want 1", byKind["trade"][299])
+	}
+	if byKind["trade"][panicLedger] != 0 {
+		t.Errorf("panicking ledger contributed %d outputs, want 0", byKind["trade"][panicLedger])
+	}
+	if got, want := blind.UndecodableMatched, 1; got != want {
+		t.Errorf("UndecodableMatched = %d, want %d", got, want)
+	}
+	if len(blind.Ledgers) != 1 || blind.Ledgers[0] != panicLedger {
+		t.Errorf("Ledgers = %v, want [%d]", blind.Ledgers, panicLedger)
+	}
+}
+
 // TestBlindSpots_LedgersSortedAndDeduped — Ledgers[0] is read as "the first
 // affected ledger" by the verdict detail, so ordering is load-bearing even
 // when the stream arrives out of order.
