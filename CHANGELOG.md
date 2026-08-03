@@ -16,6 +16,17 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **Dashboard API-key issuance was broken against Postgres** (cold
+  audit, HIGH — verified on r1): migration 0027 pinned
+  `api_keys.key_prefix` to the pre-rebrand `^rek_[a-f0-9]{8}$`, but
+  every minter emits `sip_` (`internal/auth/store.go`,
+  `dashboardkeys`), so every INSERT failed a `check_violation` and the
+  handler returned 500. r1's `api_keys` table holds 0 rows, consistent
+  with no key ever having been minted through this path. Migration
+  0133 widens the CHECK to `^(sip|rek)_[a-f0-9]{8}$` (legacy spelling
+  stays representable). The integration fixture that should have
+  caught this had itself been written with `rek_`, matching the stale
+  constraint rather than production — corrected to `sip_`.
 - **Archived-pool TTL verdicts no longer evicted by single-pool
   requests** (cold audit): the TTL-liveness verdict cache whole-map
   replaced its snapshot with the refreshing caller's key set — and
