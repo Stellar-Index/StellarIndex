@@ -10,6 +10,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/confidence"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -620,5 +621,45 @@ func TestTriangulate_HealthyLegStillPublishes(t *testing.T) {
 	}
 	if got != "0.900000000000" {
 		t.Errorf("target = %q, want 0.900000000000 (1.00 × 0.90)", got)
+	}
+}
+
+// An UNSCORABLE edge must never outrank a fully-scored one. The
+// unscored fallback is a bare source-count factor (0.731 at 4 sources,
+// 0.953 at 6) on a different scale from the multi-factor score, and
+// uncapped it cleared the reroute + corroboration gates (both 0.5) that
+// a scored edge only ties — so edges with no z-score, no liquidity
+// measure and no cross-oracle check were the ones setting composites
+// and widening the freeze's source-count leg (cold audit 2026-08-03).
+func TestEdgeConfidence_UnscoredFallbackCannotOutrankAScoredEdge(t *testing.T) {
+	t.Parallel()
+
+	sixSourceTrades := make([]canonical.Trade, 0, 6)
+	for i, src := range []string{"a", "b", "c", "d", "e", "f"} {
+		sixSourceTrades = append(sixSourceTrades, canonical.Trade{
+			Source: src,
+			Ledger: uint32(i + 1),
+		})
+	}
+
+	unscored := edgeConfidence(confidenceComputation{}, false, sixSourceTrades)
+	if unscored > confidence.BootstrapConfidenceCap {
+		t.Fatalf("unscored 6-source edge confidence = %v, want <= %v — an edge the scorer "+
+			"COULD NOT score must not outrank one it did",
+			unscored, confidence.BootstrapConfidenceCap)
+	}
+
+	// Ranking below the cap is preserved: fewer sources still reads lower.
+	oneSource := edgeConfidence(confidenceComputation{}, false, sixSourceTrades[:1])
+	if !(oneSource < unscored) {
+		t.Errorf("single-source unscored (%v) must rank below six-source unscored (%v)", oneSource, unscored)
+	}
+
+	// A scored edge passes through untouched.
+	scored := edgeConfidence(confidenceComputation{
+		Score: confidence.Score{Confidence: 0.42},
+	}, true, sixSourceTrades)
+	if scored != 0.42 {
+		t.Errorf("scored edge confidence = %v, want the score verbatim (0.42)", scored)
 	}
 }

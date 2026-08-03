@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"time"
 
@@ -460,11 +461,27 @@ func (o *Orchestrator) recordEdgeQuote(
 // (the same [confidence.SourceCountFactor] the score itself uses). No
 // new formula; a single-source edge still reads as low-confidence so it
 // cannot set a confident cross.
+//
+// The unscored fallback is capped at [confidence.BootstrapConfidenceCap].
+// An edge reaches it precisely when the scorer COULDN'T run — no
+// baseline row, first tick after a restart, no prior comparator — which
+// is the state the scorer itself treats as stricter than bootstrap (a
+// negative BaselineAgeDays sentinel caps the score). Uncapped, a bare
+// source-count factor (0.731 at 4 sources, 0.953 at 6) OUTRANKED every
+// fully-scored edge and cleared both the reroute and corroboration
+// gates that a scored edge only ties — so the least-evidenced edges,
+// with no z-score, no liquidity measure and no cross-oracle check, were
+// the ones setting composites and widening the freeze's source-count
+// leg (cold audit 2026-08-03). Ranking among unscorable edges is
+// preserved below the cap.
 func edgeConfidence(conf confidenceComputation, confOK bool, trades []canonical.Trade) float64 {
 	if confOK {
 		return conf.Score.Confidence
 	}
-	return confidence.SourceCountFactor(distinctSourceCount(trades))
+	return math.Min(
+		confidence.SourceCountFactor(distinctSourceCount(trades)),
+		confidence.BootstrapConfidenceCap,
+	)
 }
 
 // compositeMeta is the router quality decomposition carried alongside a

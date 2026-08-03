@@ -16,6 +16,23 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **An unscorable router edge can no longer outrank a fully-scored one**
+  (cold audit): when the confidence scorer couldn't run (no baseline
+  row, first tick after a restart, no prior comparator), `edgeConfidence`
+  fell back to a bare source-count factor — 0.731 at four sources, 0.953
+  at six — on a different scale from the multi-factor score and not
+  subject to the bootstrap cap. Those least-evidenced edges cleared both
+  the reroute and corroboration gates (0.5) that fully-scored edges only
+  tie, so an edge with no z-score, no liquidity measure and no
+  cross-oracle check could set a composite price and widen the freeze's
+  source-count leg. The fallback is now capped at the same bootstrap
+  ceiling the scorer applies when it has no baseline; ranking among
+  unscorable edges is preserved.
+- **Docs: the anomaly-freeze alert no longer tells the on-call an empty
+  `freeze:*` keyspace means no customer impact.** A freeze suppresses
+  the VWAP cache write and the SSE publish whether or not the marker
+  lands, so the pair serves a pinned last-known-good with
+  `flags.frozen=false`. Corrected in both rule trees.
 - **Usage rollup no longer double-counts a closed day when Redis SCAN
   repeats a key** (cold audit): `ScanDetail` had no dedup, so a rehash
   mid-cursor (routine — this Redis is shared with the rate limiter's
