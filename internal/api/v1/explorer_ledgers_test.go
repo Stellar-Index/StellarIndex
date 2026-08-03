@@ -106,7 +106,7 @@ func (s *stubExplorerReader) EventsByTx(_ context.Context, _ uint32, _ string) (
 	return s.events, s.err
 }
 
-func (s *stubExplorerReader) ContractEventsRecent(_ context.Context, _ string, _ int, _ clickhouse.ExplorerCursor) ([]clickhouse.ContractActivityRow, error) {
+func (s *stubExplorerReader) ContractEventsRecent(_ context.Context, _ string, _ int, _ clickhouse.ContractEventsCursor) ([]clickhouse.ContractActivityRow, error) {
 	return s.contractEvents, s.err
 }
 
@@ -342,7 +342,8 @@ func TestExplorer_ContractDetail(t *testing.T) {
 	}}
 	base := explorerTestServer(t, reader)
 	// limit=2 makes this a FULL page (n==limit) so a next_cursor is emitted —
-	// the composite (ledger, op_index, event_index) of the last (oldest) row.
+	// the full row-identity composite (ledger, tx_hash, op_index, event_index)
+	// of the last (oldest) row.
 	resp := mustGet(t, base+"/v1/contracts/"+cid+"?limit=2")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
@@ -354,7 +355,7 @@ func TestExplorer_ContractDetail(t *testing.T) {
 	if body.Data.ContractID != cid || len(body.Data.Events) != 2 {
 		t.Fatalf("detail = %+v", body.Data)
 	}
-	if body.Data.Events[0].Topic0 != "transfer" || body.Data.NextCursor != "62999000.0.0" {
+	if body.Data.Events[0].Topic0 != "transfer" || body.Data.NextCursor != "62999000.def.0.0" {
 		t.Errorf("events/cursor = %+v next=%q", body.Data.Events, body.Data.NextCursor)
 	}
 }
@@ -363,6 +364,22 @@ func TestExplorer_ContractDetail_InvalidID(t *testing.T) {
 	base := explorerTestServer(t, &stubExplorerReader{})
 	if resp := mustGet(t, base+"/v1/contracts/notacontract"); resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+// The contract-activity cursor must carry the tx_hash discriminator: the
+// legacy 3-part (ledger, op_index, event_index) tuple is not unique
+// (single-op txs all tie at 0.0) and paging on it permanently skipped tied
+// rows (cold audit 2026-08-03). A 4-part cursor round-trips; the legacy
+// 3-part form is rejected as invalid rather than silently mis-paged.
+func TestExplorer_ContractDetail_CursorRequiresTxHash(t *testing.T) {
+	const cid = "CAM7DY53G63XA4AJRS24Z6VFYAFSSF76C3RZ45BE5YU3FQS5255OOABP"
+	base := explorerTestServer(t, &stubExplorerReader{})
+	if resp := mustGet(t, base+"/v1/contracts/"+cid+"?cursor=62999000.def.0.0"); resp.StatusCode != http.StatusOK {
+		t.Errorf("4-part cursor: status = %d, want 200", resp.StatusCode)
+	}
+	if resp := mustGet(t, base+"/v1/contracts/"+cid+"?cursor=62999000.0.0"); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("legacy 3-part cursor: status = %d, want 400", resp.StatusCode)
 	}
 }
 

@@ -16639,7 +16639,7 @@
               "request": {
                 "name": "Per-contract recent on-chain event activity.",
                 "description": {
-                  "content": "A contract's most-recent emitted events (newest first), keyset-paged\nwith `?cursor=<opaque>` (echo back the response's `next_cursor`). The\ncursor is the composite `(ledger, op_index, event_index)` — a\nledger-only cursor would silently drop the rest of a ledger in which a\nbusy contract emits more than `limit` events. `next_cursor` is present\nonly when a full page is returned. The SEP-41 transfer audit trail is at\nthe sibling `/contracts/{contract_id}/transfers`.\n",
+                  "content": "A contract's most-recent emitted events (newest first), keyset-paged\nwith `?cursor=<opaque>` (echo back the response's `next_cursor`). The\ncursor is the full row-identity composite\n`(ledger, tx_hash, op_index, event_index)` — anything less is not\nunique (single-operation transactions dominate, so events from\ndifferent transactions in one ledger tie on the shorter tuple) and\nwould drop rows at a page boundary. `next_cursor` is present only when\na full page is returned. The SEP-41 transfer audit trail is at the\nsibling `/contracts/{contract_id}/transfers`.\n",
                   "type": "text/plain"
                 },
                 "url": {

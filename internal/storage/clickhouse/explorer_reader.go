@@ -299,8 +299,19 @@ func (r *ExplorerReader) RecentLedgers(ctx context.Context, limit int, beforeSeq
 	q := `SELECT ` + ledgerCols + ` FROM stellar.ledgers FINAL`
 	args := []any{}
 	if beforeSeq > 0 {
-		q += ` WHERE ledger_seq < ?`
-		args = append(args, beforeSeq)
+		// Bound the cursor page to the same tail-window width the tip
+		// branch uses — without a lower bound this was the exact
+		// unbounded whole-table FINAL merge the tip branch was rewritten
+		// to avoid (O(table), caller-controlled via public ?before=).
+		// Ledgers are contiguous genesis→tip, so a window ≥ 25× the max
+		// page size can never truncate a legitimate page. Clamp at 0:
+		// uint32 underflow near genesis would wrap and return nothing.
+		lower := uint32(0)
+		if beforeSeq > uint32(recentLedgersTailWindow) {
+			lower = beforeSeq - uint32(recentLedgersTailWindow)
+		}
+		q += ` WHERE ledger_seq < ? AND ledger_seq >= ?`
+		args = append(args, beforeSeq, lower)
 	} else {
 		// Tip query (the explorer's hot path — it backs "Total XLM", base fee
 		// and the latest-ledger line). Without a lower bound this is
@@ -314,7 +325,7 @@ func (r *ExplorerReader) RecentLedgers(ctx context.Context, limit int, beforeSeq
 		q += ` WHERE ledger_seq > (SELECT max(ledger_seq) FROM stellar.ledgers) - ?`
 		args = append(args, uint32(recentLedgersTailWindow))
 	}
-	q += ` ORDER BY ledger_seq DESC LIMIT ?`
+	q += ` ORDER BY ledger_seq DESC LIMIT ?` + explorerScanSettings
 	args = append(args, limit)
 
 	rows, err := r.conn.Query(ctx, q, args...)
@@ -698,6 +709,25 @@ type ExplorerCursor struct {
 // IsSet reports whether the cursor points past the newest row (i.e. this is a
 // continuation page, not the first page).
 func (c ExplorerCursor) IsSet() bool { return c.Ledger > 0 }
+
+// ContractEventsCursor is the keyset position for ContractEventsRecent. It
+// carries the FULL row-identity tuple — (ledger_seq, tx_hash, op_index,
+// event_index), the table's own ORDER BY key — because the 3-part
+// (ledger, op_index, event_index) tuple is NOT unique: op_index/event_index
+// are per-transaction (single-op txs dominate, so nearly every token event
+// sits at (L, 0, 0)), and a strict `<` over the non-unique 3-tuple
+// permanently skipped every never-served row that tied with a page's last
+// row (cold audit 2026-08-03). Same shape as AccountMovements' 4-part
+// cursor.
+type ContractEventsCursor struct {
+	Ledger     uint32 // ledger_seq — primary sort key (DESC)
+	TxHash     string // 64-char hex — tie-break within a ledger (DESC, lexicographic)
+	OpIndex    uint32
+	EventIndex uint32
+}
+
+// IsSet reports whether the cursor points past the newest row.
+func (c ContractEventsCursor) IsSet() bool { return c.Ledger > 0 }
 
 // accountTransactionsQuery builds AccountTransactions' SQL.
 //
@@ -1337,9 +1367,11 @@ func contractEventsRecentQuery(hasCursor bool) string {
 			topics_xdr, data_xdr
 		FROM stellar.contract_events WHERE contract_id = ?`
 	if hasCursor {
-		q += ` AND (ledger_seq, op_index, event_index) < (?, ?, ?)`
+		// Full row-identity tuple — see ContractEventsCursor: the 3-part
+		// (ledger_seq, op_index, event_index) predicate skipped tied rows.
+		q += ` AND (ledger_seq, tx_hash, op_index, event_index) < (?, ?, ?, ?)`
 	}
-	return q + ` ORDER BY ledger_seq DESC, op_index DESC, event_index DESC` +
+	return q + ` ORDER BY ledger_seq DESC, tx_hash DESC, op_index DESC, event_index DESC` +
 		` LIMIT 1 BY ledger_seq, tx_hash, op_index, event_index LIMIT ?` + explorerScanSettings
 }
 
@@ -1349,17 +1381,19 @@ func contractEventsRecentQuery(hasCursor bool) string {
 // otherwise full-scan). NOT FINAL — FINAL would defeat the skip-index; the
 // RMT duplicate-part over-count is instead collapsed by the LIMIT 1 BY
 // primary-key dedup in contractEventsRecentQuery (audit W4-storage-1).
-// A set cursor keyset-pages to older events by the composite
-// (ledger_seq, op_index, event_index) — a contract can emit many events in one
-// ledger, so a ledger-only cursor would drop the rest of a straddled ledger.
-func (r *ExplorerReader) ContractEventsRecent(ctx context.Context, contractID string, limit int, cur ExplorerCursor) ([]ContractActivityRow, error) {
+// A set cursor keyset-pages to older events by the full row-identity
+// composite (ledger_seq, tx_hash, op_index, event_index) — a contract can
+// emit many events in one ledger (and across many single-op txs that all
+// tie at op_index=0/event_index=0), so anything less than the full tuple
+// drops rows at a page boundary.
+func (r *ExplorerReader) ContractEventsRecent(ctx context.Context, contractID string, limit int, cur ContractEventsCursor) ([]ContractActivityRow, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
 	q := contractEventsRecentQuery(cur.IsSet())
 	args := []any{contractID}
 	if cur.IsSet() {
-		args = append(args, cur.Ledger, cur.A, cur.B)
+		args = append(args, cur.Ledger, cur.TxHash, cur.OpIndex, cur.EventIndex)
 	}
 	args = append(args, limit)
 

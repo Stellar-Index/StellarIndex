@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/classicmovements"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -67,14 +68,16 @@ const (
 // parseMovementFilter reads the optional ?kind= / ?direction= /
 // ?asset= query params. direction, when present, must be one of
 // clickhouse's three AccountMovementDirection values — ok=false
-// (after a problem+json) otherwise. kind/asset are free-form (matched
-// as exact-equality filters against whatever movement_kind/asset
-// values the two backing stores hold; an unrecognized kind is not an
-// error, just a filter that matches nothing).
+// (after a problem+json) otherwise. kind is free-form (matched as an
+// exact-equality filter; an unrecognized kind is not an error, just a
+// filter that matches nothing). asset is normalized to the canonical
+// spelling the stores hold when it parses as an asset id, and passed
+// through verbatim otherwise (the movements asset domain is wider
+// than ParseAsset's: pool:<hex> legs, raw C… contract ids).
 func (h *Handler) parseMovementFilter(w http.ResponseWriter, r *http.Request) (clickhouse.AccountMovementFilter, bool) {
 	f := clickhouse.AccountMovementFilter{
 		Kind:  r.URL.Query().Get("kind"),
-		Asset: r.URL.Query().Get("asset"),
+		Asset: normalizeMovementAssetFilter(r.URL.Query().Get("asset")),
 	}
 	if dir := r.URL.Query().Get("direction"); dir != "" {
 		switch clickhouse.AccountMovementDirection(dir) {
@@ -88,6 +91,29 @@ func (h *Handler) parseMovementFilter(w http.ResponseWriter, r *http.Request) (c
 		}
 	}
 	return f, true
+}
+
+// normalizeMovementAssetFilter folds a ?asset= value to the canonical
+// spelling the movement stores hold ("native" / "CODE-ISSUER"): the CH
+// side filters `asset = ?` in SQL against canonical spellings, so
+// "XLM", "crypto:XLM" and Horizon-style "USDC:G…" would otherwise
+// exact-match nothing and serve an authoritative-looking empty feed
+// (XLM dual-form rule; the AssetHolders handler normalizes for exactly
+// this reason). Values that don't parse as an asset id pass through
+// verbatim — the movements domain also filters on pool:<hex> legs and
+// raw C… contract ids, which must not 400.
+func normalizeMovementAssetFilter(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	parsed, err := canonical.ParseAsset(raw)
+	if err != nil {
+		return raw
+	}
+	if isNativeHoldersAsset(parsed) {
+		return canonical.NativeAsset().String()
+	}
+	return parsed.String()
 }
 
 // movementCursorParts is the (ledger, tx_hash, op_index, leg_index)
@@ -344,12 +370,36 @@ func (h *Handler) mapSEP41RowsToMovements(ctx context.Context, address string, r
 // asset it impersonated.
 func (h *Handler) resolveSEP41MovementAsset(ctx context.Context, contractID string) string {
 	if name, ok, err := h.Reader.SACClassicAssetName(ctx, contractID); err == nil && ok {
-		return name
+		// The instance METADATA name is colon form ("USDC:GA5Z…", exactly
+		// as the CAP-67 topic carries it) — normalize to the canonical
+		// dash form the CH side of the merge stores, so one ?asset= value
+		// matches both sides and the response's asset field doesn't flip
+		// spelling across the P23 boundary (cold audit 2026-08-03). An
+		// unparseable name passes through verbatim (status quo).
+		return canonicalizeSACName(name)
 	}
 	if name, ok := h.sacAssetViaEvents(ctx, contractID); ok {
-		return name
+		return name // already canonical — asset.String()
 	}
 	return contractID
+}
+
+// canonicalizeSACName folds a SAC instance-METADATA asset name
+// ("native" / "CODE:ISSUER") to the canonical asset_id spelling
+// ("native" / "CODE-ISSUER"). Unparseable input returns unchanged.
+func canonicalizeSACName(name string) string {
+	if name == "native" {
+		return canonical.NativeAsset().String()
+	}
+	code, issuer, ok := strings.Cut(name, ":")
+	if !ok {
+		return name
+	}
+	asset, err := canonical.NewClassicAsset(code, issuer)
+	if err != nil {
+		return name
+	}
+	return asset.String()
 }
 
 // assertP23NonOverlap is ADR-0048 D5's "assert [the non-overlap] in

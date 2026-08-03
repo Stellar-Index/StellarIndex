@@ -121,7 +121,7 @@ type ExplorerReader interface {
 	OperationsByTx(ctx context.Context, seq uint32, hash string) ([]clickhouse.OpRow, error)
 	OperationResultsByTx(ctx context.Context, seq uint32, hash string) (map[uint32]int32, error)
 	EventsByTx(ctx context.Context, seq uint32, hash string) ([]clickhouse.EventSummary, error)
-	ContractEventsRecent(ctx context.Context, contractID string, limit int, cur clickhouse.ExplorerCursor) ([]clickhouse.ContractActivityRow, error)
+	ContractEventsRecent(ctx context.Context, contractID string, limit int, cur clickhouse.ContractEventsCursor) ([]clickhouse.ContractActivityRow, error)
 	ContractWasm(ctx context.Context, contractID string) (clickhouse.ContractWasmInfo, error)
 	RecentContracts(ctx context.Context, limit int, sinceLedger uint32) ([]clickhouse.ContractDirectoryRow, error)
 	ContractInteractions(ctx context.Context, contractID string, limit int, sinceLedger uint32) ([]clickhouse.ContractEdgeRow, error)
