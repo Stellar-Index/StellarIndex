@@ -35,10 +35,10 @@ type stubExplorerReader struct {
 	// tokenDisplaysErr fails ONLY TokenDisplays, so tests can exercise a
 	// display-lookup outage while the reserve read itself succeeds.
 	tokenDisplaysErr error
-	nativeLPStates map[string]clickhouse.NativeLiquidityPoolState
-	nativeLPRanked []clickhouse.NativeLiquidityPoolState
-	movements      []clickhouse.AccountMovementRow
-	err            error
+	nativeLPStates   map[string]clickhouse.NativeLiquidityPoolState
+	nativeLPRanked   []clickhouse.NativeLiquidityPoolState
+	movements        []clickhouse.AccountMovementRow
+	err              error
 }
 
 func (s *stubExplorerReader) RecentLedgers(_ context.Context, _ int, _ uint32) ([]clickhouse.LedgerHeader, error) {

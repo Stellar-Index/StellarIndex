@@ -73,6 +73,29 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 		return fmt.Errorf("ch-reproject: reconciliation catalogue: %w", err)
 	}
 
+	// Factory-anchored sources (ADR-0035): seed each gate registry from
+	// the factory's creation events in [genesis, lo) BEFORE the
+	// re-derive, exactly as verify-reconciliation and
+	// compute-completeness already do. Without it a source whose
+	// decoder carries no in-code curated set — blend is the only one —
+	// re-derives 0 rows for any window above its factory deploys, which
+	// reads as a bogus delta here and as a silently-empty arm in
+	// ch-rebuild -write (cold audit 2026-08-03). Read-only, idempotent,
+	// and a no-op for the 20+ non-factory sources.
+	//
+	// Caveat carried from the sibling call sites: preseedFactoryChildren
+	// walks the Postgres soroban_events landing zone, which is
+	// decommission-pending (#39); a CH-native preseed is the durable fix
+	// for all four callers.
+	for _, src := range cat {
+		if len(src.factories) == 0 {
+			continue
+		}
+		if perr := preseedFactoryChildren(ctx, store, src, lo); perr != nil {
+			return fmt.Errorf("%s: preseed factory children: %w", src.name, perr)
+		}
+	}
+
 	// ─── ClickHouse side: one pass, every event-based decoder per event ──
 	fmt.Fprintf(os.Stderr, "ch-reproject: re-deriving [%d,%d] from ClickHouse %s\n", lo, hi, *chAddr)
 	// Bucket per SOURCE then kind: the 3 reflector variants all emit the same

@@ -16,6 +16,18 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **`ch-rebuild` / `ch-reproject` now preseed factory-anchored gates**
+  (cold audit): both built the reconciliation catalogue but skipped the
+  `preseedFactoryChildren` walk that `verify-reconciliation` and
+  `compute-completeness` perform, so blend — the only gated source with
+  no in-code curated set — re-derived 0 rows for any window above its
+  factory deploys. That surfaced as a bogus delta in `ch-reproject` and
+  a silently-empty blend arm in `ch-rebuild -write`. Also corrected
+  three comments (in `backfill.go` and both blend arms of
+  `BuildDispatcher`) that justified running gated decoders with an empty
+  registry on the grounds that projected output "is dropped by
+  `IsProjectedEvent` anyway" — false, because those callers persist with
+  `SinkModeAll`, which discards nothing.
 - **`stellarindex-ops supply audit -cross-check` no longer reports a
   guaranteed failure on healthy data** (cold audit): the CLI ran the
   strict ADR-0011 equality compare unconditionally, never dispatching on
