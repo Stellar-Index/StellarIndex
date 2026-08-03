@@ -38,6 +38,19 @@ import (
 // Skipped silently when DivergenceRefresher or Windows is nil/empty
 // (operator config / launch order).
 func (o *Orchestrator) refreshDivergenceAll(ctx context.Context, now time.Time) {
+	// The divergence cross-check is a SECONDARY, best-effort guard; a
+	// panic in it (or the references it fans out to) must never crash the
+	// aggregator and take the PRIMARY VWAP refresh down with it. Contain
+	// it here so the panic path matches the "best-effort, never abort the
+	// tick" contract the caller (Tick) already documents — before this,
+	// a panic propagated through Tick→Run and crash-looped the process
+	// (audit 2026-08-03). Compare already recovers per-reference
+	// goroutine panics; this covers the outer per-pair loop.
+	defer func() {
+		if r := recover(); r != nil {
+			o.logger.Error("divergence refresh panicked; VWAP tick protected", "panic", r)
+		}
+	}()
 	if o.cfg.DivergenceRefresher == nil || len(o.cfg.Windows) == 0 {
 		return
 	}
