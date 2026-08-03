@@ -439,13 +439,22 @@ func (s *Server) parseAndValidateSignup(w http.ResponseWriter, r *http.Request) 
 			"the signup body must include an 'email' field")
 		return signupRequest{}, false
 	}
-	if _, err := mail.ParseAddress(req.Email); err != nil {
+	addr, err := mail.ParseAddress(req.Email)
+	if err != nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-email",
 			"Invalid email", http.StatusBadRequest,
 			"the email field could not be parsed as a valid address")
 		return signupRequest{}, false
 	}
+	// Keep the parsed addr-spec, not the raw input. ParseAddress accepts
+	// the RFC-5322 display-name forms (`<a@b.com>`, `"n" <a@b.com>`), and
+	// discarding its result meant every spelling of one inbox hashed to a
+	// DIFFERENT signup identifier — so the duplicate-signup guard (and the
+	// per-email reservation behind it) was bypassable by re-spelling the
+	// address, minting unlimited identities per inbox (cold audit
+	// 2026-08-03).
+	req.Email = strings.ToLower(strings.TrimSpace(addr.Address))
 
 	if len(req.Label) > 128 {
 		writeProblem(w, r,

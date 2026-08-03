@@ -106,6 +106,13 @@ type Subject struct {
 	// header's host must exactly match one entry or the request
 	// is rejected with 403. Populated like IPAllowlist; empty
 	// disables the check. F-1226 (codex audit-2026-05-12).
+	//
+	// NOT a theft control. `Referer` is fully client-settable, so
+	// anyone holding a stolen key sends whatever host the list
+	// wants; this only constrains BROWSERS embedding the key, which
+	// is a scoping convenience for the key's owner. IPAllowlist is
+	// the sibling that IS a control — it uses the trusted-proxy-
+	// resolved address, which the caller cannot forge.
 	RefererAllowlist []string
 
 	// AllowAllPermissions — if true, the per-endpoint permission

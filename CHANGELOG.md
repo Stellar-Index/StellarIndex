@@ -16,6 +16,16 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **The magic-link and signup per-email caps are no longer bypassable by
+  re-spelling the address** (cold audit): both hashed the raw input after
+  only case+trim, so `victim@x.com`, `<victim@x.com>` and
+  `"name" <victim@x.com>` were three independent throttle buckets that all
+  deliver to one inbox — defeating the inbox-bombing cap the throttle
+  exists for, and letting one inbox mint unlimited signup identities past
+  the duplicate guard. `hashEmail` now canonicalises to the RFC-5322
+  addr-spec (falling back to case+trim when unparseable, which is no worse
+  than before), and signup keeps `mail.ParseAddress`'s result instead of
+  discarding it.
 - **An unscorable router edge can no longer outrank a fully-scored one**
   (cold audit): when the confidence scorer couldn't run (no baseline
   row, first tick after a restart, no prior comparator), `edgeConfidence`
