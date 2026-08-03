@@ -186,6 +186,29 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	if cerr != nil {
 		return fmt.Errorf("ch-rebuild: reconciliation catalogue: %w", cerr)
 	}
+
+	// Factory-anchored sources (ADR-0035): seed each gate registry from
+	// the factory's creation events in [genesis, lo) BEFORE the
+	// re-derive, exactly as verify-reconciliation and
+	// compute-completeness already do. Without it a source whose
+	// decoder carries no in-code curated set — blend is the only one —
+	// re-derives 0 rows for any window above its factory deploys, which
+	// reads as a bogus delta here and as a silently-empty arm in
+	// ch-rebuild -write (cold audit 2026-08-03). Read-only, idempotent,
+	// and a no-op for the 20+ non-factory sources.
+	//
+	// Caveat carried from the sibling call sites: preseedFactoryChildren
+	// walks the Postgres soroban_events landing zone, which is
+	// decommission-pending (#39); a CH-native preseed is the durable fix
+	// for all four callers.
+	for _, src := range cat {
+		if len(src.factories) == 0 {
+			continue
+		}
+		if perr := preseedFactoryChildren(ctx, store, src, lo); perr != nil {
+			return fmt.Errorf("%s: preseed factory children: %w", src.name, perr)
+		}
+	}
 	// ch-rebuild manages sep41_transfers/sep41_supply itself via the
 	// dedicated -sep41 pass below (its own contract-prefiltered CH read,
 	// its own decoder instances, its own written-count bookkeeping) rather

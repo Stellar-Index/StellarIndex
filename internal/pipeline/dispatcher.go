@@ -167,9 +167,14 @@ func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[strin
 			// Blend gates Matches() on contract identity (ADR-0035):
 			// `deploy` only from the Pool Factory, every other event only
 			// from a factory-deployed pool. The pool registry is warmed
-			// from protocol_contracts via gated[blend] (empty when this
-			// path doesn't warm — e.g. backfill, where blend output is
-			// dropped by IsProjectedEvent anyway).
+			// from protocol_contracts via gated[blend]. When a caller
+			// passes no gate (e.g. stellarindex-ops backfill) the
+			// registry is EMPTY and blend matches nothing above its
+			// factory deploys — note this is a silent no-op, NOT
+			// "output that would be dropped anyway" as this comment
+			// previously claimed; that caller persists with
+			// SinkModeAll, which discards nothing (cold audit
+			// 2026-08-03).
 			decoders = append(decoders, blend.NewDecoder(gated[blend.SourceName]...))
 		case blend_backstop.SourceName:
 			// Blend Backstop — stateless topic Decoder gated on the two
@@ -187,9 +192,11 @@ func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[strin
 			// shape, same symbol — see
 			// internal/sources/blend_emitter/README.md). The pool
 			// registry is warmed from protocol_contracts via
-			// gated[blend_emitter] (empty when this path doesn't warm
-			// — e.g. backfill, where the output is dropped by
-			// IsProjectedEvent anyway).
+			// gated[blend_emitter]. An unwarmed caller (e.g.
+			// stellarindex-ops backfill) keeps only the in-code curated
+			// set and silently drops anything registered since — the
+			// output is NOT "dropped by IsProjectedEvent anyway", since
+			// that caller uses SinkModeAll (cold audit 2026-08-03).
 			decoders = append(decoders, blend_emitter.NewDecoder(gated[blend_emitter.SourceName]...))
 		case cctp.SourceName:
 			// Circle CCTP v2 — stateless topic Decoder, gated on the

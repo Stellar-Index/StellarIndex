@@ -314,11 +314,35 @@ func buildChunkDispatcher(
 			return nil, nil, fmt.Errorf("soroswap registry: %w", err)
 		}
 	}
-	// gated=nil: backfill writes the raw soroban_events landing + the
-	// non-projected sinks; the projected sources' (blend, …) decoder output
-	// is dropped by pipeline.IsProjectedEvent, so an empty gate registry
-	// here only suppresses output that would be discarded anyway. The
-	// projector is the sole writer of those tables and warms its own gate.
+	// gated=nil: backfill runs every gated decoder with an EMPTY identity
+	// registry.
+	//
+	// The previous rationale here — that projected sources' output "is
+	// dropped by pipeline.IsProjectedEvent, so an empty gate only
+	// suppresses output that would be discarded anyway" — was FALSE, and
+	// the correction matters: this function persists with
+	// pipeline.SinkModeAll (see PersistEvents below), and skipInSink
+	// returns false for SinkModeAll, so NOTHING is discarded. Gated
+	// output would have been written.
+	//
+	// The live consequence is a silent no-op rather than corruption.
+	// Blend is the only gated source with no in-code curated seed (its
+	// decoder installs WithFactories alone), so above its factory
+	// deploys Matches() rejects every pool event and a blend backfill
+	// writes ZERO blend_* rows and still exits 0. Sources carrying an
+	// in-code MainnetGatedSet (aquarius / phoenix / comet / defindex /
+	// blend_emitter) keep that set, but lose every child that exists
+	// only in protocol_contracts — live-registered aquarius pools,
+	// self-registered defindex strategies, any operator-admitted comet
+	// pool (cold audit 2026-08-03).
+	//
+	// Warming the gate here is deliberately NOT done as a drive-by: it
+	// would make this command write directly into the projector's
+	// exclusive tables (ADR-0031/0032, CLAUDE.md invariant 7). The
+	// ADR-consistent catch-up for projected sources is
+	// `stellarindex-ops projector-replay` / `projected-rebuild`, which
+	// warms the gate correctly. Refusing projected sources outright here
+	// is the other candidate; both are maintainer decisions.
 	disp, err := pipeline.BuildDispatcher(realSources, cfg.Oracle, nil, soroswapOpts...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("build dispatcher: %w", err)
