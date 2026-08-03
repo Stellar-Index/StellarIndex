@@ -46,6 +46,14 @@ against.
   misleading "guard always wired" comments.
 
 ### Fixed
+- **Phoenix multi-hop swap correlation is now contract-scoped** (phoenix audit) —
+  the 8-events-per-swap reassembly buffer was keyed by `(ledger, tx_hash, op_index)`
+  WITHOUT the pool `ContractID`, so in a multi-hop router op (several pools' swaps in
+  one op) an incomplete swap from one pool could be overwritten in place by the next
+  pool's field-events → a Frankenstein trade (wrong tokens/amounts, mis-indexed
+  `FanoutOpIndex`) plus a silently-lost trade. `ContractID` is now part of the group
+  key (matching the sibling soroswap decoder), so different pools in one op reassemble
+  independently; single-pool swaps are byte-identical.
 - **SEP-41 lake-flows supply never serves a negative value** (supply audit) — the
   default SEP-41 serving path (ClickHouse lake flows) computed `Σmint−Σburn−Σclawback`
   unclamped and could publish a physically-impossible negative `total_supply`/

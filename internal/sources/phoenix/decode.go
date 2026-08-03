@@ -93,20 +93,36 @@ func (r *RawSwap) assign(e *events.Event, fieldTopic string) error {
 	return nil
 }
 
-// groupKey is the (ledger, tx_hash, op_index) triple. The 8 field
-// events of one swap share this key. A router multihop emits
-// several 8-field swaps within ONE op (same key) — the buffer
-// emits-and-clears each swap before the next, then fans the trade
-// op_index out on the swap's first-field event_index (see
-// RawSwap.EventIndex) so they don't collide downstream.
+// groupKey is the (ledger, tx_hash, op_index, contract_id) tuple. The
+// 8 field events of one swap all come from ONE pool contract, so they
+// share this key — grouping for a normal single-pool swap is unchanged
+// by the ContractID term. ContractID is load-bearing for a router
+// multihop: it emits several swaps within ONE op, and when different
+// POOLS' swaps land under the same (ledger, tx, op) they MUST NOT share
+// a buffer entry. Without the ContractID discriminator, an incomplete
+// leg from pool A (a lost event, or an upgraded WASM emitting <8 fields)
+// is silently hijacked in-place by pool B's field-events — B's data gets
+// stamped with A's frozen first-field event_index (wrong FanoutOpIndex)
+// and A's leg is lost. Keying on ContractID isolates each pool's
+// reassembly; each completes on its OWN first-field event_index (see
+// RawSwap.EventIndex) so they don't collide downstream. (Mirrors
+// soroswap's groupKey.Pair discriminator.) NOTE: EventIndex is
+// deliberately NOT in the key — each of the 8 field-events has a
+// distinct EventIndex, which would shatter the grouping.
 type groupKey struct {
-	Ledger  uint32
-	TxHash  string
-	OpIndex uint32
+	Ledger     uint32
+	TxHash     string
+	OpIndex    uint32
+	ContractID string
 }
 
 func keyOf(e *events.Event) groupKey {
-	return groupKey{Ledger: e.Ledger, TxHash: e.TxHash, OpIndex: uint32(e.OperationIndex)}
+	return groupKey{
+		Ledger:     e.Ledger,
+		TxHash:     e.TxHash,
+		OpIndex:    uint32(e.OperationIndex),
+		ContractID: e.ContractID,
+	}
 }
 
 // classify identifies a Phoenix swap event by matching
