@@ -51,17 +51,29 @@ import (
 // EVERY package in the payload, whereas the on-chain adapter first
 // discards packages from non-trusted signers and enforces its
 // unique-signer threshold. The two medians can therefore disagree when
-// a payload carries extra non-trusted packages: our candidate median
-// simply matches no surviving price and the event refuses into the
-// honest-blind class (never a misattribution — the match must be
-// byte-exact per feed AND form a unique order-preserving bijection).
-// The inverse — an attacker steering attribution by appending garbage
-// packages — additionally requires the ADAPTER to have accepted the
-// payload on-chain, where the signer filter did run. Verifying signer
-// recovery here would mean vendoring redstone-core's secp256k1
-// recovery + the trusted-updater roster and keeping both in lockstep
-// with contract upgrades; the refusal-on-disagreement arm makes that
-// cost unnecessary for correctness, at the price of some refusals.
+// a payload carries extra non-trusted packages. USUALLY that disagreement
+// is honest-blind: our candidate median matches no surviving price and
+// the event refuses.
+//
+// F1 CAVEAT (audit 2026-08-03): "no surviving price matches → refuse" is
+// NOT unconditional. If our (diverged) median for a SURVIVING feed
+// instead byte-exact-matches a DROPPED feed that sits BETWEEN the
+// surviving feeds in feed_ids order, attributeSubset finds a UNIQUE
+// order-preserving bijection and emits that price under the wrong
+// feed_id — a misattribution, not a refusal. Requires (1) signer-filter
+// median divergence for a surviving feed (the even-count rule is verified
+// to match the adapter, so this is the ONLY divergence source), (2) a
+// dropped feed whose median coincidentally equals the surviving price
+// (cross-feed median collisions are real — see the BENJI twins below),
+// and (3) order-preserving position — a rare compound, and only on the
+// payload-FALLBACK path (the primary state-write path is exact). The
+// hardening (intersect the alignment candidates with the partially-plumbed
+// state-write keys, which prove which feeds were NOT accepted) is tracked;
+// see memory project_redstone_audit_2026_08_03. The attacker-steering
+// inverse additionally requires the ADAPTER to have accepted the payload
+// on-chain, where the signer filter did run. Fully closing it would mean
+// vendoring redstone-core's secp256k1 recovery + trusted-updater roster in
+// lockstep with contract upgrades.
 var redstoneMarker = []byte{0x00, 0x00, 0x02, 0xed, 0x57, 0x01, 0x1e, 0x00, 0x00}
 
 const (
@@ -153,11 +165,16 @@ func parsePayload(payload []byte) (map[string][]payloadPackage, error) {
 // medianAt returns the adapter-equivalent aggregate of pkgs' values whose
 // timestamp equals tsMS: the exact middle element for an odd count, the
 // truncated mean of the two middle elements for an even count. ok=false
-// when no package matches the timestamp. The even-count rule matching the
-// on-chain adapter is unverified against a real even-signer event — if it
-// ever disagrees, the price simply matches NO candidate and the event
-// stays in the honest-blind class (conservative by construction, never a
-// misattribution).
+// when no package matches the timestamp.
+//
+// The even-count rule (floor((a+b)/2)) was VERIFIED against the deployed
+// adapter source 2026-08-03: redstone-rust-sdk's Avg impl is
+// (a>>1)+(b>>1)+((a&1 + b&1)>>1) == floor((a+b)/2), and its even-count
+// aggregation test expects avg(2000,3000)=2500 — byte-identical to this.
+// So the even-count aggregation is NOT a divergence source. (The one
+// remaining place our median can diverge from the adapter's is the
+// signer-filter — see the ACCEPTED RESIDUAL RISK note above, and the F1
+// caveat there: a diverged median is NOT unconditionally honest-blind.)
 func medianAt(pkgs []payloadPackage, tsMS uint64) (*big.Int, bool) {
 	vals := make([]*big.Int, 0, len(pkgs))
 	for _, p := range pkgs {

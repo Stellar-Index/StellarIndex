@@ -44,8 +44,10 @@ import (
 const SourceName = "redstone"
 
 // DefaultDecimals is the RedStone-wide price scale
-// (adapter/config.rs:1 — `pub const DECIMALS: u64 = 8`). Every feed
-// publishes at 8 decimals regardless of the underlying asset class.
+// (redstone-price-feed/src/config.rs:1 — `pub const DECIMALS: u64 = 8`,
+// a single constant shared by every per-feed proxy; verified against the
+// deployed source 2026-08-03). Every feed publishes at 8 decimals
+// regardless of the underlying asset class — there is no per-feed scale.
 const DefaultDecimals uint8 = 8
 
 // DefaultResolutionSeconds reflects the on-chain update cadence:
@@ -175,4 +177,16 @@ var (
 	// a decoder bug or a contract emitting far more events per op
 	// than anything observed.
 	ErrEventIndexOverflow = errors.New("redstone: EventIndex exceeds OpIndex fanout stride")
+
+	// ErrOperationIndexOverflow — e.OperationIndex is negative or large
+	// enough that the synthetic OpIndex packing
+	// (OperationIndex*eventFanoutStride+EventIndex)*opIndexFanoutStride+i
+	// spills past uint32. Guarded like EventIndex/vector-position (its
+	// two siblings in the packing were bounds-checked; OperationIndex was
+	// the one unguarded input — audit-2026-08-03). Unreachable on-chain
+	// (Soroban caps ops-per-tx far below the bound); a hit means a
+	// dispatcher bug feeding a bad index, which without the guard would
+	// wrap and overlap another event's op_index block on the
+	// oracle_updates PK.
+	ErrOperationIndexOverflow = errors.New("redstone: OperationIndex exceeds OpIndex fanout bound")
 )
