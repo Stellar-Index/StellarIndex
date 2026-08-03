@@ -2,6 +2,54 @@ package clickhouse
 
 import "testing"
 
+// TestSubstrateQueryLo pins FINDING 2: the per-window substrate query must start
+// one ledger BELOW the window so the seam hash-link is checked — including at
+// the LOWER boundary `from`, the carried/fresh -from junction. The old guard
+// only decremented when the window started ABOVE `from` (inter-window seams), so
+// the FIRST window's query lo stayed at `from`; chainQ's `WHERE ledger_seq > qlo`
+// then never evaluated prev_hash(from) == ledger_hash(from-1), and a hash-chain
+// break exactly at the scanFrom seam was invisible even to the window abutting
+// it. The fix decrements to from-1, guarded at the chain genesis (ledger 1 has
+// no predecessor to link) so it never underflows.
+func TestSubstrateQueryLo(t *testing.T) {
+	const window = uint64(substrateWindow)
+	cases := []struct {
+		name      string
+		wlo, from uint64
+		want      uint64
+	}{
+		// The FINDING: an incremental -from run's first window. Pre-fix this
+		// returned `from` (63_300_000) and the seam link at `from` went
+		// unchecked; the fix returns from-1 so the link is evaluated.
+		{"lower-boundary seam is checked (the finding)", 63_300_000, 63_300_000, 63_299_999},
+		// A full scan from the default floor still checks its seam link at
+		// ledger 2 (prev_hash(2) == ledger_hash(1)) — previously missed.
+		{"full-scan floor (from=2) checks the link at ledger 2", 2, 2, 1},
+		// The chain genesis has no predecessor: no underflow, no phantom link.
+		{"chain genesis (from=1) does not underflow", 1, 1, 1},
+		// Inter-window seams are unchanged by the fix.
+		{"inter-window seam still decrements", 2 + window, 2, 2 + window - 1},
+		{"interior inter-window seam still decrements", 63_300_000 + window, 63_300_000, 63_300_000 + window - 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := substrateQueryLo(tc.wlo, tc.from); got != tc.want {
+				t.Fatalf("substrateQueryLo(wlo=%d, from=%d) = %d, want %d — a seam hash-link would go unchecked",
+					tc.wlo, tc.from, got, tc.want)
+			}
+		})
+	}
+
+	// The load-bearing property, stated directly: for the FIRST window
+	// (wlo == from) at any real scan floor (from > chain genesis), the query
+	// must reach one ledger below `from` so the boundary link is in range.
+	for _, from := range []uint64{2, 51_000_000, 63_300_000} {
+		if got := substrateQueryLo(from, from); got != from-1 {
+			t.Fatalf("first-window lo for from=%d = %d, want from-1 %d (the boundary seam must be covered)", from, got, from-1)
+		}
+	}
+}
+
 func TestWatermark(t *testing.T) {
 	tests := []struct {
 		name             string

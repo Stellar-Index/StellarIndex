@@ -129,6 +129,34 @@ func ContiguousWatermark(ctx context.Context, addr string, from uint32) (uint32,
 // sorts comfortably in-memory per query.
 const substrateWindow = 5_000_000
 
+// substrateChainGenesis is the first ledger sequence on the chain (Stellar
+// ledger 1). It has no predecessor, so no prev_hash link is verifiable AT it —
+// the earliest checkable link is at ledger 2 (prev_hash(2) == ledger_hash(1)).
+// substrateQueryLo never lowers a window below it.
+const substrateChainGenesis = uint64(1)
+
+// substrateQueryLo is the lower bound of a per-window substrate query. It sits
+// one ledger BELOW the window start so the seam hash-link is verified:
+//   - inter-window seam (wlo > from): the pair (wlo-1, wlo).
+//   - lower-boundary seam (wlo == from, i.e. the FIRST window): the pair
+//     (from-1, from) — the carried/fresh -from junction. The old `if wlo > from`
+//     guard skipped exactly this pair, so chainQ's `ledger_seq > qlo` predicate
+//     never evaluated prev_hash(from) == ledger_hash(from-1) and a hash-chain
+//     break at the scanFrom seam was invisible even to the window whose range
+//     abuts it — contradicting the "windows overlap by one ledger to check the
+//     seam" claim below. Guarded at substrateChainGenesis so the bound never
+//     underflows below ledger 1 (whose own genesis prev_hash is never a break).
+func substrateQueryLo(wlo, from uint64) uint64 {
+	switch {
+	case wlo > from:
+		return wlo - 1
+	case from > substrateChainGenesis:
+		return from - 1
+	default:
+		return from
+	}
+}
+
 // SubstrateProblem returns the earliest ledger in [from,to] where the CH lake's
 // substrate fails (ADR-0033 Claim 1): a missing ledger (contiguity gap) or a
 // hash-chain break (prev_hash != the prior ledger's ledger_hash). Returns
@@ -193,13 +221,12 @@ func SubstrateProblem(ctx context.Context, addr string, from, to uint32) (proble
 		if whi > uint64(to) {
 			whi = uint64(to)
 		}
-		// Window starts one ledger BEFORE the span it certifies (except the
-		// very first), so the seam pair (wlo-1, wlo) is hash-checked and a
-		// gap at the seam is caught by contiguity over [wlo-1, whi].
-		qlo := wlo
-		if qlo > uint64(from) {
-			qlo--
-		}
+		// Window starts one ledger BEFORE the span it certifies — including the
+		// very first window, whose lower-boundary seam (from-1, from) is the
+		// carried/fresh -from junction — so the seam pair is hash-checked and a
+		// gap at the seam is caught by contiguity over [qlo, whi]. See
+		// substrateQueryLo.
+		qlo := substrateQueryLo(wlo, uint64(from))
 
 		var firstGap uint64
 		if qerr := conn.QueryRow(ctx, gapQ, qlo, whi).Scan(&firstGap); qerr != nil {
