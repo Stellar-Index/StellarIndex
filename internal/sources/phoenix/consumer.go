@@ -153,6 +153,31 @@ func (InitializeEvent) Source() string { return SourceName }
 // Compile-time check.
 var _ consumer.Event = InitializeEvent{}
 
+// AdminEvent is a pool admin-rotation governance event — one of the
+// four ("XYK Pool: ", <phrase>) steps. The sink lands it in
+// phoenix_admin_events (migration 0132). Self-contained (one event →
+// one row). Admin is the address the body carries when present (0
+// occurrences on mainnet to date — built defensively).
+type AdminEvent struct {
+	Pool        string // emitting pool contract C-strkey
+	Ledger      uint32
+	TxHash      string
+	OpIndex     uint32
+	EventIndex  uint32
+	ObservedAt  time.Time
+	AdminAction string // AdminAction* slug (from topic[1])
+	Admin       string // admin address from the body; "" if absent
+}
+
+// EventKind implements [consumer.Event].
+func (AdminEvent) EventKind() string { return "phoenix.admin" }
+
+// Source implements [consumer.Event].
+func (AdminEvent) Source() string { return SourceName }
+
+// Compile-time check.
+var _ consumer.Event = AdminEvent{}
+
 // ─── 8-field correlation buffer ─────────────────────────────────
 // Phoenix emits one swap as 8 separate events (one per field).
 // An entry sits in the buffer until all 8 slots are populated —

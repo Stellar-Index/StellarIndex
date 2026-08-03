@@ -91,6 +91,13 @@ const (
 	//   ("initialize", "XYK LP token_b")
 	// Emitted once per pool deploy. Same classification-only intent.
 	EventActionInitialize = "initialize"
+
+	// AdminAction* are the stored slugs for the four admin-rotation
+	// topic[1] phrases (phoenix_admin_events.admin_action, migration 0132).
+	AdminActionReplaceRequested = "replace_requested"
+	AdminActionReplaceSet       = "replace_set"
+	AdminActionUndo             = "undo"
+	AdminActionAccepted         = "accepted"
 )
 
 // Field names for `provide_liquidity` (5 events per call).
@@ -294,6 +301,23 @@ var (
 	// as ("initialize", "XYK LP token_a" | "XYK LP token_b").
 	TopicInitTokenA = scval.MustEncodeString("XYK LP token_a") // topic[1]
 	TopicInitTokenB = scval.MustEncodeString("XYK LP token_b")
+
+	// admin (governance rotation) topic[1] variants — ("XYK Pool: ",
+	// <phrase>). The phrases include a trailing space, faithful to
+	// pool/src/contract.rs:784-836.
+	TopicAdminReplaceRequested = scval.MustEncodeString("Admin replacement requested by old admin: ") // topic[1]
+	TopicAdminReplaceSet       = scval.MustEncodeString("Replace with new admin: ")
+	TopicAdminUndo             = scval.MustEncodeString("Undo admin change: ")
+	TopicAdminAccepted         = scval.MustEncodeString("Accepted new admin: ")
+
+	// adminActionByTopic maps each admin topic[1] blob to its stored
+	// slug (see the AdminAction* constants).
+	adminActionByTopic = map[string]string{
+		TopicAdminReplaceRequested: AdminActionReplaceRequested,
+		TopicAdminReplaceSet:       AdminActionReplaceSet,
+		TopicAdminUndo:             AdminActionUndo,
+		TopicAdminAccepted:         AdminActionAccepted,
+	}
 
 	// provide_liquidity topic[1] variants.
 	TopicSymbolPLSender    = scval.MustEncodeString(FieldPLSender)
