@@ -62,11 +62,18 @@ export function IssuerPanel({ gStrkey }: { gStrkey: string }) {
       )}
       <Panel
         title="Issuer identity"
-        hint={data.org_name ?? data.home_domain ?? '—'}
+        // CS-100: org_name is only an authoritative organisation identity
+        // when SEP-1 verified (bidirectional). Unverified it is self-declared
+        // metadata a scam issuer can spoof, so it must not headline the panel
+        // as the issuer's identity — fall back to the real on-chain home_domain.
+        hint={(data.org_verified ? data.org_name : undefined) ?? data.home_domain ?? '—'}
         source={asExample(`/v1/issuers/${gStrkey}`)}
       >
         <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-          {data.org_name && (
+          {/* Only surface the "Organisation" attribution when verified;
+              otherwise home_domain (below) carries the real on-chain value
+              without laundering an unverified name as authoritative (CS-100). */}
+          {data.org_verified && data.org_name && (
             <Stat label="Organisation" value={data.org_name} />
           )}
           <Stat label="G-strkey" mono value={data.g_strkey} />

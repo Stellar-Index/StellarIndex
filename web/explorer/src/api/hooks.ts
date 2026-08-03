@@ -92,18 +92,37 @@ export function useVerifiedSlugs() {
 }
 
 export function useIssuerLookup() {
-  return useQuery<Record<string, { home_domain?: string; org_name?: string }>>({
+  return useQuery<
+    Record<
+      string,
+      { home_domain?: string; org_name?: string; org_verified?: boolean }
+    >
+  >({
     queryKey: ['/v1/issuers', 'lookup'],
     queryFn: async () => {
       const env = await apiGet<{
-        data: Array<{ g_strkey: string; home_domain?: string; org_name?: string }>;
+        data: Array<{
+          g_strkey: string;
+          home_domain?: string;
+          org_name?: string;
+          // CS-100: bidirectional SEP-1 proof. Downstream renderers
+          // (AssetLabel) MUST gate authoritative "by {org_name}"
+          // attribution on this — org_name alone is self-declared and
+          // spoofable (a scam issuer can set home_domain to a reputable
+          // org's domain to borrow its ORG_NAME).
+          org_verified?: boolean;
+        }>;
       }>('/v1/issuers', { limit: 500 });
-      const out: Record<string, { home_domain?: string; org_name?: string }> = {};
+      const out: Record<
+        string,
+        { home_domain?: string; org_name?: string; org_verified?: boolean }
+      > = {};
       for (const row of env.data ?? []) {
         if (row.org_name || row.home_domain) {
           out[row.g_strkey] = {
             home_domain: row.home_domain,
             org_name: row.org_name,
+            org_verified: row.org_verified,
           };
         }
       }
