@@ -234,9 +234,19 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		}}, nil
 	}
 
-	// We only care about swap + sync from pair contracts for
-	// trade emission. deposit/withdraw match classify but fall
-	// through to a no-op return here.
+	// Pair-contract deposit/withdraw: LP add / remove. Self-contained
+	// (does NOT feed the swap+sync correlation buffer). Emit a
+	// LiquidityEvent so the sink lands a soroswap_liquidity row. These
+	// were classified + Matched but dropped until audit 2026-08-03
+	// (every-event mission).
+	if kind == EventDeposit || kind == EventWithdraw {
+		return d.emitLiquidity(ev, kind)
+	}
+
+	// We only care about swap + sync from pair contracts for trade
+	// emission now. new_pair (factory, handled above), skim + deposit +
+	// withdraw (handled above) and EventPairToken (left for sep41) all
+	// fall out here as a no-op return.
 	if kind != EventSwap && kind != EventSync {
 		return nil, nil
 	}
@@ -255,6 +265,49 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		return nil, nil // still buffering
 	}
 	return d.emitCompleted(completed)
+}
+
+// emitLiquidity decodes a pair-contract deposit/withdraw event into a
+// LiquidityEvent. Each event is self-contained — it carries both token
+// amounts, the LP shares minted/burned, and the post-state reserves.
+// Token identities come from the factory new_pair registry (the body
+// carries only amounts); resolution is best-effort — the row is emitted
+// with empty tokens rather than dropped when the pair mapping isn't
+// seeded yet (resolvable downstream via soroswap_pairs). NEVER drop the
+// event: that is the every-event contract this arm was added to honor.
+func (d *Decoder) emitLiquidity(ev events.Event, kind string) ([]consumer.Event, error) {
+	closedAt, err := ev.EventClosedAt()
+	if err != nil {
+		return nil, err
+	}
+	fields, err := decodeLiquidity(ev.Value)
+	if err != nil {
+		return nil, err
+	}
+	var tok0, tok1 string
+	d.mu.RLock()
+	if tokens, ok := d.pairTokens[ev.ContractID]; ok {
+		tok0, tok1 = tokens.Token0.String(), tokens.Token1.String()
+	}
+	d.mu.RUnlock()
+	return []consumer.Event{LiquidityEvent{
+		ContractID: ev.ContractID,
+		Ledger:     ev.Ledger,
+		TxHash:     ev.TxHash,
+		OpIndex:    uint32(ev.OperationIndex),
+		//nolint:gosec // EventIndex is non-negative by Soroban spec.
+		EventIndex:  uint32(ev.EventIndex),
+		ObservedAt:  closedAt,
+		Action:      kind,
+		To:          fields.To,
+		Token0:      tok0,
+		Token1:      tok1,
+		Amount0:     fields.Amount0,
+		Amount1:     fields.Amount1,
+		Liquidity:   fields.Liquidity,
+		NewReserve0: fields.NewReserve0,
+		NewReserve1: fields.NewReserve1,
+	}}, nil
 }
 
 // emitCompleted turns completed swap+sync pairs into TradeEvents,

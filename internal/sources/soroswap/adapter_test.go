@@ -462,18 +462,19 @@ func mustParseRFC3339(t *testing.T, s string) time.Time {
 	return ts
 }
 
-func TestDecoder_Decode_depositTopicIsNoop(t *testing.T) {
+// Deposit is no longer a silent no-op (it emits a LiquidityEvent — see
+// TestDecoder_Decode_depositEmitsLiquidityEvent). A deposit topic with a
+// MALFORMED body must now surface as a decode ERROR — a recognition gap
+// the ADR-0033 re-derive can see — never a silently-swallowed event.
+func TestDecoder_Decode_depositMalformedBodyErrors(t *testing.T) {
 	d := NewDecoder()
-	out, err := d.Decode(events.Event{
+	_, err := d.Decode(events.Event{
 		Topic:          []string{TopicPrefixPair, TopicSymbolDeposit},
 		Value:          "",
 		LedgerClosedAt: "2026-04-23T12:00:00Z",
 	})
-	if err != nil {
-		t.Fatalf("Decode deposit: %v", err)
-	}
-	if len(out) != 0 {
-		t.Errorf("got %d events for deposit, want 0 (not a trade event)", len(out))
+	if err == nil {
+		t.Fatal("empty deposit body decoded without error — a malformed liquidity event must be a recognition gap, not a silent drop")
 	}
 }
 

@@ -57,7 +57,7 @@ Verified against `soroswap-core` `pair/src/event.rs` /
 | `("SoroswapFactory","new_pair")` | registers the pair (token_0/token_1) |
 | `("SoroswapPair","swap")` + `("SoroswapPair","sync")` | `trades` (source=soroswap) |
 | `("SoroswapPair","skim")` | `soroswap_skim_events` |
-| `("SoroswapPair","deposit"/"withdraw")` | matched (registered pair) — no trade output |
+| `("SoroswapPair","deposit"/"withdraw")` | `soroswap_liquidity` (LP add / remove; migration 0127, 2026-08-03) |
 
 ## ⚠️ Known gap — Router topics undecoded (ROADMAP #89, 2026-07-10)
 

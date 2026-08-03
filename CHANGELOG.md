@@ -15,6 +15,17 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Soroswap `deposit` / `withdraw` (LP add / remove) events now project**
+  to the new `soroswap_liquidity` hypertable (migration 0127). These events
+  were classified + Matched but silently dropped at the decoder — the raw
+  events sat in the ClickHouse lake unserved, violating the every-event
+  mission. The decoder now emits a `LiquidityEvent` (both amounts, LP shares
+  minted/burned, post-state reserves, provider) verified byte-exact against
+  real mainnet lake bodies; token identities resolve from the factory
+  registry (best-effort, row never dropped). Backfill full history with
+  `stellarindex-ops projector-replay -source soroswap`.
+
 ### Security
 - **Account kill switch now evicts cached API keys** (auth audit) — on
   `auth_backend=postgres` a suspended/closed account's keys kept authenticating

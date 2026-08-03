@@ -14,6 +14,10 @@ Soroswap has two contract types:
 2. **Pair** (one per token pair) — emits `deposit`, `swap`, `sync`,
    `withdraw`, `skim`. We extract trades from `swap` + the
    immediately-following `sync` event (see *quirks* below).
+   `deposit` / `withdraw` (LP add / remove) project to the
+   `soroswap_liquidity` hypertable (migration 0127); `skim` to
+   `soroswap_skim_events`. Every pair event now lands in a served
+   table — the deposit/withdraw drop was closed 2026-08-03.
 
 Mainnet addresses (verified against
 `public/mainnet.contracts.json` in soroswap-core):

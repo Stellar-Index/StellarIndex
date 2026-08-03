@@ -57,6 +57,49 @@ func (SkimEvent) Source() string { return SourceName }
 // Compile-time check that SkimEvent satisfies consumer.Event.
 var _ consumer.Event = SkimEvent{}
 
+// LiquidityEvent is the [consumer.Event] shape emitted by the
+// Soroswap Decoder on a pair-contract `deposit` or `withdraw` event —
+// the LP add / remove that mutates pool reserves alongside the
+// swap→trade path. Backs the soroswap_liquidity row (migration 0127).
+//
+// deposit and withdraw share one wire struct: both carry the two
+// token amounts moved (Amount0/Amount1), the LP shares minted/burned
+// (Liquidity), the post-state reserves (NewReserve0/NewReserve1) and
+// the provider address (To). Token0/Token1 come NOT from the event
+// body but from the factory new_pair registry, resolved best-effort
+// at decode time — empty when the pair mapping isn't seeded yet
+// (the row is still emitted rather than dropped; every-event mission).
+//
+// Self-contained: does NOT feed the swap+sync correlation buffer. The
+// indexer's event sink type-switches on this (internal/pipeline/
+// sink.go) and writes via Store.InsertSoroswapLiquidity.
+type LiquidityEvent struct {
+	ContractID  string // pair contract C-strkey (emitter)
+	Ledger      uint32
+	TxHash      string
+	OpIndex     uint32
+	EventIndex  uint32 // position within the op; part of the migration 0127 PK
+	ObservedAt  time.Time
+	Action      string // EventDeposit | EventWithdraw
+	To          string // LP provider address (the body's `to`)
+	Token0      string // canonical asset_id from the pair registry; "" if unseeded
+	Token1      string // canonical asset_id; "" if unseeded
+	Amount0     canonical.Amount
+	Amount1     canonical.Amount
+	Liquidity   canonical.Amount // LP shares minted (deposit) / burned (withdraw)
+	NewReserve0 canonical.Amount
+	NewReserve1 canonical.Amount
+}
+
+// EventKind implements [consumer.Event].
+func (LiquidityEvent) EventKind() string { return "soroswap.liquidity" }
+
+// Source implements [consumer.Event] — matches [SourceName].
+func (LiquidityEvent) Source() string { return SourceName }
+
+// Compile-time check that LiquidityEvent satisfies consumer.Event.
+var _ consumer.Event = LiquidityEvent{}
+
 // ─── Correlation buffer ─────────────────────────────────────────
 // Groups swap + sync by (ledger, tx_hash, op_index). Emits complete
 // pairs back to the caller; holds incompletes until either their
