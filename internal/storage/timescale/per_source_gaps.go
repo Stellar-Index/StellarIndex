@@ -222,6 +222,12 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// writer-halt tripwire. 100K override matches the aquarius trades
 	// target. Migration 0089.
 	{Source: "aquarius-reserves", Table: "aquarius_reserves", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 100000},
+	// aquarius-reserves-sync: reserves_sync is sparse (68 events / 11
+	// pools in the recent ~4M-ledger window) — a distinct reserve-sync
+	// signal projected alongside update_reserves (0128, deposit/withdraw
+	// drop closed 2026-08-03). Large override so a quiet stretch doesn't
+	// read as a decoder outage. Genesis = Aquarius protocol genesis.
+	{Source: "aquarius-reserves-sync", Table: "aquarius_reserves_sync", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 700000},
 	// aquarius-rewards: the rewards-gauge event surface (ROADMAP #89,
 	// migration 0099). Dominated by pool_state (339,712 lifetime — one
 	// of the densest Aquarius topics, fires on every reward-affecting

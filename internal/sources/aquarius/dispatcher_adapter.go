@@ -63,7 +63,7 @@ func (*Decoder) Name() string { return SourceName }
 // pool is announced by one) plus the curated seed for history.
 func (d *Decoder) Matches(ev events.Event) bool {
 	switch classify(&ev) {
-	case EventTrade, EventUpdateReserves, EventDepositLiquidity, EventWithdrawLiquidity,
+	case EventTrade, EventUpdateReserves, EventReservesSync, EventDepositLiquidity, EventWithdrawLiquidity,
 		EventPoolState, EventClaimReward, EventSetRewardsConfig, EventPositionUpdate,
 		EventGaugeDeposit, EventClaimFees, EventRewardsGaugeClaim, EventGaugeClaim,
 		EventRewardsGaugeScheduleReward, EventSetRewardsState, EventRewardsGaugeAdd:
@@ -123,8 +123,8 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	}
 	kind := classify(&ev)
 	switch kind {
-	case EventUpdateReserves:
-		rv, err := decodeReserves(&ev, closedAt)
+	case EventUpdateReserves, EventReservesSync:
+		rv, err := decodeReserves(&ev, closedAt, kind)
 		if err != nil {
 			return nil, err
 		}

@@ -16,6 +16,14 @@ against.
 ## [Unreleased]
 
 ### Added
+- **Aquarius `reserves_sync` events now project** to the new
+  `aquarius_reserves_sync` hypertable (migration 0128). Previously
+  classified but `Matches()`-dropped (recognized-only), so the raw
+  events sat unserved in the lake. Verified NOT redundant with
+  `update_reserves`: on the same pool+tx the two carry different value
+  vectors (reserves_sync is a distinct reserve-sync signal). Reuses the
+  `Vec<i128>` reserves decoder, fanned one row per token position;
+  pool-gated (ADR-0035). Backfill with `projector-replay -source aquarius`.
 - **Soroswap `deposit` / `withdraw` (LP add / remove) events now project**
   to the new `soroswap_liquidity` hypertable (migration 0127). These events
   were classified + Matched but silently dropped at the decoder — the raw

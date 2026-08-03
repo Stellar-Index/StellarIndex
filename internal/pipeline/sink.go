@@ -1224,6 +1224,31 @@ func persistCometLiquidity(ctx context.Context, logger *slog.Logger, store *time
 // liquidity-depth signal; Aquarius has no published price so these
 // rows never reach VWAP.
 func persistAquariusReserves(ctx context.Context, logger *slog.Logger, store *timescale.Store, e aquarius.ReservesEvent) error {
+	// reserves_sync is a DISTINCT reserve-sync signal (not the
+	// update_reserves post-state); route it to its own table. Empty Kind
+	// is legacy update_reserves.
+	if e.Kind == aquarius.EventReservesSync {
+		if err := store.InsertAquariusReservesSync(ctx, timescale.AquariusReservesSyncEvent{
+			ContractID:      e.ContractID,
+			Ledger:          e.Ledger,
+			LedgerCloseTime: e.ObservedAt,
+			TxHash:          e.TxHash,
+			OpIndex:         e.OpIndex,
+			EventIndex:      e.EventIndex,
+			Reserves:        e.Reserves,
+		}); err != nil {
+			obs.SourceInsertErrorsTotal.WithLabelValues(aquarius.SourceName, "aquarius_reserves_sync").Inc()
+			logger.Error("insert Aquarius reserves_sync failed",
+				"contract_id", e.ContractID, "ledger", e.Ledger,
+				"tx_hash", e.TxHash, "tokens", len(e.Reserves), "err", err)
+			return err
+		}
+		bumpEntryCount(ctx, logger, store, aquarius.SourceName)
+		logger.Debug("Aquarius reserves_sync ingested",
+			"source", aquarius.SourceName, "contract_id", e.ContractID,
+			"ledger", e.Ledger, "tokens", len(e.Reserves))
+		return nil
+	}
 	if err := store.InsertAquariusReserves(ctx, timescale.AquariusReservesEvent{
 		ContractID:      e.ContractID,
 		Ledger:          e.Ledger,
