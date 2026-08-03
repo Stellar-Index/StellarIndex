@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"testing"
 	"time"
 
@@ -23,6 +24,10 @@ type stubMarketsReader struct {
 	// on the most recent DistinctPairsExt call. Lets tests assert
 	// the handler's default-resolution behaviour.
 	lastDistinctOrder timescale.MarketsOrder
+
+	// lastAsset captures the asset filter the handler passed to
+	// AssetMarkets — the spelling that actually reaches SQL.
+	lastAsset string
 
 	// PairMarket stub state.
 	pair      v1.Market
@@ -45,7 +50,8 @@ func (r *stubMarketsReader) SourceMarkets(_ context.Context, _, _ string, _ int,
 	return r.pairs, r.nextCur, nil
 }
 
-func (r *stubMarketsReader) AssetMarkets(_ context.Context, _, _ string, _ int, _ timescale.MarketsOrder) ([]v1.Market, string, error) {
+func (r *stubMarketsReader) AssetMarkets(_ context.Context, asset, _ string, _ int, _ timescale.MarketsOrder) ([]v1.Market, string, error) {
+	r.lastAsset = asset
 	if r.err != nil {
 		return nil, "", r.err
 	}
@@ -483,4 +489,38 @@ func TestPools_ValidBaseQuote200(t *testing.T) {
 
 func (r *stubMarketsReader) FirstTradeBatch(_ context.Context, _ [][2]string) (map[string]time.Time, error) {
 	return map[string]time.Time{}, nil
+}
+
+// The ?asset= filter must reach SQL in its CANONICAL spelling. ParseAsset
+// accepts bare "XLM"/"NATIVE" and the Horizon-style "CODE:ISSUER", but the
+// stores hold only the canonical form and compare with `=` — so validating
+// and then discarding the parsed value served an authoritative HTTP 200
+// with an empty list for those documented aliases (measured on r1:
+// ?asset=XLM returned 0 rows while ?asset=native returned 5).
+func TestMarkets_AssetFilterIsCanonicalised(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"XLM", "native"},
+		{"NATIVE", "native"},
+		{"native", "native"},
+		{
+			"USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+			"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+		},
+	} {
+		t.Run(tc.in, func(t *testing.T) {
+			reader := &stubMarketsReader{}
+			srv := v1.New(v1.Options{Markets: reader})
+			ts := httpTestServer(t, srv)
+
+			resp := mustGet(t, ts.URL+"/v1/markets?asset="+url.QueryEscape(tc.in))
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+			if reader.lastAsset != tc.want {
+				t.Errorf("reader received asset %q, want canonical %q — an accepted "+
+					"alias spelling reaches SQL verbatim and matches nothing",
+					reader.lastAsset, tc.want)
+			}
+		})
+	}
 }

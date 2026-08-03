@@ -142,6 +142,25 @@ type Pool struct {
 //     Mutually exclusive with `base`/`quote` — combining the two
 //     filter shapes (AND vs OR) has no well-defined semantics.
 //     Backs the explorer's /assets/{slug} Liquidity tab.
+//
+// canonicaliseAssetFilter documents why every ?asset=/?base=/?quote=
+// filter on this file's handlers re-spells the caller's input through
+// canonical.ParseAsset before it reaches SQL or a cache key.
+//
+// ParseAsset deliberately ACCEPTS spellings whose Asset.String() differs
+// from the input — bare "XLM" and "NATIVE" (added so CoinGecko/CMC users
+// can type what they know) and the Horizon-style "CODE:ISSUER" — while
+// the stores hold only the canonical form and the SQL compares with `=`.
+// Validating and then discarding the parsed value meant those documented
+// aliases produced an authoritative HTTP 200 with an EMPTY list, cached
+// under their own key for 60s. Measured on r1 before the fix:
+// /v1/markets?asset=XLM returned 0 rows while ?asset=native returned 5
+// (cold audit 2026-08-03).
+//
+// Residual (separate, pre-existing): `native` and `crypto:XLM` are stored
+// as distinct rows, so canonicalising to one form does not merge them —
+// that is the XLM dual-form class tracked elsewhere, not something this
+// re-spelling attempts to solve.
 func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,gocyclo,funlen // option parsing + DEX-source filter + asset/base+quote validation + 8s-timeout guard are linear; splitting fragments the request lifecycle
 	cursor := r.URL.Query().Get("cursor")
 	limit := 100
@@ -213,13 +232,16 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 	quoteFilter := r.URL.Query().Get("quote")
 	assetFilter := r.URL.Query().Get("asset")
 	if assetFilter != "" {
-		if _, err := canonical.ParseAsset(assetFilter); err != nil {
+		parsed, err := canonical.ParseAsset(assetFilter)
+		if err != nil {
 			writeProblem(w, r,
 				"https://api.stellarindex.io/errors/invalid-asset-id",
 				"Invalid asset", http.StatusBadRequest,
 				"asset must be a canonical asset_id (e.g. 'native', 'USDC-G…', 'fiat:USD'); got "+assetFilter+" ("+err.Error()+")")
 			return
 		}
+		// Keep the PARSED spelling — see canonicaliseAssetFilter.
+		assetFilter = parsed.String()
 		if baseFilter != "" || quoteFilter != "" {
 			writeProblem(w, r,
 				"https://api.stellarindex.io/errors/conflicting-filters",
@@ -234,22 +256,26 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 	// rather than let it reach the query — the same silent-empty-page /
 	// DoS-lever guard the `asset` filter enforces.
 	if baseFilter != "" {
-		if _, err := canonical.ParseAsset(baseFilter); err != nil {
+		parsed, err := canonical.ParseAsset(baseFilter)
+		if err != nil {
 			writeProblem(w, r,
 				"https://api.stellarindex.io/errors/invalid-asset-id",
 				"Invalid base", http.StatusBadRequest,
 				"base must be a canonical asset_id (e.g. 'native', 'USDC-G…'); got "+baseFilter+" ("+err.Error()+")")
 			return
 		}
+		baseFilter = parsed.String()
 	}
 	if quoteFilter != "" {
-		if _, err := canonical.ParseAsset(quoteFilter); err != nil {
+		parsed, err := canonical.ParseAsset(quoteFilter)
+		if err != nil {
 			writeProblem(w, r,
 				"https://api.stellarindex.io/errors/invalid-asset-id",
 				"Invalid quote", http.StatusBadRequest,
 				"quote must be a canonical asset_id (e.g. 'native', 'USDC-G…'); got "+quoteFilter+" ("+err.Error()+")")
 			return
 		}
+		quoteFilter = parsed.String()
 	}
 	filter := timescale.PoolsFilter{
 		Sources: dexSources,
@@ -457,7 +483,10 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	// surfacing both Stellar SDEX and CEX markets under one query.
 	var expandedAssets []string
 	if asset != "" {
-		if _, err := canonical.ParseAsset(asset); err != nil {
+		if parsed, err := canonical.ParseAsset(asset); err == nil {
+			// Keep the PARSED spelling — see canonicaliseAssetFilter.
+			asset = parsed.String()
+		} else {
 			// Try the catalogue. Successful lookup expands to a slice
 			// of canonical asset_ids; failure → 400 (existing
 			// behaviour for unparseable input).
