@@ -569,15 +569,22 @@ func TestPlatformPostgresStores(t *testing.T) {
 			t.Fatalf("create owner: %v", err)
 		}
 
-		hash := sha256.Sum256([]byte("rek_plaintext_xyz"))
+		hash := sha256.Sum256([]byte("sip_plaintext_xyz"))
 		key := platform.APIKey{
-			ID:                     "kid_" + strings.ReplaceAll(uuid.New().String(), "-", "")[:12],
-			AccountID:              acct.ID,
-			CreatedByUserID:        owner.ID,
-			Name:                   "primary",
-			Description:            "production traffic",
-			KeyHash:                hash[:],
-			KeyPrefix:              "rek_4f9c1d8b",
+			ID:              "kid_" + strings.ReplaceAll(uuid.New().String(), "-", "")[:12],
+			AccountID:       acct.ID,
+			CreatedByUserID: owner.ID,
+			Name:            "primary",
+			Description:     "production traffic",
+			KeyHash:         hash[:],
+			// `sip_` — the namespace every minter actually emits
+			// (auth/store.go, dashboardkeys/handlers.go). This fixture
+			// said `rek_` (the pre-rebrand namespace) and so matched
+			// migration 0027's stale CHECK instead of production
+			// reality, masking the fact that EVERY real key mint failed
+			// a check_violation until migration 0133 (cold audit
+			// 2026-08-03).
+			KeyPrefix:              "sip_4f9c1d8b",
 			Tier:                   platform.APIKeyTierAPIKey,
 			RateLimitPerMin:        1000,
 			MonthlyQuota:           500000,
@@ -1078,12 +1085,12 @@ func TestPlatformPostgresStores(t *testing.T) {
 				// previous `plaintext := "rek_race_%d_%s"` shape
 				// also tripped the prefix regex. Build hex-only
 				// values that match what the production
-				// `generateKeyID` / `generatePlaintext` emit, so
-				// the test reaches the actual advisory-lock
-				// assertions for F-1257.
+				// `generateKeyID` / `generatePlaintext` emit
+				// (`sip_` namespace), so the test reaches the
+				// actual advisory-lock assertions for F-1257.
 				hexA := strings.ReplaceAll(uuid.New().String(), "-", "")
 				hexB := strings.ReplaceAll(uuid.New().String(), "-", "")
-				plaintext := "rek_" + hexA[:8]
+				plaintext := "sip_" + hexA[:8]
 				hash := sha256.Sum256([]byte(plaintext + fmt.Sprintf("-%d", i)))
 				_, err := keys.Create(ctx, platform.APIKey{
 					ID:              "kid_" + hexB[:12],
