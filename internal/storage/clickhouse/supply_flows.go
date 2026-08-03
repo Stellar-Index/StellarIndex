@@ -101,6 +101,23 @@ type TokenSupply struct {
 	Burn       *big.Int
 	Clawback   *big.Int
 	FlowCount  uint64
+
+	// Incomplete is true when Total < 0 — Σ(burn+clawback) exceeds Σmint.
+	// That is physically impossible for a real token (you cannot burn more
+	// than was ever minted); it means this contract's supply_flows are
+	// INCOMPLETELY SEEDED in the lake — e.g. pre-Soroban SAC-wrapper mints
+	// not yet CAP-67-replayed, so only the burn side is captured — NOT that
+	// supply is genuinely negative. Serving Total as a supply figure would
+	// publish a physically-impossible negative (ADR-0003; migration 0005
+	// enforces total_supply/circulating_supply >= 0), so both API consumers
+	// (/v1/assets/{id} F2 fallback and /v1/assets/{id}/supply) MUST treat an
+	// Incomplete supply as UNAVAILABLE — omit or refuse — rather than serve
+	// it, or clamp it to a bare 0 (which would read as a real "fully burned"
+	// supply and understate the token). Mirrors how
+	// [supply.SEP41Computer.Compute] REFUSES a negative total via
+	// ErrNegativeTotalSupply / ErrNegativeTotalMissingBaseline instead of
+	// publishing it.
+	Incomplete bool
 }
 
 // supplySumQuery sums a contract's supply_flows. FINAL dedups the
@@ -160,6 +177,10 @@ func assembleTokenSupply(contractID, mintS, burnS, clawbackS string, flows uint6
 		Burn:       burn,
 		Clawback:   clawback,
 		FlowCount:  flows,
+		// A negative net total is impossible for a real token — flag it so
+		// serving consumers refuse it rather than publish a negative supply
+		// (see the Incomplete field doc). Non-negative → false, unchanged.
+		Incomplete: total.Sign() < 0,
 	}
 }
 

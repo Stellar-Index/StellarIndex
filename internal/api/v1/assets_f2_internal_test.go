@@ -2,10 +2,12 @@ package v1
 
 import (
 	"context"
+	"log/slog"
 	"math/big"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
 // TestUsdMarketValue covers the F2 market-cap math helper directly
@@ -155,6 +157,59 @@ func TestPctChange_BadInputs(t *testing.T) {
 	}
 	if _, err := pctChange("1", "-1"); err == nil {
 		t.Error("expected error for negative then")
+	}
+}
+
+// TestApplyF2Fields_SEP41LakeFlowsIncompleteOmitted pins the F2 fallback
+// guard: for a Soroban token whose lake-flows net total is negative
+// (incompletely-seeded flows — Σ(burn+clawback) > Σmint), /v1/assets/{id}
+// must OMIT total_supply/circulating_supply (both *string,omitempty) rather
+// than publish a physically-impossible negative (ADR-0003). A normal
+// positive-total token is unaffected. Mirrors SEP41Computer.Compute refusing
+// a negative total. fakeTokenSupply lives in asset_supply_test.go (same
+// package); it hand-sets Incomplete exactly as assembleTokenSupply does
+// (proven separately in the clickhouse package's source-level test).
+func TestApplyF2Fields_SEP41LakeFlowsIncompleteOmitted(t *testing.T) {
+	asset, err := canonical.NewSorobanAsset(supplyContractID)
+	if err != nil {
+		t.Fatalf("build soroban asset: %v", err)
+	}
+
+	// Negative lake-flows total → flagged Incomplete → fallback must not fire.
+	neg := &fakeTokenSupply{supply: clickhouse.TokenSupply{
+		ContractID: supplyContractID,
+		Total:      big.NewInt(-50), Mint: big.NewInt(100), Burn: big.NewInt(150), Clawback: big.NewInt(0),
+		FlowCount:  3,
+		Incomplete: true,
+	}}
+	sNeg := &Server{logger: slog.Default(), tokenSupply: neg}
+	detailNeg := &AssetDetail{Decimals: 7}
+	sNeg.applyF2Fields(context.Background(), detailNeg, asset)
+	if detailNeg.TotalSupply != nil {
+		t.Errorf("total_supply = %q, want nil (omitted) for incompletely-seeded flows", *detailNeg.TotalSupply)
+	}
+	if detailNeg.CirculatingSupply != nil {
+		t.Errorf("circulating_supply = %q, want nil (omitted) for incompletely-seeded flows", *detailNeg.CirculatingSupply)
+	}
+
+	// Control: a normal positive-total token still populates supply from the
+	// lake — the guard must not break the correct path.
+	pos := &fakeTokenSupply{supply: clickhouse.TokenSupply{
+		ContractID: supplyContractID,
+		Total:      big.NewInt(900), Mint: big.NewInt(1000), Burn: big.NewInt(80), Clawback: big.NewInt(20),
+		FlowCount: 7,
+	}}
+	sPos := &Server{logger: slog.Default(), tokenSupply: pos}
+	detailPos := &AssetDetail{Decimals: 7}
+	sPos.applyF2Fields(context.Background(), detailPos, asset)
+	if detailPos.TotalSupply == nil || *detailPos.TotalSupply != "900" {
+		t.Errorf("total_supply = %v, want \"900\" for a normal positive-total token", detailPos.TotalSupply)
+	}
+	if detailPos.CirculatingSupply == nil || *detailPos.CirculatingSupply != "900" {
+		t.Errorf("circulating_supply = %v, want \"900\" for a normal positive-total token", detailPos.CirculatingSupply)
+	}
+	if detailPos.SupplyBasis == nil || *detailPos.SupplyBasis != "sep41_lake_flows" {
+		t.Errorf("supply_basis = %v, want \"sep41_lake_flows\"", detailPos.SupplyBasis)
 	}
 }
 

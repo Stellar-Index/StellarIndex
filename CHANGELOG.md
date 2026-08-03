@@ -46,6 +46,16 @@ against.
   misleading "guard always wired" comments.
 
 ### Fixed
+- **SEP-41 lake-flows supply never serves a negative value** (supply audit) — the
+  default SEP-41 serving path (ClickHouse lake flows) computed `Σmint−Σburn−Σclawback`
+  unclamped and could publish a physically-impossible negative `total_supply`/
+  `circulating_supply` from incompletely-seeded flows, bypassing the guard the
+  in-scope `SEP41Computer` enforces (and migration 0005's `>= 0`). A negative net is
+  now diagnosed as incomplete flows at the source: `/v1/assets/{id}` omits the supply
+  fields and `/v1/assets/{id}/supply` returns 404 (`supply-incomplete`) — never a
+  negative, and deliberately not a misleading `0`. Positive path unchanged; the
+  genesis-baseline seed (which legitimately reads negative below-ledger slices) is
+  unaffected.
 - **Projector no longer skips a lake hole at the scan boundary** (projector audit) —
   the CH-source projector's anti-skip guard (`ContiguousWatermark`) couldn't detect a
   missing ledger AT the window's lower bound `from` (its SQL found only *interior*
