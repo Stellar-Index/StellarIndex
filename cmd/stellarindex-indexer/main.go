@@ -1546,13 +1546,23 @@ func recordLedgerIngest(
 		logger.Warn("ledger census", "ledger", lcm.LedgerSequence(), "err", err)
 		return
 	}
-	if census.TxReadErrors > 0 {
-		// A malformed tx means the census may undercount this ledger's
-		// primitives. Don't write an authoritative substrate row we
-		// can't stand behind — leave the ledger as a substrate gap so
-		// it's re-examined rather than silently recorded wrong.
-		logger.Warn("ledger census tx read errors; skipping substrate record",
-			"ledger", census.LedgerSeq, "tx_read_errors", census.TxReadErrors)
+	if census.TxReadErrors > 0 || census.TxEventReadErrors > 0 {
+		// A ledger we could not fully read — a malformed tx (TxReadErrors)
+		// OR a tx whose GetTransactionEvents failed (TxEventReadErrors,
+		// e.g. an unsupported future TransactionMeta version, the P23/P27
+		// meta-break class) — undercounts this ledger's primitives: its
+		// SorobanEventCount dropped to zero in lock-step with the live
+		// sink (G15-06), so a projection reconcile against it would falsely
+		// pass. Don't write an authoritative substrate row we can't stand
+		// behind — leave the ledger as a substrate gap so a later re-run on
+		// a fixed reader rewrites the real row. Mirrors the offline
+		// census-backfill path (internal/ops/ingest/census_backfill.go),
+		// which honored the TxEventReadErrors half of this contract while
+		// the live path silently wrote the ledger complete (audit 2026-08-03).
+		logger.Warn("ledger census read errors; skipping substrate record",
+			"ledger", census.LedgerSeq,
+			"tx_read_errors", census.TxReadErrors,
+			"tx_event_read_errors", census.TxEventReadErrors)
 		return
 	}
 	row := timescale.LedgerIngestRow{
