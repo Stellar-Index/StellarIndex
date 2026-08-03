@@ -62,17 +62,20 @@ Provenance details:
   close time.
 - **Synthetic op-index fan-out:** one `relay` call → N updates, each
   sharing `(ledger, tx_hash, op_source)` with a unique
-  `OpIndex = base + i*1024`.
+  `OpIndex = base*1024 + i`.
 
 ## Aggregator treatment — reported, not counted
 
 Class `Oracle` / `IncludeInVWAP=false` (`external.Registry`). Surfaced on
 `/v1/sources` for transparency, excluded from VWAP.
 
-**Metric caveat:** because Band emits no events,
-`stellarindex_source_events_total{source="band"}` reads **zero** by
-design — confirm the ContractCallDecoder is firing via the cursor-advance
-metric and op-args ingestion counters, not the events counter.
+**Metric caveat (corrected 2026-08-03):** Band emits no CONTRACT
+events, but `stellarindex_source_events_total{source="band"}` does NOT
+read zero — `dispatchContractCall` bumps it per matched call, and r1
+shows a non-zero value. The earlier "reads zero by design" note was
+wrong and told operators to ignore a working outage signal. Use it, plus
+the cursor-advance metric, to confirm the ContractCallDecoder is
+firing.
 
 ## Backfill safety
 

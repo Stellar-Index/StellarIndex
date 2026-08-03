@@ -371,3 +371,57 @@ func TestDecoder_MatchesOnlyRelayFunctions(t *testing.T) {
 		t.Error("wrong contract should not match")
 	}
 }
+
+// A resolve_time beyond Band's own +1h acceptance window must clamp to
+// the ledger close. relay() silently NO-OPs outside that window (the tx
+// still succeeds), so recording the declared future time made our
+// `ORDER BY ts DESC` latest-read serve a price the chain refused, for as
+// long as the future stamp stayed ahead — up to a day under the shared
+// helper's generic +24h ceiling (cold audit 2026-08-03).
+func TestDecodeRelay_FutureResolveTimeBeyondContractWindowClampsToClose(t *testing.T) {
+	closedAt := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+
+	for name, tc := range map[string]struct {
+		offset    time.Duration
+		wantClose bool
+	}{
+		"within window (30m)":       {30 * time.Minute, false},
+		"just inside window (59m)":  {59 * time.Minute, false},
+		"beyond window (2h)":        {2 * time.Hour, true},
+		"far beyond, inside helper": {23 * time.Hour, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resolve := uint64(closedAt.Add(tc.offset).Unix())
+			args := []string{
+				encodeAddressArg(t, relayerG),
+				encodeSymbolRatesArg(t, []struct {
+					Symbol string
+					Rate   uint64
+				}{
+					{"BTC", 500_000_000_000_000},
+				}),
+				encodeU64Arg(t, resolve),
+				encodeU64Arg(t, 1),
+			}
+			updates, err := decodeRelayArgs(FnRelay, args, adapterC,
+				52_000_000, "abcd", 0, "", "", closedAt)
+			if err != nil {
+				t.Fatalf("decodeRelayArgs: %v", err)
+			}
+			if len(updates) != 1 {
+				t.Fatalf("expected 1 update, got %d", len(updates))
+			}
+			got := updates[0].Timestamp.UTC()
+			if tc.wantClose {
+				if !got.Equal(closedAt) {
+					t.Errorf("ts = %s, want the ledger close %s — a relay the contract "+
+						"would reject must not be stamped in the future", got, closedAt)
+				}
+				return
+			}
+			if !got.Equal(time.Unix(int64(resolve), 0).UTC()) {
+				t.Errorf("ts = %s, want the declared resolve_time (inside the contract's window)", got)
+			}
+		})
+	}
+}

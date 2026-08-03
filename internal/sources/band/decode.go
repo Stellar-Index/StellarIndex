@@ -17,6 +17,14 @@ import (
 // submission), well under 1024.
 const opIndexFanoutStride = 1024
 
+// bandMaxFutureResolveTime mirrors the Band contract's own acceptance
+// window: relay() applies an update only while
+// `resolve_time < ledger.timestamp + OFFSET`, OFFSET = 3600 seconds
+// (ref_data.rs). A relay outside it is a silent on-chain no-op that
+// still leaves a successful transaction, so the decoder has to apply
+// the same bound or it records prices the chain refused.
+const bandMaxFutureResolveTime = time.Hour
+
 // decodeRelayArgs converts one Band relay/force_relay InvokeContract
 // call into a slice of canonical.OracleUpdate — one per (symbol,
 // rate) pair in symbol_rates.
@@ -109,6 +117,33 @@ func decodeRelayArgs( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitt
 	// on garbage. Real-world Band payloads are post-2020 UNIX seconds
 	// ≤ the close.
 	ts := canonical.SafeUnixSeconds(resolveSeconds, closedAt)
+	// Then tighten to BAND's own acceptance window. The shared helper's
+	// generic +24h ceiling is far looser than the contract: relay()
+	// applies an update only while
+	// `resolve_time < ledger.timestamp + 3600` (OFFSET in the Band
+	// contract's ref_data.rs), and silently NO-OPs otherwise — the tx
+	// still succeeds, so a rejected relay is indistinguishable on the
+	// wire from an accepted one. Recording a future resolve_time the
+	// chain refused meant our `ORDER BY ts DESC` latest-read served a
+	// price Band never published, for as long as that future timestamp
+	// stayed ahead — up to a day (cold audit 2026-08-03).
+	//
+	// This closes exactly the divergence that matters: the chain's
+	// applied state per symbol is the max ACCEPTED resolve_time, and
+	// every latest-read takes the max ts, so the only way our latest
+	// can disagree is a future-dated row the chain rejected. Older
+	// rejected relays (resolve_time <= stored) are inert — they can
+	// never win a ts DESC read.
+	//
+	// Nuance worth knowing: for a symbol with NO live RefData entry
+	// (TEMPORARY storage, TTL-expired or never set) the contract takes
+	// the RefDatum::new path, which applies with no resolve_time bound.
+	// Such a relay is clamped here; it lands stamped at the close
+	// rather than its declared future time, which is the conservative
+	// direction.
+	if ts.After(closedAt.Add(bandMaxFutureResolveTime)) {
+		ts = closedAt.UTC()
+	}
 
 	usdQuote, err := canonical.NewFiatAsset("USD")
 	if err != nil {
