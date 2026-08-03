@@ -112,11 +112,7 @@ func sep1RefreshCmd(args []string) error {
 			// the back of the refresh queue — otherwise NULL-resolved dead
 			// domains clog the front of `ORDER BY ... NULLS FIRST` forever
 			// and good issuers behind them never get reached. Best-effort.
-			if !*dryRun {
-				if merr := store.MarkIssuerSep1Attempted(ctx, c.GStrkey); merr != nil {
-					fmt.Printf("WARN  %s  mark-attempted: %v\n", c.GStrkey, merr)
-				}
-			}
+			markSep1Attempted(ctx, store, c.GStrkey, dryRun)
 			failed++
 			continue
 		}
@@ -130,12 +126,24 @@ func sep1RefreshCmd(args []string) error {
 		payload, jerr := marshalSep1Payload(sep, orgVerified)
 		if jerr != nil {
 			fmt.Printf("FAIL  %s  marshal: %v\n", c.GStrkey, jerr)
+			// Same queue-hygiene rule as the fetch path above: a row we
+			// could not write leaves sep1_resolved_at NULL, which pins it
+			// at the head of `ORDER BY ... NULLS FIRST` forever. One
+			// issuer whose payload never marshals or never writes would
+			// otherwise starve every issuer behind it on every subsequent
+			// run — and both failure modes are reachable from
+			// attacker-authored TOML (a NUL codepoint in a string field
+			// marshals to \u0000, which Postgres jsonb rejects; an
+			// oversized payload can blow the run deadline so the write
+			// fails on an expired context). Cold audit 2026-08-03.
+			markSep1Attempted(ctx, store, c.GStrkey, dryRun)
 			failed++
 			continue
 		}
 		if !*dryRun {
 			if err := store.SetIssuerSep1Payload(ctx, c.GStrkey, payload); err != nil {
 				fmt.Printf("FAIL  %s  write: %v\n", c.GStrkey, err)
+				markSep1Attempted(ctx, store, c.GStrkey, dryRun)
 				failed++
 				continue
 			}
@@ -153,6 +161,25 @@ func sep1RefreshCmd(args []string) error {
 // tomlListsIssuer reports whether the fetched SEP-1 toml's [[CURRENCIES]] lists
 // the given issuer back — the bidirectional half of org verification. Without
 // this match, ORG_NAME from a self-declared home_domain is spoofable.
+// markSep1Attempted bumps sep1_resolved_at so a failed issuer moves to
+// the BACK of the refresh queue.
+//
+// The queue is `ORDER BY sep1_resolved_at ASC NULLS FIRST`, so a row
+// left NULL stays candidate #1 on every subsequent run. Every failure
+// path must call this, not just the fetch path: otherwise one issuer
+// that reliably fails to marshal or write starves the whole queue
+// behind it, and the run still exits 0 reporting "N failed" (cold
+// audit 2026-08-03). Best-effort — a failure to mark is logged, not
+// fatal.
+func markSep1Attempted(ctx context.Context, store *timescale.Store, gStrkey string, dryRun *bool) {
+	if dryRun != nil && *dryRun {
+		return
+	}
+	if err := store.MarkIssuerSep1Attempted(ctx, gStrkey); err != nil {
+		fmt.Printf("WARN  %s  mark-attempted: %v\n", gStrkey, err)
+	}
+}
+
 func tomlListsIssuer(currencies []metadata.Currency, issuer string) bool {
 	for _, cur := range currencies {
 		if cur.Issuer == issuer {

@@ -50,5 +50,25 @@ ProtectControlGroups=true
 # The binary's own -timeout caps the run; give systemd a little more headroom.
 TimeoutStartSec=15min
 
+# Memory ceiling — this job parses ATTACKER-AUTHORED input.
+#
+# Every stellar.toml it fetches is written by the issuer whose asset we
+# index, and the TOML parser's cost is superlinear in input size for
+# nested inline tables: measured against the pinned BurntSushi/toml,
+# a 38 KB file allocates 4.5 GB and a 150 KB file reaches 10.9 GB RSS
+# (cold audit 2026-08-03). The existing guards do not cover it — the
+# 1 MiB body cap is a BYTE cap, and both the HTTP timeout and the run
+# deadline elapse before the parse begins and cannot interrupt it.
+#
+# Unbounded, that competes for RAM with galexie's captive core,
+# Postgres and ClickHouse on this single host — the documented
+# 2026-07-05 failure mode where an unbounded job swapped core into an
+# `invalid local state` wedge and froze the lake for 11 hours. 2G is
+# far above a healthy run (hundreds of small TOMLs) and far below the
+# blast radius. MemorySwapMax=0 matches run-heavy-job.sh so a
+# ballooning parse is killed rather than swapping the box.
+MemoryMax=2G
+MemorySwapMax=0
+
 [Install]
 WantedBy=multi-user.target
