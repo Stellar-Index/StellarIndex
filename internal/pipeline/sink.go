@@ -455,7 +455,7 @@ func IsProjectedEvent(ev consumer.Event) bool {
 	switch ev.(type) {
 	case soroswap.TradeEvent, soroswap.SkimEvent, soroswap.LiquidityEvent,
 		aquarius.TradeEvent, aquarius.ReservesEvent, aquarius.LiquidityEvent,
-		aquarius.RewardsEvent, aquarius.AdminEvent, aquarius.FeeEvent,
+		aquarius.RewardsEvent, aquarius.AdminEvent, aquarius.FeeEvent, aquarius.KillEvent,
 		phoenix.TradeEvent, phoenix.LiquidityEvent, phoenix.StakeEvent,
 		comet.TradeEvent, comet.LiquidityEvent,
 		reflector.UpdateEvent, redstone.UpdateEvent,
@@ -806,6 +806,8 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 		return persistAquariusAdmin(ctx, logger, store, e)
 	case aquarius.FeeEvent:
 		return persistAquariusFee(ctx, logger, store, e)
+	case aquarius.KillEvent:
+		return persistAquariusKill(ctx, logger, store, e)
 	case phoenix.TradeEvent:
 		persistTrade(ctx, logger, store, e.Trade)
 		return nil
@@ -1301,6 +1303,29 @@ func persistAquariusFee(ctx context.Context, logger *slog.Logger, store *timesca
 	logger.Debug("Aquarius protocol fee ingested",
 		"source", aquarius.SourceName, "contract_id", e.ContractID,
 		"ledger", e.Ledger, "kind", e.Kind)
+	return nil
+}
+
+func persistAquariusKill(ctx context.Context, logger *slog.Logger, store *timescale.Store, e aquarius.KillEvent) error {
+	if err := store.InsertAquariusKillSwitch(ctx, timescale.AquariusKillSwitchEvent{
+		ContractID:      e.ContractID,
+		Ledger:          e.Ledger,
+		LedgerCloseTime: e.ObservedAt,
+		TxHash:          e.TxHash,
+		OpIndex:         e.OpIndex,
+		EventIndex:      e.EventIndex,
+		Action:          e.Action,
+	}); err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(aquarius.SourceName, "aquarius_kill_switches").Inc()
+		logger.Error("insert Aquarius kill switch failed",
+			"contract_id", e.ContractID, "ledger", e.Ledger,
+			"tx_hash", e.TxHash, "action", e.Action, "err", err)
+		return err
+	}
+	bumpEntryCount(ctx, logger, store, aquarius.SourceName)
+	logger.Debug("Aquarius kill switch ingested",
+		"source", aquarius.SourceName, "contract_id", e.ContractID,
+		"ledger", e.Ledger, "action", e.Action)
 	return nil
 }
 

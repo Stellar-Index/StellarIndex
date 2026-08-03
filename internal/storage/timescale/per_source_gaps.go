@@ -233,6 +233,10 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// events, one table (0129, 2026-08-03). Large override — claims are
 	// bursty and set is very rare, so a quiet stretch is normal.
 	{Source: "aquarius-protocol-fee", Table: "aquarius_protocol_fee", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 700000},
+	// aquarius-kill-switches: circuit-breaker toggles are VERY rare (32
+	// events lake-wide across 6 kinds; 0130, 2026-08-03). Huge override —
+	// a multi-month gap between pauses is normal, not an outage.
+	{Source: "aquarius-kill-switches", Table: "aquarius_kill_switches", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 2000000},
 	// aquarius-rewards: the rewards-gauge event surface (ROADMAP #89,
 	// migration 0099). Dominated by pool_state (339,712 lifetime — one
 	// of the densest Aquarius topics, fires on every reward-affecting

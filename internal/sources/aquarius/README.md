@@ -188,15 +188,17 @@ kind-discriminated), the rewards-gauge surface
 (→ `aquarius_rewards_events`), the router governance/upgrade surface
 (→ `aquarius_admin`), and `add_pool` (registers the pool).
 
-The `kill_*` / `unkill_*` circuit-breaker family is **RECOGNIZED
-ONLY**, NOT projected: `classify()` names them (so the full topic set
-is audited and none is silently unmatched) but `Matches()` returns
-false, so no row is stored. They are governance switches with no flow
-data and 0 occurrences on mainnet to date. This is
-recognized-and-intentionally-not-stored — do NOT read it as "handled"
-in the projected sense (corrected 2026-08-03; the prior wording called
-all of these "already handled", which overstated coverage). Projecting
-them is tracked in the every-event completion pass (unit C).
+The `kill_*` / `unkill_*` circuit-breaker toggles (kill/unkill for
+deposit / swap / claim / gauges_claim) project to `aquarius_kill_switches`
+(migration 0130). They carry a single topic and an SCV_VOID body — pure
+toggle signals — so the row is the identity + action.
+
+**Every Aquarius topic is now projected or intentionally registered**
+(add_pool). The prior "already handled" wording (corrected 2026-08-03)
+overstated coverage while `reserves_sync` / protocol-fee / kill-unkill
+were still recognized-only; the every-event completion pass closed all
+three (migrations 0128–0130). No recognized-but-unstored residual
+remains.
 
 **Data-quality caveat:** `stellar.contract_events_daily` (the fast
 pre-aggregated path `/v1/protocols/{name}` reads) undercounts by

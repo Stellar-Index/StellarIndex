@@ -16,6 +16,13 @@ against.
 ## [Unreleased]
 
 ### Added
+- **Aquarius circuit-breaker toggles now project** to the new
+  `aquarius_kill_switches` hypertable (migration 0130) — the eight
+  `kill_*`/`unkill_*` actions (deposit/swap/claim/gauges_claim). Pure
+  toggle signals (single topic, SCV_VOID body), so the row is identity +
+  action. Previously recognized-only. This completes Aquarius: **every
+  emitted topic is now projected or registered** — no recognized-but-
+  unstored residual remains.
 - **Aquarius protocol-fee events now project** to the new
   `aquarius_protocol_fee` hypertable (migration 0129) — `set_protocol_fee`
   (per-token old→new fee, Map of u32) and `claim_protocol_fee`
