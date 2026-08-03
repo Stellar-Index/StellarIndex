@@ -63,10 +63,33 @@ func projectorReplay(args []string) error {
 	if err != nil && !errors.Is(err, timescale.ErrNotFound) {
 		return fmt.Errorf("read projector cursor: %w", err)
 	}
-	currentLedger := uint32(0)
-	if err == nil {
-		currentLedger = cursor.LastLedger
+	if errors.Is(err, timescale.ErrNotFound) {
+		// Fail LOUDLY on an unknown source rather than falling through
+		// to currentLedger=0, where `target >= 0` prints "no action"
+		// and exits 0.
+		//
+		// This is not a theoretical typo. The projector writes its
+		// cursor under the projector SOURCE name (blend_backstop,
+		// sep41_transfers, …), but `find-data-gaps` prints a
+		// remediation command using the gap detector's per-TABLE
+		// target names, which are hyphenated (blend-backstop,
+		// sep41-transfers, soroswap-skim …) and mostly do not match —
+		// and the runbook lists several of those hyphenated names as
+		// valid under a heading claiming they match the registry. So
+		// an operator pasting the generated command for a real
+		// projection hole got a green exit code and a "no action"
+		// line, while nothing was rewound and the gap survived (cold
+		// audit 2026-08-03).
+		//
+		// A genuinely never-run source has no cursor row either, but
+		// there is nothing to rewind in that case, so refusing is
+		// correct for both.
+		return fmt.Errorf("no projector cursor for source %q — check the name against "+
+			"internal/projector/registry.go (projector SOURCE names are underscored, e.g. "+
+			"blend_backstop / sep41_transfers; the gap detector's hyphenated per-table "+
+			"target names are NOT valid here), or the source has never run", *source)
 	}
+	currentLedger := cursor.LastLedger
 	target := uint32(*from)
 	if target == 0 {
 		return fmt.Errorf("invalid -from %d", *from)
