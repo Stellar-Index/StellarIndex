@@ -55,7 +55,7 @@ The auction-event surface — the primary directional price signal:
   hypertables: `blend_positions` (the 7 position-changing
   events), `blend_emissions` (gulp / claim / emissions /
   bad_debt / defaulted_debt), `blend_admin` (admin / config /
-  pool-factory). Migration `0042_create_blend_money_market`.
+  pool-factory). Migration `0045_create_blend_money_market`.
 
 ### Still deferred
 

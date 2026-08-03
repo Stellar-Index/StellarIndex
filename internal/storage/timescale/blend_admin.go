@@ -33,7 +33,7 @@ func toAssetAmountRows(in []domain.BlendAssetAmount) []blendAssetAmountRow {
 //
 // Promoted typed columns: admin / asset / target — populated when
 // the event kind carries them; NULL otherwise (see per-kind doc
-// in migration 0042 + blend.AdminEvent godoc). Event-type-specific
+// in migration 0045 + blend.AdminEvent godoc). Event-type-specific
 // remainder (update_pool body, queue_set_reserve ReserveConfig,
 // set_reserve index, set_status status+by_admin) lands in the
 // attributes jsonb column.
@@ -126,7 +126,7 @@ func buildAdminAttributes(e domain.BlendAdminEvent) map[string]any {
 // isBlendAdminKind reports whether kind is one of the admin event
 // kinds (including the pool-factory `deploy` and the V1-pool-factory
 // liquidation-auction pair). Mirrors the CHECK constraint in
-// migration 0042, widened by migration 0097.
+// migration 0045, widened by migration 0097.
 func isBlendAdminKind(kind string) bool {
 	switch kind {
 	case domain.BlendEventSetAdmin,

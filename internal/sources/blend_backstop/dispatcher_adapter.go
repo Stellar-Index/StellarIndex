@@ -7,7 +7,7 @@ import (
 )
 
 // Decoder is the dispatcher-facing view of the Blend Backstop. It is a
-// stateless topic Decoder — each of the ten backstop events decodes
+// stateless topic Decoder — each of the twelve backstop events decodes
 // independently into one blend_backstop_events row; there is no
 // cross-event correlation (unlike Soroswap's swap/sync pairing).
 //
@@ -45,7 +45,7 @@ func IsBackstopContract(id string) bool {
 func (*Decoder) Name() string { return SourceName }
 
 // Matches implements [dispatcher.Decoder]. Claims an event when its
-// topic[0] is one of the ten backstop symbols AND it was emitted by a
+// topic[0] is one of the twelve backstop symbols AND it was emitted by a
 // known backstop contract. The contract gate disambiguates the
 // symbol-overlap with Blend pool events.
 func (*Decoder) Matches(ev events.Event) bool {

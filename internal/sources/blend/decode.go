@@ -87,7 +87,7 @@ type NewAuctionEvent struct {
 	Pool        string // pool contract C-strkey (matched at dispatch)
 	AuctionType uint32 // 0=UserLiquidation, 1=BadDebt, 2=Interest
 	User        string // address whose position is being auctioned (G or C)
-	Percent     uint32 // % of assets being auctioned off, in bps-style u32
+	Percent     uint32 // % of assets being auctioned off, 0-100 (not bps); DB CHECK enforces the range
 	Data        AuctionData
 	Ledger      uint32
 	TxHash      string

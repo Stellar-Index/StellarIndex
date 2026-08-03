@@ -15,7 +15,7 @@
 // seeded three ways, all rooted at the factory and all funneling through
 // [Registry.Seed]:
 //
-//   - Live: the decoder calls Seed(childID, ledger) when it decodes a
+//   - Live: the decoder calls Seed(childID, factoryID, firstLedger) when it decodes a
 //     factory creation event (e.g. Blend `deploy`, Soroswap-style
 //     `new_pair`). Seed fires the persistence hook so the mapping is
 //     durably recorded.
