@@ -408,9 +408,11 @@ SELECT asset_key, count(DISTINCT holder) AS holders,
 stellarindex-ops supply audit BLND-GDJEHTBE6ZHUXSWFI642DCGLUOECLHPF3KSXHPXTSTJ7E3JF6MQ5EZYY \
   -config PATH -cross-check CD25MNVTZDL4Y3XBCPCJXGXATV5WUHHOWMYFF4YBEGU5FCPGMYTVG5JY
 # repeat for EURC / KALE / PHO's own classic/SAC pair. "status: WITHIN
-# TOLERANCE" (or, if not yet migrated to CrossCheckForClass in this CLI,
-# a divergence within the pair's true wrap fraction rather than the
-# pool-held delta) confirms the fix landed.
+# TOLERANCE" confirms the fix landed. The CLI dispatches on wrap class
+# exactly as the aggregator's refresher does (corrected 2026-08-03 — it
+# previously ran strict equality unconditionally, which every
+# partially-wrapped pair fails by construction); the printed
+# `wrap_class` line tells you which invariant was applied.
 ```
 
 ```
