@@ -62,7 +62,7 @@ func (r *timeoutReader) TransactionByHash(context.Context, string) (clickhouse.T
 	return clickhouse.TxSummary{}, false, context.DeadlineExceeded
 }
 
-func (r *timeoutReader) ContractEventsRecent(context.Context, string, int, clickhouse.ExplorerCursor) ([]clickhouse.ContractActivityRow, error) {
+func (r *timeoutReader) ContractEventsRecent(context.Context, string, int, clickhouse.ContractEventsCursor) ([]clickhouse.ContractActivityRow, error) {
 	return nil, context.DeadlineExceeded
 }
 

@@ -11080,11 +11080,13 @@ export interface paths {
          * Per-contract recent on-chain event activity.
          * @description A contract's most-recent emitted events (newest first), keyset-paged
          *     with `?cursor=<opaque>` (echo back the response's `next_cursor`). The
-         *     cursor is the composite `(ledger, op_index, event_index)` — a
-         *     ledger-only cursor would silently drop the rest of a ledger in which a
-         *     busy contract emits more than `limit` events. `next_cursor` is present
-         *     only when a full page is returned. The SEP-41 transfer audit trail is at
-         *     the sibling `/contracts/{contract_id}/transfers`.
+         *     cursor is the full row-identity composite
+         *     `(ledger, tx_hash, op_index, event_index)` — anything less is not
+         *     unique (single-operation transactions dominate, so events from
+         *     different transactions in one ledger tie on the shorter tuple) and
+         *     would drop rows at a page boundary. `next_cursor` is present only when
+         *     a full page is returned. The SEP-41 transfer audit trail is at the
+         *     sibling `/contracts/{contract_id}/transfers`.
          */
         get: {
             parameters: {

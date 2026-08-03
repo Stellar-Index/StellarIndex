@@ -16,6 +16,31 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **`/v1/contracts/{id}` pagination no longer silently drops events at
+  page boundaries** (cold audit, HIGH): the keyset cursor paged on
+  `(ledger, op_index, event_index)` — a tuple that is NOT unique
+  (single-op txs dominate, so events from different txs in one ledger
+  all tie at `(L, 0, 0)`) — and the strict `<` permanently excluded
+  every never-served row tying with a page's last row. The cursor now
+  carries the full row-identity tuple
+  `(ledger, tx_hash, op_index, event_index)` (the table's own ORDER BY
+  key, same shape as the movements cursor). Legacy 3-part cursors are
+  rejected as invalid (they are short-lived client echoes).
+- **`/v1/ledgers?before=` no longer runs an unbounded whole-table FINAL
+  merge** (cold audit): the cursor branch lacked the tail-window bound
+  the tip branch was rewritten to use, making a public query param an
+  O(table) read (~3.5× slower measured on r1, worse as parts grow). Now
+  bounded to the same 5000-ledger window (clamped at genesis) with the
+  explorer scan-settings pin appended.
+- **`/v1/accounts/{g}/movements?asset=` now folds asset aliases** (cold
+  audit): the filter was matched verbatim, so `XLM`, `crypto:XLM`, and
+  Horizon-style `USDC:G…` spellings silently matched nothing (XLM
+  dual-form rule). Parseable values normalize to the canonical spelling
+  (`native` / `CODE-ISSUER`); wider-domain values (`pool:<hex>`, raw
+  `C…` ids) still pass through verbatim. The post-P23 rows' `asset`
+  field also now resolves to the canonical dash form instead of the SAC
+  instance's colon form, so one filter value matches both sides of the
+  P23 merge and the spelling no longer flips across the boundary.
 - **hashdb verify sweep no longer reports "clean" over missing lake
   objects** (cold audit): the sweep inherited the live-tail's
   trailing-missing tolerance (65,536-ledger window — wider than the

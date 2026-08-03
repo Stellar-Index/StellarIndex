@@ -120,7 +120,7 @@ func (r *capReader) EventsByTx(ctx context.Context, _ uint32, _ string) ([]click
 	return nil, nil
 }
 
-func (r *capReader) ContractEventsRecent(ctx context.Context, _ string, _ int, _ clickhouse.ExplorerCursor) ([]clickhouse.ContractActivityRow, error) {
+func (r *capReader) ContractEventsRecent(ctx context.Context, _ string, _ int, _ clickhouse.ContractEventsCursor) ([]clickhouse.ContractActivityRow, error) {
 	r.probe.record(ctx)
 	return nil, nil
 }

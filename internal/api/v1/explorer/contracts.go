@@ -2,7 +2,10 @@ package explorer
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -28,9 +31,10 @@ type ContractEventView struct {
 
 // ContractDetailView is the wire response for GET /v1/contracts/{contract_id}:
 // the contract id + its most-recent events. NextCursor is the opaque keyset
-// cursor for the next (older) page — composite (ledger, op_index, event_index)
-// so a contract that emits many events in one ledger never loses rows across a
-// page boundary. Echo it back as ?cursor=. Set only when a full page returned.
+// cursor for the next (older) page — the full row-identity composite
+// (ledger, tx_hash, op_index, event_index) so a contract that emits many
+// events in one ledger (across many txs) never loses rows across a page
+// boundary. Echo it back as ?cursor=. Set only when a full page returned.
 type ContractDetailView struct {
 	ContractID string `json:"contract_id"`
 	// Protocol names the registry protocol this contract belongs to
@@ -61,7 +65,7 @@ func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	cur, ok := h.parseExplorerCursor(w, r, 3) // (ledger, op_index, event_index)
+	cur, ok := h.parseContractEventsCursor(w, r)
 	if !ok {
 		return
 	}
@@ -110,13 +114,60 @@ func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 	// cursor there just costs the client one empty round-trip.
 	if n := len(rows); n == limit {
 		last := rows[n-1]
-		out.NextCursor = encodeCursor(last.Seq, last.OpIndex, last.EventIndex)
+		out.NextCursor = fmt.Sprintf("%d.%s.%d.%d", last.Seq, last.TxHash, last.OpIndex, last.EventIndex)
 	}
 	if !cur.IsSet() {
 		h.writeJSONAt(w, out, degraded, asOf)
 		return
 	}
 	h.WriteJSON(w, out, false)
+}
+
+// parseContractEventsCursor decodes the opaque `?cursor=` for the contract
+// activity feed — dotted-decimal with the tx_hash segment second
+// ("63000000.<64-hex>.0.2"), mirroring parseMovementCursor. The tx_hash
+// segment is required: the 3-part (ledger, op_index, event_index) tuple is
+// not unique (single-op txs all tie at 0.0), and paging on it permanently
+// skipped tied rows at page boundaries (cold audit 2026-08-03). Old 3-part
+// cursors are rejected as invalid — they are short-lived client echoes, and
+// resuming them exactly is impossible without the tx discriminator anyway.
+func (h *Handler) parseContractEventsCursor(w http.ResponseWriter, r *http.Request) (clickhouse.ContractEventsCursor, bool) {
+	raw := r.URL.Query().Get("cursor")
+	if raw == "" {
+		return clickhouse.ContractEventsCursor{}, true
+	}
+	bad := func() (clickhouse.ContractEventsCursor, bool) {
+		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/invalid-cursor",
+			"Invalid cursor", http.StatusBadRequest,
+			"cursor must be an opaque value returned in a prior next_cursor")
+		return clickhouse.ContractEventsCursor{}, false
+	}
+	parts := strings.Split(raw, ".")
+	if len(parts) != 4 {
+		return bad()
+	}
+	ledger, err := strconv.ParseUint(parts[0], 10, 32)
+	if err != nil || ledger == 0 {
+		return bad()
+	}
+	txHash := parts[1]
+	if txHash == "" {
+		return bad()
+	}
+	opIdx, err := strconv.ParseUint(parts[2], 10, 32)
+	if err != nil {
+		return bad()
+	}
+	evIdx, err := strconv.ParseUint(parts[3], 10, 32)
+	if err != nil {
+		return bad()
+	}
+	return clickhouse.ContractEventsCursor{
+		Ledger:     uint32(ledger),
+		TxHash:     txHash,
+		OpIndex:    uint32(opIdx),
+		EventIndex: uint32(evIdx),
+	}, true
 }
 
 func contractEventView(e clickhouse.ContractActivityRow) ContractEventView {
@@ -138,7 +189,7 @@ func contractEventView(e clickhouse.ContractActivityRow) ContractEventView {
 // size and slicing to the request's limit (see ContractDetail).
 func (h *Handler) contractEventsFirstPageCached(ctx context.Context, cid string, limit int) ([]clickhouse.ContractActivityRow, time.Time, bool, error) {
 	v, asOf, degraded, err := h.contractDetailCached(ctx, "ev:"+cid, func(rctx context.Context) (any, error) {
-		full, cerr := h.Reader.ContractEventsRecent(rctx, cid, 500, clickhouse.ExplorerCursor{})
+		full, cerr := h.Reader.ContractEventsRecent(rctx, cid, 500, clickhouse.ContractEventsCursor{})
 		if cerr != nil {
 			return nil, cerr
 		}

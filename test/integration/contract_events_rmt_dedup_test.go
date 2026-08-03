@@ -90,7 +90,7 @@ func TestClickHouseContractEventsRMTDedup(t *testing.T) {
 	t.Cleanup(func() { _ = er.Close() })
 
 	// ── ContractEventsRecent: LIMIT 1 BY primary key ────────────────────────
-	recent, err := er.ContractEventsRecent(ctx, contractID, 100, chstore.ExplorerCursor{})
+	recent, err := er.ContractEventsRecent(ctx, contractID, 100, chstore.ContractEventsCursor{})
 	if err != nil {
 		t.Fatalf("ContractEventsRecent: %v", err)
 	}

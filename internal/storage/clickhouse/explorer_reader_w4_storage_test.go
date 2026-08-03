@@ -41,7 +41,7 @@ func TestContractEventsRecent_DedupsPerPrimaryKey(t *testing.T) {
 	}
 	r := &ExplorerReader{conn: conn}
 
-	rows, err := r.ContractEventsRecent(context.Background(), "CTESTCONTRACT", 100, ExplorerCursor{})
+	rows, err := r.ContractEventsRecent(context.Background(), "CTESTCONTRACT", 100, ContractEventsCursor{})
 	if err != nil {
 		t.Fatalf("ContractEventsRecent: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestContractEventsRecent_DedupsPerPrimaryKey(t *testing.T) {
 	// The LIMIT 1 BY clause must come AFTER the existing ORDER BY and BEFORE the
 	// page-size LIMIT (ClickHouse clause order), so a duplicate part cannot eat a
 	// page slot before the page is cut.
-	if !strings.Contains(q, "ORDER BY ledger_seq DESC, op_index DESC, event_index DESC LIMIT 1 BY") {
+	if !strings.Contains(q, "ORDER BY ledger_seq DESC, tx_hash DESC, op_index DESC, event_index DESC LIMIT 1 BY") {
 		t.Fatalf("query = %q, want LIMIT 1 BY to follow the existing ORDER BY", q)
 	}
 	if !strings.Contains(q, "event_index LIMIT ?") {
@@ -80,7 +80,7 @@ func TestContractEventsRecent_DedupSurvivesCursor(t *testing.T) {
 	if !strings.Contains(q, "LIMIT 1 BY ledger_seq, tx_hash, op_index, event_index LIMIT ?") {
 		t.Fatalf("cursor query = %q, want the dedup clause before the page LIMIT", q)
 	}
-	if !strings.Contains(q, "(ledger_seq, op_index, event_index) < (?, ?, ?)") {
+	if !strings.Contains(q, "(ledger_seq, tx_hash, op_index, event_index) < (?, ?, ?, ?)") {
 		t.Fatalf("cursor query = %q, lost its keyset predicate", q)
 	}
 }

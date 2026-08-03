@@ -199,11 +199,13 @@ func TestExplorerScanQueries_ExecuteAgainstServer(t *testing.T) {
 			return err
 		},
 		"ContractEventsRecent(first page)": func() error {
-			_, err := r.ContractEventsRecent(ctx, contract, 5, chstore.ExplorerCursor{})
+			_, err := r.ContractEventsRecent(ctx, contract, 5, chstore.ContractEventsCursor{})
 			return err
 		},
 		"ContractEventsRecent(cursor)": func() error {
-			_, err := r.ContractEventsRecent(ctx, contract, 5, cursor)
+			_, err := r.ContractEventsRecent(ctx, contract, 5, chstore.ContractEventsCursor{
+				Ledger: cursor.Ledger, TxHash: "ff", OpIndex: cursor.A, EventIndex: cursor.B,
+			})
 			return err
 		},
 		"RecentContracts": func() error {
