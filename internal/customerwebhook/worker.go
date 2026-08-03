@@ -42,6 +42,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"strconv"
 	"time"
@@ -75,6 +76,40 @@ type DeliveryStore interface {
 	MarkAttemptFailed(ctx context.Context, id uuid.UUID, errMsg string, responseStatus int, nextAttemptAt time.Time) error
 }
 
+// Worker tuning defaults and the safety invariant that binds them.
+const (
+	// defaultBatchLimit caps deliveries drained per poll. Kept low on
+	// purpose — see the storeLeaseDuration invariant below.
+	defaultBatchLimit = 25
+
+	// defaultHTTPTimeout bounds a single delivery POST. It also bounds
+	// each attempt's total store+HTTP work (see tick), so the worst-case
+	// serial batch time is defaultBatchLimit × defaultHTTPTimeout.
+	defaultHTTPTimeout = 10 * time.Second
+
+	// storeLeaseDuration is the claim lease ListPendingDeliveries places
+	// on each row (`next_attempt_at = now() + 5m`; see the package doc /
+	// internal/platform/postgresstore/webhook_store.go). A row not
+	// finished within the lease is re-claimed by a second worker and
+	// DOUBLE-delivered. The worker processes a batch SERIALLY, so the
+	// worst-case time to reach the last row is BatchLimit × Timeout; that
+	// product MUST stay comfortably under this lease.
+	storeLeaseDuration = 5 * time.Minute
+
+	// maxDrainBytes caps how much of a response body we drain to reuse
+	// the connection. We never read the body for content, so a hostile
+	// or buggy endpoint must not tie the worker up streaming megabytes.
+	maxDrainBytes = 64 << 10 // 64 KiB
+)
+
+// Compile-time guard for the two-worker double-delivery invariant
+// (MEDIUM, F-1270 hardening): the worst-case serial batch time
+// (defaultBatchLimit × defaultHTTPTimeout) must stay strictly under the
+// store's claim lease. Raising either default past that point fails the
+// build here rather than silently reintroducing the double-delivery
+// race. 25 × 10s = 250s < 300s, with 50s of margin.
+const _ = uint(storeLeaseDuration - defaultBatchLimit*defaultHTTPTimeout - time.Nanosecond)
+
 // Options tunes the worker. Zero values yield production defaults.
 type Options struct {
 	// PollInterval between queue drains. Default 5s — tight
@@ -83,13 +118,28 @@ type Options struct {
 	PollInterval time.Duration
 
 	// BatchLimit caps how many deliveries each poll drains.
-	// Default 100. Higher values bias toward throughput at the
-	// cost of postgres lock duration per cycle.
+	// Default 25 (defaultBatchLimit). The worker processes a batch
+	// SERIALLY and the store leases each claimed row for
+	// storeLeaseDuration (5m); a row not reached before its lease
+	// expires is re-claimed by a second worker and DOUBLE-delivered.
+	// INVARIANT: BatchLimit × HTTPClient.Timeout MUST stay under the
+	// 5-minute store lease (default 25 × 10s = 250s < 300s). The
+	// compile-time guard beside the defaults enforces it for the
+	// default values; if you raise this, keep the product under the
+	// lease. Higher values bias toward throughput at the cost of
+	// postgres lock duration per cycle and shrink that safety margin.
 	BatchLimit int
 
 	// MaxAttempts before a delivery is marked permanently failed.
-	// Default 15 (matches migration 0027's docblock — "Stripe-
-	// style: signed deliveries, exponential retry over 72h").
+	// Default 15. With scheduleRetry's 30s→doubling→1h-capped backoff,
+	// the 15-attempt schedule spans only ~8h of wall-clock — NOT the 72h
+	// that migration 0027's docblock ("Stripe-style: signed deliveries,
+	// exponential retry over 72h") and the CustomerWebhook struct doc
+	// aspire to. That 72h figure is ASPIRATIONAL: reaching it would need
+	// a larger MaxAttempts (and/or a higher backoff cap) and is a
+	// customer-facing delivery-SLA decision — deliberately NOT changed
+	// here, because silently bumping the attempt budget would move the
+	// SLA under the operator's feet.
 	MaxAttempts int
 
 	// HTTPClient sends the actual POST. Default has a 10s
@@ -127,7 +177,7 @@ func New(store DeliveryStore, opts Options) *Worker {
 		opts.PollInterval = 5 * time.Second
 	}
 	if opts.BatchLimit <= 0 {
-		opts.BatchLimit = 100
+		opts.BatchLimit = defaultBatchLimit
 	}
 	if opts.MaxAttempts <= 0 {
 		opts.MaxAttempts = 15
@@ -140,7 +190,7 @@ func New(store DeliveryStore, opts Options) *Worker {
 		// stop a 302 from a public host pointing at an internal
 		// destination from being followed automatically.
 		opts.HTTPClient = &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: defaultHTTPTimeout,
 			Transport: &http.Transport{
 				DialContext: ssrfGuardedDialContext,
 			},
@@ -212,8 +262,25 @@ func (w *Worker) tick(ctx context.Context) {
 		return
 	}
 	for _, d := range pending {
-		w.deliverOne(ctx, d)
+		// Bound each attempt to the per-request timeout so the worst-case
+		// serial batch time stays BatchLimit × Timeout — the basis for the
+		// BatchLimit-vs-lease invariant (see Options.BatchLimit). A single
+		// stuck delivery can't blow the batch past the 5-minute store lease
+		// and let a second worker re-claim the tail.
+		attemptCtx, cancel := context.WithTimeout(ctx, w.attemptTimeout())
+		w.deliverOne(attemptCtx, d)
+		cancel()
 	}
+}
+
+// attemptTimeout is the per-delivery deadline: the HTTP client's own
+// per-request timeout (default defaultHTTPTimeout). Bounding each attempt
+// keeps the worst-case serial batch time at BatchLimit × Timeout.
+func (w *Worker) attemptTimeout() time.Duration {
+	if t := w.opts.HTTPClient.Timeout; t > 0 {
+		return t
+	}
+	return defaultHTTPTimeout
 }
 
 // deliverOne processes a single delivery. POSTs the payload, signs
@@ -252,6 +319,20 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 		_ = w.store.MarkAttemptFailed(ctx, d.ID,
 			"webhook disabled", 0, time.Time{})
 		obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("disabled").Inc()
+		return
+	}
+	if len(wh.SecretHash) == 0 {
+		// Defence-in-depth: a zero-length signing key yields a FORGEABLE
+		// HMAC (anyone can compute HMAC("", body) for any payload). This is
+		// unreachable via the API today (generateSecret always writes 32
+		// crypto/rand bytes), but we refuse to emit a spoofable signature.
+		// Treat it as a TERMINAL misconfiguration for this row — retrying
+		// can never repair a missing secret — and never POST.
+		w.opts.Logger.Warn("customer-webhook: empty signing secret; permanently failing delivery (never sign with an empty key)",
+			"delivery_id", d.ID, "webhook_id", d.WebhookID)
+		_ = w.store.MarkAttemptFailed(ctx, d.ID,
+			"webhook signing secret is empty", 0, time.Time{})
+		obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("no_secret").Inc()
 		return
 	}
 
@@ -293,8 +374,10 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
-	// Drain the body so the connection can be reused.
-	_, _ = io.Copy(io.Discard, resp.Body)
+	// Drain the body (capped) so the connection can be reused. We never
+	// read it for content, so io.LimitReader stops a hostile or buggy
+	// endpoint from streaming unbounded data at us within the timeout.
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxDrainBytes))
 	elapsed := time.Since(start).Seconds()
 
 	switch {
@@ -352,20 +435,58 @@ func (w *Worker) handleFailure(ctx context.Context, d platform.WebhookDelivery, 
 	obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues(outcome).Inc()
 }
 
-// scheduleRetry returns the next attempt time given a 1-based
-// attempt number. Exponential backoff: 30s, 1m, 2m, 4m, 8m, …
-// capped at 1h. Caller decides whether to use this or to mark
-// the delivery terminally failed.
+// scheduleRetry returns the next attempt time given a 1-based attempt
+// number. Exponential backoff — 30s, 1m, 2m, 4m, 8m, … capped at 1h —
+// with bounded full-jitter so deliveries that fail in the same tick
+// don't retry in synchronized waves. Caller decides whether to use this
+// or to mark the delivery terminally failed.
 func (w *Worker) scheduleRetry(nextAttempt int) time.Time {
+	return w.opts.Clock().Add(w.backoffDelay(nextAttempt))
+}
+
+// backoffDelay is the jittered exponential-backoff delay for a 1-based
+// attempt number. The shift exponent is clamped BEFORE the shift so the
+// delay can never wrap int64 regardless of MaxAttempts (the previous
+// `base << (n-1)` overflowed to a non-positive value for n ≳ 30). The
+// deterministic delay is then jittered into [delay/2, delay].
+func (w *Worker) backoffDelay(nextAttempt int) time.Duration {
 	const (
 		base    = 30 * time.Second
 		maxWait = time.Hour
+		// maxShift: 30s << 7 = 3840s already exceeds maxWait, so any
+		// exponent at or above it clamps to maxWait. Clamping here keeps
+		// the shift far below the int64 overflow point no matter how large
+		// MaxAttempts is set.
+		maxShift = 7
 	)
-	delay := base << (nextAttempt - 1) //nolint:gosec // attempt count is bounded by MaxAttempts (15)
-	if delay <= 0 || delay > maxWait {
-		delay = maxWait
+	shift := nextAttempt - 1
+	if shift < 0 {
+		shift = 0
 	}
-	return w.opts.Clock().Add(delay)
+	var delay time.Duration
+	if shift >= maxShift {
+		delay = maxWait
+	} else {
+		delay = base << shift
+		if delay <= 0 || delay > maxWait {
+			delay = maxWait
+		}
+	}
+	return jitterDelay(delay)
+}
+
+// jitterDelay applies full-jitter to a backoff delay, returning a random
+// duration in [delay/2, delay]. Spreading N simultaneous failures across
+// the back half of the window stops them re-hammering a recovering
+// endpoint in lockstep (thundering herd). Never returns a negative or
+// zero delay for a positive input.
+func jitterDelay(delay time.Duration) time.Duration {
+	half := delay / 2
+	if half <= 0 {
+		return delay
+	}
+	// rand.Int64N(half+1) ∈ [0, half]; result ∈ [half, delay].
+	return half + time.Duration(rand.Int64N(int64(half)+1))
 }
 
 // signHMACSHA256 produces the hex-encoded HMAC-SHA-256 signature over the

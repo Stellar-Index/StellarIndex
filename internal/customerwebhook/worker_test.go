@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -328,6 +329,60 @@ func TestWorker_MissingWebhookTerminates(t *testing.T) {
 	}
 	if !store.failures[deliveryID][0].terminal {
 		t.Errorf("missing webhook must terminate the delivery")
+	}
+}
+
+// TestWorker_EmptySecret_TerminalNoDelivery is the defence-in-depth guard
+// for an empty HMAC signing key. signHMACSHA256 with a zero-length secret
+// produces a FORGEABLE HMAC (anyone can compute HMAC("", body) for any
+// payload), so the worker must refuse to sign/POST and instead mark the
+// row terminally failed (a missing secret is a misconfiguration that
+// retrying can never repair) — never emit a spoofable signature.
+//
+// Not reachable via the API today (generateSecret always writes 32
+// crypto/rand bytes), but a belt-and-suspenders gap. Pre-fix the worker
+// signed with the empty key and POSTed, so the test server would receive
+// the request and the row would be marked delivered.
+func TestWorker_EmptySecret_TerminalNoDelivery(t *testing.T) {
+	var posted int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&posted, 1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	store := newFakeStore()
+	webhookID := uuid.New()
+	store.addWebhook(platform.CustomerWebhook{
+		ID:         webhookID,
+		URL:        ts.URL,
+		SecretHash: []byte{}, // empty signing key
+		Enabled:    true,
+	})
+	deliveryID := uuid.New()
+	store.enqueue(platform.WebhookDelivery{
+		ID: deliveryID, WebhookID: webhookID,
+		EventType:     string(platform.WebhookEventIncidentSEV1),
+		Payload:       []byte(`{}`),
+		NextAttemptAt: time.Now().Add(-time.Second),
+	})
+
+	runOneTick(t, store, customerwebhook.Options{PollInterval: 30 * time.Millisecond})
+
+	if n := atomic.LoadInt32(&posted); n != 0 {
+		t.Errorf("empty-secret webhook was POSTed %d time(s); must never sign/deliver with an empty key", n)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if _, ok := store.delivered[deliveryID]; ok {
+		t.Error("empty-secret delivery must not be marked delivered")
+	}
+	got := store.failures[deliveryID]
+	if len(got) != 1 {
+		t.Fatalf("expected exactly 1 terminal failure for an empty-secret webhook, got %d", len(got))
+	}
+	if !got[0].terminal {
+		t.Error("empty-secret webhook must fail TERMINALLY (zero next_attempt_at), not retry forever")
 	}
 }
 
