@@ -16,6 +16,18 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **The public SSE endpoints delivered nothing through the reverse
+  proxy** (cold audit + live r1 measurement). The API's own listener
+  streams `/v1/price/stream` correctly — `:connected`, `:keepalive` and
+  `price_update` frames arrive within milliseconds — but the same
+  request through Caddy, bypassing Cloudflare entirely, returned **zero
+  bytes over 25s**. Caddy's automatic streaming detection did not
+  engage, so every external consumer of a documented SSE endpoint
+  connected, received HTTP 200 with `Content-Type: text/event-stream`,
+  and then waited forever with no data and no heartbeat. Both Caddy
+  configs now route `/v1/*/stream` through a `flush_interval -1`
+  handler. **Requires an operator ansible run (`--tags caddy`) to take
+  effect on r1.**
 - **`ch-rebuild` / `ch-reproject` now preseed factory-anchored gates**
   (cold audit): both built the reconciliation catalogue but skipped the
   `preseedFactoryChildren` walk that `verify-reconciliation` and

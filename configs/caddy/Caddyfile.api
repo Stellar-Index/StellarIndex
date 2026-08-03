@@ -115,6 +115,28 @@ api.stellarindex.io {
 		close
 	}
 
+	# ── SSE: stream paths need immediate flushing ───────────────────
+	# Measured on r1 2026-08-03: the API's own :3000 listener streams
+	# /v1/price/stream correctly, but the SAME request through Caddy —
+	# bypassing Cloudflare entirely, straight to 127.0.0.1:443 —
+	# returned ZERO bytes over 25s. Every external SSE consumer got
+	# HTTP 200 with `Content-Type: text/event-stream` and then waited
+	# forever with no data and no heartbeat. Caddy's automatic
+	# streaming detection did not engage, so pin it for stream routes.
+	# Scoped to /v1/*/stream: `flush_interval -1` disables response
+	# buffering for everything it covers — right for a long-lived
+	# stream, needless for the ordinary JSON routes below.
+	@sse path_regexp sse ^/v1/.*/stream$
+	handle @sse {
+		reverse_proxy localhost:3000 {
+			flush_interval -1
+			header_up Host {host}
+			header_up X-Real-IP {client_ip}
+			header_up X-Forwarded-For {client_ip}
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+
 	# Health probe — Caddy reverse_proxy active health-check.
 	# Drops the upstream from rotation if /v1/healthz starts returning
 	# non-200, surfaces in /metrics. With one upstream this means
