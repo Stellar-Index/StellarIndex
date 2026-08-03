@@ -58,11 +58,22 @@ func DecimalStringToScaledInt(s string, targetDecimals int) (*big.Int, error) {
 
 // FloatToScaledInt converts a non-negative float to an integer scaled to
 // decimals. Rejects negatives + NaN.
+//
+// Formats to EXACTLY `decimals` places so strconv.FormatFloat performs
+// the rounding (round-to-nearest) — NOT `decimals+2` places then a
+// truncate inside DecimalStringToScaledInt, which dropped the two extra
+// fractional digits toward zero and gave every value a one-signed
+// downward bias. That is the same systematic bias InvertScaled was fixed
+// to remove (ADR-0003: no biased estimator in the money path; audit
+// MNY-06 / 2026-08-03). The callers here (ecb, coingecko, coinmarketcap,
+// cryptocompare) feed only VWAP-excluded reference/oracle feeds, so the
+// practical delta is <1 ulp, but the correction is free and consistent
+// with the sibling rounding.
 func FloatToScaledInt(v float64, decimals int) (*big.Int, error) {
 	if v < 0 || v != v {
 		return nil, fmt.Errorf("bad value %v", v)
 	}
-	return DecimalStringToScaledInt(strconv.FormatFloat(v, 'f', decimals+2, 64), decimals)
+	return DecimalStringToScaledInt(strconv.FormatFloat(v, 'f', decimals, 64), decimals)
 }
 
 // Pow10 returns 10^n as a *big.Int.

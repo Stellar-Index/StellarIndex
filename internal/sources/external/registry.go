@@ -89,12 +89,13 @@ var Registry = map[string]Metadata{
 	// emit no trades, so they never contribute to VWAP. Captured for
 	// the granular-coverage mission: CCTP's deposit_for_burn /
 	// mint_and_withdraw are USDC supply exits / entries beyond the
-	// classic trustline mint/burn channel. BackfillSafe stays false
-	// until a WASM-history audit lands at
-	// docs/operations/wasm-audits/cctp.md — the contracts are brand
-	// new (a single WASM hash is expected) but the audit is required
-	// program work per CLAUDE.md "Soroban DeFi contracts upgrade in
-	// place". See docs/architecture/cctp-stellar-coverage.md.
+	// classic trustline mint/burn channel. BackfillSafe is TRUE — the
+	// required WASM-history audit LANDED 2026-05-26 (see
+	// docs/operations/wasm-audits/cctp.md and the per-field citation
+	// below): zero WASM upgrades observed, single-deploy confirmed. See
+	// docs/architecture/cctp-stellar-coverage.md. (This block previously
+	// said "stays false until the audit lands"; the audit has landed —
+	// corrected 2026-08-03.)
 	"cctp": {Class: ClassBridge, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true /* audited 2026-05-26 via wasm-history walk [60M, 62.64M] across all 3 mainnet contracts (TokenMessengerMinter, MessageTransmitter, CctpForwarder): zero WASM upgrades observed, ranges=null per /tmp/wasm-history-bridges.json. Single-deploy 2026-04-16 confirmed via stellar.expert. See docs/operations/wasm-audits/cctp.md. */},
 	// Rozo v1 intent-bridge — same bridge semantics. payment / flush
 	// events from the three live v1 Payment contracts. Audited
