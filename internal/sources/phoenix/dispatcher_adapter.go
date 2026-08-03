@@ -1,6 +1,7 @@
 package phoenix
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -8,6 +9,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
 // Decoder is the dispatcher-facing view of Phoenix. Unlike
@@ -121,11 +123,14 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		return d.decodeWithdrawRewardsEvent(&ev, fieldTopic, closedAt)
 	case actionDistributeRewards:
 		return d.decodeDistributeRewardsEvent(&ev, closedAt)
-	case actionUnknown, actionAdmin, actionInitialize:
-		// Non-trade Phoenix actions (admin/init/unrecognised) — recognised
-		// so the dispatcher doesn't file them as unmatched, but they emit no
-		// trade. Explicit per the EVERY-event policy: a NEW phoenix action
-		// lands here and trips `exhaustive` until it's decided.
+	case actionInitialize:
+		return decodeInitializeEvent(&ev, fieldTopic, closedAt)
+	case actionUnknown, actionAdmin:
+		// Non-trade Phoenix actions (admin/unrecognised) — recognised so
+		// the dispatcher doesn't file them as unmatched, but they emit no
+		// projected row here. Explicit per the EVERY-event policy: a NEW
+		// phoenix action lands here and trips `exhaustive` until it's
+		// decided. (initialize is now projected — see above.)
 		return nil, nil
 	}
 	return nil, nil
@@ -247,4 +252,38 @@ func (d *Decoder) EvictedOrphans() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.evictedOrphans
+}
+
+// decodeInitializeEvent decodes a pool-deploy `initialize` event into an
+// InitializeEvent. The token slot ('a'/'b') comes from topic[1]; the
+// announced token contract address is the event body (a single
+// Address). Self-contained — one event → one row, no correlation buffer.
+func decodeInitializeEvent(ev *events.Event, fieldTopic string, closedAt time.Time) ([]consumer.Event, error) {
+	var slot string
+	switch fieldTopic {
+	case TopicInitTokenA:
+		slot = "a"
+	case TopicInitTokenB:
+		slot = "b"
+	default:
+		return nil, fmt.Errorf("%w: initialize unrecognised token-slot topic", ErrMalformedPayload)
+	}
+	sv, err := scval.Parse(ev.Value)
+	if err != nil {
+		return nil, fmt.Errorf("%w: initialize body: %w", ErrMalformedPayload, err)
+	}
+	token, err := scval.AsAddressStrkey(sv)
+	if err != nil {
+		return nil, fmt.Errorf("%w: initialize token address: %w", ErrMalformedPayload, err)
+	}
+	return []consumer.Event{InitializeEvent{
+		Pool:       ev.ContractID,
+		Ledger:     ev.Ledger,
+		TxHash:     ev.TxHash,
+		OpIndex:    uint32(ev.OperationIndex), //nolint:gosec // OperationIndex non-negative by Soroban spec.
+		EventIndex: uint32(ev.EventIndex),     //nolint:gosec // EventIndex non-negative by Soroban spec.
+		ObservedAt: closedAt,
+		TokenSlot:  slot,
+		Token:      token,
+	}}, nil
 }
