@@ -44,6 +44,19 @@ against.
   checked); the per-email login throttle's `hashEmail` normalizes (lowercase +
   trim) internally so the per-email cap can't be bypassed by case/whitespace
   regardless of caller discipline (auth audit hygiene).
+- **Completeness verdict: `coverage_pct` / `watermark_ledger` no longer overstate
+  an unproven substrate** (completeness audit) — only the `lake_complete` boolean
+  was gated by the substrate claim; the numeric fields flowed through ungated, so
+  a healed-then-carried substrate gap could publish `coverage_pct=1.0` /
+  `watermark=tip` next to `substrate_ok=false`. The numerics are now pinned to the
+  proven-from-genesis extent in lockstep with `substrate_ok`.
+- **Completeness substrate seam hash-link is checked at the lower boundary**
+  (completeness audit) — the first scan window didn't evaluate
+  `prev_hash(from)` vs `ledger_hash(from-1)`, so a hash-chain break exactly at the
+  carried/fresh seam was invisible; the chain check now includes `from-1` (guarded
+  at genesis). Corrected the misleading `StreamContractEventsFiltered` `useFinal`
+  doc (counting consumers may pass `false` with in-Go adjacent-dedup, as the
+  reconcile does).
 
 ## [v0.24.0] — 2026-08-02
 

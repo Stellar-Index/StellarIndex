@@ -306,6 +306,17 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			var subDetail string
 			substrateOK, subDetail = substrateClaim(genesis, tip, subScanFrom, scanClean, chSubProblem, priorSub[src.name])
 			detail = append(detail, subDetail)
+			// C4-057 (numeric-field gap): substrateClaim can refuse a CLEAN
+			// suffix scan (no prior / a FAILING prior / a stale prior leaving an
+			// unverified band) — cases where `problems` holds no substrate ledger
+			// yet substrate_ok is false. Feed the unproven-prefix floor into
+			// `problems` so the NUMERIC coverage watermark (coverage_pct /
+			// watermark_ledger / first_problem) tracks substrate_ok exactly as
+			// srW.Complete does, never publishing coverage_pct=1.0 / watermark=tip
+			// while substrate_ok=false. See lakeCoverageProblem.
+			if p := lakeCoverageProblem(genesis, scanClean, substrateOK, priorSub[src.name]); p != 0 {
+				problems = append(problems, p)
+			}
 		} else {
 			subGaps, err := store.FindLedgerIngestGaps(ctx, genesis, tip)
 			if err != nil {
@@ -354,15 +365,16 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		// B). lake_complete must NEVER be gated by the retention-scoped
 		// projection reconcile.
 		//
-		// C4-057: it IS gated by substrateOK, which is now a claim about the
-		// range this run scanned rather than a raw scan result. srW.Complete
-		// alone cannot see that gate — an incremental run that scanned only
-		// [from,tip] and found nothing wrong produces an EMPTY `problems`
-		// slice and therefore srW.Complete=true, i.e. a genesis-to-tip lake
-		// claim built on a suffix. Following the CH branch's own convention,
-		// an unproven claim flips the boolean rather than moving the
-		// watermark: the watermark still records where verification actually
-		// reached, and `detail` states the floor.
+		// C4-057: it IS gated by substrateOK - a claim about the range this
+		// run scanned rather than a raw scan result. And because the
+		// lakeCoverageProblem floor is already in `problems` above, so are the
+		// NUMERIC fields: an incremental run that scanned only [from,tip]
+		// cleanly but cannot prove the prefix (no/failing/stale prior) now
+		// pins srW.Ledger / CoveragePct / FirstProblem to the
+		// proven-from-genesis extent instead of reading genesis-to-tip off a
+		// suffix. srW.Complete and substrateOK therefore agree by
+		// construction; `&& substrateOK` is kept as a belt-and-suspenders
+		// guard and `detail` still states the floor.
 		lakeComplete := srW.Complete && substrateOK
 		projOK := false
 		var w completeness.Watermark
@@ -944,6 +956,11 @@ func dirtyWindowSatisfied(w timescale.ProjectionDirtyWindow, projOK bool, reconc
 // scan ACTUALLY covered. It is the exact twin of [projectionClaim], applied
 // to the claim that INV-5 left ungated (C4-057).
 //
+// substrateClaim returns only the BOOLEAN verdict; its numeric twin
+// [lakeCoverageProblem] feeds the unproven-prefix floor into the coverage
+// watermark's problem set, so coverage_pct / watermark_ledger are gated in
+// lockstep with substrate_ok (the half of C4-057 the boolean alone left open).
+//
 // The gap it closes: `computeCompleteness` scans substrate over
 // [scanFrom, hi], where scanFrom is the `-from` incremental floor — but
 // published `lake_complete` / `coverage_pct` over [genesis, hi]. On a clean
@@ -1003,6 +1020,41 @@ func substrateClaim(genesis, hi, scanFrom uint32, scanClean bool, problem uint32
 	default:
 		return true, fmt.Sprintf("substrate: verified %s; %s carried from the prior clean verdict (tip=%d), not re-scanned this run", scanned, skipped, prior.tip)
 	}
+}
+
+// lakeCoverageProblem is the NUMERIC twin of [substrateClaim]: it returns the
+// ledger to inject into the coverage watermark's problem set when the substrate
+// CLAIM refuses an otherwise-clean suffix scan, so coverage_pct /
+// watermark_ledger / first_problem track substrate_ok exactly as srW.Complete
+// does. It closes the half of C4-057 that substrateClaim's BOOLEAN could not:
+// on a clean suffix `problems` holds no substrate ledger, so without this the
+// watermark read genesis-to-tip (coverage_pct=1.0, watermark=tip) while
+// substrate_ok / lake_complete were already false — a consumer seeing
+// "verified to tip" next to "substrate unproven".
+//
+// Returns 0 (nothing to inject) when the claim HOLDS (substrateOK) or when the
+// raw scan already surfaced the problem (!scanClean — that ledger is fed to
+// `problems` separately, and it is more precise). Otherwise the claim failed on
+// a clean suffix, mirroring substrateClaim's rules 4a/4b/4c:
+//   - a clean prior that reached prior.tip proved [genesis, prior.tip]
+//     contiguously (rule 4c) → the unverified band opens at prior.tip+1;
+//   - a missing or FAILING prior proves nothing from genesis (rules 4a/4b) →
+//     the floor is genesis itself.
+//
+// The floor is clamped to >= genesis so ComputeWatermark (which ignores
+// problems below genesis) can never silently drop it and restore the 1.0 lie.
+// In the only case the prior.tip+1 branch fires (substrateClaim rule 4c) the
+// caller has scanFrom > prior.tip+1 with scanFrom <= tip+1, so prior.tip+1 <= tip
+// and the floor lands inside [genesis, tip]. Pure — unit-testable.
+func lakeCoverageProblem(genesis uint32, scanClean, substrateOK bool, prior priorProjection) uint32 {
+	if substrateOK || !scanClean {
+		return 0
+	}
+	floor := genesis
+	if prior.ok && prior.tip+1 > floor {
+		floor = prior.tip + 1
+	}
+	return floor
 }
 
 // reconcileSourceProjection reconciles every table a source writes over

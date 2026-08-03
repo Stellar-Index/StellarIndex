@@ -136,10 +136,19 @@ func forEachLedgerWindow(from, to, stride uint32, fn func(lo, hi uint32) error) 
 // useFinal toggles FINAL. The live projector passes false: it reads small
 // forward windows and its downstream writes are idempotent (ON CONFLICT DO
 // NOTHING), so a duplicate ReplacingMergeTree part decodes to the same row and
-// is absorbed — FINAL would be pure overhead. A COUNTING consumer (the
-// completeness reconcile) MUST pass true: without FINAL, un-merged duplicate
-// parts (e.g. the footprint-sample / validation re-run partitions 25/45/62)
-// are double-counted, producing false projection mismatches.
+// is absorbed — FINAL would be pure overhead. A COUNTING consumer must ensure
+// un-merged duplicate parts (e.g. the footprint-sample / validation re-run
+// partitions 25/45/62) are not double-counted, but has TWO honest ways to do
+// so. It can pass useFinal=true so merge-on-read collapses the duplicates in CH
+// (the ch-rebuild sep41 dry-run count does this). OR it can pass useFinal=false
+// and dedup adjacent duplicates in-Go: the ORDER BY (ledger_seq, tx_hash,
+// op_index, event_index) makes exact-identity duplicate rows CONSECUTIVE in the
+// callback sequence, and no window ever splits a ledger, so an O(1)
+// previous-key skip counts each event exactly once at no FINAL cost. The
+// completeness reconcile deliberately takes the second path
+// (completeness.ReDeriveOutputCountsByKindFromEvents via ReconcileEventStreamer)
+// because no-FINAL is far gentler on the shared host — so useFinal=false is
+// correct for a counting consumer that dedups, not a bug.
 //
 // withOpArgs selects whether the read includes op_args_xdr. Only decoders that
 // consume events.Event.OpArgs need it (redstone zips write_prices feed_ids

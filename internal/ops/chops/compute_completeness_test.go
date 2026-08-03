@@ -798,6 +798,79 @@ func TestSubstrateClaim_SkipSubstrateCarriesRatherThanAsserts(t *testing.T) {
 	}
 }
 
+// TestLakeCoverageProblem_UnprovenSubstratePinsNumericWatermark pins FINDING 1
+// (the C4-057 NUMERIC-field gap). substrateClaim's BOOLEAN correctly went false
+// for an unproven lake, but only `lake_complete` was gated by it — the numeric
+// coverage_pct / watermark_ledger flowed UNGATED through
+// completeness.ComputeWatermark. On a clean suffix scan whose prefix nobody
+// proved (a carried prior with substrate_ok=false), `problems` came back empty,
+// so the snapshot published coverage_pct=1.0 + watermark=tip + first_problem
+// absent — "verified to tip" sitting next to substrate_ok=false. lakeCoverageProblem
+// injects the unproven-prefix floor into the watermark's problem set so the
+// numeric fields track substrate_ok.
+func TestLakeCoverageProblem_UnprovenSubstratePinsNumericWatermark(t *testing.T) {
+	const (
+		genesis = uint32(50_457_424)
+		tip     = uint32(63_305_532)
+	)
+
+	// The finding's exact scenario: a carried prior with substrate_ok=false and
+	// a fresh suffix that scans clean. substrateClaim returns false (rule 4b)
+	// yet leaves `problems` empty — the numeric fields would otherwise read
+	// 1.0 / tip.
+	failingPrior := priorProjection{known: true, ok: false, tip: 63_300_000}
+	p := lakeCoverageProblem(genesis, true /* clean suffix */, false /* substrate_ok */, failingPrior)
+	if p == 0 {
+		t.Fatal("a clean suffix over an unproven prefix (failing prior) injected NO coverage problem — coverage_pct=1.0 would coexist with substrate_ok=false (the finding)")
+	}
+	if p < genesis || p > tip {
+		t.Fatalf("injected problem %d must lie in [genesis,tip] [%d,%d], else ComputeWatermark ignores it and the 1.0 lie returns", p, genesis, tip)
+	}
+
+	// The published shape: feed it exactly as the compute loop does
+	// (problems -> ComputeWatermark -> snapshot coverage_pct / watermark /
+	// first_problem). This is the corrected value the consumer sees.
+	w := completeness.ComputeWatermark(genesis, tip, []uint32{p})
+	if w.CoveragePct >= 1.0 {
+		t.Fatalf("coverage_pct = %v; a false substrate claim must publish < 1.0, never 1.0 alongside substrate_ok=false", w.CoveragePct)
+	}
+	if w.Ledger == tip {
+		t.Fatalf("watermark_ledger = tip (%d); a false substrate claim must not read 'verified to tip'", tip)
+	}
+	if w.Complete {
+		t.Fatal("a false substrate claim must not publish Complete=true")
+	}
+	if w.FirstProblem == 0 {
+		t.Fatal("a false substrate claim must publish a first_problem ledger, not leave it absent")
+	}
+
+	// No prior verdict at all (rule 4a) is equally unproven from genesis.
+	if got := lakeCoverageProblem(genesis, true, false, priorProjection{}); got != genesis {
+		t.Errorf("no-prior floor = %d, want genesis %d (nothing is proven from genesis)", got, genesis)
+	}
+
+	// A stale CLEAN prior proved [genesis, prior.tip] contiguously (rule 4c) —
+	// the unverified band opens at prior.tip+1, so the numeric watermark
+	// reflects the real proven extent rather than collapsing to zero.
+	stalePrior := priorProjection{known: true, ok: true, tip: 62_000_000}
+	if got := lakeCoverageProblem(genesis, true, false, stalePrior); got != stalePrior.tip+1 {
+		t.Errorf("stale-clean-prior floor = %d, want prior.tip+1 %d", got, stalePrior.tip+1)
+	}
+
+	// When the substrate claim HOLDS, nothing is injected — coverage stays
+	// legitimately at 1.0 / tip (the fix must not pin an honest full verdict).
+	if got := lakeCoverageProblem(genesis, true, true, priorProjection{known: true, ok: true, tip: tip}); got != 0 {
+		t.Errorf("a proven substrate claim must inject nothing, got %d", got)
+	}
+
+	// When the RAW scan already surfaced the problem (!scanClean), its precise
+	// ledger is fed to `problems` separately — this twin injects nothing, so it
+	// neither double-counts nor clobbers the exact scan ledger.
+	if got := lakeCoverageProblem(genesis, false, false, failingPrior); got != 0 {
+		t.Errorf("a raw-scan problem is fed separately; lakeCoverageProblem must inject nothing, got %d", got)
+	}
+}
+
 // ─── Replay-rewind dirty windows (the carried-claim invalidation gap) ───
 
 // TestDirtyReconcileFloor_ReplayRewindForcesTheRangeBackIntoScope pins the
