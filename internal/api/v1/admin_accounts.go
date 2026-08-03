@@ -5,6 +5,7 @@ package v1
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -206,6 +207,7 @@ func (s *Server) handleAdminAccountOverrides(w http.ResponseWriter, r *http.Requ
 
 	before := adminAccountView(acct)
 	priorTier := acct.Tier
+	priorStatus := acct.Status
 	applyAccountOverrides(&acct, req, time.Now().UTC())
 
 	if err := s.platformAccounts.Update(r.Context(), acct); err != nil {
@@ -222,6 +224,7 @@ func (s *Server) handleAdminAccountOverrides(w http.ResponseWriter, r *http.Requ
 	}
 
 	clamped, clampFailed := s.clampKeysAfterTierChange(r.Context(), subject, priorTier, acct)
+	evicted, evictFailed := s.evictKeyCacheOnSuspend(r.Context(), subject, priorStatus, acct)
 
 	after := adminAccountView(acct)
 	s.logger.Info("admin account override",
@@ -230,7 +233,9 @@ func (s *Server) handleAdminAccountOverrides(w http.ResponseWriter, r *http.Requ
 		"account_id", id,
 		"reason", reason,
 		"keys_clamped", clamped,
-		"key_clamp_failures", clampFailed)
+		"key_clamp_failures", clampFailed,
+		"keys_evicted", evicted,
+		"key_evict_failures", evictFailed)
 	s.recordAdminAccountAudit(r, subject, id.String(), reason, before, after, clamped, clampFailed)
 
 	writeJSON(w, after, Flags{})
@@ -275,6 +280,76 @@ func (s *Server) clampKeysAfterTierChange(
 	cause := "admin PATCH /v1/admin/accounts/" + acct.ID.String() +
 		" by " + subject.KeyID + " (" + string(priorTier) + "→" + string(acct.Tier) + ")"
 	return s.clampKeyBudgetsToTier(ctx, cause, s.apiKeyBudgets, acct, ceiling)
+}
+
+// evictKeyCacheOnSuspend evicts every cached API-key record for the account
+// from the auth read-through cache when this PATCH moved the account OUT of
+// the active state into a non-active one (suspended/closed) — the operator
+// kill switch (C3-010).
+//
+// Without it, the Postgres validator's cache-HIT path
+// (auth/apikey_postgres.go cacheLookup) keeps authenticating a suspended
+// account's keys for up to the validator's ~1h read-through TTL: that path
+// checks only the KEY's own revoked/expired fields, never the account status,
+// so persisting `accounts.status='suspended'` changes nothing an already-warm
+// key can feel. The clamp above does NOT cover this — clampKeysAfterTierChange
+// early-returns unless the tier ceiling drops, so a pure status flip evicts
+// nothing. This is the same kill-switch class C3-010 fixed for the Redis
+// backend (which re-reads GetBySlug per request), still live on the Postgres
+// read-through cache.
+//
+// Reuses the tier-clamp seam exactly (ListForAccount + InvalidateCachedKey).
+// A single eviction is durable: the cache-MISS path DOES reject non-active
+// accounts (apikey_postgres.go `acct.Status != AccountActive`) AND returns
+// before cacheStore, so it never re-warms a non-active account's key — the
+// next request misses, re-reads Postgres, and is refused.
+//
+// Fires only on an active→non-active transition: an account already
+// non-active has no warm cache entries to evict (see above), so re-patching a
+// suspended account is a no-op here. Best-effort and idempotent — a failure on
+// one key never stops the others, and a failed eviction just means that key
+// waits out the TTL; the durable security state (status=suspended) is already
+// persisted.
+func (s *Server) evictKeyCacheOnSuspend(
+	ctx context.Context, subject auth.Subject, priorStatus platform.AccountStatus, acct platform.Account,
+) (evicted, failed int) {
+	if priorStatus != platform.AccountActive || acct.Status == platform.AccountActive {
+		return 0, 0
+	}
+	st := s.apiKeyBudgets
+	if st.Platform == nil || st.CacheInvalidator == nil {
+		return 0, 0
+	}
+	cause := "admin PATCH /v1/admin/accounts/" + acct.ID.String() +
+		" by " + subject.KeyID + " (" + string(priorStatus) + "→" + string(acct.Status) + ")"
+	keys, err := st.Platform.ListForAccount(ctx, acct.ID)
+	if err != nil {
+		st.note("list_keys")
+		s.logger.Error("suspend cache evict: ListForAccount failed; cached keys keep "+
+			"authenticating until the validator TTL rolls them off",
+			"cause", cause, "account_id", acct.ID, "err", err)
+		return 0, 1
+	}
+	for i := range keys {
+		k := keys[i]
+		if len(k.KeyHash) == 0 {
+			continue
+		}
+		if err := st.CacheInvalidator.InvalidateCachedKey(ctx, hex.EncodeToString(k.KeyHash)); err != nil {
+			st.note("key_cache_invalidate")
+			s.logger.Warn("suspend cache evict: InvalidateCachedKey failed",
+				"cause", cause, "account_id", acct.ID, "key_id", k.ID, "err", err)
+			failed++
+			continue
+		}
+		evicted++
+	}
+	if evicted > 0 {
+		s.logger.Info("suspend cache evict: evicted cached API keys for a now non-active account",
+			"cause", cause, "account_id", acct.ID, "status", string(acct.Status),
+			"keys_evicted", evicted)
+	}
+	return evicted, failed
 }
 
 // applyAccountOverrides mutates acct in place from the request's set

@@ -165,6 +165,107 @@ func TestAdminAccountOverrides_TierRaiseDoesNotTouchKeys(t *testing.T) {
 	}
 }
 
+// TestAdminAccountOverrides_SuspendEvictsKeyCache is the proven-red guard for
+// the C3-010 kill-switch class re-opening on auth_backend=postgres.
+//
+// The Postgres validator's cache-HIT path (auth/apikey_postgres.go
+// cacheLookup) checks only the KEY's revoked/expired fields, never the account
+// status, so persisting `accounts.status='suspended'` left every already-cached
+// key authenticating for up to the ~1h read-through TTL. The tier clamp does
+// not help — it early-returns unless the tier ceiling drops, so a pure status
+// flip evicts nothing. handleAdminAccountOverrides now evicts every cached key
+// for an account that transitions active→non-active, reusing the tier-clamp
+// seam (ListForAccount + InvalidateCachedKey), so the next request misses the
+// cache, re-reads Postgres, and is refused by the existing cache-miss
+// `acct.Status != AccountActive` gate.
+//
+// Prove-red: without the eviction wiring, InvalidateCachedKey is never called
+// and both keys stay warm — a suspended account keeps authenticating.
+func TestAdminAccountOverrides_SuspendEvictsKeyCache(t *testing.T) {
+	acctID := uuid.MustParse("44444444-4444-4444-4444-444444444444")
+	acct := platform.Account{
+		ID:     acctID,
+		Name:   "Kill Switch Corp",
+		Slug:   "killswitch",
+		Tier:   platform.TierPro,
+		Status: platform.AccountActive,
+	}
+	accounts := newFakePlatformAccountStore(acct)
+
+	pgKeys := &fakePlatformAPIKeysForBridge{byAcct: map[uuid.UUID][]platform.APIKey{
+		acctID: {
+			{ID: "pg_a", AccountID: acctID, RateLimitPerMin: 60, KeyHash: []byte{0xaa}},
+			{ID: "pg_b", AccountID: acctID, RateLimitPerMin: 60, KeyHash: []byte{0xbb}},
+		},
+	}}
+	inv := &fakeKeyCacheInvalidator{}
+	sink := &recordingAuditSink{}
+
+	ts := newAdminClampServer(t, accounts, v1.APIKeyBudgetStores{
+		Platform:         pgKeys,
+		CacheInvalidator: inv,
+	}, sink)
+
+	resp := patchJSON(t, ts.URL+"/v1/admin/accounts/"+acctID.String(),
+		"abuse: kill switch", `{"status":"suspended"}`)
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 200; body=%s", resp.StatusCode, body)
+	}
+
+	// The tier is unchanged (Pro→Pro), so the clamp is a no-op; every eviction
+	// here is the suspend path's doing, not the clamp's.
+	if len(pgKeys.updates) != 0 {
+		t.Errorf("a status-only PATCH must not rewrite key budgets; updates=%+v", pgKeys.updates)
+	}
+
+	// Every cached key for the now-suspended account must have been evicted so
+	// the validator's cache-hit path can't keep authenticating it past the TTL.
+	got := inv.seen()
+	want := map[string]bool{"aa": false, "bb": false}
+	for _, h := range got {
+		if _, ok := want[h]; !ok {
+			t.Errorf("unexpected cache eviction for hash %q", h)
+			continue
+		}
+		want[h] = true
+	}
+	for h, evicted := range want {
+		if !evicted {
+			t.Errorf("cached key %q was NOT evicted on suspend; a suspended account keeps "+
+				"authenticating for up to the validator TTL", h)
+		}
+	}
+}
+
+// TestAdminAccountOverrides_ActivePatchDoesNotEvictKeyCache pins the transition
+// gating: the suspend eviction fires ONLY on active→non-active, not on an
+// unrelated override edit that leaves the account active (its keys are still
+// valid and must keep their warm cache entries).
+func TestAdminAccountOverrides_ActivePatchDoesNotEvictKeyCache(t *testing.T) {
+	acctID := uuid.MustParse("55555555-5555-5555-5555-555555555555")
+	accounts := newFakePlatformAccountStore(platform.Account{
+		ID: acctID, Slug: "stillactive", Tier: platform.TierPro, Status: platform.AccountActive,
+	})
+	pgKeys := &fakePlatformAPIKeysForBridge{byAcct: map[uuid.UUID][]platform.APIKey{
+		acctID: {{ID: "pg_a", AccountID: acctID, RateLimitPerMin: 60, KeyHash: []byte{0xaa}}},
+	}}
+	inv := &fakeKeyCacheInvalidator{}
+
+	ts := newAdminClampServer(t, accounts, v1.APIKeyBudgetStores{
+		Platform: pgKeys, CacheInvalidator: inv,
+	}, &recordingAuditSink{})
+
+	resp := patchJSON(t, ts.URL+"/v1/admin/accounts/"+acctID.String(),
+		"raise quota", `{"monthly_request_quota_override":1000000}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if n := len(inv.seen()); n != 0 {
+		t.Errorf("an account staying active must not evict its key cache; evicted %d: %v", n, inv.seen())
+	}
+}
+
 // TestAdminAccountOverrides_NoKeyStoresWiredStillPatches — a deployment
 // with no key store degrades visibly (keys_clamped=0) rather than
 // 500-ing or silently pretending the clamp happened.

@@ -15,6 +15,36 @@ against.
 
 ## [Unreleased]
 
+### Security
+- **Account kill switch now evicts cached API keys** (auth audit) — on
+  `auth_backend=postgres` a suspended/closed account's keys kept authenticating
+  for up to the ~1h read-through-cache TTL, because the cache-hit path checked
+  only the key's revoke/expiry and the operator override evicted nothing. The
+  override now evicts every cached key for the account on an active→non-active
+  transition (reusing the tier-clamp `ListForAccount` + cache-invalidate seam);
+  the fail-closed cache-miss path keeps it durable. Redis backend was already
+  covered; legacy `signup-<hash>` keys remain TTL-bounded (follow-up noted).
+- **Operator-tier API keys are bound by their own scope/permission gates** (auth
+  audit) — a deliberately-narrowed operator key was not actually confined
+  (`checkKeyPolicy` returned before the scope + permission checks). Operator
+  subjects now flow through both gates; a default full-privilege operator key
+  (empty scopes, all-permissions) is unchanged, and admin access stays gated on
+  operator tier, not scope.
+- **SEP-10 validator wiring is fail-closed** (auth audit) — the two-phase
+  construction never wired the replay-guarded validator for a configured
+  deployment and had a latent fail-open rebuild path (a boot-time Redis error
+  would have served SEP-10 with no replay guard). Collapsed into a single
+  construction: configured + Redis → the replay-guarded validator in every mode;
+  configured + no Redis → hard error under `auth_mode=sep10`, else Noop — never a
+  guard-free validator; unconfigured → Noop (still boots). Corrected the
+  misleading "guard always wired" comments.
+
+### Fixed
+- JWT `nbf` is now enforced on verification (it was stamped on issuance but never
+  checked); the per-email login throttle's `hashEmail` normalizes (lowercase +
+  trim) internally so the per-email cap can't be bypassed by case/whitespace
+  regardless of caller discipline (auth audit hygiene).
+
 ## [v0.24.0] — 2026-08-02
 
 ### Fixed

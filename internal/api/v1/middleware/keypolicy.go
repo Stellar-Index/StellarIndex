@@ -47,9 +47,14 @@ import (
 //     must match, and no deny entry may.
 //
 // Anonymous subjects (Tier=anonymous) bypass every check — they
-// don't carry per-key policy. Operator-tier subjects also bypass
-// permissions but not IP/Referer (the operator may have a static
-// IP allowlist for staff credentials).
+// don't carry per-key policy. Every other tier, INCLUDING operator,
+// is subject to its OWN configured gates: a default operator key
+// (empty Scopes, AllowAllPermissions=true) passes the scope +
+// permission gates freely, while an operator key deliberately narrowed
+// at mint (a scope subset or a restricted permission list) is confined
+// to what it was granted. Admin-endpoint ACCESS is gated on
+// Tier==Operator in the handlers, not on scope, so narrowing a staff
+// key's scopes bounds its data reach without locking it out of admin.
 func KeyPolicy() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -69,18 +74,20 @@ func KeyPolicy() Middleware {
 
 // checkKeyPolicy runs the per-key gates in order — IP → Referer →
 // scopes → permissions — returning the reason slug + error of the
-// first failure ("" + nil when all pass). Operator-tier subjects
-// skip the scope + permission gates but not IP/Referer (the
-// operator may have a static IP allowlist for staff credentials).
+// first failure ("" + nil when all pass). Operator-tier subjects run
+// through the SAME gates as every other tier: a default operator key
+// (empty Scopes, AllowAllPermissions=true) passes scopes + permissions
+// freely, but an operator key deliberately narrowed at mint is confined
+// to what it was granted. There is no operator early-return — an
+// operator key that carries an explicit scope subset or permission list
+// must actually be bound by it (pre-fix it silently bypassed both,
+// re-opening the very narrowing the operator configured).
 func checkKeyPolicy(r *http.Request, subject auth.Subject) (string, error) {
 	if err := checkIPAllowlist(r, subject.IPAllowlist); err != nil {
 		return "ip-not-allowed", err
 	}
 	if err := checkRefererAllowlist(r, subject.RefererAllowlist); err != nil {
 		return "referer-not-allowed", err
-	}
-	if subject.Tier == auth.TierOperator {
-		return "", nil
 	}
 	if err := checkScopes(r, subject); err != nil {
 		return "scope-denied", err
