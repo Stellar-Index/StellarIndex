@@ -177,11 +177,23 @@ surface — same exclusion `comet`'s README documents for BPT
 (1,665), `burn` (23) — these belong to `internal/sources/sep41_supply`
 / `sep41_transfers`, re-decoding them here would double-count.
 
-Every other census topic (`trade`, `deposit_liquidity`,
-`withdraw_liquidity`, `update_reserves`, `reserves_sync`,
-`set_protocol_fee`, `claim_protocol_fee`,
-`kill_deposit`/`unkill_deposit`/`kill_swap`/`unkill_swap`/
-`kill_claim`/`unkill_claim`, `add_pool`) was already handled.
+The pool-flow topics are decoded and **PROJECTED**: `trade`
+(→ `trades`), `deposit_liquidity` / `withdraw_liquidity`
+(→ `aquarius_liquidity`), `update_reserves` (→ `aquarius_reserves`),
+the rewards-gauge surface (→ `aquarius_rewards_events`), the router
+governance/upgrade surface (→ `aquarius_admin`), and `add_pool`
+(registers the pool).
+
+`reserves_sync`, `set_protocol_fee` / `claim_protocol_fee`, and the
+`kill_*` / `unkill_*` circuit-breaker family are **RECOGNIZED ONLY**,
+NOT projected: `classify()` names them (so the full topic set is
+audited and none is silently unmatched) but `Matches()` returns false,
+so no row is stored. `reserves_sync` is a per-asset reserve delta that
+`update_reserves`' post-state vector already largely subsumes; the
+fee/kill topics are governance switches carrying no flow data. This is
+recognized-and-intentionally-not-stored — do NOT read it as "handled"
+in the projected sense (corrected 2026-08-03; the prior wording called
+all of these "already handled", which overstated coverage).
 
 **Data-quality caveat:** `stellar.contract_events_daily` (the fast
 pre-aggregated path `/v1/protocols/{name}` reads) undercounts by
