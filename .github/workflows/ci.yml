@@ -619,6 +619,13 @@ jobs:
           fi
       - run: pnpm typecheck
       - run: pnpm lint
+      # The vitest suite ran in NEITHER this job nor scripts/dev/verify.sh
+      # (cold audit 2026-08-04) — 209 tests across 49 files, all green and
+      # all dead, including safe-domain.test.ts (the isSafeHomeDomain /
+      # isSafePublicImageUrl phishing + client-SSRF gate), the CS-009 og
+      # SSRF regression, and the AGT-06 stale-flag regression. A refactor
+      # loosening any of them would have landed green.
+      - run: pnpm test
       # Build covers what typecheck/lint don't: Next.js static-export
       # constraints (e.g. `dynamic = 'force-static'` requirement on
       # sitemap/robots routes), generateStaticParams behaviour at

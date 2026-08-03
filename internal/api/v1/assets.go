@@ -2689,6 +2689,18 @@ func mergeTwinStats(dst *AssetDetail, twin AssetDetail) {
 	}
 	if dst.CirculatingSupply == nil {
 		dst.CirculatingSupply = twin.CirculatingSupply
+		// Carry the twin's SCALE with its supply. `circulating_supply`
+		// is documented (and consumed) as a raw integer in the asset's
+		// smallest unit, paired with `decimals`; a catalogue row's own
+		// Decimals is vc.SupplyDecimals, which is 0 for every
+		// Stellar-issued entry because the curated seed states fiat
+		// M2 figures in whole units. Copying a 7-decimal stroop value
+		// onto a decimals=0 row made the pair self-inconsistent, and
+		// every consumer that scales by 10^decimals rendered it 10^7
+		// too large — measured live: XLM showed 342,797,138,733,487,872
+		// against the 34.3B its own market_cap/price implies (cold
+		// audit 2026-08-04).
+		dst.Decimals = twin.Decimals
 	}
 	if dst.MarketCapUSD == nil {
 		dst.MarketCapUSD = twin.MarketCapUSD

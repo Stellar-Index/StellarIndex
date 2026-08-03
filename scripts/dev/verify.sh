@@ -155,6 +155,13 @@ echo "=== Integration build ===" && make test-integration-build
 if command -v pnpm >/dev/null 2>&1 && [ -f web/explorer/pnpm-lock.yaml ]; then
     echo "=== Showcase typecheck ===" && make web-typecheck
     echo "=== Showcase lint ==="      && make web-lint
+    # The vitest suite ran in NEITHER CI nor this gate (cold audit
+    # 2026-08-04): 209 tests across 49 files, all green and all dead —
+    # including safe-domain.test.ts, the isSafeHomeDomain /
+    # isSafePublicImageUrl phishing + client-SSRF regression gate, and
+    # the AGT-06 stale-flag regression. A refactor loosening any of
+    # them would have landed green.
+    echo "=== Showcase tests ==="     && make web-test
     echo "=== Showcase build ==="     && \
         NEXT_PUBLIC_API_BASE_URL=http://api.local-stub.invalid make web-build >/dev/null
 else

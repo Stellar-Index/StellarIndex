@@ -413,6 +413,10 @@ web-typecheck: ## Typecheck the showcase site
 web-lint: ## Lint the showcase site
 	cd $(WEB_EXPLORER_DIR) && pnpm lint
 
+.PHONY: web-test
+web-test: ## Run the showcase site's vitest suite
+	cd $(WEB_EXPLORER_DIR) && pnpm test
+
 .PHONY: web-format
 web-format: ## Format the showcase site (prettier)
 	cd $(WEB_EXPLORER_DIR) && pnpm format
