@@ -208,6 +208,10 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// accumulated, while ADR-0033 has phoenix complete=t / coverage 1.0
 	// (no loss). Bumped 50K → 200K to sit above the observed envelope.
 	{Source: "phoenix-liquidity", Table: "phoenix_liquidity", LedgerColumn: "ledger", Genesis: 51_572_016, MinGapSizeOverride: 200000},
+	// phoenix-initialize: per-pool-deploy token announcements — VERY
+	// sparse (40 events / 19 pools lake-wide; 0131, 2026-08-03). Huge
+	// override — pools deploy rarely, so long quiet stretches are normal.
+	{Source: "phoenix-initialize", Table: "phoenix_initialize", LedgerColumn: "ledger", Genesis: 51_572_016, MinGapSizeOverride: 2000000},
 	{Source: "phoenix-stake", Table: "phoenix_stake_events", LedgerColumn: "ledger", Genesis: 51_572_016, MinGapSizeOverride: 200000},
 	// aquarius-liquidity: deposit_liquidity / withdraw_liquidity are
 	// user-action-triggered and sparse (a few thousand events/month on

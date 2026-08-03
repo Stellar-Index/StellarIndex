@@ -128,6 +128,31 @@ func (StakeEvent) Source() string { return SourceName }
 // Compile-time check.
 var _ consumer.Event = StakeEvent{}
 
+// InitializeEvent is a pool-deploy token announcement — one of the two
+// ("initialize", "XYK LP token_a"/"token_b") events a Phoenix pool
+// emits at deploy, each carrying one token contract address. The sink
+// lands it in phoenix_initialize (migration 0131). Self-contained (no
+// correlation buffer): one event → one row.
+type InitializeEvent struct {
+	Pool       string // emitting pool contract C-strkey
+	Ledger     uint32
+	TxHash     string
+	OpIndex    uint32
+	EventIndex uint32
+	ObservedAt time.Time
+	TokenSlot  string // "a" | "b" (from topic[1])
+	Token      string // announced token contract address (event body)
+}
+
+// EventKind implements [consumer.Event].
+func (InitializeEvent) EventKind() string { return "phoenix.initialize" }
+
+// Source implements [consumer.Event].
+func (InitializeEvent) Source() string { return SourceName }
+
+// Compile-time check.
+var _ consumer.Event = InitializeEvent{}
+
 // ─── 8-field correlation buffer ─────────────────────────────────
 // Phoenix emits one swap as 8 separate events (one per field).
 // An entry sits in the buffer until all 8 slots are populated —

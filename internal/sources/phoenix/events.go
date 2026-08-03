@@ -290,6 +290,11 @@ var (
 	TopicSymbolAdmin             = scval.MustEncodeString(EventActionAdmin)             // topic[0] for the 4 admin variants
 	TopicSymbolInitialize        = scval.MustEncodeString(EventActionInitialize)        // topic[0] for the 2 init variants
 
+	// initialize topic[1] variants — the pool announces its two tokens
+	// as ("initialize", "XYK LP token_a" | "XYK LP token_b").
+	TopicInitTokenA = scval.MustEncodeString("XYK LP token_a") // topic[1]
+	TopicInitTokenB = scval.MustEncodeString("XYK LP token_b")
+
 	// provide_liquidity topic[1] variants.
 	TopicSymbolPLSender    = scval.MustEncodeString(FieldPLSender)
 	TopicSymbolPLTokenA    = scval.MustEncodeString(FieldPLTokenA)

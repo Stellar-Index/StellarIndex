@@ -16,6 +16,12 @@ against.
 ## [Unreleased]
 
 ### Added
+- **Phoenix `initialize` events now project** to the new
+  `phoenix_initialize` hypertable (migration 0131) — the two per-pool-
+  deploy token announcements (`XYK LP token_a`/`token_b`), each carrying
+  a token contract address. Previously classified (actionInitialize) but
+  dropped at the decoder. Pool-gated (ADR-0035); golden-tested against
+  real lake bodies. Backfill with `projector-replay -source phoenix`.
 - **Aquarius circuit-breaker toggles now project** to the new
   `aquarius_kill_switches` hypertable (migration 0130) — the eight
   `kill_*`/`unkill_*` actions (deposit/swap/claim/gauges_claim). Pure

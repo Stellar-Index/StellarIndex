@@ -456,7 +456,7 @@ func IsProjectedEvent(ev consumer.Event) bool {
 	case soroswap.TradeEvent, soroswap.SkimEvent, soroswap.LiquidityEvent,
 		aquarius.TradeEvent, aquarius.ReservesEvent, aquarius.LiquidityEvent,
 		aquarius.RewardsEvent, aquarius.AdminEvent, aquarius.FeeEvent, aquarius.KillEvent,
-		phoenix.TradeEvent, phoenix.LiquidityEvent, phoenix.StakeEvent,
+		phoenix.TradeEvent, phoenix.LiquidityEvent, phoenix.StakeEvent, phoenix.InitializeEvent,
 		comet.TradeEvent, comet.LiquidityEvent,
 		reflector.UpdateEvent, redstone.UpdateEvent,
 		blend.NewAuctionEvent, blend.FillAuctionEvent, blend.DeleteAuctionEvent,
@@ -813,6 +813,8 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 		return nil
 	case phoenix.LiquidityEvent:
 		return persistPhoenixLiquidity(ctx, logger, store, e)
+	case phoenix.InitializeEvent:
+		return persistPhoenixInitialize(ctx, logger, store, e)
 	case phoenix.StakeEvent:
 		return persistPhoenixStake(ctx, logger, store, e)
 	case comet.TradeEvent:
@@ -1963,6 +1965,30 @@ func persistPhoenixLiquidity(ctx context.Context, logger *slog.Logger, store *ti
 	logger.Debug("phoenix liquidity ingested",
 		"pool", c.Pool, "action", c.Action,
 		"sender", c.Sender, "ledger", c.Ledger)
+	return nil
+}
+
+func persistPhoenixInitialize(ctx context.Context, logger *slog.Logger, store *timescale.Store, e phoenix.InitializeEvent) error {
+	if err := store.InsertPhoenixInitialize(ctx, timescale.PhoenixInitializeEvent{
+		Pool:            e.Pool,
+		Ledger:          e.Ledger,
+		LedgerCloseTime: e.ObservedAt,
+		TxHash:          e.TxHash,
+		OpIndex:         e.OpIndex,
+		EventIndex:      e.EventIndex,
+		TokenSlot:       e.TokenSlot,
+		Token:           e.Token,
+	}); err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(phoenix.SourceName, "phoenix_initialize").Inc()
+		logger.Error("insert Phoenix initialize failed",
+			"pool", e.Pool, "ledger", e.Ledger, "tx_hash", e.TxHash,
+			"token_slot", e.TokenSlot, "err", err)
+		return err
+	}
+	bumpEntryCount(ctx, logger, store, phoenix.SourceName)
+	logger.Debug("Phoenix initialize ingested",
+		"source", phoenix.SourceName, "pool", e.Pool, "ledger", e.Ledger,
+		"token_slot", e.TokenSlot, "token", e.Token)
 	return nil
 }
 
