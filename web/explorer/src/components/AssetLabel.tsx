@@ -138,7 +138,15 @@ export function AssetLabel({
   // truncated G-strkey. The issuer's full G-strkey stays in the
   // tooltip so power users can still copy it.
   const known = issuerMap?.[issuer];
-  if (known?.org_name) {
+  // CS-100: only present "by {org_name}" as authoritative attribution when
+  // the org is SEP-1 VERIFIED (the organisation's stellar.toml lists this
+  // issuer back — bidirectional). org_name alone is self-declared metadata
+  // a scam issuer can spoof by pointing home_domain at a reputable org's
+  // domain; rendering it unqualified here would launder that spoof across
+  // the markets/dexes/exchanges/pools tables. When unverified we fall
+  // through to the raw truncated-issuer rendering (no org attribution),
+  // matching how the gated issuers pages withhold the verified signal.
+  if (known?.org_verified && known.org_name) {
     return (
       <div>
         <div className="font-medium">{code}</div>
