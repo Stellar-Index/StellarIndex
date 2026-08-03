@@ -32,6 +32,12 @@ const opIndexFanoutStride = 1024
 // internal/sources/reflector/decode.go.
 const eventFanoutStride = 64
 
+// opIndexFanoutMax bounds e.OperationIndex so the packed op_index
+// (OperationIndex*eventFanoutStride+EventIndex)*opIndexFanoutStride+i
+// stays within uint32: 2^32 / (eventFanoutStride * opIndexFanoutStride)
+// = 2^32 / (64*1024) = 65536.
+const opIndexFanoutMax = (1 << 32) / (eventFanoutStride * opIndexFanoutStride)
+
 // classify reports whether this is a Redstone "REDSTONE" event.
 // topic[0] is byte-compared against the pre-encoded constant.
 func classify(e *events.Event) bool {
@@ -127,13 +133,8 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 	if err != nil {
 		return nil, err
 	}
-	if len(prices) > opIndexFanoutStride {
-		return nil, fmt.Errorf("redstone: feed count %d exceeds fanout stride %d",
-			len(prices), opIndexFanoutStride)
-	}
-	if e.EventIndex < 0 || e.EventIndex >= eventFanoutStride {
-		// See ErrEventIndexOverflow for rationale.
-		return nil, fmt.Errorf("%w: got %d", ErrEventIndexOverflow, e.EventIndex)
+	if err := checkFanoutBounds(e, len(prices)); err != nil {
+		return nil, err
 	}
 
 	observer := updater // relayer address from op args — strkey form already
@@ -567,4 +568,27 @@ func firstDuplicate(feedIDs []string) (string, bool) {
 		seen[f] = true
 	}
 	return "", false
+}
+
+// checkFanoutBounds validates the three inputs to the synthetic OpIndex
+// packing (OperationIndex*eventFanoutStride+EventIndex)*opIndexFanoutStride+i
+// so the packed value stays within uint32 — a bad input would wrap and
+// overlap another event's op_index block on the oracle_updates PK.
+// Extracted from decodeWritePrices to keep it under the gocognit ceiling.
+func checkFanoutBounds(e *events.Event, priceCount int) error {
+	if priceCount > opIndexFanoutStride {
+		return fmt.Errorf("redstone: feed count %d exceeds fanout stride %d",
+			priceCount, opIndexFanoutStride)
+	}
+	if e.EventIndex < 0 || e.EventIndex >= eventFanoutStride {
+		// See ErrEventIndexOverflow for rationale.
+		return fmt.Errorf("%w: got %d", ErrEventIndexOverflow, e.EventIndex)
+	}
+	// OperationIndex is the third input to the packing and was the one left
+	// unguarded next to its bounded siblings (EventIndex, vector position).
+	// See ErrOperationIndexOverflow.
+	if e.OperationIndex < 0 || e.OperationIndex >= opIndexFanoutMax {
+		return fmt.Errorf("%w: got %d", ErrOperationIndexOverflow, e.OperationIndex)
+	}
+	return nil
 }
