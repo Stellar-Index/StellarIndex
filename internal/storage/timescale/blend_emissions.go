@@ -18,7 +18,7 @@ import (
 //
 // The amount column is i128 → NUMERIC via decimal string per
 // ADR-0003. Asset / User are NULL when the event kind doesn't
-// carry them (see per-kind doc in migration 0042 + the
+// carry them (see per-kind doc in migration 0045 + the
 // blend.EmissionEvent godoc).
 //
 // reserve_emission_update extras (res_token_id, eps, expiration)
@@ -142,7 +142,7 @@ func buildEmissionAttributes(e domain.BlendEmissionEvent) map[string]any {
 
 // isBlendEmissionKind reports whether kind is one of the emission /
 // credit-risk event kinds. Mirrors the CHECK constraint in migration
-// 0042, widened by migration 0097 to admit the V1 pool-factory's
+// 0045, widened by migration 0097 to admit the V1 pool-factory's
 // update_emissions.
 func isBlendEmissionKind(kind string) bool {
 	switch kind {
