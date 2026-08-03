@@ -310,7 +310,10 @@ func flushTradeBatch(ctx context.Context, logger *slog.Logger, w tradeWriter, ex
 // pipeline" (ADR-0041 acceptance caveat) true.
 func persistTradeRouted(ctx context.Context, logger *slog.Logger, w tradeWriter, extBuf *externalRetryBuffer, t canonical.Trade) {
 	if extBuf == nil || external.IsOnChain(t.Source) {
-		persistTrade(ctx, logger, w, t)
+		// Batch path runs under an indefinite ctx and owns its own shutdown
+		// drain, so persistTrade's abandon error (returned only on ctx-cancel)
+		// is intentionally ignored here.
+		_ = persistTrade(ctx, logger, w, t)
 		return
 	}
 	err := w.InsertTrade(ctx, t)
@@ -348,7 +351,8 @@ func retryOnChainBatchBlocking(ctx context.Context, logger *slog.Logger, w trade
 		logger.Warn("on-chain trade batch hit a non-infra fault after retry; isolating per-row",
 			"batch_size", len(batch), "err", err)
 		for _, t := range batch {
-			persistTrade(ctx, logger, w, t)
+			// Indefinite-ctx batch path; abandon error handled by the drain.
+			_ = persistTrade(ctx, logger, w, t)
 		}
 	}
 }
