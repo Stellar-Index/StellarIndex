@@ -296,8 +296,10 @@ func seedBoundedLabelSeries() {
 		SupplyDivergenceTotal.WithLabelValues(outcome)
 	}
 	// hashdb append/verify outcomes — bounded, well-known label sets so
-	// the append-error-rate and verify-run-failure queries read a real
-	// zero (not "no data") on a freshly-enabled region before the first
+	// the hashdb_verify_failing alert expr and ad-hoc append-error-rate
+	// charts (no alert exists on the append counter — a documented
+	// decision, see docs/reference/metrics/README.md) read a real zero
+	// (not "no data") on a freshly-enabled region before the first
 	// tick / first ledger.
 	for _, outcome := range []string{"ok", "error"} {
 		HashdbAppendTotal.WithLabelValues(outcome)

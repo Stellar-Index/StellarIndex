@@ -27,6 +27,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -1621,7 +1622,23 @@ func openOrCreateHashDB(path string, startLedger uint32) (*hashdb.DB, error) {
 	if err == nil {
 		return db, nil
 	}
-	if !errors.Is(err, fs.ErrNotExist) {
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		// Fresh region: fall through to Create.
+	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		// A file shorter than the 16-byte header can only be the
+		// residue of a Create whose header never reached disk (e.g.
+		// power loss inside the writeback window) — no record was ever
+		// stored, so recreating loses nothing. Without this arm, a
+		// 0-byte file crash-loops the whole ingest daemon until an
+		// operator manually deletes it. Anything else (bad magic, bad
+		// version, permissions) stays fail-closed: auto-recreating a
+		// file that HAS content would silently discard the
+		// tamper-evidence baseline this detector exists to keep.
+		if rmErr := os.Remove(path); rmErr != nil {
+			return nil, fmt.Errorf("hashdb: remove truncated file %s: %w", path, rmErr)
+		}
+	default:
 		return nil, err
 	}
 	return hashdb.Create(path, startLedger)
@@ -1763,6 +1780,17 @@ func hashDBVerifySweep(
 		return
 	}
 
+	// Stream STRICT: the shared live-tail config tolerates
+	// trailing-missing objects (a live reader racing galexie's upload
+	// edge needs that), but this sweep's window trails ledgers the
+	// indexer itself already read successfully — every object in
+	// [from, to] existed once, so "object missing" here is exactly the
+	// deleted-history tamper class ADR-0016 exists to catch, not a
+	// race. With tolerance on, a deleted object silently ended the
+	// sweep early and the run recorded outcome="ok" — a vacuously
+	// green detector.
+	lsCfg.TolerateTrailingMissing = false
+
 	start := time.Now()
 	verifier := archivecompleteness.NewHashDBWindowVerifier(verifyDB, from, to)
 	streamErr := ledgerstream.Stream(ctx, lsCfg, from, to, func(lcm sdkxdr.LedgerCloseMeta) error {
@@ -1775,12 +1803,25 @@ func hashDBVerifySweep(
 	res := verifier.Result()
 	dur := time.Since(start).Seconds()
 
+	// Shutdown mid-walk: don't record any outcome — a partial sweep is
+	// neither clean nor failing, and stamping it "ok" would be the same
+	// vacuous-green lie the strict-stream change above removes.
+	if streamErr != nil && errors.Is(streamErr, context.Canceled) {
+		return
+	}
+
+	// A complete sweep observed every ledger in the window exactly
+	// once; anything short means the stream ended early without
+	// erroring, and "we couldn't check everything" must not read as
+	// clean.
+	observed := res.Verified + res.Drifted + res.Missing + res.OutOfRange
+	complete := observed == int(to-from)+1
+
 	switch {
-	case streamErr != nil && !errors.Is(streamErr, context.Canceled):
-		obs.HashdbVerifyRunsTotal.WithLabelValues("error").Inc()
-		obs.HashdbVerifyRunDurationSeconds.WithLabelValues("error").Observe(dur)
-		logger.Warn("hashdb verify sweep failed", "from", from, "to", to, "err", streamErr)
 	case res.AnyDrift():
+		// Drift FIRST — even when the stream ALSO errored mid-walk,
+		// drift already tallied is the signal this detector exists
+		// for; the error arm must not suppress it.
 		obs.HashdbVerifyRunsTotal.WithLabelValues("drift").Inc()
 		obs.HashdbVerifyRunDurationSeconds.WithLabelValues("drift").Observe(dur)
 		obs.HashdbDriftTotal.Add(float64(res.Drifted))
@@ -1791,6 +1832,17 @@ func hashDBVerifySweep(
 			"verified", res.Verified, "drifted", res.Drifted,
 			"missing", res.Missing, "out_of_range", res.OutOfRange,
 			"drifted_ledgers", res.DriftSeqs,
+			"stream_err", streamErr,
+		)
+	case streamErr != nil:
+		obs.HashdbVerifyRunsTotal.WithLabelValues("error").Inc()
+		obs.HashdbVerifyRunDurationSeconds.WithLabelValues("error").Observe(dur)
+		logger.Warn("hashdb verify sweep failed", "from", from, "to", to, "err", streamErr)
+	case !complete:
+		obs.HashdbVerifyRunsTotal.WithLabelValues("error").Inc()
+		obs.HashdbVerifyRunDurationSeconds.WithLabelValues("error").Observe(dur)
+		logger.Warn("hashdb verify sweep incomplete — stream ended early without error",
+			"from", from, "to", to, "observed", observed, "expected", int(to-from)+1,
 		)
 	default:
 		obs.HashdbVerifyRunsTotal.WithLabelValues("ok").Inc()

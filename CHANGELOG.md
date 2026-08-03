@@ -15,6 +15,23 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **hashdb verify sweep no longer reports "clean" over missing lake
+  objects** (cold audit): the sweep inherited the live-tail's
+  trailing-missing tolerance (65,536-ledger window — wider than the
+  whole 20,000-ledger sweep), so a deleted ledger object — the exact
+  tamper class ADR-0016 exists to catch — silently ended verification
+  early with `outcome="ok"`. The sweep now streams strict, records
+  `outcome="error"` for incomplete windows, reports tallied drift even
+  when the stream also errored (previously the error arm suppressed
+  it), and skips recording entirely on shutdown-cancel. Also: a
+  crash-torn (<16-byte) hashdb file no longer crash-loops the indexer
+  at startup (recreated safely — no records can exist without a
+  header; bad-magic/bad-version stay fail-closed), `hashdb.Create`
+  fsyncs the header, and the runbook + metrics reference now describe
+  the real failure modes (append-death leaves sweeps green; corrupt
+  in-window objects surface under `verify_failing`, not drift).
+
 ### Added
 - **Phoenix `admin` rotation events now project** to the new
   `phoenix_admin_events` hypertable (migration 0132) — the four

@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -265,5 +267,58 @@ func TestOpenOrCreateHashDB_OpensExisting(t *testing.T) {
 
 	if got := db.StartLedger(); got != 42 {
 		t.Errorf("StartLedger() = %d, want 42 (the original Create value, not the openOrCreateHashDB call's startLedger arg)", got)
+	}
+}
+
+// TestOpenOrCreateHashDB_RecreatesTruncatedFile confirms a file
+// shorter than the 16-byte header — the residue of a Create whose
+// header never reached disk (power loss in the writeback window) —
+// is recreated rather than crash-looping the daemon. No record can
+// exist in a headerless file, so recreating loses nothing.
+func TestOpenOrCreateHashDB_RecreatesTruncatedFile(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		size int
+	}{
+		{"zero-byte", 0},
+		{"partial-header", 8},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			path := filepath.Join(t.TempDir(), "torn.db")
+			if err := os.WriteFile(path, make([]byte, tc.size), 0o600); err != nil {
+				t.Fatalf("WriteFile: %v", err)
+			}
+
+			db, err := openOrCreateHashDB(path, 42)
+			if err != nil {
+				t.Fatalf("openOrCreateHashDB on %d-byte file: %v", tc.size, err)
+			}
+			defer func() { _ = db.Close() }()
+
+			if got := db.StartLedger(); got != 42 {
+				t.Errorf("StartLedger() = %d, want 42 (fresh Create)", got)
+			}
+		})
+	}
+}
+
+// TestOpenOrCreateHashDB_BadMagicFailsClosed confirms a file with a
+// full header but foreign magic bytes is NOT silently recreated — a
+// file with content might be a real baseline (or evidence); discarding
+// it automatically would defeat the detector's purpose.
+func TestOpenOrCreateHashDB_BadMagicFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "foreign.db")
+	if err := os.WriteFile(path, []byte("not-a-hashdb-file-at-all"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if _, err := openOrCreateHashDB(path, 42); !errors.Is(err, hashdb.ErrBadMagic) {
+		t.Fatalf("openOrCreateHashDB = %v, want ErrBadMagic (fail-closed)", err)
 	}
 }
