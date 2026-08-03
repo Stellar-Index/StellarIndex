@@ -65,12 +65,24 @@ contract can go silent if its upstream halts (CEX aggregator outage,
 etc.). Our `oracle-stale` alert (alerts-catalog §Divergence) fires
 at > 10× the declared resolution = 50 min without an update.
 
-### Q4 — Relayer identity available
+### Q4 — Relayer identity is NOT currently captured
 
-The `tx.source_account` of the update transaction is the relayer
-that submitted this batch. Each Reflector contract has a known set
-of ~3–5 relayers. We stash that in `canonical.OracleUpdate.Observer`
-so divergence analysis can detect a single relayer compromise.
+In principle the `tx.source_account` of the update transaction is the
+relayer that submitted this batch (each Reflector contract has a known
+set of ~3–5 relayers), and `canonical.OracleUpdate.Observer` exists to
+carry it so divergence analysis *could* isolate a single compromised
+relayer. In practice that capability is **not wired up**:
+
+- No production `NewDecoder` call passes `WithDecoderObserver`
+  (`internal/pipeline/dispatcher.go` constructs all three variants with
+  no observer), so `Observer` is empty on every production row.
+- The per-tx source account is not even available to the decoder —
+  `internal/events/event.go`'s `Event` carries no tx-source-account
+  field. Populating `Observer` would first require plumbing that field
+  through `events.Event` (a noted follow-up).
+
+So relayer-level divergence isolation is a possible future feature, not
+a current capability — do not rely on `Observer` being populated.
 
 ### Q5 — Addresses
 

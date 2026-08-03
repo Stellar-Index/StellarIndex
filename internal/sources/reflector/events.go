@@ -50,6 +50,19 @@ func (v Variant) SourceName() string {
 // Phase-1 audit). Individual contracts technically publish their
 // own `decimals()` SEP-40 method; the consumer can override via
 // Option but this is the safe default.
+//
+// CAVEAT — 14 is contract-confirmed for DEX only; ASSUMED for CEX/FX.
+// The DEX oracle's SEP-40 decimals() was checked on-chain (=14,
+// documented in decode.go's quoteForVariant, 2026-07-07). For the CEX
+// and FX oracles 14 is an assumed default — never read from the
+// contract and NOT validated at runtime (the pure-decoder architecture
+// deliberately forbids a startup RPC call — docs/architecture/
+// ingest-pipeline.md). This is safe for the three current mainnet
+// oracles, but a future Reflector v4 — or any CEX/FX contract
+// re-pointed via `[oracle.reflector]` config — that published at a
+// different scale would mis-scale prices SILENTLY. Operator action when
+// re-pointing CEX/FX: confirm the target's decimals() and pass
+// WithDecoderDecimals if it differs from 14.
 const DefaultDecimals uint8 = 14
 
 // DefaultResolutionSeconds is the uniform 5-min cadence every

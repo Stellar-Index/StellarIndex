@@ -3,6 +3,7 @@ package reflector
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -63,8 +64,17 @@ func classify(e *events.Event) bool {
 // unique in the oracle_updates hypertable.
 //
 // variant determines the source-name to stamp; decimals is the
-// contract-declared price scale (typically 14); observer is the tx
-// source account (the relayer).
+// contract-declared price scale (typically 14); observer is an
+// optional relayer strkey stamped on every emitted row.
+//
+// NOTE: observer is NOT populated in production. No production
+// NewDecoder call passes WithDecoderObserver (see
+// internal/pipeline/dispatcher.go), and the per-tx relayer — the
+// update tx's source account — is not currently available to decoders
+// at all: internal/events/event.go's Event carries no
+// tx-source-account field. Capturing the relayer would first require
+// plumbing that field through events.Event (a noted follow-up); until
+// then observer is empty on every production OracleUpdate.
 func decodeUpdate(e *events.Event, variant Variant, decimals uint8, observer string, closedAt time.Time) ([]canonical.OracleUpdate, error) {
 	if !classify(e) {
 		return nil, ErrNotReflectorEvent
@@ -129,6 +139,23 @@ func decodeUpdate(e *events.Event, variant Variant, decimals uint8, observer str
 			// before publish), so in practice we should never see
 			// one. Defensive skip keeps us correct if the contract
 			// relaxes that filter.
+			//
+			// Surface the skip so a non-positive slot isn't dropped
+			// invisibly (cf. the sibling unknown-symbol skip, which
+			// increments obs.SourceUnknownSymbolsTotal). A WARN log
+			// rather than that counter: a non-positive price is a
+			// contract-invariant violation, NOT an allow-list/coverage
+			// gap, so it doesn't belong on the coverage-drift metric
+			// that drives that counter's alert. Loud if it ever fires,
+			// without misrouting operators toward extending an
+			// allow-list.
+			slog.Warn("reflector: skipping non-positive oracle price",
+				"source", sourceName,
+				"contract_id", e.ContractID,
+				"ledger", e.Ledger,
+				"tx_hash", e.TxHash,
+				"asset", entry.Asset.String(),
+			)
 			continue
 		}
 		u := canonical.OracleUpdate{

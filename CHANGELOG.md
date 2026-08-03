@@ -57,6 +57,12 @@ against.
   at genesis). Corrected the misleading `StreamContractEventsFiltered` `useFinal`
   doc (counting consumers may pass `false` with in-Go adjacent-dedup, as the
   reconcile does).
+- **Reflector oracle audit** (decoder found sound — value/scale/i128 exact, gating
+  fail-closed, projection wiring complete): a dropped non-positive oracle price is
+  now logged instead of silently skipped; the reflector docs no longer claim a
+  per-tx relayer-attribution (`Observer`) capability that isn't wired in production;
+  the CEX/FX `decimals=14` assumption (only DEX is contract-verified) is flagged in
+  a code caveat.
 
 ## [v0.24.0] — 2026-08-02
 
