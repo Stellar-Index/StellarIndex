@@ -54,6 +54,36 @@ const (
 	StatusResolved      Status = "resolved"
 )
 
+// valid reports whether s is one of the three published severities.
+//
+// The OpenAPI contract declares `severity` as a required enum
+// [SEV-1, SEV-2, SEV-3], but the loader used to cast the raw YAML
+// string straight through — so a one-keystroke slip (`sev-1`) shipped
+// an out-of-enum value to every typed client, AND every downstream
+// severity mapping is a ternary chain whose final branch is
+// `maintenance`, which the status page renders GREEN. An ongoing SEV-1
+// could therefore be published looking like routine maintenance (cold
+// audit 2026-08-03). Validating here fails the post loudly instead.
+func (s Severity) valid() bool {
+	switch s {
+	case SeverityMajor, SeverityMinor, SeverityInformative:
+		return true
+	}
+	return false
+}
+
+// valid reports whether s is one of the four published statuses. Same
+// rationale as [Severity.valid] — and note the explorer's build-time
+// loader defaults a MISSING status to "resolved", so an unvalidated
+// blank would print "Resolved" during a live outage.
+func (s Status) valid() bool {
+	switch s {
+	case StatusInvestigating, StatusIdentified, StatusMonitoring, StatusResolved:
+		return true
+	}
+	return false
+}
+
 // Incident is one customer-facing incident post.
 type Incident struct {
 	Slug               string     `json:"slug"`
@@ -131,8 +161,15 @@ func parseFile(name string) (Incident, error) {
 	if err != nil {
 		return Incident{}, fmt.Errorf("read: %w", err)
 	}
+	return parseSource(name, string(raw))
+}
 
-	frontYAML, body, err := splitFrontmatter(string(raw))
+// parseSource parses one post's raw bytes. Split out of [parseFile] so
+// the frontmatter rules — especially the enum and timestamp validation
+// below, which decide whether a post is published at all — are testable
+// without writing into the embedded corpus.
+func parseSource(name, raw string) (Incident, error) {
+	frontYAML, body, err := splitFrontmatter(raw)
 	if err != nil {
 		return Incident{}, fmt.Errorf("split: %w", err)
 	}
@@ -149,17 +186,38 @@ func parseFile(name string) (Incident, error) {
 	var resolvedAt *time.Time
 	if fm.ResolvedAt != "" {
 		t, err := parseTimestamp(fm.ResolvedAt, "")
-		if err == nil {
-			resolvedAt = &t
+		if err != nil {
+			// Do NOT silently drop it. An unparseable resolved_at used
+			// to leave the field nil, which publishes a RESOLVED
+			// incident as never-resolved: /v1/incidents omits the
+			// field, the Atom entry's <updated> falls back to
+			// started_at, the status page prints the status string
+			// where a timestamp belongs, and `emit-incident -event
+			// resolved` ships a payload with no resolved_at while
+			// still passing its status==resolved gate (cold audit
+			// 2026-08-03).
+			return Incident{}, fmt.Errorf("resolved_at: %w", err)
 		}
+		resolvedAt = &t
+	}
+
+	severity := Severity(strings.TrimSpace(fm.Severity))
+	if !severity.valid() {
+		return Incident{}, fmt.Errorf("severity: %q is not one of %s/%s/%s",
+			fm.Severity, SeverityMajor, SeverityMinor, SeverityInformative)
+	}
+	status := Status(strings.TrimSpace(fm.Status))
+	if !status.valid() {
+		return Incident{}, fmt.Errorf("status: %q is not one of %s/%s/%s/%s",
+			fm.Status, StatusInvestigating, StatusIdentified, StatusMonitoring, StatusResolved)
 	}
 
 	slug := strings.TrimSuffix(name, ".md")
 	return Incident{
 		Slug:               slug,
 		Title:              strings.TrimSpace(fm.Title),
-		Severity:           Severity(fm.Severity),
-		Status:             Status(fm.Status),
+		Severity:           severity,
+		Status:             status,
 		StartedAt:          startedAt,
 		ResolvedAt:         resolvedAt,
 		AffectedComponents: fm.AffectedComponents,
