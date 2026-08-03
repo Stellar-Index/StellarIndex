@@ -413,9 +413,22 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
 		args := []any{since, cursor, limit + 1, pq.Array(filter.Sources), filter.Base, filter.Quote, filter.Asset}
 		return cte + tail, args
 	}
+	// FROM canon, NOT FROM pools. This tail used to read the
+	// pre-collapse CTE while the volume-desc tail above read `canon`,
+	// so the two orderings disagreed about what a pool IS: order_by=pair
+	// returned BOTH orientations of every two-sided market as separate
+	// rows, each carrying only its own direction's vol_24h_usd and
+	// count_24h instead of the summed pair, and last_price un-inverted
+	// on the flipped side. Measured on r1 2026-08-03: 61 duplicate
+	// both-orientation pairs in a 200-row page, versus 0 on the default
+	// ordering. Both variants cache under distinct keys, so the
+	// inconsistency was durable and read as a data problem rather than a
+	// query one. (The `canon` CTE was still being built and simply went
+	// unreferenced on this branch — legal in Postgres, invisible at
+	// compile time.)
 	const tail = `
 	 SELECT source, base_asset, quote_asset, last_trade_at, count_24h, vol_24h_usd, last_price
-	   FROM pools
+	   FROM canon
 	  WHERE ($2 = '' OR (source || '|' || base_asset || '|' || quote_asset) > $2)
 	  ORDER BY (source || '|' || base_asset || '|' || quote_asset) ASC
 	  LIMIT $3

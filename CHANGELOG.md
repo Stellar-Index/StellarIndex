@@ -16,6 +16,23 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **`/v1/pools?order_by=pair` returned both orientations of every
+  two-sided market** (cold audit, confirmed on r1): the pair-ordered
+  branch selected from the pre-collapse CTE while the default
+  volume-ordered branch selected from the canonical one, so the two
+  orderings disagreed about what a pool is. Each duplicate row carried
+  only its own direction's `vol_24h_usd` and `trade_count_24h` instead
+  of the summed pair, with `last_price` un-inverted on the flipped
+  side. Measured on r1: 61 duplicate pairs in a 200-row page versus 0
+  on the default ordering — and both variants cache under distinct
+  keys, so the disagreement was durable.
+- **The markets and asset-catalogue caches are now bounded** (cold
+  audit): both had never-evicted maps keyed on client-controlled input
+  — notably `cursor`, which is validated for shape only — so one
+  anonymous caller within the rate limit minted a permanent full-page
+  entry per distinct cursor. Same class as the observations cache
+  bounded above; capped with oldest-first eviction, never evicting an
+  in-flight entry.
 - **A hostile `stellar.toml` could hijack the logo shown for any asset**
   (cold audit): `AllSep1Images` built the global image map from the
   `issuer` field declared *inside* each TOML and never compared it

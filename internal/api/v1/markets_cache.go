@@ -37,6 +37,49 @@ type CachedMarketsReader struct {
 	entries map[string]*marketsCacheEntry
 }
 
+// marketsCacheMaxEntries bounds the entry map.
+//
+// Cache keys carry client-controlled components — notably `cursor`,
+// which is validated for SHAPE ONLY (it need merely contain the right
+// delimiter; there is no allowlist, HMAC or canonical round-trip), plus
+// free-text `q` and asset ids. Successful entries were never evicted,
+// so one anonymous caller inside the documented 6000/min budget minted
+// a permanent, full-page entry per distinct cursor — hundreds of MB per
+// minute of unreclaimable heap, walking the process to its 8G
+// MemoryMax and into a systemd restart-storm (cold audit 2026-08-03).
+//
+// The cap + oldest-first eviction matches the bounded siblings
+// (historyCacheMaxEntries, accountStateCacheMax, assetDetail) and sits
+// far above the real working set: the prewarmer covers a handful of
+// shapes and legitimate pagination walks a bounded number of pages.
+const marketsCacheMaxEntries = 4096
+
+// evictOldestMarketsEntry drops the oldest-filled entry when the map is at
+// capacity. Caller must hold the mutex.
+//
+// In-flight entries (at.IsZero()) are never evicted — dropping one
+// would orphan its waiters from the fill about to close their channel.
+func evictOldestMarketsEntry(m map[string]*marketsCacheEntry) {
+	if len(m) < marketsCacheMaxEntries {
+		return
+	}
+	var (
+		oldestKey string
+		oldestAt  time.Time
+	)
+	for k, e := range m {
+		if e.at.IsZero() {
+			continue
+		}
+		if oldestKey == "" || e.at.Before(oldestAt) {
+			oldestKey, oldestAt = k, e.at
+		}
+	}
+	if oldestKey != "" {
+		delete(m, oldestKey)
+	}
+}
+
 type marketsCacheEntry struct {
 	at     time.Time
 	flight chan struct{}
@@ -225,6 +268,7 @@ func (c *CachedMarketsReader) fetchPairs(
 	// none). Block inline — nothing stale to serve.
 	done := make(chan struct{})
 	entry := &marketsCacheEntry{flight: done}
+	evictOldestMarketsEntry(c.entries)
 	c.entries[key] = entry
 	c.mu.Unlock()
 	obs.APICacheOpsTotal.WithLabelValues("markets", op, "miss").Inc()
@@ -342,6 +386,7 @@ func (c *CachedMarketsReader) fetchPools(
 	// (C) Cold leader: block inline.
 	done := make(chan struct{})
 	entry := &marketsCacheEntry{flight: done}
+	evictOldestMarketsEntry(c.entries)
 	c.entries[key] = entry
 	c.mu.Unlock()
 	obs.APICacheOpsTotal.WithLabelValues("markets", op, "miss").Inc()

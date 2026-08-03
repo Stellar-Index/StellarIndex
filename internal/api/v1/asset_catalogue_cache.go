@@ -37,6 +37,49 @@ type CachedAssetsReader struct {
 	swrEntries map[string]*swrEntry
 }
 
+// assetsCacheMaxEntries bounds the entry map.
+//
+// Cache keys carry client-controlled components — notably `cursor`,
+// which is validated for SHAPE ONLY (it need merely contain the right
+// delimiter; there is no allowlist, HMAC or canonical round-trip), plus
+// free-text `q` and asset ids. Successful entries were never evicted,
+// so one anonymous caller inside the documented 6000/min budget minted
+// a permanent, full-page entry per distinct cursor — hundreds of MB per
+// minute of unreclaimable heap, walking the process to its 8G
+// MemoryMax and into a systemd restart-storm (cold audit 2026-08-03).
+//
+// The cap + oldest-first eviction matches the bounded siblings
+// (historyCacheMaxEntries, accountStateCacheMax, assetDetail) and sits
+// far above the real working set: the prewarmer covers a handful of
+// shapes and legitimate pagination walks a bounded number of pages.
+const assetsCacheMaxEntries = 4096
+
+// evictOldestAssetsEntry drops the oldest-filled entry when the map is at
+// capacity. Caller must hold the mutex.
+//
+// In-flight entries (at.IsZero()) are never evicted — dropping one
+// would orphan its waiters from the fill about to close their channel.
+func evictOldestAssetsEntry(m map[string]*assetsCacheEntry) {
+	if len(m) < assetsCacheMaxEntries {
+		return
+	}
+	var (
+		oldestKey string
+		oldestAt  time.Time
+	)
+	for k, e := range m {
+		if e.at.IsZero() {
+			continue
+		}
+		if oldestKey == "" || e.at.Before(oldestAt) {
+			oldestKey, oldestAt = k, e.at
+		}
+	}
+	if oldestKey != "" {
+		delete(m, oldestKey)
+	}
+}
+
 type assetsCacheEntry struct {
 	at     time.Time
 	flight chan struct{}
@@ -256,6 +299,32 @@ func (c *CachedAssetsReader) GetAssetTradeCount24h(ctx context.Context, assetID 
 // method-namespaced (e.g. "GetAssetByAssetID|<id>"), so the
 // e.val.(T) assertions never mix types. Guarded by
 // CachedAssetsReader.mu (shared with `entries`; distinct map).
+// evictOldestSWREntry drops the oldest-filled entry when the map is at
+// capacity. Caller must hold the mutex.
+//
+// In-flight entries (at.IsZero()) are never evicted — dropping one
+// would orphan its waiters from the fill about to close their channel.
+func evictOldestSWREntry(m map[string]*swrEntry) {
+	if len(m) < assetsCacheMaxEntries {
+		return
+	}
+	var (
+		oldestKey string
+		oldestAt  time.Time
+	)
+	for k, e := range m {
+		if e.at.IsZero() {
+			continue
+		}
+		if oldestKey == "" || e.at.Before(oldestAt) {
+			oldestKey, oldestAt = k, e.at
+		}
+	}
+	if oldestKey != "" {
+		delete(m, oldestKey)
+	}
+}
+
 type swrEntry struct {
 	at     time.Time
 	flight chan struct{}
@@ -327,6 +396,7 @@ func swr[T any](ctx context.Context, c *CachedAssetsReader, op, key string, upst
 
 	done := make(chan struct{})
 	entry := &swrEntry{flight: done}
+	evictOldestSWREntry(c.swrEntries)
 	c.swrEntries[key] = entry
 	c.mu.Unlock()
 	obs.APICacheOpsTotal.WithLabelValues("coins", op, "miss").Inc()
@@ -452,6 +522,7 @@ func (c *CachedAssetsReader) fetchRows(
 	// none). Block inline — there is nothing stale to serve.
 	done := make(chan struct{})
 	entry := &assetsCacheEntry{flight: done}
+	evictOldestAssetsEntry(c.entries)
 	c.entries[key] = entry
 	c.mu.Unlock()
 	obs.APICacheOpsTotal.WithLabelValues("coins", op, "miss").Inc()
@@ -585,6 +656,7 @@ func (c *CachedAssetsReader) fetchHistoryMap(
 	// (C) Cold leader: nothing stale to serve, so block inline.
 	done := make(chan struct{})
 	entry := &assetsCacheEntry{flight: done}
+	evictOldestAssetsEntry(c.entries)
 	c.entries[key] = entry
 	c.mu.Unlock()
 	obs.APICacheOpsTotal.WithLabelValues("coins", op, "miss").Inc()
