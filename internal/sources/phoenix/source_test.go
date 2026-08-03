@@ -149,6 +149,165 @@ func TestBufferSeparatesSwapsByGroupKey(t *testing.T) {
 	}
 }
 
+// TestDecoderSeparatesMultiPoolSameOpSwaps pins the multi-hop-router
+// data-corruption bug both auditors found independently: two DIFFERENT
+// pool contracts emitting swaps within the SAME (ledger, tx_hash,
+// op_index) must reassemble into SEPARATE buffer entries. Before
+// ContractID was part of groupKey, an INCOMPLETE leg from pool A (a
+// lost field-event, or an upgraded WASM emitting <8 fields) shared a
+// buffer slot with pool B keyed only on (ledger,tx,op): pool B's
+// field-events hijacked pool A's entry in place, so the completing
+// event produced ONE Frankenstein trade — pool A's amounts + one of
+// pool B's tokens, stamped with pool A's frozen first-field EventIndex
+// (wrong FanoutOpIndex) — while pool A's leg was silently lost.
+//
+// This drives the FULL Decoder path (absorb → decodeSwap → TradeEvent)
+// so it asserts the corrected tokens/amounts/op_index — not merely that
+// something completed. The interleave is chosen so the un-fixed code is
+// unambiguously red: pool A is missing SellToken and pool B emits
+// SellToken FIRST, so without the ContractID key pool B's SellToken
+// completes pool A's stub into a mixed trade.
+func TestDecoderSeparatesMultiPoolSameOpSwaps(t *testing.T) {
+	// Distinct assets per pool so contamination is observable.
+	poolAbuy, err := canonical.NewClassicAsset("EURC", testAddress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	poolBsell := canonical.NativeAsset()
+	poolBbuy, err := canonical.NewClassicAsset("USDC", testAddress)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	prevAddr, prevAsset, prevI128 := decodeAddress, decodeAsset, decodeI128
+	defer func() { decodeAddress, decodeAsset, decodeI128 = prevAddr, prevAsset, prevI128 }()
+	decodeAddress = func(string) (string, error) { return "GTAKER", nil }
+	decodeAsset = func(v string) (canonical.Asset, error) {
+		switch v {
+		case "asset:xlm":
+			return poolBsell, nil
+		case "asset:usdc":
+			return poolBbuy, nil
+		case "asset:eurc":
+			return poolAbuy, nil
+		}
+		t.Fatalf("fake decodeAsset: unexpected body %q", v)
+		return canonical.Asset{}, nil
+	}
+	decodeI128 = func(v string) (canonical.Amount, error) {
+		switch v {
+		case "i128:1000":
+			return canonical.NewAmount(big.NewInt(1000)), nil
+		case "i128:2000":
+			return canonical.NewAmount(big.NewInt(2000)), nil
+		case "i128:111":
+			return canonical.NewAmount(big.NewInt(111)), nil
+		case "i128:222":
+			return canonical.NewAmount(big.NewInt(222)), nil
+		case "i128:1", "i128:2", "i128:5", "i128:7":
+			return canonical.NewAmount(big.NewInt(1)), nil
+		}
+		t.Fatalf("fake decodeI128: unexpected body %q", v)
+		return canonical.NewAmount(big.NewInt(0)), nil
+	}
+
+	const (
+		poolA = "CBHCRSVX3ZZ7EGTSYMKPEFGZNWRVCSESQR3UABET4MIW52N4EVU6BIZX" // MainnetPools[0]
+		poolB = "CBCZGGNOEUZG4CAAE7TGTQQHETZMKUT4OIPFHHPKEUX46U4KXBBZ3GLH" // MainnetPools[1]
+		op    = 4
+	)
+	closedAt := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC).Format(time.RFC3339)
+	mk := func(pool string, evtIdx int, field, value string) events.Event {
+		return events.Event{
+			Ledger: 63_000_000, TxHash: phoenixTxHash, OperationIndex: op,
+			EventIndex:     evtIdx,
+			LedgerClosedAt: closedAt,
+			ContractID:     pool,
+			Topic:          []string{TopicSymbolSwap, field},
+			Value:          value,
+		}
+	}
+
+	// Pool A: 7 of 8 fields — SellToken never arrives (lost / <8-field WASM).
+	// Pool B: all 8, SellToken FIRST (idx 7) so the un-fixed code hijacks A.
+	feed := []events.Event{
+		mk(poolA, 0, TopicSymbolSender, "addr:A"),
+		mk(poolA, 1, TopicSymbolOfferAmount, "i128:1000"),
+		mk(poolA, 2, TopicSymbolActualReceived, "i128:1000"),
+		mk(poolA, 3, TopicSymbolBuyToken, "asset:eurc"),
+		mk(poolA, 4, TopicSymbolReturnAmount, "i128:2000"),
+		mk(poolA, 5, TopicSymbolSpreadAmount, "i128:5"),
+		mk(poolA, 6, TopicSymbolReferralFee, "i128:1"),
+
+		mk(poolB, 7, TopicSymbolSellToken, "asset:xlm"),
+		mk(poolB, 8, TopicSymbolSender, "addr:B"),
+		mk(poolB, 9, TopicSymbolOfferAmount, "i128:111"),
+		mk(poolB, 10, TopicSymbolActualReceived, "i128:111"),
+		mk(poolB, 11, TopicSymbolBuyToken, "asset:usdc"),
+		mk(poolB, 12, TopicSymbolReturnAmount, "i128:222"),
+		mk(poolB, 13, TopicSymbolSpreadAmount, "i128:7"),
+		mk(poolB, 14, TopicSymbolReferralFee, "i128:2"),
+	}
+
+	d := NewDecoder() // curated set includes both pools; Decode doesn't re-gate
+	var trades []canonical.Trade
+	for _, ev := range feed {
+		out, derr := d.Decode(ev)
+		if derr != nil {
+			t.Fatalf("Decode(%s idx%d): %v", ev.ContractID, ev.EventIndex, derr)
+		}
+		for _, ce := range out {
+			te, ok := ce.(TradeEvent)
+			if !ok {
+				t.Fatalf("unexpected event type %T", ce)
+			}
+			trades = append(trades, te.Trade)
+		}
+	}
+
+	// Exactly one swap completes: pool B's. Pool A's leg stays incomplete
+	// (SellToken never arrived) and must NOT be resurrected as a mongrel.
+	if len(trades) != 1 {
+		t.Fatalf("expected exactly 1 completed trade (pool B), got %d: %+v", len(trades), trades)
+	}
+	got := trades[0]
+
+	// Pool B's OWN tokens — a Frankenstein carries pool A's buy token (EURC).
+	if !got.Pair.Quote.Equal(poolBbuy) {
+		t.Errorf("Quote = %v, want pool B buy token %v — pool A's buy token contaminated the trade",
+			got.Pair.Quote, poolBbuy)
+	}
+	if !got.Pair.Base.Equal(poolBsell) {
+		t.Errorf("Base = %v, want pool B sell token %v", got.Pair.Base, poolBsell)
+	}
+	// Pool B's OWN amounts — a Frankenstein carries pool A's 1000/2000.
+	if got.BaseAmount.Cmp(canonical.NewAmount(big.NewInt(111))) != 0 {
+		t.Errorf("BaseAmount = %s, want 111 (pool B) — pool A's offer_amount leaked", got.BaseAmount)
+	}
+	if got.QuoteAmount.Cmp(canonical.NewAmount(big.NewInt(222))) != 0 {
+		t.Errorf("QuoteAmount = %s, want 222 (pool B) — pool A's return_amount leaked", got.QuoteAmount)
+	}
+	// Pool B's OWN first-field event index (7), not pool A's frozen 0.
+	wantOp := canonical.FanoutOpIndex(op, 7)
+	if got.OpIndex != wantOp {
+		t.Errorf("OpIndex = %d, want %d (pool B's own first-field event_index); frozen to pool A's would give %d",
+			got.OpIndex, wantOp, canonical.FanoutOpIndex(op, 0))
+	}
+
+	// Pool A's incomplete leg is preserved as its OWN orphan — not silently
+	// consumed into pool B's entry.
+	orphans := d.buf.orphans()
+	if len(orphans) != 1 {
+		t.Fatalf("expected exactly 1 orphan (pool A's incomplete leg), got %d", len(orphans))
+	}
+	if orphans[0].Pool != poolA {
+		t.Errorf("orphan Pool = %q, want pool A %q — the incomplete leg was hijacked/lost", orphans[0].Pool, poolA)
+	}
+	if orphans[0].fieldsPresent() != 7 {
+		t.Errorf("orphan fieldsPresent = %d, want 7 (pool A's 7/8)", orphans[0].fieldsPresent())
+	}
+}
+
 func TestBufferOrphansReportIncompletes(t *testing.T) {
 	buf := newBuffer()
 	events := allEightSwapEvents()
