@@ -193,29 +193,75 @@ func TestKeyPolicy_Permissions(t *testing.T) {
 	}
 }
 
-func TestKeyPolicy_OperatorSkipsPermissions(t *testing.T) {
-	sub := auth.Subject{
-		Identifier:          "operator:staff-1",
-		Tier:                auth.TierOperator,
-		AllowAllPermissions: false,
-		// No allow entries — anonymous policy posture would 403,
-		// but the operator tier bypasses permissions.
+// TestKeyPolicy_OperatorSubjectToOwnPermissions pins that operator-tier keys
+// are bound by their OWN permission gate — a default operator key keeps full
+// access, but a deliberately-narrowed one is confined.
+//
+// Pre-fix (the defect this replaces): checkKeyPolicy short-circuited with an
+// unconditional `return "", nil` for every TierOperator subject BEFORE the
+// scope + permission gates ran, so an operator key explicitly narrowed at
+// mint silently bypassed its own restrictions. The prior test here asserted
+// that bypass as intended behaviour; it encoded the defect.
+func TestKeyPolicy_OperatorSubjectToOwnPermissions(t *testing.T) {
+	cases := []struct {
+		name       string
+		allowAll   bool
+		allow      []auth.SubjectPermissionEntry
+		deny       []auth.SubjectPermissionEntry
+		wantStatus int
+	}{
+		{
+			// (a) default operator key: AllowAllPermissions=true, no entries
+			// → full access preserved.
+			name:       "default operator key keeps full access",
+			allowAll:   true,
+			wantStatus: http.StatusOK,
+		},
+		{
+			// (b) deliberately narrowed operator key: closed posture
+			// (AllowAllPermissions=false + no allow entries) is now enforced,
+			// not bypassed.
+			name:       "narrowed operator key is confined (closed posture)",
+			allowAll:   false,
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			// (b') an explicit deny on the operator key is honoured.
+			name:       "operator key deny entry is honoured",
+			allowAll:   true,
+			deny:       []auth.SubjectPermissionEntry{{EndpointPrefix: "/v1/admin/"}},
+			wantStatus: http.StatusForbidden,
+		},
 	}
-	req := httptest.NewRequest(http.MethodGet, "/v1/admin/freeze", nil)
-	req = req.WithContext(auth.WithSubject(req.Context(), sub))
-	w := httptest.NewRecorder()
-	middleware.KeyPolicy()(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})).ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200 (operator should bypass permissions); body=%s", w.Code, w.Body.String())
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sub := auth.Subject{
+				Identifier:          "operator:staff-1",
+				Tier:                auth.TierOperator,
+				AllowAllPermissions: tc.allowAll,
+				AllowPermissions:    tc.allow,
+				DenyPermissions:     tc.deny,
+			}
+			req := httptest.NewRequest(http.MethodGet, "/v1/admin/freeze", nil)
+			req = req.WithContext(auth.WithSubject(req.Context(), sub))
+			w := httptest.NewRecorder()
+			middleware.KeyPolicy()(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})).ServeHTTP(w, req)
+			if w.Code != tc.wantStatus {
+				t.Errorf("status = %d, want %d; body=%s", w.Code, tc.wantStatus, w.Body.String())
+			}
+		})
 	}
 }
 
 // TestKeyPolicy_Scopes pins the capability-scope gate: keys with an
 // empty scope list keep full access (back-compat), scoped keys are
-// confined to their route families, and operator-tier subjects
-// bypass the gate entirely.
+// confined to their route families, and operator-tier subjects are
+// bound by their OWN scope list — a default operator key (empty scopes)
+// keeps full access, but a scope-narrowed operator key is confined like
+// any other tier (the defect finding 2 removed had operator subjects
+// bypass this gate entirely).
 func TestKeyPolicy_Scopes(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -232,7 +278,8 @@ func TestKeyPolicy_Scopes(t *testing.T) {
 		{"account scope allows account", "/v1/account/usage", []string{"account"}, auth.TierAPIKey, http.StatusOK},
 		{"account scope blocks data", "/v1/price", []string{"account"}, auth.TierAPIKey, http.StatusForbidden},
 		{"multi-scope unions", "/v1/account/me", []string{"read", "account"}, auth.TierAPIKey, http.StatusOK},
-		{"operator bypasses scope gate", "/v1/admin/keys", []string{"read"}, auth.TierOperator, http.StatusOK},
+		{"operator empty scopes = full access", "/v1/admin/keys", nil, auth.TierOperator, http.StatusOK},
+		{"operator read scope confined off admin", "/v1/admin/keys", []string{"read"}, auth.TierOperator, http.StatusForbidden},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
