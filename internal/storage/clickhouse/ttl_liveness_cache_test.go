@@ -75,6 +75,46 @@ func TestTTLLivenessCache_MissingKeyFailsOpenAndRefreshes(t *testing.T) {
 	}
 }
 
+// A refresh kicked by a SUBSET caller (?pool= resolves one pair) must not
+// evict the rest of the snapshot: store() whole-map-replaces, so before the
+// union fix a single-pair refresh wiped every other pair's verdict and the
+// archived-pair filter fell open (TTLUnknown→keep) for the whole registry —
+// dead pools served as live liquidity (cold audit 2026-08-03).
+func TestTTLLivenessCache_SubsetRefreshDoesNotEvictOtherKeys(t *testing.T) {
+	c := newTTLLivenessCache(func(_ context.Context, keys []string) (map[string]TTLLiveness, error) {
+		out := make(map[string]TTLLiveness, len(keys))
+		for _, k := range keys {
+			if k == "k-archived" {
+				out[k] = TTLArchived
+			} else {
+				out[k] = TTLLive
+			}
+		}
+		return out, nil
+	})
+	// Seed a full snapshot holding an archived pair, then age it past the
+	// TTL so the next resolve kicks a refresh.
+	c.store(map[string]TTLLiveness{"k-archived": TTLArchived, "k-live": TTLLive})
+	c.mu.Lock()
+	c.fetchedAt = time.Now().Add(-2 * TTLVerdictCacheTTL)
+	c.mu.Unlock()
+
+	// Subset resolve: the caller asks about ONE pair only.
+	if _, err := c.resolve(context.Background(), []string{"k-live"}); err != nil {
+		t.Fatalf("subset resolve: %v", err)
+	}
+	waitTTLFlightIdle(t, c)
+
+	// The archived pair's verdict must survive the subset-kicked refresh.
+	got, err := c.resolve(context.Background(), []string{"k-archived"})
+	if err != nil {
+		t.Fatalf("post-refresh resolve: %v", err)
+	}
+	if got["k-archived"] != TTLArchived {
+		t.Fatalf("k-archived = %v after subset refresh, want TTLArchived (verdict evicted — archived pair now fails open as live)", got["k-archived"])
+	}
+}
+
 func TestTTLLivenessCache_StaleServedWhileRevalidating(t *testing.T) {
 	var calls atomic.Int32
 	block := make(chan struct{})

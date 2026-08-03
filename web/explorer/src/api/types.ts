@@ -14483,9 +14483,9 @@ export interface components {
             as_of_ledger: number;
             token0: components["schemas"]["PoolReserveToken"];
             token1: components["schemas"]["PoolReserveToken"];
-            /** @description Decimals-adjusted mid price, token1 per token0. Decimal string; null when either side is empty. */
+            /** @description Decimals-adjusted mid price, token1 per token0. Decimal string; null when either side is empty, or when token decimals metadata was unavailable for this request (a mid price is never computed from assumed decimals). */
             mid_price_0_in_1: string | null;
-            /** @description Inverse mid price. Null when either side is empty. */
+            /** @description Inverse mid price. Null under the same conditions as mid_price_0_in_1. */
             mid_price_1_in_0: string | null;
             /** @description Depth estimate per slippage tier (0.5% / 1% / 2%). Empty when either reserve is zero. */
             depth: components["schemas"]["PoolDepthLevel"][];

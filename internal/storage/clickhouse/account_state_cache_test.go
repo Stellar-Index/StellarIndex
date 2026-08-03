@@ -100,6 +100,48 @@ func TestAccountStateCached_SaturationReturnsDistinctSentinel(t *testing.T) {
 	}
 }
 
+// A NON-OWNER waiter that joined a flight the owner then
+// saturation-skipped must also see ErrRefreshSaturated: pre-fix it woke on
+// the closed channel, found no cache entry, and fell through to the
+// 500-class errAccountStateRefreshFailed for pure backpressure (cold audit
+// 2026-08-03). The owner publishes the outcome on the flight entry before
+// end() closes done.
+func TestAccountStateCached_NonOwnerSeesSaturation(t *testing.T) {
+	t.Parallel()
+	r := &ExplorerReader{
+		stateCache:  newAccountStateCache(),
+		stateFlight: newPerKeyFlight(),
+		refreshGate: NewRefreshGate(1),
+	}
+	if !r.refreshGate.TryAcquire() {
+		t.Fatal("could not acquire the only gate slot to set up saturation")
+	}
+	const account = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+
+	// Become the flight owner FIRST (simulating the non-owner's race
+	// window: it joined between the owner's begin and end), then run the
+	// cold-miss path as the non-owner and let the "owner" saturate-skip.
+	fl, owner := r.stateFlight.begin(account)
+	if !owner {
+		t.Fatal("test setup: expected flight ownership")
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := r.AccountStateCached(context.Background(), account)
+		done <- err
+	}()
+	// Give the non-owner a moment to join the flight, then end it the way
+	// refreshAccountState's saturation path does.
+	time.Sleep(10 * time.Millisecond)
+	fl.saturated = true
+	r.stateFlight.end(account, fl)
+
+	err := <-done
+	if !errors.Is(err, ErrRefreshSaturated) {
+		t.Fatalf("non-owner err = %v, want ErrRefreshSaturated (backpressure must be retryable for every waiter)", err)
+	}
+}
+
 func TestPerKeyFlight(t *testing.T) {
 	t.Parallel()
 	f := newPerKeyFlight()

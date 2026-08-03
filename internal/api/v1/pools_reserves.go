@@ -153,7 +153,7 @@ func (s *Server) handlePoolReserves(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	displays := s.poolReservesDisplays(ctx, states)
+	displays, displaysOK := s.poolReservesDisplays(ctx, states)
 
 	out := make([]PoolReservesRow, 0, len(states))
 	for _, pair := range pairs {
@@ -161,7 +161,7 @@ func (s *Server) handlePoolReserves(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			continue // instance not captured / layout mismatch — absent, never zero
 		}
-		out = append(out, buildPoolReservesRow(st, displays))
+		out = append(out, buildPoolReservesRow(st, displays, displaysOK))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Pool < out[j].Pool })
 	// ADR-0041 Decision 4: each row already carries its exact per-pool
@@ -223,9 +223,14 @@ func (s *Server) poolReservesPairs(ctx context.Context, w http.ResponseWriter, r
 }
 
 // poolReservesDisplays batch-fetches token display metadata for every
-// token appearing in the decoded states. Best-effort: a failure
-// degrades symbols/decimals to defaults, never the reserves.
-func (s *Server) poolReservesDisplays(ctx context.Context, states map[string]clickhouse.SoroswapPairState) map[string]clickhouse.TokenDisplayMeta {
+// token appearing in the decoded states. Best-effort for the reserves
+// (a failure never blocks them), but ok=false on a fetch failure so
+// callers can tell "the lookup errored" apart from "the token declares
+// no metadata": conflating the two stamped decimals=7 on EVERY token
+// and computed mid-prices from those decimals — one transient CH error
+// mis-scaled every non-7dp pair's mid price by 10^(d-7) with no signal
+// (cold audit 2026-08-03).
+func (s *Server) poolReservesDisplays(ctx context.Context, states map[string]clickhouse.SoroswapPairState) (map[string]clickhouse.TokenDisplayMeta, bool) {
 	tokenSet := make(map[string]struct{}, len(states)*2)
 	for _, st := range states {
 		tokenSet[st.Token0] = struct{}{}
@@ -237,15 +242,21 @@ func (s *Server) poolReservesDisplays(ctx context.Context, states map[string]cli
 	}
 	displays, err := s.explorer.TokenDisplays(ctx, tokens)
 	if err != nil {
-		s.logger.Warn("TokenDisplays failed", "err", err)
-		return nil
+		s.logger.Warn("TokenDisplays failed — serving reserves without mid prices this request", "err", err)
+		return nil, false
 	}
-	return displays
+	return displays, true
 }
 
 // buildPoolReservesRow assembles one wire row from a decoded pair
-// state + the best-effort token display map.
-func buildPoolReservesRow(st clickhouse.SoroswapPairState, displays map[string]clickhouse.TokenDisplayMeta) PoolReservesRow {
+// state + the best-effort token display map. displaysOK=false means the
+// display lookup itself FAILED (not "token declares no metadata") —
+// decimals are then unknown, so the decimals-dependent mid prices are
+// omitted (null) rather than computed from the default-7 stamp: a
+// transient lookup error must degrade to missing prices, never to
+// 10^(d-7)-mis-scaled ones. Reserves and depth are base-unit exact and
+// decimals-independent — always served.
+func buildPoolReservesRow(st clickhouse.SoroswapPairState, displays map[string]clickhouse.TokenDisplayMeta, displaysOK bool) PoolReservesRow {
 	tok := func(contract string, reserve *big.Int) PoolReserveToken {
 		t := PoolReserveToken{Contract: contract, Decimals: 7, Reserve: reserve.String()}
 		if meta, ok := displays[contract]; ok && meta.HasMeta {
@@ -267,10 +278,12 @@ func buildPoolReservesRow(st clickhouse.SoroswapPairState, displays map[string]c
 		row.Depth = []PoolDepthLevel{}
 		return row
 	}
-	m01 := midPriceString(st.Reserve1, st.Reserve0, row.Token1.Decimals, row.Token0.Decimals)
-	m10 := midPriceString(st.Reserve0, st.Reserve1, row.Token0.Decimals, row.Token1.Decimals)
-	row.MidPrice0In1 = &m01
-	row.MidPrice1In0 = &m10
+	if displaysOK {
+		m01 := midPriceString(st.Reserve1, st.Reserve0, row.Token1.Decimals, row.Token0.Decimals)
+		m10 := midPriceString(st.Reserve0, st.Reserve1, row.Token0.Decimals, row.Token1.Decimals)
+		row.MidPrice0In1 = &m01
+		row.MidPrice1In0 = &m10
+	}
 
 	row.Depth = make([]PoolDepthLevel, 0, len(poolDepthSlippagesBps))
 	for _, slipBps := range poolDepthSlippagesBps {

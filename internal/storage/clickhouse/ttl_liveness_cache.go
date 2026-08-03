@@ -142,10 +142,20 @@ func (c *ttlLivenessCache) store(verdicts map[string]TTLLiveness) {
 	c.mu.Unlock()
 }
 
-// kickRefresh starts ONE detached recompute for the given key snapshot
-// (returning the existing flight while one is up). The key set is the
-// caller's full current registry-derived set, so the refreshed snapshot
-// covers exactly the keys being served.
+// kickRefresh starts ONE detached recompute (returning the existing
+// flight while one is up). The computed key set is the UNION of the
+// caller's keys and every key already in the snapshot: callers pass
+// subset key sets (?pool= resolves a single pair, the TVL refresher
+// passes the full registry), and because store() whole-map-replaces,
+// a subset snapshot would evict every other pair's verdict — silently
+// re-opening the fail-open TTLUnknown→keep path for the whole registry
+// (archived pairs served as live liquidity) until the next full-set
+// refresh happened to land (cold audit 2026-08-03). The union keeps
+// store()'s replace semantics and an honest fetchedAt while never
+// shrinking coverage. Keys that leave the registry linger until
+// process restart — acceptable: the registry is grow-only in practice,
+// and the compute cost is dominated by the ttl-prefix scan, not the
+// key-set size.
 func (c *ttlLivenessCache) kickRefresh(keys []string) *ttlFlight {
 	c.mu.Lock()
 	if c.flight != nil {
@@ -155,10 +165,23 @@ func (c *ttlLivenessCache) kickRefresh(keys []string) *ttlFlight {
 	}
 	fl := &ttlFlight{done: make(chan struct{})}
 	c.flight = fl
+	snapshot := make([]string, 0, len(keys)+len(c.verdicts))
+	seen := make(map[string]struct{}, len(keys)+len(c.verdicts))
+	for _, k := range keys {
+		if _, dup := seen[k]; dup {
+			continue
+		}
+		seen[k] = struct{}{}
+		snapshot = append(snapshot, k)
+	}
+	for k := range c.verdicts {
+		if _, dup := seen[k]; dup {
+			continue
+		}
+		seen[k] = struct{}{}
+		snapshot = append(snapshot, k)
+	}
 	c.mu.Unlock()
-
-	snapshot := make([]string, len(keys))
-	copy(snapshot, keys)
 	go func() {
 		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), ttlVerdictRefreshTimeout)

@@ -2,6 +2,7 @@ package v1_test
 
 import (
 	"context"
+	"errors"
 	"math/big"
 	"net/http"
 	"testing"
@@ -106,6 +107,54 @@ func TestPoolReserves_Listing(t *testing.T) {
 		t.Fatalf("funded pool must have non-zero depth, got %+v", row.Depth[0])
 	}
 }
+
+// A TokenDisplays outage must degrade to MISSING mid prices, never to
+// mid prices computed from the default-7 decimals stamp: before the fix,
+// one transient CH error silently mis-scaled every non-7dp pair's mid
+// price by 10^(d-7) while asserting decimals=7 on the wire (cold audit
+// 2026-08-03). Reserves and depth are base-unit exact — still served.
+func TestPoolReserves_DisplaysFailureOmitsMidPrices(t *testing.T) {
+	pairA := mkCStrkey(t, 1)
+	tok0, tok1 := mkCStrkey(t, 10), mkCStrkey(t, 11)
+	reader := &stubExplorerReader{
+		pairStates: map[string]clickhouse.SoroswapPairState{
+			pairA: {
+				Pair: pairA, Token0: tok0, Token1: tok1,
+				Reserve0: big.NewInt(1_000_000), Reserve1: big.NewInt(2_000_000),
+				Ledger: 62_941_880,
+			},
+		},
+		tokenDisplaysErr: errTokenDisplaysDown,
+	}
+	base := poolReservesTestServer(t, reader, []timescale.SoroswapPair{
+		{PairStrkey: pairA, Token0Strkey: tok0, Token1Strkey: tok1},
+	})
+
+	resp := mustGet(t, base+"/v1/pools/reserves")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d (reserves must still serve through a display outage)", resp.StatusCode)
+	}
+	var body struct {
+		Data []v1.PoolReservesRow `json:"data"`
+	}
+	mustDecode(t, resp, &body)
+	if len(body.Data) != 1 {
+		t.Fatalf("want 1 row, got %d", len(body.Data))
+	}
+	row := body.Data[0]
+	if row.MidPrice0In1 != nil || row.MidPrice1In0 != nil {
+		t.Fatalf("mid prices = %v/%v, want null — decimals are unknown during a display outage",
+			row.MidPrice0In1, row.MidPrice1In0)
+	}
+	if row.Token0.Reserve != "1000000" || row.Token1.Reserve != "2000000" {
+		t.Fatalf("reserves must be unaffected, got %+v / %+v", row.Token0, row.Token1)
+	}
+	if len(row.Depth) != 3 {
+		t.Fatalf("depth is decimals-independent and must still serve, got %d tiers", len(row.Depth))
+	}
+}
+
+var errTokenDisplaysDown = errors.New("token displays lookup down")
 
 func TestPoolReserves_PoolFilter(t *testing.T) {
 	pairA := mkCStrkey(t, 1)

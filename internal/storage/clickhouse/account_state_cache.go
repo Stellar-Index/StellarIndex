@@ -126,18 +126,21 @@ func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string)
 	// Not single-flighted across accounts on purpose — distinct accounts
 	// genuinely need distinct scans. Only the exact-same-account burst is
 	// worth collapsing, which the per-account flight handles.
-	ch, saturated := r.refreshAccountState(account) //nolint:contextcheck // intentional detach — the fill must outlive a caller that times out (see doc above)
+	fl, saturated := r.refreshAccountState(account) //nolint:contextcheck // intentional detach — the fill must outlive a caller that times out (see doc above)
 	select {
-	case <-ch:
+	case <-fl.done:
 		if st, ok, _ := r.stateCache.get(account); ok {
 			return st, false, nil
 		}
-		if saturated {
+		if saturated || fl.saturated {
 			// The gate was full, so no scan ran and the cache stayed
 			// empty — a transient backpressure condition, NOT a failed
 			// scan. Return the distinct retryable sentinel so the handler
 			// maps it to 503 (retry) instead of 500 (bug); a genuine scan
 			// failure below keeps errAccountStateRefreshFailed → 500.
+			// fl.saturated covers the NON-OWNER that joined a flight the
+			// owner then saturation-skipped — it used to fall through to
+			// the 500 for pure backpressure (cold audit 2026-08-03).
 			return AccountState{}, false, ErrRefreshSaturated
 		}
 		return AccountState{}, false, errAccountStateRefreshFailed
@@ -152,14 +155,16 @@ func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string)
 // noticed the miss (see AccountStateCached).
 //
 // saturated is true only when THIS call owned the flight and the shared
-// refresh gate was full, so the scan was skipped — the caller uses it to
-// tell a transient backpressure miss (retryable 503) apart from a genuine
-// refresh failure (500). A non-owner waiting on an in-flight scan, and an
-// owner that acquired the gate, both report saturated=false.
-func (r *ExplorerReader) refreshAccountState(account string) (ch chan struct{}, saturated bool) {
-	ch, owner := r.stateFlight.begin(account)
+// refresh gate was full, so the scan was skipped. Non-owners that joined
+// the same flight learn the same outcome from the entry's saturated flag
+// (set by the owner BEFORE end() closes done — the close is the
+// happens-before edge, same pattern as ttlFlight.err) so a
+// saturation-skipped flight reads as retryable backpressure (503) for
+// every waiter, not just the owner.
+func (r *ExplorerReader) refreshAccountState(account string) (fl *stateFlightEntry, saturated bool) {
+	fl, owner := r.stateFlight.begin(account)
 	if !owner {
-		return ch, false
+		return fl, false
 	}
 	// Global bound across keys (audit 2026-07-31): the per-account flight
 	// collapses same-account bursts, but the account space is
@@ -168,12 +173,13 @@ func (r *ExplorerReader) refreshAccountState(account string) (ch chan struct{}, 
 	// pool. On saturation SKIP — the waiter misses honestly and a later
 	// request re-kicks — never queue (see RefreshGate).
 	if !r.refreshGate.TryAcquire() {
-		r.stateFlight.end(account, ch)
-		return ch, true
+		fl.saturated = true // published to waiters by end()'s close
+		r.stateFlight.end(account, fl)
+		return fl, true
 	}
 	go func() {
 		defer r.refreshGate.Release()
-		defer r.stateFlight.end(account, ch)
+		defer r.stateFlight.end(account, fl)
 		rctx, cancel := context.WithTimeout(context.Background(), accountStateRefreshTimeout)
 		defer cancel()
 		st, err := r.AccountState(rctx, account)
@@ -185,40 +191,51 @@ func (r *ExplorerReader) refreshAccountState(account string) (ch chan struct{}, 
 		}
 		r.stateCache.put(account, st, time.Now())
 	}()
-	return ch, false
+	return fl, false
+}
+
+// stateFlightEntry is one in-flight account-state refresh. done closes when
+// the flight ends; saturated is written only by the flight owner before
+// end() closes done, so waiters may read it after <-done without locking.
+type stateFlightEntry struct {
+	done      chan struct{}
+	saturated bool
 }
 
 // perKeyFlight collapses concurrent work for the same key. Used for the
 // account-state single-flight above.
 type perKeyFlight struct {
 	mu      sync.Mutex
-	inGoing map[string]chan struct{}
+	inGoing map[string]*stateFlightEntry
 }
 
 func newPerKeyFlight() *perKeyFlight {
-	return &perKeyFlight{inGoing: make(map[string]chan struct{})}
+	return &perKeyFlight{inGoing: make(map[string]*stateFlightEntry)}
 }
 
-func (f *perKeyFlight) begin(key string) (chan struct{}, bool) {
+func (f *perKeyFlight) begin(key string) (*stateFlightEntry, bool) {
 	if f == nil {
-		return nil, false
+		// Test-only readers construct without a flight; a nil done channel
+		// blocks in select until the caller's deadline — the pre-existing
+		// nil-receiver contract.
+		return &stateFlightEntry{}, false
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if ch, ok := f.inGoing[key]; ok {
-		return ch, false
+	if fl, ok := f.inGoing[key]; ok {
+		return fl, false
 	}
-	ch := make(chan struct{})
-	f.inGoing[key] = ch
-	return ch, true
+	fl := &stateFlightEntry{done: make(chan struct{})}
+	f.inGoing[key] = fl
+	return fl, true
 }
 
-func (f *perKeyFlight) end(key string, ch chan struct{}) {
+func (f *perKeyFlight) end(key string, fl *stateFlightEntry) {
 	if f == nil {
 		return
 	}
 	f.mu.Lock()
 	delete(f.inGoing, key)
 	f.mu.Unlock()
-	close(ch)
+	close(fl.done)
 }

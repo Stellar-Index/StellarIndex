@@ -16,6 +16,28 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **Archived-pool TTL verdicts no longer evicted by single-pool
+  requests** (cold audit): the TTL-liveness verdict cache whole-map
+  replaced its snapshot with the refreshing caller's key set — and
+  `/v1/pools/reserves?pool=` refreshes with ONE pair — so a subset
+  refresh wiped every other pair's verdict and the archived-pair
+  filter fell open (TTLUnknown→keep) for the whole registry: dead
+  pools' last-known reserves served as live liquidity (and baked into
+  the TVL snapshot) until a full-set refresh landed. Refreshes now
+  compute the union of the caller's keys and the existing snapshot.
+- **`/v1/pools/reserves` no longer computes mid prices from assumed
+  decimals during a metadata outage** (cold audit): one transient
+  failure of the token-display lookup silently stamped `decimals: 7`
+  on every token and mis-scaled every non-7dp pair's `mid_price_*` by
+  10^(d−7). A failed lookup now degrades to null mid prices (reserves
+  and depth are base-unit exact and still served); the default-7 stamp
+  remains only for tokens that genuinely declare no metadata.
+- **Account-state cold-miss under gate saturation returns 503 for every
+  waiter** (cold audit): a non-owner request that joined a refresh
+  flight the owner then saturation-skipped fell through to a 500-class
+  error for pure backpressure; the flight now publishes the saturated
+  outcome to all waiters (owner-write-before-close, same pattern as the
+  TTL flight).
 - **`/v1/contracts/{id}` pagination no longer silently drops events at
   page boundaries** (cold audit, HIGH): the keyset cursor paged on
   `(ledger, op_index, event_index)` — a tuple that is NOT unique
