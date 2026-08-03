@@ -43,14 +43,24 @@ via interface inspection + binary-string verification.
 
 ## Contracts under audit
 
-Comet has **no canonical mainnet factory** in our codebase — the
-source is a Balancer-v1-style weighted-AMM implementation
-deployable as a library. CLAUDE.md flags this:
+Comet has **no known deployed mainnet factory** — the source is a
+Balancer-v1-style weighted-AMM implementation deployable as a
+library. (Upstream DOES ship a factory contract emitting
+`("LOG", "NEW_POOL")` with the new pool's address — see
+`factory.rs` in the vendored source — but no mainnet deployment of
+it is known; if one appears, factory anchoring per ADR-0035 becomes
+available.) CLAUDE.md flagged the wire-level ambiguity:
 
 > **Comet uses a shared `("POOL", <event>)` topic across every pool
 > contract**, not a per-protocol namespace. The decoder matches by
 > topic bytes, not pool contract ID — any pubnet contract that
 > deploys Balancer-v1 Comet code will look identical on the wire.
+
+**Correction (2026-07-08 gate, noted 2026-08-03):** since ADR-0035
+identity gating landed, `Matches()` requires the emitting contract
+to be in the curated gated set (`comet.MainnetGatedSet`), so a
+topic-squatting deployment no longer attributes — the quoted
+topic-bytes description is the PRE-gate decoder.
 
 This makes Comet's audit shape distinct from Soroswap / Aquarius /
 Phoenix: there's no factory we can enumerate from. Instead, the
@@ -111,9 +121,13 @@ constants. Since #26 the decoder claims all five POOL kinds:
 `swap` → `canonical.Trade` (table `trades`), the other four →
 `LiquidityEvent` (table `comet_liquidity`, migration 0042). Any
 other `(POOL, *)` topic (e.g. a hypothetical `set_controller`
-event from a future contract upgrade) returns `ErrNotCometEvent`
-and is counted as an orphan event so a sustained spike alerts
-operators to add a handler.
+event from a future contract upgrade) is rejected in `Matches`
+and lands in the dispatcher's GLOBAL unmatched tally — comet has
+no per-source orphan reporter, so
+`source_orphan_events_total{source="comet"}` never populates
+(correction 2026-08-03; the alerting signal is the ADR-0033
+recognition audit, which reports a gated-pool event no decoder
+matches as a recognition gap).
 
 The Soroban port emits **only** these five topics under `POOL`. The
 EVM-Balancer-v1 admin events (`bind` / `rebind` / `unbind` /
@@ -164,9 +178,11 @@ amount is zero / negative. For swaps the trade direction is
    `join_pool` / `exit_pool` / `deposit` / `withdraw` since #26 —
    a rename of any of the five known kinds drops that kind from
    `comet_liquidity` until the decoder is updated. Brand-new
-   variants (e.g. a future `(POOL, set_controller)`) return
-   `ErrNotCometEvent` and bump the orphan-events counter rather
-   than landing as a typed row.
+   variants (e.g. a future `(POOL, set_controller)`) fall through
+   `Matches` into the dispatcher's global unmatched tally (no
+   per-source orphan series exists for comet — correction
+   2026-08-03) and surface via the ADR-0033 recognition audit
+   rather than landing as a typed row.
 3. **Body field rename** — `token_in` → `tokenIn`, `token_amount_in`
    → `amount_in`, etc. Decoder fails per event with field-not-found;
    every swap dropped under the renamed WASM.
@@ -247,10 +263,12 @@ current-state read sufficient when there's only one pool.
   port emerges that emits the same `POOL`/`swap` topic but with
   a different body shape, that's a "Comet v2" detection problem
   flagged in the Failure modes section above; the decoder fails
-  loud (`ErrMalformedPayload` per event) rather than silent. **The
-  topic-based design means BackfillSafe applies to any range up
-  to the last audit verification, conditional on no
-  topic-squatting deployment having happened in that range.**
+  loud (`ErrMalformedPayload` per event) rather than silent. **BackfillSafe applies to any range up to the last audit
+  verification.** (Pre-gate this was additionally conditional on no
+  topic-squatting deployment in the range; since the 2026-07-08
+  ADR-0035 identity gate, attribution is anchored to the curated
+  pool set and topic squatting cannot attribute — correction
+  2026-08-03.)
 - **No automated re-verification when new Comet pools deploy.** A
   new pool deployment doesn't trigger this audit. Operators
   should monitor the `comet`-source trade volume and
