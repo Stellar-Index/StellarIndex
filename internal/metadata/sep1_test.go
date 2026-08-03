@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Stellar-Index/StellarIndex/internal/metadata"
 )
@@ -233,8 +234,9 @@ func TestResolver_RejectsInvalidHostnameChars(t *testing.T) {
 }
 
 func TestResolver_AcceptsHostPort(t *testing.T) {
-	// Bare host, hostport, and subdomains all pass the validator
-	// (httptest servers come in as 127.0.0.1:NNNN).
+	// Bare host, an explicit :443, and subdomains all pass the
+	// validator. A production Resolver (AllowPrivateIPs=false) rejects
+	// any non-443 port (Finding 2), so :8080 is NOT in this list.
 	r := metadata.NewResolver(metadata.Options{
 		Timeout: 100 * time.Millisecond,
 	})
@@ -247,7 +249,7 @@ func TestResolver_AcceptsHostPort(t *testing.T) {
 		"circle.com",
 		"sub.circle.com",
 		"deep.sub.circle.com",
-		"127.0.0.1:8080",
+		"127.0.0.1:443",
 		"example-site.com",
 	} {
 		_, err := r.Resolve(ctx, good)
@@ -256,6 +258,78 @@ func TestResolver_AcceptsHostPort(t *testing.T) {
 			t.Errorf("domain %q: validator incorrectly rejected — %v", good, err)
 		}
 	}
+
+	// Finding 2: a non-443 port on an issuer home_domain is rejected
+	// at the validation stage in production — it must NOT reach the
+	// HTTP path at all.
+	for _, bad := range []string{"circle.com:8080", "circle.com:6379", "circle.com:65535"} {
+		_, err := r.Resolve(ctx, bad)
+		if err == nil {
+			t.Errorf("domain %q: expected rejection, got nil", bad)
+			continue
+		}
+		if !strings.Contains(err.Error(), "not a valid hostname") {
+			t.Errorf("domain %q: expected hostname-validation rejection, got %v", bad, err)
+		}
+	}
+}
+
+// TestResolver_TruncatesOversizedFields is the Finding 1 regression.
+// The 1 MiB whole-body cap does not bound a single field, so a hostile
+// issuer could serve a ~1 MiB ORG_NAME that we store + serve verbatim
+// (every /v1/issuers response, the explorer's issuer <h1>). We cap each
+// copied string at parse time, truncating on a UTF-8 rune boundary.
+// Multibyte runes at the boundary prove the cut is not mid-codepoint:
+// a byte-count truncation would corrupt the final "é" into invalid
+// UTF-8, which utf8.ValidString would catch.
+func TestResolver_TruncatesOversizedFields(t *testing.T) {
+	const (
+		shortCap = 256  // maxShortFieldRunes
+		longCap  = 4096 // maxLongFieldRunes
+	)
+	orgName := strings.Repeat("é", 400)  // 400 runes, 2 bytes each
+	orgDesc := strings.Repeat("你", 6000) // 6000 runes, 3 bytes each
+	curDesc := strings.Repeat("字", 5000) // 5000 runes, 3 bytes each
+	curCode := strings.Repeat("A", 400)  // 400 ASCII runes
+
+	toml := "VERSION=\"1.0.0\"\n" +
+		"[DOCUMENTATION]\n" +
+		"ORG_NAME=\"" + orgName + "\"\n" +
+		"ORG_DESCRIPTION=\"" + orgDesc + "\"\n" +
+		"[[CURRENCIES]]\n" +
+		"code=\"" + curCode + "\"\n" +
+		"desc=\"" + curDesc + "\"\n"
+
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/toml")
+		_, _ = w.Write([]byte(toml))
+	}))
+	defer srv.Close()
+
+	r := newLocalResolver(t, srv)
+	sep, err := r.Resolve(context.Background(), hostOf(t, srv))
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	assertCapped := func(name, got string, wantRunes int) {
+		t.Helper()
+		if n := utf8.RuneCountInString(got); n != wantRunes {
+			t.Errorf("%s: got %d runes, want exactly %d (truncation cap)", name, n, wantRunes)
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("%s: truncated value is not valid UTF-8 — cut mid-codepoint", name)
+		}
+	}
+
+	assertCapped("OrgName", sep.OrgName, shortCap)
+	assertCapped("Documentation[ORG_NAME]", sep.Documentation["ORG_NAME"], shortCap)
+	assertCapped("Documentation[ORG_DESCRIPTION]", sep.Documentation["ORG_DESCRIPTION"], longCap)
+	if len(sep.Currencies) != 1 {
+		t.Fatalf("expected 1 currency, got %d", len(sep.Currencies))
+	}
+	assertCapped("Currency.Code", sep.Currencies[0].Code, shortCap)
+	assertCapped("Currency.Description", sep.Currencies[0].Description, longCap)
 }
 
 func TestResolver_SSRFBlocksLoopback(t *testing.T) {

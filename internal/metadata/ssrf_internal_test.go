@@ -1,8 +1,10 @@
 package metadata
 
 import (
+	"context"
 	"net"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -104,5 +106,34 @@ func TestIsBlocked_AllowPrivateIPsBypass(t *testing.T) {
 		if d.isBlocked(net.ParseIP(s)) {
 			t.Errorf("AllowPrivateIPs=true must not block %s", s)
 		}
+	}
+}
+
+// TestDialContext_EmptyResolutionErrorsNotPanics is the Finding 3
+// regression. A resolver that returns (empty, nil) — no addresses but
+// no error — must yield an error, NOT an index-out-of-range panic on
+// ips[0] that would abort the whole sep1-refresh batch. Without the
+// len(ips)==0 guard this test panics; with it, it returns a clean
+// error. The injected lookupIP reproduces the (empty, nil) case
+// deterministically (the stdlib resolver normally returns a
+// no-such-host error instead, so the branch is only reachable this
+// way — it is a defensive guard).
+func TestDialContext_EmptyResolutionErrorsNotPanics(t *testing.T) {
+	d := &ssrfDialer{
+		inner: &net.Dialer{},
+		lookupIP: func(_ context.Context, _, _ string) ([]net.IP, error) {
+			return nil, nil // resolved to zero addresses, no error
+		},
+	}
+	conn, err := d.DialContext(context.Background(), "tcp", "example.com:443")
+	if conn != nil {
+		_ = conn.Close()
+		t.Fatal("expected no connection on empty resolution")
+	}
+	if err == nil {
+		t.Fatal("expected an error on empty resolution, got nil")
+	}
+	if !strings.Contains(err.Error(), "no addresses") {
+		t.Errorf("expected a 'no addresses' error, got: %v", err)
 	}
 }

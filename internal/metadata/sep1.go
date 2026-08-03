@@ -79,6 +79,13 @@ type Currency struct {
 // callers layer a cache via [cachekeys.TOML] if they want one).
 type Resolver struct {
 	client *http.Client
+
+	// allowPrivateIPs mirrors [Options.AllowPrivateIPs]. It is the
+	// single "test mode" switch: production leaves it false. As well
+	// as relaxing the SSRF IP guard, it relaxes the home_domain port
+	// restriction so httptest servers (which bind ephemeral ports)
+	// resolve. Production requires the SEP-1 well-known port (443).
+	allowPrivateIPs bool
 }
 
 // Options configures a [Resolver].
@@ -149,6 +156,7 @@ func NewResolver(opts Options) *Resolver {
 	}
 
 	return &Resolver{
+		allowPrivateIPs: opts.AllowPrivateIPs,
 		client: &http.Client{
 			Timeout:   timeout,
 			Transport: transport,
@@ -207,6 +215,52 @@ var ErrTOMLTooLarge = errors.New("sep1: TOML body exceeds 1 MiB limit")
 // shouldn't exceed a few KB; 1 MiB is a generous safety net.
 const maxBodyBytes = 1 << 20
 
+// Per-field length caps. The 1 MiB body cap bounds the whole TOML,
+// but a single field (e.g. DOCUMENTATION.ORG_NAME) can still be ~1 MiB
+// of one string — and we store + serve these values verbatim (every
+// /v1/issuers response, the explorer's issuer <h1>). Cap each copied
+// string at parse time so a hostile issuer can't bloat our storage or
+// our clients' DOM. Short fields (names, codes, handles, tickers) get
+// maxShortFieldRunes; free-text fields (descriptions, conditions) get
+// maxLongFieldRunes. Caps are in RUNES and truncation lands on a UTF-8
+// rune boundary (never mid-codepoint) — see [truncateRunes].
+const (
+	maxShortFieldRunes = 256
+	maxLongFieldRunes  = 4096
+)
+
+// truncateRunes returns s limited to at most maxRunes runes, cutting
+// on a UTF-8 rune boundary so the result is never invalid mid-encoding
+// UTF-8. Returns s unchanged when it already fits (the common case).
+func truncateRunes(s string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	// Byte length is an upper bound on rune count: if the bytes fit,
+	// the runes fit, and no counting is needed.
+	if len(s) <= maxRunes {
+		return s
+	}
+	n := 0
+	for i := range s { // ranging a string yields rune-start byte indices
+		if n == maxRunes {
+			return s[:i]
+		}
+		n++
+	}
+	return s
+}
+
+// sep1DocFieldCap returns the rune cap for a DOCUMENTATION field by
+// key. Only ORG_DESCRIPTION is free-text; every other documented field
+// (names, URLs, handles, addresses) is short.
+func sep1DocFieldCap(key string) int {
+	if key == "ORG_DESCRIPTION" {
+		return maxLongFieldRunes
+	}
+	return maxShortFieldRunes
+}
+
 // Resolve fetches the stellar.toml for domain and returns the
 // parsed SEP1 record.
 //
@@ -225,7 +279,7 @@ func (r *Resolver) Resolve(ctx context.Context, domain string) (*SEP1, error) {
 		strings.HasPrefix(domain, "http:") || strings.HasPrefix(domain, "https:") {
 		return nil, fmt.Errorf("sep1: %q looks like a URL; pass just the hostname", domain)
 	}
-	if !isValidDomainOrHostPort(domain) {
+	if !isValidDomainOrHostPort(domain, r.allowPrivateIPs) {
 		return nil, fmt.Errorf("sep1: %q is not a valid hostname (or host:port)", domain)
 	}
 
@@ -281,20 +335,20 @@ func parseSEP1(body []byte) (*SEP1, error) {
 	}
 
 	if v, ok := raw["VERSION"].(string); ok {
-		sep.Version = v
+		sep.Version = truncateRunes(v, maxShortFieldRunes)
 	}
 	if v, ok := raw["NETWORK_PASSPHRASE"].(string); ok {
-		sep.NetworkPassphrase = v
+		sep.NetworkPassphrase = truncateRunes(v, maxShortFieldRunes)
 	}
 
 	if doc, ok := raw["DOCUMENTATION"].(map[string]any); ok {
 		for k, v := range doc {
 			if s, ok := v.(string); ok {
-				sep.Documentation[k] = s
+				sep.Documentation[k] = truncateRunes(s, sep1DocFieldCap(k))
 			}
 		}
 		if name, ok := doc["ORG_NAME"].(string); ok {
-			sep.OrgName = name
+			sep.OrgName = truncateRunes(name, maxShortFieldRunes)
 		}
 	}
 
@@ -318,9 +372,12 @@ func parseSEP1(body []byte) (*SEP1, error) {
 
 func parseCurrency(m map[string]any) Currency {
 	c := Currency{}
-	getString := func(k string) string {
+	// getString reads a string field and caps it to maxRunes on a
+	// rune boundary (see [truncateRunes]) so a hostile issuer can't
+	// smuggle a ~1 MiB currency field past the whole-body cap.
+	getString := func(k string, maxRunes int) string {
 		if v, ok := m[k].(string); ok {
-			return v
+			return truncateRunes(v, maxRunes)
 		}
 		return ""
 	}
@@ -340,22 +397,23 @@ func parseCurrency(m map[string]any) Currency {
 		return false
 	}
 
-	c.Code = getString("code")
-	c.Issuer = getString("issuer")
+	c.Code = getString("code", maxShortFieldRunes)
+	c.Issuer = getString("issuer", maxShortFieldRunes)
 	c.Decimals = getInt("decimals")
 	c.DisplayDecimals = getInt("display_decimals")
-	c.Name = getString("name")
-	c.Description = getString("desc")
-	c.Conditions = getString("conditions")
-	c.Image = getString("image")
+	c.Name = getString("name", maxShortFieldRunes)
+	c.Description = getString("desc", maxLongFieldRunes)
+	c.Conditions = getString("conditions", maxLongFieldRunes)
+	c.Image = getString("image", maxShortFieldRunes)
 	// fixed_number + max_number are NUMERIC-scale values; TOML
-	// might decode them as int64 or string — normalise to string.
-	c.FixedNumber = normaliseNumeric(m["fixed_number"])
-	c.MaxNumber = normaliseNumeric(m["max_number"])
+	// might decode them as int64 or string — normalise to string,
+	// then cap (a string variant could be attacker-sized).
+	c.FixedNumber = truncateRunes(normaliseNumeric(m["fixed_number"]), maxShortFieldRunes)
+	c.MaxNumber = truncateRunes(normaliseNumeric(m["max_number"]), maxShortFieldRunes)
 	c.IsUnlimited = getBool("is_unlimited")
-	c.AnchorAsset = getString("anchor_asset")
-	c.AnchorAssetType = getString("anchor_asset_type")
-	c.Status = getString("status")
+	c.AnchorAsset = getString("anchor_asset", maxShortFieldRunes)
+	c.AnchorAssetType = getString("anchor_asset_type", maxShortFieldRunes)
+	c.Status = getString("status", maxShortFieldRunes)
 	return c
 }
 
@@ -382,6 +440,11 @@ func normaliseNumeric(v any) string {
 type ssrfDialer struct {
 	inner           *net.Dialer
 	allowPrivateIPs bool // tests only
+
+	// lookupIP resolves host → IPs. nil means net.DefaultResolver's
+	// LookupIP (the production path); tests override it to exercise
+	// the blocked-IP and empty-result branches deterministically.
+	lookupIP func(ctx context.Context, network, host string) ([]net.IP, error)
 }
 
 func (d *ssrfDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
@@ -393,10 +456,18 @@ func (d *ssrfDialer) DialContext(ctx context.Context, network, address string) (
 	// Resolve to a specific IP ourselves so the guard acts on the
 	// exact address we're about to connect to — not just the
 	// hostname's first resolution. This closes DNS-rebinding races.
-	resolver := net.DefaultResolver
-	ips, err := resolver.LookupIP(ctx, "ip", host)
+	lookupIP := d.lookupIP
+	if lookupIP == nil {
+		lookupIP = net.DefaultResolver.LookupIP
+	}
+	ips, err := lookupIP(ctx, "ip", host)
 	if err != nil {
 		return nil, fmt.Errorf("sep1 dialer: resolve %q: %w", host, err)
+	}
+	// Defensive: a resolver returning (empty, nil) would otherwise
+	// panic on ips[0] below and abort the whole sep1-refresh batch.
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("sep1 dialer: resolve %q: no addresses returned", host)
 	}
 	for _, ip := range ips {
 		if d.isBlocked(ip) {
@@ -409,24 +480,46 @@ func (d *ssrfDialer) DialContext(ctx context.Context, network, address string) (
 
 // isBlocked reports whether ip is in a range we refuse to dial.
 //
+// standardTLSPort is the only port a production SEP-1 fetch will dial.
+// SEP-1's stellar.toml is served over HTTPS on 443, and a Stellar
+// home_domain is a bare domain (no port) in practice. An issuer whose
+// on-chain home_domain carries any other port (":6379", ":8080") is
+// rejected: the SSRF guard filters by resolved-IP *range*, not port,
+// so a `<public-host>:<arbitrary-port>` home_domain would otherwise let
+// the sep1-refresh cron open a blind TLS+GET to any port on a public
+// host. Tests pass allowAnyPort=true so httptest servers (ephemeral
+// ports) still resolve.
+const standardTLSPort = "443"
+
 // isValidDomainOrHostPort reports whether s is a syntactically valid
 // DNS name (optionally with a :port suffix). Guards the URL builder
 // from query strings, fragments, whitespace, and other shenanigans
 // that would otherwise survive into the request URL.
 //
+// In production (allowAnyPort=false) a :port suffix is only accepted
+// when it is exactly 443; any other port is rejected. allowAnyPort is
+// the test escape hatch for httptest servers on ephemeral ports.
+//
 // Tolerates IPv4 literals (for httptest) but not IPv6 bracket form
 // — we never ingest IPv6 literals as home-domains in practice.
-func isValidDomainOrHostPort(s string) bool { //nolint:gocognit,gocyclo // dispatch-heavy; splitting would reduce linearity
+func isValidDomainOrHostPort(s string, allowAnyPort bool) bool { //nolint:gocognit,gocyclo // dispatch-heavy; splitting would reduce linearity
 	// Split off optional :port.
 	host, port, hasPort := strings.Cut(s, ":")
 	if hasPort {
-		// Port must be 1-5 digits, value 1-65535.
-		if port == "" || len(port) > 5 {
-			return false
-		}
-		for _, c := range port {
-			if c < '0' || c > '9' {
+		if !allowAnyPort {
+			// Production: only the SEP-1 HTTPS port is allowed.
+			if port != standardTLSPort {
 				return false
+			}
+		} else {
+			// Test mode: port must be 1-5 digits, value 1-65535.
+			if port == "" || len(port) > 5 {
+				return false
+			}
+			for _, c := range port {
+				if c < '0' || c > '9' {
+					return false
+				}
 			}
 		}
 	}

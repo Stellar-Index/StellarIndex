@@ -9,17 +9,17 @@ import "testing"
 // follow-on impact on outbound HTTP requests + SSRF surface area.
 
 func TestIsValidDomainOrHostPort_validInputs(t *testing.T) {
+	// Production mode (allowAnyPort=false): bare hosts + an explicit
+	// :443 (the SEP-1 HTTPS port) are the only accepted shapes.
 	for _, in := range []string{
 		"example.com",
 		"sub.example.com",
 		"a.b.c.example.com",
 		"127.0.0.1",
 		"localhost",
-		"example.com:8080",
-		"x.y:1",
-		"example.com:65535",
+		"example.com:443",
 	} {
-		if !isValidDomainOrHostPort(in) {
+		if !isValidDomainOrHostPort(in, false) {
 			t.Errorf("expected %q to be valid", in)
 		}
 	}
@@ -46,13 +46,49 @@ func TestIsValidDomainOrHostPort_invalidInputs(t *testing.T) {
 		{"empty label (double dot)", "ex..ample.com"},
 		{"label too long (>63)", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com"}, // 65 a's
 		{"host too long (>253)", longHost(t, 254)},
+		// Finding 2: a non-443 port on an issuer home_domain must be
+		// REJECTED — otherwise the sep1-refresh cron would open a blind
+		// TLS+GET to an arbitrary port on a public host. These three
+		// used to be BLESSED (encoding the vulnerable behaviour).
+		{"redis port", "host:6379"},
+		{"http-alt port", "example.com:8080"},
+		{"max non-standard port", "example.com:65535"},
+		{"low non-standard port", "x.y:1"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if isValidDomainOrHostPort(c.in) {
+			if isValidDomainOrHostPort(c.in, false) {
 				t.Errorf("expected %q to be invalid", c.in)
 			}
 		})
+	}
+}
+
+// TestIsValidDomainOrHostPort_portRestriction pins Finding 2 directly:
+// in production a :port suffix is accepted only when it is 443; the
+// test escape hatch (allowAnyPort=true, used for httptest servers on
+// ephemeral ports) accepts any syntactic 1-65535 port.
+func TestIsValidDomainOrHostPort_portRestriction(t *testing.T) {
+	// Production: only 443 passes.
+	if !isValidDomainOrHostPort("example.com:443", false) {
+		t.Error("example.com:443 must be valid in production mode")
+	}
+	for _, in := range []string{"host:6379", "example.com:8080", "example.com:65535", "x.y:1"} {
+		if isValidDomainOrHostPort(in, false) {
+			t.Errorf("%q must be REJECTED in production mode (non-443 port)", in)
+		}
+	}
+	// Test mode: ephemeral ports (httptest) are permitted.
+	for _, in := range []string{"127.0.0.1:8080", "example.com:65535", "x.y:1", "example.com:443"} {
+		if !isValidDomainOrHostPort(in, true) {
+			t.Errorf("%q must be permitted in test mode (allowAnyPort)", in)
+		}
+	}
+	// Even in test mode, a malformed port is still rejected.
+	for _, in := range []string{"example.com:", "example.com:80a", "example.com:123456"} {
+		if isValidDomainOrHostPort(in, true) {
+			t.Errorf("%q must be rejected even in test mode (malformed port)", in)
+		}
 	}
 }
 
