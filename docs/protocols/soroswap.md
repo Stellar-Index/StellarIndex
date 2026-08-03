@@ -59,13 +59,32 @@ Verified against `soroswap-core` `pair/src/event.rs` /
 | `("SoroswapPair","skim")` | `soroswap_skim_events` |
 | `("SoroswapPair","deposit"/"withdraw")` | `soroswap_liquidity` (LP add / remove; migration 0127, 2026-08-03) |
 
-## ⚠️ Known gap — Router topics undecoded (ROADMAP #89, 2026-07-10)
+## Router topics — intentionally not projected (redundant, would double-count)
 
-The Router (`CAG5LRYQ…`) emits its own contract events, currently
-100% undecoded by `internal/sources/soroswap`: `swap` (168,557),
-`add` (1,057), `remove` (219), `init` (1); the factory contracts
-also emit `init` (4, distinct from `new_pair`). Not silently
-mis-attributed (the decoder's `classify()` simply doesn't match
-these topics), but not yet acknowledged with real counts either.
-See `internal/sources/soroswap/README.md` for detail. Not
-implemented this session.
+The Router (`CAG5LRYQ…`) emits `("SoroswapRouter", "swap" | "add" |
+"remove")` events (`swap` ≈ 168k, `add` 1,057, `remove` 219) plus
+`init` lifecycle events. These are **deliberately not projected** —
+they are a router-level VIEW of swaps/LP actions whose underlying data
+we ALREADY capture, so projecting them would double-count:
+
+- **Router `swap` event** — body `{ amounts: Vec<i128>, path:
+  Vec<Address>, to: Address }` is the realized aggregate of the same
+  swap the underlying PAIR contracts emit per-hop. The pair-level
+  `swap` events already become `trades` (→ VWAP), and the router
+  *call* itself is captured from op-args into `soroswap_router_swaps`
+  (path + amount_in/out + recipient). Double-count check (2026-08-03):
+  `soroswap_router_swaps` holds **199,931 rows genesis→tip — a
+  SUPERSET of the 168,557 router swap events** — so the events add no
+  coverage. Turning them into trades would double-count VWAP against
+  the pair hops; a new table would duplicate `soroswap_router_swaps`.
+- **Router `add` / `remove` events** — the router-level view of LP
+  provision whose per-pair `deposit` / `withdraw` events we now
+  project to `soroswap_liquidity` (migration 0127). Projecting the
+  router view too would double-count LP flow.
+
+Not silently mis-attributed: the pair decoder's `classify()` returns
+`""` for the `SoroswapRouter` topic prefix (it isn't a registered
+pair), so these are cleanly unmatched, and the router's economic data
+is fully served via `trades` + `soroswap_router_swaps` + the new
+`soroswap_liquidity`. Supersedes the ROADMAP #89 "known gap" framing —
+it was a recognition-accounting artifact, not a data-coverage gap.
