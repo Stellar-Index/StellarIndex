@@ -200,7 +200,10 @@ func TestAssetGet_Sep1OverlayRefusesNonClassicMatch(t *testing.T) {
 	// entry — the cached overlay short-circuits on non-classic types
 	// before even hitting the lookup.
 	domain := "circle.com"
-	sorobanContract := "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
+	// A GENERIC Soroban token — deliberately NOT the XLM SAC
+	// (CAS3J7GY…), which the /v1/assets handler normalizes to native as
+	// an XLM alias (so it would no longer exercise the Soroban path).
+	sorobanContract := "CCT4ZYIYZ3TUO2AWQFEOFGBZ6HQP3GW5TA37CK7CRZVFRDXYTHTYX7KP"
 	reader := &stubAssetReader{
 		byID: map[string]v1.AssetDetail{
 			sorobanContract: {
