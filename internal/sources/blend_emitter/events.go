@@ -123,9 +123,12 @@ var (
 var (
 	// ErrNotEmitterEvent — topic[0] doesn't match any known Emitter
 	// symbol. Skip: an unrelated contract, or (post-gate) a future
-	// Emitter WASM upgrade that adds a new event kind. Operators see
-	// the rate via stellarindex_source_orphan_events_total{source="blend_emitter"};
-	// a sustained spike means decoder coverage is incomplete.
+	// Emitter WASM upgrade that adds a new event kind. NOTE (cold
+	// audit 2026-08-03): blend_emitter implements no EvictedOrphans()
+	// reporter, so stellarindex_source_orphan_events_total never
+	// populates for this source — unknown kinds land in the
+	// dispatcher's global unmatched tally; the ADR-0033 recognition
+	// audit is the real signal that decoder coverage is incomplete.
 	ErrNotEmitterEvent = errors.New("blend_emitter: not a recognised Emitter event")
 
 	// ErrMalformedPayload — body didn't decode to the expected shape

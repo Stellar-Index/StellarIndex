@@ -295,7 +295,9 @@ linked design doc has the full detail.
   same event's body DOES carry each asset's assigned BlendStrategy
   address, so strategies self-register live off it since 2026-07-10 —
   docs/protocols/defindex.md) and `comet` (curated one-pool allowlist —
-  no factory namespace exists; the only mainnet pool is Blend's BLND/USDC
+  no KNOWN DEPLOYED mainnet factory; upstream ships a factory contract
+  emitting `("LOG","NEW_POOL")`, so factory anchoring becomes available
+  if one ever deploys; the only mainnet pool is Blend's BLND/USDC
   backstop, seeded in-code via `comet.MainnetGatedSet`; 2026-07-08, closes
   CS-026) all gate `Matches()` on contract identity. A future genuine
   comet pool must be operator-admitted (`seed-protocol-contracts -source

@@ -181,10 +181,15 @@ var (
 	// ErrNotCometEvent — topic[0..1] doesn't match any known Comet
 	// (POOL, <kind>) tuple. Skip: another Comet variant added in a
 	// future contract upgrade, or an unrelated contract entirely.
-	// Operators see the rate via the dispatcher's
-	// `stellarindex_source_orphan_events_total{source="comet"}`
-	// counter; a sustained spike means a new event variant is in
-	// the wild and decoder coverage is incomplete.
+	// NOTE (cold audit 2026-08-03): unknown kinds are rejected in
+	// Matches (classify == ""), so they land in the dispatcher's
+	// GLOBAL unmatched tally (decoder_stats_5m) — comet implements no
+	// EvictedOrphans() reporter, so the per-source
+	// `stellarindex_source_orphan_events_total{source="comet"}` series
+	// never populates and no alert fires on it. The real live signal
+	// for a new kind on the gated pool is the ADR-0033 recognition
+	// audit ("no decoder matches" → system-wide unattributed bucket,
+	// RecognitionOK=false).
 	ErrNotCometEvent = errors.New("comet: not a recognised Comet POOL event")
 
 	// ErrMalformedPayload — body didn't decode to the expected
@@ -195,7 +200,19 @@ var (
 	// is zero / negative. A valid swap always has positive amounts
 	// on both sides; zero-amount is either a contract bug or an
 	// edge case we'd rather skip+count than emit. Liquidity events
-	// also reject non-positive amounts: a zero-amount join/exit
-	// doesn't change pool state and shouldn't materialise as a row.
+	// also reject non-positive amounts. CAVEAT (cold audit
+	// 2026-08-03, traced in the upstream Rust): the
+	// wdr_tokn_amt_in_get_lp_tokns_out withdraw variant asserts
+	// pool_amount_in > 0 but NOT token_amount_out > 0, so a dust BPT
+	// withdraw with min_amount_out=0 can emit
+	// {token_amount_out: 0, pool_amount_in: >0} while genuinely
+	// burning BPT — a real state change this reject drops. The drop
+	// is honest-blind, not silent: the event Matches but fails
+	// Decode, so the ADR-0033 reconcile counts it blind.Undecodable
+	// and flips the comet verdict complete=false. Accepting
+	// zero-out withdraws end-to-end would need the writer + the
+	// migration-0042 CHECK(amount > 0) relaxed too — a policy call,
+	// deliberately not taken unilaterally. Never observed on the one
+	// mainnet pool to date.
 	ErrNonPositiveAmounts = errors.New("comet: amounts must be positive")
 )

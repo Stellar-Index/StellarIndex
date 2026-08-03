@@ -83,12 +83,14 @@ The task brief listed several "classic Balancer-v1" events
   double-count.
 
 If a future Soroban Comet upgrade starts emitting any of these,
-the dispatcher will route them to `Decoder.Decode` (because
-`Matches` claims any `(POOL, *)` we recognise — and the unknown
-kinds fall through `Matches → false`, contributing to the
-`source_orphan_events_total{source="comet"}` counter). Operators
-alert on a sustained spike of that counter, then a follow-up PR
-extends `classify`.
+the unknown kinds fall through `Matches → false` into the
+dispatcher's GLOBAL unmatched tally (`decoder_stats_5m`) — comet
+implements no per-source orphan reporter, so
+`source_orphan_events_total{source="comet"}` never populates and
+its alert cannot fire (cold audit 2026-08-03). The live signal is
+the ADR-0033 recognition audit: a gated-pool event no decoder
+matches surfaces as a recognition gap (RecognitionOK=false). A
+follow-up PR then extends `classify`.
 
 ## Quirks
 
@@ -173,9 +175,10 @@ WHERE topic_0_sym = 'POOL'
 ```
 
 The SCVal-body extraction in SQL is more painful than re-using the
-Go decoder; a `stellarindex-ops comet-backfill` subcommand that
-walks `soroban_events` and calls `decodeLiquidityEvent` in-process
-is the cleaner path. Tracked as a follow-up.
+Go decoder. Catch-up for projected sources is `stellarindex-ops
+projector-replay -source comet -from <ledger>` — bespoke
+`<source>-backfill` subcommands were deleted in rc.97 (ADR-0032
+Phase 5) and must not be reintroduced.
 
 ## Files
 
@@ -221,10 +224,11 @@ confirm the total `POOL` count but not break it down by
 `swap`/`join_pool`/`exit_pool`/`deposit`/`withdraw`, so it neither
 confirms nor contradicts the "all five kinds" claim above (which
 rests on the 2026-05-26 source-code verification, a stronger check
-than lake sampling). `source_orphan_events_total{source="comet"}`
-is the live signal to watch for a genuinely new sixth kind; a raw-
-table topic[1] pull would close this gap in the audit methodology
-if ever needed.
+than lake sampling). The ADR-0033 recognition audit is the live
+signal for a genuinely new sixth kind (the per-source orphan
+counter never populates for comet — no EvictedOrphans reporter);
+a raw-table topic[1] pull would close this gap in the audit
+methodology if ever needed.
 
 ## References
 
