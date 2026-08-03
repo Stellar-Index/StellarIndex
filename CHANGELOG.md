@@ -46,6 +46,20 @@ against.
   misleading "guard always wired" comments.
 
 ### Fixed
+- **Projector no longer skips a lake hole at the scan boundary** (projector audit) —
+  the CH-source projector's anti-skip guard (`ContiguousWatermark`) couldn't detect a
+  missing ledger AT the window's lower bound `from` (its SQL found only *interior*
+  gaps), so under a lake hole it scanned past and advanced its cursor, permanently
+  dropping that ledger's projected rows — including sole-writer `sep41`
+  mint/burn/transfer (supply/money data). The watermark now returns `from-1` (stalling
+  the projector until catch-up heals the hole) when `from` itself is absent.
+  Fail-safe (can only stall, never skip more); real-ClickHouse integration test.
+- **Completeness re-derive survives a decoder panic** (projector audit) — a decoder
+  that panics on an event shape (e.g. an upgraded-WASM shape) was silently dropped by
+  the projector *and* crashed the `compute-completeness` job (no snapshot written → the
+  loss stayed invisible and every source's verdict froze). The re-derive now recovers
+  the panic and records it as a blind-spot (`projection_ok=false`), restoring the
+  drop-visibility mechanism.
 - JWT `nbf` is now enforced on verification (it was stamped on issuance but never
   checked); the per-email login throttle's `hashEmail` normalizes (lowercase +
   trim) internally so the per-email cap can't be bypassed by case/whitespace

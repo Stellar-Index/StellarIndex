@@ -50,25 +50,49 @@ func TestSubstrateQueryLo(t *testing.T) {
 	}
 }
 
+// TestWatermark pins the pure interpretation of the ContiguousWatermark query,
+// including the lower-boundary blind spot (a hole AT `from`). CRITICAL: the
+// minPresent column is what the SQL actually produces — min(ledger_seq >= from) —
+// so the inputs below are the ones the query can really return. The old table had
+// a "gap right at from" row that fed gap=100 (firstGap==from); that is an input
+// the SQL CANNOT produce for a missing `from` (a missing `from` leaves the set
+// {from+1,…} internally contiguous → firstGap==0, minPresent==from+1), so it
+// masked the silent-data-loss bug. Those masking synthetic-gap cases are replaced
+// with the real hole-at-from shape below.
 func TestWatermark(t *testing.T) {
 	tests := []struct {
-		name             string
-		from, chMax, gap uint32
-		want             uint32
+		name                         string
+		from, chMax, gap, minPresent uint32
+		want                         uint32
 	}{
-		{"ch not yet reached from", 100, 90, 0, 99},   // chMax<from → from-1 (idle)
-		{"ch exactly at from-1", 100, 99, 0, 99},      // same boundary
-		{"complete to tip, no gap", 100, 200, 0, 200}, // firstGap==0 → chMax
-		{"gap above from", 100, 200, 150, 149},        // hole at 150 → 149
-		{"gap right at from", 100, 200, 100, 99},      // hole at from itself → from-1 (idle)
-		{"gap one past from", 100, 200, 101, 100},     // first ledger present, hole next
-		{"single complete ledger at from", 100, 100, 0, 100},
+		// CH has not reached `from`: no ledger >= from exists, so minPresent==0.
+		{"ch not yet reached from", 100, 90, 0, 0, 99}, // chMax<from → from-1 (idle)
+		{"ch exactly at from-1", 100, 99, 0, 0, 99},    // same boundary
+		// `from` present + contiguous to the tip: minPresent==from, firstGap==0.
+		{"complete to tip, no gap", 100, 200, 0, 100, 200}, // firstGap==0 → chMax
+		// `from` present, interior hole at 150: minPresent==from, firstGap==150.
+		{"interior gap above from", 100, 200, 150, 100, 149}, // hole at 150 → 149
+		// THE FIX — hole exactly at `from` (100 absent, 101..200 present). The SQL
+		// yields firstGap==0 (the present set {101,…,200} is internally contiguous)
+		// and minPresent==101 (the smallest ledger >= from). Pre-fix, the two-arg
+		// watermark ignored minPresent and returned chMax (200), so the projector
+		// scanned past the missing ledger 100 and dropped its sep41 rows. Now the
+		// minPresent>from guard stalls at from-1 (99).
+		{"HOLE AT from itself → stall at from-1", 100, 200, 0, 101, 99},
+		// Hole at `from` AND an interior gap co-exist above it (100 absent;
+		// 101..149 present; 150 absent; 151..200 present). firstGap==150,
+		// minPresent==101. The boundary hole must win — from-1 (99) is the tighter
+		// bound — so the projector stalls at the earliest defect, not at 149.
+		{"hole at from wins over a later interior gap", 100, 200, 150, 101, 99},
+		// `from` present, first ledger present then hole at 101: minPresent==from.
+		{"gap one past from", 100, 200, 101, 100, 100}, // first ledger present, hole next
+		{"single complete ledger at from", 100, 100, 0, 100, 100},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := watermark(tt.from, tt.chMax, tt.gap); got != tt.want {
-				t.Errorf("watermark(from=%d, chMax=%d, gap=%d) = %d, want %d",
-					tt.from, tt.chMax, tt.gap, got, tt.want)
+			if got := watermark(tt.from, tt.chMax, tt.gap, tt.minPresent); got != tt.want {
+				t.Errorf("watermark(from=%d, chMax=%d, gap=%d, minPresent=%d) = %d, want %d",
+					tt.from, tt.chMax, tt.gap, tt.minPresent, got, tt.want)
 			}
 		})
 	}

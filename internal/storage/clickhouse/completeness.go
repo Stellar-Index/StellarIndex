@@ -72,8 +72,10 @@ func (s ReconcileEventStreamer) StreamContractEvents(ctx context.Context, from, 
 // durable. A buffer-full drop drops the whole extract, so it leaves no ledgers
 // row either — either way "present in ledgers" ⟹ "complete in CH".
 //
-// Returns from-1 when CH has not yet reached `from` (nothing complete to read);
-// callers treat tip <= from as idle.
+// Returns from-1 when CH has not yet reached `from` (nothing complete to read)
+// AND when `from` itself is a hole (the lower-boundary case the interior-gap scan
+// is blind to — see the SQL + watermark notes); callers treat tip <= from as idle
+// and stall until the hole heals.
 func ContiguousWatermark(ctx context.Context, addr string, from uint32) (uint32, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -83,12 +85,22 @@ func ContiguousWatermark(ctx context.Context, addr string, from uint32) (uint32,
 
 	// ch_max: highest ledger present in the lake.
 	// first_gap_start: the lowest missing ledger >= from (0 when there is none).
+	// min_present: the lowest ledger present >= from (0 when none is >= from).
+	//
+	// first_gap_start only sees INTERIOR gaps between present ledgers >= from —
+	// leadInFrame over the DISTINCT-ledger set finds a jump nxt > ledger+1. It is
+	// therefore BLIND to a hole at the lower boundary `from` itself: when `from`
+	// is absent the smallest present ledger is from+1 and {from+1, from+2, …} is
+	// internally contiguous, so first_gap_start comes back 0 as if the lake were
+	// complete from `from`. min_present exposes exactly that boundary hole — when
+	// it exceeds `from`, `from` is missing (see watermark, which stalls at from-1
+	// so the projector never scans past the missing ledger).
 	//
 	// The leadInFrame frame (CURRENT ROW .. 1 FOLLOWING) returns the current
 	// row's own value for the last row in the partition, so the final ledger
 	// never registers a spurious trailing gap. min() over an empty gap set
 	// returns 0 (UInt default), which we read as "no hole".
-	// Both columns are wrapped toUInt64(ifNull(…, 0)) so they scan as plain
+	// All columns are wrapped toUInt64(ifNull(…, 0)) so they scan as plain
 	// non-nullable uint64 regardless of CH's promotion rules: scalar subqueries
 	// are Nullable, max(ledger_seq) is UInt32 but min(ledger_seq+1) widens to
 	// UInt64, and an empty set yields NULL. ifNull(…,0) maps "no gap" / "empty
@@ -107,14 +119,15 @@ func ContiguousWatermark(ctx context.Context, addr string, from uint32) (uint32,
 					FROM (SELECT DISTINCT ledger_seq FROM stellar.ledgers WHERE ledger_seq >= ?)
 				)
 				WHERE nxt > ledger_seq + 1
-			)), 0)) AS first_gap_start`
+			)), 0)) AS first_gap_start,
+			toUInt64(ifNull((SELECT min(ledger_seq) FROM stellar.ledgers WHERE ledger_seq >= ?), 0)) AS min_present`
 
-	var chMax, firstGap uint64
-	if err := conn.QueryRow(ctx, q, from).Scan(&chMax, &firstGap); err != nil {
+	var chMax, firstGap, minPresent uint64
+	if err := conn.QueryRow(ctx, q, from, from).Scan(&chMax, &firstGap, &minPresent); err != nil {
 		return 0, fmt.Errorf("clickhouse: contiguous watermark from %d: %w", from, err)
 	}
 	// Ledger sequences are always well within uint32.
-	return watermark(from, uint32(chMax), uint32(firstGap)), nil
+	return watermark(from, uint32(chMax), uint32(firstGap), uint32(minPresent)), nil
 }
 
 // substrateWindow is the per-query ledger span for the substrate audit.
@@ -280,11 +293,29 @@ func substrateHeadProblem(from, to uint32, present bool, haveMin uint32) (proble
 }
 
 // watermark is the pure interpretation of a ContiguousWatermark query result:
-//   - chMax < from        → from-1 (CH has not reached `from`; nothing complete)
-//   - firstGap == 0        → chMax (no hole at or above `from`; complete to the tip)
-//   - otherwise            → firstGap-1 (complete up to just before the first hole)
-func watermark(from, chMax, firstGap uint32) uint32 {
+//   - chMax < from          → from-1 (CH has not reached `from`; nothing complete)
+//   - minPresent > from      → from-1 (a hole AT the lower boundary `from` itself)
+//   - firstGap == 0          → chMax (no hole at or above `from`; complete to the tip)
+//   - otherwise              → firstGap-1 (complete up to just before the first hole)
+//
+// The minPresent guard closes a silent-data-loss blind spot: firstGap only finds
+// INTERIOR gaps between present ledgers >= from, so when `from` ITSELF is absent
+// the smallest present ledger is from+1 and {from+1, from+2, …} is internally
+// contiguous → firstGap == 0. The old form then returned chMax, and the projector
+// scanned right over the missing `from` and upserted its cursor past it —
+// permanently dropping that ledger's projected (sole-writer sep41 mint/burn/
+// transfer) rows from the served tier. minPresent = min(ledger_seq >= from); when
+// it exceeds `from` there is a hole at the lower boundary, so we stall at from-1
+// until the catch-up timer heals it. Ordering is load-bearing: after the
+// chMax<from guard, chMax >= from guarantees at least one ledger >= from, so
+// minPresent >= from and `minPresent > from` cleanly means "`from` is missing";
+// from-1 is also the tightest bound (<= any interior firstGap-1), so it correctly
+// takes precedence over an interior gap that may co-exist above the boundary hole.
+func watermark(from, chMax, firstGap, minPresent uint32) uint32 {
 	if chMax < from {
+		return from - 1
+	}
+	if minPresent > from {
 		return from - 1
 	}
 	if firstGap == 0 {
