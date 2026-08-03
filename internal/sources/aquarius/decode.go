@@ -403,3 +403,75 @@ func decodeAnnouncedPool(e *events.Event) (string, error) {
 	}
 	return pool, nil
 }
+
+// decodeFee decodes an Aquarius `set_protocol_fee` or
+// `claim_protocol_fee` treasury event into a FeeEvent. The two share no
+// body shape, so `kind` (the classify() result) selects the decode:
+//
+//	set_protocol_fee   — Map{ fee_protocol{0,1}_{new,old}: u32 }
+//	claim_protocol_fee — Vec[ recipient: Address, amount: i128 ]
+//
+// Decode-by-field-name for the Map (schema-evolution safe); the Vec is
+// positional per the contract. Verified against real lake bodies.
+func decodeFee(e *events.Event, closedAt time.Time, kind string) (FeeEvent, error) {
+	fe := FeeEvent{
+		ContractID: e.ContractID,
+		Ledger:     e.Ledger,
+		TxHash:     e.TxHash,
+		OpIndex:    uint32(e.OperationIndex), //nolint:gosec // OperationIndex is non-negative by Soroban spec.
+		EventIndex: uint32(e.EventIndex),     //nolint:gosec // EventIndex is non-negative by Soroban spec.
+		ObservedAt: closedAt,
+		Kind:       kind,
+	}
+	sv, err := scval.Parse(e.Value)
+	if err != nil {
+		return FeeEvent{}, fmt.Errorf("%w: %s body: %w", ErrMalformedPayload, kind, err)
+	}
+	switch kind {
+	case EventSetProtocolFee:
+		entries, err := scval.AsMap(sv)
+		if err != nil {
+			return FeeEvent{}, fmt.Errorf("%w: set_protocol_fee not a Map: %w", ErrMalformedPayload, err)
+		}
+		for _, f := range []struct {
+			name string
+			dst  *uint32
+		}{
+			{"fee_protocol0_new", &fe.Fee0New},
+			{"fee_protocol0_old", &fe.Fee0Old},
+			{"fee_protocol1_new", &fe.Fee1New},
+			{"fee_protocol1_old", &fe.Fee1Old},
+		} {
+			msv, err := scval.MustMapField(entries, f.name)
+			if err != nil {
+				return FeeEvent{}, fmt.Errorf("%w: set_protocol_fee.%s: %w", ErrMalformedPayload, f.name, err)
+			}
+			v, err := scval.AsU32(msv)
+			if err != nil {
+				return FeeEvent{}, fmt.Errorf("%w: set_protocol_fee.%s: %w", ErrMalformedPayload, f.name, err)
+			}
+			*f.dst = v
+		}
+	case EventClaimProtocolFee:
+		vec, err := scval.AsVec(sv)
+		if err != nil {
+			return FeeEvent{}, fmt.Errorf("%w: claim_protocol_fee not a Vec: %w", ErrMalformedPayload, err)
+		}
+		if len(vec) != 2 {
+			return FeeEvent{}, fmt.Errorf("%w: claim_protocol_fee vec len %d, want 2", ErrMalformedPayload, len(vec))
+		}
+		recipient, err := scval.AsAddressStrkey(vec[0])
+		if err != nil {
+			return FeeEvent{}, fmt.Errorf("%w: claim_protocol_fee recipient: %w", ErrMalformedPayload, err)
+		}
+		amount, err := scval.AsAmountFromI128(vec[1])
+		if err != nil {
+			return FeeEvent{}, fmt.Errorf("%w: claim_protocol_fee amount: %w", ErrMalformedPayload, err)
+		}
+		fe.Recipient = recipient
+		fe.Amount = amount
+	default:
+		return FeeEvent{}, fmt.Errorf("decodeFee: unexpected kind %q", kind)
+	}
+	return fe, nil
+}

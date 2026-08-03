@@ -16,6 +16,13 @@ against.
 ## [Unreleased]
 
 ### Added
+- **Aquarius protocol-fee events now project** to the new
+  `aquarius_protocol_fee` hypertable (migration 0129) — `set_protocol_fee`
+  (per-token old→new fee, Map of u32) and `claim_protocol_fee`
+  (recipient + swept i128, one row per token), discriminated by `kind`.
+  Previously classified but `Matches()`-dropped. Pool-gated (ADR-0035);
+  golden-tested against real lake bodies. Backfill with
+  `projector-replay -source aquarius`.
 - **Aquarius `reserves_sync` events now project** to the new
   `aquarius_reserves_sync` hypertable (migration 0128). Previously
   classified but `Matches()`-dropped (recognized-only), so the raw

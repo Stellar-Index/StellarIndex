@@ -228,6 +228,11 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// drop closed 2026-08-03). Large override so a quiet stretch doesn't
 	// read as a decoder outage. Genesis = Aquarius protocol genesis.
 	{Source: "aquarius-reserves-sync", Table: "aquarius_reserves_sync", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 700000},
+	// aquarius-protocol-fee: set_protocol_fee (rare, 3 lake-wide) +
+	// claim_protocol_fee (2530 events / 99 pools) governance/treasury
+	// events, one table (0129, 2026-08-03). Large override — claims are
+	// bursty and set is very rare, so a quiet stretch is normal.
+	{Source: "aquarius-protocol-fee", Table: "aquarius_protocol_fee", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 700000},
 	// aquarius-rewards: the rewards-gauge event surface (ROADMAP #89,
 	// migration 0099). Dominated by pool_state (339,712 lifetime — one
 	// of the densest Aquarius topics, fires on every reward-affecting
