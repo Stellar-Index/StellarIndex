@@ -1886,6 +1886,12 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// XLM dual-form: native, crypto:XLM, and the XLM Stellar Asset
+	// Contract all denote the SAME asset. Normalize the non-native forms
+	// to native so the WHOLE AssetDetail is consistent — see
+	// normalizeXLMAliases.
+	parsed = normalizeXLMAliases(parsed)
+
 	// SAC → classic identity (board #40, RFP audit): a C-address that
 	// is a Stellar Asset Contract resolves to the CLASSIC asset it
 	// wraps, so the response carries the classic price/supply/detail.
@@ -2710,4 +2716,27 @@ func filterCatalogueRowsByQuery(rows []AssetDetail, rawQ string) []AssetDetail {
 		}
 	}
 	return filtered
+}
+
+// normalizeXLMAliases maps XLM's non-native canonical forms (crypto:XLM
+// and the XLM Stellar Asset Contract) to native, so the whole
+// /v1/assets/{id} AssetDetail is consistent across supply, volume,
+// market_cap, the dust-guard native carve-out, and the response-cache
+// key. The price path already resolves these via AssetAliases, but
+// supply.AssetKey errors on crypto:XLM, the 24h-volume lookup keys on
+// trades.base_asset (stored as "native"), and the dust carve-out gates
+// on Equal(native) — so before this, /v1/assets/crypto:XLM served a
+// price but NULL supply/market_cap/volume while /v1/assets/native served
+// them (same asset, two bodies; audit 2026-08-03). The XLM SAC is also
+// handled by resolveSACToClassic, which this short-circuits to native.
+func normalizeXLMAliases(a canonical.Asset) canonical.Asset {
+	if a.Equal(canonical.NativeAsset()) {
+		return a
+	}
+	for _, alias := range canonical.AssetAliases(canonical.NativeAsset()) {
+		if a.Equal(alias) {
+			return canonical.NativeAsset()
+		}
+	}
+	return a
 }
