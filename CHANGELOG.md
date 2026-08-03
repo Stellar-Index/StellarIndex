@@ -16,6 +16,25 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **`/v1/assets` served catalogue rows with `decimals: 0` against a
+  7-decimal supply**, so every consumer scaling by `10^decimals`
+  rendered circulating supply 10,000,000x too large (cold audit,
+  confirmed on r1: XLM's row served `decimals: 0` with
+  `342797138733487851`, which the explorer displayed as
+  342,797,138,733,487,872 against the ~34.3B its own
+  `market_cap_usd`/`price_usd` implies; same for USDC, AQUA, EURC,
+  PYUSD, YXLM and others). `mergeTwinStats` copied the classic twin's
+  supply onto the catalogue row without its scale — a catalogue row's
+  own `SupplyDecimals` is 0 because the curated seed states fiat M2 in
+  whole units. The decimals now travel with the supply.
+
+### Changed
+- **The explorer's vitest suite now runs in CI and `verify.sh`.** 209
+  tests across 49 files were green and dead — wired into neither gate —
+  including `safe-domain.test.ts` (the `isSafeHomeDomain` /
+  `isSafePublicImageUrl` phishing and client-SSRF regression gate), the
+  CS-009 og-function SSRF regression, and the AGT-06 stale-flag
+  regression. A refactor loosening any of them would have landed green.
 - **`/v1/pools?order_by=pair` returned both orientations of every
   two-sided market** (cold audit, confirmed on r1): the pair-ordered
   branch selected from the pre-collapse CTE while the default
