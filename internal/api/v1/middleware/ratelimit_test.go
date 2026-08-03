@@ -358,6 +358,62 @@ func TestRateLimitBySubject_AnonymousSameIPDifferentUADoesNotBypass(t *testing.T
 	}
 }
 
+// TestRateLimit_NilKeyFnMasksIPv6To64 pins the default (nil) keyFn of
+// the single-bucket RateLimit middleware to the forge-resistant,
+// /64-masked throttle resolver — the SAME resolver the production anon
+// path uses (SEC-15). Pre-fix the default was raw RemoteIPFrom(r) (the
+// unmasked /128 read from context), so a caller could rotate its IPv6
+// address within a single delegated /64 to mint a fresh bucket per
+// request and bypass the per-IP limit entirely.
+//
+// Two requests carry DIFFERENT /128 addresses that share the same /64;
+// with a budget of 1 the second MUST be 429'd because both mask to the
+// same key. A genuinely different /64 keeps its own budget.
+//
+// Against the pre-fix default this FAILS: RemoteIPFrom(r) reads the
+// remote_ip context value (never populated here — no Logger
+// middleware), yielding an empty key, so every request bypasses the
+// limiter and the second returns 200 instead of 429.
+func TestRateLimit_NilKeyFnMasksIPv6To64(t *testing.T) {
+	if err := middleware.SetTrustedProxyCIDRs([]string{}); err != nil {
+		t.Fatalf("SetTrustedProxyCIDRs: %v", err)
+	}
+
+	rdb, _ := newRLRedis(t)
+	b := ratelimit.New(rdb, 1, time.Minute)
+
+	// nil keyFn → the default resolver under test.
+	h := middleware.RateLimit(b, nil, nil, nil)(okHandler())
+
+	reqFromIPv6 := func(addr string) *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.RemoteAddr = "[" + addr + "]:5555"
+		return r
+	}
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, reqFromIPv6("2001:db8:1234:5678::1"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("first request status = %d, want 200", w.Code)
+	}
+
+	// Different /128, SAME /64 (2001:db8:1234:5678::/64) — must share
+	// the bucket and be denied.
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, reqFromIPv6("2001:db8:1234:5678:ffff:ffff:ffff:ffff"))
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("second request (different /128, same /64) status = %d, want 429 — "+
+			"default keyFn failed to mask IPv6 to /64 (SEC-15)", w.Code)
+	}
+
+	// A genuinely different /64 must still get its own fresh budget.
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, reqFromIPv6("2001:db8:1234:9999::1"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("request from a different /64 status = %d, want 200 (independent bucket)", w.Code)
+	}
+}
+
 func TestSkipHealthAndMetrics(t *testing.T) {
 	cases := map[string]bool{
 		"/v1/healthz":      true,

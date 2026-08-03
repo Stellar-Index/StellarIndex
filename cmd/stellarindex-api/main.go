@@ -179,6 +179,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	warnUnsafeBind(logger, cfg.API.ListenAddr, cfg.API.TrustedProxyCIDRs)
 	warnOpenCORS(logger, cfg.API.AllowedOrigins, cfg.API.AuthMode)
 	warnCollapsedStreamCap(logger, cfg.API.ListenAddr, cfg.API.Streaming.MaxStreamsPerIP, cfg.API.TrustedProxyCIDRs)
+	warnCollapsedAnonThrottle(logger, cfg.API.AuthMode, cfg.API.AnonRateLimitPerMin, cfg.API.TrustedProxyCIDRs)
 
 	// NOTE: the SEP-10 validator is constructed further down, AFTER `rdb`
 	// exists (search "SEP-10 validator"). It cannot be built here: the
@@ -3718,6 +3719,67 @@ func warnCollapsedStreamCap(logger *slog.Logger, listenAddr string, maxStreamsPe
 		"listen", listenAddr,
 		"max_streams_per_ip", maxStreamsPerIP,
 		"docs", "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/pre-launch-hardening.md")
+}
+
+// warnCollapsedAnonThrottle logs a warning at startup when the
+// anonymous HTTP request throttle can't discriminate clients behind a
+// reverse proxy. REL-availability (audit-2026-08-03): the anonymous
+// per-IP bucket keys on the resolved client IP (remoteIPPrefixFor —
+// the forge-resistant XFF resolver), which only trusts X-Forwarded-For
+// from TrustedProxyCIDRs. With trusted_proxy_cidrs EMPTY behind a
+// reverse proxy, every anonymous request resolves to the proxy's own
+// single socket address, so anon_rate_limit_per_min collapses into ONE
+// shared bucket for the WHOLE anonymous tier — the first N/min anon
+// requests through the proxy exhaust it for every other anonymous
+// caller: an availability self-DoS on a fresh deploy (the default
+// config ships trusted_proxy_cidrs=[]).
+//
+// Fires only when the anonymous tier is actually reachable AND capped:
+// an active anon bucket (anon_rate_limit_per_min > 0) under an auth
+// mode that admits anonymous callers (none / apikey_optional). Auth
+// modes that require a credential (apikey / sep10) reject anonymous
+// requests with 401 before the limiter, so the anon bucket is never
+// exercised and no collapse can bite.
+//
+// Unlike warnCollapsedStreamCap this DOES fire for a loopback bind —
+// bind is not consulted at all. The canonical R1 shape is
+// 127.0.0.1:3000 behind Caddy, which is EXACTLY where the collapse
+// bites; only a non-empty trusted_proxy_cidrs (as R1 correctly sets)
+// silences it, never the bind address. We can't cheaply tell a
+// direct-bind (no proxy) deploy apart from a behind-a-proxy one, so
+// the message is worded conditionally ("if this API is behind a
+// reverse proxy") rather than asserting a misconfiguration outright.
+func warnCollapsedAnonThrottle(logger *slog.Logger, authMode string, anonRateLimitPerMin int, trustedProxyCIDRs []string) {
+	if anonRateLimitPerMin <= 0 || len(trustedProxyCIDRs) > 0 {
+		return
+	}
+	if !authModeAdmitsAnonymous(authMode) {
+		return
+	}
+	logger.Warn("SECURITY: api.anon_rate_limit_per_min is set but trusted_proxy_cidrs is empty — "+
+		"if this API runs behind a reverse proxy, every anonymous client resolves to the proxy's single "+
+		"address and the per-IP anonymous request throttle collapses into ONE shared budget for the whole "+
+		"anonymous tier (an availability self-DoS). If behind a reverse proxy, set trusted_proxy_cidrs to "+
+		"your proxy's source range.",
+		"auth_mode", authMode,
+		"anon_rate_limit_per_min", anonRateLimitPerMin,
+		"docs", "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/pre-launch-hardening.md")
+}
+
+// authModeAdmitsAnonymous reports whether the configured auth_mode lets
+// un-credentialed (anonymous) requests reach the handler stack — and
+// therefore the anonymous rate-limit bucket. "none" attaches an
+// anonymous Subject to every request; "apikey_optional" is the freemium
+// shape (anonymous floor without a key). "apikey" and "sep10" require a
+// credential and reject anonymous callers with 401 before the
+// rate-limit middleware runs, so their anon bucket is never exercised.
+func authModeAdmitsAnonymous(mode string) bool {
+	switch mode {
+	case "none", "apikey_optional":
+		return true
+	default:
+		return false
+	}
 }
 
 // warnOpenCORS logs a warning at startup when CORS is set to

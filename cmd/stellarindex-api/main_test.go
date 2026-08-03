@@ -432,6 +432,60 @@ func TestWarnUnsafeBind(t *testing.T) {
 	}
 }
 
+// TestWarnCollapsedAnonThrottle pins the boot warning for the
+// anonymous-throttle collapse (REL-availability, audit-2026-08-03):
+// with trusted_proxy_cidrs empty behind a reverse proxy every
+// anonymous caller keys on the proxy's single address, collapsing the
+// whole anon tier into ONE shared bucket (an availability self-DoS).
+//
+// The warning must fire when the anon tier is BOTH capped
+// (anon_rate_limit_per_min > 0) AND reachable (auth_mode admits
+// anonymous: none / apikey_optional) AND trusted_proxy_cidrs is empty —
+// and must NOT fire when a proxy CIDR is set (the R1 shape), when the
+// anon tier is disabled (0), or under a credential-required auth mode.
+func TestWarnCollapsedAnonThrottle(t *testing.T) {
+	warnLogged := func(authMode string, anonPerMin int, cidrs []string) bool {
+		var buf bytes.Buffer
+		lg := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+		warnCollapsedAnonThrottle(lg, authMode, anonPerMin, cidrs)
+		return strings.Contains(buf.String(), "SECURITY")
+	}
+
+	// Empty CIDR + active anon bucket + an anon-admitting auth mode
+	// must warn — the collapse case, regardless of bind (bind is not
+	// consulted, so this fires for the loopback R1 shape too).
+	for _, mode := range []string{"none", "apikey_optional"} {
+		if !warnLogged(mode, 60, nil) {
+			t.Errorf("auth_mode=%q, anon active, empty CIDR: expected SECURITY warning, got none", mode)
+		}
+	}
+
+	// Credential-required auth modes reject anonymous requests before
+	// the limiter — the anon bucket is never exercised, so no collapse
+	// and no warning.
+	for _, mode := range []string{"apikey", "sep10"} {
+		if warnLogged(mode, 60, nil) {
+			t.Errorf("auth_mode=%q: anonymous requests are 401'd before the limiter; must NOT warn", mode)
+		}
+	}
+
+	// Anon tier disabled (0) → no anon bucket → nothing to collapse.
+	if warnLogged("none", 0, nil) {
+		t.Error("anon_rate_limit_per_min=0: no anon bucket exists; must NOT warn")
+	}
+
+	// A configured proxy CIDR resolves each client to its real address,
+	// so the throttle discriminates and there is no collapse. This is
+	// the R1 shape (auth_mode=apikey_optional, anon=6000,
+	// trusted_proxy_cidrs=["127.0.0.1/32"]) — it MUST stay silent.
+	if warnLogged("apikey_optional", 6000, []string{"127.0.0.1/32"}) {
+		t.Error("R1 shape (non-empty trusted_proxy_cidrs): must NOT warn")
+	}
+	if warnLogged("none", 60, []string{"10.0.0.0/8"}) {
+		t.Error("non-empty trusted_proxy_cidrs: throttle discriminates; must NOT warn")
+	}
+}
+
 // fakeSubscriberRunner implements subscriberRunner for
 // TestRunSubscriberSupervisedWithBackoff_RestartsPastFailures. The
 // first failN calls to Run return failErr immediately (mimicking
