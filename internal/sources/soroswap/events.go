@@ -167,17 +167,21 @@ var (
 	// re-derive blind (undecodable-but-matched) on that ledger.
 	ErrNonDirectionalSwap = errors.New("soroswap: non-directional swap (no cross-token exchange)")
 
-	// ErrAmbiguousSwapDirection — ALL FOUR amounts are non-zero, so BOTH
-	// direction arms hold at once (audit 2026-07-31). The old switch
-	// silently took the first arm (0→1) and decoded a trade that ignored
-	// the 1→0 leg entirely — a half-decoded row presented as a clean
-	// trade. Like the single-sided case above, pair.swap() accepts any
-	// argument combination that keeps K non-decreasing, so this shape
-	// can settle on-chain; there is no single derivable (base, quote,
-	// price), so we refuse the whole event rather than half-decode it.
-	// Wraps ErrNonDirectionalSwap so [Decoder.Decode]'s recognized-no-op
+	// ErrAmbiguousSwapDirection — THREE OR MORE of the four amounts are
+	// non-zero (overlapping in/out legs), so more than one direction arm
+	// can hold at once. The old switch silently took the first arm (0→1)
+	// and decoded a trade that reported a GROSS `in` amount while dropping
+	// the extra leg entirely — a half-decoded row presented as a clean
+	// trade that fabricates a price into VWAP/OHLC. The all-four case was
+	// closed 2026-07-31; its three-non-zero sibling (e.g. 0_in,1_in,1_out)
+	// slipped past that all-four-only guard until audit 2026-08-03. Like
+	// the single-sided case above, pair.swap() accepts any argument
+	// combination that keeps K non-decreasing, so these shapes can settle
+	// on-chain; there is no single derivable (base, quote, price), so we
+	// refuse the whole event rather than half-decode it. Wraps
+	// ErrNonDirectionalSwap so [Decoder.Decode]'s recognized-no-op
 	// handling (zero projected rows, nil error out — the ADR-0033
 	// completeness re-derive counts it as expected-zero) covers it via
 	// errors.Is without a second dispatch arm.
-	ErrAmbiguousSwapDirection = fmt.Errorf("%w: ambiguous direction (all four amounts non-zero)", ErrNonDirectionalSwap)
+	ErrAmbiguousSwapDirection = fmt.Errorf("%w: ambiguous direction (overlapping in/out legs)", ErrNonDirectionalSwap)
 )

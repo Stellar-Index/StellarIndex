@@ -203,6 +203,48 @@ func TestDecodeSwap_AmbiguousBothDirectionsRefused(t *testing.T) {
 	}
 }
 
+// TestDecodeSwap_ThreeNonZeroLegRefused (audit 2026-08-03): a swap with
+// exactly THREE non-zero amounts (0_in, 1_in, 1_out) slips past the
+// all-four-only ambiguity guard, matches the first direction arm
+// (0_in>0 && 1_out>0), and — before this fix — decoded a trade reporting
+// the GROSS 0_in while silently dropping the 1_in leg, fabricating a
+// price into VWAP/OHLC. It must be refused as ErrAmbiguousSwapDirection,
+// exactly like its all-four sibling.
+func TestDecodeSwap_ThreeNonZeroLegRefused(t *testing.T) {
+	prev := decodeSwapAmounts
+	defer func() { decodeSwapAmounts = prev }()
+	decodeSwapAmounts = func(_ string) (swapAmounts, error) {
+		amt := func(n int64) canonical.Amount { return canonical.NewAmount(big.NewInt(n)) }
+		return swapAmounts{
+			Amount0In:  amt(100),
+			Amount1In:  amt(265),
+			Amount0Out: amt(0),
+			Amount1Out: amt(42),
+		}, nil
+	}
+	xlm := canonical.NativeAsset()
+	usdc, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := RawPair{
+		Ledger: 100, TxHash: "cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe", OpIndex: 0,
+		ClosedAt: time.Now().UTC().Truncate(time.Second),
+		Swap:     &events.Event{Value: "stub"},
+		Sync:     &events.Event{Value: "stub"},
+	}
+	_, err = decodeSwap(r, xlm, usdc)
+	if err == nil {
+		t.Fatal("three-non-zero swap decoded as a trade — first-arm bias dropped a leg and reported a gross amount")
+	}
+	if !errors.Is(err, ErrAmbiguousSwapDirection) {
+		t.Fatalf("err = %v, want ErrAmbiguousSwapDirection", err)
+	}
+	if !errors.Is(err, ErrNonDirectionalSwap) {
+		t.Fatalf("err = %v, must wrap ErrNonDirectionalSwap so Decode treats it as a recognized no-op", err)
+	}
+}
+
 func TestDecodeSwap_incompleteErrors(t *testing.T) {
 	_, err := decodeSwap(RawPair{Swap: &events.Event{}, Sync: nil}, canonical.NativeAsset(), canonical.NativeAsset())
 	if err == nil {

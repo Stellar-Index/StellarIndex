@@ -149,28 +149,41 @@ func decodeSwap(r RawPair, tok0, tok1 canonical.Asset) (canonical.Trade, error) 
 	// treats as a recognized no-op rather than a decode error.
 	var base, quote canonical.Asset
 	var baseAmt, quoteAmt canonical.Amount
-	// All four amounts non-zero satisfies BOTH arms below — decoding it
-	// as 0→1 would silently drop the 1→0 leg (first-arm bias, audit
-	// 2026-07-31). No single direction is derivable, so refuse the whole
-	// event as a recognized no-op (see ErrAmbiguousSwapDirection) —
-	// honest-blind beats half-decoded.
-	if amounts.Amount0In.Sign() > 0 && amounts.Amount1Out.Sign() > 0 &&
-		amounts.Amount1In.Sign() > 0 && amounts.Amount0Out.Sign() > 0 {
-		return canonical.Trade{}, fmt.Errorf("%w: in=(%s,%s) out=(%s,%s)",
-			ErrAmbiguousSwapDirection,
-			amounts.Amount0In, amounts.Amount1In,
-			amounts.Amount0Out, amounts.Amount1Out)
-	}
+	// A price-forming swap has EXACTLY one non-zero `in` and one non-zero
+	// `out`, on OPPOSITE token sides (0→1 or 1→0). Match that shape
+	// exactly. Any other combination has no single derivable direction,
+	// so refuse the whole event as a recognized no-op (honest-blind beats
+	// half-decoded):
+	//   - single-sided / no cross-token move → ErrNonDirectionalSwap
+	//     (real case: ledger 57,403,300).
+	//   - three OR four amounts non-zero → the first matching arm below
+	//     would silently drop the extra leg and report a GROSS `in` as if
+	//     it were the net trade, fabricating a price into VWAP/OHLC. The
+	//     four-leg case was closed 2026-07-31; the three-leg sibling
+	//     (e.g. 0_in,1_in,1_out non-zero) slipped past that all-four-only
+	//     guard until audit 2026-08-03. Both → ErrAmbiguousSwapDirection.
+	in0, in1 := amounts.Amount0In.Sign() > 0, amounts.Amount1In.Sign() > 0
+	out0, out1 := amounts.Amount0Out.Sign() > 0, amounts.Amount1Out.Sign() > 0
 	switch {
-	case amounts.Amount0In.Sign() > 0 && amounts.Amount1Out.Sign() > 0:
+	case in0 && out1 && !in1 && !out0:
 		base, baseAmt = tok0, amounts.Amount0In
 		quote, quoteAmt = tok1, amounts.Amount1Out
-	case amounts.Amount1In.Sign() > 0 && amounts.Amount0Out.Sign() > 0:
+	case in1 && out0 && !in0 && !out1:
 		base, baseAmt = tok1, amounts.Amount1In
 		quote, quoteAmt = tok0, amounts.Amount0Out
 	default:
+		refuse := ErrNonDirectionalSwap
+		legs := 0
+		for _, nz := range []bool{in0, in1, out0, out1} {
+			if nz {
+				legs++
+			}
+		}
+		if legs >= 3 {
+			refuse = ErrAmbiguousSwapDirection
+		}
 		return canonical.Trade{}, fmt.Errorf("%w: in=(%s,%s) out=(%s,%s)",
-			ErrNonDirectionalSwap,
+			refuse,
 			amounts.Amount0In, amounts.Amount1In,
 			amounts.Amount0Out, amounts.Amount1Out)
 	}

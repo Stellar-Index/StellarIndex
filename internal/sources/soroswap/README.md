@@ -102,16 +102,23 @@ silently swallow any LP-share token an operator later adds to
 ## Event topic reference
 
 ```
-swap      topic: ["swap",       <pair_contract_addr>]
-sync      topic: ["sync",       <pair_contract_addr>]
-deposit   topic: ["deposit",    <pair_contract_addr>]
-withdraw  topic: ["withdraw",   <pair_contract_addr>]
-skim      topic: ["skim",       <pair_contract_addr>]
+swap      topic: ["SoroswapPair",    "swap"]
+sync      topic: ["SoroswapPair",    "sync"]
+deposit   topic: ["SoroswapPair",    "deposit"]
+withdraw  topic: ["SoroswapPair",    "withdraw"]
+skim      topic: ["SoroswapPair",    "skim"]
 
-new_pair  topic: ["new_pair",   <token0>, <token1>]   (on factory)
+new_pair  topic: ["SoroswapFactory", "new_pair"]   (on factory)
+          body carries token0 / token1 (NOT the topics)
 ```
 
-Topic[0] is a `Symbol` SCVal; topic[1+] are `Address` SCVals.
+Topic[0] is a `String` SCVal — `"SoroswapPair"` for pool events,
+`"SoroswapFactory"` for factory events (the contract-family
+discriminant, matched byte-exact in `decode.go`); topic[1] is the
+event-name `Symbol`. Token identities for `new_pair` live in the
+event BODY, not the topics. This is verified against mainnet lake
+bytes (`nondirectional_swap_test.go`); do NOT "fix" `classify()` to
+the old `["swap", <addr>]` shape — it would break all ingestion.
 See `events.go` for the typed enum.
 
 ## File layout
