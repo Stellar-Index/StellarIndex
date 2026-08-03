@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -172,9 +173,14 @@ func (t *RedisLoginThrottle) incrUnderCap(ctx context.Context, keyBase string, l
 	return int(count) <= limit, nil
 }
 
-// hashEmail returns a short stable digest of a lowercased email for use as a
-// Redis key fragment — never the plaintext address.
+// hashEmail returns a short stable digest of a lowercased, trimmed email for
+// use as a Redis key fragment — never the plaintext address. Normalisation
+// (lower-case + trim) is applied HERE so the per-target-email cap buckets
+// "Victim@X.com " and "victim@x.com" to the same key regardless of whether
+// the caller pre-normalised — the throttle invariant is self-enforcing rather
+// than a promise the caller must keep.
 func hashEmail(email string) string {
-	sum := sha256.Sum256([]byte(email))
+	normalized := strings.ToLower(strings.TrimSpace(email))
+	sum := sha256.Sum256([]byte(normalized))
 	return hex.EncodeToString(sum[:8])
 }

@@ -180,37 +180,12 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	warnOpenCORS(logger, cfg.API.AllowedOrigins, cfg.API.AuthMode)
 	warnCollapsedStreamCap(logger, cfg.API.ListenAddr, cfg.API.Streaming.MaxStreamsPerIP, cfg.API.TrustedProxyCIDRs)
 
-	// SEP-10 validator — wired regardless of auth_mode so the
-	// /v1/auth/sep10/{challenge,token} endpoints serve. When the
-	// required env vars (cfg.API.SEP10.SeedEnv / .JWTSecretEnv)
-	// are missing or empty, the constructor errors and the binary
-	// fails loud at startup rather than silently 503-ing on every
-	// challenge.
-	//
-	// `nil` Redis client at this construction site means the
-	// replay-guard defence (F-1224) is disabled at startup. The
-	// validator is rebuilt below once `rdb` exists so production
-	// always has the guard wired; this early Noop construction
-	// keeps dry-run + early-failure paths unchanged.
-	sep10Validator, err := buildSEP10Validator(cfg.API.SEP10, nil)
-	if err != nil {
-		// auth_mode=sep10 makes this a hard failure (we MUST have a
-		// validator to bootstrap auth at all). Otherwise log + carry
-		// on with a Noop so the handlers return 503 specifically for
-		// /v1/auth/sep10/* without taking down the rest of the API.
-		if cfg.API.AuthMode == "sep10" {
-			return fmt.Errorf("sep10 validator: %w (auth_mode=sep10 requires it)", err)
-		}
-		logger.Warn("sep10 validator not configured; /v1/auth/sep10/* will return 503",
-			"err", err)
-		sep10Validator = auth.NoopSEP10Validator{}
-	} else {
-		logger.Info("sep10 validator wired",
-			"web_auth_domain", cfg.API.SEP10.WebAuthDomain,
-			"home_domain", cfg.API.SEP10.HomeDomain,
-			"challenge_ttl", cfg.API.SEP10.ChallengeTTL,
-			"jwt_ttl", cfg.API.SEP10.JWTTTL)
-	}
+	// NOTE: the SEP-10 validator is constructed further down, AFTER `rdb`
+	// exists (search "SEP-10 validator"). It cannot be built here: the
+	// F-1224 replay guard is Redis-backed, and a configured SEP-10
+	// deployment MUST be replay-protected — so construction is deferred to
+	// the point where the real Redis client is available and can be wired
+	// in (or, when absent, cause a fail-CLOSED result). See the block below.
 
 	rootCtx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 
@@ -275,35 +250,15 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// last here doesn't change that path.
 	defer cancel()
 
-	// F-1224 (audit-2026-05-12): rebuild the SEP-10 validator with
-	// the Redis-backed replay guard now that we have an `rdb`. The
-	// earlier construction at line ~144 was Redis-less; that one is
-	// retained because failing the env-var check there is the
-	// fast-fail-on-misconfig path, but production always replaces
-	// it here with a guarded validator. Skipped silently when
-	// either the original construction errored (sep10Validator is
-	// the Noop) or Redis is not configured (sep10Validator stays
-	// guard-free; the replay defence falls open).
-	if rdb != nil {
-		if _, isNoop := sep10Validator.(auth.NoopSEP10Validator); !isNoop {
-			guarded, err := buildSEP10Validator(cfg.API.SEP10, rdb)
-			if err == nil {
-				sep10Validator = guarded
-				logger.Info("sep10 replay-guard wired", "store", "redis")
-			} else {
-				logger.Warn("sep10 replay-guard rebuild failed; falling back to non-guarded validator",
-					"err", err)
-			}
-		}
-	} else if cfg.API.AuthMode == "sep10" {
-		// F-1217 (codex audit-2026-05-12): SEP-10 production
-		// deployments MUST have a replay guard. A captured signed
-		// challenge XDR is otherwise replayable for the
-		// 15-minute window. The Redis-backed guard is the only
-		// implementation today, so a Redis-less binary running
-		// `auth_mode=sep10` is a misconfiguration we fail loud on
-		// at startup rather than serving guard-free.
-		return errors.New("sep10 replay-guard required when auth_mode=sep10: configure storage.redis_addr (see internal/auth/sep10/redisreplay.go)")
+	// SEP-10 validator — wired regardless of auth_mode so the
+	// /v1/auth/sep10/{challenge,token} endpoints serve. Built HERE, after
+	// `rdb` exists, because the F-1224 replay guard is Redis-backed and a
+	// configured SEP-10 deployment MUST be replay-protected. The policy
+	// (fail closed, degrade to Noop when auth_mode permits) lives in
+	// resolveSEP10Validator so it is testable end-to-end.
+	sep10Validator, err := resolveSEP10Validator(cfg.API.SEP10, cfg.API.AuthMode, rdb, logger)
+	if err != nil {
+		return err
 	}
 
 	// Build readiness-check set. Each implements v1.ReadyChecker.
@@ -2153,6 +2108,49 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 		sender:       sender,
 		emailFrom:    cfg.EmailFrom,
 	}, nil
+}
+
+// resolveSEP10Validator builds the SEP-10 validator and applies the
+// auth_mode fallback policy in ONE place (F-1224 wiring reconciliation).
+// Callers pass the real Redis client so the guarded (replay-protected)
+// validator is what actually gets wired — the earlier two-phase
+// (nil-rdb-then-rebuild) dance never wired it and could latently fall open.
+//
+// Behaviour by configuration:
+//   - SEP-10 unconfigured (no seed_env / jwt_secret_env): buildSEP10Validator
+//     errors "not configured"; we wire the Noop (503 on /v1/auth/sep10/*) so
+//     the binary still boots — the common r1 auth_mode=apikey_optional case.
+//   - SEP-10 configured + Redis available: the guarded validator, in EVERY
+//     auth_mode.
+//   - SEP-10 configured + Redis absent: FAIL CLOSED. buildSEP10Validator
+//     never returns a guard-free validator (it errors ErrReplayGuardUnavailable);
+//     under auth_mode=sep10 that error aborts startup, otherwise it degrades to
+//     the Noop. We never serve SEP-10 without the replay guard.
+func resolveSEP10Validator(
+	cfg config.SEP10Config,
+	authMode string,
+	rdb redis.UniversalClient,
+	logger *slog.Logger,
+) (auth.SEP10Validator, error) {
+	v, err := buildSEP10Validator(cfg, rdb)
+	if err != nil {
+		// auth_mode=sep10 makes this a hard failure — we MUST have a
+		// validator to bootstrap auth at all. Otherwise log + carry on
+		// with a Noop so the handlers return 503 specifically for
+		// /v1/auth/sep10/* without taking down the rest of the API.
+		if authMode == "sep10" {
+			return nil, fmt.Errorf("sep10 validator: %w (auth_mode=sep10 requires it)", err)
+		}
+		logger.Warn("sep10 validator not wired; /v1/auth/sep10/* will return 503",
+			"err", err)
+		return auth.NoopSEP10Validator{}, nil
+	}
+	logger.Info("sep10 validator wired (replay-guarded)",
+		"web_auth_domain", cfg.WebAuthDomain,
+		"home_domain", cfg.HomeDomain,
+		"challenge_ttl", cfg.ChallengeTTL,
+		"jwt_ttl", cfg.JWTTTL)
+	return v, nil
 }
 
 func buildSEP10Validator(cfg config.SEP10Config, rdb redis.UniversalClient) (auth.SEP10Validator, error) {

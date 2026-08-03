@@ -324,7 +324,8 @@ func (v *Validator) Verify(ctx context.Context, signedXDR string) (auth.Token, e
 // previously issued by [Verify] and returns the [auth.Subject] it
 // represents. Returns [auth.ErrTokenExpired] when the exp claim has
 // passed; [auth.ErrUnauthorized] for any other validation failure
-// (bad signature, malformed body, wrong issuer).
+// (bad signature, malformed body, wrong issuer, or an nbf that is
+// still in the future).
 func (v *Validator) VerifyJWT(_ context.Context, jwt string) (auth.Subject, error) {
 	claims, err := v.parseJWT(jwt)
 	if err != nil {
@@ -333,6 +334,17 @@ func (v *Validator) VerifyJWT(_ context.Context, jwt string) (auth.Subject, erro
 	now := v.now().Unix()
 	if claims.Exp < now {
 		return auth.Subject{}, auth.ErrTokenExpired
+	}
+	// nbf ("not before") enforcement — a token whose validity window
+	// hasn't opened yet is rejected. [issueJWT] sets nbf == iat, so a
+	// legitimately-issued token is immediately valid; this rejects a
+	// forged/clock-skewed token that claims to become valid later.
+	// Mirrors the exp check's strict, no-leeway posture. Tokens minted
+	// without an nbf claim carry Nbf == 0 (omitempty) and are
+	// unaffected, so this stays backward-compatible.
+	if claims.Nbf > now {
+		return auth.Subject{}, fmt.Errorf("%w: JWT nbf is in the future (not valid yet)",
+			auth.ErrUnauthorized)
 	}
 	return auth.Subject{
 		Identifier: claims.Sub,
