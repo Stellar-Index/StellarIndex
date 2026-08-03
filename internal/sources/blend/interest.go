@@ -90,7 +90,19 @@ func (rc ReserveConfig) BorrowRate(util, irMod *big.Int) *big.Int {
 
 	switch {
 	case util.Cmp(target) <= 0:
-		utilScalar := fixedDivCeil(util, target, scalar7)
+		// target (the reserve's configured target utilization) is
+		// guaranteed positive on-chain — the contract rejects util==0 at
+		// reserve setup — but a corrupt or zero-valued config-metadata row
+		// (bad backfill, a future WASM that permits it) would divide by
+		// zero inside fixedDivCeil and panic the request goroutine. This
+		// branch is only entered when util <= target, and util is
+		// non-negative, so the sole divide-by-zero case is util==0 &&
+		// target==0: no utilization, for which the utilization scalar is 0
+		// (base rate only). Guard it rather than trust the upstream.
+		utilScalar := big.NewInt(0)
+		if target.Sign() != 0 {
+			utilScalar = fixedDivCeil(util, target, scalar7)
+		}
 		baseRate := new(big.Int).Add(fixedMulCeil(utilScalar, rOne, scalar7), rBase)
 		return fixedMulCeil(baseRate, irMod, scalar7)
 	case util.Cmp(util95) <= 0:
