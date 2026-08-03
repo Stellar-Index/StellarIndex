@@ -16,6 +16,19 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **The edge shell-fallback handlers no longer inherit the client's
+  conditional-request headers** (cold audit). `new Request(url, request)`
+  copies every header, including `if-none-match` — a validator describing
+  the long-tail URL the client asked for, not the shell asset being read.
+  A match would have made the asset server answer 304 with a null body,
+  which `shell.ok` reads as failure, turning a healthy cache revalidation
+  into a 503 with an empty body on every repeat visit and every
+  search-engine recrawl. Latent rather than live: production emits no
+  ETag on these routes (verified), so no client has a validator to send —
+  but that is the platform's current behaviour, not a guarantee these
+  handlers make. The sub-fetch is now unconditional, with a regression
+  test; a second test pins each handler to its own shell path, which the
+  previous fake (matching on `/shell/` alone) could not detect.
 - **`/v1/assets` served catalogue rows with `decimals: 0` against a
   7-decimal supply**, so every consumer scaling by `10^decimals`
   rendered circulating supply 10,000,000x too large (cold audit,
