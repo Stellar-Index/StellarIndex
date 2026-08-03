@@ -49,11 +49,13 @@ type ChainlinkReference struct {
 
 // chainlinkFeedSpec captures everything needed to interpret one
 // AggregatorV3 contract's output: the address, the price decimals
-// (Chainlink standardises on 8 for crypto/USD pairs and 8 for FX
-// pairs but always read the contract's `decimals()` to be safe;
-// for static config we default to 8 unless overridden), and an
-// optional inversion flag for cases where the operator wants
-// 1/feed_price (e.g. EUR/USD feed used as USD/EUR signal).
+// (Chainlink standardises on 8 for crypto/USD and FX pairs; this is
+// STATIC config, defaulting to 8 — the code does NOT query the
+// contract's on-chain `decimals()`, so a non-8-decimal feed, e.g. an
+// 18-decimal ETH-denominated feed, MUST set Decimals explicitly or it
+// silently mis-scales by 10^(d-8)), and an optional inversion flag for
+// cases where the operator wants 1/feed_price (e.g. EUR/USD feed used
+// as USD/EUR signal).
 type chainlinkFeedSpec struct {
 	Address  string // 0x-prefixed
 	Decimals int    // power-of-10 to divide raw answer by
@@ -113,9 +115,12 @@ type ChainlinkFeed struct {
 	Address string
 
 	// Decimals is the divisor power-of-10 applied to the raw
-	// `latestAnswer()` int256. Chainlink crypto/USD feeds are 8;
-	// some FX feeds are 8 too. When in doubt, query the feed's
-	// `decimals()` view function once at config-load time.
+	// `latestAnswer()` int256. STATIC config, defaults to 8 (see the
+	// coercion in the reference constructor). Chainlink crypto/USD +
+	// most FX feeds are 8, but ETH-denominated feeds are 18. The code
+	// does NOT read the on-chain `decimals()` view — an operator adding
+	// a non-8-decimal feed MUST set this explicitly, or every comparison
+	// for that pair is off by 10^(d-8) (a permanent false divergence).
 	Decimals int
 
 	// Invert is true when the canonical pair is the reciprocal of
@@ -279,7 +284,15 @@ func (r *ChainlinkReference) LookupPrice(ctx context.Context, pair canonical.Pai
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	respBody, err := io.ReadAll(resp.Body)
+	// Bound the response body: a latestRoundData JSON-RPC reply is
+	// ~320 bytes, so cap generously at 64 KiB (matching the Dashboard
+	// fetcher). An operator may point rpc_url at a third-party public
+	// Ethereum RPC (eth.llamarpc.com / rpc.ankr.com, per the docstring),
+	// and this reference runs inside the internet-facing API + aggregator
+	// processes — an unbounded io.ReadAll on a misbehaving/huge body
+	// would OOM them. Every sibling fetcher in this package already caps.
+	const maxBody = 64 << 10
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
 	if err != nil {
 		return 0, fmt.Errorf("chainlink: read body: %w", err)
 	}
