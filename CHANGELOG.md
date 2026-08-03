@@ -16,6 +16,16 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **`/v1/markets` and `/v1/pools` asset filters no longer return an
+  authoritative empty list for accepted alias spellings** (cold audit,
+  confirmed on r1): both validated `?asset=`/`?base=`/`?quote=` with
+  `canonical.ParseAsset` and then discarded the parsed value, passing
+  the raw string to a SQL `=` predicate and to the 60s cache key. Since
+  ParseAsset deliberately accepts bare `XLM`/`NATIVE` and Horizon-style
+  `CODE:ISSUER`, those spellings matched nothing — measured on r1,
+  `?asset=XLM` returned 0 rows while `?asset=native` returned 5, and the
+  empty page was cached under its own key. The filters now reach SQL in
+  their canonical spelling.
 - **The magic-link and signup per-email caps are no longer bypassable by
   re-spelling the address** (cold audit): both hashed the raw input after
   only case+trim, so `victim@x.com`, `<victim@x.com>` and

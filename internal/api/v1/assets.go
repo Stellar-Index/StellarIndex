@@ -1859,10 +1859,21 @@ func normaliseAssetIDInput(raw string) string {
 //     C… | fiat:CODE) and serve the per-Stellar-asset view.
 //
 // Slug lookup is case-insensitive (via Catalogue.LookupBySlug) and
-// runs before canonical-id parsing — slugs never collide with
-// canonical-id shapes because canonical ids have anchored prefixes
-// (a single bare ticker like "usdc" doesn't parse as any canonical
-// shape, so dispatch order is the only deciding factor).
+// runs before canonical-id parsing. For almost every slug that is
+// unambiguous: canonical ids have anchored prefixes, so a bare ticker
+// like "usdc" doesn't parse as any canonical shape and dispatch order
+// is the only deciding factor.
+//
+// ONE slug genuinely collides: "xlm". canonical.ParseAsset accepts bare
+// "XLM"/"NATIVE" as the native asset (added so CoinGecko/CMC users can
+// type what they know), and the catalogue also carries slug "xlm" — so
+// /v1/assets/XLM serves GlobalAssetView (ticker + price_usd) while
+// /v1/assets/native serves AssetDetail (asset_id + type). Confirmed on
+// r1, cold audit 2026-08-03. That IS the documented dual-shape contract
+// for this route (clients discriminate on the wire shape), but a caller
+// who reasonably treats "XLM" as an asset id gets a payload with no
+// asset_id field. Note normalizeXLMAliases on the parsed branch never
+// runs for this input because the slug branch short-circuits first.
 func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	rawID := normaliseAssetIDInput(r.PathValue("asset_id"))
 
