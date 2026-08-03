@@ -171,6 +171,21 @@ type Quote struct {
 func BuildEdges(quotes []Quote) ([]RouteLeg, error) {
 	edges := make([]RouteLeg, 0, len(quotes)*2)
 	seen := make(map[string]struct{}, len(quotes))
+	// Deterministic dedup: the orchestrator builds `quotes` by ranging a
+	// Go map, so without this the "first quote seen per undirected
+	// market" winner below is chosen by RANDOMIZED map-iteration order.
+	// For a market quoted in BOTH orientations (XLM/USD and USD/XLM) the
+	// two VWAPs are generally non-reciprocal, so the surviving edge — and
+	// every served cross routing through it — would flip between ticks
+	// and DIVERGE across regions, violating the ADR-0018
+	// all-regions-serve-the-same-rate invariant. Sort by pair string
+	// first so the dedup winner is stable. Not reachable in the shipped
+	// single-orientation chain config, but a latent trap with no other
+	// guard (audit 2026-08-03). Safe to sort in place — the caller hands
+	// a freshly-built slice each tick.
+	sort.SliceStable(quotes, func(i, j int) bool {
+		return quotes[i].Pair.String() < quotes[j].Pair.String()
+	})
 	for _, q := range quotes {
 		if q.Price == nil || q.Price.Sign() <= 0 {
 			return nil, fmt.Errorf("%w: pair %s", ErrLegNonPositive, q.Pair)

@@ -51,11 +51,15 @@
 //
 // # Triangulation
 //
-// Cross-pair chains (XLM/USD × USD/EUR = XLM/EUR) live in
-// [Triangulate] / [TriangulateChain] in this package, with the
-// X2.5 forex-snap rule for chained-fiat pairs (per F-0014). The
-// orchestrator's [Triangulations] field drives a per-tick pass
-// after direct-pair refreshes have populated the leg cache.
+// Cross-pair chains (XLM/USD × USD/EUR = XLM/EUR) are priced by the
+// graph router — [BuildEdges] builds the edge set from the
+// freshly-cached leg VWAPs and [CombineRoutes]/[CompositeRate]
+// enumerates and composites the best route — with the X2.5 forex-snap
+// rule for chained-fiat pairs (per F-0014). The orchestrator's
+// [Triangulations] field drives a per-tick pass after direct-pair
+// refreshes have populated the leg cache. ([Triangulate] /
+// [TriangulateChain] are the older direct-multiply helpers, kept for
+// reference/tests but NOT on the serving path — the router is.)
 //
 // # What this package deliberately doesn't do
 //

@@ -322,9 +322,14 @@ type Config struct {
 	// Triangulations is the operator-configured set of chain pricing
 	// entries. After the per-(pair, window) refresh loop runs in
 	// each Tick, the orchestrator iterates each chain, reads each
-	// leg's freshly-cached VWAP, multiplies via
-	// aggregate.TriangulateChain, and writes the implied target
-	// VWAP to its own cache key. Empty (default) = no triangulation.
+	// leg's freshly-cached VWAP, and prices the target through the
+	// graph router (aggregate.BuildEdges → CombineRoutes/CompositeRate,
+	// which enumerates + composites the best route), writing the implied
+	// target VWAP to its own cache key. Empty (default) = no
+	// triangulation. (NOTE: aggregate.Triangulate/TriangulateChain are
+	// the old direct-multiply helpers and are NOT on this path — they
+	// have no non-test callers; the live math is the router. Corrected
+	// 2026-08-03.)
 	//
 	// Cardinality: each chain contributes len(Windows) cache keys
 	// per tick. Operators tune the chain set explicitly — eager
