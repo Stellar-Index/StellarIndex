@@ -453,7 +453,7 @@ func tradeFromEvent(ev consumer.Event) (canonical.Trade, bool) {
 // of this comment cited an "ADR-0030 lint guard" that never existed.
 func IsProjectedEvent(ev consumer.Event) bool {
 	switch ev.(type) {
-	case soroswap.TradeEvent, soroswap.SkimEvent,
+	case soroswap.TradeEvent, soroswap.SkimEvent, soroswap.LiquidityEvent,
 		aquarius.TradeEvent, aquarius.ReservesEvent, aquarius.LiquidityEvent,
 		aquarius.RewardsEvent, aquarius.AdminEvent,
 		phoenix.TradeEvent, phoenix.LiquidityEvent, phoenix.StakeEvent,
@@ -791,6 +791,8 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 		return nil
 	case soroswap.SkimEvent:
 		return persistSoroswapSkim(ctx, logger, store, e)
+	case soroswap.LiquidityEvent:
+		return persistSoroswapLiquidity(ctx, logger, store, e)
 	case aquarius.TradeEvent:
 		persistTrade(ctx, logger, store, e.Trade)
 		return nil
@@ -1805,6 +1807,44 @@ func persistSoroswapSkim(ctx context.Context, logger *slog.Logger, store *timesc
 		"contract_id", e.ContractID, "ledger", e.Ledger,
 		"amount_0", e.Amount0.String(), "amount_1", e.Amount1.String(),
 		"to", e.To)
+	return nil
+}
+
+func persistSoroswapLiquidity(ctx context.Context, logger *slog.Logger, store *timescale.Store, e soroswap.LiquidityEvent) error {
+	txHash, err := timescale.DecodeSoroswapTxHash(e.TxHash)
+	if err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(soroswap.SourceName, "soroswap_liquidity").Inc()
+		logger.Error("decode soroswap liquidity tx_hash failed",
+			"contract_id", e.ContractID, "ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
+		return err
+	}
+	if err := store.InsertSoroswapLiquidity(ctx, timescale.SoroswapLiquidityEvent{
+		Pair:            e.ContractID,
+		Ledger:          e.Ledger,
+		LedgerCloseTime: e.ObservedAt,
+		TxHash:          txHash,
+		OpIndex:         int16(e.OpIndex),
+		EventIndex:      int16(e.EventIndex),
+		Action:          e.Action,
+		Provider:        e.To,
+		Token0:          e.Token0,
+		Token1:          e.Token1,
+		Amount0:         e.Amount0.String(),
+		Amount1:         e.Amount1.String(),
+		Liquidity:       e.Liquidity.String(),
+		NewReserve0:     e.NewReserve0.String(),
+		NewReserve1:     e.NewReserve1.String(),
+	}); err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(soroswap.SourceName, "soroswap_liquidity").Inc()
+		logger.Error("insert soroswap liquidity event failed",
+			"contract_id", e.ContractID, "ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
+		return err
+	}
+	bumpEntryCount(ctx, logger, store, soroswap.SourceName)
+	logger.Debug("soroswap liquidity event ingested",
+		"contract_id", e.ContractID, "ledger", e.Ledger, "action", e.Action,
+		"amount_0", e.Amount0.String(), "amount_1", e.Amount1.String(),
+		"liquidity", e.Liquidity.String(), "provider", e.To)
 	return nil
 }
 

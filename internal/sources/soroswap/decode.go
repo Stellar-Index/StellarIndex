@@ -248,7 +248,75 @@ var (
 	decodeSwapAmounts = sdkDecodeSwapAmounts
 	decodeNewPair     = sdkDecodeNewPair
 	decodeSkim        = sdkDecodeSkim
+	decodeLiquidity   = sdkDecodeLiquidity
 )
+
+// LiquidityFields is the decoded body shared by the Soroswap pair
+// `deposit` and `withdraw` events. Both are the same #[contracttype]
+// struct on the wire:
+//
+//	{ amount_0: i128, amount_1: i128, liquidity: i128,
+//	  new_reserve_0: i128, new_reserve_1: i128, to: Address }
+//
+// verified byte-exact against mainnet lake bodies (deposit ledger
+// 63,181,271; withdraw ledger 62,940,668).
+type LiquidityFields struct {
+	Amount0     canonical.Amount // token0 added (deposit) / removed (withdraw)
+	Amount1     canonical.Amount // token1 added (deposit) / removed (withdraw)
+	Liquidity   canonical.Amount // LP shares minted (deposit) / burned (withdraw)
+	NewReserve0 canonical.Amount // post-state reserve0
+	NewReserve1 canonical.Amount // post-state reserve1
+	To          string           // LP provider strkey
+}
+
+// sdkDecodeLiquidity decodes a Soroswap pair deposit/withdraw body.
+// Same Map-by-field-name path as sdkDecodeSwapAmounts — a positional
+// decode would break silently if a future WASM upgrade reorders or
+// adds a field (contract-schema-evolution.md decode-by-name rule).
+func sdkDecodeLiquidity(valueB64 string) (LiquidityFields, error) {
+	body, err := scval.Parse(valueB64)
+	if err != nil {
+		return LiquidityFields{}, fmt.Errorf("parse body: %w", err)
+	}
+	entries, err := scval.AsMap(body)
+	if err != nil {
+		return LiquidityFields{}, fmt.Errorf("body not a Map: %w", err)
+	}
+	var out LiquidityFields
+	for _, field := range []struct {
+		name string
+		dst  *canonical.Amount
+	}{
+		{"amount_0", &out.Amount0},
+		{"amount_1", &out.Amount1},
+		{"liquidity", &out.Liquidity},
+		{"new_reserve_0", &out.NewReserve0},
+		{"new_reserve_1", &out.NewReserve1},
+	} {
+		sv, err := scval.MustMapField(entries, field.name)
+		if err != nil {
+			return LiquidityFields{}, fmt.Errorf("LiquidityEvent.%s: %w", field.name, err)
+		}
+		amt, err := scval.AsAmountFromI128(sv)
+		if err != nil {
+			return LiquidityFields{}, fmt.Errorf("LiquidityEvent.%s: %w", field.name, err)
+		}
+		*field.dst = amt
+	}
+	// `to` is the LP provider — present on both deposit and withdraw
+	// bodies. A missing/wrong-shape value is an error worth surfacing
+	// (unlike skim's optional `to`).
+	toSv, err := scval.MustMapField(entries, "to")
+	if err != nil {
+		return LiquidityFields{}, fmt.Errorf("LiquidityEvent.to: %w", err)
+	}
+	toStr, err := scval.AsAddressStrkey(toSv)
+	if err != nil {
+		return LiquidityFields{}, fmt.Errorf("LiquidityEvent.to: %w", err)
+	}
+	out.To = toStr
+	return out, nil
+}
 
 // sdkDecodeSwapAmounts decodes the SwapEvent body. Pulls all four
 // amount fields by name from the top-level Map — positional decode

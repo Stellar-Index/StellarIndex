@@ -174,6 +174,13 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// stretches are genuine rarity, not a decoder gap. 700K override
 	// sits above the observed natural envelope.
 	{Source: "soroswap-skim", Table: "soroswap_skim_events", LedgerColumn: "ledger", Genesis: 50_746_266, MinGapSizeOverride: 700000},
+	// soroswap-liquidity: pair deposit/withdraw (LP add/remove) are
+	// sparse — 156 events across the recent ~1M-ledger window (deposit
+	// 132, withdraw 24), single-digit/day like skim. Large override so a
+	// genuinely quiet LP stretch doesn't read as a decoder outage.
+	// Genesis = soroswap protocol genesis (same as skim/trades). Added
+	// 2026-08-03 with migration 0127 (deposit/withdraw drop closed).
+	{Source: "soroswap-liquidity", Table: "soroswap_liquidity", LedgerColumn: "ledger", Genesis: 50_746_266, MinGapSizeOverride: 700000},
 	// soroswap-router: router invocations dispatched via
 	// dispatcher.ContractCallDecoder (router itself emits no
 	// Soroban events, hence no soroban_events landing). Per-source
