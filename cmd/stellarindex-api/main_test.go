@@ -16,8 +16,10 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"github.com/stellar/go-stellar-sdk/keypair"
 
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/auth/sep10"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/divergence"
@@ -281,6 +283,103 @@ func TestBuildAPIKeyValidator_BothFlagStates(t *testing.T) {
 		v := buildAPIKeyValidator(authValidatorOptions{Backend: "postgres", Rdb: rdb, PostgresValidator: nil}, logger, "apikey")
 		if _, ok := v.(auth.NoopAPIKeyValidator); !ok {
 			t.Fatalf("got %T, want auth.NoopAPIKeyValidator (postgres backend without the dashboard bundle must fail loud)", v)
+		}
+	})
+}
+
+// TestResolveSEP10Validator_WiringByConfiguration pins the F-1224 SEP-10
+// wiring reconciliation. The pre-fix two-phase dance (build with a nil Redis
+// client at phase 1, "rebuild" behind an `if !isNoop` guard that was never
+// true at phase 2) meant a CONFIGURED SEP-10 deployment NEVER got the guarded
+// (replay-protected) validator — it either refused to boot (auth_mode=sep10)
+// or silently 503'd every SEP-10 endpoint (Noop), and the rebuild's failure
+// branch was a latent fail-open. This asserts the corrected wiring:
+//
+//   - configured (seed+jwt env) + Redis      → *sep10.Validator (GUARDED),
+//     in every auth_mode. (Pre-fix: Noop — this case is the red one.)
+//   - configured + NO Redis + auth_mode=sep10 → hard error (ErrReplayGuardUnavailable);
+//     never a guard-free validator.
+//   - configured + NO Redis + other mode      → Noop (503), binary still boots.
+//   - unconfigured (no seed/jwt env)          → Noop (503), binary still boots
+//     (the common r1 auth_mode=apikey_optional case).
+func TestResolveSEP10Validator_WiringByConfiguration(t *testing.T) {
+	server, err := keypair.Random()
+	if err != nil {
+		t.Fatalf("keypair.Random: %v", err)
+	}
+	const (
+		seedEnv = "TEST_SEP10_SEED"
+		jwtEnv  = "TEST_SEP10_JWT"
+	)
+	configured := config.SEP10Config{
+		SeedEnv:       seedEnv,
+		JWTSecretEnv:  jwtEnv,
+		WebAuthDomain: "auth.stellarindex.test",
+		HomeDomain:    "stellarindex.test",
+		ChallengeTTL:  15 * time.Minute,
+		JWTTTL:        time.Hour,
+	}
+	setConfiguredEnv := func(t *testing.T) {
+		t.Helper()
+		t.Setenv(seedEnv, server.Seed())
+		t.Setenv(jwtEnv, "test-jwt-secret-must-be-32-bytes-or-more!!")
+	}
+
+	t.Run("configured + Redis → guarded validator (every auth_mode)", func(t *testing.T) {
+		setConfiguredEnv(t)
+		mr := miniredis.RunT(t)
+		rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+		t.Cleanup(func() { _ = rdb.Close() })
+
+		for _, mode := range []string{"apikey_optional", "sep10"} {
+			v, err := resolveSEP10Validator(configured, mode, rdb, discardLogger())
+			if err != nil {
+				t.Fatalf("mode=%s: unexpected error: %v", mode, err)
+			}
+			if _, ok := v.(*sep10.Validator); !ok {
+				t.Fatalf("mode=%s: got %T, want *sep10.Validator (guarded, replay-protected)", mode, v)
+			}
+			if _, isNoop := v.(auth.NoopSEP10Validator); isNoop {
+				t.Fatalf("mode=%s: a configured deployment WITH Redis must not get the Noop (503) validator", mode)
+			}
+		}
+	})
+
+	t.Run("configured + NO Redis + auth_mode=sep10 → fail closed", func(t *testing.T) {
+		setConfiguredEnv(t)
+		v, err := resolveSEP10Validator(configured, "sep10", nil, discardLogger())
+		if err == nil {
+			t.Fatalf("expected fail-closed error, got validator %T", v)
+		}
+		if !errors.Is(err, sep10.ErrReplayGuardUnavailable) {
+			t.Errorf("err = %v, want wrap of sep10.ErrReplayGuardUnavailable", err)
+		}
+		if v != nil {
+			t.Errorf("must return a nil validator on the error path (never a guard-free one), got %T", v)
+		}
+	})
+
+	t.Run("configured + NO Redis + auth_mode=apikey_optional → Noop, boots", func(t *testing.T) {
+		setConfiguredEnv(t)
+		v, err := resolveSEP10Validator(configured, "apikey_optional", nil, discardLogger())
+		if err != nil {
+			t.Fatalf("must degrade to Noop (not abort boot) outside auth_mode=sep10: %v", err)
+		}
+		if _, ok := v.(auth.NoopSEP10Validator); !ok {
+			t.Errorf("got %T, want auth.NoopSEP10Validator (503 on SEP-10 endpoints, never guard-free)", v)
+		}
+	})
+
+	t.Run("unconfigured → Noop, boots", func(t *testing.T) {
+		v, err := resolveSEP10Validator(config.SEP10Config{
+			WebAuthDomain: "auth.stellarindex.test",
+			HomeDomain:    "stellarindex.test",
+		}, "apikey_optional", nil, discardLogger())
+		if err != nil {
+			t.Fatalf("an unconfigured SEP-10 deployment must boot with the Noop, got error: %v", err)
+		}
+		if _, ok := v.(auth.NoopSEP10Validator); !ok {
+			t.Errorf("got %T, want auth.NoopSEP10Validator", v)
 		}
 	})
 }

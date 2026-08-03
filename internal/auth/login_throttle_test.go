@@ -49,6 +49,41 @@ func newLoginThrottle(t *testing.T, opts auth.LoginThrottleOptions) (*auth.Redis
 	return auth.NewRedisLoginThrottle(rdb, opts), outage
 }
 
+// TestLoginThrottle_PerEmailCapIsCaseAndWhitespaceInsensitive is the LOW
+// finding: hashEmail normalises (lower-case + trim) internally, so the
+// per-target-email cap can't be walked by re-spelling the address. Pre-fix
+// hashEmail hashed the raw bytes, so "Victim@X.com " and "victim@x.com"
+// landed on DIFFERENT buckets and each got a fresh budget — the caller
+// happened to lower-case, but the throttle's own invariant was not
+// self-enforcing. Against a MaxPerEmail=2 cap, four sends split across two
+// spellings of one inbox must be denied once the shared bucket is full.
+func TestLoginThrottle_PerEmailCapIsCaseAndWhitespaceInsensitive(t *testing.T) {
+	tt, _ := newLoginThrottle(t, auth.LoginThrottleOptions{
+		MaxPerIP:    100, // isolate the per-email dimension
+		MaxPerEmail: 2,
+		Window:      time.Hour,
+	})
+	ctx := context.Background()
+
+	// Two spellings of the SAME inbox. A different IP each time so only the
+	// per-email cap can bound the total.
+	spellings := []string{"Victim@X.com ", "victim@x.com", "VICTIM@X.COM", " victim@x.com"}
+	sends := 0
+	for i, email := range spellings {
+		ok, err := tt.Allow(ctx, "203.0.113."+string(rune('1'+i)), email)
+		if err != nil {
+			t.Fatalf("send %d (%q): unexpected error: %v", i, email, err)
+		}
+		if ok {
+			sends++
+		}
+	}
+	if sends != 2 {
+		t.Fatalf("re-spelling one inbox across case/whitespace got %d sends through a 2/window "+
+			"per-email cap; hashEmail must normalise so all spellings share one bucket", sends)
+	}
+}
+
 // TestLoginThrottle_AllowsUpToCapThenDenies pins the baseline contract
 // the outage tests below build on: the (Max+1)th magic-link send for one
 // target inbox is denied, and a denial is reported as (false, nil) so the

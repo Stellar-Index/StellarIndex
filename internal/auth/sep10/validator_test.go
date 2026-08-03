@@ -332,6 +332,42 @@ func TestVerifyJWT_ExpiredToken(t *testing.T) {
 	}
 }
 
+// TestVerifyJWT_RejectsFutureNbf is the INFO finding: issueJWT stamps an
+// `nbf` (not-before) claim but VerifyJWT pre-fix only checked `exp`, so a
+// token whose validity window hadn't opened yet was accepted. Here we mint a
+// token at t0 and verify it from a clock BEFORE t0 — its nbf (== iat == t0)
+// is in the future, so it must be rejected. Mirrors the exp check's strict
+// (no-leeway) posture; the error is a wrap of ErrUnauthorized per VerifyJWT's
+// documented "any other validation failure" vocabulary.
+func TestVerifyJWT_RejectsFutureNbf(t *testing.T) {
+	v, _, clk := newTestValidator(t)
+	client, _ := keypair.Random()
+
+	// Issue at the validator's current time.
+	ch, _ := v.Challenge(context.Background(), client.Address())
+	signedXDR := signChallenge(t, ch.TransactionXDR, client)
+	tok, err := v.Verify(context.Background(), signedXDR)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+
+	// Move the clock BACK so the token's nbf (== its iat) is now in the
+	// future relative to "now". A well-behaved verifier must not accept a
+	// token that isn't valid yet.
+	clk.Advance(-10 * time.Minute)
+
+	if _, err := v.VerifyJWT(context.Background(), tok.JWT); !errors.Is(err, auth.ErrUnauthorized) {
+		t.Errorf("VerifyJWT on a token with future nbf: err = %v, want wrap of ErrUnauthorized", err)
+	}
+
+	// Sanity: at/after nbf the same token verifies — the check rejects only
+	// the not-yet-valid window, it doesn't reject valid tokens.
+	clk.Advance(10 * time.Minute)
+	if _, err := v.VerifyJWT(context.Background(), tok.JWT); err != nil {
+		t.Errorf("VerifyJWT at issuance time: unexpected error %v (token should be valid once nbf has passed)", err)
+	}
+}
+
 // TestVerifyJWT_TamperedSignature — flipping bits in the signature
 // portion fails with ErrUnauthorized via constant-time compare.
 func TestVerifyJWT_TamperedSignature(t *testing.T) {
