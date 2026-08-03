@@ -123,3 +123,62 @@ func TestParseTimestamp_NoneParseable(t *testing.T) {
 		t.Fatal("expected error for unparseable inputs, got nil")
 	}
 }
+
+// An out-of-enum severity or status must fail the post loudly rather
+// than shipping through. The OpenAPI contract declares both as required
+// enums, and every downstream severity mapping is a ternary chain whose
+// final branch renders "maintenance" — GREEN on the public status page.
+// So a one-keystroke slip (`sev-1`) used to publish an ongoing SEV-1
+// looking like routine maintenance, while also breaking the typed
+// clients (cold audit 2026-08-03).
+func TestParseFile_RejectsOutOfEnumSeverityAndStatus(t *testing.T) {
+	t.Parallel()
+
+	const good = `---
+title: Test
+severity: SEV-1
+status: investigating
+started_at: 2026-05-06T10:00:00Z
+---
+body
+`
+	if _, err := parseSource("2026-05-06-x.md", good); err != nil {
+		t.Fatalf("valid post rejected: %v", err)
+	}
+
+	for name, frontmatter := range map[string]string{
+		"lowercase severity": "severity: sev-1\nstatus: investigating",
+		"unknown severity":   "severity: SEV-9\nstatus: investigating",
+		"missing severity":   "status: investigating",
+		"capitalised status": "severity: SEV-1\nstatus: Investigating",
+		"unknown status":     "severity: SEV-1\nstatus: pending",
+		"missing status":     "severity: SEV-1",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			src := "---\ntitle: Test\n" + frontmatter + "\nstarted_at: 2026-05-06T10:00:00Z\n---\nbody\n"
+			if _, err := parseSource("2026-05-06-x.md", src); err == nil {
+				t.Errorf("accepted an out-of-enum post — it would publish with a green badge")
+			}
+		})
+	}
+}
+
+// A malformed resolved_at must fail rather than silently publishing a
+// RESOLVED incident as never-resolved.
+func TestParseFile_RejectsMalformedResolvedAt(t *testing.T) {
+	t.Parallel()
+
+	src := `---
+title: Test
+severity: SEV-2
+status: resolved
+started_at: 2026-05-06T10:00:00Z
+resolved_at: not-a-date
+---
+body
+`
+	if _, err := parseSource("2026-05-06-x.md", src); err == nil {
+		t.Error("accepted a malformed resolved_at — the incident publishes as never-resolved")
+	}
+}
