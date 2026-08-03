@@ -32,6 +32,9 @@ type stubExplorerReader struct {
 	wealth         []clickhouse.AccountWealth
 	pairStates     map[string]clickhouse.SoroswapPairState
 	tokenDisplays  map[string]clickhouse.TokenDisplayMeta
+	// tokenDisplaysErr fails ONLY TokenDisplays, so tests can exercise a
+	// display-lookup outage while the reserve read itself succeeds.
+	tokenDisplaysErr error
 	nativeLPStates map[string]clickhouse.NativeLiquidityPoolState
 	nativeLPRanked []clickhouse.NativeLiquidityPoolState
 	movements      []clickhouse.AccountMovementRow
@@ -157,6 +160,9 @@ func (s *stubExplorerReader) SoroswapPairReserves(_ context.Context, _ []string)
 }
 
 func (s *stubExplorerReader) TokenDisplays(_ context.Context, _ []string) (map[string]clickhouse.TokenDisplayMeta, error) {
+	if s.tokenDisplaysErr != nil {
+		return nil, s.tokenDisplaysErr
+	}
 	return s.tokenDisplays, s.err
 }
 
