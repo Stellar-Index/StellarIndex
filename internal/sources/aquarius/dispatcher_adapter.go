@@ -2,6 +2,7 @@ package aquarius
 
 import (
 	"errors"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
@@ -64,6 +65,7 @@ func (*Decoder) Name() string { return SourceName }
 func (d *Decoder) Matches(ev events.Event) bool {
 	switch classify(&ev) {
 	case EventTrade, EventUpdateReserves, EventReservesSync, EventDepositLiquidity, EventWithdrawLiquidity,
+		EventSetProtocolFee, EventClaimProtocolFee,
 		EventPoolState, EventClaimReward, EventSetRewardsConfig, EventPositionUpdate,
 		EventGaugeDeposit, EventClaimFees, EventRewardsGaugeClaim, EventGaugeClaim,
 		EventRewardsGaugeScheduleReward, EventSetRewardsState, EventRewardsGaugeAdd:
@@ -129,6 +131,8 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 			return nil, err
 		}
 		return []consumer.Event{rv}, nil
+	case EventSetProtocolFee, EventClaimProtocolFee:
+		return emitFee(&ev, closedAt, kind)
 	case EventDepositLiquidity:
 		lq, err := decodeLiquidity(&ev, LiquidityDeposit, closedAt)
 		if err != nil {
@@ -174,4 +178,15 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		}
 		return []consumer.Event{TradeEvent{Trade: trade}}, nil
 	}
+}
+
+// emitFee decodes a protocol-fee event (set_protocol_fee /
+// claim_protocol_fee) into a single FeeEvent. Extracted from Decode to
+// keep its cognitive complexity under the gocognit ceiling.
+func emitFee(ev *events.Event, closedAt time.Time, kind string) ([]consumer.Event, error) {
+	fe, err := decodeFee(ev, closedAt, kind)
+	if err != nil {
+		return nil, err
+	}
+	return []consumer.Event{fe}, nil
 }

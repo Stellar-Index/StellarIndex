@@ -227,6 +227,37 @@ func (AdminEvent) EventKind() string { return "aquarius.admin" }
 // Source implements [consumer.Event].
 func (AdminEvent) Source() string { return SourceName }
 
+// FeeEvent is a protocol-fee treasury event — set_protocol_fee (the
+// per-token old→new fee transition) or claim_protocol_fee (an accrued
+// fee swept to a recipient). One consumer type discriminated by Kind;
+// the sink lands it in aquarius_protocol_fee (migration 0129). Fields
+// are populated per Kind: the four Fee* on set_protocol_fee, Recipient
+// + Amount on claim_protocol_fee.
+type FeeEvent struct {
+	ContractID string
+	Ledger     uint32
+	TxHash     string
+	OpIndex    uint32
+	EventIndex uint32
+	ObservedAt time.Time
+	Kind       string // EventSetProtocolFee | EventClaimProtocolFee
+	// set_protocol_fee — per-token old→new protocol fee (u32).
+	Fee0New uint32
+	Fee0Old uint32
+	Fee1New uint32
+	Fee1Old uint32
+	// claim_protocol_fee — the fee-sweep destination + swept amount
+	// (i128, per ADR-0003). One event per token claimed.
+	Recipient string
+	Amount    canonical.Amount
+}
+
+// EventKind implements [consumer.Event].
+func (FeeEvent) EventKind() string { return "aquarius.fee" }
+
+// Source implements [consumer.Event].
+func (FeeEvent) Source() string { return SourceName }
+
 // Compile-time checks that the emitted types satisfy consumer.Event.
 var (
 	_ consumer.Event = TradeEvent{}
@@ -234,4 +265,5 @@ var (
 	_ consumer.Event = LiquidityEvent{}
 	_ consumer.Event = RewardsEvent{}
 	_ consumer.Event = AdminEvent{}
+	_ consumer.Event = FeeEvent{}
 )

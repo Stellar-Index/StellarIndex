@@ -455,7 +455,7 @@ func IsProjectedEvent(ev consumer.Event) bool {
 	switch ev.(type) {
 	case soroswap.TradeEvent, soroswap.SkimEvent, soroswap.LiquidityEvent,
 		aquarius.TradeEvent, aquarius.ReservesEvent, aquarius.LiquidityEvent,
-		aquarius.RewardsEvent, aquarius.AdminEvent,
+		aquarius.RewardsEvent, aquarius.AdminEvent, aquarius.FeeEvent,
 		phoenix.TradeEvent, phoenix.LiquidityEvent, phoenix.StakeEvent,
 		comet.TradeEvent, comet.LiquidityEvent,
 		reflector.UpdateEvent, redstone.UpdateEvent,
@@ -804,6 +804,8 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 		return persistAquariusRewards(ctx, logger, store, e)
 	case aquarius.AdminEvent:
 		return persistAquariusAdmin(ctx, logger, store, e)
+	case aquarius.FeeEvent:
+		return persistAquariusFee(ctx, logger, store, e)
 	case phoenix.TradeEvent:
 		persistTrade(ctx, logger, store, e.Trade)
 		return nil
@@ -1268,6 +1270,37 @@ func persistAquariusReserves(ctx context.Context, logger *slog.Logger, store *ti
 	logger.Debug("Aquarius reserves ingested",
 		"source", aquarius.SourceName, "contract_id", e.ContractID,
 		"ledger", e.Ledger, "tokens", len(e.Reserves))
+	return nil
+}
+
+func persistAquariusFee(ctx context.Context, logger *slog.Logger, store *timescale.Store, e aquarius.FeeEvent) error {
+	row := timescale.AquariusProtocolFeeEvent{
+		ContractID:      e.ContractID,
+		Ledger:          e.Ledger,
+		LedgerCloseTime: e.ObservedAt,
+		TxHash:          e.TxHash,
+		OpIndex:         e.OpIndex,
+		EventIndex:      e.EventIndex,
+		Kind:            e.Kind,
+	}
+	if e.Kind == aquarius.EventSetProtocolFee {
+		row.Fee0New, row.Fee0Old = e.Fee0New, e.Fee0Old
+		row.Fee1New, row.Fee1Old = e.Fee1New, e.Fee1Old
+	} else {
+		row.Recipient = e.Recipient
+		row.Amount = e.Amount.String()
+	}
+	if err := store.InsertAquariusProtocolFee(ctx, row); err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(aquarius.SourceName, "aquarius_protocol_fee").Inc()
+		logger.Error("insert Aquarius protocol fee failed",
+			"contract_id", e.ContractID, "ledger", e.Ledger,
+			"tx_hash", e.TxHash, "kind", e.Kind, "err", err)
+		return err
+	}
+	bumpEntryCount(ctx, logger, store, aquarius.SourceName)
+	logger.Debug("Aquarius protocol fee ingested",
+		"source", aquarius.SourceName, "contract_id", e.ContractID,
+		"ledger", e.Ledger, "kind", e.Kind)
 	return nil
 }
 

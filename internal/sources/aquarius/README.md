@@ -182,19 +182,21 @@ The pool-flow topics are decoded and **PROJECTED**: `trade`
 (→ `aquarius_liquidity`), `update_reserves` (→ `aquarius_reserves`),
 `reserves_sync` (→ `aquarius_reserves_sync`, migration 0128 — a
 DISTINCT reserve-sync signal, verified to carry different values from
-update_reserves on the same tx), the rewards-gauge surface
+update_reserves on the same tx), `set_protocol_fee` /
+`claim_protocol_fee` (→ `aquarius_protocol_fee`, migration 0129 —
+kind-discriminated), the rewards-gauge surface
 (→ `aquarius_rewards_events`), the router governance/upgrade surface
 (→ `aquarius_admin`), and `add_pool` (registers the pool).
 
-`set_protocol_fee` / `claim_protocol_fee` and the `kill_*` / `unkill_*`
-circuit-breaker family are **RECOGNIZED ONLY**, NOT projected:
-`classify()` names them (so the full topic set is audited and none is
-silently unmatched) but `Matches()` returns false, so no row is stored.
-These are governance switches carrying no flow data. This is
+The `kill_*` / `unkill_*` circuit-breaker family is **RECOGNIZED
+ONLY**, NOT projected: `classify()` names them (so the full topic set
+is audited and none is silently unmatched) but `Matches()` returns
+false, so no row is stored. They are governance switches with no flow
+data and 0 occurrences on mainnet to date. This is
 recognized-and-intentionally-not-stored — do NOT read it as "handled"
 in the projected sense (corrected 2026-08-03; the prior wording called
 all of these "already handled", which overstated coverage). Projecting
-them is tracked in the every-event completion pass (units B/C).
+them is tracked in the every-event completion pass (unit C).
 
 **Data-quality caveat:** `stellar.contract_events_daily` (the fast
 pre-aggregated path `/v1/protocols/{name}` reads) undercounts by
