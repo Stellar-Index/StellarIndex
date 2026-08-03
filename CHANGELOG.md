@@ -30,6 +30,12 @@ against.
   subjects now flow through both gates; a default full-privilege operator key
   (empty scopes, all-permissions) is unchanged, and admin access stays gated on
   operator tier, not scope.
+- **Webhook SSRF guard closes IPv6 translation/legacy bypasses** (webhook audit) —
+  the dial-time SSRF block-list blocked NAT64 (`64:ff9b::/96`) but missed the
+  sibling 6to4 (`2002::/16`), IPv4-compatible (`::a.b.c.d`), and site-local
+  (`fec0::/10`) forms, so an IPv6 address embedding a private/loopback/cloud-metadata
+  IPv4 could slip past to a customer-controlled webhook URL. All three are now
+  blocked (fail-safe additions; public IPv6/IPv4 unaffected).
 - **SEP-10 validator wiring is fail-closed** (auth audit) — the two-phase
   construction never wired the replay-guarded validator for a configured
   deployment and had a latent fail-open rebuild path (a boot-time Redis error
@@ -57,6 +63,15 @@ against.
   at genesis). Corrected the misleading `StreamContractEventsFiltered` `useFinal`
   doc (counting consumers may pass `false` with in-Go adjacent-dedup, as the
   reconcile does).
+- **Webhook delivery worker hardening** (webhook audit) — the serial delivery batch
+  could outlive the store's 5-minute claim lease and cause double-deliveries under
+  slow endpoints (default `BatchLimit` 100→25, a per-attempt deadline, and a
+  compile-time `BatchLimit × Timeout < lease` guard); backoff now has full jitter
+  (no synchronized retry waves); an empty signing secret is now a terminal
+  misconfiguration rather than a forgeable empty-key HMAC; the backoff shift can't
+  overflow; the response drain is bounded (`LimitReader`); and the retry-window
+  docstring states the actual ~8h/15-attempt window (migration 0027's "72h" is
+  flagged aspirational).
 - **Reflector oracle audit** (decoder found sound — value/scale/i128 exact, gating
   fail-closed, projection wiring complete): a dropped non-positive oracle price is
   now logged instead of silently skipped; the reflector docs no longer claim a

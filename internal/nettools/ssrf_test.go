@@ -49,6 +49,26 @@ func TestIsBlockedIP(t *testing.T) {
 		// silently widened into a public-address blackhole.
 		{"64:ff9a::1", false},
 		{"64:ff9b:2::1", false},
+
+		// 6to4 (RFC 3056, 2002::/16). Bits 16..48 embed a v4 address, so
+		// these wrap cloud-metadata / loopback / RFC 1918 targets and Go's
+		// predicates don't flag them (first byte 0x20).
+		{"2002:a9fe:a9fe::", true}, // 169.254.169.254 — cloud metadata
+		{"2002:7f00:1::", true},    // 127.0.0.1 — loopback
+		{"2002:0a00:0001::", true}, // 10.0.0.1 — RFC 1918
+		// A real 6to4 address wrapping a public v4 is still non-public
+		// (6to4 is deprecated, RFC 7526) — blocking the whole /16 is fail-safe.
+
+		// IPv4-compatible IPv6 (RFC 4291 deprecated, ::/96). Low 32 bits
+		// embed a v4 address; To4() does NOT unwrap this form.
+		{"::a9fe:a9fe", true}, // ::169.254.169.254
+		{"::7f00:1", true},    // ::127.0.0.1
+
+		// Site-local unicast (RFC 3879 deprecated, fec0::/10) — matches
+		// neither IsLinkLocalUnicast nor IsPrivate.
+		{"fec0::1", true},
+		// (Public IPv6 2606:4700:4700::1111 asserted false above proves
+		// ::/96, 2002::/16 and fec0::/10 did not over-block a real dest.)
 	}
 	for _, c := range cases {
 		ip := net.ParseIP(c.ip)

@@ -37,8 +37,23 @@ import (
 //     the ::ffff:0:0/96 IPv4-mapped form), so without these entries every
 //     v4 range above is bypassable by translating it — whenever a NAT64
 //     gateway is on the egress path (C3-110, audit-2026-07-23).
+//   - 2002::/16      — RFC 3056 6to4. Bits 16..48 EMBED a v4 address, so
+//     `2002:a9fe:a9fe::` is 169.254.169.254, `2002:7f00:1::` is 127.0.0.1.
+//     First byte is 0x20, so Go's IsPrivate / IsLinkLocal* don't flag it —
+//     the exact 6to4 mirror of the NAT64 bypass above.
+//   - ::/96          — RFC 4291 deprecated IPv4-compatible IPv6 (`::a.b.c.d`).
+//     The low 32 bits EMBED a v4 address (`::a9fe:a9fe` = 169.254.169.254);
+//     To4() unwraps only the ::ffff:0:0/96 mapped form, NOT this one, so it
+//     reads as generic global-unicast v6 and slips every v4 range above.
+//     `::1` (loopback) and `::` (unspecified) are numerically inside ::/96
+//     but are already blocked by the IsLoopback / IsUnspecified checks that
+//     run BEFORE this list, so they stay blocked for the right reason; real
+//     v4 (e.g. 8.8.8.8) can never match ::/96 because To4() shortens it to
+//     4 bytes and net.IPNet.Contains rejects the length mismatch.
+//   - fec0::/10      — RFC 3879 deprecated site-local unicast. Matches
+//     neither IsLinkLocalUnicast (fe80::/10) nor IsPrivate (fc00::/7).
 var extraBlockedNets = func() []*net.IPNet {
-	out := make([]*net.IPNet, 0, 6)
+	out := make([]*net.IPNet, 0, 9)
 	for _, cidr := range []string{
 		"100.64.0.0/10",
 		"192.0.0.0/24",
@@ -46,6 +61,9 @@ var extraBlockedNets = func() []*net.IPNet {
 		"0.0.0.0/8",
 		"64:ff9b::/96",
 		"64:ff9b:1::/48",
+		"2002::/16",
+		"::/96",
+		"fec0::/10",
 	} {
 		_, n, err := net.ParseCIDR(cidr)
 		if err != nil {
