@@ -315,8 +315,48 @@ type Sep1Image struct {
 // dozen) verified issuers; the API layer caches the result with a TTL so
 // this never runs on the per-request hot path, and applies its own
 // URL-scheme safety filter. Malformed payloads are skipped, not fatal.
+// sep1ImagesFromPayload extracts the currency images one issuer's
+// cached SEP-1 payload is entitled to declare.
+//
+// The provenance rule is the whole point: a currency entry counts only
+// when its declared Issuer equals gStrkey — the account whose
+// stellar.toml actually carried it. Split out of [Store.AllSep1Images]
+// so the rule is testable without a database.
+func sep1ImagesFromPayload(gStrkey, payload string) []Sep1Image {
+	var parsed IssuerSep1Cached
+	if err := json.Unmarshal([]byte(payload), &parsed); err != nil {
+		// One issuer's corrupt payload must not blank the whole map.
+		return nil
+	}
+	out := make([]Sep1Image, 0, len(parsed.Currencies))
+	for _, c := range parsed.Currencies {
+		if c.Image == "" || c.Code == "" || c.Issuer == "" {
+			continue
+		}
+		if c.Issuer != gStrkey {
+			continue
+		}
+		out = append(out, Sep1Image{Code: c.Code, Issuer: c.Issuer, Image: c.Image})
+	}
+	return out
+}
+
 func (s *Store) AllSep1Images(ctx context.Context) ([]Sep1Image, error) {
-	const q = `SELECT sep1_payload FROM issuers WHERE sep1_payload IS NOT NULL`
+	// g_strkey is selected so each currency's DECLARED issuer can be
+	// checked against the account whose stellar.toml actually carried
+	// it. Without that check the map was keyed purely on
+	// TOML-supplied (code, issuer): any Stellar account could publish
+	//
+	//     [[CURRENCIES]] code = "USDC" issuer = "<Circle's G-key>"
+	//                    image = "https://attacker.example/x.png"
+	//
+	// and — since nothing here filtered on org_verified either, and
+	// projectCatalogueRows assigns the result unconditionally — take
+	// over the logo served for USDC on /v1/assets and the explorer
+	// homepage, giving a per-visitor beacon under a verified brand
+	// (cold audit 2026-08-03). A TOML may still describe only the
+	// issuer that served it.
+	const q = `SELECT g_strkey, sep1_payload FROM issuers WHERE sep1_payload IS NOT NULL`
 	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: AllSep1Images: %w", err)
@@ -325,24 +365,17 @@ func (s *Store) AllSep1Images(ctx context.Context) ([]Sep1Image, error) {
 
 	out := make([]Sep1Image, 0, 64)
 	for rows.Next() {
-		var payload sql.NullString
-		if err := rows.Scan(&payload); err != nil {
+		var (
+			gStrkey string
+			payload sql.NullString
+		)
+		if err := rows.Scan(&gStrkey, &payload); err != nil {
 			return nil, fmt.Errorf("timescale: AllSep1Images scan: %w", err)
 		}
 		if !payload.Valid || payload.String == "" {
 			continue
 		}
-		var parsed IssuerSep1Cached
-		if err := json.Unmarshal([]byte(payload.String), &parsed); err != nil {
-			// One issuer's corrupt payload must not blank the whole map.
-			continue
-		}
-		for _, c := range parsed.Currencies {
-			if c.Image == "" || c.Code == "" || c.Issuer == "" {
-				continue
-			}
-			out = append(out, Sep1Image{Code: c.Code, Issuer: c.Issuer, Image: c.Image})
-		}
+		out = append(out, sep1ImagesFromPayload(gStrkey, payload.String)...)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("timescale: AllSep1Images rows: %w", err)

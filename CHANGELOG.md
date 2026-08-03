@@ -16,6 +16,29 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **A hostile `stellar.toml` could hijack the logo shown for any asset**
+  (cold audit): `AllSep1Images` built the global image map from the
+  `issuer` field declared *inside* each TOML and never compared it
+  against the account that actually served the file — it didn't even
+  select `g_strkey`. Any Stellar account could publish a
+  `[[CURRENCIES]]` entry naming Circle's issuer and take over the USDC
+  logo on `/v1/assets` and the explorer homepage, giving a per-visitor
+  beacon under a verified brand. A currency entry now counts only when
+  its declared issuer matches the serving account.
+- **One poisoned issuer could freeze the whole SEP-1 refresh queue**
+  (cold audit): marshal and write failures returned without bumping
+  `sep1_resolved_at`, leaving the row NULL and therefore permanently
+  first in `ORDER BY … NULLS FIRST` — so a single account whose payload
+  never writes starved every issuer behind it on every subsequent run,
+  while the job still exited 0. All failure paths now mark the attempt,
+  matching what the fetch path already did.
+- **`sep1-refresh` now runs under a memory ceiling** (cold audit): it
+  parses attacker-authored TOML, and the parser's cost is superlinear
+  in input size for nested inline tables — a measured 4.5 GB allocation
+  from 38 KB, 10.9 GB RSS from 150 KB. The 1 MiB body cap is a *byte*
+  cap and neither timeout can interrupt a parse. `MemoryMax=2G` +
+  `MemorySwapMax=0` bound it on the host that also runs galexie's
+  captive core.
 - **The public SSE endpoints delivered nothing through the reverse
   proxy** (cold audit + live r1 measurement). The API's own listener
   streams `/v1/price/stream` correctly — `:connected`, `:keepalive` and
