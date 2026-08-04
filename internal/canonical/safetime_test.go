@@ -115,3 +115,37 @@ func TestSafeUnixSeconds_bounds(t *testing.T) {
 		})
 	}
 }
+
+// TestSafeUnix_preEpochCloseTimeKeepsTheCeiling is the regression test
+// for the cold audit of 2026-08-04.
+//
+// The ceiling was computed as uint64(closedAt.Add(window).Unix()). For a
+// pre-1970 closedAt that Unix() is negative, and the unchecked cast
+// wrapped it to ~1.8e19 — disabling the guard entirely. Every raw value
+// including 2^63 then passed the bound and int64(raw) stamped a far-PAST
+// time, which is exactly the overflow class this helper was extracted to
+// prevent (the soroswap-router deadline_ts bug).
+//
+// Not reachable from production today — all three LedgerClosedAt
+// producers are >=1970 and all three call sites fail closed on a missing
+// close time — but the guard must not depend on that.
+func TestSafeUnix_preEpochCloseTimeKeepsTheCeiling(t *testing.T) {
+	preEpoch := time.Date(1969, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	for _, raw := range []uint64{1 << 63, 1e18, math.MaxUint64} {
+		if got := SafeUnixSeconds(raw, preEpoch); !got.Equal(preEpoch.UTC()) {
+			t.Errorf("SafeUnixSeconds(%d, pre-epoch) = %s, want the close time — the ceiling wrapped and the guard is off", raw, got)
+		}
+		if got := SafeUnixMillis(raw, preEpoch); !got.Equal(preEpoch.UTC()) {
+			t.Errorf("SafeUnixMillis(%d, pre-epoch) = %s, want the close time", raw, got)
+		}
+	}
+
+	// The zero time.Time is what events.Event.EventClosedAt returns on its
+	// error path, so it is the shape a future caller that ignores that
+	// error would pass.
+	var zero time.Time
+	if got := SafeUnixSeconds(1<<63, zero); !got.Equal(zero.UTC()) {
+		t.Errorf("SafeUnixSeconds(2^63, zero time) = %s, want the (zero) close time", got)
+	}
+}

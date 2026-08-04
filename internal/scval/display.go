@@ -5,7 +5,9 @@ package scval
 
 import (
 	"fmt"
+	"math/big"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 
@@ -72,7 +74,17 @@ func display(v xdr.ScVal, depth int) string {
 func displayScalar(v xdr.ScVal) string {
 	switch v.Type {
 	case xdr.ScValTypeScvBool:
-		return fmt.Sprintf("%t", v.MustB())
+		// NOT v.MustB(): ScValTypeScvBool == 0, so the ZERO-VALUE xdr.ScVal
+		// reports Type==Bool while carrying a nil B pointer, and MustB
+		// dereferences it. scval.AsBool guards this exact case by name;
+		// Display did not, and Display is the one accessor reachable from a
+		// default-constructed ScVal — MapField returns xdr.ScVal{} on a miss,
+		// so logging the value on a miss path panicked the goroutine
+		// (cold audit 2026-08-04).
+		if v.B == nil {
+			return "bool"
+		}
+		return fmt.Sprintf("%t", *v.B)
 	case xdr.ScValTypeScvVoid:
 		return "void"
 	case xdr.ScValTypeScvU32:
@@ -93,6 +105,13 @@ func displayScalar(v xdr.ScVal) string {
 	case xdr.ScValTypeScvI128:
 		p := v.MustI128()
 		return canonical.FromInt128Parts(int64(p.Hi), uint64(p.Lo)).String()
+	case xdr.ScValTypeScvU256:
+		p := v.MustU256()
+		return canonical.FromUInt256Parts(
+			uint64(p.HiHi), uint64(p.HiLo), uint64(p.LoHi), uint64(p.LoLo)).String()
+	case xdr.ScValTypeScvI256:
+		p := v.MustI256()
+		return int256String(p)
 	case xdr.ScValTypeScvSymbol:
 		return string(v.MustSym())
 	case xdr.ScValTypeScvString:
@@ -110,11 +129,36 @@ func displayScalar(v xdr.ScVal) string {
 	}
 }
 
+// int256String renders a signed 256-bit value. HiHi is the only signed
+// limb; the remaining three are unsigned magnitude, so the value is
+// (HiHi << 192) + (HiLo << 128) + (LoHi << 64) + LoLo in two's complement.
+func int256String(p xdr.Int256Parts) string {
+	r := big.NewInt(int64(p.HiHi))
+	r.Lsh(r, 64)
+	r.Add(r, new(big.Int).SetUint64(uint64(p.HiLo)))
+	r.Lsh(r, 64)
+	r.Add(r, new(big.Int).SetUint64(uint64(p.LoHi)))
+	r.Lsh(r, 64)
+	r.Add(r, new(big.Int).SetUint64(uint64(p.LoLo)))
+	return r.String()
+}
+
 // truncateDisplay bounds one rendered fragment.
+//
+// Cuts on a RUNE boundary. It used to slice bytes, so a >120-byte string
+// whose multi-byte rune straddled byte 120 produced invalid UTF-8 —
+// encoding/json substitutes U+FFFD so the API doesn't error, but a
+// consumer writing the field to a strict-UTF-8 sink rejects the row. The
+// string is contract-supplied, so the input is attacker-chosen
+// (cold audit 2026-08-04).
 func truncateDisplay(s string) string {
 	const maxLen = 120
 	if len(s) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "…"
+	cut := maxLen
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
 }

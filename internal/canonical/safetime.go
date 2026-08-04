@@ -32,13 +32,27 @@ const safeUnixEpochFloorSeconds = 1_000_000_000
 //     future-only After() guard misses in both directions — the same
 //     overflow class as the router deadline_ts bug. Bound-checking the
 //     raw u64 first catches both ends and keeps the cast provably in
-//     range.
+//     range. The ceiling itself is int64-checked before its own uint64
+//     cast — a pre-1970 closedAt would otherwise wrap it and disable the
+//     whole guard (cold audit 2026-08-04).
 //
 // One copy each for the three oracle decoders (reflector / band /
 // redstone) that previously hand-rolled this guard (D3 cluster 9).
 func SafeUnixSeconds(raw uint64, closedAt time.Time) time.Time {
-	maxSeconds := uint64(closedAt.Add(SafeUnixFutureWindow).Unix())
-	if raw < safeUnixEpochFloorSeconds || raw > maxSeconds {
+	ceil := closedAt.Add(SafeUnixFutureWindow).Unix()
+	if ceil < 0 {
+		// closedAt is pre-1970, so the ceiling is negative and an
+		// unchecked uint64() cast would wrap it to ~1.8e19 — silently
+		// disabling the guard this function exists to be. Every raw value
+		// including 2^63 would then pass and int64(raw) would stamp a
+		// far-PAST time, the exact overflow class the router deadline_ts
+		// bug was. No production caller can reach it today (all three
+		// LedgerClosedAt producers are >=1970 and all three call sites
+		// fail closed on a missing close time), but the guard must not
+		// depend on that (cold audit 2026-08-04).
+		return closedAt.UTC()
+	}
+	if raw < safeUnixEpochFloorSeconds || raw > uint64(ceil) {
 		return closedAt.UTC()
 	}
 	return time.Unix(int64(raw), 0).UTC()
@@ -47,8 +61,11 @@ func SafeUnixSeconds(raw uint64, closedAt time.Time) time.Time {
 // SafeUnixMillis is [SafeUnixSeconds] for raw u64 UNIX-milliseconds
 // timestamps (Reflector topic[2], Redstone PackageTimestamp).
 func SafeUnixMillis(raw uint64, closedAt time.Time) time.Time {
-	maxMillis := uint64(closedAt.Add(SafeUnixFutureWindow).UnixMilli())
-	if raw < safeUnixEpochFloorSeconds*1000 || raw > maxMillis {
+	ceil := closedAt.Add(SafeUnixFutureWindow).UnixMilli()
+	if ceil < 0 {
+		return closedAt.UTC() // see SafeUnixSeconds
+	}
+	if raw < safeUnixEpochFloorSeconds*1000 || raw > uint64(ceil) {
 		return closedAt.UTC()
 	}
 	return time.UnixMilli(int64(raw)).UTC()
