@@ -18,7 +18,12 @@ CREATE TABLE lp_reserve_observations (
     pool_id         text         NOT NULL,
 
     -- Which side of the pool this row reflects, in
-    -- supply.AssetKey form. (XLM = "XLM"; classic = "CODE:G…".)
+    -- supply.AssetKey form. CLASSIC ONLY ("CODE:G…"). The observer
+    -- returns ErrUnsupportedLPAsset for the native side, so no "XLM"
+    -- row can ever exist here despite the shared AssetKey encoding —
+    -- XLM LP reserves are NOT covered by this table. (Corrected
+    -- 2026-08-04: the comment previously listed XLM, which would lead a
+    -- reader to treat native LP reserves as observed.)
     asset_key       text         NOT NULL,
 
     ledger          integer      NOT NULL CHECK (ledger >= 0),

@@ -566,8 +566,15 @@ func (s *Store) InsertSEP41SupplyEventBatch(ctx context.Context, rows []SEP41Sup
 			e.ContractID,
 			int64(e.Ledger),
 			e.TxHash,
-			int16(e.OpIndex),
-			int16(e.EventIndex),
+			// int, not int16: the columns are `integer`, and the
+			// single-row InsertSEP41SupplyEvent binds int. Narrowing here
+			// meant an op emitting >32,767 supply events wrapped negative
+			// and violated the `CHECK (op_index >= 0)` constraint, failing
+			// the ENTIRE batch rather than one row — an asymmetry between
+			// two writers of the same table that no lockstep test covers
+			// (cold audit 2026-08-04).
+			int(e.OpIndex),
+			int(e.EventIndex),
 			e.ObservedAt.UTC(),
 			string(e.Kind),
 			e.Amount.String(),

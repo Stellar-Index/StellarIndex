@@ -199,6 +199,19 @@ type LedgerExtract struct {
 	// G15-06).
 	TxReadErrors      int
 	TxEventReadErrors int
+
+	// EntryMetaUnsupported counts transactions whose apply-phase
+	// LedgerEntryChange walk was skipped because their TransactionMeta
+	// carried a version the walk does not handle. Same in-memory-only
+	// treatment and same reason as the two above: the ledger is still
+	// written (contiguity), but this ledger's Changes undercount — every
+	// classic balance / trustline / offer / LP change in those txs is
+	// missing, which reads downstream as "nothing happened". Unreachable
+	// on production input today (galexie's captive core re-generates meta
+	// at replay time — verified across protocols 1→19 on 2026-08-04);
+	// a non-zero value means an archive re-derived by an old core binary
+	// or a protocol that bumped meta past V4 (cold audit 2026-08-04).
+	EntryMetaUnsupported int
 }
 
 // ErrBufferFull is returned by [Sink.Add] when the in-memory buffer is already

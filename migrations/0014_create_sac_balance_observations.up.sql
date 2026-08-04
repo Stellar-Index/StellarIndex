@@ -8,7 +8,15 @@
 -- Identity: (contract_id, holder, ledger). The SAC contract id
 -- (C-strkey) is the watched-set membership signal; holder is
 -- either a G-strkey (account-controlled) or a C-strkey (contract-
--- controlled). asset_key is denormalised into the row so the
+-- controlled).
+--
+-- Clarified 2026-08-04: for a CLASSIC-asset SAC, account-address
+-- balances live in the TRUSTLINE, not in ContractData — so G-strkey
+-- holders appear here only for pure SEP-41 tokens. That is precisely
+-- why the Algorithm-2 decomposition (trustline + claimable + LP +
+-- contract-held) does not double-count against this table.
+--
+-- asset_key is denormalised into the row so the
 -- reader can sum by asset without joining a side table — the
 -- contract → asset map is stable post-deploy and operator-curated.
 

@@ -443,6 +443,18 @@ type Dispatcher struct {
 	// here means Soroban ingestion is broken regardless of what the
 	// completeness verdict says.
 	txEventReadErrors int
+
+	// entryMetaUnsupported counts transactions whose apply-phase
+	// LedgerEntryChange walk was skipped because their TransactionMeta
+	// carried a version this walk does not handle. Unreachable on
+	// production input today (galexie's captive core re-generates meta
+	// at replay time — verified across protocols 1→19 on 2026-08-04),
+	// so a non-zero value means either an archive re-derived by an old
+	// core binary or a protocol that bumped meta past V4. Either way
+	// every classic balance / trustline / offer / LP change in those
+	// transactions is invisible, and without this counter that is
+	// indistinguishable from a ledger in which nothing happened.
+	entryMetaUnsupported int
 }
 
 // New constructs a Dispatcher with the given Soroban-event
@@ -592,6 +604,11 @@ type Stats struct {
 	// Soroban ingestion is broken even if the completeness reconcile
 	// still reads "complete" (G15-06).
 	TxEventReadErrors int
+	// EntryMetaUnsupported counts transactions whose apply-phase entry
+	// change walk was skipped for an unhandled TransactionMeta version.
+	// A sustained climb means the LedgerEntry supply observers are
+	// blind while every component table simply stops advancing.
+	EntryMetaUnsupported int
 }
 
 func (d *Dispatcher) Stats() Stats {
@@ -614,6 +631,7 @@ func (d *Dispatcher) Stats() Stats {
 	unmatched := d.unmatchedHits
 	txReadErrs := d.txReadErrors
 	txEventReadErrs := d.txEventReadErrors
+	entryMetaUnsup := d.entryMetaUnsupported
 	d.statsMu.Unlock()
 
 	orphanCopied := map[string]int{}
@@ -627,12 +645,13 @@ func (d *Dispatcher) Stats() Stats {
 		}
 	}
 	return Stats{
-		EventsSeen:        seenCopied,
-		DecodeErrors:      decodeCopied,
-		OrphanEvents:      orphanCopied,
-		UnmatchedHits:     unmatched,
-		TxReadErrors:      txReadErrs,
-		TxEventReadErrors: txEventReadErrs,
+		EventsSeen:           seenCopied,
+		DecodeErrors:         decodeCopied,
+		OrphanEvents:         orphanCopied,
+		UnmatchedHits:        unmatched,
+		TxReadErrors:         txReadErrs,
+		TxEventReadErrors:    txEventReadErrs,
+		EntryMetaUnsupported: entryMetaUnsup,
 	}
 }
 
@@ -920,9 +939,16 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 //
 //  2. THE WALK IS THREE-PHASE, LEDGER-WIDE (C2-032, and R-A01-1 for the
 //     third phase). stellar-core commits a ledger in ledger-wide phases,
-//     not tx by tx, and this walk mirrors the SDK's canonical
-//     ingest.LedgerChangeReader state machine exactly (feeChangesState →
+//     not tx by tx, and this walk follows the SDK's canonical
+//     ingest.LedgerChangeReader state machine (feeChangesState →
 //     metaChangesState → postTxApplyState) — see the phase table below.
+//     "Follows", not "mirrors exactly": the SDK additionally suppresses
+//     changes for txInternalError() at LedgerVersion <= 12, which this
+//     walk does not, so where the two diverge we emit MORE rather than
+//     fewer changes (inert in practice — such txs carry no operations in
+//     the V4 meta production actually delivers). Corrected 2026-08-04;
+//     the word "exactly" invited readers to treat the walks as
+//     interchangeable.
 //     Walking per tx (fee, apply, then the next tx's fee) mis-ranked an
 //     account touched by tx1's ops and tx2's fee: IntraLedgerSeq put the fee
 //     last, and IntraLedgerSeq is exactly the tiebreak that makes the FINAL
@@ -959,13 +985,36 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 // [EntryWalkVersion] and migration 0120 for the invariant and the repair
 // path.
 //
-// Meta-version handling: V1/V2 don't carry post-Soroban operation
-// metadata so their apply phase is skipped (no-op for purposes of
-// entry-change observation; the indexer run against pre-Soroban ledgers
-// produces no AccountEntry observations for those ranges, which is correct
-// — the AccountEntry observer is a forward-going surface). Their fee
-// changes still walk. V3 + V4 share the same Operations / TxChanges shape
-// for AccountEntry purposes; the only difference is the wrapping type.
+// Meta-version handling: V3 + V4 share the same Operations / TxChanges
+// shape for entry-change purposes; the only difference is the wrapping
+// type. Anything else lands in the default arm and is COUNTED, not
+// silently skipped — see below.
+//
+// V0/V1/V2 are unreachable on production input, but NOT for the reason
+// this comment used to give. It claimed "V1/V2 don't carry post-Soroban
+// operation metadata so their apply phase is skipped … which is correct".
+// That is false: xdr.TransactionMetaV1{TxChanges, Operations} and
+// TransactionMetaV2{TxChangesBefore, Operations, TxChangesAfter} both
+// carry full per-operation LedgerEntryChanges, which is exactly where
+// every pre-Soroban trustline / offer / account change lives, and the
+// SDK's own LedgerChangeReader handles V1 and V2 in its apply phase. The
+// real reason we never see them is that galexie's captive stellar-core
+// RE-GENERATES TransactionMeta at replay time in the newest format its
+// binary supports: only the LedgerCloseMeta wrapper is epoch-native.
+// Verified 2026-08-04 by decoding 48 production ledgers from both
+// datastores this code reads (r1 galexie-archive + the aws-public-
+// blockchain cold tier) spanning protocols 1→19 and 8,000+ transactions:
+// every single tx carried meta V4, including ledger 1,000,023 at
+// protocol 1. r1's own lake agrees — 70.5 billion apply-phase
+// ledger_entry_changes rows below the protocol-20 activation, back to
+// ledger 3.
+//
+// So the default arm is defence against two futures, not a live gap:
+// an archive re-derived by a pre-CAP-67 core binary, and a protocol that
+// bumps meta past V4. Both would otherwise stop entry-change observation
+// dead while every table simply stopped advancing — the exact
+// "masquerading as clean ledgers" failure the sibling tx-event path was
+// taught to count in G15-06 (cold audit 2026-08-04).
 func (d *Dispatcher) walkLedgerEntryChanges(txs []ingest.LedgerTransaction, ledgerSeq uint32, closedAt time.Time) []consumer.Event {
 	var seq uint32
 	dispatchFor := func(txHash string) func(int, xdr.LedgerEntryChange) []consumer.Event {
@@ -1010,6 +1059,16 @@ func (d *Dispatcher) walkLedgerEntryChanges(txs []ingest.LedgerTransaction, ledg
 			outputs = append(outputs, walkChangeSet(v4.TxChangesBefore, -1, dispatch)...)
 			outputs = append(outputs, walkV4Operations(v4.Operations, dispatch)...)
 			outputs = append(outputs, walkChangeSet(v4.TxChangesAfter, -1, dispatch)...)
+		default:
+			// Unreachable on production input (see the meta-version note
+			// above), and deliberately not an error: the fee phase for
+			// this tx already walked and phase 3 still will, so failing
+			// here would discard real observations. But it must not be
+			// SILENT — an unwalked apply phase looks exactly like a
+			// ledger in which nothing happened.
+			d.statsMu.Lock()
+			d.entryMetaUnsupported++
+			d.statsMu.Unlock()
 		}
 	}
 	// ── Phase 3: the post-apply fee phase (P23 Soroban fee refunds) for
@@ -1462,6 +1521,93 @@ func walkAuthTree(node *xdr.SorobanAuthorizedInvocation, path []int, ancestorCha
 	}
 }
 
+// authRootCall builds the invokeCall for an auth entry's root node, or
+// nil when that root is a create-contract (non-ContractFn) authorization.
+// Path and ancestor chain are deliberately nil: the result is used only
+// for identity comparison against the top-level call, never emitted.
+func authRootCall(node *xdr.SorobanAuthorizedInvocation) *invokeCall {
+	if node.Function.Type != xdr.SorobanAuthorizedFunctionTypeSorobanAuthorizedFunctionTypeContractFn {
+		return nil
+	}
+	ic := node.Function.MustContractFn()
+	return buildInvokeCallFromArgs(&ic, nil, nil)
+}
+
+// walkAuthEntries turns an op's auth entries into the flat call list,
+// classifying EACH entry independently as "is the op's top-level call"
+// or "is a nested call that must be re-rooted under it".
+//
+// Independence is the whole point. Until 2026-08-04 the re-rooting was
+// all-or-nothing: every entry was first walked with a nil path, and the
+// re-root pass ran only when NO walked call matched the top-level
+// invocation. That is correct for the two homogeneous shapes (all roots
+// nested, or the single root IS the top-level) but wrong for the mixed
+// one — a co-signed tx where entry 0 authorizes the top-level call and
+// entry 1 authorizes a deeper call signed by a different party. There
+// containsCall found entry 0's match, the re-root pass was skipped, and
+// entries 1..n kept CallPath nil, i.e. were exported as the op's ENTRY
+// POINT. Downstream that becomes call_depth 0 / call_kind 'top_level'
+// (soroswap_router/decode.go callPosition), so a router wrapped by an
+// aggregator is written as though it were the entry point, and
+// TagTradesRoutedVia's `call_kind = 'sub_invocation'` join misses —
+// under-reporting the real wrapper's volume on /v1/aggregators and
+// over-reporting the generic bucket. It also let two calls in one op
+// share the (TxHash, OpIndex, CallPath) identity that ContractCallContext
+// documents as a stable dedup key. Found by cold audit 2026-08-04.
+func walkAuthEntries(auth []xdr.SorobanAuthorizationEntry, top *invokeCall) []*invokeCall {
+	var calls []*invokeCall
+
+	topIdx := -1
+	if top != nil {
+		for j := range auth {
+			if root := authRootCall(&auth[j].RootInvocation); root != nil &&
+				containsCall([]*invokeCall{top}, root) {
+				topIdx = j
+				break
+			}
+		}
+	}
+
+	if topIdx < 0 {
+		for j := range auth {
+			if top == nil {
+				// No top-level call to root under (create-contract host
+				// function, or an unrenderable contract address). Walk
+				// the entries as their own roots — the pre-#48 shape.
+				walkAuthTree(&auth[j].RootInvocation, nil, nil, &calls)
+				continue
+			}
+			// The auth roots are NESTED calls: the top-level call needed
+			// no auth of its own. Re-root them under it so nothing but
+			// the real root carries CallPath [] (C2-060).
+			walkAuthTree(&auth[j].RootInvocation, []int{j}, top.CallPathContracts, &calls)
+		}
+		if top != nil {
+			calls = append([]*invokeCall{top}, calls...)
+		}
+		return calls
+	}
+
+	// One entry IS the top-level call: walk it as the root so it and its
+	// authorized subtree carry their true paths.
+	walkAuthTree(&auth[topIdx].RootInvocation, nil, nil, &calls)
+
+	// Every other entry is a separately-authorized subtree whose real
+	// sub-invocation index the auth tree does not carry. Re-root them
+	// under the top-level call at indices PAST its own sub-invocation
+	// space, so they cannot collide with a genuine sibling path while
+	// still reading as depth>=1 rather than as the entry point.
+	next := len(auth[topIdx].RootInvocation.SubInvocations)
+	for j := range auth {
+		if j == topIdx {
+			continue
+		}
+		walkAuthTree(&auth[j].RootInvocation, []int{next}, top.CallPathContracts, &calls)
+		next++
+	}
+	return calls
+}
+
 // containsCall reports whether calls already holds the same invocation as
 // c — same contract, same function, same argument encoding. Identity is
 // deliberately NOT CallPath: the question it answers is "did the auth walk
@@ -1552,23 +1698,7 @@ func extractInvokeContractCallTrees(ops []xdr.Operation) [][]*invokeCall { //nol
 		top := buildInvokeCallFromArgs(&topIC, nil, nil)
 
 		if len(ihf.Auth) > 0 {
-			// Auth tree is the canonical source for everything BELOW the
-			// top-level call: each entry's RootInvocation starts one
-			// authorized subtree. Walk them first so we can tell whether
-			// any of them is the top-level call itself.
-			for j := range ihf.Auth {
-				walkAuthTree(&ihf.Auth[j].RootInvocation, nil, nil, &calls)
-			}
-			if top != nil && !containsCall(calls, top) {
-				// The auth roots are NESTED calls: the top-level call
-				// needed no auth of its own. Re-root them under it so
-				// nothing but the real root carries CallPath [] (C2-060).
-				calls = nil
-				for j := range ihf.Auth {
-					walkAuthTree(&ihf.Auth[j].RootInvocation, []int{j}, top.CallPathContracts, &calls)
-				}
-				calls = append([]*invokeCall{top}, calls...)
-			}
+			calls = walkAuthEntries(ihf.Auth, top)
 		} else if top != nil {
 			// No auth array — the op didn't need user auth for any
 			// downstream call (rare for token-moving paths but allowed

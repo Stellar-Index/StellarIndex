@@ -17,7 +17,8 @@ import (
 // observers from the lake" promise. Closes the G12-03 known gap in
 // ExtractLedger.
 //
-// Mirrors dispatcher.walkLedgerEntryChanges EXACTLY so the lake's rows match
+// Mirrors dispatcher.walkLedgerEntryChanges — including its
+// meta-version handling and its unsupported-version counter — so the lake's rows match
 // what the live LedgerEntryChangeDecoder hook sees — including its two
 // correctness properties (see that function's doc for the full derivation):
 //
@@ -98,6 +99,11 @@ func extractLedgerEntryChanges(ext *LedgerExtract, txs []ingest.LedgerTransactio
 				emitChangeSet(v4.Operations[opIdx].Changes, opIdx, emit)
 			}
 			emitChangeSet(v4.TxChangesAfter, -1, emit)
+		default:
+			// Not silent: an unwalked apply phase is indistinguishable
+			// from a ledger in which nothing happened. Mirrors the
+			// dispatcher's entryMetaUnsupported counter.
+			ext.EntryMetaUnsupported++
 		}
 	}
 	// ── Phase 3: the post-apply fee phase (P23 Soroban fee refunds) for
