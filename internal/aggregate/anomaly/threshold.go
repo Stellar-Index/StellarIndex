@@ -216,7 +216,7 @@ func (c *Checker) Evaluate(obs Observation) Decision {
 	}
 }
 
-// computeDeviationPct returns abs(curr - prev) / prev * 100. Both
+// computeDeviationPct returns abs((curr - prev) / prev) * 100. Both
 // inputs must be non-nil and prev must be non-zero (caller's
 // responsibility — Evaluate guards this).
 func computeDeviationPct(prev, curr *big.Rat) float64 {
@@ -234,6 +234,15 @@ func computeDeviationPct(prev, curr *big.Rat) float64 {
 	delta := new(big.Rat).Sub(curr, prev)
 	delta.Abs(delta)
 	delta.Quo(delta, prev)
+	// Abs AGAIN, after the division. The numerator was already made
+	// positive, but dividing by a negative prev flips the sign back —
+	// and a negative deviation is < WarnPct for every threshold, so the
+	// anomaly check silently returns ActionAllow no matter how large the
+	// move was. Unreachable today (trades carry an amount > 0 CHECK and a
+	// VWAP is a ratio of positives), but it arms the moment any signed
+	// series — a spread, a funding rate, a delta — is routed through
+	// Evaluate (cold audit 2026-08-04).
+	delta.Abs(delta)
 	delta.Mul(delta, big.NewRat(100, 1))
 	f, _ := delta.Float64()
 	return f

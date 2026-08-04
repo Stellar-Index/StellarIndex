@@ -137,8 +137,16 @@ groups:
             seventh factor) is therefore contributing nothing, and the
             thin-pair pairs it was built for (XLM/GBP, XLM/EUR, ETH/GBP)
             are back to single-source with no independent cross-check.
-            Direct prices are UNAFFECTED — this degrades manipulation
-            detection, not the served price.
+            Do NOT assume direct prices are unaffected. This annotation
+            said so until 2026-08-04 and it is false in the REROUTE case:
+            when a chain leg goes dry the router substitutes a
+            crypto-pivot route and publishes the composite to
+            cachekeys.VWAP(target) — the same key /v1/price serves. The
+            substitution is reported as outcome="ok", so this alert's own
+            `and ...{outcome="ok"} == 0` clause suppresses it precisely
+            when a reroute is happening. Check the target's
+            :provenance and :composite_meta keys before concluding the
+            served price is direct.
             Most likely cause: the fiat-FX feed is dry, so the fiat cross
             leg has no fx_quotes row inside the 7-day lookback. Check
             stellarindex_external_fx_last_quote_unix per source, the

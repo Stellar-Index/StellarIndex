@@ -155,14 +155,25 @@ type Policy struct {
 // WithDefaults returns a copy with every unset (zero-valued) field
 // replaced by its ADR-0019 default.
 //
-// Zero is the "unset" sentinel for every field here, which is safe
-// because zero is not a meaningful setting for any of them: a
-// zero-length hold is "don't freeze" (achieved by disabling the
-// Phase 2 gate, not by a zero duration), zero extensions would mean
-// "escalate immediately" (set MaxExtensions negative for that), and a
-// zero unfreeze-confidence bound would make the auto-unfreeze
-// condition unreachable, since confidence is clamped to [0, 1] and
-// the comparison is strict.
+// Zero is the "unset" sentinel for every field here. A zero-length hold
+// is "don't freeze", which is achieved by disabling the Phase 2 gate
+// rather than by a zero duration.
+//
+// Corrected 2026-08-04. This block used to justify the sentinel for
+// UnfreezeConfidenceMin by claiming a zero bound "would make the
+// auto-unfreeze condition unreachable, since confidence is clamped to
+// [0, 1] and the comparison is strict". That is backwards: the test is
+// `sig.Confidence > p.UnfreezeConfidenceMin`, so a zero bound makes
+// that leg MAXIMALLY reachable — satisfied by any positive confidence.
+// The sentinel is still the right behaviour (an operator who leaves the
+// field unset gets the ADR-0019 default rather than an unbounded
+// release gate), but the stated reason was the opposite of the truth,
+// and an operator who deliberately wants z to be the only release gate
+// silently gets 0.30 instead of the 0 they asked for.
+//
+// The same block advertised "set MaxExtensions negative" to escalate
+// immediately. That escape hatch is unreachable through the supported
+// path: config validation rejects max_extensions < 0.
 func (p Policy) WithDefaults() Policy {
 	if p.InitialHold <= 0 {
 		p.InitialHold = DefaultInitialHold

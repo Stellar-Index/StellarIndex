@@ -62,3 +62,27 @@ func (d Decision) IsFrozen() bool { return d.Action == ActionFreeze }
 // IsWarn reports whether the decision says to warn (publish but
 // flag).
 func (d Decision) IsWarn() bool { return d.Action == ActionWarn }
+
+// Publishes reports whether the bucket should be published.
+//
+// EXHAUSTIVE by construction, and that is the point. The publish choke
+// point in the orchestrator tests `!decision.IsFrozen()`, so a fourth
+// Action added later would be treated as "publish" silently — no
+// compiler pressure, no lint, no test. Routing the decision through a
+// switch with an explicit default makes a new variant fail CLOSED
+// (refuse to publish) and, in tests, fail loudly (cold audit
+// 2026-08-04).
+func (d Decision) Publishes() bool {
+	switch d.Action {
+	case ActionAllow, ActionWarn:
+		return true
+	case ActionFreeze:
+		return false
+	default:
+		// Unknown variant: refuse to publish. Publishing an
+		// unrecognised decision is the unrecoverable direction —
+		// a wrong price goes out and is cached; refusing merely
+		// serves the last-known-good.
+		return false
+	}
+}

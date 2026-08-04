@@ -313,13 +313,13 @@ func Compute(in Inputs, w Weights) Score {
 	// arithmetic numerically stable when any factor is very small
 	// (log(small) is large negative; the exp at the end recovers
 	// the result without underflow).
-	logSum := safeLog(f.ZScore)*w.ZScore +
-		safeLog(f.SourceCount)*w.SourceCount +
-		safeLog(f.Diversity)*w.Diversity +
-		safeLog(f.Liquidity)*w.Liquidity +
-		safeLog(f.CrossOracle)*w.CrossOracle +
-		safeLog(f.TriangulationAgreement)*triWeight +
-		safeLog(f.BaselineQuality)*w.BaselineQuality
+	logSum := weightedLog(f.ZScore, w.ZScore) +
+		weightedLog(f.SourceCount, w.SourceCount) +
+		weightedLog(f.Diversity, w.Diversity) +
+		weightedLog(f.Liquidity, w.Liquidity) +
+		weightedLog(f.CrossOracle, w.CrossOracle) +
+		weightedLog(f.TriangulationAgreement, triWeight) +
+		weightedLog(f.BaselineQuality, w.BaselineQuality)
 
 	conf := math.Exp(logSum / totalWeight)
 	conf = applyBootstrapCap(conf, in.BaselineAgeDays)
@@ -371,4 +371,27 @@ func safeLog(x float64) float64 {
 		return math.Inf(-1)
 	}
 	return math.Log(x)
+}
+
+// weightedLog is safeLog(factor) * weight with the one product IEEE-754
+// gets wrong made explicit: -Inf * 0 is NaN, not 0.
+//
+// safeLog returns -Inf for a zero factor, so a factor of exactly 0 that
+// happens to carry a weight of 0 produced NaN — which propagates through
+// the sum, survives math.Exp, passes both branches of applyBootstrapCap
+// untouched, and lands in clamp01(NaN) = 0. A fully healthy pair would
+// publish confidence 0 beside a confidence_factors decomposition showing
+// every factor near 1.
+//
+// That contradicts three documented promises in this package: that "a
+// weight of 0 effectively removes that factor from the product", that a
+// zero factor zeroes the mean only "with non-zero weight", and doc.go's
+// flat guarantee that "the geometric mean never produces NaN". A
+// zero-weighted factor is REMOVED, which is what the docs already say
+// (cold audit 2026-08-04).
+func weightedLog(factor, weight float64) float64 {
+	if weight == 0 {
+		return 0
+	}
+	return safeLog(factor) * weight
 }
