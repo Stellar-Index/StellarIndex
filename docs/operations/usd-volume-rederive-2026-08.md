@@ -103,6 +103,25 @@ Mechanics (verified in repo, 2026-08-04):
   sources. `-sdex` includes the op-derived SDEX trades (needed — SDEX
   is most of the volume).
 
+Execution learnings (2026-08-04 run — folded in so the next operator
+doesn't rediscover them):
+
+- **Source the env file first**: the TOML's `postgres_dsn` carries a
+  placeholder password; the real one is injected via
+  `/etc/default/stellarindex` (systemd EnvironmentFile). A bare
+  one-shot fails 28P01. `set -a; . /etc/default/stellarindex; set +a`.
+- **DECOMPRESS FIRST** (the projector-replay lesson generalises):
+  upserting into a COMPRESSED trades chunk crawls — the calibration
+  window ran ~10× slower than the uncompressed-path precedent
+  (per-batch segment decompression). Post-consolidation trades chunks
+  are 7-DAY, so only `_hyper_1_31953_chunk` (07-16→07-23, 1.8 GB
+  compressed / 31 GB raw) overlapped this range compressed.
+  `decompress_chunk(...)` it under the heavy wrapper (5.2 TB free on
+  the pool — headroom is not a concern), and **pause the trades
+  compression policy first** (`SELECT alter_job(1000, scheduled =>
+  false)`) so it can't recompress the chunk mid-run — then re-enable
+  (`scheduled => true`) after the final window and let it drain.
+
 Operational discipline (ALL are prior-incident lessons):
 
 ```sh
