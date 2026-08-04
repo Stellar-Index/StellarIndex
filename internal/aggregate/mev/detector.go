@@ -27,9 +27,19 @@
 // Every detector is a pure function over batches of served rows (plus
 // an optional tx_hash → tx_index map from the lake); the worker
 // (worker.go) supplies the inputs and persists candidates. Detection
-// is positional/structural evidence, not proof of intent — the served
-// rows don't carry trade direction, so direction-dependent claims
-// (front-run vs back-run) are never asserted. See each detail Note.
+// is positional/structural evidence, not proof of intent, and
+// direction-dependent claims (front-run vs back-run) are never
+// asserted.
+//
+// CORRECTION (cold audit 2026-08-04): this package's comments used to
+// justify that by saying the served rows "don't carry trade direction".
+// They do — trades.base_asset is the direction. The detectors simply
+// don't check it, so a large majority of published sandwich and
+// oracle_sandwich candidates are same-direction and structurally
+// impossible. Adding the check needs a per-source sign convention
+// (sdex base = the asset the maker sold; aquarius base = token_in, what
+// the taker sold), which is why it has not been done here. See each
+// detail Note.
 package mev
 
 import (

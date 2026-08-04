@@ -10,11 +10,26 @@ import (
 // candidates.
 const KindSandwich = "sandwich"
 
+// NOTE (cold audit 2026-08-04): the "rows don't carry trade direction"
+// premise this detector was built on is FALSE. trades.base_asset IS the
+// direction — sdex sets base to the asset the maker sold, aquarius sets
+// it to token_in — so front/back opposition is checkable and simply
+// isn't checked. Measured on live /v1/mev: 196 of 200 sandwich events
+// have BOTH bracket legs in the same direction, which cannot be a
+// sandwich, at a median notional of $0.10.
+//
+// The guard is not a one-liner, which is why this is a corrected note
+// rather than a fix: the base/quote sign convention is INVERTED between
+// sources (sdex base = what the maker sold; aquarius base = token_in,
+// what the taker sold), so a direction check must carry a per-source
+// convention. Price is unaffected either way, so VWAP is safe.
 const sandwichNote = "One account's trades in two different transactions bracket at " +
 	"least one other account's trade on the same pair within a single ledger " +
-	"(tx_index application order from the raw lake). Positional signature only: " +
-	"the served rows don't carry trade direction, so front/back opposition is " +
-	"not verified and profit is not estimated — treat as a candidate, not proof."
+	"(tx_index application order from the raw lake). Positional signature ONLY: " +
+	"front/back opposition is NOT verified — the direction is available in the " +
+	"underlying rows but this detector does not yet check it, so most candidates " +
+	"are same-direction and cannot be sandwiches. Profit is not estimated. " +
+	"Treat as an unverified candidate, not proof, and not an accusation."
 
 // OrderedLeg is one trade in an ordering-aware pattern's evidence,
 // carrying the lake-resolved tx_index that placed it. Amounts are

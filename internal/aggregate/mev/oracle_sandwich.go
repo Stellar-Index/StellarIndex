@@ -13,7 +13,7 @@ const KindOracleSandwich = "oracle_sandwich"
 const oracleSandwichNote = "One account traded an asset in transactions on BOTH sides " +
 	"(tx_index application order from the raw lake) of an on-chain oracle update " +
 	"for that asset, all within a single ledger. Positional signature only: the " +
-	"served rows don't carry trade direction, so the trade/update relationship is " +
+	"this detector does not check trade direction (it IS available in the rows) so the trade/update relationship is " +
 	"not proven profitable — treat as a candidate, not proof."
 
 // oracleSandwichDetail is the mev_events.detail payload for an

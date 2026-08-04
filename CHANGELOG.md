@@ -16,6 +16,20 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **Corrected a false premise that was blocking the MEV sandwich fix.**
+  Three Go comments and the published `/v1/mev` OpenAPI description all
+  stated that "the served rows don't carry trade direction, so front/back
+  opposition is not verified". The rows *do* carry it — `trades.base_asset`
+  is the direction — so the check is possible and simply absent. Measured
+  on live `/v1/mev`: 196 of 200 sandwich events have both bracket legs on
+  the same side, which cannot be a sandwich, at a median notional of
+  $0.10. The notes and the API description now say what is actually true,
+  and the description warns that `bracket`/`victim` describe ledger
+  position rather than established behaviour and are not accusations.
+  The check itself is not added here: the base/quote sign convention is
+  inverted between sources (sdex base is what the maker sold; aquarius
+  base is `token_in`, what the taker sold), so a direction guard needs a
+  per-source convention — flagged for a design decision.
 - **The edge shell-fallback handlers no longer inherit the client's
   conditional-request headers** (cold audit). `new Request(url, request)`
   copies every header, including `if-none-match` — a validator describing
