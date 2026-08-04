@@ -462,11 +462,20 @@ export async function fetchPriceDirect(
   asset: string,
   quote: string,
 ): Promise<PriceResp | null> {
-  // softFail: the live price is refreshed client-side by <LivePrice>, so a
-  // cold/slow/unreachable /v1/price must NOT abort the export (the edge has
-  // been seen hanging ~25s on a cold-cache asset). A persistent failure
-  // degrades this page to no build-time price rather than throwing; short
-  // timeout + few attempts keep a hung endpoint from stalling the build.
+  // softFail: a cold/slow/unreachable /v1/price must NOT abort the export
+  // (the edge has been seen hanging ~25s on a cold-cache asset). A
+  // persistent failure degrades this page to no build-time price rather
+  // than throwing; short timeout + few attempts keep a hung endpoint from
+  // stalling the build. NOTE (2026-08-04): this page has NO client-side
+  // price refresh — <LivePrice> exists only on the /embed surfaces — so
+  // whatever this fetch bakes is what the reader sees until the next
+  // deploy. That is why the sidebar/panel carry an explicit provenance
+  // caption instead of presenting the baked number as live.
+  //
+  // A 404 here also covers the API's thin-market withhold verdict
+  // (problem type …/errors/price-withheld): the server deliberately
+  // refuses to aggregate a price for a substanceless on-chain market,
+  // and this page must not resurrect one from a lower-trust source.
   //
   // AGT-06: buildFetchEnvelope (not buildFetchData) so the envelope's real
   // `flags.stale`/`flags.triangulated` reach the page instead of being
@@ -492,6 +501,15 @@ export async function fetchPriceDirect(
 // VWAP doesn't exist. The client-side compose lets the page show
 // a real USD price anyway (asset/XLM × XLM/USD), tagged as
 // triangulated so the user can see the provenance.
+//
+// Substance-gate interaction (2026-08-04): this compose is NOT a
+// bypass of the server's thin-market gate, because the gate is
+// applied to the LEGS — a dust-authored asset/XLM pair is itself
+// withheld by /v1/price, so `vsXlm` comes back null and the compose
+// returns null. Triangulation only ever multiplies two legs the
+// server was independently willing to publish. Do not "fix" a
+// missing thin-asset price by reading a raw surface here — the gate
+// withholding it is the intended behaviour.
 //
 // XLM (asset_id "native") short-circuits — its direct USD VWAP
 // is the canonical answer.
@@ -849,6 +867,16 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
                   ? Number(coin.price_usd)
                   : null
             }
+            priceProvenance={
+              price?.price
+                ? price.flags?.triangulated
+                  ? 'triangulated'
+                  : 'vwap1m'
+                : coin.price_usd
+                  ? 'listing'
+                  : null
+            }
+            priceStale={Boolean(price?.flags?.stale)}
             name={globalView?.name}
             homeDomain={detail?.home_domain}
           />
@@ -912,6 +940,11 @@ function OverviewBody({
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Panel
           title="Price"
+          hint={
+            price?.flags?.triangulated
+              ? 'last closed 1-min VWAP · USD · triangulated via XLM'
+              : 'last closed 1-min VWAP · USD'
+          }
           source={asExample('/v1/price', { asset: coin.asset_id, quote: 'fiat:USD' })}
           panelId="price-card"
           className="lg:col-span-2"

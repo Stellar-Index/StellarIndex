@@ -53,6 +53,20 @@ against.
   "min_usd_volume_unvaluable"}`.
 
 ### Fixed
+- **Explorer asset pages: the chart now opens in USD to match the
+  header, and every headline price says what it is** (operator report:
+  `/assets/USDT` header $0.13 vs chart 0.76 — the chart was silently
+  quoting in XLM while the header quoted USD). The chart's quote
+  toggle still offers XLM, as an explicit user action. The sidebar
+  price and the Price panel now carry a provenance caption — "1-min
+  VWAP · USD", "triangulated via XLM", or "listing snapshot · not a
+  live aggregated price" for the build-time fallback (which can lag
+  hours–days and was previously indistinguishable from a live VWAP) —
+  and the false comments claiming a `<LivePrice>` client refresh
+  exists on these pages were corrected (it exists only on /embed).
+  Client-side XLM triangulation is documented as gate-respecting: it
+  only composes legs `/v1/price` was independently willing to publish,
+  so a substance-withheld pair cannot be resurrected from its legs.
 - **Unverified ticker look-alikes no longer publish a market cap, and
   reference-only tickers get their warning back** (2026-08-04 asset-
   identity follow-ups). Three coupled fixes: (1) an asset flagged

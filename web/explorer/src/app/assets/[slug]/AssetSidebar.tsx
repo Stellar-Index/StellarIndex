@@ -54,12 +54,26 @@ export function AssetSidebar({
   coin,
   detail,
   priceUSD,
+  priceProvenance,
+  priceStale,
   name,
   homeDomain,
 }: {
   coin: SidebarCoin;
   detail: SidebarDetail | null;
   priceUSD: number | null;
+  /**
+   * WHAT the headline number is — rendered as a caption so the page
+   * never shows a bare dollar figure of unstated provenance
+   * (2026-08-04: the sidebar was silently falling back to a
+   * build-time listing snapshot up to 7 days old, presented
+   * identically to a live VWAP).
+   *  - 'vwap1m'       — /v1/price closed 1-minute VWAP (the real thing)
+   *  - 'triangulated' — composed client-side from asset/XLM × XLM/USD
+   *  - 'listing'      — build-time listing cache; can lag hours–days
+   */
+  priceProvenance?: 'vwap1m' | 'triangulated' | 'listing' | null;
+  priceStale?: boolean;
   name?: string | null;
   homeDomain?: string | null;
 }) {
@@ -121,6 +135,20 @@ export function AssetSidebar({
             </span>
           )}
         </div>
+        {/* Provenance caption — the headline number must say what it
+            is. Series naming matches /v1/price's contract (the last
+            CLOSED 1-minute VWAP bucket, ADR-0015); the chart's candles
+            are per-trade OHLC, so the two can legitimately differ by
+            the intra-bucket spread — but never silently by quote or
+            by data source. */}
+        {priceUSD != null && priceProvenance && (
+          <p className="mt-1 text-[11px] uppercase tracking-wider text-ink-muted">
+            {priceProvenance === 'vwap1m' && '1-min VWAP · USD'}
+            {priceProvenance === 'triangulated' && '1-min VWAP · USD · triangulated via XLM'}
+            {priceProvenance === 'listing' && 'listing snapshot · not a live aggregated price'}
+            {priceStale && ' · stale'}
+          </p>
+        )}
         {/* Live 1h/24h/7d/30d strip + streak + low-water from the
             change-summary worker; renders nothing when the worker has
             no row for this asset. */}

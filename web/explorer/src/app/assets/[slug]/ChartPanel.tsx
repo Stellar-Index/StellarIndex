@@ -29,12 +29,19 @@ function shortLabel(assetID: string): string {
  * while off-chain crypto:* feeds (Binance / Bitstamp / …) have direct
  * USD pairs. Native XLM + fiat assets only make sense vs USD, so the
  * XLM option is dropped for those.
+ *
+ * The DEFAULT quote is USD for every asset (2026-08-04): the page
+ * header/sidebar price is quoted in USD, and a chart that silently
+ * opens in XLM puts two different quantities 20px apart with nothing
+ * saying so (observed on /assets/USDT: header $0.13, chart "0.76" —
+ * the 0.76 was an XLM price). Toggling to XLM is an explicit user
+ * action, visible in the pressed toggle.
  */
 export function ChartPanel({ assetID }: { assetID: string }) {
   const isNative = assetID === 'native';
   const isFiat = assetID.startsWith('fiat:');
   const quoteOptions = isNative || isFiat ? QUOTES.filter((q) => q.key !== 'native') : QUOTES;
-  const [quote, setQuote] = useState<Quote>(isNative || isFiat ? 'fiat:USD' : 'native');
+  const [quote, setQuote] = useState<Quote>('fiat:USD');
 
   return (
     <Panel
