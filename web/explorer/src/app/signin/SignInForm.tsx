@@ -30,6 +30,18 @@ export function SignInForm({ mode = 'signin' }: { mode?: 'signin' | 'signup' }) 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: trimmed }),
+        // REQUIRED. This is a cross-origin call (stellarindex.io ->
+        // api.stellarindex.io) and fetch defaults to credentials:
+        // 'same-origin', so without this the browser DISCARDS the
+        // response's Set-Cookie. The cookie in question is the
+        // login-intent witness the callback demands (C3-030), so every
+        // emailed sign-in link 403'd with "this sign-in link must be
+        // opened in the browser that requested it" — verified live
+        // 2026-08-04. The server-side binding landed in 5b99ebbd, which
+        // touched no web source; the Go tests replay the cookie a real
+        // browser "would have stored", which is exactly the assumption
+        // this call broke. accountFetch has always had it.
+        credentials: 'include',
       });
       if (!res.ok) {
         let detail: string | undefined;
