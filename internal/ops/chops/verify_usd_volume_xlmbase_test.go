@@ -84,3 +84,33 @@ func TestCheckXLMBaseBound(t *testing.T) {
 		}
 	})
 }
+
+// TestCheckXLMBaseBound_CEXScale — regression for the first live run of
+// the bound (2026-08-04): base-leg scale is a CONNECTOR property, and
+// off-chain CEX rows stamp 1e8 (not stroops). The un-fixed 1e7
+// hardcode flagged every honest kraken XLM/EUR day at ratio ≈ 0.100.
+func TestCheckXLMBaseBound_CEXScale(t *testing.T) {
+	spec, err := timescale.NewUSDVolumeQuoteSpec(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rate := new(big.Rat).SetFloat64(0.16)
+	// 10,000 XLM at CEX 1e8 scale = 1e12 raw. Honest usd_volume ≈
+	// 10,000 × $0.16 = $1,600 (stored via the EUR→USD FX tier).
+	g := timescale.TradeValuationGroup{
+		Source:        "kraken",
+		BaseAsset:     "crypto:XLM",
+		QuoteAsset:    "fiat:EUR",
+		PricedRows:    100,
+		SumUSDVolume:  "1600.00",
+		SumBaseAmount: "1000000000000",
+	}
+	if got := checkXLMBaseBound([]timescale.TradeValuationGroup{g}, spec, rate, 1, 20); got != 0 {
+		t.Errorf("violations = %d, want 0 — honest CEX rows at 1e8 scale must pass", got)
+	}
+	// And a genuinely-wrong CEX group still fails.
+	g.SumUSDVolume = "16000.00" // 10x over
+	if got := checkXLMBaseBound([]timescale.TradeValuationGroup{g}, spec, rate, 1, 20); got != 1 {
+		t.Errorf("violations = %d, want 1 — a 10x-over CEX group must still fail", got)
+	}
+}
