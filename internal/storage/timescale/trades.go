@@ -160,6 +160,44 @@ func tradeUSDVolume(ctx context.Context, t canonical.Trade, quoteSpec *USDVolume
 	if fxResolver == nil {
 		return nil
 	}
+	// When the BASE leg is XLM, value the trade off that leg BEFORE
+	// asking the resolver to price the quote.
+	//
+	// Tier 3's quote price for an on-chain token is usually not a direct
+	// market — it is tier 3b's bridge, `token/XLM x XLM/USD`, read out of
+	// prices_1m. But prices_1m is a continuous aggregate over `trades`,
+	// so for a token with no honest market the bridge rate is whatever
+	// the last trader wrote, and the loop closes: an attacker self-deals
+	// one trade to set token/XLM, and every later trade against that
+	// token is valued by multiplying through it.
+	//
+	// Measured on r1 2026-08-04, one sdex row: base 5 XLM (the only real
+	// value in the trade) traded for 49,999,980 units of a classic asset
+	// whose code impersonates XLM. Tier 3b read that issuer's own 1:1
+	// self-trade as the rate and stored
+	//   49,999,980 x 0.17118456496402309304 = $8,559,224.82
+	// for a trade worth $0.86 — and the same path understated a 10-XLM
+	// trade on the same pair as $0.00000175 (~977,000x low) 2.4h later,
+	// once the rate bucket moved. Fleet-wide over 24h: sum(usd_volume)
+	// $21,958,433 against sum(XLM leg) $596,699, with 225 rows over 10x.
+	//
+	// Note the identity key is NOT the defect — queryXLMLeg binds
+	// asset.String() and QuoteUSDPegInfo keys on code+"-"+issuer, so
+	// nothing here matches on code alone. The defect is trusting a
+	// price the counterparty authored.
+	//
+	// XLM is the one asset immune to that: it IS the bridge's anchor, so
+	// its rate is a direct XLM/USD market rather than a bridged one. When
+	// it is sitting in the row, it is both the more trustworthy leg and
+	// the one whose value we can state exactly. Restricted to XLM
+	// deliberately — a non-XLM base would resolve through the same
+	// poisonable bridge, and tradeUSDVolumeViaXLMBaseAnchor is
+	// SubclassDEX-only, so CEX pricing is untouched.
+	if isXLMAsset(t.Pair.Base) {
+		if v := tradeUSDVolumeViaXLMBaseAnchor(ctx, t, md.Subclass, fxResolver); v != nil {
+			return v
+		}
+	}
 	if v := tradeUSDVolumeViaFX(ctx, t, md, fxResolver); v != nil {
 		return v
 	}
