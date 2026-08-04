@@ -87,3 +87,51 @@ func TestHistory_ClassicDecimalsNoReaderConsult(t *testing.T) {
 		t.Errorf("classic/native pair consulted the decimals reader (contract %q)", stub.gotContract)
 	}
 }
+
+// TestHistory_OffChainSourceDecimals is the regression test for the cold
+// audit of 2026-08-04.
+//
+// base_decimals/quote_decimals are documented as THE divisor for turning
+// a row's raw amount into whole units, and they were resolved once per
+// page from the ASSET. But the scale an amount was stamped at is a
+// property of the CONNECTOR, not the asset: the CEX parsers stamp 1e8
+// and the FX pollers 1e6, while the asset resolver returns 7 for
+// anything non-Soroban. A page mixes both — /v1/history for a
+// crypto/fiat pair returns sdex rows beside coinbase rows — so a
+// consumer following the documented conversion overstated every CEX
+// trade by exactly 10x. `price` is scale-invariant, so nothing in the
+// response contradicted it.
+//
+// Verified live before the fix: coinbase rows served base_decimals 7
+// against a parser that stamps 8.
+func TestHistory_OffChainSourceDecimals(t *testing.T) {
+	onChain := mkHistTrade(100) // Source: soroswap
+	cex := mkHistTrade(101)
+	cex.Source = "coinbase"
+	fx := mkHistTrade(102)
+	fx.Source = "exchangeratesapi"
+
+	reader := &stubHistoryReader{trades: []canonical.Trade{onChain, cex, fx}}
+	srv := v1.New(v1.Options{History: reader, TokenDecimals: &decStub{}})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/history?base=native&quote=fiat:USD&limit=50")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var env struct {
+		Data []v1.TradeRow `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	if len(env.Data) != 3 {
+		t.Fatalf("got %d rows, want 3", len(env.Data))
+	}
+
+	for i, want := range []int{7, 8, 6} { // soroswap / coinbase / exchangeratesapi
+		got := env.Data[i]
+		if got.BaseDecimals != want || got.QuoteDecimals != want {
+			t.Errorf("row %d (source %q) decimals = (%d,%d), want (%d,%d) — the scale is a property of the connector, not the asset",
+				i, got.Source, got.BaseDecimals, got.QuoteDecimals, want, want)
+		}
+	}
+}

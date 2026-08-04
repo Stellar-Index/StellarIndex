@@ -509,7 +509,8 @@ type MarketsOrderBy string
 
 const (
 	// MarketsOrderByPair sorts by `<base>|<quote>` lex order
-	// ascending. Stable for paginating the full set. Default.
+	// ascending. Stable for paginating the full set. NOT the
+	// server default — pass it explicitly (corrected 2026-08-04).
 	MarketsOrderByPair MarketsOrderBy = "pair"
 	// MarketsOrderByVolume24hUSDDesc sorts by 24h USD volume
 	// descending (NULLS LAST), with `<base>|<quote>` as the
@@ -661,7 +662,7 @@ func (c *Client) AdminCreateKey(ctx context.Context, req AdminCreateKeyRequest) 
 // request — typically 401 (no credentials), 403 (caller doesn't
 // own the key), or 404 (key not found / already revoked).
 //
-// keyID is the public ID returned in [KeyCreated.ID] / on each
+// keyID is the public ID returned in [KeyCreated.KeyID] / on each
 // row of [Client.Keys] — NOT the plaintext secret. Returning the
 // secret would 400 since the route validates the path segment as
 // a key ID.
