@@ -6,6 +6,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // Decoder is the dispatcher-facing OpDecoder for classic SDEX
@@ -66,9 +67,31 @@ func (*Decoder) Decode(ctx dispatcher.OpContext) ([]consumer.Event, error) {
 			taker,
 		)
 		if err != nil {
-			// Per-claim failure counted by the dispatcher; return
-			// partial success so the other claims in this op still
-			// land.
+			// Count the per-claim failure HERE. The previous comment
+			// said "counted by the dispatcher", but the dispatcher only
+			// counts a non-nil return from Decode — and this function
+			// has no such return: every per-claim error is swallowed by
+			// this continue and both exits are `nil`. So
+			// stellarindex_source_decode_errors_total{source="sdex"}
+			// was structurally incapable of ever leaving zero, on the
+			// highest-volume source in the system (~925k events/day),
+			// while events.go, the README's "decode-error budget", and
+			// the sustained-rate alert all name that metric as THE
+			// signal for exactly this.
+			//
+			// It matters because the drop is otherwise invisible in
+			// every direction: sdexclaim.IsRealTrade mirrors the same
+			// reject, so the census and the lake's
+			// classic_trade_effect_count drop the atom too and the
+			// ADR-0033 reconcile nets to zero — a new ClaimAtom variant
+			// or an unparseable asset code would go on losing real
+			// trades indefinitely with a green verdict (cold audit
+			// 2026-08-04).
+			//
+			// Still `continue`, not a returned error: the other claims
+			// in this op are independently valid and a returned error
+			// would drop them too.
+			obs.SourceDecodeErrorsTotal.WithLabelValues(SourceName).Inc()
 			continue
 		}
 		out = append(out, TradeEvent{Trade: trade})
