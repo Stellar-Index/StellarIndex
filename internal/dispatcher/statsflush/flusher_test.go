@@ -30,11 +30,17 @@ func (s *stubStatsSource) Stats() dispatcher.Stats { return s.stats }
 type fakeStatsWriter struct {
 	fail  bool
 	calls [][]timescale.DecoderStatsBucket
+	// ctxErrs records ctx.Err() as observed at write time, one entry
+	// per call. A non-nil entry means the real *timescale.Store would
+	// have been rejected by database/sql before reaching Postgres —
+	// which is how the shutdown drain silently wrote nothing.
+	ctxErrs []error
 }
 
-func (w *fakeStatsWriter) InsertDecoderStats(_ context.Context, rows []timescale.DecoderStatsBucket) error {
+func (w *fakeStatsWriter) InsertDecoderStats(ctx context.Context, rows []timescale.DecoderStatsBucket) error {
 	cp := append([]timescale.DecoderStatsBucket(nil), rows...)
 	w.calls = append(w.calls, cp)
+	w.ctxErrs = append(w.ctxErrs, ctx.Err())
 	if w.fail {
 		return errors.New("simulated postgres outage")
 	}
@@ -133,5 +139,47 @@ func TestFlushAt_WriteSuccess_AdvancesSnapshot(t *testing.T) {
 	}
 	if len(w.calls) != 1 {
 		t.Fatalf("InsertDecoderStats called %d times, want 1", len(w.calls))
+	}
+}
+
+// TestRun_ShutdownDrain_UsesLiveContext is the regression test for the
+// cold audit of 2026-08-04: Run's ctx.Done() arm called f.flush(ctx)
+// with the very context that had just fired. database/sql checks
+// ctx.Err() before acquiring a connection, so the "one last flush
+// before exiting so a clean shutdown captures the final partial
+// bucket" could never write anything — every indexer restart dropped
+// up to a full interval of events_seen / decode_errors / orphan_events
+// while logging the retain-snapshot warning, a promise the exiting
+// process cannot keep.
+//
+// Asserts the drain both happens AND carries a context that is still
+// live at write time.
+func TestRun_ShutdownDrain_UsesLiveContext(t *testing.T) {
+	src := &stubStatsSource{stats: dispatcher.Stats{
+		EventsSeen: map[string]int{"band": 7},
+	}}
+	w := &fakeStatsWriter{}
+	// A long interval guarantees the ticker never fires, so any write
+	// observed here came from the shutdown drain and nothing else.
+	f := New(src, w, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Options{Interval: time.Hour})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- f.Run(ctx) }()
+
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run returned %v, want nil", err)
+	}
+
+	if len(w.calls) != 1 {
+		t.Fatalf("InsertDecoderStats called %d times, want 1 (the shutdown drain)", len(w.calls))
+	}
+	if w.ctxErrs[0] != nil {
+		t.Errorf("drain wrote with ctx.Err() = %v, want nil — an already-cancelled context is rejected by database/sql before it reaches Postgres, so the final bucket is silently lost", w.ctxErrs[0])
+	}
+	if len(w.calls[0]) != 1 || w.calls[0][0].EventsSeen != 7 {
+		t.Errorf("drain rows = %+v, want one band row with EventsSeen 7", w.calls[0])
 	}
 }
