@@ -73,3 +73,53 @@ func TestClampAccountTradesLimit(t *testing.T) {
 		}
 	}
 }
+
+// TestAccountTradesQuery_OuterColumnsExistInSubquery pins the invariant
+// whose violation made this endpoint 500 for every account, always.
+//
+// The outer SELECT projects from the UNION subquery by NAME, so every
+// name it lists must be an output column of both arms. That held for
+// plain columns and for `x::text` (a cast preserves the name), but NOT
+// for `COALESCE(usd_volume::text, ”)` — PostgreSQL names that output
+// column `coalesce`, so `usd_volume` resolved against nothing and the
+// statement failed at PLAN time with 42703. The endpoint had therefore
+// never served a row, and TestAccountTradesQuery_Shape could not see it
+// because it asserts substrings of the query STRING rather than the
+// relationship between the two column lists (cold audit 2026-08-04).
+//
+// This test compares the two lists structurally, so it fails for ANY
+// future expression added to the inner list without an alias — not just
+// the two COALESCEs that caused the original outage.
+func TestAccountTradesQuery_OuterColumnsExistInSubquery(t *testing.T) {
+	produced := make(map[string]bool)
+	for _, col := range strings.Split(accountTradesInnerCols, ",") {
+		col = strings.TrimSpace(strings.ReplaceAll(col, "\n", " "))
+		if col == "" {
+			continue
+		}
+		// An aliased expression contributes its alias; a bare column
+		// contributes itself. Anything else (an unaliased expression)
+		// contributes a name PostgreSQL derives from the function —
+		// which is the bug this test exists to catch, so record the
+		// expression verbatim and let the comparison below fail.
+		name := col
+		if i := strings.LastIndex(strings.ToUpper(col), " AS "); i >= 0 {
+			name = strings.TrimSpace(col[i+4:])
+		} else if strings.ContainsAny(col, "(:") {
+			name = "<unaliased expression: " + col + ">"
+		}
+		produced[name] = true
+	}
+
+	for _, want := range strings.Split(accountTradesOuterCols, ",") {
+		want = strings.TrimSpace(strings.ReplaceAll(want, "\n", " "))
+		if want == "" {
+			continue
+		}
+		if !produced[want] {
+			t.Errorf("outer SELECT projects %q, which no UNION arm produces — "+
+				"the statement will fail at plan time with 42703.\narm outputs: %v",
+				want, produced)
+		}
+	}
+}

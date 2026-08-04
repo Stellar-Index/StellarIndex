@@ -88,13 +88,29 @@ type AccountTradesCursor struct {
 // IsSet reports whether the cursor points past a previously served row.
 func (c AccountTradesCursor) IsSet() bool { return !c.Ts.IsZero() }
 
-// accountTradesCols is the per-arm column list. base/quote amounts and
-// usd_volume are cast to text server-side so the driver never sees a
+// accountTradesInnerCols is the per-arm column list. base/quote amounts
+// and usd_volume are cast to text server-side so the driver never sees a
 // float (ADR-0003).
-const accountTradesCols = `source, ledger, tx_hash, op_index, ts,
+//
+// The two COALESCE expressions MUST carry explicit aliases. Without them
+// PostgreSQL names both output columns `coalesce`, so the outer SELECT's
+// reference to `usd_volume` resolved against nothing and the statement
+// failed at PLAN time — meaning GET /v1/accounts/{id}/trades returned 500
+// for every account, always, and had never served a row. The only test
+// asserted substrings of the query STRING and never executed SQL, so
+// `make test` could not see it (cold audit 2026-08-04, reproduced against
+// r1: `pq: column "usd_volume" does not exist ... (42703)`).
+const accountTradesInnerCols = `source, ledger, tx_hash, op_index, ts,
 	       base_asset, quote_asset,
-	       base_amount::text, quote_amount::text,
-	       COALESCE(usd_volume::text, ''), COALESCE(routed_via, '')`
+	       base_amount::text AS base_amount, quote_amount::text AS quote_amount,
+	       COALESCE(usd_volume::text, '') AS usd_volume,
+	       COALESCE(routed_via, '') AS routed_via`
+
+// accountTradesOuterCols re-projects the UNION's already-normalised
+// columns by name — no re-casting, no re-COALESCE.
+const accountTradesOuterCols = `source, ledger, tx_hash, op_index, ts,
+	       base_asset, quote_asset,
+	       base_amount, quote_amount, usd_volume, routed_via`
 
 // accountTradesQuery builds the two-arm UNION described in the file
 // header. hasCursor appends the keyset tuple comparison to both arms.
@@ -114,11 +130,11 @@ func accountTradesQuery(hasCursor bool) string {
 		limitPh = "$6"
 	}
 	orderBy := ` ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC LIMIT ` + limitPh
-	return `SELECT ` + accountTradesCols + `, role, counterparty FROM (
-		(SELECT ` + accountTradesCols + `, 'taker' AS role, COALESCE(maker, '') AS counterparty
+	return `SELECT ` + accountTradesOuterCols + `, role, counterparty FROM (
+		(SELECT ` + accountTradesInnerCols + `, 'taker' AS role, COALESCE(maker, '') AS counterparty
 		   FROM trades WHERE taker = $1` + cursorClause + orderBy + `)
 		UNION ALL
-		(SELECT ` + accountTradesCols + `, 'maker' AS role, COALESCE(taker, '') AS counterparty
+		(SELECT ` + accountTradesInnerCols + `, 'maker' AS role, COALESCE(taker, '') AS counterparty
 		   FROM trades WHERE maker = $1 AND (taker IS NULL OR taker <> $1)` + cursorClause + orderBy + `)
 	) u` + orderBy
 }
