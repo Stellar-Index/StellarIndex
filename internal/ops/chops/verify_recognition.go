@@ -72,6 +72,20 @@ func verifyRecognition(args []string) error {
 	fmt.Fprintf(os.Stderr, "verify-recognition: %d distinct (contract, topic) shape(s) in ledgers [%d, %d]\n",
 		len(samples), *from, *to)
 
+	// Zero shapes is a BROKEN CHECK, not a clean range: no samples means
+	// no gaps means "OK — every on-chain event shape is recognized",
+	// asserting recognition coverage over a window it read nothing from.
+	// Reachable for any pre-Soroban range and for every range once
+	// soroban_events is retention-dropped or decommissioned (BACKLOG
+	// #39). Same fail-closed posture verify-hashchain already takes
+	// (cold audit 2026-08-04).
+	if len(samples) == 0 {
+		return fmt.Errorf(
+			"verify-recognition read 0 event shapes in ledgers [%d, %d] — "+
+				"the source table is empty for this range; refusing to certify recognition coverage vacuously",
+			*from, *to)
+	}
+
 	gaps := completeness.AuditRecognition(samples, disp)
 	if len(gaps) == 0 {
 		fmt.Fprintln(os.Stderr, "verify-recognition: OK — every on-chain event shape is recognized by a decoder")

@@ -161,7 +161,20 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 		totalRows++
 	}
 
+	// lastWalked is the highest ledger the walk actually delivered. The
+	// terminal checkpoint MUST use this, not the operator's -to.
+	var lastWalked uint32
+
 	checkpoint := func(ledger uint32, force bool) {
+		// Never advance the cursor past a ledger whose rows failed to
+		// insert. -resume defaults to true and SKIPS checkpointed
+		// ledgers, so advancing here loses those rows permanently with
+		// no dead-letter record. This mirrors projected-rebuild's
+		// checkpointWindow, which withholds for exactly this reason
+		// (cold audit 2026-08-04).
+		if insertFailures > 0 {
+			return
+		}
 		if !force && time.Since(lastCheckpoint) < checkpointInterval {
 			return
 		}
@@ -175,6 +188,7 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 	streamErr := ledgerstream.Stream(ctx, lsCfg, startLedger, uint32(*to),
 		func(lcm sdkxdr.LedgerCloseMeta) error {
 			totalLedgers++
+			lastWalked = lcm.LedgerSequence()
 			outputs, perr := disp.ProcessLedger(lcm, cfg.Stellar.Passphrase())
 			if perr != nil {
 				// One-ledger failures are noisy-but-not-fatal for a
@@ -215,17 +229,34 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 	// error). The cursor row may not exist if streamErr fired before
 	// any ledger was processed — that's fine, GetCursor will
 	// ErrNotFound on the next run.
-	if totalLedgers > 0 {
-		// We don't know the LAST ledger here without re-walking — the
-		// closure captures it via `checkpoint(...)`. The periodic
-		// checkpoint will have caught up close to the actual tail;
-		// any 30-second slip on resume is a few-thousand-ledger
-		// re-process which is idempotent.
-		checkpoint(uint32(*to), false)
+	//
+	// lastWalked, NOT *to. This used to checkpoint the operator's
+	// declared range top regardless of how far the walk actually got —
+	// and UpsertCursor is monotonic-forward, so that write always won
+	// and could never be corrected. A run that failed partway (or that
+	// returned success with a trailing hole, which
+	// TolerateTrailingMissing permits) therefore jumped the cursor to
+	// the range top, and the retry printed "cursor already at or past
+	// -to — nothing to do" and exited 0 with the remainder permanently
+	// unfilled. This is the same defect the indexer's seamed reader
+	// documents one layer up (cold audit 2026-08-04).
+	if totalLedgers > 0 && streamErr == nil {
+		checkpoint(lastWalked, true)
 	}
 
 	if streamErr != nil {
-		return fmt.Errorf("stream: %w", streamErr)
+		return fmt.Errorf("stream: %w (cursor left at the last clean checkpoint; re-run to continue)", streamErr)
+	}
+
+	// Same guard backfill carries (F-0159): a walk that delivered zero
+	// ledgers is almost always the wrong bucket, and TolerateTrailingMissing
+	// swallows the underlying missing-file error, so without this the
+	// operator reads "0 ledgers, 0 rows" as a completed backfill.
+	if totalLedgers == 0 {
+		return fmt.Errorf(
+			"backfill-router walked 0 of %d ledgers in range [%d,%d] from bucket %q — "+
+				"the bucket likely has no files there; historical ranges need -bucket galexie-archive",
+			uint32(*to)-startLedger+1, startLedger, uint32(*to), streamBucket)
 	}
 
 	fmt.Fprintf(os.Stderr, "backfill-router: done. %d ledgers, %d rows inserted (%d insert failures)\n",
