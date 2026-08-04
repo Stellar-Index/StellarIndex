@@ -202,6 +202,21 @@ func chGate(args []string) error { //nolint:gocognit,gocyclo,funlen // linear wa
 	if gateFail {
 		return fmt.Errorf("ch-gate: COMPLETENESS GATE FAILED")
 	}
+	// Zero walked ledgers is a BROKEN GATE, not a clean range. Every
+	// check here compares census vs stored vs rows, so on an empty range
+	// they are all 0 == 0 == 0 and each prints OK — certifying a range
+	// that was examined zero times. It is easy to reach: -bucket
+	// defaults to the TRIMMED live bucket, so verifying a historical
+	// backfill without -bucket galexie-archive walks nothing, and
+	// TolerateTrailingMissing converts the underlying missing-file error
+	// to nil for any range under 65,536 ledgers. Same fail-closed guard
+	// verify-hashchain already carries (cold audit 2026-08-04).
+	if walked == 0 {
+		return fmt.Errorf(
+			"ch-gate walked 0 ledgers in [%d, %d] from bucket %q — nothing was examined; "+
+				"historical ranges need -bucket galexie-archive. Refusing to pass vacuously",
+			*from, *to, *bucket)
+	}
 	fmt.Printf("\n✅ ch-gate: completeness gate PASSED\n")
 	return nil
 }

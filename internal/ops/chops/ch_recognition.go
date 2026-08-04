@@ -157,7 +157,13 @@ func chRecognition(args []string) error { //nolint:gocognit,funlen // linear: pa
 		}
 		fmt.Printf("  %s  topic0=%-24q events=%d ledgers=[%d,%d]\n", g.ContractID, sym, g.Count, g.MinLedger, g.MaxLedger)
 	}
-	return nil
+	// Non-zero, matching the Postgres sibling verify-recognition. This
+	// returned nil no matter how many shapes were unrecognized, so the
+	// ADR-0033 "every event for every protocol" gate reported the gaps
+	// in a table and exited 0 — unusable in cron or Healthchecks.io,
+	// which is where a lake-side recognition gate belongs now that
+	// soroban_events is decommission-pending (cold audit 2026-08-04).
+	return fmt.Errorf("%d unrecognized event shape(s) — a decoder is missing a topic (ADR-0033 EVERY-event policy)", len(gaps))
 }
 
 func pctOf(n, d uint64) float64 {
