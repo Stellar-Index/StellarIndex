@@ -26,7 +26,7 @@ Two alerts:
   `outcome="network_error"` at > 0.1 attempts/s for 15+ min.
   Translation: one customer's endpoint is sustained-down (5xx
   or TCP/TLS errors) and we keep retrying with exponential
-  backoff (30s → 1h cap, 15-attempt budget over ~72h).
+  backoff (30s → 1h cap, 15-attempt budget over ~8h).
 - **`_exhausted`** — a delivery hit the retry budget and was
   marked terminally failed. The customer hasn't received the
   event AT ALL; if it was a SEV-1 incident notification, they
@@ -85,7 +85,7 @@ Decision tree:
       template:
       > Hi — our webhook delivery worker has been unable to
       > reach `<URL>` since `<timestamp>` (HTTP `<status>`).
-      > After our 15-attempt retry budget elapses (~72h) we
+      > After our 15-attempt retry budget elapses (~8h) we
       > mark the delivery permanently failed; missed events
       > include SEV-1 incident pings. Could you check the
       > endpoint? Updating the URL via

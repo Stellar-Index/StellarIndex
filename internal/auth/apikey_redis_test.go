@@ -257,3 +257,32 @@ func TestNewRedisAPIKeyValidator_PanicsOnNil(t *testing.T) {
 	}()
 	_ = NewRedisAPIKeyValidator(nil)
 }
+
+// TestRedisAPIKey_LookupMapsMonthlyQuota is the regression test for the
+// cold audit of 2026-08-04.
+//
+// MonthlyQuota is persisted on APIKeyRecord, documented in this file as
+// "the per-key monthly request cap the runtime quota middleware
+// enforces", and mapped by the Postgres validator — but Lookup never
+// copied it onto the Subject. middleware.MonthlyQuota short-circuits on
+// `subject.MonthlyQuota <= 0`, so on the default (redis) backend, which
+// is what r1 runs, the cap was dead for every key: a metered key seeded
+// with a quota was never metered, never 429'd, and nothing logged or
+// alerted. Exactly the F-1226 bug class already fixed once for the
+// permission fields, which this field was left out of.
+func TestRedisAPIKey_LookupMapsMonthlyQuota(t *testing.T) {
+	v, mr, _ := newTestValidator(t)
+	seedKey(t, mr, "rek_test_quota", APIKeyRecord{
+		Identifier:   "owner-metered",
+		Tier:         TierAPIKey,
+		MonthlyQuota: 1_000_000,
+	})
+
+	got, err := v.Lookup(context.Background(), "rek_test_quota")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if got.MonthlyQuota != 1_000_000 {
+		t.Errorf("MonthlyQuota = %d, want 1000000 — the quota middleware short-circuits on <= 0, so an unmapped quota means the cap is silently unenforced", got.MonthlyQuota)
+	}
+}

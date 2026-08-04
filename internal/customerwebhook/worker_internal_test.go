@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"net/http"
 	"strconv"
 	"testing"
 	"time"
@@ -165,5 +166,44 @@ func TestSignHMACSHA256_BindsTimestamp(t *testing.T) {
 	}
 	if got != signHMACSHA256(secret, ts, payload) {
 		t.Error("signature is not deterministic for identical inputs")
+	}
+}
+
+// TestWorker_retryClassification is the regression test for the cold
+// audit of 2026-08-04.
+//
+// Every 4xx used to be terminal on the FIRST attempt, so a 429 from any
+// endpoint behind a rate-limiting gateway permanently destroyed the
+// event — next_attempt_at NULL, dropped out of the pending predicate,
+// with no dead-letter, no retry and no alert (the rules match only
+// server_error/network_error/exhausted, so client_error is unmonitored).
+// A SEV-1 notification coincident with a freeze burst was lost that way.
+//
+// Conversely 3xx was classified "transient" and retried 15 times over
+// ~8h even though redirects are deliberately disabled by the SSRF
+// defence, so it could never succeed — and the recorded reason said
+// "transient", which is false.
+func TestWorker_retryClassification(t *testing.T) {
+	for _, tc := range []struct {
+		status    int
+		wantRetry bool
+		why       string
+	}{
+		{http.StatusTooManyRequests, true, "429 is the canonical back-off signal"},
+		{http.StatusRequestTimeout, true, "408 is temporary by definition"},
+		{http.StatusTooEarly, true, "425 means retry later"},
+		{http.StatusUnauthorized, false, "401 needs the customer to act"},
+		{http.StatusNotFound, false, "404 is a wrong URL"},
+		{http.StatusUnprocessableEntity, false, "422 is validation"},
+		{http.StatusPermanentRedirect, false, "redirects are not followed, so a 3xx can never succeed"},
+		{http.StatusFound, false, "same for a 302"},
+	} {
+		if got := isRetryable4xx(tc.status); got != tc.wantRetry && tc.status < 300 {
+			t.Errorf("isRetryable4xx(%d) = %v, want %v — %s", tc.status, got, tc.wantRetry, tc.why)
+		}
+		// 3xx must not be classified retryable by the 4xx helper either.
+		if tc.status >= 300 && tc.status < 400 && isRetryable4xx(tc.status) {
+			t.Errorf("isRetryable4xx(%d) = true, want false — %s", tc.status, tc.why)
+		}
 	}
 }

@@ -214,7 +214,7 @@ groups:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/customer-webhook-delivery-failing.md
           summary: "Customer webhook deliveries permanently failed (budget exhausted)"
           description: |
-            A delivery hit the 15-attempt retry budget (72h) and
+            A delivery hit the 15-attempt retry budget (~8h) and
             was marked terminally failed.
 
       # Stripe platform-bridge sync errors (F-1219 follow-up,

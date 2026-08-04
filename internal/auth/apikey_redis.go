@@ -313,6 +313,16 @@ func (v *RedisAPIKeyValidator) Lookup(ctx context.Context, key string) (Subject,
 		DenyPermissions:     rec.DenyPermissions,
 		IPAllowlist:         ipAllowlist,
 		RefererAllowlist:    rec.RefererAllowlist,
+		// Same bug class as the permission block above, left behind by
+		// that same fix (cold audit 2026-08-04). MonthlyQuota is a
+		// persisted field this file's own APIKeyRecord doc describes as
+		// "the per-key monthly request cap the runtime quota middleware
+		// enforces", and the Postgres validator maps it — but Lookup did
+		// not, so middleware.MonthlyQuota saw 0 and short-circuited for
+		// EVERY key on the default (redis) backend, which is what r1
+		// runs. A metered key seeded with monthly_quota was never
+		// metered: no 429, no log, no alert.
+		MonthlyQuota: rec.MonthlyQuota,
 	}, nil
 }
 
