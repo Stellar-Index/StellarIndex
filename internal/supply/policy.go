@@ -95,7 +95,48 @@ func (p Policy) MaxSupplyOverride(assetKey string) (*big.Int, bool, error) {
 	if !ok {
 		return nil, false, fmt.Errorf("supply: max_supply override for %q is not a decimal integer (got %q)", assetKey, raw)
 	}
+	// SetString happily parses a leading '-', so a sign typo used to pass
+	// Validate() and then fail forever at the write boundary: the computers
+	// set it as MaxSupply with BasisOverride, and asset_supply_history's
+	// `CHECK (max_supply IS NULL OR max_supply >= 0)` rejects the row on
+	// EVERY tick. The asset's last good snapshot is then served
+	// indefinitely while the operator's first stop — config validation —
+	// reports the config is fine (cold audit 2026-08-04).
+	if n.Sign() < 0 {
+		return nil, false, fmt.Errorf(
+			"supply: max_supply override for %q is negative (got %q) — supply is unsigned and the store rejects it",
+			assetKey, raw)
+	}
 	return n, true, nil
+}
+
+// validateDistinctNonEmpty reports one error per empty entry and one per
+// duplicate, naming the index it first appeared at.
+//
+// Duplicates are REJECTED, not deduped. Every reserve/locked-set reader
+// sums per slice element with no dedup, so a repeated address is
+// subtracted twice from circulating supply — one duplicate of a real r1
+// reserve account (4.108B XLM) drops served circulating supply by 12% and
+// market cap by ~$699M, with supply_basis unchanged and no alert anywhere.
+// Silently deduping would hide an operator error in the file that IS the
+// source of truth (cold audit 2026-08-04).
+func validateDistinctNonEmpty(label string, items []string) []error {
+	var errs []error
+	seen := make(map[string]int, len(items))
+	for i, v := range items {
+		if v == "" {
+			errs = append(errs, fmt.Errorf("supply: %s[%d] is empty", label, i))
+			continue
+		}
+		if first, dup := seen[v]; dup {
+			errs = append(errs, fmt.Errorf(
+				"supply: %s[%d] duplicates [%d] (%s) — its balance would be counted twice",
+				label, i, first, v))
+			continue
+		}
+		seen[v] = i
+	}
+	return errs
 }
 
 // Validate checks the policy for structural problems. Returns
@@ -104,11 +145,7 @@ func (p Policy) MaxSupplyOverride(assetKey string) (*big.Int, bool, error) {
 func (p Policy) Validate() error {
 	var errs []error
 
-	for i, acc := range p.SDFReserveAccounts {
-		if acc == "" {
-			errs = append(errs, fmt.Errorf("supply: SDFReserveAccounts[%d] is empty", i))
-		}
-	}
+	errs = append(errs, validateDistinctNonEmpty("SDFReserveAccounts", p.SDFReserveAccounts)...)
 
 	for assetKey, override := range p.MaxSupplyOverrides {
 		if override == "" {
@@ -120,16 +157,10 @@ func (p Policy) Validate() error {
 	}
 
 	for assetKey, locked := range p.PerAsset {
-		for i, acc := range locked.Accounts {
-			if acc == "" {
-				errs = append(errs, fmt.Errorf("supply: PerAsset[%q].Accounts[%d] is empty", assetKey, i))
-			}
-		}
-		for i, contract := range locked.Contracts {
-			if contract == "" {
-				errs = append(errs, fmt.Errorf("supply: PerAsset[%q].Contracts[%d] is empty", assetKey, i))
-			}
-		}
+		errs = append(errs, validateDistinctNonEmpty(
+			fmt.Sprintf("PerAsset[%q].Accounts", assetKey), locked.Accounts)...)
+		errs = append(errs, validateDistinctNonEmpty(
+			fmt.Sprintf("PerAsset[%q].Contracts", assetKey), locked.Contracts)...)
 	}
 
 	return errors.Join(errs...)

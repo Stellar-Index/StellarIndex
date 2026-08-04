@@ -122,3 +122,46 @@ func TestPolicy_Validate_RejectsEmptyEntries(t *testing.T) {
 		}
 	}
 }
+
+// Cold audit 2026-08-04: Validate accepted two config shapes that each
+// silently corrupt XLM's published circulating supply.
+func TestPolicyValidate_rejectsNegativeOverrideAndDuplicates(t *testing.T) {
+	t.Run("negative max_supply override", func(t *testing.T) {
+		p := supply.Policy{MaxSupplyOverrides: map[string]string{
+			"USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN": "-1000",
+		}}
+		if err := p.Validate(); err == nil {
+			t.Fatal("Validate accepted a negative max_supply override — it parses, so the asset then fails the store's CHECK (max_supply >= 0) on every tick forever while config validation reports the config is fine")
+		}
+	})
+
+	t.Run("duplicate SDF reserve account", func(t *testing.T) {
+		const acc = "GDUY7J7A33TQWOSOQGDO776GGLM3UQERL4J3SPT56F6YS4ID7MLDERI4"
+		p := supply.Policy{SDFReserveAccounts: []string{acc, acc}}
+		if err := p.Validate(); err == nil {
+			t.Fatal("Validate accepted a duplicated reserve account — the readers sum per element with no dedup, so its balance is subtracted twice from circulating supply")
+		}
+	})
+
+	t.Run("duplicate per-asset locked account", func(t *testing.T) {
+		const acc = "GDUY7J7A33TQWOSOQGDO776GGLM3UQERL4J3SPT56F6YS4ID7MLDERI4"
+		p := supply.Policy{PerAsset: map[string]supply.LockedSet{
+			"AQUA:GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA": {
+				Accounts: []string{acc, acc},
+			},
+		}}
+		if err := p.Validate(); err == nil {
+			t.Fatal("Validate accepted a duplicated per-asset locked account")
+		}
+	})
+
+	t.Run("distinct accounts still pass", func(t *testing.T) {
+		p := supply.Policy{SDFReserveAccounts: []string{
+			"GDUY7J7A33TQWOSOQGDO776GGLM3UQERL4J3SPT56F6YS4ID7MLDERI4",
+			"GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7",
+		}}
+		if err := p.Validate(); err != nil {
+			t.Fatalf("Validate rejected two distinct accounts: %v", err)
+		}
+	})
+}
