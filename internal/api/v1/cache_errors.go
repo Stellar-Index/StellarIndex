@@ -50,8 +50,8 @@ func IsCacheUnavailable(err error) bool {
 	if err == nil {
 		return false
 	}
-	// Application-layer sentinel; not a cache failure.
-	if errors.Is(err, ErrPriceNotFound) {
+	// Application-layer sentinels; not cache failures.
+	if errors.Is(err, ErrPriceNotFound) || errors.Is(err, ErrPriceWithheld) {
 		return false
 	}
 

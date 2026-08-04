@@ -91,6 +91,9 @@ func (c Config) Validate() error {
 	if err := c.Trades.validate(); err != nil {
 		return err
 	}
+	if err := c.PricingGuard.validate(); err != nil {
+		return err
+	}
 	if err := c.DecimalsGuard.validate(); err != nil {
 		return err
 	}

@@ -15,6 +15,43 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Thin-market substance gate: aggregated prices are now withheld for
+  on-chain pairs with no real trailing market** (2026-08-04 valuation
+  incident, follow-up to the XLM-leg valuation fix). On a permissionless
+  DEX one participant can mint a token and author its entire market for
+  pennies; every trailing-baseline guard is blind to that because the
+  baseline itself is attacker-authored. Every raw `prices_1m` serving
+  path — `/v1/price` (+ `batch`, windowed), `/v1/price/tip` (+ stream),
+  the SEP-40 oracle passthrough, the GlobalAssetView headline price, the
+  SSE price publisher, and the customer price-alert evaluator — now
+  refuses to publish an aggregated "the price of X is P" claim unless
+  the pair's trailing 24h market clears an operator-set floor (default:
+  $1,000 USD volume, 20 distinct 1-minute buckets, 6 hours of activity
+  span, summed over the pair's alias family in both directions;
+  `[pricing_guard]` config). Withheld pairs 404 with the distinct
+  problem type `…/errors/price-withheld` so integrators can tell
+  "never observed" from "observed, too thin to aggregate"; raw surfaces
+  (`/v1/observations`, `/v1/ohlc`, `/v1/history`) still serve the full
+  market. New metric
+  `stellarindex_price_serve_substance_withheld_total{surface}`.
+  (`internal/pricingguard.SubstanceGate`,
+  `timescale.PairMarketSubstance`.)
+
+### Changed
+- **The aggregator's `min_usd_volume` floor now fails CLOSED on an
+  unvaluable on-chain quote.** Since 2026-07-10 a configured pair whose
+  on-chain quote asset had no recognised USD peg published its VWAP
+  with no floor at all (loudly, via
+  `stellarindex_aggregator_min_usd_volume_unvaluable_total`, but
+  published). An unvaluable quote is exactly the shape a mint-and-dust
+  attacker produces, so the window is now dropped: if the volume cannot
+  be valued, the floor cannot be verified, so nothing is published.
+  Declaring the peg in `trades.usd_pegged_classic_assets` /
+  `supply.sac_wrappers` un-blacks the pair with valuation. Also counted
+  under `stellarindex_aggregator_dropped_windows_total{reason=
+  "min_usd_volume_unvaluable"}`.
+
 ### Fixed
 - **Corrected a false premise that was blocking the MEV sandwich fix.**
   Three Go comments and the published `/v1/mev` OpenAPI description all

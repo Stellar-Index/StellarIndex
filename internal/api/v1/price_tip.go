@@ -105,6 +105,10 @@ func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
 	}
 
 	snapshot, sources, err := s.computeTip(r.Context(), asset, quote, window)
+	if errors.Is(err, ErrPriceWithheld) {
+		writePriceWithheldProblem(w, r, asset, quote)
+		return
+	}
 	if errors.Is(err, ErrPriceNotFound) {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/price-not-found",
@@ -151,6 +155,18 @@ func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
 // "stream cannot start" on the stream endpoint. Any other error is
 // surfaced as-is for caller-side logging + 500 mapping.
 func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, windowSeconds int) (PriceSnapshot, []string, error) {
+	// Thin-market substance gate, checked FIRST: the tip surface
+	// promises freshness, not provability (ADR-0018), but it is still
+	// an aggregated "the price of X is P" claim — and the rolling-
+	// window VWAP below is computed straight from raw trades, so
+	// without this check a dust-authored market would serve its
+	// attacker-written rate here even after /v1/price started
+	// withholding it (the 2026-08-04 incident class). One gate call
+	// covers every branch of this function; the reader-level gates
+	// inside LatestPrice would otherwise cover only the middle one.
+	if s.substance != nil && !s.substance.Allowed(ctx, asset, quote, "tip") {
+		return PriceSnapshot{}, nil, ErrPriceWithheld
+	}
 	if snap, sources, ok := s.tipWindowVWAP(ctx, asset, quote, windowSeconds); ok {
 		return snap, sources, nil
 	}

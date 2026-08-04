@@ -237,6 +237,16 @@ the `env:` column.
 | --- | ---- | ------- | ------------ | ----------- |
 | `trades.usd_pegged_classic_assets` | `[]string` | `[]` | — | Classic credit asset_keys (CODE-ISSUER) the operator declares as USD-pegged stablecoins. On-chain DEX trades quoted in these (or their SAC wrappers, transitive via [supply.sac_wrappers]) populate trades.usd_volume at insert time. Empty preserves the off-chain-only default. |
 
+### `[pricing_guard]`
+
+| Key | Type | Default | Env override | Description |
+| --- | ---- | ------- | ------------ | ----------- |
+| `pricing_guard.disable_substance_gate` | `bool` | `false` | — | Disable the thin-market substance gate entirely (serve every pair, pre-2026-08 behaviour). Diagnostic escape hatch, not a tuning knob. |
+| `pricing_guard.substance_min_volume_usd` | `float64` | `1000` | — | Minimum trailing-window USD volume (summed over prices_1m.volume_usd, both directions, alias union) below which an aggregated price is withheld. 0 = pricingguard default (1000). |
+| `pricing_guard.substance_min_buckets` | `int` | `20` | — | Minimum distinct closed 1-minute buckets with at least one trade in the trailing window. 0 = pricingguard default (20). |
+| `pricing_guard.substance_min_span_minutes` | `int` | `360` | — | Minimum minutes between the oldest and newest active 1m bucket in the trailing window (persistence floor — a one-burst market never clears it). 0 = pricingguard default (360). |
+| `pricing_guard.substance_window_hours` | `int` | `24` | — | Trailing measurement window in hours. 0 = pricingguard default (24). |
+
 ### `[decimals_guard]`
 
 | Key | Type | Default | Env override | Description |

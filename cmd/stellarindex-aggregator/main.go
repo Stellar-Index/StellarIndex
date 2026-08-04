@@ -857,7 +857,14 @@ func run(cfgPath string, dryRun bool) error {
 		paWorker := pricealerts.New(
 			postgresstore.NewPriceAlertStore(paStore),
 			postgresstore.NewWebhookStore(paStore),
-			priceAlertVWAPReader{store: store, logger: logger.With("component", "price-alert-guard")},
+			priceAlertVWAPReader{
+				store:  store,
+				logger: logger.With("component", "price-alert-guard"),
+				// Same [pricing_guard] substance policy the API binary
+				// serves under — an alert must not fire off a pair the
+				// API itself would refuse to price.
+				substance: buildAggregatorSubstanceGate(cfg.PricingGuard, store, logger),
+			},
 			pricealerts.Options{
 				Interval: time.Duration(cfg.PriceAlerts.IntervalSeconds) * time.Second,
 				Logger:   logger.With("component", "price-alerts"),
@@ -2056,8 +2063,9 @@ type priceAlertVWAPStore interface {
 // a failure. The Vwap1mRow.Bucket is the START of the 1-minute window;
 // the close time reported to the payload is +1 minute.
 type priceAlertVWAPReader struct {
-	store  priceAlertVWAPStore
-	logger *slog.Logger
+	store     priceAlertVWAPStore
+	logger    *slog.Logger
+	substance *pricingguard.SubstanceGate // nil → no thin-market gate
 }
 
 func (r priceAlertVWAPReader) LatestVWAP(ctx context.Context, base, quote canonical.Asset) (string, time.Time, bool, error) {
@@ -2072,6 +2080,13 @@ func (r priceAlertVWAPReader) LatestVWAP(ctx context.Context, base, quote canoni
 	if err != nil {
 		return "", time.Time{}, false, err
 	}
+	// Thin-market substance gate ([pricing_guard]): a customer price
+	// alert must never fire off a pair whose entire market is
+	// attacker-authorable. Withheld → ok=false, the same benign no-op
+	// as "no closed bucket" (the evaluator skips the pair).
+	if !r.substance.Allowed(ctx, base, quote, "price_alert") {
+		return "", time.Time{}, false, nil
+	}
 	// Same serving-sanity guard as the two API raw-bucket paths (/v1/price,
 	// /v1/assets/{slug}): LatestClosedVWAP1mForPair is the bare
 	// Σ(quote)/Σ(base) closed bucket that BYPASSES the orchestrator's
@@ -2083,6 +2098,23 @@ func (r priceAlertVWAPReader) LatestVWAP(ctx context.Context, base, quote canoni
 	// bucket, and fails open on thin history.
 	served := pricingguard.GuardServedVWAP1m(ctx, r.store, r.logger, pair, row)
 	return served.VWAP, served.Bucket.Add(time.Minute), true, nil
+}
+
+// buildAggregatorSubstanceGate maps [pricing_guard] onto the shared
+// pricingguard substance policy for this binary's price-alert
+// evaluator. Mirrors cmd/stellarindex-api's buildSubstanceGate (the
+// conversion itself is shared via SubstancePolicyFromValues so the two
+// can't drift). Returns nil — a valid allow-everything gate — when the
+// operator disabled it.
+func buildAggregatorSubstanceGate(cfg config.PricingGuardConfig, store *timescale.Store, logger *slog.Logger) *pricingguard.SubstanceGate {
+	if cfg.DisableSubstanceGate {
+		logger.Warn("pricing_guard: substance gate DISABLED by config — price alerts evaluate every pair regardless of trailing market substance")
+		return nil
+	}
+	pol := pricingguard.SubstancePolicyFromValues(
+		cfg.SubstanceMinVolumeUSD, cfg.SubstanceMinBuckets,
+		cfg.SubstanceMinSpanMinutes, cfg.SubstanceWindowHours)
+	return pricingguard.NewSubstanceGate(store, pricingguard.SubstanceGateOptions{Policy: pol, Logger: logger})
 }
 
 type mevObserver struct{}

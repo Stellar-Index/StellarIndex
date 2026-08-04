@@ -669,7 +669,14 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// an operator opts into a different value.
 	streaming.SetMaxConcurrentStreams(cfg.API.Streaming.MaxConcurrentStreams)
 
-	priceReader := storePriceReader{s: store, logger: logger}
+	// Serving-side thin-market substance gate ([pricing_guard],
+	// 2026-08-04 valuation incident). One gate instance is shared by
+	// every raw prices_1m serving path in this binary — the /v1/price
+	// reader, the SEP-40 passthrough, the GlobalAssetView headline —
+	// plus the v1 server's tip path, so all surfaces agree (and share
+	// the verdict cache) on which pairs are too thin to price.
+	substanceGate := buildSubstanceGate(cfg.PricingGuard, store, logger)
+	priceReader := storePriceReader{s: store, logger: logger, substance: substanceGate}
 
 	// Oracle reader — Redis-cached read-through wrapper around the
 	// store reader. /v1/oracle/latest's DISTINCT ON (source) sort
@@ -1260,6 +1267,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		RequireEmailVerified: requireEmailVerifiedOrNil(cfg.API.SignupRequireEmailVerification),
 		Stripe:               stripeCfg,
 		Divergence:           divergenceLooker,
+		Substance:            substanceGate,
 		Confidence:           redisConfidenceLooker{rdb: rdb},
 		Triangulated:         redisTriangulatedLooker{rdb: rdb},
 		Freeze:               freezeLooker,
@@ -1385,7 +1393,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			pkPairFor: func(base, quote canonical.Asset) (canonical.Pair, error) {
 				return canonical.NewPair(base, quote)
 			},
-			logger: logger,
+			logger:    logger,
+			substance: substanceGate,
 		},
 		GlobalPriceOpts: aggregate.GlobalPriceOptions{
 			AggregatorSources: external.AggregatorSources(),
@@ -2995,7 +3004,8 @@ type globalPriceReader struct {
 	s         *timescale.Store
 	tri       redisTriangulatedLooker
 	pkPairFor func(base, quote canonical.Asset) (canonical.Pair, error)
-	logger    *slog.Logger // nil → no guard logging
+	logger    *slog.Logger                // nil → no guard logging
+	substance *pricingguard.SubstanceGate // nil → no thin-market gate
 }
 
 func (g globalPriceReader) LatestVWAP(ctx context.Context, base, quote canonical.Asset) (string, time.Time, int64, []string, bool, error) {
@@ -3012,6 +3022,15 @@ func (g globalPriceReader) LatestVWAP(ctx context.Context, base, quote canonical
 	}
 	if err != nil {
 		return "", time.Time{}, 0, nil, false, err
+	}
+	// Thin-market substance gate ([pricing_guard]): a headline price on
+	// the GlobalAssetView is an aggregated claim, and a pair whose whole
+	// market is attacker-authorable must not publish one. Withheld reads
+	// degrade to "no data" here — the caller falls through to its
+	// aggregator tier, whose orchestrator applies its own min-USD-volume
+	// floor.
+	if !g.substance.Allowed(ctx, base, quote, "asset_headline") {
+		return "", time.Time{}, 0, nil, false, nil
 	}
 	// Same raw-CAGG serving-sanity guard as /v1/price
 	// (storePriceReader.LatestPrice): LatestClosedVWAP1mForPair returns a
@@ -3213,9 +3232,25 @@ const defaultVWAPFreshness = 15 * time.Minute
 
 type storePriceReader struct {
 	s             *timescale.Store
-	vwapFreshness time.Duration    // 0 → defaultVWAPFreshness
-	now           func() time.Time // nil → time.Now
-	logger        *slog.Logger     // nil → no guard logging
+	vwapFreshness time.Duration               // 0 → defaultVWAPFreshness
+	now           func() time.Time            // nil → time.Now
+	logger        *slog.Logger                // nil → no guard logging
+	substance     *pricingguard.SubstanceGate // nil → no thin-market gate
+}
+
+// buildSubstanceGate maps the [pricing_guard] config section onto the
+// pricingguard substance policy. Returns nil — a valid
+// allow-everything gate (nil-receiver safe) — when the operator
+// disabled it.
+func buildSubstanceGate(cfg config.PricingGuardConfig, store *timescale.Store, logger *slog.Logger) *pricingguard.SubstanceGate {
+	if cfg.DisableSubstanceGate {
+		logger.Warn("pricing_guard: substance gate DISABLED by config — aggregated prices serve for every pair regardless of trailing market substance")
+		return nil
+	}
+	pol := pricingguard.SubstancePolicyFromValues(
+		cfg.SubstanceMinVolumeUSD, cfg.SubstanceMinBuckets,
+		cfg.SubstanceMinSpanMinutes, cfg.SubstanceWindowHours)
+	return pricingguard.NewSubstanceGate(store, pricingguard.SubstanceGateOptions{Policy: pol, Logger: logger})
 }
 
 func (r storePriceReader) freshnessWindow() time.Duration {
@@ -3262,6 +3297,16 @@ func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 	// for a manipulated bucket.
 	row, err := r.s.LatestClosedVWAP1mForPair(ctx, pair)
 	if err == nil {
+		// Thin-market substance gate ([pricing_guard]) — checked before
+		// the trailing-baseline guard because the two protect against
+		// DIFFERENT attacks: the baseline guard rejects one bad bucket
+		// in a healthy market; the substance gate refuses a market
+		// whose entire history (baseline included) is attacker-authored
+		// (2026-08-04 valuation incident). ErrPriceWithheld deliberately
+		// bypasses the handler's fallback chain — see its doc comment.
+		if !r.substance.Allowed(ctx, asset, quote, "price_read") {
+			return v1.PriceSnapshot{}, nil, false, v1.ErrPriceWithheld
+		}
 		served, lowConfidence := pricingguard.GuardServedVWAP1mConfidence(ctx, r.s, r.logger, pair, row)
 		// CS-017: the bucket closes at Bucket+1min; flag stale when that
 		// close is older than the freshness window, so a dormant pair's
@@ -3304,6 +3349,16 @@ func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 	if len(trades) == 0 {
 		return v1.PriceSnapshot{}, nil, false, v1.ErrPriceNotFound
 	}
+	// Thin-market substance gate, last-trade arm: a pair with no closed
+	// 1m bucket in the 400-day window by definition has no trailing
+	// substance, so for an on-chain pair this withholds. That is the
+	// intended policy — "the last trade was P" for a substanceless
+	// market is exactly the manipulable claim the gate exists to stop
+	// (the raw trade stays visible on /v1/observations). Off-chain
+	// pairs (never substance-gated) keep the last-trade fallback.
+	if !r.substance.Allowed(ctx, asset, quote, "price_read") {
+		return v1.PriceSnapshot{}, nil, false, v1.ErrPriceWithheld
+	}
 	// decimals=7 matches Stellar's default stroop scale. A future
 	// revision reads per-asset decimals from internal/metadata.
 	snap := v1.LastTradeToSnapshot(trades[0], 7)
@@ -3326,6 +3381,12 @@ func (r storePriceReader) RecentClosedSnapshots(ctx context.Context, asset, quot
 	}
 	if len(rows) == 0 {
 		return []v1.PriceSnapshot{}, nil
+	}
+	// Thin-market substance gate: a snapshot SERIES is an aggregated
+	// price claim per bucket, and the SEP-40 oracle surface is the last
+	// place a substanceless market's rate belongs.
+	if !r.substance.Allowed(ctx, asset, quote, "oracle") {
+		return nil, v1.ErrPriceWithheld
 	}
 	out := make([]v1.PriceSnapshot, len(rows))
 	for i, row := range rows {

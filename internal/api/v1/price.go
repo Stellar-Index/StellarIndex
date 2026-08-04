@@ -111,6 +111,51 @@ type PriceReader interface {
 // problem+json.
 var ErrPriceNotFound = errors.New("api: price not found for pair")
 
+// ErrPriceWithheld is what a price-serving read returns when the pair
+// HAS data but the serving-side thin-market substance gate
+// (internal/pricingguard.SubstanceGate, [pricing_guard] config)
+// refuses to publish an aggregated price claim for it: the pair has an
+// on-chain leg and its trailing market activity is below the serve
+// floor, so any "the price of X is P" answer would be an
+// attacker-authorable number (2026-08-04 valuation incident).
+//
+// Handlers translate this to a 404 problem+json with the DISTINCT type
+// ".../price-withheld" — deliberately not the generic price-not-found —
+// so integrators can branch programmatically: not-found means "we have
+// never seen this pair", withheld means "we see it and decline to
+// aggregate it; read the raw surfaces (/v1/observations, /v1/ohlc,
+// /v1/history) and judge it yourself".
+//
+// The fallback chain (Redis VWAP / stablecoin proxy / fiat cross-rate)
+// is intentionally NOT consulted on a withheld read: falling back
+// would re-serve the same substanceless market through a side door.
+var ErrPriceWithheld = errors.New("api: price withheld — trailing market substance below serve floor")
+
+// PriceSubstanceGate is the serving-side thin-market gate seam.
+// Production implementation: internal/pricingguard.SubstanceGate,
+// wired by the binaries. The v1 server consults it directly only on
+// paths that compute a price WITHOUT going through PriceReader (the
+// tip rolling-window VWAP); reader-backed paths get the gate inside
+// the readers themselves (cmd/stellarindex-api wiring).
+//
+// surface is a low-cardinality metric label constant identifying the
+// serving path ("tip", "price_read", …) — see
+// obs.PriceServeSubstanceWithheldTotal.
+type PriceSubstanceGate interface {
+	Allowed(ctx context.Context, base, quote canonical.Asset, surface string) bool
+}
+
+// writePriceWithheldProblem is the single serializer for the withheld
+// verdict so every surface emits the identical problem type + guidance.
+func writePriceWithheldProblem(w http.ResponseWriter, r *http.Request, asset, quote canonical.Asset) {
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/price-withheld",
+		"Price withheld — market too thin to aggregate", http.StatusNotFound,
+		"trades exist for "+asset.String()+" / "+quote.String()+
+			" but trailing market activity is below the serve floor, so no aggregated price is published"+
+			" — read the raw market via /v1/observations, /v1/ohlc or /v1/history and apply your own judgement")
+}
+
 // defaultPriceQuote is the implicit `quote` used by /v1/price when
 // the client omits the query param. Parsed once at package init
 // so a regression that removes USD from the fiat allow-list
@@ -348,6 +393,40 @@ func parsePriceAssetParam(w http.ResponseWriter, r *http.Request) (string, bool)
 	return resolveAssetOrBaseParam(w, r)
 }
 
+// parsePricePairParams is handlePrice's parameter prologue — asset
+// resolution (asset=/base= alias), quote defaulting, and the
+// identity-pair rejection — extracted verbatim to keep the handler
+// under the gocognit budget. ok=false means a problem+json has been
+// written.
+func (s *Server) parsePricePairParams(w http.ResponseWriter, r *http.Request) (asset, quote canonical.Asset, ok bool) {
+	rawAsset, ok := parsePriceAssetParam(w, r)
+	if !ok {
+		return canonical.Asset{}, canonical.Asset{}, false
+	}
+	asset, err := canonical.ParseAsset(rawAsset)
+	if err != nil {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-asset-id",
+			"Invalid asset identifier", http.StatusBadRequest,
+			err.Error())
+		return canonical.Asset{}, canonical.Asset{}, false
+	}
+
+	quote, ok = parsePriceQuoteParam(w, r)
+	if !ok {
+		return canonical.Asset{}, canonical.Asset{}, false
+	}
+
+	if asset.Equal(quote) {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/identity-price",
+			"Asset and quote are the same", http.StatusBadRequest,
+			"price of an asset in itself is always 1; parameters must differ")
+		return canonical.Asset{}, canonical.Asset{}, false
+	}
+	return asset, quote, true
+}
+
 // handlePrice serves GET /v1/price?asset=<id>&quote=<id>.
 // `quote` defaults to "fiat:USD" if omitted (ADR-0010).
 //
@@ -375,29 +454,8 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rawAsset, ok := parsePriceAssetParam(w, r)
+	asset, quote, ok := s.parsePricePairParams(w, r)
 	if !ok {
-		return
-	}
-	asset, err := canonical.ParseAsset(rawAsset)
-	if err != nil {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/invalid-asset-id",
-			"Invalid asset identifier", http.StatusBadRequest,
-			err.Error())
-		return
-	}
-
-	quote, ok := parsePriceQuoteParam(w, r)
-	if !ok {
-		return
-	}
-
-	if asset.Equal(quote) {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/identity-price",
-			"Asset and quote are the same", http.StatusBadRequest,
-			"price of an asset in itself is always 1; parameters must differ")
 		return
 	}
 
@@ -423,6 +481,15 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	// on 2026-05-29 was exactly this — F-1308 fixed the staleness
 	// gauge but not the price-read path. ADR-0010 + F-1308.
 	snapshot, sources, stale, err := s.readPriceWithAliases(r.Context(), reader, asset, quote)
+	// Withheld beats every fallback: the substance gate refused to
+	// publish an aggregated price for this pair, and the fallback chain
+	// (Redis VWAP / stablecoin proxy / cross-rate) would just re-serve
+	// the same substanceless market through a side door. Distinct 404
+	// type so integrators can branch (see ErrPriceWithheld).
+	if errors.Is(err, ErrPriceWithheld) {
+		writePriceWithheldProblem(w, r, asset, quote)
+		return
+	}
 	triangulated := false
 	// viaFallback tracks whether the served snapshot came from
 	// priceFallback (Redis VWAP cache / stablecoin peg / fiat cross-rate)
@@ -690,10 +757,14 @@ func (s *Server) readPriceWithAliases(ctx context.Context, reader PriceReader, a
 	var firstSnap PriceSnapshot
 	var firstSrcs []string
 	var firstErr error
+	sawWithheld := false
 	freshFound := false
 	for _, a := range aliases {
 		snap, srcs, stale, err := reader.LatestPrice(ctx, a, quote)
 		if err != nil {
+			if errors.Is(err, ErrPriceWithheld) {
+				sawWithheld = true
+			}
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -716,7 +787,17 @@ func (s *Server) readPriceWithAliases(ctx context.Context, reader PriceReader, a
 		// falling all the way through to priceFallback.
 		return firstSnap, firstSrcs, true, nil
 	}
-	// Every alias errored; return the first error so the caller's
+	// Every alias errored. A withheld verdict on ANY alias wins over
+	// not-found: the pair demonstrably exists but was refused by the
+	// substance gate, and surfacing not-found instead would send the
+	// caller into priceFallback — re-serving the withheld market via
+	// the Redis/proxy side doors. (The gate measures the ALIAS UNION,
+	// so a pair that is genuinely healthy under a sibling alias was
+	// already allowed above, not withheld.)
+	if sawWithheld {
+		return PriceSnapshot{}, nil, false, ErrPriceWithheld
+	}
+	// Otherwise return the first error so the caller's
 	// errors.Is(err, ErrPriceNotFound) branch still triggers
 	// priceFallback as before.
 	return PriceSnapshot{}, nil, false, firstErr
@@ -1396,6 +1477,16 @@ func (s *Server) resolveBatchRow(ctx context.Context, r *http.Request, raw strin
 	// stale/empty while /v1/price?asset=native served fresh CEX VWAP
 	// published under the crypto:XLM alias key.
 	snap, sources, stale, err := s.readPriceWithAliases(ctx, s.prices, asset, quote)
+	if errors.Is(err, ErrPriceWithheld) {
+		// Substance-gated pair: omit the row, exactly like a miss (the
+		// batch wire contract omits rather than nulls), and do NOT run
+		// priceFallback — the fallback chain would re-serve the
+		// withheld market via the Redis/proxy side doors. Single-asset
+		// /v1/price distinguishes withheld from not-found via its 404
+		// problem type; batch callers probe the single endpoint for
+		// the reason a row is absent.
+		return batchRowResult{skip: true}
+	}
 	if errors.Is(err, ErrPriceNotFound) {
 		// Share the full three-layer fallback chain with /v1/price
 		// (priceFallback). Pre-2026-05-10 the batch path inlined

@@ -1753,11 +1753,15 @@ func TestTick_MinUSDVolumeFilter_SorobanQuotedPair(t *testing.T) {
 		}
 	})
 
-	t.Run("SAC contract NOT on USDPeggedSorobanAssets: unvaluable, passes through with WARN metric", func(t *testing.T) {
+	t.Run("SAC contract NOT on USDPeggedSorobanAssets: unvaluable, DROPPED fail-closed with WARN metric", func(t *testing.T) {
 		// Same dust-level trade as the "sub-floor" case above, but the
 		// orchestrator has no USDPeggedSorobanAssets entry for this SAC
-		// — pre-2026-07-10 behaviour: unguarded, but now OBSERVABLE via
-		// AggregatorMinUSDVolumeUnvaluableTotal instead of silent.
+		// — no recognised USD peg, so the floor cannot be verified.
+		// 2026-08-04 (valuation incident): this branch is now
+		// FAIL-CLOSED — an unvaluable on-chain quote is exactly the
+		// shape a mint-and-dust attacker produces, so the window is
+		// dropped, observably (WARN + both counters). The operator
+		// un-blacks a legitimate pair by declaring its peg.
 		store := &mockStore{trades: []canonical.Trade{mkTrade(big.NewInt(99_999_990_000))}}
 		rdb, mr := newTestRedis(t)
 		orch := New(store, rdb, Config{
@@ -1769,6 +1773,7 @@ func TestTick_MinUSDVolumeFilter_SorobanQuotedPair(t *testing.T) {
 		})
 
 		before := testutil.ToFloat64(obs.AggregatorMinUSDVolumeUnvaluableTotal.WithLabelValues(pair.String()))
+		beforeDropped := testutil.ToFloat64(obs.AggregatorDroppedWindowsTotal.WithLabelValues("min_usd_volume_unvaluable"))
 		if err := orch.Tick(context.Background()); err != nil {
 			t.Fatalf("Tick: %v", err)
 		}
@@ -1776,12 +1781,16 @@ func TestTick_MinUSDVolumeFilter_SorobanQuotedPair(t *testing.T) {
 		if after-before != 1 {
 			t.Errorf("AggregatorMinUSDVolumeUnvaluableTotal delta = %v, want 1", after-before)
 		}
-		if orch.Stats().VWAPWrites != 1 {
-			t.Errorf("VWAPWrites = %d, want 1 — unvaluable on-chain quote must pass through, not fail-closed", orch.Stats().VWAPWrites)
+		afterDropped := testutil.ToFloat64(obs.AggregatorDroppedWindowsTotal.WithLabelValues("min_usd_volume_unvaluable"))
+		if afterDropped-beforeDropped != 1 {
+			t.Errorf("DroppedWindowsTotal[min_usd_volume_unvaluable] delta = %v, want 1", afterDropped-beforeDropped)
+		}
+		if orch.Stats().VWAPWrites != 0 {
+			t.Errorf("VWAPWrites = %d, want 0 — unvaluable on-chain quote must be dropped fail-closed", orch.Stats().VWAPWrites)
 		}
 		key := "vwap:" + xlm.String() + ":" + sacUSDC.String() + ":300"
-		if !mr.Exists(key) {
-			t.Errorf("key %q missing — unvaluable pair should still publish (pass-through, not fail-closed)", key)
+		if mr.Exists(key) {
+			t.Errorf("key %q exists — unvaluable pair must not publish (fail-closed)", key)
 		}
 	})
 }
