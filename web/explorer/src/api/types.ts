@@ -3692,10 +3692,17 @@ export interface paths {
          *     Each row's `detail` carries the kind's evidence (legs, roles,
          *     tx application order, oracle refs, …) plus a `note` stating
          *     exactly what is and is NOT claimed. Detection is positional /
-         *     structural: the served rows don't carry trade direction, so
-         *     front-run vs back-run intent is never asserted and
+         *     structural: front-run vs back-run intent is never asserted and
          *     `profit_usd` stays null. `oracle_deviation` remains reserved
          *     (not yet detected).
+         *
+         *     **Read `sandwich` and `oracle_sandwich` candidates with care.**
+         *     These detectors do not check trade DIRECTION, so a large
+         *     majority of published candidates have both bracket legs on the
+         *     same side — which cannot be a sandwich. The roles named in
+         *     `detail.legs` (`bracket` / `victim`) describe POSITION in the
+         *     ledger, not established behaviour, and the accounts listed are
+         *     not accusations. Most notionals are sub-dollar.
          *
          *     200 + empty array when nothing's been detected or the reader
          *     isn't wired (feature-gated, like /v1/lending/pools).
