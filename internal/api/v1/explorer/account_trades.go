@@ -75,6 +75,16 @@ type AccountTradesView struct {
 // "<ts unixnano>.<ledger>.<tx_hash>.<op_index>" — dotted with the
 // tx_hash segment third (safe: tx_hash is fixed 64-char hex, never
 // contains '.'), mirroring the movements cursor convention.
+// accountTradesGate caps concurrent ListAccountTrades reads. Four of the
+// 25-connection serving pool: enough that a handful of genuine callers
+// proceed in parallel, small enough that this route cannot starve every
+// other Postgres-backed endpoint. See the rationale at the acquire site.
+var accountTradesGate = make(chan struct{}, 4)
+
+// accountTradesGateWait is how long a request waits for a slot before
+// shedding. Short by design — the point is to shed, not to queue.
+const accountTradesGateWait = 750 * time.Millisecond
+
 func encodeAccountTradesCursor(r timescale.AccountTradeRow) string {
 	return strconv.FormatInt(r.Ts.UTC().UnixNano(), 10) + "." +
 		strconv.FormatUint(uint64(r.Ledger), 10) + "." +
