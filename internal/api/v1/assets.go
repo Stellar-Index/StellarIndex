@@ -715,6 +715,7 @@ func (s *Server) handleAssetListFromAssets(
 		out = append(out, assetDetailFromAssetRow(row))
 	}
 	s.stampListingCollisions(out)
+	s.applySubstanceGateToListing(r.Context(), out)
 	s.fillMarketCapsFromSupply(r.Context(), out, assetRowSourceCounts(rows))
 	s.fillImagesFromSep1(r.Context(), out)
 	env := Envelope{Data: out, Flags: Flags{}}
@@ -824,6 +825,94 @@ func (s *Server) fillRowMarketCap(row *AssetDetail, precise, broad map[string]st
 			c := circ
 			row.CirculatingSupply = &c
 		}
+	}
+}
+
+// applySubstanceGateToListing extends the thin-market substance gate
+// (ADR-0018 rule: "listings, rankings and market cap must use the
+// guarded surface only") to the LISTING price enrichment — the last
+// aggregated-price surface that bypassed it. The catalogue SQL
+// computes `price_usd` from a 7-day prices_1m window + XLM
+// triangulation, entirely outside /v1/price's read path, so a
+// dust-authored market kept a listed headline price (and everything
+// derived from it: change pills, rankings by price, the explorer's
+// build-time fallback the sidebar labels "listing snapshot") after
+// /v1/price started withholding it.
+//
+// A row's price is allowed when ANY of its plausible backing pairs
+// clears the substance floor: vs XLM (the dominant on-chain quote —
+// this covers the SQL's asset/XLM triangulation route), vs fiat:USD
+// (alias-union covers the CEX-fed crypto:X/fiat:USD series), or vs an
+// operator-declared USD peg (the SQL's direct_usd route). Withheld
+// rows lose price_usd + the change pills computed from it; raw facts
+// (volume, supply, sparklines — history, not claims) stay. Gate
+// verdicts are cached ~60s per pair, so a 500-row listing costs at
+// most one bounded index scan per (row, quote-class) per minute, and
+// the listing itself sits behind the 2-minute CachedAssetsReader.
+//
+// Runs after stampListingCollisions and BEFORE fillMarketCapsFromSupply
+// so a withheld price can't back a market cap (that fill early-returns
+// on PriceUSD == nil).
+func (s *Server) applySubstanceGateToListing(ctx context.Context, rows []AssetDetail) {
+	if s.substance == nil {
+		return
+	}
+	for i := range rows {
+		row := &rows[i]
+		if row.PriceUSD == nil {
+			continue
+		}
+		asset, err := canonical.ParseAsset(row.AssetID)
+		if err != nil {
+			continue
+		}
+		if s.listingPriceAllowed(ctx, asset) {
+			continue
+		}
+		row.PriceUSD = nil
+		row.Change1hPct = nil
+		row.Change24hPct = nil
+		row.Change7dPct = nil
+	}
+}
+
+// listingPriceAllowed is [Server.applySubstanceGateToListing]'s
+// per-row verdict: allowed when the row is out of gate scope
+// (fiat/crypto catalogue rows), is native (definitionally liquid;
+// identity pairs degenerate under the alias union), or when ANY of
+// its plausible backing pairs — vs XLM, vs fiat:USD (alias union
+// covers the CEX series), or vs an operator-declared USD peg —
+// clears the substance floor.
+func (s *Server) listingPriceAllowed(ctx context.Context, asset canonical.Asset) bool {
+	if !pricingSubstanceGated(asset) {
+		return true
+	}
+	native := canonical.NativeAsset()
+	if asset.Equal(native) {
+		return true
+	}
+	if s.substance.Allowed(ctx, asset, native, "listing") ||
+		s.substance.Allowed(ctx, asset, defaultPriceQuote, "listing") {
+		return true
+	}
+	for _, peg := range s.usdPeggedClassics {
+		if s.substance.Allowed(ctx, asset, peg, "listing") {
+			return true
+		}
+	}
+	return false
+}
+
+// pricingSubstanceGated mirrors pricingguard.SubstanceGated's
+// applicability rule (at least one on-chain leg) for the listing's
+// single-asset shape without importing pricingguard (which imports
+// this package's storage sibling — keep the api layer decoupled).
+func pricingSubstanceGated(a canonical.Asset) bool {
+	switch a.Type {
+	case canonical.AssetNative, canonical.AssetClassic, canonical.AssetSoroban:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -1815,6 +1904,7 @@ func (s *Server) fetchClassicUnifiedRows(w http.ResponseWriter, r *http.Request,
 	}
 	out = s.suppressCatalogueTwins(out)
 	s.stampListingCollisions(out)
+	s.applySubstanceGateToListing(r.Context(), out)
 	s.fillMarketCapsFromSupply(r.Context(), out, assetRowSourceCounts(rows))
 	s.fillImagesFromSep1(r.Context(), out)
 	s.attachSparkline7dIfRequested(r, out)

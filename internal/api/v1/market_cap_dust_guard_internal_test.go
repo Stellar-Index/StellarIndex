@@ -4,6 +4,7 @@
 package v1
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -194,5 +195,57 @@ func TestApplyUnverifiedWarning_ReferenceOnlyTicker(t *testing.T) {
 	}
 	if d2.UnverifiedWarning.VerifiedAssetID == "" {
 		t.Error("USDC look-alike must carry the verified asset id to redirect to")
+	}
+}
+
+// stubListingGate implements PriceSubstanceGate with a per-pair-string
+// verdict map ("<base>|<quote>" keys; missing = deny).
+type stubListingGate struct{ allow map[string]bool }
+
+func (g *stubListingGate) Allowed(_ context.Context, base, quote canonical.Asset, _ string) bool {
+	return g.allow[base.String()+"|"+quote.String()]
+}
+
+// TestApplySubstanceGateToListing — the listing's price_usd enrichment
+// (7-day catalogue SQL, outside /v1/price's read path) must respect
+// the same thin-market gate: withheld rows lose price_usd + the change
+// pills, allowed rows keep them, and fiat/crypto catalogue rows are
+// out of scope.
+func TestApplySubstanceGateToListing(t *testing.T) {
+	peg, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deep := "AQUA-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V"
+	thin := "SCAM-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V"
+	gate := &stubListingGate{allow: map[string]bool{
+		deep + "|native": true, // deep pair passes vs XLM
+	}}
+	s := &Server{substance: gate, usdPeggedClassics: []canonical.Asset{peg}}
+
+	p1, p2, p3 := "0.001", "0.13", "0.16"
+	ch := "+1.00"
+	rows := []AssetDetail{
+		{AssetID: deep, Code: "AQUA", PriceUSD: &p1, Change24hPct: &ch},
+		{AssetID: thin, Code: "SCAM", PriceUSD: &p2, Change24hPct: &ch},
+		{AssetID: "native", Code: "XLM", PriceUSD: &p3, Change24hPct: &ch},
+		{AssetID: "fiat:EUR", Code: "EUR", PriceUSD: &p3},
+	}
+	s.applySubstanceGateToListing(context.Background(), rows)
+
+	if rows[0].PriceUSD == nil {
+		t.Error("deep pair must keep its listed price")
+	}
+	if rows[1].PriceUSD != nil {
+		t.Error("thin pair must lose its listed price")
+	}
+	if rows[1].Change24hPct != nil {
+		t.Error("thin pair must lose its change pills (derived from the withheld price)")
+	}
+	if rows[2].PriceUSD == nil {
+		t.Error("native must never be gated on the listing")
+	}
+	if rows[3].PriceUSD == nil {
+		t.Error("fiat rows are out of gate scope")
 	}
 }
