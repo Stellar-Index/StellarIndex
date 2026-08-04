@@ -526,3 +526,51 @@ func TestPriceBatch_AssetIdsAndPairsBoth_Returns400(t *testing.T) {
 		t.Errorf("status=%d want 400 (both asset_ids+pairs)", resp.StatusCode)
 	}
 }
+
+// TestPriceBatch_EchoesRequestedAssetNotStoreAlias pins that a batch row's
+// asset_id is the id the CLIENT asked for, not whichever XLM alias the
+// store happened to be keyed under.
+//
+// Before the fix, readPriceWithAliases returned the snapshot built from
+// the winning alias, so `?asset_ids=native,crypto:XLM` produced TWO rows
+// both stamped "crypto:XLM". Since the batch route omits misses rather
+// than returning null rows, `asset_id` is the only mapping the wire shape
+// supports — so a client keying the response by it lost `native`
+// entirely (cold audit 2026-08-04, measured on prod v0.24.0).
+func TestPriceBatch_EchoesRequestedAssetNotStoreAlias(t *testing.T) {
+	t0 := time.Unix(1_770_000_000, 0).UTC()
+	// Only the crypto:XLM key is populated; `native` must resolve through
+	// the alias walk and still echo back as `native`.
+	reader := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{
+			"crypto:XLM/fiat:USD": {
+				AssetID: "crypto:XLM", Quote: "fiat:USD",
+				Price: "0.17", PriceType: "vwap", ObservedAt: t0,
+			},
+		},
+	}
+	srv := v1.New(v1.Options{Prices: reader})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price/batch?asset_ids=native,crypto:XLM&quote=fiat:USD")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data []v1.PriceSnapshot `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	if len(env.Data) != 2 {
+		t.Fatalf("got %d rows, want 2 (both aliases resolve)", len(env.Data))
+	}
+	ids := []string{env.Data[0].AssetID, env.Data[1].AssetID}
+	if ids[0] == ids[1] {
+		t.Fatalf("both rows echo asset_id %q — a client keying the response "+
+			"by asset_id loses one of the two requested assets", ids[0])
+	}
+	for _, want := range []string{"native", "crypto:XLM"} {
+		if ids[0] != want && ids[1] != want {
+			t.Errorf("no row echoes requested asset_id %q; got %v", want, ids)
+		}
+	}
+}

@@ -658,6 +658,33 @@ func assetAliases(asset canonical.Asset) []canonical.Asset {
 // trades populate. On 2026-05-29 this caused /v1/price?asset=native
 // to fall through to a 39h-stale triangulated SDEX bucket even
 // though fresh CEX data sat in cache under the alias key.
+// echoRequestedAsset restamps a snapshot's AssetID with the asset the
+// CLIENT asked for, discarding whichever alias the store happened to be
+// keyed under.
+//
+// Which alias holds the row is an implementation detail of
+// [canonical.AssetAliases] — `native`, `crypto:XLM` and the XLM SAC are
+// the same asset, and the caller did not choose which one the aggregator
+// wrote. Echoing the store's spelling back breaks the only mapping the
+// batch wire shape supports: /v1/price/batch omits misses rather than
+// returning null rows, so a client MUST key the response by `asset_id`,
+// and a caller asking for both `native` and `crypto:XLM` got two rows
+// with an IDENTICAL asset_id (and differing change_24h_pct, which is
+// computed against the requested asset) — so `native` vanished from the
+// resulting map entirely. Measured on prod v0.24.0, cold audit
+// 2026-08-04.
+//
+// This is what [VWAP1mToSnapshot]'s godoc already says the contract is:
+// the asset id is "passed in rather than re-derived from the row so the
+// handler's echo of the request parameters stays exactly as the client
+// sent them". The alias loop was the one caller that violated it, which
+// also left /v1/price?asset=native and
+// /v1/price?asset=native&window=300 disagreeing about their own echo.
+func echoRequestedAsset(snap PriceSnapshot, requested canonical.Asset) PriceSnapshot {
+	snap.AssetID = requested.String()
+	return snap
+}
+
 func (s *Server) readPriceWithAliases(ctx context.Context, reader PriceReader, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, error) {
 	aliases := assetAliases(asset)
 	var firstSnap PriceSnapshot
@@ -674,12 +701,12 @@ func (s *Server) readPriceWithAliases(ctx context.Context, reader PriceReader, a
 		}
 		if !stale {
 			// Fresh hit — return immediately.
-			return snap, srcs, false, nil
+			return echoRequestedAsset(snap, asset), srcs, false, nil
 		}
 		// Stale — remember the first stale result as a fallback
 		// in case every alias is stale.
 		if !freshFound {
-			firstSnap, firstSrcs = snap, srcs
+			firstSnap, firstSrcs = echoRequestedAsset(snap, asset), srcs
 			freshFound = true
 		}
 	}

@@ -276,3 +276,44 @@ func TestAssetSupply_ClassicViaSACWrapper(t *testing.T) {
 		t.Errorf("unexpected body: %+v", got)
 	}
 }
+
+// TestAssetSupply_NativeAliasIsCaseInsensitive pins that every canonical
+// spelling of XLM reaches the ledger-header branch.
+//
+// The literal comparison this replaced (`assetID == "native" || "XLM" ||
+// "crypto:XLM"`) was case-SENSITIVE, so /v1/assets/xlm/supply 404'd while
+// /v1/assets/XLM/supply returned 200 — even though canonical.ParseAsset is
+// case-insensitive and every other asset route accepts `xlm`. A 404 on a
+// legitimate spelling reads as "this asset has no supply data" (cold audit
+// 2026-08-04, measured on prod v0.24.0).
+func TestAssetSupply_NativeAliasIsCaseInsensitive(t *testing.T) {
+	// `crypto:xlm` is deliberately absent: canonical.ParseAsset requires an
+	// exact-case code after the `crypto:` prefix, so it is rejected
+	// server-wide, not just here.
+	for _, id := range []string{"native", "NATIVE", "XLM", "xlm", "Xlm", "crypto:XLM"} {
+		t.Run(id, func(t *testing.T) {
+			supply := &fakeTokenSupply{nativeCoins: 1_054_439_020_873_472_865}
+			srv := New(Options{TokenSupply: supply})
+
+			rec := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rec,
+				httptest.NewRequest(http.MethodGet, "/v1/assets/"+id+"/supply", nil))
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 (%q is a canonical XLM spelling)", rec.Code, id)
+			}
+			var env struct {
+				Data AssetSupply `json:"data"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if env.Data.Source != "ledger_total_coins" {
+				t.Errorf("source = %q, want ledger_total_coins (took the contract branch)", env.Data.Source)
+			}
+			if env.Data.TotalSupply != "1054439020873472865" {
+				t.Errorf("total_supply = %q, want the ledger header's total_coins", env.Data.TotalSupply)
+			}
+		})
+	}
+}

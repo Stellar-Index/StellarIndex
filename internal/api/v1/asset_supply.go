@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -20,6 +21,32 @@ import (
 type TokenSupplyReader interface {
 	TokenSupply(ctx context.Context, contractID string) (clickhouse.TokenSupply, error)
 	NativeTotalCoins(ctx context.Context) (totalCoins int64, ledger uint32, err error)
+}
+
+// isNativeSupplyAlias reports whether a raw {asset_id} path segment names
+// XLM in any of its canonical spellings.
+//
+// It parses rather than string-matching. The literal comparison this
+// replaced (`assetID == "native" || "XLM" || "crypto:XLM"`) was
+// case-SENSITIVE, so /v1/assets/xlm/supply 404'd while
+// /v1/assets/XLM/supply returned 200 — even though canonical.ParseAsset
+// is case-insensitive and every other asset route on the server accepts
+// `xlm`. A 404 on a legitimate spelling reads to a client as "this asset
+// has no supply data", not "try different capitalisation" (cold audit
+// 2026-08-04).
+//
+// The XLM SAC contract address is deliberately NOT routed here even
+// though canonical.AssetAliases lists it: the SAC's token supply is how
+// much XLM is currently WRAPPED, a genuinely different quantity from the
+// ledger header's total_coins, and it is served by the contract branch
+// below.
+func isNativeSupplyAlias(assetID string) bool {
+	parsed, err := canonical.ParseAsset(assetID)
+	if err != nil {
+		return false
+	}
+	return parsed.Type == canonical.AssetNative ||
+		(parsed.Type == canonical.AssetCrypto && strings.EqualFold(parsed.Code, "XLM"))
 }
 
 // AssetSupply is the wire response for GET /v1/assets/{asset_id}/supply.
@@ -74,7 +101,7 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 
 	// XLM: supply is the ledger header's total_coins (XLM is not minted/burned
 	// via SAC mint/burn events, so it has no supply_flows). Handle every alias.
-	if assetID == "native" || assetID == "XLM" || assetID == "crypto:XLM" {
+	if isNativeSupplyAlias(assetID) {
 		coins, ledger, err := s.tokenSupply.NativeTotalCoins(ctx)
 		if err != nil {
 			s.logger.Warn("supply: native total_coins", "err", err)
