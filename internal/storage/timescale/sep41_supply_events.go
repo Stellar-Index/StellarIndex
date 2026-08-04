@@ -195,7 +195,9 @@ type SEP41KindTotals struct {
 // and are seeded once via `stellarindex-ops supply seed-sep41-genesis`. Tokens
 // with no pre-genesis flows carry a zero baseline, so their served total is
 // unchanged (no double-count). The baseline slice and the Soroban-era slice are
-// a disjoint ledger partition, so summing them cannot double-count. For a
+// a disjoint ledger partition — an invariant that, until 2026-08-04, nothing
+// enforced (see [sep41SorobanFloor]; 13 contracts on r1 were double-counting,
+// one by 114%). The Soroban-side queries are now floored at the boundary. For a
 // historical read strictly below the baseline boundary the genesis is NOT added
 // (the pre-Soroban answer would be a ledger-bounded subset the seed doesn't
 // carry) — the aggregator always reads at the chain tip, so this affects only
@@ -210,20 +212,24 @@ func (s *Store) SEP41KindTotalsAtOrBefore(ctx context.Context, contractID string
 		return SEP41KindTotals{}, err
 	}
 
-	// ─── Soroban-era totals (ledger ≥ SorobanGenesisLedger, from PG) ───
+	// The Soroban slice must START at the baseline boundary whenever a
+	// baseline is seeded — see sep41SorobanFloor.
+	floor := sep41SorobanFloor(cp)
+
+	// ─── Soroban-era totals (ledger ≥ the genesis boundary, from PG) ───
 	var soroban SEP41KindTotals
 	switch {
 	case !ok || cp.lastLedger > asOfLedger:
 		// No checkpoint yet, or the checkpoint is AHEAD of the requested
 		// ledger (a historical read below the watermark) — the rollup can't
 		// be subtracted back, so take the exact full aggregate.
-		soroban, err = s.sep41KindTotalsFullSum(ctx, contractID, asOfLedger)
+		soroban, err = s.sep41KindTotalsFullSum(ctx, contractID, floor, asOfLedger)
 		if err != nil {
 			return SEP41KindTotals{}, err
 		}
 	default:
 		// Checkpoint ≤ asOfLedger: add only the live tail delta above it.
-		delta, derr := s.sep41KindTotalsRange(ctx, contractID, cp.lastLedger, asOfLedger)
+		delta, derr := s.sep41KindTotalsRange(ctx, contractID, cp.lastLedger, floor, asOfLedger)
 		if derr != nil {
 			return SEP41KindTotals{}, derr
 		}
@@ -371,11 +377,49 @@ func (s *Store) UpsertSEP41GenesisBaseline(ctx context.Context, contractID strin
 	return nil
 }
 
+// sep41SorobanFloor returns the lowest ledger the Soroban-era slice may
+// include for a contract.
+//
+// The genesis baseline seeded from the ClickHouse lake covers
+// ledger < genesis_baseline_ledger. The Soroban-era Postgres slice must
+// therefore START at that boundary, or the overlapping band is summed
+// twice into lifetime supply.
+//
+// It was NOT bounded before 2026-08-04. The doc on SEP41KindTotalsAtOrBefore
+// asserted "the baseline slice and the Soroban-era slice are a disjoint
+// ledger partition, so summing them cannot double-count" — but nothing at
+// any tier enforced that partition: not the queries, not migration 0015's
+// CHECK, not the seed command (which validates only the operator's
+// -genesis-ledger argument, never the data). sep41_supply_events does hold
+// rows below the boundary, because the projector's cursor starts at
+// ledger 1000 and CAP-67 replays classic movements into contract events.
+//
+// Measured on r1 2026-08-04: 346 such rows across 13 contracts, EVERY ONE
+// of them genesis-seeded — so all 13 served a double-counted lifetime
+// supply. Worst case CCUMQ5V3… served 18,762,638,134 for a true
+// 8,762,638,134 (+114%, i.e. 2.14x). CCW67TSZ… (USDC SAC) +112.5e12
+// (+3.98%). Several are NEGATIVE contributions (a double-counted burn),
+// which can push mint-burn-clawback below zero and route a consistent
+// contract to the paging compute_error outcome.
+//
+// The verifier could not catch it: SEP41SupplyEventKindResum made the
+// identical unbounded assumption, so verify-rollup reconciled two copies
+// of the same mistake and reported green. It is bounded here too.
+//
+// Zero when no baseline is seeded — those contracts' pre-boundary rows are
+// the ONLY record of that history and must keep contributing.
+func sep41SorobanFloor(cp sep41RollupRow) uint32 {
+	if !cp.genesisSeeded {
+		return 0
+	}
+	return cp.genesisLedger
+}
+
 // sep41KindTotalsFullSum is the original full per-contract aggregate,
 // bounded at-or-before asOfLedger. The correctness backstop the fast
 // path falls back to; kept identical so rollup ⊕ delta is provably the
 // same number.
-func (s *Store) sep41KindTotalsFullSum(ctx context.Context, contractID string, asOfLedger uint32) (SEP41KindTotals, error) {
+func (s *Store) sep41KindTotalsFullSum(ctx context.Context, contractID string, floorLedger, asOfLedger uint32) (SEP41KindTotals, error) {
 	const q = `
         SELECT
             COALESCE(sum(amount) FILTER (WHERE event_kind = 'mint'),     0)::text AS mint_total,
@@ -383,10 +427,11 @@ func (s *Store) sep41KindTotalsFullSum(ctx context.Context, contractID string, a
             COALESCE(sum(amount) FILTER (WHERE event_kind = 'clawback'), 0)::text AS clawback_total
           FROM sep41_supply_events
          WHERE contract_id = $1
-           AND ledger      <= $2
+           AND ledger      >= $2
+           AND ledger      <= $3
     `
 	var mintRaw, burnRaw, clawbackRaw string
-	if err := s.db.QueryRowContext(ctx, q, contractID, int(asOfLedger)).Scan(&mintRaw, &burnRaw, &clawbackRaw); err != nil {
+	if err := s.db.QueryRowContext(ctx, q, contractID, int(floorLedger), int(asOfLedger)).Scan(&mintRaw, &burnRaw, &clawbackRaw); err != nil {
 		return SEP41KindTotals{}, fmt.Errorf("timescale: SEP41KindTotalsAtOrBefore %s@%d: %w", contractID, asOfLedger, err)
 	}
 	return parseSEP41Totals(mintRaw, burnRaw, clawbackRaw)
@@ -397,7 +442,7 @@ func (s *Store) sep41KindTotalsFullSum(ctx context.Context, contractID string, a
 // walks only the tail of the (contract_id, ledger DESC) index, so the
 // live delta above a fresh checkpoint is cheap regardless of history
 // depth.
-func (s *Store) sep41KindTotalsRange(ctx context.Context, contractID string, afterLedger, asOfLedger uint32) (SEP41KindTotals, error) {
+func (s *Store) sep41KindTotalsRange(ctx context.Context, contractID string, afterLedger, floorLedger, asOfLedger uint32) (SEP41KindTotals, error) {
 	const q = `
         SELECT
             COALESCE(sum(amount) FILTER (WHERE event_kind = 'mint'),     0)::text AS mint_total,
@@ -406,10 +451,11 @@ func (s *Store) sep41KindTotalsRange(ctx context.Context, contractID string, aft
           FROM sep41_supply_events
          WHERE contract_id = $1
            AND ledger      >  $2
-           AND ledger      <= $3
+           AND ledger      >= $3
+           AND ledger      <= $4
     `
 	var mintRaw, burnRaw, clawbackRaw string
-	if err := s.db.QueryRowContext(ctx, q, contractID, int(afterLedger), int(asOfLedger)).Scan(&mintRaw, &burnRaw, &clawbackRaw); err != nil {
+	if err := s.db.QueryRowContext(ctx, q, contractID, int(afterLedger), int(floorLedger), int(asOfLedger)).Scan(&mintRaw, &burnRaw, &clawbackRaw); err != nil {
 		return SEP41KindTotals{}, fmt.Errorf("timescale: sep41 kind-totals delta %s@(%d,%d]: %w", contractID, afterLedger, asOfLedger, err)
 	}
 	return parseSEP41Totals(mintRaw, burnRaw, clawbackRaw)
@@ -720,6 +766,7 @@ func (s *Store) AdvanceSEP41SupplyRollup(ctx context.Context, contractID string)
               FROM sep41_supply_events e, bound
              WHERE e.contract_id = $1
                AND e.ledger       > $2
+               AND e.ledger      >= $3
                AND e.ledger       < bound.mx
         )
         INSERT INTO sep41_supply_rollup
@@ -734,7 +781,7 @@ func (s *Store) AdvanceSEP41SupplyRollup(ctx context.Context, contractID string)
         RETURNING last_ledger
     `
 	var toLedger int64
-	if err := s.db.QueryRowContext(ctx, q, contractID, int(fromLedger)).Scan(&toLedger); err != nil {
+	if err := s.db.QueryRowContext(ctx, q, contractID, int(fromLedger), int(sep41SorobanFloor(cp))).Scan(&toLedger); err != nil {
 		return SEP41RollupAdvance{}, fmt.Errorf("timescale: AdvanceSEP41SupplyRollup %s: %w", contractID, err)
 	}
 	return SEP41RollupAdvance{
@@ -845,6 +892,14 @@ func (s *Store) SEP41SupplyEventKindResum(ctx context.Context, contractID string
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL statement_timeout = '%d'", statementTimeout.Milliseconds())); err != nil {
 		return SEP41KindTotals{}, fmt.Errorf("timescale: SEP41SupplyEventKindResum SET: %w", err)
 	}
+	// Bounded below by the same genesis floor the fast path uses. Before
+	// 2026-08-04 this resum was unbounded, so verify-rollup compared two
+	// copies of the identical double-count and reported green — the
+	// reconcile could not detect the very defect it exists to detect.
+	cp, _, cerr := s.sep41RollupCheckpoint(ctx, contractID)
+	if cerr != nil {
+		return SEP41KindTotals{}, cerr
+	}
 	const q = `
         SELECT
             COALESCE(sum(amount) FILTER (WHERE event_kind = 'mint'),     0)::text AS mint_total,
@@ -852,10 +907,11 @@ func (s *Store) SEP41SupplyEventKindResum(ctx context.Context, contractID string
             COALESCE(sum(amount) FILTER (WHERE event_kind = 'clawback'), 0)::text AS clawback_total
           FROM sep41_supply_events
          WHERE contract_id = $1
-           AND ledger      <= $2
+           AND ledger      >= $2
+           AND ledger      <= $3
     `
 	var mintRaw, burnRaw, clawbackRaw string
-	if err := tx.QueryRowContext(ctx, q, contractID, int(asOfLedger)).Scan(&mintRaw, &burnRaw, &clawbackRaw); err != nil {
+	if err := tx.QueryRowContext(ctx, q, contractID, int(sep41SorobanFloor(cp)), int(asOfLedger)).Scan(&mintRaw, &burnRaw, &clawbackRaw); err != nil {
 		return SEP41KindTotals{}, fmt.Errorf("timescale: SEP41SupplyEventKindResum %s@%d: %w", contractID, asOfLedger, err)
 	}
 	return parseSEP41Totals(mintRaw, burnRaw, clawbackRaw)
