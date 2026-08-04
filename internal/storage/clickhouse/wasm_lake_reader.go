@@ -15,10 +15,21 @@ import (
 // wasm could not be assembled from the lake — either the contract's
 // contract_data INSTANCE entry isn't captured (so we can't learn its wasm
 // hash) or the referenced contract_code entry isn't captured (so we have the
-// hash but not the bytes). It's a clean "not found" (404), NOT an error: the
-// lake's ledger_entry_changes capture is live-only (historical contract_code /
-// instance entries created at deploy-time, years ago, are mostly outside the
-// captured window — see extract.go's G12-03 note). Callers map this to 404.
+// hash but not the bytes). It's a clean "not found" (404), NOT an error.
+//
+// The "live-only capture window" explanation this comment used to give is
+// STALE for contract_code, and following it wastes an operator's time
+// waiting for a backfill that has already run. Measured on r1 2026-08-04:
+// ledger_entries_current holds all 4,534 distinct contract_code keys, from
+// Soroban activation (ledger 50,457,427, 2024-02-20) to tip, with zero
+// removals — and every contract_code key present in ledger_entry_changes
+// across all 14 Soroban partitions is present there too (7,777 rows, 0
+// missing). A miss on the CODE hop therefore means the hash genuinely is
+// not in the lake, not that it predates capture.
+//
+// The INSTANCE hop is the one that still misses in practice: of the 40
+// busiest contracts by event count in a recent window, only 18 had an
+// instance entry at all. Callers map this to 404.
 var ErrContractWasmUnresolved = errors.New("clickhouse: contract wasm not resolvable from lake")
 
 // ErrContractIsSAC is returned by ContractWasm when the contract's instance
@@ -307,14 +318,77 @@ func instanceKeyXDR(cid xdr.Hash) ([]string, error) {
 	return out, nil
 }
 
+// codeKeyXDR returns the base64 LedgerKey the lake stores in key_xdr for a
+// contract_code entry.
+//
+// A CONTRACT_CODE key carries ONLY the wasm hash
+// (xdr.LedgerKeyContractCode is a bare Hash), so — unlike instanceKeyXDR's
+// contract_data keys — there is no durability variant to enumerate: one
+// hash, one key. Verified byte-identical against stored key_xdr on r1.
+func codeKeyXDR(hash xdr.Hash) (string, error) {
+	var k xdr.LedgerKey
+	if err := k.SetContractCode(hash); err != nil {
+		return "", fmt.Errorf("clickhouse: contract_code key: %w", err)
+	}
+	b64, err := xdr.MarshalBase64(k)
+	if err != nil {
+		return "", fmt.Errorf("clickhouse: marshal contract_code key: %w", err)
+	}
+	return b64, nil
+}
+
+// wasmCodeByHashQuery pins the lookup to the code entry's LedgerKey.
+//
+// ledger_entries_current, NOT the changes log: (entry_type, key_xdr) is this
+// table's FULL primary key, so this is a mark-range lookup — measured on r1
+// 2026-08-04 at 121,584 rows / 53.93 MiB / 34 ms, and the MISS costs the
+// same as the hit.
+//
+// The pre-fix query scanned stellar.ledger_entry_changes (159.4B rows /
+// 6.52 TiB) with no key predicate and filtered the hash in Go. 59% of that
+// table sits in partitions holding ZERO contract_code rows, and a full pass
+// is ~45-50s — six times the 8s explorerReadTimeout. It never completed:
+// query_log showed 12/12 executions aborted at the deadline having read
+// 3.31 GiB each, i.e. this endpoint had NEVER returned a 200 for a WASM
+// contract. The key_xdr bloom on the changes log is not the answer either —
+// same lookup measured 641M rows / 47.08 GiB / 31.6s.
+//
+// Equivalence, not just speed: every contract_code key in the change log
+// exists in current-state (7,777 change rows across all 14 Soroban
+// partitions, 0 missing), so the hit set is a proven superset. Duplicate
+// rows per key differ only in ContractCodeEntryExt v0/v1 and
+// lastModifiedLedgerSeq; the Code payload is content-addressed and
+// sha256(cc.Code) == the hash in this very key (verified 34/34 on r1), so
+// any row yields identical bytes.
+//
+// NO FINAL — deliberately. entry_type/key_xdr is the whole PK so FINAL buys
+// no selectivity, and `FINAL ... AND entry_xdr != ”` applies the filter
+// AFTER dedup: a 'removed' row would win the dedup and then be filtered
+// out, turning code we still hold into a 404. Probed on r1 against a key
+// carrying both a live and a removal row: FINAL -> 0 rows, no-FINAL -> 1.
+//
+// LIMIT 4, not 1: current-state holds up to 3 rows per key pre-merge. The
+// small cap keeps the caller's cc.Hash guard able to skip an undecodable
+// row, at measurably identical cost.
+//
+// No explorerScanSettings pin: that constant's own doc carves out keyed
+// point reads on (entry_type, key_xdr), and the sibling contractWasmHash
+// query on this table carries none. Measured unpinned at 97,789 rows /
+// 50.45 MiB / 38 ms — there is no fan-out to bound.
+const wasmCodeByHashQuery = `SELECT entry_xdr FROM stellar.ledger_entries_current
+	WHERE entry_type = 'contract_code' AND key_xdr = ? AND entry_xdr != ''
+	LIMIT 4`
+
 // wasmCodeByHash returns the raw wasm bytes for a code hash from the
 // contract_code entries, or ok=false when that hash isn't captured.
 func (r *ExplorerReader) wasmCodeByHash(ctx context.Context, hash xdr.Hash) ([]byte, bool, error) {
-	const q = `SELECT entry_xdr FROM stellar.ledger_entry_changes
-		WHERE entry_type = 'contract_code' AND entry_xdr != ''`
-	rows, err := r.conn.Query(ctx, q)
+	key, err := codeKeyXDR(hash)
 	if err != nil {
-		return nil, false, fmt.Errorf("clickhouse: contract_code scan: %w", err)
+		return nil, false, err
+	}
+	rows, err := r.conn.Query(ctx, wasmCodeByHashQuery, key)
+	if err != nil {
+		return nil, false, fmt.Errorf("clickhouse: contract_code lookup: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
