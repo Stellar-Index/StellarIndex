@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
+
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
@@ -340,10 +342,21 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 		return
 	}
 
-	// Per-side decimals are constant across the page (base+quote are
-	// fixed request params), so resolve each side ONCE — not per row —
-	// then stamp onto every row. Fixes the markets pair page hardcoding 7
-	// for Soroban tokens that declare a different scale.
+	// Resolve the per-ASSET scale once (base+quote are fixed request
+	// params), then let each row override it with its SOURCE's scale.
+	//
+	// The per-asset value alone is wrong for every off-chain row. The
+	// scale an amount was stamped at is a property of the CONNECTOR, not
+	// of the asset: the CEX parsers stamp 1e8 and the FX pollers 1e6,
+	// while this resolver returns 7 for anything non-Soroban. A page can
+	// mix both — /v1/history?base=crypto:XLM&quote=fiat:USD returns sdex
+	// rows at 1e7 beside coinbase rows at 1e8 — so "constant across the
+	// page" was never true, and a consumer following this field's own
+	// documented conversion (amount / 10^decimals) overstated every CEX
+	// trade by exactly 10x. Verified live 2026-08-04: coinbase rows
+	// served base_decimals 7 against a parser that stamps 8. The `price`
+	// field is scale-invariant, so nothing in the response contradicted
+	// it (cold audit 2026-08-04).
 	baseDec := s.resolveAssetDecimals(hCtx, base)
 	quoteDec := s.resolveAssetDecimals(hCtx, quote)
 	rows := make([]TradeRow, len(trades))
@@ -351,6 +364,11 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 		rows[i] = tradeRowFrom(t, 10)
 		rows[i].BaseDecimals = baseDec
 		rows[i].QuoteDecimals = quoteDec
+		if dec, ok := externalSourceAmountDecimals(t.Source); ok {
+			// Off-chain sources normalise BOTH sides to one scale.
+			rows[i].BaseDecimals = dec
+			rows[i].QuoteDecimals = dec
+		}
 	}
 	// dex-nonstandard-decimals forward normalization of the Price field
 	// (M2). tradeRowFrom's Price is the raw quote_amount/base_amount ratio;
@@ -727,4 +745,30 @@ func (s *Server) historySinceInceptionStablecoinFallback(
 		return pp, true
 	}
 	return nil, false
+}
+
+// externalSourceAmountDecimals returns the amount scale an off-chain
+// connector stamps its trades at, and whether the source is a REGISTERED
+// off-chain venue at all.
+//
+// The ok=false path is load-bearing. external.Lookup returns a
+// zero-value Metadata for an unknown source, whose AmountScaleDecimals()
+// defaults to 8 — correct as a CEX convention, catastrophic as a
+// fallback for the on-chain sources (sdex, soroswap, aquarius, …) that
+// stamp at per-asset decimals. Only a source present in the registry may
+// override the per-asset resolution; everything else keeps it.
+func externalSourceAmountDecimals(source string) (int, bool) {
+	m, ok := external.Registry[source]
+	if !ok {
+		return 0, false
+	}
+	// Only OFF-CHAIN venues normalise to a per-source scale. On-chain
+	// sources (SubclassDEX) stamp amounts at the ASSET's own decimals, so
+	// the per-asset resolver — which consults a Soroban token's declared
+	// decimals() — is authoritative for them and the registry's flat 7
+	// would be wrong for any non-7dp token.
+	if m.Subclass == external.SubclassDEX {
+		return 0, false
+	}
+	return m.AmountScaleDecimals(), true
 }

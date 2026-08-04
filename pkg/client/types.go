@@ -32,6 +32,15 @@ type Flags struct {
 	ReducedRedundancy bool `json:"reduced_redundancy"`
 	Triangulated      bool `json:"triangulated"`
 	DivergenceWarning bool `json:"divergence_warning"`
+
+	// DivergenceChecked reports whether the cross-reference divergence
+	// check reached a verdict at all. When false, DivergenceWarning is
+	// NOT meaningful — the check was blind, so a false warning must not
+	// be read as "prices agree" (CS-087). Without this field a consumer
+	// gating on !DivergenceWarning passes 100% of the time while being
+	// structurally unable to detect the blindness (cold audit
+	// 2026-08-04).
+	DivergenceChecked bool `json:"divergence_checked"`
 	Frozen            bool `json:"frozen,omitempty"`
 	SingleSource      bool `json:"single_source,omitempty"`
 	// Diverged is set on a TRIANGULATED /v1/price response when the
@@ -514,6 +523,12 @@ type Source struct {
 type VolumeBucket struct {
 	Hour      time.Time `json:"hour"`
 	VolumeUSD string    `json:"volume_usd"`
+	// TradeCount is present on SOURCE sparklines (/v1/sources?include=
+	// sparkline) and absent on market sparklines, hence omitempty. The
+	// server marks it required on the source shape; without it the
+	// documented "trade-count line above the $-volume bars" renders
+	// zeros for every hour (cold audit 2026-08-04).
+	TradeCount int64 `json:"trade_count,omitempty"`
 }
 
 // Methodology is the data shape returned by [Client.Methodology].
@@ -801,6 +816,13 @@ type StatusLatency struct {
 	P95Ms      float64 `json:"p95_ms"`
 	P99Ms      float64 `json:"p99_ms"`
 	WindowSecs int     `json:"window_secs"`
+	// P95TargetMs / P99TargetMs are the server's own SLO thresholds,
+	// echoed so a consumer judges latency against the SAME numbers the
+	// status rollup does. Hardcoding them client-side is what produced
+	// site-audit S31 — two red SLO bars under a green
+	// "All systems operational" banner (cold audit 2026-08-04).
+	P95TargetMs int `json:"p95_target_ms"`
+	P99TargetMs int `json:"p99_target_ms"`
 }
 
 // StatusFreshness summarises the ingest layer.
