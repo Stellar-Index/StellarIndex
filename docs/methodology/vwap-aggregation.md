@@ -50,7 +50,7 @@ The **filtered** price flows through one ordered path
 |---|---|---|
 | 1. Stablecoin expansion | OFF (operator opt-in) | Expand a fiat-quote target (`XLM/fiat:USD`) to its direct pair + stablecoin-backed pairs, rewriting the quote side |
 | 2. Source-class filter | ON | Drop every trade whose source is not a VWAP-eligible exchange (see below) |
-| 3. Outlier filter | ON (σ = 4.0) | Drop trades whose price is > N standard deviations from the window mean |
+| 3. Outlier filter | ON (σ = 4.0) | Drop trades whose price is more than σ × 1.4826 × MAD from the window **median** |
 | 4. Min-USD-volume gate + freeze | ON | Suppress a window that clears too little USD volume; serve last-known-good instead of a freshly-computed value on an anomaly freeze |
 | 5. VWAP | — | `Σquote / Σbase` over what survives |
 
@@ -157,23 +157,36 @@ choice).
 
 ## Outlier filtering — honest about the current form
 
-The outlier filter drops any trade whose price is more than **σ = 4.0
-standard deviations** (configurable) from the window's unweighted mean.
-It is a **standard-deviation (σ) filter, not a MAD filter** today
-(`internal/aggregate/outliers.go`):
+The outlier filter drops any trade whose price deviates from the
+window's **median** by more than `σ × 1.4826 × MAD`, where MAD is the
+median absolute deviation and 1.4826 is the standard consistency
+constant that puts MAD on the same scale as a standard deviation for
+normally-distributed data (`internal/aggregate/outliers.go`,
+`robust.go`). σ defaults to 4.0 and remains configurable via
+`outlier_sigma_threshold`.
 
 - σ ≤ 0 disables it; with fewer than 3 valid prices it is a no-op (a
   degraded signal isn't compounded by dropping half the data).
-- Statistics use the float64 price projection — acceptable because
-  outlier detection is a heuristic gate, not the value-serving
-  computation (the VWAP itself stays exact-rational).
+- The statistics are computed in exact rational arithmetic, as is the
+  VWAP itself.
+- When every surviving price is identical the MAD is zero, which would
+  make the band degenerate; a relative floor of 0.5 % of the centre is
+  substituted in that case.
 
-**Known limitation:** a σ-mean filter is brittle on small windows with
-fat tails — a single extreme print can inflate σ enough to hide the next
-one. A MAD-based (median-absolute-deviation) filter is the planned
-replacement behind the same `outlier_sigma_threshold` flag; it has not
-shipped. We document the σ form here rather than claim a robustness
-property we don't yet have. See
+**Corrected 2026-08-04.** This section previously described a
+standard-deviation filter around the unweighted *mean*, and stated that
+a MAD form "has not shipped". Both were stale — the median/MAD form
+shipped with the M5 fix, for exactly the brittleness the old text warned
+about (a single extreme print inflating σ enough to hide the next one).
+An integrator reproducing our numbers from the old text could not
+reconcile them.
+
+**Known limitation.** The band is ADDITIVE in price space
+(`centre ± σ·1.4826·MAD`), not multiplicative, so its lower edge goes
+non-positive once the window's relative MAD exceeds `1/(σ·1.4826)` —
+16.9 % at the default σ = 4. Above that dispersion a downward outlier
+can no longer be rejected while an equivalent upward one still is. This
+is a real asymmetry on thin, volatile pairs; see
 `docs/operations/runbooks/aggregator-outlier-storm.md`.
 
 ## Triangulation — implied cross-pairs
