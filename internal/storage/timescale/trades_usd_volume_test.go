@@ -518,7 +518,22 @@ func TestTradeUSDVolume_L76XLMBaseAnchor(t *testing.T) {
 // so instead this asserts the tier-3 numeric result wins even
 // though the trade's base asset would also satisfy tier 4's
 // isXLMAsset check.
-func TestTradeUSDVolume_L76DoesNotFireWhenQuoteAlreadyResolved(t *testing.T) {
+//
+// This test used to assert the OPPOSITE — "tier 3 must win over tier 4" —
+// and its own fixture is why that was wrong. It trades 1.0 XLM (priced
+// $0.12) for 5,000 AQUA (priced $0.001 = $5.00): the two legs of a SINGLE
+// trade differ by 42x, so at least one rate is wrong, and the old
+// assertion picked the thin on-chain token over XLM.
+//
+// That is the choice that produced the $8,559,224 row measured on r1
+// (2026-08-04): tier 3's token price is usually tier 3b's bridge,
+// `token/XLM x XLM/USD`, read out of prices_1m — which is a continuous
+// aggregate over `trades`. For a token with no honest market the bridge
+// rate is whatever the last trader wrote, so an attacker self-deals once
+// to set it and every later trade against that token multiplies through
+// it. XLM is the one asset immune to that: it is the bridge's own anchor,
+// so its rate is a direct XLM/USD market.
+func TestTradeUSDVolume_XLMBaseLegBeatsABridgedQuotePrice(t *testing.T) {
 	t.Parallel()
 	xlm := canonical.NativeAsset()
 	aqua, err := canonical.NewClassicAsset("AQUA", "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
@@ -526,10 +541,7 @@ func TestTradeUSDVolume_L76DoesNotFireWhenQuoteAlreadyResolved(t *testing.T) {
 		t.Fatalf("NewClassicAsset AQUA: %v", err)
 	}
 
-	// Resolver knows AQUA's USD rate (tier 3 hit) AND XLM's (tier 4
-	// would also hit if reached) — if tier 4 fired instead of tier 3
-	// the base-anchored math (below) would produce a different
-	// number, so a mismatch proves the wrong tier ran.
+	// Both legs resolve; they disagree 42x. The XLM leg must win.
 	resolver := stubFXResolver{prices: map[string]string{
 		aqua.String(): "0.001",
 		xlm.String():  "0.12",
@@ -542,15 +554,47 @@ func TestTradeUSDVolume_L76DoesNotFireWhenQuoteAlreadyResolved(t *testing.T) {
 		resolver,
 	)
 	if got == nil {
-		t.Fatal("expected tier 3 to populate usd_volume")
+		t.Fatal("expected the XLM base anchor to populate usd_volume")
 	}
-	// Tier 3 (quote=AQUA): 50_000_000_000 stroops / 1e7 = 5_000 AQUA
-	// × $0.001 = $5.00. Tier 4 (base=XLM) would instead compute
-	// 10_000_000 stroops (mkClassicDEXTrade's fixed base) / 1e7 =
-	// 1.0 XLM × $0.12 = $0.12 — a different, wrong number.
-	want := "5.00000000"
+	// Base=XLM: 10_000_000 stroops (mkClassicDEXTrade's fixed base) / 1e7
+	// = 1.0 XLM x $0.12 = $0.12. The quote-side answer would be $5.00,
+	// derived from a token rate the counterparty can author.
+	want := "0.12000000"
 	if *got != want {
-		t.Errorf("got %q, want %q (tier 3 must win over tier 4)", *got, want)
+		t.Errorf("got %q, want %q (the XLM leg must beat a token-side rate)", *got, want)
+	}
+}
+
+// TestTradeUSDVolume_NonXLMBaseStillUsesQuoteResolution pins that the
+// reorder is scoped to XLM. A non-XLM base resolves through the same
+// poisonable bridge as the quote, so it earns no precedence — tier 3
+// still runs first for it.
+func TestTradeUSDVolume_NonXLMBaseStillUsesQuoteResolution(t *testing.T) {
+	t.Parallel()
+	aqua, err := canonical.NewClassicAsset("AQUA", "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
+	if err != nil {
+		t.Fatalf("NewClassicAsset AQUA: %v", err)
+	}
+	usdc, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatalf("NewClassicAsset USDC: %v", err)
+	}
+	resolver := stubFXResolver{prices: map[string]string{
+		usdc.String(): "1.00",
+		aqua.String(): "0.001",
+	}}
+	got := tradeUSDVolume(
+		context.Background(),
+		mkClassicDEXTrade(t, "soroswap", aqua, usdc, 50_000_000_000),
+		nil,
+		resolver,
+	)
+	if got == nil {
+		t.Fatal("expected tier 3 to populate usd_volume for a non-XLM base")
+	}
+	// Quote=USDC: 50_000_000_000 / 1e7 = 5_000 x $1.00 = $5,000.
+	if want := "5000.00000000"; *got != want {
+		t.Errorf("got %q, want %q (non-XLM base must not pre-empt tier 3)", *got, want)
 	}
 }
 
