@@ -179,7 +179,6 @@ func (h *Hub) TopicsReaped() uint64 { return h.reaped.Load() }
 // Last-Event-ID for buffered replay.
 func (h *Hub) Publish(topic, eventType string, data []byte) string {
 	ev := Event{
-		ID:        h.gen.Next(),
 		Type:      eventType,
 		Data:      data,
 		Timestamp: time.Now(),
@@ -187,6 +186,20 @@ func (h *Hub) Publish(topic, eventType string, data []byte) string {
 
 	var subs []*subscription
 	h.withTopic(topic, func(t *topicState) {
+		// Draw the ID INSIDE the topic lock. Assigning it outside meant
+		// ID assignment and ring insertion were not atomic, so two
+		// concurrent publishes to one topic could enter the ring out of
+		// ID order: G1 draws A, G2 draws B>A, G2 wins the lock and
+		// pushes B, then G1 pushes A. The ring's ascending-ID invariant
+		// — which snapshotAfter's strict `>` filter depends on — is
+		// broken, and the consequences are all silent: a live subscriber
+		// receives B before A on a channel documented as ID-ordered; an
+		// EventSource that stores the LAST id it saw (A) gets B again on
+		// reconnect; a client tracking the MAX id (B) never receives A
+		// even though it is sitting in the buffer; and ring.push evicts
+		// slot 0, which under inversion is not the lowest-ID event
+		// (cold audit 2026-08-04).
+		ev.ID = h.gen.Next()
 		t.buffer.push(ev)
 		// Snapshot subscribers so we can release the topic lock before
 		// sending — keeps a slow sub from blocking publishers (sends
@@ -219,9 +232,10 @@ func (h *Hub) Publish(topic, eventType string, data []byte) string {
 //
 // If lastEventID is empty, no replay happens — the client gets only
 // events published after Subscribe returns. If lastEventID is older
-// than the buffered window, replay starts at the buffer's oldest
-// event (the client sees an ID jump, which is the documented signal
-// that some events were lost).
+// than the subscriber queue can hold, the OLDEST events are dropped and
+// replay starts partway through the buffer (the client sees an ID jump,
+// which is the documented signal that some events were lost). It is not
+// disconnected — see the note in the loop below.
 func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func()) {
 	sub := &subscription{
 		ch:     make(chan Event, subscriberQueueDepth),
@@ -243,26 +257,36 @@ func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func
 		// exactly one of the two — no loss, no duplicate — and replay
 		// is queued before any live event can be, so the channel stays
 		// in ID order per topic.
-		overflow := false
 		h.withTopic(topic, func(t *topicState) {
-			for _, ev := range t.buffer.snapshotAfter(lastEventID) {
+			// Replay the NEWEST events that fit, then register for live.
+			//
+			// This used to replay oldest-first and CLOSE the connection
+			// the moment the queue filled, which is the worst of both:
+			// the client received the 32 OLDEST buffered events — the
+			// stalest prices in the ring — and was then disconnected.
+			// Measured on r1: every reconnect returned exactly 32 events
+			// and closed in 6-8ms, so a client 20 minutes behind ground
+			// through ~8 reconnect rounds rendering progressively-stale
+			// prices as live, and one that only advanced its
+			// Last-Event-ID after a "complete" sync never converged at
+			// all. Nothing on the wire distinguishes a replayed event
+			// from a live one.
+			//
+			// Dropping the oldest instead is the honest trade: the
+			// client lands on the CURRENT price immediately and stays
+			// connected. The lost span is exactly the gap the ID jump is
+			// documented to signal (cold audit 2026-08-04).
+			replay := t.buffer.snapshotAfter(lastEventID)
+			if len(replay) > subscriberQueueDepth {
+				replay = replay[len(replay)-subscriberQueueDepth:]
+			}
+			for _, ev := range replay {
 				if !sub.sendReplay(ev) {
-					overflow = true
-					return
+					break
 				}
 			}
 			t.subs[sub] = struct{}{}
 		})
-		if overflow {
-			// Replay overflowed the subscriber queue. Close + signal —
-			// the client sees an immediate drop and can reconnect with
-			// a more recent Last-Event-ID. Drop from any topic already
-			// registered first, so a partially-registered subscription
-			// can't linger in the fanout set.
-			cancel()
-			sub.close()
-			return sub.ch, cancel
-		}
 	}
 
 	return sub.ch, cancel

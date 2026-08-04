@@ -12,6 +12,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -344,9 +345,32 @@ func (f *CrossAnchorFiller) fetchOne(ctx context.Context, seq uint32, rng *rand.
 	// the bash-script bug from 2026-04-28 was placing curl -o
 	// into a non-existent dir, which fails fast even when the
 	// HTTP source is healthy.
-	if err := os.MkdirAll(filepath.Dir(finalPath), 0o750); err != nil {
+	//
+	// 0755, not 0750: the daemon runs as root but the archive exists to
+	// be READ by the verifier (stellar-archivist / verify-archive -tier
+	// checkpoint), which runs as a non-root service user. Creating the
+	// directories 0750 root:root made every file this filler placed
+	// unreadable by that consumer — including the files it had just
+	// chowned to stellar:stellar for exactly that purpose, since the
+	// chown covered the file and never its parent. Measured on r1
+	// 2026-08-04: 24 depth-2 directories created since 2026-05-12 were
+	// non-o+rx, covering 24,044 checkpoints (2.4% of the archive, and
+	// the ENTIRE recent window). Enabling the ADR-0017 anchor check
+	// would have failed with EACCES — which the verifier treats as a
+	// hard mismatch, not a missing file — for every checkpoint above
+	// ~63,180,000 (cold audit 2026-08-04).
+	//
+	// nolint:gosec // G301 wants <=0750. Deliberate: this is public
+	// blockchain history whose whole purpose is to be read back by a
+	// verifier running as a DIFFERENT service user than the chown target
+	// (r1: the filler chowns to stellar, verify-archive runs as
+	// stellarindex), so group permission does not cover it and 0750
+	// silently locks out the only consumer. No secret is exposed — every
+	// byte here is fetched from public unauthenticated mirrors.
+	if err := os.MkdirAll(filepath.Dir(finalPath), 0o755); err != nil { //nolint:gosec // see note above
 		return tries, fmt.Errorf("mkdir parent: %w", err)
 	}
+	f.applyDirOwnership(filepath.Dir(finalPath))
 
 	shuffled := make([]Source, len(f.sources))
 	copy(shuffled, f.sources)
@@ -546,4 +570,22 @@ func (f *CrossAnchorFiller) applyOwnership(path string) {
 		return
 	}
 	_ = os.Chown(path, f.ownerUID, f.ownerGID)
+}
+
+// applyDirOwnership chowns the checkpoint's parent directories the same
+// way applyOwnership chowns the file.
+//
+// Chowning the file alone is not enough: a reader needs +x on every
+// directory on the path to reach it. Walks up to the archive root so a
+// freshly-created 2-level prefix (ledger/XX/YY/ZZ) is fully traversable.
+// Best-effort, same contract as applyOwnership — a pre-existing
+// correctly-owned directory simply no-ops.
+func (f *CrossAnchorFiller) applyDirOwnership(dir string) {
+	if !f.chownEnabled {
+		return
+	}
+	root := filepath.Clean(f.archiveRoot)
+	for d := filepath.Clean(dir); strings.HasPrefix(d, root) && d != root; d = filepath.Dir(d) {
+		_ = os.Chown(d, f.ownerUID, f.ownerGID)
+	}
 }
