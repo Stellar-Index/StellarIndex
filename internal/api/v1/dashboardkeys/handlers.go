@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/netip"
 	"strings"
@@ -438,6 +439,31 @@ func parseCreateRequest(r *http.Request) (createRequest, int, string) {
 	if req.RateLimitPerMin > 100000 {
 		return req, http.StatusBadRequest, "rate_limit_per_min must be ≤ 100000"
 	}
+	// Validate the fields that Postgres CHECK-constrains, so a bad
+	// request is rejected as a 400 naming the field rather than
+	// surfacing as an opaque 500 from a constraint violation deep in
+	// finalizeAPIKeyCreate. Cold audit 2026-08-04 proved all four reach
+	// the store today; the operator cost is real, because a 500 here is
+	// indistinguishable from the genuine 500 a migration-drift on
+	// api_keys produces, and the first thing it prompts is "key creation
+	// is broken" rather than "your request was malformed".
+	if len(req.Description) > 2000 {
+		return req, http.StatusBadRequest, "description must be 2000 chars or fewer"
+	}
+	if req.MonthlyQuota < 0 {
+		return req, http.StatusBadRequest, "monthly_quota must be a positive integer (omit it to leave unset)"
+	}
+	if req.UsageAlertThresholdPct != 0 &&
+		(req.UsageAlertThresholdPct < 1 || req.UsageAlertThresholdPct > 100) {
+		return req, http.StatusBadRequest, "usage_alert_threshold_pct must be between 1 and 100"
+	}
+	// Postgres stores these as `cidr`, which rejects a prefix carrying
+	// host bits (203.0.113.5/24) — the natural way to write "this /24".
+	for _, entry := range req.IPAllowlist {
+		if problem := validateCIDROrIP(entry); problem != "" {
+			return req, http.StatusBadRequest, problem
+		}
+	}
 	scopes, problem := normaliseScopes(req.Scopes)
 	if problem != "" {
 		return req, http.StatusBadRequest, problem
@@ -487,6 +513,30 @@ func clampRateLimitToTier(requested int, tier platform.Tier) int {
 		return ceiling
 	}
 	return requested
+}
+
+// validateCIDROrIP accepts a bare IP or a CIDR prefix whose host bits
+// are zero, matching what the `cidr` column type will store. Returns a
+// problem detail, or "" when the entry is acceptable.
+func validateCIDROrIP(entry string) string {
+	entry = strings.TrimSpace(entry)
+	if entry == "" {
+		return "ip_allowlist entries must not be empty"
+	}
+	if !strings.Contains(entry, "/") {
+		if net.ParseIP(entry) == nil {
+			return fmt.Sprintf("ip_allowlist entry %q is not a valid IP address", entry)
+		}
+		return ""
+	}
+	ip, ipNet, err := net.ParseCIDR(entry)
+	if err != nil {
+		return fmt.Sprintf("ip_allowlist entry %q is not valid CIDR", entry)
+	}
+	if !ip.Equal(ipNet.IP) {
+		return fmt.Sprintf("ip_allowlist entry %q has host bits set — use %s", entry, ipNet.String())
+	}
+	return ""
 }
 
 // clampMonthlyQuotaToAccount returns the lower of `requested` and the

@@ -603,3 +603,53 @@ func TestHandleCreate_Scopes(t *testing.T) {
 		t.Errorf("key minted despite invalid scope")
 	}
 }
+
+// TestParseCreateRequest_RejectsCheckConstrainedValues pins that the four
+// fields Postgres CHECK-constrains are rejected as 400s naming the field,
+// not passed through to surface as an opaque 500 from a constraint
+// violation deep in the store.
+//
+// A cold audit (2026-08-04) proved all four reached Postgres. The
+// operator cost is real: a 500 here is indistinguishable from the
+// genuine 500 that api_keys migration drift produces, so the first
+// conclusion it prompts is "key creation is broken" rather than "the
+// request was malformed".
+func TestParseCreateRequest_RejectsCheckConstrainedValues(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{"description over 2000", `{"name":"k","description":"` + strings.Repeat("x", 2001) + `"}`, "description"},
+		{"negative monthly_quota", `{"name":"k","monthly_quota":-1}`, "monthly_quota"},
+		{"threshold over 100", `{"name":"k","usage_alert_threshold_pct":999}`, "usage_alert_threshold_pct"},
+		{"threshold under 1", `{"name":"k","usage_alert_threshold_pct":-5}`, "usage_alert_threshold_pct"},
+		{"cidr with host bits", `{"name":"k","ip_allowlist":["203.0.113.5/24"]}`, "host bits"},
+		{"malformed cidr", `{"name":"k","ip_allowlist":["not-an-ip/24"]}`, "not valid CIDR"},
+		{"malformed ip", `{"name":"k","ip_allowlist":["999.1.1.1"]}`, "not a valid IP"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "/v1/dashboard/keys", strings.NewReader(tc.body))
+			_, status, problem := parseCreateRequest(r)
+			if status != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 (problem %q)", status, problem)
+			}
+			if !strings.Contains(problem, tc.want) {
+				t.Errorf("problem = %q, want it to name %q", problem, tc.want)
+			}
+		})
+	}
+}
+
+// TestParseCreateRequest_AcceptsValidAllowlistForms guards against the
+// validation above over-rejecting: a bare IP and a correctly-aligned
+// prefix are both legitimate.
+func TestParseCreateRequest_AcceptsValidAllowlistForms(t *testing.T) {
+	body := `{"name":"k","ip_allowlist":["203.0.113.5","203.0.113.0/24","2001:db8::/32"],` +
+		`"usage_alert_threshold_pct":80,"monthly_quota":500}`
+	r := httptest.NewRequest(http.MethodPost, "/v1/dashboard/keys", strings.NewReader(body))
+	_, status, problem := parseCreateRequest(r)
+	if problem != "" || status != 0 {
+		t.Fatalf("valid body rejected: status=%d problem=%q", status, problem)
+	}
+}
