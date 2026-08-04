@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.25.0] — 2026-08-04
+
 ### Added
 - **`classic_assets.slug` is finally populated** (migration 0134 + the
   writer). Migration 0023 documented a disambiguated slug and bound a
