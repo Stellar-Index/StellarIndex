@@ -5,8 +5,10 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -205,5 +207,58 @@ func TestWorker_retryClassification(t *testing.T) {
 		if tc.status >= 300 && tc.status < 400 && isRetryable4xx(tc.status) {
 			t.Errorf("isRetryable4xx(%d) = true, want false — %s", tc.status, tc.why)
 		}
+	}
+}
+
+// TestNew_DefaultClientWiresSSRFGuardAndRefusesRedirects pins the
+// WIRING of the F-1245 delivery-time SSRF defence, not just its
+// predicate.
+//
+// ssrf_test.go tests ssrfGuardedDialContext rigorously — 8 blocked
+// ranges, error text asserted. Nothing asserted that the default HTTP
+// client actually USES it, so deleting `DialContext:
+// ssrfGuardedDialContext` from the transport left the whole repo's
+// `go test ./...` green (cold audit 2026-08-04). The webhook URL is
+// customer-supplied, and registration-time validation cannot catch DNS
+// rebinding between registration and delivery — which is the entire
+// reason the delivery-time guard exists.
+//
+// Also pins CheckRedirect: without it a 302 from a public host to an
+// internal one is followed automatically, routing around the dialer.
+func TestNew_DefaultClientWiresSSRFGuardAndRefusesRedirects(t *testing.T) {
+	w := New(nopStore{}, Options{})
+	c := w.opts.HTTPClient
+	if c == nil {
+		t.Fatal("New did not construct a default HTTP client")
+	}
+
+	tr, ok := c.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("default transport is %T, want *http.Transport", c.Transport)
+	}
+	if tr.DialContext == nil {
+		t.Fatal("default transport has a nil DialContext — the SSRF guard is not wired, " +
+			"so every assertion in ssrf_test.go is decorative")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	conn, err := tr.DialContext(ctx, "tcp", "169.254.169.254:80")
+	if conn != nil {
+		_ = conn.Close()
+	}
+	if err == nil {
+		t.Fatal("dial to the cloud metadata endpoint succeeded — the SSRF guard is not wired")
+	}
+	if !strings.Contains(err.Error(), "SSRF") {
+		t.Errorf("dial(169.254.169.254:80) = %v, want an SSRF-defence refusal", err)
+	}
+
+	if c.CheckRedirect == nil {
+		t.Fatal("default client follows redirects — a 302 from a public host to an internal " +
+			"one would route around the dialer")
+	}
+	if rerr := c.CheckRedirect(nil, nil); !errors.Is(rerr, http.ErrUseLastResponse) {
+		t.Errorf("CheckRedirect = %v, want http.ErrUseLastResponse", rerr)
 	}
 }

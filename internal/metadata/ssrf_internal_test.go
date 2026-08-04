@@ -2,10 +2,12 @@ package metadata
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestIsBlocked_CoversCloudMetadataAndReservedRanges pins the deny-list
@@ -135,5 +137,42 @@ func TestDialContext_EmptyResolutionErrorsNotPanics(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no addresses") {
 		t.Errorf("expected a 'no addresses' error, got: %v", err)
+	}
+}
+
+// TestResolverTransportUsesSSRFGuardedDialer pins the WIRING, not just
+// the predicate.
+//
+// Every SSRF assertion in this package tested the guard's decision
+// function; none asserted that the HTTP transport actually calls it. So
+// deleting `DialContext: (&ssrfDialer{...}).DialContext` from the
+// transport left the whole repo's `go test ./...` green (cold audit
+// 2026-08-04). The sibling TestResolverTransportDisablesProxy already
+// reaches into the transport this way — the technique just wasn't
+// applied to the dialer, which is the guard that matters most:
+// `home_domain` is attacker-controlled on-chain data, so this is what
+// stands between a malicious issuer and a GET against 169.254.169.254
+// from the sep1-refresh cron.
+func TestResolverTransportUsesSSRFGuardedDialer(t *testing.T) {
+	r := NewResolver(Options{})
+	tr, ok := r.client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("resolver transport is %T, want *http.Transport", r.client.Transport)
+	}
+	if tr.DialContext == nil {
+		t.Fatal("transport has a nil DialContext — the SSRF-guarded dialer is not wired, " +
+			"so every private-IP block in this package is decorative")
+	}
+
+	// The wired dialer must refuse a loopback literal itself, before the
+	// stdlib dialer is ever reached.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	conn, err := tr.DialContext(ctx, "tcp", "127.0.0.1:9")
+	if conn != nil {
+		_ = conn.Close()
+	}
+	if !errors.Is(err, ErrSSRFBlocked) {
+		t.Errorf("transport.DialContext(127.0.0.1:9) = %v, want ErrSSRFBlocked", err)
 	}
 }
