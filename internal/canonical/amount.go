@@ -32,7 +32,26 @@ type Amount struct {
 	// value is never nil after a successful construction. Helpers
 	// below guard against nil by constructing on demand.
 	value *big.Int
+
+	// noCompare makes Amount non-comparable, so `a == b` is a COMPILE
+	// ERROR rather than a pointer comparison. Without it `==` was legal
+	// and compared the *big.Int addresses: FromString("100") ==
+	// FromString("100") was false, and the natural "was this set?" guard
+	// `amt == (canonical.Amount{})` returned true for an unset Amount but
+	// false for one legitimately decoded as zero — silently reclassifying
+	// real zero-amount events as present. Use Cmp or Equal
+	// (cold audit 2026-08-04).
+	//
+	// Zero-width, so it costs nothing at runtime. Never read — its
+	// presence in the struct IS the effect.
+	noCompare [0]func() //nolint:unused // the field exists to make Amount non-comparable, not to be read
 }
+
+// Equal reports whether two Amounts hold the same numeric value. A zero
+// Amount equals an Amount constructed from "0" — they are the same
+// number, and the type deliberately does not distinguish absent from
+// zero (callers that need that distinction use *Amount).
+func (a Amount) Equal(b Amount) bool { return a.Cmp(b) == 0 }
 
 // NewAmount wraps any value that can be expressed as a *big.Int.
 //
