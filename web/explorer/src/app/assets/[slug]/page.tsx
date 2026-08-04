@@ -261,7 +261,15 @@ function getBuildCoinsCache(): Promise<BuildCoinsCache | null> {
     const byAssetId = new Map<string, CoinSummary>();
     for (const c of rows) {
       if (c.slug) {
-        bySlug.set(c.slug, c);
+        // FIRST row wins on both maps (rows arrive volume-DESC, so a
+        // residual duplicate slug resolves to the highest-volume row).
+        // Since migration 0134 listing slugs are unique per issuer
+        // (code-issuer8), so duplicates only exist against a
+        // pre-migration API — pre-0134 this map was LAST-write-wins,
+        // which crowned the LOWEST-volume impersonator (2026-08-04
+        // identity incident) and disagreed with bySlugCI's tie-break
+        // depending on URL casing.
+        if (!bySlug.has(c.slug)) bySlug.set(c.slug, c);
         const ci = c.slug.toLowerCase();
         if (!bySlugCI.has(ci)) bySlugCI.set(ci, c);
       }
