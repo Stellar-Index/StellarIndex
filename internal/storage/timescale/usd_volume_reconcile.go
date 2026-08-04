@@ -2,6 +2,8 @@ package timescale
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"math/big"
 	"time"
@@ -226,4 +228,36 @@ func ExactTierDelta(g TradeValuationGroup, tier USDVolumeTier, decimals int) (de
 	}
 	expected := new(big.Rat).Quo(legSum, new(big.Rat).SetInt(scaleDenominator(decimals)))
 	return new(big.Rat).Sub(stored, expected), true
+}
+
+// DayCloseVWAPXLMUSD returns the daily VWAP for crypto:XLM/fiat:USD
+// (the CEX-fed series — the one XLM/USD series whose inputs are not
+// authorable on-chain) from the prices_1d CAGG for the given UTC day.
+// ok=false when the day has no bucket (a fresh deployment, or a day
+// before CEX ingest existed) — callers skip the XLM-base sanity bound
+// for that day rather than judging against a missing rate.
+//
+// This feeds verify-usd-volume's XLM-BASE BOUND: tier-4 rows anchor
+// usd_volume to base_amount/1e7 × XLM/USD at trade time, so a
+// day-group's Σusd_volume must land within an intraday-range tolerance
+// of Σbase/1e7 × day-VWAP. The 2026-08-04 poisoning class was 10×–10⁶×
+// off; a coarse bound catches it while a day-granular rate cannot
+// false-alarm on normal intraday movement.
+func (s *Store) DayCloseVWAPXLMUSD(ctx context.Context, day time.Time) (string, bool, error) {
+	start := day.UTC().Truncate(24 * time.Hour)
+	const q = `
+		SELECT vwap::text
+		  FROM prices_1d
+		 WHERE base_asset = 'crypto:XLM' AND quote_asset = 'fiat:USD'
+		   AND bucket = $1
+	`
+	var vwap string
+	err := s.db.QueryRowContext(ctx, q, start).Scan(&vwap)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("timescale: DayCloseVWAPXLMUSD %s: %w", start.Format(time.DateOnly), err)
+	}
+	return vwap, true, nil
 }
