@@ -1920,3 +1920,71 @@ func (s *Store) OHLCSeriesReBucketed(
 	}
 	return out, nil
 }
+
+// MarketSubstance summarises a pair's trailing closed-bucket market
+// activity across BOTH stored directions of the market, as measured by
+// the prices_1m CAGG. It is the input to the serving-side thin-market
+// gate (internal/pricingguard.SubstanceGate): "is there enough real,
+// recent market here for an aggregated price claim to be publishable?"
+//
+// VolumeUSD is the NUMERIC sum of prices_1m.volume_usd over the window
+// as a decimal string (ADR-0003 — the comparison against the serve
+// floor is exact-rational, never float64). Buckets is the number of
+// DISTINCT closed 1-minute buckets with at least one trade; SpanSeconds
+// is max(bucket)-min(bucket) — how much wall-clock the activity spans.
+// Buckets + SpanSeconds together are the persistence signal: a burst of
+// N trades in one minute produces Buckets=1 / SpanSeconds=0 no matter
+// how large N is, which is exactly what distinguishes a dust-set market
+// from a continuously-traded one.
+//
+// Rows whose usd_volume could not be valued at insert time contribute 0
+// to VolumeUSD (the CAGG stores sum(coalesce(usd_volume, 0))) — so an
+// unvaluable market fails a positive volume floor BY CONSTRUCTION,
+// which is the fail-closed posture the gate wants: if the volume cannot
+// be verified, the floor cannot be verified.
+type MarketSubstance struct {
+	VolumeUSD   string
+	Buckets     int64
+	SpanSeconds int64
+}
+
+// PairMarketSubstance measures [MarketSubstance] for the pair over the
+// trailing `window` (closed buckets only, ADR-0015). Same plan-time
+// chunk-pruning discipline as the other prices_1m readers in this file:
+// the lower bound is interpolated as a LITERAL timestamptz computed in
+// Go (no injection surface), and the closed-bucket predicate is the
+// sargable `bucket <= now() - 1min` form.
+//
+// An empty pair returns {VolumeUSD: "0", Buckets: 0, SpanSeconds: 0}
+// with a nil error — absence of market is a measurement, not an error.
+func (s *Store) PairMarketSubstance(ctx context.Context, p canonical.Pair, window time.Duration) (MarketSubstance, error) {
+	if window <= 0 {
+		return MarketSubstance{}, fmt.Errorf("timescale: PairMarketSubstance: non-positive window %v", window)
+	}
+	cutoff := time.Now().UTC().Add(-window)
+	lower := fmt.Sprintf("AND bucket >= TIMESTAMPTZ '%s'\n", cutoff.Format("2006-01-02 15:04:05-07"))
+	// #nosec G201 — the only interpolated value is `lower`, built from our
+	// own time.Time in a fixed layout; pair strings bind as $1/$2. Same
+	// discipline as latestClosedVWAP1m / RecentClosedVWAP1mCombined.
+	q := fmt.Sprintf(`
+        SELECT COALESCE(sum(bucket_usd), 0)::text,
+               count(*),
+               COALESCE(EXTRACT(EPOCH FROM (max(bucket) - min(bucket)))::bigint, 0)
+          FROM (
+            SELECT bucket, sum(volume_usd) AS bucket_usd
+              FROM prices_1m
+             WHERE ((base_asset = $1 AND quote_asset = $2)
+                 OR (base_asset = $2 AND quote_asset = $1))
+               AND bucket <= now() - INTERVAL '1 minute'
+               %[1]s
+             GROUP BY bucket
+          ) b
+    `, lower) //nolint:gosec // G201: see note above
+	var sub MarketSubstance
+	if err := s.db.QueryRowContext(ctx, q, p.Base.String(), p.Quote.String()).Scan(
+		&sub.VolumeUSD, &sub.Buckets, &sub.SpanSeconds,
+	); err != nil {
+		return MarketSubstance{}, fmt.Errorf("timescale: PairMarketSubstance: %w", err)
+	}
+	return sub, nil
+}

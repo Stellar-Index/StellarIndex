@@ -897,7 +897,27 @@ paths:
            `/v1/price/tip`, `/v1/price/batch`,
            `/v1/oracle/lastprice`, and `/v1/oracle/x_last_price`.
 
-        Returns 404 only when every path above misses.
+        Returns 404 only when every path above misses — with one
+        deliberate exception: the **thin-market substance gate**. When
+        the pair has an on-chain leg (native / classic / Soroban) and
+        its trailing market activity is below the operator's serve
+        floor (default: $1,000 USD volume, 20 distinct 1-minute
+        buckets, and 6 hours of activity span within the trailing 24
+        hours, summed across the pair's alias family), the endpoint
+        WITHHOLDS the price and returns 404 with the distinct problem
+        type `https://api.stellarindex.io/errors/price-withheld` —
+        without consulting the fallback chain. On a permissionless DEX
+        an asset's entire market can be authored by one participant
+        for pennies, so an aggregated price claim for a substanceless
+        market would be an attacker-controlled number. Integrators can
+        branch on the problem `type`: `price-not-found` means "pair
+        never observed", `price-withheld` means "pair observed, too
+        thin to aggregate — read `/v1/observations`, `/v1/ohlc` or
+        `/v1/history` (which still serve the raw market) and apply
+        your own judgement". The same gate protects `/v1/price/tip`,
+        `/v1/price/batch` (withheld rows are omitted, like misses),
+        the SEP-40 oracle endpoints, and the `price_usd` enrichment on
+        asset surfaces.
       parameters:
         - name: window
           in: query
@@ -1093,6 +1113,13 @@ paths:
         before any closed-bucket fallback, so staleness exceeds 30s
         only when the pair genuinely had no trade in the last 30s —
         read observed_at + window_seconds to know what you got.
+
+        The thin-market substance gate applies here exactly as on
+        `/v1/price` (see that endpoint's description): a pair with an
+        on-chain leg whose trailing market is below the serve floor is
+        a 404 with problem type `…/errors/price-withheld` — freshness
+        is this surface's promise, but an aggregated claim over a
+        market one participant authored is still not publishable.
       parameters:
         - { $ref: "#/components/parameters/AssetQuery" }
         - { $ref: "#/components/parameters/Quote" }

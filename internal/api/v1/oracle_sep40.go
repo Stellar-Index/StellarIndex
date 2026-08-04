@@ -76,6 +76,14 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 	// trades populate — returning stale/empty here while /v1/price
 	// serves fresh. See readPriceWithAliases for the full rationale.
 	snapshot, sources, stale, err := s.readPriceWithAliases(r.Context(), reader, asset, defaultPriceQuote)
+	// Substance-gated pair: withheld beats the fallback chain — same
+	// rationale as handlePrice (see ErrPriceWithheld). The SEP-40
+	// surface is the LAST place a substanceless price belongs: its
+	// consumers are oracle integrators.
+	if errors.Is(err, ErrPriceWithheld) {
+		writePriceWithheldProblem(w, r, asset, defaultPriceQuote)
+		return
+	}
 	// viaFallback mirrors handlePrice: normalizeRawPriceSnapshot below
 	// must only run on the RAW closed-1m-bucket read, never on a
 	// priceFallback result (already normalized upstream / peg / cross-
@@ -198,6 +206,13 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 	snapshots, triangulated, err := s.recentClosedWithStablecoinFallback(r.Context(), asset, defaultPriceQuote, records)
 	if err != nil {
 		if clientAborted(r, err) {
+			return
+		}
+		// Substance-gated pair: same 404 verdict as lastprice — a
+		// historical snapshot series is still an aggregated price
+		// claim per bucket.
+		if errors.Is(err, ErrPriceWithheld) {
+			writePriceWithheldProblem(w, r, asset, defaultPriceQuote)
 			return
 		}
 		s.logger.Error("RecentClosedSnapshots (sep40 prices) failed",
@@ -343,6 +358,12 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 	// fiat:USD)` resolves a fresh `crypto:XLM/fiat:USD` VWAP that CEX
 	// trades populate rather than missing it on the literal form.
 	snapshot, sources, stale, err := s.readPriceWithAliases(r.Context(), reader, base, quote)
+	// Substance-gated pair: withheld beats the fallback chain — same
+	// rationale as handleOracleLastPrice above.
+	if errors.Is(err, ErrPriceWithheld) {
+		writePriceWithheldProblem(w, r, base, quote)
+		return
+	}
 	// viaFallback mirrors handlePrice / handleOracleLastPrice: the M2
 	// normalizeRawPriceSnapshot below must run ONLY on the RAW closed-1m-bucket
 	// read, never on a priceFallback result (already normalized at its own

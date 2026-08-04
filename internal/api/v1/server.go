@@ -88,6 +88,7 @@ type Server struct {
 	stripe              *StripeWebhookConfig
 	divergence          DivergenceLooker
 	freeze              FrozenLooker
+	substance           PriceSubstanceGate
 	supply              SupplyLooker
 	tokenSupply         TokenSupplyReader
 	tokenDecimals       TokenDecimalsReader
@@ -493,6 +494,15 @@ type Options struct {
 	// is derived from the observation count instead. Wire when the
 	// aggregator's freeze-marker writer + Redis are both running.
 	Freeze FrozenLooker
+
+	// Substance, when non-nil, is the serving-side thin-market gate
+	// ([PriceSubstanceGate], production impl
+	// internal/pricingguard.SubstanceGate). The server consults it on
+	// price-computing paths that bypass PriceReader (the tip
+	// rolling-window VWAP); reader-backed paths carry the gate inside
+	// the wired readers. Nil disables handler-side gating (the readers
+	// may still gate independently).
+	Substance PriceSubstanceGate
 
 	// Supply, when non-nil, populates the F2 fields
 	// (total_supply, circulating_supply, max_supply, market_cap_usd,
@@ -1086,6 +1096,7 @@ func New(opts Options) *Server {
 		stripe:                 opts.Stripe,
 		divergence:             opts.Divergence,
 		freeze:                 opts.Freeze,
+		substance:              opts.Substance,
 		supply:                 opts.Supply,
 		tokenSupply:            opts.TokenSupply,
 		tokenDecimals:          opts.TokenDecimals,

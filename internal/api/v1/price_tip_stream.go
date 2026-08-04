@@ -114,6 +114,12 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 	preflightCtx, cancelPreflight := context.WithTimeout(r.Context(), tipStreamTickTimeout)
 	defer cancelPreflight()
 	first, firstSources, err := s.computeTip(preflightCtx, asset, quote, window)
+	if errors.Is(err, ErrPriceWithheld) {
+		// Substance-gated pair: the stream cannot start — same verdict
+		// and problem type as the request endpoint.
+		writePriceWithheldProblem(w, r, asset, quote)
+		return
+	}
 	if errors.Is(err, ErrPriceNotFound) {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/price-not-found",

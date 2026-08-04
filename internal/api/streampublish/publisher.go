@@ -172,7 +172,10 @@ func (p *Publisher) tickOnce(ctx context.Context, pair canonical.Pair, topic str
 
 	snap, sources, stale, err := p.reader.LatestPrice(pollCtx, pair.Base, pair.Quote)
 	if err != nil {
-		if errors.Is(err, v1.ErrPriceNotFound) {
+		// Not-found and substance-withheld are both silent: the pair
+		// has nothing publishable this tick (no closed bucket, or the
+		// thin-market gate refused an aggregated claim for it).
+		if errors.Is(err, v1.ErrPriceNotFound) || errors.Is(err, v1.ErrPriceWithheld) {
 			return
 		}
 		// Suppress log noise on shutdown.

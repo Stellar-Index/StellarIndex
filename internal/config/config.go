@@ -30,6 +30,7 @@ type Config struct {
 	Metadata      MetadataConfig      `toml:"metadata" doc:"Asset metadata overlay — SEP-1 issuer→home-domain map, operator overrides."`
 	Supply        SupplyConfig        `toml:"supply" doc:"Supply pipeline config — SDF reserve list, operator-managed reserve balances (fallback when the LCM AccountEntry observer hasn't yet covered the watched set), watched classic + SEP-41 asset lists, SAC wrappers, and aggregator-refresh cadence. ADR-0011 (XLM) + ADR-0022 (classic) + ADR-0023 (SEP-41)."`
 	Trades        TradesConfig        `toml:"trades" doc:"Trade-insert policy — operator-declared USD-pegged stablecoins so on-chain DEX trades populate trades.usd_volume at insert time (launch-readiness L2.2 phase 1)."`
+	PricingGuard  PricingGuardConfig  `toml:"pricing_guard" doc:"Serving-side price guards — the thin-market substance gate that withholds aggregated price claims for on-chain pairs whose trailing market activity is below the serve floor (2026-08-04 valuation incident)."`
 	DecimalsGuard DecimalsGuardConfig `toml:"decimals_guard" doc:"internal/decimalsguard's one-time startup backfill pass — how far back it scans trade history to self-seed nonstandard_decimals_assets for Soroban tokens that traded and then went dormant."`
 	Divergence    DivergenceConfig    `toml:"divergence" doc:"Cross-check references the divergence service consults (CoinGecko + Chainlink HTTP, plus the on-chain Reflector/Redstone/Band oracle feeds read from ingested oracle_updates rows). Empty disables; the divergence_warning envelope flag stays unset."`
 	PriceAlerts   PriceAlertsConfig   `toml:"price_alerts" doc:"Customer price-threshold alert evaluator (BACKLOG #60). Off by default; when enabled the aggregator sweeps price_alerts against the latest closed VWAP every tick and enqueues price.alert webhook deliveries."`
@@ -228,6 +229,82 @@ func (tc TradesConfig) validate() error {
 		}
 	}
 	return nil
+}
+
+// PricingGuardConfig configures the serving-side price guards in
+// internal/pricingguard. Today that is the thin-market SUBSTANCE gate:
+// every raw prices_1m serving path (/v1/price + batch, /v1/price/tip,
+// the SEP-40 oracle passthrough, the GlobalAssetView headline, the
+// customer price-alert evaluator) refuses to publish an aggregated
+// "the price of X is P" claim for a pair with an on-chain leg unless
+// the pair's trailing market clears a volume + persistence floor.
+//
+// Motivation (2026-08-04 valuation incident): on a permissionless DEX
+// anyone can mint a token and author its entire market. The trailing-
+// baseline sanity guard can't help there — the baseline itself is
+// attacker-authored — so the only honest response for a substanceless
+// market is to withhold the price claim. Honest low volume stays fully
+// visible on the raw surfaces (/v1/ohlc, /v1/observations,
+// /v1/history); the operator's design intent is exactly that split:
+// low-volume VOLUME is a fact worth reporting, a low-volume PRICE is
+// not a publishable claim.
+//
+// Zero values mean "use the pricingguard default" (mirrors the
+// HashDB/Anomaly convention); the defaults live as constants in
+// internal/pricingguard/substance.go next to their rationale.
+type PricingGuardConfig struct {
+	// DisableSubstanceGate switches the gate off entirely (every pair
+	// serves, pre-2026-08 behaviour). An operator escape hatch for
+	// diagnosing a suspected false-withhold — not a tuning knob; to
+	// loosen the gate, lower the floors instead.
+	DisableSubstanceGate bool `toml:"disable_substance_gate" doc:"Disable the thin-market substance gate entirely (serve every pair, pre-2026-08 behaviour). Diagnostic escape hatch, not a tuning knob." default:"false"`
+
+	// SubstanceMinVolumeUSD is the minimum trailing-window USD volume.
+	SubstanceMinVolumeUSD float64 `toml:"substance_min_volume_usd" doc:"Minimum trailing-window USD volume (summed over prices_1m.volume_usd, both directions, alias union) below which an aggregated price is withheld. 0 = pricingguard default (1000)." default:"1000"`
+
+	// SubstanceMinBuckets is the minimum count of distinct closed
+	// 1-minute buckets with a trade in the window.
+	SubstanceMinBuckets int `toml:"substance_min_buckets" doc:"Minimum distinct closed 1-minute buckets with at least one trade in the trailing window. 0 = pricingguard default (20)." default:"20"`
+
+	// SubstanceMinSpanMinutes is the minimum wall-clock spread between
+	// the oldest and newest active bucket in the window — the
+	// cross-timeframe persistence floor.
+	SubstanceMinSpanMinutes int `toml:"substance_min_span_minutes" doc:"Minimum minutes between the oldest and newest active 1m bucket in the trailing window (persistence floor — a one-burst market never clears it). 0 = pricingguard default (360)." default:"360"`
+
+	// SubstanceWindowHours is the trailing measurement window.
+	SubstanceWindowHours int `toml:"substance_window_hours" doc:"Trailing measurement window in hours. 0 = pricingguard default (24)." default:"24"`
+}
+
+// validate rejects negative floors — a negative value is always a
+// typo, and silently treating it as "use default" (the 0 convention)
+// would hide it.
+func (pg PricingGuardConfig) validate() error {
+	if pg.SubstanceMinVolumeUSD < 0 {
+		return fmt.Errorf("%w: pricing_guard: substance_min_volume_usd must be >= 0", ErrInvalidConfig)
+	}
+	if pg.SubstanceMinBuckets < 0 {
+		return fmt.Errorf("%w: pricing_guard: substance_min_buckets must be >= 0", ErrInvalidConfig)
+	}
+	if pg.SubstanceMinSpanMinutes < 0 {
+		return fmt.Errorf("%w: pricing_guard: substance_min_span_minutes must be >= 0", ErrInvalidConfig)
+	}
+	if pg.SubstanceWindowHours < 0 {
+		return fmt.Errorf("%w: pricing_guard: substance_window_hours must be >= 0", ErrInvalidConfig)
+	}
+	return nil
+}
+
+// defaultPricingGuardConfig mirrors the pricingguard.DefaultSubstance*
+// constants — see internal/pricingguard/substance.go for the rationale
+// behind each number. Kept in lockstep with the `default:` doc tags
+// (F-1327 drift test).
+func defaultPricingGuardConfig() PricingGuardConfig {
+	return PricingGuardConfig{
+		SubstanceMinVolumeUSD:   1000,
+		SubstanceMinBuckets:     20,
+		SubstanceMinSpanMinutes: 360,
+		SubstanceWindowHours:    24,
+	}
 }
 
 // DecimalsGuardConfig configures internal/decimalsguard's one-time
@@ -1667,9 +1744,10 @@ func Default() Config {
 			MaxHops:                      3,
 			MinRouteConfidence:           0,
 		},
-		Anomaly:    defaultAnomalyConfig(),
-		API:        defaultAPIConfig(),
-		Divergence: defaultDivergenceConfig(),
+		Anomaly:      defaultAnomalyConfig(),
+		API:          defaultAPIConfig(),
+		Divergence:   defaultDivergenceConfig(),
+		PricingGuard: defaultPricingGuardConfig(),
 		DecimalsGuard: DecimalsGuardConfig{
 			// 90 days — matches decimalsguard.DefaultBackfillWindow.
 			BackfillWindowDays: 90,

@@ -100,6 +100,7 @@ func registerAppMetrics() {
 		AggregatorDroppedTradesTotal,
 		AggregatorDroppedWindowsTotal,
 		AggregatorMinUSDVolumeUnvaluableTotal,
+		PriceServeSubstanceWithheldTotal,
 
 		SupplyCrossCheckDivergenceStroops,
 		SupplyCrossCheckTotal,
@@ -2125,9 +2126,10 @@ var AggregatorDroppedWindowsTotal = prometheus.NewCounterVec(
 // refreshes where `aggregate.min_usd_volume` is configured (> 0) but
 // the target pair's on-chain quote asset (classic or Soroban) has no
 // operator-recognised USD peg, so the manipulation-floor check could
-// not be evaluated and the window published WITHOUT the floor
-// applied — the same exposure the floor exists to close. Labelled by
-// `pair` (bounded — operators configure a small, curated
+// not be evaluated and the window was DROPPED fail-closed (2026-08-04
+// inversion — pre-inversion these windows published unguarded, which
+// is the exposure the 2026-08-04 valuation incident closed). Labelled
+// by `pair` (bounded — operators configure a small, curated
 // aggregate.pairs allow-list; see PriceStalenessSeconds for the same
 // cardinality reasoning).
 //
@@ -2136,15 +2138,45 @@ var AggregatorDroppedWindowsTotal = prometheus.NewCounterVec(
 // code path minted no signal either way. A non-zero rate here means
 // an operator has a directly-configured Soroban- or classic-quoted
 // pair whose quote asset isn't on usd_pegged_classic_assets /
-// sac_wrappers; the fix is adding the missing peg, not alerting (no
-// rule wired — see docs/reference/metrics/README.md for why this one
-// is dashboard-only).
+// sac_wrappers — that pair now publishes NOTHING; the fix is adding
+// the missing peg, not alerting (no rule wired — see
+// docs/reference/metrics/README.md for why this one is
+// dashboard-only).
 var AggregatorMinUSDVolumeUnvaluableTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_min_usd_volume_unvaluable_total",
-		Help: "Windows published WITHOUT the min_usd_volume floor because the target pair's on-chain quote asset has no recognised USD peg, labelled by pair.",
+		Help: "Windows DROPPED fail-closed because min_usd_volume is set but the target pair's on-chain quote asset has no recognised USD peg (floor unverifiable), labelled by pair.",
 	},
 	[]string{"pair"},
+)
+
+// PriceServeSubstanceWithheldTotal — count of aggregated-price serves
+// WITHHELD by the serving-side thin-market substance gate
+// (internal/pricingguard.SubstanceGate): the pair has an on-chain leg
+// and its trailing market activity (USD volume / distinct 1m buckets /
+// wall-clock span) is below the [pricing_guard] serve floor, so no
+// "the price of X is P" claim is published for it. Raw surfaces
+// (/v1/ohlc, /v1/observations, /v1/history) still serve the pair.
+//
+// Labelled by `surface` — WHICH serving path withheld: "price_read"
+// (the shared /v1/price + batch + assets-enrichment reader), "tip"
+// (/v1/price/tip), "oracle" (SEP-40 passthrough), "asset_headline"
+// (GlobalAssetView), "price_alert" (customer price-alert evaluator).
+// Low-cardinality constants only — NEVER a pair label; the gate is hit
+// by arbitrary user-supplied pairs (tens of thousands of assets, see
+// the cardinality warning on PriceStalenessSeconds).
+//
+// A steady non-zero rate is EXPECTED (the long tail of dust pairs is
+// large — that is the gate doing its job); what warrants a look is a
+// sudden step-change, which usually means either a data outage
+// upstream of prices_1m (everything looks thin) or a floor
+// misconfiguration. Dashboard-only, no alert rule.
+var PriceServeSubstanceWithheldTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_price_serve_substance_withheld_total",
+		Help: "Aggregated price serves withheld by the thin-market substance gate, labelled by serving surface.",
+	},
+	[]string{"surface"},
 )
 
 // ─── Supply-derivation metrics ────────────────────────────────────

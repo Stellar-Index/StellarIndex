@@ -1403,12 +1403,15 @@ Fires once per (pair, window) refresh where `aggregate.min_usd_volume`
 is configured (> 0) but the target pair's quote is an on-chain asset
 (classic or Soroban) with NO recognised USD peg — the orchestrator
 can't compute a USD volume to compare against the threshold, so the
-window publishes WITHOUT the manipulation floor applied. Not
+window is DROPPED fail-closed (2026-08-04 inversion; before that date
+these windows published WITHOUT the manipulation floor, which is the
+exposure the 2026-08-04 valuation incident closed). Not
 alert-wired: this is a "know your exposure" dashboard signal, not a
 health failure — a directly-configured Soroban- or classic-quoted
-pair whose peg isn't declared is a deliberate operator-visible gap
-(add the missing entry to `trades.usd_pegged_classic_assets` / the
-matching `supply.sac_wrappers` row to close it), not an incident.
+pair whose peg isn't declared now publishes NOTHING until the
+operator adds the missing entry to `trades.usd_pegged_classic_assets`
+/ the matching `supply.sac_wrappers` row, which un-blacks the pair
+WITH valuation.
 Zero on every deployment today (2026-07-10): the built-in default
 pair set and every checked-in TOML, including r1's, are entirely
 fiat:USD/EUR/GBP-quoted, so no live pair currently hits this branch.
@@ -1416,6 +1419,32 @@ Fiat pairs quoted in a non-USD currency (EUR, GBP, …) do NOT increment
 this counter — that's a separate, pre-existing, already-understood
 scope boundary (see `Config.MinUSDVolume`'s doc), not the gap this
 metric watches for.
+
+### `stellarindex_price_serve_substance_withheld_total`
+
+Counter, label `surface` (`price_read` | `tip` | `oracle` |
+`asset_headline` | `price_alert`).
+
+Fires once per aggregated-price serve WITHHELD by the serving-side
+thin-market substance gate (`internal/pricingguard.SubstanceGate`,
+`[pricing_guard]` config, 2026-08-04 valuation incident): the
+requested pair has an on-chain leg and its trailing market activity
+(USD volume / distinct 1-minute buckets / wall-clock span, alias
+union, both directions) is below the serve floor, so the surface
+returned the `price-withheld` verdict instead of a price. Raw
+surfaces (`/v1/observations`, `/v1/ohlc`, `/v1/history`) still serve
+the pair.
+
+When to look at it: a steady non-zero rate is EXPECTED — Stellar's
+long tail of dust pairs is large, and each withheld request is the
+gate doing its job. What warrants investigation is a step-change:
+a sudden jump across ALL surfaces usually means an ingest/aggregate
+outage upstream of `prices_1m` (every pair suddenly "looks thin" —
+check `stellarindex_aggregator_ticks_total` and the indexer cursor
+first), while a jump after a config deploy means the
+`[pricing_guard]` floors were raised past the intended population.
+Verdicts are cached ~60s per pair, so the counter tracks withheld
+REQUESTS, not distinct pairs. Dashboard-only, no alert rule.
 
 ## Supply derivation (aggregator binary)
 

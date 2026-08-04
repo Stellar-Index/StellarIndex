@@ -1739,22 +1739,20 @@ func survivorUSDVolume(trades []canonical.Trade, tradeUSD map[string]float64) fl
 //     peg): floor applies — this is the normal gate path below.
 //   - Quote is on-chain (classic or Soroban) but NOT a recognised
 //     peg: unvaluable WITHOUT a live price lookup this package
-//     deliberately doesn't build (see [Config.MinUSDVolume]). Before
-//     2026-07-10 this shape (e.g. a directly-configured Soroban- or
-//     classic-quoted target pair) served VWAP with NO floor at all —
-//     silently. Enumerating the pairs actually configured today
-//     (cmd/stellarindex-aggregator's defaultPairs() and every
-//     checked-in TOML, including r1's live template) shows every one
-//     is fiat:USD/EUR/GBP-quoted — none would hit this branch as
-//     deployed. But failing closed here (treating "can't value" as
-//     "below floor") would permanently blackout ANY future operator
-//     who configures a legitimate but not-yet-pegged on-chain quote
-//     pair once MinUSDVolume>0 — trading one silent gap for another.
-//     So this branch passes the window through UNGUARDED, same as
-//     before, but no longer SILENTLY: it logs a WARN and increments
-//     AggregatorMinUSDVolumeUnvaluableTotal so operators can see the
-//     exposure and either add the missing peg (usd_pegged_classic_assets
-//     / sac_wrappers) or knowingly accept it.
+//     deliberately doesn't build (see [Config.MinUSDVolume]). This
+//     branch FAILS CLOSED (window dropped) as of 2026-08-04. History:
+//     before 2026-07-10 it passed through with no floor SILENTLY;
+//     2026-07-10 made it loud (WARN + metric) but kept the
+//     pass-through, reasoning that fail-closed would blackout a
+//     future legitimate not-yet-pegged pair. The 2026-08-04 valuation
+//     incident settled that trade the other way: an unvaluable quote
+//     is exactly the shape a mint-and-dust attacker produces, and "if
+//     the volume cannot be valued, the floor cannot be verified, so
+//     do not publish" is the operator's stated policy (the serving
+//     side got the same posture via pricingguard.SubstanceGate). The
+//     blackout concern keeps its answer — the WARN + metric name the
+//     missing peg, and adding it to usd_pegged_classic_assets /
+//     sac_wrappers un-blacks the pair deliberately, with valuation.
 //   - Quote is fiat but not USD (EUR, GBP, …): exempt, no WARN — a
 //     distinct, pre-existing, already-understood scope boundary (the
 //     threshold is a USD figure; converting a EUR/GBP window needs a
@@ -1771,8 +1769,14 @@ func (o *Orchestrator) dropForMinUSDVolume(pair canonical.Pair, trades []canonic
 	if _, valuable := usdQuoteDecimals(pair.Quote, o.cfg.USDPeggedClassicAssets, o.cfg.USDPeggedSorobanAssets); !valuable {
 		if pair.Quote.Type == canonical.AssetClassic || pair.Quote.Type == canonical.AssetSoroban {
 			obs.AggregatorMinUSDVolumeUnvaluableTotal.WithLabelValues(pair.String()).Inc()
-			o.logger.Warn("min_usd_volume floor skipped: on-chain quote asset has no recognised USD peg — this pair is NOT gated against dust-trade manipulation",
+			o.logger.Warn("min_usd_volume floor unverifiable: on-chain quote asset has no recognised USD peg — window DROPPED (fail-closed; add the peg to usd_pegged_classic_assets / sac_wrappers to publish this pair)",
 				"pair", pair.String())
+			obs.AggregatorDroppedWindowsTotal.WithLabelValues("min_usd_volume_unvaluable").Inc()
+			o.mu.Lock()
+			o.emptyWindows++
+			o.mu.Unlock()
+			obs.AggregatorEmptyWindowsTotal.Inc()
+			return true
 		}
 		return false
 	}
