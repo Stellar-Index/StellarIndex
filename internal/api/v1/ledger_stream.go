@@ -86,7 +86,12 @@ func (s *Server) handleLedgerStream(w http.ResponseWriter, r *http.Request) {
 
 	// First synchronous read — the chance to return a non-200 before
 	// the response switches into SSE mode.
-	first, ok, err := s.ledgerTip(r.Context())
+	// Bounded — see the note on the tip stream's pre-flight. Unbounded,
+	// this held a handler goroutine and a pool connection for as long as
+	// the client stayed connected (cold audit 2026-08-04).
+	preflightCtx, cancelPreflight := context.WithTimeout(r.Context(), ledgerStreamTickTimeout)
+	defer cancelPreflight()
+	first, ok, err := s.ledgerTip(preflightCtx)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
