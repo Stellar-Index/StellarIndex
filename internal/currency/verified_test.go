@@ -612,3 +612,62 @@ func TestStellarCollision_nativeAssetImpersonator(t *testing.T) {
 		t.Errorf("real USDC = (%v, %v), want (USDC, false)", v, c)
 	}
 }
+
+// TestStellarCollision_CoversEveryCatalogueTicker pins that an
+// impersonation can be reported for EVERY verified ticker, not only the
+// handful that happen to have a Stellar issuance.
+//
+// byStellarCode used to be populated solely inside the Issuance loop, so
+// `reference_only` entries (USDT, BTC, ETH, XRP, …) and every fiat ticker
+// never entered it — 11 keys total, meaning those were the only codes an
+// impersonation could ever be flagged for. Measured on r1: 22,496 codes
+// are claimed by more than one issuer across 132,808 of 194,034 classic
+// assets, and `?code=XRP` returned 645 rows with not one flagged (cold
+// audit 2026-08-04).
+func TestStellarCollision_CoversEveryCatalogueTicker(t *testing.T) {
+	cat, err := LoadEmbedded()
+	if err != nil {
+		t.Fatalf("LoadEmbedded: %v", err)
+	}
+	// An arbitrary issuer that cannot legitimately hold any verified
+	// ticker — every hit below is therefore a true impersonation.
+	const attacker = "GBEO62ZYQXBGDQEHPTMBHRJVUEBNMXAWZFPBQBLPJXLJKMQTOEVEDGRA"
+
+	var missed []string
+	for _, vc := range cat.All() {
+		if _, ok := cat.StellarCollision(vc.Ticker, attacker); !ok {
+			missed = append(missed, vc.Ticker)
+		}
+	}
+	if len(missed) > 0 {
+		t.Errorf("StellarCollision cannot speak about %d of %d verified tickers: %v\n"+
+			"an attacker minting a classic asset with any of these codes is unflaggable",
+			len(missed), len(cat.All()), missed)
+	}
+}
+
+// TestStellarCollision_DoesNotFlagTheGenuineIssuer guards the fix against
+// over-reach: the real issuer of a verified Stellar asset must NOT be
+// reported as colliding with itself.
+func TestStellarCollision_DoesNotFlagTheGenuineIssuer(t *testing.T) {
+	cat, err := LoadEmbedded()
+	if err != nil {
+		t.Fatalf("LoadEmbedded: %v", err)
+	}
+	checked := 0
+	for _, vc := range cat.All() {
+		for _, n := range vc.Issuance {
+			if n.Network != "stellar" || n.Issuer == "" || n.Code == "" {
+				continue
+			}
+			if _, ok := cat.StellarCollision(n.Code, n.Issuer); ok {
+				t.Errorf("%s: genuine issuer %s flagged as an impersonator of its own code %s",
+					vc.Ticker, n.Issuer, n.Code)
+			}
+			checked++
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no verified Stellar issuances found — the guard proved nothing")
+	}
+}
