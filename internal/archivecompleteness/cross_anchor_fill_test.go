@@ -433,3 +433,34 @@ func TestFill_EmptyMissingList(t *testing.T) {
 		t.Errorf("server saw %d requests for empty missing list, want 0", seen)
 	}
 }
+
+// TestFiller_ParentDirsAreTraversable is the regression test for the
+// cold audit of 2026-08-04.
+//
+// fetchOne created the checkpoint's parent directories 0750 as root and
+// chowned only the FILE, so every checkpoint the filler placed was
+// unreachable by the non-root verifier the chown exists for — a reader
+// needs +x on every directory on the path. Measured on r1: 24 depth-2
+// directories created since 2026-05-12 were non-o+rx, covering 24,044
+// checkpoints, i.e. the entire recent window. Enabling the ADR-0017
+// anchor check would have failed with EACCES, which the verifier treats
+// as a hard mismatch rather than a missing file.
+func TestFiller_ParentDirsAreTraversable(t *testing.T) {
+	root := t.TempDir()
+	// ledger/03/cd/28/ledger-03cd28ff.xdr.gz — the real shape.
+	dir := filepath.Join(root, "ledger", "03", "cd", "28")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	for d := dir; d != root; d = filepath.Dir(d) {
+		fi, err := os.Stat(d)
+		if err != nil {
+			t.Fatalf("stat %s: %v", d, err)
+		}
+		if fi.Mode().Perm()&0o005 == 0 {
+			t.Errorf("directory %s is mode %o — without o+rx a non-root verifier gets EACCES on every checkpoint beneath it",
+				d, fi.Mode().Perm())
+		}
+	}
+}

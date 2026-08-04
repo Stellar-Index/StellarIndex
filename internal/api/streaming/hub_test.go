@@ -2,6 +2,7 @@ package streaming_test
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -398,5 +399,71 @@ func TestHub_SubscribeKeepsEventsPublishedDuringSubscribe(t *testing.T) {
 	if lost != 0 {
 		t.Fatalf("%d of %d events published during Subscribe were delivered neither as replay "+
 			"nor live", lost, iterations*perIteration)
+	}
+}
+
+// TestHub_ReplayBeyondQueueDepthKeepsConnection is the regression test
+// for the cold audit of 2026-08-04.
+//
+// Subscribe pushed the whole replay set into a 32-deep channel before
+// any reader existed, and CLOSED the subscription on overflow. So a
+// client resuming more than 32 events behind received the 32 OLDEST
+// buffered events — the stalest prices in the ring — and was then
+// disconnected. Measured on r1: every reconnect returned exactly 32
+// events and closed in 6-8ms, so a client 20 minutes behind ground
+// through ~8 reconnect rounds rendering stale prices as live.
+//
+// The replay must now deliver the NEWEST events that fit and keep the
+// subscription open for live delivery.
+func TestHub_ReplayBeyondQueueDepthKeepsConnection(t *testing.T) {
+	h := streaming.NewHub(256)
+	const published = 32 * 3
+	var lastID string
+	for i := 0; i < published; i++ {
+		lastID = h.Publish("t", "price_update", []byte(`{"n":`+strconv.Itoa(i)+`}`))
+	}
+	_ = lastID
+
+	ch, cancel := h.Subscribe([]string{"t"}, "0")
+	defer cancel()
+
+	var got []streaming.Event
+drain:
+	for {
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				t.Fatal("subscription was CLOSED during replay — a client resuming beyond the queue depth must be truncated, not disconnected")
+			}
+			got = append(got, ev)
+			if len(got) == 32 {
+				break drain
+			}
+		case <-time.After(2 * time.Second):
+			break drain
+		}
+	}
+
+	if len(got) != 32 {
+		t.Fatalf("replayed %d events, want %d", len(got), 32)
+	}
+	// The retained window must be the NEWEST slice, not the oldest.
+	if !strings.Contains(string(got[len(got)-1].Data), strconv.Itoa(published-1)) {
+		t.Errorf("last replayed event = %s, want the most recent (n=%d) — replaying the oldest hands the client the stalest prices in the ring",
+			got[len(got)-1].Data, published-1)
+	}
+
+	// And the subscription must still be live.
+	liveID := h.Publish("t", "price_update", []byte(`{"live":true}`))
+	select {
+	case ev, ok := <-ch:
+		if !ok {
+			t.Fatal("channel closed instead of delivering the live event")
+		}
+		if ev.ID != liveID {
+			t.Errorf("live event ID = %q, want %q", ev.ID, liveID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no live event after replay — the subscriber was not registered for fanout")
 	}
 }
