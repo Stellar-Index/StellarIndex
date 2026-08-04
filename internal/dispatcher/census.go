@@ -22,9 +22,27 @@ import (
 //
 //   - SorobanEventCount MUST equal COUNT(soroban_events WHERE
 //     ledger=seq) — any shortfall is a capture/persistence gap.
-//   - ClassicTradeEffectCount MUST equal COUNT(trades WHERE
-//     source='sdex' AND ledger=seq) — it counts ClaimAtoms exactly
-//     the way internal/sources/sdex produces one trade per atom.
+//
+//   - ClassicTradeEffectCount counts ClaimAtoms exactly the way
+//     internal/sources/sdex produces one trade per atom.
+//
+//     CORRECTION (cold audit 2026-08-04): this used to say it "MUST
+//     equal COUNT(trades WHERE source='sdex' AND ledger=seq)". It does
+//     not, and cannot. The decoder deliberately emits one-side-zero
+//     fills (099d6fcf, "capture them for completeness" — ~60/day), and
+//     the trades table's CHECK (base_amount > 0) forbids them, so
+//     filterStorableTrades drops each one before the INSERT. The
+//     census counts an atom the served tier is structurally incapable
+//     of holding. Anything that monitors census-minus-COUNT reads a
+//     permanent non-zero for this benign class, and the legacy
+//     (non -ch) compute-completeness path flags every affected ledger
+//     as an SDEX projection gap. The authoritative -ch verdict is safe:
+//     it re-derives through the same decoder AND the same Validate()
+//     gate, so both sides drop the atom together.
+//
+//     Note the lockstep test that guards this comment compares the
+//     counter to the DECODER, never to the writer — which is why the
+//     claim survived.
 //
 // LedgerHash / PrevLedgerHash are the header hashes for the
 // contiguity hash-chain check (prev_ledger_hash[N] == ledger_hash[N-1]).

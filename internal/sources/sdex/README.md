@@ -35,15 +35,25 @@ multiple trades.
 
 ### Q2 — Three ClaimAtom variants
 
-`xdr.ClaimAtom` is a union with three arms; the decoder handles
-two and surfaces the third as a hard error (it shouldn't occur
-on post-P18 ledgers but warrants surfacing if it does):
+`xdr.ClaimAtom` is a union with three arms; the decoder decodes
+**all three** (corrected 2026-08-04 — this section previously said V0
+was surfaced as a hard error, which has not been true since F-1233;
+`decode_test.go`'s `TestDecoder_v0ClaimAtom_decodedAsOrderBook` pins
+the real behaviour):
 
 | Variant | Status | Notes |
 | --- | --- | --- |
 | `ClaimAtomTypeOrderBook` | Decoded | Standard SDEX order-book match |
 | `ClaimAtomTypeLiquidityPool` | Decoded | AMM-side fill against a pool, post-P18 |
-| `ClaimAtomTypeV0` | `ErrUnknownClaimAtomType` | Legacy pre-P18 shape — should not appear on a healthy modern stream; sustained-rate alert via `stellarindex_source_decode_errors_total{source="sdex"}` |
+| `ClaimAtomTypeV0` | Decoded as an order-book match | Legacy pre-P18 shape; carries the same seller/asset/amount fields, so it is decoded rather than rejected — dropping it would lose real pre-P18 history, which is in scope (`BackfillSafe: true`) |
+
+An UNKNOWN future arm still errors, and since 2026-08-04 that error
+is counted: `Decode` bumps
+`stellarindex_source_decode_errors_total{source="sdex"}` per failed
+claim. Before that fix the counter was structurally dead for this
+source — `Decode` never returns a non-nil error, so the dispatcher's
+counter never fired, and this file's own "decode-error budget" named
+a metric that could not move.
 
 ### Q3 — Op succeeded vs op succeeded with zero trades
 
@@ -73,7 +83,7 @@ naturally has.
 ### Q5 — Reserve / volume normalisation is the ingest stamp
 
 SDEX trade amounts arrive at native Stellar precision — XLM at
-7 decimals, classic assets at issuer-declared decimals. The
+7 decimals, classic assets at Stellar's uniform 7 decimals (there is no per-issuer decimals field for classic assets; external/registry.go stamps AmountDecimals: 7). The
 decoder stamps `canonical.Trade.BaseAmount` / `QuoteAmount` at
 those precisions. The aggregator (per ADR-0003 + the aggregator's
 class filter) treats SDEX as `ClassExchange` — it contributes
@@ -84,7 +94,7 @@ to VWAP at full precision; no scale rewrite needed.
 | File | Role |
 | --- | --- |
 | [`events.go`](events.go) | `SourceName` constant + decode error sentinels |
-| [`decode.go`](decode.go) | `matchesTradeOp` / `extractClaimAtoms` / `claimAtomToTrade` |
+| [`decode.go`](decode.go) | `matchesTradeOp` / `extractClaimAtoms` / `decodeClaimAtom` |
 | [`decode_test.go`](decode_test.go) | Decoder unit tests covering OrderBook + LiquidityPool variants |
 | [`dispatcher_adapter.go`](dispatcher_adapter.go) | Op-type registration with the dispatcher's `OpDecoder` seam |
 

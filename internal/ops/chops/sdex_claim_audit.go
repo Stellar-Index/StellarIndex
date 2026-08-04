@@ -201,10 +201,27 @@ func innerTradeCode(op sdkxdr.Operation, r sdkxdr.OperationResult) (int32, bool)
 // classifyDrop buckets a decoder error string into a stable reason category.
 func classifyDrop(reason string) string {
 	switch {
-	case strings.Contains(reason, "non-positive amounts"):
+	// The decoder's reason string was renamed from "non-positive amounts"
+	// to "both-zero no-op claim" when one-side-zero fills stopped being
+	// rejected at decode (099d6fcf). This classifier kept matching the old
+	// text, so the DOMINANT drop class fell through to "other" and the
+	// one-side-zero split below became unreachable — in the one tool whose
+	// stated purpose is "an exact diagnosis of SDEX trade-count gaps
+	// against external anchors" (cold audit 2026-08-04).
+	//
+	// Both spellings are matched so the tool still classifies correctly
+	// when run against older decoder output.
+	case strings.Contains(reason, "both-zero no-op claim"),
+		strings.Contains(reason, "non-positive amounts"):
 		// Split: both-zero claims are not real trades (Hubble drops them too,
 		// no mismatch); one-side-zero claims ARE trades Hubble records but our
 		// OR-guard rejects — the exact off-by-one vs Hubble.
+		//
+		// NOTE: since 099d6fcf the DECODER no longer rejects one-side-zero
+		// fills, so they never appear here — but they are still dropped, one
+		// layer down, by filterStorableTrades (the trades CHECK forbids a
+		// zero leg). The off-by-one vs Hubble therefore persists; it simply
+		// moved out of this tool's view. See the audit memory.
 		if strings.Contains(reason, "sold=0 bought=0") {
 			return "non-positive: both-zero (Hubble also drops)"
 		}
