@@ -116,7 +116,15 @@ func resolveSession(r *http.Request, cfg *Config, tracker *touchTracker) (Sessio
 		// caller's session-scan), revoked, and absent. The
 		// user re-logs-in.
 		if !errors.Is(err, platform.ErrNotFound) {
-			cfg.Logger.Warn("session lookup", "err", err, "session_id", id)
+			// Deliberately NOT logging `id`. The session id IS the bearer
+			// credential — sessions are the one credential stored
+			// unhashed (sessions.id is the PK, unlike api_keys and
+			// magic_link_tokens which are both hashed), and this branch
+			// fires on any transient store error, so a 60-second Postgres
+			// hiccup used to emit one live 30-day session token per
+			// authenticated request into a journal that ships to Loki with
+			// 30-day retention (cold audit 2026-08-04).
+			cfg.Logger.Warn("session lookup", "err", err)
 		}
 		return SessionContext{}, false
 	}
@@ -157,7 +165,8 @@ func resolveSession(r *http.Request, cfg *Config, tracker *touchTracker) (Sessio
 			// every in-flight request.
 			defer func() {
 				if r := recover(); r != nil {
-					cfg.Logger.Error("touch session panic", "err", r, "session_id", id)
+					// No session_id: it is the bearer credential (see above).
+					cfg.Logger.Error("touch session panic", "err", r)
 				}
 			}()
 			ctx, cancel := newTouchCtx(parent)

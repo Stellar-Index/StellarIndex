@@ -178,7 +178,27 @@
 	# aggregation (Loki) when that lands.
 	log {
 		output stdout
-		format json
+		# Redact the query string. Caddy's JSON access log records
+		# request.uri verbatim, INCLUDING the query — and
+		# /v1/auth/callback?token=<plaintext> carries a live single-use
+		# dashboard credential, while /v1/signup/verify?token=<plaintext>
+		# carries the email-verification one. Both were landing in
+		# journald and shipping to Loki on a 720h retention, so anyone
+		# with Grafana read access could mint a session for any account
+		# that signed in during the window. The API's own logger already
+		# refuses to log query parameters for exactly this reason
+		# (internal/api/v1/middleware/logger.go) — that guarantee was
+		# being defeated one layer up (cold audit 2026-08-04).
+		#
+		# NOTE: takes effect only after an ansible run with --tags caddy.
+		format filter {
+			wrap json
+			fields {
+				request>uri query {
+					replace token REDACTED
+				}
+			}
+		}
 		# Skip /v1/healthz spam from the active health check.
 		# It runs every 10s; not interesting in the access log.
 	}
