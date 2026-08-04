@@ -3,7 +3,13 @@
 
 package v1
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/currency"
+)
 
 func strptr(s string) *string { return &s }
 
@@ -34,7 +40,12 @@ func TestDustLiquiditySuppressed(t *testing.T) {
 		{"multi-source thin $10", 2, strptr("10"), floor, false},
 		{"multi-source thin, 3 venues", 3, strptr("5"), floor, false},
 		{"floor disabled (0)", 1, strptr("10"), 0, false},
-		{"unmeasured source count (0)", 0, strptr("10"), floor, false},
+		// 2026-08-04: an unmeasured venue count (0) with a POSITIVE,
+		// measured, sub-floor volume now suppresses — the measured dust
+		// volume is itself the positive evidence, and the unmeasured-
+		// count arm is where impersonator assets lived.
+		{"unmeasured source count (0) + measured dust vol suppresses", 0, strptr("10"), floor, true},
+		{"unmeasured source count (0) + nil volume kept", 0, nil, floor, false},
 		{"volume unknown (nil)", 1, nil, floor, false},
 		{"volume unparseable", 1, strptr("n/a"), floor, false},
 	}
@@ -91,5 +102,97 @@ func TestListingMarketCap_DustGuard(t *testing.T) {
 				t.Errorf("low-liquidity flag = %v, want %v", gotLowLiq, tc.wantLowLiq)
 			}
 		})
+	}
+}
+
+// TestFillRowMarketCap_UnverifiedCollisionSuppressed — 2026-08-04: an
+// unverified look-alike of a verified ticker must not publish
+// price × supply as a headline valuation (XRP-GBXRPL45… published a
+// $109.5M cap under XRP's ticker off its own manipulable market).
+// circulating_supply (a raw fact) still surfaces.
+func TestFillRowMarketCap_UnverifiedCollisionSuppressed(t *testing.T) {
+	s := &Server{minMarketCapVolumeUSD: 1000}
+	price := "1.07"
+	row := AssetDetail{
+		AssetID:                   "XRP-GBXRPL45000000000000000000000000000000000000000000000",
+		Code:                      "XRP",
+		Decimals:                  7,
+		PriceUSD:                  &price,
+		UnverifiedTickerCollision: true,
+	}
+	precise := map[string]string{row.AssetID: "1000000000000000"}
+	s.fillRowMarketCap(&row, precise, nil, map[string]int{row.AssetID: 5})
+	if row.MarketCapUSD != nil {
+		t.Errorf("market_cap_usd = %q, want suppressed (nil) for an unverified ticker collision", *row.MarketCapUSD)
+	}
+	if row.CirculatingSupply == nil {
+		t.Error("circulating_supply must still surface — it is a raw fact, not a valuation")
+	}
+}
+
+// TestFillRowMarketCap_NativeNeverDustSuppressed — the listing SQL
+// forces native's source_count to NULL (→ 0 here); with 0 now
+// suppressible, native needs the same carve-out the detail path has.
+func TestFillRowMarketCap_NativeNeverDustSuppressed(t *testing.T) {
+	s := &Server{minMarketCapVolumeUSD: 1000}
+	price := "0.16"
+	vol := "10" // absurd, but must not matter for native
+	row := AssetDetail{
+		AssetID: "native", Code: "XLM", Decimals: 7,
+		PriceUSD: &price, VolumeUSD24h: &vol,
+	}
+	precise := map[string]string{"native": "100000000000000000"}
+	s.fillRowMarketCap(&row, precise, nil, map[string]int{})
+	if row.MarketCapUSD == nil {
+		t.Fatal("native market cap must never be dust-suppressed")
+	}
+	if row.MarketCapLowLiquidity {
+		t.Error("native must not carry market_cap_low_liquidity")
+	}
+}
+
+// TestApplyUnverifiedWarning_ReferenceOnlyTicker — post-52b04a63
+// regression fix: a reference-only ticker (USDT — the catalogue knows
+// it as a well-known EXTERNAL asset with no verified Stellar issuance)
+// must still produce the warning + envelope flag. Pre-fix the
+// StellarEntry()==nil "unreachable" bail silently killed the warning
+// for exactly the tickers impersonators target hardest, so
+// /v1/assets/USDT-G… served clean while the listing flagged the same
+// row. Pinned against the real embedded catalogue.
+func TestApplyUnverifiedWarning_ReferenceOnlyTicker(t *testing.T) {
+	cat, err := currency.LoadEmbedded()
+	if err != nil {
+		t.Fatalf("LoadEmbedded: %v", err)
+	}
+	asset, err := canonical.ParseAsset("USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var detail AssetDetail
+	if !applyUnverifiedWarning(&detail, asset, cat) {
+		t.Fatal("reference-only ticker collision must produce a warning")
+	}
+	w := detail.UnverifiedWarning
+	if w == nil {
+		t.Fatal("UnverifiedWarning is nil")
+	}
+	if w.VerifiedAssetID != "" {
+		t.Errorf("verified_asset_id = %q, want empty (no verified Stellar issuance exists)", w.VerifiedAssetID)
+	}
+	if w.Note == "" || !strings.Contains(w.Note, "NO verified issuance on Stellar") {
+		t.Errorf("note = %q, want the no-verified-issuance wording", w.Note)
+	}
+
+	// And the Stellar-issued case keeps its redirect target.
+	usdc, err := canonical.ParseAsset("USDC-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d2 AssetDetail
+	if !applyUnverifiedWarning(&d2, usdc, cat) {
+		t.Fatal("USDC look-alike must warn")
+	}
+	if d2.UnverifiedWarning.VerifiedAssetID == "" {
+		t.Error("USDC look-alike must carry the verified asset id to redirect to")
 	}
 }

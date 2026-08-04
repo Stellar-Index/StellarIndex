@@ -13894,7 +13894,7 @@ export interface components {
         UnverifiedWarning: {
             /** @description Canonical slug (e.g. "usdc") the consumer can redirect to. */
             verified_slug: string;
-            /** @description Verified canonical asset_id (e.g. USDC-GA5Z…). */
+            /** @description Verified canonical asset_id (e.g. USDC-GA5Z…). EMPTY STRING when the ticker matches a well-known asset with NO verified Stellar issuance (USDT, XRP, BTC, …) — there is nothing on Stellar to redirect to; render the warning, do not redirect. */
             verified_asset_id: string;
             /** @description Human-readable currency name (e.g. "USD Coin"). */
             verified_name: string;

@@ -10536,7 +10536,7 @@ components:
         for a warning banner.
       properties:
         verified_slug:     { type: string,  description: "Canonical slug (e.g. \"usdc\") the consumer can redirect to." }
-        verified_asset_id: { type: string,  description: "Verified canonical asset_id (e.g. USDC-GA5Z…)." }
+        verified_asset_id: { type: string,  description: "Verified canonical asset_id (e.g. USDC-GA5Z…). EMPTY STRING when the ticker matches a well-known asset with NO verified Stellar issuance (USDT, XRP, BTC, …) — there is nothing on Stellar to redirect to; render the warning, do not redirect." }
         verified_name:     { type: string,  description: "Human-readable currency name (e.g. \"USD Coin\")." }
         verified_issuer:   { type: string,  nullable: true, description: "Short attribution (e.g. \"Circle (centre.io)\"). Empty when the catalogue entry didn't include a verified_issuer_label." }
         note:              { type: string,  description: "One-sentence warning rendered verbatim by clients." }

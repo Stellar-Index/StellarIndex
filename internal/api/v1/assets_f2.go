@@ -379,6 +379,17 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 	// serves, and must not be weakened to match the listing's XLM-route
 	// count). Full parity requires unifying the two price bases at the
 	// aggregator/SQL layer — out of scope for these two API files.
+	// Unverified ticker collision: a look-alike of a verified currency
+	// must not publish price × supply as a headline valuation — see the
+	// matching guard in fillRowMarketCap (listing path) for the full
+	// rationale (2026-08-04: XRP-GBXRPL45… published a $109.5M cap
+	// under XRP's ticker). Computed directly here because the envelope
+	// stamp (verifiedCurrencyFlags) runs after this populate.
+	if s.verifiedCurrencies != nil && asset.Type == canonical.AssetClassic {
+		if _, collision := s.verifiedCurrencies.StellarCollision(asset.Code, asset.Issuer); collision {
+			return
+		}
+	}
 	if !asset.Equal(canonical.NativeAsset()) &&
 		dustLiquiditySuppressed(priceSourceCount, detail.VolumeUSD24h, s.minMarketCapVolumeUSD) {
 		detail.MarketCapLowLiquidity = true

@@ -788,7 +788,29 @@ func (s *Server) fillRowMarketCap(row *AssetDetail, precise, broad map[string]st
 	if circ == "" {
 		return
 	}
-	if dustLiquiditySuppressed(sourceCounts[row.AssetID], row.VolumeUSD24h, s.minMarketCapVolumeUSD) {
+	// Unverified ticker collision (stampListingCollisions runs before
+	// this fill on both listing variants): a look-alike of a verified
+	// currency must not publish price × supply as a headline valuation
+	// at all — its price comes from its own (manipulable) market while
+	// its ticker borrows a real asset's identity, so the resulting
+	// "market cap" reads as the real asset's standing (2026-08-04:
+	// XRP-GBXRPL45… published a $109.5M cap under XRP's ticker). The
+	// cap stays null; the row's unverified_ticker_collision flag is the
+	// machine-readable reason. circulating_supply is a raw fact, not a
+	// valuation — it still surfaces.
+	if row.UnverifiedTickerCollision {
+		if row.CirculatingSupply == nil {
+			c := circ
+			row.CirculatingSupply = &c
+		}
+		return
+	}
+	// Native carve-out, mirroring the detail path (populateMarketCap's
+	// L2 note): the listing SQL forces native's source_count to NULL →
+	// 0 here, and XLM is definitionally liquid — it must never be
+	// dust-suppressed now that an unmeasured count (0) can suppress.
+	if row.AssetID != "native" &&
+		dustLiquiditySuppressed(sourceCounts[row.AssetID], row.VolumeUSD24h, s.minMarketCapVolumeUSD) {
 		row.MarketCapLowLiquidity = true
 		if row.CirculatingSupply == nil {
 			c := circ
@@ -990,7 +1012,15 @@ func (s *Server) refreshClassicSupply(er classicSupplyReader, done chan struct{}
 // cap on that "0" would be worse than the dust it guards against; a real
 // sub-floor volume is always strictly positive.
 func dustLiquiditySuppressed(sourceCount int, volume24hUSD *string, floor float64) bool {
-	if floor <= 0 || sourceCount != 1 {
+	// sourceCount <= 1 proceeds: 1 is positive single-venue evidence;
+	// 0 is "unmeasured", which pre-2026-08-04 never suppressed — but a
+	// POSITIVE, measured, sub-floor volume (required below) is itself
+	// positive evidence of dust, and the 2026-08-04 valuation incident
+	// showed the unmeasured-count arm is exactly where impersonator
+	// assets lived (their per-asset bucket carries no source_count on
+	// several catalogue variants). Native is carved out by both
+	// callers, not here.
+	if floor <= 0 || sourceCount > 1 {
 		return false
 	}
 	if volume24hUSD == nil {
@@ -2201,11 +2231,26 @@ func applyUnverifiedWarning(detail *AssetDetail, asset canonical.Asset, cat *cur
 	}
 	stellar := verified.StellarEntry()
 	if stellar == nil {
-		// Defensive — StellarCollision only returns true when the
-		// catalogue has a Stellar entry for the code, so this branch
-		// is unreachable in practice. Bail safely if the invariant
-		// ever changes.
-		return false
+		// Reference-only ticker (post-52b04a63): the catalogue knows
+		// this code as a well-known EXTERNAL asset (USDT, XRP, BTC, …)
+		// with NO verified Stellar issuance — StellarCollision now
+		// returns true for these precisely so look-alikes are
+		// flaggable. (Pre-52b04a63 this branch really was unreachable,
+		// and bailing here silently killed the warning + envelope flag
+		// + the explorer's banner for every reference-only ticker —
+		// the exact assets impersonators target hardest.) There is no
+		// verified on-Stellar asset to point at, so VerifiedAssetID
+		// stays empty — consumers must treat an empty value as "do
+		// not redirect; nothing on Stellar is the real one".
+		detail.UnverifiedWarning = &UnverifiedWarning{
+			VerifiedSlug: verified.Slug,
+			VerifiedName: verified.Name,
+			Note: fmt.Sprintf(
+				"Exercise caution — this asset uses the ticker %q, which matches a well-known asset that has NO verified issuance on Stellar. Any asset trading under this code on Stellar is third-party and is not %s.",
+				verified.Ticker, verified.Name,
+			),
+		}
+		return true
 	}
 	var note string
 	if verified.VerifiedIssuerLabel != "" {

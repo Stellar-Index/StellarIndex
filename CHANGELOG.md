@@ -53,7 +53,23 @@ against.
   "min_usd_volume_unvaluable"}`.
 
 ### Fixed
-- **Corrected a false premise that was blocking the MEV sandwich fix.**
+- **Unverified ticker look-alikes no longer publish a market cap, and
+  reference-only tickers get their warning back** (2026-08-04 asset-
+  identity follow-ups). Three coupled fixes: (1) an asset flagged
+  `unverified_ticker_collision` now has `market_cap_usd`/`fdv_usd`
+  suppressed on both the listing and detail paths — `XRP-GBXRPL45…` was
+  publishing a $109.5M cap under XRP's ticker, priced off its own
+  manipulable market; (2) the dust-liquidity guard now also suppresses
+  when the venue count is UNMEASURED (0) but a positive sub-floor
+  volume was measured — previously `sourceCount != 1` meant an
+  unmeasured count could never suppress, which is exactly where
+  impersonator rows lived (native keeps an explicit carve-out on both
+  paths); (3) `applyUnverifiedWarning` no longer bails for
+  reference-only tickers (USDT, XRP, BTC, … — flaggable since
+  `52b04a63` but the detail path's "unreachable" StellarEntry-nil
+  guard silently killed the warning, the envelope flag, and the
+  explorer banner for them). Reference-only warnings carry an EMPTY
+  `verified_asset_id` — there is nothing on Stellar to redirect to.
   Three Go comments and the published `/v1/mev` OpenAPI description all
   stated that "the served rows don't carry trade direction, so front/back
   opposition is not verified". The rows *do* carry it — `trades.base_asset`
