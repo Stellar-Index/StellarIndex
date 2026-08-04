@@ -370,3 +370,31 @@ func TestDefaultThresholds_AreValid(t *testing.T) {
 		t.Error("DefaultThresholds missing ClassDefault row")
 	}
 }
+
+// TestDecision_PublishesIsExhaustive pins the fail-closed contract for
+// an unknown Action.
+//
+// The orchestrator's publish choke point tests `!decision.IsFrozen()`,
+// so a fourth variant added later would publish silently — there is no
+// switch over Action anywhere, hence no compiler or lint pressure. This
+// asserts that an unrecognised Action refuses to publish, which is the
+// recoverable direction: refusing serves the last-known-good, whereas
+// publishing puts a wrong price on the wire and in the cache (cold audit
+// 2026-08-04).
+func TestDecision_PublishesIsExhaustive(t *testing.T) {
+	for _, tc := range []struct {
+		action anomaly.Action
+		want   bool
+	}{
+		{anomaly.ActionAllow, true},
+		{anomaly.ActionWarn, true},
+		{anomaly.ActionFreeze, false},
+		{anomaly.Action("quarantine"), false},
+		{anomaly.Action(""), false},
+	} {
+		got := anomaly.Decision{Action: tc.action}.Publishes()
+		if got != tc.want {
+			t.Errorf("Decision{Action:%q}.Publishes() = %v, want %v", tc.action, got, tc.want)
+		}
+	}
+}

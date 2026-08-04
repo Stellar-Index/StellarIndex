@@ -26,8 +26,11 @@ severity: P2
 ## Quick diagnosis (≤ 5 min)
 
 ```sh
-# Which asset class is frozen + how often
-curl -s http://localhost:9090/api/v1/query?query='sum%20by%20(asset_class)%20(rate(stellarindex_anomaly_freeze_engaged_total[1h]))'
+# Which asset class is frozen + how often.
+# The label is `class`, NOT `asset_class` — grouping by the wrong name
+# collapses every series into one with an empty label, which is what
+# this command did until 2026-08-04.
+curl -s http://localhost:9090/api/v1/query?query='sum%20by%20(class)%20(rate(stellarindex_anomaly_freeze_engaged_total[1h]))'
 
 # Sample the affected pair's flags via the API
 curl -s 'http://localhost:3000/v1/price?asset=native&quote=fiat:USD' | jq '.flags'
@@ -57,7 +60,7 @@ Capture for postmortem:
 
 ## Known false-positive patterns
 
-- **Phase-2 confidence-bootstrapping window**: per ADR-0019, the first 30 min after aggregator restart, every pair has a low confidence score because the baseline window hasn't filled. The freeze threshold is intentionally lenient during this window; if it still fires, suspect an upstream data issue, not a real market move.
+- **Phase-2 confidence-bootstrapping window**: for roughly the first 30 min after an aggregator restart the baseline window has not filled. Corrected 2026-08-04 — this entry used to say the freeze threshold is "intentionally lenient" during that window. There is no such leniency anywhere in the code, and the real behaviour is the opposite in a way that matters: `computeConfidence` returns `confOK=false`, so the bucket is UNSCORED and therefore not freeze-eligible at all. That also means a freeze rehydrated across the restart cannot accumulate an unfreeze streak (the streak requires a scored signal), so it climbs the ladder toward `escalated` instead of releasing. If you are looking at a sustained freeze shortly after a restart, that is the first thing to check.
 - **Stablecoin depeg masquerading as anomaly**: ADR-0026 says we late-bind stablecoin → fiat at VWAP compute time. A real depeg looks like an anomaly; check the divergence_warning flag — if it fires, the freeze is correct.
 
 ## Related

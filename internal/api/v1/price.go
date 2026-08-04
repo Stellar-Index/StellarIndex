@@ -1039,21 +1039,34 @@ func (s *Server) attachConfidence(r *http.Request, snap *PriceSnapshot, asset, q
 	if s.confidence == nil {
 		return
 	}
-	got, ok, err := s.confidence.LookupConfidence(r.Context(), asset, quote, confidenceLookupWindow)
-	if err != nil {
-		if !clientAborted(r, err) {
-			s.logger.Warn("confidence lookup failed",
-				"err", err, "asset", asset.String(), "quote", quote.String())
+	// Loop the alias set, exactly as readPriceWithAliases does for the
+	// price itself. Without this the confidence field silently vanished
+	// for XLM's canonical `native` spelling: the PRICE read walks aliases
+	// and resolves to crypto:XLM, but the confidence key was built from
+	// the raw request asset, so /v1/price?asset=native returned a price
+	// echoing asset_id "crypto:XLM" with no confidence, while
+	// ?asset=crypto:XLM returned the identical price WITH it
+	// (r1-verified 2026-08-04). OpenAPI tells clients to read an absent
+	// confidence as "unknown", so every client using Stellar's own
+	// canonical form got a permanent "unknown" (cold audit 2026-08-04).
+	for _, a := range assetAliases(asset) {
+		got, ok, err := s.confidence.LookupConfidence(r.Context(), a, quote, confidenceLookupWindow)
+		if err != nil {
+			if !clientAborted(r, err) {
+				s.logger.Warn("confidence lookup failed",
+					"err", err, "asset", a.String(), "quote", quote.String())
+			}
+			return
 		}
+		if !ok {
+			continue // cache miss on this spelling — try the next alias
+		}
+		c := got.Confidence
+		snap.Confidence = &c
+		f := got.Factors
+		snap.ConfidenceFactors = &f
 		return
 	}
-	if !ok {
-		return // cache miss — leave fields nil
-	}
-	c := got.Confidence
-	snap.Confidence = &c
-	f := got.Factors
-	snap.ConfidenceFactors = &f
 }
 
 // attachCompositeFlags surfaces the aggregator's router-quality

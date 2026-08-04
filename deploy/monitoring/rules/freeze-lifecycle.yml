@@ -81,16 +81,24 @@ groups:
             Resolution paths:
               1. Confirmed manipulation → leave frozen; the freeze is
                  doing its job. Ack the page.
-              2. Genuine repricing / false positive → force unfreeze
-                 by DELETing the pair's `freeze:<asset>:<quote>` key.
-                 The aggregator notices the missing marker on its next
-                 tick, drops the ladder, publishes the fresh bucket,
-                 and counts the release as
+              2. Genuine repricing / false positive → run
+                 `stellarindex-ops freeze-unfreeze`. It clears the
+                 marker AND stamps recovered_at on the durable
+                 freeze_events row, and the release counts as
                  stellarindex_anomaly_freeze_released_total{mode="operator"}.
-                 If the underlying condition still fires, the pair
-                 will re-freeze — that is intended; the durable fix is
-                 a threshold or baseline change, not repeated DELETEs.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-sustained.md
+                 If the underlying condition still fires the pair will
+                 re-freeze — that is intended; the durable fix is a
+                 threshold or baseline change, not repeated unfreezes.
+
+            Do NOT `redis-cli DEL` the marker. Against an ESCALATED
+            freeze that is permanently inert: since migration 0119 the
+            aggregator falls back to the durable ladder in
+            freeze_events when the marker is absent, rehydrates, and
+            re-writes the key on its next tick. The operator sees the
+            key disappear, concludes the pair is released, and closes
+            the page while the price stays pinned. (This annotation
+            told you to do exactly that until 2026-08-04.)
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
 
       # ─── P3: freezes are climbing the ladder ───────────────────
       #

@@ -699,3 +699,35 @@ func TestCompute_TriangulationNeverTouchesSourceCount(t *testing.T) {
 			b.Factors.SourceCount, confidence.SourceCountFactor(1))
 	}
 }
+
+// TestCompute_zeroWeightOnZeroFactorIsNotNaN is the regression test for
+// the cold audit of 2026-08-04.
+//
+// safeLog(0) is -Inf and IEEE-754 says -Inf * 0 = NaN, so a factor of
+// exactly 0 carrying a weight of exactly 0 collapsed the entire score:
+// NaN propagates through the sum, survives math.Exp, passes both
+// branches of applyBootstrapCap, and lands in clamp01(NaN) = 0. The
+// published confidence would read 0 beside a factor decomposition
+// showing everything healthy.
+//
+// The package documents a zero weight as REMOVING the factor, and doc.go
+// promises the geometric mean never produces NaN.
+func TestCompute_zeroWeightOnZeroFactorIsNotNaN(t *testing.T) {
+	w := confidence.DefaultWeights()
+	w.Liquidity = 0 // a plausible operator response to unmeasurable pairs
+
+	got := confidence.Compute(confidence.Inputs{
+		ZScore:           0.5,
+		SourceCount:      4,
+		SourceClassCount: 2,
+		LiquidityUSD:     0, // -> LiquidityFactor 0
+		BaselineAgeDays:  400,
+	}, w)
+
+	if math.IsNaN(got.Confidence) {
+		t.Fatal("Compute returned NaN — a zero-weighted zero factor must be removed, not poison the product")
+	}
+	if got.Confidence <= 0 {
+		t.Errorf("Confidence = %v, want > 0: the liquidity factor carries weight 0, so it must not affect the score at all", got.Confidence)
+	}
+}
