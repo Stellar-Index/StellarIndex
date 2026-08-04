@@ -368,8 +368,29 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) { /
 			"could not look up customer keys; Stripe will retry")
 		return
 	}
+	// Drop revoked credentials before the "did we provision anything?"
+	// check. ListKeysForIdentifier filters on identifier only, so it
+	// returns revoked records too — and upgradeAllKeys used to lift the
+	// budget on them and count them, making `upgraded == len(keys)`
+	// (suppressing DeadLetterKeyUpgradeFailed) while `len(keys) > 0`
+	// suppressed DeadLetterNoKeys. A customer who rotated their key and
+	// then paid got 200 {"upgraded":1}, no usable credential, and no
+	// dead-letter — the exact "money in, nothing provisioned" blind spot
+	// this surface exists to catch (cold audit 2026-08-04). Both the
+	// Postgres twin (upgradePlatformAPIKeys) and the DOWNGRADE twin
+	// (downgradeRedisAPIKeys) already skip revoked keys; this is the
+	// odd one out.
+	//
+	// Filtering HERE rather than inside upgradeAllKeys deliberately
+	// routes the revoked-only customer into the existing len(keys)==0
+	// branch: dead-letter + 200. That is the semantically right answer —
+	// as with a customer who never signed up, no number of Stripe
+	// retries can conjure a usable credential, so 5xx-looping would only
+	// burn the retry schedule on an event that cannot succeed until a
+	// human acts.
+	keys = activeKeysOnly(keys)
 	if len(keys) == 0 {
-		s.logger.Error("stripe webhook: no keys for identifier (customer paid but never signed up?)",
+		s.logger.Error("stripe webhook: no usable keys for identifier (customer paid but never signed up, or revoked every key?)",
 			"identifier", identifier, "event_id", ev.ID,
 			"email", maskEmail(session.CustomerEmail))
 		// Money landed at Stripe and this system provisioned nothing.
@@ -383,7 +404,7 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) { /
 		s.deadLetterStripeEvent(r.Context(), ev, identifier, platform.DeadLetterNoKeys)
 		writeJSON(w, map[string]any{
 			"ok": true, "upgraded": 0,
-			"note":          "no keys for identifier",
+			"note":          "no usable keys for identifier",
 			"dead_lettered": true,
 		}, Flags{})
 		return
@@ -406,7 +427,7 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) { /
 	// Runs even when every key update above failed: the two stores are
 	// independent, so a key-store outage must not also cost the customer
 	// their platform-side tier + dashboard-key upgrade.
-	s.applyPlatformSideEffects(r.Context(), ev, session, tierName)
+	s.applyPlatformSideEffects(r.Context(), ev, session, tierName, rateLimit)
 
 	if upgraded == 0 {
 		// TOTAL failure: the customer HAS keys and not one budget was
@@ -983,7 +1004,7 @@ func (s *Server) handleStripeInvoicePaid(ctx context.Context, ev stripeEvent) {
 // Skipped silently when Platform is nil (legacy / billing-disabled
 // deployments). Skipped per-step when the corresponding store is
 // nil (tests commonly leave Accounts nil but wire Billing).
-func (s *Server) applyPlatformSideEffects(ctx context.Context, ev stripeEvent, session stripeCheckoutSession, tierName string) {
+func (s *Server) applyPlatformSideEffects(ctx context.Context, ev stripeEvent, session stripeCheckoutSession, tierName string, rateLimit int) {
 	if s.stripe == nil || s.stripe.Platform == nil {
 		return
 	}
@@ -1042,7 +1063,7 @@ func (s *Server) applyPlatformSideEffects(ctx context.Context, ev stripeEvent, s
 	// dashboard gets the same upgrade as a customer who came
 	// in via /v1/signup.
 	if haveAccount {
-		s.applyAccountTierAndKeyUpgrade(ctx, ev, bridge, account, tierName)
+		s.applyAccountTierAndKeyUpgrade(ctx, ev, bridge, account, tierName, rateLimit)
 	}
 }
 
@@ -1053,7 +1074,7 @@ func (s *Server) applyPlatformSideEffects(ctx context.Context, ev stripeEvent, s
 // new tier promises. Both steps are best-effort + idempotent.
 // Extracted from `applyPlatformSideEffects` to keep that
 // function's cognitive complexity under the linter cap.
-func (s *Server) applyAccountTierAndKeyUpgrade(ctx context.Context, ev stripeEvent, bridge *StripePlatformBridge, account platform.Account, tierName string) {
+func (s *Server) applyAccountTierAndKeyUpgrade(ctx context.Context, ev stripeEvent, bridge *StripePlatformBridge, account platform.Account, tierName string, rateLimit int) {
 	// Update the account tier so the dashboard reflects the new
 	// plan + the F-1212 tier-rate-limit clamp picks up the right
 	// ceiling for future key mints.
@@ -1069,7 +1090,7 @@ func (s *Server) applyAccountTierAndKeyUpgrade(ctx context.Context, ev stripeEve
 	// Lift the per-key rate-limit on Postgres-backed keys.
 	// F-1219 wave 55 (codex audit-2026-05-13).
 	if bridge.APIKeys != nil {
-		s.upgradePlatformAPIKeys(ctx, ev, bridge.APIKeys, account, tierName)
+		s.upgradePlatformAPIKeys(ctx, ev, bridge.APIKeys, account, tierName, rateLimit)
 	}
 }
 
@@ -1082,11 +1103,24 @@ func (s *Server) applyAccountTierAndKeyUpgrade(ctx context.Context, ev stripeEve
 // key the operator manually lifted further). The
 // `auth.Tier.MaxRateLimitPerMin` ceiling is the source of
 // truth for "the budget this tier promises".
-func (s *Server) upgradePlatformAPIKeys(ctx context.Context, ev stripeEvent, store platform.APIKeyStore, account platform.Account, tierName string) {
+func (s *Server) upgradePlatformAPIKeys(ctx context.Context, ev stripeEvent, store platform.APIKeyStore, account platform.Account, tierName string, rateLimit int) {
 	// Same seam the DOWN path uses, so cache eviction + error reporting
 	// are identical in both directions (52105fdb residual).
 	st := s.stripeKeyBudgetStores(s.stripePlatformBridgeOrNil())
-	target := stripeTierBudget(tierName)
+	// Use the limit the HANDLER already resolved, not a second
+	// derivation from tierName alone. For every tier in stripeTierMap
+	// these are identical (the removed stripeTierBudget read that same
+	// map), but the handler additionally honours
+	// metadata.rate_limit_per_min —
+	// the documented Enterprise/custom-plan escape hatch. Deriving
+	// locally meant an "enterprise" lookup returned 0 and this
+	// function returned early, so the Redis fan-out applied the override
+	// and the Postgres dashboard keys silently kept their old budget:
+	// the account read `enterprise` in the dashboard while every key
+	// minted there stayed at the previous limit, and the response was
+	// 200 {"upgraded":1} with nothing reporting a failure (cold audit
+	// 2026-08-04).
+	target := rateLimit
 	if target <= 0 {
 		s.logger.Debug("stripe webhook: no platform-key budget for tier; skipping per-key upgrade",
 			"event_id", ev.ID, "tier", tierName)
@@ -1155,17 +1189,6 @@ func (s *Server) invalidatePlatformKeyCache(ctx context.Context, cause string, s
 	}
 }
 
-// stripeTierBudget returns the per-minute rate-limit ceiling
-// the named Stripe metadata.tier value promises. Mirrors
-// `stripeTierMap` (which carries the same ladder for the
-// Redis-side upgrade) so the two upgrade paths can't drift.
-func stripeTierBudget(tierName string) int {
-	if v, ok := stripeTierMap[tierName]; ok {
-		return v
-	}
-	return 0
-}
-
 // stripePlanFromTier maps the Stripe `metadata.tier` string into
 // the platform billing-plan enum. Unknown tier → empty string
 // (caller treats that as "skip subscription write" because the
@@ -1216,6 +1239,18 @@ func stripeTierMapPlatform(overrides map[string]platform.Tier, tierName string) 
 // `SELECT * FROM stripe_event_log WHERE error IS NOT NULL`.
 // Extracted from handleStripeWebhook to keep that function under
 // the gocognit threshold.
+// activeKeysOnly returns the records that are still usable — i.e. not
+// revoked. auth.ListKeysForIdentifier filters on the identifier alone.
+func activeKeysOnly(keys []auth.APIKeyRecord) []auth.APIKeyRecord {
+	out := keys[:0:0]
+	for _, k := range keys {
+		if k.RevokedAt.IsZero() {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
 func (s *Server) upgradeAllKeys(
 	ctx context.Context,
 	keys []auth.APIKeyRecord,
