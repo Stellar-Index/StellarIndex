@@ -436,9 +436,21 @@ func fetchOurSDEXStats(ctx context.Context, store *timescale.Store, from, to uin
 
 // hubbleZeroAmountCounts counts Hubble history_trades in the range with a zero
 // amount: oneSide (exactly one of selling/buying is 0), both (both 0), anyZero
-// (either). Diagnoses the SDEX off-by-one: our decoder's
-// soldAmount<=0||boughtAmount<=0 guard drops all of these, while Hubble records
-// them — so anyZero should equal the per-ledger trade-count shortfall.
+// (either). Diagnoses the SDEX off-by-one: our decoder's guard.
+//
+// READ THE SPLIT CAREFULLY. The decoder drops only BOTH-zero claim
+// atoms (sdex/decode.go: `soldAmount <= 0 && boughtAmount <= 0`) and
+// deliberately KEEPS one-side-zero fills — a rounding artifact where one
+// leg rounds to 0, which are real trades Hubble also records. So the
+// figure that explains a per-ledger shortfall is `both`, NOT `anyZero`.
+//
+// This comment used to say the guard was `||` and that anyZero should
+// equal the shortfall (corrected 2026-08-04, cold audit). Following the
+// old text, an operator seeing anyZero == shortfall would conclude "fully
+// explained by the zero-amount artifact — not a decoder gap", and write
+// off every one-side-zero fill in (shortfall - both) as expected. Those
+// are real SDEX history missing from `trades`, which is exactly what
+// this tool exists to catch.
 func hubbleZeroAmountCounts(ctx context.Context, client *bigquery.Client, from, to uint32) (oneSide, both, anyZero int64, err error) {
 	q := client.Query("SELECT " +
 		"COUNTIF((selling_amount = 0) != (buying_amount = 0)) AS one_side, " +

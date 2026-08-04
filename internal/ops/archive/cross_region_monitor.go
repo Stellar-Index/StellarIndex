@@ -268,18 +268,18 @@ func runOneTick(
 			// `cross-region-check`'s exit code is a separate,
 			// unaudited change to this metrics path and out of scope
 			// for this fix.
-			divergence, _ := analyseRegionResults(metric, pair, bucketFrom, bucketTo, results, io.Discard)
+			divergence, compared := analyseRegionResults(metric, pair, bucketFrom, bucketTo, results, io.Discard)
 
-			outcome := "ok"
+			outcome := tickOutcome(divergence, compared, allFailed(results))
 			if divergence {
-				outcome = "divergence"
 				exp.divergences.WithLabelValues(pair, metric.String()).Inc()
 			}
-			// "error" outcome only if EVERY region failed; partial
-			// failures are tracked separately via fetchErrors.
-			if allFailed(results) {
-				outcome = "error"
-			} else {
+			if !allFailed(results) {
+				// `reached` deliberately means "we contacted a region",
+				// not "we compared" — TestRunOneTick_ReachedStamped-
+				// OnPartialFailure pins that, and a monitor that 503s
+				// because a PEER is down would report the wrong subject.
+				// The outcome label carries the compared-vs-not fact.
 				reached = true
 			}
 			exp.checksTotal.WithLabelValues(pair, metric.String(), outcome).Inc()
@@ -394,3 +394,26 @@ func newCrossRegionExporter(reg prometheus.Registerer) *crossRegionExporter {
 // String makes crossRegionMetric usable as a Prometheus label value
 // without a type assertion every call site.
 func (m crossRegionMetric) String() string { return string(m) }
+
+// tickOutcome labels one (pair, metric) sweep.
+//
+// "inconclusive" is the case that used to be mislabelled "ok":
+// analyseRegionResults returns compared=false when fewer than two
+// regions responded, and documents that such a sample "proves NOTHING"
+// (OBS-07). runOneTick discarded that return, so in a two-region fleet
+// ONE region being down emitted the same time series as a genuine
+// agreement — divergences flat, last_reached fresh, /healthz 200, and
+// zero comparisons actually performed. The one-shot sibling treats the
+// same state as a hard failure and exits 1 (cold audit 2026-08-04).
+func tickOutcome(divergence, compared, allFailed bool) string {
+	switch {
+	case allFailed:
+		return "error"
+	case divergence:
+		return "divergence"
+	case !compared:
+		return "inconclusive"
+	default:
+		return "ok"
+	}
+}

@@ -364,3 +364,46 @@ func stubResponse(t *testing.T, body crossRegionResponse) *httptest.Server {
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": body})
 	}))
 }
+
+// TestRunOneTick_PartialFailureIsNotLabelledOK is the regression test
+// for the cold audit of 2026-08-04.
+//
+// runOneTick discarded analyseRegionResults' `compared` return and
+// defaulted outcome to "ok", so a sweep in which fewer than two regions
+// responded — i.e. one where NOTHING was compared — emitted the same
+// time series as a genuine agreement. In a two-region fleet that means
+// one region being down produces a permanent green: divergences flat,
+// last_reached fresh, /healthz 200, and zero comparisons performed.
+// analyseRegionResults documents that such a sample "proves NOTHING"
+// (OBS-07), and the one-shot sibling exits 1 on it.
+//
+// The existing TestRunOneTick_FetchErrorTracked builds this exact
+// scenario and asserts fetchErrors and divergences — but never the
+// outcome label, which is why the defect was invisible.
+func TestRunOneTick_PartialFailureIsNotLabelledOK(t *testing.T) {
+	from := time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC)
+	to := from.Add(30 * time.Second)
+	s1 := stubResponse(t, crossRegionResponse{From: from, To: to, Price: "1.0"})
+	defer s1.Close()
+	s2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusInternalServerError)
+	}))
+	defer s2.Close()
+
+	reg := prometheus.NewRegistry()
+	exp := newCrossRegionExporter(reg)
+	runOneTick(t.Context(), &http.Client{Timeout: 5 * time.Second},
+		[]regionEndpoint{{name: "r1", base: s1.URL}, {name: "r2", base: s2.URL}},
+		[]string{"native/fiat:USD"}, metricVWAP, 30*time.Second, 1, exp)
+
+	okCount := testutil.ToFloat64(
+		exp.checksTotal.WithLabelValues("native/fiat:USD", metricVWAP.String(), "ok"))
+	if okCount != 0 {
+		t.Errorf("checks_total{outcome=\"ok\"} = %v, want 0 — only one region responded, so nothing was compared; labelling that \"ok\" is indistinguishable from a real agreement", okCount)
+	}
+	inconclusive := testutil.ToFloat64(
+		exp.checksTotal.WithLabelValues("native/fiat:USD", metricVWAP.String(), "inconclusive"))
+	if inconclusive != 1 {
+		t.Errorf("checks_total{outcome=\"inconclusive\"} = %v, want 1", inconclusive)
+	}
+}
