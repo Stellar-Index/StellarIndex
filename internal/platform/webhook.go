@@ -51,7 +51,7 @@ const (
 // CustomerWebhook is an outbound HTTPS endpoint a customer
 // registers to receive event notifications. Stripe-shape:
 // signed deliveries (HMAC-SHA-256 of payload), exponential
-// retry over 72h.
+// retry over ~8h (15 attempts, 30s doubling to a 1h cap).
 //
 // F-1244 (codex audit-2026-05-12): the persisted signing-key
 // field is misnamed `SecretHash` for historical reasons. Despite

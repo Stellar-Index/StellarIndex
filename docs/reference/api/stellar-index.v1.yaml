@@ -9595,7 +9595,14 @@ components:
       properties:
         id:         { type: string, format: uuid }
         name:       { type: string, description: "Operator-friendly label, 1–200 chars." }
-        url:        { type: string, description: "HTTPS endpoint. Worker POSTs JSON with HMAC-SHA-256 signature in X-StellarIndex-Signature." }
+        url:
+          type: string
+          description: |
+            HTTPS endpoint. The worker POSTs JSON with an HMAC-SHA-256
+            signature in `X-StellarIndex-Signature` (prefixed `sha256=`)
+            and the signing time in `X-StellarIndex-Timestamp`. See
+            `CreateWebhookResponse.secret` for the exact construction —
+            the timestamp is part of the signed message.
         events:
           type: array
           description: |
@@ -9642,9 +9649,29 @@ components:
           type: string
           description: |
             HMAC-SHA-256 signing key plaintext. Returned exactly
-            once. Store server-side + use it to verify the
-            X-StellarIndex-Signature header on inbound webhook
-            POSTs. Format: `wsec_<64 hex chars>`.
+            once. Store server-side and use it to verify the
+            `X-StellarIndex-Signature` header on inbound webhook POSTs.
+            Format: `wsec_<64 hex chars>`.
+
+            VERIFICATION (the signed message is NOT the body alone):
+
+              signed_message = "<X-StellarIndex-Timestamp>" + "." + <raw request body>
+              expected       = "sha256=" + hex(HMAC_SHA256(secret, signed_message))
+
+            Compare `expected` against `X-StellarIndex-Signature` in
+            constant time. Note the literal `sha256=` prefix on the
+            header value, and that the timestamp is bound INTO the MAC —
+            verifying the body alone will fail on every delivery.
+
+            REPLAY: `X-StellarIndex-Timestamp` is Unix seconds at signing
+            time. Reject deliveries whose timestamp is outside a
+            tolerance window you choose (5 minutes is typical). Binding
+            the timestamp only prevents an attacker altering it; nothing
+            stops a captured delivery being replayed unless you check it.
+
+            DEDUPE: `X-StellarIndex-Delivery-Id` is stable across retries
+            of the same delivery. It is NOT stable across a re-emit of
+            the same logical event, so it dedupes retries, not re-sends.
       required: [webhook, secret]
 
     UpdateWebhookRequest:

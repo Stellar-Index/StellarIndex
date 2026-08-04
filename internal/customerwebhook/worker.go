@@ -380,10 +380,17 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxDrainBytes))
 	elapsed := time.Since(start).Seconds()
 
+	w.classifyResponse(ctx, d, resp.StatusCode, elapsed)
+}
+
+// classifyResponse routes a delivery's HTTP status into the delivered /
+// retry / terminal outcomes. Split out of deliverOne so the status
+// taxonomy reads as one table (and to stay under the funlen ceiling).
+func (w *Worker) classifyResponse(ctx context.Context, d platform.WebhookDelivery, status int, elapsed float64) {
 	switch {
-	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+	case status >= 200 && status < 300:
 		obs.CustomerWebhookDeliveryDurationSeconds.WithLabelValues("delivered").Observe(elapsed)
-		if err := w.store.MarkDelivered(ctx, d.ID, resp.StatusCode); err != nil {
+		if err := w.store.MarkDelivered(ctx, d.ID, status); err != nil {
 			w.opts.Logger.Warn("customer-webhook: MarkDelivered failed",
 				"err", err, "delivery_id", d.ID)
 			obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("mark_error").Inc()
@@ -391,19 +398,60 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 		}
 		w.opts.Logger.Info("customer-webhook: delivered",
 			"delivery_id", d.ID, "webhook_id", d.WebhookID,
-			"event_type", d.EventType, "status", resp.StatusCode)
+			"event_type", d.EventType, "status", status)
 		obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("delivered").Inc()
-	case resp.StatusCode >= 400 && resp.StatusCode < 500:
-		// 4xx is the customer's responsibility (auth, bad URL,
-		// validation). Don't retry — they need to fix it.
+	case status >= 300 && status < 400:
+		// Redirects are DISABLED (CheckRedirect returns
+		// ErrUseLastResponse) as part of the SSRF defence, so a 3xx can
+		// never succeed on a later attempt — retrying it 15 times over
+		// ~8h is pure waste and the recorded reason used to say
+		// "transient", which is false and misdirects diagnosis. A
+		// trailing-slash 308 from nginx/Rails/Django is the common case
+		// (cold audit 2026-08-04).
 		obs.CustomerWebhookDeliveryDurationSeconds.WithLabelValues("client_error").Observe(elapsed)
-		w.handleFailure(ctx, d, resp.StatusCode,
-			fmt.Sprintf("HTTP %d (4xx terminal)", resp.StatusCode), "client_error")
-	default:
-		// 5xx + 3xx → transient, retry with backoff.
+		w.handleFailure(ctx, d, status,
+			fmt.Sprintf("HTTP %d (redirect not followed — register the final URL)", status),
+			"client_error")
+	case isRetryable4xx(status):
+		// Not every 4xx is the customer's fault forever. 408, 425 and
+		// 429 are explicitly temporary in the HTTP spec, and 429 is what
+		// any endpoint behind a rate-limiting gateway returns under a
+		// burst — treating it as terminal DESTROYED the event on its
+		// first attempt, which is how a SEV-1 notification could be lost
+		// to a coincident freeze burst (cold audit 2026-08-04).
 		obs.CustomerWebhookDeliveryDurationSeconds.WithLabelValues("server_error").Observe(elapsed)
-		w.handleFailure(ctx, d, resp.StatusCode,
-			fmt.Sprintf("HTTP %d (transient)", resp.StatusCode), "server_error")
+		w.handleFailure(ctx, d, status,
+			fmt.Sprintf("HTTP %d (transient)", status), "server_error")
+	case status >= 400 && status < 500:
+		// The rest of 4xx is the customer's responsibility (auth, bad
+		// URL, validation). Don't retry — they need to fix it.
+		obs.CustomerWebhookDeliveryDurationSeconds.WithLabelValues("client_error").Observe(elapsed)
+		w.handleFailure(ctx, d, status,
+			fmt.Sprintf("HTTP %d (4xx terminal)", status), "client_error")
+	default:
+		// 5xx → transient, retry with backoff.
+		obs.CustomerWebhookDeliveryDurationSeconds.WithLabelValues("server_error").Observe(elapsed)
+		w.handleFailure(ctx, d, status,
+			fmt.Sprintf("HTTP %d (transient)", status), "server_error")
+	}
+}
+
+// isRetryable4xx reports whether a 4xx status describes a TEMPORARY
+// condition the customer's endpoint is expected to recover from without
+// any change on their side.
+//
+//   - 408 Request Timeout — the gateway gave up reading; retrying works.
+//   - 425 Too Early       — explicitly "retry later" by definition.
+//   - 429 Too Many Requests — the canonical back-off signal.
+//
+// Everything else in 4xx (401/403 credentials, 404 wrong URL, 400/422
+// validation) genuinely needs the customer to act, so it stays terminal.
+func isRetryable4xx(status int) bool {
+	switch status {
+	case http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests:
+		return true
+	default:
+		return false
 	}
 }
 

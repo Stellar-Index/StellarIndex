@@ -365,7 +365,7 @@ CREATE INDEX customer_webhooks_account_idx ON customer_webhooks (account_id);
 -- ─── 12. webhook_deliveries ────────────────────────────────────────
 --
 -- Per-attempt delivery log. Stripe-style: signed deliveries,
--- exponential retry over 72h (15 attempts), customer-visible
+-- exponential retry over ~8h (15 attempts: 30s..1h cap), customer-visible
 -- delivery list in dashboard.
 
 CREATE TABLE webhook_deliveries (
