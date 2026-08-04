@@ -30,12 +30,21 @@ import sys
 try:
     import yaml
 except ImportError:
+    # Fail-closed, not skip. This mirrors the fix already made in the
+    # sibling lint-rule-structure.py: a silent exit-0 here let every
+    # runbook_url regress into labels: whenever PyYAML happened to be
+    # absent — the exact vacuous pass this lint exists to prevent (C4-1:
+    # 266 of 270 alerts, no page ever showed a runbook link). This script
+    # is invoked standalone from lint-docs.sh in the doc-checks CI job,
+    # which does NOT run its sibling, so nothing else covered the gap.
+    # Cold audit 2026-08-04.
     print(
-        "lint-runbook-annotations: PyYAML not available; skipping "
-        "(CI's promtool + PyYAML job is the backstop)",
+        "lint-runbook-annotations: FAIL — PyYAML not available; cannot lint "
+        "rule files (install pyyaml so this check runs; refusing to pass "
+        "vacuously)",
         file=sys.stderr,
     )
-    sys.exit(0)
+    sys.exit(2)
 
 DIRS = ["deploy/monitoring/rules", "configs/prometheus/rules.r1"]
 RUNBOOKS_MARKER = "docs/operations/runbooks/"
@@ -58,8 +67,21 @@ def resolve_local_runbook(value):
     return None
 
 
+# Zero rule files is a BROKEN GATE, not a clean tree: a moved or renamed
+# rule directory would otherwise report "every alert has a non-empty
+# annotations.runbook_url" over an empty set. Same fail-closed posture the
+# sibling lint-rule-structure.py already takes (cold audit 2026-08-04).
+_seen = 0
 for d in DIRS:
+    if not os.path.isdir(d):
+        print(
+            f"lint-runbook-annotations: FAIL — rule directory {d} does not "
+            "exist; a moved/renamed dir would make this lint a vacuous pass",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     for path in sorted(glob.glob(f"{d}/*.yml")):
+        _seen += 1
         try:
             doc = yaml.safe_load(open(path))
         except yaml.YAMLError as e:
@@ -102,6 +124,14 @@ for d in DIRS:
                 local = resolve_local_runbook(value.strip())
                 if local is not None and not os.path.isfile(local):
                     err(path, name, f"runbook_url points to missing file: {local}")
+
+if _seen == 0:
+    print(
+        "lint-runbook-annotations: FAIL — 0 rule files found; refusing to "
+        "pass vacuously",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 if bad:
     print(f"lint-runbook-annotations: {bad} problem(s) found", file=sys.stderr)

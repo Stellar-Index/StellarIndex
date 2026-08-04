@@ -33,6 +33,15 @@ while IFS= read -r f; do
 done < <(find "$OUT" -name '*.html')
 
 echo "explorer-seo-lint: checked ${checked} indexable pages, ${fail} with missing metadata."
+# Zero checked pages is a BROKEN GATE, not a clean build: `checked` and
+# `fail` both stay 0 when the find yields nothing, so a build that emitted
+# its HTML under a different path (a Next output-dir change) deployed with
+# this gate reporting clean. It runs pre-upload in explorer-deploy.yml.
+# Cold audit 2026-08-04.
+[ "$checked" -gt 0 ] || {
+  echo "::error::explorer-seo-lint found 0 indexable pages under $OUT — the export is empty, all-noindex, or the output path moved. Refusing to pass vacuously." >&2
+  exit 1
+}
 [ "$fail" -eq 0 ] || {
   echo "Every indexable page needs a <title>, meta description, and canonical." >&2
   exit 1
