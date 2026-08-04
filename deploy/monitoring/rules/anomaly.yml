@@ -90,13 +90,28 @@ groups:
                 as "no customer impact": a freeze suppresses the VWAP
                 cache write and the SSE publish regardless of whether
                 the marker lands, so the pair is serving a pinned
-                last-known-good with flags.frozen=false. Since the
-                2026-08-03 fix the freeze step stands down entirely
-                when [anomaly] is disabled, so a marker-less freeze
-                now means the writer failed (Redis) rather than the
-                feature being half-wired — treat it as a real
-                customer-facing hold and check the aggregator log's
-                writer_wired field.
+                last-known-good with flags.frozen=false. There are
+                TWO distinct causes and they need opposite responses:
+                (a) [anomaly].enabled is false, so buildAnomalyChecker
+                returned nil and the freeze writer was never wired —
+                but stepPhase2Freeze is still called unconditionally
+                and still refuses publication. Confirm with
+                `stellarindex_anomaly_warn_total` (absent => Phase 1
+                never ran) and the class="default" label, which is
+                classOf()'s nil-checker fallback. This is the state r1
+                is in as of 2026-08-04: 91 engagements, zero markers,
+                zero freeze_events rows. (b) [anomaly] IS enabled and
+                the marker write failed (Redis) — check the aggregator
+                log's writer_wired field.
+                A previous version of this text claimed the freeze step
+                stands down when [anomaly] is disabled. It does not:
+                that change was reverted before it landed (it broke six
+                tests that deliberately exercise Phase 2 with a nil
+                checker, and whether Phase 2 belongs to the anomaly
+                feature or is independent of it is an open design
+                question). Corrected 2026-08-04 — the claim would have
+                sent the on-call chasing a Redis fault that isn't
+                there.
               - `SELECT COUNT(*) FROM freeze_events WHERE recovered_at IS NULL`
                 — durable mirror; should track Redis when both wire.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md

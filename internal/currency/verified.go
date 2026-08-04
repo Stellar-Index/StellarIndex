@@ -288,6 +288,12 @@ func buildVerifiedCurrency(rc rawCurrency) (*VerifiedCurrency, error) {
 	return vc, nil
 }
 
+// nativeAssetID is the canonical asset_id of XLM's native form, and the
+// discriminator for "this verified currency has a Stellar identity but
+// no classic issuer". Kept local so internal/currency stays free of an
+// import cycle with internal/canonical.
+const nativeAssetID = "native"
+
 // indexStellarEntries threads every Stellar network entry into the
 // asset_id + code indexes, surfacing collisions as errors.
 func (cat *Catalogue) indexStellarEntries(vc *VerifiedCurrency) error {
@@ -301,12 +307,32 @@ func (cat *Catalogue) indexStellarEntries(vc *VerifiedCurrency) error {
 			}
 			cat.byStellarAssetID[n.AssetID] = vc
 		}
-		if n.Code != "" {
-			codeKey := strings.ToUpper(n.Code)
+		// The collision key for a currency issued as a classic asset is
+		// its classic code.
+		codeKey := strings.ToUpper(n.Code)
+		if n.Code == "" && n.AssetID == nativeAssetID {
+			// ...but a currency whose Stellar identity IS the native
+			// asset has no classic issuer at all, so it would otherwise
+			// never enter this index and StellarCollision could never
+			// speak about it. That is the worst possible gap: since no
+			// legitimate classic asset can bear XLM's ticker, EVERY
+			// classic "XLM-G…" is by construction an impersonator — and
+			// before 2026-08-04 every one of them was served with no
+			// warning AND, because the listing falls back to the code as
+			// the slug, wearing the explorer's "Verified currency" badge.
+			// Measured on r1: issuer GBEO62ZY… issues both a fake USDC
+			// (correctly flagged) and a fake XLM (silent).
+			//
+			// Index the TICKER instead. StellarCollision then finds this
+			// entry and, finding no issuance whose Code matches, reports
+			// a collision for every issuer — which is the correct answer.
+			codeKey = strings.ToUpper(vc.Ticker)
+		}
+		if codeKey != "" {
 			if existing, dup := cat.byStellarCode[codeKey]; dup {
 				return fmt.Errorf(
 					"currency: code %q claimed by both %q and %q on Stellar",
-					n.Code, existing.Ticker, vc.Ticker)
+					codeKey, existing.Ticker, vc.Ticker)
 			}
 			cat.byStellarCode[codeKey] = vc
 		}
@@ -424,7 +450,11 @@ func (c *Catalogue) LookupByStellarAssetID(assetID string) (*VerifiedCurrency, b
 // Returns (nil, false) when the code is not claimed by any
 // verified currency on Stellar.
 //
-// Soroban contracts and the native asset are out of scope here.
+// Soroban contracts are out of scope here, and so is the native
+// asset ITSELF (it has no code, so callers never ask about it).
+// IMPERSONATORS of the native asset are very much in scope: a classic
+// asset with code "XLM" matches the native entry and always reports a
+// collision, because no legitimate classic asset can carry that code.
 // Callers passing empty code or issuer get (nil, false).
 func (c *Catalogue) StellarCollision(code, issuer string) (*VerifiedCurrency, bool) {
 	if c == nil || code == "" || issuer == "" {

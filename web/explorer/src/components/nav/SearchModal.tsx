@@ -532,7 +532,10 @@ export function SearchModal() {
   );
 }
 
-function search(
+// Exported for the badge-rule regression test — the ⌘K result builder is
+// the fourth copy of the verified-badge predicate and was the one that
+// disagreed with the other three (cold audit 2026-08-04).
+export function search(
   q: string,
   coins: Coin[],
   currencies: CurrencyEntry[],
@@ -541,7 +544,20 @@ function search(
 ): Result[] {
   const norm = q.trim().toLowerCase();
   const coinResults = coins.map((c) =>
-    coinResult(c, verifiedSlugs?.has(c.slug.toLowerCase()) ?? false),
+    coinResult(
+      c,
+      // Badge "verified" ONLY for the real verified row, same rule as
+      // AssetsTable / HomeTopAssets / HomeTopMovers. The listing serves
+      // COALESCE(slug, code) AS slug, so a NULL-slug impersonator emits
+      // the verified asset's CODE as its slug and matches the verified
+      // set; the API's per-row unverified_ticker_collision flag is what
+      // distinguishes it. This site used to drop that flag — the one
+      // copy of the rule that disagreed with the other three, so an
+      // impersonator the backend had correctly identified rendered with
+      // the badge in ⌘K search (cold audit 2026-08-04).
+      (verifiedSlugs?.has(c.slug.toLowerCase()) ?? false) &&
+        !c.unverified_ticker_collision,
+    ),
   );
   if (!norm) {
     // Empty query → top 5 coins as a starter list (already sorted

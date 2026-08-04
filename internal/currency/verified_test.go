@@ -561,3 +561,54 @@ func TestSeedDataIntegrity(t *testing.T) {
 		}
 	}
 }
+
+// TestStellarCollision_nativeAssetImpersonator is the regression test
+// for the cold audit of 2026-08-04.
+//
+// XLM's seed entry is `network: stellar` + `asset_id: native` with NO
+// classic `code`, so it never entered byStellarCode and StellarCollision
+// was structurally incapable of speaking about it. Every classic
+// "XLM-G<attacker>" was therefore served with unverified_warning null
+// and unverified_ticker_collision false — and because the listing falls
+// back to the asset code as the slug, the explorer's badge predicate
+// (verifiedSlugSet.has("xlm") && !collision) rendered it as a VERIFIED
+// currency. Two such assets existed on r1, one of them issued by the
+// same account as a fake USDC that WAS correctly flagged.
+//
+// No legitimate classic asset can carry XLM's code, so every issuer
+// must collide.
+func TestStellarCollision_nativeAssetImpersonator(t *testing.T) {
+	cat, err := LoadEmbedded()
+	if err != nil {
+		t.Fatalf("LoadEmbedded: %v", err)
+	}
+
+	const attacker = "GBEO62ZYAOEKVL4WMF5Q6VYTOJQUT7H2QYRDVFO5LT4W7VQPFDWVKUHO"
+	v, collision := cat.StellarCollision("XLM", attacker)
+	if v == nil {
+		t.Fatal("StellarCollision(XLM, <attacker>) returned no verified currency — a classic asset bearing the native asset's ticker is unflagged, and the explorer badges it as verified")
+	}
+	if v.Ticker != "XLM" {
+		t.Errorf("matched ticker %q, want XLM", v.Ticker)
+	}
+	if !collision {
+		t.Error("collision = false for a classic XLM impersonator — no legitimate classic asset can carry XLM's code, so every issuer must collide")
+	}
+
+	// Case-insensitivity, same as the classic-code path.
+	if _, c := cat.StellarCollision("xlm", attacker); !c {
+		t.Error("lowercase \"xlm\" did not collide")
+	}
+
+	// The native asset itself is never queried through this path (it has
+	// no code), and an empty code must stay a no-op.
+	if v, c := cat.StellarCollision("", attacker); v != nil || c {
+		t.Errorf("empty code = (%v, %v), want (nil, false)", v, c)
+	}
+
+	// A verified classic asset must still resolve to no collision for
+	// its own issuer — proving the native branch didn't disturb it.
+	if v, c := cat.StellarCollision("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"); v == nil || c {
+		t.Errorf("real USDC = (%v, %v), want (USDC, false)", v, c)
+	}
+}
