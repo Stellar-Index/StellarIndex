@@ -687,7 +687,10 @@ var ProjectorCycleDurationSeconds = prometheus.NewHistogramVec(
 // the same `_duration_seconds` series — a fast 500 landed in both
 // and reported as "good" against the latency SLO even though the
 // customer experience was a hard outage (F-0105, audit-2026-05-26).
-// The availability SLO (http_requests_total{status_class="5xx"})
+// The availability SLO (http_requests_total{status=~"5.."} — the
+// label is `status`, NOT `status_class`, which does not exist on this
+// CounterVec; corrected 2026-08-04, a selector copied from the old
+// text would have matched nothing)
 // is unchanged — it stays the authority for 5xx rate, and this
 // metric is only about getting the latency SLO right.
 //
@@ -832,9 +835,17 @@ var SourceDecodeErrorsTotal = prometheus.NewCounterVec(
 // expand while we silently omit the new asset; without this counter
 // operators have no signal that a feed is being skipped. Reflector,
 // Redstone, and Band all increment this on ErrUnknownSymbol /
-// ErrUnknownFeedID branches; the alert in
-// `deploy/monitoring/rules/external-pollers.yml` fires on a
-// sustained per-source non-zero rate.
+// ErrUnknownFeedID branches.
+//
+// NO ALERT CONSUMES IT (cold audit 2026-08-04). This comment used to
+// say one in `deploy/monitoring/rules/external-pollers.yml` fires on a
+// sustained per-source non-zero rate; the token appears in no `expr:`
+// in either rule tree. So the signal this counter exists to provide has
+// no consumer — and r1 already carries
+// source_unknown_symbols_total{source="reflector"} 7794, i.e. 7,794
+// oracle asset slots silently dropped from the price surface with
+// nothing evaluating it. That is the pre-F-1234 state the metric was
+// added to end. Wiring the rule needs a runbook per the alert lint.
 var SourceUnknownSymbolsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_source_unknown_symbols_total",

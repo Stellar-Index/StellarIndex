@@ -38,8 +38,16 @@ groups:
       # pool every 60 s and increments
       # `stellarindex_postgres_ping_total{outcome="error"}` per
       # failure.
+      # THRESHOLD IS `> 0`, NOT `> 0.5`. The probe ticks once per 60 s,
+      # so the maximum achievable rate is 1/60 = 0.0167/s — a `> 0.5`
+      # threshold (150 errors in 5 minutes) is unreachable by 30x, and
+      # this page could never fire. That is the F-0151 incident's own
+      # detector: on 2026-05-26 the indexer sat on a wedged pool for
+      # ~14 h and was found by hand. The metric's own docstring in
+      # internal/obs/metrics.go prescribes `> 0` for 2m; the rule did
+      # not match it. Corrected 2026-08-04 (cold audit).
       - alert: stellarindex_postgres_ping_failing
-        expr: rate(stellarindex_postgres_ping_total{outcome="error"}[5m]) > 0.5
+        expr: rate(stellarindex_postgres_ping_total{outcome="error"}[5m]) > 0
         for: 2m
         labels:
           severity: page

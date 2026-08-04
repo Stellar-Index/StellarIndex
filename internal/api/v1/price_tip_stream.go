@@ -97,7 +97,23 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 	// First synchronous compute — gives us a chance to return 404
 	// before switching the response into SSE mode (where it's too
 	// late to set a non-200 status code).
-	first, firstSources, err := s.computeTip(r.Context(), asset, quote, window)
+	//
+	// BOUNDED, like the tick path. This pre-flight runs on the handler
+	// goroutine under the raw request context, and /stream paths are
+	// deliberately excluded from the request-timeout middleware — so
+	// before this it had no deadline ANYWHERE: no middleware, no
+	// per-call timeout, and r1 runs statement_timeout = 0. A slow query
+	// during a Postgres stall pinned the handler goroutine AND its pool
+	// connection until the client disconnected, and WriteTimeout does
+	// not cancel an in-flight query. 20 such connections from one IP
+	// (the shipped per-IP cap) plus a second IP exhausts the 25-conn
+	// pool, and the held connections never self-release — an outage
+	// that outlives the hiccup that caused it. These two pre-flights
+	// were the only handler paths in the API with no deadline at all
+	// (cold audit 2026-08-04).
+	preflightCtx, cancelPreflight := context.WithTimeout(r.Context(), tipStreamTickTimeout)
+	defer cancelPreflight()
+	first, firstSources, err := s.computeTip(preflightCtx, asset, quote, window)
 	if errors.Is(err, ErrPriceNotFound) {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/price-not-found",
