@@ -206,7 +206,13 @@ done
 echo "Checking TODO discipline..."
 # Every TODO/FIXME/XXX in Go code must be of the form TODO(#N):
 if [ -d internal ] || [ -d cmd ]; then
-  bad_todos=$(grep -rnE '//\s*(TODO|FIXME|XXX)[^(]' \
+  # Match EVERY TODO/FIXME/XXX, then let the second grep exempt only the
+  # tracked `(#123)` form. The pattern used to end in `[^(]`, which meant
+  # the first grep never fired on a parenthesised TODO at all — so the
+  # exemption grep was dead weight and `TODO(later):`, `FIXME(nobody)` and
+  # a bare `// TODO` at end-of-line all passed silently. Cold audit
+  # 2026-08-04.
+  bad_todos=$(grep -rnE '//[[:space:]]*(TODO|FIXME|XXX)' \
     internal/ cmd/ pkg/ 2>/dev/null | \
     grep -vE '//\s*(TODO|FIXME|XXX)\(#[0-9]+\)' || true)
   if [ -n "$bad_todos" ]; then

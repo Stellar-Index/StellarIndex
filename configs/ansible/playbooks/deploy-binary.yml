@@ -192,7 +192,14 @@
           {% endif %}
           /usr/local/bin/stellarindex-migrate -migrations /usr/local/share/stellarindex/migrations up
       register: migrate_result
-      changed_when: "'migrations applied' in migrate_result.stdout"
+      # `migrated to version` is what cmdUp actually prints on success; its
+      # only other output is "already at latest version — nothing to do".
+      # This used to test for "migrations applied", a string the binary
+      # never emits (it exists only in cmdStatus, which this task does not
+      # run), so EVERY deploy reported the schema step as ok/changed=0 —
+      # including deploys that applied new hypertables requiring a
+      # follow-up projector-replay (cold audit 2026-08-04).
+      changed_when: "'migrated to version' in migrate_result.stdout"
       failed_when: migrate_result.rc != 0
       when: not (migrations_skip | default(false) | bool)
 

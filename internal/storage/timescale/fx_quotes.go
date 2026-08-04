@@ -3,6 +3,7 @@ package timescale
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/big"
 	"sort"
 	"strings"
@@ -53,7 +54,21 @@ func (s *Store) InsertFXQuoteBatch(ctx context.Context, quotes []FXQuote) error 
 	}
 	defer func() { _ = tx.Rollback() }()
 	for _, q := range quotes {
-		if q.Ticker == "" || q.RateUSD <= 0 || q.InverseUSD <= 0 {
+		// IsNaN is not redundant. Every comparison with NaN is false in
+		// Go, so `<= 0` lets a NaN rate through — and Postgres does not
+		// catch it either: it orders NaN ABOVE every numeric, so the
+		// column's own `CHECK (rate_usd > 0)` accepts it, and lib/pq
+		// formats a float64 NaN as the literal `NaN`, which the numeric
+		// type takes. A NaN rate would carry a NaN inverse with it, and
+		// NaN is absorbing under sum(), so every usd_volume derived from
+		// that ticker — and every prices_* CAGG bucket containing one —
+		// becomes NaN. Latent today only because the one live producer
+		// pre-filters non-finite values; this is an exported method with
+		// a second caller, and both the guard and the CHECK read as
+		// "positive rates only" (cold audit 2026-08-04).
+		if q.Ticker == "" ||
+			math.IsNaN(q.RateUSD) || math.IsNaN(q.InverseUSD) ||
+			q.RateUSD <= 0 || q.InverseUSD <= 0 {
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, stmt,

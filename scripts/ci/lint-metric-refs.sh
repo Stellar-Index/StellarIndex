@@ -175,4 +175,7 @@ if [[ "$dead" -eq 0 ]]; then
 else
   echo "lint-metric-refs: FAIL — $dead dead/stale metric reference(s)." >&2
 fi
-exit "$dead"
+# exit 1, NOT exit "$dead": the shell truncates the status mod 256, so
+# exactly 256 dead references exited 0 (proven with a 128-alert x 2-tree
+# fixture). Cold audit 2026-08-04.
+[[ "$dead" -eq 0 ]] || exit 1
