@@ -662,11 +662,13 @@ func run(cfgPath string, dryRun bool) error {
 						// tx, or a future TransactionMeta version breaking
 						// GetTransactionEvents for every tx in lock-step) — a climb
 						// would otherwise masquerade as clean empty ledgers.
-						if ext.TxReadErrors > 0 || ext.TxEventReadErrors > 0 {
+						if ext.TxReadErrors > 0 || ext.TxEventReadErrors > 0 ||
+							ext.EntryMetaUnsupported > 0 {
 							logger.Warn("ch live-sink: ledger extracted with read undercount",
 								"ledger", ext.Ledger.LedgerSeq,
 								"tx_read_errors", ext.TxReadErrors,
-								"tx_event_read_errors", ext.TxEventReadErrors)
+								"tx_event_read_errors", ext.TxEventReadErrors,
+								"entry_meta_unsupported", ext.EntryMetaUnsupported)
 						}
 						chLiveSink.PushLedger(ext)
 					}

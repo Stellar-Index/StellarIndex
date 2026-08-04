@@ -212,6 +212,20 @@ func (f *Flusher) flushAt(ctx context.Context, now time.Time) {
 		)
 	}
 
+	// An unhandled TransactionMeta version stops the apply-phase entry
+	// change walk for that tx — every classic balance / trustline / offer
+	// / LP change in it becomes invisible, which downstream is
+	// indistinguishable from a ledger in which nothing happened. Same
+	// WARN treatment as the sibling tx-event break above, and for the
+	// same reason (cold audit 2026-08-04).
+	if delta := current.EntryMetaUnsupported - f.last.EntryMetaUnsupported; delta > 0 {
+		f.logger.Warn("dispatcher: unsupported TransactionMeta version during this flush window — apply-phase entry changes being skipped",
+			"delta", delta,
+			"total", current.EntryMetaUnsupported,
+			"window", f.interval.String(),
+		)
+	}
+
 	if len(rows) > 0 {
 		if err := f.store.InsertDecoderStats(ctx, rows); err != nil {
 			// INT-05 (audit-2026-07-23): do NOT advance f.last on a

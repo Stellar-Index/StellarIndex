@@ -135,9 +135,24 @@ func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.E
 		}
 		ak, known := o.lookupPreImage(ctx.Ledger, id)
 		if !known {
-			// Unwatched asset, or the pre-image STATE never reached us.
-			// Nothing attributable — skip rather than guess an asset.
-			return nil, nil
+			// Matches already said yes, so the memo held this claimable
+			// when the cheap filter ran — but hasPreImage does NOT apply
+			// the ledger guard that lookupPreImage does, so reaching here
+			// means the memo entry belongs to a PREVIOUS ledger. Nothing
+			// is attributable and we must not guess an asset.
+			//
+			// Returning (nil, nil) made that silent, and a dropped removal
+			// is not a dropped increment: the removal is the only thing
+			// that stops SumClaimableBalancesAtOrBefore counting a claimed
+			// balance, so the stale amount stays in the served total
+			// FOREVER, over-reporting supply with no counter moving.
+			// Erroring bumps the per-source decode-error counter instead
+			// (cold audit 2026-08-04).
+			return nil, fmt.Errorf(
+				"%w: removed claimable %s has no pre-image in ledger %d's memo — "+
+					"a watched balance was claimed and cannot be attributed, so its "+
+					"amount will stay in the served total",
+				ErrNotClaimable, id, ctx.Ledger)
 		}
 		return []consumer.Event{Observation{
 			ClaimableID:    id,

@@ -1,6 +1,7 @@
 package liquidity_pools
 
 import (
+	"errors"
 	"math/big"
 	"testing"
 	"time"
@@ -321,11 +322,25 @@ func TestPreImageMemoIsLedgerScoped(t *testing.T) {
 	routeLedger(t, disp, 600, &seq,
 		makeLPChangeOfType(t, xdr.LedgerEntryChangeTypeLedgerEntryCreated, 7, usdc, euro, 10, 20),
 	)
-	seq = 0
-	obs := routeLedger(t, disp, 601, &seq,
-		makeLPChangeOfType(t, xdr.LedgerEntryChangeTypeLedgerEntryRemoved, 7, usdc, euro, 10, 20),
-	)
-	if len(obs) != 0 {
-		t.Errorf("got %d observations for a removal with no same-ledger pre-image, want 0", len(obs))
+	// The removal must emit nothing AND must not do so silently. Matches
+	// consults hasPreImage, which does not apply lookupPreImage's ledger
+	// guard, so this is the one shape that reaches Decode unattributable
+	// — and a dropped removal over-reports supply forever, because the
+	// removal is absorbing, not a delta. It used to return (nil, nil)
+	// (cold audit 2026-08-04).
+	evs, err := disp.RouteEntryChange(dispatcher.LedgerEntryChangeContext{
+		Ledger:         601,
+		ClosedAt:       time.Unix(1_770_000_601, 0).UTC(),
+		IntraLedgerSeq: 0,
+		Change:         makeLPChangeOfType(t, xdr.LedgerEntryChangeTypeLedgerEntryRemoved, 7, usdc, euro, 10, 20),
+	})
+	if len(evs) != 0 {
+		t.Errorf("got %d observations for a removal with no same-ledger pre-image, want 0", len(evs))
+	}
+	if err == nil {
+		t.Error("RouteEntryChange returned nil error — an unattributable removal of a WATCHED pool must be counted, not silently dropped")
+	}
+	if !errors.Is(err, ErrUnsupportedLPType) {
+		t.Errorf("err = %v, want it to wrap ErrUnsupportedLPType", err)
 	}
 }

@@ -316,3 +316,63 @@ func TestExtractCallTrees_TopLevelIsAuthRootNotDuplicated(t *testing.T) {
 		t.Errorf("calls[0].CallPath = %v, want [] — the auth root IS the top-level call here", calls[0].CallPath)
 	}
 }
+
+// TestExtractCallTrees_mixedAuthEntries_nonTopIsNested is the
+// regression test for the cold audit of 2026-08-04.
+//
+// The mixed shape: a co-signed tx whose op invokes a_fn (authorized by
+// entry 0, which IS the op's top-level call) while a second, deeper
+// call b_fn carries its own auth entry signed by a different party.
+//
+// The old all-or-nothing re-rooting keyed on "did ANY walked call match
+// the top-level invocation" — entry 0 matched, so the re-root pass was
+// skipped and entry 1's root kept CallPath nil, i.e. was exported as
+// the op's ENTRY POINT alongside the real one. Downstream that reads as
+// call_depth 0 / call_kind 'top_level', so a router wrapped by an
+// aggregator is recorded as the entry point and TagTradesRoutedVia's
+// sub_invocation join misses.
+//
+// The pre-existing TestExtractCallTrees_multipleAuthEntries builds this
+// exact XDR but asserts only the call count and function names, so the
+// mislabelling was invisible. This test asserts the paths.
+func TestExtractCallTrees_mixedAuthEntries_nonTopIsNested(t *testing.T) {
+	rootA := authNodeContract(t, 0xAA, "a_fn")
+	rootB := authNodeContract(t, 0xBB, "b_fn")
+	op := opInvokeNoAuth(t, 0xAA, "a_fn")
+	op.Body.InvokeHostFunctionOp.Auth = []xdr.SorobanAuthorizationEntry{
+		{RootInvocation: rootA},
+		{RootInvocation: rootB},
+	}
+
+	got := extractInvokeContractCallTrees([]xdr.Operation{op})
+	if len(got[0]) != 2 {
+		t.Fatalf("got %d calls, want 2", len(got[0]))
+	}
+
+	top, nested := got[0][0], got[0][1]
+	if top.FunctionName != "a_fn" || nested.FunctionName != "b_fn" {
+		t.Fatalf("function names = [%q, %q], want [a_fn, b_fn]",
+			top.FunctionName, nested.FunctionName)
+	}
+
+	// Entry 0 IS the top-level call: it alone carries the root path.
+	if len(top.CallPath) != 0 {
+		t.Errorf("a_fn CallPath = %v, want empty (it IS the op's top-level call)", top.CallPath)
+	}
+
+	// Entry 1 is a separately-authorized NESTED call. It must not claim
+	// to be the entry point, and it must sit under the top-level call.
+	if len(nested.CallPath) == 0 {
+		t.Errorf("b_fn CallPath is empty — a non-top auth entry is being exported as the op's entry point (call_depth 0, call_kind 'top_level')")
+	}
+	if len(nested.CallPathContracts) < 2 || nested.CallPathContracts[0] != top.ContractID {
+		t.Errorf("b_fn CallPathContracts = %v, want it rooted under the top-level contract %s",
+			nested.CallPathContracts, top.ContractID)
+	}
+	// Its assigned index must not collide with a genuine sibling of the
+	// top-level call (entry 0 has no sub-invocations here, so index 0 is
+	// free; the guarantee under test is that the two paths differ).
+	if len(top.CallPath) == len(nested.CallPath) {
+		t.Errorf("top and nested share path depth %d — identities (TxHash, OpIndex, CallPath) must differ", len(top.CallPath))
+	}
+}

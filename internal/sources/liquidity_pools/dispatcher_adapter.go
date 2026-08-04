@@ -141,8 +141,19 @@ func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.E
 		}
 		sides, known := o.lookupPreImage(ctx.Ledger, poolID)
 		if !known {
-			// Unwatched pool, or the pre-image STATE never reached us.
-			return nil, nil
+			// Matches already said yes on the memo, but hasPreImage does
+			// not apply lookupPreImage's ledger guard — so the entry
+			// belongs to a PREVIOUS ledger and nothing is attributable.
+			// Silent here meant a removed pool's reserves stayed in
+			// SumLPReservesAtOrBefore permanently (a removal is absorbing,
+			// not a delta), over-reporting supply with nothing counting
+			// the loss. Error so it lands on the per-source decode-error
+			// counter (cold audit 2026-08-04).
+			return nil, fmt.Errorf(
+				"%w: removed pool %s has no pre-image in ledger %d's memo — "+
+					"a watched pool's reserves cannot be attributed, so they "+
+					"will stay in the served total",
+				ErrUnsupportedLPType, poolID, ctx.Ledger)
 		}
 		outs := make([]consumer.Event, 0, len(sides))
 		for _, ak := range sides {

@@ -1,6 +1,7 @@
 package claimable_balances
 
 import (
+	"errors"
 	"math/big"
 	"testing"
 	"time"
@@ -287,11 +288,25 @@ func TestPreImageMemoIsLedgerScoped(t *testing.T) {
 	routeLedger(t, disp, 600, &seq,
 		makeCBChangeOfType(t, xdr.LedgerEntryChangeTypeLedgerEntryCreated, 0x22, "USDC", gIssuer, 10),
 	)
-	seq = 0
-	obs := routeLedger(t, disp, 601, &seq,
-		makeCBChangeOfType(t, xdr.LedgerEntryChangeTypeLedgerEntryRemoved, 0x22, "USDC", gIssuer, 10),
-	)
-	if len(obs) != 0 {
-		t.Errorf("got %d observations for a removal with no same-ledger pre-image, want 0", len(obs))
+	// The removal must emit nothing AND must not do so silently. Matches
+	// consults hasPreImage, which does not apply lookupPreImage's ledger
+	// guard, so this is the one shape that reaches Decode unattributable
+	// — and a dropped removal over-reports supply forever, because the
+	// removal is the only thing that stops the claimed balance being
+	// counted. It used to return (nil, nil) (cold audit 2026-08-04).
+	evs, err := disp.RouteEntryChange(dispatcher.LedgerEntryChangeContext{
+		Ledger:         601,
+		ClosedAt:       time.Unix(1_770_000_601, 0).UTC(),
+		IntraLedgerSeq: 0,
+		Change:         makeCBChangeOfType(t, xdr.LedgerEntryChangeTypeLedgerEntryRemoved, 0x22, "USDC", gIssuer, 10),
+	})
+	if len(evs) != 0 {
+		t.Errorf("got %d observations for a removal with no same-ledger pre-image, want 0", len(evs))
+	}
+	if err == nil {
+		t.Error("RouteEntryChange returned nil error — an unattributable removal of a WATCHED asset must be counted, not silently dropped")
+	}
+	if !errors.Is(err, ErrNotClaimable) {
+		t.Errorf("err = %v, want it to wrap ErrNotClaimable", err)
 	}
 }
