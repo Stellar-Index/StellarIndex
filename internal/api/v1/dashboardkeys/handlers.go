@@ -543,11 +543,24 @@ func validateCIDROrIP(entry string) string {
 // account's monthly-quota ceiling, preserving the "0 = inherit /
 // unlimited" sentinel.
 //
-//   - requested <= 0: pass through unchanged (0 stays the "inherit the
-//     account override, or unlimited if none" sentinel the auth cascade
-//     keys on — see internal/auth/apikey_postgres.go). Clamping this to
-//     a positive ceiling would silently START metering a key the
-//     customer left unset.
+//   - requested <= 0 WITH an account override: pass through unchanged.
+//     0 stays the "inherit the account override" sentinel the auth
+//     cascade keys on (internal/auth/apikey_postgres.go), and that
+//     override is the mechanism for issuing a higher-cap key — set it on
+//     the account, mint with the quota unset, the key inherits it.
+//   - requested <= 0 with NO override: fall back to the tier ceiling.
+//
+// This used to pass 0 through in BOTH cases, on the stated rationale
+// that clamping "would silently START metering a key the customer left
+// unset". That rationale inverted the intent: apikey_postgres resolves
+// 0 → the account override → 0, and the monthly-quota middleware treats
+// <= 0 as pass-through, so a key minted with the natural body
+// ({"name": "..."}) was metered by NOTHING. The tier ladder therefore
+// bound only customers who volunteered a number — the honest ones — and
+// a Free key could run 60rpm ≈ 2.6M requests/month against an
+// advertised 100k ceiling. The sibling clampRateLimitToTier has no such
+// hole because parseCreateRequest gives rate_limit_per_min a positive
+// default, so its clamp always bites (cold audit 2026-08-04).
 //   - requested > 0: clamp to min(requested, ceiling), where the
 //     ceiling is the operator's [platform.Account.MonthlyRequestQuotaOverride]
 //     when set (> 0), else the tier default [platform.Tier.MaxMonthlyQuota].
@@ -557,12 +570,18 @@ func validateCIDROrIP(entry string) string {
 // FLOOR (clampRateLimitToTier + the account rate-limit override at
 // auth time). audit-2026-07 (MEDIUM).
 func clampMonthlyQuotaToAccount(requested int64, acct platform.Account) int64 {
-	if requested <= 0 {
+	if requested <= 0 && acct.MonthlyRequestQuotaOverride > 0 {
+		// Inherit the operator's explicit override at auth time.
 		return requested
 	}
 	ceiling := acct.MonthlyRequestQuotaOverride
 	if ceiling <= 0 {
 		ceiling = acct.Tier.MaxMonthlyQuota()
+	}
+	if requested <= 0 {
+		// Unset, and no override to inherit: meter at the tier's
+		// advertised cap rather than not at all.
+		return ceiling
 	}
 	if requested > ceiling {
 		return ceiling
