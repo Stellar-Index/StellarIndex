@@ -297,6 +297,7 @@ const nativeAssetID = "native"
 // indexStellarEntries threads every Stellar network entry into the
 // asset_id + code indexes, surfacing collisions as errors.
 func (cat *Catalogue) indexStellarEntries(vc *VerifiedCurrency) error {
+	indexed := false
 	for _, n := range vc.Issuance {
 		if n.Network != "stellar" {
 			continue
@@ -335,8 +336,46 @@ func (cat *Catalogue) indexStellarEntries(vc *VerifiedCurrency) error {
 					codeKey, existing.Ticker, vc.Ticker)
 			}
 			cat.byStellarCode[codeKey] = vc
+			indexed = true
 		}
 	}
+	if !indexed {
+		return cat.indexTickerOnlyEntry(vc)
+	}
+	return nil
+}
+
+// indexTickerOnlyEntry indexes a catalogue entry that has NO Stellar
+// issuance, keyed on its ticker.
+//
+// Such an entry never enters indexStellarEntries' issuance loop, so its
+// ticker never reached byStellarCode and StellarCollision could not speak
+// about it. That is the same gap the native-XLM branch closes, and it is
+// much wider: it covers every `reference_only` entry (USDT, BTC, ETH,
+// SOL, BNB, XRP, ADA, DOGE, AVAX, POL, DOT, LINK, UNI, AAVE, WBTC) and
+// every fiat ticker.
+//
+// Before this, byStellarCode held 11 keys — so those were the ONLY codes
+// an impersonation could ever be reported for. Measured on r1: 22,496
+// codes are claimed by more than one issuer, covering 132,808 of 194,034
+// classic assets, and `?code=XRP` returned 645 rows with NOT ONE flagged,
+// one of them served with a market_cap_usd of $109,504,500.
+//
+// The reasoning is the native-XLM one: no legitimate classic asset can
+// bear a ticker this catalogue has verified as belonging to an
+// off-Stellar asset, so EVERY classic `USDT-G…` is by construction an
+// impersonator and every issuer is the right answer to report.
+func (cat *Catalogue) indexTickerOnlyEntry(vc *VerifiedCurrency) error {
+	codeKey := strings.ToUpper(vc.Ticker)
+	if codeKey == "" {
+		return nil
+	}
+	if existing, dup := cat.byStellarCode[codeKey]; dup {
+		return fmt.Errorf(
+			"currency: ticker %q claimed by both %q and %q",
+			codeKey, existing.Ticker, vc.Ticker)
+	}
+	cat.byStellarCode[codeKey] = vc
 	return nil
 }
 
