@@ -15,6 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -138,7 +139,6 @@ func checkXLMBaseBound(groups []timescale.TradeValuationGroup, spec *timescale.U
 	}
 	tolLo := new(big.Rat).SetFloat64(1 - xlmBaseBoundTolerance)
 	tolHi := new(big.Rat).SetFloat64(1 + xlmBaseBoundTolerance)
-	stroops := new(big.Rat).SetInt64(10_000_000)
 
 	var violations, listed int
 	for _, g := range groups {
@@ -154,7 +154,21 @@ func checkXLMBaseBound(groups []timescale.TradeValuationGroup, spec *timescale.U
 		if !sok || !bok || base.Sign() <= 0 {
 			continue
 		}
-		expected := new(big.Rat).Quo(base, stroops)
+		// Base-leg scale is a CONNECTOR property, not an asset one
+		// (CS-040, and the /v1/history 10x lesson): on-chain DEX rows
+		// stamp stroops (1e7), off-chain CEX rows 1e8, FX pollers 1e6.
+		// The first run of this bound hardcoded 1e7 and flagged every
+		// honest kraken/bitstamp XLM/EUR day at ratio ≈ 0.100 — the
+		// check was wrong, not the data. Same subclass dispatch the
+		// insert path's usdVolumeDecimals uses.
+		baseDecimals := int64(7)
+		md := external.Lookup(g.Source)
+		switch md.Subclass {
+		case external.SubclassCEX, external.SubclassFX:
+			baseDecimals = int64(md.AmountScaleDecimals())
+		}
+		scaleDen := new(big.Rat).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(baseDecimals), nil))
+		expected := new(big.Rat).Quo(base, scaleDen)
 		expected.Mul(expected, dayVWAP)
 		if expected.Sign() <= 0 {
 			continue
