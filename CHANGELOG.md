@@ -16,6 +16,85 @@ against.
 ## [Unreleased]
 
 ### Added
+- **`classic_assets.slug` is finally populated** (migration 0134 + the
+  writer). Migration 0023 documented a disambiguated slug and bound a
+  literal NULL for its whole life — 194,057 rows, 0 slugs — so every
+  reader's `COALESCE(slug, code)` made the bare CODE the public slug
+  and the explorer's slug-keyed cache crowned an arbitrary issuer as
+  `/assets/USDT`. Every classic asset now gets `lower(code)-issuer8`
+  (full asset_id on the astronomically-rare collision, proven against
+  a live Postgres with all three collision classes), new rows are
+  stamped at insert with a unique-violation fallback, and existing
+  slugs are never rewritten. Bare-code URLs now resolve through the
+  verified-currency catalogue or 404 — same behaviour as the API. The
+  explorer's residual-duplicate tie-break is now first-row-wins
+  (highest volume) on both cache maps instead of two opposite policies
+  selected by URL casing.
+- **`verify-usd-volume` gained the XLM-BASE BOUND** — the check whose
+  absence let the tier-3b poisoning ship invisible for 13 days.
+  Estimated-tier day-groups whose BASE leg is XLM (any canonical
+  spelling) must land within ±30% of Σbase/1e7 × the day's CEX-fed
+  XLM/USD VWAP; violations exit non-zero alongside the exact-tier
+  identities. The 2026-08-04 incident rows were 10×–10⁶× outside the
+  band; ordinary intraday movement cannot trip it.
+
+- **Phoenix `admin` rotation events now project** to the new
+  `phoenix_admin_events` hypertable (migration 0132) — the four
+  `("XYK Pool: ", <phrase>)` steps mapped to slugs
+  (`replace_requested`/`replace_set`/`undo`/`accepted`), with the admin
+  address from the body when present. 0 mainnet occurrences to date —
+  built defensively so the first rotation lands rather than being
+  dropped. This completes the every-event projection pass across the
+  integrated AMMs (soroswap / aquarius / phoenix).
+- **Phoenix `initialize` events now project** to the new
+  `phoenix_initialize` hypertable (migration 0131) — the two per-pool-
+  deploy token announcements (`XYK LP token_a`/`token_b`), each carrying
+  a token contract address. Previously classified (actionInitialize) but
+  dropped at the decoder. Pool-gated (ADR-0035); golden-tested against
+  real lake bodies. Backfill with `projector-replay -source phoenix`.
+- **Aquarius circuit-breaker toggles now project** to the new
+  `aquarius_kill_switches` hypertable (migration 0130) — the eight
+  `kill_*`/`unkill_*` actions (deposit/swap/claim/gauges_claim). Pure
+  toggle signals (single topic, SCV_VOID body), so the row is identity +
+  action. Previously recognized-only. This completes Aquarius: **every
+  emitted topic is now projected or registered** — no recognized-but-
+  unstored residual remains.
+- **Aquarius protocol-fee events now project** to the new
+  `aquarius_protocol_fee` hypertable (migration 0129) — `set_protocol_fee`
+  (per-token old→new fee, Map of u32) and `claim_protocol_fee`
+  (recipient + swept i128, one row per token), discriminated by `kind`.
+  Previously classified but `Matches()`-dropped. Pool-gated (ADR-0035);
+  golden-tested against real lake bodies. Backfill with
+  `projector-replay -source aquarius`.
+- **Aquarius `reserves_sync` events now project** to the new
+  `aquarius_reserves_sync` hypertable (migration 0128). Previously
+  classified but `Matches()`-dropped (recognized-only), so the raw
+  events sat unserved in the lake. Verified NOT redundant with
+  `update_reserves`: on the same pool+tx the two carry different value
+  vectors (reserves_sync is a distinct reserve-sync signal). Reuses the
+  `Vec<i128>` reserves decoder, fanned one row per token position;
+  pool-gated (ADR-0035). Backfill with `projector-replay -source aquarius`.
+- **Soroswap `deposit` / `withdraw` (LP add / remove) events now project**
+  to the new `soroswap_liquidity` hypertable (migration 0127). These events
+  were classified + Matched but silently dropped at the decoder — the raw
+  events sat in the ClickHouse lake unserved, violating the every-event
+  mission. The decoder now emits a `LiquidityEvent` (both amounts, LP shares
+  minted/burned, post-state reserves, provider) verified byte-exact against
+  real mainnet lake bodies; token identities resolve from the factory
+  registry (best-effort, row never dropped). Backfill full history with
+  `stellarindex-ops projector-replay -source soroswap`.
+
+### Changed
+- **The `/v1/assets` listing `price_usd` now respects the thin-market
+  substance gate** — the last aggregated-price surface outside it. The
+  listing's catalogue SQL prices rows from a 7-day window + XLM
+  triangulation, entirely outside `/v1/price`'s read path, so a
+  dust-authored market kept a listed headline price after `/v1/price`
+  started withholding it. Withheld rows now lose `price_usd` and the
+  change pills derived from it (raw facts — volume, supply, sparklines
+  — stay), which also removes them from any price-keyed ranking, per
+  the "listings and rankings must use the guarded surface only" rule.
+
 - **Thin-market substance gate: aggregated prices are now withheld for
   on-chain pairs with no real trailing market** (2026-08-04 valuation
   incident, follow-up to the XLM-leg valuation fix). On a permissionless
@@ -38,7 +117,6 @@ against.
   (`internal/pricingguard.SubstanceGate`,
   `timescale.PairMarketSubstance`.)
 
-### Changed
 - **The aggregator's `min_usd_volume` floor now fails CLOSED on an
   unvaluable on-chain quote.** Since 2026-07-10 a configured pair whose
   on-chain quote asset had no recognised USD peg published its VWAP
@@ -52,77 +130,6 @@ against.
   under `stellarindex_aggregator_dropped_windows_total{reason=
   "min_usd_volume_unvaluable"}`.
 
-### Fixed
-- **Explorer asset pages: the chart now opens in USD to match the
-  header, and every headline price says what it is** (operator report:
-  `/assets/USDT` header $0.13 vs chart 0.76 — the chart was silently
-  quoting in XLM while the header quoted USD). The chart's quote
-  toggle still offers XLM, as an explicit user action. The sidebar
-  price and the Price panel now carry a provenance caption — "1-min
-  VWAP · USD", "triangulated via XLM", or "listing snapshot · not a
-  live aggregated price" for the build-time fallback (which can lag
-  hours–days and was previously indistinguishable from a live VWAP) —
-  and the false comments claiming a `<LivePrice>` client refresh
-  exists on these pages were corrected (it exists only on /embed).
-  Client-side XLM triangulation is documented as gate-respecting: it
-  only composes legs `/v1/price` was independently willing to publish,
-  so a substance-withheld pair cannot be resurrected from its legs.
-- **Unverified ticker look-alikes no longer publish a market cap, and
-  reference-only tickers get their warning back** (2026-08-04 asset-
-  identity follow-ups). Three coupled fixes: (1) an asset flagged
-  `unverified_ticker_collision` now has `market_cap_usd`/`fdv_usd`
-  suppressed on both the listing and detail paths — `XRP-GBXRPL45…` was
-  publishing a $109.5M cap under XRP's ticker, priced off its own
-  manipulable market; (2) the dust-liquidity guard now also suppresses
-  when the venue count is UNMEASURED (0) but a positive sub-floor
-  volume was measured — previously `sourceCount != 1` meant an
-  unmeasured count could never suppress, which is exactly where
-  impersonator rows lived (native keeps an explicit carve-out on both
-  paths); (3) `applyUnverifiedWarning` no longer bails for
-  reference-only tickers (USDT, XRP, BTC, … — flaggable since
-  `52b04a63` but the detail path's "unreachable" StellarEntry-nil
-  guard silently killed the warning, the envelope flag, and the
-  explorer banner for them). Reference-only warnings carry an EMPTY
-  `verified_asset_id` — there is nothing on Stellar to redirect to.
-  Three Go comments and the published `/v1/mev` OpenAPI description all
-  stated that "the served rows don't carry trade direction, so front/back
-  opposition is not verified". The rows *do* carry it — `trades.base_asset`
-  is the direction — so the check is possible and simply absent. Measured
-  on live `/v1/mev`: 196 of 200 sandwich events have both bracket legs on
-  the same side, which cannot be a sandwich, at a median notional of
-  $0.10. The notes and the API description now say what is actually true,
-  and the description warns that `bracket`/`victim` describe ledger
-  position rather than established behaviour and are not accusations.
-  The check itself is not added here: the base/quote sign convention is
-  inverted between sources (sdex base is what the maker sold; aquarius
-  base is `token_in`, what the taker sold), so a direction guard needs a
-  per-source convention — flagged for a design decision.
-- **The edge shell-fallback handlers no longer inherit the client's
-  conditional-request headers** (cold audit). `new Request(url, request)`
-  copies every header, including `if-none-match` — a validator describing
-  the long-tail URL the client asked for, not the shell asset being read.
-  A match would have made the asset server answer 304 with a null body,
-  which `shell.ok` reads as failure, turning a healthy cache revalidation
-  into a 503 with an empty body on every repeat visit and every
-  search-engine recrawl. Latent rather than live: production emits no
-  ETag on these routes (verified), so no client has a validator to send —
-  but that is the platform's current behaviour, not a guarantee these
-  handlers make. The sub-fetch is now unconditional, with a regression
-  test; a second test pins each handler to its own shell path, which the
-  previous fake (matching on `/shell/` alone) could not detect.
-- **`/v1/assets` served catalogue rows with `decimals: 0` against a
-  7-decimal supply**, so every consumer scaling by `10^decimals`
-  rendered circulating supply 10,000,000x too large (cold audit,
-  confirmed on r1: XLM's row served `decimals: 0` with
-  `342797138733487851`, which the explorer displayed as
-  342,797,138,733,487,872 against the ~34.3B its own
-  `market_cap_usd`/`price_usd` implies; same for USDC, AQUA, EURC,
-  PYUSD, YXLM and others). `mergeTwinStats` copied the classic twin's
-  supply onto the catalogue row without its scale — a catalogue row's
-  own `SupplyDecimals` is 0 because the curated seed states fiat M2 in
-  whole units. The decimals now travel with the supply.
-
-### Changed
 - **The explorer's vitest suite now runs in CI and `verify.sh`.** 209
   tests across 49 files were green and dead — wired into neither gate —
   including `safe-domain.test.ts` (the `isSafeHomeDomain` /
@@ -348,84 +355,76 @@ against.
   the real failure modes (append-death leaves sweeps green; corrupt
   in-window objects surface under `verify_failing`, not drift).
 
-### Added
-- **Phoenix `admin` rotation events now project** to the new
-  `phoenix_admin_events` hypertable (migration 0132) — the four
-  `("XYK Pool: ", <phrase>)` steps mapped to slugs
-  (`replace_requested`/`replace_set`/`undo`/`accepted`), with the admin
-  address from the body when present. 0 mainnet occurrences to date —
-  built defensively so the first rotation lands rather than being
-  dropped. This completes the every-event projection pass across the
-  integrated AMMs (soroswap / aquarius / phoenix).
-- **Phoenix `initialize` events now project** to the new
-  `phoenix_initialize` hypertable (migration 0131) — the two per-pool-
-  deploy token announcements (`XYK LP token_a`/`token_b`), each carrying
-  a token contract address. Previously classified (actionInitialize) but
-  dropped at the decoder. Pool-gated (ADR-0035); golden-tested against
-  real lake bodies. Backfill with `projector-replay -source phoenix`.
-- **Aquarius circuit-breaker toggles now project** to the new
-  `aquarius_kill_switches` hypertable (migration 0130) — the eight
-  `kill_*`/`unkill_*` actions (deposit/swap/claim/gauges_claim). Pure
-  toggle signals (single topic, SCV_VOID body), so the row is identity +
-  action. Previously recognized-only. This completes Aquarius: **every
-  emitted topic is now projected or registered** — no recognized-but-
-  unstored residual remains.
-- **Aquarius protocol-fee events now project** to the new
-  `aquarius_protocol_fee` hypertable (migration 0129) — `set_protocol_fee`
-  (per-token old→new fee, Map of u32) and `claim_protocol_fee`
-  (recipient + swept i128, one row per token), discriminated by `kind`.
-  Previously classified but `Matches()`-dropped. Pool-gated (ADR-0035);
-  golden-tested against real lake bodies. Backfill with
-  `projector-replay -source aquarius`.
-- **Aquarius `reserves_sync` events now project** to the new
-  `aquarius_reserves_sync` hypertable (migration 0128). Previously
-  classified but `Matches()`-dropped (recognized-only), so the raw
-  events sat unserved in the lake. Verified NOT redundant with
-  `update_reserves`: on the same pool+tx the two carry different value
-  vectors (reserves_sync is a distinct reserve-sync signal). Reuses the
-  `Vec<i128>` reserves decoder, fanned one row per token position;
-  pool-gated (ADR-0035). Backfill with `projector-replay -source aquarius`.
-- **Soroswap `deposit` / `withdraw` (LP add / remove) events now project**
-  to the new `soroswap_liquidity` hypertable (migration 0127). These events
-  were classified + Matched but silently dropped at the decoder — the raw
-  events sat in the ClickHouse lake unserved, violating the every-event
-  mission. The decoder now emits a `LiquidityEvent` (both amounts, LP shares
-  minted/burned, post-state reserves, provider) verified byte-exact against
-  real mainnet lake bodies; token identities resolve from the factory
-  registry (best-effort, row never dropped). Backfill full history with
-  `stellarindex-ops projector-replay -source soroswap`.
-
-### Security
-- **Account kill switch now evicts cached API keys** (auth audit) — on
-  `auth_backend=postgres` a suspended/closed account's keys kept authenticating
-  for up to the ~1h read-through-cache TTL, because the cache-hit path checked
-  only the key's revoke/expiry and the operator override evicted nothing. The
-  override now evicts every cached key for the account on an active→non-active
-  transition (reusing the tier-clamp `ListForAccount` + cache-invalidate seam);
-  the fail-closed cache-miss path keeps it durable. Redis backend was already
-  covered; legacy `signup-<hash>` keys remain TTL-bounded (follow-up noted).
-- **Operator-tier API keys are bound by their own scope/permission gates** (auth
-  audit) — a deliberately-narrowed operator key was not actually confined
-  (`checkKeyPolicy` returned before the scope + permission checks). Operator
-  subjects now flow through both gates; a default full-privilege operator key
-  (empty scopes, all-permissions) is unchanged, and admin access stays gated on
-  operator tier, not scope.
-- **Webhook SSRF guard closes IPv6 translation/legacy bypasses** (webhook audit) —
-  the dial-time SSRF block-list blocked NAT64 (`64:ff9b::/96`) but missed the
-  sibling 6to4 (`2002::/16`), IPv4-compatible (`::a.b.c.d`), and site-local
-  (`fec0::/10`) forms, so an IPv6 address embedding a private/loopback/cloud-metadata
-  IPv4 could slip past to a customer-controlled webhook URL. All three are now
-  blocked (fail-safe additions; public IPv6/IPv4 unaffected).
-- **SEP-10 validator wiring is fail-closed** (auth audit) — the two-phase
-  construction never wired the replay-guarded validator for a configured
-  deployment and had a latent fail-open rebuild path (a boot-time Redis error
-  would have served SEP-10 with no replay guard). Collapsed into a single
-  construction: configured + Redis → the replay-guarded validator in every mode;
-  configured + no Redis → hard error under `auth_mode=sep10`, else Noop — never a
-  guard-free validator; unconfigured → Noop (still boots). Corrected the
-  misleading "guard always wired" comments.
-
 ### Fixed
+- **Explorer asset pages: the chart now opens in USD to match the
+  header, and every headline price says what it is** (operator report:
+  `/assets/USDT` header $0.13 vs chart 0.76 — the chart was silently
+  quoting in XLM while the header quoted USD). The chart's quote
+  toggle still offers XLM, as an explicit user action. The sidebar
+  price and the Price panel now carry a provenance caption — "1-min
+  VWAP · USD", "triangulated via XLM", or "listing snapshot · not a
+  live aggregated price" for the build-time fallback (which can lag
+  hours–days and was previously indistinguishable from a live VWAP) —
+  and the false comments claiming a `<LivePrice>` client refresh
+  exists on these pages were corrected (it exists only on /embed).
+  Client-side XLM triangulation is documented as gate-respecting: it
+  only composes legs `/v1/price` was independently willing to publish,
+  so a substance-withheld pair cannot be resurrected from its legs.
+- **Unverified ticker look-alikes no longer publish a market cap, and
+  reference-only tickers get their warning back** (2026-08-04 asset-
+  identity follow-ups). Three coupled fixes: (1) an asset flagged
+  `unverified_ticker_collision` now has `market_cap_usd`/`fdv_usd`
+  suppressed on both the listing and detail paths — `XRP-GBXRPL45…` was
+  publishing a $109.5M cap under XRP's ticker, priced off its own
+  manipulable market; (2) the dust-liquidity guard now also suppresses
+  when the venue count is UNMEASURED (0) but a positive sub-floor
+  volume was measured — previously `sourceCount != 1` meant an
+  unmeasured count could never suppress, which is exactly where
+  impersonator rows lived (native keeps an explicit carve-out on both
+  paths); (3) `applyUnverifiedWarning` no longer bails for
+  reference-only tickers (USDT, XRP, BTC, … — flaggable since
+  `52b04a63` but the detail path's "unreachable" StellarEntry-nil
+  guard silently killed the warning, the envelope flag, and the
+  explorer banner for them). Reference-only warnings carry an EMPTY
+  `verified_asset_id` — there is nothing on Stellar to redirect to.
+  Three Go comments and the published `/v1/mev` OpenAPI description all
+  stated that "the served rows don't carry trade direction, so front/back
+  opposition is not verified". The rows *do* carry it — `trades.base_asset`
+  is the direction — so the check is possible and simply absent. Measured
+  on live `/v1/mev`: 196 of 200 sandwich events have both bracket legs on
+  the same side, which cannot be a sandwich, at a median notional of
+  $0.10. The notes and the API description now say what is actually true,
+  and the description warns that `bracket`/`victim` describe ledger
+  position rather than established behaviour and are not accusations.
+  The check itself is not added here: the base/quote sign convention is
+  inverted between sources (sdex base is what the maker sold; aquarius
+  base is `token_in`, what the taker sold), so a direction guard needs a
+  per-source convention — flagged for a design decision.
+- **The edge shell-fallback handlers no longer inherit the client's
+  conditional-request headers** (cold audit). `new Request(url, request)`
+  copies every header, including `if-none-match` — a validator describing
+  the long-tail URL the client asked for, not the shell asset being read.
+  A match would have made the asset server answer 304 with a null body,
+  which `shell.ok` reads as failure, turning a healthy cache revalidation
+  into a 503 with an empty body on every repeat visit and every
+  search-engine recrawl. Latent rather than live: production emits no
+  ETag on these routes (verified), so no client has a validator to send —
+  but that is the platform's current behaviour, not a guarantee these
+  handlers make. The sub-fetch is now unconditional, with a regression
+  test; a second test pins each handler to its own shell path, which the
+  previous fake (matching on `/shell/` alone) could not detect.
+- **`/v1/assets` served catalogue rows with `decimals: 0` against a
+  7-decimal supply**, so every consumer scaling by `10^decimals`
+  rendered circulating supply 10,000,000x too large (cold audit,
+  confirmed on r1: XLM's row served `decimals: 0` with
+  `342797138733487851`, which the explorer displayed as
+  342,797,138,733,487,872 against the ~34.3B its own
+  `market_cap_usd`/`price_usd` implies; same for USDC, AQUA, EURC,
+  PYUSD, YXLM and others). `mergeTwinStats` copied the classic twin's
+  supply onto the catalogue row without its scale — a catalogue row's
+  own `SupplyDecimals` is 0 because the curated seed states fiat M2 in
+  whole units. The decimals now travel with the supply.
+
 - **VWAP no longer over-weights higher-scale sources on mixed-scale windows**
   (aggregate audit) — the fiat-combine (`/v1/vwap`, single-bar `/v1/ohlc`) and
   `/v1/price/tip` + SSE paths merge on-chain (7dp) and CEX (8dp) trades into one
@@ -503,6 +502,37 @@ against.
   per-tx relayer-attribution (`Observer`) capability that isn't wired in production;
   the CEX/FX `decimals=14` assumption (only DEX is contract-verified) is flagged in
   a code caveat.
+
+### Security
+- **Account kill switch now evicts cached API keys** (auth audit) — on
+  `auth_backend=postgres` a suspended/closed account's keys kept authenticating
+  for up to the ~1h read-through-cache TTL, because the cache-hit path checked
+  only the key's revoke/expiry and the operator override evicted nothing. The
+  override now evicts every cached key for the account on an active→non-active
+  transition (reusing the tier-clamp `ListForAccount` + cache-invalidate seam);
+  the fail-closed cache-miss path keeps it durable. Redis backend was already
+  covered; legacy `signup-<hash>` keys remain TTL-bounded (follow-up noted).
+- **Operator-tier API keys are bound by their own scope/permission gates** (auth
+  audit) — a deliberately-narrowed operator key was not actually confined
+  (`checkKeyPolicy` returned before the scope + permission checks). Operator
+  subjects now flow through both gates; a default full-privilege operator key
+  (empty scopes, all-permissions) is unchanged, and admin access stays gated on
+  operator tier, not scope.
+- **Webhook SSRF guard closes IPv6 translation/legacy bypasses** (webhook audit) —
+  the dial-time SSRF block-list blocked NAT64 (`64:ff9b::/96`) but missed the
+  sibling 6to4 (`2002::/16`), IPv4-compatible (`::a.b.c.d`), and site-local
+  (`fec0::/10`) forms, so an IPv6 address embedding a private/loopback/cloud-metadata
+  IPv4 could slip past to a customer-controlled webhook URL. All three are now
+  blocked (fail-safe additions; public IPv6/IPv4 unaffected).
+- **SEP-10 validator wiring is fail-closed** (auth audit) — the two-phase
+  construction never wired the replay-guarded validator for a configured
+  deployment and had a latent fail-open rebuild path (a boot-time Redis error
+  would have served SEP-10 with no replay guard). Collapsed into a single
+  construction: configured + Redis → the replay-guarded validator in every mode;
+  configured + no Redis → hard error under `auth_mode=sep10`, else Noop — never a
+  guard-free validator; unconfigured → Noop (still boots). Corrected the
+  misleading "guard always wired" comments.
+
 
 ## [v0.24.0] — 2026-08-02
 

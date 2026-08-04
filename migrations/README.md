@@ -265,6 +265,7 @@ migration lands.
 | 0131 | [`0131_create_phoenix_initialize.up.sql`](0131_create_phoenix_initialize.up.sql) | Phoenix pool contracts emit two `initialize` events at deploy — one |
 | 0132 | [`0132_create_phoenix_admin_events.up.sql`](0132_create_phoenix_admin_events.up.sql) | Phoenix pool contracts emit four admin-rotation governance events |
 | 0133 | [`0133_fix_api_key_prefix_check.up.sql`](0133_fix_api_key_prefix_check.up.sql) | Migration 0027 pinned the prefix regex to the PRE-REBRAND namespace: |
+| 0134 | [`0134_populate_classic_asset_slugs.up.sql`](0134_populate_classic_asset_slugs.up.sql) | Backfill the classic_assets.slug disambiguator 0023 documented but never wrote (194k NULLs → code-issuer8; identity incident 2026-08-04) |
 
 
 F-1241 (codex audit-2026-05-12): the table previously stopped at

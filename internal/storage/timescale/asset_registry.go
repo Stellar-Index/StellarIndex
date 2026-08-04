@@ -92,6 +92,18 @@ func (s *Store) registerClassicAssetSeen(
 	// behind. Without this, replaying an older window after the
 	// row already exists would leave first_seen_ledger pinned at
 	// the original (later) ledger — wrong by definition. F-1239.
+	//
+	// slug (2026-08-04, migration 0134): NEW rows are stamped with the
+	// disambiguated form migration 0023 documented but never
+	// implemented — lower(code)-<first 8 of issuer> — instead of the
+	// literal NULL this INSERT bound for its whole life. The NULL made
+	// every reader's COALESCE(slug, code) serve the bare CODE as the
+	// public slug, so 5+ unrelated issuers of "USDT" all published the
+	// SAME slug and the explorer's slug-keyed cache crowned an
+	// arbitrary winner as /assets/USDT (2026-08-04 identity incident).
+	// ON CONFLICT the EXISTING slug is kept — the backfill migration
+	// owns historical rows, and a slug is a public URL: it must never
+	// silently change once issued.
 	const q = `
 		INSERT INTO classic_assets (
 			asset_id, code, issuer_g_strkey, slug,
@@ -99,7 +111,7 @@ func (s *Store) registerClassicAssetSeen(
 			last_seen_at,  last_seen_ledger,
 			observation_count
 		) VALUES (
-			$1, $2, $3, NULL,
+			$1, $2, $3, lower($2) || '-' || lower(left($3, 8)),
 			$4, $5, $4, $5, 1
 		)
 		ON CONFLICT (asset_id) DO UPDATE SET
@@ -113,7 +125,39 @@ func (s *Store) registerClassicAssetSeen(
 		assetID, asset.Code, asset.Issuer,
 		observedAt.UTC(), int(ledger),
 	); err != nil {
-		return fmt.Errorf("timescale: registerClassicAssetSeen %s: %w", assetID, err)
+		// slug is UNIQUE, and the 8-char issuer prefix leaves an
+		// astronomically small (but non-zero) same-code collision
+		// window. A collision must not sink trade ingest: retry once
+		// with the fully-qualified asset_id as the slug — unique by
+		// construction (it IS the primary key's value), same tier-3
+		// fallback the 0134 backfill uses.
+		if isUniqueViolation(err) {
+			const qFull = `
+				INSERT INTO classic_assets (
+					asset_id, code, issuer_g_strkey, slug,
+					first_seen_at, first_seen_ledger,
+					last_seen_at,  last_seen_ledger,
+					observation_count
+				) VALUES (
+					$1, $2, $3, $1,
+					$4, $5, $4, $5, 1
+				)
+				ON CONFLICT (asset_id) DO UPDATE SET
+					first_seen_at     = LEAST(classic_assets.first_seen_at, EXCLUDED.first_seen_at),
+					first_seen_ledger = LEAST(classic_assets.first_seen_ledger, EXCLUDED.first_seen_ledger),
+					last_seen_at      = GREATEST(classic_assets.last_seen_at, EXCLUDED.last_seen_at),
+					last_seen_ledger  = GREATEST(classic_assets.last_seen_ledger, EXCLUDED.last_seen_ledger),
+					observation_count = classic_assets.observation_count + 1
+			`
+			if _, rerr := s.db.ExecContext(ctx, qFull,
+				assetID, asset.Code, asset.Issuer,
+				observedAt.UTC(), int(ledger),
+			); rerr != nil {
+				return fmt.Errorf("timescale: registerClassicAssetSeen %s (full-slug retry): %w", assetID, rerr)
+			}
+		} else {
+			return fmt.Errorf("timescale: registerClassicAssetSeen %s: %w", assetID, err)
+		}
 	}
 	assetRegistryDedupe.Store(assetID, time.Now())
 	return nil
