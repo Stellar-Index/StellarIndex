@@ -12,6 +12,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -108,9 +109,74 @@ func verifyUSDVolume(args []string) error {
 
 	printUSDVolumeFooter(violations)
 	if violations > 0 {
-		return fmt.Errorf("verify-usd-volume: %d exact-tier valuation violation(s) — see above", violations)
+		return fmt.Errorf("verify-usd-volume: %d valuation violation(s) — see above", violations)
 	}
 	return nil
+}
+
+// xlmBaseBoundTolerance is the relative tolerance for the XLM-BASE
+// BOUND. Deliberately coarse: the check compares a day-group's stored
+// Σusd_volume against Σbase_amount/1e7 × the day's XLM/USD VWAP, and
+// individual trades were anchored at their own minute's rate, so
+// normal intraday XLM movement produces a few percent of legitimate
+// spread. The failure class this bound exists to catch (2026-08-04
+// tier-3b poisoning) was 10×–1,000,000× off; ±30% catches all of it
+// with zero false alarms on ordinary volatility. This is a SANITY
+// BOUND, not an exact identity — which is why it lives beside, not
+// inside, the exact-tier check.
+const xlmBaseBoundTolerance = 0.30
+
+// checkXLMBaseBound judges the estimated-tier groups whose BASE leg is
+// XLM (any canonical spelling): stored Σusd_volume must land within
+// [1−tol, 1+tol] × (Σbase/1e7 × dayVWAP). Returns the violation count.
+// Skips silently when the day has no XLM/USD bucket (rate unknowable —
+// printed by the caller).
+func checkXLMBaseBound(groups []timescale.TradeValuationGroup, spec *timescale.USDVolumeQuoteSpec, dayVWAP *big.Rat, minRows int64, maxList int) int {
+	xlmForms := map[string]bool{}
+	for _, a := range canonical.AssetAliases(canonical.NativeAsset()) {
+		xlmForms[a.String()] = true
+	}
+	tolLo := new(big.Rat).SetFloat64(1 - xlmBaseBoundTolerance)
+	tolHi := new(big.Rat).SetFloat64(1 + xlmBaseBoundTolerance)
+	stroops := new(big.Rat).SetInt64(10_000_000)
+
+	var violations, listed int
+	for _, g := range groups {
+		if !xlmForms[g.BaseAsset] || g.PricedRows < minRows {
+			continue
+		}
+		tier, _, cerr := timescale.ClassifyUSDVolumeTier(g.Source, g.BaseAsset, g.QuoteAsset, spec)
+		if cerr != nil || tier != timescale.TierEstimated {
+			continue
+		}
+		stored, sok := new(big.Rat).SetString(g.SumUSDVolume)
+		base, bok := new(big.Rat).SetString(g.SumBaseAmount)
+		if !sok || !bok || base.Sign() <= 0 {
+			continue
+		}
+		expected := new(big.Rat).Quo(base, stroops)
+		expected.Mul(expected, dayVWAP)
+		if expected.Sign() <= 0 {
+			continue
+		}
+		lo := new(big.Rat).Mul(expected, tolLo)
+		hi := new(big.Rat).Mul(expected, tolHi)
+		if stored.Cmp(lo) >= 0 && stored.Cmp(hi) <= 0 {
+			continue
+		}
+		violations++
+		if listed < maxList {
+			listed++
+			ratio := new(big.Rat).Quo(stored, expected)
+			fmt.Printf("  XLM-BASE BOUND VIOLATION %s %s/%s rows=%d  stored=%s  expected≈%s  ratio=%s\n",
+				g.Source, g.BaseAsset, g.QuoteAsset, g.PricedRows,
+				stored.FloatString(2), expected.FloatString(2), ratio.FloatString(4))
+		} else if listed == maxList {
+			listed++
+			fmt.Printf("  … more XLM-base bound violations suppressed (raise -max-list)\n")
+		}
+	}
+	return violations
 }
 
 // resolveUSDVolumeDay parses -day, defaulting to YESTERDAY: today's chunk is
@@ -224,11 +290,33 @@ func verifyUSDVolumeDay(
 		}
 	}
 
+	// XLM-BASE BOUND (2026-08-04): the estimated tiers were structurally
+	// unjudged — Exact() covers only the pegged tiers — which is why the
+	// tier-3b poisoning shipped invisible for 13 days. For groups whose
+	// BASE leg is XLM the anchor formula IS checkable against the day's
+	// CEX-fed XLM/USD VWAP, within a coarse intraday tolerance.
+	rate, rateOK, rerr := store.DayCloseVWAPXLMUSD(ctx, day)
+	if rerr != nil {
+		return 0, rerr
+	}
+	if !rateOK {
+		fmt.Printf("  XLM-BASE BOUND: skipped — no crypto:XLM/fiat:USD prices_1d bucket for this day\n")
+	} else if rateRat, ok := new(big.Rat).SetString(rate); !ok || rateRat.Sign() <= 0 {
+		fmt.Printf("  XLM-BASE BOUND: skipped — unusable day VWAP %q\n", rate)
+	} else {
+		n := checkXLMBaseBound(groups, spec, rateRat, minRows, maxList)
+		if n > 0 {
+			fmt.Printf("  XLM-BASE BOUND: %d violation(s) at ±%.0f%% vs day VWAP %s\n",
+				n, xlmBaseBoundTolerance*100, rateRat.FloatString(6))
+		}
+		violations += n
+	}
+
 	printUSDVolumeTierTable(rollups)
 	if parseErrs > 0 {
 		fmt.Printf("  %d group(s) could not be classified or parsed — listed on stderr above\n", parseErrs)
 	}
-	fmt.Printf("%s: %d exact-tier violation(s)\n", day.Format(time.DateOnly), violations)
+	fmt.Printf("%s: %d violation(s)\n", day.Format(time.DateOnly), violations)
 	return violations, nil
 }
 
@@ -291,10 +379,15 @@ func printUSDVolumeFooter(violations int) {
 	fmt.Printf(`
 --- what this run proved ---
 CHECKED  quote_pegged + base_pegged: usd_volume == pegged_leg / 10^decimals,
-         an exact identity with no tolerance. %d violation(s).
-MEASURED estimated (FX / XLM-anchor tiers): sums and row counts printed only.
-         NOT judged — these are genuinely inexact and no threshold for them
-         has been measured yet.
+         an exact identity with no tolerance.
+CHECKED  XLM-base estimated groups: Σusd_volume within ±30%% of
+         Σbase/1e7 × the day's CEX XLM/USD VWAP (the 2026-08-04
+         tier-3b poisoning class — coarse bound, catches 10x+ errors,
+         cannot false-alarm on intraday movement).
+         Total: %d violation(s) across both checked classes.
+MEASURED remaining estimated tiers (non-XLM-base FX/bridge rows): sums and
+         row counts printed only — genuinely inexact, no calibrated
+         threshold yet.
 
 A clean run does NOT certify that tier-3/4 usd_volume values are correct,
 and does not certify coverage (that is the standing
