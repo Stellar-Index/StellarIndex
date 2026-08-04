@@ -26,6 +26,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
+// shutdownDrainTimeout bounds the final flush on the way out. Long
+// enough for one small batched write against a healthy pool, short
+// enough that a wedged pool cannot hold process shutdown open.
+const shutdownDrainTimeout = 5 * time.Second
+
 // StatsSource is the seam the flusher reads from. The Dispatcher
 // satisfies it directly; tests can substitute a fake.
 type StatsSource interface {
@@ -118,7 +123,19 @@ func (f *Flusher) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			// One last flush before exiting so a clean shutdown
 			// captures the final partial bucket.
-			f.flush(ctx)
+			//
+			// It must NOT use ctx: that context is what just fired,
+			// so database/sql rejects the write before it reaches
+			// Postgres and every restart silently dropped up to a
+			// full interval of counters — while logging the
+			// retain-snapshot warning, a promise an exiting process
+			// cannot keep (cold audit 2026-08-04). Detach from the
+			// cancellation but keep a bound so a wedged pool can't
+			// hold shutdown open.
+			drainCtx, cancel := context.WithTimeout(
+				context.WithoutCancel(ctx), shutdownDrainTimeout)
+			f.flush(drainCtx)
+			cancel()
 			return nil
 		case now := <-t.C:
 			f.flushAt(ctx, now)
