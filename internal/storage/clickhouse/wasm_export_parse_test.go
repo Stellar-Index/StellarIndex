@@ -126,3 +126,44 @@ func TestParseWasmExports_HugeCountDoesNotOOM(t *testing.T) {
 		t.Fatal("expected a truncation error on an oversized declared count, got nil")
 	}
 }
+
+// TestParseWasmExports_HugeLengthDoesNotPanic pins the signed-overflow
+// vector that the existing huge-COUNT test does not reach.
+//
+// `bytes(n)` guarded with `r.i+n > len(r.b)`. n is decoded from an
+// attacker-authored LEB128, and a 9-byte varint yields values near
+// MaxInt64 — for which `r.i+n` overflows to a NEGATIVE number, passes the
+// guard, and panics in the slice expression. Reproduced from both call
+// sites (a section size and a name length) as
+// `slice bounds out of range [:-9223372036854775791]`.
+//
+// stellar-core validates WASM at upload_contract_wasm, so this cannot
+// arrive from a successful on-chain upload today. It is reachable from
+// any corruption of entry_xdr that preserves XDR framing — and nothing
+// downstream verifies sha256(code) against the content-addressed key —
+// and from any future caller feeding non-chain bytes (cold audit
+// 2026-08-04).
+func TestParseWasmExports_HugeLengthDoesNotPanic(t *testing.T) {
+	// LEB128 encoding of a value near MaxInt64.
+	huge := []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f}
+
+	hdr := []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00}
+
+	t.Run("section size", func(t *testing.T) {
+		mod := append(append([]byte{}, hdr...), 0x07) // export section id
+		mod = append(mod, huge...)                    // section size
+		if _, err := parseWasmExports(mod); err == nil {
+			t.Error("want an error for an oversized section size, got nil")
+		}
+	})
+
+	t.Run("name length", func(t *testing.T) {
+		body := append([]byte{0x01}, huge...) // 1 export, huge name length
+		mod := append(append([]byte{}, hdr...), 0x07)
+		mod = append(mod, byte(len(body)))
+		mod = append(mod, body...)
+		if _, err := parseWasmExports(mod); err == nil {
+			t.Error("want an error for an oversized name length, got nil")
+		}
+	})
+}
