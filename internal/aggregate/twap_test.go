@@ -147,3 +147,96 @@ func TestTWAP_farFutureWindowEndCannotProduceNegativePrice(t *testing.T) {
 		}
 	}
 }
+
+// twapPathologicalTrades builds the shape that made the old big.Rat
+// accumulator super-linear: every trade carries a DISTINCT base amount, so
+// each Add accretes the LCM of all denominators seen so far. Prime-ish
+// bases maximise that growth.
+func twapPathologicalTrades(n int) []canonical.Trade {
+	t0 := time.Unix(1_770_000_000, 0).UTC()
+	trades := make([]canonical.Trade, 0, n)
+	for i := range n {
+		base := int64(2*i + 1_000_003)
+		quote := base*3 + int64(i)
+		trades = append(trades, mkTradeAt(base, quote, t0.Add(time.Duration(i)*time.Second)))
+	}
+	return trades
+}
+
+// TestTWAP_PathologicalInputStaysLinear pins the CPU-exhaustion class shut.
+//
+// The accumulator used to be a big.Rat, whose denominator grows as the LCM
+// of every trade's base amount. At the /v1/twap handler's own maxTrades
+// cap of 10000 that cost 60.6s of pure CPU for one unauthenticated request
+// (measured 7.47 CPU-seconds against production, and journalctl already
+// held three 111-second 200s with 296-byte bodies). aggregate.TWAP takes
+// no ctx and RequestTimeout only injects a deadline without aborting the
+// handler goroutine, so nothing could reclaim it.
+//
+// The bound here is deliberately loose — this asserts the COMPLEXITY CLASS,
+// not a latency SLO. Anything still quadratic blows a 10s budget by ~6x on
+// the pre-fix code while the linear version lands in single-digit ms.
+func TestTWAP_PathologicalInputStaysLinear(t *testing.T) {
+	const handlerMaxTrades = 10_000
+	trades := twapPathologicalTrades(handlerMaxTrades)
+	windowEnd := trades[len(trades)-1].Timestamp.Add(time.Second)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if _, err := aggregate.TWAP(trades, windowEnd); err != nil {
+			t.Errorf("TWAP: %v", err)
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("TWAP over 10000 distinct-base trades did not finish in 10s — " +
+			"the super-linear accumulator is back; one anonymous GET burns this much CPU")
+	}
+}
+
+// TestTWAP_FixedPointMatchesExactRational proves the fixed-point
+// accumulator agrees with the exact rational computation it replaced, to
+// far more precision than the value is ever serialised at.
+//
+// Error model: each term truncates by <1 unit in the last place and every
+// Δt is >=1ns, so the relative error of the quotient is bounded by
+// 1/twapScale = 10^-40. Assert 10^-30 — comfortably inside that bound and
+// twenty orders below the ~10 decimal places /v1/twap publishes.
+func TestTWAP_FixedPointMatchesExactRational(t *testing.T) {
+	trades := twapPathologicalTrades(300)
+	windowEnd := trades[len(trades)-1].Timestamp.Add(time.Second)
+
+	got, err := aggregate.TWAP(trades, windowEnd)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Exact reference: Σ(quote_i/base_i × Δt_i) / Σ(Δt_i) in big.Rat,
+	// the pre-fix algorithm, computed here at a size where it is cheap.
+	want := new(big.Rat)
+	totalNanos := new(big.Int)
+	for i := range trades {
+		var dur time.Duration
+		if i == len(trades)-1 {
+			dur = windowEnd.Sub(trades[i].Timestamp)
+		} else {
+			dur = trades[i+1].Timestamp.Sub(trades[i].Timestamp)
+		}
+		price := new(big.Rat).SetFrac(trades[i].QuoteAmount.BigInt(), trades[i].BaseAmount.BigInt())
+		price.Mul(price, big.NewRat(int64(dur), 1))
+		want.Add(want, price)
+		totalNanos.Add(totalNanos, big.NewInt(int64(dur)))
+	}
+	want.Quo(want, new(big.Rat).SetInt(totalNanos))
+
+	diff := new(big.Rat).Sub(got, want)
+	diff.Abs(diff)
+	rel := new(big.Rat).Quo(diff, want)
+	tol := new(big.Rat).SetFrac(big.NewInt(1), new(big.Int).Exp(big.NewInt(10), big.NewInt(30), nil))
+	if rel.Cmp(tol) > 0 {
+		t.Errorf("relative error %s exceeds 1e-30\n got  = %s\n want = %s",
+			rel.FloatString(45), got.FloatString(30), want.FloatString(30))
+	}
+}
