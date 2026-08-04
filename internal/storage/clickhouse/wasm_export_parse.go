@@ -111,8 +111,19 @@ func (r *reader) uvarint() (uint64, error) {
 }
 
 // bytes reads n raw bytes.
+//
+// The bound is written as `n > len(r.b)-r.i` rather than the natural
+// `r.i+n > len(r.b)`: n comes from an attacker-authored LEB128, and a
+// 9-byte varint yields values near MaxInt64, for which `r.i+n` OVERFLOWS
+// to a negative number, passes the check, and panics in the slice
+// expression below. Reproduced from both call sites — a section size
+// (parseWasmExports) and a name length (name) — as
+// `slice bounds out of range [:-9223372036854775791]`.
+//
+// `len(r.b)-r.i` cannot overflow: both are non-negative and r.i <= len(r.b)
+// is an invariant of every mutation in this file. Cold audit 2026-08-04.
 func (r *reader) bytes(n int) ([]byte, error) {
-	if n < 0 || r.i+n > len(r.b) {
+	if n < 0 || n > len(r.b)-r.i {
 		return nil, errTruncated
 	}
 	out := r.b[r.i : r.i+n]
