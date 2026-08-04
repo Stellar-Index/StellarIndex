@@ -202,7 +202,8 @@ func TestHandleCreate_ClampsMonthlyQuota(t *testing.T) {
 		{"override set, request 0 stays inherit", platform.TierStarter, 5_000_000, 0, 0},
 		{"no override: tier ceiling clamps huge", platform.TierStarter, 0, 9_000_000_000, platform.TierStarter.MaxMonthlyQuota()},
 		{"no override: below tier ceiling honored", platform.TierPro, 0, 2_000_000, 2_000_000},
-		{"no override, request 0 stays inherit/unlimited", platform.TierFree, 0, 0, 0},
+		{"no override, request 0 falls back to the tier ceiling", platform.TierFree, 0, 0, platform.TierFree.MaxMonthlyQuota()},
+		{"override present, request 0 inherits it at auth time", platform.TierFree, 250_000, 0, 0},
 		{"free tier ceiling clamps", platform.TierFree, 0, 500_000, platform.TierFree.MaxMonthlyQuota()},
 	}
 	for _, tc := range cases {
