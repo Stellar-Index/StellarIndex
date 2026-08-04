@@ -453,6 +453,27 @@ func (a AggregateConfig) validate() error {
 		return fmt.Errorf("%w: aggregate.min_market_cap_volume_usd must be >= 0",
 			ErrInvalidConfig)
 	}
+	// A cap above the store's ceiling is REFUSED, not clamped. Silently
+	// clamping does double damage: the scan does not widen, AND the
+	// orchestrator's truncation detector (len(t) >= MaxTradesPerWindow)
+	// can never fire again — so an operator who follows the field's own
+	// godoc ("raise the cap if that counter fires sustainedly") would see
+	// the ~48%-of-windows truncation rate measured on r1 drop to a
+	// reported 0% with nothing actually fixed (cold audit 2026-08-04).
+	// tradesInRangeCeiling mirrors timescale.MaxTradesInRangeLimit.
+	// Duplicated as a literal because internal/config is a leaf package
+	// and must not import a storage adapter; timescale's own
+	// TestMaxTradesInRangeLimit_matchesConfigCeiling keeps the two in
+	// lockstep.
+	const tradesInRangeCeiling = 10000
+	if a.MaxTradesPerWindow > tradesInRangeCeiling {
+		return fmt.Errorf(
+			"%w: aggregate.max_trades_per_window is %d but the trade reader clamps at %d — "+
+				"raising it above the ceiling silently does nothing AND blinds the truncation detector; "+
+				"move the large windows to a SQL-side aggregate instead",
+			ErrInvalidConfig, a.MaxTradesPerWindow, tradesInRangeCeiling)
+	}
+
 	if a.OutlierSigmaThreshold <= 0 {
 		return fmt.Errorf("%w: aggregate.outlier_sigma_threshold must be > 0",
 			ErrInvalidConfig)

@@ -1299,6 +1299,19 @@ func (s *Store) LatestTradePerSource(ctx context.Context, p canonical.Pair, sour
 // An empty slice + nil error means the pair has no trades in the
 // window — not an error. Callers distinguish "empty" from "error"
 // by testing len(rows).
+//
+// limit is clamped to [MaxTradesInRangeLimit]. That ceiling is enforced
+// in config validation too, because a silent clamp here does double
+// damage: the scan does not widen AND the orchestrator's truncation
+// detector (len(t) >= cfg.MaxTradesPerWindow) can never fire again, so
+// the ~48%-of-windows truncation rate measured on r1 would read as 0%
+// while nothing had actually changed (cold audit 2026-08-04).
+// MaxTradesInRangeLimit is the hard ceiling [Store.TradesInRange] clamps
+// its limit to. Exported so config validation can refuse a
+// max_trades_per_window above it rather than let an operator raise a
+// number that silently does nothing.
+const MaxTradesInRangeLimit = 10000
+
 func (s *Store) TradesInRange(ctx context.Context, p canonical.Pair, from, to time.Time, limit int) ([]canonical.Trade, error) {
 	if limit <= 0 {
 		limit = 1000

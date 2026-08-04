@@ -37,9 +37,24 @@ func TWAP(trades []canonical.Trade, windowEnd time.Time) (*big.Rat, error) {
 	}
 
 	// weightedSum accumulates Σ(price_i × Δt_i) as a Rat.
-	// totalSeconds accumulates Σ(Δt_i) as int64 nanoseconds.
+	//
+	// totalNanos accumulates Σ(Δt_i) as a *big.Int, NOT an int64. It was
+	// an int64 of nanoseconds, which overflows: time.Time.Sub SATURATES
+	// at MaxInt64 (~292.47 years), so a windowEnd far enough in the
+	// future produces a saturated Δt, and adding any further positive
+	// interval WRAPS THE SUM NEGATIVE — after which the final division
+	// flips the sign of the published price. The guard below only tested
+	// for zero, so a negative denominator sailed through.
+	//
+	// Reproduced against production 2026-08-04:
+	//   /v1/twap?base=native&quote=fiat:USD&from=2026-08-01&to=9999-12-31
+	//   → 200 {"price":"-0.1702543997", "flags":{"stale":false}}
+	// The API places no upper bound on an explicit `to`, so any client
+	// using a far-future sentinel for "no end bound" got a negative money
+	// string on a success response. A big.Int accumulator removes the
+	// overflow class rather than papering over this one entry point.
 	weightedSum := new(big.Rat)
-	var totalNanos int64
+	totalNanos := new(big.Int)
 
 	for i := range trades {
 		base := trades[i].BaseAmount.BigInt()
@@ -68,11 +83,16 @@ func TWAP(trades []canonical.Trade, windowEnd time.Time) (*big.Rat, error) {
 		weight := big.NewRat(int64(dur), 1)
 		price.Mul(price, weight)
 		weightedSum.Add(weightedSum, price)
-		totalNanos += int64(dur)
+		totalNanos.Add(totalNanos, big.NewInt(int64(dur)))
 	}
 
-	if totalNanos == 0 {
+	// Sign() <= 0, not == 0. Every Δt added above is strictly positive
+	// (the dur <= 0 continue), so a non-positive total is only reachable
+	// via the saturation described above — but assert it rather than
+	// assume it, because the failure mode is a signed money value on a
+	// 200 response.
+	if totalNanos.Sign() <= 0 {
 		return nil, ErrNoTrades
 	}
-	return new(big.Rat).Quo(weightedSum, big.NewRat(totalNanos, 1)), nil
+	return new(big.Rat).Quo(weightedSum, new(big.Rat).SetInt(totalNanos)), nil
 }

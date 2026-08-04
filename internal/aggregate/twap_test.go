@@ -107,3 +107,43 @@ func TestTWAP_NonPositiveFinalDurationClamps(t *testing.T) {
 		t.Errorf("TWAP = %v, want 100 (late trade clamped)", got)
 	}
 }
+
+// TestTWAP_farFutureWindowEndCannotProduceNegativePrice is the
+// regression test for the cold audit of 2026-08-04.
+//
+// totalNanos was an int64 of nanoseconds. time.Time.Sub SATURATES at
+// MaxInt64 (~292.47 years), so a far-future windowEnd produced a
+// saturated Δt and adding any further positive interval wrapped the sum
+// NEGATIVE — the final division then flipped the sign of the published
+// price. The guard tested only for zero, so the negative sailed through.
+//
+// Reproduced against production before the fix:
+//
+//	/v1/twap?base=native&quote=fiat:USD&from=2026-08-01&to=9999-12-31
+//	-> 200 {"price":"-0.1702543997","flags":{"stale":false}}
+//
+// The API puts no upper bound on an explicit `to`, so any client using a
+// far-future sentinel for "no end bound" got a negative money string on a
+// success response.
+func TestTWAP_farFutureWindowEndCannotProduceNegativePrice(t *testing.T) {
+	base := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	trades := []canonical.Trade{
+		mkTradeAt(100, 10, base),
+		mkTradeAt(100, 12, base.Add(time.Hour)),
+	}
+
+	for _, end := range []time.Time{
+		time.Date(9999, 12, 31, 0, 0, 0, 0, time.UTC),
+		time.Date(2400, 1, 1, 0, 0, 0, 0, time.UTC),
+		time.Date(2319, 6, 1, 0, 0, 0, 0, time.UTC), // just past the ~292y Duration ceiling
+	} {
+		got, err := aggregate.TWAP(trades, end)
+		if err != nil {
+			continue // refusing is an acceptable answer; a negative is not
+		}
+		if got.Sign() <= 0 {
+			t.Errorf("TWAP(windowEnd=%s) = %s — a non-positive price is never a valid answer; the nanosecond accumulator wrapped",
+				end.Format(time.RFC3339), got.RatString())
+		}
+	}
+}

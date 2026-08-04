@@ -31,12 +31,17 @@
 //
 // # Outliers
 //
-// Phase-1 design settled on a sigma-threshold filter (default 4σ) —
-// drop any trade whose price is more than N standard deviations
-// from the unweighted mean. Over small windows with fat tails this
-// is less defensible than a MAD-based filter, but the σ form is
-// what the methodology specifies. The σ-vs-MAD migration plan + on-call
-// guidance lives in
+// The filter drops any trade whose price deviates from the window
+// MEDIAN by more than σ × 1.4826 × MAD (median absolute deviation),
+// σ defaulting to 4. Exact rational arithmetic throughout.
+//
+// Corrected 2026-08-04: this block used to describe a sigma-threshold
+// filter around the unweighted MEAN and said "the σ form is what the
+// methodology specifies". The median/MAD form shipped with the M5 fix;
+// the methodology page has now been corrected to match too. Note the
+// band is ADDITIVE in price space, so its lower edge goes non-positive
+// above 1/(σ×1.4826) relative MAD — 16.9% at σ=4 — and downward
+// outliers stop being rejectable there. On-call guidance lives in
 // docs/operations/runbooks/aggregator-outlier-storm.md.
 //
 // # Stablecoin fiat proxy
