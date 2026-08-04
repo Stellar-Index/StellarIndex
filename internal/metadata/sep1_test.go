@@ -348,16 +348,20 @@ func TestResolver_SSRFBlocksLoopback(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected SSRF block, got nil")
 	}
+	// errors.Is on the sentinel, ASSERTED. This used to degrade to a
+	// t.Logf note when the error wasn't SSRF-shaped, which made the test
+	// pass on `err != nil` alone — so the OS refusing the connection
+	// satisfied it just as well as the guard firing. Proven by mutation
+	// (cold audit 2026-08-04): forcing allowPrivateIPs=true still PASSED,
+	// logging "dial tcp [::1]:443: connect: connection refused", and
+	// deleting the guarded DialContext from the transport entirely left
+	// `go test ./...` green. `home_domain` is attacker-controlled on-chain
+	// data, so this is the check standing between a malicious issuer and
+	// a GET against 169.254.169.254 from the sep1-refresh cron.
 	if !errors.Is(err, metadata.ErrSSRFBlocked) {
-		// Might also land as a DNS error on some systems —
-		// accept either "blocked" or dial-time rejection. The
-		// important property is "didn't connect".
-		if !strings.Contains(err.Error(), "SSRF") &&
-			!strings.Contains(err.Error(), "blocked") &&
-			!strings.Contains(err.Error(), "loopback") &&
-			!strings.Contains(err.Error(), "private") {
-			t.Logf("note: expected SSRF-style error, got: %v", err)
-		}
+		t.Errorf("Resolve(localhost) = %v, want an error wrapping ErrSSRFBlocked — "+
+			"a non-SSRF error means the connection was refused by something other than our guard, "+
+			"which is indistinguishable from the guard being absent", err)
 	}
 }
 
