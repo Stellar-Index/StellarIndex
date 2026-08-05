@@ -15,6 +15,7 @@ import {
   Container,
 } from '@/components/ui';
 import { AssetClientFallback } from './AssetClientFallback';
+import { AssetPathView } from './AssetPathView';
 import { AssetSidebar } from './AssetSidebar';
 import { SourceBreakdown } from '../../markets/[pair]/SourceBreakdown';
 import { AssetTabs, ActiveTabSlot } from './AssetTabs';
@@ -51,7 +52,10 @@ export async function generateStaticParams() {
   // has a special-case path for slug "XLM" / "native". Without
   // this, the most important asset on the network would 404 on
   // the explorer.
-  const fallback = [{ slug: 'XLM' }, { slug: 'native' }];
+  // 'shell' is the runtime-fallback sentinel: functions/assets/[[path]].js
+  // serves /assets/shell/ for any path outside this pre-render set, and
+  // the page's shell branch renders the client-side AssetPathView.
+  const fallback = [{ slug: 'shell' }, { slug: 'XLM' }, { slug: 'native' }];
   // Reuse the build-time listing cache that fetchCoin reads —
   // generateStaticParams runs first, so this primes the cache for
   // the per-page renders that follow. One API call does double duty.
@@ -643,6 +647,22 @@ export async function generateMetadata({
 
 export default async function AssetDetailPage({ params }: { params: Params }) {
   const { slug } = await params;
+  // Runtime-fallback shell for slugs outside the build-time pre-render
+  // (same S1b pattern as /markets): functions/assets/[[path]].js serves
+  // this HTML for any unmatched /assets/* path, and the client view
+  // reads the real slug from the URL. 194k classic assets carry unique
+  // migration-0134 slugs the API resolves; only ~500 are pre-rendered,
+  // and the rest hard-404'd on the static host (live report:
+  // /assets/usdt-gasu4kif, 2026-08-05).
+  if (slug === 'shell') {
+    return (
+      <Container className="space-y-8 py-8 sm:py-10">
+        <Suspense fallback={null}>
+          <AssetPathView />
+        </Suspense>
+      </Container>
+    );
+  }
   const [coin, globalViewEarly] = await Promise.all([
     fetchCoin(slug),
     fetchGlobalAsset(slug),
