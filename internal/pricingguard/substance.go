@@ -235,12 +235,13 @@ func (g *SubstanceGate) Allowed(ctx context.Context, base, quote canonical.Asset
 	key := pairCacheKey(base, quote)
 	now := g.clock()
 	g.mu.Lock()
-	if v, ok := g.cache[key]; ok && now.Before(v.expires) {
+	prior, hadPrior := g.cache[key]
+	if hadPrior && now.Before(prior.expires) {
 		g.mu.Unlock()
-		if !v.allowed {
+		if !prior.allowed {
 			obs.PriceServeSubstanceWithheldTotal.WithLabelValues(surface).Inc()
 		}
-		return v.allowed
+		return prior.allowed
 	}
 	g.mu.Unlock()
 
@@ -258,10 +259,19 @@ func (g *SubstanceGate) Allowed(ctx context.Context, base, quote canonical.Asset
 	g.mu.Unlock()
 	if !allowed {
 		obs.PriceServeSubstanceWithheldTotal.WithLabelValues(surface).Inc()
-		if g.logger != nil {
+		// Log on verdict TRANSITIONS only — first observation of a pair,
+		// or a flip from allowed. The steady state (hundreds of thin
+		// long-tail pairs re-measured every TTL expiry) produced 6,000
+		// WARNs/hour on r1 (2026-08-05), churning the journald ring
+		// buffer past anything an operator could triage; the metric is
+		// the volume signal, the log is the change signal.
+		if g.logger != nil && (!hadPrior || prior.allowed) {
 			g.logger.Warn("substance gate: aggregated price withheld — trailing market below serve floor",
 				"base", base.String(), "quote", quote.String(), "surface", surface)
 		}
+	} else if g.logger != nil && hadPrior && !prior.allowed {
+		g.logger.Info("substance gate: pair recovered above the serve floor — price serving resumed",
+			"base", base.String(), "quote", quote.String(), "surface", surface)
 	}
 	return allowed
 }
