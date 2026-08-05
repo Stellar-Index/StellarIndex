@@ -4,6 +4,7 @@ import { formatCompact, formatPriceSmall } from '@/lib/format';
 import { isSafeHomeDomain } from '@/lib/safe-domain';
 import { AssetConverter } from './AssetConverter';
 import { ChangeSummaryStrip } from './ChangeSummaryStrip';
+import { LiveAssetPrice } from './LiveAssetPrice';
 import { SidebarAssetIcon } from './SidebarAssetIcon';
 
 // Loosely-typed mirror of the page's fetched shapes — only the fields
@@ -120,35 +121,31 @@ export function AssetSidebar({
             </div>
           </div>
         </div>
-        <div className="mt-3 flex flex-wrap items-baseline gap-2">
-          <span className="font-mono text-3xl tabular-nums text-ink">
-            {priceUSD != null ? `$${formatPriceSmall(priceUSD)}` : '—'}
-          </span>
-          {change != null && (
-            <span
-              className={`font-mono text-sm tabular-nums ${
-                change > 0 ? 'text-up' : change < 0 ? 'text-down' : 'text-ink-muted'
-              }`}
-            >
-              {change > 0 ? '▲' : change < 0 ? '▼' : ''} {change > 0 ? '+' : ''}
-              {change.toFixed(2)}% <span className="text-ink-faint">(24h)</span>
-            </span>
-          )}
-        </div>
-        {/* Provenance caption — the headline number must say what it
-            is. Series naming matches /v1/price's contract (the last
-            CLOSED 1-minute VWAP bucket, ADR-0015); the chart's candles
-            are per-trade OHLC, so the two can legitimately differ by
-            the intra-bucket spread — but never silently by quote or
-            by data source. */}
-        {priceUSD != null && priceProvenance && (
-          <p className="mt-1 text-[11px] uppercase tracking-wider text-ink-muted">
-            {priceProvenance === 'vwap1m' && '1-min VWAP · USD'}
-            {priceProvenance === 'triangulated' && '1-min VWAP · USD · triangulated via XLM'}
-            {priceProvenance === 'listing' && 'listing snapshot · not a live aggregated price'}
-            {priceStale && ' · stale'}
-          </p>
-        )}
+        {/* Live headline price + provenance caption (LiveAssetPrice):
+            the baked value paints first, then the browser re-fetches
+            /v1/price on mount + every 60s — a static export must never
+            present a build-frozen number as the current price
+            (2026-08-05: a 12-day-old bake showed XLM at $0.186 against
+            a live $0.17 chart). Series naming matches /v1/price's
+            contract (last CLOSED 1-minute VWAP, ADR-0015). */}
+        <LiveAssetPrice
+          assetID={coin.asset_id}
+          initialPrice={priceUSD}
+          initialProvenance={priceProvenance ?? null}
+          initialStale={priceStale}
+          changePill={
+            change != null ? (
+              <span
+                className={`font-mono text-sm tabular-nums ${
+                  change > 0 ? 'text-up' : change < 0 ? 'text-down' : 'text-ink-muted'
+                }`}
+              >
+                {change > 0 ? '▲' : change < 0 ? '▼' : ''} {change > 0 ? '+' : ''}
+                {change.toFixed(2)}% <span className="text-ink-faint">(24h)</span>
+              </span>
+            ) : undefined
+          }
+        />
         {/* Live 1h/24h/7d/30d strip + streak + low-water from the
             change-summary worker; renders nothing when the worker has
             no row for this asset. */}
