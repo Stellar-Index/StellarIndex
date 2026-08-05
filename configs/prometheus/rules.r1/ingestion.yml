@@ -69,13 +69,18 @@ groups:
             as enabled in ingestion.enabled_sources.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
 
-      # Low-volume Soroban DEX sources. 6-hour rate / 30-min sustained.
+      # Low-volume Soroban DEX sources. 24-hour rate / 30-min sustained.
       # These can go hours between swaps on quiet days and that's
       # not an outage signal — long-tail TVL just doesn't trade
-      # constantly. F-1208 (codex audit-2026-05-12).
+      # constantly. F-1208 (codex audit-2026-05-12). Widened 6h → 24h
+      # 2026-08-05: phoenix's measured 30-day max swap gap is 8h28m,
+      # and a genuine 12h lull (lake-verified quiet — zero swap events
+      # on any known or unknown pool) tripped the 6h window right after
+      # the same evidence widened the insert-stale budget. One cadence,
+      # one threshold: all three phoenix-cadence rules now agree at 24h.
       - alert: stellarindex_ingestion_source_stopped_low_volume_dex
         expr: |
-          sum by (source) (rate(stellarindex_source_events_total[6h])) == 0
+          sum by (source) (rate(stellarindex_source_events_total[24h])) == 0
           and on (source) stellarindex_source_enabled == 1
           and on (source) (
             label_replace(vector(1), "source", "comet",    "", "") or
@@ -90,9 +95,9 @@ groups:
           component: ingestion
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
-          summary: "Low-volume Soroban DEX {{ $labels.source }} has been silent for 6+ hours"
+          summary: "Low-volume Soroban DEX {{ $labels.source }} has been silent for 24+ hours"
           description: |
-            No events from {{ $labels.source }} in the last 6 hours,
+            No events from {{ $labels.source }} in the last 24 hours,
             sustained for ≥ 30 min. For low-volume Soroban DEXes
             this is unusual but not necessarily an outage — check
             the contract on stellar.expert before paging the

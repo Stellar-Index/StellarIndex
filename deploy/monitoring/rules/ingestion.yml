@@ -50,7 +50,7 @@ groups:
 
       - alert: stellarindex_ingestion_source_stopped_low_volume_dex
         expr: |
-          sum by (source) (rate(stellarindex_source_events_total[6h])) == 0
+          sum by (source) (rate(stellarindex_source_events_total[24h])) == 0
           and on (source) stellarindex_source_enabled == 1
           and on (source) (
             label_replace(vector(1), "source", "comet",    "", "") or
@@ -65,7 +65,7 @@ groups:
           component: ingestion
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
-          summary: "Low-volume Soroban DEX {{ $labels.source }} silent 6+ hours"
+          summary: "Low-volume Soroban DEX {{ $labels.source }} silent 24+ hours"
           description: |
             For low-volume Soroban DEXes this is unusual but not
             necessarily an outage — check the contract on
