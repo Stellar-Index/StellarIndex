@@ -49,6 +49,17 @@ Consequence: the SDK buffer metrics (`buffer_fetch_latency_seconds`
 etc.) are not exported in production. That is a low-value operational
 coverage gap, not a dead page.
 
+**2026-08-05: the alert rule now EXCLUDES `component="ledgerstream"`**
+— it fired continuously for a week on this documented accepted state,
+which is alert-board noise, while staying unable to distinguish it
+from a new regression. The rule remains armed for every OTHER
+component. Queued real fix: a swappable gatherer-bridge collector —
+give the SDK a fresh sub-registry per `Stream` call and expose the
+CURRENT one through the main registry via an unchecked collector that
+converts `Gather()` output to const metrics — which makes repeated
+registration safe without SDK changes; remove the exclusion in the
+same PR that lands it.
+
 > **NOTE (W5-mon-3):** this alert USED to also mean the
 > `TieredDataStore` metrics were dead and the ledgerstream-tier
 > `both_missing` P1 page was inert. That is **no longer true.**
