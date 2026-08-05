@@ -607,10 +607,19 @@ export async function generateMetadata({
       description: 'Stellar asset detail, rendered live from the Stellar Index API.',
     };
   }
-  const [coin, globalView] = await Promise.all([
+  const metaResults = await Promise.all([
     fetchCoin(slug),
     fetchGlobalAsset(slug),
   ]);
+  let coin = metaResults[0];
+  const globalView = metaResults[1];
+  // Catalogue slugs resolve to the verified issuance's rich row for
+  // metadata too, so /assets/usdc titles "USDC $0.9997 …" like the
+  // page body it now describes (memoised fetches — no extra API
+  // calls beyond what the page render already does).
+  if (!coin && globalView) {
+    coin = await resolveVerifiedListingCoin(globalView);
+  }
   const code = globalView?.ticker ?? coin?.code ?? slug;
   const priceNum = coin?.price_usd ? Number(coin.price_usd) : null;
   const change24h = coin?.change_24h_pct ? Number(coin.change_24h_pct) : null;
