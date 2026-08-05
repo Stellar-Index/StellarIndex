@@ -3,6 +3,7 @@ package pricingguard
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"math/big"
 	"testing"
 	"time"
@@ -213,5 +214,66 @@ func TestSubstancePolicyFromValues(t *testing.T) {
 	}
 	if gate.policy.MinBuckets != DefaultSubstanceMinBuckets || gate.policy.MinSpan != DefaultSubstanceMinSpan || gate.policy.Window != DefaultSubstanceWindow {
 		t.Errorf("defaults = %+v", gate.policy)
+	}
+}
+
+// countingHandler counts slog records at Warn+ so the transition-only
+// logging contract is testable.
+type countingHandler struct{ warns *int }
+
+func (h countingHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h countingHandler) Handle(_ context.Context, r slog.Record) error {
+	if r.Level >= slog.LevelWarn {
+		*h.warns++
+	}
+	return nil
+}
+func (h countingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h countingHandler) WithGroup(string) slog.Handler      { return h }
+
+// TestSubstanceGate_LogsOnTransitionsOnly — the steady state
+// (hundreds of thin pairs re-measured every TTL expiry) produced
+// 6,000 WARNs/hour on r1 (2026-08-05). The metric carries the volume;
+// the log carries only verdict CHANGES.
+func TestSubstanceGate_LogsOnTransitionsOnly(t *testing.T) {
+	classic := mustAsset(t, "SCAM-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V")
+	native := mustAsset(t, "native")
+	reader := &fakeSubstanceReader{byPair: map[string]timescale.MarketSubstance{}}
+	warns := 0
+	gate := NewSubstanceGate(reader, SubstanceGateOptions{
+		Policy: testPolicy(),
+		Logger: slog.New(countingHandler{warns: &warns}),
+	})
+	now := time.Unix(1_700_000_000, 0)
+	gate.now = func() time.Time { return now }
+
+	gate.Allowed(context.Background(), classic, native, "test")
+	if warns != 1 {
+		t.Fatalf("first withheld observation must WARN once, got %d", warns)
+	}
+	// TTL expiry → re-measure, still withheld → NO new warn.
+	now = now.Add(substanceCacheTTL + time.Second)
+	gate.Allowed(context.Background(), classic, native, "test")
+	if warns != 1 {
+		t.Errorf("repeat withheld verdict must not re-WARN, got %d", warns)
+	}
+	// Pair recovers → next re-measure logs no warn either (Info only).
+	pair, _ := canonical.NewPair(classic, native)
+	reader.byPair[pair.String()] = timescale.MarketSubstance{
+		VolumeUSD: "50000", Buckets: 500, SpanSeconds: 23 * 3600,
+	}
+	now = now.Add(substanceCacheTTL + time.Second)
+	if !gate.Allowed(context.Background(), classic, native, "test") {
+		t.Fatal("recovered pair must be allowed")
+	}
+	if warns != 1 {
+		t.Errorf("recovery must not WARN, got %d", warns)
+	}
+	// And a flip BACK to withheld warns again.
+	delete(reader.byPair, pair.String())
+	now = now.Add(substanceCacheTTL + time.Second)
+	gate.Allowed(context.Background(), classic, native, "test")
+	if warns != 2 {
+		t.Errorf("allowed→withheld flip must WARN, got %d", warns)
 	}
 }

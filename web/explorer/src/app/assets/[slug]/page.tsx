@@ -654,7 +654,9 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
   // migration-0134 slugs the API resolves; only ~500 are pre-rendered,
   // and the rest hard-404'd on the static host (live report:
   // /assets/usdt-gasu4kif, 2026-08-05).
-  if (slug === 'shell') {
+  // Case-insensitive: generateStaticParams emits case variants of every
+  // slug (audit 2026-06-19), so the sentinel arrives as shell/SHELL too.
+  if (slug.toLowerCase() === 'shell') {
     return (
       <Container className="space-y-8 py-8 sm:py-10">
         <Suspense fallback={null}>
