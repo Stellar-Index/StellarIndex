@@ -127,6 +127,26 @@ func verifyUSDVolume(args []string) error {
 // inside, the exact-tier check.
 const xlmBaseBoundTolerance = 0.30
 
+// xlmBaseLegScale returns the denominator that lifts a group's raw XLM
+// base-amount sum to whole XLM. The scale is a CONNECTOR property, not
+// an asset one (CS-040, and the /v1/history 10× lesson): on-chain DEX
+// rows stamp stroops (1e7), off-chain CEX rows 1e8, the FX pollers
+// 1e6. The bound's first live run hardcoded 1e7 and flagged every
+// honest kraken/bitstamp XLM/EUR day at ratio ≈ 0.100 — the check was
+// wrong, not the data. Same subclass dispatch the insert path's
+// usdVolumeDecimals uses.
+func xlmBaseLegScale(source string) *big.Rat {
+	baseDecimals := int64(7) // on-chain stroop scale
+	md := external.Lookup(source)
+	switch md.Subclass {
+	case external.SubclassCEX, external.SubclassFX:
+		baseDecimals = int64(md.AmountScaleDecimals())
+	default:
+		// SubclassDEX and anything future: on-chain stroops.
+	}
+	return new(big.Rat).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(baseDecimals), nil))
+}
+
 // checkXLMBaseBound judges the estimated-tier groups whose BASE leg is
 // XLM (any canonical spelling): stored Σusd_volume must land within
 // [1−tol, 1+tol] × (Σbase/1e7 × dayVWAP). Returns the violation count.
@@ -154,21 +174,7 @@ func checkXLMBaseBound(groups []timescale.TradeValuationGroup, spec *timescale.U
 		if !sok || !bok || base.Sign() <= 0 {
 			continue
 		}
-		// Base-leg scale is a CONNECTOR property, not an asset one
-		// (CS-040, and the /v1/history 10x lesson): on-chain DEX rows
-		// stamp stroops (1e7), off-chain CEX rows 1e8, FX pollers 1e6.
-		// The first run of this bound hardcoded 1e7 and flagged every
-		// honest kraken/bitstamp XLM/EUR day at ratio ≈ 0.100 — the
-		// check was wrong, not the data. Same subclass dispatch the
-		// insert path's usdVolumeDecimals uses.
-		baseDecimals := int64(7)
-		md := external.Lookup(g.Source)
-		switch md.Subclass {
-		case external.SubclassCEX, external.SubclassFX:
-			baseDecimals = int64(md.AmountScaleDecimals())
-		}
-		scaleDen := new(big.Rat).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(baseDecimals), nil))
-		expected := new(big.Rat).Quo(base, scaleDen)
+		expected := new(big.Rat).Quo(base, xlmBaseLegScale(g.Source))
 		expected.Mul(expected, dayVWAP)
 		if expected.Sign() <= 0 {
 			continue
