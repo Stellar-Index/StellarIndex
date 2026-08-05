@@ -447,6 +447,37 @@ async function redirectVerifiedCollision(
   return coin;
 }
 
+// resolveVerifiedListingCoin maps a verified-currency catalogue view
+// (usdc, aqua, …) to the VERIFIED Stellar issuance's rich listing row
+// + memoised detail, so the friendly catalogue URL renders the full
+// asset page. The verified issuance is the listing row whose CODE is
+// the catalogue ticker WITHOUT the server-stamped
+// unverified_ticker_collision flag — impersonators all carry the
+// stamp, so they can never be chosen here. Returns null when no
+// listing row qualifies (fiat catalogue rows, or a verified asset
+// outside the top-500 listing snapshot) — the caller falls back to
+// the identity view.
+async function resolveVerifiedListingCoin(
+  view: GlobalAssetView,
+): Promise<CoinSummary | null> {
+  const ticker = view.ticker?.toUpperCase();
+  if (!ticker) return null;
+  const cache = await getBuildCoinsCache();
+  if (!cache) return null;
+  for (const c of cache.byAssetId.values()) {
+    if (
+      (c.code ?? '').toUpperCase() === ticker &&
+      !c.unverified_ticker_collision &&
+      typeof c.asset_id === 'string' &&
+      c.asset_id
+    ) {
+      const direct = await fetchCoinDirect(c.asset_id).catch(() => null);
+      return direct ? { ...c, ...direct } : c;
+    }
+  }
+  return null;
+}
+
 // buildFetch's per-URL memo makes the detail + price fetches one-shot
 // per build even though the casing variants + canonical-id route of
 // one asset all render off the same asset_id (unmemoised duplicates
@@ -675,18 +706,34 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
       </Container>
     );
   }
-  const [coin, globalViewEarly] = await Promise.all([
-    fetchCoin(slug),
-    fetchGlobalAsset(slug),
-  ]);
+  let [coin] = await Promise.all([fetchCoin(slug)]);
+  const globalViewEarly = await fetchGlobalAsset(slug);
 
   if (!coin) {
-    // No Stellar asset row for this slug. If it's a verified-currency
-    // catalogue entry that doesn't trade on Stellar (us-dollar, wbtc,
-    // …), render the cross-chain identity view.
+    // No Stellar asset row for this slug. For a verified-currency
+    // catalogue slug (usdc, aqua, …), resolve the VERIFIED Stellar
+    // issuance from the listing and render the FULL asset page —
+    // 2026-08-05 regression: after migration 0135 made listing slugs
+    // the full asset_id, the catalogue slug no longer matched a
+    // listing row, so /assets/usdc fell through to the thin
+    // VerifiedCurrencyView (identity + markets only) instead of the
+    // rich page it always had. The verified issuance is the listing
+    // row carrying the catalogue TICKER as its code WITHOUT the
+    // unverified_ticker_collision stamp — the same server-computed
+    // signal every badge uses, so an impersonator can never be
+    // chosen here.
     if (globalViewEarly) {
+      coin = await resolveVerifiedListingCoin(globalViewEarly);
+    }
+    // A catalogue entry with no resolvable Stellar listing row
+    // (fiat rows, or a verified asset outside the top-500 listing)
+    // keeps the cross-chain identity view.
+    if (!coin && globalViewEarly) {
       return <VerifiedCurrencyView slug={slug} view={globalViewEarly} />;
     }
+  }
+
+  if (!coin) {
     // Real build: every rendered param was promised by
     // generateStaticParams (output:'export'), so no coin row AND no
     // catalogue entry means the API contradicted its own listing —
