@@ -309,6 +309,12 @@ const (
 	TransitionHeld Transition = "held"
 	// TransitionExtended — the hold expired unreleased; ladder +1.
 	TransitionExtended Transition = "extended"
+	// TransitionHeldUnscored — the hold expired on a bucket that could
+	// not be scored (post-restart confidence bootstrap, scoring
+	// outage): the hold slides WITHOUT consuming an extension, because
+	// an unscored bucket asked nothing about recovery. The ladder
+	// resumes when scoring does.
+	TransitionHeldUnscored Transition = "held_unscored"
 	// TransitionEscalated — the ladder ran out; operator review (P1).
 	TransitionEscalated Transition = "escalated"
 	// TransitionReleased — the auto-unfreeze condition was met at
@@ -393,6 +399,26 @@ func (p Policy) Evaluate(prev State, sig Signal) Outcome {
 		// streak keeps accumulating so the checks above and the expiry
 		// below read a CURRENT answer rather than a historical one.
 		return p.frozen(st, TransitionHeld, sig.Now)
+
+	case !sig.Scored:
+		// The hold expired on a bucket that could NOT be scored — the
+		// ~30-minute post-restart confidence bootstrap, or a mid-freeze
+		// scoring outage. An extension is supposed to mean "we asked
+		// whether this pair recovered and it had not"; an unscored
+		// bucket asked NOTHING, so it must not climb the ladder.
+		// Pre-fix this was the restart-rehydration trap the runbook
+		// documents: a freeze rehydrated across a deploy could never
+		// accumulate an unfreeze streak (unscored ⇒ streak=0) while
+		// its expiries still burned extensions, so it marched
+		// deterministically to ESCALATED — operator-only — without a
+		// single scored evaluation (live occurrence: crypto:XLM/
+		// fiat:GBP 24h, 2026-08-05, escalated entirely inside the
+		// v0.25.0 restart's bootstrap window). Slide the hold and wait
+		// for scoring to return; the ladder resumes exactly where it
+		// was. ADR-0019's 2-hour escalation budget thereby counts two
+		// hours of SCORED asking, which is what it always meant.
+		st.HoldUntil = sig.Now.Add(p.Extension)
+		return p.frozen(st, TransitionHeldUnscored, sig.Now)
 
 	case st.ExtensionsUsed < p.MaxExtensions:
 		st.ExtensionsUsed++

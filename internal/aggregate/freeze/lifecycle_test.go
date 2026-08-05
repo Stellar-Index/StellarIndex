@@ -374,3 +374,65 @@ func TestPolicy_OperatorTuning(t *testing.T) {
 		t.Errorf("Transition = %q, want %q with MaxExtensions=1", esc.Transition, freeze.TransitionEscalated)
 	}
 }
+
+// TestPolicy_UnscoredExpiryDoesNotBurnTheLadder — the restart-
+// rehydration trap (live occurrence: crypto:XLM/fiat:GBP 24h,
+// 2026-08-05): during the ~30-minute post-restart confidence
+// bootstrap every bucket is UNSCORED, so a rehydrated freeze could
+// never accumulate an unfreeze streak while its expiries still burned
+// extensions — it marched to ESCALATED without one scored
+// evaluation. An unscored expiry now slides the hold WITHOUT
+// consuming an extension; the ladder resumes when scoring does.
+func TestPolicy_UnscoredExpiryDoesNotBurnTheLadder(t *testing.T) {
+	p := freeze.Policy{}
+	st := p.Evaluate(freeze.State{}, firing(t0)).State
+
+	// Ten hold expiries in a row, all unscored (a bootstrap window far
+	// longer than the whole pre-fix ladder): no extension consumed, no
+	// escalation, still frozen throughout.
+	now := t0.Add(freeze.DefaultUncorroboratedInitialHold + time.Second)
+	for i := 1; i <= 10; i++ {
+		sig := middling(now)
+		sig.Scored = false
+		out := p.Evaluate(st, sig)
+		if out.Transition != freeze.TransitionHeldUnscored {
+			t.Fatalf("unscored expiry %d: Transition = %q, want %q", i, out.Transition, freeze.TransitionHeldUnscored)
+		}
+		if out.State.ExtensionsUsed != 0 {
+			t.Fatalf("unscored expiry %d consumed an extension: %d", i, out.State.ExtensionsUsed)
+		}
+		if out.State.Escalated {
+			t.Fatalf("unscored expiry %d escalated", i)
+		}
+		if !out.Frozen {
+			t.Fatalf("unscored expiry %d unfroze", i)
+		}
+		st = out.State
+		now = now.Add(freeze.DefaultExtension + time.Second)
+	}
+
+	// Scoring returns: the ladder picks up from ZERO extensions —
+	// a scored middling expiry consumes the FIRST extension.
+	out := p.Evaluate(st, middling(now))
+	if out.Transition != freeze.TransitionExtended || out.State.ExtensionsUsed != 1 {
+		t.Fatalf("first scored expiry after bootstrap: %q ext=%d, want extended ext=1",
+			out.Transition, out.State.ExtensionsUsed)
+	}
+
+	// And a recovered pair releases through the normal streak once
+	// scored — the bootstrap window cost it nothing.
+	st = out.State
+	now = now.Add(time.Minute)
+	for i := 0; i < freeze.DefaultUnfreezeBuckets; i++ {
+		res := p.Evaluate(st, healthy(now))
+		st = res.State
+		if res.Transition == freeze.TransitionReleased {
+			return // released — done
+		}
+		now = now.Add(time.Minute)
+	}
+	res := p.Evaluate(st, healthy(now))
+	if res.Transition != freeze.TransitionReleased {
+		t.Fatalf("post-bootstrap recovery did not release: %q %+v", res.Transition, res.State)
+	}
+}
