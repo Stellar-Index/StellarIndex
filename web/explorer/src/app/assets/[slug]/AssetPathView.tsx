@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 
@@ -45,6 +46,16 @@ export function AssetPathView() {
     retry: false,
   });
 
+  // Restamp the shell's generic baked <title> once the real asset
+  // loads — the same HTML serves every long-tail asset URL. Effect,
+  // not render-body mutation (react-compiler rule).
+  const loadedCode = detail.data?.data?.code;
+  useEffect(() => {
+    if (loadedCode) {
+      document.title = `${loadedCode} — Stellar asset · Stellar Index`;
+    }
+  }, [loadedCode]);
+
   if (!slug || detail.isLoading) {
     return (
       <div className="space-y-4">
@@ -55,11 +66,6 @@ export function AssetPathView() {
   }
 
   const d = detail.data?.data;
-  // Restamp the shell's generic baked <title> with the real asset once
-  // it loads — the same HTML serves every long-tail asset URL.
-  if (typeof document !== 'undefined' && d?.code) {
-    document.title = `${d.code} — Stellar asset · Stellar Index`;
-  }
   if (detail.isError || !d?.asset_id) {
     return (
       <EmptyState
