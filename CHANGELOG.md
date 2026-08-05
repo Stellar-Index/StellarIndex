@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.25.2] — 2026-08-05
+
 ### Fixed
 - **A freeze can no longer escalate to operator-only without a single
   scored evaluation.** During the ~30-minute post-restart confidence
