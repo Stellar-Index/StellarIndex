@@ -10,6 +10,17 @@
 # at build time); everything else is local self-references.
 
 /*
+  # HTML must revalidate at the edge on every request (2026-08-05):
+  # a zone-level cache rule was edge-caching page HTML for 7 days
+  # (s-maxage=604800), so users saw day-old baked prices and
+  # pre-redesign chart code UNDER three successive deploys — the
+  # operator caught /assets/USDT serving yesterday's title to the
+  # digit. Pages HTML is cheap to revalidate (304s), and every
+  # fingerprinted asset below keeps its immutable year. NOTE: this
+  # header only wins if the zone cache rule RESPECTS origin — the
+  # rule itself is dashboard-managed; see the ops note in
+  # docs/operations/cdn-setup.md.
+  Cache-Control: public, max-age=0, must-revalidate
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin

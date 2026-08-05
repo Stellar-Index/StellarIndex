@@ -641,11 +641,14 @@ paths:
         Slugs match a hand-curated catalogue
         (`internal/currency/data/seed.yaml`); unknown slugs fall
         through to canonical parsing, then to **classic-asset slug
-        resolution**: every classic asset carries a unique public
-        slug (`lower(code)-<first 8 of issuer>`, e.g.
-        `usdt-gcqtgzqq`), so `/assets/usdt-gcqtgzqq` serves the same
-        per-Stellar-asset detail as its canonical `USDT-G…` form.
-        A path that is none of the above returns 400.
+        resolution**: every classic asset's public slug is its
+        fully-qualified asset_id (`CODE-GFULLISSUER`), matched
+        case-insensitively — so a lowercased or case-mangled form of
+        the canonical id still resolves. The slug is deliberately
+        NEVER an abbreviation: issuer-prefix forms are vanity-
+        grindable (~2^32 for 8 chars), and the full form is
+        self-certifying. A path that is none of the above returns
+        400.
       parameters:
         - { $ref: "#/components/parameters/AssetIdPath" }
       responses:

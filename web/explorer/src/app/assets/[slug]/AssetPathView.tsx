@@ -55,6 +55,11 @@ export function AssetPathView() {
   }
 
   const d = detail.data?.data;
+  // Restamp the shell's generic baked <title> with the real asset once
+  // it loads — the same HTML serves every long-tail asset URL.
+  if (typeof document !== 'undefined' && d?.code) {
+    document.title = `${d.code} — Stellar asset · Stellar Index`;
+  }
   if (detail.isError || !d?.asset_id) {
     return (
       <EmptyState
