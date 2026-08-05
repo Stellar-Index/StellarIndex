@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.25.1] — 2026-08-05
+
 ### Added
 - **`/v1/assets/{id}` resolves classic-asset slugs** — `usdt-gcqtgzqq`
   now serves the same detail as `USDT-G…`. Completes migration 0134:
