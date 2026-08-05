@@ -68,6 +68,16 @@
       /var/log/debug
       /var/log/messages
       {
+              # su directive (2026-08-05, root-disk-warning incident):
+              # /var/log is root:syslog group-writable on noble, and
+              # logrotate REFUSES group-writable parents unless told
+              # which user/group to rotate as — so this whole override
+              # was being SKIPPED with "insecure permissions" errors
+              # and the 100M maxsize cap never applied (syslog reached
+              # 2.6 GB). Stock Ubuntu ships `su root adm` in
+              # logrotate.conf for exactly this reason; a per-file
+              # override must repeat it.
+              su root adm
               rotate 7
               daily
               maxsize 100M
@@ -472,3 +482,27 @@
       </clickhouse>
   # No automatic restart — same operator-coordinated policy as above.
   tags: [clickhouse, log-discipline]
+
+- name: Stop rsyslog duplicating stellarindex unit logs into /var/log/syslog
+  # 2026-08-05 (stellarindex_node_root_disk_warning at 81%): the API's
+  # per-request JSON access log alone writes ~2.5 GB/day into
+  # /var/log/syslog — a straight DUPLICATE of what journald (capped at
+  # 500M above) and Loki already hold. The logrotate maxsize cap above
+  # can't help intra-day: Ubuntu's logrotate.timer is daily, so maxsize
+  # is only evaluated once per day while the file grows unbounded in
+  # between. Filter the stellarindex-* units out of rsyslog entirely —
+  # syslog keeps kernel/system lines, the app logs stay queryable via
+  # journalctl -u and Loki, and the root FS stops breathing with
+  # request volume.
+  ansible.builtin.copy:
+    dest: /etc/rsyslog.d/30-stellarindex-journald-only.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by ansible (archival-node role / 15-log-discipline.yml).
+      # stellarindex-* unit output is journald+Loki-only; writing it to
+      # /var/log/syslog too duplicated ~2.5 GB/day onto the root FS
+      # (2026-08-05 root-disk-warning incident).
+      if $programname startswith "stellarindex-" then stop
+  notify: Reload rsyslog
