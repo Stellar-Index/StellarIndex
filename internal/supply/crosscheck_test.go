@@ -230,32 +230,16 @@ func TestCrossCheckSubsetBound_ExactMatchIsWithin(t *testing.T) {
 	}
 }
 
-// TestCrossCheckSubsetBound_OneStroopOvershootTolerated — sac
-// exceeding classic by exactly the documented 1-stroop tolerance must
-// not alert, matching CrossCheck's equality-side tolerance boundary.
-func TestCrossCheckSubsetBound_OneStroopOvershootTolerated(t *testing.T) {
-	got, err := supply.CrossCheckSubsetBound(
-		supplyWithTotal(usdcClassicKey, 1_000_000_000),
-		supplyWithTotal(usdcSACKey, 1_000_000_001),
-	)
-	if err != nil {
-		t.Fatalf("CrossCheckSubsetBound: %v", err)
-	}
-	if got.DivergenceStroops.Cmp(big.NewInt(1)) != 0 {
-		t.Errorf("DivergenceStroops = %s, want 1", got.DivergenceStroops)
-	}
-	if !got.WithinTolerance {
-		t.Errorf("1-stroop overshoot must be tolerated; got WithinTolerance=false")
-	}
-}
-
-// TestCrossCheckSubsetBound_OverMintFires — sac exceeding classic by
-// MORE than tolerance is impossible under correct accounting (the
-// wrapped amount cannot exceed the total it's wrapped from) and MUST
-// fire regardless of wrap fraction — this is the "genuine
-// escrow != minted violation" the 2026-07-08 decision requires to
-// keep working.
-func TestCrossCheckSubsetBound_OverMintFires(t *testing.T) {
+// TestCrossCheckSubsetBound_OverMintIsDiagnosticOnly — 2026-08-05:
+// leg 1's premise (cumulative SAC net mint ≤ current classic
+// outstanding) was falsified live by BLND (12.6M retired classically
+// after SAC minting — no SAC burn fires on that path) and PHO (the
+// whole 200M supply minted through the SAC once, classic outstanding
+// issuer-excluded). The over-mint excess is still COMPUTED and
+// REPORTED (OverMintStroops) so an operator can read the
+// cumulative-vs-outstanding gap, but it no longer feeds
+// DivergenceStroops and must not alert.
+func TestCrossCheckSubsetBound_OverMintIsDiagnosticOnly(t *testing.T) {
 	got, err := supply.CrossCheckSubsetBound(
 		supplyWithTotal(usdcClassicKey, 1_000_000_000),
 		supplyWithTotal(usdcSACKey, 1_000_000_005),
@@ -263,11 +247,14 @@ func TestCrossCheckSubsetBound_OverMintFires(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CrossCheckSubsetBound: %v", err)
 	}
-	if got.DivergenceStroops.Cmp(big.NewInt(5)) != 0 {
-		t.Errorf("DivergenceStroops = %s, want 5", got.DivergenceStroops)
+	if got.OverMintStroops.Cmp(big.NewInt(5)) != 0 {
+		t.Errorf("OverMintStroops = %s, want 5 — the gap must stay visible", got.OverMintStroops)
 	}
-	if got.WithinTolerance {
-		t.Error("5-stroop over-mint must trigger alert")
+	if got.DivergenceStroops.Sign() != 0 {
+		t.Errorf("DivergenceStroops = %s, want 0 — over-mint is diagnostic, not paging", got.DivergenceStroops)
+	}
+	if !got.WithinTolerance {
+		t.Error("a pure over-mint gap must not alert (BLND/PHO false-positive class)")
 	}
 }
 

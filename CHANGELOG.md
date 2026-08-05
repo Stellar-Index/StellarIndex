@@ -15,6 +15,19 @@ against.
 
 ## [Unreleased]
 
+### Changed
+- **The partial-wrap supply cross-check's over-mint leg is
+  diagnostic-only.** Its premise — cumulative SAC net mint ≤ current
+  classic outstanding — only holds for one-way wraps, and two live
+  assets falsified it: BLND retires supply classically after SAC
+  minting (no SAC burn fires on a classic payment to the issuer), and
+  PHO minted its entire 200M supply through the SAC once while classic
+  outstanding is issuer-excluded. Both paged for a week with every
+  unit accounted for. The over-mint excess stays computed and reported
+  (`OverMintStroops`); the paging divergence is now leg 2 alone —
+  escrow ≤ net mint, the bound that is impossible to breach under
+  correct accounting for a partial wrap.
+
 ## [v0.25.2] — 2026-08-05
 
 ### Fixed
