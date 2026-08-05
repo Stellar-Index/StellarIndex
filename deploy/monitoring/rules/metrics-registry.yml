@@ -32,7 +32,15 @@ groups:
     rules:
 
       - alert: stellarindex_metrics_registry_absent
-        expr: stellarindex_metrics_registry_present == 0
+        # ledgerstream is the DOCUMENTED accepted exception (runbook "The
+        # known case"): the SDK's WithMetrics takes a concrete
+        # *prometheus.Registry and MustRegisters fresh collectors per
+        # Stream call, so the repeated-Stream production shape must run
+        # registry-less until a gatherer-bridge lands (queued in the
+        # runbook). Alerting forever on a documented accepted state is
+        # noise; the rule stays armed for any NEW registry-less
+        # component (2026-08-05).
+        expr: stellarindex_metrics_registry_present{component!="ledgerstream"} == 0
         for: 15m
         labels:
           severity: informational
