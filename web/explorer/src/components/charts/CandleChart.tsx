@@ -129,6 +129,14 @@ export function CandleChart({ data, height = 360, className, ariaLabel }: Candle
   // Push new data on prop changes (and initial mount) without destroying the chart.
   useEffect(() => {
     const theme = themeRef.current;
+    // Adaptive price precision (2026-08-05): lightweight-charts
+    // defaults to 2 decimals, which renders XLM as a flat "$0.17" and
+    // any sub-cent asset as "$0.00". Scale the axis/crosshair/legend
+    // precision to the series' actual magnitude.
+    const precision = pricePrecisionFor(data);
+    seriesRef.current?.applyOptions({
+      priceFormat: { type: 'price', precision, minMove: 10 ** -precision },
+    });
     seriesRef.current?.setData(toSeries(data));
     if (theme) volumeRef.current?.setData(toVolume(data, theme));
     chartRef.current?.timeScale().fitContent();
@@ -146,6 +154,24 @@ export function CandleChart({ data, height = 360, className, ariaLabel }: Candle
       }
     />
   );
+}
+
+// pricePrecisionFor picks the axis decimal count from the series'
+// magnitude: enough significant digits that intraday movement is
+// visible (XLM at ~$0.17 gets 6 decimals, not "0.17"), without
+// rendering BTC-scale values with absurd tails. Exported for tests.
+export function pricePrecisionFor(points: CandlePoint[]): number {
+  let max = 0;
+  for (const p of points) {
+    if (p.close > max) max = p.close;
+    if (p.high > max) max = p.high;
+  }
+  if (max === 0) return 2;
+  if (max >= 1000) return 2;
+  if (max >= 10) return 4;
+  if (max >= 0.01) return 6;
+  if (max >= 0.0001) return 8;
+  return 10;
 }
 
 function toSeries(points: CandlePoint[]): CandlestickData<Time>[] {

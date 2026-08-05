@@ -1,16 +1,41 @@
 'use client';
 
-import { useState } from 'react';
-
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
 import { MarketChart } from '@/components/charts/MarketChart';
 
-type Quote = 'native' | 'fiat:USD';
-const QUOTES: { key: Quote; label: string }[] = [
-  { key: 'native', label: 'XLM' },
-  { key: 'fiat:USD', label: 'USD' },
-];
+// The verified Circle-issued USDC — the chart anchor quote.
+export const USDC_ASSET_ID =
+  'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+
+// chartQuoteFor picks the ONE quote an asset's price chart renders
+// against (2026-08-05 operator decision): every chart is anchored to
+// USDC — never XLM. An XLM-quoted chart re-denominates the asset in a
+// floating unit (the source of the header-vs-chart confusion this
+// replaced), and XLM-quoted thin markets were exactly the manipulated
+// visuals of the 2026-08-04 incident. USDC ≈ $1 by construction, so a
+// USDC-quoted chart reads as dollars while staying a REAL traded
+// market rather than a synthetic blend.
+//
+// Three cases:
+//   - USDC itself charts against fiat:USD — its actual dollar price,
+//     which is the surface where a depeg becomes visible (a USDC/USDC
+//     chart would be a flat 1.0 by definition).
+//   - Native XLM + fiat assets chart against fiat:USD (the CEX-fed
+//     combined USD series — deeper than any single on-chain pair, and
+//     "never XLM" trivially holds).
+//   - Everything else charts against the verified USDC asset.
+//
+// Exported for the unit test; no toggle — one honest quote per asset.
+export function chartQuoteFor(assetID: string): { quote: string; label: string } {
+  if (assetID === USDC_ASSET_ID) {
+    return { quote: 'fiat:USD', label: 'USD' };
+  }
+  if (assetID === 'native' || assetID.startsWith('fiat:')) {
+    return { quote: 'fiat:USD', label: 'USD' };
+  }
+  return { quote: USDC_ASSET_ID, label: 'USDC' };
+}
 
 // shortLabel renders a compact base label for the chart caption.
 function shortLabel(assetID: string): string {
@@ -24,59 +49,23 @@ function shortLabel(assetID: string): string {
 
 /**
  * Chart tab for /assets/[slug]?tab=chart — real OHLC candles + volume
- * (the shared MarketChart over /v1/ohlc). The quote toggle picks the
- * counter-asset: most classic Stellar assets trade vs XLM on SDEX,
- * while off-chain crypto:* feeds (Binance / Bitstamp / …) have direct
- * USD pairs. Native XLM + fiat assets only make sense vs USD, so the
- * XLM option is dropped for those.
- *
- * The DEFAULT quote is USD for every asset (2026-08-04): the page
- * header/sidebar price is quoted in USD, and a chart that silently
- * opens in XLM puts two different quantities 20px apart with nothing
- * saying so (observed on /assets/USDT: header $0.13, chart "0.76" —
- * the 0.76 was an XLM price). Toggling to XLM is an explicit user
- * action, visible in the pressed toggle.
+ * (the shared MarketChart over /v1/ohlc), quoted per [chartQuoteFor].
  */
 export function ChartPanel({ assetID }: { assetID: string }) {
-  const isNative = assetID === 'native';
-  const isFiat = assetID.startsWith('fiat:');
-  const quoteOptions = isNative || isFiat ? QUOTES.filter((q) => q.key !== 'native') : QUOTES;
-  const [quote, setQuote] = useState<Quote>('fiat:USD');
+  const { quote, label } = chartQuoteFor(assetID);
 
   return (
     <Panel
       title="Price chart"
-      hint="OHLC + volume"
+      hint={`OHLC + volume · quoted in ${label}`}
       source={asExample('/v1/ohlc', { base: assetID, quote, interval: '15m', limit: 672 })}
       bodyClassName="space-y-3"
     >
-      {quoteOptions.length > 1 && (
-        <div className="flex items-center gap-1">
-          <span className="text-[11px] uppercase tracking-wider text-ink-muted">Quote</span>
-          <div className="inline-flex overflow-hidden rounded-md border border-line">
-            {quoteOptions.map((opt) => (
-              <button
-                key={opt.key}
-                type="button"
-                onClick={() => setQuote(opt.key)}
-                aria-pressed={opt.key === quote}
-                className={`px-2 py-1 text-xs ${
-                  opt.key === quote
-                    ? 'bg-brand-600 text-white'
-                    : 'bg-surface text-ink-body hover:bg-surface-muted'
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
       <MarketChart
         base={assetID}
         quote={quote}
         baseLabel={shortLabel(assetID)}
-        quoteLabel={quote === 'native' ? 'XLM' : 'USD'}
+        quoteLabel={label}
         height={420}
       />
     </Panel>
