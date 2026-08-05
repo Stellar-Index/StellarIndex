@@ -2,6 +2,8 @@ package timescale
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -231,4 +233,28 @@ func (s *Store) registerIssuerSeen(ctx context.Context, gStrkey string) error {
 	}
 	issuerRegistryDedupe.Store(gStrkey, struct{}{})
 	return nil
+}
+
+// ClassicAssetBySlug resolves a PUBLIC slug (populated by migration
+// 0134 + stamped on new rows above) to its classic (code, issuer)
+// identity. Exact match wins over the case-folded match — tier-3
+// fallback slugs are the verbatim asset_id and therefore mixed-case,
+// while tier-1/2 slugs are lowercase; a URL may arrive in either
+// casing. ok=false when no row carries the slug (not an error).
+func (s *Store) ClassicAssetBySlug(ctx context.Context, slug string) (code, issuer string, ok bool, err error) {
+	const q = `
+		SELECT code, issuer_g_strkey
+		  FROM classic_assets
+		 WHERE slug = $1 OR slug = lower($1)
+		 ORDER BY (slug = $1) DESC
+		 LIMIT 1
+	`
+	err = s.db.QueryRowContext(ctx, q, slug).Scan(&code, &issuer)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, fmt.Errorf("timescale: ClassicAssetBySlug %q: %w", slug, err)
+	}
+	return code, issuer, true, nil
 }

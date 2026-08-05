@@ -15,6 +15,33 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **`/v1/assets/{id}` resolves classic-asset slugs** — `usdt-gcqtgzqq`
+  now serves the same detail as `USDT-G…`. Completes migration 0134:
+  the explorer links every classic asset by its public slug, and
+  before this those URLs were only resolvable through the explorer's
+  own build-time cache, so any page not baked at build time 404'd
+  (live report: `/assets/usdt-gasu4kif`). Optional reader capability,
+  forwarded through the cache wrapper explicitly.
+- **Asset-page headline prices are now LIVE** (`LiveAssetPrice`): the
+  static build still bakes an initial value, but the browser
+  re-fetches `/v1/price` on mount and every 60s — a 12-day-old deploy
+  was showing XLM at $0.186 against a live $0.17 chart. Un-refreshed
+  values are captioned "as baked at deploy"; a `price-withheld`
+  verdict replaces any baked number rather than leaving a lower-trust
+  snapshot on screen.
+
+### Changed
+- **Every asset price chart is anchored to USDC — never XLM** (operator
+  decision). The XLM quote toggle is gone: an XLM-quoted chart
+  re-denominates the asset in a floating unit, and XLM-quoted thin
+  markets were the manipulated visuals of the 2026-08-04 incident.
+  USDC itself charts against `fiat:USD` so a depeg is visible; native
+  XLM and fiat assets chart against the CEX-fed USD series.
+- **Chart price precision is now adaptive** — the axis scales its
+  decimals to the series magnitude (XLM renders ~6 decimals instead of
+  a flat "$0.17"; sub-cent assets no longer flatline at "$0.00").
+
 ## [v0.25.0] — 2026-08-04
 
 ### Added
