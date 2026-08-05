@@ -152,14 +152,3 @@ func IsPermanentDataError(err error) bool {
 	// safe side for a data-integrity caller is retry-and-alert, not skip.
 	return false
 }
-
-// isUniqueViolation reports whether err is a Postgres unique_violation
-// (SQLSTATE 23505) — narrower than [IsPermanentDataError]'s whole
-// class-23 test. Used by the classic-asset registrar's slug fallback:
-// a unique collision on the disambiguated slug is retriable with the
-// fully-qualified form, while every OTHER constraint violation on that
-// insert is a genuine defect that must surface.
-func isUniqueViolation(err error) bool {
-	var pqErr *pq.Error
-	return errors.As(err, &pqErr) && pqErr.Code == "23505"
-}

@@ -95,17 +95,16 @@ func (s *Store) registerClassicAssetSeen(
 	// row already exists would leave first_seen_ledger pinned at
 	// the original (later) ledger — wrong by definition. F-1239.
 	//
-	// slug (2026-08-04, migration 0134): NEW rows are stamped with the
-	// disambiguated form migration 0023 documented but never
-	// implemented — lower(code)-<first 8 of issuer> — instead of the
-	// literal NULL this INSERT bound for its whole life. The NULL made
-	// every reader's COALESCE(slug, code) serve the bare CODE as the
-	// public slug, so 5+ unrelated issuers of "USDT" all published the
-	// SAME slug and the explorer's slug-keyed cache crowned an
-	// arbitrary winner as /assets/USDT (2026-08-04 identity incident).
-	// ON CONFLICT the EXISTING slug is kept — the backfill migration
-	// owns historical rows, and a slug is a public URL: it must never
-	// silently change once issued.
+	// slug (migration 0135, 2026-08-05): the fully-qualified asset_id,
+	// verbatim. 0134 briefly shipped an abbreviated
+	// lower(code)-issuer8 form; the operator flipped it to the full
+	// form one day later because an 8-char issuer prefix is a ~2^32
+	// vanity-grind (dust-attack address mimicry does this routinely)
+	// and the abbreviation bought nothing but URL length. The full
+	// form is self-certifying and unique by construction — it IS the
+	// primary key's value — which also deletes the collision-retry
+	// apparatus 0134's writer needed. ON CONFLICT the existing slug
+	// is kept (a slug is a public URL; it never silently changes).
 	const q = `
 		INSERT INTO classic_assets (
 			asset_id, code, issuer_g_strkey, slug,
@@ -113,7 +112,7 @@ func (s *Store) registerClassicAssetSeen(
 			last_seen_at,  last_seen_ledger,
 			observation_count
 		) VALUES (
-			$1, $2, $3, lower($2) || '-' || lower(left($3, 8)),
+			$1, $2, $3, $1,
 			$4, $5, $4, $5, 1
 		)
 		ON CONFLICT (asset_id) DO UPDATE SET
@@ -127,39 +126,7 @@ func (s *Store) registerClassicAssetSeen(
 		assetID, asset.Code, asset.Issuer,
 		observedAt.UTC(), int(ledger),
 	); err != nil {
-		// slug is UNIQUE, and the 8-char issuer prefix leaves an
-		// astronomically small (but non-zero) same-code collision
-		// window. A collision must not sink trade ingest: retry once
-		// with the fully-qualified asset_id as the slug — unique by
-		// construction (it IS the primary key's value), same tier-3
-		// fallback the 0134 backfill uses.
-		if isUniqueViolation(err) {
-			const qFull = `
-				INSERT INTO classic_assets (
-					asset_id, code, issuer_g_strkey, slug,
-					first_seen_at, first_seen_ledger,
-					last_seen_at,  last_seen_ledger,
-					observation_count
-				) VALUES (
-					$1, $2, $3, $1,
-					$4, $5, $4, $5, 1
-				)
-				ON CONFLICT (asset_id) DO UPDATE SET
-					first_seen_at     = LEAST(classic_assets.first_seen_at, EXCLUDED.first_seen_at),
-					first_seen_ledger = LEAST(classic_assets.first_seen_ledger, EXCLUDED.first_seen_ledger),
-					last_seen_at      = GREATEST(classic_assets.last_seen_at, EXCLUDED.last_seen_at),
-					last_seen_ledger  = GREATEST(classic_assets.last_seen_ledger, EXCLUDED.last_seen_ledger),
-					observation_count = classic_assets.observation_count + 1
-			`
-			if _, rerr := s.db.ExecContext(ctx, qFull,
-				assetID, asset.Code, asset.Issuer,
-				observedAt.UTC(), int(ledger),
-			); rerr != nil {
-				return fmt.Errorf("timescale: registerClassicAssetSeen %s (full-slug retry): %w", assetID, rerr)
-			}
-		} else {
-			return fmt.Errorf("timescale: registerClassicAssetSeen %s: %w", assetID, err)
-		}
+		return fmt.Errorf("timescale: registerClassicAssetSeen %s: %w", assetID, err)
 	}
 	assetRegistryDedupe.Store(assetID, time.Now())
 	return nil
@@ -235,17 +202,19 @@ func (s *Store) registerIssuerSeen(ctx context.Context, gStrkey string) error {
 	return nil
 }
 
-// ClassicAssetBySlug resolves a PUBLIC slug (populated by migration
-// 0134 + stamped on new rows above) to its classic (code, issuer)
-// identity. Exact match wins over the case-folded match — tier-3
-// fallback slugs are the verbatim asset_id and therefore mixed-case,
-// while tier-1/2 slugs are lowercase; a URL may arrive in either
-// casing. ok=false when no row carries the slug (not an error).
+// ClassicAssetBySlug resolves a PUBLIC slug to its classic
+// (code, issuer) identity. Since migration 0135 the slug IS the
+// fully-qualified asset_id (self-certifying — see the writer note in
+// registerClassicAssetSeen), so this lookup mostly serves
+// case-mangled URLs: a lowercased full form fails strkey parsing in
+// the canonical parser and lands here instead. Exact match wins over
+// the case-folded match. ok=false when no row carries the slug (not
+// an error).
 func (s *Store) ClassicAssetBySlug(ctx context.Context, slug string) (code, issuer string, ok bool, err error) {
 	const q = `
 		SELECT code, issuer_g_strkey
 		  FROM classic_assets
-		 WHERE slug = $1 OR slug = lower($1)
+		 WHERE slug = $1 OR lower(slug) = lower($1)
 		 ORDER BY (slug = $1) DESC
 		 LIMIT 1
 	`

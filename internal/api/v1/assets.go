@@ -2232,7 +2232,7 @@ func (s *Server) parseAssetGetID(w http.ResponseWriter, r *http.Request, rawID s
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-asset-id",
 			"Invalid asset identifier", http.StatusBadRequest,
-			"asset_id must match: native | <code>-<G-issuer> | <C-contract> | fiat:<CODE> | a classic asset slug (e.g. usdc-ga5zsejy)")
+			"asset_id must match: native | <code>-<G-issuer> | <C-contract> | fiat:<CODE> | a classic asset slug (the full asset_id, any casing)")
 		return canonical.Asset{}, false
 	}
 	if err := parsed.Validate(); err != nil {

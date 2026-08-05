@@ -566,6 +566,16 @@ export async function generateMetadata({
   params: Params;
 }): Promise<Metadata> {
   const { slug } = await params;
+  // The runtime-fallback shell's HTML serves for ARBITRARY long-tail
+  // asset URLs, so its baked metadata must be generic — the literal
+  // param would title every such page "shell". AssetPathView restamps
+  // document.title client-side once the real asset loads.
+  if (slug.toLowerCase() === 'shell') {
+    return {
+      title: 'Asset · Stellar Index',
+      description: 'Stellar asset detail, rendered live from the Stellar Index API.',
+    };
+  }
   const [coin, globalView] = await Promise.all([
     fetchCoin(slug),
     fetchGlobalAsset(slug),

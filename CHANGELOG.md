@@ -15,6 +15,29 @@ against.
 
 ## [Unreleased]
 
+### Changed
+- **Classic-asset slugs are now the fully-qualified asset_id**
+  (migration 0135, superseding 0134's abbreviation one day later).
+  An 8-character issuer prefix is a ~2^32 vanity-grind — minutes on
+  consumer GPUs, the same economics dust-attack address mimicry
+  already exploits — and the abbreviation bought nothing but URL
+  length. The full form is self-certifying (the URL IS the identity,
+  nothing to grind or front-run) and deletes the writer's whole
+  collision apparatus, since the slug equals the primary key's value.
+  Slug resolution on `/v1/assets/{id}` is now effectively a
+  case-insensitive canonical-id match. Verified-currency slugs
+  (`usdc`, `aqua`) are unaffected — that's the catalogue namespace.
+- **Explorer HTML now ships `Cache-Control: public, max-age=0,
+  must-revalidate`** — a zone-level cache rule was edge-caching page
+  HTML for 7 days, so users saw day-old baked prices and pre-redesign
+  chart code under three successive deploys. Fingerprinted assets
+  keep their immutable year. (The zone rule itself is
+  dashboard-managed and needs the operator: respect-origin + one
+  purge.)
+- **The `/assets/*` runtime shell carries generic metadata** ("Asset ·
+  Stellar Index") instead of baking the literal "shell" title, and the
+  client view restamps `document.title` once the real asset loads.
+
 ## [v0.25.1] — 2026-08-05
 
 ### Added
