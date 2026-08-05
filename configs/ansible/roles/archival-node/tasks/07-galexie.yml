@@ -148,6 +148,12 @@
   # skipped in check mode by default, which left stdout empty and failed
   # the assert below with "printed NOTHING" — 2026-07-27 drift run).
   check_mode: false
+  # Must carry the SAME tags as the set_fact + assert below: a
+  # `--tags observability` run (2026-08-05) skipped this untagged
+  # probe while still running its tagged consumers, so the assert
+  # fired "printed NOTHING (no rc)" against a register that was
+  # never populated — a tag-filtering artifact, not drift.
+  tags: [observability, stellar-stack-version, drift-guard]
 
 # The comparison reads stdout OR stderr. Observed on r1 (recorded in the
 # defaults/main.yml warning): the assert below failed with the live

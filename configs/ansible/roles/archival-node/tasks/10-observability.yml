@@ -469,24 +469,36 @@
         if [ "$have_jq" -eq 1 ] && [ -n "$latest_tag" ] && [ "$latest_tag" != "null" ]; then
           latest_major=$(major_of "$(printf '%s' "$latest_tag" | sed -E 's/^galexie-v//')")
           latest_published=$(printf '%s' "$gh_json" | jq -r '.published_at // empty')
-          target_commitish=$(printf '%s' "$gh_json" | jq -r '.target_commitish // empty')
 
-          # Best-effort: the target commit's own date is a closer proxy
-          # to the pseudo-version's embedded commit date than
-          # published_at (a release can be published well after its
-          # commit lands). Falls back to published_at silently on any
-          # failure — one extra cheap GET, not required for correctness.
+          # Resolve the release's commit date from the TAG's own
+          # commit — NEVER from target_commitish. For most releases
+          # target_commitish is the literal branch name "main", so the
+          # previous revision compared the installed tag-commit date
+          # against CURRENT MAIN HEAD: any post-release commit
+          # upstream made a current install read "behind", and the
+          # protocol-major disambiguation then classified it lag=2.
+          # That paged 2026-08-04 for a galexie that was byte-for-byte
+          # the latest release (upstream merged to main 2026-08-03
+          # 20:38Z; our v27.0.0 tag-commit is 2026-06-10 16:18:48Z —
+          # the exact commit we run). Falls back to published_at
+          # silently on any failure (never a branch, at worst ~30 min
+          # after the tag commit).
           latest_commit_date=""
-          if [ -n "$target_commitish" ]; then
-            commit_json=$(curl -sS --max-time 10 \
-              "https://api.github.com/repos/stellar/stellar-galexie/commits/${target_commitish}" 2>/dev/null || true)
-            latest_commit_date=$(printf '%s' "$commit_json" | jq -r '.commit.committer.date // empty' 2>/dev/null || true)
-          fi
+          commit_json=$(curl -sS --max-time 10 \
+            "https://api.github.com/repos/stellar/stellar-galexie/commits/${latest_tag}" 2>/dev/null || true)
+          latest_commit_date=$(printf '%s' "$commit_json" | jq -r '.commit.committer.date // empty' 2>/dev/null || true)
           ref_date="${latest_commit_date:-$latest_published}"
-          ref_date_compact=$(printf '%s' "$ref_date" | tr -dc '0-9' | cut -c1-14)
+          # DAY granularity, deliberately: a release's published_at
+          # trails its tag commit by minutes-to-hours (v27.0.0:
+          # 16:46 vs 16:18 the same day), so a second-level compare
+          # on the published_at fallback path reads a current
+          # install as 28 minutes "behind" and pages. A genuine lag
+          # is measured in months; same-day == current.
+          ref_date_compact=$(printf '%s' "$ref_date" | tr -dc '0-9' | cut -c1-8)
+          galexie_date_day=$(printf '%s' "$galexie_date" | cut -c1-8)
 
-          if [ -n "$latest_major" ] && {% raw %}[ "${#ref_date_compact}" -eq 14 ]{% endraw %}; then
-            if [ "$galexie_date" -ge "$ref_date_compact" ]; then
+          if [ -n "$latest_major" ] && {% raw %}[ "${#ref_date_compact}" -eq 8 ]{% endraw %}; then
+            if [ "$galexie_date_day" -ge "$ref_date_compact" ]; then
               lag=0
             else
               # Behind the latest release. galexie tags map 1:1 to
