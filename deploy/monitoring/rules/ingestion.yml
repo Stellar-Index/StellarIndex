@@ -453,12 +453,16 @@ groups:
       # crosses its 0.5/s threshold. The 1 h budget tolerates
       # legitimately-bursty sources without false-firing.
       - alert: stellarindex_ingestion_source_insert_stale
-        # 1 h budget for normal sources; 6 h for the genuinely-sparse Soroban
+        # 1 h budget for normal sources; 24 h for the genuinely-sparse Soroban
         # AMMs (comet, phoenix). Comet is tiny — ~20-70 trades/day, bursty —
         # so multi-hour quiet stretches are normal and the flat 1 h budget
-        # false-fired (2026-06-20). The 6 h budget still catches a real
-        # day-scale stall (both produce every day). Tune the regex as new
-        # sparse sources appear.
+        # false-fired (2026-06-20); the 6 h budget that replaced it ALSO
+        # false-fired (2026-08-05: phoenix's measured 30-day max gap is
+        # 8h28m and a genuine 12h market lull tripped it while the lake
+        # showed zero swap events on any known or unknown pool). 24 h
+        # still catches a real day-scale stall; the ADR-0033 completeness
+        # verdict is the correctness net. Tune the regex as new sparse
+        # sources appear.
         expr: |
           (
             time() - stellarindex_source_last_insert_unix > 3600
@@ -467,7 +471,7 @@ groups:
           )
           or
           (
-            time() - stellarindex_source_last_insert_unix{source=~"comet|phoenix"} > 21600
+            time() - stellarindex_source_last_insert_unix{source=~"comet|phoenix"} > 86400
             and on (source) stellarindex_source_enabled == 1
           )
         for: 10m
