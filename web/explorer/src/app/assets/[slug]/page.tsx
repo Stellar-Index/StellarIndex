@@ -572,7 +572,7 @@ export async function generateMetadata({
   // document.title client-side once the real asset loads.
   if (slug.toLowerCase() === 'shell') {
     return {
-      title: 'Asset · Stellar Index',
+      title: 'Asset',
       description: 'Stellar asset detail, rendered live from the Stellar Index API.',
     };
   }
