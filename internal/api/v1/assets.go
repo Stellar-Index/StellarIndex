@@ -2001,19 +2001,8 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	parsed, err := canonical.ParseAsset(rawID)
-	if err != nil {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/invalid-asset-id",
-			"Invalid asset identifier", http.StatusBadRequest,
-			"asset_id must match: native | <code>-<G-issuer> | <C-contract> | fiat:<CODE>")
-		return
-	}
-	if err := parsed.Validate(); err != nil {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/invalid-asset-id",
-			"Invalid asset identifier", http.StatusBadRequest,
-			err.Error())
+	parsed, ok := s.parseAssetGetID(w, r, rawID)
+	if !ok {
 		return
 	}
 
@@ -2223,6 +2212,79 @@ func (s *Server) tryServeGlobalAsset(w http.ResponseWriter, r *http.Request, raw
 	}
 	s.handleGlobalAsset(w, r, vc)
 	return true
+}
+
+// parseAssetGetID resolves handleAssetGet's path parameter to a
+// canonical asset: canonical parse + Validate first, then — for a
+// segment that is neither a catalogue entry (dispatched earlier) nor
+// a canonical id — classic-slug resolution ("usdt-gcqtgzqq",
+// 2026-08-05, migration 0134). The explorer links every classic asset
+// by slug; before the slug branch those URLs were only resolvable via
+// the explorer's own build cache, so any page not baked at build time
+// 404'd (operator report: /assets/usdt-gasu4kif). ok=false means a
+// problem+json has been written.
+func (s *Server) parseAssetGetID(w http.ResponseWriter, r *http.Request, rawID string) (canonical.Asset, bool) {
+	parsed, err := canonical.ParseAsset(rawID)
+	if err != nil {
+		if resolved, ok := s.resolveClassicSlug(r.Context(), rawID); ok {
+			return resolved, true
+		}
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-asset-id",
+			"Invalid asset identifier", http.StatusBadRequest,
+			"asset_id must match: native | <code>-<G-issuer> | <C-contract> | fiat:<CODE> | a classic asset slug (e.g. usdc-ga5zsejy)")
+		return canonical.Asset{}, false
+	}
+	if err := parsed.Validate(); err != nil {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-asset-id",
+			"Invalid asset identifier", http.StatusBadRequest,
+			err.Error())
+		return canonical.Asset{}, false
+	}
+	return parsed, true
+}
+
+// classicSlugResolver is the OPTIONAL reader capability behind
+// /v1/assets/{slug} classic-slug resolution (the proxyPairGate idiom).
+// Production: timescale.Store.ClassicAssetBySlug via the cmd adapters;
+// a reader without it degrades to the pre-0134 behaviour (400 on
+// non-canonical ids).
+type classicSlugResolver interface {
+	ClassicAssetBySlug(ctx context.Context, slug string) (code, issuer string, ok bool, err error)
+}
+
+// resolveClassicSlug maps a public classic-asset slug to its
+// (code, issuer) identity via the wired reader. Best-effort: a lookup
+// error logs and reads as a miss (the caller then 400s), never a 500 —
+// slug resolution is a convenience layer over the canonical-id
+// contract.
+func (s *Server) resolveClassicSlug(ctx context.Context, raw string) (canonical.Asset, bool) {
+	// The server carries TWO reader seams (`assets` for the detail/list
+	// handlers, `assetsReader` for the F2 listing paths); the binaries
+	// wire the same store adapter behind both, but a test — or a future
+	// deployment — may wire only one. Probe both.
+	res, ok := s.assets.(classicSlugResolver)
+	if !ok {
+		res, ok = s.assetsReader.(classicSlugResolver)
+	}
+	if !ok {
+		return canonical.Asset{}, false
+	}
+	code, issuer, found, err := res.ClassicAssetBySlug(ctx, raw)
+	if err != nil {
+		s.logger.Warn("classic slug lookup failed", "slug", raw, "err", err)
+		return canonical.Asset{}, false
+	}
+	if !found {
+		return canonical.Asset{}, false
+	}
+	asset, err := canonical.NewClassicAsset(code, issuer)
+	if err != nil {
+		s.logger.Warn("classic slug resolved to unbuildable asset", "slug", raw, "code", code, "err", err)
+		return canonical.Asset{}, false
+	}
+	return asset, true
 }
 
 // lookupCatalogue resolves a slug OR ticker to a verified currency (slug wins),

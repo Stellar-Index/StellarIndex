@@ -2440,6 +2440,13 @@ type storeAssetReader struct {
 	homeDomainLookup func(issuer string) (string, bool)
 }
 
+// ClassicAssetBySlug satisfies v1's optional classicSlugResolver
+// capability — /v1/assets/{slug} resolution for the migration-0134
+// public slugs. Pure delegation to the store.
+func (r storeAssetReader) ClassicAssetBySlug(ctx context.Context, slug string) (string, string, bool, error) {
+	return r.s.ClassicAssetBySlug(ctx, slug)
+}
+
 func (r storeAssetReader) ListAssets(ctx context.Context, cursor string, limit int) ([]v1.AssetDetail, string, error) {
 	assets, next, err := r.s.DistinctAssets(ctx, cursor, limit)
 	if err != nil {
@@ -2693,6 +2700,22 @@ type cachedAssetReader struct {
 	inner v1.AssetReader
 	rdb   redis.UniversalClient
 	log   *slog.Logger
+}
+
+// ClassicAssetBySlug forwards the optional classicSlugResolver
+// capability through the cache wrapper — a wrapping reader that
+// swallowed it would silently 400 every slug URL in production while
+// tests against the bare reader stayed green (the exact
+// capability-erasure bug class the mutation audit flagged). Uncached:
+// the lookup is a single unique-index point read.
+func (r cachedAssetReader) ClassicAssetBySlug(ctx context.Context, slug string) (string, string, bool, error) {
+	res, ok := r.inner.(interface {
+		ClassicAssetBySlug(ctx context.Context, slug string) (string, string, bool, error)
+	})
+	if !ok {
+		return "", "", false, nil
+	}
+	return res.ClassicAssetBySlug(ctx, slug)
 }
 
 func (r cachedAssetReader) GetAsset(ctx context.Context, a canonical.Asset) (v1.AssetDetail, error) {

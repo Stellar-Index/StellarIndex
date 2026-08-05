@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -828,4 +829,52 @@ func (s *listingStub) GetAssetsATHBatch(_ context.Context, _ []string) (map[stri
 
 func (s *listingStub) GetAssetTradeCount24h(_ context.Context, _ string) (int64, error) {
 	return 0, nil
+}
+
+// slugStubAssetReader wraps stubAssetReader with the optional
+// classicSlugResolver capability (migration-0134 slug URLs).
+type slugStubAssetReader struct {
+	v1.AssetReader
+	code, issuer string
+}
+
+func (r slugStubAssetReader) ClassicAssetBySlug(_ context.Context, slug string) (string, string, bool, error) {
+	if slug == "usdt-gcqtgzqq" {
+		return r.code, r.issuer, true, nil
+	}
+	return "", "", false, nil
+}
+
+// TestAssetGet_ClassicSlugResolves — /v1/assets/{slug} must resolve a
+// migration-0134 public slug to its (code, issuer) identity when the
+// wired reader offers the capability, and keep the 400 for genuinely
+// unresolvable ids. Pre-fix, slug URLs were resolvable ONLY through
+// the explorer's build cache, so any page not baked at build time
+// 404'd (operator report: /assets/usdt-gasu4kif).
+func TestAssetGet_ClassicSlugResolves(t *testing.T) {
+	const usdtID = "USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V"
+	reader := slugStubAssetReader{
+		AssetReader: &stubAssetReader{byID: map[string]v1.AssetDetail{
+			usdtID: {AssetID: usdtID, Type: "classic", Code: "USDT", Decimals: 7},
+		}},
+		code:   "USDT",
+		issuer: "GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V",
+	}
+	srv := v1.New(v1.Options{Assets: reader})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/assets/usdt-gcqtgzqq")
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 200: %s", resp.StatusCode, body)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V") {
+		t.Errorf("resolved detail must carry the full asset_id: %s", body)
+	}
+
+	resp2 := mustGet(t, ts.URL+"/v1/assets/definitely-not-a-slug")
+	if resp2.StatusCode != http.StatusBadRequest {
+		t.Errorf("unresolvable id status = %d, want 400", resp2.StatusCode)
+	}
 }
