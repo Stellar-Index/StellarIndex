@@ -277,49 +277,15 @@ groups:
       # isn't being applied" — see
       # stellarindex_nonstandard_decimals_correction_failing below for
       # that action-item alert.
-      - alert: stellarindex_dex_nonstandard_decimals_detected
-        expr: |
-          sum by (source, asset) (stellarindex_dex_trade_nonstandard_decimals_total) > 0
-        for: 5m
-        labels:
-          severity: informational
-          team: stellarindex
-          component: aggregator
-        annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
-          summary: "DEX trade for a non-7-decimal Soroban token detected — auto-corrected, no action needed"
-          description: |
-            A DEX trade landed for a Soroban token whose on-chain
-            decimals() is not 7 (source {{ $labels.source }}, asset
-            {{ $labels.asset }}). This is EXPECTED and HANDLED: every
-            serving path (prices_* continuous aggregates + reads,
-            aggregate.VWAP/TWAP/OHLC, /v1/price, /v1/vwap, /v1/twap,
-            /v1/history, /v1/ohlc, /v1/chart, /v1/markets /v1/pools
-            /v1/pairs, the SEP-40 oracle passthroughs) has normalized
-            against the confirmed decimals since 2026-07-10 — see the
-            runbook's "Mitigation" section. This alert is an awareness
-            signal only, latching so operators can see which tokens
-            have been confirmed non-7-decimal; it does not indicate a
-            pricing error. If the correction ITSELF is failing (the
-            refresh sweep erroring, or serving actively declining),
-            stellarindex_nonstandard_decimals_correction_failing fires
-            instead — that is the real action item.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
-
-      # ─── Decimals correction sweep/serving failing (the real risk) ───
-      # The detection alert above is now expected noise — every
-      # confirmed non-7-decimal token is auto-corrected. What ISN'T
-      # supposed to happen is the correction mechanism itself failing:
-      # either the aggregator's background sweep that seeds/refreshes
-      # nonstandard_decimals_assets errors out
-      # (NonstandardDecimalsCacheRefreshFailuresTotal), or a serving
-      # path actively declines instead of normalizing
-      # (PriceServeDeclinedNonstandardDecimalsTotal — dormant since the
-      # 422 guard was removed in favor of normalization, but a real
-      # failure signal if it ever increments again). Either means a
-      # newly-detected non-7-decimal token's pairs revert to the raw
-      # (skewed) ratio the detection alert above warns about — this is
-      # the actual action item.
+      #
+      # (2026-08-05: the former informational
+      # stellarindex_dex_nonstandard_decimals_detected alert was
+      # REMOVED. It compared an all-time counter to zero, so once any
+      # nonstandard token traded it fired FOREVER — three
+      # already-confirmed, actively-normalized aquarius tokens held it
+      # permanently active. The awareness signal lives on the
+      # dashboard metric; the actionable failure mode is
+      # correction_failing below.)
       - alert: stellarindex_nonstandard_decimals_correction_failing
         expr: |
           increase(stellarindex_nonstandard_decimals_cache_refresh_failures_total[15m]) > 0

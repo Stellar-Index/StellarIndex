@@ -15,6 +15,25 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **A freeze can no longer escalate to operator-only without a single
+  scored evaluation.** During the ~30-minute post-restart confidence
+  bootstrap every bucket is unscored, so a freeze rehydrated across a
+  deploy could never accumulate an unfreeze streak while its hold
+  expiries still burned extensions — it marched deterministically to
+  ESCALATED (live occurrence: crypto:XLM/fiat:GBP 24h escalated
+  entirely inside the v0.25.0 restart window). An unscored expiry now
+  slides the hold without consuming an extension
+  (`TransitionHeldUnscored`); ADR-0019's 2-hour escalation budget
+  thereby counts two hours of SCORED asking. Escalated freezes still
+  never auto-unfreeze.
+- **The permanently-firing `dex_nonstandard_decimals_detected` alert
+  was removed** — it compared an all-time counter to zero, so once any
+  nonstandard token traded it fired forever (three already-confirmed,
+  auto-normalized aquarius tokens held it active). The awareness
+  signal lives on the dashboard metric; the actionable failure mode
+  keeps its own `correction_failing` ticket alert.
+
 ### Changed
 - **Classic-asset slugs are now the fully-qualified asset_id**
   (migration 0135, superseding 0134's abbreviation one day later).

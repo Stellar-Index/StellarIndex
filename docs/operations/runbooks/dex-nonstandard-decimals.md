@@ -10,12 +10,16 @@ severity: P2
 This runbook now covers **two** alerts that share the same root cause
 area but have very different action profiles:
 
-- **`stellarindex_dex_nonstandard_decimals_detected`** (informational) —
-  a non-7-decimal Soroban token was detected on a DEX trade. As of
-  2026-07-10 every serving path auto-normalizes via the
-  `nonstandard_decimals_assets` correction table, so this is now an
-  **expected, handled** condition — an awareness signal, not an
-  action item. See "Why this exists" below for the mechanism.
+- **`stellarindex_dex_nonstandard_decimals_detected`** — REMOVED
+  2026-08-05. It compared the all-time detection counter to zero, so
+  once any nonstandard token traded it fired forever: three
+  already-confirmed, actively-normalized aquarius tokens held it
+  permanently active on the alert board. Every serving path
+  auto-normalizes via the `nonstandard_decimals_assets` correction
+  table (since 2026-07-10), so detection is an **expected, handled**
+  condition; the awareness signal lives on the
+  `stellarindex_dex_trade_nonstandard_decimals_total` dashboard
+  metric. See "Why this exists" below for the mechanism.
 - **`stellarindex_nonstandard_decimals_correction_failing`** (ticket) —
   the correction mechanism ITSELF is failing: either the refresh
   sweep that seeds/refreshes `nonstandard_decimals_assets` is erroring,
