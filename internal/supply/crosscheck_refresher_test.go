@@ -188,12 +188,12 @@ func TestCrossCheckRefresher_PartialWrapClassicExceedsSacIsBenign(t *testing.T) 
 	}
 }
 
-// TestCrossCheckRefresher_PartialWrapOverMintFires — the genuine
+// TestCrossCheckRefresher_PartialWrapOverMintIsDiagnostic — the genuine
 // violation direction for a partial-wrap pair: SAC total exceeding
 // classic total is impossible under correct accounting and MUST still
 // fire an Over outcome (2026-07-08 decision: "a genuine
 // escrow != minted violation must still fire").
-func TestCrossCheckRefresher_PartialWrapOverMintFires(t *testing.T) {
+func TestCrossCheckRefresher_PartialWrapOverMintIsDiagnostic(t *testing.T) {
 	t.Parallel()
 	reader := &fakeSnapshotReader{supplies: map[string]supply.Supply{
 		"USDC:G...": {AssetKey: "USDC:G...", TotalSupply: big.NewInt(100_000_000_000)},
@@ -205,14 +205,17 @@ func TestCrossCheckRefresher_PartialWrapOverMintFires(t *testing.T) {
 		reader, emitter, newSilentLogger(),
 	)
 	got := r.Tick(context.Background())
-	if len(got) != 1 || got[0].Kind != supply.CrossCheckOutcomeOver {
-		t.Fatalf("Tick: got %#v, want one Over", got)
+	// 2026-08-05: over-mint is diagnostic-only (the BLND/PHO
+	// false-positive class) — the outcome stays within-tolerance and
+	// the gap is carried on OverMintStroops, not the paging gauge.
+	if len(got) != 1 || got[0].Kind != supply.CrossCheckOutcomeWithin {
+		t.Fatalf("Tick: got %#v, want one Within (over-mint diagnostic)", got)
 	}
-	if got[0].Result.DivergenceStroops.Cmp(big.NewInt(2)) != 0 {
-		t.Fatalf("divergence stroops: got %s, want 2", got[0].Result.DivergenceStroops)
+	if got[0].Result.OverMintStroops.Cmp(big.NewInt(2)) != 0 {
+		t.Fatalf("over-mint stroops: got %s, want 2", got[0].Result.OverMintStroops)
 	}
-	if emitter.divergences[0].Stroops != 2 {
-		t.Fatalf("emitted divergence: got %v, want 2", emitter.divergences[0].Stroops)
+	if got[0].Result.DivergenceStroops.Sign() != 0 {
+		t.Fatalf("divergence stroops: got %s, want 0", got[0].Result.DivergenceStroops)
 	}
 	if emitter.outcomes[0].WrapClass != supply.WrapClassPartial {
 		t.Fatalf("outcome wrap_class: got %q, want %q", emitter.outcomes[0].WrapClass, supply.WrapClassPartial)
@@ -272,11 +275,14 @@ func TestCrossCheckRefresher_AlignedLedgersStillCompare(t *testing.T) {
 		reader, emitter, newSilentLogger(),
 	)
 	got := r.Tick(context.Background())
-	if len(got) != 1 || got[0].Kind != supply.CrossCheckOutcomeOver {
-		t.Fatalf("Tick: got %#v, want one Over — the boundary gap is still comparable", got)
+	// Still COMPARED at the ledger-tolerance boundary (that is what
+	// this test pins); the over-mint result itself is diagnostic-only
+	// since 2026-08-05.
+	if len(got) != 1 || got[0].Kind != supply.CrossCheckOutcomeWithin {
+		t.Fatalf("Tick: got %#v, want one Within — the boundary gap is still comparable", got)
 	}
-	if got[0].Result.DivergenceStroops.Cmp(big.NewInt(2)) != 0 {
-		t.Fatalf("divergence stroops: got %s, want 2", got[0].Result.DivergenceStroops)
+	if got[0].Result.OverMintStroops.Cmp(big.NewInt(2)) != 0 {
+		t.Fatalf("over-mint stroops: got %s, want 2", got[0].Result.OverMintStroops)
 	}
 }
 

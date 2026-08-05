@@ -333,6 +333,26 @@ func CrossCheckSubsetBound(classic, sac Supply) (CrossCheckResult, error) {
 		return CrossCheckResult{}, ErrCrossCheckNilSupply
 	}
 
+	// Leg 1 (over-mint) is DIAGNOSTIC-ONLY since 2026-08-05: its
+	// premise — sac.TotalSupply ≤ classic.TotalSupply — conflates the
+	// event-derived CUMULATIVE net mint with the CURRENT escrowed
+	// balance, and only holds for a one-way wrap where nothing ever
+	// leaves contract space. Two live counter-examples falsified it:
+	//   - BLND: 130.1M ever minted through the SAC, 4.5M SAC-burned,
+	//     but ~12.6M more was later retired CLASSICALLY (paid back to
+	//     the issuer — no SAC burn event fires on that path), so
+	//     classic outstanding (113.0M) sits legitimately below the
+	//     cumulative net mint (125.6M).
+	//   - PHO: the full 200M supply was minted through the SAC once
+	//     and then distributed classic-side; classic outstanding is
+	//     issuer-EXCLUDED (77.9M), so the one-time cumulative mint
+	//     exceeds it forever, by design.
+	// Both paged for a week as "divergence" while every unit was
+	// accounted for. OverMintStroops is still computed and reported so
+	// an operator can read the cumulative-vs-outstanding gap, but it
+	// no longer feeds DivergenceStroops — leg 2 below is the bound
+	// that is impossible to breach under correct accounting for a
+	// partial wrap (escrow got there by mints, so escrow ≤ net mint).
 	overMint := excessOver(sac.TotalSupply, classic.TotalSupply)
 	res := CrossCheckResult{
 		ClassicKey:        classic.AssetKey,
@@ -340,7 +360,7 @@ func CrossCheckSubsetBound(classic, sac Supply) (CrossCheckResult, error) {
 		ClassicTotal:      new(big.Int).Set(classic.TotalSupply),
 		SACTotal:          new(big.Int).Set(sac.TotalSupply),
 		OverMintStroops:   overMint,
-		DivergenceStroops: new(big.Int).Set(overMint),
+		DivergenceStroops: big.NewInt(0),
 		WrapClass:         WrapClassPartial,
 	}
 
