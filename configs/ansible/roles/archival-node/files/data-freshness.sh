@@ -55,7 +55,15 @@ WITH f AS (
   SELECT 'fx', source, extract(epoch FROM now()-max(bucket)), 172800
     FROM fx_quotes WHERE bucket > now()-interval '30 days' GROUP BY source
   UNION ALL
-  SELECT 'trades', source, extract(epoch FROM now()-max(bucket)), 14400
+  -- Sparse Soroban AMMs get 24h: phoenix's MEASURED 30-day gap
+  -- distribution (2026-08-05, 3,278 trades) is max 8h28m / p99 3h12m,
+  -- and a 12h+ genuine market lull false-fired the flat 4h threshold
+  -- twice — with the lake confirming zero swap events on ANY known or
+  -- unknown pool (quiet, not stale; the CS-102 class). 24h still
+  -- catches a dead decoder within a day, and the ADR-0033 verdict
+  -- (129600s below) remains the real correctness net.
+  SELECT 'trades', source, extract(epoch FROM now()-max(bucket)),
+         CASE WHEN source IN ('phoenix','comet') THEN 86400 ELSE 14400 END
     FROM source_volume_1h GROUP BY source
   UNION ALL
   SELECT 'supply', 'asset_supply_history', extract(epoch FROM now()-max(time)), 108000
