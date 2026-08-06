@@ -52,6 +52,18 @@ against.
   itself, e.g. `lobstr.co`) is never refilled into the cleared field.
   Auth flags still populate — they are objective account state, not
   identity claims.
+- **The explorer no longer renders scientific notation for prices**
+  — `$3.353e-4` now renders `$0.0003353` (plain decimal,
+  significant-digits tail, trailing zeros trimmed) via one shared
+  `formatSubunitPrice`, replacing the two shared formatters' exponent
+  branches and five inline copies.
+- **`anomaly_freeze_sustained` pages only on ESCALATION** (both rule
+  trees): the old shape paged whenever any pair freeze-cycled for an
+  hour, including fire→extend→auto-release cycles resolving exactly
+  as ADR-0019 designs. Engaged/active stay ticket/informational.
+- **`metrics_registry_absent` excludes `component="ledgerstream"`** —
+  the documented exception (archive-only deployments) that kept the
+  alert permanently red on r1.
 
 ### Changed
 - **The partial-wrap supply cross-check's over-mint leg is
