@@ -511,6 +511,8 @@
     - galexie-archive-trim.timer
     - sep1-refresh.service
     - sep1-refresh.timer
+    - directory-sync.service
+    - directory-sync.timer
     - compute-completeness.service
     - compute-completeness.timer
     - data-freshness.service
@@ -536,6 +538,7 @@
     - archive-completeness.timer
     - supply-snapshot.timer
     - sep1-refresh.timer
+    - directory-sync.timer
     - compute-completeness.timer
     - data-freshness.timer
     - ch-supply.timer
