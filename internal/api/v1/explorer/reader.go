@@ -225,6 +225,13 @@ type Handler struct {
 	// request.
 	PoolTokens PoolTokensReader
 
+	// Directory, when non-nil, resolves curated third-party address
+	// labels (stellar-expert/public-directory via account_directory,
+	// migration 0136) for the account + contract detail views'
+	// `directory` field and GET /v1/directory. Nil omits the field
+	// and 503s the batch endpoint (directory.go).
+	Directory DirectoryReader
+
 	LookupUSDPrice  func(ctx context.Context, asset canonical.Asset) (string, bool)
 	IsKnownSAC      func(contractID string) bool
 	LakeWatermark   func(ctx context.Context) (ledger uint32, stale bool, ok bool)

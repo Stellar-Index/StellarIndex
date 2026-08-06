@@ -44,6 +44,10 @@ type ContractDetailView struct {
 	Protocol   string              `json:"protocol,omitempty"`
 	Events     []ContractEventView `json:"events"`
 	NextCursor string              `json:"next_cursor,omitempty"`
+	// Directory is the curated third-party label for this contract
+	// (directory.go) — display attribution, not verification. Omitted
+	// when the contract isn't listed or no directory reader is wired.
+	Directory *DirectoryInfoV `json:"directory,omitempty"`
 }
 
 // ContractDetail serves GET /v1/contracts/{contract_id} — a contract's
@@ -107,6 +111,7 @@ func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	out := ContractDetailView{ContractID: cid, Events: make([]ContractEventView, len(rows))}
 	out.Protocol = h.contractAttribution(ctx)[cid]
+	out.Directory = h.directoryFor(ctx, cid)
 	for i, e := range rows {
 		out.Events[i] = contractEventView(e)
 	}

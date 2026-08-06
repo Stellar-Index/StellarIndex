@@ -11210,6 +11210,7 @@ export interface paths {
                                 events?: components["schemas"]["ContractEvent"][];
                                 /** @description Opaque cursor for the next (older) page; absent on the last page. */
                                 next_cursor?: string;
+                                directory?: components["schemas"]["DirectoryInfo"];
                             };
                         };
                     };
@@ -11636,6 +11637,97 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/directory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Batch address labels from the curated public directory.
+         * @description Resolve curated third-party labels (names, domains, tags) for up to
+         *     100 Stellar addresses — G-accounts and C-contracts — in one request.
+         *     The set is mirrored from the MIT-licensed
+         *     [stellar-expert/public-directory](https://github.com/stellar-expert/public-directory)
+         *     (~18.5k entries, resynced daily); listing is not endorsement, and the
+         *     labels are display attribution, NOT a verification signal.
+         *
+         *     `entries` is keyed by address and contains PRESENT addresses only —
+         *     an address absent from the map has no label. Tags follow the upstream
+         *     registry (`exchange`, `anchor`, `issuer`, `wallet`, `custodian`,
+         *     `sdf`, `memo-required`, `airdrop`, `malicious`, `unsafe`, …); treat
+         *     `malicious`/`unsafe` as warnings.
+         *
+         *     Every address must be a checksum-valid G/C strkey — one malformed
+         *     address fails the whole request with 400 so client bugs surface
+         *     instead of silently dropping labels.
+         */
+        get: {
+            parameters: {
+                query: {
+                    /** @description Comma-separated G/C strkeys (max 100). */
+                    addresses: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Labels for the listed subset of the requested addresses. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "entries": {
+                         *           "GDUY7J7A33TQWOSOQGDO776GGLM3UQERL4J3SPT56F6YS4ID7MLDERI4": {
+                         *             "name": "SDF Growth 3",
+                         *             "domain": "stellar.org",
+                         *             "tags": [
+                         *               "sdf",
+                         *               "custodian"
+                         *             ],
+                         *             "source": "stellar-expert"
+                         *           }
+                         *         }
+                         *       },
+                         *       "as_of": "2026-08-06T12:00:00Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
+                        "application/json": {
+                            data?: {
+                                /** @description Address → label, present addresses only; always an object, never null. */
+                                entries: {
+                                    [key: string]: components["schemas"]["DirectoryInfo"];
+                                };
+                            };
+                        };
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/accounts/{g_strkey}": {
         parameters: {
             query?: never;
@@ -11777,6 +11869,7 @@ export interface paths {
                                  * @description Lake watermark this read is fresh to (ADR-0041) — the highest captured ledger at serve time, NOT the account's last_modified_ledger. Omitted when no watermark reader is wired. Pairs with flags.stale.
                                  */
                                 as_of_ledger?: number;
+                                directory?: components["schemas"]["DirectoryInfo"];
                             };
                         };
                     };
@@ -12511,6 +12604,17 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description Curated third-party label for a Stellar address, mirrored from the MIT-licensed stellar-expert/public-directory set. Display attribution only — listing is not endorsement and this is NOT a verification signal. Tags follow the upstream registry (exchange, anchor, issuer, wallet, custodian, sdf, memo-required, airdrop, malicious, unsafe, …); treat `malicious`/`unsafe` as warnings worth surfacing prominently. */
+        DirectoryInfo: {
+            /** @description Human label */
+            name: string;
+            /** @description Domain the upstream set associates with the address; absent when none. */
+            domain?: string;
+            /** @description Upstream tag registry values (always present */
+            tags: string[];
+            /** @description Upstream set the label came from ("stellar-expert"). */
+            source: string;
+        };
         /** @description A ledger header from the certified lake. */
         Ledger: {
             sequence?: number;

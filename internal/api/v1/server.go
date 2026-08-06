@@ -760,6 +760,14 @@ type Options struct {
 	// when Explorer is ALSO nil.
 	AccountActivity explorerpkg.ActivityReader
 
+	// Directory, when non-nil, resolves curated third-party address
+	// labels (account_directory, migration 0136 — synced from the
+	// MIT-licensed stellar-expert/public-directory) for the account +
+	// contract detail views and GET /v1/directory. timescale.Store
+	// satisfies it. Nil omits the `directory` field and 503s the
+	// batch endpoint.
+	Directory explorerpkg.DirectoryReader
+
 	// FXHistory, when non-nil, lets /v1/chart serve fiat:fiat pairs
 	// from the fx_quotes hypertable for ranges beyond 7d. Leave nil
 	// to keep /v1/chart fiat:fiat in 7d-only mode.
@@ -1525,6 +1533,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/contracts/{contract_id}/code-history", s.explorerHandler.ContractCodeHistory)
 	s.mux.HandleFunc("GET /v1/accounts", s.explorerHandler.AccountsList)
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}", s.explorerHandler.AccountState)
+	s.mux.HandleFunc("GET /v1/directory", s.explorerHandler.DirectoryLookup)
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/transactions", s.explorerHandler.AccountTransactions)
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/operations", s.explorerHandler.AccountOperations)
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/movements", s.explorerHandler.AccountMovements)

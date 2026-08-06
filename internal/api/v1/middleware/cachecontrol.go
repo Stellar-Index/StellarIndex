@@ -249,6 +249,12 @@ func policyForPath(path string, cdnEnabled bool) string {
 		// Registry catalogue — issuer directory.
 		path == "/v1/issuers",
 		strings.HasPrefix(path, "/v1/issuers/"),
+		// Curated address labels — resynced from upstream at most
+		// daily; the query string (address list) is the cache key.
+		// Deliberately public despite the /v1/accounts/* siblings
+		// being private: this is reference data, not per-account
+		// state.
+		path == "/v1/directory",
 		// Multi-window delta strip. Refreshed every 5 min by the
 		// change-summary worker; 60s edge cache stays well inside
 		// that boundary, and 5 min s-maxage matches.

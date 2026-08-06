@@ -225,6 +225,10 @@ type AccountStateView struct {
 	// captured at serve time, NOT the account's last-modified ledger.
 	// Omitted when no watermark reader is wired. Pairs with `flags.stale`.
 	AsOfLedger uint32 `json:"as_of_ledger,omitempty"`
+	// Directory is the curated third-party label for this address
+	// (directory.go) — display attribution, not verification. Omitted
+	// when the address isn't listed or no directory reader is wired.
+	Directory *DirectoryInfoV `json:"directory,omitempty"`
 }
 
 type AccountThresholds struct {
@@ -305,6 +309,10 @@ func (h *Handler) AccountState(w http.ResponseWriter, r *http.Request) {
 
 	wmLedger, stale, _ := h.LakeWatermark(ctx)
 	out := AccountStateView{AccountID: g, Exists: st.Exists, AsOfLedger: wmLedger}
+	// Directory labels apply regardless of Exists — a listed address
+	// whose AccountEntry predates the captured window (or was merged
+	// away) is exactly where a label helps most.
+	out.Directory = h.directoryFor(ctx, g)
 	if st.Exists {
 		out.Balance = strconv.FormatInt(st.Balance, 10)
 		out.SeqNum = strconv.FormatInt(st.SeqNum, 10)
