@@ -7,6 +7,7 @@ import { useQuery, keepPreviousData } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { Breadcrumbs } from '@/components/ui';
+import { DirectoryLabel } from '@/components/DirectoryLabel';
 import { apiGet, asExample, API_BASE_URL } from '@/api/client';
 import { useSACWrappers } from '@/api/hooks';
 import {
@@ -198,6 +199,11 @@ export function ContractView({ id: idProp }: { id?: string } = {}) {
           <div className="mt-0.5">
             <CopyHash value={data.contract_id || id} head={16} tail={16} />
           </div>
+          {data.directory && (
+            <div className="mt-2">
+              <DirectoryLabel info={data.directory} />
+            </div>
+          )}
         </div>
         <ul className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-ink-body">
           <li>

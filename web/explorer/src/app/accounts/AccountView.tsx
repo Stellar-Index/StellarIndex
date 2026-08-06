@@ -7,6 +7,7 @@ import { useQuery, keepPreviousData } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { AssetLink } from '@/components/AssetLink';
+import { DirectoryLabel, type DirectoryInfo } from '@/components/DirectoryLabel';
 import { Breadcrumbs } from '@/components/ui';
 import { AccountPositions } from './AccountPositions';
 import { AccountMovementsPanel } from './AccountMovements';
@@ -159,6 +160,7 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
             <CopyHash value={id} head={16} tail={16} />
           </div>
         </div>
+        {stateQ.data?.directory && <DirectoryLabel info={stateQ.data.directory} />}
         <ul className="flex flex-wrap items-center gap-x-6 gap-y-1 text-xs text-ink-body">
           {isKnownIssuer && (
             <li>
@@ -351,6 +353,7 @@ interface AccountStateResp {
   trustlines?: { asset: string; balance: string; limit: string; flags: number }[];
   offers?: { offer_id: number; selling: string; buying: string; amount: string; price_n: number; price_d: number }[];
   last_modified_ledger?: number;
+  directory?: DirectoryInfo;
 }
 
 function AccountStatePanel({
