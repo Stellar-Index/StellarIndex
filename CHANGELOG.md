@@ -15,6 +15,20 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **Busy-contract pages no longer 503.** `/v1/contracts/{id}` for a
+  high-activity contract (the Soroswap router has 17.9M events) blew
+  the 8s explorer read budget on every cold read: the query's
+  `LIMIT 1 BY` dedup clause disabled ClickHouse's reverse
+  read-in-order early exit, turning "most recent 100 events" into a
+  sort over every event the contract ever emitted — measured 16.3s
+  vs 0.16s (100×) with the clause removed. The W4-storage-1
+  duplicate-part dedup is preserved: duplicates are adjacent under
+  the full ORDER BY tuple, so the reader collapses them in Go over a
+  100-row over-fetch, falling back to the in-ClickHouse dedup shape
+  in the (never-observed) case a duplicate storm exhausts the
+  headroom.
+
 ## [v0.26.0] — 2026-08-06
 
 ### Added

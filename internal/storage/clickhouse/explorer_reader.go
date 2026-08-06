@@ -1362,6 +1362,17 @@ type ContractActivityRow struct {
 // surviving granule is exactly the per-stream-buffer × part-fan-out product
 // the pin bounds (route-sweep 2026-07-29: /v1/contracts/{id} was in the 8s
 // 503 class).
+// contractEventsRecentQuery deliberately carries NO `LIMIT 1 BY`: that
+// clause disables ClickHouse's reverse read-in-order early exit, turning
+// the busy-contract first page into an O(all-events-of-contract) sort —
+// measured 16.3s vs 0.16s (100×) for a 17.9M-event contract on r1
+// (2026-08-06, the CCW5IBJ7… soroswap-router 503). The W4-storage-1 RMT
+// duplicate-part dedup still happens — in Go, in contractEventsScan: the
+// full ORDER BY tuple makes duplicate row-identities ADJACENT in the
+// stream, so adjacent-row collapse is exact. The page over-fetches
+// contractEventsDedupHeadroom rows so dedup can collapse and still fill
+// the page; a duplicate storm beyond that falls back to
+// contractEventsRecentDedupQuery (in-CH dedup, slow, correct).
 func contractEventsRecentQuery(hasCursor bool) string {
 	q := `SELECT ledger_seq, close_time, tx_hash, op_index, event_index, event_type, topic_0_sym,
 			topics_xdr, data_xdr
@@ -1372,44 +1383,103 @@ func contractEventsRecentQuery(hasCursor bool) string {
 		q += ` AND (ledger_seq, tx_hash, op_index, event_index) < (?, ?, ?, ?)`
 	}
 	return q + ` ORDER BY ledger_seq DESC, tx_hash DESC, op_index DESC, event_index DESC` +
+		` LIMIT ?` + explorerScanSettings
+}
+
+// contractEventsRecentDedupQuery is the legacy in-ClickHouse dedup shape —
+// the correctness fallback when a duplicate storm eats the whole Go-side
+// headroom. Slow on busy contracts (see contractEventsRecentQuery); only
+// ever issued when the fast path provably could not fill the page.
+func contractEventsRecentDedupQuery(hasCursor bool) string {
+	q := `SELECT ledger_seq, close_time, tx_hash, op_index, event_index, event_type, topic_0_sym,
+			topics_xdr, data_xdr
+		FROM stellar.contract_events WHERE contract_id = ?`
+	if hasCursor {
+		q += ` AND (ledger_seq, tx_hash, op_index, event_index) < (?, ?, ?, ?)`
+	}
+	return q + ` ORDER BY ledger_seq DESC, tx_hash DESC, op_index DESC, event_index DESC` +
 		` LIMIT 1 BY ledger_seq, tx_hash, op_index, event_index LIMIT ?` + explorerScanSettings
 }
 
+// contractEventsDedupHeadroom is the fast path's over-fetch beyond the
+// requested page size. RMT duplicate parts exist only for rows whose
+// parts haven't merged yet (a recent-ingest sliver), so duplicates on any
+// given page are rare and few — 100 extra rows of headroom covers real
+// merge windows by orders of magnitude while keeping the worst-case fetch
+// at 600 rows.
+const contractEventsDedupHeadroom = 100
+
 // ContractEventsRecent returns a contract's most-recent events, descending.
-// Relies on the contract_id bloom skip-index (contract_events is
-// ORDER BY (ledger_seq, tx_hash, ...), so a contract_id predicate would
-// otherwise full-scan). NOT FINAL — FINAL would defeat the skip-index; the
-// RMT duplicate-part over-count is instead collapsed by the LIMIT 1 BY
-// primary-key dedup in contractEventsRecentQuery (audit W4-storage-1).
-// A set cursor keyset-pages to older events by the full row-identity
-// composite (ledger_seq, tx_hash, op_index, event_index) — a contract can
-// emit many events in one ledger (and across many single-op txs that all
-// tie at op_index=0/event_index=0), so anything less than the full tuple
-// drops rows at a page boundary.
+// Relies on the contract_id bloom skip-index for quiet contracts and on
+// reverse read-in-order early exit for busy ones — which is why the fast
+// query carries NO FINAL and NO LIMIT 1 BY (both disable one of those two
+// paths; see contractEventsRecentQuery). The RMT duplicate-part
+// over-count (audit W4-storage-1) is collapsed by adjacent-row dedup in
+// contractEventsScan, with an in-CH dedup fallback when the headroom is
+// exhausted. A set cursor keyset-pages to older events by the full
+// row-identity composite (ledger_seq, tx_hash, op_index, event_index) — a
+// contract can emit many events in one ledger (and across many single-op
+// txs that all tie at op_index=0/event_index=0), so anything less than
+// the full tuple drops rows at a page boundary.
 func (r *ExplorerReader) ContractEventsRecent(ctx context.Context, contractID string, limit int, cur ContractEventsCursor) ([]ContractActivityRow, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	q := contractEventsRecentQuery(cur.IsSet())
+	fetch := limit + contractEventsDedupHeadroom
+	out, raw, err := r.contractEventsScan(ctx, contractEventsRecentQuery(cur.IsSet()), contractID, limit, fetch, cur)
+	if err != nil {
+		return nil, err
+	}
+	if len(out) < limit && raw == fetch {
+		// Duplicate storm: the over-fetch was ALL consumed and dedup still
+		// couldn't fill the page — the only case where a short page would
+		// be a lie (the handler's next_cursor emission keys on a FULL
+		// page). Fall back to the in-ClickHouse dedup shape.
+		out, _, err = r.contractEventsScan(ctx, contractEventsRecentDedupQuery(cur.IsSet()), contractID, limit, limit, cur)
+	}
+	return out, err
+}
+
+// contractEventsScan issues one contract-events page query, collapsing
+// adjacent duplicate row-identities (exact under the full ORDER BY tuple)
+// and keeping at most `keep` rows. Returns the raw pre-dedup row count so
+// the caller can distinguish "data exhausted" from "headroom exhausted".
+// Display decoding runs only for kept rows.
+func (r *ExplorerReader) contractEventsScan(ctx context.Context, q, contractID string, keep, fetch int, cur ContractEventsCursor) ([]ContractActivityRow, int, error) {
 	args := []any{contractID}
 	if cur.IsSet() {
 		args = append(args, cur.Ledger, cur.TxHash, cur.OpIndex, cur.EventIndex)
 	}
-	args = append(args, limit)
+	args = append(args, fetch)
 
 	rows, err := r.conn.Query(ctx, q, args...)
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse: contract %s events: %w", contractID, err)
+		return nil, 0, fmt.Errorf("clickhouse: contract %s events: %w", contractID, err)
 	}
 	defer func() { _ = rows.Close() }()
-	var out []ContractActivityRow
+	var (
+		out  []ContractActivityRow
+		raw  int
+		last ContractActivityRow
+	)
 	for rows.Next() {
 		var e ContractActivityRow
 		var topicsB64 []string
 		var dataB64 string
 		if err := rows.Scan(&e.Seq, &e.CloseTime, &e.TxHash, &e.OpIndex, &e.EventIndex, &e.EventType, &e.Topic0Sym,
 			&topicsB64, &dataB64); err != nil {
-			return nil, fmt.Errorf("clickhouse: scan contract event: %w", err)
+			return nil, 0, fmt.Errorf("clickhouse: scan contract event: %w", err)
+		}
+		raw++
+		if len(out) > 0 && e.Seq == last.Seq && e.TxHash == last.TxHash &&
+			e.OpIndex == last.OpIndex && e.EventIndex == last.EventIndex {
+			continue // un-merged RMT duplicate part (W4-storage-1)
+		}
+		last = e
+		if len(out) == keep {
+			// Page already full — keep draining rows.Next() only to count
+			// raw (cheap: the fetch LIMIT bounds it), not to decode.
+			continue
 		}
 		// Skip topic[0] (already surfaced as Topic0Sym) and render the
 		// rest for display; decode failures degrade to omission.
@@ -1424,7 +1494,7 @@ func (r *ExplorerReader) ContractEventsRecent(ctx context.Context, contractID st
 		e.DataDisplay = scval.DisplayB64(dataB64)
 		out = append(out, e)
 	}
-	return out, rows.Err()
+	return out, raw, rows.Err()
 }
 
 // ContractDirectoryRow is one row of the contracts directory: a contract
