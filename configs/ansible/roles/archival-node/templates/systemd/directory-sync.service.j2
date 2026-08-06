@@ -1,0 +1,55 @@
+# systemd unit: curated address-directory sync.
+#
+# Rendered by Ansible. Mirrors the MIT-licensed
+# stellar-expert/public-directory account labels (~18.5k G/C addresses:
+# names, domains, tags like #exchange/#sdf/#malicious) into the
+# account_directory table (migration 0136). One tarball GET, chunked
+# transactional upsert + prune; an empty/failed parse is refused so a
+# broken fetch can never wipe the table. Backs the API's `directory`
+# field on /v1/accounts/{g} + /v1/contracts/{id} and GET /v1/directory.
+
+[Unit]
+Description=Stellar Index — public-directory address-label sync (daily)
+Documentation=https://github.com/stellar-expert/public-directory
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/directory-sync
+EnvironmentFile=-/etc/default/stellarindex
+
+# Defaults. Operators override via /etc/default/directory-sync.
+Environment=CONFIG_PATH=/etc/stellarindex.toml
+Environment=RUN_TIMEOUT=5m
+Environment=EXTRA_FLAGS=
+
+ExecStart=/usr/local/bin/stellarindex-ops directory-sync \
+  -config ${CONFIG_PATH} \
+  -timeout ${RUN_TIMEOUT} \
+  ${EXTRA_FLAGS}
+
+# De-privileged, same shape as sep1-refresh (CS-118/CS-119): reads
+# config, fetches one HTTPS tarball, writes Postgres.
+User=stellarindex
+Group=stellarindex
+
+ProtectSystem=strict
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+TimeoutStartSec=10min
+
+# Memory ceiling — the input is a third-party tarball (GitHub-hosted,
+# but the repo's contents are community-curated). The code caps the
+# decompressed read at 256 MB; 1G here is the host-level backstop so a
+# surprise can never compete with galexie's captive core (the
+# 2026-07-05 wedge class). MemorySwapMax=0 kills rather than swaps.
+MemoryMax=1G
+MemorySwapMax=0
+
+[Install]
+WantedBy=multi-user.target

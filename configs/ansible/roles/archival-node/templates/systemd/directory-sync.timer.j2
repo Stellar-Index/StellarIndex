@@ -1,0 +1,23 @@
+# systemd timer: daily public-directory address-label sync.
+#
+# Rendered by Ansible. Companion to directory-sync.service. The
+# upstream set changes at community-curation cadence (a handful of
+# entries a week, occasional #malicious reports that we want promptly);
+# daily keeps warning tags fresh without hammering GitHub.
+#
+# Time slot: 04:05 UTC + up to 5 min jitter — before supply-snapshot
+# (04:42), clear of sep1-refresh (05:12) and compute-completeness
+# (05:30). Persistent=true so a reboot doesn't skip a day.
+
+[Unit]
+Description=Daily public-directory address-label sync
+Documentation=https://github.com/stellar-expert/public-directory
+
+[Timer]
+OnCalendar=*-*-* 04:05:00 UTC
+RandomizedDelaySec=300
+Persistent=true
+Unit=directory-sync.service
+
+[Install]
+WantedBy=timers.target
