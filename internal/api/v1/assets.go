@@ -2065,20 +2065,18 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// already re-pointed at its classic identity above).
 	s.applyTokenDecimals(r.Context(), &detail, parsed)
 
-	// Backfill HomeDomain from the curated known-issuers map when
-	// the storage row doesn't carry one (classic assets ingested
-	// before `stellarindex-ops sep1-refresh` ran, or issuers whose
-	// SEP-1 lookup never persisted because they aren't in the
-	// watched set). Mirrors enrichIssuer's policy on /v1/issuers,
-	// which is how that endpoint returns home_domain="centre.io"
-	// for USDC while /v1/assets was reporting null.
-	// R-016 in `docs/review-2026-05-10.md`.
-	if (detail.HomeDomain == nil || *detail.HomeDomain == "") && detail.Issuer != nil && *detail.Issuer != "" {
-		hd, _ := enrichIssuer(*detail.Issuer, "", "")
-		if hd != "" {
-			detail.HomeDomain = &hd
-		}
-	}
+	// Backfill HomeDomain when the storage row doesn't carry one
+	// (classic assets ingested before `stellarindex-ops sep1-refresh`
+	// ran, or issuers whose SEP-1 lookup never persisted because
+	// they aren't in the watched set). On-chain account state FIRST,
+	// curated known-issuers map only as last resort — the account's
+	// own home_domain field tracks anchor acquisitions the static
+	// map misses, and whatever domain lands here is also what the
+	// SEP-1 overlay below verifies against (the ex-apay ETH issuer
+	// rendered "apay.io" + sep1_status=verified while its on-chain
+	// domain said ultracapital.xyz). R-016 in
+	// `docs/review-2026-05-10.md`; on-chain-first 2026-08-06.
+	s.backfillHomeDomain(r.Context(), &detail)
 
 	// SEP-1 overlay — reads the cached payload `sep1-refresh` cron
 	// persisted in `issuers.sep1_payload`. NO live HTTPS fetch.
@@ -2508,14 +2506,9 @@ func (s *Server) handleAssetMetadata(w http.ResponseWriter, r *http.Request) {
 		detail = detailFromAsset(parsed)
 	}
 
-	// Same known-issuers backfill as handleAssetGet (R-016) — keeps
+	// Same on-chain-first backfill as handleAssetGet (R-016) — keeps
 	// the two surfaces in lockstep on the SEP-1 status they report.
-	if (detail.HomeDomain == nil || *detail.HomeDomain == "") && detail.Issuer != nil && *detail.Issuer != "" {
-		hd, _ := enrichIssuer(*detail.Issuer, "", "")
-		if hd != "" {
-			detail.HomeDomain = &hd
-		}
-	}
+	s.backfillHomeDomain(r.Context(), &detail)
 
 	if s.sep1Cache != nil {
 		s.applySep1Overlay(r.Context(), &detail, parsed)

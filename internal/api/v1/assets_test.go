@@ -384,8 +384,8 @@ func TestAssetGet_BackfillsHomeDomainFromKnownIssuersMap(t *testing.T) {
 	}
 	mustDecode(t, resp, &env)
 
-	if env.Data.HomeDomain == nil || *env.Data.HomeDomain != "centre.io" {
-		t.Errorf("HomeDomain = %v, want centre.io (from known_issuers map)", env.Data.HomeDomain)
+	if env.Data.HomeDomain == nil || *env.Data.HomeDomain != "circle.com" {
+		t.Errorf("HomeDomain = %v, want circle.com (from known_issuers map)", env.Data.HomeDomain)
 	}
 	// With no metadata resolver wired the status should advance from
 	// the empty default to "not_fetched" — distinct from the
@@ -419,8 +419,8 @@ func TestAssetMetadata_BackfillsHomeDomainFromKnownIssuersMap(t *testing.T) {
 	}
 	mustDecode(t, resp, &env)
 
-	if env.Data.HomeDomain == nil || *env.Data.HomeDomain != "centre.io" {
-		t.Errorf("HomeDomain = %v, want centre.io", env.Data.HomeDomain)
+	if env.Data.HomeDomain == nil || *env.Data.HomeDomain != "circle.com" {
+		t.Errorf("HomeDomain = %v, want circle.com", env.Data.HomeDomain)
 	}
 	if env.Data.Sep1Status != "not_fetched" {
 		t.Errorf("Sep1Status = %q, want not_fetched", env.Data.Sep1Status)
