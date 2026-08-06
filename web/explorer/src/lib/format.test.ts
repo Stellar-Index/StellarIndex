@@ -5,6 +5,7 @@ import {
   formatPrice,
   formatCompact,
   formatPriceSmall,
+  formatSubunitPrice,
   formatPairPrice,
   formatRelative,
 } from './format';
@@ -44,7 +45,7 @@ describe('AGT-06: dead-code percentage footgun removed', () => {
 describe('formatPriceSmall / formatPairPrice', () => {
   it('keeps sub-threshold precision instead of collapsing to 0.00', () => {
     expect(formatPriceSmall(150)).toBe('150.00');
-    expect(formatPriceSmall(0.0005)).toBe((0.0005).toExponential(3));
+    expect(formatPriceSmall(0.0005)).toBe('0.0005'); // plain decimal since 2026-08-06
     expect(formatPairPrice(1500)).toBe('1500.00');
   });
 
@@ -56,7 +57,7 @@ describe('formatPriceSmall / formatPairPrice', () => {
     // A negative price is bad data, not a zero — it must render
     // distinguishably (and not identically to a healthy zero-price row).
     expect(formatPriceSmall(-0.5)).not.toBe('0');
-    expect(formatPriceSmall(-0.5)).toBe((-0.5).toExponential(3));
+    expect(formatPriceSmall(-0.5)).toBe('-0.5'); // plain decimal since 2026-08-06
   });
 });
 
@@ -97,5 +98,36 @@ describe('truncateMiddle', () => {
   });
   it('truncates long identifiers to head…tail', () => {
     expect(truncateMiddle('GABCDEFGHIJKLMNOP', 6, 4)).toBe('GABCDE…MNOP');
+  });
+});
+
+// 2026-08-06 operator call: no scientific notation anywhere a price
+// renders — "$3.353e-4" is not user-friendly; "$0.0003353" is no less
+// accurate.
+describe('formatSubunitPrice', () => {
+  it('renders the founding example as a plain decimal', () => {
+    expect(formatSubunitPrice(3.353e-4)).toBe('0.0003353');
+  });
+  it('keeps 4 significant digits however deep the leading zeros', () => {
+    expect(formatSubunitPrice(1.234e-7)).toBe('0.0000001234');
+  });
+  it('trims trailing zeros', () => {
+    expect(formatSubunitPrice(0.0005)).toBe('0.0005');
+  });
+  it('keeps the bad-data negative sign visible (COR-01)', () => {
+    expect(formatSubunitPrice(-3.353e-4)).toBe('-0.0003353');
+  });
+  it('caps the decimal tail at 20 places for deep dust', () => {
+    // 1e-18 still renders as an honest plain decimal within the cap —
+    // long, but accurate, and monospace columns absorb it.
+    expect(formatSubunitPrice(1e-18)).toBe('0.000000000000000001');
+  });
+});
+
+describe('formatPriceSmall — no scientific notation', () => {
+  it('never emits an exponent for tiny prices', () => {
+    for (const n of [3.353e-4, 1e-6, 9.9e-9, 2.5e-11]) {
+      expect(formatPriceSmall(n)).not.toMatch(/e/i);
+    }
   });
 });

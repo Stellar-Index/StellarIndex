@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { formatSubunitPrice } from '@/lib/format';
 
 import { useCoins, useVerifiedSlugs, type Coin } from '@/api/hooks';
 
@@ -159,6 +160,6 @@ function formatPrice(n: number): string {
   if (!Number.isFinite(n)) return '—';
   if (n >= 1) return n.toFixed(n >= 100 ? 2 : 4);
   if (n >= 0.001) return n.toFixed(6);
-  if (n > 0) return n.toExponential(3);
+  if (n > 0) return formatSubunitPrice(n);
   return '0';
 }

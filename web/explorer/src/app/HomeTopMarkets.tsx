@@ -14,7 +14,7 @@ import {
   THead,
   TR,
 } from '@/components/ui';
-import { formatCompact } from '@/lib/format';
+import { formatCompact , formatSubunitPrice } from '@/lib/format';
 
 /**
  * HomeTopMarkets — top 10 trading pairs by trailing-24h USD
@@ -130,7 +130,7 @@ export function HomeTopMarkets() {
 function formatLastPrice(raw: string): string {
   const n = Number(raw);
   if (!Number.isFinite(n)) return '—';
-  return n >= 1000 ? n.toFixed(2) : n >= 1 ? n.toFixed(4) : n >= 0.0001 ? n.toFixed(6) : n.toExponential(3);
+  return n >= 1000 ? n.toFixed(2) : n >= 1 ? n.toFixed(4) : n >= 0.0001 ? n.toFixed(6) : formatSubunitPrice(n);
 }
 
 function shortAsset(canonical: string | undefined | null): string {

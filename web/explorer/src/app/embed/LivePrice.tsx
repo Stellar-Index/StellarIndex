@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { formatSubunitPrice } from '@/lib/format';
 
 import { API_BASE_URL as API_BASE } from '@/api/client';
 
@@ -63,6 +64,6 @@ export function LivePrice({
 
 function fmt(n: number, format?: 'usd' | 'plain'): string {
   const s =
-    n >= 1 ? n.toFixed(n >= 100 ? 2 : 4) : n >= 0.001 ? n.toFixed(6) : n.toExponential(3);
+    n >= 1 ? n.toFixed(n >= 100 ? 2 : 4) : n >= 0.001 ? n.toFixed(6) : formatSubunitPrice(n);
   return format === 'plain' ? s : `$${s}`;
 }
