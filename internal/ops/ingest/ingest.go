@@ -58,6 +58,8 @@ func Run(args []string) error {
 		return issuerEnrich(args[1:])
 	case "sep1-refresh":
 		return sep1RefreshCmd(args[1:])
+	case "directory-sync":
+		return directorySync(args[1:])
 	default:
 		return fmt.Errorf("internal/ops/ingest: unknown subcommand %q", args[0])
 	}

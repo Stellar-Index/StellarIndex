@@ -142,6 +142,7 @@ var subcommands = map[string]func(args []string) error{
 	"state-snapshot":          ingest.Run,
 	"issuer-enrich":           ingest.Run,
 	"sep1-refresh":            ingest.Run,
+	"directory-sync":          ingest.Run,
 
 	"verify-archive":            archive.Run,
 	"archive-completeness":      archive.Run,
@@ -264,6 +265,14 @@ Subcommands:
                           Report sources lagging more than N ledgers (default 100)
                           behind the stellar-rpc network tip. Exit code 1 if any
                           source is lagging.
+  directory-sync -config PATH [-url URL] [-dry-run] [-timeout DUR]
+                          Mirror the MIT-licensed stellar-expert/public-directory
+                          account labels (~18.5k G/C addresses: names, domains,
+                          tags like #exchange/#sdf/#malicious) into
+                          account_directory. One tarball GET, full upsert +
+                          prune; refuses an empty parse. Display-only data —
+                          never feeds verification or the in-repo scam list.
+                          Run daily from a timer.
   verify-decoders -config PATH -from N -to N
                           Stream a bounded ledger range from Galexie through
                           every registered decoder and print a per-source tally
