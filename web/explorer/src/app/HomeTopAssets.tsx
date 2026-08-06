@@ -15,7 +15,7 @@ import {
   THead,
   TR,
 } from '@/components/ui';
-import { formatCompact } from '@/lib/format';
+import { formatCompact , formatSubunitPrice } from '@/lib/format';
 import { isSafePublicImageUrl } from '@/lib/safe-domain';
 
 /**
@@ -201,7 +201,7 @@ function parseDec(s: string | null | undefined): number | null {
 function formatPrice(n: number): string {
   if (n >= 1) return n.toFixed(n >= 100 ? 2 : 4);
   if (n >= 0.001) return n.toFixed(6);
-  if (n > 0) return n.toExponential(3);
+  if (n > 0) return formatSubunitPrice(n);
   return '0';
 }
 

@@ -25,28 +25,50 @@ export function formatCompact(value: number | string): string {
   return COMPACT_FORMATTER.format(n);
 }
 
-// formatPriceSmall — compact USD price with a toExponential tail below
-// 0.001, so a real sub-cent (or sub-1e-8) price never collapses to
-// "0.00" the way a fixed-max-8dp formatter does. This is the /assets
-// directory price-column formatter, lifted here as the single source so
-// the asset-detail sidebar and any other USD-price cell share ONE
-// implementation instead of each re-deriving the thresholds.
+// formatSubunitPrice — a tiny positive (or bad-data negative) value as
+// a PLAIN DECIMAL with `sig` significant digits and no exponent:
+// 3.353e-4 renders "0.0003353", never "$3.353e-4" (operator call,
+// 2026-08-06: scientific notation is not user-friendly and the plain
+// decimal is no less accurate). Trailing zeros are trimmed. Decimals
+// are capped at 20 places, which keeps 1e-18 honest (its first
+// significant digit is place 18) while bounding the column width.
+export function formatSubunitPrice(n: number, sig = 4): string {
+  const abs = Math.abs(n);
+  if (abs === 0) return '0';
+  const leadingZeros = Math.max(0, -Math.floor(Math.log10(abs)) - 1);
+  const decimals = Math.min(leadingZeros + sig, 20);
+  let out = n.toFixed(decimals);
+  if (out.includes('.')) {
+    out = out.replace(/0+$/, '').replace(/\.$/, '');
+  }
+  return out;
+}
+
+// formatPriceSmall — compact USD price with a plain-decimal
+// significant-digits tail below 0.001 (formatSubunitPrice), so a real
+// sub-cent (or sub-1e-8) price never collapses to "0.00" the way a
+// fixed-max-8dp formatter does — and never renders scientific
+// notation either (pre-2026-08-06 this branch was toExponential).
+// This is the /assets directory price-column formatter, lifted here
+// as the single source so the asset-detail sidebar and any other
+// USD-price cell share ONE implementation instead of each re-deriving
+// the thresholds.
 export function formatPriceSmall(n: number): string {
   if (!Number.isFinite(n)) return '—';
   if (n >= 1) return n.toFixed(n >= 100 ? 2 : 4);
   if (n >= 0.001) return n.toFixed(6);
-  if (n > 0) return n.toExponential(3);
+  if (n > 0) return formatSubunitPrice(n);
   // COR-01: a negative price is bad data, not a legitimate zero — collapsing
   // both to the bare string '0' made a negative value look like a normal,
   // healthy zero price instead of surfacing it as the anomaly it is.
-  if (n < 0) return n.toExponential(3);
+  if (n < 0) return formatSubunitPrice(n);
   return '0';
 }
 
 // formatPairPrice — quote-per-base last-price formatter for the exchange
-// and pair tables. Same toExponential-below-threshold shape as
-// formatPriceSmall but tuned for pair prices (a >=1000 band and a lower
-// 0.0001 exponential cutoff) so a cheap pair never renders "0.0000".
+// and pair tables. Same shape as formatPriceSmall but tuned for pair
+// prices (a >=1000 band and a lower 0.0001 plain-decimal cutoff) so a
+// cheap pair never renders "0.0000" — or scientific notation.
 // Returns '—' for a non-finite value.
 export function formatPairPrice(n: number): string {
   if (!Number.isFinite(n)) return '—';
@@ -56,7 +78,7 @@ export function formatPairPrice(n: number): string {
       ? n.toFixed(4)
       : n >= 0.0001
         ? n.toFixed(6)
-        : n.toExponential(3);
+        : formatSubunitPrice(n);
 }
 
 // AGT-06: formatPctChange and formatLedger were removed as dead code —

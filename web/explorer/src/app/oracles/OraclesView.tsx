@@ -7,7 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { AssetLink } from '@/components/AssetLink';
 import { apiGet, asExample } from '@/api/client';
-import { formatRelative } from '@/lib/format';
+import { formatRelative , formatSubunitPrice } from '@/lib/format';
 
 // Wire shapes from the generated OpenAPI contract: /v1/sources rows via
 // the shared hooks alias; /v1/oracle/streams rows are the spec's
@@ -266,5 +266,5 @@ function formatPrice(p: string): string {
   if (n === 0) return '0';
   if (n >= 1) return n.toFixed(4);
   if (n >= 0.01) return n.toFixed(6);
-  return n.toExponential(3);
+  return formatSubunitPrice(n);
 }

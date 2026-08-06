@@ -51,16 +51,25 @@ groups:
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
 
       - alert: stellarindex_anomaly_freeze_sustained
+        # Reshaped 2026-08-06: the old expr paged whenever ANY pair
+        # freeze-cycled for an hour — including fire → extend → auto-
+        # release cycles that resolve themselves exactly as ADR-0019
+        # designs (live: XLM/EUR + XLM/GBP single-venue z-spikes cycled
+        # and auto-released overnight, paging a human for the system
+        # working). A PAGE means a human is needed; the lifecycle
+        # defines that moment precisely — ESCALATION (ladder exhausted,
+        # freeze now operator-only). Engaged/active remain
+        # ticket/informational for cycle visibility.
         expr: |
-          sum by (class) (rate(stellarindex_anomaly_freeze_engaged_total[1h])) > 0
-        for: 1h
+          sum by (class) (increase(stellarindex_anomaly_freeze_escalated_total[1h])) > 0
+        for: 5m
         labels:
           severity: page
           team: stellarindex
           component: aggregator
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
-          summary: "Anomaly freeze sustained for 1h+ on class {{ $labels.class }} (P1)"
+          summary: "Anomaly freeze ESCALATED to operator-only on class {{ $labels.class }} (P1)"
           description: |
             Freeze decisions for asset class {{ $labels.class }}
             have been emitted continuously over the last hour. Three
