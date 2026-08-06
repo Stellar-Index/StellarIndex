@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.26.0] — 2026-08-06
+
 ### Added
 - **Curated address labels from the StellarExpert public directory**
   (API 1.19.0). The MIT-licensed
