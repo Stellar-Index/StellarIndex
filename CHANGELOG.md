@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.26.1] — 2026-08-06
+
 ### Fixed
 - **Busy-contract pages no longer 503.** `/v1/contracts/{id}` for a
   high-activity contract (the Soroswap router has 17.9M events) blew
