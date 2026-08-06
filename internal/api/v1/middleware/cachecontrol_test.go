@@ -90,6 +90,12 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		// Native (CAP-38) liquidity-pool reserves — same short band.
 		{"/v1/liquidity-pools", "public, max-age=30, s-maxage=60"},
 
+		// Directory labels — slow-moving reference data in the public
+		// catalogue band; sibling /v1/accounts/* stays private (the
+		// account surface is deliberately no-store; this is reference
+		// data keyed on the query-string address list).
+		{"/v1/directory", "public, max-age=60, s-maxage=300"},
+
 		// Diagnostics — operator-facing live data, never CDN-cached
 		{"/v1/diagnostics/cursors", "private, no-cache, must-revalidate"},
 		{"/v1/diagnostics/archive", "private, no-cache, must-revalidate"},

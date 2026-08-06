@@ -18,7 +18,7 @@
 openapi: 3.1.0
 info:
   title: Stellar Index API
-  version: "1.18.0"
+  version: "1.19.0"
   summary: The Stellar network — explorer, history, supply, analytics, and prices.
   description: |
     The Stellar Index API exposes the Stellar network as one
@@ -7898,6 +7898,7 @@ paths:
                       protocol: { type: string, description: Registry protocol this contract belongs to (blend, soroswap, …) when attribution is known; absent otherwise. }
                       events: { type: array, items: { $ref: "#/components/schemas/ContractEvent" } }
                       next_cursor: { type: string, description: Opaque cursor for the next (older) page; absent on the last page. }
+                      directory: { $ref: "#/components/schemas/DirectoryInfo" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -8183,6 +8184,64 @@ paths:
                       as_of_ledger: { type: integer, format: int64, description: "Lake watermark this current-state ranking is fresh to (ADR-0041) — the highest captured ledger at serve time. Omitted when no watermark reader is wired. Pairs with flags.stale." }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /directory:
+    get:
+      x-stability: experimental
+      tags: [explorer]
+      summary: Batch address labels from the curated public directory.
+      description: |
+        Resolve curated third-party labels (names, domains, tags) for up to
+        100 Stellar addresses — G-accounts and C-contracts — in one request.
+        The set is mirrored from the MIT-licensed
+        [stellar-expert/public-directory](https://github.com/stellar-expert/public-directory)
+        (~18.5k entries, resynced daily); listing is not endorsement, and the
+        labels are display attribution, NOT a verification signal.
+
+        `entries` is keyed by address and contains PRESENT addresses only —
+        an address absent from the map has no label. Tags follow the upstream
+        registry (`exchange`, `anchor`, `issuer`, `wallet`, `custodian`,
+        `sdf`, `memo-required`, `airdrop`, `malicious`, `unsafe`, …); treat
+        `malicious`/`unsafe` as warnings.
+
+        Every address must be a checksum-valid G/C strkey — one malformed
+        address fails the whole request with 400 so client bugs surface
+        instead of silently dropping labels.
+      parameters:
+        - { name: addresses, in: query, required: true, description: "Comma-separated G/C strkeys (max 100).", schema: { type: string } }
+      responses:
+        "200":
+          description: Labels for the listed subset of the requested addresses.
+          content:
+            application/json:
+              example:
+                data:
+                  entries:
+                    GDUY7J7A33TQWOSOQGDO776GGLM3UQERL4J3SPT56F6YS4ID7MLDERI4:
+                      name: SDF Growth 3
+                      domain: stellar.org
+                      tags: [sdf, custodian]
+                      source: stellar-expert
+                as_of: '2026-08-06T12:00:00Z'
+                flags:
+                  stale: false
+                  reduced_redundancy: false
+                  triangulated: false
+                  divergence_warning: false
+                  divergence_checked: false
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [entries]
+                    properties:
+                      entries:
+                        type: object
+                        description: Address → label, present addresses only; always an object, never null.
+                        additionalProperties: { $ref: "#/components/schemas/DirectoryInfo" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /accounts/{g_strkey}:
     get:
       x-stability: experimental
@@ -8299,6 +8358,7 @@ paths:
                             price_d: { type: integer }
                       last_modified_ledger: { type: integer, format: int64 }
                       as_of_ledger: { type: integer, format: int64, description: "Lake watermark this read is fresh to (ADR-0041) — the highest captured ledger at serve time, NOT the account's last_modified_ledger. Omitted when no watermark reader is wired. Pairs with flags.stale." }
+                      directory: { $ref: "#/components/schemas/DirectoryInfo" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -9087,6 +9147,21 @@ components:
 
   schemas:
     # ───────────────── Network explorer (ADR-0038) ─────────────────
+    DirectoryInfo:
+      type: object
+      description: >
+        Curated third-party label for a Stellar address, mirrored from the
+        MIT-licensed stellar-expert/public-directory set. Display attribution
+        only — listing is not endorsement and this is NOT a verification
+        signal. Tags follow the upstream registry (exchange, anchor, issuer,
+        wallet, custodian, sdf, memo-required, airdrop, malicious, unsafe, …);
+        treat `malicious`/`unsafe` as warnings worth surfacing prominently.
+      required: [name, tags, source]
+      properties:
+        name: { type: string, description: Human label, e.g. "SDF Growth 3". }
+        domain: { type: string, description: Domain the upstream set associates with the address; absent when none. }
+        tags: { type: array, items: { type: string }, description: Upstream tag registry values (always present, possibly empty). }
+        source: { type: string, description: Upstream set the label came from ("stellar-expert"). }
     Ledger:
       type: object
       description: A ledger header from the certified lake.

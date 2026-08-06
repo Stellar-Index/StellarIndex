@@ -27,6 +27,8 @@ import (
 type ExplorerReader = explorerpkg.ExplorerReader
 
 type (
+	DirectoryInfoV           = explorerpkg.DirectoryInfoV
+	DirectoryLookupView      = explorerpkg.DirectoryLookupView
 	AccountsListView         = explorerpkg.AccountsListView
 	AccountWealthRow         = explorerpkg.AccountWealthRow
 	AccountStateView         = explorerpkg.AccountStateView
@@ -123,6 +125,7 @@ func explorerHandlerFor(s *Server, opts Options, logger *slog.Logger) *explorerp
 		Trades:             opts.AccountTrades,
 		Activity:           opts.AccountActivity,
 		PoolTokens:         opts.ProtocolPoolTokens,
+		Directory:          opts.Directory,
 		LookupUSDPrice:     s.lookupUSDPrice,
 		IsKnownSAC:         s.isKnownSAC,
 		LakeWatermark:      s.lakeWatermark,

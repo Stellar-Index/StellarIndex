@@ -129,6 +129,7 @@ var uncoveredOperations = map[string]string{
 	"GET /contracts/{contract_id}/code-history": "explorer surface — SDK is pricing-first",
 	"GET /contracts/{contract_id}/transfers":    "explorer surface — SDK is pricing-first",
 	"GET /accounts":                             "explorer surface — SDK is pricing-first",
+	"GET /directory":                            "explorer surface — SDK is pricing-first",
 	"GET /accounts/{g_strkey}":                  "explorer surface — SDK is pricing-first",
 	"GET /accounts/{g_strkey}/transactions":     "explorer surface — SDK is pricing-first",
 	"GET /accounts/{g_strkey}/operations":       "explorer surface — SDK is pricing-first",

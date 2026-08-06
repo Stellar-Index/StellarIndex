@@ -15,6 +15,21 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Curated address labels from the StellarExpert public directory**
+  (API 1.19.0). The MIT-licensed
+  [stellar-expert/public-directory](https://github.com/stellar-expert/public-directory)
+  set (~18.5k well-known G-account and C-contract addresses: names,
+  domains, tags like `exchange`/`sdf`/`custodian`/`malicious`) is
+  mirrored into a new `account_directory` table (migration 0136) by
+  `stellarindex-ops directory-sync` — one tarball fetch, transactional
+  upsert + prune, empty-parse refusal so a broken fetch can never wipe
+  the set. `/v1/accounts/{g}` and `/v1/contracts/{id}` gain a
+  `directory` object, and `GET /v1/directory?addresses=…` batch-resolves
+  up to 100 addresses for list decoration. Display attribution only:
+  listing is not endorsement, nothing feeds verification or the in-repo
+  scam list, and `malicious`/`unsafe` render as warnings.
+
 ### Fixed
 - **Issuer home-domain precedence: the account's own on-chain
   `home_domain` field now outranks the hand-curated known-issuers
