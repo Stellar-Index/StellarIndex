@@ -27,8 +27,8 @@ func TestEnrichIssuer_FallbackOnEmpty(t *testing.T) {
 	usdc := "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 
 	domain, org := enrichIssuer(usdc, "", "")
-	if domain != "centre.io" {
-		t.Errorf("empty/empty: domain = %q; want centre.io", domain)
+	if domain != "circle.com" {
+		t.Errorf("empty/empty: domain = %q; want circle.com", domain)
 	}
 	if org != "Circle" {
 		t.Errorf("empty/empty: org = %q; want Circle", org)
@@ -36,8 +36,8 @@ func TestEnrichIssuer_FallbackOnEmpty(t *testing.T) {
 
 	// Partial — DB has org but not domain.
 	domain, org = enrichIssuer(usdc, "", "Circle Custom")
-	if domain != "centre.io" {
-		t.Errorf("partial: domain = %q; want centre.io (filled from map)", domain)
+	if domain != "circle.com" {
+		t.Errorf("partial: domain = %q; want circle.com (filled from map)", domain)
 	}
 	if org != "Circle Custom" {
 		t.Errorf("partial: org = %q; want Circle Custom (DB value preserved)", org)

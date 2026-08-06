@@ -15,6 +15,29 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **Issuer home-domain precedence: the account's own on-chain
+  `home_domain` field now outranks the hand-curated known-issuers
+  map** on `/v1/assets/{id}`, `/v1/assets/{id}/metadata`, and
+  `/v1/issuers/{g}`. Founding case: the ex-apay ETH issuer
+  (`GBFXOHVAS…SOCC`) rendered `home_domain=apay.io` with
+  `sep1_status=verified` — a dead anchor's identity, verified against
+  the wrong domain — while the issuer's live on-chain field has said
+  `ultracapital.xyz` since Ultra Stellar acquired apay.io's wrapped
+  assets. A 2026-08-06 sweep found 8 of 27 curated entries diverged
+  from chain; the flagrantly wrong ones (both apay.io accounts →
+  `ultracapital.xyz`, Circle's `centre.io` → `circle.com` for USDC
+  and EURC, a USDx issuer mis-attributed to Mykobo → FxDAO) are also
+  corrected in the map itself, which remains only a last-resort
+  fallback for issuers with no on-chain domain.
+- **S-010 identity suppression can no longer be undone by the
+  account-state enrich** on `/v1/issuers/{g}`: suppression for a
+  flagged, unverified issuer now runs after all enrichment, so the
+  scammer's self-declared on-chain `home_domain` (the impersonation
+  itself, e.g. `lobstr.co`) is never refilled into the cleared field.
+  Auth flags still populate — they are objective account state, not
+  identity claims.
+
 ### Changed
 - **The partial-wrap supply cross-check's over-mint leg is
   diagnostic-only.** Its premise — cumulative SAC net mint ≤ current

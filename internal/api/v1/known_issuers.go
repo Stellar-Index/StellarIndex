@@ -1,5 +1,7 @@
 package v1
 
+import "context"
+
 // knownIssuers is a hand-curated fallback map from issuer
 // G-strkey to (home_domain, org_name). The production
 // `issuers.home_domain` column stays empty until an issuer-upsert
@@ -28,9 +30,11 @@ type knownIssuer struct {
 }
 
 var knownIssuers = map[string]knownIssuer{
-	// Circle — USDC. Verified via centre.io/.well-known/stellar.toml.
+	// Circle — USDC. On-chain home_domain moved centre.io →
+	// circle.com (2026-08-06 sweep); circle.com's stellar.toml
+	// lists this account.
 	"GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN": {
-		HomeDomain: "centre.io",
+		HomeDomain: "circle.com",
 		OrgName:    "Circle",
 	},
 	// Ultra Capital — yXLM, yUSDC.
@@ -53,9 +57,10 @@ var knownIssuers = map[string]knownIssuer{
 		HomeDomain: "stellar.moneygram.com",
 		OrgName:    "MoneyGram International",
 	},
-	// AnchorUSD.
+	// AnchorUSD. On-chain home_domain is the stablecoin subdomain
+	// (2026-08-06 sweep).
 	"GDUKMGUGDZQK6YHYA5Z6AY2G4XDSZPSZ3SW5UN3ARVMO6QSRDWP5YLEX": {
-		HomeDomain: "anchorusd.com",
+		HomeDomain: "stablecoin.anchorusd.com",
 		OrgName:    "AnchorUSD",
 	},
 	// Round 2 (2026-05-08): issuers identified via the SAC wrapper
@@ -71,33 +76,44 @@ var knownIssuers = map[string]knownIssuer{
 		HomeDomain: "velo.org",
 		OrgName:    "Velo Labs",
 	},
-	// Phoenix DEX — PHO governance token.
+	// Phoenix DEX — PHO governance token. On-chain home_domain is
+	// the app subdomain (2026-08-06 sweep).
 	"GAX5TXB5RYJNLBUR477PEXM4X75APK2PGMTN6KEFQSESGWFXEAKFSXJO": {
-		HomeDomain: "phoenix-hub.io",
+		HomeDomain: "app.phoenix-hub.io",
 		OrgName:    "Phoenix",
 	},
-	// Mykobo — issues USDx, EURx, GBPx (multi-currency stablecoins).
+	// FxDAO — USDx issuer. The original entry here said
+	// "Mykobo — issues USDx, EURx, GBPx", which was wrong from day
+	// one: USDx is FxDAO's; the on-chain home_domain is
+	// assets.fxdao.io and that domain's stellar.toml ACCOUNTS list
+	// carries this G-strkey (verified 2026-08-06).
 	"GAVH5ZWACAY2PHPUG4FL3LHHJIYIHOFPSIUGM2KHK25CJWXHAV6QKDMN": {
-		HomeDomain: "mykobo.co",
-		OrgName:    "Mykobo",
+		HomeDomain: "assets.fxdao.io",
+		OrgName:    "FxDAO",
 	},
-	// Apay — issues wrapped BTC/ETH on Stellar.
+	// Ultra Capital (Ultra Stellar) — acquired apay.io's wrapped
+	// BTC/ETH issuers. Both accounts' on-chain home_domain is now
+	// ultracapital.xyz and its stellar.toml lists them as the
+	// tethered BTC/ETH issuers (verified 2026-08-06; the stale
+	// "apay.io" entries here were serving a dead anchor's identity
+	// AND SEP-1-verifying against the wrong domain).
 	"GDPJALI4AZKUU2W426U5WKMAT6CN3AJRPIIRYR2YM54TL2GDWO5O2MZM": {
-		HomeDomain: "apay.io",
-		OrgName:    "Apay",
+		HomeDomain: "ultracapital.xyz",
+		OrgName:    "Ultra Capital",
 	},
 	"GBFXOHVAS43OIWNIO7XLRJAHT3BICFEIKOJLZVXNT572MISM4CMGSOCC": {
-		HomeDomain: "apay.io",
-		OrgName:    "Apay",
+		HomeDomain: "ultracapital.xyz",
+		OrgName:    "Ultra Capital",
 	},
 	// LIBRE — Libre Capital.
 	"GAYCCWKECNGDRHYU3UTREBD2XLC3CUQN6FV22TKM4WCQER3IWR7TF5CY": {
 		HomeDomain: "libre.cx",
 		OrgName:    "Libre",
 	},
-	// Circle EUR-pegged stablecoin (EURC).
+	// Circle EUR-pegged stablecoin (EURC). centre.io → circle.com,
+	// same move as the USDC issuer above (2026-08-06 sweep).
 	"GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2": {
-		HomeDomain: "centre.io",
+		HomeDomain: "circle.com",
 		OrgName:    "Circle (EURC)",
 	},
 	// Round 5 (2026-05-08): legitimate issuers found via wider
@@ -119,8 +135,9 @@ var knownIssuers = map[string]knownIssuer{
 		HomeDomain: "zeam.money",
 		OrgName:    "Zeam.Money",
 	},
+	// On-chain home_domain is the sslx subdomain (2026-08-06 sweep).
 	"GBHFGY3ZNEJWLNO4LBUKLYOCEK4V7ENEBJGPRHHX7JU47GWHBREH37UR": {
-		HomeDomain: "sl8.online",
+		HomeDomain: "sslx.sl8.online",
 		OrgName:    "sl8.online",
 	},
 	"GC6OYQJIZF3HFXCYPFCBXYXNGIBQ4TNSFUBUXQJOZWIP6F3YZK4QH3VQ": {
@@ -155,6 +172,49 @@ var knownIssuers = map[string]knownIssuer{
 		HomeDomain: "allbridge.io",
 		OrgName:    "Allbridge",
 	},
+}
+
+// onChainHomeDomain returns the issuer account's live self-declared
+// home_domain from the CH account state, or "" when the explorer
+// reader isn't wired, the account doesn't exist, the read fails, or
+// the field is unset. Callers use it AHEAD of the curated
+// knownIssuers map: the on-chain field is signed by the account's
+// own keys and follows anchor acquisitions/rebrands, while the map
+// is a hand-maintained snapshot that goes stale silently — the
+// 2026-08-06 sweep found 8 of 27 entries diverged from chain
+// (apay.io→ultracapital.xyz, centre.io→circle.com, a mis-attributed
+// FxDAO issuer, …), and the stale domain was also what SEP-1
+// verification resolved against.
+func (s *Server) onChainHomeDomain(ctx context.Context, issuer string) string {
+	if s.explorer == nil {
+		return ""
+	}
+	st, _, err := s.explorer.AccountStateCached(ctx, issuer)
+	if err != nil || !st.Exists {
+		return ""
+	}
+	return st.HomeDomain
+}
+
+// backfillHomeDomain fills an empty detail.HomeDomain for a classic
+// asset: live on-chain account state first, curated knownIssuers map
+// as last resort. Shared by both asset-detail surfaces
+// (handleAssetGet + the metadata route) so they stay in lockstep on
+// the domain their SEP-1 overlays verify against.
+func (s *Server) backfillHomeDomain(ctx context.Context, detail *AssetDetail) {
+	if detail.HomeDomain != nil && *detail.HomeDomain != "" {
+		return
+	}
+	if detail.Issuer == nil || *detail.Issuer == "" {
+		return
+	}
+	hd := s.onChainHomeDomain(ctx, *detail.Issuer)
+	if hd == "" {
+		hd, _ = enrichIssuer(*detail.Issuer, "", "")
+	}
+	if hd != "" {
+		detail.HomeDomain = &hd
+	}
 }
 
 // enrichIssuer fills empty home_domain / org_name fields on the

@@ -253,17 +253,11 @@ func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 		assets = nil
 	}
 
-	homeDomain, orgName := enrichIssuer(row.GStrkey, row.HomeDomain, row.OrgName)
 	detailReason := scamReason(row.GStrkey)
-	// Same identity suppression as the list (S-010): a flagged,
-	// unverified issuer's self-declared identity is the impersonation.
-	if detailReason != "" && !row.OrgVerified {
-		homeDomain, orgName = "", ""
-	}
 	out := Issuer{
 		GStrkey:        row.GStrkey,
-		HomeDomain:     homeDomain,
-		OrgName:        orgName,
+		HomeDomain:     row.HomeDomain,
+		OrgName:        row.OrgName,
 		OrgVerified:    row.OrgVerified,
 		ScamReason:     detailReason,
 		AuthRequired:   row.AuthRequired,
@@ -274,7 +268,22 @@ func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 		SEP1Payload:    row.SEP1Payload,
 		CreationLedger: row.CreationLedger,
 	}
+	// Identity precedence (2026-08-06): DB row → live on-chain
+	// account state → curated knownIssuers map. The curated map used
+	// to run FIRST, so a stale entry beat the account's own signed
+	// home_domain (the ex-apay ETH issuer rendered apay.io while
+	// on-chain said ultracapital.xyz).
 	s.enrichIssuerFromAccountState(iCtx, gStrkey, &out)
+	out.HomeDomain, out.OrgName = enrichIssuer(row.GStrkey, out.HomeDomain, out.OrgName)
+	// Identity suppression runs LAST (S-010): a flagged, unverified
+	// issuer's self-declared identity is the impersonation. Before
+	// this reorder the suppression ran ahead of the account-state
+	// enrich, which then REFILLED the cleared home_domain straight
+	// from the scammer's own on-chain field. Auth flags stay — they
+	// are objective account state, not identity claims.
+	if detailReason != "" && !row.OrgVerified {
+		out.HomeDomain, out.OrgName = "", ""
+	}
 	for _, a := range assets {
 		out.Assets = append(out.Assets, IssuedAsset{
 			AssetID:          a.AssetID,
