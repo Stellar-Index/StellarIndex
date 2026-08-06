@@ -12,8 +12,10 @@ import (
 )
 
 // TestClickHouseContractEventsRMTDedup is the live-ClickHouse proof for audit
-// W4-storage-1: ContractEventsRecent (LIMIT 1 BY the primary key) and EventsByTx
-// (FINAL) must serve each contract event EXACTLY ONCE even while
+// W4-storage-1: ContractEventsRecent (Go-side adjacent-row dedup since
+// 2026-08-06 — the SQL LIMIT 1 BY disabled reverse read-in-order and cost
+// 100× on busy contracts) and EventsByTx (FINAL) must serve each contract
+// event EXACTLY ONCE even while
 // stellar.contract_events — a ReplacingMergeTree — holds an un-merged duplicate
 // part (the legitimate post-heal / ch-rebuild / partial-flush-retry state).
 //
