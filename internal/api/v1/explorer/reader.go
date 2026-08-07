@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -72,9 +73,19 @@ func readTimedOut(callCtx context.Context, err error) bool {
 // account-state cache (AccountStateCached) — same condition, different
 // package (this one can't own a sentinel the clickhouse layer must return).
 func retryableColdMiss(callCtx context.Context, err error) bool {
-	return readTimedOut(callCtx, err) ||
+	if readTimedOut(callCtx, err) ||
 		errors.Is(err, errRefreshSaturated) ||
-		errors.Is(err, clickhouse.ErrRefreshSaturated)
+		errors.Is(err, clickhouse.ErrRefreshSaturated) {
+		return true
+	}
+	// Driver-level network timeouts (`read tcp …: i/o timeout` from the
+	// ClickHouse conn under load) are the same transient capacity class:
+	// they arrive as net.Error, not context.DeadlineExceeded, and were
+	// falling through to 500 "Internal error" (site audit 2026-08-07 —
+	// /accounts/{g}/operations served exactly that during a refresh
+	// storm).
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
 }
 
 // writeReadTimeout writes the standard response for a lake read that blew
