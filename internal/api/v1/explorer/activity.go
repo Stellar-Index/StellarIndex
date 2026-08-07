@@ -122,7 +122,7 @@ func (h *Handler) AccountActivity(w http.ResponseWriter, r *http.Request) {
 		if h.ClientAborted(r, err) {
 			return
 		}
-		if readTimedOut(ctx, err) {
+		if retryableColdMiss(ctx, err) {
 			h.Logger.Warn("explorer AccountActivity deadline exceeded", "account", g)
 			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/account-activity-timeout",
 				"Account activity timed out")

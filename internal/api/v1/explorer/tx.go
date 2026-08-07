@@ -54,7 +54,7 @@ func (h *Handler) TxDetail(w http.ResponseWriter, r *http.Request) {
 		if h.ClientAborted(r, err) {
 			return
 		}
-		if readTimedOut(ctx, err) {
+		if retryableColdMiss(ctx, err) {
 			h.Logger.Warn("explorer TransactionByHash deadline exceeded", "hash", hash)
 			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/tx-detail-timeout",
 				"Transaction detail timed out")
@@ -77,7 +77,7 @@ func (h *Handler) TxDetail(w http.ResponseWriter, r *http.Request) {
 		if h.ClientAborted(r, err) {
 			return
 		}
-		if readTimedOut(ctx, err) {
+		if retryableColdMiss(ctx, err) {
 			h.Logger.Warn("explorer OperationsByTx deadline exceeded", "hash", hash)
 			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/tx-detail-timeout",
 				"Transaction detail timed out")

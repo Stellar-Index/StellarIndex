@@ -78,7 +78,7 @@ func (h *Handler) AccountTransactions(w http.ResponseWriter, r *http.Request) {
 		if h.ClientAborted(r, err) {
 			return
 		}
-		if readTimedOut(ctx, err) {
+		if retryableColdMiss(ctx, err) {
 			h.Logger.Warn("explorer AccountTransactions deadline exceeded", "account", g)
 			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/account-transactions-timeout",
 				"Account transactions timed out")
@@ -129,7 +129,7 @@ func (h *Handler) AccountOperations(w http.ResponseWriter, r *http.Request) {
 		if h.ClientAborted(r, err) {
 			return
 		}
-		if readTimedOut(ctx, err) {
+		if retryableColdMiss(ctx, err) {
 			h.Logger.Warn("explorer AccountOperations deadline exceeded", "account", g)
 			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/account-operations-timeout",
 				"Account operations timed out")
