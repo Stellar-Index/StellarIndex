@@ -89,6 +89,10 @@ export function AccountsAnalytics() {
     display: formatCompact(b.accounts),
   }));
 
+  // Native is held by every funded account by definition — charting it
+  // alongside issued assets collapses the rest to slivers.
+  const heldAssets = (s.top_held_assets ?? []).filter((a) => a.asset !== 'native');
+
   return (
     <>
       <Panel title="Network accounts" source={asExample('/v1/accounts/stats')} bodyClassName="space-y-5">
@@ -132,14 +136,14 @@ export function AccountsAnalytics() {
         </Panel>
       </div>
 
-      {s.top_held_assets && s.top_held_assets.length > 0 && (
+      {heldAssets.length > 0 && (
         <Panel title="Most held assets" source={asExample('/v1/accounts/stats')} bodyClassName="space-y-2">
           <p className="text-xs text-ink-muted">
             Assets by number of positive-balance holders — click through for
             each asset&apos;s holder board.
           </p>
           <HBarList
-            items={s.top_held_assets.map((a) => ({
+            items={heldAssets.map((a) => ({
               label: a.asset.split('-')[0],
               value: a.holders,
               display: formatCompact(a.holders),
@@ -148,7 +152,7 @@ export function AccountsAnalytics() {
             ariaLabel="Most held assets by holder count"
           />
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-            {s.top_held_assets.map((a) => (
+            {heldAssets.map((a) => (
               <AssetLink key={a.asset} canonical={a.asset} />
             ))}
           </div>
