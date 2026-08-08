@@ -15,13 +15,23 @@ against.
 
 ## [Unreleased]
 
+## [v0.28.1] — 2026-08-08
+
+### Added
+- **Sub-second holders boards** (inventory #4): `ch-holders-rollup` +
+  30-min timer precompute every asset's top-500 holders + count into
+  exchange-swapped rollup tables; `/v1/assets/{id}/holders` serves
+  keyed reads with a probed fallback to the legacy scans. Part of the
+  sub-second page goal (2026-08-08); `scripts/ops/subsecond-audit.py`
+  is the goal's acceptance harness.
+
 ### Fixed
-- **Saturation rejects stop claiming to be timeouts** (inventory #5).
-  A cold page rejected because the shared refresh capacity was busy
-  warming OTHER pages rendered the same "read didn't return within the
-  8s budget" detail as a genuine slow query — the instant-503 class
-  that misdirected every investigation this week. The problem detail
-  now states which condition occurred; same 503 + type contract.
+- Saturation rejects no longer claim to be timeouts (inventory #5).
+- `/v1/readyz` single-flight + 1s cache — unauthenticated spam can no
+  longer exhaust the DB pool through the checkers (inventory #26).
+- Migration 0137 disarms the comet replay double-count (inventory
+  #19); REQUIRES `projector-replay -source comet -from 51499000`
+  after deploy.
 
 ## [v0.28.0] — 2026-08-08
 
