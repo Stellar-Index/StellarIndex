@@ -40,6 +40,10 @@ func contractEventRecentRowFor(seq uint32, opIndex, eventIndex uint32) []any {
 func TestContractEventsRecent_FastPathKeepsReadInOrder(t *testing.T) {
 	conn := &stubConn{}
 	conn.respond = func(q string) (driver.Rows, error) {
+		// Ledger-index probe: empty → index unavailable → legacy path.
+		if strings.Contains(q, "contract_active_ledgers") {
+			return &stubRows{}, nil
+		}
 		if !strings.Contains(q, "FROM stellar.contract_events") {
 			t.Fatalf("unexpected query: %s", q)
 		}
@@ -60,10 +64,13 @@ func TestContractEventsRecent_FastPathKeepsReadInOrder(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d, want 2 (adjacent duplicate collapsed)", len(rows))
 	}
-	if len(conn.queries) != 1 {
-		t.Fatalf("issued %d queries, want 1 (no fallback on a clean page)", len(conn.queries))
+	if len(conn.queries) != 2 {
+		t.Fatalf("issued %d queries, want 2 (index probe + events; no fallback on a clean page)", len(conn.queries))
 	}
 	q := conn.queries[len(conn.queries)-1]
+	if strings.Contains(q, "ledger_seq IN") {
+		t.Fatalf("query = %q, must NOT carry a ledger bound when the index is unavailable", q)
+	}
 	if strings.Contains(q, "LIMIT 1 BY") {
 		t.Fatalf("query = %q, must NOT use LIMIT 1 BY (disables reverse read-in-order early exit)", q)
 	}
@@ -85,6 +92,9 @@ func TestContractEventsRecent_DupStormFallsBackToInCHDedup(t *testing.T) {
 	fetch := limit + contractEventsDedupHeadroom
 	conn := &stubConn{}
 	conn.respond = func(q string) (driver.Rows, error) {
+		if strings.Contains(q, "contract_active_ledgers") {
+			return &stubRows{}, nil // index unavailable → legacy path
+		}
 		if strings.Contains(q, "LIMIT 1 BY") {
 			// Fallback path: in-CH dedup returns a clean full page.
 			return &stubRows{data: [][]any{
@@ -106,11 +116,11 @@ func TestContractEventsRecent_DupStormFallsBackToInCHDedup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ContractEventsRecent: %v", err)
 	}
-	if len(conn.queries) != 2 {
-		t.Fatalf("issued %d queries, want 2 (fast path + dedup fallback)", len(conn.queries))
+	if len(conn.queries) != 3 {
+		t.Fatalf("issued %d queries, want 3 (index probe + fast path + dedup fallback)", len(conn.queries))
 	}
-	if !strings.Contains(conn.queries[1], "LIMIT 1 BY ledger_seq, tx_hash, op_index, event_index LIMIT ?") {
-		t.Fatalf("fallback query = %q, want the in-CH LIMIT 1 BY dedup shape", conn.queries[1])
+	if !strings.Contains(conn.queries[2], "LIMIT 1 BY ledger_seq, tx_hash, op_index, event_index LIMIT ?") {
+		t.Fatalf("fallback query = %q, want the in-CH LIMIT 1 BY dedup shape", conn.queries[2])
 	}
 	if len(rows) != limit {
 		t.Fatalf("rows = %d, want %d from the fallback", len(rows), limit)
@@ -118,14 +128,77 @@ func TestContractEventsRecent_DupStormFallsBackToInCHDedup(t *testing.T) {
 }
 
 func TestContractEventsRecent_CursorShapes(t *testing.T) {
-	// Both shapes must keyset-page by the FULL row-identity tuple.
+	// Both shapes must keyset-page by the FULL row-identity tuple, with
+	// and without the active-ledger bound.
 	for name, q := range map[string]string{
-		"fast":  contractEventsRecentQuery(true),
-		"dedup": contractEventsRecentDedupQuery(true),
+		"fast":          contractEventsRecentQuery(true, false),
+		"dedup":         contractEventsRecentDedupQuery(true, false),
+		"fast+ledgers":  contractEventsRecentQuery(true, true),
+		"dedup+ledgers": contractEventsRecentDedupQuery(true, true),
 	} {
 		if !strings.Contains(q, "(ledger_seq, tx_hash, op_index, event_index) < (?, ?, ?, ?)") {
 			t.Fatalf("%s cursor query = %q, lost its keyset predicate", name, q)
 		}
+		if strings.Contains(name, "ledgers") && !strings.Contains(q, "ledger_seq IN (?)") {
+			t.Fatalf("%s query = %q, lost its active-ledger bound", name, q)
+		}
+	}
+}
+
+// TestContractEventsRecent_ActiveLedgerBound — with the
+// contract_active_ledgers index present, the reader walks the contract's
+// recent active ledgers and bounds the events read to them (the
+// quiet-contract fix, site audit 2026-08-07/08). An empty walk is an
+// authoritative "no events" — no contract_events query at all.
+func TestContractEventsRecent_ActiveLedgerBound(t *testing.T) {
+	conn := &stubConn{}
+	conn.respond = func(q string) (driver.Rows, error) {
+		if strings.Contains(q, "contract_active_ledgers") {
+			if strings.Contains(q, "WHERE contract_id") {
+				return &stubRows{data: [][]any{{uint32(100)}, {uint32(99)}}}, nil
+			}
+			return &stubRows{data: [][]any{{uint32(1)}}}, nil // probe: non-empty
+		}
+		if !strings.Contains(q, "ledger_seq IN (?)") {
+			t.Fatalf("events query lost the ledger bound: %s", q)
+		}
+		return &stubRows{data: [][]any{
+			contractEventRecentRowFor(100, 0, 0),
+			contractEventRecentRowFor(99, 0, 0),
+		}}, nil
+	}
+	r := &ExplorerReader{conn: conn}
+
+	rows, err := r.ContractEventsRecent(context.Background(), "CTESTCONTRACT", 100, ContractEventsCursor{})
+	if err != nil {
+		t.Fatalf("ContractEventsRecent: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	if len(conn.queries) != 3 {
+		t.Fatalf("issued %d queries, want 3 (probe + ledgers walk + bounded events)", len(conn.queries))
+	}
+
+	// Empty walk → authoritative empty page, no events query.
+	conn2 := &stubConn{}
+	conn2.respond = func(q string) (driver.Rows, error) {
+		if strings.Contains(q, "contract_active_ledgers") {
+			if strings.Contains(q, "WHERE contract_id") {
+				return &stubRows{}, nil
+			}
+			return &stubRows{data: [][]any{{uint32(1)}}}, nil
+		}
+		t.Fatalf("unexpected contract_events query for an index-empty contract: %s", q)
+		return nil, nil
+	}
+	r2 := &ExplorerReader{conn: conn2}
+	rows2, err := r2.ContractEventsRecent(context.Background(), "CTESTCONTRACT", 100, ContractEventsCursor{})
+	if err != nil {
+		t.Fatalf("ContractEventsRecent(empty): %v", err)
+	}
+	if len(rows2) != 0 {
+		t.Fatalf("rows = %d, want 0 (authoritative empty)", len(rows2))
 	}
 }
 
