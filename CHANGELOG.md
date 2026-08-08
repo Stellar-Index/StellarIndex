@@ -15,6 +15,14 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **Saturation rejects stop claiming to be timeouts** (inventory #5).
+  A cold page rejected because the shared refresh capacity was busy
+  warming OTHER pages rendered the same "read didn't return within the
+  8s budget" detail as a genuine slow query — the instant-503 class
+  that misdirected every investigation this week. The problem detail
+  now states which condition occurred; same 503 + type contract.
+
 ## [v0.28.0] — 2026-08-08
 
 ### Added

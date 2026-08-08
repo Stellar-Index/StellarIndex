@@ -100,7 +100,7 @@ func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 		}
 		if retryableColdMiss(ctx, err) {
 			h.Logger.Warn("explorer ContractEventsRecent deadline/saturation", "contract", cid, "err", err)
-			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/contract-detail-timeout",
+			h.writeRetryable(w, r, err, "https://api.stellarindex.io/errors/contract-detail-timeout",
 				"Contract detail timed out")
 			return
 		}

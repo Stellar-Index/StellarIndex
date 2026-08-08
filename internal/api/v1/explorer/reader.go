@@ -109,6 +109,24 @@ func (h *Handler) writeReadTimeout(w http.ResponseWriter, r *http.Request, typeU
 			" explorer read budget; retry shortly")
 }
 
+// writeRetryable is writeReadTimeout with an honest split by cause
+// (inventory #5, site audit 2026-08-07): a saturation reject is NOT a
+// timeout — it's an instant "the shared refresh capacity is busy
+// warming other cold pages" answer, and labeling it "timed out" sent
+// every investigation down the wrong path (it reads as a slow query
+// when the query never ran). Same 503 + type URL contract either way;
+// only the detail tells the truth about which condition occurred.
+func (h *Handler) writeRetryable(w http.ResponseWriter, r *http.Request, err error, typeURL, title string) {
+	if errors.Is(err, errRefreshSaturated) || errors.Is(err, clickhouse.ErrRefreshSaturated) {
+		h.WriteProblem(w, r, typeURL, title, http.StatusServiceUnavailable,
+			"the server's shared cold-page refresh capacity is saturated (many distinct cold pages "+
+				"are being computed right now); this page's data was NOT computed on this request — "+
+				"retry in a few seconds")
+		return
+	}
+	h.writeReadTimeout(w, r, typeURL, title)
+}
+
 // ExplorerReader is the seam the network-explorer endpoints (ADR-0038) read
 // through: the certified Tier-1 ClickHouse lake (the full chain to genesis —
 // ledgers / transactions / operations / contract events). *clickhouse.ExplorerReader

@@ -297,7 +297,7 @@ func (h *Handler) AccountState(w http.ResponseWriter, r *http.Request) {
 			// bug gets. Mirrors the sibling SWR handlers (AssetHolders,
 			// ContractDetail, ContractsList) which map the same class here.
 			h.Logger.Warn("explorer AccountState deadline/saturation", "account", g, "err", err)
-			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/account-state-timeout",
+			h.writeRetryable(w, r, err, "https://api.stellarindex.io/errors/account-state-timeout",
 				"Account state timed out")
 			return
 		}
@@ -454,7 +454,7 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 		}
 		if retryableColdMiss(ctx, err) {
 			h.Logger.Warn("explorer AssetHolders deadline/saturation on cold asset", "asset", asset, "err", err)
-			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/asset-holders-timeout",
+			h.writeRetryable(w, r, err, "https://api.stellarindex.io/errors/asset-holders-timeout",
 				"Asset holders timed out")
 			return
 		}

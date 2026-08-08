@@ -88,7 +88,7 @@ func (h *Handler) ContractsList(w http.ResponseWriter, r *http.Request) {
 		}
 		if retryableColdMiss(ctx, err) {
 			h.Logger.Warn("explorer RecentContracts deadline/saturation on cold rung", "window_days", window, "err", err)
-			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/contracts-timeout",
+			h.writeRetryable(w, r, err, "https://api.stellarindex.io/errors/contracts-timeout",
 				"Contracts directory timed out")
 			return
 		}
@@ -205,7 +205,7 @@ func (h *Handler) ContractInteractions(w http.ResponseWriter, r *http.Request) {
 		}
 		if retryableColdMiss(ctx, err) {
 			h.Logger.Warn("explorer ContractInteractions deadline/saturation", "contract", cid, "err", err)
-			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/contract-interactions-timeout",
+			h.writeRetryable(w, r, err, "https://api.stellarindex.io/errors/contract-interactions-timeout",
 				"Contract interactions timed out")
 			return
 		}
@@ -287,7 +287,7 @@ func (h *Handler) ContractCodeHistory(w http.ResponseWriter, r *http.Request) {
 		}
 		if retryableColdMiss(ctx, err) {
 			h.Logger.Warn("explorer ContractCodeHistory deadline/saturation", "contract", cid, "err", err)
-			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/contract-code-history-timeout",
+			h.writeRetryable(w, r, err, "https://api.stellarindex.io/errors/contract-code-history-timeout",
 				"Contract code history timed out")
 			return
 		}
