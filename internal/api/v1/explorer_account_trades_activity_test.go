@@ -23,12 +23,12 @@ type stubAccountTradesReader struct {
 	rows []timescale.AccountTradeRow
 }
 
-func (s *stubAccountTradesReader) ListAccountTrades(_ context.Context, _ string, limit int, _ timescale.AccountTradesCursor) ([]timescale.AccountTradeRow, error) {
+func (s *stubAccountTradesReader) ListAccountTrades(_ context.Context, _ string, limit int, _ timescale.AccountTradesCursor) ([]timescale.AccountTradeRow, time.Time, error) {
 	rows := s.rows
 	if limit > 0 && len(rows) > limit {
 		rows = rows[:limit]
 	}
-	return rows, nil
+	return rows, time.Time{}, nil
 }
 
 // stubAccountActivityReader is a canned explorerpkg.ActivityReader.
@@ -38,8 +38,8 @@ type stubAccountActivityReader struct {
 	bridge timescale.BridgeActivity
 }
 
-func (s *stubAccountActivityReader) CountAccountTrades(context.Context, string) (int64, error) {
-	return s.trades, nil
+func (s *stubAccountActivityReader) CountAccountTrades(context.Context, string) (int64, time.Time, error) {
+	return s.trades, time.Time{}, nil
 }
 
 func (s *stubAccountActivityReader) DefiActionCountsByUser(context.Context, string) ([]timescale.DefiActionCount, error) {

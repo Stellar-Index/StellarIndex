@@ -15,6 +15,32 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **Account pages stop dying on compressed history** (the GATL report).
+  Three per-account Postgres reads walked chunks that have no
+  per-account index once compressed: `/accounts/{g}/trades` burned 8s
+  proving even a zero-trade account empty (16.4M buffers), the
+  movements post-P23 tail used the `from OR to` shape and
+  statement-timed-out for busy accounts (so `/movements` silently
+  showed only the pre-P23 archive — "history stops 340d ago"), and the
+  activity trades count decompress-scanned all 248 compressed chunks.
+  The movements tail is now the two-arm UNION shape; trades list +
+  count are bounded to the compression horizon and SAY SO
+  (`note`/`trades_total_since`) instead of serving a silently-partial
+  "all time" answer.
+- **The movements feed discloses its post-P23 scope.** After the P23
+  boundary the feed carries watched Soroban/SAC tokens only — classic
+  XLM payment history after 2025-09-03 is not served there yet (the
+  lake captures it; the all-asset archive is inventory item #1). The
+  coverage note now states this on every response rather than letting
+  a busy XLM account's feed masquerade as complete.
+
+### Added
+- `docs/operations/open-fixes-inventory-2026-08-08.md` — the complete
+  deduplicated register of sidelined findings (35 items, three tiers),
+  compiled on operator request; items leave it only when deployed +
+  verified.
+
 ## [v0.27.0] — 2026-08-08
 
 ### Added

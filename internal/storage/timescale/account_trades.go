@@ -3,6 +3,7 @@ package timescale
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -123,21 +124,59 @@ const accountTradesOuterCols = `source, ledger, tx_hash, op_index, ts,
 // Both arms reuse the same numbered placeholders, so the caller passes
 // each value once regardless of arm count.
 func accountTradesQuery(hasCursor bool) string {
+	// $2 is always the compression-horizon ts floor (site audit
+	// 2026-08-08): the per-account partial indexes exist only on
+	// UNCOMPRESSED chunks — compressed chunks (248/250 on r1, segmented
+	// by pair for the price workload) have no btree, so an arm that
+	// descends into them decompress-scans each one (~46k buffers/chunk;
+	// 16.4M buffers ≈ 8s measured proving a ZERO-trade account empty).
+	// The ts floor lets ChunkAppend exclude compressed chunks outright;
+	// the caller surfaces the floor as an explicit coverage note rather
+	// than serving a silently-partial "all time" answer.
 	cursorClause := ""
-	limitPh := "$2"
+	limitPh := "$3"
 	if hasCursor {
-		cursorClause = ` AND (ts, ledger, tx_hash, op_index) < ($2, $3, $4, $5)`
-		limitPh = "$6"
+		cursorClause = ` AND (ts, ledger, tx_hash, op_index) < ($3, $4, $5, $6)`
+		limitPh = "$7"
 	}
 	orderBy := ` ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC LIMIT ` + limitPh
 	return `SELECT ` + accountTradesOuterCols + `, role, counterparty FROM (
 		(SELECT ` + accountTradesInnerCols + `, 'taker' AS role, COALESCE(maker, '') AS counterparty
-		   FROM trades WHERE taker = $1` + cursorClause + orderBy + `)
+		   FROM trades WHERE taker = $1 AND ts >= $2` + cursorClause + orderBy + `)
 		UNION ALL
 		(SELECT ` + accountTradesInnerCols + `, 'maker' AS role, COALESCE(taker, '') AS counterparty
-		   FROM trades WHERE maker = $1 AND (taker IS NULL OR taker <> $1)` + cursorClause + orderBy + `)
+		   FROM trades WHERE maker = $1 AND ts >= $2 AND (taker IS NULL OR taker <> $1)` + cursorClause + orderBy + `)
 	) u` + orderBy
 }
+
+// tradesUncompressedHorizon returns the start of the oldest UNCOMPRESSED
+// trades chunk — the boundary below which per-account reads have no
+// index (see accountTradesQuery). Cached for 10 minutes; the horizon
+// only moves when the compression policy compresses another chunk.
+// Fail-open to epoch (no floor, legacy behavior) on lookup errors so a
+// catalog hiccup can't blank the endpoint.
+func (s *Store) tradesUncompressedHorizon(ctx context.Context) time.Time {
+	tradesHorizonMu.Lock()
+	defer tradesHorizonMu.Unlock()
+	if time.Since(tradesHorizonAt) < 10*time.Minute && !tradesHorizon.IsZero() {
+		return tradesHorizon
+	}
+	const q = `SELECT coalesce(min(range_start), 'epoch'::timestamptz)
+	             FROM timescaledb_information.chunks
+	            WHERE hypertable_name = 'trades' AND NOT is_compressed`
+	var t time.Time
+	if err := s.db.QueryRowContext(ctx, q).Scan(&t); err != nil {
+		return time.Time{} // epoch — no floor
+	}
+	tradesHorizon, tradesHorizonAt = t, time.Now()
+	return t
+}
+
+var (
+	tradesHorizonMu sync.Mutex
+	tradesHorizon   time.Time
+	tradesHorizonAt time.Time
+)
 
 // clampAccountTradesLimit normalizes a caller limit onto
 // [1, accountTradesMaxLimit], defaulting out-of-range values.
@@ -151,16 +190,17 @@ func clampAccountTradesLimit(limit int) int {
 // ListAccountTrades returns the address's trades (taker or maker side),
 // newest first, keyset-paged. Empty slice + nil error when the address
 // has no attributed trades.
-func (s *Store) ListAccountTrades(ctx context.Context, address string, limit int, cur AccountTradesCursor) ([]AccountTradeRow, error) {
+func (s *Store) ListAccountTrades(ctx context.Context, address string, limit int, cur AccountTradesCursor) ([]AccountTradeRow, time.Time, error) {
 	limit = clampAccountTradesLimit(limit)
-	args := []any{address}
+	horizon := s.tradesUncompressedHorizon(ctx)
+	args := []any{address, horizon}
 	if cur.IsSet() {
 		args = append(args, cur.Ts.UTC(), cur.Ledger, cur.TxHash, cur.OpIndex)
 	}
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, accountTradesQuery(cur.IsSet()), args...)
 	if err != nil {
-		return nil, fmt.Errorf("timescale: ListAccountTrades: %w", err)
+		return nil, horizon, fmt.Errorf("timescale: ListAccountTrades: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -174,7 +214,7 @@ func (s *Store) ListAccountTrades(ctx context.Context, address string, limit int
 		if err := rows.Scan(&r.Source, &ledger, &r.TxHash, &opIdx, &r.Ts,
 			&r.BaseAsset, &r.QuoteAsset, &r.BaseAmount, &r.QuoteAmount,
 			&r.USDVolume, &r.RoutedVia, &r.Role, &r.Counterparty); err != nil {
-			return nil, fmt.Errorf("timescale: ListAccountTrades scan: %w", err)
+			return nil, horizon, fmt.Errorf("timescale: ListAccountTrades scan: %w", err)
 		}
 		r.Ledger = uint32(ledger) //nolint:gosec // ledger seq fits uint32
 		r.OpIndex = uint32(opIdx) //nolint:gosec // op_index fits uint32
@@ -182,26 +222,25 @@ func (s *Store) ListAccountTrades(ctx context.Context, address string, limit int
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: ListAccountTrades rows: %w", err)
+		return nil, horizon, fmt.Errorf("timescale: ListAccountTrades rows: %w", err)
 	}
-	return out, nil
+	return out, horizon, nil
 }
 
-// CountAccountTrades returns the address's all-time attributed trade
-// count (taker or maker side, each row once).
-//
-// The OR here is deliberate (unlike ListAccountTrades' UNION): a plain
-// count has no ORDER BY + LIMIT for an index to preserve, so a
-// bitmap-or over the two partial indexes (migration 0123) is exactly
-// what the planner should do, and each matching row is counted once
-// with no dedup step. Cost scales with the address's own trade count —
-// callers run it under the activity endpoint's detached
-// stale-while-revalidate budget, not a request deadline.
-func (s *Store) CountAccountTrades(ctx context.Context, address string) (int64, error) {
-	const q = `SELECT count(*) FROM trades WHERE taker = $1 OR maker = $1`
+// CountAccountTrades returns the address's attributed trade count
+// (taker or maker side, each row once) SINCE the returned horizon —
+// the compression boundary below which the per-account partial indexes
+// don't exist (site audit 2026-08-08: the previous all-time OR count
+// decompress-scanned all 248 compressed chunks, ~8s, and was what the
+// activity endpoint's trades_total burned its budget on). The OR here
+// stays deliberate: with the ts floor the scan is confined to indexed
+// uncompressed chunks, where a bitmap-or counts each row once.
+func (s *Store) CountAccountTrades(ctx context.Context, address string) (int64, time.Time, error) {
+	horizon := s.tradesUncompressedHorizon(ctx)
+	const q = `SELECT count(*) FROM trades WHERE (taker = $1 OR maker = $1) AND ts >= $2`
 	var n int64
-	if err := s.db.QueryRowContext(ctx, q, address).Scan(&n); err != nil {
-		return 0, fmt.Errorf("timescale: CountAccountTrades: %w", err)
+	if err := s.db.QueryRowContext(ctx, q, address, horizon).Scan(&n); err != nil {
+		return 0, horizon, fmt.Errorf("timescale: CountAccountTrades: %w", err)
 	}
-	return n, nil
+	return n, horizon, nil
 }

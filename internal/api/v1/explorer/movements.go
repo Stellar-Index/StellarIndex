@@ -278,7 +278,21 @@ func (h *Handler) fetchSEP41MovementsTail(ctx context.Context, address string, l
 		h.Logger.Error("explorer AccountMovements (Postgres recent tail) failed", "err", err, "account", address)
 		return nil, "the recent (post-P23) tail is temporarily unavailable; showing the pre-P23 ClickHouse archive only"
 	}
-	return h.mapSEP41RowsToMovements(ctx, address, rows, filter.Asset), ""
+	// Honest scope (site audit 2026-08-08): the post-P23 tail projects
+	// only the WATCHED token contracts (sep41_transfers' operator set) —
+	// native XLM's SAC is deliberately not watched (its event volume
+	// would balloon the served tier), so classic XLM payments after the
+	// P23 boundary (2025-09-03) do NOT appear in this feed yet even
+	// though the lake captures them. Without this note a busy
+	// XLM-payment account looks like its history "stops" at P23 —
+	// exactly the user report that triggered the audit. The complete
+	// genesis→tip movement archive (all assets, derived lake-side from
+	// the CAP-67 events) is the tracked replacement.
+	return h.mapSEP41RowsToMovements(ctx, address, rows, filter.Asset),
+		"movements after 2025-09-03 (P23) currently include watched Soroban/SAC tokens only — " +
+			"classic XLM payment history after that date is not yet served on this feed " +
+			"(the full-history movement archive is being extended); see /accounts/{g}/operations " +
+			"for complete raw operation history"
 }
 
 // mapSEP41RowsToMovements converts sep41_transfers 'transfer' rows into
