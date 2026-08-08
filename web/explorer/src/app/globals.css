@@ -202,6 +202,52 @@
   letter-spacing: -0.01em;
 }
 
+/* Live-tick program (RT-2): micro-animations for real-time frames.
+   `.live-tick` nudges a value that just updated (key the element on the
+   value so React remounts it per tick); `.flash-up` / `.flash-down`
+   tint a price for ~0.9s after a tick in that direction (drive from
+   usePriceFlash). All are suppressed by prefers-reduced-motion via the
+   global override below. */
+.live-tick {
+  animation: live-tick 0.45s ease-out both;
+}
+@keyframes live-tick {
+  from {
+    opacity: 0.35;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.flash-up {
+  animation: flash-up 0.9s ease-out both;
+}
+.flash-down {
+  animation: flash-down 0.9s ease-out both;
+}
+@keyframes flash-up {
+  0% {
+    color: var(--color-up-strong);
+    text-shadow: 0 0 12px rgb(49 196 141 / 0.35);
+  }
+  100% {
+    color: inherit;
+    text-shadow: none;
+  }
+}
+@keyframes flash-down {
+  0% {
+    color: var(--color-down-strong);
+    text-shadow: 0 0 12px rgb(246 70 93 / 0.35);
+  }
+  100% {
+    color: inherit;
+    text-shadow: none;
+  }
+}
+
 /* Time-machine pinned-mode overlay tint — amber, dimmed for dark. */
 [data-as-of] {
   background-image: linear-gradient(

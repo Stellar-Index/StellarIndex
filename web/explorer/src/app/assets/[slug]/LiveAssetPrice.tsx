@@ -3,9 +3,15 @@
 import { useEffect, useState } from 'react';
 
 import { API_BASE_URL } from '@/api/client';
+import { isFrameStale, useLiveClock, usePriceFlash, useTipStream } from '@/lib/live/hooks';
+import { cn } from '@/lib/cn';
 import { formatPriceSmall } from '@/lib/format';
 
 export type PriceProvenance = 'vwap1m' | 'triangulated' | 'listing' | null;
+
+/** A tip tick is "live" while fresher than this (producer window is
+ * 5s; 30s of silence = wedged stream or backgrounded tab). */
+const TIP_LIVE_STALE_MS = 30_000;
 
 // LiveAssetPrice — the sidebar headline price, hydrated LIVE.
 //
@@ -15,9 +21,18 @@ export type PriceProvenance = 'vwap1m' | 'triangulated' | 'listing' | null;
 // chart. The static build still bakes an initial value (so the page
 // paints instantly and search engines see a number), but the browser
 // re-fetches /v1/price on mount and every 60s, replacing the baked
-// figure and re-stamping the provenance caption. On fetch failure the
-// baked value stays, still captioned with its provenance — never a
-// blank flash, never a silent stale number presented as live.
+// figure and re-stamping the provenance caption.
+//
+// 2026-08-08 (live-tick program RT-2): on top of the poll, the browser
+// subscribes to /v1/price/tip/stream via the shared SSE multiplexer.
+// While tip frames are fresh they take over the headline — every tick
+// re-renders the number with a direction flash, and the caption
+// switches to the live-tip provenance. If the stream is unavailable
+// (older API, blocked SSE, substance-withheld pair → pre-flight 404
+// hard-closes it), everything degrades to the poll shape above. On
+// fetch failure the baked value stays, still captioned with its
+// provenance — never a blank flash, never a silent stale number
+// presented as live.
 //
 // A 404 with problem type …/price-withheld REPLACES any baked price
 // with the withheld verdict: the server has deliberately refused to
@@ -42,6 +57,18 @@ export function LiveAssetPrice({
   const [stale, setStale] = useState<boolean>(Boolean(initialStale));
   const [live, setLive] = useState(false);
   const [withheld, setWithheld] = useState(false);
+
+  // Tip stream (disabled once the server says withheld — the stream's
+  // own pre-flight would keep 404ing anyway).
+  const tip = useTipStream(withheld ? null : assetID);
+  // Slow clock so a wedged stream loses its "live" claim without
+  // waiting for the next poll render (WB-04).
+  const clock = useLiveClock();
+  const tipFresh = tip != null && !isFrameStale(clock, tip.receivedAt, TIP_LIVE_STALE_MS);
+  const tipPriceStr = tipFresh ? tip.data.data?.price : undefined;
+  const tipNumber = tipPriceStr != null ? Number(tipPriceStr) : NaN;
+  const tipActive = Number.isFinite(tipNumber) && tipNumber > 0;
+  const flash = usePriceFlash(tipActive ? tipPriceStr : undefined);
 
   useEffect(() => {
     let cancelled = false;
@@ -84,21 +111,36 @@ export function LiveAssetPrice({
     };
   }, [assetID]);
 
+  const shown = tipActive ? tipNumber : price;
+
   return (
     <>
       <div className="mt-3 flex flex-wrap items-baseline gap-2">
-        <span className="font-mono text-3xl tabular-nums text-ink">
-          {price != null ? `$${formatPriceSmall(price)}` : '—'}
+        <span
+          className={cn(
+            'font-mono text-3xl tabular-nums text-ink',
+            flash === 'up' && 'flash-up',
+            flash === 'down' && 'flash-down',
+          )}
+        >
+          {shown != null ? `$${formatPriceSmall(shown)}` : '—'}
         </span>
         {changePill}
+        {tipActive && (
+          <span className="relative flex h-2 w-2" aria-label="live" role="status">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-up opacity-60" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-up" />
+          </span>
+        )}
       </div>
       <p className="mt-1 text-[11px] uppercase tracking-wider text-ink-muted">
         {withheld && 'price withheld · market too thin to aggregate'}
-        {!withheld && price != null && provenance === 'vwap1m' && '1-min VWAP · USD'}
-        {!withheld && price != null && provenance === 'triangulated' && '1-min VWAP · USD · triangulated via XLM'}
-        {!withheld && price != null && provenance === 'listing' && 'listing snapshot · not a live aggregated price'}
-        {!withheld && price != null && stale && ' · stale'}
-        {!withheld && price != null && !live && provenance !== 'listing' && ' · as baked at deploy'}
+        {!withheld && tipActive && 'live tip price · USD · streaming'}
+        {!withheld && !tipActive && shown != null && provenance === 'vwap1m' && '1-min VWAP · USD'}
+        {!withheld && !tipActive && shown != null && provenance === 'triangulated' && '1-min VWAP · USD · triangulated via XLM'}
+        {!withheld && !tipActive && shown != null && provenance === 'listing' && 'listing snapshot · not a live aggregated price'}
+        {!withheld && !tipActive && shown != null && stale && ' · stale'}
+        {!withheld && !tipActive && shown != null && !live && provenance !== 'listing' && ' · as baked at deploy'}
       </p>
     </>
   );

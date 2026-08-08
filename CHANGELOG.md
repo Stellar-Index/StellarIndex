@@ -15,6 +15,17 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Explorer live ticks (RT-2)**: a shared SSE multiplexer
+  (`web/explorer/src/lib/live/`) — one refcounted EventSource per
+  endpoint per tab, slow reopen on hard failure (WB-04) — now powers a
+  live network heartbeat in the sidebar (latest closed ledger, pulsing,
+  linking to its /ledgers page) and live tip-price streaming on asset
+  pages: the headline price ticks in real time with an up/down flash
+  and a "live tip price · streaming" caption, degrading to the
+  existing 60s poll + baked value when the stream is unavailable.
+  Animations respect prefers-reduced-motion.
+
 ### Fixed
 - **`/v1/price/tip/stream` now shares one tip-compute loop per
   distinct (asset, quote, window) across all connections** via the
