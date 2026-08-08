@@ -75,6 +75,10 @@ func wasmHashN(n byte) xdr.Hash {
 func TestContractCodeHistory_BoundsTheScan(t *testing.T) {
 	conn := &stubConn{}
 	conn.respond = func(q string) (driver.Rows, error) {
+		if strings.Contains(q, "stellar.contract_instance_changes") {
+			// Index probe: no rows → unavailable → legacy scan path.
+			return &stubRows{}, nil
+		}
 		if !strings.Contains(q, "FROM stellar.ledger_entry_changes") {
 			t.Fatalf("unexpected query: %s", q)
 		}
@@ -85,10 +89,12 @@ func TestContractCodeHistory_BoundsTheScan(t *testing.T) {
 	if _, err := r.ContractCodeHistory(context.Background(), testContractID); err != nil {
 		t.Fatalf("ContractCodeHistory: %v", err)
 	}
-	if len(conn.queries) != 1 {
-		t.Fatalf("issued %d queries, want 1", len(conn.queries))
+	// Query 0 is the instance-index probe; the legacy scan is the last.
+	q := conn.queries[len(conn.queries)-1]
+	args := conn.args[len(conn.args)-1]
+	if !strings.Contains(q, "FROM stellar.ledger_entry_changes") {
+		t.Fatalf("last query = %q, want the legacy changes scan", q)
 	}
-	q := conn.queries[0]
 
 	if !strings.Contains(q, "LIMIT ?") {
 		t.Fatalf("query = %q, want a bound `LIMIT ?` — an unbounded instance-change "+
@@ -96,7 +102,6 @@ func TestContractCodeHistory_BoundsTheScan(t *testing.T) {
 	}
 	// The cap must be the one the code declares, passed as a bound arg after
 	// the key list.
-	args := conn.args[0]
 	if len(args) != 2 {
 		t.Fatalf("query args = %v, want [keys, limit]", args)
 	}
@@ -136,7 +141,10 @@ func TestContractCodeHistory_CollapsesToDistinctExecutables(t *testing.T) {
 	base := time.Unix(1700000000, 0).UTC()
 
 	conn := &stubConn{}
-	conn.respond = func(string) (driver.Rows, error) {
+	conn.respond = func(q string) (driver.Rows, error) {
+		if strings.Contains(q, "stellar.contract_instance_changes") {
+			return &stubRows{}, nil // index unavailable → legacy path
+		}
 		// Ascending, as the query's outer ORDER BY delivers them:
 		// A, A (no-op rewrite), B (upgrade), A (rollback).
 		return &stubRows{data: [][]any{
@@ -164,5 +172,71 @@ func TestContractCodeHistory_CollapsesToDistinctExecutables(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("version[%d] = %+v, want %+v", i, got[i], want[i])
 		}
+	}
+}
+
+// TestContractCodeHistory_IndexedPath pins the fast path over
+// stellar.contract_instance_changes (inventory #26 item 3): when the
+// probe finds the index usable, the reader must walk the keyed timeline
+// (contract_hash primary-key predicate, wasm-only rows, the same
+// newest-first cap re-sorted ascending) and never touch the changes log;
+// the pre-extracted hashes collapse exactly like the legacy decode.
+func TestContractCodeHistory_IndexedPath(t *testing.T) {
+	rawA, rawB := wasmHashN(0xAA), wasmHashN(0xBB)
+	hashA := hex.EncodeToString(rawA[:])
+	hashB := hex.EncodeToString(rawB[:])
+	base := time.Unix(1700000000, 0).UTC()
+
+	conn := &stubConn{}
+	conn.respond = func(q string) (driver.Rows, error) {
+		if strings.Contains(q, "FROM stellar.ledger_entry_changes") {
+			t.Fatalf("indexed path must not touch the changes log: %s", q)
+		}
+		if strings.Contains(q, "LIMIT 1") { // probe: one row → usable
+			return &stubRows{data: [][]any{{uint32(1)}}}, nil
+		}
+		return &stubRows{data: [][]any{
+			{uint32(100), base, hashA},
+			{uint32(101), base.Add(5 * time.Second), hashA},
+			{uint32(102), base.Add(10 * time.Second), hashB},
+		}}, nil
+	}
+	r := &ExplorerReader{conn: conn}
+
+	got, err := r.ContractCodeHistory(context.Background(), testContractID)
+	if err != nil {
+		t.Fatalf("ContractCodeHistory: %v", err)
+	}
+	want := []ContractCodeVersion{
+		{Ledger: 100, CloseTime: base, WasmHash: hashA},
+		{Ledger: 102, CloseTime: base.Add(10 * time.Second), WasmHash: hashB},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("versions = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("version[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+
+	q := conn.queries[len(conn.queries)-1]
+	for _, must := range []string{
+		"FROM stellar.contract_instance_changes",
+		"WHERE contract_hash = ?",
+		"is_sac = 0",
+		"ORDER BY ledger_seq DESC, change_index DESC",
+		"LIMIT ?",
+	} {
+		if !strings.Contains(q, must) {
+			t.Fatalf("indexed query = %q, missing %q", q, must)
+		}
+	}
+	args := conn.args[len(conn.args)-1]
+	if len(args) != 2 {
+		t.Fatalf("indexed query args = %v, want [contract_hash, limit]", args)
+	}
+	if lim, ok := args[1].(int); !ok || lim != contractCodeHistoryMaxRows {
+		t.Fatalf("limit arg = %v, want %d", args[1], contractCodeHistoryMaxRows)
 	}
 }

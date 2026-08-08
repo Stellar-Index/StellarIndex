@@ -16,6 +16,20 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **`/v1/contracts/{id}/code-history` cold reads** (the last persistent
+  503 class in the route sweep): new keyed
+  `stellar.contract_instance_changes` index — an MV-fed
+  ReplacingMergeTree holding one narrow row per captured
+  instance-entry write with the executable verdict pre-extracted via
+  fixed-offset XDR substrings (byte-verified against go-stellar-sdk
+  marshalling and against live r1 data). The reader walks the
+  contract's primary key instead of a scan-shaped `key_xdr` predicate
+  over the whole changes log; legacy scan remains the fallback where
+  the index is absent. Historical fill via the new
+  `stellarindex-ops ch-instance-backfill` (windowed, resumable, under
+  run-heavy-job.sh).
+
+### Fixed
 - **/ledgers table was permanently stuck on "Loading…"** — the page
   wrapped `LedgersTable` (which takes no `useSearchParams`) in a
   vestigial `<Suspense fallback={null}>`, and the static exporter

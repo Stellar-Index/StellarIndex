@@ -165,6 +165,7 @@ var subcommands = map[string]func(args []string) error{
 	"ch-supply":                    chops.Run,
 	"ch-txindex-backfill":          chops.Run,
 	"ch-contract-ledgers-backfill": chops.Run,
+	"ch-instance-backfill":         chops.Run,
 	"ch-cap67-movements":           chops.Run,
 	"ch-holders-rollup":            chops.Run,
 	"ch-participant-backfill":      chops.Run,
@@ -712,6 +713,13 @@ Subcommands:
                           history so substrate continuity + hash-chain
                           checks cover [genesis, tip]. Idempotent
                           (ON CONFLICT DO UPDATE); checkpoints for resume.
+  ch-instance-backfill    -ch-addr ADDR [-from N] [-to N] [-window N]
+                          One-time historical fill of
+                          stellar.contract_instance_changes (the keyed
+                          instance-executable timeline behind fast
+                          /contracts/{id}/code-history) from
+                          ledger_entry_changes. Windowed + resumable; run
+                          under run-heavy-job.sh.
   ch-backfill -config PATH -from N -to N [-bucket NAME] [-ch-addr H:P] [-flush-every N] [-parallel N]
                           ADR-0034 Phase 2: structurally decode [from,to]
                           from galexie into the ClickHouse stellar.* Tier-1

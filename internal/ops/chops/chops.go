@@ -75,6 +75,8 @@ func lakeMutatorVerb(verb string) (func([]string) error, bool) {
 		return chTxIndexBackfill, true
 	case "ch-contract-ledgers-backfill":
 		return chContractLedgersBackfill, true
+	case "ch-instance-backfill":
+		return chInstanceBackfill, true
 	case "ch-cap67-movements":
 		return chCap67Movements, true
 	case "ch-holders-rollup":

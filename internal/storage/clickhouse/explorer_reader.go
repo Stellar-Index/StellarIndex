@@ -131,6 +131,18 @@ type ExplorerReader struct {
 	// index-unavailable, not as "no contract has events".
 	contractLedgersProbe schemaProbe
 
+	// instanceChangesProbe probes stellar.contract_instance_changes (the
+	// per-contract instance-executable timeline,
+	// deploy/clickhouse/contract_instance_changes.sql). Present +
+	// non-empty → ContractCodeHistory reads the keyed timeline
+	// (primary-key walk, ms) instead of the scan-shaped key_xdr
+	// predicate over the whole changes log (8s+ cold, the last
+	// persistent 503 in the 2026-08-09 route sweep). requireRows for the
+	// same reason as the siblings: per-contract emptiness is served as
+	// authoritative, so an existing-but-empty index must read as
+	// unavailable.
+	instanceChangesProbe schemaProbe
+
 	// accountsStatsProbe probes stellar.accounts_stats (the /accounts hub
 	// analytics rollup, deploy/clickhouse/accounts_stats_rollup.sql).
 	// requireRows: an unpopulated rollup 503s the stats endpoint rather
@@ -1093,6 +1105,14 @@ func (r *ExplorerReader) txHashIndexAvailable(ctx context.Context) bool {
 func (r *ExplorerReader) contractLedgersIndexAvailable(ctx context.Context) bool {
 	return r.probeSchema(ctx, &r.contractLedgersProbe,
 		`SELECT ledger_seq FROM stellar.contract_active_ledgers LIMIT 1`, true)
+}
+
+// instanceChangesIndexAvailable reports whether
+// stellar.contract_instance_changes is USABLE: exists AND non-empty (see
+// the probe field doc for why emptiness must not settle).
+func (r *ExplorerReader) instanceChangesIndexAvailable(ctx context.Context) bool {
+	return r.probeSchema(ctx, &r.instanceChangesProbe,
+		`SELECT ledger_seq FROM stellar.contract_instance_changes LIMIT 1`, true)
 }
 
 // ContractActivitySummary is the per-contract liveness card (page
