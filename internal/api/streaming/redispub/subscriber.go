@@ -130,10 +130,25 @@ func (s *Subscriber) handleMessage(payload []byte) {
 			"err", err, "asset", ev.Asset, "quote", ev.Quote)
 		return
 	}
-	// Re-marshal the validated struct so only the canonical four-field
-	// shape reaches subscribers — any attacker-injected extra fields in
-	// the raw payload are dropped here.
-	sanitized, err := json.Marshal(&ev)
+	// Fan out the DOCUMENTED envelope shape built from the validated
+	// struct (cold audit 2026-08-03: the raw ClosedBucketEvent shape
+	// shared zero field names with the /price/stream OpenAPI example,
+	// and the two producers emitted incompatible shapes). Building from
+	// the validated struct also keeps the sanitization property: any
+	// attacker-injected extra fields in the raw payload are dropped
+	// here. as_of is the bucket end — deterministic, so every region's
+	// subscriber still receives byte-identical payloads (ADR-0015).
+	sanitized, err := json.Marshal(closedBucketEnvelope{
+		Data: closedBucketWireData{
+			AssetID:       ev.Asset,
+			Quote:         ev.Quote,
+			Price:         ev.ValueDecimal,
+			PriceType:     "vwap",
+			ObservedAt:    ev.ObservedAt,
+			WindowSeconds: ev.WindowSeconds,
+		},
+		AsOf: ev.ObservedAt,
+	})
 	if err != nil {
 		// Marshalling a fully-typed, already-decoded struct cannot
 		// fail; defensive for static analysis only.
@@ -144,6 +159,27 @@ func (s *Subscriber) handleMessage(payload []byte) {
 	topic := topicForPair(ev.Asset, ev.Quote, ev.WindowSeconds)
 	s.hub.Publish(topic, "price_update", sanitized)
 	obs.APIStreamSubscribeTotal.WithLabelValues("ok").Inc()
+}
+
+// closedBucketEnvelope is the SSE wire shape fanned out to
+// /v1/price/stream subscribers — field-compatible with the /v1/price
+// response envelope and the endpoint's OpenAPI example. No `flags`
+// object is emitted on this path: the aggregator's pub/sub event
+// doesn't carry stale/frozen verdicts, and fabricating `stale: false`
+// would turn missing data into a false claim — clients treat absent
+// flags as "not evaluated".
+type closedBucketEnvelope struct {
+	Data closedBucketWireData `json:"data"`
+	AsOf time.Time            `json:"as_of"`
+}
+
+type closedBucketWireData struct {
+	AssetID       string    `json:"asset_id"`
+	Quote         string    `json:"quote"`
+	Price         string    `json:"price"`
+	PriceType     string    `json:"price_type"`
+	ObservedAt    time.Time `json:"observed_at"`
+	WindowSeconds int64     `json:"window_seconds"`
 }
 
 const (

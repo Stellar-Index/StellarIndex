@@ -1521,6 +1521,10 @@ paths:
         - Heartbeats every 15 s as comment lines.
         - Resume after disconnect via `Last-Event-ID` (header preferred,
           `?last_event_id=` fallback).
+        - Events carry the `/v1/price` envelope shape (`data` +
+          `as_of`); `flags` / `sources` are present only when the
+          publishing path evaluated them — absent flags mean "not
+          evaluated", never "fresh".
         - URL discipline: `?granularity=` returns 400 — bucket series
           are selected by `window_seconds`; use
           `/v1/history/since-inception` for chart granularities.

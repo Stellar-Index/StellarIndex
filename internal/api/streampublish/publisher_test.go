@@ -97,17 +97,17 @@ func TestPublisher_PublishesOnNewBucket(t *testing.T) {
 			t.Errorf("event type = %q, want price_update", ev.Type)
 		}
 		var payload struct {
-			Snapshot v1.PriceSnapshot `json:"snapshot"`
-			Sources  []string         `json:"sources"`
+			Data    v1.PriceSnapshot `json:"data"`
+			Sources []string         `json:"sources"`
 		}
 		if err := json.Unmarshal(ev.Data, &payload); err != nil {
 			t.Fatalf("unmarshal payload: %v", err)
 		}
-		if !payload.Snapshot.ObservedAt.Equal(bucket1) {
-			t.Errorf("payload ObservedAt = %v, want %v", payload.Snapshot.ObservedAt, bucket1)
+		if !payload.Data.ObservedAt.Equal(bucket1) {
+			t.Errorf("payload ObservedAt = %v, want %v", payload.Data.ObservedAt, bucket1)
 		}
-		if payload.Snapshot.Price != "0.07" {
-			t.Errorf("payload Price = %q, want 0.07", payload.Snapshot.Price)
+		if payload.Data.Price != "0.07" {
+			t.Errorf("payload Price = %q, want 0.07", payload.Data.Price)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("no event received within 2s of publisher start")
@@ -131,13 +131,13 @@ func TestPublisher_PublishesOnNewBucket(t *testing.T) {
 	select {
 	case ev := <-ch:
 		var payload struct {
-			Snapshot v1.PriceSnapshot `json:"snapshot"`
+			Data v1.PriceSnapshot `json:"data"`
 		}
 		if err := json.Unmarshal(ev.Data, &payload); err != nil {
 			t.Fatalf("unmarshal payload (bucket2): %v", err)
 		}
-		if !payload.Snapshot.ObservedAt.Equal(bucket2) {
-			t.Errorf("bucket2 ObservedAt = %v, want %v", payload.Snapshot.ObservedAt, bucket2)
+		if !payload.Data.ObservedAt.Equal(bucket2) {
+			t.Errorf("bucket2 ObservedAt = %v, want %v", payload.Data.ObservedAt, bucket2)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("no event received for bucket2 within 2s")

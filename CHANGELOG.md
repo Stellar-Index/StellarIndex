@@ -31,6 +31,15 @@ against.
   legs live under `native`, so a `?asset=native` query was silently
   blind to the CEX rows (and vice versa). Alias results merge keeping
   the newest trade per source; single-spelling pairs still do one scan.
+- **`/v1/price/stream` events now carry the documented `/v1/price`
+  envelope shape from BOTH producers** (`data` + `as_of`; `flags` /
+  `sources` only when evaluated). Previously the aggregator bridge
+  emitted `{asset, quote, window_seconds, value_decimal, observed_at}`
+  and streampublish emitted `{snapshot, sources, stale}` — two bespoke
+  shapes on one endpoint, neither matching the OpenAPI example. No
+  fabricated flags: an absent `flags` object means "not evaluated",
+  never "fresh". `as_of` is the bucket end, keeping cross-region
+  payloads byte-identical (ADR-0015).
 
 ### Added
 - **Explorer live ticks (RT-2)**: a shared SSE multiplexer

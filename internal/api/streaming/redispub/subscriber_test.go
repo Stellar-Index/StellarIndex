@@ -132,13 +132,13 @@ func TestSubscriber_RoundTrip(t *testing.T) {
 
 	// Payload round-trip — Subscriber forwards the published
 	// JSON bytes verbatim, so re-decode should match.
-	var got redispub.ClosedBucketEvent
-	if err := json.Unmarshal(c.data, &got); err != nil {
-		t.Fatalf("decode forwarded payload: %v", err)
-	}
-	if got.Asset != pair.Base.String() || got.Quote != pair.Quote.String() {
+	got := decodeCall(t, c.data)
+	if got.Data.AssetID != pair.Base.String() || got.Data.Quote != pair.Quote.String() {
 		t.Errorf("payload identity = %s/%s, want %s/%s",
-			got.Asset, got.Quote, pair.Base.String(), pair.Quote.String())
+			got.Data.AssetID, got.Data.Quote, pair.Base.String(), pair.Quote.String())
+	}
+	if got.Data.PriceType != "vwap" {
+		t.Errorf("price_type = %q, want vwap", got.Data.PriceType)
 	}
 
 	cancel()
@@ -172,9 +172,24 @@ func publishRaw(t *testing.T, rdb *redis.Client, channel, payload string) {
 	}
 }
 
-func decodeCall(t *testing.T, data []byte) redispub.ClosedBucketEvent {
+// wireEnvelope mirrors the envelope shape the Subscriber fans out
+// (field-compatible with /v1/price responses — see subscriber.go
+// closedBucketEnvelope).
+type wireEnvelope struct {
+	Data struct {
+		AssetID       string    `json:"asset_id"`
+		Quote         string    `json:"quote"`
+		Price         string    `json:"price"`
+		PriceType     string    `json:"price_type"`
+		ObservedAt    time.Time `json:"observed_at"`
+		WindowSeconds int64     `json:"window_seconds"`
+	} `json:"data"`
+	AsOf time.Time `json:"as_of"`
+}
+
+func decodeCall(t *testing.T, data []byte) wireEnvelope {
 	t.Helper()
-	var ev redispub.ClosedBucketEvent
+	var ev wireEnvelope
 	if err := json.Unmarshal(data, &ev); err != nil {
 		t.Fatalf("decode forwarded payload %q: %v", data, err)
 	}
@@ -184,7 +199,7 @@ func decodeCall(t *testing.T, data []byte) redispub.ClosedBucketEvent {
 func hasValue(t *testing.T, calls []hubCall, want string) bool {
 	t.Helper()
 	for _, c := range calls {
-		if decodeCall(t, c.data).ValueDecimal == want {
+		if decodeCall(t, c.data).Data.Price == want {
 			return true
 		}
 	}
@@ -195,7 +210,7 @@ func callValues(t *testing.T, calls []hubCall) string {
 	t.Helper()
 	vs := make([]string, len(calls))
 	for i, c := range calls {
-		vs[i] = decodeCall(t, c.data).ValueDecimal
+		vs[i] = decodeCall(t, c.data).Data.Price
 	}
 	return strings.Join(vs, ",")
 }
@@ -313,13 +328,13 @@ func TestSubscriber_StripsInjectedExtraFields(t *testing.T) {
 		}
 	}
 	ev := decodeCall(t, data)
-	if ev.Asset != asset || ev.Quote != quote {
-		t.Errorf("identity = %s/%s, want %s/%s", ev.Asset, ev.Quote, asset, quote)
+	if ev.Data.AssetID != asset || ev.Data.Quote != quote {
+		t.Errorf("identity = %s/%s, want %s/%s", ev.Data.AssetID, ev.Data.Quote, asset, quote)
 	}
-	if ev.ValueDecimal != value {
-		t.Errorf("value_decimal = %q, want %q (must survive unchanged as a decimal string)", ev.ValueDecimal, value)
+	if ev.Data.Price != value {
+		t.Errorf("price = %q, want %q (must survive unchanged as a decimal string)", ev.Data.Price, value)
 	}
-	if ev.WindowSeconds != 300 {
-		t.Errorf("window_seconds = %d, want 300", ev.WindowSeconds)
+	if ev.Data.WindowSeconds != 300 {
+		t.Errorf("window_seconds = %d, want 300", ev.Data.WindowSeconds)
 	}
 }
