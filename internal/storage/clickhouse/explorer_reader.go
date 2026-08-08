@@ -119,6 +119,18 @@ type ExplorerReader struct {
 	// bloom-skip-index scan, exactly as before the index existed.
 	txIndexProbe schemaProbe
 
+	// contractLedgersProbe probes stellar.contract_active_ledgers (the
+	// per-(contract, ledger) activity index,
+	// deploy/clickhouse/contract_active_ledgers.sql). Present + non-empty
+	// → ContractEventsRecent bounds its scan to the contract's active
+	// ledgers (quiet-contract cold reads drop from ~9s to ms — site audit
+	// 2026-08-07/08); absent → the unbounded reverse walk, exactly as
+	// before the index existed. requireRows, like tx_hash_index: per-
+	// contract emptiness is served as an authoritative "no events", so an
+	// existing-but-empty index (MV dropped / TRUNCATE) must read as
+	// index-unavailable, not as "no contract has events".
+	contractLedgersProbe schemaProbe
+
 	// opsBySourceProbe probes whether stellar.ops_by_source (the slim
 	// sourced-history projection, deploy/clickhouse/ops_by_source.sql)
 	// exists. The account-history readers REFUSE without it — a silent
@@ -1055,6 +1067,44 @@ func (r *ExplorerReader) txHashIndexAvailable(ctx context.Context) bool {
 		`SELECT ledger_seq FROM stellar.tx_hash_index LIMIT 1`, true)
 }
 
+// contractLedgersIndexAvailable reports whether
+// stellar.contract_active_ledgers is USABLE: exists AND non-empty (see the
+// probe field doc for why emptiness must not settle).
+func (r *ExplorerReader) contractLedgersIndexAvailable(ctx context.Context) bool {
+	return r.probeSchema(ctx, &r.contractLedgersProbe,
+		`SELECT ledger_seq FROM stellar.contract_active_ledgers LIMIT 1`, true)
+}
+
+// contractActiveLedgers returns the contract's most recent active ledgers
+// (descending), at most n, optionally bounded to <= before (cursor pages —
+// inclusive: the boundary ledger can still hold events older than the
+// cursor tuple). Primary-key reverse walk on the narrow index: µs-class.
+// DISTINCT collapses un-merged RMT duplicate rows.
+func (r *ExplorerReader) contractActiveLedgers(ctx context.Context, contractID string, before uint32, n int) ([]uint32, error) {
+	q := `SELECT DISTINCT ledger_seq FROM stellar.contract_active_ledgers WHERE contract_id = ?`
+	args := []any{contractID}
+	if before > 0 {
+		q += ` AND ledger_seq <= ?`
+		args = append(args, before)
+	}
+	q += ` ORDER BY ledger_seq DESC LIMIT ?`
+	args = append(args, n)
+	rows, err := r.conn.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: contract %s active ledgers: %w", contractID, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []uint32
+	for rows.Next() {
+		var l uint32
+		if err := rows.Scan(&l); err != nil {
+			return nil, fmt.Errorf("clickhouse: scan active ledger: %w", err)
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
 // errOpsBySourceMissing — the sourced-history projection has not been
 // provisioned on this ClickHouse. Fail-loud by design (same contract as
 // ttl_live_until): the pre-projection bloom-scan arm is DELETED, and a
@@ -1373,7 +1423,7 @@ type ContractActivityRow struct {
 // contractEventsDedupHeadroom rows so dedup can collapse and still fill
 // the page; a duplicate storm beyond that falls back to
 // contractEventsRecentDedupQuery (in-CH dedup, slow, correct).
-func contractEventsRecentQuery(hasCursor bool) string {
+func contractEventsRecentQuery(hasCursor, hasLedgerSet bool) string {
 	q := `SELECT ledger_seq, close_time, tx_hash, op_index, event_index, event_type, topic_0_sym,
 			topics_xdr, data_xdr
 		FROM stellar.contract_events WHERE contract_id = ?`
@@ -1381,6 +1431,13 @@ func contractEventsRecentQuery(hasCursor bool) string {
 		// Full row-identity tuple — see ContractEventsCursor: the 3-part
 		// (ledger_seq, op_index, event_index) predicate skipped tied rows.
 		q += ` AND (ledger_seq, tx_hash, op_index, event_index) < (?, ?, ?, ?)`
+	}
+	if hasLedgerSet {
+		// Active-ledger bound from contract_active_ledgers — prunes the
+		// scan to the granules of ledgers the contract actually touched,
+		// which is what makes QUIET contracts fast (the reverse
+		// read-in-order early exit already covers busy ones).
+		q += ` AND ledger_seq IN (?)`
 	}
 	return q + ` ORDER BY ledger_seq DESC, tx_hash DESC, op_index DESC, event_index DESC` +
 		` LIMIT ?` + explorerScanSettings
@@ -1390,12 +1447,15 @@ func contractEventsRecentQuery(hasCursor bool) string {
 // the correctness fallback when a duplicate storm eats the whole Go-side
 // headroom. Slow on busy contracts (see contractEventsRecentQuery); only
 // ever issued when the fast path provably could not fill the page.
-func contractEventsRecentDedupQuery(hasCursor bool) string {
+func contractEventsRecentDedupQuery(hasCursor, hasLedgerSet bool) string {
 	q := `SELECT ledger_seq, close_time, tx_hash, op_index, event_index, event_type, topic_0_sym,
 			topics_xdr, data_xdr
 		FROM stellar.contract_events WHERE contract_id = ?`
 	if hasCursor {
 		q += ` AND (ledger_seq, tx_hash, op_index, event_index) < (?, ?, ?, ?)`
+	}
+	if hasLedgerSet {
+		q += ` AND ledger_seq IN (?)`
 	}
 	return q + ` ORDER BY ledger_seq DESC, tx_hash DESC, op_index DESC, event_index DESC` +
 		` LIMIT 1 BY ledger_seq, tx_hash, op_index, event_index LIMIT ?` + explorerScanSettings
@@ -1426,7 +1486,28 @@ func (r *ExplorerReader) ContractEventsRecent(ctx context.Context, contractID st
 		limit = 100
 	}
 	fetch := limit + contractEventsDedupHeadroom
-	out, raw, err := r.contractEventsScan(ctx, contractEventsRecentQuery(cur.IsSet()), contractID, limit, fetch, cur)
+
+	// Active-ledger bound (contract_active_ledgers): when the index is
+	// usable, walk the contract's most recent `fetch` active ledgers and
+	// prune the events read to them — every event the page can serve lives
+	// in those ledgers (≥1 event per active ledger), so the bound is
+	// lossless for both the page and its cursor. An EMPTY walk is
+	// authoritative under the index's operator contract (presence +
+	// non-empty table = backfilled to genesis): the contract has no
+	// events (or none older than the cursor). Index errors fall back to
+	// the unbounded read — availability over speed.
+	var ledgers []uint32
+	if r.contractLedgersIndexAvailable(ctx) {
+		ls, lerr := r.contractActiveLedgers(ctx, contractID, cur.Ledger, fetch)
+		if lerr == nil {
+			if len(ls) == 0 {
+				return nil, nil
+			}
+			ledgers = ls
+		}
+	}
+
+	out, raw, err := r.contractEventsScan(ctx, contractEventsRecentQuery(cur.IsSet(), ledgers != nil), contractID, limit, fetch, cur, ledgers)
 	if err != nil {
 		return nil, err
 	}
@@ -1435,7 +1516,7 @@ func (r *ExplorerReader) ContractEventsRecent(ctx context.Context, contractID st
 		// couldn't fill the page — the only case where a short page would
 		// be a lie (the handler's next_cursor emission keys on a FULL
 		// page). Fall back to the in-ClickHouse dedup shape.
-		out, _, err = r.contractEventsScan(ctx, contractEventsRecentDedupQuery(cur.IsSet()), contractID, limit, limit, cur)
+		out, _, err = r.contractEventsScan(ctx, contractEventsRecentDedupQuery(cur.IsSet(), ledgers != nil), contractID, limit, limit, cur, ledgers)
 	}
 	return out, err
 }
@@ -1445,10 +1526,13 @@ func (r *ExplorerReader) ContractEventsRecent(ctx context.Context, contractID st
 // and keeping at most `keep` rows. Returns the raw pre-dedup row count so
 // the caller can distinguish "data exhausted" from "headroom exhausted".
 // Display decoding runs only for kept rows.
-func (r *ExplorerReader) contractEventsScan(ctx context.Context, q, contractID string, keep, fetch int, cur ContractEventsCursor) ([]ContractActivityRow, int, error) {
+func (r *ExplorerReader) contractEventsScan(ctx context.Context, q, contractID string, keep, fetch int, cur ContractEventsCursor, ledgers []uint32) ([]ContractActivityRow, int, error) {
 	args := []any{contractID}
 	if cur.IsSet() {
 		args = append(args, cur.Ledger, cur.TxHash, cur.OpIndex, cur.EventIndex)
+	}
+	if ledgers != nil {
+		args = append(args, ledgers)
 	}
 	args = append(args, fetch)
 

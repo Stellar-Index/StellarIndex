@@ -15,6 +15,32 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **`stellar.contract_active_ledgers` — the quiet-contract index.**
+  Cold `/v1/contracts/{id}` for a low-activity contract scanned the
+  whole events key range backwards (avg 9.3s / 114M rows — the
+  inverse of the v0.26.1 busy-contract pathology; three user-reported
+  503s). New per-(contract, ledger) activity index
+  (deploy/clickhouse/contract_active_ledgers.sql, ~20-40 GiB vs
+  ~800 GiB for a per-event index): the reader walks the contract's
+  recent active ledgers by primary key (µs) and bounds the events
+  read to them — lossless for the page and its cursor, and an empty
+  walk is an authoritative "no events". Deliberately count-free so
+  re-derives/replays can't double-count (the migration-0059 class);
+  kept current by a materialized view, with
+  `stellarindex-ops ch-contract-ledgers-backfill` (windowed,
+  resumable) covering history. Reader falls back to the unbounded
+  walk when the index is absent or empty (requireRows probe — an
+  MV-drop must not read as "no contract has events").
+
+### Fixed
+- **Capacity errors never render as 500.** `/accounts/{g}/activity`
+  served "detached refresh capacity saturated" as a 500 Internal
+  error, and `/operations` did the same with driver-level ClickHouse
+  i/o timeouts. All 14 explorer handler sites now classify through
+  one `retryableColdMiss` (extended to net.Error timeouts) → the
+  truthful retryable 503.
+
 ## [v0.26.1] — 2026-08-06
 
 ### Fixed

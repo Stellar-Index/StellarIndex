@@ -158,20 +158,21 @@ var subcommands = map[string]func(args []string) error{
 
 	"supply": supply.Run,
 
-	"ch-backfill":             chops.Run,
-	"ch-gate":                 chops.Run,
-	"ch-reproject":            chops.Run,
-	"ch-rebuild":              chops.Run,
-	"ch-supply":               chops.Run,
-	"ch-txindex-backfill":     chops.Run,
-	"ch-participant-backfill": chops.Run,
-	"ch-recognition":          chops.Run,
-	"verify-recognition":      chops.Run,
-	"verify-reconciliation":   chops.Run,
-	"compute-completeness":    chops.Run,
-	"verify-served-values":    chops.Run,
-	"verify-usd-volume":       chops.Run,
-	"sdex-claim-audit":        chops.Run,
+	"ch-backfill":                  chops.Run,
+	"ch-gate":                      chops.Run,
+	"ch-reproject":                 chops.Run,
+	"ch-rebuild":                   chops.Run,
+	"ch-supply":                    chops.Run,
+	"ch-txindex-backfill":          chops.Run,
+	"ch-contract-ledgers-backfill": chops.Run,
+	"ch-participant-backfill":      chops.Run,
+	"ch-recognition":               chops.Run,
+	"verify-recognition":           chops.Run,
+	"verify-reconciliation":        chops.Run,
+	"compute-completeness":         chops.Run,
+	"verify-served-values":         chops.Run,
+	"verify-usd-volume":            chops.Run,
+	"sdex-claim-audit":             chops.Run,
 
 	"classic-movements-backfill": chops.Run,
 	"projected-rebuild":          chops.Run,
@@ -265,6 +266,14 @@ Subcommands:
                           Report sources lagging more than N ledgers (default 100)
                           behind the stellar-rpc network tip. Exit code 1 if any
                           source is lagging.
+  ch-contract-ledgers-backfill -ch-addr ADDR [-from N] [-to N] [-window N]
+                          One-time historical fill of
+                          stellar.contract_active_ledgers (the per-contract
+                          activity index behind fast contract pages) from
+                          contract_events. Windowed + resumable; run under
+                          run-heavy-job.sh on r1 immediately after applying
+                          deploy/clickhouse/contract_active_ledgers.sql —
+                          the reader trusts a non-empty index as complete.
   directory-sync -config PATH [-url URL] [-dry-run] [-timeout DUR]
                           Mirror the MIT-licensed stellar-expert/public-directory
                           account labels (~18.5k G/C addresses: names, domains,

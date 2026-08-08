@@ -647,3 +647,21 @@ TO stellar.ops_by_source AS
 SELECT source_account, ledger_seq, tx_index, 4294967295 AS op_index
 FROM stellar.transactions
 WHERE source_account != '';
+
+-- ── contract_active_ledgers — see deploy/clickhouse/contract_active_ledgers.sql ──
+CREATE TABLE IF NOT EXISTS stellar.contract_active_ledgers
+(
+    contract_id String,
+    ledger_seq  UInt32,
+    close_time  DateTime('UTC'),
+    ingested_at DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+ORDER BY (contract_id, ledger_seq);
+
+-- SELECT DISTINCT collapses within each insert block (a busy AMM emits many
+-- events per contract-ledger); RMT merges collapse the rest across blocks.
+CREATE MATERIALIZED VIEW IF NOT EXISTS stellar.contract_active_ledgers_mv
+TO stellar.contract_active_ledgers AS
+SELECT DISTINCT contract_id, ledger_seq, close_time
+FROM stellar.contract_events;
