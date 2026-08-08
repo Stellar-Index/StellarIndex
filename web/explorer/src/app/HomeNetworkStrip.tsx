@@ -4,7 +4,14 @@ import Link from 'next/link';
 
 import { useNativeUsdPrice, useNetworkStats, useSources } from '@/api/hooks';
 import { Stat } from '@/components/ui';
+import { cn } from '@/lib/cn';
 import { formatCompact } from '@/lib/format';
+import {
+  isFrameStale,
+  useLiveClock,
+  usePriceFlash,
+  useTipStream,
+} from '@/lib/live/hooks';
 
 /**
  * HomeNetworkStrip — 5-card network-level stats hero on the home
@@ -49,7 +56,18 @@ export function HomeNetworkStrip() {
 
   // XLM price from the canonical native VWAP — NOT the coins list
   // (native has no classic_assets row, so it isn't in /v1/assets).
-  const xlmPrice = native.price;
+  // While the tip stream is fresh it takes over, ticking live with a
+  // direction flash (RT-2); the polled VWAP is the fallback.
+  const tip = useTipStream('native');
+  const clock = useLiveClock();
+  const tipPriceStr =
+    tip != null && !isFrameStale(clock, tip.receivedAt, 30_000)
+      ? tip.data.data?.price
+      : undefined;
+  const tipNumber = tipPriceStr != null ? Number(tipPriceStr) : NaN;
+  const tipActive = Number.isFinite(tipNumber) && tipNumber > 0;
+  const flash = usePriceFlash(tipActive ? tipPriceStr : undefined);
+  const xlmPrice = tipActive ? tipNumber : native.price;
   const xlmChange = native.change24hPct;
 
   return (
@@ -92,6 +110,7 @@ export function HomeNetworkStrip() {
         <Cell
           label="XLM"
           value={`$${xlmPrice.toFixed(xlmPrice >= 1 ? 4 : 6)}`}
+          flash={flash}
           sub={
             xlmChange != null && Number.isFinite(xlmChange)
               ? `${xlmChange > 0 ? '+' : ''}${xlmChange.toFixed(2)}% 24h`
@@ -128,6 +147,7 @@ function Cell({
   tone,
   mono,
   href,
+  flash,
 }: {
   label: string;
   value: string;
@@ -135,6 +155,8 @@ function Cell({
   tone?: 'up' | 'down';
   mono?: boolean;
   href?: string;
+  /** Live-tick direction flash for the value (RT-2). */
+  flash?: 'up' | 'down' | null;
 }) {
   const subNode = sub ? (
     <span
@@ -149,7 +171,15 @@ function Cell({
     <Stat
       label={label}
       value={
-        <span className={`truncate ${mono ? 'font-mono' : ''}`} title={value}>
+        <span
+          className={cn(
+            'truncate',
+            mono && 'font-mono',
+            flash === 'up' && 'flash-up',
+            flash === 'down' && 'flash-down',
+          )}
+          title={value}
+        >
           {value}
         </span>
       }
