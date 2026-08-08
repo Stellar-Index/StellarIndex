@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.27.0] — 2026-08-08
+
 ### Added
 - **`stellar.contract_active_ledgers` — the quiet-contract index.**
   Cold `/v1/contracts/{id}` for a low-activity contract scanned the
