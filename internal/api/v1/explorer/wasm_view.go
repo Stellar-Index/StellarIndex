@@ -122,7 +122,7 @@ func (h *Handler) ContractWasm(w http.ResponseWriter, r *http.Request) {
 		}
 		if retryableColdMiss(ctx, err) {
 			h.Logger.Warn("explorer ContractWasm deadline exceeded", "contract", cid)
-			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/contract-wasm-timeout",
+			h.writeRetryable(w, r, err, "https://api.stellarindex.io/errors/contract-wasm-timeout",
 				"Contract WASM timed out")
 			return
 		}

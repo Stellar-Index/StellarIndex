@@ -284,7 +284,7 @@ func (h *Handler) Operations(w http.ResponseWriter, r *http.Request) {
 		}
 		if retryableColdMiss(ctx, err) {
 			h.Logger.Warn("explorer OperationsByLedger deadline exceeded", "seq", seq)
-			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/operations-timeout",
+			h.writeRetryable(w, r, err, "https://api.stellarindex.io/errors/operations-timeout",
 				"Operations query timed out")
 			return
 		}
@@ -349,7 +349,7 @@ func (h *Handler) NetworkThroughput(w http.ResponseWriter, r *http.Request) {
 		}
 		if retryableColdMiss(ctx, err) {
 			h.Logger.Warn("explorer NetworkThroughput deadline exceeded", "window_days", windowDays)
-			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/network-throughput-timeout",
+			h.writeRetryable(w, r, err, "https://api.stellarindex.io/errors/network-throughput-timeout",
 				"Network throughput timed out")
 			return
 		}
@@ -403,7 +403,7 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 		}
 		if retryableColdMiss(ctx, err) {
 			h.Logger.Warn("explorer RecentOperations deadline exceeded")
-			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/operations-timeout",
+			h.writeRetryable(w, r, err, "https://api.stellarindex.io/errors/operations-timeout",
 				"Operations query timed out")
 			return
 		}

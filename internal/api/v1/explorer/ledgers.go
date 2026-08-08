@@ -113,7 +113,7 @@ func (h *Handler) LedgersList(w http.ResponseWriter, r *http.Request) {
 		}
 		if retryableColdMiss(ctx, err) {
 			h.Logger.Warn("explorer RecentLedgers deadline exceeded")
-			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/ledgers-timeout",
+			h.writeRetryable(w, r, err, "https://api.stellarindex.io/errors/ledgers-timeout",
 				"Ledgers listing timed out")
 			return
 		}
@@ -167,7 +167,7 @@ func (h *Handler) LedgerDetail(w http.ResponseWriter, r *http.Request) {
 		}
 		if retryableColdMiss(ctx, err) {
 			h.Logger.Warn("explorer LedgerBySeq deadline exceeded", "seq", seq)
-			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/ledger-detail-timeout",
+			h.writeRetryable(w, r, err, "https://api.stellarindex.io/errors/ledger-detail-timeout",
 				"Ledger detail timed out")
 			return
 		}
@@ -216,7 +216,7 @@ func (h *Handler) LedgerTransactions(w http.ResponseWriter, r *http.Request) {
 		}
 		if retryableColdMiss(ctx, err) {
 			h.Logger.Warn("explorer LedgerTransactions deadline exceeded", "seq", seq)
-			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/ledger-transactions-timeout",
+			h.writeRetryable(w, r, err, "https://api.stellarindex.io/errors/ledger-transactions-timeout",
 				"Ledger transactions timed out")
 			return
 		}

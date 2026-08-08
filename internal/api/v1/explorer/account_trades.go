@@ -172,7 +172,7 @@ func (h *Handler) AccountTrades(w http.ResponseWriter, r *http.Request) {
 		}
 		if retryableColdMiss(ctx, err) {
 			h.Logger.Warn("explorer AccountTrades deadline exceeded", "account", g)
-			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/account-trades-timeout",
+			h.writeRetryable(w, r, err, "https://api.stellarindex.io/errors/account-trades-timeout",
 				"Account trades timed out")
 			return
 		}

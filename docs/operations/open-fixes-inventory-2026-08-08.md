@@ -32,9 +32,15 @@ coverage notes on trades/activity/movements (v0.27.1, this release).
    decode-at-ingest pattern (like SupplyFlows). Retires the PG tail
    merge. RMT on account_movements makes the backfill replay-safe.
 2. **[ENG] contracts census cost** — `RecentContracts`-shape query: 40s /
-   790M rows, 160 runs per 3h (4 window rungs × 5-min prewarm). Needs a
-   contract-first rollup (extend `contract_active_ledgers` usage or a
-   small AggregatingMV) so the directory ranking stops re-scanning.
+   790M rows, 160 runs per 3h (4 window rungs × 5-min prewarm).
+   MEASURED 2026-08-08: ranking from `contract_events_daily` is NOT the
+   fix (24.5s — merging ~15M uniqCombined HLL states costs more than it
+   saves; the table's t0/t1 dimensions explode its row count), and
+   `contract_active_ledgers` is contract-first so a window scan doesn't
+   prune. Needs a dedicated day-keyed plain-counts rollup with a
+   dup-safety story (RMT re-insert double-fire through a Summing MV is
+   the migration-0059 class — derive counts from the RMT-collapsed
+   active-ledgers index in a periodic job instead of an MV). Own unit.
 3. **[ENG] /contracts/{id}/code-history** — same heavy-scan class the
    events read had; give it the active-ledgers bound or a keyed source.
 4. **[ENG] /assets/{id}/holders** — two `ledger_entries_current FINAL`
