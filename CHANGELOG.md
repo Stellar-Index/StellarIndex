@@ -15,6 +15,20 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **`/v1/price/tip/stream` now shares one tip-compute loop per
+  distinct (asset, quote, window) across all connections** via the
+  streaming Hub, instead of running a private 5-second query loop per
+  connection (cold audit 2026-08-04: "tip stream = 6 DB queries/s PER
+  CONNECTION — pool saturates at ~2300 streams"). Steady-state DB cost
+  now scales with distinct pairs being watched, not with viewer count;
+  producers linger 30 s after their last subscriber leaves to absorb
+  reconnects, and Hub resume (`Last-Event-ID`) now works on the tip
+  stream. Per-connection pre-flight verdicts (404 / withheld / 400)
+  and the instant first frame are unchanged. Hub-less deployments keep
+  the legacy per-connection producer. This is the scaling precondition
+  for the explorer's live-ticking pages (RT-1).
+
 ## [v0.29.0] — 2026-08-08
 
 ### Added

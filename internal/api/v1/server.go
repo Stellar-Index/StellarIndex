@@ -193,6 +193,11 @@ type Server struct {
 	usageReader          UsageReader
 	usageRollupReader    UsageRollupReader
 	hub                  *streaming.Hub
+	// tipProducers is the shared tip-stream producer registry (RT-1):
+	// one compute loop per distinct (asset, quote, window) publishing
+	// into the hub, refcounted by open /v1/price/tip/stream
+	// connections. See price_tip_producers.go.
+	tipProducers         tipProducerRegistry
 	confidence           ConfidenceLooker
 	triangulated         TriangulatedPriceLooker
 	cdnEnabled           bool
