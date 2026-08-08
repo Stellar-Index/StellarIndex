@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.30.0] — 2026-08-08
+
 ### Fixed
 - **`/v1/price/stream` no longer interleaves aggregation windows on
   one topic** (cold audit 2026-08-03, r1-confirmed: three consecutive
@@ -41,6 +43,25 @@ against.
   never "fresh". `as_of` is the bucket end, keeping cross-region
   payloads byte-identical (ADR-0015).
 
+- **`/v1/price/tip/stream` now shares one tip-compute loop per
+  distinct (asset, quote, window) across all connections** via the
+  streaming Hub, instead of running a private 5-second query loop per
+  connection (cold audit 2026-08-04: "tip stream = 6 DB queries/s PER
+  CONNECTION — pool saturates at ~2300 streams"). Steady-state DB cost
+  now scales with distinct pairs being watched, not with viewer count;
+  producers linger 30 s after their last subscriber leaves to absorb
+  reconnects, and Hub resume (`Last-Event-ID`) now works on the tip
+  stream. Per-connection pre-flight verdicts (404 / withheld / 400)
+  and the instant first frame are unchanged. Hub-less deployments keep
+  the legacy per-connection producer. This is the scaling precondition
+  for the explorer's live-ticking pages (RT-1).
+- The accounts hub's most-held chart no longer includes native XLM —
+  every funded account holds XLM by definition, so charting it
+  collapsed the issued-asset bars to slivers.
+- CI's web advisory gate: pnpm override floors raised for four fresh
+  high GHSAs (nanoid, undici, brace-expansion, js-yaml — the prior
+  js-yaml range `>=4.2.0 <4.3.0` excluded the patched 4.3.1).
+
 ### Added
 - **Explorer live ticks (RT-2)**: a shared SSE multiplexer
   (`web/explorer/src/lib/live/`) — one refcounted EventSource per
@@ -54,22 +75,14 @@ against.
   a BUILD-frozen price captioned "as of <build time>") stream the
   same way, and /ledgers + /operations follow the network live: new
   rows animate in on every ledger close while page 1 is on screen
-  (paging into history pauses following). Animations respect
+  (paging into history pauses following). The markets board follows
+  ledger closes with a throttled refresh and per-cell price flashes —
+  one SSE connection for the whole table. Animations respect
   prefers-reduced-motion.
-
-### Fixed
-- **`/v1/price/tip/stream` now shares one tip-compute loop per
-  distinct (asset, quote, window) across all connections** via the
-  streaming Hub, instead of running a private 5-second query loop per
-  connection (cold audit 2026-08-04: "tip stream = 6 DB queries/s PER
-  CONNECTION — pool saturates at ~2300 streams"). Steady-state DB cost
-  now scales with distinct pairs being watched, not with viewer count;
-  producers linger 30 s after their last subscriber leaves to absorb
-  reconnects, and Hub resume (`Last-Event-ID`) now works on the tip
-  stream. Per-connection pre-flight verdicts (404 / withheld / 400)
-  and the instant first frame are unchanged. Hub-less deployments keep
-  the legacy per-connection producer. This is the scaling precondition
-  for the explorer's live-ticking pages (RT-1).
+- **Contract activity card** (insight program unit 1): every contract
+  page shows first-seen / last-seen ledgers, lifetime active-ledger
+  count, and a 30-day activity sparkline — µs reads off the
+  contract-keyed `contract_active_ledgers` index.
 
 ## [v0.29.0] — 2026-08-08
 
