@@ -1930,7 +1930,7 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(body)
 		return
 	}
-	code, body := s.computeReadyz()
+	code, body := s.computeReadyz() //nolint:contextcheck // deliberately detached: the round is SHARED by every queued caller (single-flight), so one caller's cancellation must not abort it — see computeReadyz's doc.
 	s.readyzCode, s.readyzBody, s.readyzAt = code, body, time.Now()
 	s.readyzMu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
