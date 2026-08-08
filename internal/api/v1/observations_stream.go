@@ -162,23 +162,62 @@ func (s *Server) handleObservationsStream(w http.ResponseWriter, r *http.Request
 // computeObservations is the shared core of [Server.handleObservations]
 // and [Server.handleObservationsStream]. Returns the post-aggregate
 // trade slice ready for wire encoding.
+//
+// Alias fan-in (cold audit 2026-08-03, streaming/metadata): trades are
+// stored under whichever canonical spelling the decoder stamped —
+// SDEX XLM legs under `native`, CEX feeds under `crypto:XLM` — and the
+// literal single-pair lookup made `?asset=native` silently blind to
+// the CEX observations (and vice versa). Every alias spelling of the
+// pair is scanned and the results merge keeping the newest trade per
+// source, mirroring the assetAliases loop the price read paths run.
+// Non-XLM pairs have exactly one spelling, so they still do one scan.
 func (s *Server) computeObservations(
 	ctx context.Context, pair canonical.Pair, source, aggregate string,
 ) ([]canonical.Trade, error) {
 	// Bound the trades scan even on the stream path (the request handler
 	// wraps its own 8s ceiling; the stream prelude + ticks previously had
 	// none, so a cold-cache lookup could hold the connection open
-	// unboundedly per tick — G2-04).
+	// unboundedly per tick — G2-04). One ceiling spans ALL alias scans:
+	// the alias loop must not multiply the endpoint's worst-case hold.
 	scanCtx, cancel := context.WithTimeout(ctx, observationsScanTimeout)
 	defer cancel()
-	trades, err := s.history.LatestTradePerSource(scanCtx, pair, source)
-	if err != nil {
-		return nil, err
+
+	var merged []canonical.Trade
+	bySource := map[string]int{}
+	for _, b := range assetAliases(pair.Base) {
+		for _, q := range assetAliases(pair.Quote) {
+			aliasPair, err := canonical.NewPair(b, q)
+			if err != nil {
+				continue
+			}
+			trades, err := s.history.LatestTradePerSource(scanCtx, aliasPair, source)
+			if err != nil {
+				return nil, err
+			}
+			merged = mergeNewestPerSource(merged, bySource, trades)
+		}
 	}
 	if aggregate == "latest" {
-		trades = collapseToLatest(trades)
+		merged = collapseToLatest(merged)
 	}
-	return trades, nil
+	return merged, nil
+}
+
+// mergeNewestPerSource folds `trades` into `merged`, keeping the most
+// recent trade per source. `bySource` maps source → index in merged
+// and is mutated in place.
+func mergeNewestPerSource(merged []canonical.Trade, bySource map[string]int, trades []canonical.Trade) []canonical.Trade {
+	for _, t := range trades {
+		if i, ok := bySource[t.Source]; ok {
+			if isLater(t, merged[i]) {
+				merged[i] = t
+			}
+			continue
+		}
+		bySource[t.Source] = len(merged)
+		merged = append(merged, t)
+	}
+	return merged
 }
 
 // observationsScanTimeout bounds a single LatestTradePerSource scan,

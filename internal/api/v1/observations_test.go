@@ -419,3 +419,53 @@ func TestObservations_BothAssetAndBase400(t *testing.T) {
 		t.Errorf("status=%d want 400 (both asset+base)", resp.StatusCode)
 	}
 }
+
+// aliasKeyedHistoryReader returns observations only for an exact pair
+// string — the fixture for the alias fan-in regression below.
+type aliasKeyedHistoryReader struct {
+	stubHistoryReader
+	byPair map[string][]canonical.Trade
+}
+
+func (r *aliasKeyedHistoryReader) LatestTradePerSource(
+	_ context.Context, pair canonical.Pair, _ string,
+) ([]canonical.Trade, error) {
+	return r.byPair[pair.String()], nil
+}
+
+// TestObservations_AliasFanIn — the XLM dual-form regression (cold
+// audit 2026-08-03, streaming/metadata): CEX observations are stored
+// under XLM's `crypto:XLM` spelling, and the literal single-pair
+// lookup made `?asset=native` silently blind to them. The handler must
+// scan every alias spelling and merge per source. (Quote is
+// crypto:USDT, not fiat:USD — that quote short-circuits to the
+// triangulation hint before any scan, F-1325.)
+func TestObservations_AliasFanIn(t *testing.T) {
+	now := time.Unix(1745000000, 0).UTC()
+	usdt, _ := canonical.ParseAsset("crypto:USDT")
+	cryptoXLM, _ := canonical.ParseAsset("crypto:XLM")
+	native, _ := canonical.ParseAsset("native")
+
+	cexTrade := mkObservationTrade("kraken", now.Add(-3*time.Second), 1, 100)
+	cexTrade.Pair, _ = canonical.NewPair(cryptoXLM, usdt)
+	sdexTrade := mkObservationTrade("sdex", now.Add(-1*time.Second), 1, 105)
+	sdexTrade.Pair, _ = canonical.NewPair(native, usdt)
+
+	hist := &aliasKeyedHistoryReader{byPair: map[string][]canonical.Trade{
+		"native/crypto:USDT":     {sdexTrade},
+		"crypto:XLM/crypto:USDT": {cexTrade},
+	}}
+	srv := v1.New(v1.Options{History: hist})
+	tsv := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, tsv.URL+"/v1/observations?asset=native&quote=crypto:USDT")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	for _, want := range []string{`"source":"sdex"`, `"source":"kraken"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q — alias spelling not scanned: %s", want, body)
+		}
+	}
+}

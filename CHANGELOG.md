@@ -26,6 +26,11 @@ against.
   Also fixed: subscribing with an alias spelling (`?asset=native` vs
   the aggregator's `crypto:XLM`) silently matched nothing forever —
   the handler now subscribes to every alias spelling of the pair.
+- **`/v1/observations` (+ its stream) now scans every alias spelling
+  of the pair** — CEX observations live under `crypto:XLM` while SDEX
+  legs live under `native`, so a `?asset=native` query was silently
+  blind to the CEX rows (and vice versa). Alias results merge keeping
+  the newest trade per source; single-spelling pairs still do one scan.
 
 ### Added
 - **Explorer live ticks (RT-2)**: a shared SSE multiplexer
