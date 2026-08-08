@@ -122,7 +122,7 @@ func TestSubscriber_RoundTrip(t *testing.T) {
 		t.Fatalf("Hub.Publish called %d times, want 1", len(calls))
 	}
 	c := calls[0]
-	wantTopic := v1.PriceStreamTopic(pair.Base, pair.Quote)
+	wantTopic := v1.PriceStreamTopic(pair.Base, pair.Quote, 300)
 	if c.topic != wantTopic {
 		t.Errorf("topic = %q, want %q", c.topic, wantTopic)
 	}
@@ -155,8 +155,8 @@ func TestSubscriber_TopicFormatStaysInSync(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseAsset: %v", err)
 	}
-	want := v1.PriceStreamTopic(canonical.NativeAsset(), usd)
-	if want != "closed:"+canonical.NativeAsset().String()+"/"+usd.String() {
+	want := v1.PriceStreamTopic(canonical.NativeAsset(), usd, 300)
+	if want != "closed:"+canonical.NativeAsset().String()+"/"+usd.String()+"/300" {
 		t.Fatalf("v1.PriceStreamTopic format changed; redispub Subscriber must update too. Got %q", want)
 	}
 }

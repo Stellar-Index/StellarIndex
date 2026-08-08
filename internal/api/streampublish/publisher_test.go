@@ -66,7 +66,7 @@ func TestPublisher_PublishesOnNewBucket(t *testing.T) {
 	reader := &fakeReader{}
 	asset := mustParse(t, "native")
 	quote := mustParse(t, "fiat:USD")
-	topic := v1.PriceStreamTopic(asset, quote)
+	topic := v1.PriceStreamTopic(asset, quote, 60)
 
 	bucket1 := time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)
 	reader.SetSnapshot(asset, quote, v1.PriceSnapshot{
@@ -157,7 +157,7 @@ func TestPublisher_TwoSubscribersIdenticalPayload(t *testing.T) {
 	reader := &fakeReader{}
 	asset := mustParse(t, "native")
 	quote := mustParse(t, "fiat:USD")
-	topic := v1.PriceStreamTopic(asset, quote)
+	topic := v1.PriceStreamTopic(asset, quote, 60)
 
 	reader.SetSnapshot(asset, quote, v1.PriceSnapshot{
 		AssetID: "native", Quote: "fiat:USD", Price: "0.07",
@@ -204,7 +204,7 @@ func TestPublisher_ErrPriceNotFoundIsSilent(t *testing.T) {
 	reader := &fakeReader{} // no snapshots → ErrPriceNotFound
 	asset := mustParse(t, "native")
 	quote := mustParse(t, "fiat:USD")
-	topic := v1.PriceStreamTopic(asset, quote)
+	topic := v1.PriceStreamTopic(asset, quote, 60)
 
 	pub := streampublish.New(hub, reader, time.Second, nil)
 	ch, cancel := hub.Subscribe([]string{topic}, "")
@@ -232,7 +232,7 @@ func TestPublisher_ReaderErrorContinues(t *testing.T) {
 	reader := &fakeReader{err: errors.New("postgres unreachable")}
 	asset := mustParse(t, "native")
 	quote := mustParse(t, "fiat:USD")
-	topic := v1.PriceStreamTopic(asset, quote)
+	topic := v1.PriceStreamTopic(asset, quote, 60)
 
 	pub := streampublish.New(hub, reader, time.Second, nil)
 	ch, cancel := hub.Subscribe([]string{topic}, "")

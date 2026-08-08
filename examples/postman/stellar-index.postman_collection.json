@@ -5628,7 +5628,7 @@
               "request": {
                 "name": "SSE stream of closed-bucket price updates (ADR-0015).",
                 "description": {
-                  "content": "SSE counterpart of `/v1/price` — carries the strict ADR-0015\nclosed-bucket consistency contract. Unlike `/v1/price/tip/stream`\nand `/v1/observations/stream` (per-connection tick), this\nsurface is **Hub-driven**: the aggregator publishes one event\nper closed bucket, and every subscriber on the same\n(asset, quote) pair receives byte-identical payloads — the\nsame cross-region consistency guarantee `/v1/price` exposes.\n\n- Heartbeats every 15 s as comment lines.\n- Resume after disconnect via `Last-Event-ID` (header preferred,\n  `?last_event_id=` fallback).\n- URL discipline: `?granularity=` returns 400 — the closed-\n  bucket stream is fixed at 1m; use\n  `/v1/history/since-inception` for other granularities.\n- 503 when the deployment hasn't wired the streaming Hub\n  (typical pre-aggregator state).\n",
+                  "content": "SSE counterpart of `/v1/price` — carries the strict ADR-0015\nclosed-bucket consistency contract. Unlike `/v1/price/tip/stream`\nand `/v1/observations/stream` (per-connection tick), this\nsurface is **Hub-driven**: the aggregator publishes one event\nper closed bucket, and every subscriber on the same\n(asset, quote, window) triple receives byte-identical payloads\n— the same cross-region consistency guarantee `/v1/price`\nexposes.\n\nThe aggregator publishes one bucket series **per window**\n(standard windows: 300 / 3600 / 86400 seconds); a connection\nfollows exactly one series, selected by `?window_seconds=`\n(default 300), so consecutive events on a stream are always\ncomparable. Alias spellings of the same asset (`native`,\n`crypto:XLM`, the XLM SAC) are subscribed together — either\nspelling receives the pair's publishes.\n\n- Heartbeats every 15 s as comment lines.\n- Resume after disconnect via `Last-Event-ID` (header preferred,\n  `?last_event_id=` fallback).\n- URL discipline: `?granularity=` returns 400 — bucket series\n  are selected by `window_seconds`; use\n  `/v1/history/since-inception` for chart granularities.\n- 503 when the deployment hasn't wired the streaming Hub\n  (typical pre-aggregator state).\n",
                   "type": "text/plain"
                 },
                 "url": {
@@ -5657,6 +5657,15 @@
                       },
                       "key": "quote",
                       "value": "fiat:USD"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Which closed-bucket window series to follow, in seconds. The standard aggregator windows are 300, 3600, and 86400; a window the aggregator doesn't publish yields a silent (heartbeat-only) stream.",
+                        "type": "text/plain"
+                      },
+                      "key": "window_seconds",
+                      "value": "300"
                     }
                   ],
                   "variable": []
@@ -5710,6 +5719,15 @@
                           },
                           "key": "quote",
                           "value": "fiat:USD"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Which closed-bucket window series to follow, in seconds. The standard aggregator windows are 300, 3600, and 86400; a window the aggregator doesn't publish yields a silent (heartbeat-only) stream.",
+                            "type": "text/plain"
+                          },
+                          "key": "window_seconds",
+                          "value": "300"
                         }
                       ],
                       "variable": []
@@ -5773,6 +5791,15 @@
                           },
                           "key": "quote",
                           "value": "fiat:USD"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Which closed-bucket window series to follow, in seconds. The standard aggregator windows are 300, 3600, and 86400; a window the aggregator doesn't publish yields a silent (heartbeat-only) stream.",
+                            "type": "text/plain"
+                          },
+                          "key": "window_seconds",
+                          "value": "300"
                         }
                       ],
                       "variable": []
@@ -5836,6 +5863,15 @@
                           },
                           "key": "quote",
                           "value": "fiat:USD"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Which closed-bucket window series to follow, in seconds. The standard aggregator windows are 300, 3600, and 86400; a window the aggregator doesn't publish yields a silent (heartbeat-only) stream.",
+                            "type": "text/plain"
+                          },
+                          "key": "window_seconds",
+                          "value": "300"
                         }
                       ],
                       "variable": []
@@ -5935,6 +5971,15 @@
                           },
                           "key": "quote",
                           "value": "fiat:USD"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Which closed-bucket window series to follow, in seconds. The standard aggregator windows are 300, 3600, and 86400; a window the aggregator doesn't publish yields a silent (heartbeat-only) stream.",
+                            "type": "text/plain"
+                          },
+                          "key": "window_seconds",
+                          "value": "300"
                         }
                       ],
                       "variable": []
@@ -7419,7 +7464,7 @@
                         "type": "text/plain"
                       },
                       "key": "granularity",
-                      "value": "15m"
+                      "value": "1h"
                     }
                   ],
                   "variable": []
@@ -7472,7 +7517,7 @@
                             "type": "text/plain"
                           },
                           "key": "granularity",
-                          "value": "15m"
+                          "value": "1h"
                         }
                       ],
                       "variable": []
@@ -7535,7 +7580,7 @@
                             "type": "text/plain"
                           },
                           "key": "granularity",
-                          "value": "15m"
+                          "value": "1h"
                         }
                       ],
                       "variable": []
@@ -7598,7 +7643,7 @@
                             "type": "text/plain"
                           },
                           "key": "granularity",
-                          "value": "15m"
+                          "value": "1h"
                         }
                       ],
                       "variable": []
@@ -7697,7 +7742,7 @@
                             "type": "text/plain"
                           },
                           "key": "granularity",
-                          "value": "15m"
+                          "value": "1h"
                         }
                       ],
                       "variable": []
@@ -7760,7 +7805,7 @@
                             "type": "text/plain"
                           },
                           "key": "granularity",
-                          "value": "15m"
+                          "value": "1h"
                         }
                       ],
                       "variable": []
@@ -7850,7 +7895,7 @@
                     "type": "text/plain"
                   },
                   "key": "granularity",
-                  "value": "15m"
+                  "value": "1h"
                 },
                 {
                   "disabled": false,
@@ -7920,7 +7965,7 @@
                         "type": "text/plain"
                       },
                       "key": "granularity",
-                      "value": "15m"
+                      "value": "1h"
                     },
                     {
                       "disabled": false,
@@ -7951,7 +7996,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"asset_id\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"timeframe\": \"1w\",\n    \"granularity\": \"1m\",\n    \"price_type\": \"vwap\",\n    \"points\": [\n      {\n        \"t\": \"<dateTime>\",\n        \"p\": \"<string>\",\n        \"v_usd\": \"<string>\"\n      },\n      {\n        \"t\": \"<dateTime>\",\n        \"p\": \"<string>\",\n        \"v_usd\": \"<string>\"\n      }\n    ],\n    \"truncated\": \"<boolean>\",\n    \"data_starts_at\": \"<dateTime>\",\n    \"requested_from\": \"<dateTime>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"asset_id\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"timeframe\": \"24h\",\n    \"granularity\": \"1mo\",\n    \"price_type\": \"market_cap\",\n    \"points\": [\n      {\n        \"t\": \"<dateTime>\",\n        \"p\": \"<string>\",\n        \"v_usd\": \"<string>\"\n      },\n      {\n        \"t\": \"<dateTime>\",\n        \"p\": \"<string>\",\n        \"v_usd\": \"<string>\"\n      }\n    ],\n    \"truncated\": \"<boolean>\",\n    \"data_starts_at\": \"<dateTime>\",\n    \"requested_from\": \"<dateTime>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -8000,7 +8045,7 @@
                         "type": "text/plain"
                       },
                       "key": "granularity",
-                      "value": "15m"
+                      "value": "1h"
                     },
                     {
                       "disabled": false,
@@ -8080,7 +8125,7 @@
                         "type": "text/plain"
                       },
                       "key": "granularity",
-                      "value": "15m"
+                      "value": "1h"
                     },
                     {
                       "disabled": false,
@@ -8186,7 +8231,7 @@
                     "type": "text/plain"
                   },
                   "key": "interval",
-                  "value": "30m"
+                  "value": "1d"
                 },
                 {
                   "disabled": false,
@@ -8274,7 +8319,7 @@
                         "type": "text/plain"
                       },
                       "key": "interval",
-                      "value": "30m"
+                      "value": "1d"
                     },
                     {
                       "disabled": false,
@@ -8372,7 +8417,7 @@
                         "type": "text/plain"
                       },
                       "key": "interval",
-                      "value": "30m"
+                      "value": "1d"
                     },
                     {
                       "disabled": false,
@@ -8470,7 +8515,7 @@
                         "type": "text/plain"
                       },
                       "key": "interval",
-                      "value": "30m"
+                      "value": "1d"
                     },
                     {
                       "disabled": false,
@@ -8568,7 +8613,7 @@
                         "type": "text/plain"
                       },
                       "key": "interval",
-                      "value": "30m"
+                      "value": "1d"
                     },
                     {
                       "disabled": false,
@@ -8702,7 +8747,7 @@
                         "type": "text/plain"
                       },
                       "key": "interval",
-                      "value": "30m"
+                      "value": "1d"
                     },
                     {
                       "disabled": false,
@@ -8800,7 +8845,7 @@
                         "type": "text/plain"
                       },
                       "key": "interval",
-                      "value": "30m"
+                      "value": "1d"
                     },
                     {
                       "disabled": false,
@@ -13769,7 +13814,7 @@
                     "type": "text/plain"
                   },
                   "key": "kind",
-                  "value": "oracle_deviation"
+                  "value": "wash_trade"
                 },
                 {
                   "disabled": false,
@@ -13812,7 +13857,7 @@
                         "type": "text/plain"
                       },
                       "key": "kind",
-                      "value": "oracle_deviation"
+                      "value": "wash_trade"
                     },
                     {
                       "disabled": false,
@@ -13865,7 +13910,7 @@
                         "type": "text/plain"
                       },
                       "key": "kind",
-                      "value": "oracle_deviation"
+                      "value": "wash_trade"
                     },
                     {
                       "disabled": false,
@@ -14045,7 +14090,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"data\": {\n    \"firing_count\": \"<integer>\",\n    \"reason_tally\": [\n      {\n        \"reason\": \"<string>\",\n        \"count\": \"<long>\"\n      },\n      {\n        \"reason\": \"<string>\",\n        \"count\": \"<long>\"\n      }\n    ],\n    \"events\": [\n      {\n        \"asset_id\": \"<string>\",\n        \"quote_id\": \"<string>\",\n        \"frozen_at\": \"<dateTime>\",\n        \"frozen_at_ledger\": \"<long>\",\n        \"reason\": \"manual\",\n        \"frozen_value\": \"<string>\",\n        \"recovered_at\": \"<dateTime>\",\n        \"recovered_at_ledger\": \"<long>\",\n        \"firing\": \"<boolean>\",\n        \"detail\": {}\n      },\n      {\n        \"asset_id\": \"<string>\",\n        \"quote_id\": \"<string>\",\n        \"frozen_at\": \"<dateTime>\",\n        \"frozen_at_ledger\": \"<long>\",\n        \"reason\": \"other\",\n        \"frozen_value\": \"<string>\",\n        \"recovered_at\": \"<dateTime>\",\n        \"recovered_at_ledger\": \"<long>\",\n        \"firing\": \"<boolean>\",\n        \"detail\": {}\n      }\n    ],\n    \"daily\": [\n      {\n        \"day\": \"<date>\",\n        \"reason\": \"<string>\",\n        \"count\": \"<long>\"\n      },\n      {\n        \"day\": \"<date>\",\n        \"reason\": \"<string>\",\n        \"count\": \"<long>\"\n      }\n    ]\n  }\n}",
+              "body": "{\n  \"data\": {\n    \"firing_count\": \"<integer>\",\n    \"reason_tally\": [\n      {\n        \"reason\": \"<string>\",\n        \"count\": \"<long>\"\n      },\n      {\n        \"reason\": \"<string>\",\n        \"count\": \"<long>\"\n      }\n    ],\n    \"events\": [\n      {\n        \"asset_id\": \"<string>\",\n        \"quote_id\": \"<string>\",\n        \"frozen_at\": \"<dateTime>\",\n        \"frozen_at_ledger\": \"<long>\",\n        \"reason\": \"manual\",\n        \"frozen_value\": \"<string>\",\n        \"recovered_at\": \"<dateTime>\",\n        \"recovered_at_ledger\": \"<long>\",\n        \"firing\": \"<boolean>\",\n        \"detail\": {}\n      },\n      {\n        \"asset_id\": \"<string>\",\n        \"quote_id\": \"<string>\",\n        \"frozen_at\": \"<dateTime>\",\n        \"frozen_at_ledger\": \"<long>\",\n        \"reason\": \"divergence\",\n        \"frozen_value\": \"<string>\",\n        \"recovered_at\": \"<dateTime>\",\n        \"recovered_at_ledger\": \"<long>\",\n        \"firing\": \"<boolean>\",\n        \"detail\": {}\n      }\n    ],\n    \"daily\": [\n      {\n        \"day\": \"<date>\",\n        \"reason\": \"<string>\",\n        \"count\": \"<long>\"\n      },\n      {\n        \"day\": \"<date>\",\n        \"reason\": \"<string>\",\n        \"count\": \"<long>\"\n      }\n    ]\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -14247,7 +14292,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"data\": {\n    \"observations\": [\n      {\n        \"asset_id\": \"<string>\",\n        \"quote_id\": \"<string>\",\n        \"reference\": \"reflector-cex\",\n        \"observed_at\": \"<dateTime>\",\n        \"observed_at_ledger\": \"<long>\",\n        \"our_price\": \"<string>\",\n        \"ref_price\": \"<string>\",\n        \"delta_pct\": \"<string>\",\n        \"status\": \"clear\"\n      },\n      {\n        \"asset_id\": \"<string>\",\n        \"quote_id\": \"<string>\",\n        \"reference\": \"chainlink\",\n        \"observed_at\": \"<dateTime>\",\n        \"observed_at_ledger\": \"<long>\",\n        \"our_price\": \"<string>\",\n        \"ref_price\": \"<string>\",\n        \"delta_pct\": \"<string>\",\n        \"status\": \"firing\"\n      }\n    ]\n  }\n}",
+              "body": "{\n  \"data\": {\n    \"observations\": [\n      {\n        \"asset_id\": \"<string>\",\n        \"quote_id\": \"<string>\",\n        \"reference\": \"chainlink\",\n        \"observed_at\": \"<dateTime>\",\n        \"observed_at_ledger\": \"<long>\",\n        \"our_price\": \"<string>\",\n        \"ref_price\": \"<string>\",\n        \"delta_pct\": \"<string>\",\n        \"status\": \"clear\"\n      },\n      {\n        \"asset_id\": \"<string>\",\n        \"quote_id\": \"<string>\",\n        \"reference\": \"reflector-dex\",\n        \"observed_at\": \"<dateTime>\",\n        \"observed_at_ledger\": \"<long>\",\n        \"our_price\": \"<string>\",\n        \"ref_price\": \"<string>\",\n        \"delta_pct\": \"<string>\",\n        \"status\": \"clear\"\n      }\n    ]\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -14440,7 +14485,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"data\": {\n    \"asset_id\": \"<string>\",\n    \"quote_id\": \"<string>\",\n    \"reference\": \"redstone\",\n    \"days\": \"<integer>\",\n    \"bucket_seconds\": \"<integer>\",\n    \"threshold_pct\": \"<number>\",\n    \"points\": [\n      {\n        \"t\": \"<dateTime>\",\n        \"delta_pct\": \"<string>\",\n        \"our_price\": \"<string>\",\n        \"ref_price\": \"<string>\",\n        \"firing\": \"<boolean>\"\n      },\n      {\n        \"t\": \"<dateTime>\",\n        \"delta_pct\": \"<string>\",\n        \"our_price\": \"<string>\",\n        \"ref_price\": \"<string>\",\n        \"firing\": \"<boolean>\"\n      }\n    ]\n  }\n}",
+                  "body": "{\n  \"data\": {\n    \"asset_id\": \"<string>\",\n    \"quote_id\": \"<string>\",\n    \"reference\": \"coingecko\",\n    \"days\": \"<integer>\",\n    \"bucket_seconds\": \"<integer>\",\n    \"threshold_pct\": \"<number>\",\n    \"points\": [\n      {\n        \"t\": \"<dateTime>\",\n        \"delta_pct\": \"<string>\",\n        \"our_price\": \"<string>\",\n        \"ref_price\": \"<string>\",\n        \"firing\": \"<boolean>\"\n      },\n      {\n        \"t\": \"<dateTime>\",\n        \"delta_pct\": \"<string>\",\n        \"our_price\": \"<string>\",\n        \"ref_price\": \"<string>\",\n        \"firing\": \"<boolean>\"\n      }\n    ]\n  }\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -15853,7 +15898,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"g_strkey\": \"<string>\",\n    \"home_domain\": \"<string>\",\n    \"org_name\": \"<string>\",\n    \"scam_reason\": \"<string>\",\n    \"org_verified\": \"<boolean>\",\n    \"auth_required\": \"<boolean>\",\n    \"auth_revocable\": \"<boolean>\",\n    \"auth_immutable\": \"<boolean>\",\n    \"auth_clawback\": \"<boolean>\",\n    \"sep1_resolved_at\": \"<dateTime>\",\n    \"sep1_payload\": {\n      \"key_0\": \"string\",\n      \"key_1\": 8891.199161298573,\n      \"key_2\": false\n    },\n    \"creation_ledger\": \"<integer>\",\n    \"assets\": [\n      {\n        \"asset_id\": \"<string>\",\n        \"code\": \"<string>\",\n        \"slug\": \"<string>\",\n        \"first_seen_ledger\": \"<integer>\",\n        \"last_seen_ledger\": \"<integer>\",\n        \"observation_count\": \"<long>\"\n      },\n      {\n        \"asset_id\": \"<string>\",\n        \"code\": \"<string>\",\n        \"slug\": \"<string>\",\n        \"first_seen_ledger\": \"<integer>\",\n        \"last_seen_ledger\": \"<integer>\",\n        \"observation_count\": \"<long>\"\n      }\n    ]\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"g_strkey\": \"<string>\",\n    \"home_domain\": \"<string>\",\n    \"org_name\": \"<string>\",\n    \"scam_reason\": \"<string>\",\n    \"org_verified\": \"<boolean>\",\n    \"auth_required\": \"<boolean>\",\n    \"auth_revocable\": \"<boolean>\",\n    \"auth_immutable\": \"<boolean>\",\n    \"auth_clawback\": \"<boolean>\",\n    \"sep1_resolved_at\": \"<dateTime>\",\n    \"sep1_payload\": {\n      \"key_0\": 8373.635911848396,\n      \"key_1\": 8891.199161298573\n    },\n    \"creation_ledger\": \"<integer>\",\n    \"assets\": [\n      {\n        \"asset_id\": \"<string>\",\n        \"code\": \"<string>\",\n        \"slug\": \"<string>\",\n        \"first_seen_ledger\": \"<integer>\",\n        \"last_seen_ledger\": \"<integer>\",\n        \"observation_count\": \"<long>\"\n      },\n      {\n        \"asset_id\": \"<string>\",\n        \"code\": \"<string>\",\n        \"slug\": \"<string>\",\n        \"first_seen_ledger\": \"<integer>\",\n        \"last_seen_ledger\": \"<integer>\",\n        \"observation_count\": \"<long>\"\n      }\n    ]\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -16286,7 +16331,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"contract_id\": \"<string>\",\n    \"count\": \"<integer>\",\n    \"limit\": \"<integer>\",\n    \"decimals\": \"<integer>\",\n    \"transfers\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"event_kind\": \"set_admin\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"event_index\": \"<integer>\",\n        \"from\": \"<string>\",\n        \"to\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"live_until_ledger\": \"<integer>\",\n        \"authorized\": \"<boolean>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"event_kind\": \"transfer\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"event_index\": \"<integer>\",\n        \"from\": \"<string>\",\n        \"to\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"live_until_ledger\": \"<integer>\",\n        \"authorized\": \"<boolean>\"\n      }\n    ],\n    \"from\": \"<string>\",\n    \"to\": \"<string>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"contract_id\": \"<string>\",\n    \"count\": \"<integer>\",\n    \"limit\": \"<integer>\",\n    \"decimals\": \"<integer>\",\n    \"transfers\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"event_kind\": \"approve\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"event_index\": \"<integer>\",\n        \"from\": \"<string>\",\n        \"to\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"live_until_ledger\": \"<integer>\",\n        \"authorized\": \"<boolean>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"event_kind\": \"set_admin\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"event_index\": \"<integer>\",\n        \"from\": \"<string>\",\n        \"to\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"live_until_ledger\": \"<integer>\",\n        \"authorized\": \"<boolean>\"\n      }\n    ],\n    \"from\": \"<string>\",\n    \"to\": \"<string>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -17853,7 +17898,7 @@
                       "variable": [
                         {
                           "type": "any",
-                          "value": "protocol",
+                          "value": "pair",
                           "key": "entity_type",
                           "disabled": false,
                           "description": {
@@ -17905,7 +17950,7 @@
                                 "type": "text/plain"
                               },
                               "type": "any",
-                              "value": "protocol",
+                              "value": "pair",
                               "key": "entity_type"
                             },
                             {
@@ -17937,7 +17982,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"entity_type\": \"<string>\",\n    \"entity_id\": \"<string>\",\n    \"refreshed_at\": \"<dateTime>\",\n    \"current_value\": \"<string>\",\n    \"h1_value\": \"<string>\",\n    \"h1_delta_pct\": \"<number>\",\n    \"h24_value\": \"<string>\",\n    \"h24_delta_pct\": \"<number>\",\n    \"d7_value\": \"<string>\",\n    \"d7_delta_pct\": \"<number>\",\n    \"d30_value\": \"<string>\",\n    \"d30_delta_pct\": \"<number>\",\n    \"ath_value\": \"<string>\",\n    \"ath_at\": \"<dateTime>\",\n    \"atl_value\": \"<string>\",\n    \"atl_at\": \"<dateTime>\",\n    \"streak_direction\": \"flat\",\n    \"streak_days\": \"<integer>\",\n    \"acceleration\": \"decreasing\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"entity_type\": \"<string>\",\n    \"entity_id\": \"<string>\",\n    \"refreshed_at\": \"<dateTime>\",\n    \"current_value\": \"<string>\",\n    \"h1_value\": \"<string>\",\n    \"h1_delta_pct\": \"<number>\",\n    \"h24_value\": \"<string>\",\n    \"h24_delta_pct\": \"<number>\",\n    \"d7_value\": \"<string>\",\n    \"d7_delta_pct\": \"<number>\",\n    \"d30_value\": \"<string>\",\n    \"d30_delta_pct\": \"<number>\",\n    \"ath_value\": \"<string>\",\n    \"ath_at\": \"<dateTime>\",\n    \"atl_value\": \"<string>\",\n    \"atl_at\": \"<dateTime>\",\n    \"streak_direction\": \"down\",\n    \"streak_days\": \"<integer>\",\n    \"acceleration\": \"decreasing\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -17962,7 +18007,7 @@
                                 "type": "text/plain"
                               },
                               "type": "any",
-                              "value": "protocol",
+                              "value": "pair",
                               "key": "entity_type"
                             },
                             {
@@ -18019,7 +18064,7 @@
                                 "type": "text/plain"
                               },
                               "type": "any",
-                              "value": "protocol",
+                              "value": "pair",
                               "key": "entity_type"
                             },
                             {
@@ -18076,7 +18121,7 @@
                                 "type": "text/plain"
                               },
                               "type": "any",
-                              "value": "protocol",
+                              "value": "pair",
                               "key": "entity_type"
                             },
                             {
@@ -18169,7 +18214,7 @@
                                 "type": "text/plain"
                               },
                               "type": "any",
-                              "value": "protocol",
+                              "value": "pair",
                               "key": "entity_type"
                             },
                             {
@@ -18226,7 +18271,7 @@
                                 "type": "text/plain"
                               },
                               "type": "any",
-                              "value": "protocol",
+                              "value": "pair",
                               "key": "entity_type"
                             },
                             {
@@ -18306,7 +18351,7 @@
                         "type": "text/plain"
                       },
                       "key": "status",
-                      "value": "active"
+                      "value": "stale"
                     },
                     {
                       "disabled": false,
@@ -18359,7 +18404,7 @@
                             "type": "text/plain"
                           },
                           "key": "status",
-                          "value": "active"
+                          "value": "stale"
                         },
                         {
                           "disabled": false,
@@ -18422,7 +18467,7 @@
                             "type": "text/plain"
                           },
                           "key": "status",
-                          "value": "active"
+                          "value": "stale"
                         },
                         {
                           "disabled": false,
@@ -18473,7 +18518,7 @@
                             "type": "text/plain"
                           },
                           "key": "status",
-                          "value": "active"
+                          "value": "stale"
                         },
                         {
                           "disabled": false,
@@ -18572,7 +18617,7 @@
                             "type": "text/plain"
                           },
                           "key": "status",
-                          "value": "active"
+                          "value": "stale"
                         },
                         {
                           "disabled": false,
@@ -18635,7 +18680,7 @@
                             "type": "text/plain"
                           },
                           "key": "status",
-                          "value": "active"
+                          "value": "stale"
                         },
                         {
                           "disabled": false,
@@ -19188,7 +19233,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"incidents\": [\n      {\n        \"slug\": \"<string>\",\n        \"title\": \"<string>\",\n        \"severity\": \"SEV-1\",\n        \"status\": \"monitoring\",\n        \"started_at\": \"<dateTime>\",\n        \"body_markdown\": \"<string>\",\n        \"resolved_at\": \"<dateTime>\",\n        \"affected_components\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"postmortem\": \"<string>\"\n      },\n      {\n        \"slug\": \"<string>\",\n        \"title\": \"<string>\",\n        \"severity\": \"SEV-3\",\n        \"status\": \"investigating\",\n        \"started_at\": \"<dateTime>\",\n        \"body_markdown\": \"<string>\",\n        \"resolved_at\": \"<dateTime>\",\n        \"affected_components\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"postmortem\": \"<string>\"\n      }\n    ],\n    \"count\": \"<integer>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"incidents\": [\n      {\n        \"slug\": \"<string>\",\n        \"title\": \"<string>\",\n        \"severity\": \"SEV-2\",\n        \"status\": \"investigating\",\n        \"started_at\": \"<dateTime>\",\n        \"body_markdown\": \"<string>\",\n        \"resolved_at\": \"<dateTime>\",\n        \"affected_components\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"postmortem\": \"<string>\"\n      },\n      {\n        \"slug\": \"<string>\",\n        \"title\": \"<string>\",\n        \"severity\": \"SEV-1\",\n        \"status\": \"identified\",\n        \"started_at\": \"<dateTime>\",\n        \"body_markdown\": \"<string>\",\n        \"resolved_at\": \"<dateTime>\",\n        \"affected_components\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"postmortem\": \"<string>\"\n      }\n    ],\n    \"count\": \"<integer>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -19585,7 +19630,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"protocols\": [\n      {\n        \"name\": \"<string>\",\n        \"category\": \"amm\",\n        \"description\": \"<string>\",\n        \"genesis_ledger\": \"<long>\",\n        \"factories\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"contract_count\": \"<integer>\",\n        \"events_24h\": \"<long>\",\n        \"completeness\": {\n          \"complete\": \"<boolean>\",\n          \"watermark_ledger\": \"<long>\"\n        },\n        \"tvl\": {\n          \"tvl_usd\": \"<string>\",\n          \"pools_total\": \"<integer>\",\n          \"pools_priced\": \"<integer>\",\n          \"unpriced_pools\": \"<integer>\",\n          \"as_of\": \"<dateTime>\",\n          \"basis\": \"<string>\"\n        }\n      },\n      {\n        \"name\": \"<string>\",\n        \"category\": \"yield\",\n        \"description\": \"<string>\",\n        \"genesis_ledger\": \"<long>\",\n        \"factories\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"contract_count\": \"<integer>\",\n        \"events_24h\": \"<long>\",\n        \"completeness\": {\n          \"complete\": \"<boolean>\",\n          \"watermark_ledger\": \"<long>\"\n        },\n        \"tvl\": {\n          \"tvl_usd\": \"<string>\",\n          \"pools_total\": \"<integer>\",\n          \"pools_priced\": \"<integer>\",\n          \"unpriced_pools\": \"<integer>\",\n          \"as_of\": \"<dateTime>\",\n          \"basis\": \"<string>\"\n        }\n      }\n    ],\n    \"total_protocols\": \"<integer>\"\n  }\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"protocols\": [\n      {\n        \"name\": \"<string>\",\n        \"category\": \"dex\",\n        \"description\": \"<string>\",\n        \"genesis_ledger\": \"<long>\",\n        \"factories\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"contract_count\": \"<integer>\",\n        \"events_24h\": \"<long>\",\n        \"completeness\": {\n          \"complete\": \"<boolean>\",\n          \"watermark_ledger\": \"<long>\"\n        },\n        \"tvl\": {\n          \"tvl_usd\": \"<string>\",\n          \"pools_total\": \"<integer>\",\n          \"pools_priced\": \"<integer>\",\n          \"unpriced_pools\": \"<integer>\",\n          \"as_of\": \"<dateTime>\",\n          \"basis\": \"<string>\"\n        }\n      },\n      {\n        \"name\": \"<string>\",\n        \"category\": \"dex\",\n        \"description\": \"<string>\",\n        \"genesis_ledger\": \"<long>\",\n        \"factories\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"contract_count\": \"<integer>\",\n        \"events_24h\": \"<long>\",\n        \"completeness\": {\n          \"complete\": \"<boolean>\",\n          \"watermark_ledger\": \"<long>\"\n        },\n        \"tvl\": {\n          \"tvl_usd\": \"<string>\",\n          \"pools_total\": \"<integer>\",\n          \"pools_priced\": \"<integer>\",\n          \"unpriced_pools\": \"<integer>\",\n          \"as_of\": \"<dateTime>\",\n          \"basis\": \"<string>\"\n        }\n      }\n    ],\n    \"total_protocols\": \"<integer>\"\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -19806,7 +19851,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"category\": \"yield\",\n    \"contract_count\": \"<integer>\",\n    \"contracts\": [\n      {\n        \"contract_id\": \"<string>\",\n        \"factory_id\": \"<string>\",\n        \"first_ledger\": \"<long>\",\n        \"token0\": \"<string>\",\n        \"token1\": \"<string>\",\n        \"tokens\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"token_symbols\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"pair\": \"<string>\",\n        \"kind\": \"module\",\n        \"events\": \"<long>\",\n        \"last_seen\": \"<dateTime>\"\n      },\n      {\n        \"contract_id\": \"<string>\",\n        \"factory_id\": \"<string>\",\n        \"first_ledger\": \"<long>\",\n        \"token0\": \"<string>\",\n        \"token1\": \"<string>\",\n        \"tokens\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"token_symbols\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"pair\": \"<string>\",\n        \"kind\": \"instance\",\n        \"events\": \"<long>\",\n        \"last_seen\": \"<dateTime>\"\n      }\n    ],\n    \"description\": \"<string>\",\n    \"event_kinds\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"events_24h\": \"<long>\",\n    \"factories\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"genesis_ledger\": \"<long>\",\n    \"name\": \"<string>\",\n    \"completeness\": {\n      \"complete\": \"<boolean>\",\n      \"watermark_ledger\": \"<long>\"\n    },\n    \"tvl\": {\n      \"tvl_usd\": \"<string>\",\n      \"pools_total\": \"<integer>\",\n      \"pools_priced\": \"<integer>\",\n      \"unpriced_pools\": \"<integer>\",\n      \"as_of\": \"<dateTime>\",\n      \"basis\": \"<string>\"\n    },\n    \"bespoke\": {\n      \"key_0\": 5167.629725765437,\n      \"key_1\": true\n    },\n    \"verification_page\": \"<string>\",\n    \"activity_window_days\": \"<integer>\",\n    \"events_total\": \"<long>\",\n    \"event_breakdown\": [\n      {\n        \"event_type\": \"<string>\",\n        \"count\": \"<long>\"\n      },\n      {\n        \"event_type\": \"<string>\",\n        \"count\": \"<long>\"\n      }\n    ],\n    \"activity_series\": [\n      {\n        \"date\": \"<string>\",\n        \"events\": \"<long>\"\n      },\n      {\n        \"date\": \"<string>\",\n        \"events\": \"<long>\"\n      }\n    ],\n    \"analytics\": {\n      \"status\": \"ok\",\n      \"as_of\": \"<dateTime>\"\n    }\n  }\n}",
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"category\": \"dex\",\n    \"contract_count\": \"<integer>\",\n    \"contracts\": [\n      {\n        \"contract_id\": \"<string>\",\n        \"factory_id\": \"<string>\",\n        \"first_ledger\": \"<long>\",\n        \"token0\": \"<string>\",\n        \"token1\": \"<string>\",\n        \"tokens\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"token_symbols\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"pair\": \"<string>\",\n        \"kind\": \"instance\",\n        \"events\": \"<long>\",\n        \"last_seen\": \"<dateTime>\"\n      },\n      {\n        \"contract_id\": \"<string>\",\n        \"factory_id\": \"<string>\",\n        \"first_ledger\": \"<long>\",\n        \"token0\": \"<string>\",\n        \"token1\": \"<string>\",\n        \"tokens\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"token_symbols\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"pair\": \"<string>\",\n        \"kind\": \"factory\",\n        \"events\": \"<long>\",\n        \"last_seen\": \"<dateTime>\"\n      }\n    ],\n    \"description\": \"<string>\",\n    \"event_kinds\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"events_24h\": \"<long>\",\n    \"factories\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"genesis_ledger\": \"<long>\",\n    \"name\": \"<string>\",\n    \"completeness\": {\n      \"complete\": \"<boolean>\",\n      \"watermark_ledger\": \"<long>\"\n    },\n    \"tvl\": {\n      \"tvl_usd\": \"<string>\",\n      \"pools_total\": \"<integer>\",\n      \"pools_priced\": \"<integer>\",\n      \"unpriced_pools\": \"<integer>\",\n      \"as_of\": \"<dateTime>\",\n      \"basis\": \"<string>\"\n    },\n    \"bespoke\": {\n      \"key_0\": 9843.705939128995,\n      \"key_1\": 5167.629725765437\n    },\n    \"verification_page\": \"<string>\",\n    \"activity_window_days\": \"<integer>\",\n    \"events_total\": \"<long>\",\n    \"event_breakdown\": [\n      {\n        \"event_type\": \"<string>\",\n        \"count\": \"<long>\"\n      },\n      {\n        \"event_type\": \"<string>\",\n        \"count\": \"<long>\"\n      }\n    ],\n    \"activity_series\": [\n      {\n        \"date\": \"<string>\",\n        \"events\": \"<long>\"\n      },\n      {\n        \"date\": \"<string>\",\n        \"events\": \"<long>\"\n      }\n    ],\n    \"analytics\": {\n      \"status\": \"stale\",\n      \"as_of\": \"<dateTime>\"\n    }\n  }\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -20997,7 +21042,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"version\": \"<string>\",\n    \"aggregation\": {\n      \"price_method\": \"vwap\",\n      \"outlier_filter\": {\n        \"default_sigma\": \"<number>\",\n        \"endpoint\": \"<string>\",\n        \"note\": \"<string>\"\n      },\n      \"stablecoin_fiat_proxy\": [\n        {\n          \"asset_id\": \"<string>\",\n          \"pegs_to\": \"<string>\"\n        },\n        {\n          \"asset_id\": \"<string>\",\n          \"pegs_to\": \"<string>\"\n        }\n      ],\n      \"closed_bucket_window_seconds\": \"<integer>\"\n    },\n    \"source_classes\": [\n      {\n        \"name\": \"router\",\n        \"contributes_to_vwap\": \"<boolean>\",\n        \"description\": \"<string>\"\n      },\n      {\n        \"name\": \"router\",\n        \"contributes_to_vwap\": \"<boolean>\",\n        \"description\": \"<string>\"\n      }\n    ],\n    \"sources\": [\n      {\n        \"name\": \"<string>\",\n        \"class\": \"oracle\",\n        \"include_in_vwap\": \"<boolean>\",\n        \"paid\": \"<boolean>\",\n        \"backfill_available\": \"<boolean>\",\n        \"backfill_safe\": \"<boolean>\",\n        \"default_weight\": \"<integer>\",\n        \"on_chain\": \"<boolean>\",\n        \"subclass\": \"dex\",\n        \"trade_count_24h\": \"<integer>\",\n        \"volume_24h_usd\": \"<string>\",\n        \"markets_count_24h\": \"<integer>\",\n        \"volume_history_24h\": [\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          },\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          }\n        ],\n        \"volume_history_7d\": [\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          },\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          }\n        ]\n      },\n      {\n        \"name\": \"<string>\",\n        \"class\": \"aggregator\",\n        \"include_in_vwap\": \"<boolean>\",\n        \"paid\": \"<boolean>\",\n        \"backfill_available\": \"<boolean>\",\n        \"backfill_safe\": \"<boolean>\",\n        \"default_weight\": \"<integer>\",\n        \"on_chain\": \"<boolean>\",\n        \"subclass\": \"cex\",\n        \"trade_count_24h\": \"<integer>\",\n        \"volume_24h_usd\": \"<string>\",\n        \"markets_count_24h\": \"<integer>\",\n        \"volume_history_24h\": [\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          },\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          }\n        ],\n        \"volume_history_7d\": [\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          },\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          }\n        ]\n      }\n    ],\n    \"references\": [\n      {\n        \"id\": \"<string>\",\n        \"title\": \"<string>\",\n        \"url\": \"<string>\"\n      },\n      {\n        \"id\": \"<string>\",\n        \"title\": \"<string>\",\n        \"url\": \"<string>\"\n      }\n    ]\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"version\": \"<string>\",\n    \"aggregation\": {\n      \"price_method\": \"vwap\",\n      \"outlier_filter\": {\n        \"default_sigma\": \"<number>\",\n        \"endpoint\": \"<string>\",\n        \"note\": \"<string>\"\n      },\n      \"stablecoin_fiat_proxy\": [\n        {\n          \"asset_id\": \"<string>\",\n          \"pegs_to\": \"<string>\"\n        },\n        {\n          \"asset_id\": \"<string>\",\n          \"pegs_to\": \"<string>\"\n        }\n      ],\n      \"closed_bucket_window_seconds\": \"<integer>\"\n    },\n    \"source_classes\": [\n      {\n        \"name\": \"oracle\",\n        \"contributes_to_vwap\": \"<boolean>\",\n        \"description\": \"<string>\"\n      },\n      {\n        \"name\": \"exchange\",\n        \"contributes_to_vwap\": \"<boolean>\",\n        \"description\": \"<string>\"\n      }\n    ],\n    \"sources\": [\n      {\n        \"name\": \"<string>\",\n        \"class\": \"oracle\",\n        \"include_in_vwap\": \"<boolean>\",\n        \"paid\": \"<boolean>\",\n        \"backfill_available\": \"<boolean>\",\n        \"backfill_safe\": \"<boolean>\",\n        \"default_weight\": \"<integer>\",\n        \"on_chain\": \"<boolean>\",\n        \"subclass\": \"cex\",\n        \"trade_count_24h\": \"<integer>\",\n        \"volume_24h_usd\": \"<string>\",\n        \"markets_count_24h\": \"<integer>\",\n        \"volume_history_24h\": [\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          },\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          }\n        ],\n        \"volume_history_7d\": [\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          },\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          }\n        ]\n      },\n      {\n        \"name\": \"<string>\",\n        \"class\": \"aggregator\",\n        \"include_in_vwap\": \"<boolean>\",\n        \"paid\": \"<boolean>\",\n        \"backfill_available\": \"<boolean>\",\n        \"backfill_safe\": \"<boolean>\",\n        \"default_weight\": \"<integer>\",\n        \"on_chain\": \"<boolean>\",\n        \"subclass\": \"cex\",\n        \"trade_count_24h\": \"<integer>\",\n        \"volume_24h_usd\": \"<string>\",\n        \"markets_count_24h\": \"<integer>\",\n        \"volume_history_24h\": [\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          },\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          }\n        ],\n        \"volume_history_7d\": [\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          },\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\",\n            \"trade_count\": \"<long>\"\n          }\n        ]\n      }\n    ],\n    \"references\": [\n      {\n        \"id\": \"<string>\",\n        \"title\": \"<string>\",\n        \"url\": \"<string>\"\n      },\n      {\n        \"id\": \"<string>\",\n        \"title\": \"<string>\",\n        \"url\": \"<string>\"\n      }\n    ]\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -21070,7 +21115,7 @@
                     "type": "text/plain"
                   },
                   "key": "class",
-                  "value": "oracle"
+                  "value": "exchange"
                 },
                 {
                   "disabled": false,
@@ -21113,7 +21158,7 @@
                         "type": "text/plain"
                       },
                       "key": "class",
-                      "value": "oracle"
+                      "value": "exchange"
                     },
                     {
                       "disabled": false,
@@ -21144,7 +21189,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"name\": \"<string>\",\n      \"class\": \"aggregator\",\n      \"include_in_vwap\": \"<boolean>\",\n      \"paid\": \"<boolean>\",\n      \"backfill_available\": \"<boolean>\",\n      \"backfill_safe\": \"<boolean>\",\n      \"default_weight\": \"<integer>\",\n      \"on_chain\": \"<boolean>\",\n      \"subclass\": \"cex\",\n      \"trade_count_24h\": \"<integer>\",\n      \"volume_24h_usd\": \"<string>\",\n      \"markets_count_24h\": \"<integer>\",\n      \"volume_history_24h\": [\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        },\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        }\n      ],\n      \"volume_history_7d\": [\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        },\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        }\n      ]\n    },\n    {\n      \"name\": \"<string>\",\n      \"class\": \"exchange\",\n      \"include_in_vwap\": \"<boolean>\",\n      \"paid\": \"<boolean>\",\n      \"backfill_available\": \"<boolean>\",\n      \"backfill_safe\": \"<boolean>\",\n      \"default_weight\": \"<integer>\",\n      \"on_chain\": \"<boolean>\",\n      \"subclass\": \"fx\",\n      \"trade_count_24h\": \"<integer>\",\n      \"volume_24h_usd\": \"<string>\",\n      \"markets_count_24h\": \"<integer>\",\n      \"volume_history_24h\": [\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        },\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        }\n      ],\n      \"volume_history_7d\": [\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        },\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        }\n      ]\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"name\": \"<string>\",\n      \"class\": \"lending\",\n      \"include_in_vwap\": \"<boolean>\",\n      \"paid\": \"<boolean>\",\n      \"backfill_available\": \"<boolean>\",\n      \"backfill_safe\": \"<boolean>\",\n      \"default_weight\": \"<integer>\",\n      \"on_chain\": \"<boolean>\",\n      \"subclass\": \"fx\",\n      \"trade_count_24h\": \"<integer>\",\n      \"volume_24h_usd\": \"<string>\",\n      \"markets_count_24h\": \"<integer>\",\n      \"volume_history_24h\": [\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        },\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        }\n      ],\n      \"volume_history_7d\": [\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        },\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        }\n      ]\n    },\n    {\n      \"name\": \"<string>\",\n      \"class\": \"oracle\",\n      \"include_in_vwap\": \"<boolean>\",\n      \"paid\": \"<boolean>\",\n      \"backfill_available\": \"<boolean>\",\n      \"backfill_safe\": \"<boolean>\",\n      \"default_weight\": \"<integer>\",\n      \"on_chain\": \"<boolean>\",\n      \"subclass\": \"cex\",\n      \"trade_count_24h\": \"<integer>\",\n      \"volume_24h_usd\": \"<string>\",\n      \"markets_count_24h\": \"<integer>\",\n      \"volume_history_24h\": [\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        },\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        }\n      ],\n      \"volume_history_7d\": [\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        },\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\",\n          \"trade_count\": \"<long>\"\n        }\n      ]\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -21166,7 +21211,7 @@
                         "type": "text/plain"
                       },
                       "key": "class",
-                      "value": "oracle"
+                      "value": "exchange"
                     },
                     {
                       "disabled": false,
@@ -21219,7 +21264,7 @@
                         "type": "text/plain"
                       },
                       "key": "class",
-                      "value": "oracle"
+                      "value": "exchange"
                     },
                     {
                       "disabled": false,
@@ -21308,7 +21353,7 @@
                         "type": "text/plain"
                       },
                       "key": "class",
-                      "value": "oracle"
+                      "value": "exchange"
                     },
                     {
                       "disabled": false,
@@ -22403,7 +22448,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"user\": {\n      \"key_0\": 7262,\n      \"key_1\": true,\n      \"key_2\": false,\n      \"key_3\": true\n    },\n    \"account\": {\n      \"key_0\": \"string\"\n    },\n    \"key_id\": \"<string>\",\n    \"label\": \"<string>\",\n    \"key_prefix\": \"<string>\",\n    \"tier\": \"partner\",\n    \"rate_limit_per_min\": \"<integer>\",\n    \"created_at\": \"<dateTime>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"user\": {\n      \"key_0\": false,\n      \"key_1\": 7262\n    },\n    \"account\": {\n      \"key_0\": 9230.398805812001,\n      \"key_1\": false,\n      \"key_2\": 3038.4208960458636,\n      \"key_3\": \"string\"\n    },\n    \"key_id\": \"<string>\",\n    \"label\": \"<string>\",\n    \"key_prefix\": \"<string>\",\n    \"tier\": \"partner\",\n    \"rate_limit_per_min\": \"<integer>\",\n    \"created_at\": \"<dateTime>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },

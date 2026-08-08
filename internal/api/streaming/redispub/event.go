@@ -20,8 +20,8 @@ const DefaultChannel = "stellarindex:closed-bucket:v1"
 type ClosedBucketEvent struct {
 	// Asset + Quote echo the canonical asset strings the
 	// aggregator just published a closed bucket for. The
-	// API-side subscriber routes by (Asset, Quote) into
-	// `closed:<asset>/<quote>` Hub topics.
+	// API-side subscriber routes by (Asset, Quote, WindowSeconds)
+	// into `closed:<asset>/<quote>/<window_seconds>` Hub topics.
 	Asset string `json:"asset"`
 	Quote string `json:"quote"`
 

@@ -15,6 +15,18 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **`/v1/price/stream` no longer interleaves aggregation windows on
+  one topic** (cold audit 2026-08-03, r1-confirmed: three consecutive
+  `price_update` events carried `window_seconds` 300/3600/86400 with
+  materially different prices, so a client reading `value_decimal` saw
+  the price flap three times per tick). The Hub topic key now includes
+  the window (`closed:<asset>/<quote>/<window_seconds>`) and the
+  stream accepts `?window_seconds=` (default 300) to pick one series.
+  Also fixed: subscribing with an alias spelling (`?asset=native` vs
+  the aggregator's `crypto:XLM`) silently matched nothing forever —
+  the handler now subscribes to every alias spelling of the pair.
+
 ### Added
 - **Explorer live ticks (RT-2)**: a shared SSE multiplexer
   (`web/explorer/src/lib/live/`) — one refcounted EventSource per

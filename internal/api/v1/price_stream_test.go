@@ -84,7 +84,7 @@ func TestPriceStream_HubPublishReachesSubscriber(t *testing.T) {
 
 	xlm, _ := canonical.ParseAsset("native")
 	usd, _ := canonical.ParseAsset("fiat:USD")
-	topic := v1.PriceStreamTopic(xlm, usd)
+	topic := v1.PriceStreamTopic(xlm, usd, 300)
 
 	// Open the stream. The handler subscribes synchronously before
 	// calling streaming.Stream's loop.
@@ -135,7 +135,7 @@ func TestPriceStream_TopicIsolation(t *testing.T) {
 
 	usdc, _ := canonical.ParseAsset("native")
 	usd, _ := canonical.ParseAsset("fiat:USD")
-	otherTopic := v1.PriceStreamTopic(usdc, usd) + "-different-pair-suffix"
+	otherTopic := v1.PriceStreamTopic(usdc, usd, 300) + "-different-pair-suffix"
 
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
@@ -169,7 +169,7 @@ func TestPriceStream_LastEventIDResume(t *testing.T) {
 
 	xlm, _ := canonical.ParseAsset("native")
 	usd, _ := canonical.ParseAsset("fiat:USD")
-	topic := v1.PriceStreamTopic(xlm, usd)
+	topic := v1.PriceStreamTopic(xlm, usd, 300)
 
 	id1 := hub.Publish(topic, "price_update", []byte(`{"p":"0.10"}`))
 	hub.Publish(topic, "price_update", []byte(`{"p":"0.11"}`))
@@ -228,4 +228,100 @@ func readPriceStreamFrame(t *testing.T, br *bufio.Reader, timeout time.Duration)
 		sb.WriteString(line)
 	}
 	return sb.String()
+}
+
+// TestPriceStream_AliasSubscriptionReceivesCryptoXLMPublishes — the
+// alias fan-out regression (cold audit 2026-08-03 finding 2): the
+// aggregator publishes XLM's CEX-fed VWAP under `crypto:XLM/fiat:USD`,
+// and pre-fix a `?asset=native` subscriber got a healthy 200 and zero
+// frames forever. The handler now subscribes to every alias spelling
+// of the pair.
+func TestPriceStream_AliasSubscriptionReceivesCryptoXLMPublishes(t *testing.T) {
+	hub := streaming.NewHub(0)
+	srv := v1.New(v1.Options{Hub: hub})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	cryptoXLM, _ := canonical.ParseAsset("crypto:XLM")
+	usd, _ := canonical.ParseAsset("fiat:USD")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
+		ts.URL+"/v1/price/stream?asset=native&quote=fiat:USD", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	// Publish under the ALIAS spelling — the one the aggregator uses.
+	hub.Publish(v1.PriceStreamTopic(cryptoXLM, usd, 300), "price_update", []byte(`{"price":"0.17"}`))
+
+	br := bufio.NewReader(resp.Body)
+	frame := readPriceStreamFrame(t, br, 2*time.Second)
+	if !strings.Contains(frame, `data: {"price":"0.17"}`) {
+		t.Fatalf("native subscriber missed the crypto:XLM publish; frame = %q", frame)
+	}
+}
+
+// TestPriceStream_WindowSeparation — the window-interleave regression
+// (cold audit 2026-08-03 finding 1, r1-confirmed): the aggregator
+// publishes one bucket per (pair, window) and pre-fix all three landed
+// on ONE topic. A subscriber following the default 300s series must
+// NOT receive the 3600s or 86400s publishes.
+func TestPriceStream_WindowSeparation(t *testing.T) {
+	hub := streaming.NewHub(0)
+	srv := v1.New(v1.Options{Hub: hub})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	xlm, _ := canonical.ParseAsset("native")
+	usd, _ := canonical.ParseAsset("fiat:USD")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
+		ts.URL+"/v1/price/stream?asset=native&quote=fiat:USD&window_seconds=300", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	hub.Publish(v1.PriceStreamTopic(xlm, usd, 3600), "price_update", []byte(`{"w":"3600"}`))
+	hub.Publish(v1.PriceStreamTopic(xlm, usd, 86400), "price_update", []byte(`{"w":"86400"}`))
+	hub.Publish(v1.PriceStreamTopic(xlm, usd, 300), "price_update", []byte(`{"w":"300"}`))
+
+	br := bufio.NewReader(resp.Body)
+	frame := readPriceStreamFrame(t, br, 2*time.Second)
+	if !strings.Contains(frame, `data: {"w":"300"}`) {
+		t.Fatalf("first frame should be the 300s bucket only; frame = %q", frame)
+	}
+}
+
+// TestPriceStream_RejectsBadWindowSeconds — a malformed window returns
+// 400 pre-stream.
+func TestPriceStream_RejectsBadWindowSeconds(t *testing.T) {
+	hub := streaming.NewHub(0)
+	srv := v1.New(v1.Options{Hub: hub})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/v1/price/stream?asset=native&quote=fiat:USD&window_seconds=-5")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
 }
