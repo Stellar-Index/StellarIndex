@@ -33,6 +33,11 @@ func TestTipProducerRegistry_StartsOncePerKeyAcrossConcurrentAcquires(t *testing
 	}
 	wg.Wait()
 
+	// The start closure runs on its own goroutine — wait for it, then
+	// assert no SECOND start ever fired.
+	if !waitFor(time.Second, func() bool { return starts.Load() >= 1 }) {
+		t.Fatal("producer start never ran")
+	}
 	if got := starts.Load(); got != 1 {
 		t.Fatalf("start called %d times for one key, want exactly 1", got)
 	}
