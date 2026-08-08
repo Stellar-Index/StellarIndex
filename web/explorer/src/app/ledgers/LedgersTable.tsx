@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 
@@ -17,6 +17,9 @@ import {
 } from '../explorer-shared';
 
 const PAGE_SIZE = 50;
+
+/** Minimum gap between live-follow refetches (RT-2). */
+const LIVE_REFETCH_MIN_MS = 10_000;
 
 /**
  * Live ledgers table backed by /v1/ledgers?limit=50.
@@ -52,16 +55,24 @@ export function LedgersTable() {
   );
 
   // Live follow: refetch the tip page when the stream reports a ledger
-  // newer than the newest row on screen. The guard also stops the loop
-  // once the refetch lands (newest catches up to the frame).
+  // newer than the newest row on screen, at most once per
+  // LIVE_REFETCH_MIN_MS (ledgers close ~every 5s; unthrottled this is
+  // 12 req/min per viewer — batching two closes per refresh still
+  // feels live at half the load).
   const frame = useLedgerStream();
   const clock = useLiveClock();
   const queryClient = useQueryClient();
+  const lastRefetchRef = useRef(0);
   const streamLatest = frame?.data.latest_ledger;
   const newestShown = data?.ledgers?.[0]?.sequence;
   useEffect(() => {
     if (before !== undefined || streamLatest == null) return;
-    if (newestShown != null && streamLatest <= newestShown) return;
+    // Wait for the initial page before following — invalidating while
+    // the first fetch is in flight just cancels and restarts it.
+    if (newestShown == null || streamLatest <= newestShown) return;
+    const now = Date.now();
+    if (now - lastRefetchRef.current < LIVE_REFETCH_MIN_MS) return;
+    lastRefetchRef.current = now;
     void queryClient.invalidateQueries({ queryKey: ['/v1/ledgers', PAGE_SIZE, 'tip'] });
   }, [before, streamLatest, newestShown, queryClient]);
   const following =

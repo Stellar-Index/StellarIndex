@@ -1,4 +1,3 @@
-import { Suspense } from 'react';
 import type { Metadata } from 'next';
 
 import { LedgersTable } from './LedgersTable';
@@ -36,9 +35,19 @@ export default function LedgersPage() {
           the row list — same shared series /network renders. */}
       <ThroughputPanel defaultMetric="ledgers" />
 
-      <Suspense fallback={null}>
-        <LedgersTable />
-      </Suspense>
+      {/* NO Suspense wrapper (2026-08-09): LedgersTable takes no
+          useSearchParams, so a <Suspense fallback={null}> around it was
+          vestigial — and actively harmful: the static exporter emitted
+          the boundary as a NEVER-COMPLETING pending template
+          (<!--$?--><template id="B:0">), so the browser never hydrated
+          or client-rendered the subtree and the table sat on
+          "Loading…" forever with zero network activity. Every other
+          page's Suspense child either uses useSearchParams (CSR
+          bailout — resolves client-side) or completes at export time;
+          this was the only pending boundary shipped on the site. Wrap
+          a client component in Suspense here ONLY if it calls
+          useSearchParams. */}
+      <LedgersTable />
     </div>
   );
 }
