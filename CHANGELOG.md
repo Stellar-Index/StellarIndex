@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.28.0] — 2026-08-08
+
 ### Added
 - **The movements feed covers every asset again — inventory #1.**
   `stellarindex-ops ch-cap67-movements` derives post-P23 account
