@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -110,8 +111,12 @@ func TestAccountMovements_MergesCHArchiveAndPGTail(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 
-	if body.Data.CoverageNote != "" {
-		t.Errorf("coverage_note = %q, want empty — both stores are wired and populated", body.Data.CoverageNote)
+	// Since inventory #1 (2026-08-08) the healthy-path note is ALWAYS
+	// present, stating the feed's post-P23 scope: without the cap67
+	// archive provisioned (this harness has no watermark table), the
+	// watched-token disclosure; with it, the through-ledger statement.
+	if !strings.Contains(body.Data.CoverageNote, "watched") {
+		t.Errorf("coverage_note = %q, want the post-P23 scope statement", body.Data.CoverageNote)
 	}
 	if len(body.Data.Movements) != 2 {
 		t.Fatalf("movements = %d, want 2 (1 CH + 1 PG): %+v", len(body.Data.Movements), body.Data.Movements)

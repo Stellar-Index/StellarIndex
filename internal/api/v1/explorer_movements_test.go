@@ -39,7 +39,7 @@ type stubSEP41MovementsReader struct {
 	err  error
 }
 
-func (s *stubSEP41MovementsReader) ListSEP41TransfersByAddress(_ context.Context, _ string, limit int, _ timescale.SEP41TransferCursor, _ string) ([]timescale.SEP41TransferRow, error) {
+func (s *stubSEP41MovementsReader) ListSEP41TransfersByAddress(_ context.Context, _ string, limit int, _ timescale.SEP41TransferCursor, _ string, _ uint32) ([]timescale.SEP41TransferRow, error) {
 	if s.err != nil {
 		return nil, s.err
 	}

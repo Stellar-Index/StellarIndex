@@ -15,6 +15,32 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **The movements feed covers every asset again — inventory #1.**
+  `stellarindex-ops ch-cap67-movements` derives post-P23 account
+  movements for ALL assets (native XLM included — its SAC is
+  deliberately excluded from the Postgres watched-token projection)
+  straight from the lake's CAP-67 transfer events into the ClickHouse
+  movement archive (provenance `cap67_derived`), windowed + resumable
+  via a watermark, kept following the tip by a 5-minute timer. The
+  `/v1/accounts/{g}/movements` merge boundary is now DYNAMIC: the
+  ClickHouse arm serves everything at/below the watermark, the
+  Postgres tail only above it — gap-free and double-count-free at any
+  derive progress — and the coverage note states the live scope
+  ("complete for all assets through ledger N") instead of the static
+  P23 disclosure. Closes the "history stops 340 days ago" class for
+  classic-payment accounts.
+
+### Fixed
+- **main CI is green again** (the ci-health email flood): explorer CI
+  Node 20→22 (vitest/undici), web/status audit advisories fixed via
+  overrides, a mid-test miniredis close race made deterministic, the
+  cross-check convergence test reworked to the demoted-leg contract,
+  two fixture bugs (63-char tx hashes; a hardcoded day that aged out
+  of a now-relative read window), and a fake-timer test that native
+  AbortSignal.timeout ignores on Node 22 switched to short real
+  timers.
+
 ## [v0.27.1] — 2026-08-08
 
 ### Fixed

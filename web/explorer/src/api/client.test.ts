@@ -7,12 +7,15 @@ import { apiGet, timeoutSignal } from './client';
 // still honoring an external (e.g. TanStack Query) cancellation signal.
 describe('timeoutSignal', () => {
   it('aborts on its own after the given timeout when no external signal is passed', async () => {
-    vi.useFakeTimers();
-    const signal = timeoutSignal(1_000);
+    // Real timers, deliberately: the no-external path is native
+    // AbortSignal.timeout(), whose internal timer vitest fake timers do
+    // NOT drive on Node 22 (CI) — the fake-timer version passed locally
+    // on Node 24 and failed every CI run (ci-health flood, 2026-08-08).
+    // 30ms timeout / 150ms wait keeps it fast and 5x-margin robust.
+    const signal = timeoutSignal(30);
     expect(signal.aborted).toBe(false);
-    await vi.advanceTimersByTimeAsync(1_000);
+    await new Promise((resolve) => setTimeout(resolve, 150));
     expect(signal.aborted).toBe(true);
-    vi.useRealTimers();
   });
 
   it('aborts immediately when the external signal is already aborted', () => {

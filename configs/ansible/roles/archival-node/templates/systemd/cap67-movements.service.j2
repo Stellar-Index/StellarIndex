@@ -1,0 +1,60 @@
+# systemd unit: cap67 movements derive (inventory #1).
+#
+# Rendered by Ansible. Derives post-P23 account movements for EVERY
+# asset (native XLM included) from the lake's CAP-67 transfer events
+# into stellar.account_movements (provenance cap67_derived), resuming
+# from stellar.cap67_movements_watermark. One invocation catches up to
+# the lake tip and exits; the companion 5-minute timer keeps the archive
+# following. The FIRST run after provisioning is the multi-hour
+# P23→tip backfill — systemd's one-instance rule makes timer fires
+# no-ops while it runs.
+
+[Unit]
+Description=Stellar Index — cap67 account-movements derive (follows the lake tip)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/open-fixes-inventory-2026-08-08.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/cap67-movements
+EnvironmentFile=-/etc/default/stellarindex
+
+Environment=CH_ADDR=127.0.0.1:9300
+Environment=WINDOW=50000
+Environment=EXTRA_FLAGS=
+
+ExecStart=/usr/local/bin/stellarindex-ops ch-cap67-movements \
+  -ch-addr ${CH_ADDR} \
+  -window ${WINDOW} \
+  ${EXTRA_FLAGS}
+
+# De-privileged, same shape as the sibling oneshots (CS-118/CS-119).
+User=stellarindex
+Group=stellarindex
+
+ProtectSystem=strict
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# The initial backfill is a long catch-up; steady-state runs are
+# minutes. No TimeoutStartSec ceiling would risk a wedged run holding
+# the slot forever — 12h covers the backfill with margin and a killed
+# run resumes from the watermark.
+TimeoutStartSec=12h
+
+# Memory ceiling — streams + decodes lake events in 50k-ledger windows
+# with 50k-row insert batches; 4G is far above a healthy run and far
+# below the blast radius (the 2026-07-05 wedge class). Swap-kill, not
+# swap-crawl.
+MemoryMax=4G
+MemorySwapMax=0
+# Batch-class weights: this must never starve galexie's captive core.
+CPUWeight=25
+IOWeight=25
+
+[Install]
+WantedBy=multi-user.target

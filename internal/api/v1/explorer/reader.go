@@ -172,6 +172,13 @@ type ExplorerReader interface {
 	SACAssetFromEvents(ctx context.Context, contractID string) (string, bool, error)
 	AccountsUnspendable(ctx context.Context, accountIDs []string) (map[string]bool, error)
 	AccountMovements(ctx context.Context, address string, limit int, cur clickhouse.AccountMovementCursor, filter clickhouse.AccountMovementFilter) ([]clickhouse.AccountMovementRow, error)
+	// Cap67MovementsWatermark is the highest ledger the cap67 movement
+	// derive (inventory #1) has completed through — 0 when the feed
+	// isn't provisioned. The movements handler floors its Postgres tail
+	// arm at watermark+1 and ceilings the ClickHouse arm at the
+	// watermark, keeping the merge gap-free and double-count-free at
+	// any derive progress. Implementations cache (~60s).
+	Cap67MovementsWatermark(ctx context.Context) (uint32, error)
 }
 
 // ContractsReader is the narrow read seam onto the protocol_contracts

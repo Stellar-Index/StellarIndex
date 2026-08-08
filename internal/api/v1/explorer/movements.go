@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/classicmovements"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -21,7 +20,7 @@ import (
 // ClickHouse pre-P23 archive alone, with an honest coverage_note — see
 // AccountMovements below).
 type SEP41MovementsReader interface {
-	ListSEP41TransfersByAddress(ctx context.Context, address string, limit int, cur timescale.SEP41TransferCursor, direction string) ([]timescale.SEP41TransferRow, error)
+	ListSEP41TransfersByAddress(ctx context.Context, address string, limit int, cur timescale.SEP41TransferCursor, direction string, floorLedger uint32) ([]timescale.SEP41TransferRow, error)
 }
 
 // AccountMovementEntry is one row in the wire response for GET
@@ -222,6 +221,19 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 
 	chCur := clickhouse.AccountMovementCursor{Ledger: cur.Ledger, TxHash: cur.TxHash, OpIndex: cur.OpIndex, LegIndex: cur.LegIndex}
 
+	// Dynamic archive boundary (inventory #1): the cap67-derived
+	// archive covers ALL assets through its watermark; the Postgres
+	// tail covers watched tokens above it. Reading ONE cached watermark
+	// and applying it as BOTH the CH ceiling and the PG floor keeps the
+	// arms gap-free and double-count-free even while the derive is
+	// mid-catch-up (rows landing between the two reads are excluded
+	// from CH by the ceiling and served by PG above the floor).
+	wm, wmErr := h.Reader.Cap67MovementsWatermark(ctx)
+	if wmErr != nil {
+		h.Logger.Warn("cap67 movements watermark read failed — serving with the static P23 boundary", "err", wmErr)
+		wm = 0
+	}
+
 	chRows, err := h.Reader.AccountMovements(ctx, g, limit, chCur, filter)
 	if err != nil {
 		if h.ClientAborted(r, err) {
@@ -239,8 +251,23 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pgRows, coverageNote := h.fetchSEP41MovementsTail(ctx, g, limit, cur, filter)
-	h.assertP23NonOverlap(chRows, pgRows)
+	if wm > 0 {
+		trimmed := chRows[:0]
+		for _, row := range chRows {
+			if row.Ledger <= wm {
+				trimmed = append(trimmed, row)
+			}
+		}
+		chRows = trimmed
+	}
+
+	pgFloor := timescale.SEP41MovementsFloorLedger
+	if wm+1 > pgFloor {
+		pgFloor = wm + 1
+	}
+	pgRows, tailNote := h.fetchSEP41MovementsTail(ctx, g, limit, cur, filter, pgFloor)
+	coverageNote := movementsCoverageNote(wm, tailNote)
+	h.assertMovementsNonOverlap(chRows, pgRows, pgFloor)
 
 	merged := mergeAccountMovementRows(chRows, pgRows, limit)
 	out := AccountMovementsView{
@@ -265,7 +292,7 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 // kind filters that structurally CANNOT match a PG-tail row (every
 // synthesized row is movement_kind="transfer") short-circuit without a
 // round-trip.
-func (h *Handler) fetchSEP41MovementsTail(ctx context.Context, address string, limit int, cur movementCursorParts, filter clickhouse.AccountMovementFilter) ([]clickhouse.AccountMovementRow, string) {
+func (h *Handler) fetchSEP41MovementsTail(ctx context.Context, address string, limit int, cur movementCursorParts, filter clickhouse.AccountMovementFilter, floorLedger uint32) ([]clickhouse.AccountMovementRow, string) {
 	if h.SEP41Movements == nil {
 		return nil, "this deployment has not wired the recent (post-P23) Postgres tail reader; showing only the ClickHouse pre-P23 archive"
 	}
@@ -273,26 +300,40 @@ func (h *Handler) fetchSEP41MovementsTail(ctx context.Context, address string, l
 		return nil, ""
 	}
 	pgCur := timescale.SEP41TransferCursor{Ledger: cur.Ledger, TxHash: cur.TxHash, OpIndex: cur.OpIndex, EventIndex: cur.LegIndex}
-	rows, err := h.SEP41Movements.ListSEP41TransfersByAddress(ctx, address, limit, pgCur, string(filter.Direction))
+	rows, err := h.SEP41Movements.ListSEP41TransfersByAddress(ctx, address, limit, pgCur, string(filter.Direction), floorLedger)
 	if err != nil {
 		h.Logger.Error("explorer AccountMovements (Postgres recent tail) failed", "err", err, "account", address)
 		return nil, "the recent (post-P23) tail is temporarily unavailable; showing the pre-P23 ClickHouse archive only"
 	}
-	// Honest scope (site audit 2026-08-08): the post-P23 tail projects
-	// only the WATCHED token contracts (sep41_transfers' operator set) —
-	// native XLM's SAC is deliberately not watched (its event volume
-	// would balloon the served tier), so classic XLM payments after the
-	// P23 boundary (2025-09-03) do NOT appear in this feed yet even
-	// though the lake captures them. Without this note a busy
-	// XLM-payment account looks like its history "stops" at P23 —
-	// exactly the user report that triggered the audit. The complete
-	// genesis→tip movement archive (all assets, derived lake-side from
-	// the CAP-67 events) is the tracked replacement.
-	return h.mapSEP41RowsToMovements(ctx, address, rows, filter.Asset),
-		"movements after 2025-09-03 (P23) currently include watched Soroban/SAC tokens only — " +
+	return h.mapSEP41RowsToMovements(ctx, address, rows, filter.Asset), ""
+}
+
+// movementsCoverageNote is the feed's honest-scope statement, chosen by
+// the cap67 archive watermark. tailNote (a tail wiring/availability
+// failure) takes priority — it means the response is MISSING data
+// beyond the structural scope.
+//
+// wm == 0: the cap67-derived archive (inventory #1) isn't provisioned —
+// post-P23 coverage is the watched-token Postgres tail only, and
+// classic XLM payment history after the boundary is absent. Saying so
+// on EVERY response is what keeps a busy XLM account's feed from
+// masquerading as complete (the GATL report, site audit 2026-08-08).
+//
+// wm > 0: all assets are covered through the watermark; only the sliver
+// above it (the derive follows the tip on a ~5-minute timer) is
+// watched-tokens-only.
+func movementsCoverageNote(wm uint32, tailNote string) string {
+	if tailNote != "" {
+		return tailNote
+	}
+	if wm == 0 {
+		return "movements after 2025-09-03 (P23) currently include watched Soroban/SAC tokens only — " +
 			"classic XLM payment history after that date is not yet served on this feed " +
 			"(the full-history movement archive is being extended); see /accounts/{g}/operations " +
 			"for complete raw operation history"
+	}
+	return fmt.Sprintf("complete for all assets through ledger %d; more recent movements may include "+
+		"watched Soroban/SAC tokens only while the archive follows the tip (~minutes)", wm)
 }
 
 // mapSEP41RowsToMovements converts sep41_transfers 'transfer' rows into
@@ -425,17 +466,23 @@ func canonicalizeSACName(name string) string {
 // violation can only mean one of those two floors/clamps regressed
 // elsewhere; it's logged as an error rather than panicking a
 // user-facing read path — loud in observability, not a 500.
-func (h *Handler) assertP23NonOverlap(chRows, pgRows []clickhouse.AccountMovementRow) {
+// assertMovementsNonOverlap checks the merge invariant at the DYNAMIC
+// boundary (the cap67 watermark's Postgres floor — pgFloor): the CH arm
+// serves strictly below it, the PG arm at/above it. Generalizes the old
+// static-P23 assertion; pgFloor == P23StartLedger when the cap67
+// archive isn't provisioned, so the pre-inventory-#1 invariant is the
+// degenerate case.
+func (h *Handler) assertMovementsNonOverlap(chRows, pgRows []clickhouse.AccountMovementRow, pgFloor uint32) {
 	for _, row := range chRows {
-		if row.Ledger >= classicmovements.P23StartLedger {
-			h.Logger.Error("ADR-0048 D5 invariant violated: ClickHouse account_movements row at/past the P23 boundary",
-				"ledger", row.Ledger, "tx_hash", row.TxHash, "boundary", classicmovements.P23StartLedger)
+		if row.Ledger >= pgFloor {
+			h.Logger.Error("ADR-0048 D5 invariant violated: ClickHouse account_movements row at/past the merge boundary",
+				"ledger", row.Ledger, "tx_hash", row.TxHash, "boundary", pgFloor)
 		}
 	}
 	for _, row := range pgRows {
-		if row.Ledger < classicmovements.P23StartLedger {
-			h.Logger.Error("ADR-0048 D5 invariant violated: Postgres sep41_transfers-tail row before the P23 boundary",
-				"ledger", row.Ledger, "tx_hash", row.TxHash, "boundary", classicmovements.P23StartLedger)
+		if row.Ledger < pgFloor {
+			h.Logger.Error("ADR-0048 D5 invariant violated: Postgres sep41_transfers-tail row below the merge boundary",
+				"ledger", row.Ledger, "tx_hash", row.TxHash, "boundary", pgFloor)
 		}
 	}
 }
