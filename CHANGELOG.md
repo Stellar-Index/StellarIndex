@@ -15,6 +15,19 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Accounts hub analytics** (operator request 2026-08-08; API 1.19.0+
+  `/v1/accounts/stats`): network totals (funded accounts, trustlines,
+  XLM held), balance statistics (avg/median/p90/p99 — stroops as
+  strings, ADR-0003), top-100 concentration, a log10 wealth-
+  distribution histogram, trustlines-per-account bands, and the
+  most-held assets board — all computed by the same 30-minute
+  ch-holders-rollup cycle (the analytics ride the scans the holders
+  boards already pay for) and served from keyed tables, sub-second by
+  construction. The /accounts page grows a stat strip, two
+  distribution charts, and the most-held board above the wealth
+  directory.
+
 ## [v0.28.1] — 2026-08-08
 
 ### Added

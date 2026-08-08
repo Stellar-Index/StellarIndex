@@ -11728,6 +11728,157 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/accounts/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Network-wide account analytics — totals, wealth + trustline distribution, most-held assets.
+         * @description Precomputed account analytics for the accounts hub, refreshed by a
+         *     30-minute rollup cycle (`computed_at` stamps the cycle): funded
+         *     account + trustline totals, XLM balance statistics (average /
+         *     median / p90 / p99 — stroops as strings, ADR-0003), top-100
+         *     concentration, a log10 wealth histogram (`bucket` = floor(log10 of
+         *     the XLM balance); -1 is "< 1 XLM"), a trustlines-per-account band
+         *     histogram (the "0" band is derived from the totals), and the
+         *     most-held assets by holder count.
+         *
+         *     503 with type `accounts-stats-warming` until the rollup's first
+         *     cycle completes on a fresh deployment.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The current analytics snapshot. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "totals": {
+                         *           "accounts": 9930118,
+                         *           "trustlines": 19400000,
+                         *           "trustline_holding_accounts": 3100000,
+                         *           "xlm_held_stroops": "1049598291112345678"
+                         *         },
+                         *         "balances": {
+                         *           "avg_stroops": "1056980000",
+                         *           "median_stroops": "50000000",
+                         *           "p90_stroops": "3200000000",
+                         *           "p99_stroops": "91000000000"
+                         *         },
+                         *         "concentration": {
+                         *           "top100_xlm_stroops": "512345678901234567",
+                         *           "top100_share_pct": 48.82
+                         *         },
+                         *         "wealth_histogram": [
+                         *           {
+                         *             "bucket": -1,
+                         *             "accounts": 4100000,
+                         *             "xlm_stroops": "9876543210"
+                         *           }
+                         *         ],
+                         *         "trustline_histogram": [
+                         *           {
+                         *             "bucket": "0",
+                         *             "accounts": 6830118
+                         *           },
+                         *           {
+                         *             "bucket": "1",
+                         *             "accounts": 1400000
+                         *           }
+                         *         ],
+                         *         "top_held_assets": [
+                         *           {
+                         *             "asset": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                         *             "holders": 619460
+                         *           }
+                         *         ],
+                         *         "computed_at": "2026-08-08T19:30:00Z"
+                         *       },
+                         *       "as_of": "2026-08-08T19:45:00Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
+                        "application/json": {
+                            data?: {
+                                totals: {
+                                    /** Format: int64 */
+                                    accounts?: number;
+                                    /** Format: int64 */
+                                    trustlines?: number;
+                                    /** Format: int64 */
+                                    trustline_holding_accounts?: number;
+                                    /** @description Total XLM held by funded accounts */
+                                    xlm_held_stroops?: string;
+                                };
+                                balances: {
+                                    avg_stroops?: string;
+                                    median_stroops?: string;
+                                    p90_stroops?: string;
+                                    p99_stroops?: string;
+                                };
+                                concentration: {
+                                    top100_xlm_stroops?: string;
+                                    /** @description Display convenience derived from the exact stroops figures. */
+                                    top100_share_pct?: number;
+                                };
+                                wealth_histogram: {
+                                    /** @description floor(log10(balance in XLM)), clamped to [-1, 10]. */
+                                    bucket?: number;
+                                    /** Format: int64 */
+                                    accounts?: number;
+                                    xlm_stroops?: string;
+                                }[];
+                                trustline_histogram: {
+                                    /** @description Trustlines-per-account band: 0, 1, 2-5, 6-10, 11-50, or 50+. */
+                                    bucket?: string;
+                                    /** Format: int64 */
+                                    accounts?: number;
+                                }[];
+                                top_held_assets?: {
+                                    asset?: string;
+                                    /** Format: int64 */
+                                    holders?: number;
+                                }[];
+                                /**
+                                 * Format: date-time
+                                 * @description Rollup cycle timestamp — the snapshot's real age.
+                                 */
+                                computed_at: string;
+                            };
+                        };
+                    };
+                };
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/accounts/{g_strkey}": {
         parameters: {
             query?: never;

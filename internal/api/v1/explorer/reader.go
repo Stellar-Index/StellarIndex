@@ -197,6 +197,9 @@ type ExplorerReader interface {
 	// watermark, keeping the merge gap-free and double-count-free at
 	// any derive progress. Implementations cache (~60s).
 	Cap67MovementsWatermark(ctx context.Context) (uint32, error)
+	// AccountsStats is the /accounts hub analytics snapshot (rollup-
+	// backed; ok=false while the rollup hasn't completed a cycle).
+	AccountsStats(ctx context.Context) (clickhouse.AccountsStats, bool, error)
 }
 
 // ContractsReader is the narrow read seam onto the protocol_contracts

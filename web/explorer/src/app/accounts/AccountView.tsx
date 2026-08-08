@@ -14,6 +14,7 @@ import { AccountMovementsPanel } from './AccountMovements';
 import { AccountDefiPositionsPanel } from './AccountDefiPositions';
 import { AccountActivitySummaryPanel } from './AccountActivitySummary';
 import { AccountTradesPanel } from './AccountTrades';
+import { AccountsAnalytics } from './AccountsAnalytics';
 import { useIssuers } from '@/api/hooks';
 import { apiGet, asExample } from '@/api/client';
 import {
@@ -105,7 +106,12 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
   const isKnownIssuer = (issuersQ.data ?? []).some((iss) => iss.g_strkey === id);
 
   if (id.length === 0) {
-    return <AccountsDirectory />;
+    return (
+      <div className="space-y-6">
+        <AccountsAnalytics />
+        <AccountsDirectory />
+      </div>
+    );
   }
 
   if (!looksValid) {

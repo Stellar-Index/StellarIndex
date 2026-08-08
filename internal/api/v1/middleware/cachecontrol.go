@@ -249,6 +249,9 @@ func policyForPath(path string, cdnEnabled bool) string {
 		// Registry catalogue — issuer directory.
 		path == "/v1/issuers",
 		strings.HasPrefix(path, "/v1/issuers/"),
+		// Accounts analytics — 30-min rollup snapshot; the public
+		// catalogue band is well inside its real cadence.
+		path == "/v1/accounts/stats",
 		// Curated address labels — resynced from upstream at most
 		// daily; the query string (address list) is the cache key.
 		// Deliberately public despite the /v1/accounts/* siblings

@@ -702,3 +702,45 @@ ORDER BY asset;
 
 CREATE TABLE IF NOT EXISTS stellar.asset_holders_counts_staging
 AS stellar.asset_holders_counts;
+
+-- ── accounts_stats rollup — see deploy/clickhouse/accounts_stats_rollup.sql ──
+CREATE TABLE IF NOT EXISTS stellar.accounts_stats
+(
+    metric      String,
+    value       Int64,
+    computed_at DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+ORDER BY metric;
+
+CREATE TABLE IF NOT EXISTS stellar.accounts_stats_staging
+AS stellar.accounts_stats;
+
+-- Wealth histogram: bucket = clamp(floor(log10(balance_xlm)), -1..10);
+-- -1 is "< 1 XLM", 10 is ">= 10B XLM".
+CREATE TABLE IF NOT EXISTS stellar.accounts_wealth_histogram
+(
+    bucket      Int8,
+    accounts    UInt64,
+    xlm_stroops Int64,
+    computed_at DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+ORDER BY bucket;
+
+CREATE TABLE IF NOT EXISTS stellar.accounts_wealth_histogram_staging
+AS stellar.accounts_wealth_histogram;
+
+-- Trustlines-per-account histogram (accounts with >= 1 trustline; the
+-- zero bucket is derived API-side from total_accounts).
+CREATE TABLE IF NOT EXISTS stellar.accounts_trustline_histogram
+(
+    bucket      String,
+    accounts    UInt64,
+    computed_at DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+ORDER BY bucket;
+
+CREATE TABLE IF NOT EXISTS stellar.accounts_trustline_histogram_staging
+AS stellar.accounts_trustline_histogram;

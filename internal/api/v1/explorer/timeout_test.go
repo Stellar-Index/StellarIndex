@@ -57,6 +57,10 @@ type capReader struct{ probe *deadlineProbe }
 
 func (r *capReader) Cap67MovementsWatermark(context.Context) (uint32, error) { return 0, nil }
 
+func (r *capReader) AccountsStats(context.Context) (clickhouse.AccountsStats, bool, error) {
+	return clickhouse.AccountsStats{}, false, nil
+}
+
 func (r *capReader) RecentLedgers(ctx context.Context, _ int, _ uint32) ([]clickhouse.LedgerHeader, error) {
 	r.probe.record(ctx)
 	return nil, nil

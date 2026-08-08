@@ -8242,6 +8242,90 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /accounts/stats:
+    get:
+      x-stability: experimental
+      tags: [explorer]
+      summary: Network-wide account analytics — totals, wealth + trustline distribution, most-held assets.
+      description: |
+        Precomputed account analytics for the accounts hub, refreshed by a
+        30-minute rollup cycle (`computed_at` stamps the cycle): funded
+        account + trustline totals, XLM balance statistics (average /
+        median / p90 / p99 — stroops as strings, ADR-0003), top-100
+        concentration, a log10 wealth histogram (`bucket` = floor(log10 of
+        the XLM balance); -1 is "< 1 XLM"), a trustlines-per-account band
+        histogram (the "0" band is derived from the totals), and the
+        most-held assets by holder count.
+
+        503 with type `accounts-stats-warming` until the rollup's first
+        cycle completes on a fresh deployment.
+      responses:
+        "200":
+          description: The current analytics snapshot.
+          content:
+            application/json:
+              example:
+                data:
+                  totals: { accounts: 9930118, trustlines: 19400000, trustline_holding_accounts: 3100000, xlm_held_stroops: "1049598291112345678" }
+                  balances: { avg_stroops: "1056980000", median_stroops: "50000000", p90_stroops: "3200000000", p99_stroops: "91000000000" }
+                  concentration: { top100_xlm_stroops: "512345678901234567", top100_share_pct: 48.82 }
+                  wealth_histogram: [ { bucket: -1, accounts: 4100000, xlm_stroops: "9876543210" } ]
+                  trustline_histogram: [ { bucket: "0", accounts: 6830118 }, { bucket: "1", accounts: 1400000 } ]
+                  top_held_assets: [ { asset: "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", holders: 619460 } ]
+                  computed_at: "2026-08-08T19:30:00Z"
+                as_of: "2026-08-08T19:45:00Z"
+                flags: { stale: false, reduced_redundancy: false, triangulated: false, divergence_warning: false, divergence_checked: false }
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [totals, balances, concentration, wealth_histogram, trustline_histogram, computed_at]
+                    properties:
+                      totals:
+                        type: object
+                        properties:
+                          accounts: { type: integer, format: int64 }
+                          trustlines: { type: integer, format: int64 }
+                          trustline_holding_accounts: { type: integer, format: int64 }
+                          xlm_held_stroops: { type: string, description: Total XLM held by funded accounts, stroops (ADR-0003 string). }
+                      balances:
+                        type: object
+                        properties:
+                          avg_stroops: { type: string }
+                          median_stroops: { type: string }
+                          p90_stroops: { type: string }
+                          p99_stroops: { type: string }
+                      concentration:
+                        type: object
+                        properties:
+                          top100_xlm_stroops: { type: string }
+                          top100_share_pct: { type: number, description: Display convenience derived from the exact stroops figures. }
+                      wealth_histogram:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            bucket: { type: integer, description: "floor(log10(balance in XLM)), clamped to [-1, 10]." }
+                            accounts: { type: integer, format: int64 }
+                            xlm_stroops: { type: string }
+                      trustline_histogram:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            bucket: { type: string, description: 'Trustlines-per-account band: 0, 1, 2-5, 6-10, 11-50, or 50+.' }
+                            accounts: { type: integer, format: int64 }
+                      top_held_assets:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            asset: { type: string }
+                            holders: { type: integer, format: int64 }
+                      computed_at: { type: string, format: date-time, description: Rollup cycle timestamp — the snapshot's real age. }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /accounts/{g_strkey}:
     get:
       x-stability: experimental
