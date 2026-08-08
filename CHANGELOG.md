@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.29.0] — 2026-08-08
+
 ### Added
 - **Accounts hub analytics** (operator request 2026-08-08; API 1.19.0+
   `/v1/accounts/stats`): network totals (funded accounts, trustlines,
