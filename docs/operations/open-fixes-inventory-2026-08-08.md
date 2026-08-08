@@ -17,7 +17,11 @@ finding that may have been fixed since; re-verify before working.
 Shipped this week: busy-contract 100× (v0.26.1); quiet-contract index +
 backfill (v0.27.0); capacity-errors-as-500 fix; trades OR-scan → UNION +
 compression-horizon bound; movements-tail OR-scan → UNION; honest
-coverage notes on trades/activity/movements (v0.27.1, this release).
+coverage notes on trades/activity/movements (v0.27.1); holders rollup +
+saturation/timeout problem-type split + readyz single-flight (v0.28.1);
+accounts analytics (v0.29.0); RT program + SSE correctness trio +
+observations alias fan-in (v0.30.0); /ledgers dead-Suspense fix
+(explorer 2026-08-09).
 
 1. **[ENG] Post-P23 all-asset movement archive.** The single biggest
    user-visible gap: `sep41_transfers` projects only watched token
@@ -41,15 +45,19 @@ coverage notes on trades/activity/movements (v0.27.1, this release).
    dup-safety story (RMT re-insert double-fire through a Summing MV is
    the migration-0059 class — derive counts from the RMT-collapsed
    active-ledgers index in a periodic job instead of an MV). Own unit.
-3. **[ENG] /contracts/{id}/code-history** — same heavy-scan class the
-   events read had; give it the active-ledgers bound or a keyed source.
-4. **[ENG] /assets/{id}/holders** — two `ledger_entries_current FINAL`
-   scans per request; effectively 100% failure for random assets.
-   Needs a precomputed per-asset holders rollup (SWR-refreshed).
-5. **[ENG] refresh-gate saturation UX** — any burst of distinct cold
-   keys (crawlers!) fills the shared detached-refresh gate; cold pages
-   then fast-503 with a misleading "timed out" message. Split the
-   problem type (saturated vs timed out), consider per-key-class gates.
+3. **[ENG→SHIPPING] /contracts/{id}/code-history** — keyed
+   `contract_instance_changes` index + MV landed 2026-08-09 (bb77be89);
+   DDL applied on r1 (live coverage from ledger 63863502). REMAINING:
+   run `ch-instance-backfill` to genesis (queued behind the cap67 job —
+   one heavy job at a time), then deploy the reader in the next release
+   ONLY after the backfill completes (operator contract: present +
+   non-empty = trusted).
+4. **[DONE v0.28.1] /assets/{id}/holders** — 30-min holders rollup +
+   keyed reads, 0.11–0.14s live-validated 2026-08-08.
+5. **[ENG, half-done] refresh-gate saturation UX** — the problem-type
+   split (saturated vs timed out) SHIPPED in v0.28.1. Remaining:
+   per-key-class gates so one crawler burst can't starve every cold
+   page class.
 6. **[ENG] account family latency for old accounts** — /transactions,
    /operations 3–8s on quiet-box cold reads in the 2026-08-07 audit;
    re-measure after this week's fixes, then chase the real arm.
@@ -59,9 +67,10 @@ coverage notes on trades/activity/movements (v0.27.1, this release).
    CH account-keyed table (preferred, ADR-0048 logic) or add
    taker/maker to compression segmentby (recompress-everything cost,
    hurts the pair workload — probably no).
-8. **[ENG] /contracts/{id}/wasm real reads** — historical finding: full
-   scan of ledger_entry_changes per request. The 404-classes are now
-   honest; the resolvable-path cost needs the keyed treatment.
+8. **[DONE, verified 2026-08-09] /contracts/{id}/wasm reads** — both
+   hops (instance lookup + code fetch) read the keyed
+   `ledger_entries_current` (509d1d83); no changes-log scan remains on
+   the resolvable path.
 
 ## Tier 2 — data correctness / money (audit NEEDS-ASH backlog)
 
