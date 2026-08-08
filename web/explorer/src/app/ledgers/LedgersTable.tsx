@@ -1,12 +1,14 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
+import { cn } from '@/lib/cn';
 import { formatCompact } from '@/lib/format';
+import { isFrameStale, LEDGER_LIVE_STALE_MS, useLedgerStream, useLiveClock } from '@/lib/live/hooks';
 import {
   type Envelope,
   type LedgersPage,
@@ -18,6 +20,12 @@ const PAGE_SIZE = 50;
 
 /**
  * Live ledgers table backed by /v1/ledgers?limit=50.
+ *
+ * While the newest page is displayed, the table follows the network in
+ * real time (RT-2): /v1/ledger/stream close events trigger a refetch of
+ * the tip page, and rows that weren't there before animate in. Paging
+ * into history pauses following (a reader mid-scroll must not have the
+ * table shift under them); "← Newest" resumes it.
  *
  * "Load older" walks backwards via the envelope's `next_before`
  * cursor (passed as ?before=). Each page replaces the view; the
@@ -42,6 +50,33 @@ export function LedgersTable() {
       staleTime: 10_000,
     },
   );
+
+  // Live follow: refetch the tip page when the stream reports a ledger
+  // newer than the newest row on screen. The guard also stops the loop
+  // once the refetch lands (newest catches up to the frame).
+  const frame = useLedgerStream();
+  const clock = useLiveClock();
+  const queryClient = useQueryClient();
+  const streamLatest = frame?.data.latest_ledger;
+  const newestShown = data?.ledgers?.[0]?.sequence;
+  useEffect(() => {
+    if (before !== undefined || streamLatest == null) return;
+    if (newestShown != null && streamLatest <= newestShown) return;
+    void queryClient.invalidateQueries({ queryKey: ['/v1/ledgers', PAGE_SIZE, 'tip'] });
+  }, [before, streamLatest, newestShown, queryClient]);
+  const following =
+    before === undefined &&
+    frame != null &&
+    !isFrameStale(clock, frame.receivedAt, LEDGER_LIVE_STALE_MS);
+
+  // Rows newer than the page's previous newest animate in (render-time
+  // derived-state pattern — no effects, no ref reads in render).
+  const [prevNewest, setPrevNewest] = useState<number | null>(null);
+  const [flashAbove, setFlashAbove] = useState<number | null>(null);
+  if (newestShown != null && newestShown !== prevNewest) {
+    setPrevNewest(newestShown);
+    setFlashAbove(before === undefined ? prevNewest : null);
+  }
 
   const source = asExample('/v1/ledgers', {
     limit: PAGE_SIZE,
@@ -92,7 +127,7 @@ export function LedgersTable() {
       title={`${ledgers.length} ledgers`}
       hint={
         newest != null && oldest != null
-          ? `#${oldest.toLocaleString('en-US')} → #${newest.toLocaleString('en-US')}`
+          ? `#${oldest.toLocaleString('en-US')} → #${newest.toLocaleString('en-US')}${following ? ' · live' : ''}`
           : undefined
       }
       source={source}
@@ -113,7 +148,10 @@ export function LedgersTable() {
             {ledgers.map((l) => (
               <tr
                 key={l.sequence}
-                className="hover:bg-surface-muted"
+                className={cn(
+                  'hover:bg-surface-muted',
+                  flashAbove != null && (l.sequence ?? 0) > flashAbove && 'live-tick',
+                )}
               >
                 <Td>
                   <Link
