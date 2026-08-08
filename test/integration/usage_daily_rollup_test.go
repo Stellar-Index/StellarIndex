@@ -42,10 +42,12 @@ func TestUsageDailyRollupReSweepIdempotent(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	const (
-		day  = "2026-07-29"
-		subj = "key:kid_bill_1"
-	)
+	// day is now-relative: ReadUsageDaily reads a trailing now-anchored
+	// window, so a hardcoded date is a calendar time-bomb — the original
+	// "2026-07-29" literal aged out of the 7-day window on 2026-08-05 and
+	// the test started failing untouched (ci-health flood, 2026-08-08).
+	day := time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02")
+	const subj = "key:kid_bill_1"
 
 	// One day of real traffic to /v1/price for one subject: 100 ok, 5 4xx,
 	// 2 5xx, 3 throttled. These are the CUMULATIVE per-day counters the
@@ -109,10 +111,8 @@ func TestUsageDailyRollupWithinDayGrowth(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	const (
-		day  = "2026-07-29"
-		subj = "key:kid_bill_2"
-	)
+	day := time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02")
+	const subj = "key:kid_bill_2"
 
 	// Sweep 1: half a day's traffic captured.
 	if err := store.UpsertUsageDaily(ctx, []usage.RollupRow{{

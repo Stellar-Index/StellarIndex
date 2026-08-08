@@ -153,15 +153,26 @@ func TestSupplyCrossCheckConvergesAfterPoolBalanceRecovery(t *testing.T) {
 				t.Fatalf("Compute (before): %v", err)
 			}
 
-			// (2) Cross-check BEFORE recovery reproduces the documented
-			// divergence: sac_total > classic_total → `over`.
+			// (2) Cross-check BEFORE recovery: the over-mint direction
+			// (sac_total > classic_total) is DIAGNOSTIC-ONLY since the
+			// leg-1 demotion (c4184ddd — BLND retires supply classically
+			// with no SAC burn and PHO minted its whole supply through
+			// the SAC once, so this direction paged for a week on
+			// correct accounting). The new contract this step pins:
+			// WithinTolerance stays TRUE (no page) while OverMintStroops
+			// still reports the excess so the diagnostic isn't lost.
 			resultBefore, err := supply.CrossCheckForClass(before, sacSupply, supply.WrapClassPartial)
 			if err != nil {
 				t.Fatalf("CrossCheckForClass (before): %v", err)
 			}
-			if resultBefore.WithinTolerance {
-				t.Fatalf("%s: cross-check WithinTolerance=true BEFORE pool-balance recovery (classic=%s sac=%s) — fixture doesn't reproduce the documented divergence; adjust classicAmount/poolAmount/sacTotal so classic < sac",
+			if !resultBefore.WithinTolerance {
+				t.Fatalf("%s: over-mint direction paged (WithinTolerance=false) — leg-1 demotion contract violated (classic=%s sac=%s)",
 					tc.name, before.TotalSupply, sacTotal)
+			}
+			wantOverMint := new(big.Int).Sub(sacTotal, before.TotalSupply)
+			if resultBefore.OverMintStroops == nil || resultBefore.OverMintStroops.Cmp(wantOverMint) != 0 {
+				t.Fatalf("%s: OverMintStroops = %v, want %s (the demoted leg must still REPORT the excess)",
+					tc.name, resultBefore.OverMintStroops, wantOverMint)
 			}
 
 			// (3) Recover the dormant pool-held SAC balance — the exact
@@ -187,14 +198,21 @@ func TestSupplyCrossCheckConvergesAfterPoolBalanceRecovery(t *testing.T) {
 				t.Fatalf("Compute (after): %v", err)
 			}
 
-			// (4) Acceptance criterion: the cross-check now converges.
+			// (4) Acceptance criterion: recovery registers — the
+			// cross-check stays within tolerance AND the over-mint
+			// diagnostic clears (classic+pool now covers the SAC total,
+			// so the reported excess drops to zero).
 			resultAfter, err := supply.CrossCheckForClass(after, sacSupply, supply.WrapClassPartial)
 			if err != nil {
 				t.Fatalf("CrossCheckForClass (after): %v", err)
 			}
 			if !resultAfter.WithinTolerance {
-				t.Errorf("%s: cross-check still OVER TOLERANCE after pool-balance recovery — classic_total=%s sac_total=%s divergence=%s (want classic_total >= sac_total)",
+				t.Errorf("%s: cross-check OVER TOLERANCE after pool-balance recovery — classic_total=%s sac_total=%s divergence=%s",
 					tc.name, after.TotalSupply, sacTotal, resultAfter.DivergenceStroops)
+			}
+			if resultAfter.OverMintStroops != nil && resultAfter.OverMintStroops.Sign() > 0 {
+				t.Errorf("%s: OverMintStroops = %s after recovery, want 0 (classic+pool must cover the SAC total)",
+					tc.name, resultAfter.OverMintStroops)
 			}
 			if after.TotalSupply.Cmp(before.TotalSupply) <= 0 {
 				t.Errorf("%s: classic total did not increase after recovering the pool balance (before=%s after=%s) — SumSACBalancesAtOrBefore did not pick up the new holder",
