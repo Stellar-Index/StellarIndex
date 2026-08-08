@@ -243,6 +243,17 @@ func (r *ExplorerReader) ContractCodeHistory(ctx context.Context, contractID str
 	}
 	var cidHash xdr.Hash
 	copy(cidHash[:], dec)
+
+	// Index-first (inventory #26 item 3): the keyed
+	// contract_instance_changes timeline turns this from a scan-shaped
+	// key_xdr predicate over the whole changes log (8s+ cold, the last
+	// persistent 503 class in the 2026-08-09 route sweep) into a
+	// primary-key walk. Fallback keeps the legacy scan for deployments
+	// without the index.
+	if r.instanceChangesIndexAvailable(ctx) {
+		return r.contractCodeHistoryIndexed(ctx, cidHash)
+	}
+
 	keys, err := instanceKeyXDR(cidHash)
 	if err != nil {
 		return nil, err
@@ -279,6 +290,53 @@ func (r *ExplorerReader) ContractCodeHistory(ctx context.Context, contractID str
 			continue
 		}
 		h := hex.EncodeToString(inst.Executable.WasmHash[:])
+		if h == lastHash {
+			continue // unchanged executable — not an upgrade
+		}
+		lastHash = h
+		out = append(out, ContractCodeVersion{Ledger: seq, CloseTime: closeTime, WasmHash: h})
+	}
+	return out, rows.Err()
+}
+
+// contractCodeHistoryIndexedQuery reads the keyed instance-executable
+// timeline (deploy/clickhouse/contract_instance_changes.sql). The
+// contract_hash predicate is the table's primary-key prefix, ascending
+// order matches the collapse loop, and the same newest-preserving cap as
+// the legacy scan bounds pathological instance-storage churn: the inner
+// select keeps the NEWEST rows, the outer re-sorts ascending.
+const contractCodeHistoryIndexedQuery = `SELECT ledger_seq, close_time, wasm_hash FROM (
+			SELECT ledger_seq, close_time, wasm_hash, change_index
+			FROM stellar.contract_instance_changes
+			WHERE contract_hash = ? AND is_sac = 0 AND wasm_hash != ''
+			ORDER BY ledger_seq DESC, change_index DESC
+			LIMIT ?
+		) ORDER BY ledger_seq ASC, change_index ASC`
+
+// contractCodeHistoryIndexed is ContractCodeHistory's fast path over the
+// keyed index: no XDR decode (the MV/backfill already extracted the
+// executable verdict), collapse of consecutive identical hashes in Go —
+// which also absorbs RMT pre-merge duplicate keys, since a duplicate row
+// carries the same hash as its neighbour.
+func (r *ExplorerReader) contractCodeHistoryIndexed(ctx context.Context, cid xdr.Hash) ([]ContractCodeVersion, error) {
+	rows, err := r.conn.Query(ctx, contractCodeHistoryIndexedQuery,
+		hex.EncodeToString(cid[:]), contractCodeHistoryMaxRows)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: contract code history (indexed): %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []ContractCodeVersion
+	var lastHash string
+	for rows.Next() {
+		var (
+			seq       uint32
+			closeTime time.Time
+			h         string
+		)
+		if err := rows.Scan(&seq, &closeTime, &h); err != nil {
+			return nil, fmt.Errorf("clickhouse: scan code history (indexed): %w", err)
+		}
 		if h == lastHash {
 			continue // unchanged executable — not an upgrade
 		}
