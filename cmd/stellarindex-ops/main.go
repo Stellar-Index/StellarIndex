@@ -166,6 +166,7 @@ var subcommands = map[string]func(args []string) error{
 	"ch-txindex-backfill":          chops.Run,
 	"ch-contract-ledgers-backfill": chops.Run,
 	"ch-cap67-movements":           chops.Run,
+	"ch-holders-rollup":            chops.Run,
 	"ch-participant-backfill":      chops.Run,
 	"ch-recognition":               chops.Run,
 	"verify-recognition":           chops.Run,
@@ -274,6 +275,11 @@ Subcommands:
                           (provenance cap67_derived). Resumes from
                           stellar.cap67_movements_watermark; a 5-min timer
                           keeps it following the tip. Inventory #1.
+  ch-holders-rollup -ch-addr ADDR
+                          Recompute every asset's top-500 holders board +
+                          holder count into staging and atomically exchange
+                          live (asset_holders_rollup). Run from the 30-min
+                          timer; backs sub-second /v1/assets/{id}/holders.
   ch-contract-ledgers-backfill -ch-addr ADDR [-from N] [-to N] [-window N]
                           One-time historical fill of
                           stellar.contract_active_ledgers (the per-contract

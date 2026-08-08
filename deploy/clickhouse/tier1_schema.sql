@@ -675,3 +675,30 @@ CREATE TABLE IF NOT EXISTS stellar.cap67_movements_watermark
 )
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY name;
+
+-- ── asset_holders_rollup — see deploy/clickhouse/asset_holders_rollup.sql ──
+CREATE TABLE IF NOT EXISTS stellar.asset_holders_rollup
+(
+    asset       String,
+    rank        UInt32,
+    account_id  String,
+    balance     Int64,
+    computed_at DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+ORDER BY (asset, rank);
+
+CREATE TABLE IF NOT EXISTS stellar.asset_holders_rollup_staging
+AS stellar.asset_holders_rollup;
+
+CREATE TABLE IF NOT EXISTS stellar.asset_holders_counts
+(
+    asset       String,
+    holders     Int64,
+    computed_at DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+ORDER BY asset;
+
+CREATE TABLE IF NOT EXISTS stellar.asset_holders_counts_staging
+AS stellar.asset_holders_counts;

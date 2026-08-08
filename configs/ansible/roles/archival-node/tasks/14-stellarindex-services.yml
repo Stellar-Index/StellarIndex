@@ -515,6 +515,8 @@
     - directory-sync.timer
     - cap67-movements.service
     - cap67-movements.timer
+    - holders-rollup.service
+    - holders-rollup.timer
     - compute-completeness.service
     - compute-completeness.timer
     - data-freshness.service
@@ -542,6 +544,7 @@
     - sep1-refresh.timer
     - directory-sync.timer
     - cap67-movements.timer
+    - holders-rollup.timer
     - compute-completeness.timer
     - data-freshness.timer
     - ch-supply.timer
