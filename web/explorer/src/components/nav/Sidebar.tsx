@@ -43,6 +43,7 @@ import { useMe } from '@/api/hooks';
 import { API_BASE_URL } from '@/api/client';
 import { cn } from '@/lib/cn';
 import { useDialog } from '@/lib/useDialog';
+import { LiveLedgerBadge } from './LiveLedgerBadge';
 import { SearchModal } from './SearchModal';
 
 type NavItem = { href: string; label: string; icon: LucideIcon; external?: boolean; exact?: boolean };
@@ -220,6 +221,9 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
           </div>
         ))}
       </nav>
+
+      {/* Live network heartbeat — just above the account card. */}
+      <LiveLedgerBadge onNavigate={onNavigate} />
 
       {/* Account — bottom-left */}
       <div className="shrink-0 border-t border-line p-3">
