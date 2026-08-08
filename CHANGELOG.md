@@ -15,6 +15,19 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **/ledgers table was permanently stuck on "Loading…"** — the page
+  wrapped `LedgersTable` (which takes no `useSearchParams`) in a
+  vestigial `<Suspense fallback={null}>`, and the static exporter
+  emitted that boundary as a never-completing pending template, so
+  browsers never hydrated or client-rendered the subtree (zero network
+  activity; the only such boundary on the site — audited all pages).
+  Wrapper removed. The live-follow refetch on /ledgers + /operations
+  is also throttled to one per 10s (operations' newest row structurally
+  trails the ingest-tip stream, so unthrottled it refetched every
+  close, ~12 req/min per viewer) and no longer fires while the initial
+  page fetch is in flight.
+
 ## [v0.30.0] — 2026-08-08
 
 ### Fixed

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -29,6 +29,9 @@ type OperationsResp = NonNullable<
 type OpView = TxOperation;
 
 const PAGE_SIZE = 50;
+
+/** Minimum gap between live-follow refetches (RT-2). */
+const LIVE_REFETCH_MIN_MS = 10_000;
 
 // A one-line summary of the decoded op body — the fields that matter
 // most per type, best-effort. Falls back to nothing (the type badge
@@ -71,15 +74,25 @@ export function OperationsView() {
   // Live follow (RT-2, same shape as /ledgers): while page 1 is on
   // screen, a ledger close newer than the newest row triggers a
   // refetch, and rows from ledgers that weren't there before animate
-  // in. Deep-paged readers are never shifted.
+  // in. Deep-paged readers are never shifted. THROTTLED: the newest
+  // served operation structurally trails the ingest-tip stream by a
+  // beat, so the newer-than guard alone can never settle — unthrottled
+  // this refetched every close (~12 req/min per viewer, observed live
+  // 2026-08-09).
   const frame = useLedgerStream();
   const clock = useLiveClock();
   const queryClient = useQueryClient();
+  const lastRefetchRef = useRef(0);
   const streamLatest = frame?.data.latest_ledger;
   const newestShown = ops[0]?.ledger;
   useEffect(() => {
     if (cursor || streamLatest == null) return;
-    if (newestShown != null && streamLatest <= newestShown) return;
+    // Wait for the initial page before following — invalidating while
+    // the first fetch is in flight just cancels and restarts it.
+    if (newestShown == null || streamLatest <= newestShown) return;
+    const now = Date.now();
+    if (now - lastRefetchRef.current < LIVE_REFETCH_MIN_MS) return;
+    lastRefetchRef.current = now;
     void queryClient.invalidateQueries({ queryKey: ['/v1/operations', ''] });
   }, [cursor, streamLatest, newestShown, queryClient]);
   const following =
