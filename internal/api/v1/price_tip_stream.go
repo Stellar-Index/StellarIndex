@@ -146,6 +146,38 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// We have a valid first event + an open response. Switch to SSE.
+	//
+	// Two producer shapes (RT-1, audit 2026-08-04 "tip stream = 6 DB
+	// queries/s PER CONNECTION"):
+	//
+	//   - Hub-wired deployments (production): ONE shared producer per
+	//     distinct (asset, quote, window) publishes into the Hub; this
+	//     connection is a plain subscriber. Steady-state DB cost scales
+	//     with distinct pairs being watched, not with viewers. The
+	//     pre-flight snapshot computed above is still emitted as this
+	//     connection's first frame so the page paints instantly even
+	//     when it joins mid-tick; a near-duplicate tip_update from the
+	//     shared producer is harmless (idempotent state update).
+	//   - Hub-less deployments (tests, minimal binaries): the legacy
+	//     per-connection tick loop.
+	if s.hub != nil {
+		// The producer's context is DELIBERATELY detached from r.Context()
+		// (contextcheck): the shared compute loop outlives any single
+		// connection — it stops via the registry's refcount + linger, not
+		// via this request's cancellation.
+		topic, releaseProducer := s.acquireTipProducer(asset, quote, window) //nolint:contextcheck
+		defer releaseProducer()
+		sub, cancelSub := s.hub.Subscribe([]string{topic}, streaming.LastEventIDFrom(r))
+		defer cancelSub()
+
+		var gen streaming.Generator
+		firstEv, _ := tipStreamEvent(&gen, first, firstSources)
+		ch := make(chan streaming.Event, tipStreamProducerQueueDepth)
+		go s.forwardTipStream(r.Context(), ch, sub, firstEv)
+		streaming.StreamFromChannelPreAdmitted(w, r, ch, streaming.StreamOptions{})
+		return
+	}
+
 	var gen streaming.Generator
 	ch := make(chan streaming.Event, tipStreamProducerQueueDepth)
 	prodCtx, cancelProd := context.WithCancel(r.Context())
@@ -154,6 +186,46 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 	go s.runTipStreamProducer(prodCtx, ch, &gen, asset, quote, window, first, firstSources)
 
 	streaming.StreamFromChannelPreAdmitted(w, r, ch, streaming.StreamOptions{})
+}
+
+// forwardTipStream bridges a Hub subscription onto the SSE writer
+// channel, prepending the connection's own pre-flight snapshot so the
+// first frame never waits for the shared producer's next tick. Returns
+// (closing ch so the SSE writer ends cleanly) when the request context
+// cancels or the Hub subscription closes (hub shutdown / topic evict —
+// the client's EventSource auto-reconnects and lands on a fresh
+// subscription).
+func (s *Server) forwardTipStream(
+	ctx context.Context,
+	ch chan<- streaming.Event,
+	sub <-chan streaming.Event,
+	firstEv streaming.Event,
+) {
+	defer s.recoverStreamProducer("price_tip")
+	defer close(ch)
+
+	if len(firstEv.Data) > 0 {
+		select {
+		case <-ctx.Done():
+			return
+		case ch <- firstEv:
+		}
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ev, open := <-sub:
+			if !open {
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case ch <- ev:
+			}
+		}
+	}
 }
 
 // runTipStreamProducer is the per-connection compute + push loop.
