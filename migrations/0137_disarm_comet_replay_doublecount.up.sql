@@ -1,0 +1,33 @@
+-- 0137: disarm the comet replay double-count (inventory #19; comet audit
+-- 2026-08-03, confirming audit-2026-08-01).
+--
+-- Migration 0059 added event_index to comet_liquidity's PK and left the
+-- existing rows at event_index=0 on the premise that "a re-derive then
+-- adds the previously-dropped siblings (no DELETE needed)". That premise
+-- is FALSE for comet: the pool interleaves SEP-41 transfer events with
+-- its own, so a liquidity event's TRUE event_index is usually nonzero —
+-- a projector-replay writes the SAME event under a DIFFERENT PK than its
+-- legacy event_index=0 row, and every replayed op double-counts (the
+-- 47,372 legacy index-0 rows of 59,726 total on r1 at fix time).
+--
+-- The disarm: drop every comet_liquidity row. All of it is re-derivable
+-- from the certified lake — comet is the single Blend BLND/USDC backstop
+-- pool (ledgers 51,499,922..tip at fix time; ~60k rows). REQUIRED
+-- follow-up on any populated deployment, immediately after the deploy
+-- that applies this migration:
+--
+--   /usr/local/sbin/run-heavy-job.sh comet-replay \
+--     /usr/local/bin/stellarindex-ops projector-replay \
+--     -config /etc/stellarindex.toml -source comet -from 51499000
+--
+-- Until the replay completes, comet liquidity reads serve empty —
+-- honest-absent (the ADR-0033 projection reconcile will show the comet
+-- window as unprojected), never double-counted. Trades are NOT touched:
+-- the comet swap path fans op_index by event_index at decode time
+-- (canonical.FanoutOpIndex), so trade PKs were always correct.
+--
+-- TimescaleDB blocks DML on compressed chunks; decompress first (small
+-- table — cheap).
+SELECT decompress_chunk(c, true) FROM show_chunks('comet_liquidity') c;
+
+DELETE FROM comet_liquidity;
