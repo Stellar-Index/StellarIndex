@@ -197,11 +197,22 @@ func (p *Publisher) tickOnce(ctx context.Context, pair canonical.Pair, topic str
 		return
 	}
 
+	// The DOCUMENTED envelope shape — field-compatible with /v1/price
+	// responses and the redispub bridge's fan-out (cold audit
+	// 2026-08-03: this producer previously emitted a bespoke
+	// {snapshot, sources, stale} shape that matched neither). as_of is
+	// the bucket's ObservedAt — deterministic, preserving the
+	// byte-identical cross-region property this package's docs promise.
 	payload, err := json.Marshal(struct {
-		Snapshot v1.PriceSnapshot `json:"snapshot"`
-		Sources  []string         `json:"sources"`
-		Stale    bool             `json:"stale,omitempty"`
-	}{Snapshot: snap, Sources: sources, Stale: stale})
+		Data    v1.PriceSnapshot `json:"data"`
+		AsOf    time.Time        `json:"as_of"`
+		Sources []string         `json:"sources,omitempty"`
+		Flags   struct {
+			Stale bool `json:"stale"`
+		} `json:"flags"`
+	}{Data: snap, AsOf: snap.ObservedAt, Sources: sources, Flags: struct {
+		Stale bool `json:"stale"`
+	}{Stale: stale}})
 	if err != nil {
 		// json.Marshal of a fixed shape that already round-trips
 		// through /v1/price — only surfaces on a Go runtime defect.
