@@ -200,6 +200,10 @@ type ExplorerReader interface {
 	// AccountsStats is the /accounts hub analytics snapshot (rollup-
 	// backed; ok=false while the rollup hasn't completed a cycle).
 	AccountsStats(ctx context.Context) (clickhouse.AccountsStats, bool, error)
+	// ContractActivitySummaryFor is the per-contract liveness card
+	// (first/last seen + daily active-ledger series; ok=false when the
+	// active-ledgers index isn't usable — callers omit the card).
+	ContractActivitySummaryFor(ctx context.Context, contractID string, days int) (clickhouse.ContractActivitySummary, bool, error)
 }
 
 // ContractsReader is the narrow read seam onto the protocol_contracts

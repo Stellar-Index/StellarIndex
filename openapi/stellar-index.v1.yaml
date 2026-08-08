@@ -7899,6 +7899,20 @@ paths:
                       events: { type: array, items: { $ref: "#/components/schemas/ContractEvent" } }
                       next_cursor: { type: string, description: Opaque cursor for the next (older) page; absent on the last page. }
                       directory: { $ref: "#/components/schemas/DirectoryInfo" }
+                      activity:
+                        type: object
+                        description: Liveness card — lifetime bounds + a 30-day daily active-ledger series. Absent when the activity index isn't provisioned.
+                        properties:
+                          first_seen: { type: string, format: date-time }
+                          last_seen: { type: string, format: date-time }
+                          active_ledgers_total: { type: integer, format: int64 }
+                          daily:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                date: { type: string }
+                                active_ledgers: { type: integer, format: int64 }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 

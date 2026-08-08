@@ -11211,6 +11211,20 @@ export interface paths {
                                 /** @description Opaque cursor for the next (older) page; absent on the last page. */
                                 next_cursor?: string;
                                 directory?: components["schemas"]["DirectoryInfo"];
+                                /** @description Liveness card — lifetime bounds + a 30-day daily active-ledger series. Absent when the activity index isn't provisioned. */
+                                activity?: {
+                                    /** Format: date-time */
+                                    first_seen?: string;
+                                    /** Format: date-time */
+                                    last_seen?: string;
+                                    /** Format: int64 */
+                                    active_ledgers_total?: number;
+                                    daily?: {
+                                        date?: string;
+                                        /** Format: int64 */
+                                        active_ledgers?: number;
+                                    }[];
+                                };
                             };
                         };
                     };
