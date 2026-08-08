@@ -1,13 +1,16 @@
 'use client';
 
 import Link from 'next/link';
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { OperationMixPanel, ThroughputPanel } from '@/components/NetworkInsight';
 import { apiGet, asExample } from '@/api/client';
+import { cn } from '@/lib/cn';
 import { formatCompact } from '@/lib/format';
+import { isFrameStale, LEDGER_LIVE_STALE_MS, useLedgerStream, useLiveClock } from '@/lib/live/hooks';
 import {
   type Envelope,
   type TxOperation,
@@ -65,6 +68,29 @@ export function OperationsView() {
 
   const ops = q.data?.operations ?? [];
 
+  // Live follow (RT-2, same shape as /ledgers): while page 1 is on
+  // screen, a ledger close newer than the newest row triggers a
+  // refetch, and rows from ledgers that weren't there before animate
+  // in. Deep-paged readers are never shifted.
+  const frame = useLedgerStream();
+  const clock = useLiveClock();
+  const queryClient = useQueryClient();
+  const streamLatest = frame?.data.latest_ledger;
+  const newestShown = ops[0]?.ledger;
+  useEffect(() => {
+    if (cursor || streamLatest == null) return;
+    if (newestShown != null && streamLatest <= newestShown) return;
+    void queryClient.invalidateQueries({ queryKey: ['/v1/operations', ''] });
+  }, [cursor, streamLatest, newestShown, queryClient]);
+  const following =
+    !cursor && frame != null && !isFrameStale(clock, frame.receivedAt, LEDGER_LIVE_STALE_MS);
+  const [prevNewest, setPrevNewest] = useState<number | null>(null);
+  const [flashAbove, setFlashAbove] = useState<number | null>(null);
+  if (newestShown != null && newestShown !== prevNewest) {
+    setPrevNewest(newestShown);
+    setFlashAbove(!cursor ? prevNewest : null);
+  }
+
   return (
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
       <header className="space-y-1">
@@ -88,6 +114,7 @@ export function OperationsView() {
 
       <Panel
         title={ops.length > 0 ? `Recent operations (${formatCompact(ops.length)})` : 'Recent operations'}
+        hint={following ? 'live' : undefined}
         source={asExample('/v1/operations', { limit: PAGE_SIZE })}
         bodyClassName="-mx-4"
       >
@@ -118,7 +145,13 @@ export function OperationsView() {
               </thead>
               <tbody className="divide-y divide-line-subtle">
                 {ops.map((op) => (
-                  <tr key={`${op.tx_hash}:${op.op_index}`} className="hover:bg-surface-muted">
+                  <tr
+                    key={`${op.tx_hash}:${op.op_index}`}
+                    className={cn(
+                      'hover:bg-surface-muted',
+                      flashAbove != null && (op.ledger ?? 0) > flashAbove && 'live-tick',
+                    )}
+                  >
                     <td className="px-4 py-3">
                       <Link
                         href={`/operation?tx=${op.tx_hash}&i=${op.op_index}`}
