@@ -1,0 +1,19 @@
+# systemd timer: asset-holders rollup — every 30 minutes.
+#
+# Rendered by Ansible. Companion to holders-rollup.service (inventory
+# #4): holders boards move slowly, and each cycle costs the two FINAL
+# scans the API used to pay per-request.
+
+[Unit]
+Description=asset-holders rollup every 30 minutes
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/open-fixes-inventory-2026-08-08.md
+
+[Timer]
+OnBootSec=10min
+OnUnitInactiveSec=30min
+RandomizedDelaySec=120
+Persistent=true
+Unit=holders-rollup.service
+
+[Install]
+WantedBy=timers.target

@@ -131,6 +131,14 @@ type ExplorerReader struct {
 	// index-unavailable, not as "no contract has events".
 	contractLedgersProbe schemaProbe
 
+	// holdersRollupProbe probes stellar.asset_holders_rollup (inventory
+	// #4, deploy/clickhouse/asset_holders_rollup.sql). Present +
+	// non-empty → AssetHolders serves keyed precomputed boards; absent →
+	// the legacy two-FINAL-scans-per-request path. requireRows: a
+	// never-exchanged empty rollup must read as unavailable, not as
+	// "no asset has holders".
+	holdersRollupProbe schemaProbe
+
 	// cap67 movements watermark cache (see Cap67MovementsWatermark in
 	// cap67_movements.go).
 	cap67WMMu sync.Mutex
