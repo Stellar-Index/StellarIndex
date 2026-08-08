@@ -4,6 +4,7 @@ import (
 	"context"
 	"math/big"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -93,8 +94,12 @@ func TestExplorer_AccountMovements_Merge(t *testing.T) {
 	}
 	mustDecode(t, resp, &body)
 
-	if body.Data.CoverageNote != "" {
-		t.Errorf("coverage_note = %q, want empty (both readers wired)", body.Data.CoverageNote)
+	// Site audit 2026-08-08: the healthy-path note is now ALWAYS present —
+	// it discloses the post-P23 watched-token scope (classic XLM payments
+	// after P23 aren't served on this feed yet), so a busy XLM account's
+	// feed can't silently masquerade as complete.
+	if !strings.Contains(body.Data.CoverageNote, "P23") || !strings.Contains(body.Data.CoverageNote, "watched") {
+		t.Errorf("coverage_note = %q, want the post-P23 watched-token scope disclosure", body.Data.CoverageNote)
 	}
 	if len(body.Data.Movements) != 3 {
 		t.Fatalf("movements = %d, want 3: %+v", len(body.Data.Movements), body.Data.Movements)

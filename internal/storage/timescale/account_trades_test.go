@@ -19,10 +19,10 @@ func TestAccountTradesQuery_Shape(t *testing.T) {
 		if len(parts) != 2 {
 			t.Fatalf("hasCursor=%v: query is not a two-arm UNION:\n%s", hasCursor, q)
 		}
-		if !strings.Contains(parts[0], "WHERE taker = $1") {
-			t.Errorf("hasCursor=%v: arm 1 must key the taker index:\n%s", hasCursor, parts[0])
+		if !strings.Contains(parts[0], "WHERE taker = $1 AND ts >= $2") {
+			t.Errorf("hasCursor=%v: arm 1 must key the taker index with the compression-horizon floor:\n%s", hasCursor, parts[0])
 		}
-		if !strings.Contains(parts[1], "WHERE maker = $1 AND (taker IS NULL OR taker <> $1)") {
+		if !strings.Contains(parts[1], "WHERE maker = $1 AND ts >= $2 AND (taker IS NULL OR taker <> $1)") {
 			t.Errorf("hasCursor=%v: arm 2 must key the maker index and exclude taker-arm rows:\n%s", hasCursor, parts[1])
 		}
 		const orderBy = "ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC LIMIT"
@@ -31,7 +31,7 @@ func TestAccountTradesQuery_Shape(t *testing.T) {
 				hasCursor, got, q)
 		}
 
-		wantCursor := strings.Count(q, "(ts, ledger, tx_hash, op_index) < ($2, $3, $4, $5)")
+		wantCursor := strings.Count(q, "(ts, ledger, tx_hash, op_index) < ($3, $4, $5, $6)")
 		if hasCursor && wantCursor != 2 {
 			t.Errorf("cursor page: both arms must carry the keyset tuple comparison, got %d:\n%s", wantCursor, q)
 		}

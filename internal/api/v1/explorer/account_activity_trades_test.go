@@ -26,13 +26,13 @@ type stubTradesReader struct {
 	gotLimit       atomic.Int32
 }
 
-func (s *stubTradesReader) ListAccountTrades(ctx context.Context, _ string, limit int, _ timescale.AccountTradesCursor) ([]timescale.AccountTradeRow, error) {
+func (s *stubTradesReader) ListAccountTrades(ctx context.Context, _ string, limit int, _ timescale.AccountTradesCursor) ([]timescale.AccountTradeRow, time.Time, error) {
 	s.calls.Add(1)
 	s.gotLimit.Store(int32(limit)) //nolint:gosec // test limit fits int32
 	if _, ok := ctx.Deadline(); ok {
 		s.gotCtxDeadline.Store(true)
 	}
-	return s.rows, s.err
+	return s.rows, time.Time{}, s.err
 }
 
 type stubActivityReader struct {
@@ -45,9 +45,9 @@ type stubActivityReader struct {
 	calls     atomic.Int32
 }
 
-func (s *stubActivityReader) CountAccountTrades(context.Context, string) (int64, error) {
+func (s *stubActivityReader) CountAccountTrades(context.Context, string) (int64, time.Time, error) {
 	s.calls.Add(1)
-	return s.trades, s.tradesErr
+	return s.trades, time.Time{}, s.tradesErr
 }
 
 func (s *stubActivityReader) DefiActionCountsByUser(context.Context, string) ([]timescale.DefiActionCount, error) {

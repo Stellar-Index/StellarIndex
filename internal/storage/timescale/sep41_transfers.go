@@ -385,7 +385,49 @@ func (c SEP41TransferCursor) IsSet() bool { return c.Ledger > 0 }
 // semantics honestly asymmetric (documented) rather than silently
 // wrong.
 //
-//nolint:gocognit,gocyclo // linear query-build (four optional clauses) + row-scan loop, same shape as ListSEP41Transfers.
+
+// sep41TransfersByAddressQuery assembles the UNION arm set for one
+// direction filter (see ListSEP41TransfersByAddress's shape comment).
+func sep41TransfersByAddressQuery(direction, cursorClause, orderBy string) (string, error) {
+	const armCols = `
+            ledger_close_time, ledger, tx_hash, op_index, event_index,
+            contract_id, event_kind,
+            from_addr, to_addr,
+            amount::text AS amount, live_until_ledger, authorized`
+	fromArm := `(SELECT` + armCols + `
+        FROM sep41_transfers
+        WHERE event_kind = 'transfer' AND ledger >= $1
+          AND from_addr = $2 AND (to_addr IS DISTINCT FROM $2)` + cursorClause + orderBy + `)`
+	toArm := `(SELECT` + armCols + `
+        FROM sep41_transfers
+        WHERE event_kind = 'transfer' AND ledger >= $1
+          AND to_addr = $2 AND (from_addr IS DISTINCT FROM $2)` + cursorClause + orderBy + `)`
+	selfArm := `(SELECT` + armCols + `
+        FROM sep41_transfers
+        WHERE event_kind = 'transfer' AND ledger >= $1
+          AND from_addr = $2 AND to_addr = $2` + cursorClause + orderBy + `)`
+
+	var arms []string
+	switch direction {
+	case "sent":
+		arms = []string{fromArm}
+	case "received":
+		arms = []string{toArm}
+	case "self":
+		arms = []string{selfArm}
+	case "":
+		arms = []string{fromArm, toArm, selfArm}
+	default:
+		return "", fmt.Errorf("timescale: ListSEP41TransfersByAddress: invalid direction %q", direction)
+	}
+	return `
+        SELECT ledger_close_time, ledger, tx_hash, op_index, event_index,
+               contract_id, event_kind, from_addr, to_addr,
+               amount, live_until_ledger, authorized
+        FROM (` + strings.Join(arms, " UNION ALL ") + `) u` + orderBy, nil
+}
+
+//nolint:gocognit // linear: arm-select + cursor build + null-projecting row-scan loop, same shape as ListSEP41Transfers.
 func (s *Store) ListSEP41TransfersByAddress(ctx context.Context, address string, limit int, cur SEP41TransferCursor, direction string) ([]SEP41TransferRow, error) {
 	if address == "" {
 		return nil, errors.New("timescale: ListSEP41TransfersByAddress: empty address")
@@ -397,38 +439,35 @@ func (s *Store) ListSEP41TransfersByAddress(ctx context.Context, address string,
 		limit = 200
 	}
 
-	var sb strings.Builder
-	sb.WriteString(`
-        SELECT
-            ledger_close_time, ledger, tx_hash, op_index, event_index,
-            contract_id, event_kind,
-            from_addr, to_addr,
-            amount::text, live_until_ledger, authorized
-        FROM sep41_transfers
-        WHERE event_kind = 'transfer'
-          AND ledger >= $1
-          AND (from_addr = $2 OR to_addr = $2)
-    `)
+	// QUERY SHAPE (site audit 2026-08-08): two index-friendly arms
+	// UNION'd, not `from_addr = $2 OR to_addr = $2` — the same OR
+	// disease account_trades.go documents. The OR can't ride either
+	// address-leading partial index in output order, so on the 30/32
+	// COMPRESSED sep41_transfers chunks (no btrees) the planner
+	// decompress-scanned every chunk, blew the statement timeout, and
+	// the movements handler soft-failed the tail — which is why busy
+	// accounts' /movements silently stopped at the P23 boundary. Each
+	// arm walks its own partial index (from_addr/to_addr, ledger DESC)
+	// newest-first and stops after one page; the outer merge picks the
+	// page. Direction filters collapse to arm selection: sent = the
+	// from-arm alone, received = the to-arm alone, self = one from-arm
+	// with to = from.
+	cursorClause := ""
 	args := []any{int64(SEP41MovementsFloorLedger), address}
-	switch direction {
-	case "sent":
-		sb.WriteString(" AND from_addr = $2 AND (to_addr IS DISTINCT FROM $2)")
-	case "received":
-		sb.WriteString(" AND to_addr = $2 AND (from_addr IS DISTINCT FROM $2)")
-	case "self":
-		sb.WriteString(" AND from_addr = $2 AND to_addr = $2")
-	case "":
-		// no direction filter
-	default:
-		return nil, fmt.Errorf("timescale: ListSEP41TransfersByAddress: invalid direction %q", direction)
-	}
 	if cur.IsSet() {
 		args = append(args, int64(cur.Ledger), cur.TxHash, int16(cur.OpIndex), int16(cur.EventIndex))
-		fmt.Fprintf(&sb, " AND (ledger, tx_hash, op_index, event_index) < ($%d, $%d, $%d, $%d)",
-			len(args)-3, len(args)-2, len(args)-1, len(args))
+		cursorClause = " AND (ledger, tx_hash, op_index, event_index) < ($3, $4, $5, $6)"
 	}
 	args = append(args, limit)
-	fmt.Fprintf(&sb, " ORDER BY ledger DESC, tx_hash DESC, op_index DESC, event_index DESC LIMIT $%d", len(args))
+	limitPh := fmt.Sprintf("$%d", len(args))
+	orderBy := " ORDER BY ledger DESC, tx_hash DESC, op_index DESC, event_index DESC LIMIT " + limitPh
+
+	q, qerr := sep41TransfersByAddressQuery(direction, cursorClause, orderBy)
+	if qerr != nil {
+		return nil, qerr
+	}
+	var sb strings.Builder
+	sb.WriteString(q)
 
 	rows, err := s.db.QueryContext(ctx, sb.String(), args...)
 	if err != nil {

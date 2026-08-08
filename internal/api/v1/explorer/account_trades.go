@@ -19,7 +19,7 @@ import (
 // *timescale.Store satisfies it. Nil disables the endpoint (503), same
 // degrade pattern as PositionsReader.
 type TradesReader interface {
-	ListAccountTrades(ctx context.Context, address string, limit int, cur timescale.AccountTradesCursor) ([]timescale.AccountTradeRow, error)
+	ListAccountTrades(ctx context.Context, address string, limit int, cur timescale.AccountTradesCursor) ([]timescale.AccountTradeRow, time.Time, error)
 }
 
 // accountTradesDefaultLimit / accountTradesMaxLimit — the pagination
@@ -165,7 +165,7 @@ func (h *Handler) AccountTrades(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	rows, err := h.Trades.ListAccountTrades(ctx, g, limit, cur)
+	rows, horizon, err := h.Trades.ListAccountTrades(ctx, g, limit, cur)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -182,10 +182,20 @@ func (h *Handler) AccountTrades(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	note := accountTradesScopeNote
+	if !horizon.IsZero() && horizon.Year() > 1971 {
+		// Compression-horizon floor (site audit 2026-08-08): trades older
+		// than the oldest uncompressed chunk aren't index-searchable per
+		// account yet — say so instead of serving a silently-partial
+		// "all time" list. The deep-history serving path is tracked as
+		// the account-archive ClickHouse work.
+		note += " Showing trades since " + horizon.UTC().Format("2006-01-02") +
+			"; older trade history is not yet searchable per-account and is being rebuilt."
+	}
 	out := AccountTradesView{
 		Account: g,
 		Trades:  make([]AccountTradeEntry, len(rows)),
-		Note:    accountTradesScopeNote,
+		Note:    note,
 	}
 	for i, t := range rows {
 		out.Trades[i] = accountTradeEntryView(t)

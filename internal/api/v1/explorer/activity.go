@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -28,7 +29,7 @@ import (
 // ActivityReader is the narrow Postgres read seam this endpoint needs.
 // *timescale.Store satisfies it. Nil disables the endpoint (503).
 type ActivityReader interface {
-	CountAccountTrades(ctx context.Context, address string) (int64, error)
+	CountAccountTrades(ctx context.Context, address string) (int64, time.Time, error)
 	DefiActionCountsByUser(ctx context.Context, address string) ([]timescale.DefiActionCount, error)
 	BridgeActivityByAddress(ctx context.Context, address string) (timescale.BridgeActivity, error)
 }
@@ -68,11 +69,15 @@ const bridgeMatchingNote = "rozo matches payment from_addr (outbound) / destinat
 // /v1/accounts/{g_strkey}/activity. Segments that could not be read are
 // ABSENT (nil), never zero-filled — coverage_note names them.
 type AccountActivityView struct {
-	Account         string               `json:"account"`
-	OpsByType       []OpTypeCountView    `json:"ops_by_type,omitempty"`
-	TradesTotal     *int64               `json:"trades_total,omitempty"`
-	DefiActions     []DefiActionView     `json:"defi_actions,omitempty"`
-	BridgeTransfers *BridgeTransfersView `json:"bridge_transfers,omitempty"`
+	Account     string            `json:"account"`
+	OpsByType   []OpTypeCountView `json:"ops_by_type,omitempty"`
+	TradesTotal *int64            `json:"trades_total,omitempty"`
+	// TradesTotalSince, when set, is the date trades_total counts FROM —
+	// the trades compression horizon (older rows aren't per-account
+	// searchable yet; site audit 2026-08-08). Absent = all-time.
+	TradesTotalSince string               `json:"trades_total_since,omitempty"`
+	DefiActions      []DefiActionView     `json:"defi_actions,omitempty"`
+	BridgeTransfers  *BridgeTransfersView `json:"bridge_transfers,omitempty"`
 	// CoverageNote is the honest-degrade signal (same contract as the
 	// movements/positions siblings): present when one or more segments
 	// could not be read — those segments are MISSING, not zero.
@@ -169,11 +174,14 @@ func (h *Handler) computeAccountActivity(ctx context.Context, g string) (Account
 	if h.Activity == nil {
 		failed = append(failed, "trades_total, defi_actions, bridge_transfers (no Postgres activity reader wired)")
 	} else {
-		if n, err := h.Activity.CountAccountTrades(ctx, g); err != nil {
+		if n, horizon, err := h.Activity.CountAccountTrades(ctx, g); err != nil {
 			h.Logger.Error("activity: trades count read failed", "err", err, "account", g)
 			failed = append(failed, "trades_total")
 		} else {
 			out.TradesTotal = &n
+			if !horizon.IsZero() && horizon.Year() > 1971 {
+				out.TradesTotalSince = horizon.UTC().Format("2006-01-02")
+			}
 		}
 		if actions, err := h.Activity.DefiActionCountsByUser(ctx, g); err != nil {
 			h.Logger.Error("activity: defi action counts read failed", "err", err, "account", g)
