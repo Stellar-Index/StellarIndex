@@ -1,0 +1,20 @@
+# systemd timer: cap67 movements derive — every 5 minutes.
+#
+# Rendered by Ansible. Companion to cap67-movements.service. The derive
+# resumes from its watermark and exits when caught up, so steady-state
+# fires are minutes of work; while the initial multi-hour backfill (or
+# any long catch-up) runs, timer fires are one-instance no-ops.
+
+[Unit]
+Description=cap67 account-movements derive every 5 minutes
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/open-fixes-inventory-2026-08-08.md
+
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=5min
+RandomizedDelaySec=30
+Persistent=true
+Unit=cap67-movements.service
+
+[Install]
+WantedBy=timers.target

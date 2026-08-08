@@ -428,7 +428,7 @@ func sep41TransfersByAddressQuery(direction, cursorClause, orderBy string) (stri
 }
 
 //nolint:gocognit // linear: arm-select + cursor build + null-projecting row-scan loop, same shape as ListSEP41Transfers.
-func (s *Store) ListSEP41TransfersByAddress(ctx context.Context, address string, limit int, cur SEP41TransferCursor, direction string) ([]SEP41TransferRow, error) {
+func (s *Store) ListSEP41TransfersByAddress(ctx context.Context, address string, limit int, cur SEP41TransferCursor, direction string, floorLedger uint32) ([]SEP41TransferRow, error) {
 	if address == "" {
 		return nil, errors.New("timescale: ListSEP41TransfersByAddress: empty address")
 	}
@@ -452,8 +452,17 @@ func (s *Store) ListSEP41TransfersByAddress(ctx context.Context, address string,
 	// page. Direction filters collapse to arm selection: sent = the
 	// from-arm alone, received = the to-arm alone, self = one from-arm
 	// with to = from.
+	// floorLedger is the DYNAMIC lower bound (exclusive semantics via
+	// >=): the cap67 movements watermark + 1 once the lake-derived
+	// archive (inventory #1) is following — the archive serves
+	// everything at/below the watermark for ALL assets, so this tail
+	// only needs (watermark, tip]. Never below the P23 boundary: the
+	// classic_derived archive owns everything before it.
+	if floorLedger < SEP41MovementsFloorLedger {
+		floorLedger = SEP41MovementsFloorLedger
+	}
 	cursorClause := ""
-	args := []any{int64(SEP41MovementsFloorLedger), address}
+	args := []any{int64(floorLedger), address}
 	if cur.IsSet() {
 		args = append(args, int64(cur.Ledger), cur.TxHash, int16(cur.OpIndex), int16(cur.EventIndex))
 		cursorClause = " AND (ledger, tx_hash, op_index, event_index) < ($3, $4, $5, $6)"

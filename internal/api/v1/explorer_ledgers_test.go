@@ -27,6 +27,7 @@ type stubExplorerReader struct {
 	interactions   []clickhouse.ContractEdgeRow
 	codeHistory    []clickhouse.ContractCodeVersion
 	accountState   clickhouse.AccountState
+	cap67WM        uint32
 	holders        []clickhouse.AssetHolder
 	holderCount    int64
 	wealth         []clickhouse.AccountWealth
@@ -131,6 +132,10 @@ func (s *stubExplorerReader) ContractCodeHistory(_ context.Context, _ string) ([
 
 func (s *stubExplorerReader) AccountState(_ context.Context, _ string) (clickhouse.AccountState, error) {
 	return s.accountState, s.err
+}
+
+func (s *stubExplorerReader) Cap67MovementsWatermark(_ context.Context) (uint32, error) {
+	return s.cap67WM, nil
 }
 
 func (s *stubExplorerReader) AccountStateCached(_ context.Context, _ string) (clickhouse.AccountState, bool, error) {

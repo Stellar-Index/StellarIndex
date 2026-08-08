@@ -165,6 +165,7 @@ var subcommands = map[string]func(args []string) error{
 	"ch-supply":                    chops.Run,
 	"ch-txindex-backfill":          chops.Run,
 	"ch-contract-ledgers-backfill": chops.Run,
+	"ch-cap67-movements":           chops.Run,
 	"ch-participant-backfill":      chops.Run,
 	"ch-recognition":               chops.Run,
 	"verify-recognition":           chops.Run,
@@ -266,6 +267,13 @@ Subcommands:
                           Report sources lagging more than N ledgers (default 100)
                           behind the stellar-rpc network tip. Exit code 1 if any
                           source is lagging.
+  ch-cap67-movements -ch-addr ADDR [-from N] [-to N] [-window N] [-dry-run]
+                          Derive post-P23 account movements (ALL assets,
+                          native XLM included) from the lake's CAP-67
+                          transfer events into stellar.account_movements
+                          (provenance cap67_derived). Resumes from
+                          stellar.cap67_movements_watermark; a 5-min timer
+                          keeps it following the tip. Inventory #1.
   ch-contract-ledgers-backfill -ch-addr ADDR [-from N] [-to N] [-window N]
                           One-time historical fill of
                           stellar.contract_active_ledgers (the per-contract

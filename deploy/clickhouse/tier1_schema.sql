@@ -665,3 +665,13 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS stellar.contract_active_ledgers_mv
 TO stellar.contract_active_ledgers AS
 SELECT DISTINCT contract_id, ledger_seq, close_time
 FROM stellar.contract_events;
+
+-- ── cap67_movements_watermark — see deploy/clickhouse/cap67_movements.sql ──
+CREATE TABLE IF NOT EXISTS stellar.cap67_movements_watermark
+(
+    name        String,
+    thru_ledger UInt32,
+    updated_at  DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY name;

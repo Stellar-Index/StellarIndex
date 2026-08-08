@@ -131,6 +131,12 @@ type ExplorerReader struct {
 	// index-unavailable, not as "no contract has events".
 	contractLedgersProbe schemaProbe
 
+	// cap67 movements watermark cache (see Cap67MovementsWatermark in
+	// cap67_movements.go).
+	cap67WMMu sync.Mutex
+	cap67WM   uint32
+	cap67WMAt time.Time
+
 	// opsBySourceProbe probes whether stellar.ops_by_source (the slim
 	// sourced-history projection, deploy/clickhouse/ops_by_source.sql)
 	// exists. The account-history readers REFUSE without it — a silent
