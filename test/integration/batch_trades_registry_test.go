@@ -50,7 +50,7 @@ func TestBatchInsertTrades_PopulatesClassicAssetRegistry(t *testing.T) {
 	ts := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
 
 	mkTrade := func(ledger uint32, txTail rune) c.Trade {
-		txHash := "beadfeedbeadfeedbeadfeedbeadfeedbeadfeedbeadfeedbeadfeedbeadfe" + string(txTail)
+		txHash := "beadfeedbeadfeedbeadfeedbeadfeedbeadfeedbeadfeedbeadfeedbeadfee" + string(txTail)
 		return c.Trade{
 			Source:      "test-batch-registry",
 			Ledger:      ledger,

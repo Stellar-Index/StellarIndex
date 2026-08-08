@@ -196,13 +196,24 @@ func TestRateLimit_SkipsWhenSkipReturnsTrue(t *testing.T) {
 }
 
 func TestRateLimit_FailsOpenOnRedisError(t *testing.T) {
-	rdb, mr := newRLRedis(t)
+	// Deterministically-broken Redis: a client dialed at a miniredis
+	// that is closed BEFORE the client ever connects, with connection
+	// pooling that can't smuggle a live conn past the close. The
+	// previous shape (newRLRedis then mr.Close() mid-test) raced on CI:
+	// go-redis could complete one command on an already-pooled
+	// connection during miniredis's shutdown drain on a slow runner, so
+	// Take() succeeded and the "headers absent" assertion failed
+	// (ci-health flood, 2026-08-08). Closing first + a fresh client
+	// makes every Take() a dial failure — the exact production
+	// condition the test models.
+	mr := miniredis.RunT(t)
+	addr := mr.Addr()
+	mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: addr, MaxRetries: -1})
+	t.Cleanup(func() { _ = rdb.Close() })
 	b := ratelimit.New(rdb, 1, time.Minute)
 
 	h := middleware.RateLimit(b, fixedKeyFn("k4"), nil, nil)(okHandler())
-
-	// Blow up the backing miniredis — future Take() calls error.
-	mr.Close()
 
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()

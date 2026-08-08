@@ -606,7 +606,7 @@ jobs:
           version: "10"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v6
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "pnpm"
           cache-dependency-path: web/explorer/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
@@ -709,7 +709,7 @@ jobs:
           version: "10"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v6
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "pnpm"
           cache-dependency-path: web/status/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
