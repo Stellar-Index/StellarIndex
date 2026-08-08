@@ -12,28 +12,29 @@ import (
 )
 
 type stubExplorerReader struct {
-	ledgers        []clickhouse.LedgerHeader
-	txs            []clickhouse.TxSummary
-	ops            []clickhouse.OpRow
-	opTypeStats    []clickhouse.OpTypeCount
-	throughput     []clickhouse.ThroughputBucket
-	reserves       []clickhouse.BlendReserveState
-	opResults      map[uint32]int32
-	events         []clickhouse.EventSummary
-	contractEvents []clickhouse.ContractActivityRow
-	wasm           clickhouse.ContractWasmInfo
-	wasmErr        error
-	directory      []clickhouse.ContractDirectoryRow
-	interactions   []clickhouse.ContractEdgeRow
-	codeHistory    []clickhouse.ContractCodeVersion
-	accountState   clickhouse.AccountState
-	cap67WM        uint32
-	accountsStats  clickhouse.AccountsStats
-	holders        []clickhouse.AssetHolder
-	holderCount    int64
-	wealth         []clickhouse.AccountWealth
-	pairStates     map[string]clickhouse.SoroswapPairState
-	tokenDisplays  map[string]clickhouse.TokenDisplayMeta
+	ledgers          []clickhouse.LedgerHeader
+	txs              []clickhouse.TxSummary
+	ops              []clickhouse.OpRow
+	opTypeStats      []clickhouse.OpTypeCount
+	throughput       []clickhouse.ThroughputBucket
+	reserves         []clickhouse.BlendReserveState
+	opResults        map[uint32]int32
+	events           []clickhouse.EventSummary
+	contractEvents   []clickhouse.ContractActivityRow
+	wasm             clickhouse.ContractWasmInfo
+	wasmErr          error
+	directory        []clickhouse.ContractDirectoryRow
+	interactions     []clickhouse.ContractEdgeRow
+	codeHistory      []clickhouse.ContractCodeVersion
+	accountState     clickhouse.AccountState
+	cap67WM          uint32
+	accountsStats    clickhouse.AccountsStats
+	contractActivity clickhouse.ContractActivitySummary
+	holders          []clickhouse.AssetHolder
+	holderCount      int64
+	wealth           []clickhouse.AccountWealth
+	pairStates       map[string]clickhouse.SoroswapPairState
+	tokenDisplays    map[string]clickhouse.TokenDisplayMeta
 	// tokenDisplaysErr fails ONLY TokenDisplays, so tests can exercise a
 	// display-lookup outage while the reserve read itself succeeds.
 	tokenDisplaysErr error
@@ -141,6 +142,10 @@ func (s *stubExplorerReader) Cap67MovementsWatermark(_ context.Context) (uint32,
 
 func (s *stubExplorerReader) AccountsStats(_ context.Context) (clickhouse.AccountsStats, bool, error) {
 	return s.accountsStats, s.accountsStats.TotalAccounts > 0, nil
+}
+
+func (s *stubExplorerReader) ContractActivitySummaryFor(_ context.Context, _ string, _ int) (clickhouse.ContractActivitySummary, bool, error) {
+	return s.contractActivity, s.contractActivity.ActiveLedgersTotal > 0, nil
 }
 
 func (s *stubExplorerReader) AccountStateCached(_ context.Context, _ string) (clickhouse.AccountState, bool, error) {

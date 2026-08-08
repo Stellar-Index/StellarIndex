@@ -1095,6 +1095,64 @@ func (r *ExplorerReader) contractLedgersIndexAvailable(ctx context.Context) bool
 		`SELECT ledger_seq FROM stellar.contract_active_ledgers LIMIT 1`, true)
 }
 
+// ContractActivitySummary is the per-contract liveness card (page
+// insight program unit 1): lifetime bounds + a daily activity series,
+// all key-pruned reads off contract_active_ledgers (µs–ms class).
+type ContractActivitySummary struct {
+	FirstSeen          time.Time
+	LastSeen           time.Time
+	ActiveLedgersTotal uint64
+	Daily              []ContractActivityDay
+}
+
+// ContractActivityDay is one day of the activity series. ActiveLedgers
+// counts index rows (ledgers the contract emitted ≥1 event in) — RMT
+// duplicate parts can inflate it a hair between merges, which is
+// irrelevant for a liveness chart and keeps the read a plain count.
+type ContractActivityDay struct {
+	Date          time.Time
+	ActiveLedgers uint64
+}
+
+// ContractActivitySummaryFor reads the contract's activity card.
+// ok=false when the active-ledgers index isn't usable (probe) — callers
+// omit the card rather than fabricating one.
+func (r *ExplorerReader) ContractActivitySummaryFor(ctx context.Context, contractID string, days int) (ContractActivitySummary, bool, error) {
+	if !r.contractLedgersIndexAvailable(ctx) {
+		return ContractActivitySummary{}, false, nil
+	}
+	if days <= 0 || days > 365 {
+		days = 30
+	}
+	var s ContractActivitySummary
+	if err := r.conn.QueryRow(ctx, `
+		SELECT min(close_time), max(close_time), toUInt64(count())
+		FROM stellar.contract_active_ledgers WHERE contract_id = ?`,
+		contractID).Scan(&s.FirstSeen, &s.LastSeen, &s.ActiveLedgersTotal); err != nil {
+		return ContractActivitySummary{}, false, fmt.Errorf("clickhouse: contract activity bounds: %w", err)
+	}
+	if s.ActiveLedgersTotal == 0 {
+		return s, true, nil
+	}
+	rows, err := r.conn.Query(ctx, `
+		SELECT toDate(close_time) AS d, toUInt64(count())
+		FROM stellar.contract_active_ledgers
+		WHERE contract_id = ? AND close_time >= now() - INTERVAL ? DAY
+		GROUP BY d ORDER BY d`, contractID, days)
+	if err != nil {
+		return ContractActivitySummary{}, false, fmt.Errorf("clickhouse: contract activity series: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var d ContractActivityDay
+		if err := rows.Scan(&d.Date, &d.ActiveLedgers); err != nil {
+			return ContractActivitySummary{}, false, fmt.Errorf("clickhouse: scan activity day: %w", err)
+		}
+		s.Daily = append(s.Daily, d)
+	}
+	return s, true, rows.Err()
+}
+
 // contractActiveLedgers returns the contract's most recent active ledgers
 // (descending), at most n, optionally bounded to <= before (cursor pages —
 // inclusive: the boundary ledger can still hold events older than the

@@ -8,6 +8,7 @@ import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { Breadcrumbs } from '@/components/ui';
 import { DirectoryLabel } from '@/components/DirectoryLabel';
+import { Sparkline } from '@/components/primitives';
 import { apiGet, asExample, API_BASE_URL } from '@/api/client';
 import { useSACWrappers } from '@/api/hooks';
 import {
@@ -202,6 +203,32 @@ export function ContractView({ id: idProp }: { id?: string } = {}) {
           {data.directory && (
             <div className="mt-2">
               <DirectoryLabel info={data.directory} />
+            </div>
+          )}
+          {data.activity && (
+            <div className="mt-3 flex flex-wrap items-end gap-x-8 gap-y-2">
+              <div>
+                <div className="text-[11px] uppercase tracking-wider text-ink-muted">First seen</div>
+                <div className="mt-0.5 font-mono text-sm">{data.activity.first_seen?.slice(0, 10)}</div>
+              </div>
+              <div>
+                <div className="text-[11px] uppercase tracking-wider text-ink-muted">Last active</div>
+                <div className="mt-0.5 font-mono text-sm">{data.activity.last_seen?.slice(0, 10)}</div>
+              </div>
+              <div>
+                <div className="text-[11px] uppercase tracking-wider text-ink-muted">Active ledgers</div>
+                <div className="mt-0.5 font-mono text-sm">{(data.activity.active_ledgers_total ?? 0).toLocaleString('en-US')}</div>
+              </div>
+              {(data.activity.daily?.length ?? 0) >= 2 && (
+                <div title="Ledgers with activity per day, last 30 days">
+                  <div className="text-[11px] uppercase tracking-wider text-ink-muted">30d activity</div>
+                  <Sparkline
+                    values={(data.activity.daily ?? []).map((d) => d.active_ledgers ?? 0)}
+                    width={160}
+                    height={28}
+                  />
+                </div>
+              )}
             </div>
           )}
         </div>

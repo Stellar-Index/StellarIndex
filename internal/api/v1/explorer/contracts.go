@@ -48,6 +48,24 @@ type ContractDetailView struct {
 	// (directory.go) — display attribution, not verification. Omitted
 	// when the contract isn't listed or no directory reader is wired.
 	Directory *DirectoryInfoV `json:"directory,omitempty"`
+	// Activity is the liveness card (page insight program unit 1):
+	// lifetime bounds + a 30-day daily active-ledger series off the
+	// contract-keyed index. Omitted when the index isn't provisioned.
+	Activity *ContractActivityV `json:"activity,omitempty"`
+}
+
+// ContractActivityV is the wire liveness card.
+type ContractActivityV struct {
+	FirstSeen          string                 `json:"first_seen"`
+	LastSeen           string                 `json:"last_seen"`
+	ActiveLedgersTotal uint64                 `json:"active_ledgers_total"`
+	Daily              []ContractActivityDayV `json:"daily"`
+}
+
+// ContractActivityDayV is one day of the activity series.
+type ContractActivityDayV struct {
+	Date          string `json:"date"`
+	ActiveLedgers uint64 `json:"active_ledgers"`
 }
 
 // ContractDetail serves GET /v1/contracts/{contract_id} — a contract's
@@ -112,6 +130,17 @@ func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 	out := ContractDetailView{ContractID: cid, Events: make([]ContractEventView, len(rows))}
 	out.Protocol = h.contractAttribution(ctx)[cid]
 	out.Directory = h.directoryFor(ctx, cid)
+	if act, actOK, actErr := h.Reader.ContractActivitySummaryFor(ctx, cid, 30); actErr == nil && actOK && act.ActiveLedgersTotal > 0 {
+		av := &ContractActivityV{
+			FirstSeen:          act.FirstSeen.UTC().Format(time.RFC3339),
+			LastSeen:           act.LastSeen.UTC().Format(time.RFC3339),
+			ActiveLedgersTotal: act.ActiveLedgersTotal,
+		}
+		for _, d := range act.Daily {
+			av.Daily = append(av.Daily, ContractActivityDayV{Date: d.Date.UTC().Format("2006-01-02"), ActiveLedgers: d.ActiveLedgers})
+		}
+		out.Activity = av
+	}
 	for i, e := range rows {
 		out.Events[i] = contractEventView(e)
 	}
