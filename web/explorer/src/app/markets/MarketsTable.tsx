@@ -1,16 +1,25 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
 import { AssetLabel } from '@/components/AssetLabel';
 import { SourceSparkline } from '@/components/SourceSparkline';
 import { useMarkets } from '@/api/hooks';
+import { cn } from '@/lib/cn';
 import { formatCompact, formatPairPrice, formatRelative } from '@/lib/format';
+import { usePriceFlash, useLedgerStream } from '@/lib/live/hooks';
 import { Input, TBody, TR, Table, Td, Th, THead } from '@/components/ui';
+
+/** Minimum gap between live refetches of /v1/markets. Ledgers close
+ * every ~5s but the markets directory is a heavier read than a tip
+ * price — one refresh per ~15s keeps the board feeling live without
+ * tripling the endpoint's load. */
+const MARKETS_LIVE_REFRESH_MS = 15_000;
 
 /**
  * Live-data markets table backed by `/v1/markets`.
@@ -44,6 +53,23 @@ export function MarketsTable() {
     sparkline: true,
     ...(assetParam ? { asset: assetParam } : {}),
   });
+
+  // Live follow (RT-2): ledger closes from the shared stream drive a
+  // throttled refetch of the markets board — ONE SSE connection for
+  // the whole table (a per-pair tip stream here would burn the per-IP
+  // stream cap on one page). Changed last-price cells flash via
+  // LastPriceCell's own tick detector.
+  const frame = useLedgerStream();
+  const queryClient = useQueryClient();
+  const lastRefetchRef = useRef(0);
+  const streamLatest = frame?.data.latest_ledger;
+  useEffect(() => {
+    if (streamLatest == null) return;
+    const now = Date.now();
+    if (now - lastRefetchRef.current < MARKETS_LIVE_REFRESH_MS) return;
+    lastRefetchRef.current = now;
+    void queryClient.invalidateQueries({ queryKey: ['/v1/markets'] });
+  }, [streamLatest, queryClient]);
   const [filter, setFilter] = useState('');
   // AM-05: the volume sort puts pure CEX reference pairs (crypto:*/
   // fiat:*) first — a visitor asking "what trades on Stellar" got
@@ -326,6 +352,10 @@ function SortHeader({
 }
 
 function LastPriceCell({ raw }: { raw?: string | null }) {
+  // Flash on change (RT-2): each cell watches its own value across
+  // refetches. Hook order stays stable because the hook runs before
+  // any early return.
+  const flash = usePriceFlash(raw ?? undefined);
   if (!raw) return <span className="text-ink-faint">—</span>;
   const n = Number(raw);
   if (!Number.isFinite(n)) return <span className="text-ink-faint">—</span>;
@@ -336,7 +366,13 @@ function LastPriceCell({ raw }: { raw?: string | null }) {
   // (@/lib/format) — three components had independently forked this exact
   // threshold ladder, risking visible drift between them.
   return (
-    <span className="font-mono tabular-nums text-ink-body">
+    <span
+      className={cn(
+        'font-mono tabular-nums text-ink-body',
+        flash === 'up' && 'flash-up',
+        flash === 'down' && 'flash-down',
+      )}
+    >
       {formatPairPrice(n)}
     </span>
   );
