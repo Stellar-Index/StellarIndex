@@ -1540,6 +1540,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/accounts", s.explorerHandler.AccountsList)
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}", s.explorerHandler.AccountState)
 	s.mux.HandleFunc("GET /v1/directory", s.explorerHandler.DirectoryLookup)
+	s.mux.HandleFunc("GET /v1/accounts/stats", s.explorerHandler.AccountsStats)
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/transactions", s.explorerHandler.AccountTransactions)
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/operations", s.explorerHandler.AccountOperations)
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/movements", s.explorerHandler.AccountMovements)

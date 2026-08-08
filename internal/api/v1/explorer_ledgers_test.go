@@ -28,6 +28,7 @@ type stubExplorerReader struct {
 	codeHistory    []clickhouse.ContractCodeVersion
 	accountState   clickhouse.AccountState
 	cap67WM        uint32
+	accountsStats  clickhouse.AccountsStats
 	holders        []clickhouse.AssetHolder
 	holderCount    int64
 	wealth         []clickhouse.AccountWealth
@@ -136,6 +137,10 @@ func (s *stubExplorerReader) AccountState(_ context.Context, _ string) (clickhou
 
 func (s *stubExplorerReader) Cap67MovementsWatermark(_ context.Context) (uint32, error) {
 	return s.cap67WM, nil
+}
+
+func (s *stubExplorerReader) AccountsStats(_ context.Context) (clickhouse.AccountsStats, bool, error) {
+	return s.accountsStats, s.accountsStats.TotalAccounts > 0, nil
 }
 
 func (s *stubExplorerReader) AccountStateCached(_ context.Context, _ string) (clickhouse.AccountState, bool, error) {

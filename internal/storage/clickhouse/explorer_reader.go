@@ -131,6 +131,12 @@ type ExplorerReader struct {
 	// index-unavailable, not as "no contract has events".
 	contractLedgersProbe schemaProbe
 
+	// accountsStatsProbe probes stellar.accounts_stats (the /accounts hub
+	// analytics rollup, deploy/clickhouse/accounts_stats_rollup.sql).
+	// requireRows: an unpopulated rollup 503s the stats endpoint rather
+	// than serving zeros as facts.
+	accountsStatsProbe schemaProbe
+
 	// holdersRollupProbe probes stellar.asset_holders_rollup (inventory
 	// #4, deploy/clickhouse/asset_holders_rollup.sql). Present +
 	// non-empty → AssetHolders serves keyed precomputed boards; absent →
