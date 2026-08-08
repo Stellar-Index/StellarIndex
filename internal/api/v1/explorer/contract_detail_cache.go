@@ -2,6 +2,7 @@ package explorer
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -53,6 +54,27 @@ type contractDetailCache struct {
 	flight  perKeyFlight
 }
 
+// contractCodeHistoryTTL is the "ch:" key class's freshness window
+// (inventory #3 / sub-second goal 2026-08-08). A contract's executable
+// timeline is append-only and changes on the order of MONTHS (an
+// in-place upgrade), while its backing read is the heaviest per-request
+// scan in the explorer (the key_xdr probe over ledger_entry_changes,
+// 8s class) — recomputing it every 5 minutes per visited contract was
+// pure background burn. 24h keeps at most one recompute per contract
+// per day; a brand-new upgrade appears within a day, which matches the
+// page's actual freshness need.
+const contractCodeHistoryTTL = 24 * time.Hour
+
+// detailTTLForKey maps a cache key to its freshness window — 5 minutes
+// for the live-ish classes (detail events, interactions, activity), 24h
+// for the near-immutable code-history timeline.
+func detailTTLForKey(key string) time.Duration {
+	if strings.HasPrefix(key, "ch:") {
+		return contractCodeHistoryTTL
+	}
+	return contractDetailTTL
+}
+
 // get returns the entry for key whenever one exists — INCLUDING past the
 // TTL (fresh=false); staleness is the caller's judgment, so a run of
 // failed refreshes degrades to old-but-real data instead of 503s.
@@ -63,7 +85,7 @@ func (c *contractDetailCache) get(key string) (e contractDetailEntry, ok, fresh 
 	if !ok {
 		return contractDetailEntry{}, false, false
 	}
-	return e, true, time.Since(e.cachedAt) <= contractDetailTTL
+	return e, true, time.Since(e.cachedAt) <= detailTTLForKey(key)
 }
 
 func (c *contractDetailCache) put(key string, v any) {
