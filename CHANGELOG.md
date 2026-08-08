@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.27.1] — 2026-08-08
+
 ### Fixed
 - **Account pages stop dying on compressed history** (the GATL report).
   Three per-account Postgres reads walked chunks that have no
