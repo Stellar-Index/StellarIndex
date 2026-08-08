@@ -24,7 +24,12 @@ against.
   pages: the headline price ticks in real time with an up/down flash
   and a "live tip price · streaming" caption, degrading to the
   existing 60s poll + baked value when the stream is unavailable.
-  Animations respect prefers-reduced-motion.
+  The home strip's XLM cell and the market-pair headline (previously
+  a BUILD-frozen price captioned "as of <build time>") stream the
+  same way, and /ledgers + /operations follow the network live: new
+  rows animate in on every ledger close while page 1 is on screen
+  (paging into history pauses following). Animations respect
+  prefers-reduced-motion.
 
 ### Fixed
 - **`/v1/price/tip/stream` now shares one tip-compute loop per

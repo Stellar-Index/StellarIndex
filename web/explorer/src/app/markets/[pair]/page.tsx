@@ -8,6 +8,7 @@ import { Breadcrumbs } from '@/components/ui';
 import { Sparkline } from '@/components/primitives';
 import { Suspense } from 'react';
 
+import { LivePairPrice } from './LivePairPrice';
 import { OrderBookPanel } from './OrderBookPanel';
 import { PairChart } from './PairChart';
 import { PairPathView } from './PairPathView';
@@ -402,16 +403,16 @@ export default async function PairPage({ params }: { params: Params }) {
           className="lg:col-span-2"
         >
           <div className="flex flex-wrap items-baseline gap-4">
-            <span className="font-mono text-3xl tabular-nums">
-              {priceNum != null ? formatQuoteAmount(priceNum, quote) : '—'}
-            </span>
+            <LivePairPrice
+              base={base}
+              quote={quote}
+              initialPrice={priceNum}
+              initialObservedAt={price?.observed_at ?? null}
+              quoteIsUsd={isUsdQuote(quote)}
+              quoteSuffix={shortAsset(quote)}
+            />
             {change24h != null && Number.isFinite(change24h) && (
               <ChangeBadge pct={change24h} window="24h" />
-            )}
-            {price?.observed_at && (
-              <span className="text-xs text-ink-muted">
-                as of {formatTimestamp(price.observed_at)}
-              </span>
             )}
           </div>
           <div className="mt-4">
