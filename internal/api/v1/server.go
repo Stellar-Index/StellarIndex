@@ -172,33 +172,39 @@ type Server struct {
 	currencies             CurrenciesReader
 	explorer               ExplorerReader
 	explorerHandler        *explorerpkg.Handler // network-explorer endpoints (ADR-0038); see explorer.go
-	fxHistory              FXHistoryReader
-	sessionPeeker          SessionPeeker
-	incidents              []incidents.Incident
-	sep10                  auth.SEP10Validator
-	cors                   middleware.Middleware
-	auth                   middleware.Middleware
-	keyPolicy              middleware.Middleware
-	rateLimit              middleware.Middleware
-	monthlyQuota           middleware.Middleware
-	touchUsage             middleware.Middleware
-	requireEmailVerified   middleware.Middleware
-	usageTracker           middleware.Middleware
-	usageReader            UsageReader
-	usageRollupReader      UsageRollupReader
-	hub                    *streaming.Hub
-	confidence             ConfidenceLooker
-	triangulated           TriangulatedPriceLooker
-	cdnEnabled             bool
-	statusBackend          StatusBackend
-	archiveReportPath      string
-	regionName             string
-	regionDeployment       string
-	dashboardAuth          DashboardAuthMounter
-	dashboardKeys          DashboardAuthMounter
-	dashboardWebhooks      DashboardAuthMounter
-	dashboardPriceAlerts   DashboardAuthMounter
-	sessionAuth            middleware.Middleware
+
+	// readyz single-flight cache (inventory #26) — see handleReadyz.
+	readyzMu             sync.Mutex
+	readyzAt             time.Time
+	readyzCode           int
+	readyzBody           []byte
+	fxHistory            FXHistoryReader
+	sessionPeeker        SessionPeeker
+	incidents            []incidents.Incident
+	sep10                auth.SEP10Validator
+	cors                 middleware.Middleware
+	auth                 middleware.Middleware
+	keyPolicy            middleware.Middleware
+	rateLimit            middleware.Middleware
+	monthlyQuota         middleware.Middleware
+	touchUsage           middleware.Middleware
+	requireEmailVerified middleware.Middleware
+	usageTracker         middleware.Middleware
+	usageReader          UsageReader
+	usageRollupReader    UsageRollupReader
+	hub                  *streaming.Hub
+	confidence           ConfidenceLooker
+	triangulated         TriangulatedPriceLooker
+	cdnEnabled           bool
+	statusBackend        StatusBackend
+	archiveReportPath    string
+	regionName           string
+	regionDeployment     string
+	dashboardAuth        DashboardAuthMounter
+	dashboardKeys        DashboardAuthMounter
+	dashboardWebhooks    DashboardAuthMounter
+	dashboardPriceAlerts DashboardAuthMounter
+	sessionAuth          middleware.Middleware
 	// verifiedCurrencies is the loaded *currency.Catalogue — the
 	// cross-chain currency seed (USDC, USDT, BTC, ETH, …) plus per-
 	// network identities. Powers the `unverified_warning` body +
@@ -1906,7 +1912,37 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 // check. The k8s liveness-probe timeout is typically 1s — blowing
 // past it flaps the pod.
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	// Single-flight + 1s result cache (inventory #26, audit 2026-08-03:
+	// /v1/readyz is unauthenticated and unlimited — LB probes must never
+	// be throttled — but every call fanned Pings across all checkers,
+	// each holding DB pool slots up to 2s, so unauthenticated spam could
+	// exhaust the shared pool, r1-confirmed). Concurrent callers now
+	// share ONE check round per second: the first computes while holding
+	// the lock, the rest queue briefly and serve the fresh cache. A
+	// readiness answer up to 1s old is at least as truthful as a
+	// point-in-time probe.
+	s.readyzMu.Lock()
+	if time.Since(s.readyzAt) < time.Second && s.readyzBody != nil {
+		code, body := s.readyzCode, s.readyzBody
+		s.readyzMu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(code)
+		_, _ = w.Write(body)
+		return
+	}
+	code, body := s.computeReadyz()
+	s.readyzCode, s.readyzBody, s.readyzAt = code, body, time.Now()
+	s.readyzMu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_, _ = w.Write(body)
+}
+
+// computeReadyz runs one full check round and renders the response.
+// Detached from any caller's request context — one impatient caller's
+// disconnect must not cancel the round every queued caller shares.
+func (s *Server) computeReadyz() (int, []byte) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	results := make([]checkResult, len(s.checks))
@@ -1950,18 +1986,18 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		Checks:     results,
 		StatusRoot: "/v1/status",
 	}
+	render := func(status int, flags Flags) (int, []byte) {
+		env := Envelope{Data: resp, AsOf: time.Now().UTC(), Flags: flags}
+		b, err := json.Marshal(env)
+		if err != nil {
+			return http.StatusInternalServerError, []byte(`{"error":"readyz render"}`)
+		}
+		return status, b
+	}
 	switch {
 	case criticalFailed:
 		resp.Status = "unready"
-		env := Envelope{
-			Data:  resp,
-			AsOf:  time.Now().UTC(),
-			Flags: Flags{Stale: true},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(env)
-		return
+		return render(http.StatusServiceUnavailable, Flags{Stale: true})
 	case anyFailed:
 		// Non-critical dependency degraded — API still serves
 		// (Timescale fallback for Redis cache misses per
@@ -1969,11 +2005,9 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		// the response body's status="degraded" + per-check
 		// breakdown tells operators what's down.
 		resp.Status = "degraded"
-		writeJSON(w, resp, Flags{Stale: true})
-		return
+		return render(http.StatusOK, Flags{Stale: true})
 	}
-
-	writeJSON(w, resp, Flags{})
+	return render(http.StatusOK, Flags{})
 }
 
 // handleVersion reports binary version + build date + VCS info.
