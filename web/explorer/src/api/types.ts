@@ -2017,15 +2017,24 @@ export interface paths {
          *     and `/v1/observations/stream` (per-connection tick), this
          *     surface is **Hub-driven**: the aggregator publishes one event
          *     per closed bucket, and every subscriber on the same
-         *     (asset, quote) pair receives byte-identical payloads — the
-         *     same cross-region consistency guarantee `/v1/price` exposes.
+         *     (asset, quote, window) triple receives byte-identical payloads
+         *     — the same cross-region consistency guarantee `/v1/price`
+         *     exposes.
+         *
+         *     The aggregator publishes one bucket series **per window**
+         *     (standard windows: 300 / 3600 / 86400 seconds); a connection
+         *     follows exactly one series, selected by `?window_seconds=`
+         *     (default 300), so consecutive events on a stream are always
+         *     comparable. Alias spellings of the same asset (`native`,
+         *     `crypto:XLM`, the XLM SAC) are subscribed together — either
+         *     spelling receives the pair's publishes.
          *
          *     - Heartbeats every 15 s as comment lines.
          *     - Resume after disconnect via `Last-Event-ID` (header preferred,
          *       `?last_event_id=` fallback).
-         *     - URL discipline: `?granularity=` returns 400 — the closed-
-         *       bucket stream is fixed at 1m; use
-         *       `/v1/history/since-inception` for other granularities.
+         *     - URL discipline: `?granularity=` returns 400 — bucket series
+         *       are selected by `window_seconds`; use
+         *       `/v1/history/since-inception` for chart granularities.
          *     - 503 when the deployment hasn't wired the streaming Hub
          *       (typical pre-aggregator state).
          */
@@ -2050,6 +2059,8 @@ export interface paths {
                      * @example fiat:USD
                      */
                     quote?: components["parameters"]["Quote"];
+                    /** @description Which closed-bucket window series to follow, in seconds. The standard aggregator windows are 300, 3600, and 86400; a window the aggregator doesn't publish yields a silent (heartbeat-only) stream. */
+                    window_seconds?: number;
                 };
                 header?: {
                     /** @description Opaque ID for resuming a previously-broken stream. */

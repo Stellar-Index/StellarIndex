@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"strconv"
 	"strings"
 	"time"
 
@@ -140,7 +141,7 @@ func (s *Subscriber) handleMessage(payload []byte) {
 		s.logger.Warn("redispub: re-marshal validated event", "err", err)
 		return
 	}
-	topic := topicForPair(ev.Asset, ev.Quote)
+	topic := topicForPair(ev.Asset, ev.Quote, ev.WindowSeconds)
 	s.hub.Publish(topic, "price_update", sanitized)
 	obs.APIStreamSubscribeTotal.WithLabelValues("ok").Inc()
 }
@@ -229,10 +230,12 @@ func parseValueDecimal(s string) (*big.Rat, error) {
 	return v, nil
 }
 
-// topicForPair returns the Hub topic key for a (asset, quote)
-// pair. Mirrors `internal/api/v1.PriceStreamTopic` — a sentinel
-// test in this package's test suite verifies the format stays
-// in sync.
-func topicForPair(asset, quote string) string {
-	return "closed:" + asset + "/" + quote
+// topicForPair returns the Hub topic key for a (asset, quote, window)
+// triple. Mirrors `internal/api/v1.PriceStreamTopic` — a sentinel
+// test in this package's test suite verifies the format stays in
+// sync. The window is part of the key so the aggregator's per-window
+// publishes (r1: 5m/1h/24h) land on separate topics instead of
+// interleaving on one (cold audit 2026-08-03, r1-confirmed).
+func topicForPair(asset, quote string, windowSeconds int64) string {
+	return "closed:" + asset + "/" + quote + "/" + strconv.FormatInt(windowSeconds, 10)
 }
