@@ -16,6 +16,16 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **/v1/contracts directory census: 40s scans replaced by a day-keyed
+  rollup** (inventory #26 item 2 — the single heaviest explorer read,
+  ~160 runs per 3h across the prewarm rungs). New
+  `stellar.contracts_census_daily` (plain per-day per-contract counts;
+  whole days recomputed and swapped via REPLACE PARTITION — no MV, so
+  the Summing double-count class cannot arise) maintained by the new
+  `stellarindex-ops ch-census-rollup` on a 30-min timer; the reader
+  sums day rows (sub-second) with a coverage check that falls back to
+  the exact scan while a backfill is incomplete. Window floors round
+  to UTC-day resolution.
 - **Aquarius `claim_protocol_fee` now records WHICH token was claimed**
   (sources-decode audit 2026-08-04, finding 5): the token address lives
   in `topic[1]` — not the body — and migration 0129 shipped no token

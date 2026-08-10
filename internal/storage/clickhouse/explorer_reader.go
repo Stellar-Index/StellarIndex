@@ -143,6 +143,14 @@ type ExplorerReader struct {
 	// unavailable.
 	instanceChangesProbe schemaProbe
 
+	// censusProbe probes stellar.contracts_census_daily (the day-keyed
+	// per-contract event counts, deploy/clickhouse/
+	// contracts_census_daily.sql). Present + non-empty → RecentContracts
+	// sums day rows (sub-second) instead of the 40s uniqExact GROUP BY
+	// over billions of contract_events rows. requireRows as with the
+	// siblings.
+	censusProbe schemaProbe
+
 	// accountsStatsProbe probes stellar.accounts_stats (the /accounts hub
 	// analytics rollup, deploy/clickhouse/accounts_stats_rollup.sql).
 	// requireRows: an unpopulated rollup 503s the stats endpoint rather
@@ -1115,6 +1123,13 @@ func (r *ExplorerReader) instanceChangesIndexAvailable(ctx context.Context) bool
 		`SELECT ledger_seq FROM stellar.contract_instance_changes LIMIT 1`, true)
 }
 
+// censusAvailable reports whether stellar.contracts_census_daily is
+// USABLE: exists AND non-empty (see the probe field doc).
+func (r *ExplorerReader) censusAvailable(ctx context.Context) bool {
+	return r.probeSchema(ctx, &r.censusProbe,
+		`SELECT day FROM stellar.contracts_census_daily LIMIT 1`, true)
+}
+
 // ContractActivitySummary is the per-contract liveness card (page
 // insight program unit 1): lifetime bounds + a daily activity series,
 // all key-pruned reads off contract_active_ledgers (µs–ms class).
@@ -1730,6 +1745,22 @@ func (r *ExplorerReader) RecentContracts(ctx context.Context, limit int, sinceLe
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
+	// Census-first (inventory #26 item 2): sum precomputed day rows —
+	// sub-second against ~tens of millions of narrow rows — instead of
+	// the 40s uniqExact GROUP BY over billions of contract_events. Day
+	// resolution: the window floor rounds DOWN to the start of
+	// sinceLedger's UTC day, so a ranking window is up to one day wider
+	// than the exact ledger floor — immaterial for an activity ranking,
+	// and the serving tail is at most one rollup cadence (30 min) stale.
+	if r.censusAvailable(ctx) {
+		if out, ok, err := r.recentContractsFromCensus(ctx, limit, sinceLedger); err != nil {
+			return nil, err
+		} else if ok {
+			return out, nil
+		}
+		// !ok: sinceLedger predates the census coverage — fall through
+		// to the exact scan.
+	}
 	rows, err := r.conn.Query(ctx, recentContractsQuery, sinceLedger, limit)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: recent contracts: %w", err)
@@ -1878,4 +1909,83 @@ func scanTxSummaries(rows driver.Rows) ([]TxSummary, error) {
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+// recentContractsCensusQuery sums the day-keyed census over the window.
+// The day floor is resolved from sinceLedger via a pruned PK lookup on
+// stellar.ledgers.
+const recentContractsCensusQuery = `SELECT contract_id,
+		       toInt64(sum(events)) AS events,
+		       max(last_ledger) AS last_ledger, max(last_seen) AS last_seen
+		FROM stellar.contracts_census_daily
+		WHERE day >= ?
+		GROUP BY contract_id
+		ORDER BY events DESC
+		LIMIT ?`
+
+// recentContractsFromCensus serves the directory census from
+// contracts_census_daily. ok=false when the census doesn't cover
+// sinceLedger's day (caller falls back to the exact scan).
+func (r *ExplorerReader) recentContractsFromCensus(ctx context.Context, limit int, sinceLedger uint32) ([]ContractDirectoryRow, bool, error) {
+	// Resolve the window floor's UTC day from the ledger sequence
+	// (pruned read on the ledgers PK, ms).
+	dayRows, err := r.conn.Query(ctx,
+		`SELECT toDate(close_time) FROM stellar.ledgers WHERE ledger_seq >= ? ORDER BY ledger_seq ASC LIMIT 1`,
+		sinceLedger)
+	if err != nil {
+		return nil, false, fmt.Errorf("clickhouse: census day floor: %w", err)
+	}
+	var floor time.Time
+	haveFloor := dayRows.Next()
+	if haveFloor {
+		if err := dayRows.Scan(&floor); err != nil {
+			_ = dayRows.Close()
+			return nil, false, fmt.Errorf("clickhouse: scan census day floor: %w", err)
+		}
+	}
+	if cerr := dayRows.Close(); cerr != nil {
+		return nil, false, cerr
+	}
+	if err := dayRows.Err(); err != nil {
+		return nil, false, err
+	}
+	if !haveFloor {
+		return nil, false, nil
+	}
+
+	// Coverage check: the census must reach back to the floor day —
+	// an in-progress backfill must not serve a silently-truncated
+	// ranking (the verification-blind-spots class).
+	covRows, err := r.conn.Query(ctx, `SELECT min(day) FROM stellar.contracts_census_daily`)
+	if err != nil {
+		return nil, false, fmt.Errorf("clickhouse: census coverage: %w", err)
+	}
+	var minDay time.Time
+	if covRows.Next() {
+		if err := covRows.Scan(&minDay); err != nil {
+			_ = covRows.Close()
+			return nil, false, err
+		}
+	}
+	if cerr := covRows.Close(); cerr != nil {
+		return nil, false, cerr
+	}
+	if minDay.After(floor) {
+		return nil, false, nil
+	}
+
+	rows, err := r.conn.Query(ctx, recentContractsCensusQuery, floor, limit)
+	if err != nil {
+		return nil, false, fmt.Errorf("clickhouse: recent contracts (census): %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []ContractDirectoryRow
+	for rows.Next() {
+		var row ContractDirectoryRow
+		if err := rows.Scan(&row.ContractID, &row.Events, &row.LastLedger, &row.LastSeen); err != nil {
+			return nil, false, fmt.Errorf("clickhouse: scan recent contracts (census): %w", err)
+		}
+		out = append(out, row)
+	}
+	return out, true, rows.Err()
 }

@@ -1,0 +1,20 @@
+# systemd timer: contracts-census rollup — every 30 minutes.
+#
+# Rendered by Ansible. Companion to census-rollup.service (inventory
+# #26 item 2): the /v1/contracts directory's serving tail is at most
+# one cadence stale, replacing the 40s-per-run census scans the
+# prewarm rungs used to pay ~160 times per 3h.
+
+[Unit]
+Description=contracts-census rollup every 30 minutes
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/open-fixes-inventory-2026-08-08.md
+
+[Timer]
+OnBootSec=12min
+OnUnitInactiveSec=30min
+RandomizedDelaySec=120
+Persistent=true
+Unit=census-rollup.service
+
+[Install]
+WantedBy=timers.target

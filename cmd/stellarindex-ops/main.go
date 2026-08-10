@@ -166,6 +166,7 @@ var subcommands = map[string]func(args []string) error{
 	"ch-txindex-backfill":          chops.Run,
 	"ch-contract-ledgers-backfill": chops.Run,
 	"ch-instance-backfill":         chops.Run,
+	"ch-census-rollup":             chops.Run,
 	"ch-cap67-movements":           chops.Run,
 	"ch-holders-rollup":            chops.Run,
 	"ch-participant-backfill":      chops.Run,
@@ -720,6 +721,11 @@ Subcommands:
                           /contracts/{id}/code-history) from
                           ledger_entry_changes. Windowed + resumable; run
                           under run-heavy-job.sh.
+  ch-census-rollup        -ch-addr ADDR [-backfill] [-from-day YYYY-MM-DD]
+                          Maintain stellar.contracts_census_daily (the
+                          day-keyed census behind fast /v1/contracts).
+                          Timer mode recomputes today + missing days;
+                          -backfill walks from the lake's first event.
   ch-backfill -config PATH -from N -to N [-bucket NAME] [-ch-addr H:P] [-flush-every N] [-parallel N]
                           ADR-0034 Phase 2: structurally decode [from,to]
                           from galexie into the ClickHouse stellar.* Tier-1
