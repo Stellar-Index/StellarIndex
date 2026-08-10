@@ -197,6 +197,12 @@ type Direction string
 const (
 	DirectionDeposit  Direction = "deposit"
 	DirectionWithdraw Direction = "withdraw"
+	// DirectionHarvest is strategy yield realised into the vault — not a
+	// user flow. Position sums exclude it by construction (their CASE
+	// arms name deposit/withdraw only); NAV math must include it
+	// (audit 2026-08-04 finding 4: reconstructing NAV from
+	// deposit+withdraw under-counted by the full harvested yield).
+	DirectionHarvest Direction = "harvest"
 )
 
 // RebalanceMethod is the multiplexed sub-type of a

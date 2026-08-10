@@ -823,28 +823,39 @@ func TestDecoder_OperatorSeedAdmitsNewVault(t *testing.T) {
 
 // ─── Phase-B follow-up: harvest / rebalance / admin (BACKLOG #58) ──
 
-// TestDecode_strategyHarvestRecognisedEmits0Events pins the harvest
-// contract: a ("BlendStrategy","harvest") from a registered strategy
-// is recognised (Matches true) but drops cleanly — Decode returns
-// (nil, nil), NOT the ErrUnknownEvent sentinel it returned before
-// #58. Filing harvest as a decode error inflated the source's
-// decode-error counter for normal upstream yield events.
-func TestDecode_strategyHarvestRecognisedEmits0Events(t *testing.T) {
+// TestDecode_strategyHarvestDecodes SUPERSEDES the old
+// recognised-but-drops-cleanly pin (BACKLOG #58 "blocked on real
+// samples"): the lake disproved the no-samples premise (audit
+// 2026-08-04 finding 4 — 1,018 harvests with a decodeFlow-compatible
+// body), so a registered strategy's harvest now emits one
+// DirectionHarvest StrategyFlow end to end through Decode.
+func TestDecode_strategyHarvestDecodes(t *testing.T) {
 	t.Parallel()
 	d := NewDecoder()
 	ev := events.Event{
-		ContractID: MainnetStrategies[0],
-		Topic:      []string{TopicPrefixStrategy, TopicSymbolHarvest},
+		ContractID:     MainnetStrategies[0],
+		Ledger:         63_783_690,
+		LedgerClosedAt: "2026-08-01T10:30:00Z",
+		TxHash:         "harvesttx3",
+		Topic:          []string{TopicPrefixStrategy, TopicSymbolHarvest},
+		Value: mustB64(t, mapSCVal(t,
+			mapEntry(t, "amount", i128SCVal(big.NewInt(915_806))),
+			mapEntry(t, "from", addrSCVal(makeAccountAddress(t, 0xDD))),
+			mapEntry(t, "price_per_share", i128SCVal(big.NewInt(1))),
+		)),
 	}
 	if !d.Matches(ev) {
 		t.Fatal("Matches(strategy harvest) = false, want true")
 	}
 	out, err := d.Decode(ev)
 	if err != nil {
-		t.Errorf("Decode(strategy harvest) err = %v, want nil (recognised, unmodelled — not a decode error)", err)
+		t.Fatalf("Decode(strategy harvest) err = %v, want a decoded flow", err)
 	}
-	if len(out) != 0 {
-		t.Errorf("Decode(strategy harvest) emitted %d events, want 0", len(out))
+	if len(out) != 1 {
+		t.Fatalf("Decode(strategy harvest) emitted %d events, want 1", len(out))
+	}
+	if fe := out[0].(Event); fe.Flow.Direction != DirectionHarvest {
+		t.Errorf("Direction = %q, want harvest", fe.Flow.Direction)
 	}
 }
 
@@ -960,4 +971,76 @@ func TestDecodeRebalanceMethod(t *testing.T) {
 			t.Errorf("err = %v, want ErrMalformedPayload", err)
 		}
 	})
+}
+
+// TestDecodeFlow_harvest — audit 2026-08-04 finding 4 regression: the
+// real on-chain harvest body (ledger 63,783,690 shape) is
+// {amount, from, price_per_share}; decodeFlow must produce a
+// DirectionHarvest StrategyFlow from it, ignoring the extra field
+// (decode-by-name), instead of the old recognise-and-drop.
+func TestDecodeFlow_harvest(t *testing.T) {
+	t.Parallel()
+	ev := &events.Event{
+		Type:           "contract",
+		Ledger:         63_783_690,
+		LedgerClosedAt: "2026-08-01T10:30:00Z",
+		ContractID:     "CDB2WMKQQNVZMEBY7Q7GZ5C7E7IAFSNMZ7GGVD6WKTCEWK7XOIAVZSAP",
+		OperationIndex: 1,
+		TxHash:         "harvesttx",
+		Topic:          []string{TopicPrefixStrategy, TopicSymbolHarvest},
+		Value: mustB64(t, mapSCVal(t,
+			mapEntry(t, "amount", i128SCVal(big.NewInt(915_806))),
+			mapEntry(t, "from", addrSCVal(makeAccountAddress(t, 0xBB))),
+			mapEntry(t, "price_per_share", i128SCVal(big.NewInt(1_002_345))),
+		)),
+	}
+	flow, err := decodeFlow(ev, EventHarvest)
+	if err != nil {
+		t.Fatalf("decodeFlow(harvest): %v", err)
+	}
+	if flow.Direction != DirectionHarvest {
+		t.Errorf("Direction = %q, want harvest", flow.Direction)
+	}
+	if got := flow.Amount.BigInt().Int64(); got != 915_806 {
+		t.Errorf("Amount = %d, want 915806", got)
+	}
+	if flow.From == "" || flow.From[0] != 'G' {
+		t.Errorf("From = %q, want a G-strkey", flow.From)
+	}
+}
+
+// TestDecoder_strategyHarvestEmitsFlow pins the adapter path: a
+// classified harvest event must emit one StrategyFlow consumer.Event
+// end to end (previously recognised-and-dropped with (nil, nil)).
+func TestDecoder_strategyHarvestEmitsFlow(t *testing.T) {
+	t.Parallel()
+	d := &Decoder{}
+	ev := &events.Event{
+		Type:           "contract",
+		Ledger:         63_783_690,
+		LedgerClosedAt: "2026-08-01T10:30:00Z",
+		ContractID:     "CDB2WMKQQNVZMEBY7Q7GZ5C7E7IAFSNMZ7GGVD6WKTCEWK7XOIAVZSAP",
+		OperationIndex: 1,
+		TxHash:         "harvesttx2",
+		Topic:          []string{TopicPrefixStrategy, TopicSymbolHarvest},
+		Value: mustB64(t, mapSCVal(t,
+			mapEntry(t, "amount", i128SCVal(big.NewInt(42))),
+			mapEntry(t, "from", addrSCVal(makeAccountAddress(t, 0xCC))),
+			mapEntry(t, "price_per_share", i128SCVal(big.NewInt(7))),
+		)),
+	}
+	out, err := d.decodeStrategy(ev, EventHarvest)
+	if err != nil {
+		t.Fatalf("decodeStrategy(harvest): %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("emitted %d events, want 1", len(out))
+	}
+	fe, ok := out[0].(Event)
+	if !ok {
+		t.Fatalf("emitted %T, want defindex.Event", out[0])
+	}
+	if fe.Flow.Direction != DirectionHarvest {
+		t.Errorf("Direction = %q, want harvest", fe.Flow.Direction)
+	}
 }

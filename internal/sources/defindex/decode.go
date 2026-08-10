@@ -125,9 +125,12 @@ func classifyFactory(e *events.Event) string {
 // StrategyFlow.
 //
 // Body shape (verified on-chain via scan-soroban-events — identical
-// for both deposit and withdraw):
+// for deposit and withdraw; harvest carries the same two fields plus
+// an unread price_per_share):
 //
-//	{ from: Address, amount: i128 }
+//	{ from: Address, amount: i128 }              (deposit/withdraw)
+//	{ from: Address, amount: i128,
+//	  price_per_share: i128 }                    (harvest)
 //
 // Fields are pulled by name from the top-level Map per
 // docs/architecture/contract-schema-evolution.md's decode-by-name
@@ -152,6 +155,8 @@ func decodeFlow(e *events.Event, kind string) (StrategyFlow, error) {
 		flow.Direction = DirectionDeposit
 	case EventWithdraw:
 		flow.Direction = DirectionWithdraw
+	case EventHarvest:
+		flow.Direction = DirectionHarvest
 	default:
 		// Defensive — classify() should have filtered.
 		return StrategyFlow{}, fmt.Errorf("%w: %s", ErrUnknownEvent, kind)

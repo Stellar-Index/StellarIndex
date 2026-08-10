@@ -132,14 +132,17 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	return nil, ErrUnknownEvent
 }
 
-// decodeStrategy handles a classified BlendStrategy event. Only
-// deposit/withdraw model a StrategyFlow; `harvest` is recognised
-// (EVERY-event policy) but its body has never been observed on-chain
-// and is NOT modelled — it drops cleanly rather than counting as a
-// decode error (BACKLOG #58, blocked on real samples).
+// decodeStrategy handles a classified BlendStrategy event.
+// deposit/withdraw/harvest each model a StrategyFlow. The old premise
+// that harvest's body "has never been observed on-chain" was disproved
+// by the lake (audit 2026-08-04 finding 4: 1,018 harvests; body
+// `{amount: i128, from: Address, price_per_share: i128}` — the exact
+// {from, amount} shape decodeFlow reads by name, the extra field
+// unread), so dropping them under-counted vault NAV by the full
+// harvested yield. Recovery: projector-replay -source defindex.
 func (d *Decoder) decodeStrategy(ev *events.Event, kind string) ([]consumer.Event, error) {
-	if kind != EventDeposit && kind != EventWithdraw {
-		return nil, nil // harvest (or any future unmodelled strategy topic)
+	if kind != EventDeposit && kind != EventWithdraw && kind != EventHarvest {
+		return nil, nil // any future unmodelled strategy topic
 	}
 	flow, err := decodeFlow(ev, kind)
 	if err != nil {
