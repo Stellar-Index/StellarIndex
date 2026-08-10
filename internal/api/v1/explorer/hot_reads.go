@@ -191,12 +191,12 @@ func (h *Handler) refreshAssetHolders(asset string) *keyFlight {
 	// (any CODE-ISSUER combination parses); on saturation skip, don't
 	// queue (see detachedGate).
 	gate := h.detachedGate()
-	if !gate.TryAcquire() {
+	if !gate.TryAcquireClass("asset_holders") {
 		h.assetHolders.flight.end(asset, fl, errRefreshSaturated)
 		return fl
 	}
 	go func() {
-		defer gate.Release()
+		defer gate.ReleaseClass("asset_holders")
 		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), assetHoldersRefreshTimeout)
 		defer cancel()
@@ -350,12 +350,12 @@ func (h *Handler) refreshContractsDir(window int) *keyFlight {
 	// shared pool with the attacker-keyed caches, so it draws from the
 	// same gate; the prewarm loop re-kicks within one TTL if skipped.
 	gate := h.detachedGate()
-	if !gate.TryAcquire() {
+	if !gate.TryAcquireClass("contracts_dir") {
 		h.contractsDir.flight.end(key, fl, errRefreshSaturated)
 		return fl
 	}
 	go func() {
-		defer gate.Release()
+		defer gate.ReleaseClass("contracts_dir")
 		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), contractsDirRefreshTimeout)
 		defer cancel()

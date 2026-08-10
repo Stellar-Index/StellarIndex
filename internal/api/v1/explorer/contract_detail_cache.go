@@ -120,12 +120,12 @@ func (h *Handler) refreshContractDetail(key string, compute func(context.Context
 	// (any shape-valid C-address is a distinct cold key); on saturation
 	// skip, don't queue (see detachedGate).
 	gate := h.detachedGate()
-	if !gate.TryAcquire() {
+	if !gate.TryAcquireClass("contract_detail") {
 		h.contractDetail.flight.end(key, fl, errRefreshSaturated)
 		return fl
 	}
 	go func() {
-		defer gate.Release()
+		defer gate.ReleaseClass("contract_detail")
 		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), contractDetailRefreshTimeout)
 		defer cancel()

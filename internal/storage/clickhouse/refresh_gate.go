@@ -1,6 +1,9 @@
 package clickhouse
 
-import "errors"
+import (
+	"errors"
+	"sync"
+)
 
 // ErrRefreshSaturated is returned by a cache-fill method (AccountStateCached)
 // to a COLD-path waiter when the shared detached-refresh gate was saturated
@@ -34,8 +37,20 @@ var ErrRefreshSaturated = errors.New("clickhouse: detached refresh capacity satu
 // concurrent scans instead of thousands.
 //
 // A nil *RefreshGate admits everything (handy for test stubs).
+//
+// PER-CLASS FAIRNESS (inventory #26 item 5, second half): the single
+// global bound stopped the amplification but let one key CLASS starve
+// the rest — a crawler churning fabricated contract ids could hold all
+// 4 slots with contract-detail refreshes, and every cold account /
+// holders / directory page then fast-503d behind it. TryAcquireClass
+// additionally caps each class at half the global limit, so a burst in
+// one class leaves headroom for the others while the global bound (the
+// pool-safety property) is unchanged.
 type RefreshGate struct {
 	sem chan struct{}
+
+	mu      sync.Mutex
+	classes map[string]chan struct{}
 }
 
 // DefaultDetachedRefreshLimit is the production bound on concurrently
@@ -70,6 +85,59 @@ func (g *RefreshGate) Release() {
 		return
 	}
 	<-g.sem
+}
+
+// classSem returns (lazily creating) the per-class semaphore, capped at
+// half the global limit (min 1).
+func (g *RefreshGate) classSem(class string) chan struct{} {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.classes == nil {
+		g.classes = make(map[string]chan struct{})
+	}
+	sem, ok := g.classes[class]
+	if !ok {
+		limit := cap(g.sem) / 2
+		if limit < 1 {
+			limit = 1
+		}
+		sem = make(chan struct{}, limit)
+		g.classes[class] = sem
+	}
+	return sem
+}
+
+// TryAcquireClass claims a slot for a named refresh class without
+// blocking: the class must be under its own cap (half the global
+// limit) AND the global bound must have room. False means skip the
+// refresh — same contract as TryAcquire.
+func (g *RefreshGate) TryAcquireClass(class string) bool {
+	if g == nil {
+		return true
+	}
+	sem := g.classSem(class)
+	select {
+	case sem <- struct{}{}:
+	default:
+		return false
+	}
+	select {
+	case g.sem <- struct{}{}:
+		return true
+	default:
+		<-sem // give the class token back — all-or-nothing
+		return false
+	}
+}
+
+// ReleaseClass returns both tokens claimed by a successful
+// TryAcquireClass.
+func (g *RefreshGate) ReleaseClass(class string) {
+	if g == nil {
+		return
+	}
+	<-g.sem
+	<-g.classSem(class)
 }
 
 // DetachedRefreshGate exposes the reader's gate so the API-layer explorer

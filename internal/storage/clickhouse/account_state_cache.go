@@ -172,13 +172,13 @@ func (r *ExplorerReader) refreshAccountState(account string) (fl *stateFlightEnt
 	// churn queued one unbounded detached scan per key on the 8-conn
 	// pool. On saturation SKIP — the waiter misses honestly and a later
 	// request re-kicks — never queue (see RefreshGate).
-	if !r.refreshGate.TryAcquire() {
+	if !r.refreshGate.TryAcquireClass("account_state") {
 		fl.saturated = true // published to waiters by end()'s close
 		r.stateFlight.end(account, fl)
 		return fl, true
 	}
 	go func() {
-		defer r.refreshGate.Release()
+		defer r.refreshGate.ReleaseClass("account_state")
 		defer r.stateFlight.end(account, fl)
 		rctx, cancel := context.WithTimeout(context.Background(), accountStateRefreshTimeout)
 		defer cancel()
