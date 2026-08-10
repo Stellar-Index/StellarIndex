@@ -16,6 +16,14 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **DeFindex `harvest` events are now decoded** (sources-decode audit
+  2026-08-04, finding 4): the recognise-and-drop premise ("body never
+  observed on-chain") was disproved by the lake — 1,018 harvests with
+  body `{amount, from, price_per_share}`, the exact shape `decodeFlow`
+  reads by name. Harvests now emit `direction='harvest'` strategy-flow
+  rows (migration 0138 widens the CHECK; user-position sums exclude
+  them by construction — harvest is strategy yield, not a user flow).
+  Historical recovery via `projector-replay -source defindex` (queued).
 - **Phoenix pre-upgrade swaps no longer dropped** (sources-decode
   audit 2026-08-04, finding 1 — HIGH): the pre-upgrade pool WASM
   (ledgers 51,019,036 → 53,134,167) emitted 7 field-events per swap —
