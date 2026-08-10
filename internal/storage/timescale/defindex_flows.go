@@ -28,19 +28,22 @@ func (l DefindexLayer) IsValid() bool {
 	return false
 }
 
-// DefindexDirection discriminates deposit / withdraw. Matches the
-// defindex_flows.direction CHECK constraint.
+// DefindexDirection discriminates deposit / withdraw / harvest.
+// Matches the defindex_flows.direction CHECK constraint (widened to
+// admit harvest by migration 0138 — strategy yield realised into the
+// vault, decoded since the 2026-08-10 audit-finding-4 fix).
 type DefindexDirection string
 
 const (
 	DefindexDeposit  DefindexDirection = "deposit"
 	DefindexWithdraw DefindexDirection = "withdraw"
+	DefindexHarvest  DefindexDirection = "harvest"
 )
 
-// IsValid reports whether d is one of the two known directions.
+// IsValid reports whether d is one of the known directions.
 func (d DefindexDirection) IsValid() bool {
 	switch d {
-	case DefindexDeposit, DefindexWithdraw:
+	case DefindexDeposit, DefindexWithdraw, DefindexHarvest:
 		return true
 	}
 	return false

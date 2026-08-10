@@ -1,4 +1,4 @@
--- 0138: admit direction = 'harvest' into defindex_strategy_flows.
+-- 0138: admit direction = 'harvest' into defindex_flows.
 --
 -- Sources-decode audit 2026-08-04, finding 4 (MEDIUM-HIGH): the
 -- BlendStrategy `harvest` event was recognised-and-dropped on the
@@ -16,8 +16,8 @@
 -- rows fall out of user-position sums (harvest is strategy yield, not
 -- a user flow), and the bespoke-lending series filter directions
 -- explicitly.
-ALTER TABLE defindex_strategy_flows
-    DROP CONSTRAINT defindex_strategy_flows_direction_check;  -- migration-compat:ok replaced in the same transaction by a strict SUPERSET check below
-ALTER TABLE defindex_strategy_flows
-    ADD CONSTRAINT defindex_strategy_flows_direction_check    -- migration-compat:ok widening only: every value the previous released binary writes ('deposit'/'withdraw') satisfies the new check
+ALTER TABLE defindex_flows
+    DROP CONSTRAINT defindex_flows_direction_check;  -- migration-compat:ok replaced in the same transaction by a strict SUPERSET check below
+ALTER TABLE defindex_flows
+    ADD CONSTRAINT defindex_flows_direction_check    -- migration-compat:ok widening only: every value the previous released binary writes ('deposit'/'withdraw') satisfies the new check
     CHECK (direction IN ('deposit', 'withdraw', 'harvest'));
