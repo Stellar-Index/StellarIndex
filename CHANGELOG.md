@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.31.0] — 2026-08-10
+
 ### Fixed
 - **Detached-refresh gate is now class-fair** (inventory #26 item 5,
   second half): the single global bound stopped the unauthenticated
