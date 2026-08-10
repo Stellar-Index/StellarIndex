@@ -247,8 +247,14 @@ type FeeEvent struct {
 	Fee1New uint32
 	Fee1Old uint32
 	// claim_protocol_fee — the fee-sweep destination + swept amount
-	// (i128, per ADR-0003). One event per token claimed.
+	// (i128, per ADR-0003). One event per token claimed. Token is the
+	// claimed token's contract address, carried in topic[1] (audit
+	// 2026-08-04 finding 5: the body Vec has no token; every sampled
+	// event has an ScvAddress at topic[1], and two same-tx claims of
+	// DIFFERENT tokens prove per-pool amounts are meaningless without
+	// it — summing them adds USDC-scale and XLM-scale integers).
 	Recipient string
+	Token     string
 	Amount    canonical.Amount
 }
 

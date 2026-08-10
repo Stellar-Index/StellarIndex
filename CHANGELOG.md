@@ -16,6 +16,16 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **Aquarius `claim_protocol_fee` now records WHICH token was claimed**
+  (sources-decode audit 2026-08-04, finding 5): the token address lives
+  in `topic[1]` — not the body — and migration 0129 shipped no token
+  column on the documented premise that a recent trade could resolve
+  it; the lake refutes that (one tx claims two different tokens with
+  near-identical amounts), and per-pool `SUM(amount)` without the token
+  adds integers of different token scales. `FeeEvent` gains `Token`
+  (decode refuses a claim without it), migration 0139 adds the nullable
+  column, and the 163 token-less rows already on r1 re-derive via
+  `projector-replay -source aquarius` (queued).
 - **DeFindex `harvest` events are now decoded** (sources-decode audit
   2026-08-04, finding 4): the recognise-and-drop premise ("body never
   observed on-chain") was disproved by the lake — 1,018 harvests with

@@ -1307,6 +1307,7 @@ func persistAquariusFee(ctx context.Context, logger *slog.Logger, store *timesca
 		row.Fee1New, row.Fee1Old = e.Fee1New, e.Fee1Old
 	} else {
 		row.Recipient = e.Recipient
+		row.Token = e.Token
 		row.Amount = e.Amount.String()
 	}
 	if err := store.InsertAquariusProtocolFee(ctx, row); err != nil {

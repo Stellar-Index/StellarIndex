@@ -453,25 +453,46 @@ func decodeFee(e *events.Event, closedAt time.Time, kind string) (FeeEvent, erro
 			*f.dst = v
 		}
 	case EventClaimProtocolFee:
-		vec, err := scval.AsVec(sv)
-		if err != nil {
-			return FeeEvent{}, fmt.Errorf("%w: claim_protocol_fee not a Vec: %w", ErrMalformedPayload, err)
+		if err := decodeClaimFee(e, sv, &fe); err != nil {
+			return FeeEvent{}, err
 		}
-		if len(vec) != 2 {
-			return FeeEvent{}, fmt.Errorf("%w: claim_protocol_fee vec len %d, want 2", ErrMalformedPayload, len(vec))
-		}
-		recipient, err := scval.AsAddressStrkey(vec[0])
-		if err != nil {
-			return FeeEvent{}, fmt.Errorf("%w: claim_protocol_fee recipient: %w", ErrMalformedPayload, err)
-		}
-		amount, err := scval.AsAmountFromI128(vec[1])
-		if err != nil {
-			return FeeEvent{}, fmt.Errorf("%w: claim_protocol_fee amount: %w", ErrMalformedPayload, err)
-		}
-		fe.Recipient = recipient
-		fe.Amount = amount
 	default:
 		return FeeEvent{}, fmt.Errorf("decodeFee: unexpected kind %q", kind)
 	}
 	return fe, nil
+}
+
+// decodeClaimFee fills the claim_protocol_fee fields: recipient +
+// amount from the body Vec, and the claimed token from topic[1] (an
+// ScvAddress). The token is NOT in the body — the 0129-era premise
+// that "the token identity is positional/not in the body — join a
+// recent trade to resolve it" was refuted by the lake (audit
+// 2026-08-04 finding 5: ledger 63,698,651 has two same-tx claims with
+// different topic[1] tokens and near-identical amounts, so per-pool
+// sums without the token mix token scales).
+func decodeClaimFee(e *events.Event, sv scval.ScVal, fe *FeeEvent) error {
+	vec, err := scval.AsVec(sv)
+	if err != nil {
+		return fmt.Errorf("%w: claim_protocol_fee not a Vec: %w", ErrMalformedPayload, err)
+	}
+	if len(vec) != 2 {
+		return fmt.Errorf("%w: claim_protocol_fee vec len %d, want 2", ErrMalformedPayload, len(vec))
+	}
+	if fe.Recipient, err = scval.AsAddressStrkey(vec[0]); err != nil {
+		return fmt.Errorf("%w: claim_protocol_fee recipient: %w", ErrMalformedPayload, err)
+	}
+	if fe.Amount, err = scval.AsAmountFromI128(vec[1]); err != nil {
+		return fmt.Errorf("%w: claim_protocol_fee amount: %w", ErrMalformedPayload, err)
+	}
+	if len(e.Topic) < 2 {
+		return fmt.Errorf("%w: claim_protocol_fee has %d topics, want token address at topic[1]", ErrMalformedPayload, len(e.Topic))
+	}
+	tokenSv, err := scval.Parse(e.Topic[1])
+	if err != nil {
+		return fmt.Errorf("%w: claim_protocol_fee topic[1]: %w", ErrMalformedPayload, err)
+	}
+	if fe.Token, err = scval.AsAddressStrkey(tokenSv); err != nil {
+		return fmt.Errorf("%w: claim_protocol_fee topic[1] not an address: %w", ErrMalformedPayload, err)
+	}
+	return nil
 }
