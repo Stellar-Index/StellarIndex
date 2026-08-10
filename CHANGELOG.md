@@ -16,6 +16,14 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **Detached-refresh gate is now class-fair** (inventory #26 item 5,
+  second half): the single global bound stopped the unauthenticated
+  scan-amplification but let one key class starve the rest — a crawler
+  churning fabricated contract ids could hold every slot while cold
+  account/holders/directory pages fast-503d behind it. Each refresh
+  class (account state, contract detail, asset holders, contracts
+  directory) is now additionally capped at half the global limit; the
+  global pool-safety bound is unchanged.
 - **/v1/contracts directory census: 40s scans replaced by a day-keyed
   rollup** (inventory #26 item 2 — the single heaviest explorer read,
   ~160 runs per 3h across the prewarm rungs). New
