@@ -158,18 +158,38 @@ func (d *Decoder) decodeSwapMapEvent(ev *events.Event, closedAt time.Time) ([]co
 
 func (d *Decoder) decodeSwapEvent(ev *events.Event, fieldTopic string, closedAt time.Time) ([]consumer.Event, error) {
 	completed, evicted, err := d.buf.absorb(ev, fieldTopic, closedAt)
-	d.evictedOrphans += len(evicted)
+	// Sweep-time rescue (sources-decode audit 2026-08-04, finding 1):
+	// an aged-out group whose decode-consumed slots are all present is a
+	// pre-upgrade 7-event swap (that era never sends ActualReceived /
+	// SpreadAmount / ReferralFee), not an orphan — decode and emit it.
+	// Only genuinely under-filled groups count as orphans. Decode
+	// failures on a rescued group fall through to the orphan count
+	// rather than failing the CURRENT event, which is unrelated to the
+	// swept group.
+	var out []consumer.Event
+	for i := range evicted {
+		if !evicted[i].Decodable() {
+			d.evictedOrphans++
+			continue
+		}
+		trade, derr := decodeSwap(&evicted[i])
+		if derr != nil {
+			d.evictedOrphans++
+			continue
+		}
+		out = append(out, TradeEvent{Trade: trade})
+	}
 	if err != nil {
-		return nil, err
+		return out, err
 	}
 	if completed == nil {
-		return nil, nil
+		return out, nil
 	}
 	trade, err := decodeSwap(completed)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
-	return []consumer.Event{TradeEvent{Trade: trade}}, nil
+	return append(out, TradeEvent{Trade: trade}), nil
 }
 
 func (d *Decoder) decodeProvideLiquidityEvent(ev *events.Event, fieldTopic string, closedAt time.Time) ([]consumer.Event, error) {

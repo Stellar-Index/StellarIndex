@@ -245,3 +245,83 @@ func TestDecoder_GateRejectsForeignContract(t *testing.T) {
 		t.Fatal("curated stake contract failed to match")
 	}
 }
+
+// makeFieldEventAt is makeFieldEvent with a controllable close time +
+// tx hash, for tests that need two swap groups on different timelines.
+func makeFieldEventAt(t *testing.T, fieldTopic, body, txHash, closedAt string) events.Event {
+	t.Helper()
+	ev := makeFieldEvent(t, fieldTopic, body)
+	ev.TxHash = txHash
+	ev.LedgerClosedAt = closedAt
+	return ev
+}
+
+// TestDecoder_Decode_rescuesPreUpgradeSevenFieldSwapAtSweep is the
+// sources-decode audit 2026-08-04 finding-1 regression: the
+// PRE-UPGRADE pool WASM (ledgers 51,019,036 → 53,134,167) emitted 7
+// field-events per swap — no "actual received amount" — so the group
+// could never Complete() and was dropped as an orphan at sweep. ALL
+// 5,161 pre-upgrade swaps emitted zero trades (r1-confirmed). An
+// aged-out group whose decode-consumed slots are present must now be
+// DECODED at sweep, not orphaned; a genuinely under-filled group must
+// still count as an orphan.
+func TestDecoder_Decode_rescuesPreUpgradeSevenFieldSwapAtSweep(t *testing.T) {
+	d := newTestDecoder()
+
+	sellToken := makeC(t, 0x20)
+	buyToken := makeC(t, 0x30)
+	sender := makeC(t, 0x10)
+	offer := big.NewInt(1_000_000)
+	returnAmt := big.NewInt(2_000_000)
+	zeroI128 := i128Body(t, big.NewInt(0))
+
+	// The 7-event pre-upgrade shape: every field EXCEPT ActualReceived.
+	preUpgrade := []struct{ topic, body string }{
+		{TopicSymbolSender, addrBody(t, sender)},
+		{TopicSymbolSellToken, addrBody(t, sellToken)},
+		{TopicSymbolOfferAmount, i128Body(t, offer)},
+		{TopicSymbolBuyToken, addrBody(t, buyToken)},
+		{TopicSymbolReturnAmount, i128Body(t, returnAmt)},
+		{TopicSymbolSpreadAmount, zeroI128},
+		{TopicSymbolReferralFee, zeroI128},
+	}
+	for i, f := range preUpgrade {
+		out, err := d.Decode(makeFieldEventAt(t, f.topic, f.body, "pre-upgrade-tx", "2026-04-23T12:00:00Z"))
+		if err != nil {
+			t.Fatalf("field %d (%s): %v", i, f.topic, err)
+		}
+		if len(out) != 0 {
+			t.Fatalf("field %d (%s): emitted %d events before sweep, want 0 — rescue must be sweep-time only", i, f.topic, len(out))
+		}
+	}
+
+	// A second, genuinely-broken group (2 fields only) on the same
+	// timeline — must remain an orphan.
+	for _, f := range preUpgrade[:2] {
+		if _, err := d.Decode(makeFieldEventAt(t, f.topic, f.body, "broken-tx", "2026-04-23T12:00:01Z")); err != nil {
+			t.Fatalf("broken group: %v", err)
+		}
+	}
+
+	// An unrelated event past maxAge triggers the sweep of both groups.
+	out, err := d.Decode(makeFieldEventAt(t, TopicSymbolSender, addrBody(t, sender), "later-tx", "2026-04-23T12:10:00Z"))
+	if err != nil {
+		t.Fatalf("sweep-trigger event: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("sweep emitted %d events, want exactly 1 (the rescued 7-field swap; the 2-field group stays an orphan)", len(out))
+	}
+	te, ok := out[0].(TradeEvent)
+	if !ok {
+		t.Fatalf("swept emission is %T, want TradeEvent", out[0])
+	}
+	if te.Trade.Source != SourceName {
+		t.Errorf("rescued trade source = %q, want %q", te.Trade.Source, SourceName)
+	}
+	if got := te.Trade.QuoteAmount.BigInt().Int64(); got != returnAmt.Int64() {
+		t.Errorf("rescued trade quote amount = %d, want %d (ReturnAmount — decode must match the 8-field era's field mapping)", got, returnAmt.Int64())
+	}
+	if d.evictedOrphans != 1 {
+		t.Errorf("evictedOrphans = %d, want 1 (only the 2-field group)", d.evictedOrphans)
+	}
+}

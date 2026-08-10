@@ -39,7 +39,9 @@ type RawSwap struct {
 	ReferralFee    *events.Event
 }
 
-// Complete reports whether all 8 slots are populated.
+// Complete reports whether all 8 slots are populated — the CURRENT
+// (post-upgrade) era's full event set, and the trigger for the eager
+// emit path in absorb.
 func (r *RawSwap) Complete() bool {
 	return r.Sender != nil &&
 		r.SellToken != nil &&
@@ -49,6 +51,31 @@ func (r *RawSwap) Complete() bool {
 		r.ReturnAmount != nil &&
 		r.SpreadAmount != nil &&
 		r.ReferralFee != nil
+}
+
+// Decodable reports whether the slots decodeSwap actually CONSUMES are
+// populated: Sender, SellToken, OfferAmount, BuyToken, ReturnAmount.
+// ActualReceived / SpreadAmount / ReferralFee are deliberately unread
+// (see decodeSwap's doc: ActualReceived is the pool's INPUT echo and
+// using it corrupted prices, Q3).
+//
+// This is the sweep-time emission gate (sources-decode audit
+// 2026-08-04, finding 1): the PRE-UPGRADE pool WASM (ledgers
+// 51,019,036 → 53,134,167) emitted 7 field-events per swap — no
+// "actual received amount" — so those groups can never Complete() and
+// were dropped as orphans at sweep: ALL 5,161 pre-upgrade swaps,
+// r1-confirmed (min trades ledger for phoenix was 53,134,242).
+// Emitting decodable groups AT SWEEP (never eagerly) keeps the current
+// era's accounting unchanged: an in-flight 8-field group still waits
+// for its full set, and only a group that aged out — meaning its era
+// genuinely never sends the missing fields — is decoded from what the
+// decoder needs rather than thrown away.
+func (r *RawSwap) Decodable() bool {
+	return r.Sender != nil &&
+		r.SellToken != nil &&
+		r.OfferAmount != nil &&
+		r.BuyToken != nil &&
+		r.ReturnAmount != nil
 }
 
 // fieldsPresent returns the count of populated slots. Diagnostic
@@ -232,7 +259,11 @@ func classifyAny(e *events.Event) (action, string) {
 //     base==quote and corrupted all Phoenix prices (Q3).
 //   - Trade.Taker        = sender address
 func decodeSwap(r *RawSwap) (canonical.Trade, error) {
-	if !r.Complete() {
+	// Decodable, not Complete: the guard's job is "can this function
+	// read every slot it touches", and it touches five. Requiring the
+	// unread ActualReceived here silently zeroed the 7-event
+	// pre-upgrade era (see Decodable's doc).
+	if !r.Decodable() {
 		return canonical.Trade{}, fmt.Errorf("%w: have %d/8 fields",
 			ErrIncompleteSwap, r.fieldsPresent())
 	}
