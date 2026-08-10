@@ -27,6 +27,7 @@ type AquariusProtocolFeeEvent struct {
 	Fee1New         uint32
 	Fee1Old         uint32
 	Recipient       string
+	Token           string // claimed token C-strkey from topic[1]; "" on set_protocol_fee (migration 0139)
 	Amount          string // decimal i128; "" on set_protocol_fee
 }
 
@@ -51,7 +52,7 @@ func (s *Store) InsertAquariusProtocolFee(ctx context.Context, e AquariusProtoco
 
 	var (
 		fee0New, fee0Old, fee1New, fee1Old sql.NullInt64
-		recipient, amount                  sql.NullString
+		recipient, token, amount           sql.NullString
 	)
 	switch e.Kind {
 	case "set_protocol_fee":
@@ -68,6 +69,12 @@ func (s *Store) InsertAquariusProtocolFee(ctx context.Context, e AquariusProtoco
 		}
 		recipient = sql.NullString{String: e.Recipient, Valid: true}
 		amount = sql.NullString{String: e.Amount, Valid: true}
+		// Token may be empty only for rows re-persisted from pre-0139
+		// decoders; new decodes always carry it (decodeFee refuses a
+		// claim without topic[1]).
+		if e.Token != "" {
+			token = sql.NullString{String: e.Token, Valid: true}
+		}
 	default:
 		return fmt.Errorf("timescale: InsertAquariusProtocolFee: unknown Kind %q", e.Kind)
 	}
@@ -77,13 +84,13 @@ func (s *Store) InsertAquariusProtocolFee(ctx context.Context, e AquariusProtoco
             contract_id, ledger, ledger_close_time, tx_hash,
             op_index, event_index, kind,
             fee_protocol0_new, fee_protocol0_old, fee_protocol1_new, fee_protocol1_old,
-            recipient, amount,
+            recipient, token, amount,
             derive_generation
         ) VALUES (
             $1, $2, $3, $4, $5, $6, $7,
             $8, $9, $10, $11,
-            $12, $13,
-            $14
+            $12, $13, $14,
+            $15
         )
         ON CONFLICT (ledger_close_time, contract_id, ledger, tx_hash, op_index, event_index) DO UPDATE SET
             kind              = EXCLUDED.kind,
@@ -92,6 +99,7 @@ func (s *Store) InsertAquariusProtocolFee(ctx context.Context, e AquariusProtoco
             fee_protocol1_new = EXCLUDED.fee_protocol1_new,
             fee_protocol1_old = EXCLUDED.fee_protocol1_old,
             recipient         = EXCLUDED.recipient,
+            token             = EXCLUDED.token,
             amount            = EXCLUDED.amount,
             derive_generation = EXCLUDED.derive_generation
           WHERE aquarius_protocol_fee.derive_generation <= EXCLUDED.derive_generation
@@ -100,7 +108,7 @@ func (s *Store) InsertAquariusProtocolFee(ctx context.Context, e AquariusProtoco
 		e.ContractID, int(e.Ledger), e.LedgerCloseTime.UTC(), e.TxHash,
 		int(e.OpIndex), int(e.EventIndex), e.Kind,
 		fee0New, fee0Old, fee1New, fee1Old,
-		recipient, amount,
+		recipient, token, amount,
 		s.deriveGeneration,
 	); err != nil {
 		return fmt.Errorf("timescale: InsertAquariusProtocolFee %s@%d: %w", e.ContractID, e.Ledger, err)

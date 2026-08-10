@@ -41,12 +41,17 @@ func TestDecodeFee_setProtocolFee_realFixture(t *testing.T) {
 }
 
 func TestDecodeFee_claimProtocolFee_realFixture(t *testing.T) {
+	// topic[1] carries the claimed token address on every sampled
+	// on-chain event (audit 2026-08-04 finding 5) — the original
+	// fixture captured only topic[0]; the token topic is rebuilt with
+	// the same encoding the lake stores.
+	wantClaimedAsset := "CCNXGPE4AQCSNEBZO3XJDKKDI3CRLYMVS6UWBBTVDLALLWMJEXBORQ2A" // public contract strkey, not a credential
 	e := &events.Event{
 		ContractID: "CCNXGPE4AQCSNEBZO3XJDKKDI3CRLYMVS6UWBBTVDLALLWMJEXBORQ2A",
 		Ledger:     63_276_201,
 		TxHash:     "b6c8ece0e7c9995967448fba5f0f7ab99ffc78677a259ab74dd2c04b46bac28e",
 		EventIndex: 1,
-		Topic:      []string{realClaimFeeTopic0},
+		Topic:      []string{realClaimFeeTopic0, encodeContractAddrFromStrkey(t, wantClaimedAsset)},
 		Value:      realClaimFeeBody,
 	}
 	if got := classify(e); got != EventClaimProtocolFee {
@@ -55,6 +60,9 @@ func TestDecodeFee_claimProtocolFee_realFixture(t *testing.T) {
 	fe, err := decodeFee(e, closedAtTest, EventClaimProtocolFee)
 	if err != nil {
 		t.Fatalf("decodeFee: %v", err)
+	}
+	if fe.Token != wantClaimedAsset {
+		t.Errorf("Token = %q, want %q (from topic[1])", fe.Token, wantClaimedAsset)
 	}
 	if fe.Kind != EventClaimProtocolFee {
 		t.Errorf("Kind = %q", fe.Kind)
