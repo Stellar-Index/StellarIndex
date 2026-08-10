@@ -16,6 +16,17 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **Phoenix pre-upgrade swaps no longer dropped** (sources-decode
+  audit 2026-08-04, finding 1 — HIGH): the pre-upgrade pool WASM
+  (ledgers 51,019,036 → 53,134,167) emitted 7 field-events per swap —
+  no "actual received amount" — but `RawSwap.Complete()` required that
+  slot even though `decodeSwap` deliberately never reads it, so all
+  5,161 pre-upgrade swaps aged out as orphans (r1-confirmed: zero
+  phoenix trades before ledger 53,134,242). Aged-out groups whose
+  decode-consumed slots are present are now decoded at sweep time
+  instead of orphaned; the current era's eager 8-field emit and orphan
+  accounting are unchanged. Recovery of the historical rows needs
+  `projector-replay -source phoenix -from 51019036` (queued).
 - **`/v1/contracts/{id}/code-history` cold reads** (the last persistent
   503 class in the route sweep): new keyed
   `stellar.contract_instance_changes` index — an MV-fed
