@@ -1,0 +1,52 @@
+# systemd unit: contracts-census rollup (inventory #26 item 2).
+#
+# Rendered by Ansible. Maintains stellar.contracts_census_daily — the
+# day-keyed per-contract event counts behind the /v1/contracts
+# directory. Timer mode recomputes today + any missing days (whole-day
+# REPLACE PARTITION, idempotent); the FIRST fill after provisioning is
+# `ch-census-rollup -backfill` run manually under run-heavy-job.sh
+# (see deploy/clickhouse/contracts_census_daily.sql).
+
+[Unit]
+Description=Stellar Index — contracts-census daily rollup
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/open-fixes-inventory-2026-08-08.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/census-rollup
+EnvironmentFile=-/etc/default/stellarindex
+
+Environment=CH_ADDR=127.0.0.1:9300
+Environment=EXTRA_FLAGS=
+
+ExecStart=/usr/local/bin/stellarindex-ops ch-census-rollup \
+  -ch-addr ${CH_ADDR} \
+  ${EXTRA_FLAGS}
+
+# De-privileged, same shape as the sibling oneshots (CS-118/CS-119).
+User=stellarindex
+Group=stellarindex
+
+ProtectSystem=strict
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# Steady state recomputes one or two days (~seconds each); the ceiling
+# guards a wedged run, and a killed run resumes from the newest day
+# present.
+TimeoutStartSec=30min
+
+# Memory ceiling — the day GROUP BY spills externally at 4GB (SETTINGS
+# in the job SQL); host-level backstop per the 2026-07-05 wedge class.
+MemoryMax=4G
+MemorySwapMax=0
+CPUWeight=25
+IOWeight=25
+
+[Install]
+WantedBy=multi-user.target
