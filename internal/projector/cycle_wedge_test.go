@@ -460,3 +460,28 @@ func TestCycle_HealthyRowsUnaffected(t *testing.T) {
 		t.Errorf("ok delta = %v, want 2", got)
 	}
 }
+
+// TestCycle_AdjacentDuplicateRowsDecodeOnce pins the entry-point
+// duplicate guard (2026-08-11 stake-buffer investigation): the lake is
+// an append log read without FINAL, so re-ingested duplicate rows reach
+// the cycle consecutively. Stateless decoders + keyed sinks absorb
+// that, but BUFFERED decoders (phoenix's multi-event correlation)
+// corrupt: a duplicate re-opens a completed group and cross-assigns
+// fields between legs. Exact-identity re-deliveries must be decoded
+// exactly once.
+func TestCycle_AdjacentDuplicateRowsDecodeOnce(t *testing.T) {
+	// Three copies of one row followed by a distinct second row.
+	dup := lakeRow(101, 1)
+	rows := []sorobanevents.Row{dup, dup, dup, lakeRow(102, 2)}
+
+	var emitted int
+	h := newWedgeHarness(t, "dup-test", rows, 200, func(consumer.Event) error {
+		emitted++
+		return nil
+	})
+	h.cycle()
+
+	if emitted != 2 {
+		t.Fatalf("sink saw %d events, want 2 (three duplicate copies must decode once; the distinct row once)", emitted)
+	}
+}

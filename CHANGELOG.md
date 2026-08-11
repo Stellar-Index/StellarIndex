@@ -15,6 +15,17 @@ against.
 
 ## [Unreleased]
 
+- **Projector decodes each lake event exactly once** (stake-buffer
+  investigation 2026-08-11): the append-log lake is read without FINAL,
+  so re-ingested duplicate rows reached every decoder — absorbed by
+  keyed sinks for stateless sources, but CORRUPTING for buffered
+  decoders (phoenix's multi-event correlation: a duplicate re-opens a
+  completed group and can cross-assign fields between a mixed op's
+  legs — the 616 bond/unbond class). An adjacent-identity guard at the
+  single decode entry point (mirroring the completeness reconcile's
+  guard) now skips exact re-deliveries; `events_emitted` stops
+  over-counting duplicates.
+
 ### Fixed
 - **Contract WASM view resolves pre-capture contracts** ("this
   contract's on-chain WASM isn't in the captured ledger window yet",
