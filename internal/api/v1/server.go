@@ -77,6 +77,7 @@ type Server struct {
 	accounts            AccountStore
 	accountKeyQuota     int
 	platformAccounts    PlatformAccountStore
+	registerAccounts    RegisterAccountCreator
 	apiKeyBudgets       APIKeyBudgetStores
 	statusNotices       StatusNoticeStore
 	audit               AuditSink
@@ -396,6 +397,15 @@ type Options struct {
 	// overrides from at Lookup time, so a staff-set override takes
 	// effect on the next key lookup. Nil makes those endpoints 503.
 	PlatformAccounts PlatformAccountStore
+
+	// RegisterAccounts, when non-nil, backs POST /v1/register — the
+	// open, curl-first onboarding path that creates a free-tier
+	// platform account and mints its first Postgres-backed API key
+	// (the key store is APIKeyBudgets.Platform; both must be wired or
+	// the endpoint 503s). Production wires the SAME
+	// postgresstore.NewAccountStore instance as PlatformAccounts,
+	// narrowed to create-only. The per-IP SignupIPThrottle gates it.
+	RegisterAccounts RegisterAccountCreator
 
 	// StatusNotices, when non-nil, backs the operator status-banner
 	// endpoints (POST/GET /v1/admin/status-notices, resolve) and the
@@ -1093,6 +1103,7 @@ func New(opts Options) *Server {
 		accounts:               opts.Accounts,
 		accountKeyQuota:        opts.AccountKeyQuota,
 		platformAccounts:       opts.PlatformAccounts,
+		registerAccounts:       opts.RegisterAccounts,
 		apiKeyBudgets:          opts.APIKeyBudgets,
 		statusNotices:          opts.StatusNotices,
 		signups:                opts.Signups,
@@ -1764,6 +1775,10 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("POST /v1/admin/status-notices", s.handleAdminStatusNoticeCreate)
 	s.mux.HandleFunc("POST /v1/admin/status-notices/{id}/resolve", s.handleAdminStatusNoticeResolve)
 	s.mux.HandleFunc("POST /v1/signup", s.handleSignup)
+	// Open registration — the curl-first agent onboarding path:
+	// creates a free-tier platform account + first API key in one
+	// unauthenticated POST. Shares /v1/signup's per-IP throttle.
+	s.mux.HandleFunc("POST /v1/register", s.handleRegister)
 	// F-1218 (codex audit-2026-05-12): email-ownership-proof
 	// flow. The signup handler issues a token (subsequent
 	// wave) and emails it; this endpoint consumes the token

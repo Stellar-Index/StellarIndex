@@ -12,7 +12,7 @@ import {
 export const metadata: Metadata = {
   title: 'Pricing — free access, quotas, SLAs',
   description:
-    'Stellar Index is free. Anonymous public reads plus a $0 self-service Starter tier for higher per-key rate limits — no payments, no card. Need more throughput? Talk to us about a partner limit.',
+    'Stellar Index is free. Anonymous public reads plus free registered accounts for higher per-key rate limits — no payments, no card. Need more throughput? Talk to us about a partner limit.',
   alternates: { canonical: '/pricing' },
 };
 
@@ -30,7 +30,7 @@ interface Tier {
 
 const TIERS: Tier[] = [
   {
-    name: 'Free',
+    name: 'Anonymous',
     price: '$0',
     priceSubtitle: 'forever',
     rateLimit: '60 req/min per IP',
@@ -46,22 +46,23 @@ const TIERS: Tier[] = [
     notFeatures: ['Per-key analytics', 'Higher per-key rate limit', 'Dedicated SLA'],
   },
   {
-    name: 'Starter',
+    name: 'Free account',
     price: '$0',
     priceSubtitle: 'self-service',
     rateLimit: '1,000 req/min per key',
     cta: { label: 'Create account', href: '/signup' },
     description:
-      'Sign in with magic-link, mint an API key, get 1,000 req/min and per-key usage analytics. Designed for individual builders and side-projects shipping to customers.',
+      'Register in one curl (POST /v1/register) or sign in with magic-link, mint an API key, get 1,000 req/min and per-key usage analytics. Designed for builders and agents shipping to customers.',
     highlight: true,
     features: [
-      'Everything in Free',
+      'Everything in Anonymous',
       '1,000 requests / minute per key',
+      'One-curl onboarding: POST /v1/register',
       'Per-key usage history (30d)',
       'Mint & rotate keys at /account',
       'Email support',
     ],
-    notFeatures: ['Dedicated SLA', 'Operator-issued tier overrides'],
+    notFeatures: ['Dedicated SLA', 'Staff-set partner limits'],
   },
 ];
 
@@ -76,10 +77,11 @@ export default function PricingPage() {
           Pricing
         </h1>
         <p className="text-lg leading-relaxed text-ink-muted">
-          Stellar Index is free — there are no paid plans. Free reads
-          work without an account; the self-service Starter tier
-          unlocks a higher per-key rate limit and usage analytics.
-          Higher partner limits are set by our staff on request.
+          Stellar Index is free — there are no paid plans. Anonymous
+          reads work without an account; a free account (one curl:
+          POST /v1/register) unlocks a higher per-key rate limit and
+          usage analytics. Higher partner limits are set by our staff
+          on request.
         </p>
       </header>
 

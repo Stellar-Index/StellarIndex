@@ -175,6 +175,7 @@ var uncoveredOperations = map[string]string{
 
 	// Auth/session/webhook flows — browser/dashboard interactions,
 	// not machine-SDK surface.
+	"POST /register":                          "one-shot curl-first onboarding — SDK consumers already hold a key; coverage lands with the account-management client if one ships",
 	"POST /signup":                            "browser onboarding flow",
 	"GET /signup/verify":                      "browser onboarding flow",
 	"GET /dashboard/keys":                     "session-cookie dashboard surface",

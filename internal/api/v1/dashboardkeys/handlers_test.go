@@ -131,12 +131,13 @@ func TestHandleCreate_RejectsMissingName(t *testing.T) {
 }
 
 // TestHandleCreate_TierClampsRateLimit pins F-1212 (codex
-// audit-2026-05-12): a Free account requesting a 100_000/min
-// budget gets clamped to the free-tier ceiling (60/min), and a
-// Pro account requesting the same gets clamped to the Pro ceiling
-// (10_000/min). Regression-guards against any future change that
-// re-introduces direct customer control over the persisted
-// budget.
+// audit-2026-05-12): a free account requesting a 100_000/min
+// budget gets clamped to the free-tier ceiling (1000/min under the
+// free-platform model), while a partner account keeps the 100_000
+// ceiling. Legacy tier strings must clamp at their CANONICAL rung
+// (starter≡free, pro/business/enterprise≡partner).
+// Regression-guards against any future change that re-introduces
+// direct customer control over the persisted budget.
 func TestHandleCreate_TierClampsRateLimit(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -144,14 +145,14 @@ func TestHandleCreate_TierClampsRateLimit(t *testing.T) {
 		requested int
 		wantCap   int
 	}{
-		{"free clamps 100k to 60", platform.TierFree, 100_000, 60},
-		{"free clamps 1000 to 60", platform.TierFree, 1000, 60},
-		{"starter passes 1000", platform.TierStarter, 1000, 1000},
-		{"starter clamps 10000 to 1000", platform.TierStarter, 10_000, 1000},
-		{"pro passes 10000", platform.TierPro, 10_000, 10_000},
-		{"pro clamps 100k to 10k", platform.TierPro, 100_000, 10_000},
-		{"business passes 60k", platform.TierBusiness, 60_000, 60_000},
-		{"enterprise passes 100k", platform.TierEnterprise, 100_000, 100_000},
+		{"free clamps 100k to 1000", platform.TierFree, 100_000, 1000},
+		{"free clamps 10000 to 1000", platform.TierFree, 10_000, 1000},
+		{"free passes 1000", platform.TierFree, 1000, 1000},
+		{"partner passes 100k", platform.TierPartner, 100_000, 100_000},
+		{"legacy starter maps to free: clamps 10000 to 1000", platform.TierStarter, 10_000, 1000},
+		{"legacy pro maps to partner: passes 100k", platform.TierPro, 100_000, 100_000},
+		{"legacy business maps to partner: passes 60k", platform.TierBusiness, 60_000, 60_000},
+		{"legacy enterprise maps to partner: passes 100k", platform.TierEnterprise, 100_000, 100_000},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -204,7 +205,7 @@ func TestHandleCreate_ClampsMonthlyQuota(t *testing.T) {
 		{"no override: below tier ceiling honored", platform.TierPro, 0, 2_000_000, 2_000_000},
 		{"no override, request 0 falls back to the tier ceiling", platform.TierFree, 0, 0, platform.TierFree.MaxMonthlyQuota()},
 		{"override present, request 0 inherits it at auth time", platform.TierFree, 250_000, 0, 0},
-		{"free tier ceiling clamps", platform.TierFree, 0, 500_000, platform.TierFree.MaxMonthlyQuota()},
+		{"free tier ceiling clamps", platform.TierFree, 0, 5_000_000, platform.TierFree.MaxMonthlyQuota()},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

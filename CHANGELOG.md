@@ -25,6 +25,36 @@ against.
   single decode entry point (mirroring the completeness reconcile's
   guard) now skips exact re-deliveries; `events_emitted` stops
   over-counting duplicates.
+### Added
+- **`POST /v1/register` — open registration, the curl-first agent
+  onboarding path**: one unauthenticated POST (empty body fine;
+  optional `name` + contact-only `email`, never verified) creates a
+  free-tier platform account and mints its first Postgres-backed API
+  key, returning `{account_id, api_key, key_id, key_prefix, tier,
+  limits}` with the plaintext shown once. Rides the same per-IP
+  signup throttle as `/v1/signup` (shared budget → 429) and the
+  signup Content-Type CSRF gate. OpenAPI path + all three generated
+  artifacts refreshed (docs-api, docs-postman, web-generate-api);
+  SDK triage recorded in `uncoveredOperations`; agent-facing
+  walkthrough at `docs/agent-onboarding.md`.
+
+### Changed
+- **Tier model collapsed to `anon` / `free` / `partner`** (follow-up
+  to the Stripe removal — the platform is free). `free` is every
+  registered account's default, anchored to the old Starter numbers
+  (1000 req/min, 1M req/month, 25 keys, 10 webhooks, 25 price
+  alerts); `partner` is staff-set per-account limits via the existing
+  PATCH `/v1/admin/accounts/{id}` override + key-clamp path, with the
+  old Enterprise numbers as ceilings when no override is set
+  (100k req/min, 1B req/month, 250 keys, 100 webhooks, 1000 alerts);
+  `anon` documents the unauthenticated 60/min per-IP baseline.
+  Legacy stored tier strings map in code
+  (`platform.Tier.Canonical`: starter→free,
+  pro/business/enterprise→partner; unknown fails closed to free) and
+  writes fold back to CHECK-legal strings
+  (`platform.Tier.StorageValue`) — migrations untouched. The admin
+  PATCH accepts both vocabularies and canonicalises.
+
 ### Removed
 - **Stripe/billing integration removed — the platform is free**
   (operator decision 2026-08-10: anonymous access, free accounts,

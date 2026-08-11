@@ -114,8 +114,11 @@ func TestAdminAccountOverrides_Happy(t *testing.T) {
 	if store.updateCalls != 1 {
 		t.Fatalf("Update called %d times, want 1", store.updateCalls)
 	}
-	if store.lastUpdate.Tier != platform.TierEnterprise {
-		t.Errorf("persisted Tier = %q, want enterprise", store.lastUpdate.Tier)
+	// Legacy "enterprise" in the PATCH body canonicalises to partner
+	// in memory (free-platform model); the storage layer folds it back
+	// to a CHECK-legal legacy string via Tier.StorageValue at write.
+	if store.lastUpdate.Tier != platform.TierPartner {
+		t.Errorf("persisted Tier = %q, want partner (canonical form of legacy enterprise)", store.lastUpdate.Tier)
 	}
 	if store.lastUpdate.RateLimitPerMinOverride != 50000 {
 		t.Errorf("persisted RateLimitPerMinOverride = %d, want 50000", store.lastUpdate.RateLimitPerMinOverride)
@@ -130,7 +133,7 @@ func TestAdminAccountOverrides_Happy(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if env.Data.Tier != "enterprise" || env.Data.RateLimitPerMinOverride != 50000 {
+	if env.Data.Tier != "partner" || env.Data.RateLimitPerMinOverride != 50000 {
 		t.Errorf("response view = %+v", env.Data)
 	}
 

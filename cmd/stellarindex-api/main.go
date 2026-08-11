@@ -1125,10 +1125,16 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// and the public notices list to `[]`.
 	var (
 		platformAccountStore v1.PlatformAccountStore
+		registerAccountStore v1.RegisterAccountCreator
 		statusNoticeStore    v1.StatusNoticeStore
 	)
 	if pgDB := store.DB(); pgDB != nil {
-		platformAccountStore = postgresstore.NewAccountStore(postgresstore.New(pgDB))
+		// One concrete AccountStore serves both narrowed seams:
+		// Get/Update for the admin override endpoints, Create for
+		// POST /v1/register.
+		acctStore := postgresstore.NewAccountStore(postgresstore.New(pgDB))
+		platformAccountStore = acctStore
+		registerAccountStore = acctStore
 		statusNoticeStore = postgresstore.NewStatusNoticeStore(postgresstore.New(pgDB))
 	}
 
@@ -1168,6 +1174,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Sep1Cache:           store,
 		Accounts:            accountStore,
 		PlatformAccounts:    platformAccountStore,
+		RegisterAccounts:    registerAccountStore,
 		APIKeyBudgets:       apiKeyBudgets,
 		StatusNotices:       statusNoticeStore,
 		Audit:               adminAudit,

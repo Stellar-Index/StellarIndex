@@ -118,7 +118,7 @@ function PlanCard({ me }: { me: MeResponse }) {
   const tier = me.account?.tier ?? me.tier;
   const ceiling = tierCeiling(tier);
   const status = me.account?.status ?? 'active';
-  const isEnterprise = (tier ?? '').toLowerCase() === 'enterprise';
+  const isPartner = ['partner', 'enterprise'].includes((tier ?? '').toLowerCase());
   return (
     <Card>
       <CardHeader
@@ -141,7 +141,7 @@ function PlanCard({ me }: { me: MeResponse }) {
               : 'Custom rate limits'}
           </div>
         </div>
-        {isEnterprise ? (
+        {isPartner ? (
           <ButtonLink href="mailto:sales@stellarindex.io" variant="secondary">
             Contact your account team
           </ButtonLink>

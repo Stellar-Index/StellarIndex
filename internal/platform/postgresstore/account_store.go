@@ -61,6 +61,13 @@ func scanAccount(row interface {
 	if suspendedAt.Valid {
 		a.SuspendedAt = suspendedAt.Time
 	}
+	// Legacy-tier folding (free-platform model, 2026-08-11): stored
+	// rows still carry the migration-0027 five-string vocabulary
+	// (free/starter/pro/business/enterprise). In-memory the tier is
+	// always canonical (free/partner) so every ladder lookup, clamp,
+	// and wire view speaks the three-level model; the reverse mapping
+	// happens at write time via [platform.Tier.StorageValue].
+	a.Tier = a.Tier.Canonical()
 	return a, nil
 }
 
@@ -80,7 +87,7 @@ func (r *AccountStore) Create(ctx context.Context, a platform.Account) (platform
 
 	row := r.s.db.QueryRowContext(ctx, q,
 		a.Name, a.Slug, a.BillingEmail,
-		string(a.Tier), string(a.Status),
+		a.Tier.StorageValue(), string(a.Status),
 		a.RateLimitPerMinOverride, a.MonthlyRequestQuotaOverride,
 	)
 	out, err := scanAccount(row)
@@ -154,7 +161,7 @@ func (r *AccountStore) Update(ctx context.Context, a platform.Account) error {
 	}
 	res, err := r.s.db.ExecContext(ctx, q,
 		a.ID, a.Name, a.BillingEmail,
-		string(a.Tier), string(a.Status),
+		a.Tier.StorageValue(), string(a.Status),
 		suspendedAt, a.SuspendedReason,
 		a.RateLimitPerMinOverride, a.MonthlyRequestQuotaOverride,
 	)
