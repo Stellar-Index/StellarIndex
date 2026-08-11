@@ -82,6 +82,11 @@ func TestPlatformPostgresStores(t *testing.T) {
 		}
 
 		// Update tier; verify.
+		// Legacy tier in → CANONICAL tier out (free-platform pivot
+		// 2026-08-10): the store persists a CHECK-legal legacy string
+		// and canonicalises on read, so writing the deprecated `pro`
+		// must round-trip as `partner`. Asserting `pro` back would pin
+		// the pre-pivot behaviour.
 		acme.Tier = platform.TierPro
 		if err := accounts.Update(ctx, acme); err != nil {
 			t.Fatalf("update: %v", err)
@@ -90,8 +95,22 @@ func TestPlatformPostgresStores(t *testing.T) {
 		if err != nil {
 			t.Fatalf("get after update: %v", err)
 		}
-		if got.Tier != platform.TierPro {
-			t.Errorf("tier didn't persist: %q", got.Tier)
+		if got.Tier != platform.TierPartner {
+			t.Errorf("legacy tier %q did not canonicalise on read: got %q, want %q",
+				platform.TierPro, got.Tier, platform.TierPartner)
+		}
+
+		// And a canonical tier round-trips unchanged.
+		acme.Tier = platform.TierFree
+		if err := accounts.Update(ctx, acme); err != nil {
+			t.Fatalf("update (free): %v", err)
+		}
+		got, err = accounts.Get(ctx, acme.ID)
+		if err != nil {
+			t.Fatalf("get after update (free): %v", err)
+		}
+		if got.Tier != platform.TierFree {
+			t.Errorf("canonical tier didn't persist: %q", got.Tier)
 		}
 
 		// Suspend → unsuspend (idempotency).

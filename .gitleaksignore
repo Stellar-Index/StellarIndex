@@ -28,3 +28,10 @@
 # (3.55) of the hex-looking tail. Kept as a fingerprint rather than a
 # path allowlist so usage_rollup_backfill_test.go stays scanned.
 6721eacb1b40533c039ecd58b424c3071f29b7c5:cmd/stellarindex-ops/usage_rollup_backfill_test.go:generic-api-key:73
+
+# 2026-08-11: the agent-onboarding walkthrough shipped a realistic-looking
+# sample key_id in commit 01bcb6c3 (docs only, never a real credential; the
+# working tree now uses an obvious placeholder). History is immutable and
+# the repo is public — force-pushing to scrub a docs sample is not worth
+# rewriting published history over.
+01bcb6c32636b51edb8e895e5c9825d4afd4bcf2:docs/agent-onboarding.md:generic-api-key:25
