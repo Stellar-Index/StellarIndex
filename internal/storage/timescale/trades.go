@@ -281,8 +281,64 @@ func tradeUSDVolumeViaFX(ctx context.Context, t canonical.Trade, md external.Met
 	}
 	q := new(big.Rat).SetFrac(t.QuoteAmount.BigInt(), scaleDenominator(decimals))
 	usdAmount := new(big.Rat).Mul(q, usdRate)
+
+	// LEG CROSS-CHECK (fake-XMR incident 2026-08-11, task #32): a
+	// resolver rate for an on-chain token is usually tier 3b's
+	// <token>/XLM x XLM/USD bridge, and the token leg of that bridge is
+	// WRITABLE by anyone willing to pay bridgeLegMinUSDVolume — an
+	// attacker planted INDUSX/XLM at 3,395 XLM and two dust trades
+	// stamped $182M of fake usd_volume (real value <$0.01; ledgers
+	// 63890020/63890022). A volume floor cannot stop that (the floor is
+	// just the plant's price), but DOUBLE-planting is: value the BASE
+	// leg through the same resolver, and when the two legs disagree by
+	// more than usdLegAgreementFactor, store the SMALLER — an attacker
+	// must now pump BOTH legs' markets with real value to inflate a
+	// print. DEX-only: CEX/FX quote rates are vendor feeds, not
+	// poisonable bridges, and their pairs' base legs are often
+	// unresolvable anyway.
+	if md.Subclass == external.SubclassDEX {
+		if baseVal := fxLegValue(ctx, r, t.Pair.Base, t.BaseAmount, decimals, t.Timestamp); baseVal != nil {
+			hi, lo := usdAmount, baseVal
+			if hi.Cmp(lo) < 0 {
+				hi, lo = lo, hi
+			}
+			// hi > lo * factor → divergent → conservative leg wins.
+			bound := new(big.Rat).Mul(lo, usdLegAgreementFactor)
+			if hi.Cmp(bound) > 0 && usdAmount.Cmp(baseVal) > 0 {
+				usdAmount = baseVal
+			}
+		}
+	}
 	rendered := usdAmount.FloatString(8)
 	return &rendered
+}
+
+// usdLegAgreementFactor is how far the two independently-valued legs of
+// one trade may diverge before the FX tier stores the smaller. 10x is
+// far beyond honest spread/rounding on any real market (the incident
+// rows diverged by ~10^10) while never firing on ordinary thin-market
+// noise.
+var usdLegAgreementFactor = big.NewRat(10, 1)
+
+// fxLegValue values one leg of a trade through the resolver: amount /
+// 10^decimals x USDPriceAt(asset). nil when the asset has no resolvable
+// rate (which keeps the caller on its single-leg behaviour — no
+// cross-check is possible).
+func fxLegValue(ctx context.Context, r USDVolumeFXResolver, asset canonical.Asset, amount canonical.Amount, decimals int, at time.Time) *big.Rat {
+	rateStr, ok, err := r.USDPriceAt(ctx, asset, at)
+	if err != nil || !ok || rateStr == "" {
+		return nil
+	}
+	rate, ok := new(big.Rat).SetString(rateStr)
+	if !ok || rate.Sign() <= 0 {
+		return nil
+	}
+	amt := amount.BigInt()
+	if amt == nil || amt.Sign() <= 0 {
+		return nil
+	}
+	v := new(big.Rat).SetFrac(amt, scaleDenominator(decimals))
+	return v.Mul(v, rate)
 }
 
 // tradeUSDVolumeViaXLMBaseAnchor is L7.6 (ROADMAP #37): the

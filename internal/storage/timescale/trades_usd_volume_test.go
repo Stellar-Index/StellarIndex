@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
 // TestQuoteIsUSDOrUSDPegged covers the predicate's three branches:
@@ -583,12 +584,14 @@ func TestTradeUSDVolume_NonXLMBaseStillUsesQuoteResolution(t *testing.T) {
 		usdc.String(): "1.00",
 		aqua.String(): "0.001",
 	}}
-	got := tradeUSDVolume(
-		context.Background(),
-		mkClassicDEXTrade(t, "soroswap", aqua, usdc, 50_000_000_000),
-		nil,
-		resolver,
-	)
+	// The fixture's legs must be economically COHERENT (5M AQUA at
+	// $0.001 ≈ the 5,000 USDC quote side): since the task-#32 leg
+	// cross-check, a fixture whose legs disagree by 10^6 — the shape of
+	// a poisoned rate, not of any real trade — is deliberately valued
+	// off its smaller leg, which is not what this test is about.
+	tr := mkClassicDEXTrade(t, "soroswap", aqua, usdc, 50_000_000_000)
+	tr.BaseAmount = canonical.NewAmount(big.NewInt(50_000_000_000_000)) // 5,000,000 AQUA at 7dp
+	got := tradeUSDVolume(context.Background(), tr, nil, resolver)
 	if got == nil {
 		t.Fatal("expected tier 3 to populate usd_volume for a non-XLM base")
 	}
@@ -1181,5 +1184,75 @@ func TestUSDVolumeIsIndependentOfTokenDecimals(t *testing.T) {
 	const trueValue = "46.09498172"
 	if want != trueValue {
 		t.Errorf("usd_volume = %s, want %s (250 XLM x %s)", want, trueValue, xlmUSD)
+	}
+}
+
+func mustAsset(t *testing.T, s string) canonical.Asset {
+	t.Helper()
+	a, err := canonical.ParseAsset(s)
+	if err != nil {
+		t.Fatalf("ParseAsset(%q): %v", s, err)
+	}
+	return a
+}
+
+// TestTradeUSDVolumeViaFX_LegCrossCheck is the fake-XMR incident
+// regression (2026-08-11, task #32): an attacker planted an
+// INDUSX/XLM bridge rate for the cost of the dust floor, and two
+// trades with NO XLM leg were stamped ~$91M each off the poisoned
+// quote-side rate (real value <$0.01). When BOTH legs resolve and
+// disagree beyond usdLegAgreementFactor, the FX tier must store the
+// SMALLER leg's value; within tolerance, the quote-side value stays
+// authoritative.
+func TestTradeUSDVolumeViaFX_LegCrossCheck(t *testing.T) {
+	base := mustAsset(t, "XMR-GDGE5SNCNHIP7HG3EHZWBC6NU3TWYODNXDMGC5CCKNJW555VCEAHPORT")
+	quote := mustAsset(t, "INDUSX-GCBSLNSO4NWX3BUQ2K5HZYW4JV2CWJIBZ3KOY6L3WNNGEX6RE7PINDUS")
+	pair, err := canonical.NewPair(base, quote)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	tr := canonical.Trade{
+		Source: "sdex", Ledger: 63_890_020, TxHash: "poison", Timestamp: time.Unix(1_754_800_000, 0).UTC(),
+		Pair:        pair,
+		BaseAmount:  canonical.NewAmount(big.NewInt(13_012_363_332_323)), // 1,301,236.3 units at 7dp
+		QuoteAmount: canonical.NewAmount(big.NewInt(2_922_474_116_360)),  // 292,247.4 units at 7dp
+	}
+	md := external.Lookup("sdex")
+
+	// Poisoned quote rate ($549.43/INDUSX) vs honest dust base rate
+	// ($0.00000001/fake-XMR): divergence ~10^10 → base leg must win.
+	poisoned := stubFXResolver{prices: map[string]string{
+		quote.String(): "549.43",
+		base.String():  "0.00000001",
+	}}
+	got := tradeUSDVolumeViaFX(context.Background(), tr, md, poisoned)
+	if got == nil {
+		t.Fatal("expected a value (the conservative leg), got nil")
+	}
+	v, _ := new(big.Rat).SetString(*got)
+	if limit := big.NewRat(1, 1); v.Cmp(limit) > 0 { // < $1, not $160M
+		t.Fatalf("cross-check failed: stored %s, want the dust base-leg value (<$1)", *got)
+	}
+
+	// Agreeing legs (within 10x): quote-side value stays authoritative.
+	agreeing := stubFXResolver{prices: map[string]string{
+		quote.String(): "0.50",
+		base.String():  "0.12", // 1.30M units x 0.12 = $156k vs quote 292k x 0.5 = $146k — within 10x
+	}}
+	got2 := tradeUSDVolumeViaFX(context.Background(), tr, md, agreeing)
+	if got2 == nil {
+		t.Fatal("agreeing legs: expected quote-side value, got nil")
+	}
+	want := new(big.Rat).Mul(big.NewRat(2_922_474_116_360, 10_000_000), big.NewRat(1, 2))
+	v2, _ := new(big.Rat).SetString(*got2)
+	if v2.Cmp(want) != 0 {
+		t.Fatalf("agreeing legs: stored %s, want quote-side %s", *got2, want.FloatString(8))
+	}
+
+	// Base leg unresolvable: single-leg behaviour unchanged.
+	single := stubFXResolver{prices: map[string]string{quote.String(): "549.43"}}
+	got3 := tradeUSDVolumeViaFX(context.Background(), tr, md, single)
+	if got3 == nil {
+		t.Fatal("single-leg: expected quote-side value, got nil")
 	}
 }

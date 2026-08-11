@@ -15,6 +15,18 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **Trade USD valuation: divergent-leg cross-check** (fake-XMR
+  incident 2026-08-11): an attacker planted an INDUSX/XLM bridge rate
+  for the cost of the $0.01 dust floor and two no-XLM-leg trades were
+  stamped ~$91M each off the poisoned quote-side rate (real value
+  <$0.01 — a $182M fake spike in the SDEX volume series). The FX tier
+  now values BOTH legs through the resolver when possible and stores
+  the SMALLER when they disagree beyond 10× — inflating a print now
+  requires pumping both legs' markets with real value. The two
+  poisoned rows re-derive to honest values via the generation-guarded
+  corrective path.
+
 ## [v0.31.0] — 2026-08-10
 
 ### Fixed
