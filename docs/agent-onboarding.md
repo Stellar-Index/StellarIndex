@@ -22,7 +22,7 @@ just register again):
   "data": {
     "account_id": "7d9f2a54-4f0e-4c1a-9b3d-2f6c8e1a0b5c",
     "api_key": "sip_YOUR_KEY_HERE…",
-    "key_id": "kid_8f3a2c1b9e7d4f6a8f3a2c1b",
+    "key_id": "kid_YOUR_KEY_ID",
     "key_prefix": "sip_YOUR_KEY_HERE",
     "tier": "free",
     "limits": {
