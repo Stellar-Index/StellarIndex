@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.32.0] — 2026-08-11
+
 - **Projector decodes each lake event exactly once** (stake-buffer
   investigation 2026-08-11): the append-log lake is read without FINAL,
   so re-ingested duplicate rows reached every decoder — absorbed by
