@@ -101,7 +101,7 @@ func (lr *lockoutRig) grind(t *testing.T, email string, n int) {
 			lr.postLogin(t, email)
 		}
 		plaintext := lr.extractTokenFromSentEmail(t)
-		code := CodeFromHash(HashMagicLinkPlaintext(plaintext))
+		code := lr.h.cfg.Generator.CodeForHash(HashMagicLinkPlaintext(plaintext))
 		if w := lr.postVerifyCode(t, email, wrongCode(code)); w.Code != http.StatusBadRequest {
 			t.Fatalf("guess %d: status = %d, want 400", i+1, w.Code)
 		}

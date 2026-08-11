@@ -26,7 +26,44 @@ against.
   guard) now skips exact re-deliveries; `events_emitted` stops
   over-counting duplicates.
 ### Added
-- **`POST /v1/register` — open registration, the curl-first agent
+- **Passkey (WebAuthn) sign-in for the dashboard**: six new
+  endpoints under `/v1/auth/passkey/` — `begin-login` /
+  `finish-login` (anonymous, usernameless discoverable-credential
+  flow; finish mints the SAME session cookie the email-code flow
+  does, via the shared session-mint path), `begin-register` /
+  `finish-register` (session-gated; resident key required so the
+  credential can sign in usernameless), and `credentials`
+  (GET list + DELETE `{id}`, session-gated, owner-scoped). Server
+  is `github.com/go-webauthn/webauthn` v0.17.4; RP ID/origin derive
+  from the existing `api.dashboard.base_url`. Ceremony state rides
+  a 5-minute HMAC-signed HttpOnly cookie (purpose-bound so a
+  registration challenge can't finish a login); a sign-count
+  regression (possible cloned authenticator) refuses the login and
+  logs. Storage is the new `webauthn_credentials` table (migration
+  0140, additive). Explorer: "Sign in with a passkey" on /signin
+  (feature-detected) + a Passkeys list/add/remove card on
+  /dashboard/settings. OpenAPI paths + all three generated
+  artifacts refreshed; SDK triage recorded in
+  `uncoveredOperations`.
+
+### Security
+- **Dashboard 6-digit sign-in codes are no longer derivable from
+  the database** (parked audit finding, aggregate+dashboardauth
+  cold audit 2026-08-03): the code was an unkeyed public function
+  of `magic_link_tokens.token_hash` (base32 of its first 4 bytes),
+  so any Postgres read — SQL injection elsewhere, a stolen backup —
+  yielded every in-flight sign-in code directly, no brute force
+  needed, and with it a session for any address the reader could
+  trigger a login for. The code is now
+  `HMAC-SHA256(server_secret, token_hash)` reduced to 6 digits —
+  same UX, same storage, one derivation swapped; the secret lives
+  in config/env (`api.dashboard.code_secret_env`, default
+  `STELLARINDEX_DASHBOARD_CODE_SECRET`), never in Postgres. With
+  the env unset the API falls back to a random per-process secret
+  (still keyed; in-flight codes just don't survive a restart —
+  they live 15 minutes and the magic link is unaffected). Deploy
+  note: codes emailed before the deploy stop verifying for their
+  remaining TTL; links keep working.
   onboarding path**: one unauthenticated POST (empty body fine;
   optional `name` + contact-only `email`, never verified) creates a
   free-tier platform account and mints its first Postgres-backed API

@@ -1,10 +1,25 @@
 'use client';
 
-import { useState } from 'react';
-import { AlertCircle, Loader2, Mail } from 'lucide-react';
+import { useState, useSyncExternalStore } from 'react';
+import { AlertCircle, KeyRound, Loader2, Mail } from 'lucide-react';
 
 import { API_BASE_URL } from '@/api/client';
-import { ApiError, verifyCode } from '@/api/account';
+import {
+  ApiError,
+  beginPasskeyLogin,
+  finishPasskeyLogin,
+  verifyCode,
+} from '@/api/account';
+import {
+  getPasskeyAssertion,
+  isCeremonyCancelled,
+  supportsPasskeys,
+  type ServerRequestOptions,
+} from '@/lib/webauthn';
+
+// Stable no-op subscription for useSyncExternalStore — the passkey
+// capability of a browser never changes mid-session.
+const emptySubscribe = () => () => {};
 
 type State =
   | { kind: 'email' }
@@ -18,6 +33,38 @@ export function SignInForm({ mode = 'signin' }: { mode?: 'signin' | 'signup' }) 
   const [code, setCode] = useState('');
   const [state, setState] = useState<State>({ kind: 'email' });
   const [error, setError] = useState<string | null>(null);
+  // Feature-detected client-side (static export — the server snapshot
+  // renders the passkey-less first paint, then hydration reveals the
+  // button; useSyncExternalStore avoids a setState-in-effect and a
+  // hydration mismatch, matching useLastPathSegment's pattern).
+  const passkeyReady = useSyncExternalStore(
+    emptySubscribe,
+    supportsPasskeys,
+    () => false,
+  );
+  const [passkeyBusy, setPasskeyBusy] = useState(false);
+
+  async function onPasskey() {
+    setError(null);
+    setPasskeyBusy(true);
+    try {
+      const options = (await beginPasskeyLogin()) as ServerRequestOptions;
+      const assertion = await getPasskeyAssertion(options);
+      await finishPasskeyLogin(assertion);
+      // Full-page navigation so the freshly-set session cookie applies.
+      window.location.assign('/dashboard');
+      return;
+    } catch (err) {
+      if (!isCeremonyCancelled(err)) {
+        setError(
+          err instanceof ApiError
+            ? (err.detail ?? 'Passkey sign-in failed — try again or use email.')
+            : 'Passkey sign-in failed — try again or use email.',
+        );
+      }
+      setPasskeyBusy(false);
+    }
+  }
 
   async function onSubmitEmail(e: React.FormEvent) {
     e.preventDefault();
@@ -186,10 +233,34 @@ export function SignInForm({ mode = 'signin' }: { mode?: 'signin' | 'signup' }) 
         {mode === 'signup' ? 'Create account' : 'Send sign-in code'}
       </button>
 
+      {passkeyReady && (
+        <>
+          <div className="flex items-center gap-3 text-xs text-ink-faint">
+            <span className="h-px flex-1 bg-line" aria-hidden />
+            or
+            <span className="h-px flex-1 bg-line" aria-hidden />
+          </div>
+          <button
+            type="button"
+            onClick={onPasskey}
+            disabled={passkeyBusy}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-line bg-surface px-4 py-2 text-sm font-medium text-ink-body hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {passkeyBusy ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <KeyRound className="h-4 w-4" />
+            )}
+            Sign in with a passkey
+          </button>
+        </>
+      )}
+
       <p className="text-xs text-ink-muted">
         Passwordless sign-in — we email a 6-digit code (and a one-click
         link), valid for 15 minutes. New emails create an account on
-        first sign-in.
+        first sign-in. Passkeys can be added from the dashboard once
+        you&apos;re in.
       </p>
     </form>
   );

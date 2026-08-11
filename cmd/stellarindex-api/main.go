@@ -1922,6 +1922,23 @@ func wireDashboardAuthThrottles(authCfg *dashboardauth.Config, rdb redis.Univers
 		"per-email/per-IP caps are NOT shared across instances")
 }
 
+// buildDashboardGenerator wires the token generator with the server
+// secret keying the 6-digit-code derivation + the passkey
+// ceremony-cookie MAC. Without the env, dashboardauth's validate()
+// falls back to a random per-process secret — still keyed (a DB read
+// alone can never reveal a code), but in-flight codes stop verifying
+// across a restart, so production sets the env.
+func buildDashboardGenerator(cfg config.DashboardConfig, logger *slog.Logger) *dashboardauth.Generator {
+	generator := dashboardauth.NewGenerator()
+	if secret := os.Getenv(cfg.CodeSecretEnv); secret != "" {
+		generator.Secret = []byte(secret)
+	} else {
+		logger.Warn("dashboard code secret env unset — using a random per-process secret; "+
+			"in-flight sign-in codes will not survive a restart", "env", cfg.CodeSecretEnv)
+	}
+	return generator
+}
+
 func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.UniversalClient, logger *slog.Logger) (dashboardBundle, error) {
 	if cfg.BaseURL == "" {
 		logger.Warn("dashboard not wired (api.dashboard.base_url is empty); /v1/auth/* + /v1/dashboard/* will 404")
@@ -1953,10 +1970,13 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 	}
 
 	authCfg := dashboardauth.Config{
-		Accounts: accounts,
-		Users:    users,
-		Tokens:   tokens,
-		Sender:   sender,
+		Accounts:  accounts,
+		Users:     users,
+		Tokens:    tokens,
+		Sender:    sender,
+		Generator: buildDashboardGenerator(cfg, logger),
+		// Passkey (WebAuthn) sign-in — webauthn_credentials, migration 0140.
+		Passkeys: postgresstore.NewWebAuthnCredentialStore(pg),
 		// C3-056: the staff customer look-up reads another customer's
 		// PII. Same audit_log (migration 0027) the admin surfaces
 		// already append to, so a staff read lands next to the
