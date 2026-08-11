@@ -16,6 +16,14 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **Contract WASM view resolves pre-capture contracts** ("this
+  contract's on-chain WASM isn't in the captured ledger window yet",
+  operator report 2026-08-11): the instance→hash hop now reads the
+  genesis-complete `contract_instance_changes` index first, so any
+  contract whose instance was ever written resolves its current
+  executable (or SAC verdict) regardless of the live-capture window;
+  the code-bytes hop was already lake-complete (r1-measured: all
+  4,534 contract_code keys present). Legacy read remains the fallback.
 - **Trade USD valuation: divergent-leg cross-check** (fake-XMR
   incident 2026-08-11): an attacker planted an INDUSX/XLM bridge rate
   for the cost of the $0.01 dust floor and two no-XLM-leg trades were

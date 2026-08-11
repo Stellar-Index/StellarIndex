@@ -137,6 +137,29 @@ func (r *ExplorerReader) ContractWasm(ctx context.Context, contractID string) (C
 // executable wins under in-place contract upgrades; the per-contract result is
 // cached hard (the wasm for a hash is immutable).
 func (r *ExplorerReader) contractWasmHash(ctx context.Context, cid xdr.Hash) (xdr.Hash, bool, error) {
+	// Index-first (inventory #26, wasm two-hop item, 2026-08-11): the
+	// genesis-complete contract_instance_changes timeline resolves the
+	// CURRENT executable for contracts whose instance entry predates
+	// live entry capture — the "not in the captured window yet" class
+	// the ledger_entries_current path below cannot see. Newest row
+	// wins under in-place upgrades; a SAC verdict surfaces as
+	// ErrContractIsSAC exactly like the legacy path.
+	if r.instanceChangesIndexAvailable(ctx) {
+		h, ok, err := r.contractWasmHashIndexed(ctx, cid)
+		if err == nil || errors.Is(err, ErrContractIsSAC) {
+			// A SAC verdict is authoritative, not an index failure.
+			return h, ok, err
+		}
+		// Genuine index error — fall through to the legacy read rather
+		// than failing the whole resolution.
+	}
+	return r.contractWasmHashLegacy(ctx, cid)
+}
+
+// contractWasmHashLegacy is the pre-index resolution over
+// ledger_entries_current — the capture-window-bound read kept as the
+// fallback for deployments without contract_instance_changes.
+func (r *ExplorerReader) contractWasmHashLegacy(ctx context.Context, cid xdr.Hash) (xdr.Hash, bool, error) {
 	keys, err := instanceKeyXDR(cid)
 	if err != nil {
 		return xdr.Hash{}, false, err
@@ -344,6 +367,44 @@ func (r *ExplorerReader) contractCodeHistoryIndexed(ctx context.Context, cid xdr
 		out = append(out, ContractCodeVersion{Ledger: seq, CloseTime: closeTime, WasmHash: h})
 	}
 	return out, rows.Err()
+}
+
+// contractWasmHashIndexed resolves the current executable from the
+// keyed instance timeline: the newest captured instance write for the
+// contract. ok=false with nil error = the instance was never written in
+// all of history (the index is genesis-complete) — an authoritative
+// not-found. ErrContractIsSAC mirrors the legacy path's verdict.
+func (r *ExplorerReader) contractWasmHashIndexed(ctx context.Context, cid xdr.Hash) (xdr.Hash, bool, error) {
+	rows, err := r.conn.Query(ctx,
+		`SELECT is_sac, wasm_hash FROM stellar.contract_instance_changes
+		  WHERE contract_hash = ?
+		  ORDER BY ledger_seq DESC, change_index DESC
+		  LIMIT 1`,
+		hex.EncodeToString(cid[:]))
+	if err != nil {
+		return xdr.Hash{}, false, fmt.Errorf("clickhouse: instance index wasm hash: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		return xdr.Hash{}, false, rows.Err()
+	}
+	var (
+		isSAC   uint8
+		hashHex string
+	)
+	if err := rows.Scan(&isSAC, &hashHex); err != nil {
+		return xdr.Hash{}, false, fmt.Errorf("clickhouse: scan instance index: %w", err)
+	}
+	if isSAC == 1 {
+		return xdr.Hash{}, false, ErrContractIsSAC
+	}
+	raw, err := hex.DecodeString(hashHex)
+	if err != nil || len(raw) != 32 {
+		return xdr.Hash{}, false, fmt.Errorf("clickhouse: instance index bad wasm hash %q", hashHex)
+	}
+	var h xdr.Hash
+	copy(h[:], raw)
+	return h, true, nil
 }
 
 // instanceKeyXDR returns the base64 LedgerKey(s) for a contract's
