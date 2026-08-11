@@ -75,9 +75,9 @@ func adminAccountView(a platform.Account) AdminAccountView {
 // clear the override / set the value". Every field is optional but at
 // least one must be present.
 type adminAccountOverrideRequest struct {
-	// Tier, when set, overwrites the account's plan tier — the operator
-	// comp / enterprise path (Stripe normally drives tier; this is the
-	// manual override for accounts not on self-service billing).
+	// Tier, when set, overwrites the account's tier — the operator
+	// comp / partner path (staff-set limits; there is no self-service
+	// billing).
 	Tier *string `json:"tier,omitempty"`
 	// Status, when set, moves the account's lifecycle state:
 	// active | suspended | closed. This is the operator KILL SWITCH
@@ -246,17 +246,14 @@ func (s *Server) handleAdminAccountOverrides(w http.ResponseWriter, r *http.Requ
 // the tier ceiling. Returns (keys lowered, per-key failures) so the
 // caller can record both in the audit row.
 //
-// 52105fdb residual (audit-2026-07-23). The kill-switch/downgrade work
-// gave the Stripe path a full clamp — `applyPlanDowngrade` lowers the
-// account override AND both key stores — but PATCH
-// /v1/admin/accounts/{id} only wrote `accounts.tier`. The enforced
-// per-minute budget is read straight off the key record
-// (auth/apikey_postgres.go `rateLimit := pgKey.RateLimitPerMin`;
-// auth/apikey_redis.go returns the stored value), so an operator
-// demoting an abusive or non-paying account Pro→Free left every existing
-// key serving 10_000/min indefinitely — the same defect C3-014 fixed for
-// Stripe, still live on the operator surface. Same helper, same ladder
-// (`platform.Tier.MaxRateLimitPerMin`), so the two paths cannot drift.
+// 52105fdb residual (audit-2026-07-23). PATCH /v1/admin/accounts/{id}
+// originally only wrote `accounts.tier`. The enforced per-minute budget
+// is read straight off the key record (auth/apikey_postgres.go
+// `rateLimit := pgKey.RateLimitPerMin`; auth/apikey_redis.go returns
+// the stored value), so an operator demoting an abusive account
+// Pro→Free left every existing key serving 10_000/min indefinitely
+// (the C3-014 defect class). The clamp helper + the tier ladder
+// (`platform.Tier.MaxRateLimitPerMin`) close that.
 //
 // Only runs when the ceiling DROPS. A raise is intentionally not
 // mirrored: budgets are raised at mint time by the dashboard's
@@ -264,12 +261,11 @@ func (s *Server) handleAdminAccountOverrides(w http.ResponseWriter, r *http.Requ
 // would grant throughput the operator did not ask for.
 //
 // The account-level `rate_limit_per_min_override` is deliberately NOT
-// clamped here, unlike the Stripe path: on the operator surface the
-// override is an explicit field of the SAME request. An operator who
-// PATCHes tier=free while leaving a 10_000 override in place is making a
-// deliberate, audited comp decision; overwriting it would silently
-// discard the very affordance this endpoint exists to provide. (Stripe
-// clamps it because no human is in that loop.)
+// clamped here: on the operator surface the override is an explicit
+// field of the SAME request. An operator who PATCHes tier=free while
+// leaving a 10_000 override in place is making a deliberate, audited
+// comp decision; overwriting it would silently discard the very
+// affordance this endpoint exists to provide.
 func (s *Server) clampKeysAfterTierChange(
 	ctx context.Context, subject auth.Subject, priorTier platform.Tier, acct platform.Account,
 ) (lowered, failed int) {
@@ -536,11 +532,9 @@ func (s *Server) recordAdminAccountAudit(
 		"actor_key_id":     actor.KeyID,
 		"actor_identifier": actor.Identifier,
 		"reason":           reason,
-		// The tier-lowering key clamp's OUTCOME, durably. There is no
-		// dedicated metric for this path (the Stripe counter's name,
-		// help text and runbook are all Stripe-specific, so reusing it
-		// would mislabel), and a clamp that silently failed would leave
-		// paid throughput live on a demoted account. The audit_log is
+		// The tier-lowering key clamp's OUTCOME, durably. A clamp that
+		// silently failed would leave over-tier throughput live on a
+		// demoted account. The audit_log is
 		// the surface staff already read for privileged mutations, so a
 		// non-zero key_clamp_failures is queryable next to the tier
 		// change that caused it.

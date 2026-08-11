@@ -216,9 +216,6 @@ func (stubAccountsForBuild) GetBySlug(context.Context, string) (platform.Account
 	panic("unused")
 }
 
-func (stubAccountsForBuild) GetByStripeCustomerID(context.Context, string) (platform.Account, error) {
-	panic("unused")
-}
 func (stubAccountsForBuild) Update(context.Context, platform.Account) error   { panic("unused") }
 func (stubAccountsForBuild) Suspend(context.Context, uuid.UUID, string) error { panic("unused") }
 func (stubAccountsForBuild) Unsuspend(context.Context, uuid.UUID) error       { panic("unused") }

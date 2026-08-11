@@ -1154,11 +1154,7 @@ Subcommands:
                           unrecoverable. Pipe stdout to an
                           encrypted transport (Bitwarden, vault,
                           encrypted email) immediately. Tiers:
-                          apikey | sep10 | operator. Stripe webhook
-                          integration (future) calls the same
-                          internal/auth.RedisAPIKeyStore.Create
-                          path from a small HTTP handler instead
-                          of from the CLI.
+                          apikey | sep10 | operator.
                           Example:
                             stellarindex-ops mint-key \
                               -config /etc/stellarindex.toml \
@@ -1169,10 +1165,9 @@ Subcommands:
   upgrade-key -config PATH -key-id KID -rate-limit-per-min N
                           Lift (or lower) an existing API key's
                           per-minute rate-limit budget. Operator-
-                          side path for manual paid-tier upgrades
-                          before the Stripe webhook ships; same
-                          internal/auth.RedisAPIKeyStore.UpdateRateLimit
-                          path the future webhook will call.
+                          side path for manual / partner rate
+                          limits, via
+                          internal/auth.RedisAPIKeyStore.UpdateRateLimit.
                           The customer's existing plaintext key
                           keeps working — they don't need to
                           rotate to pick up the new budget;

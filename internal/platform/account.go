@@ -168,7 +168,7 @@ const (
 )
 
 // Account is the top-level org primitive — every API key,
-// subscription, webhook, audit-log entry hangs off Account.ID.
+// webhook, audit-log entry hangs off Account.ID.
 //
 // v1 is one user per account; v2 multi-org migrates by moving
 // (account_id, role) from User to a new memberships join table
@@ -178,7 +178,6 @@ type Account struct {
 	Name                        string
 	Slug                        string
 	BillingEmail                string
-	StripeCustomerID            string // empty when no Stripe customer minted yet
 	Tier                        Tier
 	Status                      AccountStatus
 	CreatedAt                   time.Time
@@ -203,10 +202,6 @@ type AccountStore interface {
 
 	// GetBySlug returns the account by URL-safe handle.
 	GetBySlug(ctx context.Context, slug string) (Account, error)
-
-	// GetByStripeCustomerID maps Stripe customer back to our
-	// account — used by webhook handlers.
-	GetByStripeCustomerID(ctx context.Context, stripeCustomerID string) (Account, error)
 
 	// Update writes mutable fields (name, billing_email, tier,
 	// status, suspension bookkeeping, overrides). Immutable fields

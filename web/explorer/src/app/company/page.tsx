@@ -102,8 +102,8 @@ export default function CompanyPage() {
               </strong>{' '}
               Anonymous reads work without an account. The free tier
               covers prototyping, low-traffic embeds, and read-only
-              integrations. Paid tiers exist for higher rate limits
-              and dedicated SLAs — never gated data.
+              integrations. Higher rate limits and dedicated SLAs are
+              staff-set partner arrangements — never gated data.
             </span>
           </li>
           <li className="flex gap-2">
@@ -132,10 +132,9 @@ export default function CompanyPage() {
         <h2 className="text-2xl font-semibold tracking-tight">Funding</h2>
         <p className="text-sm text-ink-body">
           Development was supported by a grant from the Stellar Community
-          Fund. Operating revenue from paid tiers covers ongoing
-          infrastructure + operator headcount; the public tier and the
-          open-source codebase are perpetual commitments regardless of
-          commercial outcomes.
+          Fund. The platform is free — there are no paid tiers; the
+          public tier and the open-source codebase are perpetual
+          commitments.
         </p>
       </section>
 

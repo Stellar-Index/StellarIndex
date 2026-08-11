@@ -24,7 +24,7 @@ import (
 // billing email, tier, status and EVERY user's email + last-login. Pre-fix
 // the only record that the access happened was one `Logger.Info` line,
 // while every sibling admin surface (account override, key mint/revoke,
-// status notice, Stripe plan change) wrote a durable platform.AuditEntry.
+// status notice) wrote a durable platform.AuditEntry.
 //
 // A log line is not a privacy audit trail: it is rotated on journal
 // retention, is not queryable per-account, and never reaches the audit

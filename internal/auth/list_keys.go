@@ -14,10 +14,9 @@ import (
 // ListKeysForIdentifier returns every [APIKeyRecord] whose
 // Identifier matches. Used by:
 //
-//   - The Stripe webhook handler, when a payment lands and we
-//     need to lift every key that customer holds into the paid
-//     tier (rather than asking them to rotate).
-//   - The future /v1/account/keys (GET) endpoint that lists a
+//   - The admin tier-clamp path, which lowers every key an
+//     account holds when its tier ceiling drops.
+//   - The /v1/account/keys (GET) endpoint that lists a
 //     caller's keys.
 //
 // Implementation: SCANs `apikey:*`, JSON-decodes each, filters
@@ -26,8 +25,8 @@ import (
 // `signup:identifier:<id>` Redis SET written at Create time.
 //
 // Returns nil + nil for "no matches" (the operator-facing path
-// distinguishes "Stripe sent us a webhook for an identifier we
-// don't know" from a Redis I/O failure).
+// distinguishes "an identifier we don't know" from a Redis I/O
+// failure).
 func (s *RedisAPIKeyStore) ListKeysForIdentifier(ctx context.Context, identifier string) ([]APIKeyRecord, error) {
 	if identifier == "" {
 		return nil, errors.New("auth: ListKeysForIdentifier: identifier is required")

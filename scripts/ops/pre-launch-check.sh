@@ -100,16 +100,7 @@ else
 fi
 echo
 
-# ── 3. Stripe (only relevant if launching paid tiers)
-echo "  Stripe"
-if [ -f /etc/default/stellarindex ] && grep -q '^STELLARINDEX_STRIPE_WEBHOOK_SECRET=whsec_' /etc/default/stellarindex 2>/dev/null; then
-  pass "Stripe webhook secret set" "(whsec_… present)"
-else
-  warn "Stripe webhook secret not set" "ok if launching free-tier-only"
-fi
-echo
-
-# ── 4. Healthchecks.io URLs
+# ── 3. Healthchecks.io URLs
 echo "  Healthchecks.io"
 if [ ! -f "$HC_ENV" ]; then
   fail "HC env file missing" "$HC_ENV"
@@ -124,7 +115,7 @@ else
 fi
 echo
 
-# ── 5. Alertmanager secrets
+# ── 4. Alertmanager secrets
 echo "  Alertmanager"
 if [ ! -f "$AM_ENV" ]; then
   fail "AM env file missing" "$AM_ENV"
@@ -139,7 +130,7 @@ else
 fi
 echo
 
-# ── 6. Timers active
+# ── 5. Timers active
 echo "  Timers"
 for t in 'stellarindex-heartbeat@indexer.timer' \
          'stellarindex-heartbeat@aggregator.timer' \
@@ -153,7 +144,7 @@ for t in 'stellarindex-heartbeat@indexer.timer' \
 done
 echo
 
-# ── 7. Core services
+# ── 6. Core services
 echo "  Services"
 for s in stellarindex-indexer.service \
          stellarindex-aggregator.service \
@@ -169,7 +160,7 @@ for s in stellarindex-indexer.service \
 done
 echo
 
-# ── 8. Caddy serving on :443
+# ── 7. Caddy serving on :443
 echo "  Caddy"
 if ss -tlnp 2>/dev/null | grep -q ':443.*caddy'; then
   pass "caddy listening on :443" ""
@@ -178,7 +169,7 @@ else
 fi
 echo
 
-# ── 9. API smoke
+# ── 8. API smoke
 echo "  Smoke (loopback)"
 if curl -fsS --max-time 5 http://localhost:3000/v1/healthz >/dev/null 2>&1; then
   pass "/v1/healthz" "200"
@@ -192,7 +183,7 @@ else
 fi
 echo
 
-# ── 10. Boot warnings
+# ── 9. Boot warnings
 echo "  Recent SECURITY warnings"
 sec_warns="$(journalctl -u stellarindex-api -b -p warning --no-pager 2>/dev/null | grep -c SECURITY: || true)"
 if [ "$sec_warns" -eq 0 ]; then

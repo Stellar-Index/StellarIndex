@@ -17,12 +17,6 @@ func TestSentinelErrors_AreDistinct(t *testing.T) {
 		platform.ErrNotFound,
 		platform.ErrTokenExpired,
 		platform.ErrConflict,
-		platform.ErrAlreadyProcessed,
-		// C3-039: ErrEventInFlight must never be confused with
-		// ErrAlreadyProcessed — the first means "retry me", the second
-		// means "stop retrying", and swapping them either double-applies
-		// a paid event or drops it.
-		platform.ErrEventInFlight,
 		platform.ErrLastOwner,
 	}
 	for i, a := range all {

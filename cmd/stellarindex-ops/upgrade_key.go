@@ -14,9 +14,8 @@ import (
 )
 
 // upgradeKey lifts (or lowers) the per-minute rate-limit on an
-// existing API key. Used by operators to perform manual paid-tier
-// upgrades before the Stripe webhook handler ships, and by the
-// webhook handler itself once it does (calls the same internal
+// existing API key. Used by operators to set manual / partner
+// rate-limit budgets (calls the internal
 // `auth.RedisAPIKeyStore.UpdateRateLimit` path).
 //
 // Usage:

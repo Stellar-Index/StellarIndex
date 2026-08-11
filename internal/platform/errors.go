@@ -19,26 +19,11 @@ var (
 	ErrTokenExpired = errors.New("platform: token expired")
 
 	// ErrConflict signals a uniqueness violation (duplicate
-	// email, duplicate stripe_customer_id, key_hash collision).
+	// email, duplicate slug, key_hash collision).
 	// Callers handle by surfacing the appropriate user-facing
 	// message — typically "an account with that email already
 	// exists" for users, or retry-with-new-id for keys.
 	ErrConflict = errors.New("platform: conflict")
-
-	// ErrAlreadyProcessed is returned by AppendStripeEvent when a
-	// prior delivery of the stripe_event_id COMPLETED. Handlers
-	// skip processing and dup-ack (Stripe retried; we already
-	// applied the effect).
-	ErrAlreadyProcessed = errors.New("platform: stripe event already processed")
-
-	// ErrEventInFlight is returned by AppendStripeEvent when the
-	// event is unfinished but another delivery holds a live claim
-	// on it (C3-039, audit-2026-07-23). It is emphatically NOT a
-	// duplicate-ack: the in-flight processor may still die, so the
-	// handler must return a RETRYABLE response and leave the event
-	// in Stripe's retry queue. A 200 here would remove the last
-	// chance to provision what a customer already paid for.
-	ErrEventInFlight = errors.New("platform: stripe event delivery already in flight")
 
 	// ErrLastOwner is returned when an operation would leave an
 	// account with zero owner-role users — demotion + deletion

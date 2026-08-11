@@ -572,9 +572,6 @@ func (s *stubAccountStore) GetBySlug(_ context.Context, _ string) (platform.Acco
 	return platform.Account{}, platform.ErrNotFound
 }
 
-func (s *stubAccountStore) GetByStripeCustomerID(_ context.Context, _ string) (platform.Account, error) {
-	return platform.Account{}, platform.ErrNotFound
-}
 func (s *stubAccountStore) Update(_ context.Context, _ platform.Account) error { return nil }
 func (s *stubAccountStore) Suspend(_ context.Context, _ uuid.UUID, _ string) error {
 	return nil

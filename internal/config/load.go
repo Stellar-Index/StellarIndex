@@ -131,10 +131,6 @@ func (c *Config) ApplyEnvOverrides() []string {
 		c.Divergence.Chainlink.RPCURL = v
 		overridden = append(overridden, "external.chainlink.rpc_url", "divergence.chainlink.rpc_url")
 	}
-	if v := os.Getenv("STELLARINDEX_STRIPE_WEBHOOK_SECRET"); v != "" {
-		c.API.Stripe.SigningSecret = v
-		overridden = append(overridden, "api.stripe.signing_secret")
-	}
 	return overridden
 }
 

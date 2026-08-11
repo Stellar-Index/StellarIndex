@@ -21,7 +21,7 @@ import (
 // TestAuditStore exercises the postgresstore.AuditStore against the
 // audit_log table from migration 0027. The audit trail is the
 // append-only record of every privileged action (key.mint,
-// plan.upgrade, session.revoke, Stripe tier changes) and was
+// plan.upgrade, session.revoke, staff tier changes) and was
 // completely untested at every layer (audit-2026-06-14 A20 /
 // maintainability-audit-2026-07-01 D10). One container per test,
 // matching the storage-test convention.
@@ -63,7 +63,7 @@ func TestAuditStore(t *testing.T) {
 			TargetID:   "sub_123",
 			Metadata:   json.RawMessage(`{"from":"starter","to":"pro"}`),
 			IP:         net.ParseIP("203.0.113.7"),
-			UserAgent:  "Stripe/1.0",
+			UserAgent:  "webhook-agent/1.0",
 			Timestamp:  ts,
 		}
 		if err := audit.Append(ctx, in); err != nil {
@@ -80,7 +80,7 @@ func TestAuditStore(t *testing.T) {
 		if got.TargetKind != "subscription" || got.TargetID != "sub_123" {
 			t.Errorf("target = (%q,%q)", got.TargetKind, got.TargetID)
 		}
-		if got.UserAgent != "Stripe/1.0" {
+		if got.UserAgent != "webhook-agent/1.0" {
 			t.Errorf("UserAgent = %q", got.UserAgent)
 		}
 		if !got.IP.Equal(net.ParseIP("203.0.113.7")) {

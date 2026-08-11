@@ -151,7 +151,7 @@ export default function SDKPage() {
         </h1>
         <p className="max-w-2xl text-base text-ink-body">
           Typed, SemVer-stable, no surprises. Anonymous mode for the
-          public tier; bearer-token mode for paid tiers and SEP-10
+          public tier; bearer-token mode for API keys and SEP-10
           JWTs. The SDK covers the pricing/read surface — prices,
           history, OHLC, markets, the asset catalogue, and account
           self-service — with ~36 typed methods; SSE streams and the

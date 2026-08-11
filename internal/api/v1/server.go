@@ -85,7 +85,6 @@ type Server struct {
 	signupVerifier      SignupVerifier
 	signupVerifyEmailer SignupVerifyEmailer
 	apiKeyEmailVerifier APIKeyEmailVerifier
-	stripe              *StripeWebhookConfig
 	divergence          DivergenceLooker
 	freeze              FrozenLooker
 	substance           PriceSubstanceGate
@@ -408,8 +407,7 @@ type Options struct {
 	// Audit, when non-nil, receives persisted audit rows for admin
 	// actions (POST /v1/admin/keys → "key.mint"; account overrides;
 	// status-notice mutations). Production wires
-	// postgresstore.NewAuditStore — the same store the Stripe
-	// webhook's audit sink uses. Nil degrades to structured-log-only
+	// postgresstore.NewAuditStore. Nil degrades to structured-log-only
 	// audit (the mutation still logs unconditionally).
 	Audit AuditSink
 
@@ -466,8 +464,7 @@ type Options struct {
 	APIKeyEmailVerifier APIKeyEmailVerifier
 
 	// APIKeyBudgets are the credential stores a TIER CHANGE has to
-	// clamp — the same two stores the Stripe downgrade path lowers.
-	// Wired so PATCH /v1/admin/accounts/{id} can enforce a
+	// clamp. Wired so PATCH /v1/admin/accounts/{id} can enforce a
 	// tier-lowering on the keys the account can actually
 	// authenticate with, instead of only writing accounts.tier
 	// (52105fdb residual, audit-2026-07-23: the enforced per-minute
@@ -477,16 +474,7 @@ type Options struct {
 	// Zero value disables the admin-side clamp: the tier write still
 	// lands and the endpoint reports keys_clamped=0, so a deployment
 	// without a key store degrades visibly rather than silently.
-	// Deliberately NOT read from Options.Stripe — the operator
-	// downgrade must not depend on Stripe being configured.
 	APIKeyBudgets APIKeyBudgetStores
-
-	// Stripe, when non-nil, backs POST /v1/webhooks/stripe (paid-
-	// tier upgrade webhook). Nil makes the endpoint return 503 so
-	// deployments without Stripe don't accept arbitrary upgrade
-	// requests. The signing secret inside is the `whsec_…` value
-	// from the Stripe dashboard.
-	Stripe *StripeWebhookConfig
 
 	// Divergence, when non-nil, is consulted by /v1/price after a
 	// successful LatestPrice lookup. When the lookup says
@@ -1112,7 +1100,6 @@ func New(opts Options) *Server {
 		signupVerifier:         opts.SignupVerifier,
 		signupVerifyEmailer:    opts.SignupVerifyEmailer,
 		apiKeyEmailVerifier:    opts.APIKeyEmailVerifier,
-		stripe:                 opts.Stripe,
 		divergence:             opts.Divergence,
 		freeze:                 opts.Freeze,
 		substance:              opts.Substance,
@@ -1782,7 +1769,6 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// wave) and emails it; this endpoint consumes the token
 	// from the click-through link.
 	s.mux.HandleFunc("GET /v1/signup/verify", s.handleSignupVerify)
-	s.mux.HandleFunc("POST /v1/webhooks/stripe", s.handleStripeWebhook)
 
 	// Customer-dashboard magic-link auth — POST /v1/auth/login +
 	// GET /v1/auth/callback + POST /v1/auth/logout. Mounted only

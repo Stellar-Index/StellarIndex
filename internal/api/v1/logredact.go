@@ -10,11 +10,10 @@ import "strings"
 // outlive the account.
 //
 // Every log call site in this package that has a customer email in
-// hand MUST route it through here. The ones that matter today are the
-// signup verification send-failure (signup.go) and the two Stripe
-// webhook triage lines (stripe_webhook.go) — all three are error/warn
-// paths, which is exactly where an operator debugging an incident
-// would otherwise leave a plaintext address in the log store.
+// hand MUST route it through here. The one that matters today is the
+// signup verification send-failure (signup.go) — an error/warn path,
+// which is exactly where an operator debugging an incident would
+// otherwise leave a plaintext address in the log store.
 //
 // This is a deliberate twin of dashboardauth's unexported maskEmail
 // rather than a shared call: package v1 does NOT import

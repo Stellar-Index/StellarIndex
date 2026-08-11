@@ -196,8 +196,8 @@ func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) 
 // entropy. Safe to log: 32 bits is far short of authentication-
 // material; the secret tail is what makes the key. Customers
 // see this in dashboard listings to identify which row maps to
-// which key in their secret manager (mirrors Stripe's
-// `sk_live_4eC39H…` and AWS's `AKIA…` patterns).
+// which key in their secret manager (mirrors AWS's `AKIA…`
+// pattern).
 //
 // Returns "" for inputs shorter than 12 chars (defensive — never
 // happens in practice; generateID always emits long enough).

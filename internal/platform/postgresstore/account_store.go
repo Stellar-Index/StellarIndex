@@ -31,7 +31,6 @@ const (
 // scanAccount helper below.
 const accountColumns = `
 	id, name, slug, billing_email,
-	COALESCE(stripe_customer_id, ''),
 	tier, status, created_at,
 	suspended_at, COALESCE(suspended_reason, ''),
 	COALESCE(rate_limit_per_min_override, 0),
@@ -49,7 +48,6 @@ func scanAccount(row interface {
 		&a.Name,
 		&a.Slug,
 		&a.BillingEmail,
-		&a.StripeCustomerID,
 		&a.Tier,
 		&a.Status,
 		&a.CreatedAt,
@@ -68,21 +66,20 @@ func scanAccount(row interface {
 
 // Create inserts a new account. The schema's CHECK constraints
 // catch malformed slugs / tiers / statuses; we map the unique-
-// violation case (slug or stripe_customer_id collision) to
-// platform.ErrConflict.
+// violation case (slug collision) to platform.ErrConflict.
 func (r *AccountStore) Create(ctx context.Context, a platform.Account) (platform.Account, error) {
 	const q = `
 		INSERT INTO accounts (
-			name, slug, billing_email, stripe_customer_id,
+			name, slug, billing_email,
 			tier, status,
 			rate_limit_per_min_override, monthly_request_quota_override
 		)
-		VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6,
-		        NULLIF($7, 0), NULLIF($8, 0))
+		VALUES ($1, $2, $3, $4, $5,
+		        NULLIF($6, 0), NULLIF($7, 0))
 		RETURNING ` + accountColumns
 
 	row := r.s.db.QueryRowContext(ctx, q,
-		a.Name, a.Slug, a.BillingEmail, a.StripeCustomerID,
+		a.Name, a.Slug, a.BillingEmail,
 		string(a.Tier), string(a.Status),
 		a.RateLimitPerMinOverride, a.MonthlyRequestQuotaOverride,
 	)
@@ -125,25 +122,6 @@ func (r *AccountStore) GetBySlug(ctx context.Context, slug string) (platform.Acc
 	return out, nil
 }
 
-// GetByStripeCustomerID maps the Stripe customer back to our
-// account row. Stripe webhook handlers use this to find the
-// account a `customer.*` event applies to.
-func (r *AccountStore) GetByStripeCustomerID(ctx context.Context, stripeCustomerID string) (platform.Account, error) {
-	if stripeCustomerID == "" {
-		return platform.Account{}, platform.ErrNotFound
-	}
-	const q = `SELECT ` + accountColumns + ` FROM accounts WHERE stripe_customer_id = $1`
-	row := r.s.db.QueryRowContext(ctx, q, stripeCustomerID)
-	out, err := scanAccount(row)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return platform.Account{}, platform.ErrNotFound
-		}
-		return platform.Account{}, fmt.Errorf("get account by stripe customer: %w", err)
-	}
-	return out, nil
-}
-
 // Update writes the mutable fields — including the suspension
 // bookkeeping (status, suspended_at, suspended_reason). Immutable (id,
 // slug, created_at) are ignored; passing different values is a no-op
@@ -162,13 +140,12 @@ func (r *AccountStore) Update(ctx context.Context, a platform.Account) error {
 		UPDATE accounts SET
 			name = $2,
 			billing_email = $3,
-			stripe_customer_id = NULLIF($4, ''),
-			tier = $5,
-			status = $6,
-			suspended_at = $7,
-			suspended_reason = NULLIF($8, ''),
-			rate_limit_per_min_override = NULLIF($9, 0),
-			monthly_request_quota_override = NULLIF($10, 0)
+			tier = $4,
+			status = $5,
+			suspended_at = $6,
+			suspended_reason = NULLIF($7, ''),
+			rate_limit_per_min_override = NULLIF($8, 0),
+			monthly_request_quota_override = NULLIF($9, 0)
 		WHERE id = $1
 	`
 	var suspendedAt any
@@ -176,7 +153,7 @@ func (r *AccountStore) Update(ctx context.Context, a platform.Account) error {
 		suspendedAt = a.SuspendedAt
 	}
 	res, err := r.s.db.ExecContext(ctx, q,
-		a.ID, a.Name, a.BillingEmail, a.StripeCustomerID,
+		a.ID, a.Name, a.BillingEmail,
 		string(a.Tier), string(a.Status),
 		suspendedAt, a.SuspendedReason,
 		a.RateLimitPerMinOverride, a.MonthlyRequestQuotaOverride,

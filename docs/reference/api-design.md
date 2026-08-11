@@ -439,14 +439,16 @@ single shared egress can't burn the public surface.
 | ---- | ------------ | ----------------------------: | -------- |
 | Anonymous | no API key | **60** | per IP (XFF-aware via `api.trusted_proxy_cidrs`) |
 | Starter (free) | `POST /v1/signup` | **1,000** | per `X-API-Key` |
-| Pro | Stripe upgrade (`metadata.tier=pro`) | **10,000** | per `X-API-Key` |
-| Business | Stripe upgrade (`metadata.tier=business`) | **50,000** | per `X-API-Key` |
-| Enterprise | Stripe override (`metadata.rate_limit_per_min=…`) | per-contract | per `X-API-Key` |
+| Pro | staff-set (operator comp / partner) | **10,000** | per `X-API-Key` |
+| Business | staff-set (operator comp / partner) | **50,000** | per `X-API-Key` |
+| Enterprise | staff-set override (`rate_limit_per_min_override`) | per-arrangement | per `X-API-Key` |
 
 Operator notes:
 
-- Tier-to-budget mapping lives in `internal/api/v1/stripe_webhook.go`'s
-  `stripeTierMap` table; updates are a code change + redeploy.
+- Tier ceilings live in `platform.Tier.MaxRateLimitPerMin`
+  (internal/platform/account.go); updates are a code change + redeploy.
+  Staff set tiers/overrides via `PATCH /v1/admin/accounts/{id}` and
+  `stellarindex-ops upgrade-key`.
 - Per-key overrides are persisted on the `auth.APIKeyRecord` and
   consulted on every request via the
   `middleware.RateLimitBySubject` path.

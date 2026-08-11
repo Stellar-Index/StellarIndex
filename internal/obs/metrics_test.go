@@ -391,11 +391,6 @@ func TestZeroSeed_F0033(t *testing.T) {
 		// as "no data" (indistinguishable from a dead metric) rather
 		// than as a healthy zero.
 		`stellarindex_aggregator_triangulations_total{outcome="frozen_leg"} 0`,
-		`stellarindex_stripe_platform_sync_errors_total{operation="get_account"} 0`,
-		`stellarindex_stripe_platform_sync_errors_total{operation="upsert_subscription"} 0`,
-		`stellarindex_stripe_platform_sync_errors_total{operation="account_update"} 0`,
-		`stellarindex_stripe_platform_sync_errors_total{operation="list_keys"} 0`,
-		`stellarindex_stripe_platform_sync_errors_total{operation="key_update"} 0`,
 		`stellarindex_usage_rollup_sweeps_total{outcome="ok"}`,
 		`stellarindex_usage_rollup_sweeps_total{outcome="scan_error"} 0`,
 		`stellarindex_usage_rollup_sweeps_total{outcome="sink_error"} 0`,
@@ -419,8 +414,6 @@ func TestZeroSeed_F0033(t *testing.T) {
 		`stellarindex_admin_audit_write_failures_total{surface="key_mint"} 0`,
 		`stellarindex_admin_audit_write_failures_total{surface="key_revoke"} 0`,
 		`stellarindex_admin_audit_write_failures_total{surface="status_notice"} 0`,
-		`stellarindex_admin_audit_write_failures_total{surface="stripe_plan_upgrade"} 0`,
-		`stellarindex_admin_audit_write_failures_total{surface="stripe_dead_letter"} 0`,
 		// C3-056: the staff PII look-up joined the set. It is a read, not
 		// a mutation, which is exactly why its audit row is the ONLY
 		// evidence it happened — an absent series here would make "no

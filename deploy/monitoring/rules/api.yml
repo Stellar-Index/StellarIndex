@@ -237,35 +237,6 @@ groups:
             the event. Operator should reach out before the
             customer notices via their own monitoring.
 
-      # Stripe platform-bridge sync errors (F-1219 follow-up,
-      # 2026-05-13). The Stripe webhook deliberately does NOT 5xx
-      # on platform-store failures — Stripe retries would just keep
-      # applying the same Redis rate-limit without making the
-      # platform-store path any healthier. So this counter is the
-      # operator-visible signal that the bridge is degraded:
-      # customer dashboard / Postgres-backed key state is drifting
-      # from their Stripe billing state.
-      - alert: stellarindex_stripe_platform_sync_errors
-        expr: |
-          sum(rate(stellarindex_stripe_platform_sync_errors_total[15m])) > 0
-        for: 15m
-        labels:
-          severity: ticket
-          team: stellarindex
-          component: api
-        annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stripe-platform-sync-errors.md
-          summary: "Stripe platform bridge degraded: {{ $value | humanize }} errors/s"
-          description: |
-            One or more Stripe webhook → platform-store side effects
-            are failing. The Redis rate-limit half is unaffected
-            (the customer's API still respects the new tier), but
-            the Postgres-backed dashboard view of their account
-            tier / subscription / per-key budget is drifting.
-            Per-`operation` label isolates the failing layer
-            (get_account / upsert_subscription / account_update /
-            list_keys / key_update). Follow the runbook.
-
       # F-0051 (audit-2026-05-26). Caddy auto-renews Let's Encrypt
       # 30 days before expiry; if renewal fails (rate limit, DNS,
       # ACME quota) we'd otherwise discover only at cert expiry.
@@ -294,19 +265,6 @@ groups:
             (rate limit, DNS issue, ACME quota, Caddy stuck).
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/tls-cert-expiring-soon.md
-
-      # C3-016 (audit-2026-07-23): a dead-lettered Stripe event means
-      # a customer PAID and provisioning did not complete. The gauge
-      # is re-seeded from the durable table at boot + every 60s, so
-      # this cannot be blinded by a process restart.
-      - alert: stellarindex_stripe_dead_letter_open
-        expr: stellarindex_stripe_dead_letters_open > 0
-        for: 15m
-        labels:
-          severity: page
-        annotations:
-          summary: "{{ $value }} unresolved Stripe dead-letter(s) — a customer paid and got nothing"
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stripe-dead-letter.md
 
       # C6-032 (audit-2026-07-23): stellarindex_ratelimit_fail_open_total
       # has been registered + incremented since the rate limiter shipped
@@ -385,7 +343,7 @@ groups:
             namespace or an eviction policy rather than Redis availability.
 
       # C3-067 (audit-2026-07-23): every privileged mutation on the admin
-      # + Stripe surfaces appends its audit row best-effort. The mutation
+      # surfaces appends its audit row best-effort. The mutation
       # has already committed by then, so swallowing the error is right —
       # but it means an account tier, an API credential or a public status
       # notice can change with NO durable record of who did it or why, and
@@ -412,8 +370,8 @@ groups:
             A privileged mutation on the `{{ $labels.surface }}` surface
             COMPLETED but its durable audit row did not land. The change is
             live — a tier override, a minted or revoked credential, a public
-            status notice, or a Stripe-driven plan change — with no record
-            of the actor, the reason, or the previous values.
+            status notice — with no record of the actor, the reason, or
+            the previous values.
 
             This is a compliance/forensics gap, not an availability one: do
             NOT roll anything back. Recover the missing rows from the API's

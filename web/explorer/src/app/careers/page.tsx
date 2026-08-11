@@ -25,7 +25,7 @@ const VALUES = [
   },
   {
     title: 'Public tier is permanent.',
-    body: "We never gate data behind paid tiers. The free anonymous read budget exists in perpetuity; commercial revenue funds the operator team and infrastructure, not a paywall.",
+    body: "We never gate data behind paid tiers — the platform is free. The anonymous read budget and the open-source codebase exist in perpetuity.",
   },
 ];
 

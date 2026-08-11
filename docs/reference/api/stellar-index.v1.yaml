@@ -5715,8 +5715,7 @@ paths:
         returned**; it's only retrievable at POST-time.
 
         Use this to render an account dashboard ("here are your
-        keys"), verify rotation worked, or confirm a Stripe-paid
-        upgrade lifted the right keys.
+        keys") or verify rotation worked.
       security:
         - APIKeyAuth: []
       responses:
@@ -6301,160 +6300,6 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
-  /webhooks/stripe:
-    post:
-      tags: [account]
-      summary: Stripe webhook — paid-tier upgrade.
-      description: |
-        Receives Stripe webhook events. On `checkout.session.completed`
-        with `payment_status=paid`, looks up every API key whose
-        identifier matches `client_reference_id` and lifts their
-        `rate_limit_per_min` to the value implied by `metadata.tier`
-        (pro / business) or the explicit `metadata.rate_limit_per_min`
-        override.
-
-        Idempotent — Stripe at-least-once delivery means the same
-        event may arrive multiple times; the handler always sets the
-        same target rate-limit. Customer keeps their existing
-        plaintext key; effective on the next request (validator reads
-        the per-key budget on every Lookup).
-
-        Deduped by a durable CLAIM on `stripe_event_log`, not merely by
-        row existence: a completed delivery is duplicate-acked `200`,
-        and a delivery that arrives while another copy of the same
-        event is still being processed gets `409` so it stays in
-        Stripe's retry queue.
-
-        Stripe-Signature header verified via HMAC-SHA256 with
-        timestamp drift bounded to 5 minutes. Endpoint returns 503
-        when the signing secret is unset (deployments without
-        Stripe).
-
-        **Operator observability.** Beyond the Redis-side
-        rate-limit lift (which 5xx-bubbles back to Stripe so the
-        platform retries), the handler also fans out platform-store
-        side effects: account tier update, subscription upsert, and
-        per-key rate-limit lift on dashboard-created Postgres keys
-        (F-1219). Those side effects are best-effort — they do NOT
-        5xx — because Stripe retries against an unhealthy Postgres
-        would just retry-storm. Failures are surfaced via the
-        `stellarindex_stripe_platform_sync_errors_total{operation}`
-        counter; the alert
-        `stellarindex_stripe_platform_sync_errors` (P3 / ticket)
-        fires on any non-zero rate over 15 min. See the runbook
-        at `docs/operations/runbooks/stripe-platform-sync-errors.md`
-        for per-`operation` triage.
-
-        **Provisioning outcomes.** The status code encodes whether a
-        retry can help:
-
-        - **All keys upgraded** → `200`.
-        - **Some keys upgraded, some failed** → `200` with
-          `keys_failed > 0`. The customer already holds a credential
-          carrying the paid tier, and a retry loop over one
-          permanently-unwritable key record would risk Stripe
-          disabling the endpoint for every customer. Surfaced by
-          `keys_failed` and per-key ERROR logs, not by the status.
-        - **Keys exist but NONE could be upgraded** → `500`. Nothing
-          was provisioned and the cause is a key-store outage, which
-          a retry heals, so Stripe's retry schedule must re-deliver.
-          The event is also dead-lettered (`processed_at` stays NULL)
-          so the incident survives Stripe eventually giving up, and
-          resolves itself when a retry succeeds.
-        - **No keys exist for the identifier** (customer paid but
-          never signed up) → `200` + dead-letter. Retrying cannot
-          help; a human must act.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-      parameters:
-        - name: Stripe-Signature
-          in: header
-          required: true
-          schema: { type: string }
-      responses:
-        "200":
-          description: >-
-            Event acknowledged. Covers full success, PARTIAL success
-            (`keys_failed > 0` — at least one key carries the paid tier),
-            deliberately-ignored event types, and the paid-but-never-signed-up
-            case (`dead_lettered: true`), where no retry could help. A total
-            provisioning failure returns 500 instead so Stripe retries.
-          content:
-            application/json:
-              example:
-                data:
-                  ok: true
-                  upgraded: 2
-                  keys_total: 2
-                  keys_failed: 0
-                  rate_limit_per_min: 10000
-                as_of: '2026-07-03T22:45:19.771408Z'
-                flags:
-                  stale: false
-                  reduced_redundancy: false
-                  triangulated: false
-                  divergence_warning: false
-                  divergence_checked: false
-              schema:
-                allOf:
-                  - { $ref: "#/components/schemas/EnvelopeMeta" }
-                  - type: object
-                    properties:
-                      data:
-                        type: object
-                        properties:
-                          ok:                { type: boolean }
-                          upgraded:          { type: integer, description: "Keys upgraded to the new rate limit." }
-                          keys_total:        { type: integer, description: "Total keys belonging to the identifier." }
-                          keys_failed:       { type: integer, description: "Keys whose budget could NOT be updated. Non-zero means a PARTIAL upgrade: the customer holds at least one key on the paid tier, the rest kept the old budget. Investigate via the per-key ERROR logs." }
-                          rate_limit_per_min: { type: integer }
-                          ignored:           { type: string, description: "Set when an event was acknowledged but not acted on (wrong type, unpaid)." }
-                          note:              { type: string, description: "Human-readable outcome for an acknowledged-but-unprovisioned event (e.g. 'no keys for identifier')." }
-                          dead_lettered:     { type: boolean, description: "The event was recorded as paid-but-unprovisioned; processed_at stays NULL so an operator re-send re-runs the provisioning." }
-                    required: [data]
-        "400":
-          description: Missing signature header / bad body / bad metadata.
-          content:
-            application/problem+json:
-              schema: { $ref: "#/components/schemas/Problem" }
-        "401":
-          description: Stripe-Signature verification failed.
-          content:
-            application/problem+json:
-              schema: { $ref: "#/components/schemas/Problem" }
-        "409":
-          description: >-
-            Another delivery of this same event is currently being processed
-            (Stripe delivers at-least-once and can deliver concurrently).
-            Deliberately NOT a 200 duplicate-ack: the in-flight processor has
-            not finished, and acking would remove the event from Stripe's
-            retry queue, so a crash mid-processing would leave a paid customer
-            unprovisioned with no further delivery. Stripe retries; by then the
-            claim is either released, completed (→ 200 duplicate-ack) or
-            lease-expired (→ re-processed).
-          content:
-            application/problem+json:
-              schema: { $ref: "#/components/schemas/Problem" }
-        "500":
-          description: >-
-            Provisioning failed and a retry can help — the customer's keys
-            could not be listed, or they exist but NONE could be updated.
-            Returned deliberately so Stripe's retry schedule re-delivers; the
-            event is dead-lettered in parallel so the incident survives Stripe
-            giving up, and resolves automatically when a retry succeeds.
-          content:
-            application/problem+json:
-              schema: { $ref: "#/components/schemas/Problem" }
-        "503":
-          description: Webhook signing secret not configured.
-          content:
-            application/problem+json:
-              schema: { $ref: "#/components/schemas/Problem" }
-
   /signup:
     post:
       tags: [account]
@@ -6464,9 +6309,8 @@ paths:
         + optional label and get back a freshly-minted API key for
         the Starter tier (1000 req/min). Idempotent on the email:
         a second call for the same email returns 409 with a pointer
-        to the existing key (recover access via support; future
-        Stripe-paid upgrade flow will support self-service rotation
-        via /v1/account/keys).
+        to the existing key (recover access via support, or rotate
+        via /v1/account/keys once authenticated).
 
         Already-authenticated callers receive 400 — they should
         rotate keys via POST /v1/account/keys instead.

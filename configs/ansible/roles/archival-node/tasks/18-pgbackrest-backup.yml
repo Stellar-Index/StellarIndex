@@ -83,7 +83,7 @@
 # job.
 # repo1 encryption (audit-2026-07-23 F4-F2). repo1 shipped with
 # pgbackrest's default cipher-type=none: a full copy of the database —
-# API keys, customer records, Stripe identifiers — in plaintext on disk,
+# API keys, customer records, webhook secrets — in plaintext on disk,
 # protected by filesystem permissions alone, and copied verbatim into
 # any ZFS send / rsync / disk-level backup of that dataset. repo2 has
 # been encrypted since CS-111; repo1 never was.
