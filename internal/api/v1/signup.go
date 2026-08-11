@@ -104,11 +104,13 @@ type SignupResult struct {
 // purely abuse-prevention.
 const signupBodyMaxBytes = 4 * 1024
 
-// signupDefaultRateLimitPerMin — the Starter-tier budget. Matches
-// `[api].key_rate_limit_per_min` default in the config schema and
-// the API SLA's "≥ 1000 requests per minute per client" commitment.
-// Operators can override by mutating the per-key RateLimitPerMin
-// (`stellarindex-ops upgrade-key` / staff-set partner limits).
+// signupDefaultRateLimitPerMin — the free-tier budget
+// (platform.TierFree.MaxRateLimitPerMin; the old Starter number).
+// Matches `[api].key_rate_limit_per_min` default in the config schema
+// and the API SLA's "≥ 1000 requests per minute per client"
+// commitment. Operators can override by mutating the per-key
+// RateLimitPerMin (`stellarindex-ops upgrade-key` / staff-set
+// partner limits).
 const signupDefaultRateLimitPerMin = 1000
 
 // handleSignup serves POST /v1/signup.

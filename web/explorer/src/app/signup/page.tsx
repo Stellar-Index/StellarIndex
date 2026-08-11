@@ -15,35 +15,25 @@ export const metadata: Metadata = {
 
 const TIERS = [
   {
-    name: 'Free',
+    name: 'Anonymous',
     rateLimit: '60 req/min per IP',
     cost: '$0',
-    notes: 'Public read of every endpoint. No account required for the anonymous tier.',
+    notes: 'Public read of every endpoint. No account, no key, no auth.',
   },
   {
-    name: 'Starter',
+    name: 'Free',
     rateLimit: '1,000 req/min per key',
     cost: '$0',
-    notes: 'Self-service. Sign in with the form on the right; first sign-in creates the account. API keys live under your account once you’re in.',
+    notes:
+      'Every registered account. Sign in with the form on the right (first sign-in creates the account), or register straight from the terminal: POST /v1/register returns an account + API key in one call.',
     highlight: true,
   },
   {
-    name: 'Pro',
-    rateLimit: '10,000 req/min per key',
-    cost: 'Contact sales',
-    notes: 'For wallets + portfolio apps with heavy fan-out. Includes Slack channel + 24h SLA on incident response.',
-  },
-  {
-    name: 'Business',
-    rateLimit: '60,000 req/min per key',
-    cost: 'Contact sales',
-    notes: 'For exchanges + market-data redistributors. Dedicated AlertManager routes + named on-call + 1h SLA on SEV-1.',
-  },
-  {
-    name: 'Enterprise',
-    rateLimit: 'Custom',
-    cost: 'Custom',
-    notes: 'Bespoke shape. Multi-tenant key isolation, custom retention, dedicated regional capacity, named TAM. Talk to us.',
+    name: 'Partner',
+    rateLimit: 'Staff-set (up to 100,000 req/min)',
+    cost: '$0',
+    notes:
+      'For wallets, exchanges, and redistributors with heavy fan-out. Nothing to buy — email us with your use-case and we raise your account’s limits.',
   },
 ];
 

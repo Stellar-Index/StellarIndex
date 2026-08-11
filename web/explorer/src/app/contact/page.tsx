@@ -30,9 +30,9 @@ const CHANNELS: Channel[] = [
   },
   {
     icon: KeyRound,
-    title: 'Sales — growth & enterprise',
+    title: 'Partner limits',
     blurb:
-      'Need higher than the 1,000 req/min Starter rate-limit, named on-call, dedicated regional capacity, or a Slack channel? Those plans are announced at GA and aren’t for sale yet — email sales with your traffic profile and we’ll work out an interim arrangement.',
+      'Need higher than the 1,000 req/min free rate-limit, named on-call, dedicated regional capacity, or a Slack channel? There is nothing to buy — partner limits are staff-set. Email us with your traffic profile and we’ll raise your account’s limits.',
     destination: 'sales@stellarindex.io',
     href: 'mailto:sales@stellarindex.io',
   },

@@ -360,10 +360,27 @@ These are fast (CAGG-served) and rate-limited like everything else.
 
 ## 4. Billing
 
-Stripe-driven. We already have webhook infrastructure (#669);
-extend significantly.
+> **SUPERSEDED (2026-08-11).** The platform is free — the Stripe
+> integration was removed end to end (operator decision 2026-08-10)
+> and the paid-plan ladder collapsed into three levels. §4.2–§4.x
+> below are retained as historical design record only; nothing in
+> them is wired.
 
-### 4.1 Plans
+### 4.1 Tiers (current — free platform)
+
+| Tier | Cost | Rate limit | Monthly quota | Notes |
+|------|------|------------|---------------|-------|
+| `anon` | $0 | 60 / IP-min | — | No key required; IP-bucket |
+| `free` | $0 | 1,000 / key-min | 1M | Registered default; `POST /v1/register` (open, curl-first) or `/v1/signup` |
+| `partner` | $0 | staff-set (≤100,000 / key-min ceiling) | staff-set (≤1B ceiling) | Operator-admitted via PATCH `/v1/admin/accounts/{id}` overrides |
+
+Legacy stored tier strings map in code
+(`platform.Tier.Canonical`): starter→free (identical numbers);
+pro/business/enterprise→partner. The `accounts.tier` CHECK
+constraint (migration 0027) is untouched; writes fold canonical
+tiers back to CHECK-legal strings (`platform.Tier.StorageValue`).
+
+### 4.1-legacy Plans (historical)
 
 | Plan | Cost | Rate limit | Monthly quota | Notes |
 |------|------|------------|---------------|-------|
@@ -372,11 +389,6 @@ extend significantly.
 | Pro | $99/mo | 10,000 / key-min | 25M | Multiple keys; usage analytics |
 | Business | $499/mo | 50,000 / key-min | 200M | Discord channel; 24h SLA |
 | Enterprise | Custom | Custom | Custom | SEP-10 / multi-tenant / dedicated capacity |
-
-**Overage policy:** soft cap with email alerts at 80% / 100%.
-Hard cap optional per-account (default off — we'd rather charge
-metered overage at $0.10 per 10K than break a customer's
-production system mid-incident).
 
 ### 4.2 Stripe model
 

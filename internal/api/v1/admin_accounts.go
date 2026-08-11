@@ -354,7 +354,12 @@ func (s *Server) evictKeyCacheOnSuspend(
 // the suspension bookkeeping.
 func applyAccountOverrides(acct *platform.Account, req adminAccountOverrideRequest, now time.Time) {
 	if req.Tier != nil {
-		acct.Tier = platform.Tier(*req.Tier)
+		// Canonicalise on apply so the in-memory account (and the
+		// clamp + audit rows downstream) always speaks the
+		// three-level model even when the operator sent a legacy
+		// paid-tier string; the store folds back to a CHECK-legal
+		// string at write time (platform.Tier.StorageValue).
+		acct.Tier = platform.Tier(*req.Tier).Canonical()
 	}
 	if req.Status != nil {
 		applyAccountStatus(acct, platform.AccountStatus(*req.Status), req.SuspendedReason, now)
@@ -424,7 +429,7 @@ func parseAccountOverrideRequest(w http.ResponseWriter, r *http.Request) (adminA
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-tier",
 			"Invalid tier", http.StatusBadRequest,
-			"tier must be one of free, starter, pro, business, enterprise")
+			"tier must be one of free, partner (legacy paid-tier names are accepted and mapped: starter→free; pro/business/enterprise→partner)")
 		return req, false
 	}
 	if req.Status != nil && !validAccountStatus(*req.Status) {
@@ -466,14 +471,14 @@ func parseAccountOverrideRequest(w http.ResponseWriter, r *http.Request) (adminA
 	return req, true
 }
 
+// validAccountTier gates the PATCH tier vocabulary: the canonical
+// three-level model (free / partner — anon is not an account tier)
+// plus the legacy paid-tier strings, which applyAccountOverrides
+// canonicalises (starter→free; pro/business/enterprise→partner) so
+// pre-existing operator tooling keeps working. The vocabulary itself
+// lives in [platform.KnownTier].
 func validAccountTier(t string) bool {
-	switch platform.Tier(t) {
-	case platform.TierFree, platform.TierStarter, platform.TierPro,
-		platform.TierBusiness, platform.TierEnterprise:
-		return true
-	default:
-		return false
-	}
+	return platform.KnownTier(t)
 }
 
 // validAccountStatus gates the kill-switch vocabulary to the three

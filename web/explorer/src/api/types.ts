@@ -8449,8 +8449,14 @@ export interface paths {
             requestBody: {
                 content: {
                     "application/json": {
-                        /** @enum {string} */
-                        tier?: "free" | "starter" | "pro" | "business" | "enterprise";
+                        /**
+                         * @description Canonical model is `free` / `partner` (the platform
+                         *     is free; partner = staff-set per-account limits).
+                         *     Legacy paid-tier names are accepted and mapped in
+                         *     code: starter→free; pro/business/enterprise→partner.
+                         * @enum {string}
+                         */
+                        tier?: "free" | "partner" | "starter" | "pro" | "business" | "enterprise";
                         /**
                          * @description Account lifecycle state — the kill switch. `suspended`
                          *     / `closed` stop the account's keys authenticating and
@@ -8741,6 +8747,165 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/register": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Open registration — create a free account + first API key in one call.
+         * @description Public, anonymous-tier, and deliberately friction-free — the
+         *     canonical **agent onboarding** path. One POST (an empty body
+         *     is fine) creates a free-tier platform account and mints its
+         *     first API key:
+         *
+         *         curl -X POST https://api.stellarindex.io/v1/register
+         *
+         *     `name` and `email` are both optional. The email is
+         *     contact-only: no verification email is sent, nothing is keyed
+         *     on it, and duplicates are allowed. The response carries the
+         *     plaintext key **once** plus the account's free-tier limits so
+         *     a client can self-configure without a second request. Staff
+         *     can later raise a specific account's limits (the partner
+         *     path) via the operator override endpoints.
+         *
+         *     Abuse posture: rides the same per-IP signup throttle as
+         *     `POST /v1/signup` (shared budget, default 5/hour/IP → 429),
+         *     underneath the global anonymous rate limit. When a
+         *     Content-Type header is present it must be
+         *     `application/json`.
+         *
+         *     Already-authenticated callers receive 400 — they should mint
+         *     additional keys via POST /v1/account/keys instead.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    /**
+                     * @example {
+                     *       "name": "my-trading-agent",
+                     *       "email": "ops@example.com"
+                     *     }
+                     */
+                    "application/json": {
+                        /** @description Display name for the account (defaults to "api-registered account"). */
+                        name?: string;
+                        /**
+                         * Format: email
+                         * @description Optional contact address. Never verified, never required.
+                         */
+                        email?: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Account created — plaintext key shown **once**. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "account_id": "7d9f2a54-4f0e-4c1a-9b3d-2f6c8e1a0b5c",
+                         *         "api_key": "sip_4f9c1d8b3a7e2f1c9d4b8a6e3f2c1d9b8a7e6f5d4c3b2a1f4f9c1d8b3a7e2f1c",
+                         *         "key_id": "kid_8f3a2c1b9e7d4f6a8f3a2c1b",
+                         *         "key_prefix": "sip_4f9c1d8b",
+                         *         "tier": "free",
+                         *         "limits": {
+                         *           "rate_limit_per_min": 1000,
+                         *           "monthly_quota": 1000000,
+                         *           "max_active_keys": 25,
+                         *           "max_webhooks": 10,
+                         *           "max_price_alerts": 25
+                         *         }
+                         *       },
+                         *       "as_of": "2026-08-11T14:35:42.881Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false
+                         *       }
+                         *     }
+                         */
+                        "application/json": components["schemas"]["EnvelopeMeta"] & {
+                            data?: {
+                                /** Format: uuid */
+                                account_id: string;
+                                /** @description Bearer token (`sip_<64hex>`). Shown ONCE; register again if lost. */
+                                api_key: string;
+                                key_id: string;
+                                key_prefix: string;
+                                /** @enum {string} */
+                                tier: "free";
+                                limits: {
+                                    rate_limit_per_min: number;
+                                    /** Format: int64 */
+                                    monthly_quota: number;
+                                    max_active_keys: number;
+                                    max_webhooks: number;
+                                    max_price_alerts: number;
+                                };
+                            };
+                        };
+                    };
+                };
+                /** @description Invalid email / name too long / malformed body / already authenticated. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Content-Type present but not application/json. */
+                415: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Per-IP registration throttle exhausted (shared with /v1/signup). */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Platform account store not configured (Postgres unavailable). */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/signup": {
         parameters: {
             query?: never;
@@ -8754,7 +8919,9 @@ export interface paths {
          * Self-service signup — mint a first API key by email.
          * @description Public, anonymous-tier endpoint. Hit it once with an email
          *     + optional label and get back a freshly-minted API key for
-         *     the Starter tier (1000 req/min). Idempotent on the email:
+         *     the free tier (1000 req/min). Prefer `POST /v1/register` for
+         *     machine onboarding — it creates a real platform account and
+         *     doesn't require an email. Idempotent on the email:
          *     a second call for the same email returns 409 with a pointer
          *     to the existing key (recover access via support, or rotate
          *     via /v1/account/keys once authenticated).
@@ -9040,9 +9207,8 @@ export interface paths {
          *     ONCE. The dashboard surfaces it in a "save this now"
          *     banner; subsequent reads only see the prefix. Owner /
          *     admin / member roles can mint; viewer + billing 403.
-         *     Active-key quota is tier-aware (free 5, starter 25, pro 50,
-         *     business 100, enterprise 250 — deployment-overridable);
-         *     exceeding it returns 409.
+         *     Active-key quota is tier-aware (free 25, partner 250 —
+         *     deployment-overridable); exceeding it returns 409.
          */
         post: {
             parameters: {
@@ -9267,9 +9433,9 @@ export interface paths {
          *     server-side immediately and use it to HMAC-verify the
          *     X-StellarIndex-Signature header on inbound POSTs. URL must
          *     be https://. Owner / admin / member roles can register;
-         *     viewer + billing 403. Webhook quota is tier-aware (free 2,
-         *     starter 10, pro 25, business 50, enterprise 100 —
-         *     deployment-overridable); exceeding it returns 409.
+         *     viewer + billing 403. Webhook quota is tier-aware (free 10,
+         *     partner 100 — deployment-overridable); exceeding it
+         *     returns 409.
          */
         post: {
             parameters: {
@@ -9638,9 +9804,8 @@ export interface paths {
          *     this account's subscribed webhooks (register one via
          *     POST /v1/dashboard/webhooks with `price.alert` in `events`).
          *     Owner / admin / member roles can register; viewer + billing
-         *     403. Alert quota is tier-aware (free 5, starter 25, pro 100,
-         *     business 250, enterprise 1000 — deployment-overridable);
-         *     exceeding it returns 409.
+         *     403. Alert quota is tier-aware (free 25, partner 1000 —
+         *     deployment-overridable); exceeding it returns 409.
          */
         post: {
             parameters: {
@@ -13091,13 +13256,11 @@ export interface components {
              *     **Silently clamped to the account's tier ceiling** —
              *     see `platform.Tier.MaxRateLimitPerMin` in code:
              *
-             *       - Free:       60/min  (key parity with anon-tier)
-             *       - Starter:    1000/min
-             *       - Pro:        10000/min
-             *       - Business:   60000/min
-             *       - Enterprise: 100000/min
+             *       - free:    1000/min
+             *       - partner: 100000/min ceiling (the staff-set
+             *         per-account override is the real limit)
              *
-             *     A request of 100000 on a Free account persists 60.
+             *     A request of 100000 on a free account persists 1000.
              *     The `maximum: 100000` in this schema is the hard ceiling
              *     for any tier; the effective cap is whichever is lower.
              *     F-1256 (codex audit-2026-05-12).
@@ -14945,8 +15108,14 @@ export interface components {
             id: string;
             name: string;
             slug: string;
-            /** @enum {string} */
-            tier: "free" | "starter" | "pro" | "business" | "enterprise";
+            /**
+             * @description Canonical three-level model (anon is not an account
+             *     tier). Legacy paid-tier strings in stored rows are
+             *     folded to these on read: starter→free;
+             *     pro/business/enterprise→partner.
+             * @enum {string}
+             */
+            tier: "free" | "partner";
             /** @enum {string} */
             status: "active" | "suspended" | "closed";
             billing_email?: string;

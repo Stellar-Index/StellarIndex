@@ -320,7 +320,7 @@ function PlanCard({ me }: { me: MeResponse }) {
   const tier = accountTier(me);
   const ceiling = tierCeiling(tier);
   const status = me.account?.status ?? 'active';
-  const isEnterprise = (tier ?? '').toLowerCase() === 'enterprise';
+  const isPartner = ['partner', 'enterprise'].includes((tier ?? '').toLowerCase());
   return (
     <Card>
       <CardHeader title="Your plan" />
@@ -340,7 +340,7 @@ function PlanCard({ me }: { me: MeResponse }) {
             {status}
           </Badge>
         </div>
-        {!isEnterprise && (
+        {!isPartner && (
           <ButtonLink
             href="/dashboard/settings"
             variant="secondary"

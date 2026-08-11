@@ -65,13 +65,18 @@ export function titleCase(s: string | null | undefined): string {
 
 // Per-tier metadata used across Overview / Usage / Settings. The API is
 // the source of truth for which tier an account is on; this is purely
-// presentation (label + rate-limit ceiling copy) and mirrors the tier
-// ceilings documented in the keys create form.
+// presentation (label + rate-limit ceiling copy) and mirrors
+// platform.Tier.MaxRateLimitPerMin. The canonical model is
+// free/partner (the platform is free; partner limits are staff-set);
+// legacy tier strings are kept here folded to their canonical rung in
+// case an older API still serves them.
 const TIER_RATE_CEILING: Record<string, number> = {
-  free: 60,
+  free: 1000,
+  partner: 100000,
+  // Legacy names → canonical rungs (starter≡free; pro/business/enterprise≡partner).
   starter: 1000,
-  pro: 10000,
-  business: 60000,
+  pro: 100000,
+  business: 100000,
   enterprise: 100000,
 };
 

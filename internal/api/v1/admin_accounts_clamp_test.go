@@ -50,9 +50,10 @@ func newAdminClampServer(
 // wrote `accounts.tier` and stopped, so an operator demoting an abusive
 // Pro account to Free left every one of its keys serving 10_000/min.
 //
-// Asserted end to end: both key stores lowered to the Free ceiling (60),
-// keys already at or below it untouched, revoked keys untouched, and the
-// audit row carrying the clamp outcome.
+// Asserted end to end: both key stores lowered to the free ceiling
+// (1000/min under the free-platform model — legacy "pro" canonicalises
+// to partner, 100k ceiling), keys already at or below it untouched,
+// revoked keys untouched, and the audit row carrying the clamp outcome.
 func TestAdminAccountOverrides_TierLoweringClampsKeyBudgets(t *testing.T) {
 	acctID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
 	acct := platform.Account{
@@ -91,7 +92,7 @@ func TestAdminAccountOverrides_TierLoweringClampsKeyBudgets(t *testing.T) {
 		t.Fatalf("status = %d, want 200; body=%s", resp.StatusCode, body)
 	}
 
-	const freeCeiling = 60 // platform.TierFree.MaxRateLimitPerMin()
+	const freeCeiling = 1000 // platform.TierFree.MaxRateLimitPerMin()
 	if got := platform.TierFree.MaxRateLimitPerMin(); got != freeCeiling {
 		t.Fatalf("tier ladder moved: TierFree.MaxRateLimitPerMin() = %d, want %d", got, freeCeiling)
 	}

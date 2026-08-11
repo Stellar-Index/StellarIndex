@@ -67,10 +67,27 @@ on either the `X-API-Key` header or `Authorization: Bearer <key>`
 (the Go SDK always sends `Authorization: Bearer <key>`; `X-API-Key`
 is a convenience for hand-written curl calls).
 
-### Self-service signup — the ≤1-minute path
+### Open registration — the one-curl path
+
+No email, no browser, no payment. `POST /v1/register` creates a
+free-tier account and returns its first API key in one call —
+the canonical path for agents and scripts (full walkthrough:
+[agent-onboarding.md](agent-onboarding.md)):
+
+```sh
+curl -X POST https://api.stellarindex.io/v1/register
+```
+
+The response carries `data.api_key` (shown **once**) plus the
+account's free-tier limits (1,000 req/min, 1M req/month). Optional
+`name` / `email` fields personalise the account; the email is
+contact-only and never verified.
+
+### Self-service signup — the email-keyed path
 
 No Stellar wallet required. `POST /v1/signup` takes an email and
-returns a usable key immediately:
+returns a usable key immediately (idempotent per email — prefer
+`/v1/register` for machine onboarding):
 
 ```sh
 curl -fsSL -X POST https://api.stellarindex.io/v1/signup \

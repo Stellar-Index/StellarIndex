@@ -166,7 +166,7 @@ export default function WidgetsPage() {
             from the public tier of the Stellar Index API. Sites with
             extreme traffic should host their own copy or use{' '}
             <Link href="/signup" className="text-brand-600 hover:underline">
-              a Starter key
+              a free API key
             </Link>{' '}
             for the higher rate-limit.
           </li>

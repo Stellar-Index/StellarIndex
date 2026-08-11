@@ -198,8 +198,9 @@ export type MeResponse = Omit<Schemas['Account'], 'tier'> & {
     status?: string;
   };
   // spec'd since board #33; local narrowing retained: the spec enum ("anonymous" | "apikey" | "partner") omits
-  // the platform tiers the dashboard session flow reports (free /
-  // starter / pro / …) — widened until the spec covers them.
+  // the platform account tiers the dashboard session flow reports
+  // (free / partner, plus legacy strings from older API builds) —
+  // widened until the spec covers them.
   tier?: string;
 };
 
