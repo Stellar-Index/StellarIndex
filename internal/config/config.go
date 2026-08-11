@@ -1162,6 +1162,8 @@ type DashboardConfig struct {
 
 	ResendAPIKeyEnv string `toml:"resend_api_key_env" doc:"Environment variable holding the Resend transactional-email API key (re_…). Empty value leaves the dashboard auth flow on a NoopSender — magic-link tokens land in the API logs only, useful for local dev. Production sets this." default:"STELLARINDEX_RESEND_API_KEY"`
 
+	CodeSecretEnv string `toml:"code_secret_env" doc:"Environment variable holding the server secret that keys the 6-digit email-code derivation (HMAC over the stored token hash — without it a Postgres read would reveal every in-flight sign-in code). Any long random string (32+ bytes). Unset/empty env falls back to a random per-process secret: still keyed, but in-flight codes stop verifying across a restart. Production sets this." default:"STELLARINDEX_DASHBOARD_CODE_SECRET"`
+
 	MagicLinkTTLMinutes int `toml:"magic_link_ttl_minutes" doc:"Magic-link validity in minutes. Default 15 — long enough for an email to arrive + the user to switch contexts; short enough to limit replay-window if a phone is briefly unattended." default:"15"`
 
 	SessionTTLDays int `toml:"session_ttl_days" doc:"Session-cookie lifetime in days. Default 30 — matches typical SaaS dashboards; users sign in monthly without re-authing." default:"30"`
@@ -1617,6 +1619,7 @@ func defaultAPIConfig() APIConfig {
 		Dashboard: DashboardConfig{
 			EmailFrom:           "Stellar Index <hello@stellarindex.io>",
 			ResendAPIKeyEnv:     "STELLARINDEX_RESEND_API_KEY",
+			CodeSecretEnv:       "STELLARINDEX_DASHBOARD_CODE_SECRET",
 			MagicLinkTTLMinutes: 15,
 			SessionTTLDays:      30,
 			CookieSecure:        true, // dev (http://localhost) overrides to false

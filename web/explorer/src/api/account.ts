@@ -88,6 +88,80 @@ export async function verifyCode(email: string, code: string): Promise<void> {
   });
 }
 
+// ─── Passkeys (WebAuthn) ───────────────────────────────────────────
+
+// PasskeyCredential mirrors the passkeyDTO wire shape
+// (internal/api/v1/dashboardauth/passkey.go). Display metadata only —
+// no key material ever crosses the wire.
+export interface PasskeyCredential {
+  id: string;
+  name: string;
+  transports?: string[];
+  backup_eligible: boolean;
+  created_at: string;
+  last_used_at?: string;
+}
+
+/**
+ * POST /v1/auth/passkey/begin-login — WebAuthn assertion options for
+ * `navigator.credentials.get()`. Credentialed so the signed ceremony
+ * cookie (challenge binding) sticks; finish requires it.
+ */
+export async function beginPasskeyLogin(): Promise<unknown> {
+  return accountFetch<unknown>('/auth/passkey/begin-login', { method: 'POST' });
+}
+
+/**
+ * POST /v1/auth/passkey/finish-login — verify the assertion; on
+ * success the same session cookie the email-code flow mints rides the
+ * response. Throws ApiError (400) on any verification failure.
+ */
+export async function finishPasskeyLogin(
+  assertion: Record<string, unknown>,
+): Promise<void> {
+  await accountFetch<{ status: string }>('/auth/passkey/finish-login', {
+    method: 'POST',
+    body: assertion,
+  });
+}
+
+/** POST /v1/auth/passkey/begin-register — creation options (session-gated). */
+export async function beginPasskeyRegister(): Promise<unknown> {
+  return accountFetch<unknown>('/auth/passkey/begin-register', {
+    method: 'POST',
+  });
+}
+
+/** POST /v1/auth/passkey/finish-register — store the new passkey. */
+export async function finishPasskeyRegister(
+  name: string,
+  credential: Record<string, unknown>,
+): Promise<PasskeyCredential> {
+  return accountFetch<PasskeyCredential>('/auth/passkey/finish-register', {
+    method: 'POST',
+    body: { name, credential },
+  });
+}
+
+/** GET /v1/auth/passkey/credentials — the signed-in user's passkeys. */
+export async function listPasskeys(
+  signal?: AbortSignal,
+): Promise<PasskeyCredential[]> {
+  const res = await accountFetch<{ credentials: PasskeyCredential[] }>(
+    '/auth/passkey/credentials',
+    { signal },
+  );
+  return res.credentials;
+}
+
+/** DELETE /v1/auth/passkey/credentials/{id} — remove one passkey. */
+export async function deletePasskey(id: string): Promise<void> {
+  await accountFetch<void>(
+    `/auth/passkey/credentials/${encodeURIComponent(id)}`,
+    { method: 'DELETE' },
+  );
+}
+
 // ─── Keys ──────────────────────────────────────────────────────────
 
 // APIKey mirrors the `/v1/dashboard/keys` keyDTO wire shape

@@ -19,9 +19,10 @@ package dashboardauth
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base32"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 
@@ -44,11 +45,12 @@ const MagicLinkPlaintextLen = 32
 // generateMagicLinkToken returns (plaintext, sha256-hash, code).
 // The plaintext is what we put in the email link;
 // the hash is what we store in magic_link_tokens;
-// the code is the paste-friendly 6-digit numeric variant.
+// the code is the paste-friendly 6-digit numeric variant, derived
+// under `secret` (see [Generator.CodeForHash] for why it is keyed).
 //
-// `rand` is the entropy source. crypto/rand.Read in production;
+// `read` is the entropy source. crypto/rand.Read in production;
 // tests inject a deterministic source.
-func generateMagicLinkToken(read func([]byte) (int, error)) (plaintext string, hash []byte, code string, err error) {
+func generateMagicLinkToken(read func([]byte) (int, error), secret []byte) (plaintext string, hash []byte, code string, err error) {
 	buf := make([]byte, MagicLinkPlaintextLen)
 	n, err := read(buf)
 	if err != nil {
@@ -61,54 +63,51 @@ func generateMagicLinkToken(read func([]byte) (int, error)) (plaintext string, h
 	plaintext = hex.EncodeToString(buf)
 	sum := sha256.Sum256([]byte(plaintext))
 
-	return plaintext, sum[:], CodeFromHash(sum[:]), nil
+	return plaintext, sum[:], codeFromHashKeyed(secret, sum[:]), nil
 }
 
-// CodeFromHash derives the paste-friendly 6-digit numeric code from a
-// stored token hash. The code is the high 32 bits (4 bytes) of the
-// sha256 token hash, base32-encoded then mapped to 6 digits — so it is
-// a deterministic function of the hash we already persist. The
-// verify-code handler recomputes it per active token (it can't be
-// reversed, only re-derived from a candidate's hash) and constant-time
-// compares against the user-supplied code.
+// loginCodeDomain domain-separates the code HMAC from any other use
+// of the server secret, so a code can never be confused with (or
+// replayed as) another derived value.
+const loginCodeDomain = "stellarindex/login-code/v1|"
+
+// codeFromHashKeyed derives the 6-digit email code from a stored
+// token hash UNDER A SERVER-SIDE SECRET.
 //
-// 4 bytes → 7 base32 chars, of which we keep 6: 3 bytes only yields 5
-// base32 chars, which left numericFromBase32 one digit short (it
-// padded the 6th with a NUL, so the emailed "6-digit code" was really
-// 5 digits). Now that the code is a typed credential it must be a full
-// clean 6 digits.
+// History (audit-2026-08-03, aggregate+dashboardauth: "the 6-digit
+// code is derivable from the stored hash"): the previous derivation
+// was an unkeyed, public function of magic_link_tokens.token_hash —
+// base32 of the hash's first 4 bytes mapped to digits. Anyone with a
+// read of that table (SQL injection on any other surface, a stolen
+// backup, a curious operator) could compute every in-flight sign-in
+// code DIRECTLY — no brute force, no email access — and mint a
+// session for any address they could trigger a login for via
+// POST /v1/auth/verify-code. The token PLAINTEXT was never
+// recoverable (preimage-safe), but the code path made that
+// irrelevant: the code was equivalent to the token, and the code was
+// public knowledge given the row.
 //
-// Numeric-only is mobile-keyboard friendly. Code and link plaintext
-// stay independent for replay-resistance: knowing one doesn't reveal
-// the other.
-func CodeFromHash(hash []byte) string {
+// Now the code is HMAC-SHA256(secret, domain || token_hash) reduced
+// to 6 digits. The secret lives in config/env (never in Postgres), so
+// a database read alone yields nothing: without the secret the code
+// is uniformly unpredictable, and the existing online-guessing bounds
+// (per-token attempt cap + durable per-email lockout, C3-032) are the
+// only attack surface left — unchanged UX, one derivation swapped.
+//
+// The uint32 % 10^6 reduction has negligible modulo bias (2^32 is
+// ~4295 full cycles of 10^6; the first 967296 codes appear once more
+// than the rest — a 0.02% skew, irrelevant at 10 guesses/day).
+func codeFromHashKeyed(secret, hash []byte) string {
 	if len(hash) < 4 {
+		// Defensive: a malformed hash must not silently produce a
+		// guessable constant-derived code.
 		return ""
 	}
-	codeBase32 := base32.StdEncoding.WithPadding(base32.NoPadding).
-		EncodeToString(hash[:4])
-	return numericFromBase32(codeBase32)
-}
-
-// numericFromBase32 maps a base32 string into 6 numeric digits
-// for paste-friendly entry. We take the first 6 characters of
-// the base32 alphabet [A-Z2-7] and map them by ord modulo 10.
-// Collision rate is acceptable at our scale (15-min TTL means
-// even with 1000 active tokens the odds of two having the same
-// 6-digit code are negligible). Callers pass ≥6 chars (4 hash
-// bytes → 7 base32 chars); if fewer arrive the short positions
-// map through '0' rather than a NUL byte, so the result is always
-// a well-formed 6-digit numeric string.
-func numericFromBase32(s string) string {
-	out := make([]byte, 6)
-	for i := 0; i < 6; i++ {
-		var c byte
-		if i < len(s) {
-			c = s[i]
-		}
-		out[i] = '0' + (c % 10)
-	}
-	return string(out)
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(loginCodeDomain))
+	mac.Write(hash)
+	sum := mac.Sum(nil)
+	return fmt.Sprintf("%06d", binary.BigEndian.Uint32(sum[:4])%1_000_000)
 }
 
 // HashMagicLinkPlaintext returns the sha256 hash of a
@@ -124,16 +123,34 @@ func HashMagicLinkPlaintext(plaintext string) []byte {
 // deterministic plaintexts.
 type Generator struct {
 	Read func([]byte) (int, error)
+	// Secret keys the 6-digit code derivation (see
+	// [Generator.CodeForHash]). Production wires it from the
+	// STELLARINDEX_DASHBOARD_CODE_SECRET env (config
+	// api.dashboard.code_secret_env); when left empty,
+	// Config.validate() fills a random per-process secret so the
+	// derivation is NEVER unkeyed — the trade-off being that
+	// in-flight codes stop verifying across a restart (the magic
+	// link is unaffected; codes live 15 minutes anyway).
+	Secret []byte
 }
 
-// NewGenerator returns a production-default Generator.
+// NewGenerator returns a production-default Generator. The caller
+// (or Config.validate()) supplies Secret.
 func NewGenerator() *Generator {
 	return &Generator{Read: rand.Read}
 }
 
 // NewToken mints (plaintext, hash, code).
 func (g *Generator) NewToken() (plaintext string, hash []byte, code string, err error) {
-	return generateMagicLinkToken(g.Read)
+	return generateMagicLinkToken(g.Read, g.Secret)
+}
+
+// CodeForHash re-derives the 6-digit code for a stored token hash
+// under this Generator's secret. The verify-code handler computes it
+// per candidate token and constant-time compares against the
+// user-supplied code — the code itself is never stored anywhere.
+func (g *Generator) CodeForHash(hash []byte) string {
+	return codeFromHashKeyed(g.Secret, hash)
 }
 
 // generateSessionID — 16 bytes of crypto/rand → uuid.UUID.

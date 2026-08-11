@@ -15,7 +15,7 @@ func (r *testRig) loginAndCode(t *testing.T, email string) string {
 	t.Helper()
 	r.postLogin(t, email)
 	plaintext := r.extractTokenFromSentEmail(t)
-	return CodeFromHash(HashMagicLinkPlaintext(plaintext))
+	return r.h.cfg.Generator.CodeForHash(HashMagicLinkPlaintext(plaintext))
 }
 
 func (r *testRig) postVerifyCode(t *testing.T, email, code string) *httptest.ResponseRecorder {

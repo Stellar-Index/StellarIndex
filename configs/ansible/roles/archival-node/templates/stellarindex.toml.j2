@@ -270,6 +270,9 @@ key_rate_limit_per_min = 6000
 base_url           = "{{ stellarindex_dashboard_base_url | default('https://stellarindex.io') }}"
 email_from         = "{{ stellarindex_dashboard_email_from | default('Stellar Index <hello@stellarindex.io>') }}"
 resend_api_key_env = "STELLARINDEX_RESEND_API_KEY"
+# Keys the 6-digit email-code derivation (HMAC over the stored token
+# hash). Unset env → random per-process secret (codes die on restart).
+code_secret_env    = "STELLARINDEX_DASHBOARD_CODE_SECRET"
 cookie_secure      = true
 cookie_domain      = "{{ stellarindex_dashboard_cookie_domain | default('.stellarindex.io') }}"
 

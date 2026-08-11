@@ -99,6 +99,11 @@ type Config struct {
 	// admin surfaces do. nil degrades that handler to structured-log
 	// -only audit (Redis-less / Postgres-less deployments).
 	Audit platform.AuditStore
+	// Passkeys (optional) is the WebAuthn credential store backing
+	// passkey sign-in (migration 0140). nil leaves the
+	// /v1/auth/passkey/* routes unmounted — email-code sign-in
+	// still works.
+	Passkeys platform.WebAuthnCredentialStore
 	// DashboardBaseURL is the absolute URL of the explorer hosting
 	// the in-site dashboard (typically https://stellarindex.io).
 	// The magic-link callback URL embedded in emails is
@@ -135,6 +140,19 @@ func (c *Config) validate() error {
 	}
 	if c.Generator == nil {
 		c.Generator = NewGenerator()
+	}
+	if len(c.Generator.Secret) == 0 {
+		// The 6-digit code derivation must NEVER run unkeyed (that is
+		// the vulnerability this secret exists to close — see
+		// [Generator.CodeForHash]). No configured secret → random
+		// per-process one: codes stay verifiable within this process's
+		// lifetime, and a restart merely invalidates in-flight codes
+		// (≤15 min; the magic link keeps working).
+		secret := make([]byte, 32)
+		if _, err := c.Generator.Read(secret); err != nil {
+			return fmt.Errorf("dashboardauth: generate code secret: %w", err)
+		}
+		c.Generator.Secret = secret
 	}
 	if c.Logger == nil {
 		c.Logger = slog.Default()
@@ -176,6 +194,15 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 //	POST /v1/auth/verify-code  — consume the 6-digit code, mint session
 //	POST /v1/auth/logout       — revoke current session
 //
+// Plus, when Config.Passkeys is wired (see passkey.go):
+//
+//	POST   /v1/auth/passkey/begin-login       — WebAuthn assertion options
+//	POST   /v1/auth/passkey/finish-login      — verify assertion, mint session
+//	POST   /v1/auth/passkey/begin-register    — creation options (session-gated)
+//	POST   /v1/auth/passkey/finish-register   — store credential (session-gated)
+//	GET    /v1/auth/passkey/credentials       — list passkeys (session-gated)
+//	DELETE /v1/auth/passkey/credentials/{id}  — remove one (session-gated)
+//
 // Caller wires the result into the regular middleware stack
 // (RequestID + Logger + Recoverer + RateLimit + ...). These
 // routes intentionally do NOT pass through the API-key auth
@@ -200,6 +227,29 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 	// (HandleAdminLookup checks IsStaff). Backs /dashboard/admin's first tool.
 	mux.Handle("GET /v1/account/admin/lookup",
 		RequireSession(h.cfg)(http.HandlerFunc(h.HandleAdminLookup)))
+
+	// Passkey (WebAuthn) routes — only when a credential store is
+	// wired. Registration + management are session-gated (adding a
+	// passkey is a privilege of an existing session); the login pair
+	// is the unauthenticated entry point, like /v1/auth/login. Every
+	// state-changing route keeps the same-site write gate the other
+	// auth POSTs carry — finish-login MINTS a session, so it is a
+	// login-CSRF primitive exactly as verify-code is (C3-031/C3-057).
+	if h.cfg.Passkeys != nil {
+		requireSession := RequireSession(h.cfg)
+		mux.Handle("POST /v1/auth/passkey/begin-login",
+			sameSite(http.HandlerFunc(h.HandlePasskeyBeginLogin)))
+		mux.Handle("POST /v1/auth/passkey/finish-login",
+			sameSite(http.HandlerFunc(h.HandlePasskeyFinishLogin)))
+		mux.Handle("POST /v1/auth/passkey/begin-register",
+			requireSession(sameSite(http.HandlerFunc(h.HandlePasskeyBeginRegister))))
+		mux.Handle("POST /v1/auth/passkey/finish-register",
+			requireSession(sameSite(http.HandlerFunc(h.HandlePasskeyFinishRegister))))
+		mux.Handle("GET /v1/auth/passkey/credentials",
+			requireSession(http.HandlerFunc(h.HandlePasskeyList)))
+		mux.Handle("DELETE /v1/auth/passkey/credentials/{id}",
+			requireSession(sameSite(http.HandlerFunc(h.HandlePasskeyDelete))))
+	}
 }
 
 // maxCodeAttempts caps wrong 6-digit code guesses against a single
@@ -520,7 +570,7 @@ func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 
 	var matchedHash []byte
 	for i := range cands {
-		expected := CodeFromHash(cands[i].TokenHash)
+		expected := h.cfg.Generator.CodeForHash(cands[i].TokenHash)
 		if subtle.ConstantTimeCompare([]byte(expected), []byte(code)) == 1 {
 			matchedHash = cands[i].TokenHash
 			break
@@ -649,11 +699,24 @@ func (h *Handlers) startSessionForEmail(w http.ResponseWriter, r *http.Request, 
 		h.cfg.Logger.Warn("clear login code lockout", "err", err, "email", maskEmail(email))
 	}
 
-	// Mark email verified + last_login_at. Non-fatal on error — the
-	// session can still issue; we just won't have a fresh verified-at
-	// on the next /me lookup.
+	// Mark email verified — a consumed login token proves control of
+	// the address. Passkey logins don't re-prove it, so the flag is
+	// set here, not in mintSession.
+	user.EmailVerifiedAt = h.cfg.Now()
+
+	return h.mintSession(w, r, user)
+}
+
+// mintSession bumps last_login, creates the DB session row, and
+// writes the session cookie for an ALREADY-AUTHENTICATED user. It is
+// the single session-issuance path — magic link, email code, and
+// passkey login all end here, so every door issues the identical
+// credential with identical attributes.
+func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user platform.User) error {
+	// last_login (+ any caller-staged field like EmailVerifiedAt) is
+	// non-fatal on error — the session can still issue; we just won't
+	// have a fresh timestamp on the next /me lookup.
 	now := h.cfg.Now()
-	user.EmailVerifiedAt = now
 	user.LastLoginAt = now
 	if err := h.cfg.Users.UpdateUser(r.Context(), user); err != nil {
 		h.cfg.Logger.Warn("update user post-login", "err", err, "user_id", user.ID)

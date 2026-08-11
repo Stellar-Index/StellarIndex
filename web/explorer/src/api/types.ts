@@ -10377,6 +10377,419 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/passkey/begin-login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Customer dashboard — begin a passkey (WebAuthn) sign-in.
+         * @description Returns the WebAuthn credential-request options the browser
+         *     passes to `navigator.credentials.get()`. Usernameless
+         *     (discoverable credential): no email is asked for, so the
+         *     endpoint reveals nothing to an anonymous caller.
+         *
+         *     Sets a short-lived, HMAC-signed, HttpOnly ceremony cookie
+         *     (`stellarindex_passkey_ceremony`) binding the challenge to
+         *     this browser; `/auth/passkey/finish-login` requires it.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description WebAuthn assertion options (challenge, rpId, …). */
+                200: {
+                    headers: {
+                        /** @description Signed, short-lived ceremony cookie. */
+                        "Set-Cookie"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": Record<string, never>;
+                    };
+                };
+                /**
+                 * @description Cross-site write blocked: state-changing dashboard + auth
+                 *     requests must carry an `Origin` (or `Referer`) matching
+                 *     this API or an operator-allow-listed site
+                 *     (`cross-site-request-blocked`).
+                 */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/passkey/finish-login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Customer dashboard — finish a passkey sign-in; mints the session cookie.
+         * @description Verifies the authenticator's assertion (the JSON produced by
+         *     `navigator.credentials.get()`) against the ceremony cookie's
+         *     challenge and the stored credential public key, then sets the
+         *     SAME HttpOnly session cookie (`stellarindex_session`) the
+         *     email-code and magic-link flows mint, and returns
+         *     `{status:"ok"}`.
+         *
+         *     Every verification failure — unknown credential, bad
+         *     signature, stale challenge, tampered ceremony cookie, or a
+         *     sign-count regression (possible cloned authenticator; refused
+         *     and logged) — returns the same generic 400 so a caller cannot
+         *     probe which credentials exist.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            responses: {
+                /** @description Authenticated; session cookie set. */
+                200: {
+                    headers: {
+                        /** @description HttpOnly + Secure session cookie. */
+                        "Set-Cookie"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        /**
+                         * @example {
+                         *       "status": "ok"
+                         *     }
+                         */
+                        "application/json": {
+                            /** @enum {string} */
+                            status: "ok";
+                        };
+                    };
+                };
+                /** @description Verification failed (generic — modes are indistinguishable). */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /**
+                 * @description Cross-site write blocked: state-changing dashboard + auth
+                 *     requests must carry an `Origin` (or `Referer`) matching
+                 *     this API or an operator-allow-listed site
+                 *     (`cross-site-request-blocked`).
+                 */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/passkey/begin-register": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Customer dashboard — begin adding a passkey to the signed-in account.
+         * @description Session-gated. Returns the WebAuthn credential-creation
+         *     options for `navigator.credentials.create()` — resident
+         *     (discoverable) key required, so the resulting passkey can
+         *     later sign in usernameless. Already-registered credentials
+         *     are excluded so an authenticator refuses to double-register.
+         *
+         *     Sets the same signed ceremony cookie the login pair uses
+         *     (purpose-bound: a registration challenge cannot finish a
+         *     login, nor vice versa).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description WebAuthn creation options. */
+                200: {
+                    headers: {
+                        /** @description Signed, short-lived ceremony cookie. */
+                        "Set-Cookie"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": Record<string, never>;
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/passkey/finish-register": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Customer dashboard — finish adding a passkey; stores the credential.
+         * @description Session-gated. Verifies the attestation response against the
+         *     ceremony cookie's challenge (which must have been minted for
+         *     THIS user) and stores the credential's public key. The
+         *     private key never leaves the user's authenticator.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /**
+                         * @description User-chosen label ("MacBook Touch ID"). Defaults
+                         *     to "Passkey" when empty. Display-only.
+                         */
+                        name?: string;
+                        /**
+                         * @description The serialized `PublicKeyCredential` attestation
+                         *     from `navigator.credentials.create()`.
+                         */
+                        credential: Record<string, never>;
+                    };
+                };
+            };
+            responses: {
+                /** @description Passkey stored. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        /**
+                         * @example {
+                         *       "id": "9f1c2b3a-4d5e-6f70-8192-a3b4c5d6e7f8",
+                         *       "name": "MacBook Touch ID",
+                         *       "transports": [
+                         *         "internal"
+                         *       ],
+                         *       "backup_eligible": true,
+                         *       "created_at": "2026-08-11T12:00:00Z"
+                         *     }
+                         */
+                        "application/json": components["schemas"]["PasskeyCredential"];
+                    };
+                };
+                /** @description Verification failed (generic — modes are indistinguishable). */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                /** @description This credential is already registered. */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/passkey/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Customer dashboard — list the signed-in user's passkeys.
+         * @description Session-gated. Display metadata only — credential IDs and
+         *     public keys never leave the server.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The user's registered passkeys, newest first. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        /**
+                         * @example {
+                         *       "credentials": [
+                         *         {
+                         *           "id": "9f1c2b3a-4d5e-6f70-8192-a3b4c5d6e7f8",
+                         *           "name": "MacBook Touch ID",
+                         *           "transports": [
+                         *             "internal"
+                         *           ],
+                         *           "backup_eligible": true,
+                         *           "created_at": "2026-08-11T12:00:00Z",
+                         *           "last_used_at": "2026-08-11T12:30:00Z"
+                         *         }
+                         *       ]
+                         *     }
+                         */
+                        "application/json": {
+                            credentials: components["schemas"]["PasskeyCredential"][];
+                        };
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/passkey/credentials/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Customer dashboard — remove one of the signed-in user's passkeys.
+         * @description Session-gated and owner-scoped: a credential belonging to
+         *     another user is indistinguishable from a nonexistent one
+         *     (404 either way). Email-code sign-in always remains, so
+         *     removing the last passkey cannot lock the account out.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description The passkey's server-side id (from the list endpoint). */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Passkey removed. */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Malformed id. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                /** @description No such passkey on this account. */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/sep10/challenge": {
         parameters: {
             query?: never;
@@ -12764,6 +13177,27 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description One registered passkey (WebAuthn credential) on the signed-in user's account. Display metadata only — the credential ID and public key never leave the server, and the private key never left the user's authenticator. */
+        PasskeyCredential: {
+            /**
+             * Format: uuid
+             * @description Server-side row id — the handle DELETE takes.
+             */
+            id: string;
+            /** @description User-chosen label ("MacBook Touch ID"). */
+            name: string;
+            /** @description Authenticator-reported transports (usb / nfc / ble / internal / hybrid). Hints only; may be absent. */
+            transports?: string[];
+            /** @description Whether the credential is a synced (multi-device) passkey rather than bound to one authenticator. */
+            backup_eligible: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: date-time
+             * @description Last successful sign-in with this passkey; absent when never used.
+             */
+            last_used_at?: string;
+        };
         /** @description Curated third-party label for a Stellar address, mirrored from the MIT-licensed stellar-expert/public-directory set. Display attribution only — listing is not endorsement and this is NOT a verification signal. Tags follow the upstream registry (exchange, anchor, issuer, wallet, custodian, sdf, memo-required, airdrop, malicious, unsafe, …); treat `malicious`/`unsafe` as warnings worth surfacing prominently. */
         DirectoryInfo: {
             /** @description Human label */

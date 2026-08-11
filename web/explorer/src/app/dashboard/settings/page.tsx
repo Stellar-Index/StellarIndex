@@ -28,6 +28,7 @@ import {
 import { cn } from '@/lib/cn';
 
 import { AccountGate } from '../AccountGate';
+import { Passkeys } from './Passkeys';
 
 /**
  * /dashboard/settings — read-only profile, the current plan, and a
@@ -50,6 +51,7 @@ function SettingsBody({ me }: { me: MeResponse }) {
         />
 
         <ProfileCard me={me} />
+        <Passkeys />
         <PlanCard me={me} />
         <DangerZone />
 

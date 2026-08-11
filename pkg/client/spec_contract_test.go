@@ -177,6 +177,12 @@ var uncoveredOperations = map[string]string{
 	// not machine-SDK surface.
 	"POST /register":                          "one-shot curl-first onboarding — SDK consumers already hold a key; coverage lands with the account-management client if one ships",
 	"POST /signup":                            "browser onboarding flow",
+	"POST /auth/passkey/begin-login":          "browser WebAuthn ceremony — session-cookie dashboard surface",
+	"POST /auth/passkey/finish-login":         "browser WebAuthn ceremony — session-cookie dashboard surface",
+	"POST /auth/passkey/begin-register":       "browser WebAuthn ceremony — session-cookie dashboard surface",
+	"POST /auth/passkey/finish-register":      "browser WebAuthn ceremony — session-cookie dashboard surface",
+	"GET /auth/passkey/credentials":           "session-cookie dashboard surface",
+	"DELETE /auth/passkey/credentials/{id}":   "session-cookie dashboard surface",
 	"GET /signup/verify":                      "browser onboarding flow",
 	"GET /dashboard/keys":                     "session-cookie dashboard surface",
 	"POST /dashboard/keys":                    "session-cookie dashboard surface",
