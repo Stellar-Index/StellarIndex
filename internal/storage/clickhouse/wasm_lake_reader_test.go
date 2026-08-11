@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -238,5 +239,58 @@ func TestContractCodeHistory_IndexedPath(t *testing.T) {
 	}
 	if lim, ok := args[1].(int); !ok || lim != contractCodeHistoryMaxRows {
 		t.Fatalf("limit arg = %v, want %d", args[1], contractCodeHistoryMaxRows)
+	}
+}
+
+// TestContractWasmHash_IndexedResolvesPreCaptureContract pins the wasm
+// two-hop item's hop 1 (inventory #26, 2026-08-11): a contract whose
+// instance entry predates live entry capture must resolve its current
+// executable from the genesis-complete contract_instance_changes index
+// — including the SAC verdict — without touching
+// ledger_entries_current.
+func TestContractWasmHash_IndexedResolvesPreCaptureContract(t *testing.T) {
+	wantHash := wasmHashN(0xCD)
+	wantHex := hex.EncodeToString(wantHash[:])
+
+	conn := &stubConn{}
+	conn.respond = func(q string) (driver.Rows, error) {
+		switch {
+		case strings.Contains(q, "ledger_entries_current"):
+			t.Fatalf("indexed path must not read ledger_entries_current: %s", q)
+			return nil, nil
+		case strings.Contains(q, "contract_instance_changes LIMIT 1"): // probe
+			return &stubRows{data: [][]any{{uint32(1)}}}, nil
+		default: // indexed hash lookup
+			return &stubRows{data: [][]any{{uint8(0), wantHex}}}, nil
+		}
+	}
+	r := &ExplorerReader{conn: conn}
+
+	var cid xdr.Hash
+	copy(cid[:], []byte("contract-id-32-bytes-padding----"))
+	got, ok, err := r.contractWasmHash(context.Background(), cid)
+	if err != nil || !ok {
+		t.Fatalf("contractWasmHash: ok=%v err=%v", ok, err)
+	}
+	if got != wantHash {
+		t.Fatalf("hash = %x, want %x", got, wantHash)
+	}
+
+	// SAC verdict is authoritative from the index (no legacy fallback).
+	conn2 := &stubConn{}
+	conn2.respond = func(q string) (driver.Rows, error) {
+		switch {
+		case strings.Contains(q, "ledger_entries_current"):
+			t.Fatalf("SAC verdict must not fall through to legacy: %s", q)
+			return nil, nil
+		case strings.Contains(q, "contract_instance_changes LIMIT 1"):
+			return &stubRows{data: [][]any{{uint32(1)}}}, nil
+		default:
+			return &stubRows{data: [][]any{{uint8(1), ""}}}, nil
+		}
+	}
+	r2 := &ExplorerReader{conn: conn2}
+	if _, _, err := r2.contractWasmHash(context.Background(), cid); !errors.Is(err, ErrContractIsSAC) {
+		t.Fatalf("SAC row: err = %v, want ErrContractIsSAC", err)
 	}
 }
