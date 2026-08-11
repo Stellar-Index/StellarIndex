@@ -108,7 +108,6 @@ func registerAppMetrics() {
 		SupplyDivergenceTotal,
 
 		AggregatorTriangulationsTotal,
-		StripeDeadLettersOpen,
 		AggregatorFXSnapFallbackTotal,
 		AggregatorBaselineRefreshTotal,
 		AggregatorSupplyRefreshTotal,
@@ -119,8 +118,6 @@ func registerAppMetrics() {
 		VerifyArchiveCurrentLedger,
 		VerifyArchiveCheckpointsTotal,
 		VerifyArchiveMismatchesTotal,
-
-		StripePlatformSyncErrorsTotal,
 
 		ChLiveSinkLedgersTotal,
 
@@ -252,9 +249,6 @@ func seedBoundedLabelSeries() {
 	for _, outcome := range []string{"ok", "missing_leg", "parse_error", "redis_error", "frozen_leg", "low_confidence"} {
 		AggregatorTriangulationsTotal.WithLabelValues(outcome)
 	}
-	for _, op := range []string{"get_account", "upsert_subscription", "account_update", "list_keys", "key_update", "key_cache_invalidate"} {
-		StripePlatformSyncErrorsTotal.WithLabelValues(op)
-	}
 	for _, outcome := range []string{"written", "buffered", "dropped", "errored"} {
 		ChLiveSinkLedgersTotal.WithLabelValues(outcome)
 	}
@@ -330,7 +324,7 @@ func seedBoundedLabelSeries() {
 	// gap that let the audit-write failure go unobserved in the first place.
 	for _, surface := range []string{
 		"account_override", "key_mint", "key_revoke",
-		"status_notice", "stripe_plan_upgrade", "stripe_dead_letter",
+		"status_notice",
 		// C3-056: the staff customer look-up is a PII READ rather than a
 		// mutation, but the accountability gap is identical — the row
 		// that records who read whose data is the only trace it happened.
@@ -2042,10 +2036,9 @@ var CustomerWebhookFanoutFailuresTotal = prometheus.NewCounterVec(
 
 // CustomerWebhookDeliveryDurationSeconds — latency histogram for
 // the outbound HTTP POST inside the customer-webhook delivery
-// worker (parallel to the inbound Stripe webhook's free
-// `http_request_duration_seconds` from the API HTTP middleware;
-// the OUTBOUND worker is a goroutine, not an HTTP handler, so the
-// standard histogram doesn't cover it).
+// worker (the OUTBOUND worker is a goroutine, not an HTTP handler,
+// so the API middleware's free `http_request_duration_seconds`
+// doesn't cover it).
 //
 // Labelled by outcome (same enum as the attempts counter) so
 // operators can chart p95/p99 latency separately for `delivered`
@@ -2578,18 +2571,6 @@ var AnomalyFreezeRecoverySweepDurationSeconds = prometheus.NewHistogramVec(
 	[]string{"outcome"},
 )
 
-// StripeDeadLettersOpen — gauge of stripe_event_log rows that are
-// dead-lettered and unresolved: money arrived and provisioning did
-// not complete (C3-016). Incremented when a dead-letter opens,
-// decremented on resolution, and re-seeded from the durable table at
-// API boot so a restart cannot zero a real backlog. A sustained
-// non-zero value is a paged state — the customer paid and got
-// nothing.
-var StripeDeadLettersOpen = prometheus.NewGauge(prometheus.GaugeOpts{
-	Name: "stellarindex_stripe_dead_letters_open",
-	Help: "Open (unresolved) Stripe dead-letter events: payment processed but provisioning failed (C3-016). Non-zero = a paying customer without their entitlement.",
-})
-
 // AggregatorTriangulationsTotal — counter of triangulation
 // computations per outcome. The aggregator runs one row per
 // (chain, window) per tick; steady state is mostly `ok` with
@@ -2891,29 +2872,6 @@ var TLSCertProbeTotal = prometheus.NewCounterVec(
 	[]string{"host", "outcome"},
 )
 
-// StripePlatformSyncErrorsTotal — counter of failures inside the
-// Stripe webhook's platform-store side-effects path
-// (`internal/api/v1/stripe_webhook.go::applyPlatformSideEffects`).
-// The webhook deliberately does NOT 5xx on platform-store failures
-// (Stripe retries would just keep applying the same Redis rate-
-// limit without making the platform-store path any healthier), so
-// this counter is the operator-visible signal that the bridge is
-// degraded. Any non-zero reading is alertable — the customer's
-// dashboard / Postgres-backed key state is drifting from their
-// Stripe billing state.
-//
-// Labels:
-//   - operation: which step failed
-//     (get_account|upsert_subscription|account_update|list_keys|
-//     key_update|key_cache_invalidate)
-var StripePlatformSyncErrorsTotal = prometheus.NewCounterVec(
-	prometheus.CounterOpts{
-		Name: "stellarindex_stripe_platform_sync_errors_total",
-		Help: "Stripe webhook platform-store side-effect failures, labelled by operation. Non-zero = bridge degraded; customer dashboard state drifting from Stripe billing state.",
-	},
-	[]string{"operation"},
-)
-
 // AdminAuditWriteFailuresTotal — counter of privileged mutations (and,
 // since C3-056, privileged PII READS) that COMPLETED but whose durable
 // audit row did not land (C3-067, audit-2026-07-23).
@@ -2934,7 +2892,7 @@ var StripePlatformSyncErrorsTotal = prometheus.NewCounterVec(
 // Labels:
 //   - surface: which privileged action lost its audit row
 //     (account_override|key_mint|key_revoke|status_notice|
-//     stripe_plan_upgrade|stripe_dead_letter|staff_customer_lookup)
+//     staff_customer_lookup)
 //
 // `staff_customer_lookup` is the one READ in the set: the staff
 // customer look-up returns another customer's billing email plus every
@@ -2953,8 +2911,8 @@ var AdminAuditWriteFailuresTotal = prometheus.NewCounterVec(
 
 // AdminKeyBudgetClampsTotal — counter of API credentials whose per-minute
 // budget was lowered to their account's tier ceiling by
-// `Server.clampKeyBudgetsToTier` (the Stripe downgrade path and the admin
-// account-override path both funnel through it).
+// `Server.clampKeyBudgetsToTier` (the admin account-override path
+// funnels through it).
 //
 // A clamp silently reduces throughput a customer may still believe they
 // have: their existing key keeps working but starts 429-ing sooner, and the

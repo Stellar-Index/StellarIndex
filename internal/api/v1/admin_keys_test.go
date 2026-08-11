@@ -16,9 +16,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// The audit sink test double is stripe_webhook_test.go's
-// recordingAuditSink — same package, same StripeAuditSink/AuditSink
-// shape.
+// The audit sink test double is keybudgets_fakes_test.go's
+// recordingAuditSink — same package, same AuditSink shape.
 
 func newAdminTestServer(t *testing.T, subject auth.Subject, store v1.AccountStore, sink v1.AuditSink) *httptest.Server {
 	t.Helper()

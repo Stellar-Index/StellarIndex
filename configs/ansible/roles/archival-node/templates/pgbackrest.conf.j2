@@ -31,7 +31,7 @@ repo1-cipher-type=aes-256-cbc
 repo1-cipher-pass={{ pgbackrest_repo1_cipher_pass }}
 {% else %}
 # repo1 is UNENCRYPTED (pgbackrest's default cipher-type=none). Every
-# row of the database — API keys, customer records, Stripe ids — sits in
+# row of the database — API keys, customer records, webhook secrets — sits in
 # plaintext under repo1-path, protected only by filesystem permissions.
 # This state is reachable only with pgbackrest_repo1_unencrypted_ack
 # explicitly set (18-pgbackrest-backup.yml asserts it); to fix it, set

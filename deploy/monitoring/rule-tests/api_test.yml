@@ -117,8 +117,8 @@ tests:
                 A privileged mutation on the `account_override` surface
                 COMPLETED but its durable audit row did not land. The change is
                 live — a tier override, a minted or revoked credential, a public
-                status notice, or a Stripe-driven plan change — with no record
-                of the actor, the reason, or the previous values.
+                status notice — with no record of the actor, the reason, or
+                the previous values.
 
                 This is a compliance/forensics gap, not an availability one: do
                 NOT roll anything back. Recover the missing rows from the API's
@@ -137,7 +137,7 @@ tests:
         values: '0+0x60'
       - series: 'stellarindex_admin_audit_write_failures_total{job="stellarindex_api",instance="r1:8080",surface="key_mint"}'
         values: '0+0x60'
-      - series: 'stellarindex_admin_audit_write_failures_total{job="stellarindex_api",instance="r1:8080",surface="stripe_dead_letter"}'
+      - series: 'stellarindex_admin_audit_write_failures_total{job="stellarindex_api",instance="r1:8080",surface="staff_customer_lookup"}'
         values: '0+0x60'
 
     alert_rule_test:

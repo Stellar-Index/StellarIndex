@@ -41,10 +41,10 @@ func newAdminClampServer(
 // TestAdminAccountOverrides_TierLoweringClampsKeyBudgets is the
 // proven-red guard for the 52105fdb residual (audit-2026-07-23).
 //
-// C3-014 gave the STRIPE downgrade path a full clamp: lowering the tier
-// also lowers every credential the account can still authenticate with,
-// because the enforced per-minute budget is read straight off the key
-// record (auth/apikey_postgres.go `rateLimit := pgKey.RateLimitPerMin`;
+// C3-014 established the full clamp: lowering the tier also lowers
+// every credential the account can still authenticate with, because
+// the enforced per-minute budget is read straight off the key record
+// (auth/apikey_postgres.go `rateLimit := pgKey.RateLimitPerMin`;
 // auth/apikey_redis.go returns the stored value). PATCH
 // /v1/admin/accounts/{id} — the operator kill-switch / demotion surface —
 // wrote `accounts.tier` and stopped, so an operator demoting an abusive
@@ -71,7 +71,7 @@ func TestAdminAccountOverrides_TierLoweringClampsKeyBudgets(t *testing.T) {
 		},
 	}}
 	abusiveID := auth.AccountIdentifier("abusive")
-	redisKeys := &fakeStripeManager{keys: map[string][]auth.APIKeyRecord{
+	redisKeys := &fakeSelfServiceKeyManager{keys: map[string][]auth.APIKeyRecord{
 		abusiveID: {
 			{KeyID: "rk_hot", Identifier: abusiveID, RateLimitPerMin: 10_000},
 			{KeyID: "rk_low", Identifier: abusiveID, RateLimitPerMin: 60},
@@ -146,7 +146,7 @@ func TestAdminAccountOverrides_TierRaiseDoesNotTouchKeys(t *testing.T) {
 	pgKeys := &fakePlatformAPIKeysForBridge{byAcct: map[uuid.UUID][]platform.APIKey{
 		acctID: {{ID: "pg_k", AccountID: acctID, RateLimitPerMin: 60}},
 	}}
-	redisKeys := &fakeStripeManager{keys: map[string][]auth.APIKeyRecord{
+	redisKeys := &fakeSelfServiceKeyManager{keys: map[string][]auth.APIKeyRecord{
 		auth.AccountIdentifier("comped"): {{KeyID: "rk_k", RateLimitPerMin: 60}},
 	}}
 

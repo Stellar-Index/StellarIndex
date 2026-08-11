@@ -115,7 +115,6 @@ signal lands.
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_api_down` | `up{job=~"stellarindex[_-]api"}` across regions | == 0 for > 60 s | **P1** | [api-down](runbooks/api-down.md) |
-| `stellarindex_stripe_dead_letter_open` | `stellarindex_stripe_dead_letters_open` | > 0 for 15 m | **P1** | [stripe-dead-letter](runbooks/stripe-dead-letter.md) |
 | `stellarindex_api_latency_p95_high` | `histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))` | > 500 ms for > 2 min | P2 | [api-latency](runbooks/api-latency.md) |
 | `stellarindex_api_latency_p99_high` | `histogram_quantile(0.99, ...)` | > 2 s for > 2 min | P2 | [api-latency](runbooks/api-latency.md) |
 | `stellarindex_api_error_rate_high` | `rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m])` | > 1 % for > 2 min | P2 | [api-5xx](runbooks/api-5xx.md) |
@@ -354,7 +353,6 @@ auto-unfreeze at all. Rules in
 | `stellarindex_nonstandard_decimals_correction_failing` | `increase(stellarindex_nonstandard_decimals_cache_refresh_failures_total[15m]) > 0 or increase(stellarindex_price_serve_declined_nonstandard_decimals_total[15m]) > 0` | > 0 for ≥ 5 min | **P2** | [dex-nonstandard-decimals](runbooks/dex-nonstandard-decimals.md) |
 | `stellarindex_price_alert_eval_failing` | `rate(stellarindex_price_alert_eval_total{outcome="list_error"}[5m]) > rate(...{outcome="ok"}[5m])` | sustained 30 min | P3 | [price-alert-eval-failing](runbooks/price-alert-eval-failing.md) |
 | `stellarindex_signup_reaper_failing` | `rate(stellarindex_signup_reaper_runs_total{outcome="error"}[6h]) > rate(...{outcome="ok"}[6h])` | sustained 30 min | P3 | [signup-reaper-failing](runbooks/signup-reaper-failing.md) |
-| `stellarindex_stripe_platform_sync_errors` | `rate(stellarindex_stripe_platform_sync_errors_total[15m])` | > 0 for ≥ 15 min | P3 | [stripe-platform-sync-errors](runbooks/stripe-platform-sync-errors.md) |
 | `stellarindex_ratelimit_fail_open` | `sum(rate(stellarindex_ratelimit_fail_open_total[5m]))` | > 0 for ≥ 10 min (rate limiter bypassing on a Redis error) | P3 | [ratelimit-fail-open](runbooks/ratelimit-fail-open.md) |
 | `stellarindex_monthly_quota_fail_open` | `sum(rate(stellarindex_monthly_quota_fail_open_total[5m]))` | > 0 for ≥ 10 min (metered-spend ceiling bypassing on a counter read error) | P3 | [monthly-quota-fail-open](runbooks/monthly-quota-fail-open.md) |
 | `stellarindex_admin_audit_write_failing` | `sum by (surface) (increase(stellarindex_admin_audit_write_failures_total[1h]))` | > 0 for ≥ 5 min (a privileged mutation committed with no durable audit row) | P3 | [admin-audit-write-failing](runbooks/admin-audit-write-failing.md) |

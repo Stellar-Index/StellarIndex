@@ -80,7 +80,7 @@ type signupRequest struct {
 // plaintext key appears here exactly once — clients that drop the
 // response can never recover it. The identifier surfaces so the
 // caller can correlate this account with future /v1/account/me
-// responses and (eventually) Stripe-paid upgrades.
+// responses.
 type SignupResult struct {
 	Plaintext       string `json:"plaintext"`
 	KeyID           string `json:"key_id"`
@@ -107,8 +107,8 @@ const signupBodyMaxBytes = 4 * 1024
 // signupDefaultRateLimitPerMin — the Starter-tier budget. Matches
 // `[api].key_rate_limit_per_min` default in the config schema and
 // the API SLA's "≥ 1000 requests per minute per client" commitment.
-// Operator can override via Stripe-paid upgrades that mutate the
-// per-key RateLimitPerMin.
+// Operators can override by mutating the per-key RateLimitPerMin
+// (`stellarindex-ops upgrade-key` / staff-set partner limits).
 const signupDefaultRateLimitPerMin = 1000
 
 // handleSignup serves POST /v1/signup.
@@ -148,9 +148,8 @@ const signupDefaultRateLimitPerMin = 1000
 // deliberately; do not "fix" by returning 200 for duplicates without
 // also moving key delivery off the synchronous response.
 //   - **Garbage emails**: net/mail.ParseAddress + heuristic
-//     strip-and-lower normalisation. Bounces are not detected
-//     (we don't send confirmation email here); a follow-up Stripe-
-//     gated upgrade flow will require email verification.
+//     strip-and-lower normalisation. Bounces are not detected;
+//     the F-1218 email-ownership-proof flow covers verification.
 //
 // Stores nil → 503 (no AccountStore wired); same shape as
 // /v1/account/keys per Server.handleAccountKeysCreate.

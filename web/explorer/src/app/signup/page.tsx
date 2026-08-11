@@ -10,7 +10,7 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
   title: 'Create account',
   description:
-    'Create your Stellar Index account. Magic-link email auth — no passwords. Free tier included; paid plans unlock higher rate limits + dedicated SLAs.',
+    'Create your Stellar Index account. Magic-link email auth — no passwords. Accounts are free; higher partner rate limits are staff-set on request.',
 };
 
 const TIERS = [
@@ -57,8 +57,8 @@ export default function SignupPage() {
         <p className="mt-3 max-w-2xl text-base text-ink-body">
           Magic-link sign-in — no passwords. Once you&apos;re in, mint
           API keys and watch usage under your account.
-          The free tier covers most prototyping; paid plans unlock
-          higher per-key rate limits + dedicated SLAs.
+          Accounts are free; higher partner rate limits are
+          staff-set on request.
         </p>
       </header>
 

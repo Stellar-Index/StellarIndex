@@ -25,8 +25,7 @@ import (
 //
 // All writes are fire-and-forget from the caller's perspective:
 // audit-log unavailability never blocks customer / staff workflows
-// (the caller logs the error + continues). F-1240 wired the Stripe
-// webhook into this path for tier-upgrade visibility.
+// (the caller logs the error + continues).
 type AuditStore struct{ s *Store }
 
 // NewAuditStore returns the Postgres-backed implementation.

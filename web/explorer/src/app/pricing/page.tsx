@@ -10,9 +10,9 @@ import {
 } from '@/components/ui';
 
 export const metadata: Metadata = {
-  title: 'Pricing — plans, quotas, SLAs',
+  title: 'Pricing — free access, quotas, SLAs',
   description:
-    'Stellar Index pricing. Free anonymous reads and a $0 self-service Starter tier for higher per-key rate limits are live today. Growth and enterprise plans are announced at GA — talk to us.',
+    'Stellar Index is free. Anonymous public reads plus a $0 self-service Starter tier for higher per-key rate limits — no payments, no card. Need more throughput? Talk to us about a partner limit.',
   alternates: { canonical: '/pricing' },
 };
 
@@ -36,11 +36,11 @@ const TIERS: Tier[] = [
     rateLimit: '60 req/min per IP',
     cta: { label: 'Read the docs', href: 'https://docs.stellarindex.io' },
     description:
-      'Anonymous public reads. Same data as the paid tiers, just rate-limited per IP. Perfect for prototyping, low-traffic embeds, and read-only integrations.',
+      'Anonymous public reads. Same data as every tier, just rate-limited per IP. Perfect for prototyping, low-traffic embeds, and read-only integrations.',
     features: [
       'Every public endpoint',
       'No signup, no API key, no auth',
-      'Same VWAP / freshness as paid tiers',
+      'Same VWAP / freshness as every tier',
       '60 requests / minute per source IP',
     ],
     notFeatures: ['Per-key analytics', 'Higher per-key rate limit', 'Dedicated SLA'],
@@ -76,10 +76,10 @@ export default function PricingPage() {
           Pricing
         </h1>
         <p className="text-lg leading-relaxed text-ink-muted">
-          Same data on every tier. Free reads work without an account;
-          the self-service Starter tier unlocks a higher per-key rate
-          limit and usage analytics. Growth and enterprise plans are
-          announced at GA.
+          Stellar Index is free — there are no paid plans. Free reads
+          work without an account; the self-service Starter tier
+          unlocks a higher per-key rate limit and usage analytics.
+          Higher partner limits are set by our staff on request.
         </p>
       </header>
 
@@ -92,20 +92,15 @@ export default function PricingPage() {
       <Card className="p-6 sm:p-8">
         <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
           <div className="space-y-2.5">
-            <Badge tone="brand">Announced at GA</Badge>
+            <Badge tone="brand">Partner limits</Badge>
             <h2 className="text-h3 font-semibold text-ink">
-              Growth &amp; enterprise plans
+              Need more than 1,000 req/min?
             </h2>
             <p className="max-w-2xl text-sm text-ink-muted">
-              Higher per-key throughput, dedicated support channels,
-              and custom SLAs for wallets, exchanges, and
-              redistributors are coming — pricing for those tiers
-              will be announced at GA, once there&apos;s a real
-              billing path behind it. There&apos;s nothing to buy
-              above Starter today. If you need more than Starter&apos;s
-              1,000 req/min ahead of GA, email us with your use-case
-              and scale and we&apos;ll work out an interim
-              arrangement.
+              Higher per-key throughput for wallets, exchanges, and
+              redistributors is granted as a staff-set partner limit —
+              there is nothing to buy. Email us with your use-case and
+              scale and we&apos;ll raise your key&apos;s limit.
             </p>
           </div>
           <ButtonLink
@@ -133,30 +128,28 @@ export default function PricingPage() {
               Same data, every tier.
             </strong>{' '}
             We do not gate endpoints, freshness, or precision behind
-            paid tiers. The difference is rate limit, support model,
+            any tier. The difference is rate limit, support model,
             and SLA — never the data itself.
           </li>
           <li>
             <strong className="text-ink-body">
-              No card to sign up Starter.
+              No card, ever.
             </strong>{' '}
-            Magic-link account, mint a key, ship. Starter is the top
-            of what&apos;s actually for sale right now.
+            Magic-link account, mint a key, ship. There is no billing
+            integration and no payment flow anywhere on the platform.
           </li>
           <li>
             <strong className="text-ink-body">
-              Growth &amp; enterprise pricing isn&apos;t live yet.
+              Higher limits are a conversation, not a checkout.
             </strong>{' '}
-            We&apos;re pre-v1 and there&apos;s no billing path built
-            for those tiers. Concrete numbers land here at GA; until
-            then,{' '}
+            Partner rate limits are set by our staff.{' '}
             <a
               href="mailto:sales@stellarindex.io"
               className="text-brand-600 hover:underline"
             >
               sales@stellarindex.io
             </a>{' '}
-            is the fastest way to figure out an interim arrangement.
+            is the fastest way to arrange one.
           </li>
         </ul>
       </Card>

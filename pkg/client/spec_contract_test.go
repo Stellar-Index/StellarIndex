@@ -175,7 +175,6 @@ var uncoveredOperations = map[string]string{
 
 	// Auth/session/webhook flows — browser/dashboard interactions,
 	// not machine-SDK surface.
-	"POST /webhooks/stripe":                   "Stripe calls this, not customers",
 	"POST /signup":                            "browser onboarding flow",
 	"GET /signup/verify":                      "browser onboarding flow",
 	"GET /dashboard/keys":                     "session-cookie dashboard surface",

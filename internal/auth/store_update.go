@@ -13,19 +13,16 @@ import (
 
 // ErrKeyNotFound is returned by [RedisAPIKeyStore.UpdateRateLimit]
 // when no key with the supplied KeyID was found in Redis. Operators
-// see this when they typo a KeyID on the upgrade-key CLI; downstream
-// callers (Stripe webhook handler) treat it as "this customer never
-// signed up — refund the payment, ask them to sign up first."
+// see this when they typo a KeyID on the upgrade-key CLI.
 var ErrKeyNotFound = errors.New("auth: key_id not found")
 
 // UpdateRateLimit lifts (or lowers) the per-minute rate-limit budget
 // of an existing API key, identified by its public KeyID. Used by:
 //
-//   - `stellarindex-ops upgrade-key` (operator-side manual paid
-//     upgrades pre-Stripe-webhook).
-//   - The future Stripe webhook handler that fires on
-//     `payment_intent.succeeded` and lifts the customer's keys to
-//     the paid tier they bought.
+//   - `stellarindex-ops upgrade-key` (operator-side manual tier
+//     changes).
+//   - The admin tier-clamp path, which lowers every key an account
+//     holds when its tier ceiling drops.
 //
 // Implementation: SCANs the `apikey:*` keyspace until it finds the
 // record whose KeyID matches. O(N) in key count — fine for v1's

@@ -142,35 +142,6 @@ func TestAdminAuditWriteFailure_StatusNotice(t *testing.T) {
 	}
 }
 
-// TestAdminAuditWriteFailure_StripePlanUpgrade — a paid account's plan
-// changed with no audit row tying it to the Stripe event that caused it.
-// The webhook still 200s (a retry storm would be worse), which is precisely
-// why the counter is the only signal.
-func TestAdminAuditWriteFailure_StripePlanUpgrade(t *testing.T) {
-	before := auditFailureCount(t, "stripe_plan_upgrade")
-
-	now := time.Now().UTC()
-	mgr := &fakeStripeManager{
-		keys: map[string][]auth.APIKeyRecord{
-			"signup-audit-fail": {{KeyID: "kid_af", Identifier: "signup-audit-fail", Tier: auth.TierAPIKey, RateLimitPerMin: 1000}},
-		},
-	}
-	audit := &recordingAuditSink{err: errors.New("simulated audit-db blip")}
-	ts := newStripeTestServerWithOptions(t, mgr, nil, audit, now)
-	body := `{"id":"evt_audit_fail","type":"checkout.session.completed","data":{"object":{"id":"cs_af","client_reference_id":"signup-audit-fail","payment_status":"paid","metadata":{"tier":"pro"}}}}`
-	sig := stripeSign(t, body, testStripeSecret, now)
-
-	resp := postStripe(t, ts, body, sig)
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (audit failure must not block the ack)", resp.StatusCode)
-	}
-
-	if got, want := auditFailureCount(t, "stripe_plan_upgrade"), before+1; got != want {
-		t.Errorf("admin_audit_write_failures_total{surface=\"stripe_plan_upgrade\"} = %v, want %v", got, want)
-	}
-}
-
 // TestAdminKeyBudgetClampCounter is the queued admin-clamp metric
 // (audit-2026-07-23 one-liner).
 //
@@ -180,7 +151,7 @@ func TestAdminAuditWriteFailure_StripePlanUpgrade(t *testing.T) {
 // starts 429-ing sooner, and the only prior trace was one INFO line per
 // account. Deliberately NOT alerted (downgrades are routine); the point is
 // that the rate is visible, so support can tie "my key started rate-limiting"
-// to a billing event and a mass-clamp from a bad tier map is not invisible.
+// to a tier change and a mass-clamp from a bad tier map is not invisible.
 //
 // Asserts it counts CREDENTIALS, not clamp calls: this demotion lowers one
 // Postgres-backed and one Redis-backed key, so the counter must move by 2.
@@ -204,7 +175,7 @@ func TestAdminKeyBudgetClampCounter(t *testing.T) {
 		},
 	}}
 	ident := auth.AccountIdentifier("clampmetric")
-	redisKeys := &fakeStripeManager{keys: map[string][]auth.APIKeyRecord{
+	redisKeys := &fakeSelfServiceKeyManager{keys: map[string][]auth.APIKeyRecord{
 		ident: {{KeyID: "rk_hot", Identifier: ident, RateLimitPerMin: 10_000}},
 	}}
 
@@ -251,35 +222,5 @@ func TestAdminAuditWriteFailure_KeyRevoke(t *testing.T) {
 
 	if got, want := auditFailureCount(t, "key_revoke"), before+1; got != want {
 		t.Errorf("admin_audit_write_failures_total{surface=\"key_revoke\"} = %v, want %v", got, want)
-	}
-}
-
-// TestAdminAuditWriteFailure_StripeDeadLetter — the worst one. Money landed,
-// nothing was provisioned, and the audit row recording THAT conclusion is
-// also missing. The durable dead-letter row still lands (that is C3-016's
-// job); this counter covers the accountability trail on top of it.
-func TestAdminAuditWriteFailure_StripeDeadLetter(t *testing.T) {
-	before := auditFailureCount(t, "stripe_dead_letter")
-
-	now := time.Now().UTC()
-	mgr := &fakeStripeManager{keys: map[string][]auth.APIKeyRecord{}} // identifier holds nothing
-	events := newFakeStripeEventStore()
-	audit := &recordingAuditSink{err: errors.New("simulated audit-db blip")}
-	ts := newStripeTestServerWithOptions(t, mgr, events, audit, now)
-
-	body := `{"id":"evt_dl_auditfail","type":"checkout.session.completed","data":{"object":` +
-		`{"id":"cs_dl","client_reference_id":"signup-ghost","payment_status":"paid","metadata":{"tier":"pro"}}}}`
-	resp := postStripe(t, ts, body, stripeSign(t, body, testStripeSecret, now))
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	// Precondition: this really is the dead-letter path.
-	if _, ok := events.openDeadLetters()["evt_dl_auditfail"]; !ok {
-		t.Fatalf("event was not dead-lettered; the test is not exercising the intended path")
-	}
-
-	if got, want := auditFailureCount(t, "stripe_dead_letter"), before+1; got != want {
-		t.Errorf("admin_audit_write_failures_total{surface=\"stripe_dead_letter\"} = %v, want %v", got, want)
 	}
 }

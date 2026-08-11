@@ -35,9 +35,9 @@ const AccountIdentifierPrefix = "acct:"
 // account with the given slug authenticates as. It is the single
 // definition of that shape: [PostgresAPIKeyValidator.Lookup] stamps it
 // onto every Subject it resolves, POST /v1/account/keys copies the
-// Subject's identifier onto the Redis records it mints, and the Stripe
-// downgrade fan-out looks records up by it. Reconstructing the string
-// inline in any of those places is how the three drift apart.
+// Subject's identifier onto the Redis records it mints, and the
+// admin tier-clamp fan-out looks records up by it. Reconstructing the
+// string inline in any of those places is how the three drift apart.
 func AccountIdentifier(slug string) string { return AccountIdentifierPrefix + slug }
 
 // NoopAPIKeyValidator is the placeholder used when auth_mode=apikey

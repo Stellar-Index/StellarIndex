@@ -67,7 +67,7 @@ const CHANNELS: Channel[] = [
 const FAQS: { q: string; a: string }[] = [
   {
     q: 'Is the public tier really free?',
-    a: 'Yes. 60 req/min per IP, no auth, no signup. The same data the paid tiers serve, just rate-limited per-IP. Sign up only when you need the higher per-key rate limit and usage analytics.',
+    a: 'Yes. 60 req/min per IP, no auth, no signup. The same data every tier serves, just rate-limited per-IP. Sign up only when you need the higher per-key rate limit and usage analytics.',
   },
   {
     q: 'Do you redistribute paid CEX data?',

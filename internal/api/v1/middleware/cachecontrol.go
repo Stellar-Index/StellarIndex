@@ -110,16 +110,15 @@ func policyForPath(path string, cdnEnabled bool) string {
 	// + /v1/dashboard/keys* fell through to the no-match branch
 	// (no Cache-Control set), so a CDN in front of the API could
 	// have cached /v1/auth/callback's session-cookie response and
-	// re-issued it to subsequent requests. Webhook receivers
-	// (/v1/webhooks/stripe) + /v1/signup are also credential /
-	// state-changing surfaces that must never cache. /v1/methodology
+	// re-issued it to subsequent requests. /v1/signup is also a
+	// credential / state-changing surface that must never cache.
+	// /v1/methodology
 	// + /v1/incidents.atom + /v1/price/stream are not credential
 	// surfaces but had no explicit policy — fold them in here so
 	// no v1 route reaches the no-match default branch.
 	case strings.HasPrefix(path, "/v1/auth/"),
 		strings.HasPrefix(path, "/v1/dashboard/"),
-		path == "/v1/signup",
-		path == "/v1/webhooks/stripe":
+		path == "/v1/signup":
 		return "private, no-store"
 
 	// ─── SSE streams — bypass CDN cache; the response is a long-

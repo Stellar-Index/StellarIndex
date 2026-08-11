@@ -27,7 +27,6 @@
 //	apikey.go       — Extended APIKey aggregate (replaces auth.APIKeyRecord
 //	                  once the migration cuts over)
 //	usage.go        — UsageEvent + UsageRollup wire types
-//	billing.go      — Subscription + StripeEventLog aggregates
 //	audit.go        — AuditLog entry
 //	webhook.go      — CustomerWebhook + WebhookDelivery aggregates
 //	errors.go       — Sentinel errors

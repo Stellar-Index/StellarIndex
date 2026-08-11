@@ -18,17 +18,15 @@ import (
 // catch regressions a Postgres swap would also reject.
 
 type fakeAccountStore struct {
-	mu       sync.Mutex
-	byID     map[uuid.UUID]platform.Account
-	bySlug   map[string]platform.Account
-	byStripe map[string]platform.Account
+	mu     sync.Mutex
+	byID   map[uuid.UUID]platform.Account
+	bySlug map[string]platform.Account
 }
 
 func newFakeAccountStore() *fakeAccountStore {
 	return &fakeAccountStore{
-		byID:     map[uuid.UUID]platform.Account{},
-		bySlug:   map[string]platform.Account{},
-		byStripe: map[string]platform.Account{},
+		byID:   map[uuid.UUID]platform.Account{},
+		bySlug: map[string]platform.Account{},
 	}
 }
 
@@ -42,9 +40,6 @@ func (f *fakeAccountStore) Create(_ context.Context, a platform.Account) (platfo
 	a.CreatedAt = time.Now().UTC()
 	f.byID[a.ID] = a
 	f.bySlug[a.Slug] = a
-	if a.StripeCustomerID != "" {
-		f.byStripe[a.StripeCustomerID] = a
-	}
 	return a, nil
 }
 
@@ -62,16 +57,6 @@ func (f *fakeAccountStore) GetBySlug(_ context.Context, slug string) (platform.A
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	a, ok := f.bySlug[slug]
-	if !ok {
-		return platform.Account{}, platform.ErrNotFound
-	}
-	return a, nil
-}
-
-func (f *fakeAccountStore) GetByStripeCustomerID(_ context.Context, sid string) (platform.Account, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	a, ok := f.byStripe[sid]
 	if !ok {
 		return platform.Account{}, platform.ErrNotFound
 	}

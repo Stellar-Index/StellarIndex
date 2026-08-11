@@ -18,9 +18,7 @@ import (
 )
 
 // AuditSink is the narrow subset of [platform.AuditStore] the admin
-// handlers need. Same shape as [StripeAuditSink] — kept as its own
-// type so the two surfaces can be wired (or left nil) independently.
-// Appends are best-effort: a sink failure is logged, never blocks
+// handlers need. Appends are best-effort: a sink failure is logged, never blocks
 // the admin action, and the action is ALWAYS also structured-logged
 // (the handlers_admin.go "record who did what" pattern), so an
 // unwired sink still leaves an operator-greppable trail.
@@ -65,8 +63,8 @@ type adminCreateKeyRequest struct {
 //
 // Every successful mint is audit-logged: a structured log line
 // unconditionally, plus a persisted audit_log row ("key.mint",
-// ActorStaff) when the deployment wired an [AuditSink] — the same
-// best-effort posture as recordStripeUpgradeAudit.
+// ActorStaff) when the deployment wired an [AuditSink] —
+// best-effort, never blocking the mint.
 func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 	subject, ok := auth.SubjectFrom(r.Context())
 	if !ok || subject.Tier == auth.TierAnonymous || subject.Tier == "" {

@@ -499,88 +499,6 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		signupVerifier = auth.NewRedisSignupVerifier(rdb)
 	}
 
-	// Stripe webhook handler — gated on (Redis up + signing secret
-	// configured). Without the secret the handler 503s every request
-	// (fail-closed; otherwise a forged event could lift any
-	// identifier's keys). The Manager is the same RedisAPIKeyStore
-	// used for mint-key + upgrade-key paths — Stripe-driven upgrades
-	// are wire-equivalent to operator-driven ones.
-	var stripeCfg *v1.StripeWebhookConfig
-	if rdb != nil && cfg.API.Stripe.SigningSecret != "" {
-		stripeCfg = &v1.StripeWebhookConfig{
-			SigningSecret: cfg.API.Stripe.SigningSecret,
-			Manager:       auth.NewRedisAPIKeyStore(rdb),
-		}
-		// F-1227: wire the Postgres-backed BillingStore for inbound
-		// event dedupe whenever Postgres is available. Without this,
-		// Stripe at-least-once delivery means a delayed re-delivery
-		// of an event silently re-runs the upgrade after a manual
-		// downgrade. Skipped when Postgres is absent (rare; the API
-		// usually has Postgres), in which case the legacy "rely on
-		// idempotent UpdateRateLimit" path stays.
-		if pgDB := store.DB(); pgDB != nil {
-			pgStore := postgresstore.New(pgDB)
-			billingStore := postgresstore.NewBillingStore(pgStore)
-			stripeCfg.Events = billingStore
-			// C3-016: seed + refresh the dead-letter gauge from the
-			// durable table so a restart cannot zero a real backlog
-			// (the webhook's Inc covers only this process's opens).
-			go func() {
-				defer recoverBackgroundWorker(logger, "stripe-deadletter-gauge")
-				tick := time.NewTicker(time.Minute)
-				defer tick.Stop()
-				for {
-					cctx, cancel := context.WithTimeout(rootCtx, 10*time.Second)
-					if n, err := billingStore.CountOpenDeadLetters(cctx); err == nil {
-						obs.StripeDeadLettersOpen.Set(float64(n))
-					}
-					cancel()
-					select {
-					case <-rootCtx.Done():
-						return
-					case <-tick.C:
-					}
-				}
-			}()
-			// F-1240: durable audit row per tier upgrade. Same
-			// postgres connection as the dedupe store; both target
-			// the platform schema from migration 0027.
-			stripeCfg.Audit = postgresstore.NewAuditStore(pgStore)
-			// F-1219 (codex audit-2026-05-12): wire the platform
-			// bridge so a successful Stripe upgrade also writes
-			// the Subscription row and bumps the account's Tier on
-			// the canonical platform stores. Without this the
-			// dashboard's view of the customer's plan stays at
-			// whatever it was before Stripe (typically Free) even
-			// though the Redis API-key budgets were lifted. Empty
-			// TierMap = the handler's default starter/pro/
-			// business/enterprise mapping.
-			stripeCfg.Platform = &v1.StripePlatformBridge{
-				Accounts: postgresstore.NewAccountStore(pgStore),
-				Billing:  postgresstore.NewBillingStore(pgStore),
-				// F-1219 wave 55 (codex audit-2026-05-13):
-				// fan the upgrade out to Postgres-backed
-				// dashboard keys too — pre-fix only Redis-
-				// stored /v1/signup keys were lifted.
-				APIKeys: postgresstore.NewAPIKeyStore(pgStore),
-				// X6 split-brain follow-up: evict each lifted
-				// key from the auth read-through cache so
-				// auth_backend=postgres serves the new budget
-				// immediately (else the stale cached Subject
-				// lingers until the validator's cache TTL).
-				// No-op when Redis is absent or the deployment
-				// runs auth_backend=redis.
-				KeyCacheInvalidator: auth.NewRedisKeyCacheInvalidator(rdb),
-			}
-			logger.Info("stripe webhook wired", "endpoint", "/v1/webhooks/stripe", "dedupe", "postgres", "audit", "postgres", "platform", "accounts+billing+apikeys")
-		} else {
-			logger.Warn("stripe webhook wired without dedupe — Postgres absent",
-				"endpoint", "/v1/webhooks/stripe")
-		}
-	} else if cfg.API.Stripe.SigningSecret != "" {
-		logger.Warn("stripe webhook signing_secret set but Redis is not configured — endpoint will 503")
-	}
-
 	// Divergence lookup adapter. Only wired when Redis is reachable
 	// (the worker's cached results live there). References are
 	// constructed from cfg.Divergence; CoinGecko is on by default
@@ -1189,10 +1107,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	}
 
 	// Admin audit sink — durable "key.mint" rows for POST
-	// /v1/admin/keys. Wired whenever Postgres is reachable (same
-	// platform audit_log the Stripe webhook sink targets, migration
-	// 0027); nil degrades the admin handler to structured-log-only
-	// audit.
+	// /v1/admin/keys. Wired whenever Postgres is reachable (platform
+	// audit_log, migration 0027); nil degrades the admin handler to
+	// structured-log-only audit.
 	var adminAudit v1.AuditSink
 	if pgDB := store.DB(); pgDB != nil {
 		adminAudit = postgresstore.NewAuditStore(postgresstore.New(pgDB))
@@ -1217,12 +1134,10 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 
 	// 52105fdb residual (audit-2026-07-23): the credential stores PATCH
 	// /v1/admin/accounts/{id} must clamp when an operator LOWERS an
-	// account's tier. Same two stores the Stripe downgrade path lowers —
-	// Postgres-backed dashboard keys and Redis-backed self-service keys —
-	// wired independently of `stripeCfg` so the operator kill-switch keeps
-	// working on a deployment with no Stripe signing secret. Each half is
-	// nil-safe: a missing store means that half is skipped and the
-	// endpoint's audit row records keys_clamped=0.
+	// account's tier — Postgres-backed dashboard keys and Redis-backed
+	// self-service keys. Each half is nil-safe: a missing store means
+	// that half is skipped and the endpoint's audit row records
+	// keys_clamped=0.
 	var apiKeyBudgets v1.APIKeyBudgetStores
 	if pgDB := store.DB(); pgDB != nil {
 		apiKeyBudgets.Platform = postgresstore.NewAPIKeyStore(postgresstore.New(pgDB))
@@ -1265,7 +1180,6 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// underlying Redis-stored API key record after Consume.
 		APIKeyEmailVerifier:  apiKeyEmailVerifierOrNil(rdb),
 		RequireEmailVerified: requireEmailVerifiedOrNil(cfg.API.SignupRequireEmailVerification),
-		Stripe:               stripeCfg,
 		Divergence:           divergenceLooker,
 		Substance:            substanceGate,
 		Confidence:           redisConfidenceLooker{rdb: rdb},
@@ -2037,8 +1951,8 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 		Tokens:   tokens,
 		Sender:   sender,
 		// C3-056: the staff customer look-up reads another customer's
-		// PII. Same audit_log (migration 0027) the admin + Stripe
-		// surfaces already append to, so a staff read lands next to the
+		// PII. Same audit_log (migration 0027) the admin surfaces
+		// already append to, so a staff read lands next to the
 		// staff mutations in one queryable trail.
 		Audit:  postgresstore.NewAuditStore(pg),
 		Logger: logger.With("component", "dashboard-auth"),

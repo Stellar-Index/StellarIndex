@@ -1098,7 +1098,7 @@ type APIConfig struct {
 	ExternalBaseURL     string   `toml:"external_base_url" doc:"Public-facing base URL (e.g. https://api.stellarindex.io/v1)." default:"https://api.stellarindex.io/v1"`
 	TLSCertProbeHosts   []string `toml:"tls_cert_probe_hosts" doc:"Public hostnames whose TLS leaf cert NotAfter the API binary should periodically probe and surface as stellarindex_tls_cert_not_after_unix{host}. Each entry may include :port; bare hostnames default to :443. The probe goroutine ticks every 6h. F-0051 (audit-2026-05-26): Caddy auto-renews Let's Encrypt 30d before expiry but silent renewal failures (DNS, rate limit, ACME quota) would otherwise only surface at cert expiry. Empty list disables the probe." default:"[\"api.stellarindex.io\",\"status.stellarindex.io\",\"stellarindex.io\"]"`
 	AuthMode            string   `toml:"auth_mode" doc:"Authentication mode — none / apikey / apikey_optional / sep10. 'none' attaches anonymous Subject to every request. 'apikey' requires Authorization: Bearer <key> on every request; missing → 401. 'apikey_optional' is the freemium shape — anonymous floor (60/min) without a key, per-key tier (1000/min default) with a valid key, invalid key → 401. 'sep10' requires a SEP-10 JWT. The API binary wires real validators when the required dependencies are present; deployments that opt into auth without satisfying those fail loud rather than silently demoting to anonymous." default:"none"`
-	AuthBackend         string   `toml:"auth_backend" doc:"Backing store for API-key validation. 'redis' (default) uses the legacy apikey:<hash> JSON records minted by /v1/signup. 'postgres' uses the platform.api_keys table (the dashboard's source of truth) with Redis as a read-through cache — required for keys minted from the dashboard to authenticate against the runtime API. Cutover knob: deployments running both /v1/signup keys and dashboard-minted keys should use 'postgres' (the validator falls back to Postgres on Redis cache miss + writes back, so existing legacy keys keep working transparently). CUTOVER PROCEDURE — this is the hot auth path on a live API, so flip after a soak, not blind: (1) leave 'redis' running and confirm the dashboard bundle is wired (api.dashboard.base_url set, Postgres reachable) — the Postgres validator is constructed regardless of this flag, so its InvalidateCachedKey path is already active on dashboard revoke; (2) flip a canary instance to 'postgres' and watch that authenticated traffic still 200s and that dashboard-minted keys now authenticate; (3) soak, then roll the fleet. ROLLBACK is instant and lossless: set 'redis' and restart — no data migration either direction (Postgres stays the dashboard's source of truth, Redis keeps the legacy /v1/signup records; the two populations coexist). Invalidation on revoke/update works in BOTH modes: 'redis' rewrites the canonical record in place; 'postgres' evicts the read-through cache entry (dashboard revoke + Stripe tier-upgrade both call InvalidateCachedKey). NOTE: 'postgres' disables the legacy /v1/account/keys self-service surface (it writes only to Redis, which the Postgres validator does not read as canonical) — customers manage keys via /v1/dashboard/keys instead." default:"redis"`
+	AuthBackend         string   `toml:"auth_backend" doc:"Backing store for API-key validation. 'redis' (default) uses the legacy apikey:<hash> JSON records minted by /v1/signup. 'postgres' uses the platform.api_keys table (the dashboard's source of truth) with Redis as a read-through cache — required for keys minted from the dashboard to authenticate against the runtime API. Cutover knob: deployments running both /v1/signup keys and dashboard-minted keys should use 'postgres' (the validator falls back to Postgres on Redis cache miss + writes back, so existing legacy keys keep working transparently). CUTOVER PROCEDURE — this is the hot auth path on a live API, so flip after a soak, not blind: (1) leave 'redis' running and confirm the dashboard bundle is wired (api.dashboard.base_url set, Postgres reachable) — the Postgres validator is constructed regardless of this flag, so its InvalidateCachedKey path is already active on dashboard revoke; (2) flip a canary instance to 'postgres' and watch that authenticated traffic still 200s and that dashboard-minted keys now authenticate; (3) soak, then roll the fleet. ROLLBACK is instant and lossless: set 'redis' and restart — no data migration either direction (Postgres stays the dashboard's source of truth, Redis keeps the legacy /v1/signup records; the two populations coexist). Invalidation on revoke/update works in BOTH modes: 'redis' rewrites the canonical record in place; 'postgres' evicts the read-through cache entry (dashboard revoke + the admin tier clamp both call InvalidateCachedKey). NOTE: 'postgres' disables the legacy /v1/account/keys self-service surface (it writes only to Redis, which the Postgres validator does not read as canonical) — customers manage keys via /v1/dashboard/keys instead." default:"redis"`
 	AnonRateLimitPerMin int      `toml:"anon_rate_limit_per_min" doc:"Per-IP rate limit for anonymous requests. 0 DISABLES the anonymous tier entirely (fail-open, unbounded) — Validate() accepts 0 as a deliberate opt-out, but the API binary logs a boot-time WARN so the choice isn't silent (CFG-08, audit-2026-07-23)." default:"60"`
 	KeyRateLimitPerMin  int      `toml:"key_rate_limit_per_min" doc:"Per-API-key rate limit, default tier. 0 DISABLES the authenticated tier entirely (fail-open, unbounded) — Validate() accepts 0 as a deliberate opt-out, but the API binary logs a boot-time WARN so the choice isn't silent (CFG-08, audit-2026-07-23)." default:"1000"`
 
@@ -1136,7 +1136,6 @@ type APIConfig struct {
 	TrustedProxyCIDRs              []string        `toml:"trusted_proxy_cidrs" doc:"Immediate peer CIDR allow-list that is permitted to supply X-Forwarded-For. Empty means the API ignores that header and uses the socket peer address for logging, anonymous identity, and IP-based rate limiting." default:"[]"`
 	SEP10                          SEP10Config     `toml:"sep10" doc:"SEP-10 Web Auth — server signing seed, JWT secret, TTLs. Active when auth_mode=sep10 OR when /v1/auth/sep10/* endpoints are exposed."`
 	Streaming                      StreamingConfig `toml:"streaming" doc:"Closed-bucket SSE fanout — pairs the API binary republishes to the streaming Hub on every new closed prices_1m bucket. Empty Pairs leaves /v1/price/stream returning 503; Hub still constructs so subscribers can connect (and immediately drop) without a panic."`
-	Stripe                         StripeConfig    `toml:"stripe" doc:"Stripe webhook handler — paid-tier upgrades wired to POST /v1/webhooks/stripe. Empty signing_secret leaves the endpoint 503."`
 	PrometheusURL                  string          `toml:"prometheus_url" doc:"Prometheus HTTP API root (e.g. http://localhost:9090) backing /v1/status. Empty leaves /v1/status serving an in-process surface (uptime + region only)." default:""`
 	ArchiveReportPath              string          `toml:"archive_report_path" doc:"Filesystem path of the archive-completeness daemon's latest JSON report (the -output-file of 'stellarindex-ops archive-completeness verify'; the systemd unit writes /var/lib/galexie/last-completeness-report.json). Backs GET /v1/diagnostics/archive. The endpoint 404s while the file doesn't exist yet and 503s when this is empty." default:"/var/lib/galexie/last-completeness-report.json"`
 	Dashboard                      DashboardConfig `toml:"dashboard" doc:"Customer dashboard auth flow — passwordless email login (6-digit code + magic link) + cookie sessions backing the in-site dashboard at stellarindex.io/account. Empty leaves /v1/auth/{login,callback,verify-code,logout} returning 503."`
@@ -1155,8 +1154,7 @@ type APIConfig struct {
 //
 // The Resend API key lives in an env var (default
 // STELLARINDEX_RESEND_API_KEY) so it doesn't sit in the TOML
-// alongside non-secret config — same pattern as
-// StripeConfig.SigningSecret.
+// alongside non-secret config.
 type DashboardConfig struct {
 	BaseURL string `toml:"base_url" doc:"Absolute URL of the explorer hosting the in-site dashboard (e.g. https://stellarindex.io). The magic-link callback URL embedded in emails is {base_url}/auth/callback?token=<plaintext>, and the post-login redirect lands on {base_url}/account." default:""`
 
@@ -1171,22 +1169,6 @@ type DashboardConfig struct {
 	CookieSecure bool `toml:"cookie_secure" doc:"Set the Secure flag on the session cookie. Production = true; dev (http://localhost) = false." default:"true"`
 
 	CookieDomain string `toml:"cookie_domain" doc:"Cookie Domain attribute. Empty (default) means a host-only cookie scoped to the API host. Set to '.stellarindex.io' if a future surface needs the cookie shared across subdomains." default:""`
-}
-
-// StripeConfig wires the /v1/webhooks/stripe handler. Stripe
-// signs every webhook delivery with HMAC-SHA256 over (timestamp +
-// '.' + body); the API verifies that signature against
-// SigningSecret before consuming the event. Without it, anyone
-// can POST a fake "customer paid" event and lift their own keys
-// to Business tier — so an empty secret rejects every request 503
-// (fail-closed).
-//
-// Operator gets the secret from the Stripe dashboard (Webhooks →
-// signing secret, format `whsec_…`). Stored in the env-overridden
-// secret (STELLARINDEX_STRIPE_WEBHOOK_SECRET) so it doesn't sit in
-// /etc/stellarindex.toml in cleartext on operator workstations.
-type StripeConfig struct {
-	SigningSecret string `toml:"signing_secret" doc:"Stripe webhook signing secret (whsec_…). Empty disables the endpoint." env:"STELLARINDEX_STRIPE_WEBHOOK_SECRET" default:""`
 }
 
 // StreamingConfig configures the closed-bucket SSE producer

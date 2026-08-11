@@ -16,7 +16,7 @@ const (
 	ActorUser    ActorKind = "user"    // customer-account user
 	ActorStaff   ActorKind = "staff"   // platform staff
 	ActorSystem  ActorKind = "system"  // background worker / cron
-	ActorWebhook ActorKind = "webhook" // inbound webhook (e.g. Stripe)
+	ActorWebhook ActorKind = "webhook" // inbound webhook (e.g. Alertmanager)
 )
 
 // AuditEntry is a single row in audit_log. Append-only; never

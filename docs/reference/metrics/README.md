@@ -896,8 +896,7 @@ Alert: `stellarindex_monthly_quota_fail_open` →
 ### `stellarindex_admin_audit_write_failures_total`
 
 Counter, label `surface` (`account_override` / `key_mint` /
-`key_revoke` / `status_notice` / `stripe_plan_upgrade` /
-`stripe_dead_letter` / `staff_customer_lookup`).
+`key_revoke` / `status_notice` / `staff_customer_lookup`).
 
 Privileged mutations that **completed** but whose durable audit row
 failed to append. Every one of these call sites appends best-effort:
@@ -905,9 +904,8 @@ the mutation has already committed when the append runs, so the
 error is logged and swallowed rather than propagated (un-doing a
 committed tier change because the audit store blipped would be
 worse). The consequence is that a tier override, a minted or revoked
-credential, a public status notice or a Stripe-driven plan change
-can be live with no record of the actor, the reason, or the previous
-values.
+credential, or a public status notice can be live with no record of
+the actor, the reason, or the previous values.
 
 `staff_customer_lookup` is the one **read** in the set (C3-056):
 `GET /v1/account/admin/lookup` returns another customer's billing
@@ -918,7 +916,7 @@ not an unrecorded change.
 
 Non-zero means the admin audit trail has holes that must be
 reconstructed from application logs before their retention window
-closes. All seven label values are pre-seeded at zero (C3-067,
+closes. All five label values are pre-seeded at zero (C3-067,
 C3-056, audit-2026-07-23).
 
 Alert: `stellarindex_admin_audit_write_failing` →
@@ -930,13 +928,13 @@ Counter, label `outcome` (`lowered` / `failed`).
 
 API **credentials** — not clamp calls — whose per-minute budget was
 lowered to their account's tier ceiling by
-`Server.clampKeyBudgetsToTier`. Both callers funnel through it: the
-Stripe downgrade path and the admin `PATCH /v1/admin/accounts/{id}`
-override path. One account downgrade that lowers four keys adds 4.
+`Server.clampKeyBudgetsToTier` (the admin
+`PATCH /v1/admin/accounts/{id}` override path). One account
+downgrade that lowers four keys adds 4.
 
 `failed` is the one that matters operationally: the downgrade errored
-and the credential KEPT its old, higher budget, i.e. paid throughput
-is still live past the downgrade.
+and the credential KEPT its old, higher budget, i.e. over-tier
+throughput is still live past the downgrade.
 
 Deliberately **not alerted** — downgrades are routine. The counter
 exists because a clamp is invisible from the customer's side (their
@@ -1723,17 +1721,6 @@ as long as it is held, which is what makes the `rate()`-based
 `stellarindex_anomaly_freeze_active` to count freezes rather than
 frozen ticks.
 
-### `stellarindex_stripe_dead_letters_open`
-
-Gauge, no labels.
-
-Open (unresolved) Stripe dead-letter events: payment processed but
-provisioning failed (C3-016). Incremented when the webhook dead-letters
-an event, re-seeded from `stripe_event_log` at API boot and every 60s
-so a process restart cannot zero a real backlog. Non-zero means a
-paying customer is without their entitlement — paged after 15 minutes
-via `stellarindex_stripe_dead_letter_open`.
-
 ### `stellarindex_anomaly_freeze_active`
 
 Gauge, no labels.
@@ -2166,27 +2153,6 @@ signal; a sustained non-`ok` rate alongside a stale gauge means
 the probe itself is failing — investigate before the gauge ages
 out via the alert rule's 14-day threshold. F-0051.
 
-### `stellarindex_stripe_platform_sync_errors_total`
-
-Counter, label `operation` (`get_account` / `upsert_subscription` /
-`account_update` / `list_keys` / `key_update`).
-
-Failures inside the Stripe webhook's platform-store side-effects path
-(`internal/api/v1/stripe_webhook.go::applyPlatformSideEffects` and
-the subscription / invoice handlers). The webhook deliberately does
-NOT 5xx on platform-store failures — Stripe retries would just keep
-applying the same Redis rate-limit without making the platform-store
-path any healthier — so this counter is the operator-visible signal
-that the bridge is degraded.
-
-**Any non-zero reading is alertable**: the customer's dashboard /
-Postgres-backed key state is drifting from their Stripe billing
-state. Per-`operation` breakdown isolates the failing layer:
-`get_account` → no row for that Stripe customer (signup never
-completed); `upsert_subscription` → Postgres write failure;
-`account_update` → tier sync failure; `list_keys` / `key_update` →
-per-key rate-limit lift failure.
-
 ### `stellarindex_markets_skipped_rows_total`
 
 Counter, no labels.
@@ -2459,6 +2425,12 @@ hitting the 90 s top bucket, which is the hard budget, not headroom.
 
 ## Changelog
 
+- 2026-08-11 — removed the Stripe metrics
+  (`stellarindex_stripe_platform_sync_errors_total`,
+  `stellarindex_stripe_dead_letters_open`) and the
+  `stripe_plan_upgrade` / `stripe_dead_letter` audit-failure
+  surfaces — the Stripe/billing integration was deleted when the
+  platform went free.
 - 2026-07-10 — `stellarindex_price_serve_declined_nonstandard_decimals_total`
   is now HISTORICAL (permanently zero): the 422 decline path it counted
   was removed when read-time decimals normalization

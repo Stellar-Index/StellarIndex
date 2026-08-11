@@ -22,13 +22,12 @@ import (
 // input-validation (audit-2026-07-23): -identifier previously only
 // checked non-empty — store.Create (internal/auth/store.go) does
 // the same. Today the only caller is a trusted operator running this
-// CLI by hand, so an out-of-shape value is low-risk; but this
-// function's own docstring says the future Stripe webhook
-// integration calls the SAME auth.RedisAPIKeyStore.Create path from
-// an HTTP handler, at which point Identifier is attacker-influenced
-// (derived from Stripe customer metadata) rather than operator-typed.
-// Enforcing the documented shape here — at the CLI's input boundary —
-// closes the gap for this call site now, before that reuse happens.
+// CLI by hand, so an out-of-shape value is low-risk; but any future
+// HTTP-handler reuse of the SAME auth.RedisAPIKeyStore.Create path
+// would make Identifier attacker-influenced rather than
+// operator-typed. Enforcing the documented shape here — at the CLI's
+// input boundary — closes the gap for this call site now, before
+// that reuse happens.
 var mintKeyIdentifierPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
 const (
@@ -78,9 +77,6 @@ func validateMintKeyIdentifierAndLabel(identifier, label string) error {
 // should pipe stdout to a secure transport (encrypted email, vault,
 // 1Password) immediately. Stderr carries the public-safe record
 // (KeyID, Identifier, Tier, CreatedAt) for the audit log.
-//
-// Stripe webhook integration (future) will call the same code path
-// from a small HTTP handler instead of from the CLI.
 func mintKey(args []string) error {
 	fs := flag.NewFlagSet("mint-key", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")

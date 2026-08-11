@@ -123,7 +123,7 @@ function PlanCard({ me }: { me: MeResponse }) {
     <Card>
       <CardHeader
         title="Plan"
-        description="Your subscription tier and its limits."
+        description="Your account tier and its limits."
         actions={
           <Badge tone={status === 'active' ? 'ok' : 'warn'} dot>
             {status}
@@ -147,7 +147,7 @@ function PlanCard({ me }: { me: MeResponse }) {
           </ButtonLink>
         ) : (
           <ButtonLink href="mailto:sales@stellarindex.io" variant="primary">
-            Contact us to upgrade
+            Contact us for higher limits
             <ArrowUpRight className="h-4 w-4" />
           </ButtonLink>
         )}

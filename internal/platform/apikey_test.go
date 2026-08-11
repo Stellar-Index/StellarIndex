@@ -62,58 +62,6 @@ func TestAPIKey_IsActive(t *testing.T) {
 	}
 }
 
-func TestSubscription_IsActive(t *testing.T) {
-	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
-
-	cases := []struct {
-		name string
-		sub  platform.Subscription
-		want bool
-	}{
-		{
-			name: "current period active",
-			sub:  platform.Subscription{CurrentPeriodEnd: now.Add(7 * 24 * time.Hour)},
-			want: true,
-		},
-		{
-			name: "period ended",
-			sub:  platform.Subscription{CurrentPeriodEnd: now.Add(-time.Hour)},
-			want: false,
-		},
-		{
-			name: "scheduled to cancel later — still active until period end",
-			sub: platform.Subscription{
-				CurrentPeriodEnd:  now.Add(time.Hour),
-				CancelAtPeriodEnd: true,
-			},
-			want: true,
-		},
-		{
-			name: "already canceled",
-			sub: platform.Subscription{
-				CurrentPeriodEnd: now.Add(7 * 24 * time.Hour),
-				CanceledAt:       now.Add(-time.Hour),
-			},
-			want: false,
-		},
-		{
-			name: "canceled in the future (scheduled) — still active now",
-			sub: platform.Subscription{
-				CurrentPeriodEnd: now.Add(7 * 24 * time.Hour),
-				CanceledAt:       now.Add(time.Hour),
-			},
-			want: true,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := tc.sub.IsActive(now); got != tc.want {
-				t.Errorf("IsActive() = %v, want %v", got, tc.want)
-			}
-		})
-	}
-}
-
 func TestWebhookDelivery_IsTerminal(t *testing.T) {
 	now := time.Now()
 

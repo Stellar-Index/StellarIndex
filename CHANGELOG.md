@@ -25,6 +25,24 @@ against.
   single decode entry point (mirroring the completeness reconcile's
   guard) now skips exact re-deliveries; `events_emitted` stops
   over-counting duplicates.
+### Removed
+- **Stripe/billing integration removed — the platform is free**
+  (operator decision 2026-08-10: anonymous access, free accounts,
+  staff-set partner limits; no payments). Deleted the
+  `POST /v1/webhooks/stripe` endpoint (handler + route + OpenAPI path
+  + generated artifacts), `[api.stripe]` config
+  (`STELLARINDEX_STRIPE_WEBHOOK_SECRET`), `platform.BillingStore` /
+  `Subscription` / `StripeEvent` and their Postgres store,
+  `Account.StripeCustomerID` + `GetByStripeCustomerID`, the
+  `stellarindex_stripe_platform_sync_errors_total` +
+  `stellarindex_stripe_dead_letters_open` metrics with both alert-rule
+  trees and their runbooks, and paid-plan copy in the explorer
+  (pricing/signup/company/dashboard now describe free access).
+  The shared tier-clamp machinery the admin
+  `PATCH /v1/admin/accounts/{id}` path uses survives in
+  `internal/api/v1/keybudgets.go` (`StripeKeyManager` →
+  `SelfServiceKeyManager`). Migrations are untouched — historical
+  `stripe_*` columns/tables stay in place, unused.
 
 ### Fixed
 - **Contract WASM view resolves pre-capture contracts** ("this
