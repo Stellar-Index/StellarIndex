@@ -499,7 +499,35 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	// classified ([classifySinkFault]): permanent → count + skip; transient or
 	// unclassified → hold the cursor below ev.Ledger for retry, counting the
 	// consecutive failing cycles for this exact row.
+	// Adjacent-duplicate guard (2026-08-11, stake-buffer investigation):
+	// the lake is an append log and the projector reads it WITHOUT FINAL
+	// (see the feed-switch comment below), so re-ingested duplicate rows
+	// reach this callback — one copy each, CONSECUTIVELY, because the
+	// query's ORDER BY is the table's sort key. Stateless decoders +
+	// keyed ON CONFLICT sinks absorb that; BUFFERED decoders (phoenix's
+	// multi-event correlation) do NOT: a duplicate field-event re-opens
+	// a just-completed group as a partial (orphan noise) and, worse,
+	// interleaved with a genuine second leg it cross-assigns fields
+	// between legs (the 616 bond/unbond corruption class). Skip exact
+	// re-deliveries of the previous identity here — the ONE place every
+	// event enters decode — mirroring reconcile.go's identical guard.
+	// This also stops events_emitted over-counting duplicates (which
+	// made the projector's emit counts structurally disagree with the
+	// deduping completeness reconcile); rows_scanned deliberately still
+	// counts raw rows — it is a scan metric.
+	var (
+		lastID     rowIdentity
+		haveLastID bool
+	)
 	process := func(ev events.Event) {
+		id := rowIdentity{
+			ledger: ev.Ledger, txHash: ev.TxHash,
+			opIndex: ev.OperationIndex, eventIndex: ev.EventIndex,
+		}
+		if haveLastID && id == lastID {
+			return // exact-identity duplicate part; decode once
+		}
+		lastID, haveLastID = id, true
 		emitted, decodeFail, sinkErr := processEventSafely(src, ev,
 			func(out consumer.Event) error { return p.sink(cycleCtx, out) }, p.logger)
 		eventsEmitted += emitted
@@ -510,12 +538,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		if sinkErr == nil {
 			return
 		}
-		id := rowIdentity{
-			ledger:     ev.Ledger,
-			txHash:     ev.TxHash,
-			opIndex:    ev.OperationIndex,
-			eventIndex: ev.EventIndex,
-		}
+		// `id` was computed at closure entry for the duplicate guard.
 		disposition := classifySinkFault(sinkErr)
 		if disposition == dispositionSkip {
 			// Poison row: retrying can never succeed, so skipping (letting
