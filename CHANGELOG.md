@@ -15,6 +15,18 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **`POST /v1/register` returned keys that could not authenticate**
+  (found in the v0.32.0 post-deploy battery): the mint wrote only the
+  Postgres MANAGEMENT row, but r1's auth middleware validates against
+  the REDIS store (`backend=redis`), so a freshly registered key 401'd
+  on first use — a 200 response carrying a dead credential, worse than
+  an honest failure. The mint now mirrors the same plaintext into the
+  validator's own store (`RedisAPIKeyStore.CreateWithSecret`) whenever
+  that store is wired, and a mirror failure fails the request instead
+  of handing back a key that cannot work. The agent-onboarding flow is
+  functional again.
+
 ## [v0.32.0] — 2026-08-11
 
 - **Projector decodes each lake event exactly once** (stake-buffer

@@ -170,12 +170,17 @@ func newRegisterTestServer(
 	accounts v1.RegisterAccountCreator,
 	keys platform.APIKeyStore,
 	throttle v1.SignupIPThrottle,
+	mirrors ...v1.KeyMirror,
 ) *httptest.Server {
 	t.Helper()
+	budgets := v1.APIKeyBudgetStores{Platform: keys}
+	if len(mirrors) > 0 {
+		budgets.RedisMirror = mirrors[0]
+	}
 	srv := v1.New(v1.Options{
 		Auth:             fakeAuthMiddleware(auth.Subject{}), // anonymous
 		RegisterAccounts: accounts,
-		APIKeyBudgets:    v1.APIKeyBudgetStores{Platform: keys},
+		APIKeyBudgets:    budgets,
 		SignupIPThrottle: throttle,
 	})
 	ts := httptest.NewServer(srv.Handler())
@@ -433,4 +438,73 @@ func TestRegister_ValidationAndGates(t *testing.T) {
 			t.Errorf("status = %d, want 503", resp.StatusCode)
 		}
 	})
+}
+
+// recordingMirror captures what the register mint writes into the
+// validator's own key store.
+type recordingMirror struct {
+	got  auth.MirroredKey
+	err  error
+	call int
+}
+
+func (m *recordingMirror) CreateWithSecret(_ context.Context, k auth.MirroredKey) error {
+	m.call++
+	m.got = k
+	return m.err
+}
+
+// TestRegister_MirrorsKeyIntoValidatorStore is the v0.32.0
+// post-deploy regression: /v1/register wrote only the Postgres
+// MANAGEMENT row while r1's auth middleware validates against REDIS,
+// so the 200 response carried a key that 401'd on first use. The mint
+// must mirror the SAME plaintext into the validator store when one is
+// wired.
+func TestRegister_MirrorsKeyIntoValidatorStore(t *testing.T) {
+	accounts := newFakeRegisterAccountStore()
+	keys := newFakeRegisterKeyStore()
+	mirror := &recordingMirror{}
+	ts := newRegisterTestServer(t, accounts, keys, &fakeRegisterIPThrottle{}, mirror)
+
+	resp := postRegister(t, ts.URL, "application/json", `{"name":"agent"}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data struct {
+			APIKey string `json:"api_key"`
+			KeyID  string `json:"key_id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if mirror.call != 1 {
+		t.Fatalf("mirror called %d times, want 1 — a management-store-only key cannot authenticate", mirror.call)
+	}
+	if mirror.got.Plaintext != env.Data.APIKey {
+		t.Errorf("mirrored plaintext does not match the key handed to the caller — one secret must validate on either backend")
+	}
+	if mirror.got.KeyID != env.Data.KeyID {
+		t.Errorf("mirrored KeyID = %q, want %q (revocation must line up across stores)", mirror.got.KeyID, env.Data.KeyID)
+	}
+	if mirror.got.Identifier == "" {
+		t.Error("mirrored Identifier is empty — the validator keys records by account identifier")
+	}
+}
+
+// A mirror failure must fail the request: 200 with a key that cannot
+// authenticate is the exact defect being fixed.
+func TestRegister_MirrorFailureIsNotA200(t *testing.T) {
+	accounts := newFakeRegisterAccountStore()
+	keys := newFakeRegisterKeyStore()
+	mirror := &recordingMirror{err: context.DeadlineExceeded}
+	ts := newRegisterTestServer(t, accounts, keys, &fakeRegisterIPThrottle{}, mirror)
+
+	resp := postRegister(t, ts.URL, "application/json", "")
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		t.Fatal("register returned 200 though the credential never reached the validator store")
+	}
 }
