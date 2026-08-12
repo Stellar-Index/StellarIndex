@@ -111,11 +111,21 @@ test-cover: ## Unit tests + coverage report
 
 .PHONY: test-integration
 test-integration: ## Integration tests (requires Docker; spins its own containers via testcontainers-go)
+	# 35m: the same suite-growth story as the 10m→20m raise below, one
+	# campaign later. 2026-08-11/12: CI hit the 20m deadline on three
+	# consecutive pushes with the running test 1s in, while the same
+	# suite completes in ~787s (13m) on a developer box — CI runners are
+	# roughly 1.5x slower, so 20m left almost no headroom and a red run
+	# meant "the clock ran out", not "something broke". A gate that
+	# fails on wall-clock stops being a signal. If this needs raising a
+	# third time, split the suite by package instead (the ops/archive
+	# packages are already separate targets and finish in seconds).
+	#
 	# 20m: the suite's CUMULATIVE runtime crossed 10m on 2026-07-29 (the
 	# July campaign added container-backed tests, e.g. the CS-102
 	# watermark pair) — CI died at the go-test deadline with the running
 	# test only 4s in. This is suite growth, not a hang.
-	$(GO) test -tags=integration -timeout 20m $(INT_TEST_PKGS)
+	$(GO) test -tags=integration -timeout 35m $(INT_TEST_PKGS)
 
 .PHONY: test-integration-build
 test-integration-build: ## Compile integration tests without running them (no Docker, fast). Catches build-tag breakage from interface changes.

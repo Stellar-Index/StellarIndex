@@ -16,6 +16,13 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **CI integration gate stopped failing on the clock**: the suite's
+  go-test deadline is raised 20m→35m. It hit the ceiling on three
+  consecutive pushes with the running test 1s in, while the same suite
+  completes in ~13m locally (CI runners are ~1.5× slower) — a gate that
+  reports "the clock ran out" as a failure stops being a signal. The
+  next raise should split the suite by package instead.
+
 - **`POST /v1/register` returned keys that could not authenticate**
   (found in the v0.32.0 post-deploy battery): the mint wrote only the
   Postgres MANAGEMENT row, but r1's auth middleware validates against
