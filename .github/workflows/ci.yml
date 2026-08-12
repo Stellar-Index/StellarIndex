@@ -181,7 +181,10 @@ jobs:
       - run: go mod download
       - name: make test-integration
         # testcontainers-go spins TimescaleDB/Redis/MinIO; ubuntu-latest ships
-        # a Docker daemon. 10-min cap matches the Makefile target.
+        # a Docker daemon. The go-test deadline lives in the Makefile target
+        # (35m as of 2026-08-12 — CI runners run the suite ~1.5x slower than
+        # a developer box, and it kept dying on the clock); no job-level
+        # timeout-minutes here, so that single number is the ceiling.
         run: make test-integration
 
   # ────────────────────────────────────────────────────────────────
