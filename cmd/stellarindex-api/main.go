@@ -1149,7 +1149,12 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		apiKeyBudgets.Platform = postgresstore.NewAPIKeyStore(postgresstore.New(pgDB))
 	}
 	if rdb != nil {
-		apiKeyBudgets.Redis = auth.NewRedisAPIKeyStore(rdb)
+		redisKeys := auth.NewRedisAPIKeyStore(rdb)
+		apiKeyBudgets.Redis = redisKeys
+		// Same store, mirror seam: POST /v1/register writes its
+		// credential here too so it validates against the Redis
+		// validator this deployment runs.
+		apiKeyBudgets.RedisMirror = redisKeys
 		apiKeyBudgets.CacheInvalidator = auth.NewRedisKeyCacheInvalidator(rdb)
 	}
 

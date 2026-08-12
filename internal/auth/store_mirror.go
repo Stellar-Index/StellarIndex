@@ -1,0 +1,70 @@
+package auth
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+
+	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
+)
+
+// MirroredKey is an already-minted credential being written into the
+// Redis validator store under a plaintext the CALLER generated.
+//
+// Why this exists (v0.32.0 post-deploy, 2026-08-12): a deployment can
+// run the Redis validator (r1: `backend=redis`) while an issuance path
+// records its management row in Postgres. A key that exists only in
+// Postgres 401s the moment it is used — POST /v1/register shipped a
+// well-formed key that never authenticated. [RedisAPIKeyStore.Create]
+// cannot serve that path because it GENERATES the secret; mirroring
+// requires writing the caller's secret verbatim so one plaintext
+// validates on either backend.
+type MirroredKey struct {
+	// Plaintext is the caller-generated secret (`sip_<64hex>`). The
+	// store writes only its SHA-256; the plaintext is never persisted.
+	Plaintext string
+	// KeyID must match the management row's id so revocation and
+	// listings line up across the two stores.
+	KeyID string
+	// Identifier is the owner reference — use [AccountIdentifier].
+	Identifier string
+	Label      string
+	// RateLimitPerMin: zero means the tier default.
+	RateLimitPerMin int
+}
+
+// CreateWithSecret writes an already-minted credential into the Redis
+// validator store. Same record shape and key layout as
+// [RedisAPIKeyStore.Create] — including PermissionsAll, without which
+// the permission middleware 403s every request from the key.
+func (s *RedisAPIKeyStore) CreateWithSecret(ctx context.Context, k MirroredKey) error {
+	switch {
+	case k.Plaintext == "":
+		return errors.New("auth: CreateWithSecret: Plaintext is required")
+	case k.KeyID == "":
+		return errors.New("auth: CreateWithSecret: KeyID is required")
+	case k.Identifier == "":
+		return errors.New("auth: CreateWithSecret: Identifier is required")
+	}
+
+	rec := APIKeyRecord{
+		KeyID:           k.KeyID,
+		Identifier:      k.Identifier,
+		Label:           k.Label,
+		KeyPrefix:       keyPrefix(k.Plaintext),
+		Tier:            TierAPIKey,
+		RateLimitPerMin: k.RateLimitPerMin,
+		CreatedAt:       s.now().UTC(),
+		PermissionsAll:  true,
+	}
+	body, err := json.Marshal(rec)
+	if err != nil {
+		return fmt.Errorf("auth: CreateWithSecret: marshal record: %w", err)
+	}
+	hash := hashAPIKey(k.Plaintext)
+	if err := s.rdb.Set(ctx, cachekeys.APIKey(hash).String(), body, 0).Err(); err != nil {
+		return fmt.Errorf("auth: CreateWithSecret: redis set: %w", err)
+	}
+	return nil
+}

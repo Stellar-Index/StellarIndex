@@ -28,6 +28,12 @@ type SelfServiceKeyManager interface {
 // internal/auth) so the v1 package stays free of an auth dependency
 // in its exported bridge type — the same narrowing pattern as
 // dashboardkeys.CacheInvalidator.
+// KeyMirror writes a caller-minted credential into the validator's
+// own store. Implemented by [auth.RedisAPIKeyStore].
+type KeyMirror interface {
+	CreateWithSecret(ctx context.Context, k auth.MirroredKey) error
+}
+
 type KeyCacheInvalidator interface {
 	InvalidateCachedKey(ctx context.Context, hexHash string) error
 }
@@ -51,6 +57,12 @@ type APIKeyBudgetStores struct {
 	// Redis is the Redis-backed self-service key store, reached by
 	// [auth.AccountIdentifier](account.Slug). Nil skips that half.
 	Redis SelfServiceKeyManager
+	// RedisMirror writes an already-minted credential into the Redis
+	// validator store. Non-nil only when the deployment wires Redis;
+	// POST /v1/register uses it so the key it hands back authenticates
+	// against the REDIS validator r1 actually runs (a Postgres-only
+	// key 401s — v0.32.0 post-deploy finding).
+	RedisMirror KeyMirror
 	// CacheInvalidator evicts each lowered Postgres key from the auth
 	// read-through cache so the new budget is enforced on the next
 	// request rather than after the validator's ~1h TTL. Nil is safe.

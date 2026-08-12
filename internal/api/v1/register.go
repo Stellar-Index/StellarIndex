@@ -229,6 +229,29 @@ func (s *Server) mintRegisterKey(ctx context.Context, acct platform.Account) (st
 	if err != nil {
 		return "", platform.APIKey{}, fmt.Errorf("create api key: %w", err)
 	}
+	// The Postgres row above is the MANAGEMENT record (listing,
+	// tier-clamp fan-out, revocation). It is NOT necessarily what the
+	// deployment's auth middleware reads: r1 runs the REDIS validator
+	// (`backend=redis` at startup), so a Postgres-only key 401s the
+	// instant the caller uses it — found in the v0.32.0 post-deploy
+	// battery, where /v1/register returned a well-formed key that did
+	// not work. Mirror the credential into the Redis store when that
+	// store is wired, keyed by the SAME plaintext so one secret
+	// validates on either backend.
+	if s.apiKeyBudgets.RedisMirror != nil {
+		if err := s.apiKeyBudgets.RedisMirror.CreateWithSecret(ctx, auth.MirroredKey{
+			Plaintext:       plaintext,
+			KeyID:           rec.ID,
+			Identifier:      auth.AccountIdentifier(acct.Slug),
+			Label:           rec.Name,
+			RateLimitPerMin: rec.RateLimitPerMin,
+		}); err != nil {
+			// The management row exists but the credential would not
+			// authenticate — refuse rather than hand back a key that
+			// silently fails (the exact defect this guards).
+			return "", platform.APIKey{}, fmt.Errorf("mirror api key to validator store: %w", err)
+		}
+	}
 	return plaintext, out, nil
 }
 
