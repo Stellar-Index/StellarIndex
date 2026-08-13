@@ -36,6 +36,53 @@ against.
   required; docs and examples send it.
 
 ### Fixed
+- **SECURITY (live surface): a captured passkey sign-in was an
+  unlimited, never-expiring session mint.** `POST
+  /v1/auth/passkey/finish-login` accepted a replay of the same
+  ceremony cookie + assertion body indefinitely: the ceremony carried
+  no server-side expiry, and nothing marked a challenge used. The
+  expiry was believed to be covered — the guard was written — but
+  go-webauthn only stamps `SessionData.Expires` when
+  `Config.Timeouts.<ceremony>.Enforce` is true and that field defaults
+  FALSE, so `Expires` was always the zero time and the check was dead
+  code. The only bound was the cookie's `Max-Age`, which is a browser
+  hint an attacker's HTTP client ignores. Two fixes: the timeouts are
+  now configured (5 minutes, enforced) and an unstamped ceremony is
+  refused rather than treated as eternal; and each challenge is now
+  SINGLE-USE, spent through a Redis-SETNX guard (`passkey:ceremony:*`,
+  the same mechanism the SEP-10 replay guard uses — F-1224) after the
+  assertion verifies and before any session is minted. The guard fails
+  CLOSED: if the store is unreachable the sign-in is refused (500)
+  rather than granted on trust, and email-code sign-in is unaffected.
+  Redis-less deployments fall back to an in-process spent-set
+  (single-instance accounting, warned at boot). Note for reviewers of
+  the old behaviour: the sign-counter clone check was NOT a backstop
+  here — go-webauthn deliberately exempts counter 0, which is what
+  Apple/iCloud passkeys report forever. Regression tests drive the
+  real ceremony end-to-end against a software authenticator, including
+  a mint-then-replay.
+- **SECURITY (live surface): passkey sign-in never asked for or
+  required user verification**, making passwordless sign-in
+  possession-only — whoever held the authenticator was the account, no
+  biometric or PIN involved. `AuthenticatorSelection` was unset and
+  neither begin call passed a user-verification requirement, so the
+  library's `shouldVerifyUser` was false, the UV bit was never
+  checked, and the options JSON omitted the field entirely (browsers
+  then applied their own default). Both ceremonies now require user
+  verification. Trade-off, taken deliberately: a security key with no
+  PIN configured can no longer be enrolled or used as a first factor.
+- **A passkey label with 34+ multi-byte characters 500'd instead of
+  saving.** The name was truncated by BYTES while the storage CHECK
+  counts CHARACTERS, so a CJK label was cut mid-rune, and Postgres
+  rejects invalid UTF-8 — after the authenticator had already burned a
+  resident-credential slot for a credential the server then never
+  stored. Truncation is now by runes.
+- **"Body too large" was unreachable on four auth endpoints**
+  (`/v1/auth/login`, `/v1/auth/verify-code`, both passkey finish
+  routes): `io.ReadAll(io.LimitReader(…))` returns a nil error at its
+  cap, so an oversize body was silently TRUNCATED and then surfaced as
+  a confusing parse error. All four now use `http.MaxBytesReader`, the
+  pattern the rest of the repo already follows.
 - **`/v1/accounts/{g}/positions` runs its six protocol folds in
   parallel** (sub-second audit's last warm breach, 1.99s): the folds
   are independent Postgres reads and were executed serially, so the

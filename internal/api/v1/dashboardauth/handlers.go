@@ -104,6 +104,14 @@ type Config struct {
 	// /v1/auth/passkey/* routes unmounted — email-code sign-in
 	// still works.
 	Passkeys platform.WebAuthnCredentialStore
+	// PasskeyCeremonyGuard (optional) makes each WebAuthn ceremony
+	// challenge single-use, so a captured finish-ceremony request
+	// cannot be replayed into a second session (audit-2026-08-13).
+	// Production wires the Redis-SETNX adapter so the spent-set is
+	// shared across API instances; nil defaults to the in-process
+	// guard installed by validate() below — never nil at runtime, so
+	// the protection cannot be absent, only single-instance.
+	PasskeyCeremonyGuard PasskeyCeremonyGuard
 	// DashboardBaseURL is the absolute URL of the explorer hosting
 	// the in-site dashboard (typically https://stellarindex.io).
 	// The magic-link callback URL embedded in emails is
@@ -159,6 +167,14 @@ func (c *Config) validate() error {
 	}
 	if c.Now == nil {
 		c.Now = func() time.Time { return time.Now().UTC() }
+	}
+	// Replay protection for passkey ceremonies is never optional —
+	// only its blast radius is. Redis-less deployments get the
+	// in-process spent-set (single-instance accounting), the same
+	// posture the NTF-08 login-throttle fallback takes. Must come
+	// after the Now default: the guard expires records on that clock.
+	if c.PasskeyCeremonyGuard == nil {
+		c.PasskeyCeremonyGuard = newInProcessPasskeyCeremonyGuard(c.Now)
 	}
 	if c.DashboardBaseURL == "" {
 		return errors.New("dashboardauth: DashboardBaseURL is required")
@@ -308,9 +324,13 @@ type loginResponse struct {
 // on consumption: if the user doesn't exist when they click
 // the link, the callback handler creates the account.
 func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, 4<<10))
+	// MaxBytesReader, not LimitReader: LimitReader returns (n, nil) at
+	// its cap, so the read succeeds on a silently truncated body and
+	// this branch was unreachable — an oversize body surfaced as
+	// "malformed JSON". audit-2026-08-13.
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<10))
 	if err != nil {
-		writeProblem(w, http.StatusBadRequest, "body too large", "/v1/auth/login")
+		writeProblem(w, http.StatusBadRequest, "request body too large", "/v1/auth/login")
 		return
 	}
 	var req loginRequest
@@ -534,9 +554,10 @@ type verifyCodeResponse struct {
 // and any successful sign-in clears the counter. A user who exhausts
 // the budget on stale codes clicks the link instead.
 func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, 4<<10))
+	// MaxBytesReader, not LimitReader — see HandleLogin.
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<10))
 	if err != nil {
-		writeProblem(w, http.StatusBadRequest, "body too large", "/v1/auth/verify-code")
+		writeProblem(w, http.StatusBadRequest, "request body too large", "/v1/auth/verify-code")
 		return
 	}
 	var req verifyCodeRequest
