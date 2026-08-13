@@ -128,18 +128,23 @@ func (s *Server) protoDetailRefreshLocked(key string, build func(context.Context
 		switch {
 		case rctx.Err() != nil:
 			outcome = "timeout"
-		case view.Analytics != nil && view.Analytics.Status != protocolAnalyticsOK:
+		case view.Analytics != nil && view.Analytics.Status == protocolAnalyticsUnavailable:
 			outcome = "degraded"
+		case view.Analytics != nil && view.Analytics.Status == protocolAnalyticsStale:
+			// COMPLETE page, older bespoke block (served from the last-good
+			// cache past its staleness horizon). Distinct from "degraded":
+			// nothing is missing, so it still displaces the previous entry.
+			outcome = "stale"
 		}
 
 		s.protoDetailMu.Lock()
 		existing, exists := s.protoDetailCache[key]
-		// Only a genuinely-ok build may displace an existing HEALTHY entry.
-		// Checking rctx.Err() alone is not enough: a fast-failing build
-		// (store down → enrich errors in ms) has rctx.Err()==nil but an
-		// analytics-empty view — caching it over good data would blank the
-		// page and stamp the blank fresh.
-		if outcome == "ok" || !exists || !protoDetailEntryHealthy(existing) {
+		// Only a build that produced a COMPLETE page may displace an
+		// existing HEALTHY entry. Checking rctx.Err() alone is not enough:
+		// a fast-failing build (store down → enrich errors in ms) has
+		// rctx.Err()==nil but an analytics-empty view — caching it over
+		// good data would blank the page and stamp the blank fresh.
+		if outcome == "ok" || outcome == "stale" || !exists || !protoDetailEntryHealthy(existing) {
 			s.protoDetailCache[key] = protoDetailEntry{view: view, at: time.Now()}
 		}
 		delete(s.protoDetailFlight, key)
@@ -158,11 +163,17 @@ func (s *Server) protoDetailRefreshLocked(key string, build func(context.Context
 	return done
 }
 
-// protoDetailEntryHealthy reports whether a cached detail entry was built
-// healthy (analytics status "ok") — the only entries a degraded rebuild
-// must never displace.
+// protoDetailEntryHealthy reports whether a cached detail entry carries a
+// COMPLETE page — status "ok", or "stale" (every panel present, the
+// bespoke block served from the last-good cache). Those are the entries a
+// DEGRADED rebuild must never displace; an "unavailable" entry is missing
+// panels and any later build may replace it.
 func protoDetailEntryHealthy(e protoDetailEntry) bool {
-	return e.view.Analytics != nil && e.view.Analytics.Status == protocolAnalyticsOK
+	if e.view.Analytics == nil {
+		return false
+	}
+	return e.view.Analytics.Status == protocolAnalyticsOK ||
+		e.view.Analytics.Status == protocolAnalyticsStale
 }
 
 // protocolDetailPrewarmPause is the gap between consecutive prewarm
@@ -691,9 +702,15 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 	if stale {
 		view = staleProtocolDetail(view)
 	}
+	// The envelope flag tracks the ANALYTICS status, not just the cache
+	// entry's age: a freshly-built view whose bespoke block came from the
+	// last-good cache past its horizon is still stale data, and the wire
+	// contract is that analytics.status="stale" always travels with
+	// flags.stale (openapi: "flags.stale is set on the envelope too").
+	staleFlag := stale || (view.Analytics != nil && view.Analytics.Status == protocolAnalyticsStale)
 
 	w.Header().Set("Cache-Control", "public, max-age=60")
-	writeJSON(w, view, Flags{Stale: stale})
+	writeJSON(w, view, Flags{Stale: staleFlag})
 }
 
 // protocolDetailBuilder returns the one build closure both the request
@@ -710,8 +727,10 @@ func (s *Server) protocolDetailBuilder(meta ProtocolMeta, windowDays int) func(c
 // buildProtocolDetail assembles the full detail view and stamps its
 // analytics status: "ok" only when BOTH analytics halves (the lake
 // analytics and the bespoke block) built healthy under a live context;
-// otherwise "unavailable" — so a degraded build is explicit on the wire
-// instead of masquerading as present zeros / silent absence.
+// "stale" when both are present but the bespoke block came from the
+// last-good cache past its staleness horizon; otherwise "unavailable" —
+// so a degraded build is explicit on the wire instead of masquerading as
+// present zeros / silent absence.
 func (s *Server) buildProtocolDetail(ctx context.Context, meta ProtocolMeta, windowDays int) ProtocolDetailView {
 	contracts := s.protocolRoster(ctx, meta)
 	classifyContractKinds(contracts, meta.Factories)
@@ -724,10 +743,13 @@ func (s *Server) buildProtocolDetail(ctx context.Context, meta ProtocolMeta, win
 	}
 	attachProtocolTVL(&v.ProtocolView, s.protocolTVLs())
 	lakeOK := s.enrichProtocolAnalytics(ctx, meta, &v)
-	bespokeOK := s.enrichBespoke(ctx, meta, &v, windowDays)
+	bespokeOK, bespokeStale := s.enrichBespoke(ctx, meta, &v, windowDays)
 	status := protocolAnalyticsOK
-	if !lakeOK || !bespokeOK || ctx.Err() != nil {
+	switch {
+	case !lakeOK || !bespokeOK || ctx.Err() != nil:
 		status = protocolAnalyticsUnavailable
+	case bespokeStale:
+		status = protocolAnalyticsStale
 	}
 	v.Analytics = &ProtocolAnalyticsStatus{Status: status, AsOf: time.Now().UTC().Format(time.RFC3339)}
 	return v
@@ -751,22 +773,27 @@ func staleProtocolDetail(v ProtocolDetailView) ProtocolDetailView {
 
 // enrichBespoke attaches the category-specific bespoke analytics block over
 // the request's ?days= window (default protocolActivityWindowDays), degrading
-// to absent when the reader is nil or errors. Returns whether the bespoke
-// half is HEALTHY: true when the block built — or when the category
-// legitimately has none (nil block, nil error) — false when no reader is
-// wired or the build errored (absence then means degradation, and the
-// caller marks the view's analytics status accordingly).
-func (s *Server) enrichBespoke(ctx context.Context, meta ProtocolMeta, view *ProtocolDetailView, windowDays int) bool {
-	if s.protocolBespoke == nil {
-		return false
-	}
-	blk, err := s.protocolBespoke.BuildProtocolBespoke(ctx, meta.Name, meta.Category, windowDays)
-	if err != nil {
-		s.logger.Warn("protocol bespoke build failed", "source", meta.Name, "category", meta.Category, "err", err)
-		return false
+// to absent only when NO block has ever been built for this key.
+//
+// The block comes from the last-good cache (protocol_bespoke_cache.go), so a
+// build whose own battery is slow, failing, or starved keeps serving the
+// previous block instead of dropping the page's visual suite — the §2.6b
+// failure. Returns:
+//
+//   - ok: a block (or a legitimate "this category has none") was attached.
+//     false ⇒ no reader wired, or the FIRST-EVER build for this key failed /
+//     was starved / outran ctx; absence then means degradation and the caller
+//     marks the view's analytics status accordingly.
+//   - stale: the attached block is older than bespokeStaleAfter — real data,
+//     but the refresh behind it has not landed for several sweeps, which the
+//     caller surfaces as analytics.status "stale".
+func (s *Server) enrichBespoke(ctx context.Context, meta ProtocolMeta, view *ProtocolDetailView, windowDays int) (ok, stale bool) {
+	blk, stale, ok := s.cachedBespoke(ctx, meta.Name, meta.Category, windowDays)
+	if !ok {
+		return false, false
 	}
 	view.Bespoke = bespokeFromStore(blk)
-	return true
+	return true, stale
 }
 
 // classifyContractKinds tags each roster contract as "factory" (it is one of

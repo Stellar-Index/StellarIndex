@@ -2371,12 +2371,17 @@ bug.
 ### `stellarindex_explorer_swr_refresh_total`
 
 Counter. Labels: `cache` (`accounts_wealth` | `asset_holders` |
-`contract_detail` | `contracts_dir` | `op_type_stats` | `ttl_liveness`),
+`contract_detail` | `contracts_dir` | `network_throughput` |
+`op_type_stats` | `protocol_bespoke` | `ttl_liveness`),
 `outcome` (`ok` | `error`).
 
 Detached stale-while-revalidate refresh outcomes for the explorer's
 snapshot caches (route-sweep 2026-07-29; `contract_detail` — the shared
-per-contract events/interactions/code-history cache — joined 2026-07-30). The SWR design makes
+per-contract events/interactions/code-history cache — joined 2026-07-30;
+`network_throughput` — the /v1/network/throughput daily series — and
+`protocol_bespoke` — the last-good block under the
+/v1/protocols/{name} visual suite, a SERVED-TIER refresh sharing this
+pair because its contract is identical — joined 2026-08-13). The SWR design makes
 refresh failures invisible at the API surface by construction —
 stale-but-real keeps serving with `flags.stale` — so this counter is
 the ONLY place a persistently dying refresher is visible before its
@@ -2395,15 +2400,19 @@ growing user-visible before errors appear.
 
 ### `stellarindex_protocol_detail_refresh_total`
 
-Counter. Labels: `outcome` (`ok` | `degraded` | `timeout`).
+Counter. Labels: `outcome` (`ok` | `stale` | `degraded` | `timeout`).
 
 One increment per detached `/v1/protocols/{name}` detail rebuild —
 both the prewarm sweep (every protocol × `?days=` window, re-swept 10
 minutes after each sweep ends) and request-kicked stale revalidations
 share the single-flight and count here. `ok` means the lake analytics
 AND the bespoke block both built (`analytics.status="ok"` on the
-wire); `degraded` means the build completed but some analytics
-component failed/was skipped (served with
+wire); `stale` means the page built COMPLETE but its bespoke block came
+from the last-good cache past the 45-minute staleness horizon (served
+with `analytics.status="stale"` — every panel present, the bespoke
+numbers older than the sweep cadence, i.e. that battery has been
+failing or starved); `degraded` means the build completed but some
+analytics component failed/was skipped (served with
 `analytics.status="unavailable"`); `timeout` means the build outran
 its 90 s detached budget — a previously built entry is kept, so the
 page stale-serves rather than blanking. Look here when protocol pages

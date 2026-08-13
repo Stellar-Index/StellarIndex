@@ -321,6 +321,13 @@ type Handler struct {
 	// contract_detail_cache.go.
 	contractDetail contractDetailCache
 
+	// throughput is the single-entry, single-flighted cache in front of
+	// GET /v1/network/throughput — a FINAL scan over up to a year of
+	// stellar.ledgers that ran inline on the 8s request budget and lost
+	// the /network panel whenever it missed it (§2.6b, 2026-08-13). Zero
+	// value ready; see network_throughput_cache.go.
+	throughput networkThroughputCache
+
 	// refreshGate bounds this handler's DETACHED cache refreshes globally
 	// across keys AND cache kinds (audit 2026-07-31): per-key
 	// single-flight alone leaves the key space attacker-chosen on these

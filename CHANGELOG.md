@@ -46,6 +46,41 @@ against.
   concurrency-safe: it memoises into a plain map, and concurrent map
   writes are a FATAL runtime throw no recover() catches, so the
   parallel folds would have crashed the process under load.
+### Fixed
+- **Protocol pages keep their bespoke visual suite when the battery
+  misses its budget** (§2.6b grounding incident): the detail VIEW has
+  been prewarmed + stale-served since 2026-07-31, but the bespoke block
+  INSIDE it had no cache of its own — it is built last, so it inherited
+  whatever was left of the rebuild's 90s budget, and when that ran out
+  (`protocol bespoke build failed … context deadline exceeded`) the
+  block was dropped and, on a key with no healthy entry yet, the
+  suite-less view was cached and stamped fresh. The block now has a
+  last-good cache with a detached, single-flighted, gate-classed
+  (`protocol_bespoke`, its own served-tier gate — these are Postgres
+  queries, not lake scans) refresh: a build serves the previous block
+  instantly and never blocks, only a true first-ever miss computes
+  inline (bounded by its caller's context, with the compute surviving
+  it so the next build lands warm), and a failed or starved refresh
+  keeps the last good block. A block older than 45 minutes (≈3 prewarm
+  sweeps) is still served but reported: `analytics.status` gains a
+  `stale` value, distinct from `unavailable`, and such a build now
+  counts as COMPLETE for cache displacement instead of being pinned out
+  as degraded.
+- **`/v1/network/throughput` is prewarmed and snapshot-served**: the
+  /network page's daily series is a FINAL scan over up to a year of
+  `stellar.ledgers` with three argMax columns, and it ran inline on the
+  8s request budget — so a cold or loaded first load lost the panel
+  (the "no operations in 24h" half of the same incident) and, because
+  the scan died with the request, no retry could land warm. It now
+  rides the established SWR shape (5-minute TTL matching the API's
+  5-minute prewarm loop, detached single-flight refresh under the
+  `network_throughput` gate class, stale entries served with
+  `flags.stale` + their real `as_of`). ONE entry holds the maximum
+  365-day window and every request slices its tail, which also collapses
+  the key space: an unauthenticated caller walking `?window_days=1..365`
+  previously bought 365 distinct year-class scans. `partial` is now
+  decided at serve time, so a cached series that crosses UTC midnight
+  no longer advertises a complete day as still accumulating.
 
 ## [v0.32.1] — 2026-08-13
 

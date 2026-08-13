@@ -368,6 +368,12 @@ func TestExplorerReads_BoundedByReadTimeout(t *testing.T) {
 				// compute runs DETACHED on the shared contract-detail
 				// budget — still bounded, just not request-scoped.
 				wantBudget = contractDetailRefreshTimeout
+			case "NetworkThroughput":
+				// Snapshot-served (§2.6b, 2026-08-13): the year-window
+				// scan runs DETACHED on its own refresh budget so it
+				// survives the request that kicked it — still bounded,
+				// just not request-scoped.
+				wantBudget = networkThroughputRefreshTimeout
 			}
 			if probe.budget <= 0 || probe.budget > wantBudget {
 				t.Fatalf("%s: deadline budget %v not in (0, %v]", tc.name, probe.budget, wantBudget)
