@@ -135,18 +135,34 @@ function fetchLendingPools(): Promise<LendingPool[] | null> {
   return buildFetchData<LendingPool[]>('/v1/lending/pools');
 }
 
-async function fetchPool(pool: string): Promise<LendingPool | null> {
+/**
+ * fetchPool resolves one pool's row against the listing, keeping the
+ * two very different "no row" cases apart:
+ *
+ * - `listed: false` — the listing itself carried no rows at all: it was
+ *   null (CI stub / authoritative 4xx) or empty, which is exactly what
+ *   `/v1/lending/pools` serves when no LendingReader is wired
+ *   (internal/api/v1/lending.go, "200 + empty array"). We know NOTHING
+ *   about this pool's auctions; every stat must render '—'.
+ * - `listed: true, row: null` — the reader answered with other pools but
+ *   not this one (the curated factory/backstop contracts emit no
+ *   auctions). That is a real, derived zero and renders as 0.
+ *
+ * Pre-fix both collapsed into `null` and the page baked "Auctions
+ * (total): 0" — a false empirical claim frozen into the static export
+ * until the next build.
+ */
+async function fetchPool(
+  pool: string,
+): Promise<{ listed: boolean; row: LendingPool | null }> {
   const pools = await fetchLendingPools();
-  // A null row is legitimate for the curated factory/backstop
-  // contracts — they don't emit auctions so they never appear in the
-  // listing; the page renders zeroed stats for them. But an auction
-  // pool that generateStaticParams took FROM the listing must resolve.
-  return pools?.find((p) => p.pool === pool) ?? null;
+  if (!pools || pools.length === 0) return { listed: false, row: null };
+  return { listed: true, row: pools.find((p) => p.pool === pool) ?? null };
 }
 
 export default async function LendingPoolPage({ params }: { params: Params }) {
   const { pool } = await params;
-  const data = await fetchPool(pool);
+  const { listed, row: data } = await fetchPool(pool);
   const label = BLEND_POOL_LABELS[pool];
   if (!data && !label) {
     // Real build: a param that is neither curated nor in the listing
@@ -258,10 +274,24 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
       )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <Stat label="Auctions (24h)" value={data?.auctions_24h ?? 0} />
-        <Stat label="Auctions (total)" value={data?.auctions_total ?? 0} />
-        <Stat label="Unique users (30d)" value={data?.unique_users_30d ?? 0} />
+        <Stat label="Auctions (24h)" value={listed ? (data?.auctions_24h ?? 0) : null} />
+        <Stat label="Auctions (total)" value={listed ? (data?.auctions_total ?? 0) : null} />
+        <Stat
+          label="Unique users (30d)"
+          value={listed ? (data?.unique_users_30d ?? 0) : null}
+        />
       </div>
+
+      {!listed && (
+        <p
+          role="status"
+          className="rounded-md border border-line bg-surface-subtle px-3 py-2 text-xs text-ink-muted"
+        >
+          Auction statistics are unavailable for this build — the lending
+          listing returned no rows, so the figures above are unknown rather
+          than zero. They refresh on the next build.
+        </p>
+      )}
 
       {data && (
         <Panel title="Last activity">
@@ -281,14 +311,20 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
   );
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
+// `value: null` means UNKNOWN (the listing didn't answer) and renders an
+// em-dash; a real 0 still renders "0".
+function Stat({ label, value }: { label: string; value: number | null }) {
   return (
     <div className="rounded-xl border border-line bg-surface p-4 shadow-sm">
       <div className="text-[10px] uppercase tracking-wider text-ink-muted">
         {label}
       </div>
       <div className="mt-1 font-mono text-2xl tabular-nums text-ink">
-        {value.toLocaleString('en-US')}
+        {value == null ? (
+          <span className="text-ink-faint">—</span>
+        ) : (
+          value.toLocaleString('en-US')
+        )}
       </div>
     </div>
   );

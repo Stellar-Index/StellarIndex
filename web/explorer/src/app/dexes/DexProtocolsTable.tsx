@@ -55,6 +55,10 @@ export function DexProtocolsTable() {
   });
 
   const rows = q.data ?? [];
+  // Absent (the /v1/sources fetch failed) ≠ empty (no DEX registered).
+  // Without this the error path falls into the empty state and claims
+  // Stellar has no active DEXes.
+  const registryAvailable = q.data != null;
   // `?include=stats` soft-fails server-side and every stats column is
   // omitempty — on that degrade EVERY row arrives bare. Detect wholesale
   // absence so cells render '—' rather than a fabricated "0 trades /
@@ -96,7 +100,14 @@ export function DexProtocolsTable() {
                 </td>
               </tr>
             )}
-            {!q.isLoading && rows.length === 0 && (
+            {!q.isLoading && !registryAvailable && (
+              <tr>
+                <td colSpan={7} className="px-4 py-6 text-center text-sm text-ink-muted">
+                  Protocol list unavailable right now — retry shortly.
+                </td>
+              </tr>
+            )}
+            {!q.isLoading && registryAvailable && rows.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-4 py-6 text-center text-sm text-ink-muted">
                   No DEX protocols reporting 24h activity.

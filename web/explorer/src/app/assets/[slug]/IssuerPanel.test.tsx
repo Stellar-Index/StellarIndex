@@ -71,3 +71,47 @@ describe('IssuerPanel org attribution gating (CS-100)', () => {
     expect(screen.getAllByText('circle.com').length).toBeGreaterThan(0);
   });
 });
+
+// Frontend-honesty sweep: /v1/issuers/{g} SOFT-FAILS its per-asset
+// fan-out ("Soft-fail on the asset list … Includes deadline exceeded",
+// internal/api/v1/issuers.go) and `assets` is omitempty — so an errored
+// or timed-out read arrives as an absent field. `?? []` turned that into
+// "No issued assets recorded." — a claim about the issuer we cannot make
+// from a read that never answered.
+describe('IssuerPanel issued-asset list', () => {
+  it('says the list is unavailable when `assets` is absent', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: { g_strkey: G, home_domain: 'circle.com', org_verified: true },
+    } as unknown as never);
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByText(/Issued-asset list unavailable/)).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/No issued assets recorded/)).not.toBeInTheDocument();
+  });
+
+  it('keeps the genuine empty claim when `assets` is present and empty', async () => {
+    mockIssuer(true);
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByText(/No issued assets recorded/)).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/Issued-asset list unavailable/)).not.toBeInTheDocument();
+  });
+
+  it('renders — not #0 — for an unknown first/last seen ledger', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: {
+        g_strkey: G,
+        home_domain: 'circle.com',
+        org_verified: true,
+        assets: [{ asset_id: `USDC-${G}`, code: 'USDC', slug: 'usdc', observation_count: 7 }],
+      },
+    } as unknown as never);
+    renderPanel();
+    await waitFor(() => expect(screen.getByText('USDC')).toBeInTheDocument());
+    // Ledger 0 cannot exist (genesis is 1).
+    expect(screen.queryByText('#0')).not.toBeInTheDocument();
+    expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(2);
+  });
+});

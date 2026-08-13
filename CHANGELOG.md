@@ -81,6 +81,46 @@ against.
   previously bought 365 distinct year-class scans. `partial` is now
   decided at serve time, so a cached series that crosses UTC midnight
   no longer advertises a complete day as still accumulating.
+### Fixed
+- **Explorer: absent data no longer renders as a factual zero**
+  (frontend-honesty sweep, follow-on to the CCTP / roster / `/network`
+  incident in `docs/operations/v1-launch-plan.md` §2.6b). A whole class
+  of surfaces coalesced a MISSING value — an expensive aggregate the API
+  honestly omitted on a budget miss, a 503 from an 8s query ceiling, a
+  build-time transport blip — into `?? 0` / `?? []`, then published the
+  result as an empirical claim about the chain. Absent now renders `—`
+  or an explicit "unavailable" affordance; a **served zero is still
+  rendered as `0` / "no X"**, which is the entire point of the
+  distinction. Fixed:
+  - `/dexes/{source}` + `/exchanges/{name}`: a `/v1/markets` 503 claimed
+    "No pools/pairs found in the last 14 days" (and "0 on this page").
+  - `/exchanges`: the CEX pair board is a `Promise.all` over four venue
+    fetches — one 503 headlined "0 CEX pairs · No CEX pairs reporting".
+  - `/dexes`, `/oracles`, `/aggregators`: a failed `/v1/sources` read
+    claimed Stellar has no DEXes / no oracles / no aggregators.
+  - `/issuers/{g}`, `/issuers` long-tail shell, and the issuer panel on
+    every asset page: `/v1/issuers/{g}` SOFT-FAILS its per-asset fan-out
+    (error *or* deadline), so absent `assets` was baking "Assets 0",
+    "Total observations 0", "Issued assets (0)" and "No issued assets
+    observed" for issuers with live assets. Unknown first/last-seen
+    ledgers also rendered as `#0`, a ledger that cannot exist.
+  - `/assets/{slug}` liquidity tab: a bespoke fetcher swallowed 5xx,
+    429 and its own timeout into `[]`, baking "No DEX pools observed
+    touching {code}" into the static export.
+  - `/assets/{slug}` supply tab: a failed `/v1/chart` asserted "No
+    market-cap history for this asset".
+  - `/external/assets/{slug}`: any transport failure baked the flat
+    denial "We don't track an external asset with the slug X"; only an
+    authoritative 4xx may say that now.
+  - `/lending/{pool}`: an empty listing (what the API serves when no
+    lending reader is wired) baked "Auctions (total): 0".
+  - `/sources/{name}`: a null market read baked "0 pairs · No markets
+    observed for this source".
+  - `/status`: an unreachable latency backend rendered "0.0 ms" in green
+    (a perfect-SLO claim from a missing measurement) and a failed
+    freshness probe rendered "0 / 0" active sources.
+  Each fix ships a render test asserting BOTH directions — absent →
+  `—`/unavailable, served zero → `0`/"no X".
 
 ## [v0.32.1] — 2026-08-13
 

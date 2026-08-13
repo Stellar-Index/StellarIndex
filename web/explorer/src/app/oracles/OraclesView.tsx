@@ -44,6 +44,11 @@ export function OraclesView() {
   });
 
   const oracles = sources.data ?? [];
+  // Absent (fetch failed) ≠ empty (nothing registered / nothing observed).
+  // Both tables below assert absence in their empty state; that claim is
+  // only ours to make when the request actually answered.
+  const registryAvailable = sources.data != null;
+  const streamsAvailable = streams.data != null;
   // Memoise the `streams.data ?? []` defaulting so the perSourceCounts
   // useMemo dep array stays referentially stable across renders. Without
   // this, `streamRows` is a fresh `[]` literal on every render when
@@ -103,7 +108,14 @@ export function OraclesView() {
                   </td>
                 </tr>
               )}
-              {!sources.isLoading && oracles.length === 0 && (
+              {!sources.isLoading && !registryAvailable && (
+                <tr>
+                  <td colSpan={4} className="px-4 py-6 text-center text-sm text-ink-muted">
+                    Oracle registry unavailable right now — retry shortly.
+                  </td>
+                </tr>
+              )}
+              {!sources.isLoading && registryAvailable && oracles.length === 0 && (
                 <tr>
                   <td colSpan={4} className="px-4 py-6 text-center text-sm text-ink-muted">
                     No oracles registered.
@@ -178,7 +190,14 @@ export function OraclesView() {
                   </td>
                 </tr>
               )}
-              {!streams.isLoading && streamRows.length === 0 && (
+              {!streams.isLoading && !streamsAvailable && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-6 text-center text-sm text-ink-muted">
+                    Oracle observations unavailable right now — retry shortly.
+                  </td>
+                </tr>
+              )}
+              {!streams.isLoading && streamsAvailable && streamRows.length === 0 && (
                 <tr>
                   <td colSpan={5} className="px-4 py-6 text-center text-sm text-ink-muted">
                     No oracle observations in the last 7 days.

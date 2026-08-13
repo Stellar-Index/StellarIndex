@@ -55,7 +55,11 @@ export function ExchangesView() {
     },
   });
 
+  // Absent (registry fetch failed) ≠ empty (no CEX registered): keep the
+  // undefined so the table renders "unavailable" instead of the claim
+  // "No CEX sources reporting."
   const rows = q.data ?? [];
+  const registryAvailable = q.data != null;
   // `?include=stats` soft-fails server-side (internal/api/v1/sources.go:
   // "serve the registry without stats") and every stats column is
   // omitempty — on that degrade EVERY row arrives bare. Detect the
@@ -106,7 +110,11 @@ export function ExchangesView() {
       )}
 
       <Panel
-        title={`${rows.length} centralised exchanges`}
+        title={
+          registryAvailable
+            ? `${rows.length} centralised exchanges`
+            : 'Centralised exchanges'
+        }
         hint={
           rows.length > 0 && statsAvailable
             ? `Total 24h: $${formatCompact(totalVol)} across ${formatCompact(totalTrades)} trades on ${totalMarkets} pairs`
@@ -138,7 +146,14 @@ export function ExchangesView() {
                   </td>
                 </tr>
               )}
-              {!q.isLoading && rows.length === 0 && (
+              {!q.isLoading && !registryAvailable && (
+                <tr>
+                  <td colSpan={7} className="px-4 py-6 text-center text-sm text-ink-muted">
+                    Exchange registry unavailable right now — retry shortly.
+                  </td>
+                </tr>
+              )}
+              {!q.isLoading && registryAvailable && rows.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-4 py-6 text-center text-sm text-ink-muted">
                     No CEX sources reporting.
@@ -260,11 +275,20 @@ function AllCEXMarkets() {
     },
   });
 
+  // The queryFn is a Promise.all over four venue-scoped /v1/markets
+  // calls — ONE 503 rejects the whole query. `queries.data` is then
+  // undefined, and `?? []` would headline "0 CEX pairs" plus "No CEX
+  // pairs reporting.". Keep the absence.
   const markets = queries.data ?? [];
+  const marketsAvailable = queries.data != null;
 
   return (
     <Panel
-      title={`${markets.length} CEX pairs · sorted by 24h volume`}
+      title={
+        marketsAvailable
+          ? `${markets.length} CEX pairs · sorted by 24h volume`
+          : 'CEX pairs · sorted by 24h volume'
+      }
       hint="One row per (venue, base, quote) tuple — every pair we observed across all four CEXes in the last 14 days"
       source={asExample('/v1/markets', { source: 'binance', limit: 200 })}
       bodyClassName="-mx-4"
@@ -289,7 +313,15 @@ function AllCEXMarkets() {
                 </td>
               </tr>
             )}
-            {!queries.isLoading && markets.length === 0 && (
+            {!queries.isLoading && !marketsAvailable && (
+              <tr>
+                <td colSpan={6} className="px-4 py-6 text-center text-sm text-ink-muted">
+                  Pair list unavailable right now — at least one venue query
+                  didn&apos;t return. Retry shortly.
+                </td>
+              </tr>
+            )}
+            {!queries.isLoading && marketsAvailable && markets.length === 0 && (
               <tr>
                 <td colSpan={6} className="px-4 py-6 text-center text-sm text-ink-muted">
                   No CEX pairs reporting.

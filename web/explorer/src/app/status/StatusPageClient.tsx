@@ -829,15 +829,19 @@ function LatencyStrip({ latency }: { latency: StatusResponse['latency'] }) {
             operational" banner came to sit above two red SLO bars
             (site-audit S31). Literals retained only as a fallback for a
             response predating the field. */}
-        <LatencyCell label="p50" value={latency?.p50_ms ?? 0} target={50} />
+        {/* An absent percentile is a MISSING MEASUREMENT, not a fast one:
+            `?? 0` rendered "0.0 ms" in green, comfortably inside target,
+            precisely when the latency backend was unreachable. Absent
+            renders '—' with no bar and no verdict. */}
+        <LatencyCell label="p50" value={latency?.p50_ms ?? null} target={50} />
         <LatencyCell
           label="p95"
-          value={latency?.p95_ms ?? 0}
+          value={latency?.p95_ms ?? null}
           target={latency?.p95_target_ms ?? 200}
         />
         <LatencyCell
           label="p99"
-          value={latency?.p99_ms ?? 0}
+          value={latency?.p99_ms ?? null}
           target={latency?.p99_target_ms ?? 500}
         />
       </div>
@@ -851,9 +855,24 @@ function LatencyCell({
   target,
 }: {
   label: string;
-  value: number;
+  value: number | null;
   target: number;
 }) {
+  if (value == null) {
+    return (
+      <Card className="p-4">
+        <div className="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
+          {label}
+        </div>
+        <div className="mt-1 flex items-baseline gap-2">
+          <span className="tnum text-2xl font-semibold text-ink-faint">—</span>
+          <span className="text-xs text-ink-muted">not measured</span>
+          <span className="ml-auto text-xs text-ink-faint">target {target}</span>
+        </div>
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-subtle" />
+      </Card>
+    );
+  }
   const pct = Math.min(100, (value / target) * 100);
   const tone = pct < 60 ? 'ok' : pct < 100 ? 'warn' : ('bad' as const);
   const fg = {
@@ -890,10 +909,14 @@ function FreshnessRow({
 }: {
   freshness: StatusResponse['freshness'];
 }) {
-  const activeSources = freshness?.active_sources ?? 0;
-  const totalSources = freshness?.total_sources ?? 0;
+  // Absent counts mean the freshness probe didn't answer. `?? 0` read
+  // as "0 / 0 active sources" — total ingest death — on the public
+  // status page. Absent renders '—' instead.
+  const activeSources = freshness?.active_sources ?? null;
+  const totalSources = freshness?.total_sources ?? null;
+  const measured = activeSources != null && totalSources != null;
   const sourcePct =
-    totalSources > 0 ? (activeSources / totalSources) * 100 : 0;
+    measured && totalSources > 0 ? (activeSources / totalSources) * 100 : 0;
   return (
     <section>
       <SectionHead>Ingest freshness</SectionHead>
@@ -911,11 +934,13 @@ function FreshnessRow({
             Active sources
           </div>
           <div className="mt-1 flex items-baseline gap-2">
-            <span className="tnum text-2xl font-semibold text-ink">
-              {activeSources}
+            <span
+              className={`tnum text-2xl font-semibold ${measured ? 'text-ink' : 'text-ink-faint'}`}
+            >
+              {measured ? activeSources : '—'}
             </span>
             <span className="text-sm text-ink-muted">
-              / {totalSources}
+              {measured ? `/ ${totalSources}` : 'not measured'}
             </span>
           </div>
           <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-subtle">

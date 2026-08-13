@@ -182,14 +182,21 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
     );
   }
 
+  // `assets` is omitempty AND soft-failed to nil server-side when the
+  // per-asset fan-out errors or blows its 8s deadline
+  // (internal/api/v1/issuers.go, "Soft-fail on the asset list …
+  // Includes deadline exceeded"). Absent therefore means "we couldn't
+  // read the asset list", not "this issuer issued nothing" — every tile
+  // below renders '—' rather than a fabricated 0.
+  const assets = detail.assets ?? null;
   const totalObs =
-    detail.assets?.reduce((sum, a) => sum + a.observation_count, 0) ?? 0;
+    assets?.reduce((sum, a) => sum + a.observation_count, 0) ?? null;
   // Sum per-asset 24h USD volume from the parallel /v1/coins?issuer= fetch.
   // null/missing volumes drop out cleanly; the panel renders "—" when
   // every asset row had no recent USD-priced trade.
   let totalVolume24hUSD = 0;
   let anyVolume = false;
-  for (const a of detail.assets ?? []) {
+  for (const a of assets ?? []) {
     const v = Number(coinPrices.get(a.asset_id)?.volume_24h_usd ?? '');
     if (Number.isFinite(v) && v > 0) {
       totalVolume24hUSD += v;
@@ -316,14 +323,14 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
           className="lg:col-span-2"
         >
           <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
-            <Stat label="Assets" value={String(detail.assets?.length ?? 0)} />
+            <Stat label="Assets" value={assets ? String(assets.length) : '—'} />
             <Stat
               label="24h volume"
               value={anyVolume ? `$${formatCompact(totalVolume24hUSD)}` : '—'}
             />
             <Stat
               label="Total observations"
-              value={formatCompact(totalObs)}
+              value={totalObs != null ? formatCompact(totalObs) : '—'}
             />
             <Stat
               label="Creation ledger"
@@ -437,12 +444,17 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
       </Panel>
 
       <Panel
-        title={`Issued assets (${detail.assets?.length ?? 0})`}
+        title={assets ? `Issued assets (${assets.length})` : 'Issued assets'}
         hint="All classic assets we've observed minted by this G-strkey"
         source={asExample(`/v1/issuers/${g_strkey}`)}
         bodyClassName="-mx-4"
       >
-        {!detail.assets || detail.assets.length === 0 ? (
+        {!assets ? (
+          <p className="px-4 py-3 text-sm text-ink-muted">
+            Issued-asset list unavailable — the per-asset read didn&apos;t
+            return, so this is unknown rather than empty. Retry shortly.
+          </p>
+        ) : assets.length === 0 ? (
           <p className="px-4 py-3 text-sm text-ink-muted">
             No issued assets observed.
           </p>
@@ -462,7 +474,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-line-subtle">
-                {detail.assets.map((a) => {
+                {assets.map((a) => {
                   const coin = coinPrices.get(a.asset_id);
                   return (
                     <tr

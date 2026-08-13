@@ -83,7 +83,14 @@ export function PoolsTable({
     setCursorStack([]);
   }
 
-  const markets = q.data?.markets ?? [];
+  // `q.data` is undefined while loading AND when the request failed —
+  // /v1/markets answers 503 on its documented 8s trades-hypertable
+  // ceiling (internal/api/v1/markets.go). Coalescing that to `[]` and
+  // falling through to the empty state would publish "this venue traded
+  // nothing for 14 days", which we cannot know. Absence is kept
+  // type-visible (`Market[] | undefined`) so the render has to choose.
+  const markets = q.data?.markets;
+  const rows = markets ?? [];
   const hasNext = !!q.data?.nextCursor;
   const hasPrev = cursorStack.length > 0;
 
@@ -111,7 +118,7 @@ export function PoolsTable({
             Pair (A→Z)
           </SortPill>
           <span className="ml-auto font-mono text-[11px] text-ink-muted">
-            {markets.length} on this page
+            {markets ? `${markets.length} on this page` : '— on this page'}
             {q.isFetching && ' · refreshing…'}
           </span>
         </div>
@@ -138,14 +145,22 @@ export function PoolsTable({
                 </td>
               </tr>
             )}
-            {!q.isLoading && markets.length === 0 && (
+            {!q.isLoading && !markets && (
+              <tr>
+                <td colSpan={7} className="px-4 py-8 text-center text-sm text-ink-muted">
+                  Pool list unavailable right now — the markets query didn&apos;t
+                  return. Retry shortly.
+                </td>
+              </tr>
+            )}
+            {!q.isLoading && markets && markets.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-4 py-8 text-center text-sm text-ink-muted">
                   No pools found in the last 14 days.
                 </td>
               </tr>
             )}
-            {markets.map((m, i) => {
+            {rows.map((m, i) => {
               const slug = `${m.base}~${m.quote}`;
               const offset = cursorStack.length * PAGE_LIMIT + i + 1;
               const vol = m.volume_24h_usd ? Number(m.volume_24h_usd) : null;
