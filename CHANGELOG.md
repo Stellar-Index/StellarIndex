@@ -15,6 +15,33 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **Every cold contract page served at least one failed panel, because
+  the page starved itself at the refresh gate.** The contract view fans
+  out to five concurrent reads, but four of them (detail events,
+  interactions, code-history, account activity) all acquired the single
+  refresh-gate class `contract_detail`, capped at half the global limit
+  — two slots. So on a cold contract two of the four refreshes were
+  refused, and a refusal with nothing cached is a 503, not a stale
+  serve. Measured on 20 of 20 cold random contract pages, and it was
+  not crawl pressure: the same rate held with seconds of think time
+  between pages. The per-class cap exists to stop one class starving
+  the OTHERS, so the classes are now keyed per panel, which restores
+  that intent without letting a page compete with itself. The global
+  bound was also below one page's width (4 for a 5-read page) — raised
+  to 8, with the explorer ClickHouse pool 8 → 16 so "detached refreshes
+  can never consume the whole pool" still holds. r1 has 20 cores and
+  idles at ~2 concurrent queries, and every explorer scan is pinned to
+  `max_threads = 4`.
+- `scripts/ops/contract-page-audit.py` now scores a non-2xx/404 panel
+  as UNLOADED instead of as a fast response, and reports it separately
+  from latency. The first version counted a 503 as a loaded panel, so
+  it rated pages "ok" at 0.10s while three of five panels were failing
+  — a broken page scored better than a slow one. It also takes `PACE`,
+  because "is one cold page fast" and "does the site hold up under a
+  sustained crawl" are different questions and were being answered by
+  one number.
+
 ## [v0.33.0] — 2026-08-13
 
 ### Security

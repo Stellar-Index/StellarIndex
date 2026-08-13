@@ -54,10 +54,21 @@ type RefreshGate struct {
 }
 
 // DefaultDetachedRefreshLimit is the production bound on concurrently
-// running detached refreshes. Half the 8-connection explorer pool: worst
-// case the detached tier can never consume every connection, so inline
+// running detached refreshes. Half the explorer pool: worst case the
+// detached tier can never consume every connection, so inline
 // request-path reads always have headroom.
-const DefaultDetachedRefreshLimit = 4
+//
+// Sized against a PAGE, not a request (2026-08-13). At 4 — half the old
+// 8-connection pool — a single cold contract page could not fill
+// itself: it fans out to five reads, so even with per-panel classes the
+// global bound refused some, and a second visitor had nothing left.
+// Explorer traffic is inherently fan-out traffic, and the previous
+// figure was below one page's width. The pool moved 8 -> 16 with it, so
+// the "detached can never take the whole pool" invariant is unchanged;
+// r1 has 20 cores and idles at ~2 concurrent ClickHouse queries, and
+// every explorer scan carries max_threads = 4, so the ceiling this
+// implies is well within the host.
+const DefaultDetachedRefreshLimit = 8
 
 // NewRefreshGate returns a gate admitting at most limit concurrent
 // holders.

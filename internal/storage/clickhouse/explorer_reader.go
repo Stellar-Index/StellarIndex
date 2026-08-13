@@ -259,13 +259,20 @@ func NewExplorerReader(ctx context.Context, addr string) (*ExplorerReader, error
 // treats an empty Auth.Username as CH's `default` user).
 func NewExplorerReaderAuth(ctx context.Context, addr, username, password string) (*ExplorerReader, error) {
 	conn, err := clickhouse.Open(&clickhouse.Options{
-		Addr:            []string{addr},
-		Auth:            clickhouse.Auth{Database: "stellar", Username: username, Password: password},
-		Settings:        clickhouse.Settings{"max_execution_time": 30},
-		DialTimeout:     10 * time.Second,
-		ReadTimeout:     30 * time.Second,
-		MaxOpenConns:    8,
-		MaxIdleConns:    4,
+		Addr:        []string{addr},
+		Auth:        clickhouse.Auth{Database: "stellar", Username: username, Password: password},
+		Settings:    clickhouse.Settings{"max_execution_time": 30},
+		DialTimeout: 10 * time.Second,
+		ReadTimeout: 30 * time.Second,
+		// 8 -> 16 (2026-08-13): explorer pages fan out — one cold
+		// contract page issues five concurrent reads — so a pool of 8
+		// was barely one and a half visitors wide, and the detached
+		// refresh gate (half the pool, see DefaultDetachedRefreshLimit)
+		// was narrower than a single page. Each explorer scan is pinned
+		// to max_threads = 4 and r1 has 20 cores at ~2 concurrent
+		// queries idle, so this stays well inside the host.
+		MaxOpenConns:    16,
+		MaxIdleConns:    8,
 		ConnMaxLifetime: time.Hour,
 	})
 	if err != nil {

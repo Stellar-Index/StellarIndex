@@ -42,6 +42,12 @@ import urllib.request
 
 BASE = os.environ.get("BASE", "https://api.stellarindex.io/v1")
 BUDGET = float(os.environ.get("BUDGET", "1.0"))
+# Think time between pages. PACE=0 (the default) is a SUSTAINED-CRAWL
+# stress: the next page starts while the previous one's detached
+# refreshes are still running, so the refresh gate stays saturated.
+# That is a real traffic shape, but it is not the same question as "is
+# one cold page fast" — set PACE to isolate a single cold page load.
+PACE = float(os.environ.get("PACE", "0"))
 UA = {"User-Agent": "stellarindex-contract-page-audit"}
 CTX = ssl.create_default_context()
 
@@ -56,9 +62,19 @@ PANELS = [
 ]
 
 
+# A panel is LOADED only if it carried an answer. 2xx obviously; 404 too
+# — an honest "this contract is a SAC, there is no wasm" fully populates
+# the panel. Everything else (notably 503 from a saturated refresh gate)
+# renders as an error or a spinner, so counting it as loaded would score
+# a broken page as a fast one. That mistake is why the first version of
+# this harness reported pages "ok" at 0.10s while three of five panels
+# were failing.
+def loaded(status):
+    return status < 400 or status == 404
+
+
 def fetch(path):
-    """Return (seconds, status). A 404 is a legitimate answer — an
-    honest 'no wasm for this contract' still populates the panel."""
+    """Return (seconds, status)."""
     url = BASE + path
     start = time.monotonic()
     try:
@@ -98,15 +114,22 @@ def main():
         print("no contract ids in", sys.argv[1])
         return 2
 
-    print(f"contracts: {len(contracts)} | panels: {len(PANELS)} | budget {BUDGET}s (full page)")
-    breaches, rows = [], []
-    for c in contracts:
+    print(f"contracts: {len(contracts)} | panels: {len(PANELS)} | budget {BUDGET}s "
+          f"(full page) | pace {PACE}s between pages")
+    breaches, rows, unloaded = [], [], []
+    for i, c in enumerate(contracts):
+        if i and PACE:
+            time.sleep(PACE)
         total, per = audit(c)
         rows.append((total, c, per))
         slowest = max(per.items(), key=lambda kv: kv[1][0])
-        flag = "BREACH" if total > BUDGET else "ok    "
+        bad = [n for n, v in per.items() if not loaded(v[1])]
+        flag = "FAILED" if bad else ("BREACH" if total > BUDGET else "ok    ")
         print(f"{flag} {total:5.2f}s {c[:12]}… slowest={slowest[0]} {slowest[1][0]:.2f}s "
-              + " ".join(f"{n}:{v[0]:.2f}({v[1]})" for n, v in sorted(per.items())))
+              + " ".join(f"{n}:{v[0]:.2f}({v[1]})" for n, v in sorted(per.items()))
+              + (f"  UNLOADED={','.join(sorted(bad))}" if bad else ""))
+        if bad:
+            unloaded.append((c, bad))
         if total > BUDGET:
             breaches.append((total, c, per))
 
@@ -123,7 +146,19 @@ def main():
         print(f"   slowest panel {n:3d}x  {name}")
     worst = {n: max(p[n][0] for _t, _c, p in rows) for n, _ in PANELS}
     print("== worst per panel: " + " ".join(f"{n}:{v:.2f}s" for n, v in sorted(worst.items(), key=lambda kv: -kv[1])))
-    return len(breaches)
+
+    # Panels that never carried an answer. Reported SEPARATELY from
+    # latency: a page whose panels 503 is not a fast page, it is a
+    # broken one, and averaging the two hides it.
+    print(f"== pages with an UNLOADED panel: {len(unloaded)}/{len(contracts)}")
+    if unloaded:
+        by_panel = {}
+        for _c, bad in unloaded:
+            for n in bad:
+                by_panel[n] = by_panel.get(n, 0) + 1
+        for n, k in sorted(by_panel.items(), key=lambda kv: -kv[1]):
+            print(f"   unloaded {k:3d}x  {n}")
+    return len(breaches) + len(unloaded)
 
 
 if __name__ == "__main__":
