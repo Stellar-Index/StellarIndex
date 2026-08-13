@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.33.2] — 2026-08-13
+
 ### Changed
 - **`GET /v1/contracts/{id}/interactions` now anchors its window to the
   contract's own recent activity, so `?days=` is an UPPER bound rather
