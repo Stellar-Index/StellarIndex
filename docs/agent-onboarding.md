@@ -11,7 +11,8 @@ human in a hurry) and you want an API key, this is the whole flow —
 one unauthenticated POST, no email, no browser, no payment:
 
 ```sh
-curl -X POST https://api.stellarindex.io/v1/register
+curl -X POST https://api.stellarindex.io/v1/register \
+  -H 'Content-Type: application/json'
 ```
 
 Response (the key is shown **once** — store it; if you lose it,

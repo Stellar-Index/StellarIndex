@@ -15,6 +15,26 @@ against.
 
 ## [Unreleased]
 
+### Security
+- **Registered API keys were completely unmetered in production**
+  (audit 2026-08-13 F1): `MirroredKey` carried no monthly quota, so the
+  record the deployed Redis validator reads had none, and the quota
+  middleware short-circuits at `<= 0` — every key `/v1/register` handed
+  out advertised a 1,000,000/month cap (in its own response body and in
+  the public agent docs) and was enforced nowhere. The rate limiter was
+  the only live bound. Quota now flows through the mirror, with a
+  round-trip test (real store → real validator) asserting LITERAL
+  expected values: the prior tests compared a component against its own
+  input, which is why a dropped field read as correct on both sides.
+- **`POST /v1/register` was cross-site invocable** (F4): the
+  Content-Type gate only validated the header when present, so a
+  header-less POST — a CORS *simple* request, never preflighted —
+  let any page create an account plus a permanent credential per
+  visitor via `fetch(…, {mode:'no-cors'})`, while burning tokens from
+  the per-IP throttle this endpoint shares with `/v1/signup` (with the
+  source addresses distributed across victims). The header is now
+  required; docs and examples send it.
+
 ### Fixed
 - **`/v1/accounts/{g}/positions` runs its six protocol folds in
   parallel** (sub-second audit's last warm breach, 1.99s): the folds
