@@ -15,6 +15,22 @@ against.
 
 ## [Unreleased]
 
+### Changed
+- **`GET /v1/contracts/{id}/interactions` now anchors its window to the
+  contract's own recent activity, so `?days=` is an UPPER bound rather
+  than the window served.** Both halves of the read scale with the
+  ledger span they cover, and over the default 90 days a busy contract
+  cost 3–6s — the slowest panel left on the contract page once the
+  `/wasm` scan was bounded. Narrowing to the contract's 500 most recent
+  active ledgers brings that to 0.705s. This is a deliberate trade, not
+  a free win: `shared_txs` counts drop for busy contracts. The ranking
+  — which is what the panel is for — was unchanged in the same order on
+  the measured sample, and the endpoint has always reported a bounded
+  recent sample (`subjectTxCap` truncates at 50,000 transactions).
+  Quiet contracts, which are most of them, have fewer active ledgers
+  than the cap and keep the full window. `since_ledger` reports the
+  floor actually served, and the OpenAPI description now says so.
+
 ## [v0.33.1] — 2026-08-13
 
 ### Fixed

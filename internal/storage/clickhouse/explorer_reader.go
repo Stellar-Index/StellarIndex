@@ -1856,9 +1856,37 @@ const contractInteractionsQuery = `SELECT contract_id, toInt64(uniqExact(tx_hash
 // finds the other contracts in those txs) rather than a self-join, which
 // ClickHouse would materialise more expensively. Window-scoped via
 // sinceLedger to bound both halves.
-func (r *ExplorerReader) ContractInteractions(ctx context.Context, contractID string, limit int, sinceLedger uint32) ([]ContractEdgeRow, error) {
+func (r *ExplorerReader) ContractInteractions(ctx context.Context, contractID string, limit int, sinceLedger uint32) ([]ContractEdgeRow, uint32, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
+	}
+	// Anchor the window to the contract's OWN recent activity, not to
+	// wall-clock days (sub-second audit 2026-08-13). Both halves of this
+	// query scale with the ledger SPAN they cover, and over the default
+	// 90 days a busy contract cost 3-6s — the slowest panel left on the
+	// contract page once the /wasm scan was bounded.
+	//
+	// This narrows what a busy contract reports, so it is a deliberate
+	// choice and not a free win. It is consistent with what the endpoint
+	// already does — subjectTxCap has always truncated busy contracts to
+	// a recent sample — and the ranking is what the panel is for: at 500
+	// ledgers the top edges came back in the SAME order as the full
+	// window, with proportionally smaller counts (0.705s vs 3.017s).
+	// Quiet contracts, which are most of them, have fewer active ledgers
+	// than the cap and so are untouched by this and keep the full window.
+	//
+	// The effective floor is RETURNED so the response's since_ledger
+	// describes the window actually served rather than the one asked
+	// for.
+	const activeLedgerWindow = 500
+	if r.contractLedgersIndexAvailable(ctx) {
+		if ls, err := r.contractActiveLedgers(ctx, contractID, 0, activeLedgerWindow); err == nil && len(ls) == activeLedgerWindow {
+			// contractActiveLedgers is newest-first, so the last entry is
+			// the oldest ledger inside the cap. Never widen the window.
+			if oldest := ls[len(ls)-1]; oldest > sinceLedger {
+				sinceLedger = oldest
+			}
+		}
 	}
 	// Cap the subject's transaction set to its most-recent 50k (ledger,
 	// tx) rows. Without this, a mega-contract (a SAC / AMM router with
@@ -1884,18 +1912,18 @@ func (r *ExplorerReader) ContractInteractions(ctx context.Context, contractID st
 	// figure was an event count wearing a transaction count's name.
 	rows, err := r.conn.Query(ctx, contractInteractionsQuery, sinceLedger, contractID, contractID, sinceLedger, subjectTxCap, limit)
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse: contract %s interactions: %w", contractID, err)
+		return nil, 0, fmt.Errorf("clickhouse: contract %s interactions: %w", contractID, err)
 	}
 	defer func() { _ = rows.Close() }()
 	var out []ContractEdgeRow
 	for rows.Next() {
 		var e ContractEdgeRow
 		if err := rows.Scan(&e.ContractID, &e.SharedTxs); err != nil {
-			return nil, fmt.Errorf("clickhouse: scan contract edge: %w", err)
+			return nil, 0, fmt.Errorf("clickhouse: scan contract edge: %w", err)
 		}
 		out = append(out, e)
 	}
-	return out, rows.Err()
+	return out, sinceLedger, rows.Err()
 }
 
 // EventSummary is a lightweight contract-event row for the tx-detail view.

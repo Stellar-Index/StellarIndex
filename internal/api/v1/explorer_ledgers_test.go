@@ -124,8 +124,8 @@ func (s *stubExplorerReader) RecentContracts(_ context.Context, _ int, _ uint32)
 	return s.directory, s.err
 }
 
-func (s *stubExplorerReader) ContractInteractions(_ context.Context, _ string, _ int, _ uint32) ([]clickhouse.ContractEdgeRow, error) {
-	return s.interactions, s.err
+func (s *stubExplorerReader) ContractInteractions(_ context.Context, _ string, _ int, since uint32) ([]clickhouse.ContractEdgeRow, uint32, error) {
+	return s.interactions, since, s.err
 }
 
 func (s *stubExplorerReader) ContractCodeHistory(_ context.Context, _ string) ([]clickhouse.ContractCodeVersion, error) {
