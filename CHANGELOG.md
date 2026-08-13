@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.33.1] — 2026-08-13
+
 ### Fixed
 - **Every cold contract page served at least one failed panel, because
   the page starved itself at the refresh gate.** The contract view fans
