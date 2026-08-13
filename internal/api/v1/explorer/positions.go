@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -207,6 +208,58 @@ func (h *Handler) positionsUnavailable(w http.ResponseWriter, r *http.Request) {
 // "Net-zero" means different things per protocol (see each buildXPositions
 // helper) — a delta-summed net of exactly 0 for event_derived protocols,
 // or a Withdrawal-observed flag for sorocredit's stateful positions.
+func (h *Handler) collectPositions(ctx context.Context, g string, resolve positionAssetResolver, cov *positionsCoverage) []PositionEntry {
+	// collectPositions runs the six protocol folds and merges their results.
+	// The six protocol folds are INDEPENDENT reads (each its own
+	// Postgres round trip) and were run serially, so the endpoint's
+	// latency was their SUM — 1.99s warm in the 2026-08-13 sub-second
+	// audit, the last warm breach on the board. Running them
+	// concurrently makes it the MAX instead.
+	//
+	// Determinism is preserved exactly: each fold writes its own slot
+	// (positions + coverage), and both are merged afterwards in the
+	// original fixed order — so the wire output, including
+	// coverage_note's protocol ordering, is byte-identical to the
+	// serial version. Per-fold coverage collectors also avoid a data
+	// race on positionsCoverage.degraded, which is a plain append.
+	folds := []func(*positionsCoverage) []PositionEntry{
+		func(c *positionsCoverage) []PositionEntry { return h.buildBlendPositions(ctx, g, resolve, c) },
+		func(c *positionsCoverage) []PositionEntry { return h.buildBlendBackstopPositions(ctx, g, resolve, c) },
+		func(c *positionsCoverage) []PositionEntry { return h.buildPhoenixStakePositions(ctx, g, resolve, c) },
+		func(c *positionsCoverage) []PositionEntry { return h.buildDefindexPositions(ctx, g, c) },
+		func(c *positionsCoverage) []PositionEntry { return h.buildCreditPositions(ctx, g, c) },
+		func(c *positionsCoverage) []PositionEntry { return h.buildAquariusGaugePositions(ctx, g, resolve, c) },
+	}
+	slots := make([][]PositionEntry, len(folds))
+	covs := make([]positionsCoverage, len(folds))
+	var wg sync.WaitGroup
+	for i, fold := range folds {
+		wg.Add(1)
+		go func(i int, fold func(*positionsCoverage) []PositionEntry) {
+			defer wg.Done()
+			// A panic in one fold must not take down the process: this
+			// runs off the handler goroutine, so middleware.Recoverer
+			// does not cover it. Degrade that fold instead.
+			defer func() {
+				if rec := recover(); rec != nil {
+					h.Logger.Error("explorer AccountPositions fold panicked",
+						"fold", i, "account", g, "panic", rec)
+					covs[i].fail("panic")
+				}
+			}()
+			slots[i] = fold(&covs[i])
+		}(i, fold)
+	}
+	wg.Wait()
+
+	var positions []PositionEntry
+	for i := range slots {
+		positions = append(positions, slots[i]...)
+		cov.degraded = append(cov.degraded, covs[i].degraded...)
+	}
+	return positions
+}
+
 func (h *Handler) AccountPositions(w http.ResponseWriter, r *http.Request) {
 	if h.Positions == nil {
 		h.positionsUnavailable(w, r)
@@ -224,13 +277,7 @@ func (h *Handler) AccountPositions(w http.ResponseWriter, r *http.Request) {
 	resolve := h.newPositionAssetResolver(ctx)
 
 	var cov positionsCoverage
-	var positions []PositionEntry
-	positions = append(positions, h.buildBlendPositions(ctx, g, resolve, &cov)...)
-	positions = append(positions, h.buildBlendBackstopPositions(ctx, g, resolve, &cov)...)
-	positions = append(positions, h.buildPhoenixStakePositions(ctx, g, resolve, &cov)...)
-	positions = append(positions, h.buildDefindexPositions(ctx, g, &cov)...)
-	positions = append(positions, h.buildCreditPositions(ctx, g, &cov)...)
-	positions = append(positions, h.buildAquariusGaugePositions(ctx, g, resolve, &cov)...)
+	positions := h.collectPositions(ctx, g, resolve, &cov)
 
 	out := make([]PositionEntry, 0, len(positions))
 	for _, p := range positions {
@@ -266,12 +313,26 @@ func (h *Handler) AccountPositions(w http.ResponseWriter, r *http.Request) {
 // Positions without also wiring the ClickHouse Explorer reader must
 // degrade the label to the raw contract id here instead of calling
 // through to a nil interface.
-func (h *Handler) newPositionAssetResolver(ctx context.Context) func(contractID string) string {
+func (h *Handler) newPositionAssetResolver(ctx context.Context) positionAssetResolver {
+	// MUST be concurrency-safe: AccountPositions runs its six protocol
+	// folds in parallel (2026-08-13) and four of them share this one
+	// resolver. An unguarded map here is not merely racy — concurrent
+	// map writes are a FATAL runtime throw that no recover() catches,
+	// so it would take the process down under exactly the load the
+	// parallelism exists to serve.
+	//
+	// The lock is held across the resolve (which may hit the lake), so
+	// two folds asking for the SAME contract serialise — that is the
+	// point of the memo, and it also means a contract is resolved once
+	// per request rather than once per fold.
+	var mu sync.Mutex
 	cache := map[string]string{}
 	return func(contractID string) string {
 		if contractID == "" {
 			return ""
 		}
+		mu.Lock()
+		defer mu.Unlock()
 		if v, ok := cache[contractID]; ok {
 			return v
 		}
@@ -284,6 +345,11 @@ func (h *Handler) newPositionAssetResolver(ctx context.Context) func(contractID 
 		return v
 	}
 }
+
+// positionAssetResolver maps a contract id to its display label,
+// memoised per request. Safe for concurrent use (see
+// newPositionAssetResolver).
+type positionAssetResolver = func(contractID string) string
 
 // assetDisplayLabel shortens a resolved asset identifier to its display
 // code: "native" -> "XLM"; "CODE-ISSUER" / "CODE:GISSUER" (both
