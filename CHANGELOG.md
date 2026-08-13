@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.32.1] — 2026-08-13
+
 ### Fixed
 - **`/v1/accounts/{g}/transactions` 6.7× faster** (sub-second audit
   2026-08-13, r1-measured): both union arms carried the WIDE tx column
