@@ -52,7 +52,7 @@ user stellarindex on >{{ redis_password }} \
   ~vwap:* ~confidence:* ~freeze:* ~div:* \
   ~rl:* ~signup-ip:* ~signup:email:* ~signup:lock:* ~signup:verify:* ~touch:apikey:* \
   ~toml:* ~meta:* ~price:* ~apikey:* ~health:* ~oracle:* \
-  ~sub:* ~sep10:seen:* ~usage:* \
+  ~sub:* ~sep10:seen:* ~usage:* ~passkey:ceremony:* \
   ~assets:list:* ~markets:list:* \
   &closed-bucket-* &stream-*
 # F-1254 (codex audit-2026-05-12): the previous allow-list named
@@ -75,6 +75,13 @@ user stellarindex on >{{ redis_password }} \
 # F-1226 wave 39 (codex audit-2026-05-12): `touch:apikey:*` is
 # the SETNX-debounce namespace the api-key TouchUsage middleware
 # uses to gate hot-row UPDATEs on the api_keys table.
+#
+# audit-2026-08-13: `passkey:ceremony:*` is the SETNX spent-set that
+# makes each WebAuthn ceremony challenge single-use, so a captured
+# `/v1/auth/passkey/finish-login` request cannot be replayed into a
+# second session. The handler FAILS CLOSED when the SETNX errors —
+# omit this pattern under lockdown and passkey sign-in stops working
+# entirely (email-code sign-in keeps working).
 #
 # F-1218 wave 42 (codex audit-2026-05-12): `signup:verify:*` is
 # the email-ownership-proof token namespace. The signup handler

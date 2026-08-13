@@ -22,6 +22,17 @@ package dashboardauth
 // HMAC (keyed by the same server secret that keys the 6-digit code
 // derivation, domain-separated) provides exactly that.
 //
+// Integrity alone is not enough, and audit-2026-08-13 found both
+// gaps live:
+//
+//   - The ceremony must EXPIRE server-side. The cookie's MaxAge is a
+//     client-side hint; an attacker's HTTP client simply ignores it.
+//     See [Handlers.webAuthn] for why the library needs telling.
+//   - The ceremony must be SINGLE-USE. See passkey_ceremony_guard.go.
+//
+// Without both, a captured finish-login request (cookie + body) is a
+// session-mint oracle for that account: unlimited uses, no expiry.
+//
 // RP identity derives from DashboardBaseURL — the origin the browser
 // performs the ceremony on (https://stellarindex.io): RP ID is its
 // hostname, allowed origin is its scheme://host. That mirrors how the
@@ -29,9 +40,11 @@ package dashboardauth
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -39,6 +52,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -84,10 +98,33 @@ func (h *Handlers) webAuthn() (*webauthn.WebAuthn, error) {
 	if err != nil || u.Hostname() == "" {
 		return nil, errors.New("dashboardauth: DashboardBaseURL is not an absolute URL")
 	}
+	// Timeouts is load-bearing, not cosmetic: go-webauthn stamps
+	// SessionData.Expires ONLY when the matching Enforce is true
+	// (webauthn/login.go, webauthn/registration.go) and Enforce
+	// defaults FALSE. Ship the zero value and Expires stays the zero
+	// time, which makes every `!Expires.IsZero()` guard — ours in
+	// [Handlers.readPasskeyCeremonyCookie] AND the library's own in
+	// ValidateLogin / CreateCredential — dead code. The ceremony then
+	// has no server-side lifetime at all: the cookie's MaxAge=300 is
+	// a browser hint, and a captured cookie replayed by a plain HTTP
+	// client is honoured forever. audit-2026-08-13 (HIGH).
+	//
+	// TimeoutUVD (the "user verification discouraged" variant) is set
+	// to the same value for completeness; we require UV everywhere
+	// (see the Begin* handlers) so it should never be selected.
+	timeouts := webauthn.TimeoutConfig{
+		Enforce:    true,
+		Timeout:    passkeyCeremonyTTL,
+		TimeoutUVD: passkeyCeremonyTTL,
+	}
 	return webauthn.New(&webauthn.Config{
 		RPID:          u.Hostname(),
 		RPDisplayName: "Stellar Index",
 		RPOrigins:     []string{u.Scheme + "://" + u.Host},
+		Timeouts: webauthn.TimeoutsConfig{
+			Login:        timeouts,
+			Registration: timeouts,
+		},
 	})
 }
 
@@ -199,10 +236,72 @@ func (h *Handlers) readPasskeyCeremonyCookie(r *http.Request, wantPurpose string
 	if ceremony.Purpose != wantPurpose {
 		return passkeyCeremony{}, errInvalid
 	}
-	if !ceremony.Session.Expires.IsZero() && !ceremony.Session.Expires.After(h.cfg.Now()) {
+	// A MISSING expiry is refused, not waved through. The previous
+	// `!IsZero() && …` spelling meant an unstamped ceremony lived
+	// forever — which is exactly what shipped, because the library
+	// never stamped one (see [Handlers.webAuthn]). Requiring the
+	// stamp makes that failure mode impossible to reintroduce
+	// silently: a config regression locks passkeys out rather than
+	// quietly issuing eternal challenges. The one visible cost is at
+	// deploy time — ceremonies begun by the previous binary carry no
+	// expiry and are refused, so a sign-in in flight across the
+	// restart must be retried. audit-2026-08-13.
+	if ceremony.Session.Expires.IsZero() || !ceremony.Session.Expires.After(h.cfg.Now()) {
 		return passkeyCeremony{}, errInvalid
 	}
 	return ceremony, nil
+}
+
+// errPasskeyCeremonyReplayed is the sentinel for "this ceremony has
+// already been spent" — distinct from a store outage so the caller
+// can log the two differently (a replay is an attack signal; an
+// outage is an ops signal) while returning the same generic body.
+var errPasskeyCeremonyReplayed = errors.New("dashboardauth: passkey ceremony already used")
+
+// passkeyCeremonyDigest is the single-use guard's key for one
+// ceremony: purpose + challenge, hashed.
+//
+// The challenge is the per-ceremony unique value (32 random bytes
+// from the library), so it alone identifies the ceremony; purpose is
+// mixed in for the same reason the cookie carries it, and the domain
+// string keeps this digest from colliding with any other use of the
+// same inputs. Plain SHA-256 rather than the cookie's HMAC: the
+// challenge is not a secret (the browser and the authenticator both
+// see it), and keying the digest would tie the spent-set to a secret
+// that can rotate independently of the challenges it must outlive.
+func passkeyCeremonyDigest(c passkeyCeremony) string {
+	sum := sha256.Sum256([]byte(passkeyCeremonyDomain + c.Purpose + "|" + c.Session.Challenge))
+	return hex.EncodeToString(sum[:])
+}
+
+// consumeCeremony spends a ceremony so it can never be presented
+// again. Returns [errPasskeyCeremonyReplayed] for a second
+// presentation, and a wrapped store error when the spent-set is
+// unreachable — callers refuse in BOTH cases (fail closed: a session
+// we can't prove is fresh is one we don't mint).
+//
+// Called AFTER the assertion/attestation verifies, mirroring the
+// SEP-10 replay guard's placement (internal/auth/sep10/validator.go):
+// verifying first keeps unauthenticated callers from spending slots
+// in the shared store, and a submission that fails verification never
+// minted anything worth replaying.
+func (h *Handlers) consumeCeremony(ctx context.Context, c passkeyCeremony) error {
+	guard := h.cfg.PasskeyCeremonyGuard
+	if guard == nil {
+		// Unreachable via NewHandlers (validate installs the
+		// in-process default). Refuse rather than skip the check —
+		// a Handlers assembled by hand must not silently lose replay
+		// protection.
+		return errors.New("dashboardauth: no passkey ceremony guard configured")
+	}
+	claimed, err := guard.Consume(ctx, passkeyCeremonyDigest(c), passkeyCeremonyTTL)
+	if err != nil {
+		return err
+	}
+	if !claimed {
+		return errPasskeyCeremonyReplayed
+	}
+	return nil
 }
 
 func (h *Handlers) clearPasskeyCeremonyCookie(w http.ResponseWriter) {
@@ -252,9 +351,27 @@ func (h *Handlers) HandlePasskeyBeginRegister(w http.ResponseWriter, r *http.Req
 
 	user := webauthnUser{user: sc.User, creds: libCreds}
 	creation, session, err := wa.BeginRegistration(user,
+		// User verification REQUIRED. The credential registered here
+		// is a first-factor, passwordless sign-in credential (the
+		// login side asks for nothing else), so it has to carry a
+		// second factor of its own: without UV, possession of the
+		// authenticator IS the account. Requiring it at registration
+		// means the credential is created behind a biometric/PIN, and
+		// the login side (HandlePasskeyBeginLogin) requires the UV bit
+		// on every assertion. Trade-off, accepted deliberately: a
+		// security key with no PIN configured cannot be enrolled.
+		//
+		// ORDER MATTERS. WithAuthenticatorSelection REPLACES the whole
+		// AuthenticatorSelection struct, while WithResidentKeyRequirement
+		// only sets its two resident-key fields — so this option must
+		// come FIRST or the UV requirement is silently dropped. The
+		// options-shape assertions in passkey_test.go pin both fields
+		// so a reorder fails the build rather than weakening sign-in.
+		webauthn.WithAuthenticatorSelection(protocol.AuthenticatorSelection{
+			UserVerification: protocol.VerificationRequired,
+		}),
 		// Discoverable (resident) so the login side can be
-		// usernameless; UV preferred so platform authenticators
-		// prompt biometrics without hard-failing security keys.
+		// usernameless.
 		webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementRequired),
 		webauthn.WithExclusions(exclusions),
 		webauthn.WithConveyancePreference(protocol.PreferNoAttestation),
@@ -273,6 +390,28 @@ func (h *Handlers) HandlePasskeyBeginRegister(w http.ResponseWriter, r *http.Req
 	_ = json.NewEncoder(w).Encode(creation)
 }
 
+// passkeyDisplayName normalises the user-chosen label to something
+// the storage CHECK (`length(name) <= 100`, migration 0140) accepts.
+//
+// Truncation is by RUNES, not bytes. Postgres `length()` counts
+// CHARACTERS, so a byte slice was wrong twice over: it clipped a
+// perfectly legal 100-character CJK name to 33 characters, and — the
+// real bug — it could cut mid-rune and hand Postgres invalid UTF-8,
+// which Postgres refuses. That surfaced as a 500 AFTER the
+// authenticator had already burned a resident-credential slot for a
+// credential the server then never stored: the user is left with a
+// dead passkey on their device and no row here. audit-2026-08-13.
+func passkeyDisplayName(raw string) string {
+	name := strings.TrimSpace(raw)
+	if name == "" {
+		return "Passkey"
+	}
+	if utf8.RuneCountInString(name) > maxPasskeyNameLen {
+		name = string([]rune(name)[:maxPasskeyNameLen])
+	}
+	return name
+}
+
 // finishRegisterRequest wraps the raw credential JSON the browser
 // produced with the user-chosen label.
 type finishRegisterRequest struct {
@@ -288,9 +427,15 @@ func (h *Handlers) HandlePasskeyFinishRegister(w http.ResponseWriter, r *http.Re
 		writeProblem(w, http.StatusUnauthorized, "authentication required", r.URL.Path)
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxPasskeyBodyBytes))
+	// MaxBytesReader, not LimitReader: a LimitReader hitting its cap
+	// returns (n, nil) — the read SUCCEEDS with a silently truncated
+	// body, so the "body too large" branch below was unreachable and
+	// an oversize attestation surfaced as "malformed JSON" instead.
+	// MaxBytesReader is the repo-wide pattern and returns a real
+	// error at the cap. audit-2026-08-13.
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxPasskeyBodyBytes))
 	if err != nil {
-		writeProblem(w, http.StatusBadRequest, "body too large", r.URL.Path)
+		writeProblem(w, http.StatusBadRequest, "request body too large", r.URL.Path)
 		return
 	}
 	var req finishRegisterRequest
@@ -326,21 +471,27 @@ func (h *Handlers) HandlePasskeyFinishRegister(w http.ResponseWriter, r *http.Re
 		writeProblem(w, http.StatusBadRequest, "passkey registration failed — start again", r.URL.Path)
 		return
 	}
+	// Spend the challenge now that the attestation verified — before
+	// the credential is stored, so a replayed registration can't take
+	// a second bite even if the store's uniqueness check changes.
+	if err := h.consumeCeremony(r.Context(), ceremony); err != nil {
+		if errors.Is(err, errPasskeyCeremonyReplayed) {
+			h.cfg.Logger.Warn("passkey registration ceremony replay refused", "user_id", sc.User.ID)
+			writeProblem(w, http.StatusBadRequest, "passkey registration failed — start again", r.URL.Path)
+			return
+		}
+		h.cfg.Logger.Error("consume passkey ceremony", "err", err, "user_id", sc.User.ID)
+		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
+		return
+	}
 
-	name := strings.TrimSpace(req.Name)
-	if name == "" {
-		name = "Passkey"
-	}
-	if len(name) > maxPasskeyNameLen {
-		name = name[:maxPasskeyNameLen]
-	}
 	transports := make([]string, 0, len(cred.Transport))
 	for _, t := range cred.Transport {
 		transports = append(transports, string(t))
 	}
 	row, err := h.cfg.Passkeys.CreateWebAuthnCredential(r.Context(), platform.WebAuthnCredential{
 		UserID:          sc.User.ID,
-		Name:            name,
+		Name:            passkeyDisplayName(req.Name),
 		CredentialID:    cred.ID,
 		PublicKey:       cred.PublicKey,
 		AttestationType: cred.AttestationType,
@@ -377,7 +528,17 @@ func (h *Handlers) HandlePasskeyBeginLogin(w http.ResponseWriter, r *http.Reques
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
-	assertion, session, err := wa.BeginDiscoverableLogin()
+	// User verification REQUIRED, and required HERE is what makes the
+	// assertion side check it: the library derives shouldVerifyUser
+	// from session.UserVerification == "required" (webauthn/login.go),
+	// which is populated from these options. Unset, the field is
+	// omitted from the options JSON entirely, the browser falls back
+	// to its own default ("preferred"), and the UV bit is never
+	// verified — passwordless sign-in degrades to possession of the
+	// authenticator alone. audit-2026-08-13.
+	assertion, session, err := wa.BeginDiscoverableLogin(
+		webauthn.WithUserVerification(protocol.VerificationRequired),
+	)
 	if err != nil {
 		h.cfg.Logger.Error("begin passkey login", "err", err)
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
@@ -394,18 +555,22 @@ func (h *Handlers) HandlePasskeyBeginLogin(w http.ResponseWriter, r *http.Reques
 
 // HandlePasskeyFinishLogin verifies the assertion and mints the same
 // session cookie the email flows issue. Every verification failure —
-// unknown credential, bad signature, stale challenge, tampered
-// cookie — returns one generic 400: an anonymous caller must not be
-// able to probe which credentials exist.
+// unknown credential, bad signature, stale challenge, already-spent
+// ceremony, tampered cookie — returns one generic 400: an anonymous
+// caller must not be able to probe which credentials exist. The one
+// non-400 refusal is an unreachable spent-set (500): that is an ops
+// condition, not a fact about the caller's credentials.
 func (h *Handlers) HandlePasskeyFinishLogin(w http.ResponseWriter, r *http.Request) {
 	ceremony, err := h.readPasskeyCeremonyCookie(r, "login")
 	if err != nil {
 		writeProblem(w, http.StatusBadRequest, "passkey sign-in failed — try again", r.URL.Path)
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxPasskeyBodyBytes))
+	// MaxBytesReader, not LimitReader — see the note in
+	// HandlePasskeyFinishRegister.
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxPasskeyBodyBytes))
 	if err != nil {
-		writeProblem(w, http.StatusBadRequest, "body too large", r.URL.Path)
+		writeProblem(w, http.StatusBadRequest, "request body too large", r.URL.Path)
 		return
 	}
 	parsed, err := protocol.ParseCredentialRequestResponseBytes(body)
@@ -463,6 +628,26 @@ func (h *Handlers) HandlePasskeyFinishLogin(w http.ResponseWriter, r *http.Reque
 		h.cfg.Logger.Error("passkey clone warning — refusing login",
 			"user_id", matchedUser.ID, "credential_id", matchedRow.ID, "ip", clientIP(r).String())
 		writeProblem(w, http.StatusBadRequest, "passkey sign-in failed — try again", r.URL.Path)
+		return
+	}
+	// Spend the challenge. This is the step that makes a CAPTURED
+	// finish-login request (ceremony cookie + assertion body) useless
+	// a second time: the assertion still verifies — it is byte-for-
+	// byte the one that verified before — but the ceremony behind it
+	// is gone. Everything below this line mints or mutates state, so
+	// nothing has happened yet when we refuse. A store outage refuses
+	// too (500, not the generic 400): we will not issue a session we
+	// cannot prove is fresh, and passkey sign-in degrading while
+	// email-code sign-in keeps working is the right way to fail.
+	if err := h.consumeCeremony(r.Context(), ceremony); err != nil {
+		if errors.Is(err, errPasskeyCeremonyReplayed) {
+			h.cfg.Logger.Warn("passkey ceremony replay refused",
+				"user_id", matchedUser.ID, "credential_id", matchedRow.ID, "ip", clientIP(r).String())
+			writeProblem(w, http.StatusBadRequest, "passkey sign-in failed — try again", r.URL.Path)
+			return
+		}
+		h.cfg.Logger.Error("consume passkey ceremony", "err", err, "user_id", matchedUser.ID)
+		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
 	// Persist the advanced sign counter. Best-effort: the assertion

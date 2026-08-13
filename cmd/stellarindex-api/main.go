@@ -1923,15 +1923,24 @@ func (t *inProcessSignupIPThrottle) CheckIP(ctx context.Context, ip string) erro
 // abuse cap is never fully disabled, just downgraded to
 // single-instance accounting — the same posture already accepted
 // for the rate-limit tiers' C3-13 in-process fallback in run().
+// Passkey ceremony replay guard (audit-2026-08-13): each WebAuthn
+// challenge is single-use, and the spent-set has to be SHARED or a
+// replay routed to another instance is simply not seen. Redis-less
+// deployments fall back to dashboardauth's in-process guard (installed
+// by its validate()) — same single-instance downgrade the throttle
+// takes, never an off switch.
 func wireDashboardAuthThrottles(authCfg *dashboardauth.Config, rdb redis.UniversalClient, logger *slog.Logger) {
 	if rdb != nil {
 		authCfg.EmailLocker = auth.NewRedisSignupEmailLocker(rdb)
 		authCfg.LoginThrottle = auth.NewRedisLoginThrottle(rdb, auth.LoginThrottleOptions{})
+		authCfg.PasskeyCeremonyGuard = auth.NewRedisPasskeyCeremonyGuard(rdb)
 		return
 	}
 	authCfg.LoginThrottle = newInProcessLoginThrottle()
 	logger.Warn("dashboard magic-link throttle is in-process (single-instance fallback — no Redis); " +
 		"per-email/per-IP caps are NOT shared across instances")
+	logger.Warn("passkey ceremony replay guard is in-process (single-instance fallback — no Redis); " +
+		"a spent challenge is NOT visible to other instances")
 }
 
 // buildDashboardGenerator wires the token generator with the server

@@ -32411,7 +32411,7 @@
                   "request": {
                     "name": "Customer dashboard — begin a passkey (WebAuthn) sign-in.",
                     "description": {
-                      "content": "Returns the WebAuthn credential-request options the browser\npasses to `navigator.credentials.get()`. Usernameless\n(discoverable credential): no email is asked for, so the\nendpoint reveals nothing to an anonymous caller.\n\nSets a short-lived, HMAC-signed, HttpOnly ceremony cookie\n(`stellarindex_passkey_ceremony`) binding the challenge to\nthis browser; `/auth/passkey/finish-login` requires it.\n",
+                      "content": "Returns the WebAuthn credential-request options the browser\npasses to `navigator.credentials.get()`. Usernameless\n(discoverable credential): no email is asked for, so the\nendpoint reveals nothing to an anonymous caller.\n\n`userVerification` is `required`: the authenticator must\nverify the user (biometric / PIN) for the assertion to be\naccepted, so a passkey sign-in is never possession-only.\n\nSets an HMAC-signed, HttpOnly ceremony cookie\n(`stellarindex_passkey_ceremony`) binding the challenge to\nthis browser; `/auth/passkey/finish-login` requires it. The\nchallenge is valid for 5 minutes — enforced server-side, not\nmerely by the cookie's `Max-Age` — and is single-use.\n",
                       "type": "text/plain"
                     },
                     "url": {
@@ -32471,7 +32471,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "Signed, short-lived ceremony cookie.",
+                            "content": "Signed ceremony cookie; challenge valid 5 minutes, single-use.",
                             "type": "text/plain"
                           },
                           "key": "Set-Cookie",
@@ -32571,7 +32571,7 @@
                   "request": {
                     "name": "Customer dashboard — finish a passkey sign-in; mints the session cookie.",
                     "description": {
-                      "content": "Verifies the authenticator's assertion (the JSON produced by\n`navigator.credentials.get()`) against the ceremony cookie's\nchallenge and the stored credential public key, then sets the\nSAME HttpOnly session cookie (`stellarindex_session`) the\nemail-code and magic-link flows mint, and returns\n`{status:\"ok\"}`.\n\nEvery verification failure — unknown credential, bad\nsignature, stale challenge, tampered ceremony cookie, or a\nsign-count regression (possible cloned authenticator; refused\nand logged) — returns the same generic 400 so a caller cannot\nprobe which credentials exist.\n",
+                      "content": "Verifies the authenticator's assertion (the JSON produced by\n`navigator.credentials.get()`) against the ceremony cookie's\nchallenge and the stored credential public key, then sets the\nSAME HttpOnly session cookie (`stellarindex_session`) the\nemail-code and magic-link flows mint, and returns\n`{status:\"ok\"}`.\n\nThe ceremony challenge is single-use: replaying a captured\nrequest (ceremony cookie plus the same assertion body) is\nrefused, as is a challenge older than its 5-minute lifetime.\n\nEvery verification failure — unknown credential, bad\nsignature, missing user verification, expired challenge,\nalready-used challenge, tampered ceremony cookie, or a\nsign-count regression (possible cloned authenticator; refused\nand logged) — returns the same generic 400 so a caller cannot\nprobe which credentials exist.\n",
                       "type": "text/plain"
                     },
                     "url": {
@@ -32767,6 +32767,55 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
+                      "name": "The single-use challenge store could not be reached, so\nthe ceremony's freshness could not be established. The\nsign-in is refused rather than granted on trust; email-code\nsign-in is unaffected.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "auth",
+                            "passkey",
+                            "finish-login"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": []
+                        },
+                        "header": [
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          },
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          }
+                        ],
+                        "method": "POST",
+                        "body": {
+                          "mode": "raw",
+                          "raw": "{}",
+                          "options": {
+                            "raw": {
+                              "headerFamily": "json",
+                              "language": "json"
+                            }
+                          }
+                        }
+                      },
+                      "status": "Internal Server Error",
+                      "code": 500,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
                       "name": "Server is degraded (dependency outage, startup, shutdown).",
                       "originalRequest": {
                         "url": {
@@ -32832,7 +32881,7 @@
                   "request": {
                     "name": "Customer dashboard — begin adding a passkey to the signed-in account.",
                     "description": {
-                      "content": "Session-gated. Returns the WebAuthn credential-creation\noptions for `navigator.credentials.create()` — resident\n(discoverable) key required, so the resulting passkey can\nlater sign in usernameless. Already-registered credentials\nare excluded so an authenticator refuses to double-register.\n\nSets the same signed ceremony cookie the login pair uses\n(purpose-bound: a registration challenge cannot finish a\nlogin, nor vice versa).\n",
+                      "content": "Session-gated. Returns the WebAuthn credential-creation\noptions for `navigator.credentials.create()` — resident\n(discoverable) key required, so the resulting passkey can\nlater sign in usernameless, and `userVerification: required`,\nsince that credential is a passwordless first factor and must\ncarry a biometric/PIN of its own. An authenticator that\ncannot verify the user (a PIN-less security key) therefore\ncannot be enrolled. Already-registered credentials are\nexcluded so an authenticator refuses to double-register.\n\nSets the same signed ceremony cookie the login pair uses\n(purpose-bound: a registration challenge cannot finish a\nlogin, nor vice versa), with the same server-enforced\n5-minute, single-use challenge.\n",
                       "type": "text/plain"
                     },
                     "url": {
@@ -33032,7 +33081,7 @@
                   "request": {
                     "name": "Customer dashboard — finish adding a passkey; stores the credential.",
                     "description": {
-                      "content": "Session-gated. Verifies the attestation response against the\nceremony cookie's challenge (which must have been minted for\nTHIS user) and stores the credential's public key. The\nprivate key never leaves the user's authenticator.\n",
+                      "content": "Session-gated. Verifies the attestation response against the\nceremony cookie's challenge (which must have been minted for\nTHIS user, be within its 5-minute lifetime, and not already\nhave been used) and stores the credential's public key. The\nprivate key never leaves the user's authenticator.\n\nA label longer than 100 characters is truncated to 100\ncharacters (not bytes — multi-byte names keep their full\ncharacter budget).\n",
                       "type": "text/plain"
                     },
                     "url": {
@@ -33305,6 +33354,63 @@
                       },
                       "status": "Conflict",
                       "code": 409,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "The single-use challenge store could not be reached, so\nthe ceremony's freshness could not be established; the\ncredential is not stored.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "auth",
+                            "passkey",
+                            "finish-register"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": []
+                        },
+                        "header": [
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          },
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          },
+                          {
+                            "description": {
+                              "content": "Added as a part of security scheme: apikey",
+                              "type": "text/plain"
+                            },
+                            "key": "stellarindex_session",
+                            "value": "<API Key>"
+                          }
+                        ],
+                        "method": "POST",
+                        "body": {
+                          "mode": "raw",
+                          "raw": "{\n  \"credential\": {},\n  \"name\": \"<string>\"\n}",
+                          "options": {
+                            "raw": {
+                              "headerFamily": "json",
+                              "language": "json"
+                            }
+                          }
+                        }
+                      },
+                      "status": "Internal Server Error",
+                      "code": 500,
                       "header": [
                         {
                           "key": "Content-Type",

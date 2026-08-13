@@ -10393,9 +10393,15 @@ export interface paths {
          *     (discoverable credential): no email is asked for, so the
          *     endpoint reveals nothing to an anonymous caller.
          *
-         *     Sets a short-lived, HMAC-signed, HttpOnly ceremony cookie
+         *     `userVerification` is `required`: the authenticator must
+         *     verify the user (biometric / PIN) for the assertion to be
+         *     accepted, so a passkey sign-in is never possession-only.
+         *
+         *     Sets an HMAC-signed, HttpOnly ceremony cookie
          *     (`stellarindex_passkey_ceremony`) binding the challenge to
-         *     this browser; `/auth/passkey/finish-login` requires it.
+         *     this browser; `/auth/passkey/finish-login` requires it. The
+         *     challenge is valid for 5 minutes — enforced server-side, not
+         *     merely by the cookie's `Max-Age` — and is single-use.
          */
         post: {
             parameters: {
@@ -10409,7 +10415,7 @@ export interface paths {
                 /** @description WebAuthn assertion options (challenge, rpId, …). */
                 200: {
                     headers: {
-                        /** @description Signed, short-lived ceremony cookie. */
+                        /** @description Signed ceremony cookie; challenge valid 5 minutes, single-use. */
                         "Set-Cookie"?: string;
                         [name: string]: unknown;
                     };
@@ -10458,8 +10464,13 @@ export interface paths {
          *     email-code and magic-link flows mint, and returns
          *     `{status:"ok"}`.
          *
+         *     The ceremony challenge is single-use: replaying a captured
+         *     request (ceremony cookie plus the same assertion body) is
+         *     refused, as is a challenge older than its 5-minute lifetime.
+         *
          *     Every verification failure — unknown credential, bad
-         *     signature, stale challenge, tampered ceremony cookie, or a
+         *     signature, missing user verification, expired challenge,
+         *     already-used challenge, tampered ceremony cookie, or a
          *     sign-count regression (possible cloned authenticator; refused
          *     and logged) — returns the same generic 400 so a caller cannot
          *     probe which credentials exist.
@@ -10519,6 +10530,20 @@ export interface paths {
                         "application/problem+json": components["schemas"]["Problem"];
                     };
                 };
+                /**
+                 * @description The single-use challenge store could not be reached, so
+                 *     the ceremony's freshness could not be established. The
+                 *     sign-in is refused rather than granted on trust; email-code
+                 *     sign-in is unaffected.
+                 */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
                 503: components["responses"]["ServiceUnavailable"];
             };
         };
@@ -10542,12 +10567,17 @@ export interface paths {
          * @description Session-gated. Returns the WebAuthn credential-creation
          *     options for `navigator.credentials.create()` — resident
          *     (discoverable) key required, so the resulting passkey can
-         *     later sign in usernameless. Already-registered credentials
-         *     are excluded so an authenticator refuses to double-register.
+         *     later sign in usernameless, and `userVerification: required`,
+         *     since that credential is a passwordless first factor and must
+         *     carry a biometric/PIN of its own. An authenticator that
+         *     cannot verify the user (a PIN-less security key) therefore
+         *     cannot be enrolled. Already-registered credentials are
+         *     excluded so an authenticator refuses to double-register.
          *
          *     Sets the same signed ceremony cookie the login pair uses
          *     (purpose-bound: a registration challenge cannot finish a
-         *     login, nor vice versa).
+         *     login, nor vice versa), with the same server-enforced
+         *     5-minute, single-use challenge.
          */
         post: {
             parameters: {
@@ -10592,8 +10622,13 @@ export interface paths {
          * Customer dashboard — finish adding a passkey; stores the credential.
          * @description Session-gated. Verifies the attestation response against the
          *     ceremony cookie's challenge (which must have been minted for
-         *     THIS user) and stores the credential's public key. The
+         *     THIS user, be within its 5-minute lifetime, and not already
+         *     have been used) and stores the credential's public key. The
          *     private key never leaves the user's authenticator.
+         *
+         *     A label longer than 100 characters is truncated to 100
+         *     characters (not bytes — multi-byte names keep their full
+         *     character budget).
          */
         post: {
             parameters: {
@@ -10651,6 +10686,19 @@ export interface paths {
                 401: components["responses"]["Unauthorized"];
                 /** @description This credential is already registered. */
                 409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /**
+                 * @description The single-use challenge store could not be reached, so
+                 *     the ceremony's freshness could not be established; the
+                 *     credential is not stored.
+                 */
+                500: {
                     headers: {
                         [name: string]: unknown;
                     };

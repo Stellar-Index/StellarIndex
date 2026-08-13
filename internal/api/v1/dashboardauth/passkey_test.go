@@ -228,7 +228,8 @@ func TestPasskeyBeginRegister_RequiresSessionAndExcludesExisting(t *testing.T) {
 				ID string `json:"id"`
 			} `json:"excludeCredentials"`
 			AuthenticatorSelection struct {
-				ResidentKey string `json:"residentKey"`
+				ResidentKey      string `json:"residentKey"`
+				UserVerification string `json:"userVerification"`
 			} `json:"authenticatorSelection"`
 		} `json:"publicKey"`
 	}
@@ -247,6 +248,15 @@ func TestPasskeyBeginRegister_RequiresSessionAndExcludesExisting(t *testing.T) {
 	}
 	if opts.PublicKey.AuthenticatorSelection.ResidentKey != "required" {
 		t.Fatalf("residentKey = %q, want required (discoverable login depends on it)", opts.PublicKey.AuthenticatorSelection.ResidentKey)
+	}
+	// BOTH fields, because they are set by two options that write the
+	// same struct: WithAuthenticatorSelection replaces it wholesale and
+	// WithResidentKeyRequirement patches two of its fields, so getting
+	// the order wrong silently drops one of these. The credential
+	// registered here is a passwordless first factor — without UV it is
+	// possession-only. audit-2026-08-13.
+	if opts.PublicKey.AuthenticatorSelection.UserVerification != "required" {
+		t.Fatalf("userVerification = %q, want required", opts.PublicKey.AuthenticatorSelection.UserVerification)
 	}
 	if ceremonyCookie(t, w) == nil {
 		t.Fatal("no ceremony cookie set")
