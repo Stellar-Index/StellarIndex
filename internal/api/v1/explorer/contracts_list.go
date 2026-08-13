@@ -182,11 +182,13 @@ func (h *Handler) ContractInteractions(w http.ResponseWriter, r *http.Request) {
 	}
 	v, asOf, degraded, err := h.contractDetailCached(ctx, fmt.Sprintf("ix:%s:%d", cid, days), func(rctx context.Context) (any, error) {
 		s := h.windowFloorLedger(rctx, days)
-		full, cerr := h.Reader.ContractInteractions(rctx, cid, 200, s)
+		// The reader may narrow the window to the contract's own recent
+		// activity; serve the floor it actually used.
+		full, effective, cerr := h.Reader.ContractInteractions(rctx, cid, 200, s)
 		if cerr != nil {
 			return nil, cerr
 		}
-		return interactionsPayload{edges: full, since: s}, nil
+		return interactionsPayload{edges: full, since: effective}, nil
 	})
 	var (
 		edges []clickhouse.ContractEdgeRow

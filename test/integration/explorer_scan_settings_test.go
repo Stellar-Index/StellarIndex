@@ -213,7 +213,7 @@ func TestExplorerScanQueries_ExecuteAgainstServer(t *testing.T) {
 			return err
 		},
 		"ContractInteractions": func() error {
-			_, err := r.ContractInteractions(ctx, contract, 5, 0)
+			_, _, err := r.ContractInteractions(ctx, contract, 5, 0)
 			return err
 		},
 		"ContractCodeHistory": func() error {

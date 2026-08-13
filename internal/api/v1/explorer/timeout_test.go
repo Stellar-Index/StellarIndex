@@ -145,9 +145,9 @@ func (r *capReader) RecentContracts(ctx context.Context, _ int, _ uint32) ([]cli
 	return nil, nil
 }
 
-func (r *capReader) ContractInteractions(ctx context.Context, _ string, _ int, _ uint32) ([]clickhouse.ContractEdgeRow, error) {
+func (r *capReader) ContractInteractions(ctx context.Context, _ string, _ int, since uint32) ([]clickhouse.ContractEdgeRow, uint32, error) {
 	r.probe.record(ctx)
-	return nil, nil
+	return nil, since, nil
 }
 
 func (r *capReader) ContractCodeHistory(ctx context.Context, _ string) ([]clickhouse.ContractCodeVersion, error) {

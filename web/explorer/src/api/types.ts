@@ -11845,11 +11845,21 @@ export interface paths {
          *     caller's transaction. Each edge is tagged with the other contract's
          *     owning `protocol` where known. Powers the contract page's interaction
          *     graph.
+         *
+         *     `days` is an UPPER bound, not the window actually used. For a busy
+         *     contract the window is narrowed to its own most recent activity so
+         *     the read stays sub-second, which lowers the `shared_txs` counts
+         *     while preserving the ranking. Always read `since_ledger` for the
+         *     window actually served — it describes the real floor, which may be
+         *     newer than `days` implies. The result is additionally computed over
+         *     at most the contract's 50,000 most recent transactions in that
+         *     window, so this endpoint reports a recent SAMPLE of behaviour
+         *     rather than a lifetime total.
          */
         get: {
             parameters: {
                 query?: {
-                    /** @description Window size in days. */
+                    /** @description Upper bound on window size in days. The served window may be narrower for busy contracts — read since_ledger. */
                     days?: number;
                     /** @description Maximum rows to return (1-200, default 50). Out-of-range values return 400. */
                     limit?: number;

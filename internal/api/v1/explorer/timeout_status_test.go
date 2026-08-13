@@ -74,8 +74,8 @@ func (r *timeoutReader) RecentContracts(context.Context, int, uint32) ([]clickho
 	return nil, context.DeadlineExceeded
 }
 
-func (r *timeoutReader) ContractInteractions(context.Context, string, int, uint32) ([]clickhouse.ContractEdgeRow, error) {
-	return nil, context.DeadlineExceeded
+func (r *timeoutReader) ContractInteractions(context.Context, string, int, uint32) ([]clickhouse.ContractEdgeRow, uint32, error) {
+	return nil, 0, context.DeadlineExceeded
 }
 
 func (r *timeoutReader) ContractCodeHistory(context.Context, string) ([]clickhouse.ContractCodeVersion, error) {

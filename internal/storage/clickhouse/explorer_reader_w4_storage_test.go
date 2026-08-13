@@ -284,3 +284,68 @@ func TestSACAssetFromEvents_NoActiveLedgersSkipsScan(t *testing.T) {
 		t.Fatalf("got (%q, %v), want the empty authoritative answer", name, found)
 	}
 }
+
+// TestContractInteractions_BusyContractWindowNarrows — both halves of
+// the interactions read scale with the ledger SPAN they cover, so over
+// the default 90 days a busy contract cost 3-6s and was the slowest
+// panel left on the contract page. The window is anchored to the
+// contract's own recent activity instead, and the EFFECTIVE floor must
+// be returned so the response's since_ledger describes what was
+// actually served rather than what was asked for.
+func TestContractInteractions_BusyContractWindowNarrows(t *testing.T) {
+	const window = 500
+	conn := &stubConn{}
+	conn.respond = func(q string) (driver.Rows, error) {
+		if strings.Contains(q, "contract_active_ledgers") {
+			if strings.Contains(q, "WHERE contract_id") {
+				// Exactly the cap = busy: newest first, oldest last.
+				data := make([][]any, window)
+				for i := range data {
+					data[i] = []any{uint32(9000 - i)}
+				}
+				return &stubRows{data: data}, nil
+			}
+			return &stubRows{data: [][]any{{uint32(1)}}}, nil
+		}
+		return &stubRows{data: [][]any{}}, nil
+	}
+	r := &ExplorerReader{conn: conn}
+
+	_, effective, err := r.ContractInteractions(context.Background(), "CTESTCONTRACT", 50, 100)
+	if err != nil {
+		t.Fatalf("ContractInteractions: %v", err)
+	}
+	if want := uint32(9000 - (window - 1)); effective != want {
+		t.Fatalf("effective floor = %d, want %d (the oldest of the contract's most recent %d active ledgers)",
+			effective, want, window)
+	}
+	if effective <= 100 {
+		t.Fatal("effective floor did not narrow the requested window")
+	}
+}
+
+// TestContractInteractions_QuietContractKeepsFullWindow — most
+// contracts have fewer active ledgers than the cap. Narrowing THEIR
+// window would silently shrink the answer for no performance reason,
+// and the floor must never widen past what the caller asked for.
+func TestContractInteractions_QuietContractKeepsFullWindow(t *testing.T) {
+	conn := &stubConn{}
+	conn.respond = func(q string) (driver.Rows, error) {
+		if strings.Contains(q, "contract_active_ledgers") {
+			if strings.Contains(q, "WHERE contract_id") {
+				return &stubRows{data: [][]any{{uint32(9000)}, {uint32(8000)}}}, nil
+			}
+			return &stubRows{data: [][]any{{uint32(1)}}}, nil
+		}
+		return &stubRows{data: [][]any{}}, nil
+	}
+	r := &ExplorerReader{conn: conn}
+
+	_, effective, err := r.ContractInteractions(context.Background(), "CTESTCONTRACT", 50, 100)
+	if err != nil {
+		t.Fatalf("ContractInteractions: %v", err)
+	}
+	if effective != 100 {
+		t.Fatalf("effective floor = %d, want the requested 100 kept intact for a quiet contract", effective)
+	}
+}

@@ -17191,7 +17191,7 @@
                   "request": {
                     "name": "Contract interaction map — co-occurring contracts (cross-contract calls).",
                     "description": {
-                      "content": "The contracts that emitted events in the same transactions as this one,\nranked by shared-transaction count over a recent window (`?days=`,\ndefault 90, max 365). Co-occurrence within a transaction is a strong\nproxy for a cross-contract call: a Soroban invoke nests its sub-calls\ninside one `InvokeHostFunction` op, so the callee's events land in the\ncaller's transaction. Each edge is tagged with the other contract's\nowning `protocol` where known. Powers the contract page's interaction\ngraph.\n",
+                      "content": "The contracts that emitted events in the same transactions as this one,\nranked by shared-transaction count over a recent window (`?days=`,\ndefault 90, max 365). Co-occurrence within a transaction is a strong\nproxy for a cross-contract call: a Soroban invoke nests its sub-calls\ninside one `InvokeHostFunction` op, so the callee's events land in the\ncaller's transaction. Each edge is tagged with the other contract's\nowning `protocol` where known. Powers the contract page's interaction\ngraph.\n\n`days` is an UPPER bound, not the window actually used. For a busy\ncontract the window is narrowed to its own most recent activity so\nthe read stays sub-second, which lowers the `shared_txs` counts\nwhile preserving the ranking. Always read `since_ledger` for the\nwindow actually served — it describes the real floor, which may be\nnewer than `days` implies. The result is additionally computed over\nat most the contract's 50,000 most recent transactions in that\nwindow, so this endpoint reports a recent SAMPLE of behaviour\nrather than a lifetime total.\n",
                       "type": "text/plain"
                     },
                     "url": {
@@ -17207,7 +17207,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "Window size in days.",
+                            "content": "Upper bound on window size in days. The served window may be narrower for busy contracts — read since_ledger.",
                             "type": "text/plain"
                           },
                           "key": "days",
@@ -17263,7 +17263,7 @@
                             {
                               "disabled": false,
                               "description": {
-                                "content": "Window size in days.",
+                                "content": "Upper bound on window size in days. The served window may be narrower for busy contracts — read since_ledger.",
                                 "type": "text/plain"
                               },
                               "key": "days",
@@ -17329,7 +17329,7 @@
                             {
                               "disabled": false,
                               "description": {
-                                "content": "Window size in days.",
+                                "content": "Upper bound on window size in days. The served window may be narrower for busy contracts — read since_ledger.",
                                 "type": "text/plain"
                               },
                               "key": "days",
@@ -17395,7 +17395,7 @@
                             {
                               "disabled": false,
                               "description": {
-                                "content": "Window size in days.",
+                                "content": "Upper bound on window size in days. The served window may be narrower for busy contracts — read since_ledger.",
                                 "type": "text/plain"
                               },
                               "key": "days",

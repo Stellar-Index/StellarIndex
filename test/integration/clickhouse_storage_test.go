@@ -853,7 +853,7 @@ func TestClickHouseContractDirectoryDedupsDuplicateEvents(t *testing.T) {
 	}
 
 	// ─── ContractInteractions: shared_txs must count TRANSACTIONS ────────
-	edges, err := er.ContractInteractions(ctx, subject, 200, baseLedger)
+	edges, _, err := er.ContractInteractions(ctx, subject, 200, baseLedger)
 	if err != nil {
 		t.Fatalf("ContractInteractions: %v", err)
 	}

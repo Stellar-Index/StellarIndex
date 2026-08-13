@@ -153,7 +153,12 @@ type ExplorerReader interface {
 	ContractEventsRecent(ctx context.Context, contractID string, limit int, cur clickhouse.ContractEventsCursor) ([]clickhouse.ContractActivityRow, error)
 	ContractWasm(ctx context.Context, contractID string) (clickhouse.ContractWasmInfo, error)
 	RecentContracts(ctx context.Context, limit int, sinceLedger uint32) ([]clickhouse.ContractDirectoryRow, error)
-	ContractInteractions(ctx context.Context, contractID string, limit int, sinceLedger uint32) ([]clickhouse.ContractEdgeRow, error)
+	// ContractInteractions returns the edges plus the EFFECTIVE window
+	// floor, which may be newer than the requested sinceLedger: a busy
+	// contract's window is narrowed to its own recent activity so the
+	// read stays sub-second. Callers must serve the returned floor as
+	// since_ledger, not the one they asked for.
+	ContractInteractions(ctx context.Context, contractID string, limit int, sinceLedger uint32) ([]clickhouse.ContractEdgeRow, uint32, error)
 	ContractCodeHistory(ctx context.Context, contractID string) ([]clickhouse.ContractCodeVersion, error)
 	AccountTransactions(ctx context.Context, account string, limit int, cur clickhouse.ExplorerCursor) ([]clickhouse.TxSummary, error)
 	AccountOperations(ctx context.Context, account string, limit int, cur clickhouse.ExplorerCursor) ([]clickhouse.OpRow, error)
