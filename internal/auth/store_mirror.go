@@ -32,6 +32,15 @@ type MirroredKey struct {
 	Label      string
 	// RateLimitPerMin: zero means the tier default.
 	RateLimitPerMin int
+	// MonthlyQuota is the per-key monthly request cap. MUST be set
+	// explicitly: the quota middleware treats <= 0 as "unmetered" and
+	// short-circuits (middleware/monthly_quota.go), so omitting this
+	// silently ships an UNLIMITED key — the register endpoint's
+	// response and the public docs both advertise a cap, and the
+	// mirrored record is what the deployed validator actually reads.
+	// (Audit 2026-08-13 F1: this field did not exist, and every
+	// registered key was unmetered in production.)
+	MonthlyQuota int64
 }
 
 // CreateWithSecret writes an already-minted credential into the Redis
@@ -55,6 +64,7 @@ func (s *RedisAPIKeyStore) CreateWithSecret(ctx context.Context, k MirroredKey) 
 		KeyPrefix:       keyPrefix(k.Plaintext),
 		Tier:            TierAPIKey,
 		RateLimitPerMin: k.RateLimitPerMin,
+		MonthlyQuota:    k.MonthlyQuota,
 		CreatedAt:       s.now().UTC(),
 		PermissionsAll:  true,
 	}

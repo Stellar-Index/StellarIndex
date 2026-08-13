@@ -304,7 +304,7 @@ func TestRegister_EmptyBody(t *testing.T) {
 	keys := newFakeRegisterKeyStore()
 	ts := newRegisterTestServer(t, accounts, keys, nil)
 
-	resp := postRegister(t, ts.URL, "", "")
+	resp := postRegister(t, ts.URL, "application/json", "")
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status = %d, want 200; body=%s", resp.StatusCode, body)
@@ -506,5 +506,27 @@ func TestRegister_MirrorFailureIsNotA200(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusOK {
 		t.Fatal("register returned 200 though the credential never reached the validator store")
+	}
+}
+
+// TestRegister_RequiresContentType is the audit-2026-08-13 F4
+// regression: a header-less POST is a CORS *simple* request, so
+// `fetch(url, {method:"POST", mode:"no-cors"})` on any page created an
+// account + a permanent credential per visitor and burned a token from
+// the per-IP throttle this endpoint shares with /v1/signup — the exact
+// cross-site vector the Content-Type gate exists to close, left open by
+// only validating the header when present.
+func TestRegister_RequiresContentType(t *testing.T) {
+	accounts := newFakeRegisterAccountStore()
+	keys := newFakeRegisterKeyStore()
+	ts := newRegisterTestServer(t, accounts, keys, &fakeRegisterIPThrottle{})
+
+	resp := postRegister(t, ts.URL, "", "")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		t.Fatalf("header-less POST status = %d, want 415 — this is the cross-site vector", resp.StatusCode)
+	}
+	if n := len(accounts.created); n != 0 {
+		t.Errorf("refused request still created %d account(s)", n)
 	}
 }
