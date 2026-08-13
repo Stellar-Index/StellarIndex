@@ -107,6 +107,31 @@ func (c *contractDetailCache) put(key string, v any) {
 	c.entries[key] = contractDetailEntry{v: v, cachedAt: time.Now()}
 }
 
+// detachedClassForKey maps a cache key to its refresh-gate CLASS, using
+// the key's kind prefix ("ev:", "ix:", "ch:", "act:").
+//
+// Every caller of contractDetailCached previously shared the single
+// class "contract_detail", capped at half the global limit. The
+// per-class cap exists to stop one class starving the OTHERS — but with
+// four panels behind one class it made a contract page starve ITSELF: a
+// page fires detail + interactions + code-history concurrently, so on a
+// cold contract three-to-four refreshes contend for two class slots and
+// the losers 503. Measured 2026-08-13: 20 of 20 cold random contract
+// pages served at least one failed panel, and it was NOT crawl
+// pressure — the same rate held with seconds of think time between
+// pages.
+//
+// Keying the class per panel restores the cap's actual intent: one
+// panel's burst still cannot monopolise the gate, but a single page's
+// own fan-out no longer competes with itself for one panel's budget.
+func detachedClassForKey(key string) string {
+	prefix, _, ok := strings.Cut(key, ":")
+	if !ok || prefix == "" {
+		return "contract_detail"
+	}
+	return "contract_detail_" + prefix
+}
+
 // refreshContractDetail kicks ONE detached compute for key (no-op while a
 // flight is up) and returns the flight to optionally wait on. Detached for
 // the same reason as every sibling: bound to a request deadline, the scan
@@ -120,12 +145,13 @@ func (h *Handler) refreshContractDetail(key string, compute func(context.Context
 	// (any shape-valid C-address is a distinct cold key); on saturation
 	// skip, don't queue (see detachedGate).
 	gate := h.detachedGate()
-	if !gate.TryAcquireClass("contract_detail") {
+	class := detachedClassForKey(key)
+	if !gate.TryAcquireClass(class) {
 		h.contractDetail.flight.end(key, fl, errRefreshSaturated)
 		return fl
 	}
 	go func() {
-		defer gate.ReleaseClass("contract_detail")
+		defer gate.ReleaseClass(class)
 		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), contractDetailRefreshTimeout)
 		defer cancel()

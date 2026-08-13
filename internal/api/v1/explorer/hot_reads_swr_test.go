@@ -399,3 +399,44 @@ func TestContractDetailCached_ColdFailurePropagates(t *testing.T) {
 		t.Fatal("cold-path compute failure must propagate")
 	}
 }
+
+// TestDetachedClassForKey_PanelsDoNotShareOneBudget — the contract page
+// fans out to several panels at once, and they must not compete for a
+// single refresh-gate class. When they did, the per-class cap (half the
+// global limit) refused the losers and 20 of 20 cold random contract
+// pages served at least one 503 panel (2026-08-13).
+func TestDetachedClassForKey_PanelsDoNotShareOneBudget(t *testing.T) {
+	// The four kinds a contract page + account activity actually use.
+	keys := map[string]string{
+		"events":       "ev:CTEST",
+		"interactions": "ix:CTEST:30",
+		"code-history": "ch:CTEST",
+		"activity":     "act:GTEST",
+	}
+	seen := map[string]string{}
+	for panel, key := range keys {
+		class := detachedClassForKey(key)
+		if other, dup := seen[class]; dup {
+			t.Errorf("panels %q and %q share refresh-gate class %q — a single page "+
+				"would starve itself for that class's budget", other, panel, class)
+		}
+		seen[class] = panel
+	}
+	// A key with no kind prefix must still land somewhere valid rather
+	// than producing an empty class name.
+	if got := detachedClassForKey("nokindprefix"); got != "contract_detail" {
+		t.Errorf("detachedClassForKey(unprefixed) = %q, want the shared default", got)
+	}
+}
+
+// TestDefaultDetachedRefreshLimit_FitsOnePage — the gate's global bound
+// must be at least as wide as one page's fan-out, or a single visitor
+// cannot fill a cold page no matter how the classes are split.
+func TestDefaultDetachedRefreshLimit_FitsOnePage(t *testing.T) {
+	const contractPagePanels = 5
+	if clickhouse.DefaultDetachedRefreshLimit < contractPagePanels {
+		t.Fatalf("DefaultDetachedRefreshLimit = %d, but one contract page fans out to %d "+
+			"concurrent reads — a cold page cannot fill itself",
+			clickhouse.DefaultDetachedRefreshLimit, contractPagePanels)
+	}
+}
