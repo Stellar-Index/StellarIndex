@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.33.0] — 2026-08-13
+
 ### Security
 - **Registered API keys were completely unmetered in production**
   (audit 2026-08-13 F1): `MirroredKey` carried no monthly quota, so the
