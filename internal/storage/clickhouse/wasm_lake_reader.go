@@ -618,10 +618,55 @@ func sacNameFromInstanceEntry(b64 string) (string, bool) {
 // — the topic is attacker-influenceable on non-SAC contracts, the
 // derivation is not.
 func (r *ExplorerReader) SACAssetFromEvents(ctx context.Context, contractID string) (string, bool, error) {
+	// Bound the scan by the contract's own active ledgers (sub-second
+	// audit 2026-08-13). Unbounded, this is the quiet-contract reverse
+	// read-in-order trap that contract_active_ledgers exists to fix:
+	// `contract_id = ? ORDER BY ledger_seq DESC LIMIT 1` walks the whole
+	// key range backwards for a contract with few events, and this
+	// query sits on the /wasm 404 path — so a contract with NO wasm
+	// spent ~3s (8s under concurrency, i.e. the request deadline)
+	// producing a nicer error message. 23 of 25 cold random contract
+	// pages breached the 1s budget on this one call.
+	if r.contractLedgersIndexAvailable(ctx) {
+		// Probe the most recent few active ledgers rather than just the
+		// latest: a SAC emits CAP-67 transfer/mint/burn (3-4 topics) on
+		// essentially every ledger it appears in, but its newest ledger
+		// could carry only a shorter-topic event, and answering "not a
+		// SAC" off that single sample would be wrong.
+		const probeLedgers = 8
+		ledgers, lerr := r.contractActiveLedgers(ctx, contractID, 0, probeLedgers)
+		if lerr == nil {
+			if len(ledgers) == 0 {
+				// Authoritative: the index covers every contract with
+				// events, so no active ledgers means nothing to inspect.
+				return "", false, nil
+			}
+			const boundedQ = `SELECT topics_xdr[length(topics_xdr)] FROM stellar.contract_events
+		WHERE contract_id = ? AND ledger_seq IN (?) AND length(topics_xdr) >= 3
+		ORDER BY ledger_seq DESC LIMIT 1`
+			// A miss here is an ANSWER, not a reason to fall back: the
+			// unbounded scan is the very cost this path exists to avoid,
+			// and non-SACs (the common case) would pay it every time.
+			if name, ok, qerr := r.sacAssetFromEventsQuery(ctx, boundedQ, contractID, ledgers); qerr == nil {
+				return name, ok, nil
+			}
+			// Only a query ERROR falls through to the unbounded form,
+			// so a broken index degrades to slow rather than to wrong.
+		}
+	}
 	const q = `SELECT topics_xdr[length(topics_xdr)] FROM stellar.contract_events
 		WHERE contract_id = ? AND length(topics_xdr) >= 3
 		ORDER BY ledger_seq DESC LIMIT 1`
-	rows, err := r.conn.Query(ctx, q, contractID)
+	return r.sacAssetFromEventsQuery(ctx, q, contractID)
+}
+
+// sacAssetFromEventsQuery runs one SAC-name probe and decodes its
+// result. Shared by the ledger-bounded fast path and the unbounded
+// fallback so both decode identically; extra args (e.g. the bounding
+// ledger) bind after contractID in the order the query declares them.
+func (r *ExplorerReader) sacAssetFromEventsQuery(ctx context.Context, q, contractID string, extra ...any) (string, bool, error) {
+	args := append([]any{contractID}, extra...)
+	rows, err := r.conn.Query(ctx, q, args...)
 	if err != nil {
 		return "", false, fmt.Errorf("clickhouse: SACAssetFromEvents: %w", err)
 	}

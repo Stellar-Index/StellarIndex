@@ -36,6 +36,24 @@ against.
   required; docs and examples send it.
 
 ### Fixed
+- **A contract page took ~8s to finish loading because the WASM panel
+  paid an unbounded lake scan to produce a nicer 404.** When a
+  contract has no captured instance — the common case — `/wasm` asked
+  "is this a SAC?" via `contract_id = ? ORDER BY ledger_seq DESC LIMIT
+  1` over `contract_events`, the quiet-contract reverse-scan trap that
+  `contract_active_ledgers` exists to prevent. That cost ~0.34s idle,
+  but the contract page fires five reads at once and the other four
+  return via stale-while-revalidate while spawning background
+  refreshes, so the inline WASM read was starved to its full 8s
+  request deadline. 23 of 25 cold random contract pages breached the
+  1s budget on this single call, and it also starved sibling panels
+  into intermittent 503s. The probe is now bounded to the contract's
+  own recent active ledgers (0.008s measured on r1, ~40x), and an
+  empty active-ledger walk answers authoritatively without touching
+  `contract_events` at all. New `scripts/ops/contract-page-audit.py`
+  measures the whole page the way a browser loads it — concurrently,
+  scored on the SLOWEST panel — because the per-endpoint harness
+  reported every one of these reads as passing.
 - **SECURITY (live surface): a captured passkey sign-in was an
   unlimited, never-expiring session mint.** `POST
   /v1/auth/passkey/finish-login` accepted a replay of the same

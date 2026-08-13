@@ -225,3 +225,62 @@ func TestEventsByTx_UsesFinal(t *testing.T) {
 		t.Fatalf("query = %q, want `FROM stellar.contract_events FINAL`", q)
 	}
 }
+
+// TestSACAssetFromEvents_ActiveLedgerBound — the /wasm 404 path asks
+// "is this contract a SAC?" for every contract with no captured
+// instance, i.e. the COMMON case. Unbounded, that probe is the
+// quiet-contract reverse-scan trap: `contract_id = ? ORDER BY
+// ledger_seq DESC LIMIT 1` walks the whole key range backwards, cost
+// ~0.34s idle and 8s (the request deadline) under a page's own
+// concurrency — 23 of 25 cold random contract pages breached the 1s
+// budget on this single call (sub-second audit 2026-08-13). With the
+// index present the read MUST be bounded to the contract's own recent
+// active ledgers.
+func TestSACAssetFromEvents_ActiveLedgerBound(t *testing.T) {
+	conn := &stubConn{}
+	conn.respond = func(q string) (driver.Rows, error) {
+		if strings.Contains(q, "contract_active_ledgers") {
+			if strings.Contains(q, "WHERE contract_id") {
+				return &stubRows{data: [][]any{{uint32(100)}, {uint32(99)}}}, nil
+			}
+			return &stubRows{data: [][]any{{uint32(1)}}}, nil // probe: index present
+		}
+		if !strings.Contains(q, "ledger_seq IN (?)") {
+			t.Errorf("SAC events probe lost its ledger bound: %s", q)
+		}
+		return &stubRows{data: [][]any{}}, nil
+	}
+	r := &ExplorerReader{conn: conn}
+
+	if _, _, err := r.SACAssetFromEvents(context.Background(), "CTESTCONTRACT"); err != nil {
+		t.Fatalf("SACAssetFromEvents: %v", err)
+	}
+}
+
+// TestSACAssetFromEvents_NoActiveLedgersSkipsScan — a contract the
+// index knows has NO active ledgers has no events to inspect, so the
+// answer is authoritative and the events table must not be touched at
+// all. Falling back to the unbounded scan here would reintroduce the
+// full cost on exactly the contracts that are cheapest to answer.
+func TestSACAssetFromEvents_NoActiveLedgersSkipsScan(t *testing.T) {
+	conn := &stubConn{}
+	conn.respond = func(q string) (driver.Rows, error) {
+		if strings.Contains(q, "contract_active_ledgers") {
+			if strings.Contains(q, "WHERE contract_id") {
+				return &stubRows{data: [][]any{}}, nil // no active ledgers
+			}
+			return &stubRows{data: [][]any{{uint32(1)}}}, nil // probe: index present
+		}
+		t.Errorf("queried contract_events despite an empty active-ledger walk: %s", q)
+		return &stubRows{data: [][]any{}}, nil
+	}
+	r := &ExplorerReader{conn: conn}
+
+	name, found, err := r.SACAssetFromEvents(context.Background(), "CTESTCONTRACT")
+	if err != nil {
+		t.Fatalf("SACAssetFromEvents: %v", err)
+	}
+	if found || name != "" {
+		t.Fatalf("got (%q, %v), want the empty authoritative answer", name, found)
+	}
+}
