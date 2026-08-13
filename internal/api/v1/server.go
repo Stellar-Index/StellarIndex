@@ -135,6 +135,12 @@ type Server struct {
 	protoDetailMu     sync.Mutex
 	protoDetailCache  map[string]protoDetailEntry
 	protoDetailFlight map[string]chan struct{}
+	// Last-good cache for the bespoke analytics block INSIDE that detail
+	// view. The block is built last, so it used to inherit whatever was
+	// left of the rebuild's budget and got dropped from the page when
+	// that ran out (§2.6b). Zero value ready — see
+	// protocol_bespoke_cache.go.
+	protocolBespokeCache bespokeCache
 	// Per-server TTL + single-flight cache for the broad-coverage
 	// classic circulating-supply map (one ~0.5s ClickHouse GROUP BY over
 	// the trustline slice — see cachedClassicSupply). Backs market-cap

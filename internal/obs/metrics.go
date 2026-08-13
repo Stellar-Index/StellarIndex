@@ -381,7 +381,8 @@ func seedBoundedLabelSeriesTail() {
 		SDEXOrderBookMaintainTotal.WithLabelValues(outcome)
 	}
 	for _, cache := range []string{
-		"accounts_wealth", "asset_holders", "contract_detail", "contracts_dir", "op_type_stats", "ttl_liveness",
+		"accounts_wealth", "asset_holders", "contract_detail", "contracts_dir",
+		"network_throughput", "op_type_stats", "protocol_bespoke", "ttl_liveness",
 	} {
 		for _, outcome := range []string{"ok", "error"} {
 			ExplorerSWRRefreshTotal.WithLabelValues(cache, outcome)
@@ -3310,6 +3311,13 @@ var SDEXOrderBookUndecodableOffersTotal = prometheus.NewCounter(
 //   - `contract_detail` — the shared per-contract detail cache
 //     (recent events / interactions / code-history, route-sweep
 //     2026-07-30).
+//   - `network_throughput` — the /v1/network/throughput daily series
+//     (§2.6b, 2026-08-13).
+//   - `protocol_bespoke` — the last-good cache under the
+//     /v1/protocols/{name} bespoke analytics block (§2.6b,
+//     2026-08-13). Served-tier (Postgres), not lake, but the refresh
+//     contract is identical, so it shares this pair rather than
+//     minting a fourth near-duplicate metric.
 //
 // The SWR design makes refresh failures INVISIBLE at the API surface
 // by construction (stale-but-real keeps serving) — this counter is
@@ -3319,7 +3327,7 @@ var SDEXOrderBookUndecodableOffersTotal = prometheus.NewCounter(
 var ExplorerSWRRefreshTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_explorer_swr_refresh_total",
-		Help: "Explorer stale-while-revalidate detached refresh outcomes per cache (accounts_wealth|asset_holders|contract_detail|contracts_dir|op_type_stats|ttl_liveness × ok|error).",
+		Help: "Explorer stale-while-revalidate detached refresh outcomes per cache (accounts_wealth|asset_holders|contract_detail|contracts_dir|network_throughput|op_type_stats|protocol_bespoke|ttl_liveness × ok|error).",
 	},
 	[]string{"cache", "outcome"},
 )
@@ -3350,6 +3358,11 @@ var ExplorerSWRRefreshDurationSeconds = prometheus.NewHistogramVec(
 //
 //   - `ok`       — the view built fully: lake analytics + bespoke both
 //     healthy (analytics.status="ok" on the wire).
+//   - `stale`    — the view built COMPLETE, but its bespoke block came
+//     from the last-good cache past bespokeStaleAfter
+//     (analytics.status="stale" on the wire). Every panel is present;
+//     the bespoke numbers are older than the sweep cadence, which means
+//     that battery has been failing or starved for a while.
 //   - `degraded` — the build completed but at least one analytics
 //     component failed/was skipped (the served view carries
 //     analytics.status="unavailable"; the page still renders its
@@ -3365,7 +3378,7 @@ var ExplorerSWRRefreshDurationSeconds = prometheus.NewHistogramVec(
 var ProtocolDetailRefreshTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_protocol_detail_refresh_total",
-		Help: "Detached protocol-detail cache rebuild outcomes (ok|degraded|timeout), covering the prewarm sweep and request-kicked stale revalidations.",
+		Help: "Detached protocol-detail cache rebuild outcomes (ok|stale|degraded|timeout), covering the prewarm sweep and request-kicked stale revalidations.",
 	},
 	[]string{"outcome"},
 )
@@ -3382,7 +3395,7 @@ var ProtocolDetailRefreshTotal = prometheus.NewCounterVec(
 var ProtocolDetailRefreshDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name:    "stellarindex_protocol_detail_refresh_duration_seconds",
-		Help:    "Detached protocol-detail rebuild latency, labelled by outcome (ok|degraded|timeout).",
+		Help:    "Detached protocol-detail rebuild latency, labelled by outcome (ok|stale|degraded|timeout).",
 		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 90},
 	},
 	[]string{"outcome"},

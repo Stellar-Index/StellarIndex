@@ -1350,6 +1350,11 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// /v1/operations op-type panel had SWR + detached refresh but nothing
 	// warmed it at boot, so the first directory hit after every deploy
 	// rendered without it. Its 5-minute TTL matches this cadence exactly.
+	// PrewarmNetworkThroughput joins them (§2.6b, 2026-08-13): the
+	// /v1/network/throughput series is a FINAL scan over up to a year of
+	// ledgers that used to run inline on the 8s request budget, so a cold
+	// or loaded /network first load lost the panel entirely. Its cache
+	// also has a 5-minute TTL — this cadence keeps it permanently fresh.
 	go func() {
 		defer recoverBackgroundWorker(logger, "prewarm-supply-wealth")
 		const cadence = 5 * time.Minute
@@ -1357,6 +1362,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		apiSrv.PrewarmAccountsWealth(rootCtx)
 		apiSrv.PrewarmContractsDirectory(rootCtx)
 		apiSrv.PrewarmOpTypeStats(rootCtx)
+		apiSrv.PrewarmNetworkThroughput(rootCtx)
 		t := time.NewTicker(cadence)
 		defer t.Stop()
 		for {
@@ -1368,6 +1374,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 				apiSrv.PrewarmAccountsWealth(rootCtx)
 				apiSrv.PrewarmContractsDirectory(rootCtx)
 				apiSrv.PrewarmOpTypeStats(rootCtx)
+				apiSrv.PrewarmNetworkThroughput(rootCtx)
 			}
 		}
 	}()

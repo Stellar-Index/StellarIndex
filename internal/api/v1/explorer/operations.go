@@ -332,6 +332,13 @@ type ThroughputBucketV struct {
 // ledger / transaction / operation / Soroban-event counts over the
 // trailing `?window_days=` (default 30, max 365), ascending by day.
 // The time-series companion to the /v1/network/stats snapshot.
+//
+// Snapshot-served (§2.6b, 2026-08-13): the underlying year-window FINAL
+// scan runs DETACHED and prewarmed, and this handler only ever slices the
+// warm entry — fresh, or STALE with flags.stale + its real as_of while a
+// single-flight rescan runs. Only a never-computed process can time out
+// here, and its detached scan keeps running so the retry lands warm. See
+// network_throughput_cache.go.
 func (h *Handler) NetworkThroughput(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -342,13 +349,13 @@ func (h *Handler) NetworkThroughput(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	buckets, err := h.Reader.NetworkThroughput(ctx, windowDays)
+	buckets, asOf, degraded, err := h.networkThroughputCached(ctx, windowDays)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
 		}
 		if retryableColdMiss(ctx, err) {
-			h.Logger.Warn("explorer NetworkThroughput deadline exceeded", "window_days", windowDays)
+			h.Logger.Warn("explorer NetworkThroughput deadline/saturation on cold series", "window_days", windowDays, "err", err)
 			h.writeRetryable(w, r, err, "https://api.stellarindex.io/errors/network-throughput-timeout",
 				"Network throughput timed out")
 			return
@@ -358,6 +365,11 @@ func (h *Handler) NetworkThroughput(w http.ResponseWriter, r *http.Request) {
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
+	// `partial` is decided HERE, not read from the cached bucket: only a
+	// bucket covering today is still accumulating, and an entry computed
+	// before UTC midnight would otherwise keep flagging yesterday — by
+	// then a complete day — as partial.
+	today := time.Now().UTC().Truncate(24 * time.Hour)
 	out := NetworkThroughputView{WindowDays: windowDays, Buckets: make([]ThroughputBucketV, len(buckets))}
 	for i, b := range buckets {
 		out.Buckets[i] = ThroughputBucketV{
@@ -366,10 +378,10 @@ func (h *Handler) NetworkThroughput(w http.ResponseWriter, r *http.Request) {
 			FeePool:         strconv.FormatInt(b.FeePool, 10),
 			TotalCoins:      strconv.FormatInt(b.TotalCoins, 10),
 			ProtocolVersion: b.ProtocolVersion,
-			Partial:         b.Partial,
+			Partial:         !b.Day.UTC().Before(today),
 		}
 	}
-	h.WriteJSON(w, out, false)
+	h.writeJSONAt(w, out, degraded, asOf)
 }
 
 // operationsDirectory serves the no-ledger path: network-wide
