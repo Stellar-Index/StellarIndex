@@ -62,22 +62,37 @@ export async function generateStaticParams() {
 
 type Params = Promise<{ slug: string }>;
 
-// fetchExternalAsset reads GET /v1/external/assets/{slug} at build
-// time. Returns null on any non-2xx / network error / CI stub so the
-// page renders its not-found state (a Stellar asset 404s here — its
-// detail lives on /assets/{slug}).
-async function fetchExternalAsset(slug: string): Promise<GlobalAssetView | null> {
-  if (isCIStub) return null;
+/**
+ * The three outcomes of the build-time read, kept apart on purpose.
+ *
+ * Pre-fix all three collapsed into `null` and the page rendered "We
+ * don't track an external asset with the slug X" — a flat denial baked
+ * into the static export for a REAL asset whenever the API 5xx'd or the
+ * fetch timed out (generateStaticParams had already promised the slug
+ * exists). Only an authoritative 4xx may produce that claim.
+ */
+type ExternalAssetResult =
+  | { status: 'ok'; view: GlobalAssetView }
+  | { status: 'not-tracked' }
+  | { status: 'unavailable' };
+
+// fetchExternalAsset reads GET /v1/external/assets/{slug} at build time.
+async function fetchExternalAsset(slug: string): Promise<ExternalAssetResult> {
+  if (isCIStub) return { status: 'unavailable' };
   try {
     const res = await fetch(
       `${API_BASE_URL}/v1/external/assets/${encodeURIComponent(slug)}`,
       { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
     );
-    if (!res.ok) return null;
+    // 4xx is the API answering authoritatively that it doesn't track
+    // this slug; anything else (5xx, non-JSON, no `data`) is us failing
+    // to get an answer.
+    if (res.status >= 400 && res.status < 500) return { status: 'not-tracked' };
+    if (!res.ok) return { status: 'unavailable' };
     const env = (await res.json()) as { data?: GlobalAssetView };
-    return env.data ?? null;
+    return env.data ? { status: 'ok', view: env.data } : { status: 'unavailable' };
   } catch {
-    return null;
+    return { status: 'unavailable' };
   }
 }
 
@@ -87,7 +102,8 @@ export async function generateMetadata({
   params: Params;
 }): Promise<Metadata> {
   const { slug } = await params;
-  const view = await fetchExternalAsset(slug);
+  const res = await fetchExternalAsset(slug);
+  const view = res.status === 'ok' ? res.view : null;
   const name = view?.name ?? view?.ticker ?? slug;
   const canonical = `https://stellarindex.io/external/assets/${view?.slug ?? slug}`;
   const description = `${name} is a non-Stellar reference asset tracked by Stellar Index for pricing (it isn't issued on Stellar). Live USD price and source authority.`;
@@ -118,9 +134,9 @@ export default async function ExternalAssetDetailPage({
   params: Params;
 }) {
   const { slug } = await params;
-  const view = await fetchExternalAsset(slug);
+  const result = await fetchExternalAsset(slug);
 
-  if (!view) {
+  if (result.status !== 'ok') {
     return (
       <Container className="space-y-8 py-8 sm:py-10">
         <header className="space-y-3">
@@ -133,28 +149,49 @@ export default async function ExternalAssetDetailPage({
           />
           <h1 className="text-h1 font-semibold text-ink">{slug}</h1>
         </header>
-        <Callout tone="warn" title="External asset not found">
-          <p>
-            We don&apos;t track an external (non-Stellar) asset with the slug{' '}
-            <code className="font-mono">{slug}</code>. If this is a
-            Stellar-issued asset, its detail lives on{' '}
-            <Link href="/assets" className="font-medium underline">
-              /assets
-            </Link>
-            .
-          </p>
-          <p className="mt-2">
-            <Link
-              href="/external/assets"
-              className="font-medium text-brand-600 hover:text-brand-700"
-            >
-              ← External assets
-            </Link>
-          </p>
-        </Callout>
+        {result.status === 'not-tracked' ? (
+          <Callout tone="warn" title="External asset not found">
+            <p>
+              We don&apos;t track an external (non-Stellar) asset with the slug{' '}
+              <code className="font-mono">{slug}</code>. If this is a
+              Stellar-issued asset, its detail lives on{' '}
+              <Link href="/assets" className="font-medium underline">
+                /assets
+              </Link>
+              .
+            </p>
+            <p className="mt-2">
+              <Link
+                href="/external/assets"
+                className="font-medium text-brand-600 hover:text-brand-700"
+              >
+                ← External assets
+              </Link>
+            </p>
+          </Callout>
+        ) : (
+          <Callout tone="info" title="Asset detail unavailable">
+            <p>
+              We couldn&apos;t read{' '}
+              <code className="font-mono">{slug}</code> when this page was
+              built — that means unknown, not untracked. It refreshes on the
+              next build.
+            </p>
+            <p className="mt-2">
+              <Link
+                href="/external/assets"
+                className="font-medium text-brand-600 hover:text-brand-700"
+              >
+                ← External assets
+              </Link>
+            </p>
+          </Callout>
+        )}
       </Container>
     );
   }
+
+  const view = result.view;
 
   const priceNum = view.price_usd != null ? Number(view.price_usd) : null;
   const hasPrice =

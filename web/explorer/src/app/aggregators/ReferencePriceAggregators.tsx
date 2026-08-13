@@ -40,6 +40,9 @@ export function ReferencePriceAggregators() {
   });
 
   const rows = q.data ?? [];
+  // Absent (fetch failed) ≠ empty (none registered) — see the sweep note
+  // in src/components/NetworkInsight.tsx.
+  const registryAvailable = q.data != null;
 
   return (
     <Panel
@@ -66,7 +69,14 @@ export function ReferencePriceAggregators() {
                 </td>
               </tr>
             )}
-            {!q.isLoading && rows.length === 0 && (
+            {!q.isLoading && !registryAvailable && (
+              <tr>
+                <td colSpan={4} className="px-4 py-6 text-center text-sm text-ink-muted">
+                  Source registry unavailable right now — retry shortly.
+                </td>
+              </tr>
+            )}
+            {!q.isLoading && registryAvailable && rows.length === 0 && (
               <tr>
                 <td colSpan={4} className="px-4 py-6 text-center text-sm text-ink-muted">
                   No reference aggregators registered.

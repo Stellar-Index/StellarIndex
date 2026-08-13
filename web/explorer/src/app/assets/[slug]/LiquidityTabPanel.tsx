@@ -11,16 +11,26 @@ const isCIStub =
   API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
 const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
-async function fetchPoolsForAsset(assetID: string): Promise<PoolRow[]> {
-  if (isCIStub) return [];
+/**
+ * fetchPoolsForAsset returns the pool rows, or `null` when we could not
+ * read them at all (CI stub, non-2xx, timeout, transport error).
+ *
+ * The null is load-bearing: /v1/pools answers 503 on its documented
+ * trades-hypertable ceiling, and this panel's empty state asserts "no
+ * DEX pools observed touching {code} in the trailing 14 days" — a claim
+ * that would otherwise be BAKED INTO THE STATIC EXPORT off a transport
+ * blip (the incident class src/lib/buildFetch.ts's header documents).
+ */
+async function fetchPoolsForAsset(assetID: string): Promise<PoolRow[] | null> {
+  if (isCIStub) return null;
   try {
     const url = `${API_BASE_URL}/v1/pools?asset=${encodeURIComponent(assetID)}&limit=100&order_by=volume_24h_usd_desc`;
     const res = await fetch(url, { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) });
-    if (!res.ok) return [];
+    if (!res.ok) return null;
     const env = (await res.json()) as { data?: PoolRow[] };
     return env.data ?? [];
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -49,7 +59,7 @@ export async function LiquidityTabPanel({
   // the response would be the global top pools (every asset
   // detail page would render the same list). Drop this once every
   // region runs a release that includes the filter.
-  const merged = rows
+  const merged = (rows ?? [])
     .filter((p) => p.base === assetID || p.quote === assetID)
     .map((p) => ({ ...p, side: (p.base === assetID ? 'base' : 'quote') as 'base' | 'quote' }))
     .sort((a, b) => {
@@ -65,7 +75,13 @@ export async function LiquidityTabPanel({
       source={asExample('/v1/pools', { asset: assetID, limit: 100, order_by: 'volume_24h_usd_desc' })}
       bodyClassName="-mx-4"
     >
-      {merged.length === 0 ? (
+      {rows == null ? (
+        <p className="px-4 py-3 text-sm text-ink-muted">
+          Pool list unavailable for this build — the liquidity query
+          didn&apos;t answer, so {code}&apos;s DEX pools are unknown rather than
+          absent. It refreshes on the next build.
+        </p>
+      ) : merged.length === 0 ? (
         <p className="px-4 py-3 text-sm text-ink-muted">
           No DEX pools observed touching {code} in the trailing 14 days.
           Either the asset only trades on CEX feeds or the dispatcher

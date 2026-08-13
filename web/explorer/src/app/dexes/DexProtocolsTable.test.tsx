@@ -66,3 +66,39 @@ describe('DexProtocolsTable TVL column', () => {
     expect(phoenixRow?.textContent).toContain('—');
   });
 });
+
+// Frontend-honesty sweep: a failed /v1/sources fetch coalesced to `[]`
+// and fell into the empty state — "No DEX protocols reporting 24h
+// activity", i.e. the claim that Stellar has no active DEXes. Absent
+// must read as unavailable; a genuinely empty answer still reads as the
+// no-activity claim.
+describe('DexProtocolsTable availability', () => {
+  function renderTable() {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={client}>
+        <DexProtocolsTable />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('renders the unavailable state, not "no DEX protocols", when the fetch fails', async () => {
+    vi.mocked(apiGet).mockRejectedValue(new Error('HTTP 503'));
+    renderTable();
+    await waitFor(() =>
+      expect(screen.getByText(/Protocol list unavailable right now/)).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByText(/No DEX protocols reporting 24h activity/),
+    ).not.toBeInTheDocument();
+  });
+
+  it('renders the genuine empty state when the API answers with no rows', async () => {
+    vi.mocked(apiGet).mockResolvedValue({ data: [] });
+    renderTable();
+    await waitFor(() =>
+      expect(screen.getByText(/No DEX protocols reporting 24h activity/)).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/Protocol list unavailable/)).not.toBeInTheDocument();
+  });
+});

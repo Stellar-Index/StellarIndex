@@ -105,7 +105,22 @@ export function IssuerPanel({ gStrkey }: { gStrkey: string }) {
 }
 
 function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
-  const assets = issuer.assets ?? [];
+  // `assets` is soft-failed to nil server-side when the per-asset
+  // fan-out errors or blows its 8s deadline (internal/api/v1/issuers.go)
+  // — absent is "we couldn't read the list", not "nothing issued".
+  const assets = issuer.assets;
+  if (!assets) {
+    return (
+      <Panel
+        title="Issued assets"
+        source={asExample(`/v1/issuers/${issuer.g_strkey}`)}
+        bodyClassName="text-sm text-ink-muted"
+      >
+        Issued-asset list unavailable — the per-asset read didn&apos;t return,
+        so this is unknown rather than empty. Retry shortly.
+      </Panel>
+    );
+  }
   if (assets.length === 0) {
     return (
       <Panel
@@ -160,14 +175,20 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
                     {formatCompact(a.observation_count ?? 0)}
                   </span>
                 </Td>
+                {/* Ledger 0 does not exist (genesis is 1) — an absent
+                    first/last_seen_ledger is unknown, not "#0". */}
                 <Td align="right">
                   <span className="font-mono tabular-nums text-xs text-ink-muted">
-                    #{(a.first_seen_ledger ?? 0).toLocaleString('en-US')}
+                    {a.first_seen_ledger != null
+                      ? `#${a.first_seen_ledger.toLocaleString('en-US')}`
+                      : '—'}
                   </span>
                 </Td>
                 <Td align="right">
                   <span className="font-mono tabular-nums text-xs text-ink-muted">
-                    #{(a.last_seen_ledger ?? 0).toLocaleString('en-US')}
+                    {a.last_seen_ledger != null
+                      ? `#${a.last_seen_ledger.toLocaleString('en-US')}`
+                      : '—'}
                   </span>
                 </Td>
               </tr>

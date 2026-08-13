@@ -106,15 +106,19 @@ interface MarketRow {
   last_price?: string | null;
 }
 
-async function fetchSourceMarkets(name: string): Promise<MarketRow[]> {
+async function fetchSourceMarkets(name: string): Promise<MarketRow[] | null> {
   // /v1/markets accepts ?source=<name> filter (DistinctPairs scoped
   // to one venue). Sort by volume desc and cap at 25 — the page
   // wants a "top markets" preview, not the full enumeration. An empty
   // list is legitimate (quiet venue); transport failure throws.
-  const rows = await buildFetchData<MarketRow[]>(
+  //
+  // `null` (CI stub / authoritative 4xx) is NOT an empty list and is
+  // deliberately propagated: the panel below asserts "no markets
+  // observed for this source in the trailing 14 days", and that claim
+  // is only ours to bake when the API actually answered.
+  return buildFetchData<MarketRow[]>(
     `/v1/markets?source=${encodeURIComponent(name)}&order_by=volume_24h_usd_desc&limit=25`,
   );
-  return rows ?? [];
 }
 
 export default async function SourceDetailPage({
@@ -333,10 +337,16 @@ export default async function SourceDetailPage({
 
       <Panel
         title="Top markets via this source"
-        subtitle={`${topMarkets.length} pairs · ranked by 24h USD volume · /v1/markets?source=${name}`}
+        subtitle={`${topMarkets ? topMarkets.length : '—'} pairs · ranked by 24h USD volume · /v1/markets?source=${name}`}
         bodyClassName="-mx-4"
       >
-        {topMarkets.length === 0 ? (
+        {!topMarkets ? (
+          <p className="px-4 py-3 text-sm text-ink-muted">
+            Market list unavailable for this build — the pair query didn&apos;t
+            answer, so this is unknown rather than empty. It refreshes on the
+            next build.
+          </p>
+        ) : topMarkets.length === 0 ? (
           <p className="px-4 py-3 text-sm text-ink-muted">
             No markets observed for this source in the trailing 14 days. Either
             the venue isn&apos;t actively producing trades the indexer can decode,

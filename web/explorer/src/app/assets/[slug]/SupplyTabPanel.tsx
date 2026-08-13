@@ -199,7 +199,16 @@ function MarketCapChart({ assetID }: { assetID: string }) {
         Market-cap timeline
       </h4>
       {q.isLoading && <div className="h-[260px]" />}
-      {!q.isLoading && points.length < 2 && (
+      {/* A failed /v1/chart used to fall straight into the empty state
+          and assert "no market-cap history for this asset". Absent is
+          not empty. */}
+      {!q.isLoading && q.isError && (
+        <p className="text-sm text-ink-muted">
+          Market-cap history unavailable right now — the series query
+          didn&apos;t return. Retry shortly.
+        </p>
+      )}
+      {!q.isLoading && !q.isError && points.length < 2 && (
         <p className="text-sm text-ink-muted">
           No market-cap history for this asset — it needs both an on-chain
           circulating supply and a USD price track over time.

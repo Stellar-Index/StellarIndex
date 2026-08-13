@@ -124,7 +124,15 @@ export function IssuerPathView() {
                 <div className="text-[11px] uppercase tracking-wider text-ink-muted">
                   Issued assets
                 </div>
-                {(data.assets ?? []).length === 0 ? (
+                {/* `assets` is soft-failed to nil server-side on an
+                    errored/deadline-exceeded per-asset read
+                    (internal/api/v1/issuers.go) — absent is unknown,
+                    not "this issuer has issued nothing". */}
+                {!data.assets ? (
+                  <p className="mt-1 text-sm text-ink-muted">
+                    Issued-asset list unavailable — retry shortly.
+                  </p>
+                ) : data.assets.length === 0 ? (
                   <p className="mt-1 text-sm text-ink-muted">
                     No observed classic assets.
                   </p>

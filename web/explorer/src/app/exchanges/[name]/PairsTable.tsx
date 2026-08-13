@@ -65,7 +65,12 @@ export function PairsTable({
     setCursorStack([]);
   }
 
-  const markets = q.data?.markets ?? [];
+  // Absent (request failed) ≠ empty (venue was quiet): /v1/markets
+  // answers 503 on its documented 8s ceiling, and `q.data` is undefined
+  // for both that and the loading state. Flattening to `[]` would claim
+  // "this exchange traded nothing for 14 days". Keep absence visible.
+  const markets = q.data?.markets;
+  const rows = markets ?? [];
   const hasNext = !!q.data?.nextCursor;
   const hasPrev = cursorStack.length > 0;
 
@@ -89,7 +94,7 @@ export function PairsTable({
             Pair (A→Z)
           </SortPill>
           <span className="ml-auto font-mono text-[11px] text-ink-muted">
-            {markets.length} on this page
+            {markets ? `${markets.length} on this page` : '— on this page'}
             {q.isFetching && ' · refreshing…'}
           </span>
         </div>
@@ -116,14 +121,22 @@ export function PairsTable({
                 </td>
               </tr>
             )}
-            {!q.isLoading && markets.length === 0 && (
+            {!q.isLoading && !markets && (
+              <tr>
+                <td colSpan={7} className="px-4 py-8 text-center text-sm text-ink-muted">
+                  Pair list unavailable right now — the markets query didn&apos;t
+                  return. Retry shortly.
+                </td>
+              </tr>
+            )}
+            {!q.isLoading && markets && markets.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-4 py-8 text-center text-sm text-ink-muted">
                   No pairs found in the last 14 days.
                 </td>
               </tr>
             )}
-            {markets.map((m, i) => {
+            {rows.map((m, i) => {
               const slug = `${m.base}~${m.quote}`;
               const offset = cursorStack.length * PAGE_LIMIT + i + 1;
               const vol = m.volume_24h_usd ? Number(m.volume_24h_usd) : null;
