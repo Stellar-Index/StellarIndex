@@ -16,6 +16,19 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **`/v1/accounts/{g}/transactions` 6.7× faster** (sub-second audit
+  2026-08-13, r1-measured): both union arms carried the WIDE tx column
+  set (memo, result_code, source_account, …) through their own scan and
+  sort of `stellar.transactions`, and the outer DISTINCT then
+  materialised both. The query now resolves the KEYSET in the union and
+  hydrates the wide columns once over the surviving ≤limit keys —
+  1.479s → 0.219s for the same 50 rows, with the cross-arm dedupe now
+  provided by the hydration pass's `LIMIT 1 BY`.
+- **`/v1/accounts/{g}/operations` 2.7× faster** — same two-phase shape,
+  and it matters more here: `opCols` carries `body_xdr`, the column the
+  code itself measures at ~600ms over the 24B-row table, and both arms
+  were paying it. 0.407s → 0.153s (r1, 50 rows).
+
 - **CI integration gate stopped failing on the clock**: the suite's
   go-test deadline is raised 20m→35m. It hit the ceiling on three
   consecutive pushes with the running test 1s in, while the same suite

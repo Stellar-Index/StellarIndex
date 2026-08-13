@@ -82,10 +82,18 @@ func TestAccountOperations_DedupsPerPrimaryKeyInBothArms(t *testing.T) {
 	}
 	q := conn.queries[len(conn.queries)-1]
 	// audit DAT-10: opCols carries body_xdr (KB-scale) so an outer DISTINCT
-	// (AccountTransactions' approach) is the wrong tool here — each UNION arm
-	// must dedup on the narrow primary key BEFORE the union, not after.
-	if n := strings.Count(q, "LIMIT 1 BY ledger_seq, tx_index, op_index"); n != 2 {
-		t.Fatalf("query has %d `LIMIT 1 BY ledger_seq, tx_index, op_index` clauses, want 2 (one per UNION arm): %s", n, q)
+	// is the wrong tool here — dedup happens on the narrow primary key.
+	// THREE clauses since the two-phase rewrite (2026-08-13): one per
+	// UNION arm (both now narrow, key-only) plus the hydration pass,
+	// which is the only place the wide columns are read.
+	if n := strings.Count(q, "LIMIT 1 BY ledger_seq, tx_index, op_index"); n != 3 {
+		t.Fatalf("query has %d `LIMIT 1 BY ledger_seq, tx_index, op_index` clauses, want 3 (two arms + hydration): %s", n, q)
+	}
+	// body_xdr must be read EXACTLY once — carrying it inside both arms
+	// is the regression this shape exists to prevent (opColsLight's doc
+	// measures that column at ~600ms over a 24B-row table).
+	if n := strings.Count(q, "body_xdr"); n != 1 {
+		t.Fatalf("body_xdr appears %d times, want 1 (hydrate once, never per arm): %s", n, q)
 	}
 }
 

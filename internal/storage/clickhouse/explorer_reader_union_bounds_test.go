@@ -77,10 +77,11 @@ func TestAccountOperations_BoundsEachUnionArm(t *testing.T) {
 			t.Errorf("arm %d must dedup (LIMIT 1 BY) before taking its LIMIT, else an un-merged duplicate part eats a slot: %s", i+1, arm)
 		}
 	}
-	// Three bound page sizes: one per arm + the outer merge LIMIT. A per-arm
-	// limit SMALLER than the outer one would silently drop rows at the seam.
-	if n := countPerArmLimitArgs(conn.args[len(conn.args)-1], limit); n != 3 {
-		t.Errorf("bound page-size args = %d, want 3 (arm1, arm2, outer) — each arm must be bounded by the SAME page size as the outer merge; args: %v", n, conn.args[len(conn.args)-1])
+	// Four bound page sizes since the two-phase rewrite: one per arm, the
+	// keyset merge, and the hydration pass. A per-arm limit SMALLER than
+	// the merge would silently drop rows at the seam.
+	if n := countPerArmLimitArgs(conn.args[len(conn.args)-1], limit); n != 4 {
+		t.Errorf("bound page-size args = %d, want 4 (arm1, arm2, keyset, hydration); args: %v", n, conn.args[len(conn.args)-1])
 	}
 }
 
@@ -106,13 +107,26 @@ func TestAccountTransactions_BoundsEachUnionArm(t *testing.T) {
 			t.Errorf("arm %d must dedup on the primary key and then take its own LIMIT — otherwise an un-merged duplicate part consumes a slot and the page comes back short: %s", i+1, arm)
 		}
 	}
-	if n := countPerArmLimitArgs(conn.args[len(conn.args)-1], limit); n != 3 {
-		t.Errorf("bound page-size args = %d, want 3 (arm1, arm2, outer); args: %v", n, conn.args[len(conn.args)-1])
+	// Four bound page sizes since the two-phase rewrite (2026-08-13):
+	// arm1, arm2, the KEYSET limit, and the HYDRATION limit.
+	if n := countPerArmLimitArgs(conn.args[len(conn.args)-1], limit); n != 4 {
+		t.Errorf("bound page-size args = %d, want 4 (arm1, arm2, keyset, hydration); args: %v", n, conn.args[len(conn.args)-1])
 	}
 	// The cross-arm dedup must survive: a tx can be BOTH sourced by the
-	// account and carry it as a non-source participant.
-	if !strings.HasPrefix(strings.TrimSpace(q), "SELECT DISTINCT") {
-		t.Errorf("outer SELECT lost its DISTINCT — cross-arm duplicates would be served twice: %s", q)
+	// account and carry it as a non-source participant. The two-phase
+	// shape collapses those by KEY — the hydration pass selects from
+	// stellar.transactions filtered by a (ledger_seq, tx_index) set and
+	// re-applies LIMIT 1 BY — which subsumes the old outer DISTINCT
+	// (identical keys can no longer produce two rows). Assert the
+	// mechanism that actually provides the property.
+	if !strings.Contains(q, "LIMIT 1 BY ledger_seq, tx_index LIMIT ?"+explorerScanSettings) &&
+		!strings.HasSuffix(strings.TrimSpace(q), "LIMIT 1 BY ledger_seq, tx_index LIMIT ?") {
+		t.Errorf("hydration pass lost its key dedupe — cross-arm duplicates would be served twice: %s", q)
+	}
+	// And the wide column set must appear EXACTLY once: carrying it
+	// inside both arms is the 1.48s→0.22s regression this shape fixed.
+	if n := strings.Count(q, "memo_type"); n != 1 {
+		t.Errorf("wide tx columns appear %d times, want 1 — hydrate once, not per arm (r1: 6.7x): %s", n, q)
 	}
 }
 
@@ -133,7 +147,8 @@ func TestAccountOperations_PerArmLimitPreservesCursorArgOrder(t *testing.T) {
 	want := []any{
 		"GTEST", cur.Ledger, cur.A, cur.B, limit, // arm 1: account, cursor, page size
 		"GTEST", cur.Ledger, cur.A, cur.B, limit, // arm 2: same
-		limit, // outer merge
+		limit, // keyset merge
+		limit, // hydration pass (two-phase, 2026-08-13)
 	}
 	got := conn.args[len(conn.args)-1]
 	if len(got) != len(want) {

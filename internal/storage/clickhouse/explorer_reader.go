@@ -831,17 +831,33 @@ func accountTransactionsQuery(hasCursor bool) string {
 	if hasCursor {
 		cursorClause = ` AND (ledger_seq, tx_index) < (?, ?)`
 	}
-	return `SELECT DISTINCT ` + txCols + ` FROM (
-		(SELECT ` + txCols + ` FROM stellar.transactions
-		   WHERE (ledger_seq, tx_index) IN (
-		        SELECT DISTINCT ledger_seq, tx_index FROM stellar.ops_by_source WHERE source_account = ?)` + cursorClause + `
-		   ORDER BY ledger_seq DESC, tx_index DESC LIMIT 1 BY ledger_seq, tx_index LIMIT ?)
-		UNION ALL
-		(SELECT ` + txCols + ` FROM stellar.transactions
-		   WHERE (ledger_seq, tx_index) IN (
-		        SELECT DISTINCT ledger_seq, tx_index FROM stellar.operation_participants WHERE account = ?)` + cursorClause + `
-		   ORDER BY ledger_seq DESC, tx_index DESC LIMIT 1 BY ledger_seq, tx_index LIMIT ?)
-	) ORDER BY ledger_seq DESC, tx_index DESC LIMIT ?` + explorerScanSettings
+	// TWO-PHASE (sub-second audit 2026-08-13): resolve the KEYSET in the
+	// union, then hydrate the wide columns ONCE over the surviving ≤limit
+	// keys. Selecting txCols inside both arms made each arm carry
+	// memo/result_code/source_account/… through its own scan and sort of
+	// stellar.transactions, and the outer DISTINCT then materialised both
+	// wide sets. Measured on r1 (GATL account, 50 rows): wide-in-arms
+	// 1.479s vs two-phase 0.219s — 6.7x, identical rows. The endpoint was
+	// 1.5-2.0s and is now dominated by neither arm.
+	//
+	// The narrow arms keep their own LIMIT + LIMIT 1 BY (the per-arm
+	// dedupe of a tx whose account appears in several of its operations),
+	// and the hydration pass repeats LIMIT 1 BY as belt-and-braces
+	// against duplicate lake parts.
+	return `SELECT ` + txCols + ` FROM stellar.transactions
+		WHERE (ledger_seq, tx_index) IN (
+		  SELECT ledger_seq, tx_index FROM (
+		    (SELECT ledger_seq, tx_index FROM stellar.transactions
+		       WHERE (ledger_seq, tx_index) IN (
+		            SELECT DISTINCT ledger_seq, tx_index FROM stellar.ops_by_source WHERE source_account = ?)` + cursorClause + `
+		       ORDER BY ledger_seq DESC, tx_index DESC LIMIT 1 BY ledger_seq, tx_index LIMIT ?)
+		    UNION ALL
+		    (SELECT ledger_seq, tx_index FROM stellar.transactions
+		       WHERE (ledger_seq, tx_index) IN (
+		            SELECT DISTINCT ledger_seq, tx_index FROM stellar.operation_participants WHERE account = ?)` + cursorClause + `
+		       ORDER BY ledger_seq DESC, tx_index DESC LIMIT 1 BY ledger_seq, tx_index LIMIT ?)
+		  ) ORDER BY ledger_seq DESC, tx_index DESC LIMIT ?)
+		ORDER BY ledger_seq DESC, tx_index DESC LIMIT 1 BY ledger_seq, tx_index LIMIT ?` + explorerScanSettings
 }
 
 // AccountTransactions returns transactions INVOLVING an account — both those
@@ -872,6 +888,9 @@ func (r *ExplorerReader) AccountTransactions(ctx context.Context, account string
 	args = append(args, limit)
 	args = append(args, account)
 	args = append(args, cursorArgs...)
+	args = append(args, limit)
+	// Two placeholders trail the arms: the keyset LIMIT and the
+	// hydration LIMIT (see accountTransactionsQuery).
 	args = append(args, limit)
 	args = append(args, limit)
 	rows, err := r.conn.Query(ctx, q, args...)
@@ -926,20 +945,30 @@ func accountOperationsQuery(hasCursor bool) string {
 	if hasCursor {
 		cursorClause = ` AND (ledger_seq, tx_index, op_index) < (?, ?, ?)`
 	}
-	return `SELECT ` + opCols + ` FROM (
-		(SELECT ` + opCols + ` FROM stellar.operations
-		   WHERE (ledger_seq, tx_index, op_index) IN (
-		        SELECT ledger_seq, tx_index, op_index FROM stellar.ops_by_source
-		        WHERE source_account = ? AND op_index != 4294967295)` + cursorClause + `
-		   ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC
-		   LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?)
-		UNION ALL
-		(SELECT ` + opCols + ` FROM stellar.operations
-		   WHERE (ledger_seq, tx_index, op_index) IN (
-		        SELECT ledger_seq, tx_index, op_index FROM stellar.operation_participants WHERE account = ?)` + cursorClause + `
-		   ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC
-		   LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?)
-	) ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT ?` + explorerScanSettings
+	// TWO-PHASE, same as accountTransactionsQuery (sub-second audit
+	// 2026-08-13) and with more at stake here: opCols carries body_xdr,
+	// which opColsLight's own doc measures at ~600ms over this 24B-row /
+	// 2TiB table. Carrying it through BOTH arms' scans and sorts paid
+	// that twice; the keyset union below is narrow and the wide read
+	// happens once over ≤limit keys.
+	return `SELECT ` + opCols + ` FROM stellar.operations
+		WHERE (ledger_seq, tx_index, op_index) IN (
+		  SELECT ledger_seq, tx_index, op_index FROM (
+		    (SELECT ledger_seq, tx_index, op_index FROM stellar.operations
+		       WHERE (ledger_seq, tx_index, op_index) IN (
+		            SELECT ledger_seq, tx_index, op_index FROM stellar.ops_by_source
+		            WHERE source_account = ? AND op_index != 4294967295)` + cursorClause + `
+		       ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC
+		       LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?)
+		    UNION ALL
+		    (SELECT ledger_seq, tx_index, op_index FROM stellar.operations
+		       WHERE (ledger_seq, tx_index, op_index) IN (
+		            SELECT ledger_seq, tx_index, op_index FROM stellar.operation_participants WHERE account = ?)` + cursorClause + `
+		       ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC
+		       LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?)
+		  ) ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT ?)
+		ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC
+		LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?` + explorerScanSettings
 }
 
 // AccountOperations returns operations INVOLVING an account — both those it
@@ -967,6 +996,9 @@ func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, 
 	args = append(args, account)
 	args = append(args, cursorArgs...)
 	args = append(args, limit)
+	args = append(args, limit)
+	// Two trailing placeholders: the keyset LIMIT and the hydration
+	// LIMIT (see accountOperationsQuery).
 	args = append(args, limit)
 	rows, err := r.conn.Query(ctx, q, args...)
 	if err != nil {
