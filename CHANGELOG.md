@@ -15,6 +15,18 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **`/v1/accounts/{g}/positions` runs its six protocol folds in
+  parallel** (sub-second audit's last warm breach, 1.99s): the folds
+  are independent Postgres reads and were executed serially, so the
+  endpoint's latency was their sum rather than their max. Output is
+  byte-identical — each fold writes its own slot and the results plus
+  coverage notes merge in the original fixed order. Fixing this also
+  required making the shared per-request asset resolver
+  concurrency-safe: it memoises into a plain map, and concurrent map
+  writes are a FATAL runtime throw no recover() catches, so the
+  parallel folds would have crashed the process under load.
+
 ## [v0.32.1] — 2026-08-13
 
 ### Fixed
