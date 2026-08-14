@@ -2,6 +2,52 @@
 
 > The project-specific overlay for `/audit`. Generic checklists know what *kinds* of bugs exist; this file knows where *this* project keeps them. Authored cold from primary evidence by five independent code-mapping agents (money/pricing · API/auth · ingest/storage/completeness · extraction-derived entry-points/config · web+plans) plus direct spot-verification. Re-verify every claim against current code before trusting it — this file drifts too.
 
+- ⚠ **REFRESHED 2026-08-14 (audit №4) against commit `d30408e9` — read
+  `audit-2026-08-14/recon/*.md` FIRST; eight cold extraction-derived recon maps supersede
+  both §§1-6 AND the 2026-08-01 banner below where they conflict.** The 244-commit /
+  733-file window `f8c099ee..d30408e9` reshaped the platform. Load-bearing corrections:
+  (1) **Stripe/billing REMOVED end-to-end** (d2185560) — no `/v1/webhooks/stripe` route,
+  no BillingStore, `moves no user money` is now unconditional; migrations 0027/0118/0121
+  stripe_* DDL is ORPHANED (a future grep will find "stripe" and wrongly infer a surface).
+  (2) **Free-tier pivot, ADR-less**: open anon `POST /v1/register` (mints a durable
+  Postgres account+key + Redis mirror), 6 passkey/WebAuthn routes, hardened email-code
+  storage, migration 0140; tiers collapsed 5→3 (anon/free/partner). The §4 threat model's
+  "authenticated user" adversary is now **anyone-with-an-email at zero cost**. (3) **Counts
+  are all stale**: migrations head **0140** (135 pairs), **66 ops subcommands**, **135
+  route patterns** (129 /v1 + 6 non-/v1), **8 CF edge functions** (not 1), **~29 timers**,
+  **8 GH crons**; SSE is **4 endpoints** (recipe wrongly lists /oracle/streams). (4)
+  **Several keystone invariants MOVED — re-verify, don't inherit**: INV-3 keystone LANDED
+  (derive_generation gen-gated DO UPDATE on trades/supply/all protocol tables) so the
+  "VIOLATED tier:NONE" text is stale — BUT it introduced a NEW class (equal/gen-0 last-
+  writer-wins can regress a populated value to NULL; open-fixes item 18 alleges replay
+  corrections are inert at equal generation — TOP verify item). INV-2 /v1/changes now
+  serves money-as-strings; INV-5 projector-cursor-past-sink-failure is FIXED (state machine
+  projector.go:480-700); INV-6 BatchInsertTrades now Validates; INV-7 all three decimals
+  gaps CLOSED (+ a deliberate non-closed-bucket `/v1/price/tip` carve-out, ADR-0018); INV-10
+  rate-limit is HYBRID (transient=fail-open, sustained-dwell=fail-closed 503). (5) **Traps
+  8 (retentionStart), 13 (isSafeImageURL→isSafePublicImageUrl host-validated), 14 (query
+  timeouts on /ohlc/twap/vwap) are RESOLVED**; **banner-claim (9) "46 vitest never run in
+  CI" is now FALSE** (a28c5535 wired `pnpm test`); **CORS default is now `[]`** not `["*"]`.
+  (6) **NEW hot surfaces** (audit hardest, RFC-6): the pricing rate-router
+  `internal/aggregate/router.go`+triangulate (~1,500 new lines on the serve path); the
+  register/passkey auth stack (3 shipped defects in week 1); the explorer perf rework (7 SWR
+  caches + per-class RefreshGate, pool 8→16); **6 new operator-applied CH rollup DDL
+  artifacts outside migrations/** (trap-16 multiplied) with a "presence+non-empty = readers
+  TRUST it" contract that serves confidently-wrong when applied-but-unbackfilled. (7) **NEW
+  trap CLASSES** (details/leads in the gitignored `audit-2026-08-14/finding-leads-seed.md`):
+  equal-gen DO-UPDATE last-writer-wins; conflict-semantics docstring drift (6+ writers SAY
+  DO NOTHING, SQL is DO UPDATE — read the SQL); DDL-applied-but-unbackfilled; migration +
+  mandatory-manual-follow-up (0126/0137/0139 — "which migrations have un-run operator
+  follow-ups?" is now standing recon); dual-store auth mirror field-drop; validate-only-
+  when-present header gate (CORS simple-request); perf-window-narrowing changes served
+  numbers; "can this gate fail at all?"; empty-registry gated backfill = silent no-op;
+  re-derive tool that counts success while dropping rows; `.claude/worktrees/` contaminates
+  repo-wide greps. (8) **Live-ops:** Phase A (recompress) DONE 2026-07-20; the master-plan
+  is SUPERSEDED — current authority is `open-fixes-inventory-2026-08-08.md`; fence is
+  one-heavy-job-at-a-time (cap67 + ch-instance backfills QUEUED); **DEPLOY_APPROVAL_RELAXED
+  still =true**; `repo-prep.md` is STALE (Phase-0 freeze ended; must be re-derived before
+  remediation). A full §§1-6 rewrite is still owed; this banner + the recon maps are the
+  interim authority.
 - ⚠ **REFRESHED 2026-08-01 (audit №3) against commit `f8c099ee` — read
   `audit-2026-08-01/recon/*.md` FIRST; the six cold recon maps supersede §§1-6
   below.** Load-bearing corrections the old §§1-6 get wrong: (1) **prod anon rate
