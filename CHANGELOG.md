@@ -15,6 +15,17 @@ against.
 
 ## [Unreleased]
 
+### Security
+- **Go toolchain 1.25.12 → 1.25.13.** govulncheck reported 7 standard-library
+  vulnerabilities reachable from live call paths — `net/http` (GO-2026-5026,
+  Punycode label handling) via the ClickHouse reader, the CoinGecko supply
+  client, the history-archive checkpoint resolver and the galexie trim's S3
+  calls, and `encoding/asn1` via the WebAuthn passkey registration path. All
+  are fixed in go1.25.13. Every workflow reads `go-version-file: go.mod`, so
+  the `toolchain` directive is the only pin to move. Verified clean locally:
+  "0 vulnerabilities".
+
+
 ### Fixed
 - **`TestMigrationsRoundTrip` could deadlock against TimescaleDB's own
   job scheduler, turning `main` red for 30 hours and firing the
