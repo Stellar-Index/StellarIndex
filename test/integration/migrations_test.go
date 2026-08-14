@@ -47,6 +47,28 @@ func TestMigrationsRoundTrip(t *testing.T) {
 		tcpostgres.WithDatabase("stellarindex"),
 		tcpostgres.WithUsername("stellarindex"),
 		tcpostgres.WithPassword("stellarindex-test"),
+		// Run the scheduler with ZERO background workers (2026-08-13).
+		// The down-migration drops the very hypertables whose
+		// compression / CAGG-refresh policies this test has just
+		// asserted are attached, and TimescaleDB's job scheduler runs
+		// those policies concurrently — so DROP's AccessExclusiveLock
+		// and a running job can form a lock CYCLE. CI hit exactly that:
+		// "migrate down: deadlock detected, Process 94 waits for
+		// AccessExclusiveLock on relation 21724; blocked by process
+		// 161", which turned main red and had the ci-health tripwire
+		// mailing hourly. It reproduces only under load, which is why
+		// it passes locally in 5s.
+		//
+		// Retrying Down() is not the fix: a failed migration leaves
+		// golang-migrate's version DIRTY, so the retry needs a force.
+		// Removing the concurrent actor removes the whole class.
+		//
+		// This does not weaken the test. It asserts policies are
+		// ATTACHED — a metadata row, still written with no workers to
+		// run them — not that they execute.
+		// APPEND to the module's own Cmd ("postgres -c fsync=off") —
+		// replacing it wholesale makes the container exit 1.
+		testcontainers.WithCmdArgs("-c", "timescaledb.max_background_workers=0"),
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).
@@ -67,6 +89,25 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	dsn, err := pg.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
 		t.Fatalf("connection string: %v", err)
+	}
+
+	// Prove the zero-background-workers setting actually took effect.
+	// A Cmd override that silently fails to apply would look exactly
+	// like a fix while leaving the deadlock race in place.
+	{
+		probe, perr := sql.Open("postgres", dsn)
+		if perr != nil {
+			t.Fatalf("open probe: %v", perr)
+		}
+		var workers string
+		if qerr := probe.QueryRowContext(ctx, "SHOW timescaledb.max_background_workers").Scan(&workers); qerr != nil {
+			t.Fatalf("read timescaledb.max_background_workers: %v", qerr)
+		}
+		_ = probe.Close()
+		if workers != "0" {
+			t.Fatalf("timescaledb.max_background_workers = %q, want \"0\" — the container Cmd override did not apply, "+
+				"so policy jobs can still deadlock against the down-migration's DROP", workers)
+		}
 	}
 
 	// Pre-create the timescaledb extension, mirroring
