@@ -2,7 +2,7 @@ module github.com/Stellar-Index/StellarIndex
 
 go 1.25.10
 
-toolchain go1.25.12
+toolchain go1.25.13
 
 // Direct production dependencies.
 //
