@@ -15,6 +15,25 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **`TestMigrationsRoundTrip` could deadlock against TimescaleDB's own
+  job scheduler, turning `main` red for 30 hours and firing the
+  ci-health tripwire every two hours.** The test asserts compression
+  and CAGG-refresh policies are attached, then rolls every migration
+  back — so `migrate down`'s `DROP ... AccessExclusiveLock` raced the
+  16 background workers running those very policies, and the two could
+  form a lock cycle ("deadlock detected, Process 94 waits for
+  AccessExclusiveLock on relation 21724; blocked by process 161"). It
+  only reproduces under load, which is why it passes locally in 5s.
+  Retrying is not available as a fix: a failed migration leaves
+  golang-migrate's version DIRTY. The container now runs with
+  `timescaledb.max_background_workers=0`, removing the concurrent
+  actor entirely, and the test asserts the setting actually applied —
+  a Cmd override that silently failed to take would otherwise look
+  exactly like a fix. The assertions are unchanged in strength: they
+  check policies are ATTACHED (a metadata row), not that they run.
+
+
 ## [v0.33.2] — 2026-08-13
 
 ### Changed
