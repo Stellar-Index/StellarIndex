@@ -1270,9 +1270,12 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		KeyPolicy:             middleware.KeyPolicy(),
 		// F-1226 (codex audit-2026-05-12): monthly-quota enforcer.
 		// Reads month-to-date counters from the same Redis Counter
-		// the UsageTracker writes. Only Postgres-backed Subjects
-		// carry MonthlyQuota; other validators leave it 0 and the
-		// middleware short-circuits per request.
+		// the UsageTracker writes. Both the Postgres validator and
+		// the Redis validator now map MonthlyQuota onto the Subject
+		// (apikey_redis.go maps rec.MonthlyQuota; store_mirror.go
+		// persists it), so metered keys are enforced on the default
+		// redis backend too. A validator that leaves it 0 makes the
+		// middleware short-circuit per request.
 		MonthlyQuota: middleware.MonthlyQuota(usageCounter, logger.With("component", "monthly-quota")),
 		RateLimit:    rateLimit,
 		UsageTracker: middleware.UsageTracker(usageCounter, logger.With("component", "usage")),
