@@ -586,7 +586,13 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	// sep41 batches (2026-07-05): the full-history re-derive buffers
 	// tens of millions of sep41 events per window; per-row HandleEvent
 	// capped writes at ~520/s (round-trip + cold PK-page per insert).
-	// Same batching pattern as trades, same per-row fallback.
+	// Same batching pattern as trades, same per-row fallback. The primary
+	// CopyMerge* path and the per-row Insert* fallback share the identical
+	// INV-3 generation-guarded corrective-upsert semantics (both COPY/bind
+	// s.deriveGeneration and merge DO UPDATE ... WHERE derive_generation <=
+	// EXCLUDED), so a COPY batch error dropping into the fallback cannot
+	// change the write outcome — additive-vs-overwrite no longer diverges
+	// on which path ran (TV-3; before TV-1 the primary was gen-0 DO NOTHING).
 	const sepBatchN = 50_000
 	xferBatch := make([]timescale.SEP41TransferRow, 0, sepBatchN)
 	flushXfer := func() {
