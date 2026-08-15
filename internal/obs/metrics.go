@@ -646,12 +646,16 @@ var ProjectorLagLedgers = prometheus.NewGaugeVec(
 )
 
 // ProjectorRunsTotal counts projector cycle outcomes per source.
-// `outcome` ∈ {ok, error, idle}; rate is the alive-check (zero
-// rate sustained 5+ minutes means the source's loop wedged).
+// `outcome` ∈ {ok, error, idle, sink_retry, decode_degraded}; rate is
+// the alive-check (zero rate sustained 5+ minutes means the source's
+// loop wedged). `decode_degraded` (DATA-6 / NS-2) marks a cycle that
+// advanced the cursor but dropped at least one decode-failed row — a
+// clean-looking advance that is NOT "ok"; a sustained per-source
+// decode_error rate on those cycles is a decoder regression.
 var ProjectorRunsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_projector_runs_total",
-		Help: "Per-source projector cycle outcomes (ok, error, idle). Rate goes to zero if the source's loop has wedged.",
+		Help: "Per-source projector cycle outcomes (ok, error, idle, sink_retry, decode_degraded). Rate goes to zero if the source's loop has wedged.",
 	},
 	[]string{"source", "outcome"},
 )

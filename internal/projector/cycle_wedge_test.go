@@ -165,6 +165,23 @@ func decodedCount(t *testing.T, source, outcome string) float64 {
 	return testutil.ToFloat64(obs.ProjectorEventsDecoded.WithLabelValues(source, outcome))
 }
 
+func runsCount(t *testing.T, source, outcome string) float64 {
+	t.Helper()
+	return testutil.ToFloat64(obs.ProjectorRunsTotal.WithLabelValues(source, outcome))
+}
+
+// decodeErrDecoder matches every row and returns a decode error for all of
+// them — the shape of a shipped decoder REGRESSION that breaks a whole class
+// of valid events at once (the phoenix 5,161-orphaned-swap / I-L4 class), as
+// opposed to the odd scattered poison row.
+type decodeErrDecoder struct{}
+
+func (*decodeErrDecoder) Name() string              { return "decode-err" }
+func (*decodeErrDecoder) Matches(events.Event) bool { return true }
+func (*decodeErrDecoder) Decode(events.Event) ([]consumer.Event, error) {
+	return nil, errors.New("field-mapping regression: cannot decode 7-field swap")
+}
+
 // ---------------------------------------------------------------------------
 // COR-11: a DETERMINISTIC store validation error must not wedge the source.
 // ---------------------------------------------------------------------------
@@ -439,6 +456,55 @@ func TestCycle_SinkBudgetExhaustionShrinksWindowAndHoldsCursor(t *testing.T) {
 	}
 	if h.window != 2*MinBatchLimit {
 		t.Fatalf("recovery cycle: window = %d, want %d (success doubles back toward BatchLimit)", h.window, 2*MinBatchLimit)
+	}
+}
+
+// TestCycle_DecoderRegressionMarksRunDegradedNotOK pins DATA-6 / NS-2
+// (audit-2026-08-14): when a decoder regression makes a whole class of valid
+// events fail to decode, the projector still (correctly) advances the cursor
+// past them — holding would re-wedge the sole-writer source on a deterministic
+// failure (COR-11). What must NOT happen is the cycle reporting a clean "ok"
+// run over those dropped rows. The cycle is marked runs_total{outcome=
+// "decode_degraded"} instead, so runs_total no longer counts it clean and the
+// per-source decode_error rate alert can distinguish a regression from
+// scattered poison rows. Pre-fix the outcome was "ok" and the loss was
+// invisible at the run level.
+func TestCycle_DecoderRegressionMarksRunDegradedNotOK(t *testing.T) {
+	const source = "data6-decode-regression"
+	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2)}
+
+	beforeOK := runsCount(t, source, "ok")
+	beforeDegraded := runsCount(t, source, "decode_degraded")
+	beforeDecodeErr := decodedCount(t, source, "decode_error")
+
+	store := &fakeStore{projectorCursor: 100, haveCursor: true, tipLedger: 105, rows: rows}
+	p := &Projector{
+		store:  store,
+		logger: discardLog(),
+		sink:   func(context.Context, consumer.Event) error { return nil },
+	}
+	src := Source{Name: source, Decoder: &decodeErrDecoder{}}
+	window := uint32(BatchLimit)
+	var tracker poisonTracker
+
+	p.cycleOneSource(context.Background(), src, &window, &tracker)
+
+	// The cursor still advances past the broken class (poison-row escape /
+	// COR-11 — do NOT re-wedge a sole-writer source on a deterministic fault).
+	if got := store.cursor(); got != 105 {
+		t.Fatalf("cursor = %d, want 105 (a deterministic decode failure is skipped, not held)", got)
+	}
+	// The dropped rows are counted for visibility.
+	if got := decodedCount(t, source, "decode_error") - beforeDecodeErr; got != 2 {
+		t.Fatalf("decode_error delta = %v, want 2 (both broken rows counted)", got)
+	}
+	// THE FIX: the cycle must NOT be reported as a clean "ok" run...
+	if got := runsCount(t, source, "ok") - beforeOK; got != 0 {
+		t.Errorf("runs_total{outcome=ok} delta = %v, want 0 (a decode-dropping cycle must not be reported clean)", got)
+	}
+	// ...it is surfaced as "decode_degraded" so the silent drop is visible.
+	if got := runsCount(t, source, "decode_degraded") - beforeDegraded; got != 1 {
+		t.Errorf("runs_total{outcome=decode_degraded} delta = %v, want 1 (the dropped-rows cycle must surface as degraded)", got)
 	}
 }
 

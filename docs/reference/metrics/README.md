@@ -160,19 +160,28 @@ ticket: > 256 ledgers sustained 10 min). See ADR-0032.
 
 Counter, labels `source`, `outcome`.
 
-Per-cycle outcome counter. Outcomes: `ok` (cursor advanced),
-`idle` (caught up, no rows in scan range), `error` (scan / cursor
-read / cursor write failed; cursor not advanced — retried next
-cycle). Drives the `stellarindex_projector_error_rate_high` alert.
+Per-cycle outcome counter. Outcomes: `ok` (cursor advanced, nothing
+dropped), `idle` (caught up, no rows in scan range), `error` (scan /
+cursor read / cursor write failed; cursor not advanced — retried next
+cycle), `sink_retry` (a sink write held the cursor below a ledger for
+retry), `decode_degraded` (the cursor advanced but at least one
+decode-failed row was dropped — a clean-looking advance that is NOT
+`ok`; DATA-6 / NS-2). Drives the `stellarindex_projector_error_rate_high`
+alert (on `error`).
 
 ### `stellarindex_projector_events_decoded_total`
 
 Counter, labels `source`, `outcome`.
 
 Number of consumer.Events the projector emitted to its sink.
-Outcomes: `ok` (decode succeeded) and `decode_error` (Reconstruct
-or Decoder.Decode returned non-nil; row skipped, cursor still
-advances).
+Outcomes: `ok` (decode succeeded), `decode_error` (Reconstruct or
+Decoder.Decode returned non-nil, or a decoder panic was recovered; row
+skipped, cursor still advances), plus the sink dispositions
+`sink_retry` / `sink_permanent` / `sink_quarantined`. A sustained
+per-source `decode_error` rate drives the
+`stellarindex_projector_decode_error_rate_high` alert (DATA-6 / NS-2) —
+that pattern is a decoder regression draining a whole class of events,
+not the odd poison row.
 
 ### `stellarindex_projector_cycle_duration_seconds`
 
