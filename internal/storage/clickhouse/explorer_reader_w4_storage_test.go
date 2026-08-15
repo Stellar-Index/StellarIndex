@@ -148,8 +148,9 @@ func TestContractEventsRecent_CursorShapes(t *testing.T) {
 // TestContractEventsRecent_ActiveLedgerBound — with the
 // contract_active_ledgers index present, the reader walks the contract's
 // recent active ledgers and bounds the events read to them (the
-// quiet-contract fix, site audit 2026-08-07/08). An empty walk is an
-// authoritative "no events" — no contract_events query at all.
+// quiet-contract fix, site audit 2026-08-07/08). A NON-EMPTY walk bounds
+// the events read; an EMPTY walk is NOT authoritative (audit
+// W1-chrollup-3) — see TestContractEventsRecent_EmptyWalkFallsThrough.
 func TestContractEventsRecent_ActiveLedgerBound(t *testing.T) {
 	conn := &stubConn{}
 	conn.respond = func(q string) (driver.Rows, error) {
@@ -180,25 +181,51 @@ func TestContractEventsRecent_ActiveLedgerBound(t *testing.T) {
 		t.Fatalf("issued %d queries, want 3 (probe + ledgers walk + bounded events)", len(conn.queries))
 	}
 
-	// Empty walk → authoritative empty page, no events query.
-	conn2 := &stubConn{}
-	conn2.respond = func(q string) (driver.Rows, error) {
+}
+
+// TestContractEventsRecent_EmptyWalkFallsThrough is the audit
+// W1-chrollup-3 regression: the contract_active_ledgers probe is a
+// LIMIT-1 table-global emptiness check that cannot see PARTIAL backfill
+// coverage. When the index is present-but-still-backfilling, a quiet
+// contract's per-contract walk comes back EMPTY even though its events
+// exist in contract_events. The reader must NOT short-circuit to "no
+// events" — it must fall through to the UNBOUNDED contract_events scan
+// (the source of truth) and serve the real events.
+func TestContractEventsRecent_EmptyWalkFallsThrough(t *testing.T) {
+	conn := &stubConn{}
+	conn.respond = func(q string) (driver.Rows, error) {
 		if strings.Contains(q, "contract_active_ledgers") {
 			if strings.Contains(q, "WHERE contract_id") {
-				return &stubRows{}, nil
+				return &stubRows{}, nil // partial backfill: empty per-contract walk
 			}
-			return &stubRows{data: [][]any{{uint32(1)}}}, nil
+			return &stubRows{data: [][]any{{uint32(1)}}}, nil // probe: globally non-empty
 		}
-		t.Fatalf("unexpected contract_events query for an index-empty contract: %s", q)
-		return nil, nil
+		// The events table DOES hold this contract's events.
+		if strings.Contains(q, "ledger_seq IN (?)") {
+			t.Fatalf("empty walk must NOT bound the scan by (unknown) ledgers: %s", q)
+		}
+		return &stubRows{data: [][]any{
+			contractEventRecentRowFor(5_000_000, 0, 0),
+		}}, nil
 	}
-	r2 := &ExplorerReader{conn: conn2}
-	rows2, err := r2.ContractEventsRecent(context.Background(), "CTESTCONTRACT", 100, ContractEventsCursor{})
+	r := &ExplorerReader{conn: conn}
+
+	rows, err := r.ContractEventsRecent(context.Background(), "CQUIETCONTRACT", 100, ContractEventsCursor{})
 	if err != nil {
-		t.Fatalf("ContractEventsRecent(empty): %v", err)
+		t.Fatalf("ContractEventsRecent(empty walk): %v", err)
 	}
-	if len(rows2) != 0 {
-		t.Fatalf("rows = %d, want 0 (authoritative empty)", len(rows2))
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1 — the real event served via the unbounded fallthrough, "+
+			"not a confidently-wrong empty page", len(rows))
+	}
+	// Probe + empty walk + unbounded events scan = 3 queries; the events
+	// query must have run (no short-circuit to nil,nil).
+	if len(conn.queries) != 3 {
+		t.Fatalf("issued %d queries, want 3 (probe + walk + unbounded events scan)", len(conn.queries))
+	}
+	last := conn.queries[len(conn.queries)-1]
+	if !strings.Contains(last, "FROM stellar.contract_events") || strings.Contains(last, "ledger_seq IN") {
+		t.Fatalf("final query = %q, want the UNBOUNDED contract_events scan", last)
 	}
 }
 
