@@ -19,10 +19,23 @@ type PriceSourceContribution struct {
 }
 
 // InsertPriceSourceContributions writes a batch of per-source
-// contribution rows. ON CONFLICT (asset, quote, bucket, source) DO
-// UPDATE replaces the values — useful when the orchestrator
-// re-computes a window with fresher data and we want to refresh
-// the historical row rather than spawning a duplicate.
+// contribution rows. This table is APPEND-PER-TICK: the conflict key
+// bucket is stamped with the orchestrator's ComputedAt (time.Now() at
+// flush, orchestrator.go), NOT a truncated window boundary, so every
+// recompute of the same (asset, quote, window) carries a distinct
+// bucket and INSERTs a fresh row. The ON CONFLICT (asset, quote,
+// bucket, source) DO UPDATE arm below is therefore effectively
+// unreachable in practice (two flushes never share a ComputedAt for
+// one key) and does NOT refresh a historical row in place — an
+// earlier docstring claiming it did was false (MR-2). Readers must
+// pick the latest row per (asset, quote, source) for a window rather
+// than assuming one row per source; the raw table accumulates one row
+// per tick per source.
+//
+// Consequently the unguarded volume_usd never overwrites a prior
+// value (no in-place regression risk), but also never corrects one —
+// which is why this table is NOT part of the INV-3
+// generation-guarded corrective-upsert family.
 //
 // Volume is optional (some on-chain pairs don't have a USD-volume
 // computation today; the source-donut gracefully degrades).
