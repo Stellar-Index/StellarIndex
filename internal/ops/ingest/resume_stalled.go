@@ -464,6 +464,34 @@ func parseResumeStalledFlags(args []string) (resumeStalledOpts, config.Config, e
 	return opts, cfg, nil
 }
 
+// ArmTradeWriteStore prepares a freshly-[timescale.Open]ed store for a
+// trade-writing re-derive the same way the main `backfill` subcommand does
+// (backfill.go), and is the single place any trade-writing ops entry point
+// should route store construction through so a new tool cannot forget:
+//
+//   - a POSITIVE derive generation (time.Now().Unix()) so a corrected
+//     re-derive wins the served-tier writers' ON CONFLICT guard
+//     (`derive_generation <= EXCLUDED.derive_generation`) and can never be
+//     reverted by a live gen-0 replay (INV-3 re-derive-trap fix); and
+//   - the USD-volume resolvers ([timescale.InstallUSDVolumeResolution]) so
+//     on-chain DEX trades resolve a real usd_volume instead of NULL.
+//
+// The two are inseparable: a positive generation without resolvers makes
+// every re-derived DEX trade WIN the guard while computing usd_volume=NULL,
+// silently overwriting correct stored values (A-CRIT-1). InstallUSDVolumeResolution
+// also arms the reDeriveNullVolumeGuard fail-closed for any future omission.
+func ArmTradeWriteStore(store *timescale.Store, cfg config.Config) error {
+	store.SetDeriveGeneration(time.Now().Unix())
+	if err := timescale.InstallUSDVolumeResolution(
+		store,
+		cfg.Trades.USDPeggedClassicAssets,
+		cfg.Supply.SACWrappers,
+	); err != nil {
+		return fmt.Errorf("install usd-volume resolution: %w", err)
+	}
+	return nil
+}
+
 func resumeStalled(args []string) error {
 	opts, cfg, err := parseResumeStalledFlags(args)
 	if err != nil {
@@ -480,6 +508,19 @@ func resumeStalled(args []string) error {
 		return fmt.Errorf("storage: %w", err)
 	}
 	defer func() { _ = store.Close() }()
+
+	// CWR-1 (audit-2026-08-14): resume-stalled marches stalled cursors
+	// through the SAME runBackfillChunk trade-write path as the main
+	// `backfill` subcommand, so it MUST arm the store for a trade-writing
+	// re-derive exactly like backfill.go does — a positive generation so a
+	// corrected re-derive wins the writers' ON CONFLICT guard, AND the
+	// USD-volume resolvers so on-chain DEX trades resolve a real usd_volume
+	// instead of NULL. Skipping this wrote DEX usd_volume=NULL at gen 0 for
+	// the whole resumed range, and left the A-CRIT-1 reDeriveNullVolumeGuard
+	// inert (it only fires once the generation is positive).
+	if err := ArmTradeWriteStore(store, cfg); err != nil {
+		return err
+	}
 
 	// maxResumes is intentionally NOT passed to planResumeStalled: it
 	// gathers every matching candidate, and the cap is applied AFTER
