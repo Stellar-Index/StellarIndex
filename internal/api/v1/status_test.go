@@ -268,6 +268,125 @@ func TestStatus_BackendErrorDegradesOverall(t *testing.T) {
 	}
 }
 
+// W1.1: a FAILED Alertmanager query must NOT serialise as an
+// all-clear. Before the tri-state, `if incErr == nil { out.Incidents
+// = incidents }` left the counts at their zero value with no signal
+// that the query failed, so the incidents block was byte-identical to
+// "no alerts firing" — and DegradedBanner's `active_count ?? 0`
+// published "0 active alerts" while alerting was blind. The response
+// must now carry incidents_status="unknown" on a query error, and the
+// counts must remain zero (not be invented). We decode the raw wire
+// JSON — not the Go struct — so the assertion pins what a customer's
+// browser actually receives.
+func TestStatus_IncidentsQueryError_ReportsUnknownNotZero(t *testing.T) {
+	srv := New(Options{
+		RegionName: "r1",
+		StatusBackend: &fakeStatusBackend{
+			// Every other signal is healthy; only the incidents query
+			// fails, isolating the incidents-block honesty from the
+			// overall-rollup degradation (which is covered separately).
+			heartbeats: map[string]time.Time{
+				"indexer":    time.Now().UTC(),
+				"aggregator": time.Now().UTC(),
+			},
+			incErr: errors.New("prometheus: connection refused"),
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want 200", rr.Code)
+	}
+
+	// Assert against the raw wire bytes, not the typed struct, so the
+	// field is proven present and correct on the JSON a client sees.
+	var env struct {
+		Data struct {
+			IncidentsStatus string `json:"incidents_status"`
+			Incidents       struct {
+				ActiveCount int `json:"active_count"`
+			} `json:"incidents"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+
+	if env.Data.IncidentsStatus != "unknown" {
+		t.Errorf("incidents_status = %q, want \"unknown\" on a failed Alertmanager query (must not read as all-clear)", env.Data.IncidentsStatus)
+	}
+	if env.Data.Incidents.ActiveCount != 0 {
+		t.Errorf("active_count = %d, want 0 (counts must not be invented on error)", env.Data.Incidents.ActiveCount)
+	}
+	// The whole point: the wire must not present a green all-clear.
+	if strings.Contains(rr.Body.String(), `"incidents_status":"ok"`) {
+		t.Errorf("body reports incidents_status=ok during a query failure — all-clear derived from a failure:\n%s", rr.Body.String())
+	}
+}
+
+// The two success cases the tri-state also has to get right, so the
+// "unknown" case above can't pass by simply hard-coding "unknown".
+func TestStatus_IncidentsStatus_SuccessCases(t *testing.T) {
+	healthyHeartbeats := func() map[string]time.Time {
+		return map[string]time.Time{
+			"indexer":    time.Now().UTC(),
+			"aggregator": time.Now().UTC(),
+		}
+	}
+
+	tests := []struct {
+		name      string
+		incidents StatusIncidents
+		want      string
+	}{
+		{
+			name:      "query ok, no alerts firing",
+			incidents: StatusIncidents{ActiveCount: 0},
+			want:      "ok",
+		},
+		{
+			name: "query ok, alerts firing",
+			incidents: StatusIncidents{
+				ActiveCount: 1,
+				PageCount:   1,
+				Active:      []ActiveIncident{{Name: "stellarindex_api_down", Severity: "page"}},
+			},
+			want: "degraded",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := New(Options{
+				RegionName: "r1",
+				StatusBackend: &fakeStatusBackend{
+					heartbeats: healthyHeartbeats(),
+					incidents:  tc.incidents,
+				},
+			})
+
+			req := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+			rr := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rr, req)
+
+			var env struct {
+				Data struct {
+					IncidentsStatus string `json:"incidents_status"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			if env.Data.IncidentsStatus != tc.want {
+				t.Errorf("incidents_status = %q, want %q", env.Data.IncidentsStatus, tc.want)
+			}
+		})
+	}
+}
+
 func TestPrometheusStatusBackend_QueryShape(t *testing.T) {
 	// Hand-rolled HTTP server returning a canned Prometheus
 	// instant-query response. Verifies the client parses it

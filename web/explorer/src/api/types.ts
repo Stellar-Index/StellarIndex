@@ -335,7 +335,8 @@ export interface paths {
                          *           "page_count": 0,
                          *           "ticket_count": 0,
                          *           "informational_count": 0
-                         *         }
+                         *         },
+                         *         "incidents_status": "ok"
                          *       },
                          *       "as_of": "2026-05-05T15:09:00.119Z",
                          *       "flags": {
@@ -14413,6 +14414,23 @@ export interface components {
                  */
                 active?: components["schemas"]["ActiveIncident"][];
             };
+            /**
+             * @description Explicit tri-state trust signal for the `incidents` block.
+             *     The counts alone are ambiguous: a failed Alertmanager query
+             *     zeroes them, which is byte-identical to "no alerts firing",
+             *     so a banner reading `active_count` via a `?? 0` chain would
+             *     publish "0 active alerts" while alerting is blind. Read this
+             *     field first:
+             *       - "ok":       query succeeded, no alerts firing.
+             *       - "degraded": query succeeded, one or more alerts firing
+             *                     (see the counts + `active` list).
+             *       - "unknown":  the alerts query FAILED, or no metrics
+             *                     backend is wired — the counts are NOT
+             *                     trustworthy; render "unknown", not "0 active".
+             *     Always present.
+             * @enum {string}
+             */
+            incidents_status: "ok" | "degraded" | "unknown";
         };
         ActiveIncident: {
             /** @description Alertmanager `alertname` label. */

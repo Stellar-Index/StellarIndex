@@ -48,9 +48,51 @@ type StatusResponse struct {
 	Freshness StatusFreshness `json:"freshness"`
 
 	// Incidents counts active alerts in Alertmanager by severity.
-	// Zero values indicate Alertmanager isn't wired or no alerts
-	// are firing.
+	// The counts are only meaningful when IncidentsStatus is "ok" or
+	// "degraded"; on "unknown" they are the zero value of a FAILED
+	// query and MUST NOT be read as an all-clear.
 	Incidents StatusIncidents `json:"incidents"`
+
+	// IncidentsStatus is the explicit tri-state trust signal for the
+	// Incidents block. It exists because the counts alone are
+	// ambiguous: a failed Alertmanager query zeroes them, which is
+	// byte-identical to "no alerts firing". A public banner reading
+	// active_count via `?? 0` would then publish "0 active alerts"
+	// while alerting is blind (v1-launch-plan W1.1). The tri-state
+	// disambiguates on the wire:
+	//   - "ok":       query succeeded, no alerts firing.
+	//   - "degraded": query succeeded, one or more alerts firing
+	//                 (see the counts + Active list).
+	//   - "unknown":  the alerts query FAILED, or no metrics backend
+	//                 is wired — the counts are NOT trustworthy and
+	//                 the UI must render "unknown", not "0 active".
+	// Always present (no omitempty) so consumers never confuse an
+	// omitted field for a zero count.
+	IncidentsStatus string `json:"incidents_status"`
+}
+
+// Incident-block trust states for [StatusResponse.IncidentsStatus].
+const (
+	incidentsStatusOK       = "ok"
+	incidentsStatusDegraded = "degraded"
+	incidentsStatusUnknown  = "unknown"
+)
+
+// incidentsStatusFor classifies the incidents block's trust state
+// from the Alertmanager query outcome. A query error (or no metrics
+// backend, which surfaces as inc being the zero value alongside a
+// nil err — handled by the caller setting "unknown" directly) must
+// NOT be published as an all-clear: err != nil is "unknown", not
+// "ok". See [StatusResponse.IncidentsStatus] (W1.1).
+func incidentsStatusFor(inc StatusIncidents, err error) string {
+	switch {
+	case err != nil:
+		return incidentsStatusUnknown
+	case inc.ActiveCount > 0:
+		return incidentsStatusDegraded
+	default:
+		return incidentsStatusOK
+	}
 }
 
 type StatusRegion struct {
@@ -437,7 +479,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	if s.statusBackend == nil {
 		// No metrics backend wired — return the in-process surface.
-		// Indexer + aggregator heartbeats are unknown.
+		// Indexer + aggregator heartbeats are unknown, and so is the
+		// incidents signal: with no Alertmanager query, zero counts
+		// are absence-of-signal, not an all-clear.
+		out.IncidentsStatus = incidentsStatusUnknown
 		out.Services = append(out.Services,
 			StatusService{Name: "indexer", Status: "unknown"},
 			StatusService{Name: "aggregator", Status: "unknown"},
@@ -499,9 +544,14 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if freErr == nil {
 		out.Freshness = freshness
 	}
+	// Incidents block: publish the tri-state explicitly. On a failed
+	// Alertmanager query we leave the counts at their zero value but
+	// mark the block "unknown" so a downstream `?? 0` chain cannot
+	// render "0 active alerts" while alerting is blind (W1.1).
 	if incErr == nil {
 		out.Incidents = incidents
 	}
+	out.IncidentsStatus = incidentsStatusFor(incidents, incErr)
 
 	// Compute overall from the worst-case per-service state and the
 	// backend-canary signals. F-0055: previously any service in
