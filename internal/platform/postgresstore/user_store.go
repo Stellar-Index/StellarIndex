@@ -172,7 +172,7 @@ func (r *UserStore) UpdateUser(ctx context.Context, u platform.User) error {
 // ─── Sessions ─────────────────────────────────────────────────────
 
 const sessionColumns = `
-	id, user_id, expires_at, revoked_at, created_at, last_seen_at,
+	id, token_hash, user_id, expires_at, revoked_at, created_at, last_seen_at,
 	ip_first_seen, ip_last_seen, user_agent,
 	COALESCE(geo_first_seen, ''), COALESCE(geo_last_seen, '')
 `
@@ -186,6 +186,7 @@ func scanSession(row interface {
 	var ipFirst, ipLast string
 	if err := row.Scan(
 		&s.ID,
+		&s.TokenHash,
 		&s.UserID,
 		&s.ExpiresAt,
 		&revokedAt,
@@ -210,15 +211,15 @@ func scanSession(row interface {
 func (r *UserStore) CreateSession(ctx context.Context, s platform.Session) (platform.Session, error) {
 	const q = `
 		INSERT INTO sessions (
-			user_id, expires_at,
+			token_hash, user_id, expires_at,
 			ip_first_seen, ip_last_seen, user_agent,
 			geo_first_seen, geo_last_seen
 		)
-		VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, ''))
+		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), NULLIF($8, ''))
 		RETURNING ` + sessionColumns
 
 	row := r.s.db.QueryRowContext(ctx, q,
-		s.UserID, s.ExpiresAt,
+		s.TokenHash, s.UserID, s.ExpiresAt,
 		ipString(s.IPFirstSeen), ipString(s.IPLastSeen), s.UserAgent,
 		s.GeoFirstSeen, s.GeoLastSeen,
 	)
@@ -238,6 +239,23 @@ func (r *UserStore) GetSession(ctx context.Context, id uuid.UUID) (platform.Sess
 			return platform.Session{}, platform.ErrNotFound
 		}
 		return platform.Session{}, fmt.Errorf("get session: %w", err)
+	}
+	return out, nil
+}
+
+// GetSessionByTokenHash is the authentication-path lookup: the caller
+// (resolveSession) hashes the incoming cookie token and looks the
+// active session up by hash. The sessions table stores only the hash,
+// so read-access to the table is not directly replayable.
+func (r *UserStore) GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (platform.Session, error) {
+	const q = `SELECT ` + sessionColumns + ` FROM sessions WHERE token_hash = $1 AND revoked_at IS NULL`
+	row := r.s.db.QueryRowContext(ctx, q, tokenHash)
+	out, err := scanSession(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return platform.Session{}, platform.ErrNotFound
+		}
+		return platform.Session{}, fmt.Errorf("get session by token hash: %w", err)
 	}
 	return out, nil
 }

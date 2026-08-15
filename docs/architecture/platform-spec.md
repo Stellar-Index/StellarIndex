@@ -73,15 +73,22 @@ covers 95% of dev workflows. Defer until churn shows it's needed.
 
 ### 1.2 Sessions
 
-Server-issued, opaque session ID stored in:
+Server-issued, opaque random session **token** stored in:
 - HttpOnly + Secure + SameSite=Lax cookie on `stellarindex.io`
 - 30-day rolling expiry; touched on every authenticated request
+
+The cookie carries a high-entropy random token; the table stores only
+`sha256(token)` (`token_hash`), so a read of the `sessions` table is not
+directly replayable — the same hashed-at-rest posture as `api_keys` and
+`magic_link_tokens` (W1-auth-passkey-2). The `id` PK is an internal
+handle only and never leaves the server.
 
 `sessions` table:
 
 ```sql
 CREATE TABLE sessions (
     id            uuid PRIMARY KEY,
+    token_hash    bytea,  -- sha256(cookie token); UNIQUE where NOT NULL
     user_id       uuid NOT NULL REFERENCES users(id),
     expires_at    timestamptz NOT NULL,
     revoked_at    timestamptz,

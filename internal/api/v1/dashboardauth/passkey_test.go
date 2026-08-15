@@ -429,13 +429,19 @@ func TestMintSession_SetsSameCookieAsEmailFlow(t *testing.T) {
 	if !got.HttpOnly {
 		t.Fatal("session cookie must be HttpOnly")
 	}
-	id, err := uuid.Parse(got.Value)
+	// W1-auth-passkey-2: the cookie carries a random token, NOT the
+	// session PK, and the row is found by sha256(token). Looking the
+	// session up by the cookie value hashed is how resolveSession does
+	// it; a read of the row yields only the hash, never a replayable id.
+	sess, err := rig.users.GetSessionByTokenHash(context.Background(), HashSessionToken(got.Value))
 	if err != nil {
-		t.Fatalf("session cookie value is not a session id: %v", err)
+		t.Fatalf("session row not created / not resolvable by token hash: %v", err)
 	}
-	sess, err := rig.users.GetSession(context.Background(), id)
-	if err != nil {
-		t.Fatalf("session row not created: %v", err)
+	// The cookie value must NOT itself be the session id — that was the
+	// unhashed-bearer defect. Even if it happened to parse as a UUID, it
+	// must not equal the stored PK.
+	if got.Value == sess.ID.String() {
+		t.Fatal("cookie value equals the session PK — the raw-id bearer defect (W1-auth-passkey-2) is back")
 	}
 	if sess.UserID != rig.user.ID {
 		t.Fatalf("session user = %s, want %s", sess.UserID, rig.user.ID)

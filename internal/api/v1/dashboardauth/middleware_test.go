@@ -43,13 +43,10 @@ func TestMiddleware_NilNowDoesNotPanic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	sess, err := users.CreateSession(context.Background(), platform.Session{
+	_, token := mintTestSession(t, users, platform.Session{
 		UserID:    user.ID,
 		ExpiresAt: time.Now().Add(24 * time.Hour),
 	})
-	if err != nil {
-		t.Fatalf("create session: %v", err)
-	}
 
 	// Config with Now AND Logger left nil — the exact shape that
 	// panicked in production.
@@ -65,7 +62,7 @@ func TestMiddleware_NilNowDoesNotPanic(t *testing.T) {
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/account/me", nil)
-	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: sess.ID.String()})
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token})
 	rec := httptest.NewRecorder()
 
 	// The bug manifested as a panic recovered upstream into a 500;

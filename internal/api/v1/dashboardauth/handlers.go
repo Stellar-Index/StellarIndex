@@ -751,8 +751,19 @@ func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user plat
 		h.cfg.Logger.Warn("update user post-login", "err", err, "user_id", user.ID)
 	}
 
+	// The cookie carries a high-entropy random token; the row stores
+	// only sha256(token). A leak of the sessions table is therefore not
+	// directly replayable — the same hashed-at-rest posture as api_keys
+	// and magic_link_tokens (W1-auth-passkey-2). We hold the plaintext
+	// just long enough to set the cookie, then drop it.
+	token, tokenHash, err := h.cfg.Generator.NewSessionToken()
+	if err != nil {
+		return fmt.Errorf("mint session token: %w", err)
+	}
+
 	sess, err := h.cfg.Users.CreateSession(r.Context(), platform.Session{
 		UserID:       user.ID,
+		TokenHash:    tokenHash,
 		ExpiresAt:    now.Add(h.cfg.SessionTTL),
 		IPFirstSeen:  clientIP(r),
 		IPLastSeen:   clientIP(r),
@@ -766,7 +777,7 @@ func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user plat
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     SessionCookieName,
-		Value:    sess.ID.String(),
+		Value:    token,
 		Path:     "/",
 		Domain:   h.cfg.CookieDomain,
 		Expires:  sess.ExpiresAt,
@@ -781,9 +792,12 @@ func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user plat
 // cookie. Idempotent — calling without a session cookie is a
 // 200, not a 401.
 func (h *Handlers) HandleLogout(w http.ResponseWriter, r *http.Request) {
-	if c, err := r.Cookie(SessionCookieName); err == nil {
-		if id, err := uuid.Parse(c.Value); err == nil {
-			if err := h.cfg.Users.RevokeSession(r.Context(), id); err != nil {
+	if c, err := r.Cookie(SessionCookieName); err == nil && c.Value != "" {
+		// The cookie is the random token, not the PK — hash it, resolve
+		// the row, and revoke by internal ID. Best-effort: a missing /
+		// already-revoked session is not an error at logout.
+		if sess, err := h.cfg.Users.GetSessionByTokenHash(r.Context(), HashSessionToken(c.Value)); err == nil {
+			if err := h.cfg.Users.RevokeSession(r.Context(), sess.ID); err != nil {
 				h.cfg.Logger.Warn("revoke session at logout", "err", err)
 			}
 		}
