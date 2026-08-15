@@ -806,6 +806,14 @@ type Status struct {
 	Latency   StatusLatency   `json:"latency"`
 	Freshness StatusFreshness `json:"freshness"`
 	Incidents StatusIncidents `json:"incidents"`
+	// IncidentsStatus is the explicit tri-state trust signal for the
+	// Incidents block — "ok", "degraded", or "unknown". Read it BEFORE
+	// the counts: on "unknown" the Alertmanager query failed (or no
+	// metrics backend is wired) and the counts are the zero value of a
+	// failure, NOT an all-clear. Rendering active_count directly on
+	// "unknown" is how a status banner publishes "0 active alerts"
+	// while alerting is blind.
+	IncidentsStatus string `json:"incidents_status"`
 }
 
 // StatusRegion identifies which region produced the response.
