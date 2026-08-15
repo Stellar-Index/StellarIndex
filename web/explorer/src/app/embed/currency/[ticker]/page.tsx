@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import { assetHrefFor } from '@/lib/fiat-slugs';
 import type { components } from '@/api/types';
 import { API_BASE_URL } from '@/api/client';
+import { formatSubunitPrice } from '@/lib/format';
 
 const isCIStub =
   API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
@@ -244,5 +245,5 @@ function formatRate(n: number): string {
   if (n >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
   if (n >= 1) return n.toFixed(4);
   if (n >= 0.0001) return n.toFixed(6);
-  return n.toExponential(3);
+  return formatSubunitPrice(n);
 }

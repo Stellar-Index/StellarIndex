@@ -18,7 +18,7 @@ import {
   TR,
 } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
-import { formatCompact } from '@/lib/format';
+import { formatCompact, formatSubunitPrice } from '@/lib/format';
 import { scaledUnits } from '../explorer-shared';
 
 // Mirror of the slice of AccountStateResp we need (kept local so this
@@ -221,7 +221,7 @@ function formatPrice(n: number): string {
   if (!Number.isFinite(n)) return '—';
   if (n >= 1) return n.toFixed(n >= 100 ? 2 : 4);
   if (n >= 0.0001) return n.toFixed(6);
-  return n.toExponential(2);
+  return formatSubunitPrice(n);
 }
 
 function shortAsset(canonical: string): string {

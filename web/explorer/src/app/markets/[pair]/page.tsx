@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { buildFetchData, requireRows } from '@/lib/buildFetch';
-import { formatCompact } from '@/lib/format';
+import { formatCompact, formatPairPrice, formatSubunitPrice } from '@/lib/format';
 import { serializeJsonLd, datasetJsonLd, ogImageFor } from '@/lib/seo';
 import { Breadcrumbs } from '@/components/ui';
 import { Sparkline } from '@/components/primitives';
@@ -169,7 +169,7 @@ export async function generateMetadata({
         ? ` ${priceNum.toFixed(priceNum >= 100 ? 2 : 4)}`
         : priceNum >= 0.001
           ? ` ${priceNum.toFixed(6)}`
-          : ` ${priceNum.toExponential(3)}`;
+          : ` ${formatSubunitPrice(priceNum)}`;
   }
   const title = `${baseLabel} / ${quoteLabel}${suffix} — pair detail`;
   const description = `Live VWAP${suffix ? ` (${suffix.trim()})` : ''}, recent trades, and per-source breakdown for ${baseLabel} / ${quoteLabel} on Stellar.`;
@@ -588,16 +588,7 @@ function SourceBreakdownPanel({ rows }: { rows: PoolRow[] }) {
           const v = r.volume_24h_usd ? Number(r.volume_24h_usd) : null;
           const pct = totalUSD > 0 && v != null && Number.isFinite(v) ? (v / totalUSD) * 100 : null;
           const lp = r.last_price ? Number(r.last_price) : null;
-          const lpFixed =
-            lp == null
-              ? null
-              : lp >= 1000
-                ? lp.toFixed(2)
-                : lp >= 1
-                  ? lp.toFixed(4)
-                  : lp >= 0.0001
-                    ? lp.toFixed(6)
-                    : lp.toExponential(3);
+          const lpFixed = lp == null ? null : formatPairPrice(lp);
           return (
             <li key={r.source} className="flex items-center gap-3 text-sm">
               <Link
@@ -777,7 +768,7 @@ function isUsdQuote(quote: string): boolean {
 
 function formatQuoteAmount(n: number, quote: string): string {
   const num =
-    n >= 1 ? n.toFixed(n >= 100 ? 2 : 4) : n >= 0.001 ? n.toFixed(6) : n > 0 ? n.toExponential(3) : '—';
+    n >= 1 ? n.toFixed(n >= 100 ? 2 : 4) : n >= 0.001 ? n.toFixed(6) : n > 0 ? formatSubunitPrice(n) : '—';
   if (num === '—') return num;
   return isUsdQuote(quote) ? `$${num}` : `${num} ${shortAsset(quote)}`;
 }

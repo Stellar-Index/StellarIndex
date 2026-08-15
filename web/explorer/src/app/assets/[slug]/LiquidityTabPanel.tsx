@@ -2,7 +2,7 @@ import Link from 'next/link';
 
 import { Panel } from '@/components/reveal';
 import { asExample, API_BASE_URL } from '@/api/client';
-import { formatCompact } from '@/lib/format';
+import { formatCompact, formatPairPrice } from '@/lib/format';
 // /v1/pools row from the generated OpenAPI contract (spec PoolRow, via
 // the shared alias in src/api/hooks.ts).
 import type { Pool as PoolRow } from '@/api/hooks';
@@ -104,16 +104,7 @@ export async function LiquidityTabPanel({
               {merged.map((p) => {
                 const slug = encodeURIComponent(`${p.base}~${p.quote}`);
                 const lp = p.last_price ? Number(p.last_price) : null;
-                const lpFixed =
-                  lp == null
-                    ? null
-                    : lp >= 1000
-                      ? lp.toFixed(2)
-                      : lp >= 1
-                        ? lp.toFixed(4)
-                        : lp >= 0.0001
-                          ? lp.toFixed(6)
-                          : lp.toExponential(3);
+                const lpFixed = lp == null ? null : formatPairPrice(lp);
                 return (
                   <tr
                     key={`${p.source}|${p.base}|${p.quote}|${p.side}`}

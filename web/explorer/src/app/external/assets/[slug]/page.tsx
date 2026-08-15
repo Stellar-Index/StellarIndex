@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { Panel } from '@/components/reveal';
 import { asExample, API_BASE_URL } from '@/api/client';
 import { ogImageFor } from '@/lib/seo';
+import { formatSubunitPrice } from '@/lib/format';
 import { Badge, Breadcrumbs, Callout, Container } from '@/components/ui';
 import { type GlobalAssetView } from '../../../assets/catalogue';
 
@@ -311,10 +312,11 @@ const PRICE_AUTHORITY_LABELS: Record<string, string> = {
 };
 
 // formatHeadlinePrice mirrors the GlobalAssetView headline formatting
-// on the Stellar detail page's VerifiedCurrencyView: exponential for
-// sub-milli prices, 2dp for large, 6dp otherwise.
+// on the Stellar detail page's VerifiedCurrencyView: plain-decimal
+// significant digits for sub-milli prices (formatSubunitPrice, never
+// scientific notation — UXP-26), 2dp for large, 6dp otherwise.
 function formatHeadlinePrice(n: number): string {
-  if (n < 0.001) return n.toExponential(3);
+  if (n < 0.001) return formatSubunitPrice(n);
   return n.toFixed(n >= 100 ? 2 : 6);
 }
 

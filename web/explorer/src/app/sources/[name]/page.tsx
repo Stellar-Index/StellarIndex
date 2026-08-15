@@ -6,7 +6,7 @@ import { SourceHealthPanel } from './SourceHealthPanel';
 import { SourceStatsPanel } from '@/app/dexes/[source]/SourceStatsPanel';
 import { SourceTopChart } from '@/app/dexes/[source]/SourceTopChart';
 import { buildFetchData, failBuild, requireRows } from '@/lib/buildFetch';
-import { formatCompact } from '@/lib/format';
+import { formatCompact, formatPairPrice } from '@/lib/format';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, serializeJsonLd } from '@/lib/seo';
 
 // Sources that also have a dedicated DEX or CEX detail page — used to
@@ -420,9 +420,7 @@ export default async function SourceDetailPage({
 }
 
 function formatLastPrice(raw: string): string {
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return '—';
-  return n >= 1000 ? n.toFixed(2) : n >= 1 ? n.toFixed(4) : n >= 0.0001 ? n.toFixed(6) : n.toExponential(3);
+  return formatPairPrice(Number(raw));
 }
 
 function shortAsset(canonical: string): string {
