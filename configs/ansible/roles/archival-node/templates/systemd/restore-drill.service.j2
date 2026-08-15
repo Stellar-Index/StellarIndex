@@ -36,6 +36,13 @@ ExecStart=/usr/local/bin/restore-drill.sh
 # the actual pg/pgbackrest operations) — see its own EUID check.
 User=root
 
+# BDR-03: the drill's deliverable is DR EVIDENCE, and journald rotates.
+# Persist the run log off journald as belt-and-suspenders alongside the
+# script's own durable evidence file (RESTORE_DRILL_LOG_DIR, default
+# /var/lib/stellarindex/restore-drills) and its node_exporter metric.
+StandardOutput=append:/var/log/restore-drill.log
+StandardError=append:/var/log/restore-drill.log
+
 # Keep drill I/O off the critical path of live ingest.
 Nice=15
 IOSchedulingClass=best-effort
@@ -48,9 +55,18 @@ IOSchedulingPriority=7
 TimeoutStartSec=4h
 RuntimeMaxSec=4h
 
-# Hardening — ProtectSystem=full (not strict): the script writes its
-# disposable Postgres data dir + evidence log under DRILL_ROOT
-# (default /var/tmp/restore-drill).
+# Hardening — ProtectSystem=full (not strict): /usr, /boot and /etc are
+# read-only but /var stays WRITABLE, so with no extra ReadWritePaths the
+# script can still write its disposable Postgres data dir under DRILL_ROOT
+# (default /var/tmp/restore-drill), its durable evidence log under
+# /var/lib/stellarindex/restore-drills (RESTORE_DRILL_LOG_DIR — created at
+# runtime via mkdir -p), its node_exporter metric under
+# /var/lib/node_exporter/textfile_collector, and its run log to
+# /var/log/restore-drill.log (BDR-03). ReadWritePaths is intentionally NOT
+# extended for these: they may not pre-exist, and a missing path in
+# ReadWritePaths fails namespace setup before ExecStart — full already
+# grants them. Only keep the historical /var/tmp/restore-drill entry
+# (the provisioned ZFS drill dataset).
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full

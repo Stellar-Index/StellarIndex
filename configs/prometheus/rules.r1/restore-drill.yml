@@ -1,0 +1,64 @@
+---
+# Restore-drill evidence-staleness alert (BDR-03, audit-2026-08-14).
+#
+# Pairs with scripts/ops/restore-drill.sh + the MONTHLY systemd timer
+# (configs/ansible/.../systemd/restore-drill.timer.j2, first Saturday
+# 04:00 UTC). The drill is a NON-DESTRUCTIVE scratch restore of the
+# pgBackRest stanza (ADR-0043 §3 / CS-110: "a backup that has never been
+# restored is a hope, not a backup").
+#
+# Scrape source: node_exporter's textfile_collector reads
+# `/var/lib/node_exporter/textfile_collector/restore_drill.prom`, which
+# the script writes atomically at the end of a run. It stamps
+# `stellarindex_restore_drill_last_success_unix` ONLY on a fully clean
+# run (zero failed checks AND the evidence log was written), mirroring
+# ch-schema-snapshot.sh.
+#
+# BDR-03 root cause: the drill's ONLY deliverable is DR evidence, but the
+# installed copy (/usr/local/bin/restore-drill.sh) resolved its evidence
+# dir from $0, landing on a non-existent /usr/docs/operations/drills, so
+# the whole evidence phase was silently skipped and nothing — no file, no
+# metric — recorded whether the monthly drill ran, passed or failed. This
+# alert is the monitored signal that closes that gap: "has a restore
+# succeeded recently?" is now answerable without shell access.
+#
+# absent_over_time branch (OBS-2 pattern): a run that fails rewrites the
+# textfile WITHOUT the last_success series, so the every-run-failed / dead-
+# timer / never-ran cases make the series ABSENT (not old). The plain
+# `time() - last_success` branch evaluates over an empty vector there and
+# can never fire; `absent_over_time(...[40d])` restores that coverage —
+# it fires when no successful drill has been recorded in 40 days (one
+# missed monthly cycle + slack), covering both a stale-but-present value
+# and an absent series.
+
+groups:
+  - name: stellarindex.restore_drill
+    interval: 60s
+    rules:
+
+      - alert: stellarindex_restore_drill_stale
+        expr: |
+          (time() - stellarindex_restore_drill_last_success_unix) > (40 * 24 * 3600)
+          or
+          absent_over_time(stellarindex_restore_drill_last_success_unix[40d])
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill-stale.md
+          summary: "pgBackRest restore-drill has recorded no success in >40d (monthly timer) — DR evidence is going stale"
+          description: |
+            The monthly pgBackRest restore-drill
+            (restore-drill.timer, first Saturday 04:00 UTC) has not
+            recorded a fully-successful run in over 40 days — one missed
+            cycle plus slack — or has never recorded one. Either the
+            timer isn't firing, every recent run has failed, or the
+            drill volume dropped below MIN_FREE_GB and the precondition
+            refused. While this is stale we have no current proof the
+            pgBackRest backup chain is actually restorable (ADR-0043 §3 /
+            CS-110). Check `systemctl status restore-drill.timer`,
+            read `/var/log/restore-drill.log` + the evidence log under
+            `/var/lib/stellarindex/restore-drills/restore-drills.md`, and
+            run `/usr/local/bin/restore-drill.sh` by hand.

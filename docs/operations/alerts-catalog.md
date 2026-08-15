@@ -100,6 +100,7 @@ signal lands.
 | `stellarindex_timescale_backup_none_24h` | same | > 24 h | **P1** | [backup-failed](runbooks/backup-failed.md) |
 | `stellarindex_ch_schema_snapshot_stale` | `time() - stellarindex_ch_schema_snapshot_last_success_unix` | > 36 h for ≥ 30 min | P3 | [ch-schema-restore](runbooks/ch-schema-restore.md) |
 | `stellarindex_ch_schema_snapshot_offsite_stale` | `time() - stellarindex_ch_schema_snapshot_offsite_last_success_unix` | > 72 h for ≥ 30 min | P3 | [ch-schema-restore](runbooks/ch-schema-restore.md) |
+| `stellarindex_restore_drill_stale` | `time() - stellarindex_restore_drill_last_success_unix` (or `absent_over_time(...[40d])`) | > 40 d for ≥ 30 min | P3 | [restore-drill-stale](runbooks/restore-drill-stale.md) |
 
 ## Cache / serving alerts
 
