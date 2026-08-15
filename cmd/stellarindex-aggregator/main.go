@@ -158,7 +158,10 @@ func run(cfgPath string, dryRun bool) error {
 	rootCtx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 
 	// ─── Storage ─────────────────────────────────────────────────
-	store, err := timescale.Open(rootCtx, cfg.Storage.PostgresDSN)
+	// OpenBackground applies a generous session-level statement_timeout as
+	// the SQL-side runaway backstop (REC-08). Heavy batch scans SET LOCAL
+	// a longer bound inside their own transactions, overriding it.
+	store, err := timescale.OpenBackground(rootCtx, cfg.Storage.PostgresDSN, cfg.Storage.BackgroundStatementTimeout)
 	if err != nil {
 		cancel() // nothing else registered yet; release the signal ctx
 		return fmt.Errorf("storage: %w", err)
