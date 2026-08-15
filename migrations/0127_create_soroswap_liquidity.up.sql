@@ -29,10 +29,18 @@
 --
 -- token_0 / token_1 are NOT in the event body — they are a property
 -- of the pair, resolved from the factory new_pair registry at decode
--- time and denormalised here for query convenience. NULLABLE: if the
--- pair mapping isn't seeded yet (mid-history-start race) the row is
--- still written with NULL tokens rather than dropped (every-event
--- mission) — downstream resolves via soroswap_pairs.
+-- time and denormalised here for query convenience. The columns are
+-- NULLABLE only for defence-in-depth: a deposit/withdraw is recognised
+-- (and a row written) ONLY for a pair already in the seeded/factory
+-- registry (dispatcher_adapter.go Matches gates on pairTokens), and a
+-- registered pair always carries both token addresses — so in practice
+-- both are non-NULL. An UNSEEDED pair (mid-history-start race, or a
+-- window whose new_pair event is before the replay -from) fails CLOSED
+-- into an ADR-0033 recognition gap: the LP events are NOT written with
+-- NULL tokens, they are dropped-and-visible exactly like the swap/trade
+-- path — never silently attributed to a foreign contract. Filling that
+-- gap is a matter of re-deriving from a -from at/before the pair's
+-- new_pair event, not of resolving NULLs after the fact.
 --
 -- Storage shape: per-protocol table, same decision as comet_liquidity
 -- (0042) / phoenix_liquidity (0044). Soroswap deposit/withdraw carry
@@ -85,7 +93,10 @@ CREATE TABLE soroswap_liquidity (
 
     -- Pair token identities, resolved from the factory new_pair
     -- registry (the deposit/withdraw body carries only amounts).
-    -- NULL when the pair mapping wasn't seeded at decode time.
+    -- Nullable for defence-in-depth (see header): a row exists only for
+    -- a seeded/registered pair, which always carries both tokens, so
+    -- these are non-NULL in practice; an unseeded pair is a recognition
+    -- gap (no row), not a NULL-token row.
     token_0            text,
     token_1            text,
 

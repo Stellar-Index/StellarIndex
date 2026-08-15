@@ -325,3 +325,108 @@ func TestDecoder_Decode_rescuesPreUpgradeSevenFieldSwapAtSweep(t *testing.T) {
 		t.Errorf("evictedOrphans = %d, want 1 (only the 2-field group)", d.evictedOrphans)
 	}
 }
+
+// makeFieldEventIdx is makeFieldEvent with an explicit EventIndex, so a
+// test can put two swaps' field-events under ONE (ledger, tx, op, pool)
+// groupKey while keeping each swap's field-events distinguishable.
+func makeFieldEventIdx(t *testing.T, fieldTopic, body string, eventIndex int) events.Event {
+	t.Helper()
+	ev := makeFieldEvent(t, fieldTopic, body)
+	ev.EventIndex = eventIndex
+	return ev
+}
+
+// TestDecoder_Decode_samePoolTwiceInOpKeepsBothSwaps is the
+// W1-protocol-tables-3 regression: a router multi-hop (or cyclic
+// arbitrage) that routes through the SAME phoenix pool twice in one op
+// emits two swaps whose field-events share ONE groupKey (ledger, tx,
+// op, contract). In the pre-upgrade 7-field era a group never
+// Complete()s, so absorb never emit-and-clears mid-op; without the
+// re-assignment guard the second swap's field-events overwrite the
+// first's slots in place and only ONE trade survives — the first swap
+// is silently dropped. The guard must rotate the first (Decodable)
+// group out so BOTH trades land, with distinct op_index.
+func TestDecoder_Decode_samePoolTwiceInOpKeepsBothSwaps(t *testing.T) {
+	d := newTestDecoder()
+
+	sellToken := makeC(t, 0x20)
+	buyToken := makeC(t, 0x30)
+	sender := makeC(t, 0x10)
+	zeroI128 := i128Body(t, big.NewInt(0))
+
+	// Two distinct 7-field swaps through the SAME pool in the SAME op.
+	// Swap 1 offers 1,000,000 / returns 2,000,000; swap 2 offers
+	// 3,000,000 / returns 4,000,000. Field EventIndex ranges are
+	// disjoint (swap 1: 0..6, swap 2: 7..13) so the guard can tell a
+	// second-swap field from a redelivery.
+	swap := func(base int, offer, ret *big.Int) []events.Event {
+		fields := []struct{ topic, body string }{
+			{TopicSymbolSender, addrBody(t, sender)},
+			{TopicSymbolSellToken, addrBody(t, sellToken)},
+			{TopicSymbolOfferAmount, i128Body(t, offer)},
+			{TopicSymbolBuyToken, addrBody(t, buyToken)},
+			{TopicSymbolReturnAmount, i128Body(t, ret)},
+			{TopicSymbolSpreadAmount, zeroI128},
+			{TopicSymbolReferralFee, zeroI128},
+		}
+		evs := make([]events.Event, len(fields))
+		for i, f := range fields {
+			evs[i] = makeFieldEventIdx(t, f.topic, f.body, base+i)
+		}
+		return evs
+	}
+
+	offer1, ret1 := big.NewInt(1_000_000), big.NewInt(2_000_000)
+	offer2, ret2 := big.NewInt(3_000_000), big.NewInt(4_000_000)
+
+	var emitted []TradeEvent
+	feed := func(evs []events.Event) {
+		for _, ev := range evs {
+			out, err := d.Decode(ev)
+			if err != nil {
+				t.Fatalf("Decode: %v", err)
+			}
+			for _, o := range out {
+				te, ok := o.(TradeEvent)
+				if !ok {
+					t.Fatalf("emitted %T, want TradeEvent", o)
+				}
+				emitted = append(emitted, te)
+			}
+		}
+	}
+	feed(swap(0, offer1, ret1))
+	feed(swap(7, offer2, ret2))
+
+	// Sweep to flush the second (still-buffered) swap.
+	out, err := d.Decode(makeFieldEventAt(t, TopicSymbolSender, addrBody(t, sender), "later-tx", "2026-04-23T12:10:00Z"))
+	if err != nil {
+		t.Fatalf("sweep-trigger: %v", err)
+	}
+	for _, o := range out {
+		if te, ok := o.(TradeEvent); ok {
+			emitted = append(emitted, te)
+		}
+	}
+
+	if len(emitted) != 2 {
+		t.Fatalf("emitted %d trades, want 2 (both same-pool swaps must survive; the second must not overwrite the first)", len(emitted))
+	}
+
+	// Both swaps' amounts must be present — neither dropped nor merged.
+	got := map[int64]int64{}
+	ops := map[uint32]bool{}
+	for _, te := range emitted {
+		got[te.Trade.BaseAmount.BigInt().Int64()] = te.Trade.QuoteAmount.BigInt().Int64()
+		ops[te.Trade.OpIndex] = true
+	}
+	if got[offer1.Int64()] != ret1.Int64() {
+		t.Errorf("first swap missing: base=%d not paired with quote=%d (it was overwritten)", offer1.Int64(), ret1.Int64())
+	}
+	if got[offer2.Int64()] != ret2.Int64() {
+		t.Errorf("second swap missing: base=%d not paired with quote=%d", offer2.Int64(), ret2.Int64())
+	}
+	if len(ops) != 2 {
+		t.Errorf("the two trades collapsed onto %d op_index value(s), want 2 distinct (FanoutOpIndex must keep them apart on the trades PK)", len(ops))
+	}
+}
