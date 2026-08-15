@@ -70,6 +70,36 @@ Verifying the backlog rather than reciting it moved a lot of it:
 
 ---
 
+### audit-2026-08-14 remediation merged — plan deltas [V] (2026-08-15)
+
+PR #71 (79 verified fixes) squash-merged to main `dd7b995b`. It **advanced or
+reframed** these plan items (each verified against the merged code; details inline):
+
+- **W4.1** (restore-drill) — **code DONE** (BDR-03): explicit `LOG_DIR` + fail-loud
+  + textfile metric + `restore_drill_stale` alert. Only the r1-ops drill run
+  remains → **unblocks W6.6**.
+- **W4.6** (template the untemplated sla-probe units) — **DONE** (`50d84d27` +
+  AAI-1/2). **W4.5** — the 0640 vault-sourced secret EnvironmentFile is **in
+  code**; key mint/rotate stays r1-ops.
+- **W8** partials, now verified: item 2 (SDEX, $100M ceiling), item 6
+  (recognition_ok can fail), item 9 (derive_generation projector-replay), item 15
+  (revocation-drift cache-hit + TWAP detector). See the W8 reconciliation box.
+- **W3.1** got further contract-surface hardening (interactions cache-key +
+  census freshness).
+- **Gates reconciled to decisions:** **W6.4** (deploy-approval re-arm) is a
+  launch-flip [OP] toggle, not a defect — the relaxed state is ACCEPTED
+  (NS-4/CID-4). **D10** GDPR erasure DROPPED (PRV-1); privacy hygiene landed
+  (PRV-2/3). **D9** Stripe reconcile ready to DROP citing ADR-0049.
+- **NEW launch-day requirement (§2.8):** apply migrations **through 0143 before
+  the binary** (REC-06 fail-closes `/readyz` otherwise); **0143 forces a one-time
+  dashboard re-login** — a watch note, not an incident.
+
+It did **NOT** touch the headline blockers — **W1.1** (status incidents
+absent-as-zero), **W2** (alias registry), **W3.2–3.4**, **D1** (freeze paging),
+and the W5 backfills — those remain the real path to v1.
+
+---
+
 ### W1 — Absent-vs-zero: stop publishing false empirical claims
 
 **Why one workstream:** three separately-tracked items are one bug class, and
@@ -115,7 +145,11 @@ here means one cache pattern and one honesty convention, not three.
 (blocked on W1.1) and `NetworkInsight.tsx`'s several `?? 0` sites.
 *Exit criteria for W1:* a grep for `?? 0` / `?? []` in explorer components
 returns only sites where the API genuinely serves a zero, and each fixed site
-has a both-directions test.
+has a both-directions test. *(Note: audit-2026-08-14's web fixes F1–F4
+(`2b58260b`) — sub-cent decimal rendering, the fiat dual-page canonicalization,
+the v1-stable-vs-pre-launch copy, search a11y — are a **different bug class** and
+do NOT count toward this `?? 0`/`?? []` grep; `DegradedBanner.tsx:76` and the
+`NetworkInsight.tsx` sites are still untouched.)*
 
 ---
 
@@ -158,7 +192,10 @@ contract↔tx index are the same programme at three depths.
 0 pages with a failed panel, worst page 8.2s → 1.6s. Root causes were an
 unbounded SAC probe on the `/wasm` 404 path (95.35M rows, cancelled at the
 8s deadline) and four panels sharing one refresh-gate class so a page starved
-itself.
+itself. *(audit-2026-08-14 hardened the same contract surface further:
+W1-explorer-perf-1 quantized the `/v1/contracts/{id}/interactions` cache key
+(`9e42e8fb`) and REC-05/W1-explorer-perf-2 added a `max(day)` census-freshness
+gate to `/v1/contracts` (`bb64ff3c`). W3.2/W3.3/W3.4 remain untouched.)*
 
 **W3.2 — Every other page type.** Accounts, assets, ledgers, tx, operations,
 network, protocols — measured COLD to fully-populated with lake-drawn random
@@ -218,11 +255,21 @@ now unrecoverable, because the evidence write was skipped and journald has
 rotated.
 
 So CS-110's whole deliverable — the evidence that the backup restores — is
-not produced by the scheduled path. Fix `LOG_DIR` (explicit, configurable,
-and fail LOUDLY if unwritable rather than skipping), then run the drill
-manually to get a current verdict. Only after that is the "is our backup
-good?" question answerable, which is why W6.6 (off-site decision) sequences
-behind this.
+not produced by the scheduled path.
+
+**[V] CODE FIX LANDED — BDR-03, merged to main `dd7b995b` (audit-2026-08-14).**
+`restore-drill.sh` now uses an explicit, env-overridable `LOG_DIR`
+(`/var/lib/stellarindex/restore-drills`, `restore-drill.sh:56`) and **fails
+loudly** — an unwritable evidence dir increments `fail_count` → non-zero exit
+(`:299-310`), no more silent `[[ -d ]]` skip. It also now emits a
+`stellarindex_restore_drill_last_success_unix` node_exporter textfile metric
+(only on a clean run) and ships a `restore_drill_stale` alert (both rule trees
++ rule-test + runbook + catalog). **What remains is r1-ops only:** re-run
+ansible (reinstalls the script + unit) + `systemctl daemon-reload`, then
+`systemctl start restore-drill.service` (or wait for the monthly timer) to seed
+a CURRENT verdict + the metric. Only after that manual run is the "is our backup
+good?" question answerable — which is why W6.6 (off-site decision) still
+sequences behind this **manual run** (no longer behind a code fix).
 
 **W4.2 — [V] `galexie-archive-fill.service`.** Not previously tracked.
 Succeeded 12:20 today, failed 13:18 with `status=2/INVALIDARGUMENT` in one
@@ -249,16 +296,29 @@ it runs anonymous, hits the 60/min anon tier, and reports `verdict: fail` at
 count (~45,000 per 30s burst vs the ~430 the config assumes) is a SYMPTOM:
 429s return instantly so the probe spins. The 10k/min limit matches the
 intended ~8,600/min design.
-*Approach:* put the key in a **0600** EnvironmentFile, not the world-readable
-0644 `/etc/default/sla-probe`. **Rotate this key** — its plaintext was
-exposed in a session transcript on 2026-08-15.
+*Approach:* put the key in a mode-restricted EnvironmentFile, not the
+world-readable 0644 `/etc/default/sla-probe`. **[V] CONFIG LANDED — `50d84d27`
+(audit-2026-08-14):** `10-observability.yml:115-129` now provisions a
+`/etc/default/sla-probe.secret` EnvironmentFile at mode **0640** (group
+`stellarindex`, `no_log`, sourced from vault var `stellarindex_probe_api_key`)
+— 0640 not 0600 because the probe runs *as* the `stellarindex` user, not root.
+**Still r1-ops:** mint the Partner/Operator-tier key, set
+`stellarindex_probe_api_key` in the r1 vault, and **rotate** the key whose
+plaintext was exposed in a session transcript on 2026-08-15 (= r1-ops #2,
+overlaps W6.3).
 
-**W4.6 — [V] Template the untemplated.** `sla-probe.service`/`.timer` have
-NO template in the repo (the live file is a Jun 12 pre-rename artifact
+**W4.6 — [V] Template the untemplated. DONE — `50d84d27` + AAI-1/AAI-2
+(`8221092c`), merged `dd7b995b` (audit-2026-08-14).** `sla-probe.service`/`.timer`
+had NO install in the repo (the live file is a Jun 12 pre-rename artifact
 carrying `RATESENGINE_PROBE_API_KEY` in comments and a `User=ratesengine`
-drop-in), yet `10-observability.yml` *enables* `sla-probe.timer`. Rebuild r1
-from the playbook and that task fails exactly like `census-rollup` did.
-Template them, and audit every `systemd:` enable task for the same shape.
+drop-in) yet `10-observability.yml` *enabled* `sla-probe.timer`.
+`10-observability.yml:97-107` now **installs** `deploy/systemd/sla-probe.{service,timer}`
+into `/etc/systemd/system` *before* the `:131` enable; AAI-1/AAI-2 fixed the
+sibling archival-node drop-in copy + the notify-a-real-handler bug. **Still
+r1-ops:** remove the stale hand-installed `/etc/systemd/system/sla-probe.service`
+(pre-rename `User=ratesengine` artifact) on live r1. **Residual (keep open):**
+confirm the "audit every `systemd:` enable task for the same shape" sweep is
+exhaustive role-wide — the fix templated the known offenders, not proven every one.
 
 **W4.7 — [V] Remove dead units:** `lec-repair.service` /
 `lec-repair-v2.service` both exec `/tmp/lec-repair.sh`.
@@ -273,6 +333,19 @@ every unit ansible enables is also templated by ansible.
 **[V] Complete, verified 2026-08-15 — do NOT re-run:** cap67/movements
 archive; comet replay; defindex replay; aquarius; phoenix stake history. All
 duplicate-free under per-table identity.
+
+> **⚠️ audit-2026-08-14 caveat — reconcile before trusting "do NOT re-run":**
+> the remediation added *enforcement/detectors* for migrations that empty data
+> and rely on an un-run follow-up (REC-01/W1-migrations-1 = 0126 TWAP CAGG
+> refresh; REC-02/W1-migrations-2 = 0137 comet `-from 51499000`; W1-migrations-4
+> = 0139 aquarius fee-token) — a `data-freshness` detector (`513c4f6d`) that will
+> now *fire* if the follow-up hasn't run. If 0137/0139 were applied on r1 without
+> their replays, the comet/aquarius "complete, do NOT re-run" rows above and the
+> new detector disagree — check the detector's verdict on r1 before concluding
+> either. These replays are listed as r1-ops follow-ups (r1-ops #4).
+> **Also new:** migrations **0142** (int4→bigint `derive_generation`) + **0143**
+> (`sessions.token_hash`) must be applied **before** the launch binary — see §2.8
+> step 1.
 
 **W5.1 — [V] `ch-instance-backfill -from 2`: probably already satisfied.**
 The index floor is 50,457,429, which is Soroban's mainnet activation — there
@@ -315,16 +388,25 @@ lives in the same file as the probe's API key, so wire them in one edit.
 anything remaining.
 
 **W6.3** Rotate session-exposed credentials: `ratesengine-admin`, MinIO, and
-the SLA-probe key from W4.5.
+the SLA-probe key from W4.5. *(The SLA-probe key's secure home is now in code —
+`50d84d27`, the 0640 vault-sourced EnvironmentFile; the three rotations remain
+r1-ops. The SLA-probe rotation == r1-ops #2 "mint `STELLARINDEX_PROBE_API_KEY`".)*
 
-**W6.4** Re-arm the deploy approval gate:
-`gh variable delete DEPLOY_APPROVAL_RELAXED` + r1 Required-reviewers.
+**W6.4 — [OP] launch-flip toggle, not a defect.** Re-arm the deploy approval
+gate at the production flip: `gh variable delete DEPLOY_APPROVAL_RELAXED` + r1
+Required-reviewers. *(The relaxed state is an ACCEPTED risk-until-launch, not an
+open bug — Ash accepted it 2026-08-15 per NS-4/CID-4: the gate fails **closed**
+and the relaxation is honest/visible, so there is nothing to "fix," only the
+one-line toggle to delete the variable at the flip.)*
 
 **W6.5 — [OP]** Sign the 15 accepted-risk candidates.
 
 **W6.6 — [OP]** Off-site backup decision executed or explicitly
-risk-accepted. **Sequence after W4.1** — deciding backup posture while the
-restore drill is red is deciding blind.
+risk-accepted. **Sequence after W4.1's manual drill run** — W4.1's *code* is now
+DONE (BDR-03, `dd7b995b`); the only thing left before this decision is no longer
+blind is the one **r1-ops** run of the drill (r1-ops #3) to get a current
+verdict. The provisioning itself (BDR-01/02/05: offsite pgBackRest repo2, off-box
+CH copy, owned deep-history copy) stays Ash-deferred ("sort after").
 
 **W6.7 — [OP]** Announcement copy; first-24h watch staffed. Gate on W6.1 and
 on the anomaly-freeze decision (D1) — otherwise the watch opens with a pager
@@ -379,10 +461,16 @@ public traffic, and note it interacts with W2's priority ordering.
 **D8** SolvBTC quote mislabel — registered `fiat:USD`, publishes a NAV ratio
 vs BTC. Recommendation: fix post-v1 (redstone is `IncludeInVWAP=false`).
 
-**D9** Stripe C3-081 reconcile — almost certainly a formal DROP now that the
-access model is anon/free/partner.
+**D9** Stripe C3-081 reconcile — **ready to DROP.** The anon/free/partner access
+model is now recorded in **ADR-0049** (`7ae91445`, audit-2026-08-14), which is
+the documented basis; close C3-081 as a formal DROP citing it.
 
-**D10** Privacy/GDPR review.
+**D10** Privacy review — **reduced to a sign-off, not an engineering review.**
+GDPR Art.17 erasure was DROPPED as overdesigned (PRV-1, Ash 2026-08-15: not
+storing user data meaningfully). Privacy hygiene is addressed in code:
+magic-link reaper (PRV-2, `828de74c`) bounds the unauth-writable table; IPs
+are documented with their retention rationale (PRV-3, `0b3a783c`). What remains
+is a lightweight documentation sign-off, not open work.
 
 ---
 
@@ -391,6 +479,38 @@ access model is anon/free/partner.
 Each item's first step is to REPRODUCE it; several 2026-08-04 findings have
 already been silently fixed (W1.4, W5's replays and phoenix/defindex decoders
 were all found to be done or half-done once checked).
+
+> **audit-2026-08-14 reconciliation [V] (merged `dd7b995b`) — verify these
+> against the merged code before reproducing them:**
+> - **Item 2 (SDEX downside protection): PARTIAL.** W1-flow-price-serve-1
+>   (`af1f8985`) bounds the uncross-checkable single-leg DEX print at a $100M
+>   plausibility ceiling (base-unresolvable → refuse/NULL). It does NOT restore
+>   the cross-check — sub-$100M fake prints on a base-unresolvable pair are still
+>   unchallenged (accepted residual). Remaining work: both-legs-corroborate /
+>   bridge-quote gating.
+> - **Item 6 (recognition_ok always-true): the recognition-axis half is DONE.**
+>   W1-flowcompleteness-1 (`ac6458e5`) folds all pool families into `ownerOf` and
+>   fails closed on a registry-read error, so `recognition_ok` can now fail for
+>   topic-matched sources (incl. defindex). Still open: "defindex emitter
+>   ungated" and "defindex gate poisoning" — separate, untouched.
+> - **Item 9 (derive_generation blocks projector-replay): that sub-item is
+>   DONE.** CWR-1 (`a893f8f7`, resume-stalled resolver + positive generation) +
+>   W1-flowtradeingest-1 (`af1f8985`, gen-aware usd_volume) + W1-migrations-3
+>   (`640c0a09`, 0142 int4→bigint) + the follow-up detectors (`513c4f6d`). Still
+>   open: "MinBatchLimit wedge" and "zero mail instrumentation".
+> - **Item 15 (CI/test gaps): PARTIAL.** The revocation-drift cache-hit path is
+>   closed at runtime by F-A (`e880093e`, admin PATCH evicts the key cache); the
+>   TWAP-coverage gap now has a runtime detector (`513c4f6d`) though not the CI
+>   coverage test. Still open: lint-metric-refs-accepts-comments, goroutine-leak
+>   detection, the two ops-CLI write-gate conventions, txindex-backfill defaults.
+> - **NOT closed, do not over-credit:** Item 1 (alias registry — untouched; the
+>   *analogous* stale-`as_of` bug was fixed only on `/v1/contracts` via
+>   REC-05/W1-explorer-perf-2 `bb64ff3c`, a pattern to copy onto `/v1/markets`);
+>   Item 4 (`/v1/readyz` got a schema-head check via REC-06 but is still
+>   uncapped + auth-exempt — the pool-exhaustion surface stands; the oracle-price
+>   forgery + middleware-deadlock sub-items are untouched); Item 5 (the 6-digit
+>   code entropy is a *different* credential from the session hashing);
+>   Items 3, 7, 8, 10, 11, 12, 13, 14 — untouched by audit-2026-08-14.
 
 1. Ten money handlers alias-blind → **folded into W2**; `markets` reports
    `stale:false` when it isn't; XLM supply 2.11× split.
@@ -435,9 +555,12 @@ emitters; Phoenix pool→stake map; Blend V1 backstop schema).
 
 ### Recommended order
 
-1. **W4.1** (restore-drill) — independent of everything, worst failure mode.
+1. **W4.1** (restore-drill) — code DONE (BDR-03, `dd7b995b`); now just the one
+   **r1-ops** run of the drill for a current verdict (unblocks W6.6).
 2. **D1** — one decision, unblocks W6.7 and stops the pager crying wolf.
 3. **W6.1 + W4.5** — one file, closes the paging gate and the SLA verdict.
+   (W4.5's secure key-home + W4.6's install are now in code (`50d84d27`); this
+   step is now the r1-ops key-mint + `HEALTHCHECKS_URL_*` wiring in one edit.)
 4. **W1** — server → UI → protocols, in that order (W1.1 gates W1.4).
 5. **W4.2–W4.7** — unit sweep + template the pattern.
 6. **W2** — the alias registry.
@@ -3165,13 +3288,27 @@ post-replay before concluding anything is intrinsically slow.
 ### 2.8 Launch execution
 Refreshed launch-day sequence (the old checklist's CalVer/public-flip steps
 are obsolete — repo has been public since 2026-07-03):
-1. Tag the launch release (SemVer), deploy via the re-armed gate.
+1. **Apply DB migrations THROUGH 0143 before the binary swap** [V, audit-2026-08-14]:
+   run `stellarindex-migrate up` (0142 = int4→bigint `derive_generation`; 0143 =
+   `sessions.token_hash`) and confirm `schema_migrations.version = 143` and not
+   dirty. THEN tag the launch release (SemVer) and deploy via the re-armed gate.
+   The new binary carries `ExpectedSchemaVersion = 143`; REC-06's critical
+   readiness check (`internal/api/v1/server.go:126`) fail-closes `/readyz` with a
+   503 backend-drain if it starts against a ≤142 or dirty schema — so the ordering
+   is enforced fail-closed, but the migration MUST actually be run first or the
+   deploy will drain instead of serve.
 2. Confirm `auth_mode=apikey_optional`; external SLA-probe smoke with a
    `sip_` key; outside-internet `make smoke` 13/13.
 3. Status page + API docs + SLA/error-budget page current; F-0100
    counter-presence PromQL sanity; Grafana launch-watch board from
    `post-launch-queries.md` (refresh metric names first).
 4. Announcement; open the first-24h watch (every alert = SEV-2 minimum).
+   **EXPECT a one-time forced re-login of every dashboard user** in the first
+   minutes after cutover [V, audit-2026-08-14]: migration 0143 leaves all
+   pre-cutover `sessions` rows with `token_hash = NULL`, so the new binary (which
+   authenticates by `sha256(cookie token)`) resolves none of them. This is the
+   standard single-invalidation cost of a session-secret rotation, NOT an auth
+   outage — do not escalate the resulting login spike / 401s on stale cookies.
 
 ### 2.9 Explicitly deferred to post-v1 (decide, don't drift)
 - **HA / R2+R3 / ClickHouse HA** — the single-box SPOF ships at v1 as a
