@@ -767,9 +767,16 @@ jobs:
           printf '%s\n' '--- {}' > inventory/ci.syntax-secrets.yml
           ansible-playbook --syntax-check -i inventory/r1.example.yml playbooks/archival-node.yml -e secrets_file=../inventory/ci.syntax-secrets.yml
           ansible-playbook --syntax-check -i inventory/r1.example.yml playbooks/monitoring.yml
-      - name: ansible-lint (production profile, warnings tolerated)
+      - name: ansible-lint (moderate profile — enforced; baseline grandfathered)
         working-directory: configs/ansible
-        run: ansible-lint --profile moderate roles/ playbooks/ || true
+        # CID-3 (audit-2026-08-14): the trailing `|| true` used to swallow the
+        # exit code, so this REQUIRED check was permanently green even on
+        # error-level violations — a silent false green. It is dropped: a NEW
+        # violation in any non-grandfathered rule now fails the check. The
+        # ~535 pre-existing moderate findings are grandfathered via skip_list
+        # in configs/ansible/.ansible-lint (auto-discovered from this dir);
+        # burn that list down to re-enable each rule as an enforced gate.
+        run: ansible-lint --profile moderate roles/ playbooks/
 
   branch-protection-status:
     name: branch protection status (informational)
