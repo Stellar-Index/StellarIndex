@@ -42,7 +42,25 @@
   when-present header gate (CORS simple-request); perf-window-narrowing changes served
   numbers; "can this gate fail at all?"; empty-registry gated backfill = silent no-op;
   re-derive tool that counts success while dropping rows; `.claude/worktrees/` contaminates
-  repo-wide greps. (8) **Live-ops:** Phase A (recompress) DONE 2026-07-20; the master-plan
+  repo-wide greps. **Added by the audit-2026-08-14 finding waves (all generic, hunt these
+  next time):** (a) **fixed-precision serialization of a big.Rat/big.Int money value can round
+  a strictly-positive price to a string that reparses as zero** — and a zero price fed back as
+  a graph leg can collapse a whole triangulation window; render served prices at a
+  magnitude-relative precision (the storage layer's `rateScaleFor` already does this; the
+  orchestrator publish path did not). (b) **equal/gen-0 last-writer-wins on a gen-guarded
+  upsert regresses a populated value to NULL/zero** when a transient resolver/decode error
+  yields nil at generation 0 and the null-guard only fires at gen>0 — bounded to the writers
+  with a *swallowed fallible resolver* (trades/fx/sep41), not the deterministic-XDR-decode
+  writers, so scope it by "does this column's value come from a fallible lookup?". (c)
+  **auth hot-path with an uncached cross-store status read that fails closed → total outage
+  on a routine dependency blip** (and the wrong 401-vs-503 status). (d) **retention-parity:
+  an unauth-writable durable PII/token table whose SIBLING got a reaper but it didn't** — for
+  every such table ask "what prunes it, and does its sibling have a reaper it lacks?". (e)
+  **non-atomic multi-step rollup/swap sequence can serve a globally-non-empty-but-PARTIAL
+  table that the LIMIT-1 presence probe then trusts as authoritative.** Meta-lesson for the
+  audit tooling itself (see IMPROVEMENTS.md): content-rich finder units destabilize structured
+  output — recover a dead unit with a PROSE auditor, then skeptic-verify the prose. (8)
+  **Live-ops:** Phase A (recompress) DONE 2026-07-20; the master-plan
   is SUPERSEDED — current authority is `open-fixes-inventory-2026-08-08.md`; fence is
   one-heavy-job-at-a-time (cap67 + ch-instance backfills QUEUED); **DEPLOY_APPROVAL_RELAXED
   still =true**; `repo-prep.md` is STALE (Phase-0 freeze ended; must be re-derived before
