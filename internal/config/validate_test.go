@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
@@ -13,6 +14,24 @@ func TestValidate_DefaultPasses(t *testing.T) {
 	// works" contract every binary depends on.
 	if err := config.Default().Validate(); err != nil {
 		t.Fatalf("Default().Validate: %v", err)
+	}
+}
+
+// TestDefault_BackgroundStatementTimeoutIsGenerousBackstop pins REC-08
+// (audit-2026-08-14): the indexer/aggregator pools must ship with a
+// non-zero, GENEROUS SQL-side statement_timeout backstop out of the box.
+// Zero would leave those pools unbounded (the defect); a tight value would
+// clip legitimate heavy work (the rejected global-timeout fix). It must
+// also comfortably exceed the request-path serving bound — a background
+// runaway is expected to run far longer than any serving query before it is
+// unambiguously stuck.
+func TestDefault_BackgroundStatementTimeoutIsGenerousBackstop(t *testing.T) {
+	got := config.Default().Storage.BackgroundStatementTimeout
+	if got != 30*time.Minute {
+		t.Fatalf("Storage.BackgroundStatementTimeout = %v, want 30m (the generous REC-08 backstop)", got)
+	}
+	if serving := config.Default().API.ServingStatementTimeout; got <= serving {
+		t.Fatalf("Storage.BackgroundStatementTimeout (%v) must exceed the serving bound (%v)", got, serving)
 	}
 }
 

@@ -120,6 +120,33 @@ func (r *RawSwap) assign(e *events.Event, fieldTopic string) error {
 	return nil
 }
 
+// slot returns the event currently stored in the slot identified by
+// fieldTopic, or nil if that slot is empty (or fieldTopic isn't a swap
+// field). Read-only companion to assign — absorb uses it to detect a
+// SECOND swap re-using the same (ledger, tx, op, pool) groupKey before
+// it silently overwrites the first swap's slots.
+func (r *RawSwap) slot(fieldTopic string) *events.Event {
+	switch fieldTopic {
+	case TopicSymbolSender:
+		return r.Sender
+	case TopicSymbolSellToken:
+		return r.SellToken
+	case TopicSymbolOfferAmount:
+		return r.OfferAmount
+	case TopicSymbolActualReceived:
+		return r.ActualReceived
+	case TopicSymbolBuyToken:
+		return r.BuyToken
+	case TopicSymbolReturnAmount:
+		return r.ReturnAmount
+	case TopicSymbolSpreadAmount:
+		return r.SpreadAmount
+	case TopicSymbolReferralFee:
+		return r.ReferralFee
+	}
+	return nil
+}
+
 // groupKey is the (ledger, tx_hash, op_index, contract_id) tuple. The
 // 8 field events of one swap all come from ONE pool contract, so they
 // share this key — grouping for a normal single-pool swap is unchanged

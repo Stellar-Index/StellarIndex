@@ -690,6 +690,27 @@ Subcommands:
                               -config /etc/stellarindex.toml \
                               -from 21000000 -to 25000000 \
                               -source soroswap,aquarius
+  backfill-router -config PATH -from N -to N [-resume] [-bucket NAME]
+                          Reconstruct soroswap_router_swaps for a ledger
+                          range by replaying the soroswap-router
+                          ContractCallDecoder over raw Galexie ledger
+                          metadata (the router emits no Soroban events, so
+                          the projector cannot rebuild it). Idempotent
+                          (ON CONFLICT DO NOTHING); checkpoints into
+                          ingestion_cursors for resume. Superseded on the
+                          lake path by ch-rebuild -contract-calls.
+  resume-stalled -config PATH [-min-lag DUR] [-max-resumes N] [-source-filter S] [-parallel N] [-dry-run]
+                          Resume every stalled backfill cursor that still
+                          has a remaining range, marching each toward the
+                          'to' ledger encoded in its sub_source. One-shot
+                          replacement for a hand-rolled SQL+shell loop over
+                          stalled cursors. -dry-run prints the plan only.
+  find-data-gaps -config PATH [-from N] [-to N] [-min-gap-size N] [-source S] [-output text|json]
+                          Data-derived gap detector: scan the soroban_events
+                          hypertable directly and report contiguous
+                          ledger-coverage gaps >= -min-gap-size (default
+                          1000 ledgers). Feed the output to a targeted
+                          backfill run. Read-only.
   tag-routed-via -config PATH [-from N] [-to N] [-window N] [-resume]
                           Back-tag trades.routed_via='soroswap-router' for
                           every trade sharing (ledger, tx_hash) with a
@@ -751,6 +772,23 @@ Subcommands:
                           per-kind/per-ledger output counts match exactly —
                           proving decoders read ClickHouse identically. Writes
                           nothing; exits non-zero on any divergence.
+  ch-rebuild -config PATH -from N -to N [-ch-addr H:P] [-sources CSV] [-sdex] [-sep41] [-contract-calls] [-contracts CSV]
+                          Re-derive event-based served tables (Timescale)
+                          from the ClickHouse lake for a range by re-running
+                          the production decoders — the ADR-0034 lake-replay
+                          successor to per-source MinIO backfills. -sdex also
+                          re-derives SDEX trades from operations;
+                          -contract-calls the event-less router/band sources;
+                          -sep41 the watched SEP-41 supply/transfer sources
+                          (see docs/operations/sep41-mint-recovery.md). Reads
+                          the lake; idempotent ON CONFLICT writes.
+  ch-supply -config PATH -from N -to N [-ch-addr H:P] [-top N] [-final] [-seed-flows]
+                          Derive every token's total supply from the lake by
+                          summing CAP-67 classic + SEP-41 mint/burn/clawback
+                          flows per contract (ADR-0034). Defaults to a
+                          top-N report; -seed-flows writes one decoded row
+                          per flow event into stellar.supply_flows
+                          (idempotent). Read-only unless -seed-flows.
   ch-txindex-backfill [-ch-addr H:P] [-from N] [-to N] [-window N]
                           Fill stellar.tx_hash_index (the hash-ordered
                           GET /v1/tx/{hash} lookup table, perf-todo §4)
@@ -827,6 +865,16 @@ Subcommands:
                               -ch-addr 127.0.0.1:9300 \
                               -from 2 -to 58762516 \
                               -write -verify
+  projector-replay -config PATH -source NAME -from N [-dry-run]
+                          Rewind the projector's per-source cursor so the
+                          indexer's projector goroutine re-projects a
+                          historical range from soroban_events (ADR-0032
+                          Phase 5 replacement for the retired *-backfill
+                          subcommands). One-shot cursor SQL — the running
+                          indexer does the work; idempotent per-source
+                          ON CONFLICT DO NOTHING. -source names: see
+                          internal/projector/registry.go. Referenced by the
+                          migration 0137/0139 operator follow-ups.
   projected-rebuild -config PATH -source NAME -from N [-to N] [-workers K] [-window N] [-resume] [-write] [-ch-addr H:P] [-allow-live-overlap]
                           ADR-0048 D3: bulk catch-up for a projected
                           (Soroban-derived) source, replacing
@@ -1004,6 +1052,27 @@ Subcommands:
                           different shape; run it separately. Example:
                             stellarindex-ops verify-lake \
                               -ch-addr 127.0.0.1:9300 -ec-floor 63050000
+  ch-recognition -config PATH [-from N] [-to N] [-ch-addr H:P] [-include-firehose] [-top N]
+                          ADR-0033 Claim 2a recognition audit: pull every
+                          distinct (contract_id, topic_0_sym) shape from the
+                          lake and run each through the production decoder
+                          chain's Matches(); any shape no decoder claims is a
+                          recognition gap (an event the system would silently
+                          drop). -include-firehose also audits the CAP-67
+                          classic-token topics. Read-only.
+  verify-served-values -api URL [-textfile PATH] [-timeout DUR]
+                          Data-correctness harness: fetch a curated set of
+                          values we SERVE and reconcile each against an
+                          INDEPENDENT ground truth (e.g. XLM supply vs the
+                          SDF lumen API), emitting node_exporter textfile
+                          gauges so a drifting served value alerts within a
+                          day. Read-only.
+  sdex-claim-audit -config PATH -from N -to N [-bucket NAME] [-examples N] [-dump-ops]
+                          Walk a ledger range and run every classic-DEX claim
+                          atom through the real SDEX decode path, tallying
+                          which claims the decoder DROPS and why — the exact
+                          diagnosis of SDEX trade-count gaps against Hubble
+                          (which counts one trade per claim atom). Read-only.
   verify-recognition -config PATH -from N -to N
                           ADR-0033 Claim 2a: pull every distinct
                           (contract, topic[0]) shape from soroban_events
@@ -1070,6 +1139,25 @@ Subcommands:
                           Example:
                             stellarindex-ops verify-usd-volume \
                               -config /etc/stellarindex.toml -days 30
+  state-snapshot -config PATH [-archive URL] [-checkpoint N] [-write] [-scope contracts|all|storage] [-ch ADDR] [-dry-run]
+                          Read a history-archive checkpoint's ledger-entry
+                          state and tally it per entry type. -write fills
+                          ClickHouse ledger_entry_changes from the snapshot
+                          (DATA-TRUTH-PLAN G1-G3); -scope selects the entry
+                          types; -dry-run sizes the write set without
+                          writing.
+  issuer-enrich -config PATH [-ch ADDR] [-batch N] [-dry-run]
+                          Populate issuers.home_domain from on-chain account
+                          state in the ClickHouse lake (unblocks sep1-refresh
+                          → org_name). Batched; -dry-run reports counts
+                          without writing.
+  sep1-refresh -config PATH [-limit N] [-older-than DUR] [-timeout DUR] [-issuer G...] [-dry-run]
+                          Resolve the SEP-1 stellar.toml for every issuer
+                          with a home_domain and write the parsed payload to
+                          issuers.sep1_payload (surfacing org_name on
+                          /v1/issuers). Per-issuer failures are counted, not
+                          fatal; built-in per-request timeout + SSRF guard.
+                          Run hourly from cron.
   seed-soroswap-pairs -config PATH [-rpc URL] [-timeout DUR]
                           Bootstrap the soroswap_pairs registry table
                           via stellar-rpc simulateTransaction. Walks the

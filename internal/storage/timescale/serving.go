@@ -18,12 +18,14 @@ import (
 // serving pool). It is the defense-in-depth backstop UNDER the app-layer
 // per-request context deadline, which is the primary bound.
 //
-// Scope is the serving pool ONLY. The indexer/aggregator keep using
-// [Open] — their heavy batch scans (per_source_gaps, source_coverage,
-// row_counts, …) set their own longer `SET LOCAL statement_timeout`
-// inside a transaction, which overrides this session default for exactly
-// those statements. A plain request-path read (no explicit SET LOCAL)
-// inherits this session default and is bounded by it.
+// The indexer/aggregator pools get their own generous session backstop
+// via [OpenBackground] (REC-08); the one-shot ops/migrate/heavy-backfill
+// pools stay unbounded on plain [Open]. In every bounded pool the heavy
+// batch scans (per_source_gaps, source_coverage, row_counts, …) set their
+// own longer `SET LOCAL statement_timeout` inside a transaction, which
+// overrides the session default for exactly those statements. A plain
+// request-path read (no explicit SET LOCAL) inherits this session default
+// and is bounded by it.
 //
 // statementTimeout <= 0 falls back to plain [Open] (no session timeout).
 //
@@ -33,18 +35,47 @@ import (
 // and keyword-form DSNs and never disturbs the configured connection
 // string.
 func OpenServing(ctx context.Context, dsn string, statementTimeout time.Duration) (*Store, error) {
-	if statementTimeout <= 0 {
+	return openWithStatementTimeout(ctx, dsn, statementTimeout)
+}
+
+// OpenBackground is [Open] with a session-level `statement_timeout` applied
+// to every connection in the pool, for the long-running INDEXER and
+// AGGREGATOR binaries. It is the SQL-side runaway backstop for REC-08
+// (audit-2026-08-14): before it, only the serving pool self-bounded
+// (OpenServing), so a genuinely stuck indexer/aggregator query kept running
+// server-side even after the Go-side ctx was cancelled.
+//
+// The bound is deliberately GENEROUS (see StorageConfig.BackgroundStatementTimeout)
+// so it only ever kills a true runaway. The heavy batch scans
+// (per_source_gaps, source_coverage, row_counts, sep41_supply_events, …)
+// open a transaction and `SET LOCAL statement_timeout` to their own longer
+// value, which OVERRIDES this session default for exactly those statements —
+// so this backstop never clips legitimate heavy work.
+//
+// It shares OpenServing's post-connect SET mechanism but is a distinct
+// constructor so the two call-sites read their own intent (DoS backstop vs
+// runaway backstop) and draw their timeout from their own config field. The
+// one-shot ops/migrate/heavy-backfill paths keep using plain [Open]
+// (unbounded) — a global timeout there was the rejected prior fix.
+//
+// statementTimeout <= 0 falls back to plain [Open] (no session timeout).
+func OpenBackground(ctx context.Context, dsn string, statementTimeout time.Duration) (*Store, error) {
+	return openWithStatementTimeout(ctx, dsn, statementTimeout)
+}
+
+// openWithStatementTimeout is the shared implementation behind OpenServing
+// and OpenBackground: a pool whose every connection runs `SET
+// statement_timeout` on dial (via [statementTimeoutConnector]), Ping'd
+// before returning. statementTimeout <= 0 falls back to plain [Open].
+func openWithStatementTimeout(ctx context.Context, dsn string, statementTimeout time.Duration) (*Store, error) {
+	connector, err := boundedConnector(dsn, statementTimeout)
+	if err != nil {
+		return nil, err
+	}
+	if connector == nil {
 		return Open(ctx, dsn)
 	}
-
-	base, err := pq.NewConnector(dsn)
-	if err != nil {
-		return nil, fmt.Errorf("timescale: pq.NewConnector: %w", err)
-	}
-	db := sql.OpenDB(&statementTimeoutConnector{
-		base:      base,
-		timeoutMS: statementTimeout.Milliseconds(),
-	})
+	db := sql.OpenDB(connector)
 	configurePool(db)
 
 	pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -54,6 +85,24 @@ func OpenServing(ctx context.Context, dsn string, statementTimeout time.Duration
 		return nil, fmt.Errorf("timescale: ping: %w", err)
 	}
 	return &Store{db: db}, nil
+}
+
+// boundedConnector builds the SET-statement_timeout-on-connect driver
+// connector for a positive timeout, or returns (nil, nil) to signal "no
+// bound — use plain [Open]". Split out so the timeout-arithmetic and the
+// bounded/unbounded decision are unit-testable without a live Postgres.
+func boundedConnector(dsn string, statementTimeout time.Duration) (driver.Connector, error) {
+	if statementTimeout <= 0 {
+		return nil, nil
+	}
+	base, err := pq.NewConnector(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: pq.NewConnector: %w", err)
+	}
+	return &statementTimeoutConnector{
+		base:      base,
+		timeoutMS: statementTimeout.Milliseconds(),
+	}, nil
 }
 
 // statementTimeoutConnector wraps a driver.Connector so every freshly

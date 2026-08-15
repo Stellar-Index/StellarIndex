@@ -100,6 +100,12 @@ type Cache interface {
 	// a BoolCmd whose value is false when the key doesn't exist (no
 	// prior bucket to keep alive) — a normal, non-error outcome.
 	Expire(ctx context.Context, key string, expiration time.Duration) *redis.BoolCmd
+	// Del removes keys. Used by the direct per-pair refresh to clear a
+	// stale triangulated-provenance marker when it overwrites the shared
+	// VWAP key with a DIRECT value (W1-flow-price-serve-2), so a prior
+	// composite's "triangulated" marker cannot outlive the composite it
+	// described. Deleting an absent key is a no-op, not an error.
+	Del(ctx context.Context, keys ...string) *redis.IntCmd
 }
 
 // FreezeMarker is the side-effect interface the orchestrator uses
@@ -966,7 +972,7 @@ func (o *Orchestrator) emitStalenessGauges(now time.Time) {
 // refreshPairWindow computes VWAP for one (pair, window) and
 // writes it to Redis. ErrNoTrades is a normal-path outcome (the
 // window was empty for this pair) and not propagated as an error.
-func (o *Orchestrator) refreshPairWindow(
+func (o *Orchestrator) refreshPairWindow( //nolint:funlen // 61>60 after the R-2 window-scoped composite-meta fix; a coherent VWAP unit
 	ctx context.Context,
 	pair canonical.Pair,
 	window time.Duration,
@@ -1087,6 +1093,23 @@ func (o *Orchestrator) refreshPairWindow(
 		// surface much later.
 		obs.AggregatorVWAPCacheWriteErrorsTotal.Inc()
 		return fmt.Errorf("redis set %s: %w", key, err)
+	}
+
+	// W1-flow-price-serve-2: this DIRECT value now owns the shared VWAP
+	// key. Clear any stale "triangulated" provenance marker a PRIOR
+	// tick's composite left on it, so LookupTriangulatedVWAP cannot serve
+	// this (possibly thin, single-source) direct price mislabeled as a
+	// robust deep-market composite with the prior composite's
+	// diverged/rerouted flags. The direct refresh runs BEFORE
+	// triangulateAll each tick, so a confident same-tick triangulation
+	// re-stamps the marker in publishComposite; a non-confident tick
+	// leaves it absent, which the API reads as isTriangulated=false.
+	// Best-effort: a failed clear only reverts to the prior (buggy)
+	// behaviour — never worth blocking the value publish.
+	provKey := cachekeys.VWAPProvenance(pair.Base, pair.Quote, window)
+	if err := o.cache.Del(ctx, provKey.String()).Err(); err != nil {
+		o.logger.Debug("aggregator: direct-refresh provenance clear failed",
+			"pair", pair.String(), "window", window.String(), "err", err)
 	}
 
 	// Cache write confidence (only on successful publish — frozen
@@ -1814,6 +1837,18 @@ func filterForVWAP(trades []canonical.Trade) []canonical.Trade {
 	return out
 }
 
+// formatRatSigDigits is how many SIGNIFICANT digits [formatRatFixed]
+// preserves for a value too small to render at its requested fixed
+// scale — see [renderScale]. 12 keeps a sub-1e-12 price round-tripping
+// with the same fidelity a normal-magnitude price gets at 12 decimals.
+const formatRatSigDigits = 12
+
+// formatRatMaxScale caps the fractional places [renderScale] will
+// extend to, so a pathological (or hostile) micro-valued rational can
+// never make us render an unbounded string on the publish path. Mirrors
+// storage-tier bridgeRateMaxScale.
+const formatRatMaxScale = 60
+
 // formatRatFixed returns a fixed-precision decimal string
 // representation of r. 12 decimal places covers every sensible
 // crypto/fiat price range without float-precision loss.
@@ -1823,7 +1858,18 @@ func filterForVWAP(trades []canonical.Trade) []canonical.Trade {
 // but not the "truncate toward zero" convention the API spec
 // mandates. Rolling a tiny fixed-precision formatter keeps the
 // rounding behaviour explicit.
+//
+// R-1: the fixed scale is a FLOOR, not a hard cap. A strictly-positive
+// rational whose first significant digit falls beyond `decimals` places
+// (e.g. a high-supply token priced in BTC at <1e-12) would truncate to
+// "0.000…0", reparse to zero via big.Rat.SetString, and be served as
+// price 0 — which then poisons the next tick's window edge graph
+// (BuildEdges rejects a Sign()<=0 leg and nils the whole graph).
+// [renderScale] extends the scale magnitude-relatively for exactly those
+// values so no positive price ever renders to a zero-reparsing string,
+// while normal-magnitude prices keep byte-identical output.
 func formatRatFixed(r *big.Rat, decimals int) string {
+	decimals = renderScale(r, decimals)
 	// Multiply numerator by 10^decimals, divide by denominator,
 	// then insert the decimal point.
 	scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
@@ -1856,6 +1902,46 @@ func zeroes(n int) string {
 		b[i] = '0'
 	}
 	return string(b)
+}
+
+// renderScale returns the number of fractional decimal places
+// [formatRatFixed] should render r with. It is the requested `decimals`
+// for any value that renders non-zero there (so normal-magnitude prices
+// keep byte-identical output), but for a strictly-positive magnitude
+// whose first significant digit falls BEYOND `decimals` places it
+// EXTENDS the scale to keep [formatRatSigDigits] significant digits — so
+// a tiny-but-non-zero price never truncates to a "0.000…0" string that
+// reparses to zero (R-1).
+//
+// Deliberately float-free (ADR-0003): a log10 to find the magnitude is
+// the obvious way to reintroduce float error into the money path. This
+// counts leading fractional zeros exactly, mirroring the proven
+// storage-tier rateScaleFor.
+func renderScale(r *big.Rat, decimals int) int {
+	if r == nil || r.Sign() == 0 {
+		return decimals
+	}
+	// firstSigPlace is the decimal position of |r|'s first significant
+	// digit: 0 for |r| >= 1, 1 for 0.1<=|r|<1, 2 for 0.01<=|r|<0.1, …
+	x := new(big.Rat).Abs(r)
+	one := big.NewRat(1, 1)
+	ten := big.NewRat(10, 1)
+	firstSigPlace := 0
+	for x.Cmp(one) < 0 && firstSigPlace < formatRatMaxScale {
+		x.Mul(x, ten)
+		firstSigPlace++
+	}
+	// The fixed `decimals` render is all-zeros exactly when that first
+	// significant digit lands beyond the last rendered place. Only then
+	// extend — otherwise leave the requested scale untouched.
+	if firstSigPlace <= decimals {
+		return decimals
+	}
+	need := firstSigPlace + formatRatSigDigits
+	if need > formatRatMaxScale {
+		return formatRatMaxScale
+	}
+	return need
 }
 
 // Stats is a snapshot of the orchestrator's runtime counters.

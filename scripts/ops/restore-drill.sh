@@ -45,6 +45,16 @@ DRILL_CH_BUCKET="${DRILL_CH_BUCKET:-galexie-archive}"
 # minutes (third drill failure mode: a daily-diff schedule means up
 # to ~24h of a busy ingest DB's WAL replays through archive-get).
 PG_START_TIMEOUT="${PG_START_TIMEOUT:-7200}"
+# Evidence log + metric destinations. Both are EXPLICIT host paths
+# (env-overridable), NOT computed from $0 — the installed copy runs as
+# /usr/local/bin/restore-drill.sh, where the old $0-relative LOG_DIR
+# resolved to a non-existent /usr/docs/operations/drills and silently
+# dropped the whole evidence phase (BDR-03). /var is left writable by
+# the systemd unit's ProtectSystem=full. Operators running from a
+# checkout who want the evidence committed can point LOG_DIR at the
+# repo: RESTORE_DRILL_LOG_DIR=$(pwd)/docs/operations/drills.
+LOG_DIR="${RESTORE_DRILL_LOG_DIR:-/var/lib/stellarindex/restore-drills}"
+TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
 
 fail_count=0
 note() { echo "restore-drill: $*" >&2; }
@@ -280,17 +290,51 @@ if [[ -n "${DRILL_CH_WINDOW:-}" ]]; then
 fi
 
 # ─── phase 5: evidence log ─────────────────────────────────────────
-LOG_DIR="$(cd "$(dirname "$0")/../.." && pwd)/docs/operations/drills"
-if [[ -d "$LOG_DIR" ]]; then
-  {
-    echo "## $(date -u +%F) restore drill (repo${DRILL_REPO})"
-    echo "- restore: ${restore_secs}s; tip lag ${lag} ledgers; hash-chain breaks: ${breaks}; trades window match: ${restored_rows}=${live_rows}"
-    [[ -n "${ch_secs:-}" ]] && echo "- CH re-derive (dry-run, fetch+decode only): ${DRILL_CH_WINDOW} ledgers in ${ch_secs}s from ${DRILL_CH_BUCKET}; lake rows in window: ${ch_rows:-n/a}"
-    [[ -n "$DRILL_LOG_NOTE" ]] && echo "- note: $DRILL_LOG_NOTE"
-    echo "- failures: $fail_count"
-    echo
-  } >> "$LOG_DIR/restore-drills.md"
-  note "evidence appended to docs/operations/drills/restore-drills.md — commit it"
+# The evidence IS the deliverable (ADR-0043 §3 / CS-110: "a backup that
+# has never been restored is a hope"). A drill that ran but recorded
+# nothing is a FAILED drill, so an unwritable evidence log fails LOUDLY
+# and is counted — it does not get silently skipped as it did while
+# LOG_DIR was $0-relative (BDR-03).
+evidence_file="$LOG_DIR/restore-drills.md"
+if mkdir -p "$LOG_DIR" 2>/dev/null && {
+      echo "## $(date -u +%F) restore drill (repo${DRILL_REPO})"
+      echo "- restore: ${restore_secs}s; tip lag ${lag} ledgers; hash-chain breaks: ${breaks}; trades window match: ${restored_rows}=${live_rows}"
+      [[ -n "${ch_secs:-}" ]] && echo "- CH re-derive (dry-run, fetch+decode only): ${DRILL_CH_WINDOW} ledgers in ${ch_secs}s from ${DRILL_CH_BUCKET}; lake rows in window: ${ch_rows:-n/a}"
+      [[ -n "$DRILL_LOG_NOTE" ]] && echo "- note: $DRILL_LOG_NOTE"
+      echo "- failures: $fail_count"
+      echo
+    } >> "$evidence_file"; then
+  note "evidence appended to $evidence_file"
+else
+  note "FATAL: could not write drill evidence to $evidence_file — the evidence is the drill's only deliverable; recording this run as a FAILURE"
+  fail_count=$((fail_count + 1))
+fi
+
+# ─── phase 6: node_exporter textfile metric ────────────────────────
+# Mirrors ch-schema-snapshot.sh §6: stamp last_success ONLY on a fully
+# clean run (fail_count==0, evidence written) so
+# stellarindex_restore_drill_stale fires when the monthly drill stops
+# producing evidence. Written atomically (.tmp then mv) under /var,
+# which ProtectSystem=full leaves writable.
+if [[ "$TEXTFILE_DIR" != "/dev/null" ]]; then
+  if mkdir -p "$TEXTFILE_DIR" 2>/dev/null; then
+    metric_out="$TEXTFILE_DIR/restore_drill.prom"
+    metric_tmp="$metric_out.tmp.$$"
+    {
+      echo "# HELP stellarindex_restore_drill_last_success_unix Unix time of the most recent fully-successful pgBackRest restore-drill (ADR-0043 §3 / CS-110)."
+      echo "# TYPE stellarindex_restore_drill_last_success_unix gauge"
+      if [[ "$fail_count" -eq 0 ]]; then
+        echo "stellarindex_restore_drill_last_success_unix $(date +%s)"
+      fi
+      echo "# HELP stellarindex_restore_drill_failures Number of failed verification checks in the most recent restore-drill run."
+      echo "# TYPE stellarindex_restore_drill_failures gauge"
+      echo "stellarindex_restore_drill_failures $fail_count"
+    } > "$metric_tmp"
+    chmod 644 "$metric_tmp"
+    mv "$metric_tmp" "$metric_out"
+  else
+    note "WARN: could not write $TEXTFILE_DIR — restore-drill metric not emitted (staleness alert will fire on the absent series)"
+  fi
 fi
 
 note "done: $fail_count failure(s)"

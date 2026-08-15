@@ -307,6 +307,23 @@ func tradeUSDVolumeViaFX(ctx context.Context, t canonical.Trade, md external.Met
 			if hi.Cmp(bound) > 0 && usdAmount.Cmp(baseVal) > 0 {
 				usdAmount = baseVal
 			}
+		} else if usdAmount.Cmp(singleLegMaxUSDVolume) > 0 {
+			// W1-flow-price-serve-1: the base leg is UNRESOLVABLE, so the
+			// double-plant cross-check above cannot fire — the whole value
+			// rests on the quote leg, which for an on-chain token is usually
+			// the tier-3b <token>/XLM bridge an attacker can author for the
+			// cost of bridgeLegMinUSDVolume. A fresh never-priced base token
+			// therefore BYPASSES the cross-check and re-opens the $182M
+			// fake-print class through the quote side alone. USDPriceAt exposes
+			// only (rate, ok, err) — it cannot tell a poisoned bridge from an
+			// honest direct market — and base legs are legitimately unresolvable
+			// on most DEX pairs, so we do NOT blanket-NULL the single-leg class.
+			// Instead we BOUND it: an uncross-checkable single-leg DEX print
+			// above singleLegMaxUSDVolume is implausible for any real Stellar
+			// swap, so it is refused (usd_volume left NULL) rather than served
+			// and propagated to /v1/markets volume and the confidence
+			// LiquidityUSD factor.
+			return nil
 		}
 	}
 	rendered := usdAmount.FloatString(8)
@@ -319,6 +336,20 @@ func tradeUSDVolumeViaFX(ctx context.Context, t canonical.Trade, md external.Met
 // rows diverged by ~10^10) while never firing on ordinary thin-market
 // noise.
 var usdLegAgreementFactor = big.NewRat(10, 1)
+
+// singleLegMaxUSDVolume bounds a DEX trade whose usd_volume rests on ONE
+// resolvable leg. When the BASE leg is unresolvable the [fxLegValue]
+// double-plant cross-check above cannot corroborate the quote leg, and the
+// quote leg for an on-chain token is usually the poisonable tier-3b
+// <token>/XLM bridge (see [tradeUSDVolumeViaFX]). No real single Stellar DEX
+// swap approaches nine figures — fleet-wide 24h on-chain volume is far below
+// this — so a single-leg print above the ceiling is refused (usd_volume left
+// NULL) rather than served. Deliberately set high so the large legitimate
+// class of unresolvable-base DEX trades keeps its honest value: the ceiling
+// only removes the implausible, uncross-checkable tail an attacker can drive
+// arbitrarily high through a self-authored bridge rate (W1-flow-price-serve-1;
+// the base-unresolvable variant of the $182M fake-print incident, task #32).
+var singleLegMaxUSDVolume = new(big.Rat).SetInt64(100_000_000)
 
 // fxLegValue values one leg of a trade through the resolver: amount /
 // 10^decimals x USDPriceAt(asset). nil when the asset has no resolvable
@@ -764,7 +795,18 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
                 quote_asset       = EXCLUDED.quote_asset,
                 base_amount       = EXCLUDED.base_amount,
                 quote_amount      = EXCLUDED.quote_amount,
-                usd_volume        = EXCLUDED.usd_volume,
+                -- W1-flowtradeingest-1 (generation-aware NULL preservation):
+                -- at the LIVE / equal generation a transient FX-resolver miss
+                -- must NOT regress a populated usd_volume to NULL (the gen-0
+                -- double-write race between BatchInsertTrades and InsertTrade),
+                -- so preserve the stored value on a NULL incoming. A strictly
+                -- HIGHER-generation re-derive is still allowed to write an
+                -- honest NULL (the tier-3b de-poisoning case; store.go:147-155).
+                usd_volume        = CASE
+                                        WHEN EXCLUDED.derive_generation > trades.derive_generation
+                                            THEN EXCLUDED.usd_volume
+                                        ELSE COALESCE(EXCLUDED.usd_volume, trades.usd_volume)
+                                    END,
                 maker             = EXCLUDED.maker,
                 taker             = EXCLUDED.taker,
                 derive_generation = EXCLUDED.derive_generation
@@ -1103,7 +1145,18 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
                 quote_asset       = EXCLUDED.quote_asset,
                 base_amount       = EXCLUDED.base_amount,
                 quote_amount      = EXCLUDED.quote_amount,
-                usd_volume        = EXCLUDED.usd_volume,
+                -- W1-flowtradeingest-1 (generation-aware NULL preservation):
+                -- at the LIVE / equal generation a transient FX-resolver miss
+                -- must NOT regress a populated usd_volume to NULL (the gen-0
+                -- double-write race between BatchInsertTrades and InsertTrade),
+                -- so preserve the stored value on a NULL incoming. A strictly
+                -- HIGHER-generation re-derive is still allowed to write an
+                -- honest NULL (the tier-3b de-poisoning case; store.go:147-155).
+                usd_volume        = CASE
+                                        WHEN EXCLUDED.derive_generation > trades.derive_generation
+                                            THEN EXCLUDED.usd_volume
+                                        ELSE COALESCE(EXCLUDED.usd_volume, trades.usd_volume)
+                                    END,
                 maker             = EXCLUDED.maker,
                 taker             = EXCLUDED.taker,
                 derive_generation = EXCLUDED.derive_generation

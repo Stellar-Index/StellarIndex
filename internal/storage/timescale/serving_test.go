@@ -122,3 +122,40 @@ func TestStatementTimeoutConnector_PropagatesDialError(t *testing.T) {
 		t.Fatal("Connect should propagate the underlying dial error")
 	}
 }
+
+// TestBoundedConnector_PositiveTimeoutSetsBackstop pins REC-08
+// (audit-2026-08-14): OpenBackground (indexer/aggregator) with a positive
+// timeout builds a pool that SETs statement_timeout — the exact
+// milliseconds the config Duration renders to — so a runaway background
+// query is bounded SQL-side. Before REC-08 those pools opened via plain
+// Open with NO connector at all.
+func TestBoundedConnector_PositiveTimeoutSetsBackstop(t *testing.T) {
+	conn, err := boundedConnector("postgres://u@127.0.0.1:5432/db?sslmode=disable", 30*time.Minute)
+	if err != nil {
+		t.Fatalf("boundedConnector: %v", err)
+	}
+	stc, ok := conn.(*statementTimeoutConnector)
+	if !ok {
+		t.Fatalf("boundedConnector returned %T, want *statementTimeoutConnector (the SQL-side backstop)", conn)
+	}
+	if stc.timeoutMS != (30 * time.Minute).Milliseconds() {
+		t.Fatalf("timeoutMS = %d, want %d (the generous background backstop)", stc.timeoutMS, (30 * time.Minute).Milliseconds())
+	}
+}
+
+// TestBoundedConnector_NonPositiveTimeoutIsUnbounded — the ops/migrate
+// escape hatch: <= 0 must yield NO connector (nil), so the caller falls
+// back to plain Open and the pool stays unbounded (legitimate multi-hour
+// migrations/backfills must not be killed — the rejected global-timeout
+// fix).
+func TestBoundedConnector_NonPositiveTimeoutIsUnbounded(t *testing.T) {
+	for _, d := range []time.Duration{0, -time.Second} {
+		conn, err := boundedConnector("postgres://u@127.0.0.1:5432/db?sslmode=disable", d)
+		if err != nil {
+			t.Fatalf("boundedConnector(%v): %v", d, err)
+		}
+		if conn != nil {
+			t.Fatalf("boundedConnector(%v) = %T, want nil (unbounded fallback)", d, conn)
+		}
+	}
+}

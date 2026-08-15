@@ -188,6 +188,31 @@ func TestParseAPIError(t *testing.T) {
 			t.Errorf("Detail=%q, want errEmptyJSON's message", e.Detail)
 		}
 	})
+
+	// PC-3: a JSON content-type body that parses cleanly but carries
+	// NONE of the problem+json fields (a proxy / non-conforming
+	// service's own shape) must not be discarded — its raw text falls
+	// back into Detail exactly as the text/plain branch preserves it.
+	t.Run("non-problem-shaped JSON body preserved in Detail", func(t *testing.T) {
+		body := []byte(`{"error":"upstream boom","trace_id":"t-42"}`)
+		e := parseAPIError(500, "application/json", "", body)
+		if e.Status != 500 {
+			t.Errorf("Status=%d, want 500", e.Status)
+		}
+		if e.Detail != `{"error":"upstream boom","trace_id":"t-42"}` {
+			t.Errorf("Detail=%q, want the raw body preserved", e.Detail)
+		}
+	})
+
+	t.Run("non-problem-shaped JSON body over the cap is not leaked", func(t *testing.T) {
+		// 257 printable bytes of valid JSON with no problem fields.
+		filler := strings.Repeat("x", 257)
+		body := []byte(`{"error":"` + filler + `"}`)
+		e := parseAPIError(500, "application/json", "", body)
+		if e.Detail != "" {
+			t.Errorf("Detail=%q, want empty (oversize body should not leak)", e.Detail)
+		}
+	})
 }
 
 // TestParseAPIError_RetryAfter pins the G22-08 contract: the

@@ -214,6 +214,18 @@ func newBuffer() *buffer {
 	}
 }
 
+// newRawSwap seeds a fresh RawSwap from the first field-event observed
+// for a (ledger, tx, op, pool) group. EventIndex is that first event's
+// in-op index — the FanoutOpIndex seed that keeps sibling swaps distinct
+// on the trades PK.
+func newRawSwap(e *events.Event, closedAt time.Time) *RawSwap {
+	return &RawSwap{
+		Ledger: e.Ledger, TxHash: e.TxHash, OpIndex: uint32(e.OperationIndex),
+		EventIndex: e.EventIndex,
+		Pool:       e.ContractID, ClosedAt: closedAt,
+	}
+}
+
 // absorb stores one field-event in the appropriate RawSwap slot.
 // Returns:
 //   - completed: non-nil *RawSwap when all 8 slots are populated.
@@ -232,11 +244,24 @@ func (b *buffer) absorb(e *events.Event, fieldTopic string, closedAt time.Time) 
 	k := keyOf(e)
 	r, ok := b.m[k]
 	if !ok {
-		r = &RawSwap{
-			Ledger: e.Ledger, TxHash: e.TxHash, OpIndex: uint32(e.OperationIndex),
-			EventIndex: e.EventIndex,
-			Pool:       e.ContractID, ClosedAt: closedAt,
-		}
+		r = newRawSwap(e, closedAt)
+		b.m[k] = r
+	} else if prior := r.slot(fieldTopic); prior != nil && prior.EventIndex != e.EventIndex {
+		// A field arriving into an already-populated slot with a DIFFERENT
+		// EventIndex is the first field of a SECOND swap that routed through
+		// the SAME pool in the SAME op (a router multi-hop / cyclic
+		// arbitrage). The pre-upgrade 7-field era never Complete()s, so
+		// absorb never emit-and-clears mid-op; without this guard the second
+		// swap's field-events overwrite the first's slots in place and the
+		// first trade is lost with no orphan count (audit W1-protocol-tables-3).
+		// Rotate the current (incomplete) group out as a rescue candidate —
+		// the caller decodes Decodable evictions — and start a fresh
+		// generation keyed on THIS event's index so the two trades fan to
+		// distinct op_index (FanoutOpIndex). Same EventIndex = a lake
+		// redelivery of one field-event (idempotent): fall through to assign,
+		// which harmlessly rewrites the identical value.
+		evicted = append(evicted, *r)
+		r = newRawSwap(e, closedAt)
 		b.m[k] = r
 	}
 	if err := r.assign(e, fieldTopic); err != nil {

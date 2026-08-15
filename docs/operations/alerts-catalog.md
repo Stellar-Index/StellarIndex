@@ -63,6 +63,7 @@ Severity maps to [sev-playbook.md §1](sev-playbook.md#1-severity-definitions).
 | `stellarindex_projector_lag_high` | `max by (source) (stellarindex_projector_lag_ledgers)` | > 256 ledgers sustained 10 min | P3 | [projector-lag](runbooks/projector-lag.md) |
 | `stellarindex_projector_error_rate_high` | `rate(stellarindex_projector_runs_total{outcome="error"}[15m])` per source | > 0.05/s sustained 15 min | P3 | [projector-lag](runbooks/projector-lag.md) |
 | `stellarindex_projector_row_quarantined` | `increase(stellarindex_projector_events_decoded_total{outcome="sink_quarantined"}[15m])` | > 0 for 15 min (a poison row was skipped so the sole-writer projector could advance) | ticket | [projector-row-quarantined](runbooks/projector-row-quarantined.md) |
+| `stellarindex_projector_decode_error_rate_high` | `sum by (source) (rate(stellarindex_projector_events_decoded_total{outcome="decode_error"}[10m]))` per source | > 0.1/s sustained 15 min (a decoder regression drained a whole class of events; cursor advanced past them) | ticket | [projector-decode-error-rate](runbooks/projector-decode-error-rate.md) |
 | `stellarindex_external_poller_stale` | `time() - stellarindex_external_poller_last_success_unix{source!="ecb"}` | > 1800 s for > 5 min | P2 | [external-poller-stale](runbooks/external-poller-stale.md) |
 | `stellarindex_external_poller_stale_ecb` | `time() - stellarindex_external_poller_last_success_unix{source="ecb"}` | > 43200 s (12h) for > 10 min | P3 | [external-poller-stale](runbooks/external-poller-stale.md) |
 | `stellarindex_external_poller_error_rate_high` | `rate(stellarindex_external_poller_polls_total{outcome="error"}[15m]) / sum(...) ` | > 0.5 sustained 15 min | P3 | [external-poller-error-rate-high](runbooks/external-poller-error-rate-high.md) |
@@ -99,6 +100,7 @@ signal lands.
 | `stellarindex_timescale_backup_none_24h` | same | > 24 h | **P1** | [backup-failed](runbooks/backup-failed.md) |
 | `stellarindex_ch_schema_snapshot_stale` | `time() - stellarindex_ch_schema_snapshot_last_success_unix` | > 36 h for ≥ 30 min | P3 | [ch-schema-restore](runbooks/ch-schema-restore.md) |
 | `stellarindex_ch_schema_snapshot_offsite_stale` | `time() - stellarindex_ch_schema_snapshot_offsite_last_success_unix` | > 72 h for ≥ 30 min | P3 | [ch-schema-restore](runbooks/ch-schema-restore.md) |
+| `stellarindex_restore_drill_stale` | `time() - stellarindex_restore_drill_last_success_unix` (or `absent_over_time(...[40d])`) | > 40 d for ≥ 30 min | P3 | [restore-drill-stale](runbooks/restore-drill-stale.md) |
 
 ## Cache / serving alerts
 
@@ -257,6 +259,7 @@ coingecko rot 11 days and sep1 metadata never populate, both unnoticed.
 | `stellarindex_data_source_stale` | `stellarindex_data_freshness_stale{domain,source}` | == 1 for > 1h | P3 | [data-source-stale](runbooks/data-source-stale.md) |
 | `stellarindex_supply_assets_stale` | `stellarindex_supply_assets_stale` | > 0 for > 2h — per-asset frozen supply the domain-level `supply` check cannot see, because that one measures max(time) across the whole table | P3 | [supply-assets-stale](runbooks/supply-assets-stale.md) |
 | `stellarindex_completeness_incomplete` | `stellarindex_completeness_incomplete{source}` | == 1 for > 1h | P3 | [completeness-incomplete](runbooks/completeness-incomplete.md) |
+| `stellarindex_twap_history_missing` | `stellarindex_twap_history_missing{view}` | == 1 for > 2h — a TWAP CAGG recreated WITH NO DATA (0081/0115/0126) whose manual `refresh_continuous_aggregate` follow-up was never run; the refresh policy re-fills only a recent sliver so newest-bar freshness reads green while back-history serves empty. Not visible to the ADR-0033 verdict (twap_* are derived CAGGs, not reconcile targets) | P3 | [twap-history-missing](runbooks/twap-history-missing.md) |
 | `stellarindex_data_freshness_watchdog_silent` | `absent_over_time(stellarindex_data_freshness_stale[45m])` | for > 15m | P3 | [data-freshness-watchdog-silent](runbooks/data-freshness-watchdog-silent.md) |
 | `stellarindex_serving_insert_frozen` | `time() - max(stellarindex_source_last_insert_unix)` | > 1800 s (no insert from ANY source) for 10 min | P2 | [data-source-stale](runbooks/data-source-stale.md) |
 | `stellarindex_serving_insert_absent` | `absent(stellarindex_source_last_insert_unix)` | series missing for 15 min | P2 | [data-source-stale](runbooks/data-source-stale.md) |

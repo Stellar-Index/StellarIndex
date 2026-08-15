@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { CurrencyCombobox } from '@/components/CurrencyCombobox';
 import { apiGet, asExample } from '@/api/client';
+import { formatSubunitPrice } from '@/lib/format';
 
 interface CurrencyRow {
   ticker: string;
@@ -225,5 +226,5 @@ function formatResult(n: number): string {
   if (n >= 1_000_000) return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
   if (n >= 1) return n.toFixed(4);
   if (n >= 0.0001) return n.toFixed(6);
-  return n.toExponential(3);
+  return formatSubunitPrice(n);
 }

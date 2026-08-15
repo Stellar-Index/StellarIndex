@@ -46,14 +46,22 @@ import (
 //   - tests / Redis-less dev: nil — the Suspend-on-conflict
 //     fallback handles the rare race without serialisation.
 //
-// `Acquire` returns (true, …) when the caller now holds the
-// lock and must call `Release`. (false, …) means another
-// caller holds it — the caller should poll `Users.GetUserByEmail`
-// briefly to find the winner's user. Errors propagate; treat
-// them as "lock not acquired, fall through to the legacy path".
+// `Acquire` returns (true, token, …) when the caller now holds
+// the lock and must call `Release` with the SAME token. (false,
+// "", …) means another caller holds it — the caller should poll
+// `Users.GetUserByEmail` briefly to find the winner's user.
+// Errors propagate; treat them as "lock not acquired, fall
+// through to the legacy path".
+//
+// The `token` is a per-acquire fencing token (F-C, audit
+// -2026-08-14): `Release` must delete the lock ONLY if it still
+// carries this caller's token, so a holder that overran its TTL
+// (a slow Account.Create + Users.CreateUser) cannot delete a
+// successor's freshly-acquired lock. `Release` with an empty
+// token is a no-op (nothing was held).
 type EmailLocker interface {
-	Acquire(ctx context.Context, emailHash string, ttl time.Duration) (bool, error)
-	Release(ctx context.Context, emailHash string) error
+	Acquire(ctx context.Context, emailHash string, ttl time.Duration) (bool, string, error)
+	Release(ctx context.Context, emailHash, token string) error
 }
 
 // LoginThrottle, when set, bounds magic-link sends to prevent inbox
@@ -743,8 +751,19 @@ func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user plat
 		h.cfg.Logger.Warn("update user post-login", "err", err, "user_id", user.ID)
 	}
 
+	// The cookie carries a high-entropy random token; the row stores
+	// only sha256(token). A leak of the sessions table is therefore not
+	// directly replayable — the same hashed-at-rest posture as api_keys
+	// and magic_link_tokens (W1-auth-passkey-2). We hold the plaintext
+	// just long enough to set the cookie, then drop it.
+	token, tokenHash, err := h.cfg.Generator.NewSessionToken()
+	if err != nil {
+		return fmt.Errorf("mint session token: %w", err)
+	}
+
 	sess, err := h.cfg.Users.CreateSession(r.Context(), platform.Session{
 		UserID:       user.ID,
+		TokenHash:    tokenHash,
 		ExpiresAt:    now.Add(h.cfg.SessionTTL),
 		IPFirstSeen:  clientIP(r),
 		IPLastSeen:   clientIP(r),
@@ -758,7 +777,7 @@ func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user plat
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     SessionCookieName,
-		Value:    sess.ID.String(),
+		Value:    token,
 		Path:     "/",
 		Domain:   h.cfg.CookieDomain,
 		Expires:  sess.ExpiresAt,
@@ -773,9 +792,12 @@ func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user plat
 // cookie. Idempotent — calling without a session cookie is a
 // 200, not a 401.
 func (h *Handlers) HandleLogout(w http.ResponseWriter, r *http.Request) {
-	if c, err := r.Cookie(SessionCookieName); err == nil {
-		if id, err := uuid.Parse(c.Value); err == nil {
-			if err := h.cfg.Users.RevokeSession(r.Context(), id); err != nil {
+	if c, err := r.Cookie(SessionCookieName); err == nil && c.Value != "" {
+		// The cookie is the random token, not the PK — hash it, resolve
+		// the row, and revoke by internal ID. Best-effort: a missing /
+		// already-revoked session is not an error at logout.
+		if sess, err := h.cfg.Users.GetSessionByTokenHash(r.Context(), HashSessionToken(c.Value)); err == nil {
+			if err := h.cfg.Users.RevokeSession(r.Context(), sess.ID); err != nil {
 				h.cfg.Logger.Warn("revoke session at logout", "err", err)
 			}
 		}
@@ -909,7 +931,7 @@ func (h *Handlers) acquireSignupLock(ctx context.Context, email string) (platfor
 		return platform.User{}, false, nil, nil
 	}
 	emailHash := hashEmailForLocker(email)
-	acquired, lockErr := h.cfg.EmailLocker.Acquire(ctx, emailHash, 30*time.Second)
+	acquired, token, lockErr := h.cfg.EmailLocker.Acquire(ctx, emailHash, 30*time.Second)
 	if lockErr != nil {
 		h.cfg.Logger.Warn("signup email-lock acquire failed; falling through to non-locked path",
 			"err", lockErr, "email", maskEmail(email))
@@ -928,7 +950,7 @@ func (h *Handlers) acquireSignupLock(ctx context.Context, email string) (platfor
 		return platform.User{}, false, nil, nil
 	}
 	release := func() {
-		if relErr := h.cfg.EmailLocker.Release(ctx, emailHash); relErr != nil {
+		if relErr := h.cfg.EmailLocker.Release(ctx, emailHash, token); relErr != nil {
 			h.cfg.Logger.Warn("signup email-lock release failed",
 				"err", relErr, "email", maskEmail(email))
 		}

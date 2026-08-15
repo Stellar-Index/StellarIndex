@@ -391,12 +391,12 @@ func TestHandleLogout_RevokesActiveSession(t *testing.T) {
 	user, _ := r.users.CreateUser(context.Background(), platform.User{
 		AccountID: acct.ID, Email: "ash@example.com", Role: platform.RoleOwner,
 	})
-	sess, _ := r.users.CreateSession(context.Background(), platform.Session{
+	sess, token := mintTestSession(t, r.users, platform.Session{
 		UserID: user.ID, ExpiresAt: r.now().Add(24 * time.Hour),
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/auth/logout", nil)
-	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: sess.ID.String()})
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token})
 	w := httptest.NewRecorder()
 	r.h.HandleLogout(w, req)
 	if w.Code != http.StatusOK {
@@ -478,7 +478,7 @@ func TestMiddleware_CookieToContext(t *testing.T) {
 	user, _ := r.users.CreateUser(context.Background(), platform.User{
 		AccountID: acct.ID, Email: "ash@example.com", Role: platform.RoleOwner,
 	})
-	sess, _ := r.users.CreateSession(context.Background(), platform.Session{
+	_, token := mintTestSession(t, r.users, platform.Session{
 		UserID: user.ID, ExpiresAt: r.now().Add(24 * time.Hour),
 	})
 
@@ -490,7 +490,7 @@ func TestMiddleware_CookieToContext(t *testing.T) {
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/me", nil)
-	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: sess.ID.String()})
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token})
 	stack.ServeHTTP(httptest.NewRecorder(), req)
 
 	if !ok {
@@ -512,7 +512,7 @@ func TestMiddleware_RevokedSessionDropsContext(t *testing.T) {
 	user, _ := r.users.CreateUser(context.Background(), platform.User{
 		AccountID: acct.ID, Email: "ash@example.com", Role: platform.RoleOwner,
 	})
-	sess, _ := r.users.CreateSession(context.Background(), platform.Session{
+	sess, token := mintTestSession(t, r.users, platform.Session{
 		UserID: user.ID, ExpiresAt: r.now().Add(24 * time.Hour),
 	})
 	// Revoke it.
@@ -524,7 +524,7 @@ func TestMiddleware_RevokedSessionDropsContext(t *testing.T) {
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/me", nil)
-	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: sess.ID.String()})
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token})
 	stack.ServeHTTP(httptest.NewRecorder(), req)
 	if ok {
 		t.Error("revoked session leaked into context")
@@ -539,7 +539,7 @@ func TestMiddleware_SuspendedAccountRevokesAndDrops(t *testing.T) {
 	user, _ := r.users.CreateUser(context.Background(), platform.User{
 		AccountID: acct.ID, Email: "ash@example.com", Role: platform.RoleOwner,
 	})
-	sess, _ := r.users.CreateSession(context.Background(), platform.Session{
+	sess, token := mintTestSession(t, r.users, platform.Session{
 		UserID: user.ID, ExpiresAt: r.now().Add(24 * time.Hour),
 	})
 	// Suspend the account.
@@ -552,7 +552,7 @@ func TestMiddleware_SuspendedAccountRevokesAndDrops(t *testing.T) {
 		_, ok = SessionFromContext(req.Context())
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/me", nil)
-	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: sess.ID.String()})
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token})
 	stack.ServeHTTP(httptest.NewRecorder(), req)
 
 	if ok {

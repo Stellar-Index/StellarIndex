@@ -336,6 +336,19 @@ func writeAuthError(w http.ResponseWriter, err error) {
 			"https://api.stellarindex.io/errors/auth-not-configured",
 			"Auth validator not configured",
 			"This deployment enabled an auth mode but no validator was wired into the binary.")
+	case errors.Is(err, auth.ErrAccountStatusUnavailable):
+		// auth-ks-1: the account-status kill-switch read (its Postgres
+		// backend) is degraded and no last-known status is available to
+		// ride the blip out. This is a server-side outage, NOT a bad
+		// credential — answer 503 + Retry-After so clients retry rather
+		// than treating it as "your key is invalid" and rotating keys.
+		// Retry-After mirrors writeThrottleUnavailableProblem (30s ~
+		// ratelimit.DefaultDwellTime).
+		w.Header().Set("Retry-After", "30")
+		writeAuthProblem(w, http.StatusServiceUnavailable,
+			"https://api.stellarindex.io/errors/auth-status-unavailable",
+			"Account status check unavailable",
+			"The account-status service is temporarily unavailable; retry shortly.")
 	default:
 		// ErrUnauthorized + everything else fall here.
 		w.Header().Set("WWW-Authenticate", `Bearer realm="stellarindex"`)

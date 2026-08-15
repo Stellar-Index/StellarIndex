@@ -220,9 +220,21 @@ CREATE INDEX api_keys_expires_idx ON api_keys (expires_at)
 -- aggregates (api_usage_5m, api_usage_1h, api_usage_1d) which
 -- the next migration creates once the table has data flowing.
 --
--- `client_ip` is captured at /24 (IPv4) or /48 (IPv6) prefix to
--- stay well clear of "personally identifying" interpretations
--- under GDPR unless the customer opts into full retention.
+-- `client_ip` is an `inet` column. NOTE (PRV-3, audit-2026-08-14):
+-- this table is NOT WIRED — no writer exists (internal/platform/
+-- usage.go: the UsageStore interface has zero implementations;
+-- live per-request accounting runs through internal/usage's Redis
+-- INCR counters instead), so nothing is stored here today and no
+-- /24-/48 GDPR prefix-truncation is performed anywhere. The IP
+-- data the platform DOES retain lives at FULL resolution in the
+-- live paths — `magic_link_tokens.requested_ip`,
+-- `api_keys.last_used_ip`, and `audit_log.ip` — and is kept
+-- un-truncated deliberately: it backs session-hijack / abuse
+-- forensics and the anti-inbox-bomb throttle, controls that a
+-- prefix-mask would defeat. If this hypertable is ever wired,
+-- apply the /24-/48 minimisation in the (yet-to-be-written)
+-- writer, since these events are the high-volume, non-security
+-- usage stream where minimisation IS appropriate.
 
 CREATE TABLE api_usage_events (
     ts          timestamptz NOT NULL,

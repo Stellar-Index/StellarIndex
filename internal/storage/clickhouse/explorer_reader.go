@@ -1148,7 +1148,11 @@ func (r *ExplorerReader) txHashIndexAvailable(ctx context.Context) bool {
 
 // contractLedgersIndexAvailable reports whether
 // stellar.contract_active_ledgers is USABLE: exists AND non-empty (see the
-// probe field doc for why emptiness must not settle).
+// probe field doc for why emptiness must not settle). NOTE (audit
+// W1-chrollup-3): a true verdict means the table has at least one row — it
+// does NOT prove per-contract backfill coverage, so callers must treat an
+// empty PER-CONTRACT walk as "unknown, fall back", never as authoritative
+// "no rows for this contract" (see ContractEventsRecent).
 func (r *ExplorerReader) contractLedgersIndexAvailable(ctx context.Context) bool {
 	return r.probeSchema(ctx, &r.contractLedgersProbe,
 		`SELECT ledger_seq FROM stellar.contract_active_ledgers LIMIT 1`, true)
@@ -1180,9 +1184,11 @@ type ContractActivitySummary struct {
 }
 
 // ContractActivityDay is one day of the activity series. ActiveLedgers
-// counts index rows (ledgers the contract emitted ≥1 event in) — RMT
-// duplicate parts can inflate it a hair between merges, which is
-// irrelevant for a liveness chart and keeps the read a plain count.
+// counts DISTINCT ledgers the contract emitted ≥1 event in — uniqExact
+// on ledger_seq so un-merged ReplacingMergeTree duplicate parts (an
+// overlapping backfill window re-inserts the same (contract, ledger)
+// keys) do not inflate the count, matching the sibling reader
+// contractActiveLedgers' SELECT DISTINCT on this same table (audit CHQ-2).
 type ContractActivityDay struct {
 	Date          time.Time
 	ActiveLedgers uint64
@@ -1200,7 +1206,7 @@ func (r *ExplorerReader) ContractActivitySummaryFor(ctx context.Context, contrac
 	}
 	var s ContractActivitySummary
 	if err := r.conn.QueryRow(ctx, `
-		SELECT min(close_time), max(close_time), toUInt64(count())
+		SELECT min(close_time), max(close_time), toUInt64(uniqExact(ledger_seq))
 		FROM stellar.contract_active_ledgers WHERE contract_id = ?`,
 		contractID).Scan(&s.FirstSeen, &s.LastSeen, &s.ActiveLedgersTotal); err != nil {
 		return ContractActivitySummary{}, false, fmt.Errorf("clickhouse: contract activity bounds: %w", err)
@@ -1209,7 +1215,7 @@ func (r *ExplorerReader) ContractActivitySummaryFor(ctx context.Context, contrac
 		return s, true, nil
 	}
 	rows, err := r.conn.Query(ctx, `
-		SELECT toDate(close_time) AS d, toUInt64(count())
+		SELECT toDate(close_time) AS d, toUInt64(uniqExact(ledger_seq))
 		FROM stellar.contract_active_ledgers
 		WHERE contract_id = ? AND close_time >= now() - INTERVAL ? DAY
 		GROUP BY d ORDER BY d`, contractID, days)
@@ -1640,21 +1646,22 @@ func (r *ExplorerReader) ContractEventsRecent(ctx context.Context, contractID st
 	fetch := limit + contractEventsDedupHeadroom
 
 	// Active-ledger bound (contract_active_ledgers): when the index is
-	// usable, walk the contract's most recent `fetch` active ledgers and
-	// prune the events read to them — every event the page can serve lives
-	// in those ledgers (≥1 event per active ledger), so the bound is
-	// lossless for both the page and its cursor. An EMPTY walk is
-	// authoritative under the index's operator contract (presence +
-	// non-empty table = backfilled to genesis): the contract has no
-	// events (or none older than the cursor). Index errors fall back to
-	// the unbounded read — availability over speed.
+	// usable AND the per-contract walk is NON-EMPTY, prune the events read
+	// to those ledgers — every event the page can serve lives in them (≥1
+	// event per active ledger), so the bound is lossless for both the page
+	// and its cursor. An EMPTY walk is NOT treated as authoritative "no
+	// events" (audit W1-chrollup-3): the availability probe is a LIMIT-1
+	// table-global emptiness check that cannot see PARTIAL backfill
+	// coverage, so an applied-but-still-backfilling index can hold zero
+	// rows for a quiet contract whose events do exist in contract_events.
+	// Trusting an empty walk there served confidently-wrong "no events".
+	// Both an empty walk and an index error therefore fall through to the
+	// unbounded contract_events read (the source of truth) — correctness
+	// over speed; the bloom skip-index keeps a genuinely-eventless contract
+	// cheap anyway.
 	var ledgers []uint32
 	if r.contractLedgersIndexAvailable(ctx) {
-		ls, lerr := r.contractActiveLedgers(ctx, contractID, cur.Ledger, fetch)
-		if lerr == nil {
-			if len(ls) == 0 {
-				return nil, nil
-			}
+		if ls, lerr := r.contractActiveLedgers(ctx, contractID, cur.Ledger, fetch); lerr == nil && len(ls) > 0 {
 			ledgers = ls
 		}
 	}
@@ -1836,7 +1843,7 @@ const contractInteractionsQuery = `SELECT contract_id, toInt64(uniqExact(tx_hash
 		WHERE ledger_seq >= ?
 		  AND contract_id != ?
 		  AND (ledger_seq, tx_hash) IN (
-		      SELECT ledger_seq, tx_hash FROM stellar.contract_events
+		      SELECT DISTINCT ledger_seq, tx_hash FROM stellar.contract_events
 		      WHERE contract_id = ? AND ledger_seq >= ?
 		      ORDER BY ledger_seq DESC
 		      LIMIT ?
@@ -1888,12 +1895,15 @@ func (r *ExplorerReader) ContractInteractions(ctx context.Context, contractID st
 			}
 		}
 	}
-	// Cap the subject's transaction set to its most-recent 50k (ledger,
-	// tx) rows. Without this, a mega-contract (a SAC / AMM router with
-	// tens of millions of events in the window) builds an enormous IN set
-	// and the probe times out. 50k recent txs is a rich, bounded sample —
-	// the interaction map reflects current behaviour regardless of how
-	// busy the contract is.
+	// Cap the subject's transaction set to its most-recent 50k DISTINCT
+	// (ledger, tx) rows. Without this, a mega-contract (a SAC / AMM router
+	// with tens of millions of events in the window) builds an enormous IN
+	// set and the probe times out. The inner subquery is SELECT DISTINCT
+	// (ledger_seq, tx_hash) so the cap counts TRANSACTIONS, not event rows
+	// (audit CHQ-1): a contract emitting ~10-20 events/tx would otherwise
+	// consume the cap in event-space and sample only ~2.5-5k txs drawn from
+	// the newest handful of ledgers. With DISTINCT the cap is a rich, bounded
+	// sample of 50k recent txs, matching the comment and the shared_txs name.
 	const subjectTxCap = 50_000
 	// uniqExact(tx_hash), not count(), and this fixes TWO defects at once.
 	//
@@ -1978,6 +1988,14 @@ func scanTxSummaries(rows driver.Rows) ([]TxSummary, error) {
 	return out, rows.Err()
 }
 
+// censusHeadMaxLag is how stale the census HEAD (max(day)) may be before
+// recentContractsFromCensus stops trusting it and falls through to the
+// exact scan (audit W1-explorer-perf-2). One day of slack absorbs the UTC
+// rollover window (before the day's first rollup, the freshest row is
+// still yesterday's) while catching a genuinely stalled rollup timer,
+// whose cadence is ~30 min.
+const censusHeadMaxLag = 24 * time.Hour
+
 // recentContractsCensusQuery sums the day-keyed census over the window.
 // The day floor is resolved from sinceLedger via a pruned PK lookup on
 // stellar.ledgers.
@@ -2020,16 +2038,23 @@ func (r *ExplorerReader) recentContractsFromCensus(ctx context.Context, limit in
 		return nil, false, nil
 	}
 
-	// Coverage check: the census must reach back to the floor day —
-	// an in-progress backfill must not serve a silently-truncated
-	// ranking (the verification-blind-spots class).
-	covRows, err := r.conn.Query(ctx, `SELECT min(day) FROM stellar.contracts_census_daily`)
+	// Coverage check: the census must reach back to the floor day (a
+	// backfill still climbing toward the floor must not serve a
+	// truncated tail) AND its HEAD must be fresh (audit
+	// W1-explorer-perf-2). The old gate checked min(day) only — a
+	// lower-bound test — so a stalled census-rollup timer (max(day)
+	// frozen days ago) still passed the floor check and served a ranking
+	// missing the last N days of activity, stamped as current because the
+	// fast query itself kept succeeding. today() is read from the SAME
+	// server as the census to avoid app/DB clock skew.
+	covRows, err := r.conn.Query(ctx,
+		`SELECT min(day), max(day), today() FROM stellar.contracts_census_daily`)
 	if err != nil {
 		return nil, false, fmt.Errorf("clickhouse: census coverage: %w", err)
 	}
-	var minDay time.Time
+	var minDay, maxDay, chToday time.Time
 	if covRows.Next() {
-		if err := covRows.Scan(&minDay); err != nil {
+		if err := covRows.Scan(&minDay, &maxDay, &chToday); err != nil {
 			_ = covRows.Close()
 			return nil, false, err
 		}
@@ -2037,7 +2062,20 @@ func (r *ExplorerReader) recentContractsFromCensus(ctx context.Context, limit in
 	if cerr := covRows.Close(); cerr != nil {
 		return nil, false, cerr
 	}
+	if err := covRows.Err(); err != nil {
+		return nil, false, err
+	}
 	if minDay.After(floor) {
+		return nil, false, nil
+	}
+	// Head-freshness gate: the rollup writes today's (partial) row every
+	// cadence, so a healthy head is today or — right after UTC rollover,
+	// before the day's first rollup — yesterday. A head older than that
+	// means the timer has stalled; fall through to the exact scan
+	// (always fresh) rather than serve a silently-stale ranking. The exact
+	// scan is slower, but a stalled rollup is a degraded state that must
+	// surface, not be papered over with days-old data.
+	if chToday.Sub(maxDay) > censusHeadMaxLag {
 		return nil, false, nil
 	}
 

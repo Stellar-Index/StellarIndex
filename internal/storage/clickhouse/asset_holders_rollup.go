@@ -116,11 +116,18 @@ var holdersRollupStatements = []string{
 	 GROUP BY bucket
 	 SETTINGS max_threads = 4, max_memory_usage = 8589934592,
 	          max_bytes_before_external_group_by = 4000000000, max_execution_time = 600`,
-	`EXCHANGE TABLES stellar.asset_holders_rollup_staging AND stellar.asset_holders_rollup`,
-	`EXCHANGE TABLES stellar.asset_holders_counts_staging AND stellar.asset_holders_counts`,
-	`EXCHANGE TABLES stellar.accounts_stats_staging AND stellar.accounts_stats`,
-	`EXCHANGE TABLES stellar.accounts_wealth_histogram_staging AND stellar.accounts_wealth_histogram`,
-	`EXCHANGE TABLES stellar.accounts_trustline_histogram_staging AND stellar.accounts_trustline_histogram`,
+	// Swap all five live tables atomically as a group (RA-2). ClickHouse
+	// commits a multi-pair EXCHANGE TABLES as one metadata transaction, so a
+	// crash / ctx-cancel / CH restart cannot land midway and leave the board
+	// swapped-new while counts/stats/histograms hold the previous cycle's
+	// data — the half-swapped state the reader (holdersRollupBoard) trusts as
+	// authoritative. Kept as the final statement so all staging arms are
+	// filled before the group swap.
+	`EXCHANGE TABLES stellar.asset_holders_rollup_staging AND stellar.asset_holders_rollup,
+	                 stellar.asset_holders_counts_staging AND stellar.asset_holders_counts,
+	                 stellar.accounts_stats_staging AND stellar.accounts_stats,
+	                 stellar.accounts_wealth_histogram_staging AND stellar.accounts_wealth_histogram,
+	                 stellar.accounts_trustline_histogram_staging AND stellar.accounts_trustline_histogram`,
 }
 
 // RunHoldersRollup executes one full recompute + atomic exchange.

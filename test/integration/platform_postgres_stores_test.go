@@ -306,8 +306,12 @@ func TestPlatformPostgresStores(t *testing.T) {
 
 		// Session round-trip.
 		ip := net.ParseIP("203.0.113.42")
+		// W1-auth-passkey-2: the cookie carries a random token; the row
+		// stores only sha256(token). Simulate mintSession's contract.
+		sessTokenHash := sha256.Sum256([]byte("session-cookie-token-abc"))
 		sess, err := users.CreateSession(ctx, platform.Session{
 			UserID:       alice.ID,
+			TokenHash:    sessTokenHash[:],
 			ExpiresAt:    time.Now().Add(30 * 24 * time.Hour),
 			IPFirstSeen:  ip,
 			IPLastSeen:   ip,
@@ -325,6 +329,35 @@ func TestPlatformPostgresStores(t *testing.T) {
 		}
 		if gotSess.UserID != alice.ID {
 			t.Errorf("session UserID = %v", gotSess.UserID)
+		}
+
+		// The stored token_hash is the hash we supplied — persisted and
+		// scanned back verbatim.
+		if !bytes.Equal(gotSess.TokenHash, sessTokenHash[:]) {
+			t.Errorf("stored token_hash = %x, want %x", gotSess.TokenHash, sessTokenHash[:])
+		}
+
+		// Authentication path: lookup BY token hash resolves the row —
+		// this is what resolveSession does with sha256(cookie).
+		byHash, err := users.GetSessionByTokenHash(ctx, sessTokenHash[:])
+		if err != nil {
+			t.Fatalf("get session by token hash: %v", err)
+		}
+		if byHash.ID != sess.ID {
+			t.Errorf("GetSessionByTokenHash returned session %v, want %v", byHash.ID, sess.ID)
+		}
+
+		// A read of the sessions table yields the PK + the hash, neither
+		// of which is a presentable credential: hashing the primary key
+		// string (what an attacker with a table dump would try) resolves
+		// nothing, and a random other hash resolves nothing.
+		pkAsCookieHash := sha256.Sum256([]byte(sess.ID.String()))
+		if _, err := users.GetSessionByTokenHash(ctx, pkAsCookieHash[:]); !errors.Is(err, platform.ErrNotFound) {
+			t.Errorf("session PK (hashed) resolved as a token — raw-id replay path is live: err=%v", err)
+		}
+		otherHash := sha256.Sum256([]byte("not-the-token"))
+		if _, err := users.GetSessionByTokenHash(ctx, otherHash[:]); !errors.Is(err, platform.ErrNotFound) {
+			t.Errorf("unknown token hash resolved a session: err=%v", err)
 		}
 
 		// Touch updates last_seen + ip_last + UA.
@@ -349,6 +382,10 @@ func TestPlatformPostgresStores(t *testing.T) {
 		}
 		if _, err := users.GetSession(ctx, sess.ID); !errors.Is(err, platform.ErrNotFound) {
 			t.Errorf("expected ErrNotFound after revoke, got %v", err)
+		}
+		// A revoked session must not resolve on the auth path either.
+		if _, err := users.GetSessionByTokenHash(ctx, sessTokenHash[:]); !errors.Is(err, platform.ErrNotFound) {
+			t.Errorf("revoked session still resolved by token hash: %v", err)
 		}
 
 		// Re-revoke is a no-op.

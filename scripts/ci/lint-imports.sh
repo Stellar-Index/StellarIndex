@@ -357,7 +357,14 @@ def main():
         imports = list(imports_in(go_file))
         for rule in RULES:
             for imp in imports:
-                if imp not in rule["banned"]:
+                # Prefix-match, not exact-equality: a banned package's
+                # SUBPACKAGE (e.g. .../protocols/horizon/operations under
+                # banned .../protocols/horizon) must trip the ban too, else
+                # the ban is trivially evaded by importing one level deeper.
+                # Same `x == f or x.startswith(f + "/")` boundary logic the
+                # LAYERING_RULES below already use for module-local edges.
+                if not any(imp == b or imp.startswith(b + "/")
+                           for b in rule["banned"]):
                     continue
                 if file_allowed(rule, rel):
                     continue

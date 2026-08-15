@@ -189,6 +189,10 @@ func registerAppMetricsTail() {
 		LoginCodeLockoutRowsDeletedTotal,
 		LoginCodeLockoutErrorsTotal,
 
+		MagicLinkTokenRows,
+		MagicLinkTokenRowsDeletedTotal,
+		MagicLinkTokenErrorsTotal,
+
 		DEXTradeNonstandardDecimalsTotal,
 		PriceServeDeclinedNonstandardDecimalsTotal,
 		NonstandardDecimalsCacheRefreshFailuresTotal,
@@ -277,6 +281,13 @@ func seedBoundedLabelSeries() {
 		LoginCodeLockoutOpStatusCheck, LoginCodeLockoutOpRegister, LoginCodeLockoutOpSweep,
 	} {
 		LoginCodeLockoutErrorsTotal.WithLabelValues(op)
+	}
+	// PRV-2: the magic-link retention sweep's single fail-soft path.
+	// Seeded so a background janitor that has never failed and one that
+	// emits no series are distinguishable — same reasoning as the
+	// login-code lockout reaper above.
+	for _, op := range []string{MagicLinkTokenOpSweep} {
+		MagicLinkTokenErrorsTotal.WithLabelValues(op)
 	}
 	// Bounded outcome set for the 2026-07-06 backpressure retry counter
 	// so the `trade_insert_backpressure` alert's rate() query reads a
@@ -635,12 +646,16 @@ var ProjectorLagLedgers = prometheus.NewGaugeVec(
 )
 
 // ProjectorRunsTotal counts projector cycle outcomes per source.
-// `outcome` ∈ {ok, error, idle}; rate is the alive-check (zero
-// rate sustained 5+ minutes means the source's loop wedged).
+// `outcome` ∈ {ok, error, idle, sink_retry, decode_degraded}; rate is
+// the alive-check (zero rate sustained 5+ minutes means the source's
+// loop wedged). `decode_degraded` (DATA-6 / NS-2) marks a cycle that
+// advanced the cursor but dropped at least one decode-failed row — a
+// clean-looking advance that is NOT "ok"; a sustained per-source
+// decode_error rate on those cycles is a decoder regression.
 var ProjectorRunsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_projector_runs_total",
-		Help: "Per-source projector cycle outcomes (ok, error, idle). Rate goes to zero if the source's loop has wedged.",
+		Help: "Per-source projector cycle outcomes (ok, error, idle, sink_retry, decode_degraded). Rate goes to zero if the source's loop has wedged.",
 	},
 	[]string{"source", "outcome"},
 )
@@ -1561,6 +1576,67 @@ var LoginCodeLockoutErrorsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_login_code_lockout_errors_total",
 		Help: "Durable login-code lockout machinery failures by op (status_check|register|sweep). status_check non-zero = the lockout is failing open and is not being enforced.",
+	},
+	[]string{"op"},
+)
+
+// Operation labels on [MagicLinkTokenErrorsTotal]. A single op today —
+// the retention sweep — declared as a bounded set so a second failure
+// mode can join it without changing the metric's shape.
+const (
+	// MagicLinkTokenOpSweep — the retention sweep failed. Rows an
+	// unauthenticated caller can create (POST /v1/auth/login, PRV-2)
+	// accumulate until it recovers.
+	MagicLinkTokenOpSweep = "sweep"
+)
+
+// MagicLinkTokenRows — current row count of `magic_link_tokens`
+// (migration 0027), refreshed by each retention sweep.
+//
+// This table is durable plaintext PII (email + requested_ip) with an
+// ATTACKER-CHOSEN key: POST /v1/auth/login is unauthenticated and
+// inserts a permanent row for any well-formed address, and a link
+// nobody clicks is never consumed. `internal/magiclinkreaper` bounds
+// it; this gauge is how an operator sees the bound holding.
+//
+// Without it, the first signal of a remote table-fill would be the
+// volume-level disk-full page — i.e. after the damage. A healthy
+// deployment sits low: rows exist only for recent login/verify/invite
+// mints and are swept once expired past retention.
+//
+// Gauges register at zero, so no explicit seeding is needed — but the
+// value is only meaningful once a sweep has run (the reaper sweeps
+// immediately at boot).
+var MagicLinkTokenRows = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_magic_link_token_rows",
+		Help: "Rows in magic_link_tokens. The key is attacker-chosen and POST /v1/auth/login is unauthenticated, so sustained growth is a remote table-fill, not user behaviour.",
+	},
+)
+
+// MagicLinkTokenRowsDeletedTotal — cumulative expired magic-link rows
+// removed by the retention sweep. Charted as a rate it is the
+// production rate of expired mints; read next to [MagicLinkTokenRows]
+// it distinguishes "the table is small because nothing is happening"
+// from "the table is small because the sweep is keeping up with a
+// flood".
+var MagicLinkTokenRowsDeletedTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_magic_link_token_rows_deleted_total",
+		Help: "Cumulative expired magic_link_tokens rows deleted by the retention sweep.",
+	},
+)
+
+// MagicLinkTokenErrorsTotal — failures of the magic-link retention
+// sweep (PRV-2), labelled by `op`. The sweep is a background janitor
+// and a failed pass is silent at the HTTP layer, so — like the
+// login-code lockout reaper it mirrors — an ABSENT series and a
+// never-failed series must be different scrapes. Pre-seeded across the
+// bounded op set.
+var MagicLinkTokenErrorsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_magic_link_token_errors_total",
+		Help: "Magic-link retention sweep failures by op (sweep). Non-zero = the reaper is not bounding an unauthenticated-writable PII table.",
 	},
 	[]string{"op"},
 )

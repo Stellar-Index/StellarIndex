@@ -239,14 +239,16 @@ func TestAdminAccountOverrides_SuspendEvictsKeyCache(t *testing.T) {
 	}
 }
 
-// TestAdminAccountOverrides_ActivePatchDoesNotEvictKeyCache pins the transition
-// gating: the suspend eviction fires ONLY on active→non-active, not on an
-// unrelated override edit that leaves the account active (its keys are still
-// valid and must keep their warm cache entries).
-func TestAdminAccountOverrides_ActivePatchDoesNotEvictKeyCache(t *testing.T) {
+// TestAdminAccountOverrides_EnforcementNeutralPatchDoesNotEvictKeyCache pins
+// that the eviction is GATED on an enforcement-relevant change, not fired on
+// every PATCH. A tier RAISE that leaves status active and touches neither
+// override changes nothing the Postgres validator resolves onto a cached key
+// (the resolved Subject's tier comes from the KEY row, and the clamp only fires
+// on a ceiling DROP), so its warm cache entries must be left intact.
+func TestAdminAccountOverrides_EnforcementNeutralPatchDoesNotEvictKeyCache(t *testing.T) {
 	acctID := uuid.MustParse("55555555-5555-5555-5555-555555555555")
 	accounts := newFakePlatformAccountStore(platform.Account{
-		ID: acctID, Slug: "stillactive", Tier: platform.TierPro, Status: platform.AccountActive,
+		ID: acctID, Slug: "stillactive", Tier: platform.TierFree, Status: platform.AccountActive,
 	})
 	pgKeys := &fakePlatformAPIKeysForBridge{byAcct: map[uuid.UUID][]platform.APIKey{
 		acctID: {{ID: "pg_a", AccountID: acctID, RateLimitPerMin: 60, KeyHash: []byte{0xaa}}},
@@ -258,12 +260,86 @@ func TestAdminAccountOverrides_ActivePatchDoesNotEvictKeyCache(t *testing.T) {
 	}, &recordingAuditSink{})
 
 	resp := patchJSON(t, ts.URL+"/v1/admin/accounts/"+acctID.String(),
-		"raise quota", `{"monthly_request_quota_override":1000000}`)
+		"comp to pro", `{"tier":"pro"}`)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 	if n := len(inv.seen()); n != 0 {
-		t.Errorf("an account staying active must not evict its key cache; evicted %d: %v", n, inv.seen())
+		t.Errorf("an enforcement-neutral PATCH must not evict its key cache; evicted %d: %v", n, inv.seen())
+	}
+}
+
+// TestAdminAccountOverrides_OverrideChangeEvictsKeyCache is the proven-red guard
+// for F-A (audit-2026-08-14): an admin override-only PATCH must evict the
+// account's warm key-cache entries so the tightened ceiling is enforced now,
+// not after the Postgres validator's ~1h read-through TTL.
+//
+// The validator RESOLVES a key's effective monthly-quota ceiling and per-minute
+// floor from the account overrides at Lookup time (auth/apikey_postgres.go) and
+// caches the resolved Subject verbatim. Before the fix the PATCH ran only the
+// tier-clamp seam (early-returns unless the ceiling drops) and the suspend seam
+// (early-returns unless status leaves active); an override-only change tripped
+// neither, so every warm key kept authenticating with the OLD unmetered/higher
+// quota until the TTL rolled it off — the just-tightened operator ceiling
+// silently unenforced.
+//
+// Prove-red: without the override eviction wiring, InvalidateCachedKey is never
+// called for a status-unchanged override PATCH and both keys stay warm.
+func TestAdminAccountOverrides_OverrideChangeEvictsKeyCache(t *testing.T) {
+	acctID := uuid.MustParse("66666666-6666-6666-6666-666666666666")
+	acct := platform.Account{
+		ID:                          acctID,
+		Name:                        "Metered Abuser Corp",
+		Slug:                        "metered",
+		Tier:                        platform.TierPartner,
+		Status:                      platform.AccountActive,
+		MonthlyRequestQuotaOverride: 0, // currently unmetered
+	}
+	accounts := newFakePlatformAccountStore(acct)
+
+	pgKeys := &fakePlatformAPIKeysForBridge{byAcct: map[uuid.UUID][]platform.APIKey{
+		acctID: {
+			{ID: "pg_a", AccountID: acctID, RateLimitPerMin: 60, KeyHash: []byte{0xaa}},
+			{ID: "pg_b", AccountID: acctID, RateLimitPerMin: 60, KeyHash: []byte{0xbb}},
+		},
+	}}
+	inv := &fakeKeyCacheInvalidator{}
+
+	ts := newAdminClampServer(t, accounts, v1.APIKeyBudgetStores{
+		Platform:         pgKeys,
+		CacheInvalidator: inv,
+	}, &recordingAuditSink{})
+
+	// Tighten the monthly-quota ceiling from unmetered (0) to 1000, leaving tier
+	// and status untouched — the exact override-only PATCH from the finding.
+	resp := patchJSON(t, ts.URL+"/v1/admin/accounts/"+acctID.String(),
+		"abuse: cap metered volume", `{"monthly_request_quota_override":1000}`)
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 200; body=%s", resp.StatusCode, body)
+	}
+
+	// Tier is unchanged (partner→partner) and status stays active, so neither the
+	// clamp nor the suspend seam fires; the persisted override must not rewrite
+	// any key budget either.
+	if len(pgKeys.updates) != 0 {
+		t.Errorf("an override-only PATCH must not rewrite key budgets; updates=%+v", pgKeys.updates)
+	}
+
+	got := inv.seen()
+	want := map[string]bool{"aa": false, "bb": false}
+	for _, h := range got {
+		if _, ok := want[h]; !ok {
+			t.Errorf("unexpected cache eviction for hash %q", h)
+			continue
+		}
+		want[h] = true
+	}
+	for h, evicted := range want {
+		if !evicted {
+			t.Errorf("cached key %q was NOT evicted on an override tightening; the account keeps "+
+				"authenticating at the OLD ceiling for up to the validator TTL", h)
+		}
 	}
 }
 

@@ -21,11 +21,15 @@ import (
 // column (ADR-0003 — full precision preserved through Go's
 // *big.Int → decimal-text → NUMERIC chain).
 //
-// Defensive: rejects empty Pool / TxHash and an invalid Kind
-// before touching the DB. A nil amount is treated as "0" and
-// surfaces in the row — the decoder should never produce one,
-// but stamping zero here is more useful than failing the insert
-// on a defaulted struct value.
+// Defensive: rejects empty Pool / TxHash, an invalid Kind, and a
+// nil or negative money amount before touching the DB. Mirrors the
+// SQL-boundary magnitude guards the sibling money-market writers
+// already carry (comet Amount.Sign() > 0, aquarius reserve >= 0):
+// the sole producer (decode_money_market.go) errors rather than
+// emitting a nil amount today, so this closes the one spot-checked
+// writer whose committed value was not guarded at the insert
+// boundary (BLEND-1) — a defaulted/fuzzed struct can no longer land
+// a bad row via the nil-to-"0" coercion.
 func (s *Store) InsertBlendPositionEvent(ctx context.Context, e domain.BlendPositionEvent) error {
 	if e.Pool == "" {
 		return errors.New("timescale: InsertBlendPositionEvent: Pool is empty")
@@ -35,6 +39,18 @@ func (s *Store) InsertBlendPositionEvent(ctx context.Context, e domain.BlendPosi
 	}
 	if !isBlendPositionKind(e.Kind) {
 		return fmt.Errorf("timescale: InsertBlendPositionEvent: invalid Kind %q", e.Kind)
+	}
+	if e.TokenAmount == nil {
+		return errors.New("timescale: InsertBlendPositionEvent: TokenAmount is nil")
+	}
+	if e.TokenAmount.Sign() < 0 {
+		return fmt.Errorf("timescale: InsertBlendPositionEvent: TokenAmount must be >= 0 (got %s)", e.TokenAmount)
+	}
+	if e.BOrDAmount == nil {
+		return errors.New("timescale: InsertBlendPositionEvent: BOrDAmount is nil")
+	}
+	if e.BOrDAmount.Sign() < 0 {
+		return fmt.Errorf("timescale: InsertBlendPositionEvent: BOrDAmount must be >= 0 (got %s)", e.BOrDAmount)
 	}
 
 	// INV-3 generation-guarded corrective upsert (migration 0110): a

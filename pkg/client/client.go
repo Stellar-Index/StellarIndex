@@ -17,9 +17,14 @@ import (
 const DefaultBaseURL = "https://api.stellarindex.io"
 
 // DefaultTimeout is the per-request timeout applied when
-// [Options.HTTPClient] is nil. Hot-path calls (Price, Observations)
-// are well under this; History calls over a long range may take
-// longer and should pass a context with their own deadline.
+// [Options.HTTPClient] is nil. It is a HARD wall-clock cap on the
+// whole request — set as http.Client.Timeout — and is independent of
+// the per-call context: a context deadline can only shorten a
+// request, never extend it past this 30s. Hot-path calls (Price,
+// Observations) are well under this. To permit a longer request
+// (e.g. a wide-range History call), supply your own transport via
+// [Options.HTTPClient] with a larger (or zero = unbounded) Timeout;
+// raising the per-call context deadline alone has no effect.
 const DefaultTimeout = 30 * time.Second
 
 // userAgent is sent on every request so server-side telemetry can
@@ -159,6 +164,18 @@ func (c *Client) doJSON(ctx context.Context, method, path string, query url.Valu
 		if err := json.Unmarshal(bodyBytes, out); err != nil {
 			return fmt.Errorf("client: decode response: %w", err)
 		}
+		// A well-formed but degenerate 2xx body ({}, {"data":null})
+		// unmarshals without error into a zero Envelope, which would
+		// otherwise surface to the caller as a silent zero-value
+		// result. Enforce the one invariant every server envelope
+		// carries — a populated as_of — so such a response fails loudly
+		// instead. Endpoints that pass a non-Envelope out (or nil) skip
+		// this via the type assertion.
+		if v, ok := out.(interface{ validateEnvelope() error }); ok {
+			if err := v.validateEnvelope(); err != nil {
+				return fmt.Errorf("client: %s %s: %w", method, path, err)
+			}
+		}
 	}
 	return nil
 }
@@ -167,3 +184,10 @@ func (c *Client) doJSON(ctx context.Context, method, path string, query url.Valu
 // well-formed JSON but doesn't contain the expected problem+json
 // fields. Internal — surfaced through APIError.Detail.
 var errEmptyJSON = errors.New("server returned non-problem+json error body")
+
+// errNotAnEnvelope is returned by doJSON when a 2xx body decodes
+// without error but is missing the as_of timestamp every server
+// envelope carries — i.e. a degenerate `{}` / `{"data":null}` that
+// would otherwise yield a silent zero-value result. Reached via
+// [Envelope.validateEnvelope].
+var errNotAnEnvelope = errors.New("server returned a response without an as_of timestamp (not a valid envelope)")

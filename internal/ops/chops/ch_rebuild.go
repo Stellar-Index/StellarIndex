@@ -272,8 +272,6 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	fmt.Fprintf(os.Stderr, "ch-rebuild: [%d,%d] mode=%s sources=%q sdex=%v contract-calls=%v sep41=%v ch=%s\n",
 		lo, hi, mode, *only, *includeSDEX, *contractCalls, *includeSEP41, *chAddr)
 
-	written := map[string]int{} // source name -> events written (or counted in dry-run)
-
 	// Buffer decoded events during the CH stream, then write to Postgres AFTER
 	// the stream closes. Holding the CH FINAL stream open across slow per-row PG
 	// writes trips the client read timeout mid-stream; decoupling read from
@@ -561,104 +559,26 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		fmt.Fprintf(os.Stderr, "ch-rebuild: contract-call read done in %s\n", time.Since(ccStart).Round(time.Second))
 	}
 
-	// ─── write the buffered events to Postgres (trades batched) ──────────
-	// Per-row HandleEvent does 2 PG round-trips per trade (WouldPopulateUSDVolume
-	// + InsertTrade); at dense-window volume (175k events/window) that's hours.
-	// Batch trade-shaped events via BatchInsertTrades (one multi-row INSERT per
-	// batch); everything else (protocol entities, fewer rows) stays per-row.
-	wStart := time.Now()
-	const tradeBatchN = 1000
-	batch := make([]canonical.Trade, 0, tradeBatchN)
-	flush := func() {
-		if len(batch) == 0 {
-			return
-		}
-		if err := store.BatchInsertTrades(ctx, batch); err != nil {
-			logger.Warn("batch trade insert failed; per-row fallback", "n", len(batch), "err", err)
-			for _, t := range batch {
-				if ierr := store.InsertTrade(ctx, t); ierr != nil {
-					logger.Error("per-row trade insert failed", "err", ierr)
-				}
-			}
-		}
-		batch = batch[:0]
+	// ─── write the buffered events to Postgres ───────────────────────────
+	// drainAndWrite batches the trade/sep41 streams (per-row fallback on batch
+	// failure) and counts an event in written[] ONLY after its insert is
+	// confirmed; any row whose insert fails is tallied in failed[] instead
+	// (RA-1), so the completion report and exit code below cannot claim a
+	// partially-failed recovery as complete.
+	w := eventWriter{
+		batchTrades: store.BatchInsertTrades,
+		insertTrade: store.InsertTrade,
+		copyXfer:    store.CopyMergeSEP41Transfers,
+		insertXfer:  store.InsertSEP41Transfer,
+		copySup:     store.CopyMergeSEP41SupplyEvents,
+		insertSup:   store.InsertSEP41SupplyEvent,
+		handle: func(ctx context.Context, ev consumer.Event) error {
+			return pipeline.HandleEvent(ctx, logger, store, ev)
+		},
 	}
-	// sep41 batches (2026-07-05): the full-history re-derive buffers
-	// tens of millions of sep41 events per window; per-row HandleEvent
-	// capped writes at ~520/s (round-trip + cold PK-page per insert).
-	// Same batching pattern as trades, same per-row fallback.
-	const sepBatchN = 50_000
-	xferBatch := make([]timescale.SEP41TransferRow, 0, sepBatchN)
-	flushXfer := func() {
-		if len(xferBatch) == 0 {
-			return
-		}
-		if err := store.CopyMergeSEP41Transfers(ctx, xferBatch); err != nil {
-			logger.Warn("sep41_transfers batch failed; per-row fallback", "n", len(xferBatch), "err", err)
-			for _, r := range xferBatch {
-				if ierr := store.InsertSEP41Transfer(ctx, r); ierr != nil {
-					logger.Error("per-row sep41 transfer insert failed", "err", ierr)
-				}
-			}
-		}
-		xferBatch = xferBatch[:0]
-	}
-	supBatch := make([]timescale.SEP41SupplyEvent, 0, sepBatchN)
-	flushSup := func() {
-		if len(supBatch) == 0 {
-			return
-		}
-		if err := store.CopyMergeSEP41SupplyEvents(ctx, supBatch); err != nil {
-			logger.Warn("sep41_supply batch failed; per-row fallback", "n", len(supBatch), "err", err)
-			for _, r := range supBatch {
-				if ierr := store.InsertSEP41SupplyEvent(ctx, r); ierr != nil {
-					logger.Error("per-row sep41 supply insert failed", "err", ierr)
-				}
-			}
-		}
-		supBatch = supBatch[:0]
-	}
-	fmt.Fprintf(os.Stderr, "ch-rebuild: drain start (%d events)\n", len(buf))
-	for i, ev := range buf {
-		if i > 0 && i%1_000_000 == 0 {
-			fmt.Fprintf(os.Stderr, "ch-rebuild: drain %dM/%dM in %s\n", i/1_000_000, len(buf)/1_000_000, time.Since(wStart).Round(time.Second))
-		}
-		if *write {
-			switch e := ev.(type) {
-			case sep41transfers.Event:
-				xferBatch = append(xferBatch, pipeline.SEP41TransferRowOf(e))
-				if len(xferBatch) >= sepBatchN {
-					flushXfer()
-				}
-				written[ev.Source()]++
-				continue
-			case sep41supply.Event:
-				supBatch = append(supBatch, pipeline.SEP41SupplyRowOf(e))
-				if len(supBatch) >= sepBatchN {
-					flushSup()
-				}
-				written[ev.Source()]++
-				continue
-			}
-			if t, ok := tradeOf(ev); ok {
-				batch = append(batch, t)
-				if len(batch) >= tradeBatchN {
-					flush()
-				}
-			} else {
-				// Log-and-continue (unchanged re-derive behavior): HandleEvent
-				// logs + counts internally; idempotent ON CONFLICT re-run recovers.
-				_ = pipeline.HandleEvent(ctx, logger, store, ev)
-			}
-		}
-		written[ev.Source()]++
-	}
-	if *write {
-		flush()
-		flushXfer()
-		flushSup()
-		fmt.Fprintf(os.Stderr, "ch-rebuild: wrote %d events in %s\n", len(buf), time.Since(wStart).Round(time.Second))
+	written, failed := drainAndWrite(ctx, logger, w, buf, *write)
 
+	if *write {
 		// ─── reset the SEP-41 supply rollup fold checkpoint ──────────────
 		// A -sep41 -write run rewrites sep41_supply_events history BELOW the
 		// aggregator's incremental sep41_supply_rollup checkpoint. The rollup
@@ -688,21 +608,198 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 
 	// ─── report ──────────────────────────────────────────────────────────
 	fmt.Printf("\n=== ch-rebuild [%d,%d] %s ===\n", lo, hi, mode)
-	fmt.Printf("%-16s %14s\n", "source", "events")
-	var total int
+	fmt.Printf("%-16s %14s %14s\n", "source", "written", "failed")
+	var total, totalFailed int
 	for _, src := range cat {
-		n, ok := written[src.name]
-		if !ok {
+		n, okW := written[src.name]
+		f, okF := failed[src.name]
+		if !okW && !okF {
 			continue
 		}
-		fmt.Printf("%-16s %14d\n", src.name, n)
+		fmt.Printf("%-16s %14d %14d\n", src.name, n, f)
 		total += n
+		totalFailed += f
 	}
-	fmt.Printf("%-16s %14d\n", "TOTAL", total)
+	fmt.Printf("%-16s %14d %14d\n", "TOTAL", total, totalFailed)
 	if !*write {
 		fmt.Printf("\n(dry-run — re-run with -write to persist to Postgres)\n")
 	}
+	// RA-1: a partially-failed write must NOT present as complete (exit 0). If
+	// any batch/per-row/HandleEvent insert failed, the corresponding rows were
+	// excluded from written[] above and counted in failed[]; return a non-nil
+	// error so the process exits non-zero and the operator re-runs to recover.
+	if totalFailed > 0 {
+		return fmt.Errorf("ch-rebuild: %d event(s) failed to write (rows missing) — see the 'failed' column and re-run to recover", totalFailed)
+	}
 	return nil
+}
+
+// eventWriter abstracts the Postgres write operations drainAndWrite performs.
+// chRebuild wires it to the concrete *timescale.Store + pipeline.HandleEvent;
+// tests inject fakes that fail selected inserts to exercise the RA-1 counting.
+type eventWriter struct {
+	batchTrades func(context.Context, []canonical.Trade) error
+	insertTrade func(context.Context, canonical.Trade) error
+	copyXfer    func(context.Context, []timescale.SEP41TransferRow) error
+	insertXfer  func(context.Context, timescale.SEP41TransferRow) error
+	copySup     func(context.Context, []timescale.SEP41SupplyEvent) error
+	insertSup   func(context.Context, timescale.SEP41SupplyEvent) error
+	handle      func(context.Context, consumer.Event) error
+}
+
+// drainAndWrite persists the buffered events to Postgres and returns per-source
+// written / failed tallies.
+//
+// Trade and sep41 events are batched (one multi-row INSERT per batch) with a
+// per-row fallback on batch failure; everything else (protocol entities) goes
+// per-row via HandleEvent. The primary CopyMerge* path and the per-row Insert*
+// fallback share the identical INV-3 generation-guarded corrective-upsert
+// semantics (both bind s.deriveGeneration and merge DO UPDATE ... WHERE
+// derive_generation <= EXCLUDED), so a batch error dropping into the fallback
+// cannot change the write outcome (TV-3).
+//
+// RA-1: an event is counted in written[source] ONLY after its insert is
+// confirmed. A row whose batch AND per-row insert both fail — or whose
+// HandleEvent returns an error — is tallied in failed[source] and never
+// inflates written[]. In dry-run (write=false) every event is counted as
+// "would write" and nothing is persisted.
+func drainAndWrite(ctx context.Context, logger *slog.Logger, w eventWriter, buf []consumer.Event, write bool) (written, failed map[string]int) { //nolint:gocognit,gocyclo,funlen // linear: three symmetric batch/flush closures + a per-event dispatch; splitting the flush closures apart hurts clarity.
+	written = map[string]int{}
+	failed = map[string]int{}
+
+	const tradeBatchN = 1000
+	batch := make([]canonical.Trade, 0, tradeBatchN)
+	batchSrc := make([]string, 0, tradeBatchN)
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+		if err := w.batchTrades(ctx, batch); err != nil {
+			logger.Warn("batch trade insert failed; per-row fallback", "n", len(batch), "err", err)
+			for i, t := range batch {
+				if ierr := w.insertTrade(ctx, t); ierr != nil {
+					logger.Error("per-row trade insert failed", "source", batchSrc[i], "err", ierr)
+					failed[batchSrc[i]]++
+				} else {
+					written[batchSrc[i]]++
+				}
+			}
+		} else {
+			for _, s := range batchSrc {
+				written[s]++
+			}
+		}
+		batch = batch[:0]
+		batchSrc = batchSrc[:0]
+	}
+	// sep41 batches (2026-07-05): the full-history re-derive buffers tens of
+	// millions of sep41 events per window; per-row HandleEvent capped writes at
+	// ~520/s. Same batching pattern as trades, same per-row fallback.
+	const sepBatchN = 50_000
+	xferBatch := make([]timescale.SEP41TransferRow, 0, sepBatchN)
+	xferSrc := make([]string, 0, sepBatchN)
+	flushXfer := func() {
+		if len(xferBatch) == 0 {
+			return
+		}
+		if err := w.copyXfer(ctx, xferBatch); err != nil {
+			logger.Warn("sep41_transfers batch failed; per-row fallback", "n", len(xferBatch), "err", err)
+			for i, r := range xferBatch {
+				if ierr := w.insertXfer(ctx, r); ierr != nil {
+					logger.Error("per-row sep41 transfer insert failed", "source", xferSrc[i], "err", ierr)
+					failed[xferSrc[i]]++
+				} else {
+					written[xferSrc[i]]++
+				}
+			}
+		} else {
+			for _, s := range xferSrc {
+				written[s]++
+			}
+		}
+		xferBatch = xferBatch[:0]
+		xferSrc = xferSrc[:0]
+	}
+	supBatch := make([]timescale.SEP41SupplyEvent, 0, sepBatchN)
+	supSrc := make([]string, 0, sepBatchN)
+	flushSup := func() {
+		if len(supBatch) == 0 {
+			return
+		}
+		if err := w.copySup(ctx, supBatch); err != nil {
+			logger.Warn("sep41_supply batch failed; per-row fallback", "n", len(supBatch), "err", err)
+			for i, r := range supBatch {
+				if ierr := w.insertSup(ctx, r); ierr != nil {
+					logger.Error("per-row sep41 supply insert failed", "source", supSrc[i], "err", ierr)
+					failed[supSrc[i]]++
+				} else {
+					written[supSrc[i]]++
+				}
+			}
+		} else {
+			for _, s := range supSrc {
+				written[s]++
+			}
+		}
+		supBatch = supBatch[:0]
+		supSrc = supSrc[:0]
+	}
+
+	wStart := time.Now()
+	fmt.Fprintf(os.Stderr, "ch-rebuild: drain start (%d events)\n", len(buf))
+	for i, ev := range buf {
+		if i > 0 && i%1_000_000 == 0 {
+			fmt.Fprintf(os.Stderr, "ch-rebuild: drain %dM/%dM in %s\n", i/1_000_000, len(buf)/1_000_000, time.Since(wStart).Round(time.Second))
+		}
+		if !write {
+			written[ev.Source()]++ // dry-run: count what WOULD be written
+			continue
+		}
+		switch e := ev.(type) {
+		case sep41transfers.Event:
+			xferBatch = append(xferBatch, pipeline.SEP41TransferRowOf(e))
+			xferSrc = append(xferSrc, ev.Source())
+			if len(xferBatch) >= sepBatchN {
+				flushXfer()
+			}
+			continue // counted in flushXfer once the insert is confirmed
+		case sep41supply.Event:
+			supBatch = append(supBatch, pipeline.SEP41SupplyRowOf(e))
+			supSrc = append(supSrc, ev.Source())
+			if len(supBatch) >= sepBatchN {
+				flushSup()
+			}
+			continue // counted in flushSup once the insert is confirmed
+		}
+		if t, ok := tradeOf(ev); ok {
+			batch = append(batch, t)
+			batchSrc = append(batchSrc, ev.Source())
+			if len(batch) >= tradeBatchN {
+				flush()
+			}
+			continue // counted in flush once the insert is confirmed
+		}
+		// Protocol-entity path: HandleEvent performs the insert. RA-1: capture
+		// its error and count only on success (was `_ = pipeline.HandleEvent`,
+		// which let a failed write inflate the completion report).
+		if herr := w.handle(ctx, ev); herr != nil {
+			logger.Error("HandleEvent insert failed", "source", ev.Source(), "err", herr)
+			failed[ev.Source()]++
+		} else {
+			written[ev.Source()]++
+		}
+	}
+	if write {
+		flush()
+		flushXfer()
+		flushSup()
+		var wrote int
+		for _, n := range written {
+			wrote += n
+		}
+		fmt.Fprintf(os.Stderr, "ch-rebuild: wrote %d events in %s\n", wrote, time.Since(wStart).Round(time.Second))
+	}
+	return written, failed
 }
 
 // parseCSVList splits a comma-separated flag value into a trimmed,

@@ -15,6 +15,7 @@ groups:
         for: 10m
         labels:
           severity: ticket
+          team: stellarindex
           component: projector
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-lag.md
@@ -34,6 +35,7 @@ groups:
         for: 15m
         labels:
           severity: ticket
+          team: stellarindex
           component: projector
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-lag.md
@@ -74,3 +76,38 @@ groups:
             Any nonzero rate needs eyes.
 
             Runbook: docs/operations/runbooks/projector-row-quarantined.md
+
+      # Mirror of the rule in deploy/monitoring/rules/projector.yml (the
+      # wave-96 monitoring-rules CI dual-validation pattern). DATA-6 / NS-2
+      # (audit-2026-08-14): a projector decode soft-fail SKIPS the row and lets
+      # the cursor advance; a shipped decoder REGRESSION breaks a whole CLASS of
+      # valid events the same way (the projector runs the SAME decoders as
+      # ingest — the phoenix 5,161-orphaned-swap class), silently draining them
+      # from the served tier. The cycle is marked runs_total{outcome=
+      # "decode_degraded"} (no longer "ok") but the cursor still advances
+      # (holding would re-wedge a sole-writer source — COR-11), so this RATE
+      # alert is the defence. Sibling of stellarindex_ingestion_decode_error;
+      # threshold more sensitive (>0.1/s) so a class-wide regression on a quiet
+      # source still fires.
+      - alert: stellarindex_projector_decode_error_rate_high
+        expr: |
+          sum by (source) (rate(stellarindex_projector_events_decoded_total{outcome="decode_error"}[10m])) > 0.1
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: projector
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-decode-error-rate.md
+          summary: "Projector source {{ $labels.source }} decode errors sustained — likely a decoder regression"
+          description: |
+            The ADR-0032 projector for {{ $labels.source }} is failing to decode
+            events at {{ $value | humanize }}/sec sustained 15+ minutes. Each
+            failure SKIPS the row and advances the cursor past it, so those
+            events are silently dropped from the served per-source tier —
+            recoverable only by re-drive. A sustained rate (vs the odd poison
+            row) means a decoder REGRESSION broke a whole class of valid events.
+            Fix the decoder, then re-drive with `stellarindex-ops
+            projector-replay -source {{ $labels.source }}`.
+
+            Runbook: docs/operations/runbooks/projector-decode-error-rate.md

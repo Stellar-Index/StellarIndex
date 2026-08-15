@@ -3,6 +3,8 @@ package middleware_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -317,6 +319,59 @@ func TestAuth_ModeSEP10_RejectsXAPIKey(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401 (X-API-Key not honoured under sep10)", w.Code)
+	}
+}
+
+// TestAuth_AccountStatusUnavailableIs503Retryable pins the auth-ks-1
+// fix at the HTTP boundary: when the validator reports the account-
+// status kill-switch read is degraded (auth.ErrAccountStatusUnavailable),
+// the middleware answers 503 + Retry-After, NOT the 401 the default
+// branch used to emit — so a transient Postgres blip reads as a
+// retryable "auth layer degraded" rather than "your credential is
+// invalid" (which drives clients to rotate keys during a server-side
+// outage).
+func TestAuth_AccountStatusUnavailableIs503Retryable(t *testing.T) {
+	opts := middleware.AuthOptions{
+		Mode: middleware.AuthModeAPIKey,
+		APIKey: stubAPIKeyValidator{
+			knownKey: "k1",
+			// Wrapped like the validator wraps it, to prove the
+			// middleware unwraps via errors.Is rather than ==.
+			err: fmt.Errorf("auth: apikey account status %q: %w: %w",
+				"acme", auth.ErrAccountStatusUnavailable, errors.New("postgres unreachable")),
+		},
+	}
+	mw := middleware.Auth(opts)
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK) // must never run on the error path
+	}))
+
+	r := httptest.NewRequest(http.MethodGet, "/v1/price", nil)
+	r.Header.Set("Authorization", "Bearer k1")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 — a degraded account-status read is a server outage, not a bad credential", w.Code)
+	}
+	if got := w.Header().Get("Retry-After"); got != "30" {
+		t.Errorf("Retry-After = %q, want 30", got)
+	}
+	if got := w.Header().Get("Content-Type"); got != "application/problem+json" {
+		t.Errorf("Content-Type = %q, want application/problem+json", got)
+	}
+	var body struct {
+		Type   string `json:"type"`
+		Status int    `json:"status"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Type != "https://api.stellarindex.io/errors/auth-status-unavailable" {
+		t.Errorf("type = %q, want .../errors/auth-status-unavailable", body.Type)
+	}
+	if body.Status != http.StatusServiceUnavailable {
+		t.Errorf("body.status = %d, want 503", body.Status)
 	}
 }
 

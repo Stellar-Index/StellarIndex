@@ -353,6 +353,51 @@ func (r *TokenStore) CountLoginCodeLockouts(ctx context.Context) (int64, error) 
 	return n, nil
 }
 
+// SweepExpiredMagicLinkTokens deletes magic-link rows whose
+// `expires_at` is before `olderThan`, returning how many were removed.
+// Drives [magiclinkreaper.Reaper]; see that package for why this
+// exists.
+//
+// The short version: `magic_link_tokens.email` (+ requested_ip) is
+// ATTACKER-CHOSEN and durable plaintext PII. POST /v1/auth/login is
+// unauthenticated and inserts a permanent row for any well-formed
+// address, so a scripted caller can grow this table without bound on a
+// disk-fixed host, and nothing ever removes a row it created (a link
+// nobody clicks is never consumed).
+//
+// Every row past `expires_at` is TERMINAL: ConsumeMagicLinkToken and
+// ConsumableLoginCandidates both require `expires_at > now`, so an
+// expired row can never again be redeemed regardless of its
+// consumed_at. The reaper's retention keeps expired rows a while for
+// forensics and to preserve the expired-vs-absent distinction
+// classifyMagicLinkMiss draws for a slow user, then deletes them. The
+// predicate drives over `magic_link_tokens_expires_idx`.
+func (r *TokenStore) SweepExpiredMagicLinkTokens(ctx context.Context, olderThan time.Time) (int64, error) {
+	const q = `DELETE FROM magic_link_tokens WHERE expires_at < $1`
+	res, err := r.s.db.ExecContext(ctx, q, olderThan)
+	if err != nil {
+		return 0, fmt.Errorf("sweep expired magic link tokens: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("sweep expired magic link tokens: rows affected: %w", err)
+	}
+	return n, nil
+}
+
+// CountMagicLinkTokens returns the current row count. Feeds the
+// [obs.MagicLinkTokenRows] gauge so table growth is visible on a metric
+// an operator already watches, rather than first appearing as a
+// volume-level disk-full page.
+func (r *TokenStore) CountMagicLinkTokens(ctx context.Context) (int64, error) {
+	var n int64
+	if err := r.s.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM magic_link_tokens`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count magic link tokens: %w", err)
+	}
+	return n, nil
+}
+
 // classifyMagicLinkMiss runs after the consume UPDATE found no
 // rows. Distinguishes:
 //   - row exists, past expiry → ErrTokenExpired

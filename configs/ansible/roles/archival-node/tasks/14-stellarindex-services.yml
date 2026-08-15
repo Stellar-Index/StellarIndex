@@ -271,7 +271,7 @@
       MemoryLow=16G
       CPUWeight=500
       IOWeight=500
-  notify: daemon-reload
+  notify: Reload systemd
 
 - name: heavy-job wrapper (mandatory for ops one-shots on this host)
   # Serialises + host-protects heavy ops one-shots. Two jobs:
@@ -409,6 +409,18 @@
         "$@" || rc=$?
       exit "$rc"
 
+- name: archive-completeness drop-in directory
+  # `copy` does not create parent dirs — without this the override.conf
+  # copy below fails on a fresh host with "Destination directory
+  # /etc/systemd/system/archive-completeness.service.d does not exist".
+  # Same idiom as the galexie drop-in directory task above.
+  ansible.builtin.file:
+    path: /etc/systemd/system/archive-completeness.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: archive-completeness override drop-in (root user, no legacy env)
   # Replaces a hand-written pre-rebrand override that still loaded
   # /etc/default/ratesengine — dead legacy credentials whose values
@@ -423,7 +435,7 @@
       [Service]
       User=root
       Group=root
-  notify: daemon-reload
+  notify: Reload systemd
 
 - name: Remove the legacy ratesengine env file
   # Pre-rebrand credentials (old DB, deleted MinIO reader) that

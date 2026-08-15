@@ -103,9 +103,19 @@ groups:
       # 15 min so 90 min = 6 missed passes. Either the timer isn't
       # running or every run since has failed. P2 page either way —
       # we lose the SLA-evidence trail when the probe is silent.
+      # OBS-2: a failing run drops last_pass_timestamp from the
+      # textfile (the probe only emits it on pass and rewrites the whole
+      # file), so the every-run-failed case makes the series ABSENT, not
+      # old — the `time() - last_pass_timestamp` branch then evaluates
+      # over an empty vector and can never fire. The
+      # `absent_over_time(...[90m])` branch restores the documented
+      # coverage: no passing run recorded in 90 min (timer dead OR every
+      # run failing) pages.
       - alert: stellarindex_sla_probe_stale
         expr: |
           (time() - stellarindex_sla_probe_last_pass_timestamp) > (90 * 60)
+          or
+          absent_over_time(stellarindex_sla_probe_last_pass_timestamp[90m])
         for: 5m
         labels:
           severity: page
@@ -113,7 +123,7 @@ groups:
           component: api
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-stale.md
-          summary: "SLA probe hasn't passed in {{ $value | humanizeDuration }} (cadence 15m, threshold 90m)"
+          summary: "SLA probe has recorded no passing run in ≥ 90m (cadence 15m) — timer dead or every run failing"
           description: |
             Either the systemd timer isn't running, or every run since
             the last pass has failed. Without the probe, we lose the

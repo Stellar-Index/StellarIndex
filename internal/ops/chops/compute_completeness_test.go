@@ -1051,3 +1051,106 @@ func TestDecodeContractCallTree_CleanTreeIsNotBlind(t *testing.T) {
 		t.Errorf("a clean call tree reported blind spots: %+v", blind.Result())
 	}
 }
+
+// TestRecognitionAttribution_TopicMatchedSourceFailsOnItsPoolGap pins
+// W1-flowcompleteness-1: before the fix, the topic-matched sources
+// (soroswap/aquarius/phoenix/... — empty contractIDs) never appeared in
+// ownerOf, so a dropped/altered topic on one of THEIR pools fell into
+// `unattributed` and their per-source recognition axis was STRUCTURALLY unable
+// to fail — recognition_ok stayed true over a real drop. The fix folds the
+// factory-child (protocol_contracts) and soroswap-pair registries into ownerOf
+// so a gap on a registered pool attributes to its owning source and caps it.
+//
+// This walks the whole fixed chain — mergeRegistryOwners → attributeRecognitionGaps
+// → sourceRecognitionOK — with a synthetic unrecognized shape on a soroswap pool,
+// and asserts soroswap.recognition_ok flips FALSE while a genuinely-unowned
+// contract's gap stays unattributed (for the system snapshot), not mis-blamed.
+func TestRecognitionAttribution_TopicMatchedSourceFailsOnItsPoolGap(t *testing.T) {
+	const soroswapPool = "CPOOLSOROSWAPxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+	const phoenixChild = "CPHOENIXCHILDyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+	const foreignContract = "CFOREIGNZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"
+	const soroswapGenesis = 50_746_266
+
+	// ownerOf as computeCompleteness builds it: static contractIDs first
+	// (empty for the topic-matched sources), then the registry fold.
+	ownerOf := map[string]string{}
+	mergeRegistryOwners(ownerOf,
+		map[string][]string{"phoenix": {phoenixChild}}, // protocol_contracts child
+		[]string{soroswapPool},                         // soroswap_pairs registry
+	)
+	if ownerOf[soroswapPool] != "soroswap" {
+		t.Fatalf("soroswap pool not attributed: ownerOf[%s]=%q, want soroswap", soroswapPool, ownerOf[soroswapPool])
+	}
+	if ownerOf[phoenixChild] != "phoenix" {
+		t.Fatalf("phoenix child not attributed: ownerOf[%s]=%q, want phoenix", phoenixChild, ownerOf[phoenixChild])
+	}
+
+	gaps := []completeness.RecognitionGap{
+		{ContractID: soroswapPool, Topic0Sym: "swap", MinLedger: 61_000_000, Reason: "no decoder matches"},
+		{ContractID: foreignContract, Topic0Sym: "mystery", MinLedger: 62_000_000, Reason: "no decoder matches"},
+	}
+	recBySource, unattributed := attributeRecognitionGaps(ownerOf, gaps)
+
+	// The soroswap-pool gap must land on soroswap, NOT in unattributed.
+	if len(recBySource["soroswap"]) != 1 || recBySource["soroswap"][0] != 61_000_000 {
+		t.Fatalf("soroswap gap not attributed to soroswap: recBySource[soroswap]=%v", recBySource["soroswap"])
+	}
+	// The foreign gap must stay unattributed (system recognition snapshot),
+	// not mis-blamed onto a real source.
+	if len(unattributed) != 1 || unattributed[0].ContractID != foreignContract {
+		t.Fatalf("foreign gap mis-attributed; unattributed=%+v", unattributed)
+	}
+
+	// The per-source verdict must now FAIL — the structural always-true is gone.
+	ok, problems := sourceRecognitionOK(soroswapGenesis, recBySource["soroswap"])
+	if ok {
+		t.Fatal("soroswap recognition_ok stayed TRUE over a dropped topic on its own pool — the W1-flowcompleteness-1 lie")
+	}
+	if len(problems) != 1 || problems[0] != 61_000_000 {
+		t.Fatalf("recognition problem ledger not pinned into the watermark: %v", problems)
+	}
+}
+
+// TestMergeRegistryOwners_StaticPinWins — a contract already pinned by a
+// source's static contractIDs is never reassigned by the registry fold, so a
+// curated contract-pinned source (cctp/oracles) keeps its exact attribution.
+func TestMergeRegistryOwners_StaticPinWins(t *testing.T) {
+	const pinned = "CCCTPCONTRACTxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+	ownerOf := map[string]string{pinned: "cctp"}
+	mergeRegistryOwners(ownerOf, map[string][]string{"phoenix": {pinned}}, []string{pinned})
+	if ownerOf[pinned] != "cctp" {
+		t.Fatalf("static contractID pin lost: ownerOf[%s]=%q, want cctp", pinned, ownerOf[pinned])
+	}
+}
+
+// TestSubstrateFloorLoss pins W1-flowcompleteness-2: the substrate twin of
+// detectFloorLoss. An incremental run that scanned only [subScanFrom,tip] and
+// carried the [genesis,subScanFrom] prefix must FAIL substrate when the lake no
+// longer holds the source's genesis ledger (a capacity-archive DROP PARTITION
+// below the carried floor). Before the fix there was no such detector and
+// substrate_ok/lake_complete stayed true over an absent prefix.
+func TestSubstrateFloorLoss(t *testing.T) {
+	const genesis = 50_746_266
+	const watermark = 63_000_000 // incremental -from floor: scan carried [genesis,watermark]
+
+	// Carried prefix + genesis ledger GONE (probe reports a problem) → loss.
+	if p, lost, detail := substrateFloorLoss(genesis, watermark, genesis, true); !lost {
+		t.Fatal("bottom-edge loss NOT detected — a dropped genesis partition below the carried floor read as substrate-intact (the W1-flowcompleteness-2 gap)")
+	} else if p != genesis {
+		t.Errorf("problem ledger = %d, want genesis %d", p, genesis)
+	} else if !strings.Contains(detail, "bottom-edge loss") || !strings.Contains(detail, "-from") {
+		t.Errorf("detail must name the loss + the -from carry, got: %q", detail)
+	}
+
+	// Carried prefix but genesis PRESENT (probe clean) → no false positive.
+	if _, lost, _ := substrateFloorLoss(genesis, watermark, 0, false); lost {
+		t.Error("false positive: genesis present but reported bottom-edge loss")
+	}
+
+	// Deep/full run (subScanFrom <= genesis) already re-reads genesis, so its
+	// own head-presence guard owns the verdict — the probe must NOT double-count
+	// even if it fired.
+	if _, lost, _ := substrateFloorLoss(genesis, genesis, genesis, true); lost {
+		t.Error("double-count: a full scan (subScanFrom<=genesis) must not also report floor loss")
+	}
+}

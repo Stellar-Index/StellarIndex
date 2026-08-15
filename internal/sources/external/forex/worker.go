@@ -205,11 +205,15 @@ func (w *Worker) refreshOnce(ctx context.Context) {
 // [obs.ExternalFXRateRejectedTotal]; the ticker keeps its last accepted
 // row rather than gaining a wrong one.
 //
-// The trailing-7d history rows are NOT banded — they are dated snapshots
-// of the upstream's own published history, not a moving current rate, so
-// there is no meaningful "last accepted" baseline to compare a
-// 5-days-ago bar against. They keep the pre-existing positive-value
-// filter, tightened to reject non-finite values too.
+// The trailing-7d history rows are ALSO banded (MR-1, audit-2026-08-14).
+// They are dated snapshots, not a moving current rate, so [acceptHistoryRate]
+// bands each point against the ticker's current accepted rate WITHOUT
+// mutating the guard state: a trailing-7d bar sits at most a week from
+// today's rate, far inside the 50% decimal-shift band, so a bar >50% off
+// the live rate is a broken upstream bar about to overwrite a correct
+// stored rate in place — exactly the denominator poisoning MR-1 describes.
+// A point with no baseline yet (the current-rate loop runs first and
+// establishes one) still bootstraps rather than dropping legitimate history.
 //
 // Errors get logged at warn level; persistence is best-effort
 // alongside the in-memory cache, never a crash condition.
@@ -234,7 +238,7 @@ func (w *Worker) persistSnapshot(ctx context.Context, snap *Snapshot) {
 	}
 	for ticker, points := range snap.History7d {
 		for _, p := range points {
-			if p.RateUSD <= 0 || math.IsNaN(p.RateUSD) || math.IsInf(p.RateUSD, 0) {
+			if !w.acceptHistoryRate(ticker, p.RateUSD) {
 				continue
 			}
 			batch = append(batch, FXQuote{
@@ -321,6 +325,49 @@ func (w *Worker) acceptRate(ticker string, rate float64) bool {
 	}
 	g.pending = rate
 	w.rejectRate(ticker, rate, g.lastAccepted, "deviation")
+	return false
+}
+
+// acceptHistoryRate is the [maxRateDeviation] sanity band applied to a
+// trailing-7d HISTORY point (MR-1, audit-2026-08-14). Unlike [acceptRate]
+// it is READ-ONLY on the guard state — a dated historical bar is not the
+// moving "current" rate, so it must neither advance lastAccepted nor arm
+// the pending confirmation slot (doing so would let a wrong past bar
+// corrupt the baseline the current-rate band depends on).
+//
+// It bands the point against the ticker's current accepted baseline:
+// fx_quotes.rate_usd is the denominator of every fiat-quoted usd_volume,
+// and a trailing-7d bar is at most a week from today's rate, far inside
+// the 50% decimal-shift band, so a bar >50% off the live rate is a broken
+// upstream bar (provider glitch) about to overwrite a correct stored rate
+// in place — the exact durability hole MR-1 describes.
+//
+// Rules, in order:
+//   - non-finite or non-positive → reject (as [acceptRate]; a broken field
+//     can never be a rate and 1/rate would poison InverseUSD).
+//   - no baseline yet for the ticker → accept: there is nothing to band
+//     against and refusing would drop legitimate history (mirrors the
+//     acceptRate bootstrap arm). The current-rate loop runs first, so a
+//     live ticker normally already has a baseline here.
+//   - within [maxRateDeviation] of the last accepted rate → accept.
+//   - otherwise → reject, count + log (reason "history_deviation").
+func (w *Worker) acceptHistoryRate(ticker string, rate float64) bool {
+	if math.IsNaN(rate) || math.IsInf(rate, 0) {
+		w.rejectRate(ticker, rate, 0, "non_finite")
+		return false
+	}
+	if rate <= 0 {
+		w.rejectRate(ticker, rate, 0, "non_positive")
+		return false
+	}
+	g, ok := w.guards[ticker]
+	if !ok || g.lastAccepted <= 0 {
+		return true
+	}
+	if withinBand(rate, g.lastAccepted) {
+		return true
+	}
+	w.rejectRate(ticker, rate, g.lastAccepted, "history_deviation")
 	return false
 }
 

@@ -74,7 +74,12 @@ func TestDecoder_Matches_pairAndFactoryTopics(t *testing.T) {
 		{"registered pair deposit", events.Event{Topic: []string{TopicPrefixPair, TopicSymbolDeposit}, ContractID: registered}, true},
 		{"registered pair withdraw", events.Event{Topic: []string{TopicPrefixPair, TopicSymbolWithdraw}, ContractID: registered}, true},
 		// Pair events from an UNREGISTERED contract (topic collision) do NOT.
+		// deposit/withdraw fail CLOSED on an unseeded pair too — an unseeded
+		// pair is a recognition gap (no row), NOT a NULL-token row (migration
+		// 0127 header + emitLiquidity doc; audit W1-protocol-tables-2).
 		{"foreign pair swap", events.Event{Topic: []string{TopicPrefixPair, TopicSymbolSwap}, ContractID: foreign}, false},
+		{"unseeded pair deposit", events.Event{Topic: []string{TopicPrefixPair, TopicSymbolDeposit}, ContractID: foreign}, false},
+		{"unseeded pair withdraw", events.Event{Topic: []string{TopicPrefixPair, TopicSymbolWithdraw}, ContractID: foreign}, false},
 		// new_pair only from the canonical factory contract.
 		{"factory new_pair from factory", events.Event{Topic: []string{TopicPrefixFactory, TopicSymbolNewPair}, ContractID: MainnetFactory}, true},
 		{"new_pair from a foreign contract (injection)", events.Event{Topic: []string{TopicPrefixFactory, TopicSymbolNewPair}, ContractID: foreign}, false},

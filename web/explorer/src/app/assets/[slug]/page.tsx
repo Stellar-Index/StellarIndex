@@ -6,7 +6,7 @@ import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
 import type { components } from '@/api/types';
 import { buildFetchData, buildFetchEnvelope, failBuild } from '@/lib/buildFetch';
-import { formatCompact, formatPrice } from '@/lib/format';
+import { formatCompact, formatPrice, formatSubunitPrice } from '@/lib/format';
 import { serializeJsonLd, datasetJsonLd, ogImageFor } from '@/lib/seo';
 import {
   Badge,
@@ -634,7 +634,7 @@ export async function generateMetadata({
         ? `$${priceNum.toFixed(priceNum >= 100 ? 2 : 4)}`
         : priceNum >= 0.001
           ? `$${priceNum.toFixed(6)}`
-          : `$${priceNum.toExponential(3)}`;
+          : `$${formatSubunitPrice(priceNum)}`;
     suffix = ` ${priceStr}`;
     if (change24h != null && Number.isFinite(change24h)) {
       const sign = change24h > 0 ? '+' : '';
@@ -1587,7 +1587,7 @@ function VerifiedCurrencyView({
         </h1>
         {priceNum != null && Number.isFinite(priceNum) && (
           <div className="font-mono text-2xl tnum text-ink">
-            ${priceNum < 0.001 ? priceNum.toExponential(3) : priceNum.toFixed(priceNum >= 100 ? 2 : 6)}
+            ${priceNum < 0.001 ? formatSubunitPrice(priceNum) : priceNum.toFixed(priceNum >= 100 ? 2 : 6)}
             <span className="ml-2 text-xs text-ink-muted">USD</span>
           </div>
         )}

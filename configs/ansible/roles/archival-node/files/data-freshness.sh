@@ -34,6 +34,8 @@ trap 'rm -f "$TMP"' EXIT
   echo '# TYPE stellarindex_data_freshness_stale gauge'
   echo '# HELP stellarindex_completeness_incomplete 1 when a source latest ADR-0033 verdict is complete=false (real served<>lake gap).'
   echo '# TYPE stellarindex_completeness_incomplete gauge'
+  echo '# HELP stellarindex_twap_history_missing 1 when a TWAP continuous aggregate is missing the history prices_1m holds — a migration recreated/emptied it (WITH NO DATA) and the manual refresh_continuous_aggregate follow-up never ran.'
+  echo '# TYPE stellarindex_twap_history_missing gauge'
 } > "$TMP"
 
 # (domain, source, age_seconds, threshold_seconds) per domain. Thresholds are a
@@ -108,6 +110,44 @@ SQL
 SELECT 'stellarindex_completeness_incomplete{source="'||source||'"} '||(NOT complete)::int::text
   FROM (SELECT DISTINCT ON (source) source, complete
           FROM completeness_snapshots ORDER BY source, computed_at DESC) s;
+SQL
+
+# W1-migrations-1 / REC-01: the TWAP continuous aggregates (twap_1h/twap_1d)
+# are hierarchical roll-ups over prices_1m that a migration recreates WITH NO
+# DATA whenever their SELECT changes (0081 → 0115 → 0126). A recreate DELETES
+# all materialized history; re-materialization is a MANUAL operator step
+# (`CALL refresh_continuous_aggregate('twap_1h', NULL, now())`) that nothing
+# enforces. The trap that hides a skipped follow-up: each view's refresh POLICY
+# only auto-materializes a recent trailing window (twap_1h start_offset 4h,
+# twap_1d 7d), so RECENT bars reappear on the next policy tick and every
+# newest-bar freshness/age check reads GREEN while the entire back-history
+# stays silently empty — the API serves no TWAP for older ranges. The
+# ADR-0033 completeness verdict cannot see this: twap_* are derived price
+# CAGGs, not reconcile TARGETS. So detect it directly — a view is emptied-
+# pending-refresh when prices_1m holds real history but the view's OLDEST
+# materialized bar is far newer than prices_1m's oldest (i.e. it only carries
+# the policy's trailing sliver). Cheap: min(bucket) rides each view's
+# time index; the 1-day slack absorbs twap_1d's daily bucket truncation.
+"$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
+WITH pm  AS (SELECT min(bucket) AS pmin FROM prices_1m),
+     t1h AS (SELECT min(bucket) AS tmin, count(*) AS n FROM twap_1h),
+     t1d AS (SELECT min(bucket) AS tmin, count(*) AS n FROM twap_1d)
+-- Only judge once prices_1m has >2 days of history (a fresh/empty deploy or the
+-- legitimate initial-materialization window must not false-fire). Missing iff
+-- the view is empty OR its oldest bar trails prices_1m's oldest by >1 day.
+SELECT 'stellarindex_twap_history_missing{view="twap_1h"} '||
+       (CASE WHEN (SELECT pmin FROM pm) IS NOT NULL
+                  AND (SELECT pmin FROM pm) < now() - interval '2 days'
+                  AND ((SELECT n FROM t1h) = 0
+                       OR (SELECT tmin FROM t1h) > (SELECT pmin FROM pm) + interval '1 day')
+             THEN 1 ELSE 0 END)::text
+UNION ALL
+SELECT 'stellarindex_twap_history_missing{view="twap_1d"} '||
+       (CASE WHEN (SELECT pmin FROM pm) IS NOT NULL
+                  AND (SELECT pmin FROM pm) < now() - interval '2 days'
+                  AND ((SELECT n FROM t1d) = 0
+                       OR (SELECT tmin FROM t1d) > (SELECT pmin FROM pm) + interval '1 day')
+             THEN 1 ELSE 0 END)::text;
 SQL
 
 # CS-090: a verdict can read complete=true while its watermark lags the live

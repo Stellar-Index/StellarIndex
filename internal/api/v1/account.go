@@ -174,11 +174,15 @@ type KeyCreated struct {
 // the caller's tier verbatim. Operator callers mint for other
 // identifiers/tiers via POST /v1/admin/keys.
 //
-// Scopes is optional: absent/empty mints a full-access key (the
-// pre-scopes posture); non-empty confines the key to the listed
-// route families (platform.KnownKeyScopes vocabulary). A caller can
-// only NARROW — scopes never grant anything the key's tier wouldn't
-// already reach.
+// Scopes is optional: for a full-access caller (empty scope list),
+// absent/empty mints a full-access key (the pre-scopes posture);
+// non-empty confines the key to the listed route families
+// (platform.KnownKeyScopes vocabulary). A SCOPED caller can only
+// delegate a subset of its own scopes — an empty request inherits the
+// caller's scopes rather than granting full access, and any scope the
+// caller does not itself hold is rejected (see middleware.ClampMintScopes).
+// A caller can only NARROW — scopes never grant anything the key's tier
+// wouldn't already reach.
 type createKeyRequest struct {
 	Label  string   `json:"label"`
 	Scopes []string `json:"scopes,omitempty"`
@@ -431,6 +435,19 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-scope",
 			"Invalid scope", http.StatusBadRequest, problem)
+		return
+	}
+
+	// Delegation clamp: a scoped caller may only mint a child whose
+	// scopes are a subset of its own, and an empty request from a
+	// scoped caller inherits the caller's scopes rather than defaulting
+	// to full access. Without this a key narrowed at mint could mint an
+	// unrestricted sibling and escape its own confinement.
+	scopes, problem = middleware.ClampMintScopes(subject, scopes)
+	if problem != "" {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/scope-exceeds-caller",
+			"Scope exceeds caller", http.StatusForbidden, problem)
 		return
 	}
 

@@ -188,15 +188,28 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			ownerOf[c] = src.name
 		}
 	}
-	recBySource := map[string][]uint32{}
-	var unattributed []completeness.RecognitionGap
-	for _, g := range recGaps {
-		if owner, ok := ownerOf[g.ContractID]; ok {
-			recBySource[owner] = append(recBySource[owner], g.MinLedger)
-		} else {
-			unattributed = append(unattributed, g)
+	// W1-flowcompleteness-1: the TOPIC-MATCHED sources (soroswap/aquarius/
+	// phoenix/comet/defindex/blend — empty contractIDs) never appeared in
+	// ownerOf, so a dropped/altered topic on one of THEIR pools (the phoenix
+	// orphaned-swap class) fell into `unattributed` and their per-source
+	// recognition axis was STRUCTURALLY unable to fail: recBySource[soroswap]
+	// stayed empty and recognition_ok read true over a real drop. Their pool
+	// membership already exists in the same registries the recognition gate
+	// warms — protocol_contracts (factory-anchored children) and soroswap_pairs
+	// — so fold those into ownerOf. Now a gap on a registered pool attributes to
+	// its owning source and caps it; a gap on a contract NO source owns stays
+	// unattributed and is published by the system `recognition` snapshot below
+	// (which this run now refreshes every pass — see that block). FAIL CLOSED on
+	// a registry read error, like the prior/floor reads: an owner map missing
+	// its registry members would silently restore the pre-fix always-true axis.
+	// Only paid when the scan actually found gaps to attribute — a clean or
+	// -skip-recognition run has nothing to fold.
+	if len(recGaps) > 0 {
+		if oerr := loadRegistryOwners(ctx, store, ownerOf); oerr != nil {
+			return fmt.Errorf("recognition owner attribution (failing closed — an incomplete owner map cannot fail recognition for the topic-matched sources): %w", oerr)
 		}
 	}
+	recBySource, unattributed := attributeRecognitionGaps(ownerOf, recGaps)
 
 	// Substrate (Claim 1) is a property of the lake, not a source — compute the
 	// earliest gap/break ONCE in -ch mode (over the whole Soroban-era range) and
@@ -317,6 +330,36 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			if p := lakeCoverageProblem(genesis, scanClean, substrateOK, priorSub[src.name]); p != 0 {
 				problems = append(problems, p)
 			}
+			// W1-flowcompleteness-2: the substrate twin of detectFloorLoss.
+			// An incremental run scanned only [subScanFrom, tip] and
+			// substrateClaim rule 3 CARRIES the prior clean [genesis,
+			// subScanFrom] verdict — so a capacity-archive DROP PARTITION (the
+			// documented archive-to-S3 plan) that deletes the source's oldest
+			// ledgers BELOW subScanFrom is invisible to the scan, and
+			// substrate_ok / lake_complete stay true over an absent prefix.
+			// Projection catches its own bottom-edge loss (detectFloorLoss +
+			// completeness_target_floors, migration 0116); substrate had no
+			// equivalent. Probe the bottom edge directly: unlike the projection
+			// floor (a served-tier MIN needing a durable row to tell "lost" from
+			// "never written"), the substrate floor is the FIXED src.genesis —
+			// the first-possible-data ledger the lake must always reach — so no
+			// durable floor is needed. A cheap 1-ledger SubstrateProblem at
+			// genesis reports whether the lake still holds it; an absent/broken
+			// genesis is bottom-edge loss that must fail substrate_ok. Only
+			// probed when the run CARRIES a prefix (subScanFrom > genesis); a
+			// deep scan (subScanFrom <= genesis) already re-reads genesis and its
+			// own head-presence guard reports the same loss.
+			if subScanFrom > genesis {
+				fp, fh, _, ferr := clickhouse.SubstrateProblem(ctx, *chAddr, genesis, genesis)
+				if ferr != nil {
+					return fmt.Errorf("%s: substrate bottom-edge probe: %w", src.name, ferr)
+				}
+				if p, lost, d := substrateFloorLoss(genesis, subScanFrom, fp, fh); lost {
+					substrateOK = false
+					problems = append(problems, p)
+					detail = append(detail, d)
+				}
+			}
 		} else {
 			subGaps, err := store.FindLedgerIngestGaps(ctx, genesis, tip)
 			if err != nil {
@@ -338,14 +381,11 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			}
 		}
 
-		// Claim 2a: recognition gaps attributed to this source's contracts.
-		recOK := true
-		for _, l := range recBySource[src.name] {
-			if l >= genesis {
-				problems = append(problems, l)
-				recOK = false
-			}
-		}
+		// Claim 2a: recognition gaps attributed to this source's contracts
+		// (static contractIDs OR the factory-child / soroswap-pair registry
+		// members folded into ownerOf above — W1-flowcompleteness-1).
+		recOK, recProblems := sourceRecognitionOK(genesis, recBySource[src.name])
+		problems = append(problems, recProblems...)
 		if !recOK {
 			detail = append(detail, "recognition: unhandled topic on this source's contract(s)")
 		}
@@ -529,7 +569,18 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	}
 
 	// ── System recognition snapshot (gaps on contracts no source owns) ──
-	if *only == "" && !*skipRecognition {
+	//
+	// W1-flowcompleteness-1: this used to be gated on `*only == ""`, so the
+	// DEPLOYED daily driver (run-compute-completeness.sh always passes
+	// -source $SRC) NEVER refreshed it — the global scan detected an
+	// unattributed gap and then discarded it, leaving /v1/coverage's recognition
+	// row stale. The scan is already global on every per-source pass (line ~163,
+	// the driver passes no -skip-recognition) and `unattributed` is already
+	// fully computed, so refreshing the system snapshot every pass is free and
+	// restores the system-level alarm for gaps on contracts no source owns. The
+	// `-source` filter still governs which PER-SOURCE rows are written; it must
+	// not silence the system-wide recognition verdict.
+	if !*skipRecognition {
 		var earliest uint32
 		for _, g := range unattributed {
 			if earliest == 0 || g.MinLedger < earliest {
@@ -580,6 +631,97 @@ func runRecognitionScan(skip bool, scan func() ([]completeness.RecognitionGap, e
 		return nil, fmt.Errorf("recognition scan failed (failing closed — not writing completeness verdicts): %w", err)
 	}
 	return gaps, nil
+}
+
+// loadRegistryOwners folds the factory-child (protocol_contracts) and
+// soroswap-pair registries into ownerOf so the TOPIC-MATCHED sources (empty
+// contractIDs) can attribute — and therefore FAIL — recognition on a dropped
+// topic on one of their own pools (W1-flowcompleteness-1). These are the SAME
+// membership sets the recognition gate warms (GatedRegistryOptions /
+// seedSoroswapForRecon), so the data is already the source of truth at compute
+// time; this only makes the completeness verdict read it too. FAIL CLOSED on a
+// read error — the caller must not proceed with a partial owner map.
+//
+// The DB reads live here; the pure fold is [mergeRegistryOwners] so the
+// attribution → verdict chain is unit-testable without a live store.
+func loadRegistryOwners(ctx context.Context, store *timescale.Store, ownerOf map[string]string) error {
+	gatedChildren := make(map[string][]string)
+	for _, source := range pipeline.GatedSourceNames() {
+		ids, err := store.LoadProtocolContracts(ctx, source)
+		if err != nil {
+			return fmt.Errorf("protocol_contracts %s: %w", source, err)
+		}
+		gatedChildren[source] = ids
+	}
+	pairs, err := store.LoadSoroswapPairRegistry(ctx)
+	if err != nil {
+		return fmt.Errorf("soroswap pair registry: %w", err)
+	}
+	pairIDs := make([]string, 0, len(pairs))
+	for _, p := range pairs {
+		pairIDs = append(pairIDs, p.PairStrkey)
+	}
+	mergeRegistryOwners(ownerOf, gatedChildren, pairIDs)
+	return nil
+}
+
+// mergeRegistryOwners folds registry-derived contract→source membership into
+// ownerOf: gatedChildren maps a factory-anchored source name to its
+// protocol_contracts children, and soroswapPairs is the soroswap_pairs
+// registry (all owned by "soroswap"). A contract ALREADY pinned by a source's
+// static contractIDs is never reassigned — the static catalogue pin wins, so a
+// curated contract-pinned source keeps its exact attribution. Pure —
+// unit-testable. The "soroswap" literal mirrors the catalogue entry's own
+// literal name (reconciliation_catalogue.go).
+func mergeRegistryOwners(ownerOf map[string]string, gatedChildren map[string][]string, soroswapPairs []string) {
+	for source, ids := range gatedChildren {
+		for _, c := range ids {
+			if _, taken := ownerOf[c]; !taken {
+				ownerOf[c] = source
+			}
+		}
+	}
+	for _, p := range soroswapPairs {
+		if _, taken := ownerOf[p]; !taken {
+			ownerOf[p] = "soroswap"
+		}
+	}
+}
+
+// attributeRecognitionGaps splits the global recognition scan's gaps into the
+// per-source (owned) map and the unattributed remainder (gaps on contracts no
+// source owns), using ownerOf. A gap on an owned contract caps its owning
+// source's recognition axis; an unattributed gap flows to the system
+// `recognition` snapshot. Pure — unit-testable.
+func attributeRecognitionGaps(ownerOf map[string]string, gaps []completeness.RecognitionGap) (map[string][]uint32, []completeness.RecognitionGap) {
+	recBySource := map[string][]uint32{}
+	var unattributed []completeness.RecognitionGap
+	for _, g := range gaps {
+		if owner, ok := ownerOf[g.ContractID]; ok {
+			recBySource[owner] = append(recBySource[owner], g.MinLedger)
+		} else {
+			unattributed = append(unattributed, g)
+		}
+	}
+	return recBySource, unattributed
+}
+
+// sourceRecognitionOK is the pure per-source Claim-2a verdict: a source fails
+// recognition (returns false) when any recognition gap attributed to it falls
+// at or after its genesis, and returns those problem ledgers to fold into the
+// coverage watermark. attributed is recBySource[source] — which, since
+// W1-flowcompleteness-1, includes gaps on the source's factory-child /
+// soroswap-pair registry members, not just its static contractIDs. Pure.
+func sourceRecognitionOK(genesis uint32, attributed []uint32) (bool, []uint32) {
+	ok := true
+	var problems []uint32
+	for _, l := range attributed {
+		if l >= genesis {
+			problems = append(problems, l)
+			ok = false
+		}
+	}
+	return ok, problems
 }
 
 // combineWatermark applies the served-tier projection gate to the lake
@@ -1020,6 +1162,43 @@ func substrateClaim(genesis, hi, scanFrom uint32, scanClean bool, problem uint32
 	default:
 		return true, fmt.Sprintf("substrate: verified %s; %s carried from the prior clean verdict (tip=%d), not re-scanned this run", scanned, skipped, prior.tip)
 	}
+}
+
+// substrateFloorLoss is the bottom-edge-loss detector for the SUBSTRATE axis —
+// the twin of [detectFloorLoss] on the projection axis
+// (completeness_target_floors, migration 0116), closing W1-flowcompleteness-2.
+//
+// An incremental run scans only [subScanFrom, tip] and [substrateClaim] rule 3
+// CARRIES the prior clean [genesis, subScanFrom] verdict. A capacity-archive
+// DROP PARTITION that deletes the source's oldest ledgers below subScanFrom is
+// therefore invisible: the [subScanFrom, tip] scan is intact and the carried
+// prefix is a lie, yet substrate_ok / lake_complete / coverage_pct=1.0 keep
+// asserting "the certified archive is contiguous + hash-chained from genesis".
+//
+// Unlike the projection floor — a served-tier MIN that must be recorded durably
+// to tell "lost" from "never written" — the substrate floor is the FIXED
+// src.genesis, the first-possible-data ledger the lake must always reach, so no
+// durable row is needed: the caller simply probes whether the lake still holds
+// `genesis`. floorHasProblem is that probe's result (a cheap 1-ledger
+// clickhouse.SubstrateProblem at genesis); a present genesis is clean, an
+// absent/broken one is bottom-edge loss.
+//
+// Fires ONLY when the run CARRIES a prefix (subScanFrom > genesis): a deep scan
+// (subScanFrom <= genesis) already re-reads genesis and its own head-presence
+// guard reports the same loss, so probing there would double-count. Like
+// detectFloorLoss this catches a rising BOTTOM edge (dropped oldest partitions),
+// not an interior hole inside the carried prefix — that needs a full re-scan and
+// is the same class the projection floor detector also cannot see. Pure —
+// unit-testable.
+func substrateFloorLoss(genesis, subScanFrom, floorProblem uint32, floorHasProblem bool) (uint32, bool, string) {
+	if subScanFrom <= genesis || !floorHasProblem {
+		return 0, false, ""
+	}
+	return floorProblem, true, fmt.Sprintf(
+		"substrate: bottom-edge loss — genesis ledger %d is no longer present/intact in the lake, "+
+			"but this run scanned only [%d,tip] and substrateClaim carried [%d,%d] as clean "+
+			"(archive/DROP PARTITION below the carried floor) — re-run without -from to re-seed substrate from genesis",
+		genesis, subScanFrom, genesis, subScanFrom-1)
 }
 
 // lakeCoverageProblem is the NUMERIC twin of [substrateClaim]: it returns the

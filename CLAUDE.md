@@ -614,9 +614,13 @@ If it doesn't, that's a CI failure.
    - `make docs-api` — rendered reference + colocated YAML (the only
      one `make docs-all` and the CI drift-lint cover).
    - `make docs-postman` — `examples/postman/…json` (deterministic
-     since the generator's RNG is seeded; NOT drift-guarded).
+     since the generator's RNG is seeded; drift-guarded in CI by an
+     exact `git diff --exit-code -- examples/postman` in the
+     postman-check job).
    - `make web-generate-api` — `web/explorer/src/api/types.ts`, the
-     explorer's compile-time contract (NOT drift-guarded).
+     explorer's compile-time contract (drift-guarded in CI by an
+     exact `git diff --exit-code -- src/api/types.ts` in the
+     web-explorer job).
 3. Handlers in `internal/api/v1/` get updated; contract tests
    verify they match.
 4. Bump the API minor version if the change is additive, major

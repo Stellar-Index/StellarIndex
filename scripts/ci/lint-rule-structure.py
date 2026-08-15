@@ -9,6 +9,13 @@ so it runs everywhere verify.sh does.
 
 Checks each groups[].rules[] entry has: exactly one of alert|record, an
 `expr`, and no stray rule-shaped keys at the group level.
+
+Also enforces the alert-routing contract (OBS-1): every ALERT rule must
+carry the labels Alertmanager routes on — severity, team, component — and
+the annotations every Discord/page template renders — summary, description.
+A missing label silently mis-routes a page (drops to the catch-all route or
+loses team ownership); a missing annotation renders a blank page body. These
+are non-empty presence checks; record rules are exempt (they carry neither).
 """
 import glob, os, sys
 try:
@@ -24,6 +31,9 @@ except ImportError:
 
 DIRS = ["deploy/monitoring/rules", "configs/prometheus/rules.r1"]
 GROUP_LEVEL_RULE_KEYS = {"alert", "record", "expr", "for", "labels", "annotations"}
+# OBS-1: labels Alertmanager routes on + annotations every page template renders.
+REQUIRED_ALERT_LABELS = ("severity", "team", "component")
+REQUIRED_ALERT_ANNOTATIONS = ("summary", "description")
 bad = 0
 
 def err(path, msg):
@@ -65,6 +75,22 @@ for d in DIRS:
                     err(path, f"group '{g.get('name','?')}' rules[{ri}] must have exactly one of alert|record (has {has})")
                 if "expr" not in r:
                     err(path, f"group '{g.get('name','?')}' rule '{r.get('alert') or r.get('record') or ri}' missing `expr`")
+                # OBS-1: alert rules must carry the routing labels + page
+                # annotations. Record rules carry neither, so only gate alerts.
+                if "alert" in r:
+                    name = r.get("alert")
+                    labels = r.get("labels") if isinstance(r.get("labels"), dict) else {}
+                    ann = r.get("annotations") if isinstance(r.get("annotations"), dict) else {}
+                    for key in REQUIRED_ALERT_LABELS:
+                        val = labels.get(key)
+                        if val is None or (isinstance(val, str) and not val.strip()):
+                            err(path, f"alert '{name}' missing/empty required label `{key}` "
+                                      f"(Alertmanager routes on {sorted(REQUIRED_ALERT_LABELS)})")
+                    for key in REQUIRED_ALERT_ANNOTATIONS:
+                        val = ann.get(key)
+                        if val is None or (isinstance(val, str) and not val.strip()):
+                            err(path, f"alert '{name}' missing/empty required annotation `{key}` "
+                                      f"(page templates render {sorted(REQUIRED_ALERT_ANNOTATIONS)})")
 
 if bad:
     print(f"lint-rule-structure: {bad} problem(s) found", file=sys.stderr)

@@ -29,9 +29,19 @@ const (
 	EventDepositLiquidity  = "deposit_liquidity"
 	EventWithdrawLiquidity = "withdraw_liquidity"
 	EventUpdateReserves    = "update_reserves"
-	// ReservesSync is per-asset reserve delta, emitted in addition
-	// to update_reserves on every state-changing path. Body carries
-	// (old_reserve, new_reserve) for the single asset in topic[1].
+	// ReservesSync is emitted in addition to update_reserves on every
+	// state-changing path. Body is a `Vec<i128>` of PER-TOKEN-POSITION
+	// values — the SAME wire shape as update_reserves — NOT an
+	// (old_reserve, new_reserve) pair for a single asset. Verified
+	// against the r1 lake (pool CCRULRY3…, ledger 61,572,402:
+	// reserves_sync = [11,126,447,651, 11,177,552,170], two distinct
+	// token positions with a magnitude unrelated to the same-tx
+	// update_reserves[0]=3,684,217). The decoder reuses decodeReserves
+	// and fans one row per position (migration 0128). The exact
+	// contract semantics of the vector are undetermined (a distinct
+	// reserve-sync signal, likely the StableSwap D-invariant / virtual
+	// reserves); we capture it faithfully per position without
+	// over-interpreting the token_index labeling.
 	EventReservesSync = "reserves_sync"
 	// SetProtocolFee / ClaimProtocolFee are governance/treasury events
 	// — fee schedule changes + claim destinations. No trade impact;

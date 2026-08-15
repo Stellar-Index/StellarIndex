@@ -125,16 +125,28 @@ type movementCursorParts struct {
 	TxHash   string
 	OpIndex  uint32
 	LegIndex uint32
+	// PinnedWatermark is the cap67 archive watermark that produced the
+	// FIRST page of this pagination sequence, carried in the cursor so
+	// every continuation page reuses the SAME CH/PG arm boundary instead
+	// of re-reading the live (advancing) watermark. Without it, a derive
+	// advance mid-scroll moves the split under the cursor and silently
+	// drops the native/unwatched sliver between the old and new watermark
+	// (W1-chrollup-2). Valid only when HasPinnedWatermark is true (a
+	// first-page request, or a legacy 4-segment cursor, has none).
+	PinnedWatermark    uint32
+	HasPinnedWatermark bool
 }
 
-func encodeMovementCursor(r clickhouse.AccountMovementRow) string {
-	return fmt.Sprintf("%d.%s.%d.%d", r.Ledger, r.TxHash, r.OpIndex, r.LegIndex)
+func encodeMovementCursor(r clickhouse.AccountMovementRow, pinnedWatermark uint32) string {
+	return fmt.Sprintf("%d.%s.%d.%d.%d", r.Ledger, r.TxHash, r.OpIndex, r.LegIndex, pinnedWatermark)
 }
 
 // parseMovementCursor decodes the opaque `?cursor=` — dotted-decimal
 // with the tx_hash segment in the middle (safe: tx_hash is a fixed
-// 64-char hex string, never contains '.'). ok=false (after a
-// problem+json) on a malformed value.
+// 64-char hex string, never contains '.'). A trailing 5th segment, when
+// present, is the pinned cap67 watermark (W1-chrollup-2); a legacy
+// 4-segment cursor carries none. ok=false (after a problem+json) on a
+// malformed value.
 func (h *Handler) parseMovementCursor(w http.ResponseWriter, r *http.Request) (movementCursorParts, bool) {
 	raw := r.URL.Query().Get("cursor")
 	if raw == "" {
@@ -147,7 +159,7 @@ func (h *Handler) parseMovementCursor(w http.ResponseWriter, r *http.Request) (m
 		return movementCursorParts{}, false
 	}
 	parts := strings.Split(raw, ".")
-	if len(parts) != 4 {
+	if len(parts) != 4 && len(parts) != 5 {
 		return bad()
 	}
 	ledger, err := strconv.ParseUint(parts[0], 10, 32)
@@ -166,7 +178,16 @@ func (h *Handler) parseMovementCursor(w http.ResponseWriter, r *http.Request) (m
 	if err != nil {
 		return bad()
 	}
-	return movementCursorParts{Ledger: uint32(ledger), TxHash: txHash, OpIndex: uint32(opIdx), LegIndex: uint32(legIdx)}, true
+	out := movementCursorParts{Ledger: uint32(ledger), TxHash: txHash, OpIndex: uint32(opIdx), LegIndex: uint32(legIdx)}
+	if len(parts) == 5 {
+		pinned, err := strconv.ParseUint(parts[4], 10, 32)
+		if err != nil {
+			return bad()
+		}
+		out.PinnedWatermark = uint32(pinned)
+		out.HasPinnedWatermark = true
+	}
+	return out, true
 }
 
 // AccountMovements serves GET /v1/accounts/{g_strkey}/movements
@@ -223,15 +244,38 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 
 	// Dynamic archive boundary (inventory #1): the cap67-derived
 	// archive covers ALL assets through its watermark; the Postgres
-	// tail covers watched tokens above it. Reading ONE cached watermark
-	// and applying it as BOTH the CH ceiling and the PG floor keeps the
-	// arms gap-free and double-count-free even while the derive is
-	// mid-catch-up (rows landing between the two reads are excluded
-	// from CH by the ceiling and served by PG above the floor).
-	wm, wmErr := h.Reader.Cap67MovementsWatermark(ctx)
-	if wmErr != nil {
-		h.Logger.Warn("cap67 movements watermark read failed — serving with the static P23 boundary", "err", wmErr)
-		wm = 0
+	// tail covers watched tokens above it. ONE watermark value drives
+	// BOTH the CH ceiling and the PG floor so the arms stay gap-free and
+	// double-count-free even while the derive is mid-catch-up (rows
+	// landing between the two reads are excluded from CH by the ceiling
+	// and served by PG above the floor).
+	//
+	// The watermark advances every derive window (~minutes), so a
+	// paginated scroll must NOT re-read the live value on each page — that
+	// would move the CH/PG split under the cursor and silently drop the
+	// native/unwatched sliver between the old and new boundary
+	// (W1-chrollup-2). The first page reads the live watermark and pins it
+	// into next_cursor; continuation pages reuse that pinned value, so the
+	// whole sequence shares one boundary and one honest coverage note.
+	var wm uint32
+	if cur.HasPinnedWatermark {
+		wm = cur.PinnedWatermark
+	} else {
+		liveWM, wmErr := h.Reader.Cap67MovementsWatermark(ctx)
+		if wmErr != nil {
+			// Fail closed (W1-chrollup-1): a watermark read error must NOT
+			// disable the CH ceiling. The cap67 archive may be fully
+			// populated to the tip, and serving it untrimmed alongside the
+			// Postgres watched-token tail double-lists every post-P23
+			// watched transfer. Fall back to the static P23 boundary (wm=0
+			// => CH ceilinged at P23-1 below, PG floored at P23) so the arms
+			// stay disjoint and only the post-P23 native sliver degrades to
+			// watched-tokens-only — exactly the scope the wm==0 coverage
+			// note already discloses.
+			h.Logger.Warn("cap67 movements watermark read failed — failing closed to the static P23 boundary", "err", wmErr)
+			liveWM = 0
+		}
+		wm = liveWM
 	}
 
 	chRows, err := h.Reader.AccountMovements(ctx, g, limit, chCur, filter)
@@ -251,15 +295,25 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Clamp the CH arm to its ceiling ALWAYS — not only when wm>0
+	// (W1-chrollup-1). With a populated cap67 archive but a zero/failed
+	// watermark, an unclamped CH arm returns cap67_derived rows across the
+	// whole post-P23 range that the Postgres tail ALSO serves, double-
+	// listing every post-P23 watched transfer. When the watermark is
+	// unknown/absent the ceiling is the static P23 boundary
+	// (SEP41MovementsFloorLedger-1): a no-op for a genuinely-absent archive
+	// (no post-P23 rows exist) and a real trim for a populated one.
+	chCeiling := timescale.SEP41MovementsFloorLedger - 1
 	if wm > 0 {
-		trimmed := chRows[:0]
-		for _, row := range chRows {
-			if row.Ledger <= wm {
-				trimmed = append(trimmed, row)
-			}
-		}
-		chRows = trimmed
+		chCeiling = wm
 	}
+	trimmed := chRows[:0]
+	for _, row := range chRows {
+		if row.Ledger <= chCeiling {
+			trimmed = append(trimmed, row)
+		}
+	}
+	chRows = trimmed
 
 	pgFloor := timescale.SEP41MovementsFloorLedger
 	if wm+1 > pgFloor {
@@ -279,7 +333,10 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 		out.Movements[i] = accountMovementEntryView(m)
 	}
 	if len(merged) == limit {
-		out.NextCursor = encodeMovementCursor(merged[len(merged)-1])
+		// Pin the boundary this sequence committed to (the live watermark
+		// on page 1, the already-pinned value on continuation pages) so
+		// every subsequent page reuses it (W1-chrollup-2).
+		out.NextCursor = encodeMovementCursor(merged[len(merged)-1], wm)
 	}
 	h.WriteJSON(w, out, false)
 }

@@ -73,7 +73,14 @@ func (s *RedisAPIKeyStore) CreateWithSecret(ctx context.Context, k MirroredKey) 
 		return fmt.Errorf("auth: CreateWithSecret: marshal record: %w", err)
 	}
 	hash := hashAPIKey(k.Plaintext)
-	if err := s.rdb.Set(ctx, cachekeys.APIKey(hash).String(), body, 0).Err(); err != nil {
+	// Write with the sliding idle TTL rather than 0 (no-expiry): the
+	// register mirror is the open-registration growth vector, so its
+	// records must not accumulate forever in the allkeys-lru pool. The
+	// validator re-warms this TTL on every successful Lookup
+	// ([RedisAPIKeyValidator.refreshIdleTTL]), so a key that is actually
+	// used never expires — only an abandoned one ages out
+	// (W1-flow-register-2).
+	if err := s.rdb.Set(ctx, cachekeys.APIKey(hash).String(), body, MirroredKeyIdleTTL).Err(); err != nil {
 		return fmt.Errorf("auth: CreateWithSecret: redis set: %w", err)
 	}
 	return nil

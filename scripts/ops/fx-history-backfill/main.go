@@ -64,7 +64,7 @@ func main() {
 	var store *timescale.Store
 	if !cfg.dryRun {
 		var err error
-		store, err = timescale.Open(ctx, cfg.dsn)
+		store, err = openBackfillStore(ctx, cfg.dsn)
 		if err != nil {
 			logger.Error("open timescale", "err", err)
 			os.Exit(1)
@@ -85,6 +85,27 @@ func main() {
 		"chunks", chunks,
 		"rows", totalRows,
 		"elapsed", elapsed)
+}
+
+// openBackfillStore opens the timescale store and stamps a POSITIVE
+// derive_generation before any write (MR-1, audit-2026-08-14). This tool is
+// an INV-3 corrective entry point: it writes historical (ticker, bucket)
+// rows with source='frankfurter-historical' over the same key the live
+// forex worker owns (source='massive', generation 0). Stamping
+// time.Now().Unix() makes each correction win the fx_quotes generation
+// guard (`derive_generation <= EXCLUDED.derive_generation`) AND survive a
+// later live gen-0 worker refresh, so an operator correction is durable —
+// mirroring every other corrective tool (backfill.go:204,
+// backfill_external.go:120, supply.go:173, ch_rebuild.go:162). Without this
+// stamp the tool writes at generation 0 and its correction is silently
+// reverted by the next daily worker refresh (last-writer-wins).
+func openBackfillStore(ctx context.Context, dsn string) (*timescale.Store, error) {
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		return nil, err
+	}
+	store.SetDeriveGeneration(time.Now().Unix())
+	return store, nil
 }
 
 type backfillConfig struct {

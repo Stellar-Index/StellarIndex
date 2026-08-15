@@ -1,0 +1,40 @@
+# ansible-lint configuration (CID-3, audit-2026-08-14)
+#
+# The CI ansible-lint step (.github/workflows/ci.yml, job `ansible-check`)
+# runs `ansible-lint --profile moderate roles/ playbooks/` from this
+# directory. It previously ended in `|| true`, which silently swallowed the
+# exit code so the REQUIRED check was permanently green even on real
+# error-level violations — a false green.
+#
+# Dropping `|| true` bare would flip the check permanently RED, because the
+# tree carries ~535 pre-existing moderate-profile findings that predate this
+# gate. This file GRANDFATHERS exactly those pre-existing rule classes so the
+# check exits 0 today, while a NEW violation in any rule NOT listed below
+# (or a moderate/production-profile regression) now fails the check honestly.
+#
+# skip_list is intentionally enumerated per sub-rule (e.g. name[casing], not
+# the whole `name` rule) so a new violation of an un-grandfathered sub-rule —
+# e.g. name[play] or a stricter yaml sub-check — still fails.
+#
+# FOLLOW-UP (IaC cleanup): burn this list down. Each entry removed re-enables
+# that rule as an enforced gate. Track under the IaC lint-cleanup task.
+
+profile: moderate
+
+# Pre-existing violations grandfathered on 2026-08-14 (counts at time of
+# baseline; run `ansible-lint --profile moderate roles/ playbooks/` to refresh):
+skip_list:
+  - name[casing]              # 223 — task/handler names not capitalized
+  - yaml[colons]              # 104 — spacing around colons
+  - yaml[truthy]              #  71 — yes/no vs true/false
+  - var-naming[no-role-prefix] # 47 — role vars missing role prefix
+  - name[template]            #  35 — Jinja not at end of name
+  - yaml[commas]              #  15 — spacing around commas
+  - yaml[line-length]         #  14 — lines over 160 chars
+  - partial-become[task]      #  11 — become without become_user (or vice versa)
+  - name[missing]             #   9 — task/handler missing a name
+  - key-order[task]           #   3 — task keys out of recommended order
+  - jinja[spacing]            #   3 — Jinja spacing
+  - role-name                 #   1 — role name not conforming
+  - command-instead-of-shell  #   1 — shell used where command suffices
+  - command-instead-of-module #   1 — command used in place of a module

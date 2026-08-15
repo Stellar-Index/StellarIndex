@@ -4,6 +4,7 @@ import type { Metadata } from 'next';
 // `make web-generate-api`).
 import type { components } from '@/api/types';
 import { API_BASE_URL } from '@/api/client';
+import { formatSubunitPrice } from '@/lib/format';
 
 const isCIStub =
   API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
@@ -264,6 +265,6 @@ function formatPrice(n: number): string {
   if (!Number.isFinite(n)) return '—';
   if (n >= 1) return n.toFixed(n >= 100 ? 2 : 4);
   if (n >= 0.001) return n.toFixed(6);
-  if (n > 0) return n.toExponential(3);
+  if (n > 0) return formatSubunitPrice(n);
   return '—';
 }

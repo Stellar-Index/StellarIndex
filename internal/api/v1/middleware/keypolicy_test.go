@@ -303,3 +303,73 @@ func TestKeyPolicy_Scopes(t *testing.T) {
 		})
 	}
 }
+
+// TestClampMintScopes covers the delegation invariant (finding F-B):
+// a key may only mint a child no more privileged than itself.
+func TestClampMintScopes(t *testing.T) {
+	tests := []struct {
+		name      string
+		caller    []string
+		requested []string
+		want      []string
+		wantDeny  bool
+	}{
+		{
+			name:      "full-access caller mints full-access child",
+			caller:    nil,
+			requested: nil,
+			want:      nil,
+		},
+		{
+			name:      "full-access caller may grant any scope",
+			caller:    nil,
+			requested: []string{"admin"},
+			want:      []string{"admin"},
+		},
+		{
+			name:      "scoped caller empty request inherits own scopes",
+			caller:    []string{"account"},
+			requested: nil,
+			want:      []string{"account"},
+		},
+		{
+			name:      "scoped caller subset request allowed",
+			caller:    []string{"read", "account"},
+			requested: []string{"read"},
+			want:      []string{"read"},
+		},
+		{
+			name:      "scoped caller may not exceed own scopes",
+			caller:    []string{"account"},
+			requested: []string{"admin"},
+			wantDeny:  true,
+		},
+		{
+			name:      "wildcard caller delegates freely",
+			caller:    []string{"*"},
+			requested: []string{"admin"},
+			want:      []string{"admin"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, problem := middleware.ClampMintScopes(
+				auth.Subject{Scopes: tc.caller}, tc.requested)
+			if tc.wantDeny {
+				if problem == "" {
+					t.Fatalf("expected denial, got scopes %v", got)
+				}
+				if got != nil {
+					t.Errorf("denied clamp must return nil scopes, got %v", got)
+				}
+				return
+			}
+			if problem != "" {
+				t.Fatalf("unexpected denial: %s", problem)
+			}
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("scopes = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

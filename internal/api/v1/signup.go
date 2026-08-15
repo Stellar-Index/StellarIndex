@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"mime"
 	"net/http"
 	"net/mail"
 	"strings"
@@ -411,28 +410,17 @@ func (s *Server) parseAndValidateSignup(w http.ResponseWriter, r *http.Request) 
 
 	// Require a JSON Content-Type. This is the CSRF gate for a route
 	// that CANNOT use middleware.RequireSameSiteWrite the way its
-	// browser-only siblings /v1/auth/login and /v1/auth/verify-code do:
-	// /v1/signup is a public API endpoint, so a legitimate curl or
-	// server-side caller has no Origin/Referer and would be refused.
-	//
-	// Content-Type does the job here because `application/json` is NOT a
-	// CORS "simple request" type — a cross-site POST carrying it must be
-	// preflighted, and this deployment's CORS policy refuses the
-	// preflight. Without the check, a cross-site `text/plain` form POST
-	// was a simple request (no preflight to refuse), the handler parsed
-	// the JSON body anyway, and the signup went through: a key was
-	// minted and a verification email was sent. That made /v1/signup a
-	// CSRF-driven email relay, and riding visitors' browsers also
-	// distributed the source addresses, defeating the per-IP signup
-	// throttle — which keys on the SENDER's IP (cold audit 2026-08-04).
-	if ct := r.Header.Get("Content-Type"); ct != "" {
-		if mt, _, mtErr := mime.ParseMediaType(ct); mtErr != nil || mt != "application/json" {
-			writeProblem(w, r,
-				"https://api.stellarindex.io/errors/unsupported-media-type",
-				"Unsupported media type", http.StatusUnsupportedMediaType,
-				"/v1/signup requires Content-Type: application/json")
-			return signupRequest{}, false
-		}
+	// browser-only siblings /v1/auth/login and /v1/auth/verify-code do.
+	// The header is REQUIRED, not merely validated-when-present: a
+	// header-less POST is a CORS *simple* request that issues no
+	// preflight to refuse, so tolerating its absence made /v1/signup a
+	// CSRF-driven email relay that also distributed the source addresses
+	// across visitors, defeating the per-IP signup throttle (cold audit
+	// 2026-08-04; W1-flow-register-1 2026-08-14). See
+	// requireJSONContentType for the full reasoning, shared with the
+	// sibling /v1/register gate so the two cannot drift again.
+	if !requireJSONContentType(w, r, "/v1/signup") {
+		return signupRequest{}, false
 	}
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, signupBodyMaxBytes))

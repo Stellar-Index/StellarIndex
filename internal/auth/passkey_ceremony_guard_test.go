@@ -94,3 +94,62 @@ func TestRedisPasskeyCeremonyGuard_ErrorPropagates(t *testing.T) {
 		t.Fatal("unreachable Redis reported the ceremony as claimed")
 	}
 }
+
+// TestRedisPasskeyCeremonyGuard_ReserveClaimIsOneShot — the eviction-
+// safe single-use protocol (W1-auth-passkey-1): a ceremony reserved at
+// begin is claimable exactly once, and a second claim of the same
+// digest — the captured-request replay — is refused.
+func TestRedisPasskeyCeremonyGuard_ReserveClaimIsOneShot(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	guard := NewRedisPasskeyCeremonyGuard(rdb)
+	ctx := context.Background()
+	const digest = "0123456789abcdef"
+
+	if err := guard.Reserve(ctx, digest, 5*time.Minute); err != nil {
+		t.Fatalf("reserve: %v", err)
+	}
+	claimed, err := guard.ClaimReserved(ctx, digest)
+	if err != nil || !claimed {
+		t.Fatalf("first claim: claimed=%v err=%v, want true", claimed, err)
+	}
+	claimed, err = guard.ClaimReserved(ctx, digest)
+	if err != nil {
+		t.Fatalf("replay claim err: %v", err)
+	}
+	if claimed {
+		t.Fatal("replay claim returned true — a captured ceremony would mint a second session")
+	}
+}
+
+// TestRedisPasskeyCeremonyGuard_ClaimFailsClosedOnEviction is the core
+// of W1-auth-passkey-1. R1 runs allkeys-lru, so under memory pressure
+// the reservation marker can be evicted before its TTL. When it is, the
+// claim must REFUSE (fail closed), never treat the free slot as a fresh
+// ceremony — otherwise a replayed finish-login mints a second session
+// for the victim. The bare SETNX spent-set did the opposite: an evicted
+// marker let SETNX re-claim. Eviction is simulated by deleting the live
+// marker out from under the guard, exactly as an LRU pass would.
+func TestRedisPasskeyCeremonyGuard_ClaimFailsClosedOnEviction(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	guard := NewRedisPasskeyCeremonyGuard(rdb)
+	ctx := context.Background()
+	const digest = "deadbeefcafef00d"
+
+	if err := guard.Reserve(ctx, digest, 5*time.Minute); err != nil {
+		t.Fatalf("reserve: %v", err)
+	}
+	// allkeys-lru evicts the marker before its TTL.
+	mr.Del(liveCeremonyKey(digest))
+
+	claimed, err := guard.ClaimReserved(ctx, digest)
+	if err != nil {
+		t.Fatalf("claim err: %v", err)
+	}
+	if claimed {
+		t.Fatal("an evicted reservation was claimed — the single-use replay window is re-opened")
+	}
+}

@@ -168,6 +168,18 @@ func (h *Handler) ContractInteractions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Quantise the window onto the supported ladder before it becomes a
+	// cache key (C3-009, audit-2026-07-23; mirrors ContractsList above).
+	// Keying on the raw `?days=` bounds a repeat caller but not an
+	// adversary, who walks ?days=1..365 to mint 365 distinct cold keys —
+	// each a full-price two-phase scan that pollutes and LRU-evicts the
+	// shared contract-detail cache. Rounding UP keeps the served window a
+	// superset of the one asked for; `window_days` below echoes what was
+	// actually aggregated. The same `window` feeds the cache key, the
+	// window floor, and the echo so two raw days on one rung stay
+	// coherent under single-flight.
+	window := contractsWindow(days)
+
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
@@ -180,8 +192,8 @@ func (h *Handler) ContractInteractions(w http.ResponseWriter, r *http.Request) {
 		edges []clickhouse.ContractEdgeRow
 		since uint32
 	}
-	v, asOf, degraded, err := h.contractDetailCached(ctx, fmt.Sprintf("ix:%s:%d", cid, days), func(rctx context.Context) (any, error) {
-		s := h.windowFloorLedger(rctx, days)
+	v, asOf, degraded, err := h.contractDetailCached(ctx, fmt.Sprintf("ix:%s:%d", cid, window), func(rctx context.Context) (any, error) {
+		s := h.windowFloorLedger(rctx, window)
 		// The reader may narrow the window to the contract's own recent
 		// activity; serve the floor it actually used.
 		full, effective, cerr := h.Reader.ContractInteractions(rctx, cid, 200, s)
@@ -220,7 +232,7 @@ func (h *Handler) ContractInteractions(w http.ResponseWriter, r *http.Request) {
 	attribution := h.contractAttribution(ctx)
 	out := ContractInteractionsView{
 		ContractID:   cid,
-		WindowDays:   days,
+		WindowDays:   window,
 		SinceLedger:  since,
 		Interactions: make([]ContractEdge, len(edges)),
 	}

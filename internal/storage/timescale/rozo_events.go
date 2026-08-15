@@ -57,7 +57,9 @@ type RozoEvent struct {
 // InsertRozoEvent appends one Rozo event row, idempotent on the
 // (contract_id, ledger, tx_hash, op_index, event_type, ts) PK.
 // Re-running the indexer or a backfill over the same range writes
-// the same rows; ON CONFLICT DO NOTHING makes the replay a no-op.
+// the same rows; ON CONFLICT DO UPDATE guarded by derive_generation
+// (INV-3 / migration 0110) corrects the row in place on a higher-or-
+// equal-generation replay and no-ops a stale lower-generation one.
 //
 // Defensive: rejects empty ContractID / TxHash / Destination, an
 // invalid EventType, and an empty Amount (the column is NOT NULL)
