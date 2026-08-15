@@ -23,6 +23,21 @@ type Envelope[T any] struct {
 	Pagination *Pagination `json:"pagination,omitempty"`
 }
 
+// validateEnvelope checks the one invariant every server 2xx envelope
+// satisfies: a populated as_of. The server stamps as_of on every
+// response (internal/api/v1.writeEnvelopeStatus), so a decoded
+// envelope with a zero as_of means the body was not a real envelope —
+// a degenerate `{}` or `{"data":null}` from a misbehaving upstream
+// that would otherwise decode to a silent zero-value result. [doJSON]
+// type-asserts this method so every endpoint inherits the guard
+// without per-method code.
+func (e *Envelope[T]) validateEnvelope() error {
+	if e.AsOf.IsZero() {
+		return errNotAnEnvelope
+	}
+	return nil
+}
+
 // Flags are the advisory quality markers per the server's
 // envelope.go. New flags may be added in minor server releases —
 // the JSON decoder ignores unknown fields, so adding a flag is

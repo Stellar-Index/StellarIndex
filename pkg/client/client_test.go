@@ -255,6 +255,52 @@ func TestCreateKey_LabelRequired(t *testing.T) {
 	}
 }
 
+// TestDegenerate2xxEnvelopeIsRejected — PC-4: a well-formed but
+// degenerate 2xx body ({}, {"data":null}) decodes without a JSON
+// error into a zero Envelope. Without the as_of invariant guard the
+// client would hand the caller a silent zero-value success; with it
+// the call fails loudly. The server stamps as_of on every real
+// envelope, so a missing as_of unambiguously flags a non-envelope.
+func TestDegenerate2xxEnvelopeIsRejected(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{name: "empty object", body: `{}`},
+		{name: "null data, no as_of", body: `{"data":null}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.body))
+			})
+
+			_, err := c.Price(context.Background(), client.PriceQuery{Asset: "native", Quote: "fiat:USD"})
+			if err == nil {
+				t.Fatalf("degenerate body %q decoded to a nil-error zero envelope; want an error", tc.body)
+			}
+			if !strings.Contains(err.Error(), "envelope") {
+				t.Errorf("error = %q, want it to mention the missing envelope invariant", err.Error())
+			}
+		})
+	}
+}
+
+// TestValid2xxEnvelopeWithZeroDataStillPasses — the as_of guard must
+// only reject genuinely-degenerate bodies, not a legitimate envelope
+// whose data is empty. A response carrying a real as_of but a
+// zero-value data object stays a success.
+func TestValid2xxEnvelopeWithZeroDataStillPasses(t *testing.T) {
+	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{},"as_of":"2026-01-01T00:00:00Z","flags":{}}`))
+	})
+	if _, err := c.Price(context.Background(), client.PriceQuery{Asset: "native", Quote: "fiat:USD"}); err != nil {
+		t.Fatalf("valid envelope with empty data was rejected: %v", err)
+	}
+}
+
 // TestContextCancellation — a cancelled context aborts the request.
 func TestContextCancellation(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
