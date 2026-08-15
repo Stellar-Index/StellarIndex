@@ -544,3 +544,106 @@ func TestPasskeyFinishLogin_FailsClosedWhenGuardUnavailable(t *testing.T) {
 		t.Fatal("a session was minted while the spent-set was unreachable")
 	}
 }
+
+// evictableCeremonyGuard models a Redis ceremony guard whose markers
+// live in an allkeys-lru keyspace: both the legacy spent-set (Consume)
+// and the begin-time reservation (Reserve/ClaimReserved) sit in maps
+// that evict() empties, exactly as an LRU pass under memory pressure
+// would. Implementing BOTH the base contract and the reservation
+// upgrade lets the same fake drive the pre-fix (Consume) and post-fix
+// (ClaimReserved) finish paths through the real handlers — so the test
+// below is red against the bare spent-set and green against the fix.
+type evictableCeremonyGuard struct {
+	mu    sync.Mutex
+	spent map[string]bool // Consume's spent-marker (the vulnerable path)
+	live  map[string]bool // Reserve's reservation marker (the fixed path)
+}
+
+func newEvictableCeremonyGuard() *evictableCeremonyGuard {
+	return &evictableCeremonyGuard{spent: map[string]bool{}, live: map[string]bool{}}
+}
+
+// Consume is the vulnerable spent-set: an ABSENT marker reads as fresh,
+// so an eviction between two presentations re-opens the claim.
+func (g *evictableCeremonyGuard) Consume(_ context.Context, digest string, _ time.Duration) (bool, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.spent[digest] {
+		return false, nil
+	}
+	g.spent[digest] = true
+	return true, nil
+}
+
+func (g *evictableCeremonyGuard) Reserve(_ context.Context, digest string, _ time.Duration) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.live[digest] = true
+	return nil
+}
+
+// ClaimReserved requires the reservation to still be present: an
+// evicted (absent) marker refuses rather than re-claiming.
+func (g *evictableCeremonyGuard) ClaimReserved(_ context.Context, digest string) (bool, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.live[digest] {
+		return false, nil
+	}
+	delete(g.live, digest)
+	return true, nil
+}
+
+// evict empties both marker sets, as an allkeys-lru pass under memory
+// pressure would.
+func (g *evictableCeremonyGuard) evict() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.spent = map[string]bool{}
+	g.live = map[string]bool{}
+}
+
+// TestPasskeyFinishLogin_SurvivesSpentMarkerEviction is
+// W1-auth-passkey-1. R1's Redis runs allkeys-lru, so the ceremony
+// spent-marker can be EVICTED before its TTL under memory pressure — an
+// attacker floods the shared instance via open registration's
+// no-expiry apikey mirror. With the bare SETNX spent-set, a captured
+// finish-login replayed after that eviction found the slot free and
+// minted a SECOND live session for the victim: account takeover from a
+// single captured request, defeating the very guard built to stop it.
+// The begin-time reservation must make that replay fail CLOSED.
+//
+// Counter is 0 (as in the single-use test) so the library's clone-
+// warning can't refuse the replay for us — the ceremony guard is the
+// only thing under test.
+func TestPasskeyFinishLogin_SurvivesSpentMarkerEviction(t *testing.T) {
+	rig, auth, _ := newLiveClockPasskeyRig(t)
+	guard := newEvictableCeremonyGuard()
+	rig.h.cfg.PasskeyCeremonyGuard = guard
+
+	cookie, challenge := beginLogin(t, rig)
+	body := auth.assertionBody(t, challenge, flagUserPresent|flagUserVerified, 0)
+
+	// Legitimate sign-in consumes the ceremony.
+	first := finishLogin(t, rig, cookie, body)
+	if first.Code != http.StatusOK {
+		t.Fatalf("first finish-login status = %d, want 200 (%s)", first.Code, first.Body.String())
+	}
+	if !sessionCookieSet(first) {
+		t.Fatal("first finish-login minted no session cookie")
+	}
+
+	// Attacker drives Redis to maxmemory; allkeys-lru evicts the
+	// ceremony markers before their TTL.
+	guard.evict()
+
+	// The captured request, replayed inside the ceremony's own 5-minute
+	// validity, must NOT mint a second session.
+	second := finishLogin(t, rig, cookie, body)
+	if second.Code != http.StatusBadRequest {
+		t.Fatalf("replayed finish-login after eviction status = %d, want 400 (%s)", second.Code, second.Body.String())
+	}
+	if sessionCookieSet(second) {
+		t.Fatal("a replay after spent-marker eviction minted a SECOND session — the single-use guard was defeated by allkeys-lru")
+	}
+}
