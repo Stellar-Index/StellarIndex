@@ -1,6 +1,6 @@
 ---
 title: v1 launch plan — THE single source of truth
-last_verified: 2026-07-27
+last_verified: 2026-08-15
 status: active
 severity: P1
 ---
@@ -22,112 +22,401 @@ severity: P1
 > gitignored `production-remediation-ledger-2026-07-23.md` (finding-status
 > authority). Runbooks under `runbooks/` remain the execution recipes.
 
-## OPERATOR INBOX (questions parked by the launch loop — answer inline, loop picks up next iteration)
+## THE PLAN — refreshed 2026-08-15 (supersedes the old inbox + §2 ordering)
 
-> Loop contract: no mid-loop questions to Ash. Everything needing an operator
-> lands here with context + recommendation + what was done meanwhile.
+> **Read this section first.** It replaces the 2026-07-27 operator inbox and
+> re-orders §2. Everything below §"Loop log" is kept for HISTORY and for the
+> execution RECIPES (§2.3's heavy-job commands, §2.8's launch sequence,
+> runbooks) — but where the old §1–§4 disagree with this section on *what is
+> still outstanding*, this section is right and they are stale.
+>
+> Every item carries a verification marker:
+>
+> - **[V]** — verified against live r1 or the current code on 2026-08-15.
+> - **[C]** — CARRIED from an earlier audit and NOT re-verified in this pass.
+>   Treat the claim as unproven: step 1 of the item is to reproduce it.
+>
+> The distinction is the point. A plan that presents carried claims as
+> verified is the same failure mode as an API that renders absent as zero.
 
-### ⭐ Ash: YOUR list is now just these three (re-triaged 2026-07-28 22:50Z — Ash asked "why do you need me for those?"; two of five didn't)
+### What this pass changed
 
-| # | Item | Why only you can do it | Effort |
-|---|---|---|---|
-| 1 | **Wire paging** — [runbooks/wire-paging.md](runbooks/wire-paging.md) | Needs Healthchecks.io checks + a Discord/Slack webhook CREATED on external accounts I don't hold (every URL on r1 is blank — nothing exists to wire). I do the rest once URLs exist | ~20 min |
-| 2 | **Book the external security review** | Third-party vendor engagement — money + your identity. Longest lead time of anything left | one email |
-| ~~3~~ | ~~SAC-seed archived-row DELETE~~ — **✅ APPROVED by Ash 2026-07-28 ~22:55Z** ("happy with sac-seed delete per your recommendations"). Moved to the loop's post-deploy execution queue (below) | — | — |
-| 4 | ~~v0.21.4/5/6/7 all cut+deployed on your word; chains ran.~~ NEW ASK (2026-07-31): **say "cut v0.21.8"** — carries the state-write attribution plumbing (landed on main, verify green): exact accepted-feed attribution from value-changing contract-data write keys, closing the LAST 15 blind ledgers (1,626→170→15 this week; the residue is provably unresolvable from event+payload alone). On your word: cut → deploy → `projector-replay -source redstone -from 62056000` → verify → **17/17**. Until then the verdict honestly reads 16/17 (evidence: `evidence/2026-07-31-completeness-verdicts.md`) | One-tag-per-session budget — needs your word | one word |
+Verifying the backlog rather than reciting it moved a lot of it:
 
-**~~Reclassified as LOOP-EXECUTABLE~~ — ✅ ALL EXECUTED by the loop
-(2026-07-29): ansible apply + serving flip done, v0.21.2 AND v0.21.3
-cut+deployed, SAC DELETE done (re-seed itself re-parked on the diagnosed
-TTL-classifier blocker — now fixed by the `ttl_live_until` redesign
-riding v0.21.4). Kept for the record:**
-- **Ansible apply** (`--tags stellarindex`): serving-profile flip (fixes
-  the 21-route explorer outage) + supply-freeze alert. ATTENDED means
-  watched-live, and the loop watches live; the restart-vs-heavy-job trap
-  expires when D3 finishes. Verification: route-sweep must go 21×5xx → 0.
-- **Cut + deploy v0.21.2**: this session's release budget is unused
-  (v0.21.1 was a prior session's tag); approval gate is relaxed;
-  deploy.yml auto-rolls-back + retains `.prev` binaries (revertible per
-  the 70% rule). Then the §0 deploy-plan verification order + sep41 tail
-  rebuild + redstone replay.
-- **SAC seed DELETE + re-seed** (✅ operator-approved 2026-07-28 22:55Z,
-  MUST run AFTER the v0.21.2 deploy — the TTL filter only exists in the
-  new ops binary; v0.21.1's seed would rewrite the same phantom rows):
-  under `run-heavy-job.sh`, (1) verify the seeded-row count against
-  `sac_balance_seed_provenance` first, (2) DELETE seeded rows (the
-  `intra_ledger_seq` seed-sentinel discriminates them from live-observer
-  rows — confirm the exact predicate against the schema at execution),
-  (3) re-run `supply seed-sac-balances -full-history` (now TTL-gated,
-  fail-open on UNKNOWN), (4) acceptance: re-run
-  `reconcile-supply-vs-horizon.sh` — PHO must drop from +157% toward
-  tolerance, AQUA must STAY ~+0.18% (its 931 live entries must survive),
-  and KALIEN/XRF seeded phantoms must clear.
+- **The replay/backfill queue is essentially DONE, not pending.** [V]
+  `account_movements` is at ledger 63,962,775 against a lake tip of
+  63,962,824 (10.1B rows); comet's projected floor is 51,499,922 — exactly
+  the `-from 51499000` target; defindex's is 55,483,698; phoenix_stake's is
+  51,572,639. All four tables are duplicate-free under their own row
+  identity. Nothing is running on r1.
+- **Duplicate-hunting needs the PER-TABLE identity.** [V] A generic
+  `(ledger, tx_hash, op_index)` group-by reports 20 "duplicate" comet rows
+  and 50 aquarius ones. Both are false: a `join_pool` adds two tokens under
+  one op (distinct `token`/`event_index`), and an aquarius deposit emits
+  both legs under one `event_index` (distinct `token_index`). Under the real
+  identity every table is clean. Encode the identity per table before ever
+  concluding corruption.
+- **Two "code + data" items are already half-done.** [V] Phoenix's
+  pre-upgrade 7-event shape has a decoder + test
+  (`phoenix/adapter_test.go:264`), and defindex `harvest` now models a
+  StrategyFlow with "Recovery: projector-replay" in its own doc comment. The
+  code landed; only the re-derive is outstanding — so these belong in the
+  replay queue, not the correctness backlog.
+- **The frontend honesty sweep is mostly landed.** [V] `191f58cc` fixed 31
+  files across exchanges/issuers/lending/oracles/sources/status, each with a
+  test asserting BOTH directions. What remains is blocked on the server half.
+- **`#38` was incomplete.** [V] There are 8 failed units on r1, not 3.
+- **The SLA probe diagnosis was wrong** and is corrected in W4.
 
-Lower priority / no rush: CoinGecko Pro key, off-site backup decision,
-accepted-risk sign-off, IP-rotation + SSH CIDR, announcement copy,
-the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
+---
 
-- **[OP-standing]** The §3 register items all stand (paging wiring 2b is the
-  most launch-critical). Nothing new requires a decision yet.
-- **[DECIDE-new] Anomaly-freeze pages on CORRECT prices (thin FX crosses).**
-  Found 2026-07-27 while the SAC seed ran (freeze predates the seed —
-  engaged 14:39Z vs seed 15:36Z, NOT caused by it). 3 active freezes,
-  all thin FX crosses (XLM/GBP ×2 windows, XLM/EUR), reason
-  `phase2:3_signal_AND … z=8.71 sources=1`. **I verified both served
-  prices against an independent FX cross: XLM/GBP +0.06%, XLM/EUR
-  +0.21% — both correct.** So a `severity=page` alert
-  (`anomaly_freeze_sustained`) is firing on good data, and
-  `stellarindex_anomaly_freeze_engaged_total{class="default"}=382`
-  says it is chronic, not a blip. At launch this burns the first-24h
-  on-call for nothing. Also noted: the log carries
-  `writer_wired=false` — the freeze is advisory, it does not gate
-  writes, so the page has no corresponding automatic protection.
-  My recommendation (NOT applied — it changes a money-path protective
-  mechanism and I am not ≥70% on WHICH variant is right): the minimal
-  fix is to stop paging on freezes where `sources=1`, since a z-score
-  from a single source has no cross-source corroboration and is
-  sparse-sampling noise. The larger question — should the freeze
-  require corroboration to engage at all, and should the writer be
-  wired? — wants your call. Ties into §4's C4-012/13 thin-pool row.
-  Meanwhile: no change made; prices verified correct; documented here.
-- **[RESOLVED 2026-07-28 — NO DECISION NEEDED. Superseded by CS-102.]**
-  ~~supply-guard dormancy calibration~~. **Do not spend time on this; the
-  question was wrong.** I had escalated it as "the sole thing preventing
-  any supply value from updating" and asked you to sign off on loosening
-  a data-trust guard. Root-causing it (see the CS-102 loop entry) showed
-  the horizon was never the problem: the freshness anchor was measuring
-  the wrong quantity — per-asset last activity instead of the observer's
-  watermark — so quiet assets read as stalled. Fixed in code
-  (`e21fa3d0`), verified against live r1, regression-tested.
+### W1 — Absent-vs-zero: stop publishing false empirical claims
 
-  Two corrections to what I told you earlier, both mine:
-  - "**0 snapshots in 6 hours**" was wrong — it read cumulative
-    since-boot counters as a rate. The live delta was 3 of 4 ticks
-    persisting.
-  - "**966 dormancy rejections**" was wrong — `dormant` is an ACCEPTED
-    outcome that inserts a snapshot. The real rejections were
-    `stale_component` (7,025).
+**Why one workstream:** three separately-tracked items are one bug class, and
+they have a strict order. `DegradedBanner.tsx:76` does
+`incs?.active_count ?? 0` — it *cannot* be fixed in the UI while the server
+sends a zero struct, because absent and zero are indistinguishable on the
+wire. Server first, then UI, then the endpoint that exhibits the same shape.
 
-  Nothing to loosen: with the anchor fixed, a quiet asset reads fresh and
-  publishes normally, and the guard still catches a genuinely dead
-  observer. **The only action left is deploying it.**
-- **[DECIDE-new] SolvBTC unsuffixed-feed quote mislabel (latent, pre-existing):**
-  `SolvBTC_FUNDAMENTAL` / `SolvBTC.BBN_FUNDAMENTAL` are registered quote
-  `fiat:USD` but demonstrably publish a NAV **ratio vs BTC** (~1.003 live +
-  on-chain; BBN stores exactly 1.0). Correct quote is arguably `crypto:BTC`,
-  but changing it rewrites an existing stored series. Recommendation: fix
-  quote + one-time series annotation post-v1; NOT launch-blocking (redstone
-  is IncludeInVWAP=false). Parked — no action taken beyond documenting the
-  distinction in the registry comments.
-- **DECIDED (auto, revertible) 2026-07-27:** moved the untracked old-vault
-  backup `configs/ansible/inventory/r1.secrets.yml.lost-password-2026-07-27`
-  → `~/.config/stellarindex/` (guard-rail script requires a clean tree;
-  committing dead ciphertext to the public repo has no value; file preserved).
-- **DECIDED (auto) 2026-07-27:** cut **v0.21.1** (sep41 ops-verify
-  statement_timeout fix + CI/ansible guard entries; CHANGELOG entries for
-  06ff3b5e and the six ops/CI commits added at promote time). This consumes
-  the session's one-release budget — the redstone registry fix (below) lands
-  on main and ships as v0.21.2 in a LATER session.
+**W1.1 — `/v1/status` incidents. [V]** `status.go:53` declares
+`Incidents StatusIncidents` with **no `omitempty`**, and the assembly does
+`if incErr == nil { out.Incidents = incidents }` — so a FAILED Prometheus
+query serialises as zero counts. `DegradedBanner` and the public status page
+then publish "0 active alerts" / "No active incidents" **while alerting is
+blind**. This is the single most launch-relevant item in the plan: it is an
+all-clear derived from a failure, on the banner a visitor sees first.
+*Approach:* add an explicit tri-state (`ok` / `degraded` / `unknown`) rather
+than just omitting — the UI needs to say "unknown", and an omitted field
+would still coalesce to 0 in a `??` chain. Ship with the OpenAPI change and
+all three generators.
+
+**W1.2 — tx events + op results. [V]** `explorer/tx.go:103` sets
+`events = nil // non-fatal` and `:96` sets `results = nil // non-fatal`;
+both fields are `omitempty`, so a failed read is byte-identical to "this tx
+genuinely had none". Two instances, not one — the second (`results`, the
+per-op result codes) was not in the original finding.
+*Approach:* one wire convention for the whole explorer surface — a
+`partial` / coverage note like `movements.go` already uses — applied to both
+sites at once, rather than a bespoke `events_unavailable` boolean per field.
+That convention is then the thing new handlers copy.
+
+**W1.3 — `/v1/protocols` index. [V]** `handleProtocolsList` calls
+`protocolRoster(ctx, meta)` inside the registry loop with no server-side
+cache — only `Cache-Control: max-age=60`. For registry-empty sources that is
+a `SELECT DISTINCT … LIMIT 5000` full served-tier scan per protocol, on an
+unauthenticated route, and its own doc comment says it degrades "to
+zeros/absent". Measured live 0.54–0.77s, i.e. currently masked by edge cache.
+*Approach:* this is not a new cache — reuse the prewarm/SWR shape `a8284d64`
+already established for the bespoke and throughput blocks, and make the
+failure path OMIT rather than zero (which is W1.1's convention). Consolidating
+here means one cache pattern and one honesty convention, not three.
+
+**W1.4 — UI residue. [V]** After `191f58cc`, what is left is `DegradedBanner`
+(blocked on W1.1) and `NetworkInsight.tsx`'s several `?? 0` sites.
+*Exit criteria for W1:* a grep for `?? 0` / `?? []` in explorer components
+returns only sites where the API genuinely serves a zero, and each fixed site
+has a both-directions test.
+
+---
+
+### W2 — Asset identity: one registry, not ten handler patches
+
+**Why one workstream:** the audit filed "SAC-wrapped = a second un-aliased
+identity (53.5% of USDC volume invisible)" and "ten money handlers are
+alias-blind" as separate findings. They are one defect with one fix, and the
+codebase has already designed it.
+
+**[V] Verified:** `canonical/alias.go` builds `aliasFamilies` from
+`xlmAliasFamily` **only** — XLM is the sole family, so every other asset's
+SAC form is a distinct un-aliased identity. `alias.go:125-128` states the
+intended fix in its own words: an explicit `AliasRegistry` constructed at
+binary start-up from `[supply].sac_wrappers` and passed to the read paths,
+"a change that touches wiring in three fences [that] should land as its own
+unit of work". The config seam already exists — `SupplyConfig.SACWrappers`
+maps SAC C-strkey → `CODE:ISSUER`.
+
+**Approach:** build the registry from existing config; keep
+`AssetAliases`'s signature so the ~11 call sites that already loop aliases
+need no change; the "ten alias-blind handlers" then get fixed by adopting
+that same loop rather than by ten bespoke patches. Priority order must
+preserve the deliberate rule already documented: **SAC form LAST**, because
+Soroban XLM pools are thin and putting the SAC form first would let a few
+thousand dollars of pool liquidity become the served price.
+
+**Exit criteria:** a USDC read keyed by classic form returns the SAC-form
+volume too; the XLM three-form behaviour is unchanged (its existing tests
+must still pass unmodified).
+
+---
+
+### W3 — Cold-read performance: finish the page-level pass
+
+**Why one workstream:** §2.6b pass 3, the explorer cold-read audit, and the
+contract↔tx index are the same programme at three depths.
+
+**W3.1 — [V] Contract pages: DONE.** 23/25 cold pages breaching → 6/25,
+0 pages with a failed panel, worst page 8.2s → 1.6s. Root causes were an
+unbounded SAC probe on the `/wasm` 404 path (95.35M rows, cancelled at the
+8s deadline) and four panels sharing one refresh-gate class so a page starved
+itself.
+
+**W3.2 — Every other page type.** Accounts, assets, ledgers, tx, operations,
+network, protocols — measured COLD to fully-populated with lake-drawn random
+ids. *Approach:* extend `scripts/ops/contract-page-audit.py` (it already
+scores the slowest panel, counts a non-2xx/404 as UNLOADED, and takes `PACE`)
+to a per-page-type panel map rather than writing a new harness.
+
+**W3.3 — [C] The cold-read audit residue.** Per-entity ClickHouse reads are
+O(scan) for non-prewarmed keys (census 40s×160, quiet-contract inversion,
+account family 8s, holders fail, refresh-gate crawler-saturable). Fix designs
+are already written up; DDL-heavy.
+
+**W3.4 — The narrow contract↔tx index.** Would close W3.1's residual
+1.0–1.6s tail. New table + genesis backfill over 578 GiB of
+`contract_events`. *Do this last* — it is the most expensive item here and
+W3.2/W3.3 may reshape what it needs to hold.
+
+---
+
+### W4 — r1 unit health: template what you enable
+
+**Why one workstream:** six failed units and one near-miss share a root
+cause — **ansible enables units it does not install.** That is exactly what
+made the drift check red for four days (it failed on `census-rollup.timer`,
+a unit the playbook enables but never templates). Fixing the units without
+fixing the pattern re-earns it.
+
+**W4.1 — [V] `restore-drill.service`, failing since 2026-08-01.** Backup
+verification. Two weeks with no proven-restorable backup. **Highest-value
+unblocked item in this entire plan**, launch or no launch: its failure mode
+is discovering the backups don't restore at the moment you need them.
+
+**W4.2 — [V] `galexie-archive-fill.service`.** Not previously tracked.
+Succeeded 12:20 today, failed 13:18 with `status=2/INVALIDARGUMENT` in one
+second — it errors when there is nothing left to fill. A no-work case
+reported as failure, which also means a REAL failure here is invisible.
+
+**W4.3 — [V] `compute-completeness.service`** — `result=timeout`. Feeds the
+public coverage verdict.
+
+**W4.4 — [V] `ch-schema-drift.service`.** Re-run FIRST: its intent file
+(`/usr/local/share/stellarindex/tier1_schema.sql`) was stale on r1 until the
+2026-08-15 apply shipped the TTL-liveness DDL, so it may now pass — or may
+surface real ClickHouse schema drift.
+
+**W4.5 — [V] SLA probe, corrected diagnosis.** The earlier claim ("has never
+had an API key") was WRONG. A valid operator-tier key exists —
+`kid_abcae429583012b8`, label "SLA probe (r1 — F-1305)", 10,000/min, created
+2026-05-13 — but it is set in `/etc/default/stellarindex-healthchecks`,
+which is the EnvironmentFile for `stellarindex-sla-probe.service` (the
+Healthchecks heartbeat wrapper). The failing Go probe is a *different* unit,
+`sla-probe.service`, reading `/etc/default/sla-probe`, which has no key. So
+it runs anonymous, hits the 60/min anon tier, and reports `verdict: fail` at
+2–10% availability while healthz/readyz sit at 100%. The runaway sample
+count (~45,000 per 30s burst vs the ~430 the config assumes) is a SYMPTOM:
+429s return instantly so the probe spins. The 10k/min limit matches the
+intended ~8,600/min design.
+*Approach:* put the key in a **0600** EnvironmentFile, not the world-readable
+0644 `/etc/default/sla-probe`. **Rotate this key** — its plaintext was
+exposed in a session transcript on 2026-08-15.
+
+**W4.6 — [V] Template the untemplated.** `sla-probe.service`/`.timer` have
+NO template in the repo (the live file is a Jun 12 pre-rename artifact
+carrying `RATESENGINE_PROBE_API_KEY` in comments and a `User=ratesengine`
+drop-in), yet `10-observability.yml` *enables* `sla-probe.timer`. Rebuild r1
+from the playbook and that task fails exactly like `census-rollup` did.
+Template them, and audit every `systemd:` enable task for the same shape.
+
+**W4.7 — [V] Remove dead units:** `lec-repair.service` /
+`lec-repair-v2.service` both exec `/tmp/lec-repair.sh`.
+
+**Exit criteria for W4:** `systemctl list-units --state=failed` is empty, and
+every unit ansible enables is also templated by ansible.
+
+---
+
+### W5 — Data + backfills: what actually remains
+
+**[V] Complete, verified 2026-08-15 — do NOT re-run:** cap67/movements
+archive; comet replay; defindex replay; aquarius; phoenix stake history. All
+duplicate-free under per-table identity.
+
+**W5.1 — [V] `ch-instance-backfill -from 2`: probably already satisfied.**
+The index floor is 50,457,429, which is Soroban's mainnet activation — there
+may be nothing earlier to fill. *One confirmation query, not a run.*
+
+**W5.2 — dfees. [V] still absent** — no type, table, or migration exists
+(8,018 events discarded). This is a CODE item (new event type + table +
+projector arm + `IsProjectedEvent`) that then needs a replay; it is the only
+member of the old "Tier 2" list that is genuinely unstarted.
+
+**W5.3 — [C]** Pre-2026-07-23 USD-volume re-stamp.
+
+**W5.4 — [C]** Reset the 13 supply rollups (EURC done 2026-08-05).
+
+**W5.5 — [C]** `/v1/tx` 10.2B `tx_hash_index` backfill.
+
+**W5.6 — [C]** `contract_events_daily` v2 swap (`feat/ced-v2-rebuild`) —
+land WITH the rebuild.
+
+**W5.7 — [C]** CEX dust DELETE (#68); monthly galexie trim timer enable.
+
+**W5.8 — [C]** ClickHouse Phase 8 `soroban_events` decommission (#39) —
+destructive, LAST, enumerate live readers first.
+
+**Sequencing rule (unchanged, still binding):** one heavy job at a time under
+`/usr/local/sbin/run-heavy-job.sh`; decompress before replaying through
+compressed chunks.
+
+---
+
+### W6 — Launch gate (the only true v1 blockers)
+
+**W6.1 — [V] Wire paging. [OP]** All five `HEALTHCHECKS_URL_*` on r1 are
+blank and no alertmanager receiver holds a real URL. Turnkey runbook exists
+(`runbooks/wire-paging.md`, ~20 min). Acceptance: `pre-launch-check.sh` → 0
+FAILs (currently 4). **Note the overlap with W4.5** — `HEALTHCHECKS_URL_SLA_PROBE`
+lives in the same file as the probe's API key, so wire them in one edit.
+
+**W6.2 — [OP]** Book the external security review — longest lead time of
+anything remaining.
+
+**W6.3** Rotate session-exposed credentials: `ratesengine-admin`, MinIO, and
+the SLA-probe key from W4.5.
+
+**W6.4** Re-arm the deploy approval gate:
+`gh variable delete DEPLOY_APPROVAL_RELAXED` + r1 Required-reviewers.
+
+**W6.5 — [OP]** Sign the 15 accepted-risk candidates.
+
+**W6.6 — [OP]** Off-site backup decision executed or explicitly
+risk-accepted. **Sequence after W4.1** — deciding backup posture while the
+restore drill is red is deciding blind.
+
+**W6.7 — [OP]** Announcement copy; first-24h watch staffed. Gate on W6.1 and
+on the anomaly-freeze decision (D1) — otherwise the watch opens with a pager
+that is either silent or crying wolf.
+
+**W6.8** SEV drill — blocked on W6.1.
+
+**W6.9** Convert the three `supply_cross_check_divergence` dispositions
+(PHO/BLND/EURC) to annotated silences.
+
+---
+
+### W7 — Pre-launch passes (§2.6b)
+
+**W7.1** Full cold adversarial audit — the last was 2026-07-01 and ~40 tags
+have shipped. *Run this AFTER W1+W2 land*, so it audits the fixed surface
+rather than re-finding known items.
+
+**W7.2** Visuals-opportunity pass — every endpoint/page: what chart is
+possible from data we already serve but don't visualise.
+
+**W7.3** = W3.2 (page load-time pass). Tracked there, not duplicated here.
+
+---
+
+### D — Decisions only Ash can make
+
+**D1 — [V] Anomaly-freeze pages on CORRECT prices.** Verified worsening:
+`stellarindex_anomaly_freeze_engaged_total{class="default"}` was 382 on
+2026-07-27 and is **1,700** now. Fires on thin FX crosses with `sources=1`;
+the served prices were independently verified correct (0.06% / 0.21% off).
+`writer_wired=false`, so the page has no automatic protection behind it.
+Recommendation: stop paging when `sources=1`. **Blocks W6.7.**
+
+**D2** HA at v1 vs fast-follow (single-box SPOF as accepted risk + tested
+restore; warm standby fast-follow).
+
+**D3** ClickHouse backup posture — ADR-0043 §2.1 snapshot + re-derive; apply
+the drafted §2.3 amendment; do not resurrect full-lake copies.
+
+**D4** Site-promised features (order-book depth, DEX TVL, per-token oracles)
+— build or retract **before** announcement copy is finalised (W6.7).
+
+**D5** Served-tier retention/serve-window policy — document projection-scoped
+windows as the v1 contract.
+
+**D6** Genesis edge [2 → 287,404] — accept as documented-unfillable.
+
+**D7** C4-012/13 third-alias thin-pool VWAP surface — review **before**
+public traffic, and note it interacts with W2's priority ordering.
+
+**D8** SolvBTC quote mislabel — registered `fiat:USD`, publishes a NAV ratio
+vs BTC. Recommendation: fix post-v1 (redstone is `IncludeInVWAP=false`).
+
+**D9** Stripe C3-081 reconcile — almost certainly a formal DROP now that the
+access model is anon/free/partner.
+
+**D10** Privacy/GDPR review.
+
+---
+
+### W8 — Correctness backlog [C — all carried, none re-verified this pass]
+
+Each item's first step is to REPRODUCE it; several 2026-08-04 findings have
+already been silently fixed (W1.4, W5's replays and phoenix/defindex decoders
+were all found to be done or half-done once checked).
+
+1. Ten money handlers alias-blind → **folded into W2**; `markets` reports
+   `stale:false` when it isn't; XLM supply 2.11× split.
+2. SDEX downside protection OFF for 27.5% of pairs, attacker-inducible.
+3. `manage_data` G-address injection into other accounts' histories (proven
+   live at filing time).
+4. Auth-tree oracle-price forgery; auth middleware deadlocks; `/v1/readyz`
+   unlimited (it is in the auth-exempt list — pool-exhaustion surface).
+5. Dashboard 6-digit code derivable from the stored hash.
+6. `recognition_ok` structurally always-true for match-by-topic sources;
+   defindex emitter ungated; defindex gate poisoning.
+7. MEV sandwich detector names accounts on impossible evidence;
+   `mev_events` unbounded growth.
+8. Served confidence capped at 0.5; co-equal routes publish the LOWER value;
+   MinMAD floors 24/27 baselines; `native`/`fiat:USD` unscoreable.
+9. `derive_generation` blocks projector-replay; MinBatchLimit wedge; zero
+   mail instrumentation.
+10. Build-frozen prices served as live; `/assets/{CODE}` returns the worst
+    impersonator.
+11. Observations `as_of` lie; three VWAP windows on one SSE topic;
+    `?asset=native` matches nothing; SSE payload schema mismatch; tip stream
+    6 qps/conn.
+12. LP reserves live-only from ledger 63.3M — no trustline/LP backfill.
+13. `accounts/{g}/trades` windowing; movements 11-month gap; wasm full-scan.
+14. ADR-0017 contract 4 never runs; archive `chmod o+rx` one-off.
+15. CI/test gaps: `lint-metric-refs` accepts comments; TWAP CAGG 5-month
+    coverage; revocation drift guard misses the cache-hit path; no
+    goroutine-leak detection; two opposite ops-CLI write-gate conventions;
+    `txindex-backfill` defaults.
+
+---
+
+### W9 — Post-v1 (decide, don't drift)
+
+R2 + R3 regions and ClickHouse HA · email-verification flip-on · P4 tail
+(i128 lint tooling, strkey/SCVal stubs, ADR-0025 CF-range) · residual DeFi
+decoders and generic Soroban decoding · explorer depth + point-lookup path ·
+team-asks (Aquarius pool-set authority; DeFindex vault registry + 9 unproven
+emitters; Phoenix pool→stake map; Blend V1 backstop schema).
+
+---
+
+### Recommended order
+
+1. **W4.1** (restore-drill) — independent of everything, worst failure mode.
+2. **D1** — one decision, unblocks W6.7 and stops the pager crying wolf.
+3. **W6.1 + W4.5** — one file, closes the paging gate and the SLA verdict.
+4. **W1** — server → UI → protocols, in that order (W1.1 gates W1.4).
+5. **W4.2–W4.7** — unit sweep + template the pattern.
+6. **W2** — the alias registry.
+7. **W5.2** (dfees), then the [C] backfills.
+8. **W3.2 → W3.3 → W3.4**.
+9. **W7.1** full audit, on the fixed surface.
+10. **W6** remainder → launch.
+
+W6.2 (security review) and W6.6 (backup decision) run in parallel from day
+one — they are lead-time items, not sequenced work.
+
+---
 
 ## Loop log (newest first)
 
@@ -2186,6 +2475,12 @@ the spec, so the wire-freeze prerequisite is met).
 
 ## 1. Go-live gate (all must be true)
 
+> **SUPERSEDED for planning by “THE PLAN” at the top of this file
+> (refreshed 2026-08-15).** Kept for its rationale and execution recipes.
+> Where this section and THE PLAN disagree on what is still outstanding,
+> THE PLAN is right.
+
+
 - [x] ✅ **Supply trustworthy** — DONE 2026-07-30: full reconcile vs
       Horizon **8/8 PASS** (evidence `2026-07-30-supply-reconcile-8of8.md`);
       the claimable seed, SAC full-history seed, and dormancy-anchor fix
@@ -2233,6 +2528,12 @@ the spec, so the wire-freeze prerequisite is met).
       problem that is really "we did not wait".
 
 ## 2. Critical path (dependency-ordered)
+
+> **SUPERSEDED for planning by “THE PLAN” at the top of this file
+> (refreshed 2026-08-15).** Kept for its rationale and execution recipes.
+> Where this section and THE PLAN disagree on what is still outstanding,
+> THE PLAN is right.
+
 
 ### 2.1 The sep41 chain (REVISED 2026-07-27 — deeper than the timeout)
 ✅ v0.21.1 cut + deployed (all 6 binaries; smoke 13/13; `-ch` copy done).
@@ -2856,6 +3157,12 @@ are obsolete — repo has been public since 2026-07-03):
 
 ## 3. [OP] register (operator-only, consolidated + deduplicated)
 
+> **SUPERSEDED for planning by “THE PLAN” at the top of this file
+> (refreshed 2026-08-15).** Kept for its rationale and execution recipes.
+> Where this section and THE PLAN disagree on what is still outstanding,
+> THE PLAN is right.
+
+
 1. **Vault password re-entry** (blocks §2.2). In a Claude Code session run:
    `! mkdir -p ~/.ansible && read -s VP && echo -n "$VP" > ~/.ansible/r1_vault_pass && chmod 600 ~/.ansible/r1_vault_pass && unset VP`
    …then have the agent verify decrypt + set the two GH secrets.
@@ -2883,6 +3190,12 @@ are obsolete — repo has been public since 2026-07-03):
    backstop address/emitter schema.
 
 ## 4. Open decisions ([DECIDE])
+
+> **SUPERSEDED for planning by “THE PLAN” at the top of this file
+> (refreshed 2026-08-15).** Kept for its rationale and execution recipes.
+> Where this section and THE PLAN disagree on what is still outstanding,
+> THE PLAN is right.
+
 
 | Decision | Recommendation |
 |---|---|
