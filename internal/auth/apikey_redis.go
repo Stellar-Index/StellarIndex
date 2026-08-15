@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -37,7 +38,8 @@ import (
 //   - Redis I/O failure   → wrapped non-sentinel (middleware → 503)
 //
 // Concurrency: safe for use across goroutines — every Lookup is one
-// GET. The validator carries no mutable state.
+// GET. The only mutable state is the account-status cache, guarded by
+// its own mutex (see [accountActive]).
 type RedisAPIKeyValidator struct {
 	rdb redis.Cmdable
 	now func() time.Time
@@ -46,7 +48,33 @@ type RedisAPIKeyValidator struct {
 	// ([AccountIdentifier]) is rejected when that account is not
 	// active. See [WithAccountStatus].
 	accounts AccountStatusReader
+
+	// statusTTL / statusMaxStale bound the account-status cache below.
+	// See [WithAccountStatusCacheTTL] and [accountActive].
+	statusTTL      time.Duration
+	statusMaxStale time.Duration
+	// statusCache memoises the last-read account status per slug so the
+	// kill-switch GetBySlug is read at most once per account per
+	// statusTTL window (bounding hot-path Postgres load) and a transient
+	// Postgres blip rides out on last-known status (auth-ks-1). Only
+	// populated when accounts != nil. Guarded by statusMu.
+	statusMu    sync.RWMutex
+	statusCache map[string]cachedAccountStatus
 }
+
+// cachedAccountStatus is one memoised [platform.Account.Status] read.
+type cachedAccountStatus struct {
+	status platform.AccountStatus
+	at     time.Time
+}
+
+// DefaultAccountStatusCacheTTL is the freshness window of the Redis
+// validator's account-status cache: within it, [accountActive] serves
+// the last-read status without touching Postgres, so the kill-switch
+// read costs at most one query per account per window rather than one
+// per request. Matches the 30s dwell-time the rest of the auth layer
+// uses for Redis-degradation windows.
+const DefaultAccountStatusCacheTTL = 30 * time.Second
 
 // AccountStatusReader is the narrow slice of
 // [platform.AccountStore] the Redis validator needs to honour an
@@ -214,6 +242,19 @@ func WithAccountStatus(accounts AccountStatusReader) RedisOption {
 	return func(v *RedisAPIKeyValidator) { v.accounts = accounts }
 }
 
+// WithAccountStatusCacheTTL overrides the account-status cache
+// freshness window (default [DefaultAccountStatusCacheTTL]). A
+// non-positive value falls back to the default. The ride-out staleness
+// bound (how long a cached status may cover a Postgres outage) is
+// derived as a fixed multiple of the TTL — see [accountActive].
+func WithAccountStatusCacheTTL(ttl time.Duration) RedisOption {
+	return func(v *RedisAPIKeyValidator) {
+		if ttl > 0 {
+			v.statusTTL = ttl
+		}
+	}
+}
+
 // NewRedisAPIKeyValidator constructs a validator that reads records
 // from rdb. rdb MUST be non-nil — callers wire this only after
 // confirming Redis is available; the auth middleware fails-loud at
@@ -222,10 +263,22 @@ func NewRedisAPIKeyValidator(rdb redis.Cmdable, opts ...RedisOption) *RedisAPIKe
 	if rdb == nil {
 		panic("auth: NewRedisAPIKeyValidator: rdb must not be nil")
 	}
-	v := &RedisAPIKeyValidator{rdb: rdb, now: time.Now}
+	v := &RedisAPIKeyValidator{
+		rdb:         rdb,
+		now:         time.Now,
+		statusTTL:   DefaultAccountStatusCacheTTL,
+		statusCache: make(map[string]cachedAccountStatus),
+	}
 	for _, opt := range opts {
 		opt(v)
 	}
+	// Ride-out staleness is a fixed multiple of the freshness window:
+	// past the fresh TTL each request still re-reads Postgres, and a
+	// cached status is only used to cover a GetBySlug *error* up to this
+	// bound. A Postgres outage also blocks the suspension write itself,
+	// so riding out on last-known status here cannot mask a suspension an
+	// operator could actually have applied during the outage.
+	v.statusMaxStale = 10 * v.statusTTL
 	return v
 }
 
@@ -330,13 +383,26 @@ func (v *RedisAPIKeyValidator) Lookup(ctx context.Context, key string) (Subject,
 // that names a platform account. Returns nil when the check does not
 // apply (no reader wired, or a non-account identifier).
 //
-// Fails CLOSED on a lookup error, unlike the cache-degradation paths
-// elsewhere in this package: this is the suspension gate, and "the
-// account store blipped, so authenticate the suspended customer anyway"
-// is the one degradation a kill switch must not make. A missing account
-// row for an `acct:`-prefixed identifier is likewise a rejection — the
-// record references an account that no longer exists, which is the
-// closed-account case, not an unknown one.
+// A short-TTL in-process cache fronts the kill-switch GetBySlug so the
+// status is read at most once per account per statusTTL window
+// (auth-ks-1): within the fresh window it serves last-read status
+// without touching Postgres, bounding hot-path Postgres load and
+// suspension-propagation latency to statusTTL.
+//
+// Degradation posture (auth-ks-1):
+//
+//   - ErrNotFound: the record references an account that no longer
+//     exists — the closed-account case, rejected as [ErrUnauthorized]
+//     (unchanged).
+//   - Transport error WITH a cached status within statusMaxStale:
+//     ride out on last-known status (bounded staleness). A Postgres
+//     blip no longer 401s every active customer; a still-suspended
+//     account is still rejected off its cached status.
+//   - Transport error with NO usable cached status (truly unknown):
+//     [ErrAccountStatusUnavailable] — a retryable 503, NOT the 401
+//     default. Still fails closed, but with correct, non-key-rotating
+//     semantics rather than mis-signalling "your credential is invalid"
+//     during a server-side outage.
 func (v *RedisAPIKeyValidator) accountActive(ctx context.Context, identifier string) error {
 	if v.accounts == nil {
 		return nil
@@ -345,17 +411,55 @@ func (v *RedisAPIKeyValidator) accountActive(ctx context.Context, identifier str
 	if !ok || slug == "" {
 		return nil // legacy signup-<hash> record: no account to check
 	}
+
+	now := v.now()
+	// Fresh cache hit: serve without a Postgres read.
+	if cached, ok := v.cachedStatus(slug); ok && now.Sub(cached.at) <= v.statusTTL {
+		return statusToError(cached.status)
+	}
+
 	acct, err := v.accounts.GetBySlug(ctx, slug)
 	if err != nil {
 		if errors.Is(err, platform.ErrNotFound) {
 			return ErrUnauthorized
 		}
-		return fmt.Errorf("auth: apikey account status %q: %w", slug, err)
+		// Transport/degradation error. Ride out on a last-known status
+		// within the staleness bound rather than degrading auth for
+		// every active customer on a transient Postgres blip.
+		if cached, ok := v.cachedStatus(slug); ok && now.Sub(cached.at) <= v.statusMaxStale {
+			return statusToError(cached.status)
+		}
+		// Truly unknown: no usable cached status. Fail closed, but as a
+		// retryable 503 ("auth layer degraded"), not a 401 credential
+		// rejection.
+		return fmt.Errorf("auth: apikey account status %q: %w: %w", slug, ErrAccountStatusUnavailable, err)
 	}
-	if acct.Status != platform.AccountActive {
+
+	v.storeStatus(slug, acct.Status, now)
+	return statusToError(acct.Status)
+}
+
+// statusToError maps a resolved account status to the auth outcome:
+// active authenticates, everything else (suspended/closed) is
+// [ErrUnauthorized].
+func statusToError(status platform.AccountStatus) error {
+	if status != platform.AccountActive {
 		return ErrUnauthorized
 	}
 	return nil
+}
+
+func (v *RedisAPIKeyValidator) cachedStatus(slug string) (cachedAccountStatus, bool) {
+	v.statusMu.RLock()
+	defer v.statusMu.RUnlock()
+	cached, ok := v.statusCache[slug]
+	return cached, ok
+}
+
+func (v *RedisAPIKeyValidator) storeStatus(slug string, status platform.AccountStatus, at time.Time) {
+	v.statusMu.Lock()
+	defer v.statusMu.Unlock()
+	v.statusCache[slug] = cachedAccountStatus{status: status, at: at}
 }
 
 // HashAPIKey returns the hex-encoded SHA-256 of key. Exposed for

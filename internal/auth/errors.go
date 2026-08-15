@@ -69,4 +69,26 @@ var (
 	// reject every request during a blip) while closing the
 	// indefinitely-disabled-throttle attack surface.
 	ErrThrottleUnavailable = errors.New("auth: throttle layer unavailable (sustained backend errors)")
+
+	// ErrAccountStatusUnavailable — the account-level kill-switch read
+	// (the Postgres account store the Redis validator consults for
+	// suspension status) is degraded and there is no usable last-known
+	// status to ride out on. 503 + Retry-After, NOT 401.
+	//
+	// auth-ks-1 (audit-2026-08-14): the Redis validator does an uncached
+	// per-request GetBySlug on the hot path to honour the account
+	// suspension gate. A transient Postgres degradation (failover,
+	// restart, pool exhaustion, statement_timeout, vacuum stall) made
+	// GetBySlug return a non-[platform.ErrNotFound] error, which fell
+	// through the middleware's default branch to 401 for EVERY active
+	// customer — turning a partial-dependency blip into a total API-key
+	// auth outage AND mis-signalling "your credential is invalid" so
+	// clients rotated keys during a server-side outage. A short-TTL
+	// status cache now rides a blip out on last-known status; this
+	// sentinel is returned only for the truly-unknown case (no cached
+	// status within the staleness bound), so the degradation is a
+	// retryable "auth layer degraded" rather than a credential rejection.
+	// Distinct from [ErrUnauthorized] so [isCredentialRejection] does not
+	// count it against the per-IP failed-auth budget.
+	ErrAccountStatusUnavailable = errors.New("auth: account status layer unavailable (kill-switch read degraded)")
 )
