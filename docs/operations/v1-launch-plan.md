@@ -186,10 +186,43 @@ made the drift check red for four days (it failed on `census-rollup.timer`,
 a unit the playbook enables but never templates). Fixing the units without
 fixing the pattern re-earns it.
 
-**W4.1 — [V] `restore-drill.service`, failing since 2026-08-01.** Backup
-verification. Two weeks with no proven-restorable backup. **Highest-value
-unblocked item in this entire plan**, launch or no launch: its failure mode
-is discovering the backups don't restore at the moment you need them.
+**W4.1 — [V] `restore-drill.service`. CORRECTED 2026-08-15 — the earlier
+framing ("two weeks with no proven-restorable backup") overstated it.**
+
+What is actually true:
+
+- **The backups are healthy.** pgBackRest stanza `status: ok`; full backup
+  2026-08-09, daily diffs through 02:05 on 2026-08-15, continuous WAL
+  archive. Database 616 GB, repo 214 GB.
+- **They have been PROVEN restorable.** Drill run 5 (2026-07-03) passed with
+  0 failures: restore 871s, recovery to consistency, core tables 4/4, tip lag
+  240 ledgers, 0 hash-chain breaks, and an EXACT trades-window match
+  (5,770,426 restored = 5,770,426 live).
+- **The drill is non-destructive by construction** — restores into a fresh
+  timestamped dir on the dedicated `data/restore-drill` ZFS dataset (5.18 TB
+  free), starts a disposable instance on **port 5499, never 5432**, only
+  READS the backup repo, and refuses below `MIN_FREE_GB`. Live PGDATA is
+  never touched. It is safe to run on demand.
+- **The timer is MONTHLY** (last 2026-08-01, next 2026-09-05), so this is one
+  failed attempt, not a repeating failure.
+
+**The real defect: the drill silently produces no evidence when run the way
+production runs it.** `LOG_DIR` is derived from the script's own path —
+`$(dirname $0)/../../docs/operations/drills`. Installed at
+`/usr/local/bin/restore-drill.sh` that resolves to `/usr/docs/operations/drills`,
+which does not exist, and the append is guarded by `if [[ -d "$LOG_DIR" ]]`.
+Run 5 was logged only because it was run from a repo checkout. The 2026-08-01
+timer run exited **status 1** — meaning it passed every precondition (those
+exit 2), actually ran, and a verification check FAILED — but which check is
+now unrecoverable, because the evidence write was skipped and journald has
+rotated.
+
+So CS-110's whole deliverable — the evidence that the backup restores — is
+not produced by the scheduled path. Fix `LOG_DIR` (explicit, configurable,
+and fail LOUDLY if unwritable rather than skipping), then run the drill
+manually to get a current verdict. Only after that is the "is our backup
+good?" question answerable, which is why W6.6 (off-site decision) sequences
+behind this.
 
 **W4.2 — [V] `galexie-archive-fill.service`.** Not previously tracked.
 Succeeded 12:20 today, failed 13:18 with `status=2/INVALIDARGUMENT` in one
