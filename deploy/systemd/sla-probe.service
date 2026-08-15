@@ -48,6 +48,11 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 EnvironmentFile=-/etc/default/sla-probe
+# Minted STELLARINDEX_PROBE_API_KEY lives here (0640, ansible-templated from
+# vault) — kept out of the world-readable /etc/default/sla-probe and out of
+# the repo. Loaded second so it wins on the key; optional (`-`) so the unit
+# still starts keyless (anonymous tier) before the key is provisioned.
+EnvironmentFile=-/etc/default/sla-probe.secret
 
 # Sensible defaults. Operators override via /etc/default/sla-probe.
 Environment=BASE_URL=https://api.stellarindex.io/v1
