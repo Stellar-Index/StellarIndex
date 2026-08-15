@@ -156,6 +156,50 @@ func checkScopes(r *http.Request, subject auth.Subject) error {
 		strings.Join(subject.Scopes, ", "), need, r.Method, r.URL.Path)
 }
 
+// ClampMintScopes enforces the delegation invariant that a key may
+// only mint a child no more privileged than itself: the child's
+// capability scopes must be a subset of the parent's. It is the
+// single chokepoint every mint path funnels through so "a credential
+// can never mint a more-privileged credential than itself" holds by
+// construction, mirroring the same subset semantics [Subject.HasScope]
+// enforces at request time.
+//
+// caller is the authenticated minting subject; requested is that
+// caller's scope request, already validated against the vocabulary
+// and de-duplicated. It returns the effective scope set to persist,
+// or a non-empty problem string when the caller asked for a scope it
+// does not itself hold.
+//
+// Rules:
+//   - A full-access parent (empty scope list — the pre-scopes posture,
+//     every capability) delegates freely, including minting another
+//     full-access key.
+//   - A scoped parent with no explicit request inherits the parent's
+//     OWN scopes rather than defaulting to full access — a scoped key
+//     may not mint an empty (full-access) child.
+//   - A scoped parent with an explicit request must have every
+//     requested scope in its own set (via [Subject.HasScope], so a "*"
+//     wildcard parent still delegates freely); any scope it lacks is
+//     rejected rather than silently dropped.
+func ClampMintScopes(caller auth.Subject, requested []string) ([]string, string) {
+	if len(caller.Scopes) == 0 {
+		return requested, ""
+	}
+	if len(requested) == 0 {
+		out := make([]string, len(caller.Scopes))
+		copy(out, caller.Scopes)
+		return out, ""
+	}
+	for _, s := range requested {
+		if !caller.HasScope(s) {
+			return nil, fmt.Sprintf(
+				"scope %q exceeds this key's own scopes (%s) — a key may only mint a child with a subset of its scopes",
+				s, strings.Join(caller.Scopes, ", "))
+		}
+	}
+	return requested, ""
+}
+
 func checkPermissions(r *http.Request, subject auth.Subject) error {
 	if len(subject.DenyPermissions) > 0 && permissionMatches(r, subject.DenyPermissions) {
 		return fmt.Errorf("this key is denied access to %s %s", r.Method, r.URL.Path)
