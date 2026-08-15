@@ -2,6 +2,13 @@
 - name: Reload systemd
   ansible.builtin.systemd:
     daemon_reload: true
+  # Also answer the lowercase `daemon-reload` topic: several drop-in
+  # tasks (10-observability.yml probes, the archive-completeness
+  # override) notify `daemon-reload`, but this role has no handler by
+  # that name — a bare `notify: daemon-reload` errors with "handler not
+  # found" the moment the notifying task reports changed. Aliasing it
+  # here routes those notifies to the one canonical daemon-reload.
+  listen: daemon-reload
 
 - name: Restart postgres
   ansible.builtin.systemd:
