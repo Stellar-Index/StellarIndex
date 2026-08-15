@@ -1,14 +1,25 @@
 ---
-title: r1 archival node — current state and next-steps
+title: r1 archival node — historical bringup snapshot (2026-04/05)
 last_verified: 2026-05-12
-status: living doc
+status: historical snapshot
 ---
 
 # r1-01 (FSN1) deployment state
 
+> **⚠️ HISTORICAL SNAPSHOT — NOT current node state.** This captures the
+> r1 bringup as of 2026-04/05 and was last state-verified 2026-05-12; it is
+> NOT maintained per session. Several claims below are already superseded by
+> the running node and by the repo itself — do NOT treat them as the live
+> baseline. Known-stale examples: the API `auth_mode` is no longer `none`
+> (the operator moved it to `apikey_optional`, recorded later in this same
+> doc), so the public surface is not unauthenticated; and "15 migrations
+> applied" reflects the bringup only — the repo's migrations head is far
+> higher now (`ls migrations/ | tail`). For current r1 state, query the
+> host / operator directly rather than trusting this file.
+
 Snapshot of what's running on the r1 host (Hetzner FSN1 dedicated;
 public IP held in `configs/ansible/inventory/r1.yml`, gitignored)
-as of 2026-04-26. Updated at each session.
+as of 2026-04-26. Captured once at bringup; not updated per session.
 
 > **Bringing up a new archival node?** Follow the end-to-end recipe in
 > [archival-node-bringup.md](archival-node-bringup.md). This doc is a
