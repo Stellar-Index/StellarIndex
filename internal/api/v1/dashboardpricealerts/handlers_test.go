@@ -159,7 +159,7 @@ func validCreate() createRequest {
 		QuoteAsset:      "fiat:USD",
 		Condition:       "above",
 		Threshold:       "0.15",
-		CooldownSeconds: 300,
+		CooldownSeconds: ptr(300),
 	}
 }
 
@@ -187,6 +187,69 @@ func TestHandleCreate_HappyPath(t *testing.T) {
 	}
 	if len(store.alerts) != 1 {
 		t.Errorf("store should contain 1 alert, got %d", len(store.alerts))
+	}
+}
+
+// TestHandleCreate_OmittedCooldown_DefaultsNonZero pins NTF-PA-02: a
+// create that OMITS cooldown_seconds must not land a 0 cooldown, which the
+// level-triggered evaluator treats as "re-fire every 30s tick while the
+// threshold holds" (a firehose). The omitted case must default to a sane
+// non-zero minimum.
+func TestHandleCreate_OmittedCooldown_DefaultsNonZero(t *testing.T) {
+	h, store, sc := newTestRig(t, nil)
+	// A real client that leaves cooldown_seconds out of the JSON entirely.
+	body := map[string]any{
+		"base_asset":  "native",
+		"quote_asset": "fiat:USD",
+		"condition":   "above",
+		"threshold":   "0.15",
+	}
+	req := sessionReq(t, http.MethodPost, "/v1/dashboard/price-alerts", body, sc)
+	w := httptest.NewRecorder()
+	h.HandleCreate(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var dto priceAlertDTO
+	if err := json.Unmarshal(w.Body.Bytes(), &dto); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if dto.CooldownSeconds != DefaultCooldownSeconds {
+		t.Errorf("omitted cooldown_seconds must default to %d, got %d (0 = per-tick firehose)", DefaultCooldownSeconds, dto.CooldownSeconds)
+	}
+	for _, a := range store.alerts {
+		if a.CooldownSeconds != DefaultCooldownSeconds {
+			t.Errorf("stored cooldown_seconds = %d, want %d", a.CooldownSeconds, DefaultCooldownSeconds)
+		}
+	}
+}
+
+// TestHandleCreate_ExplicitZeroCooldown_Preserved guards the other half of
+// the NTF-PA-02 fix: an EXPLICIT cooldown_seconds:0 remains the documented
+// re-fire-every-tick opt-in and is not overwritten by the default.
+func TestHandleCreate_ExplicitZeroCooldown_Preserved(t *testing.T) {
+	h, _, sc := newTestRig(t, nil)
+	body := map[string]any{
+		"base_asset":       "native",
+		"quote_asset":      "fiat:USD",
+		"condition":        "above",
+		"threshold":        "0.15",
+		"cooldown_seconds": 0,
+	}
+	req := sessionReq(t, http.MethodPost, "/v1/dashboard/price-alerts", body, sc)
+	w := httptest.NewRecorder()
+	h.HandleCreate(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var dto priceAlertDTO
+	if err := json.Unmarshal(w.Body.Bytes(), &dto); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if dto.CooldownSeconds != 0 {
+		t.Errorf("explicit cooldown_seconds:0 must be preserved, got %d", dto.CooldownSeconds)
 	}
 }
 
@@ -223,7 +286,7 @@ func TestHandleCreate_Validation(t *testing.T) {
 		{"zero threshold", func(c *createRequest) { c.Threshold = "0" }},
 		{"fraction threshold", func(c *createRequest) { c.Threshold = "3/2" }},
 		{"scientific threshold", func(c *createRequest) { c.Threshold = "1e3" }},
-		{"negative cooldown", func(c *createRequest) { c.CooldownSeconds = -5 }},
+		{"negative cooldown", func(c *createRequest) { c.CooldownSeconds = ptr(-5) }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

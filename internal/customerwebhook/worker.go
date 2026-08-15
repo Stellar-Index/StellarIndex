@@ -308,17 +308,13 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 		// of the pending listing — retrying can never succeed.
 		w.opts.Logger.Warn("customer-webhook: webhook not found; permanently failing delivery",
 			"err", err, "delivery_id", d.ID, "webhook_id", d.WebhookID)
-		_ = w.store.MarkAttemptFailed(ctx, d.ID,
-			fmt.Sprintf("webhook lookup: %v", err), 0, time.Time{})
-		obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("webhook_missing").Inc()
+		w.markTerminal(ctx, d, fmt.Sprintf("webhook lookup: %v", err), "webhook_missing")
 		return
 	}
 	if !wh.Enabled {
 		// Webhook is disabled — silently terminate the delivery
 		// rather than retry forever.
-		_ = w.store.MarkAttemptFailed(ctx, d.ID,
-			"webhook disabled", 0, time.Time{})
-		obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("disabled").Inc()
+		w.markTerminal(ctx, d, "webhook disabled", "disabled")
 		return
 	}
 	if len(wh.SecretHash) == 0 {
@@ -330,9 +326,7 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 		// can never repair a missing secret — and never POST.
 		w.opts.Logger.Warn("customer-webhook: empty signing secret; permanently failing delivery (never sign with an empty key)",
 			"delivery_id", d.ID, "webhook_id", d.WebhookID)
-		_ = w.store.MarkAttemptFailed(ctx, d.ID,
-			"webhook signing secret is empty", 0, time.Time{})
-		obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("no_secret").Inc()
+		w.markTerminal(ctx, d, "webhook signing secret is empty", "no_secret")
 		return
 	}
 
@@ -343,9 +337,7 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 		// URL malformed at request-build time. This is
 		// permanently broken — the URL is set per-webhook by the
 		// customer; we can't fix it by retrying.
-		_ = w.store.MarkAttemptFailed(ctx, d.ID,
-			fmt.Sprintf("build request: %v", err), 0, time.Time{})
-		obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("build_error").Inc()
+		w.markTerminal(ctx, d, fmt.Sprintf("build request: %v", err), "build_error")
 		// Build error: no HTTP roundtrip happened. Record a
 		// near-zero duration so the histogram still has a sample
 		// at this label and operators see the build_error bucket
@@ -453,6 +445,29 @@ func isRetryable4xx(status int) bool {
 	default:
 		return false
 	}
+}
+
+// markTerminal records a no-retry outcome for a delivery (webhook
+// missing/disabled, empty secret, un-buildable request), clearing its
+// schedule so it drops out of the pending list.
+//
+// NTF-WH-01: it must NOT silently discard the store write error. The row
+// still carries the claim lease ListPendingDeliveries set (next_attempt_at
+// = now()+5m); if the terminal mark's UPDATE fails and the error is
+// dropped, attempt_count never advances and the row is re-claimed and the
+// same request re-POSTed every lease interval with no signal. Surfacing
+// the failure on the mark_error counter — the same counter the retry and
+// delivered paths already emit — makes the loop visible to an alert. The
+// terminal `outcome` counter is advanced only when the mark persisted, so
+// a mark_error and a terminal outcome are never both counted for one call.
+func (w *Worker) markTerminal(ctx context.Context, d platform.WebhookDelivery, msg, outcome string) {
+	if err := w.store.MarkAttemptFailed(ctx, d.ID, msg, 0, time.Time{}); err != nil {
+		w.opts.Logger.Warn("customer-webhook: terminal MarkAttemptFailed failed; delivery keeps its claim lease and will re-POST until the write succeeds",
+			"err", err, "delivery_id", d.ID, "webhook_id", d.WebhookID, "outcome", outcome)
+		obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("mark_error").Inc()
+		return
+	}
+	obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues(outcome).Inc()
 }
 
 // handleFailure routes a non-2xx response into the right

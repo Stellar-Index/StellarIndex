@@ -24,9 +24,15 @@ type fakeAlertStore struct {
 	enabled  []platform.PriceAlert
 	listErr  error
 	firedIDs []uuid.UUID
+	// markErr is returned by the next markErrN calls to MarkPriceAlertFired,
+	// simulating a transient store write failure on the fired-mark.
+	markErr  error
+	markErrN int
 }
 
 func (s *fakeAlertStore) ListEnabledPriceAlerts(context.Context) ([]platform.PriceAlert, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.listErr != nil {
 		return nil, s.listErr
 	}
@@ -40,10 +46,22 @@ func (s *fakeAlertStore) ListEnabledPriceAlerts(context.Context) ([]platform.Pri
 	return out, nil
 }
 
-func (s *fakeAlertStore) MarkPriceAlertFired(_ context.Context, id uuid.UUID, _ time.Time) error {
+func (s *fakeAlertStore) MarkPriceAlertFired(_ context.Context, id uuid.UUID, firedAt time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.markErrN > 0 {
+		s.markErrN--
+		return s.markErr
+	}
 	s.firedIDs = append(s.firedIDs, id)
+	// Reflect the postgres UPDATE so the next sweep's ListEnabled sees the
+	// advanced cooldown clock (last_fired_at) — without this the fake would
+	// never exercise coolingDown across sweeps.
+	for i := range s.enabled {
+		if s.enabled[i].ID == id {
+			s.enabled[i].LastFiredAt = firedAt
+		}
+	}
 	return nil
 }
 
@@ -259,6 +277,52 @@ func TestSweep_NoSubscribedWebhook_DoesNotMarkFired(t *testing.T) {
 	}
 	if len(alerts.firedIDs) != 0 {
 		t.Errorf("must not MarkFired when nothing was enqueued (so it delivers once a webhook is added)")
+	}
+}
+
+// TestSweep_FiredMarkFlaky_NoDuplicateDelivery pins NTF-PA-01: a
+// transient MarkPriceAlertFired failure must NOT cause the crossing to be
+// re-delivered to the same webhooks on the next tick. With the fired-mark
+// advanced before the fan-out, each subscribed webhook receives the
+// crossing at most once across repeated sweeps.
+//
+// Pre-fix (enqueue-then-mark): sweep 1 enqueues both webhooks, the mark
+// fails, and sweep 2 re-enqueues both → 4 deliveries (duplicates on new,
+// un-dedupable delivery ids). Post-fix: 2 deliveries, one per webhook.
+func TestSweep_FiredMarkFlaky_NoDuplicateDelivery(t *testing.T) {
+	acct := uuid.New()
+	now := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
+	alert := platform.PriceAlert{
+		ID: uuid.New(), AccountID: acct,
+		BaseAsset: "native", QuoteAsset: "fiat:USD",
+		Condition: platform.AlertAbove, Threshold: "0.15", Enabled: true,
+		CooldownSeconds: 3600, // a once-per-hour crossing notification
+	}
+	alerts := &fakeAlertStore{
+		enabled:  []platform.PriceAlert{alert},
+		markErr:  errors.New("transient db error"),
+		markErrN: 1, // the FIRST fired-mark write fails
+	}
+	hooks := &fakeWebhooks{byAcct: map[uuid.UUID][]platform.CustomerWebhook{
+		acct: {
+			priceAlertWebhook(acct, true, string(platform.WebhookEventPriceAlert)),
+			priceAlertWebhook(acct, true, string(platform.WebhookEventPriceAlert)),
+		},
+	}}
+	prices := fakePrices{price: "0.20", bucket: now, ok: true}
+
+	w := New(alerts, hooks, prices, Options{
+		Interval: time.Second,
+		Logger:   quietLogger(),
+		Clock:    func() time.Time { return now },
+	})
+	// Two sweeps: the first hits the transient fired-mark failure; the
+	// second re-evaluates the still-crossed alert.
+	w.Sweep(context.Background())
+	w.Sweep(context.Background())
+
+	if len(hooks.enqueued) != 2 {
+		t.Fatalf("want each of the 2 webhooks delivered exactly once (2 total), got %d — a flaky fired-mark caused duplicate fan-out", len(hooks.enqueued))
 	}
 }
 

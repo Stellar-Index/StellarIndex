@@ -10253,7 +10253,7 @@ components:
         quote_asset:      { type: string, description: "Canonical quote asset id." }
         condition:        { type: string, enum: [above, below] }
         threshold:        { type: string, description: "Positive decimal string (e.g. \"0.15\", \"1200\"). Fractions / scientific notation are rejected." }
-        cooldown_seconds: { type: integer, minimum: 0, description: "Optional; defaults 0." }
+        cooldown_seconds: { type: integer, minimum: 0, description: "Optional; defaults to 300 (5m) when omitted. Send an explicit 0 to opt into re-firing every tick the condition holds." }
         enabled:          { type: boolean, description: "Defaults true when absent." }
       required: [base_asset, quote_asset, condition, threshold]
 
