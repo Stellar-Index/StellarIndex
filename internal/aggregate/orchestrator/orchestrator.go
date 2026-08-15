@@ -972,7 +972,7 @@ func (o *Orchestrator) emitStalenessGauges(now time.Time) {
 // refreshPairWindow computes VWAP for one (pair, window) and
 // writes it to Redis. ErrNoTrades is a normal-path outcome (the
 // window was empty for this pair) and not propagated as an error.
-func (o *Orchestrator) refreshPairWindow(
+func (o *Orchestrator) refreshPairWindow( //nolint:funlen // 61>60 after the R-2 window-scoped composite-meta fix; a coherent VWAP unit
 	ctx context.Context,
 	pair canonical.Pair,
 	window time.Duration,

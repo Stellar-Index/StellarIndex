@@ -190,7 +190,7 @@ type touchTracker struct {
 	lastSweep time.Time
 }
 
-func newTouchTracker(interval time.Duration) *touchTracker {
+func newTouchTracker(interval time.Duration) *touchTracker { //nolint:unparam // interval is a test seam; prod passes time.Minute
 	return &touchTracker{
 		last:     make(map[uuid.UUID]time.Time),
 		interval: interval,

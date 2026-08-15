@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 
 import StatusPageClient from './StatusPageClient';
@@ -31,8 +31,18 @@ function statusPayload(overrides: Record<string, unknown>) {
 // and a failed freshness probe rendered "0 / 0" active sources (total
 // ingest death). Absent must render '—'.
 describe('StatusPageClient measurement tiles', () => {
-  beforeEach(() => {
-    vi.stubGlobal('EventSource', FakeEventSource);
+  // The live-ledger effect calls `new EventSource(...)` and can do so
+  // after a test's teardown (React flushes the effect / the reconnect
+  // timer fires post-test). A per-test stub that afterEach removes left
+  // an "EventSource is not defined" race that surfaces under parallel
+  // test load. Define the fake durably on globalThis for the whole file
+  // so a late call always finds it; vi.unstubAllGlobals() (the per-test
+  // fetch reset) does not touch a raw globalThis assignment.
+  beforeAll(() => {
+    (globalThis as { EventSource?: unknown }).EventSource = FakeEventSource;
+  });
+  afterAll(() => {
+    delete (globalThis as { EventSource?: unknown }).EventSource;
   });
   afterEach(() => {
     vi.unstubAllGlobals();

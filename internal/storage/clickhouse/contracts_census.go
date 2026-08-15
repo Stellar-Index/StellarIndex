@@ -127,7 +127,7 @@ func runCensusDayConn(ctx context.Context, conn censusExecConn, day time.Time, l
 	// Always drop the private staging table, even on error/cancellation, so a
 	// crashed run leaves at most one small empty orphan. A detached context
 	// makes the cleanup fire even when the parent ctx is already cancelled.
-	defer func() {
+	defer func() { //nolint:contextcheck // detached cleanup ctx: must fire even when the parent ctx is already cancelled
 		dropCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if derr := conn.Exec(dropCtx, fmt.Sprintf(
