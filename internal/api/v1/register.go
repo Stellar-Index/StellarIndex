@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime"
 	"net/http"
 	"net/mail"
 	"strings"
@@ -292,26 +291,12 @@ func (s *Server) parseAndValidateRegister(w http.ResponseWriter, r *http.Request
 
 	// CSRF gate, same reasoning as /v1/signup: application/json is not
 	// a CORS "simple request" type, so any cross-site browser POST
-	// carrying it must be preflighted (and refused).
-	//
-	// The header is REQUIRED, not merely validated-when-present (audit
-	// 2026-08-13 F4). Tolerating its absence for "bare curl ergonomics"
-	// left the exact hole the gate exists to close: a header-less POST
-	// is a CORS *simple* request, so `fetch(url, {method:'POST',
-	// mode:'no-cors'})` on any page silently created an account + a
-	// permanent credential per visitor AND burned a token from the
-	// per-IP throttle this endpoint shares with /v1/signup — with the
-	// source addresses distributed across visitors, which is how the
-	// sibling endpoint's identical defect was described. Curl callers
-	// add one -H flag; the docs and examples now show it.
-	if ct := r.Header.Get("Content-Type"); true {
-		if mt, _, mtErr := mime.ParseMediaType(ct); mtErr != nil || mt != "application/json" {
-			writeProblem(w, r,
-				"https://api.stellarindex.io/errors/unsupported-media-type",
-				"Unsupported media type", http.StatusUnsupportedMediaType,
-				"/v1/register requires Content-Type: application/json")
-			return registerRequest{}, false
-		}
+	// carrying it must be preflighted (and refused). The header is
+	// REQUIRED, not merely validated-when-present (audit 2026-08-13 F4);
+	// see requireJSONContentType, the helper shared with /v1/signup so
+	// the two anon durable-write gates cannot drift again.
+	if !requireJSONContentType(w, r, "/v1/register") {
+		return registerRequest{}, false
 	}
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, registerBodyMaxBytes))

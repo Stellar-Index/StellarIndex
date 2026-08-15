@@ -290,6 +290,49 @@ func TestSignup_StoreFailure(t *testing.T) {
 	}
 }
 
+// TestSignup_RequiresContentType is the W1-flow-register-1
+// (audit-2026-08-14) regression: a header-less POST is a CORS *simple*
+// request, so `navigator.sendBeacon("/v1/signup", new Blob([body],
+// {type:""}))` on any page a victim visits sends a POST with NO
+// Content-Type header — no preflight is issued and CORS never triggers.
+// The presence-form gate `if ct != ""` skipped the media-type check for
+// the absent header, minting a real key + relaying a verification email
+// per visitor and defeating the per-IP throttle. The gate must require
+// the header, matching the sibling /v1/register, and return 415 without
+// minting.
+func TestSignup_RequiresContentType(t *testing.T) {
+	store := &fakeAccountStore{
+		rec:   auth.APIKeyRecord{KeyID: "kid_should_not_mint"},
+		plain: "sip_should_not_mint",
+	}
+	signups := newFakeSignupTracker()
+	ts := newSignupTestServer(t, store, signups)
+
+	// Build a POST with a valid JSON body but NO Content-Type header —
+	// the empty-type-Blob / no-cors vector.
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/signup",
+		strings.NewReader(`{"email":"spam@evil.com"}`))
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Del("Content-Type")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /v1/signup: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		t.Fatalf("header-less POST status = %d, want 415 — this is the cross-site sendBeacon vector", resp.StatusCode)
+	}
+	if store.calls != 0 {
+		t.Errorf("refused header-less request still minted a key; AccountStore calls = %d, want 0", store.calls)
+	}
+	if len(signups.store) != 0 {
+		t.Errorf("refused header-less request still reserved an email; tracker entries = %d, want 0", len(signups.store))
+	}
+}
+
 // TestSignup_BodyTooLarge — bodies over 4 KiB return 400.
 func TestSignup_BodyTooLarge(t *testing.T) {
 	store := &fakeAccountStore{rec: auth.APIKeyRecord{KeyID: "kid"}, plain: "rek"}
