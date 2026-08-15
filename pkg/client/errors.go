@@ -125,6 +125,17 @@ func parseAPIError(status int, contentType, retryAfter string, body []byte) *API
 	apiErr.Detail = p.Detail
 	apiErr.Instance = p.Instance
 	apiErr.RequestID = p.RequestID
+
+	// Valid JSON that carried NONE of the problem+json fields (e.g. a
+	// proxy or non-conforming service replying
+	// {"error":"..","trace_id":".."}). Don't silently discard it:
+	// fall back to the same body-preserving behaviour the non-JSON
+	// branch uses so the caller still sees the message/id.
+	if p.Type == "" && p.Title == "" && p.Detail == "" && p.Instance == "" && p.RequestID == "" {
+		if len(body) > 0 && len(body) <= 256 {
+			apiErr.Detail = strings.TrimSpace(string(body))
+		}
+	}
 	return apiErr
 }
 

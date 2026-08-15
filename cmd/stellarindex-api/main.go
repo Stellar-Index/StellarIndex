@@ -80,6 +80,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/customerwebhook"
 	"github.com/Stellar-Index/StellarIndex/internal/divergence"
 	"github.com/Stellar-Index/StellarIndex/internal/logincodereaper"
+	"github.com/Stellar-Index/StellarIndex/internal/magiclinkreaper"
 	"github.com/Stellar-Index/StellarIndex/internal/metadata"
 	"github.com/Stellar-Index/StellarIndex/internal/notify"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -265,6 +266,11 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// Build readiness-check set. Each implements v1.ReadyChecker.
 	checks := []v1.ReadyChecker{
 		storeChecker{s: store},
+		// REC-06 (audit-2026-08-14): assert the applied schema head is
+		// at least what this binary was built against (and not dirty).
+		// Critical, so a migrations-skipped/binary-swap mismatch drains
+		// the backend (503) instead of serving stale data behind a 200.
+		v1.NewSchemaVersionChecker(schemaChecker{db: store.DB()}),
 	}
 	if rdb != nil {
 		checks = append(checks, redisChecker{rdb: rdb})
@@ -1264,9 +1270,12 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		KeyPolicy:             middleware.KeyPolicy(),
 		// F-1226 (codex audit-2026-05-12): monthly-quota enforcer.
 		// Reads month-to-date counters from the same Redis Counter
-		// the UsageTracker writes. Only Postgres-backed Subjects
-		// carry MonthlyQuota; other validators leave it 0 and the
-		// middleware short-circuits per request.
+		// the UsageTracker writes. Both the Postgres validator and
+		// the Redis validator now map MonthlyQuota onto the Subject
+		// (apikey_redis.go maps rec.MonthlyQuota; store_mirror.go
+		// persists it), so metered keys are enforced on the default
+		// redis backend too. A validator that leaves it 0 makes the
+		// middleware short-circuit per request.
 		MonthlyQuota: middleware.MonthlyQuota(usageCounter, logger.With("component", "monthly-quota")),
 		RateLimit:    rateLimit,
 		UsageTracker: middleware.UsageTracker(usageCounter, logger.With("component", "usage")),
@@ -1556,6 +1565,31 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		logger.Info("login-code-lockout reaper started",
 			"interval", logincodereaper.DefaultInterval,
 			"retention", logincodereaper.DefaultRetention)
+	}
+
+	// Magic-link token retention (PRV-2). `magic_link_tokens` is durable
+	// plaintext PII (email + requested_ip) keyed on an ATTACKER-CHOSEN
+	// email — POST /v1/auth/login is unauthenticated and inserts a
+	// permanent row for any address, and a link nobody clicks is never
+	// consumed. This sweep is the only thing that bounds the table.
+	//
+	// Like the login-code lockout reaper above, deliberately NOT gated
+	// on any toggle: it is a DoS/PII control, and it runs whenever the
+	// dashboard's Postgres token store is wired — exactly when the
+	// endpoint that writes those rows is reachable.
+	if links, ok := dashboardBundle.tokens.(magiclinkreaper.MagicLinkStore); ok && links != nil {
+		linkReaper := magiclinkreaper.New(links, magiclinkreaper.Options{
+			Logger: logger.With("component", "magic-link-token-reaper"),
+		})
+		go func() {
+			defer recoverBackgroundWorker(logger, "magic-link-token-reaper")
+			if err := linkReaper.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
+				logger.Error("magic-link-token-reaper worker exited", "err", err)
+			}
+		}()
+		logger.Info("magic-link-token reaper started",
+			"interval", magiclinkreaper.DefaultInterval,
+			"retention", magiclinkreaper.DefaultRetention)
 	}
 
 	serveErr := make(chan error, 1)
@@ -2348,6 +2382,28 @@ func (c storeChecker) Name() string   { return "postgres" }
 func (c storeChecker) Critical() bool { return true }
 func (c storeChecker) Ping(ctx context.Context) error {
 	return c.s.DB().PingContext(ctx)
+}
+
+// schemaChecker adapts the golang-migrate schema_migrations
+// bookkeeping row to v1.SchemaVersionReader for the REC-06 head
+// assertion (audit-2026-08-14). It reads over the store's *sql.DB —
+// the stellarindex-migrate binary owns writes; the API only reads —
+// keeping the raw SQL in this binary layer, mirroring storeChecker.
+type schemaChecker struct{ db *sql.DB }
+
+func (c schemaChecker) SchemaMigrationVersion(ctx context.Context) (uint, bool, error) {
+	var version uint
+	var dirty bool
+	// schema_migrations holds a single row (golang-migrate). No row =
+	// no migrations applied = version 0.
+	err := c.db.QueryRowContext(ctx, `SELECT version, dirty FROM schema_migrations LIMIT 1`).Scan(&version, &dirty)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return version, dirty, nil
 }
 
 // redisChecker adapts redis.UniversalClient to the v1.ReadyChecker

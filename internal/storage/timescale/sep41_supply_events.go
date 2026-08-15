@@ -57,8 +57,11 @@ type SEP41SupplyEvent struct {
 // event_index) PK (event_index + event_kind added by migration 0057,
 // F-1324, so multiple supply events from one op don't collide).
 // Re-running the indexer over the same range writes the same
-// rows; ON CONFLICT DO NOTHING keeps the running sum
-// monotonically correct across replays.
+// rows; ON CONFLICT DO UPDATE guarded by derive_generation
+// (INV-3 / migration 0110) corrects the value in place on a
+// higher-or-equal-generation replay and no-ops a stale
+// lower-generation one, keeping the running sum correct across
+// replays.
 //
 // Defensive: rejects empty ContractID / TxHash / nil Amount /
 // invalid Kind before touching the DB.
@@ -554,7 +557,8 @@ func parseSEP41Numeric(raw, label string) (*big.Int, error) {
 }
 
 // InsertSEP41SupplyEventBatch persists rows via a single multi-row
-// INSERT .. ON CONFLICT DO NOTHING (the batch sibling of
+// INSERT .. ON CONFLICT DO UPDATE guarded by derive_generation
+// (INV-3 / migration 0110) (the batch sibling of
 // InsertSEP41SupplyEvent — added for the 2026-07-05 full-history
 // re-derive, where per-row round-trips capped writes at ~520/s).
 // Rows are validated with the same rules as the single-row path.

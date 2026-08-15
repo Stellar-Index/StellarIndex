@@ -105,8 +105,10 @@ export default function DocsPage() {
 
       <Section id="base-url" title="Base URL & versioning">
         <p>
-          All endpoints live under a single versioned base. v1 is stable; additive
-          changes bump the minor version, breaking changes the major.
+          All endpoints live under a single versioned base. The API follows
+          semver: additive changes bump the minor version, breaking changes the
+          major. We&apos;re still pre-v1 and stabilizing the surface toward the
+          v1 cutover.
         </p>
         <Code>{`${BASE}/v1`}</Code>
         <Code>{`curl ${BASE}/v1/price?asset=native&quote=fiat:USD`}</Code>

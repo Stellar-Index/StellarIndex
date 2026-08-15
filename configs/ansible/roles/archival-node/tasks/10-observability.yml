@@ -89,11 +89,51 @@
       EXTRA_FLAGS="-availability-target 99.0"
   tags: [observability, sla-probe]
 
+# The GO sla-probe unit was ENABLED below but never INSTALLED — nothing
+# copied deploy/systemd/sla-probe.{service,timer} into /etc/systemd/system/,
+# so a clean/DR rebuild errored on the enable and the live box only worked
+# via a hand-installed pre-rename artifact (RATESENGINE_* env, User=ratesengine).
+# Install the reference copies (same src pattern as 15-log-discipline.yml).
+- name: Install sla-probe.{service,timer} (GO probe — was enabled, never installed)
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../../deploy/systemd/{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - sla-probe.service
+    - sla-probe.timer
+  notify: Reload systemd
+  tags: [observability, sla-probe]
+
+# Durable, non-world-readable home for the minted probe key. force:false so an
+# operator-populated file is never clobbered; empty default keeps the probe
+# keyless (anonymous tier, as today) until STELLARINDEX_PROBE_API_KEY is minted
+# and set in vault (stellarindex_probe_api_key). This replaces the pre-rename
+# habit of hand-adding RATESENGINE_PROBE_API_KEY into the ansible-clobbered
+# /etc/default/sla-probe.
+- name: Provision /etc/default/sla-probe.secret (minted probe key, vault-sourced)
+  ansible.builtin.copy:
+    dest: /etc/default/sla-probe.secret
+    owner: root
+    group: stellarindex
+    mode: "0640"
+    force: false
+    content: |
+      # Managed by ansible (archival-node role / 10-observability.yml).
+      # Minted Partner/Operator-tier probe key. Set stellarindex_probe_api_key
+      # in the r1 vault to populate; leave empty to run the probe keyless.
+      STELLARINDEX_PROBE_API_KEY={{ stellarindex_probe_api_key | default('') }}
+  no_log: true
+  tags: [observability, sla-probe]
+
 - name: Enable sla-probe.timer (the GO probe; emits the textfile metric)
   ansible.builtin.systemd:
     name: sla-probe.timer
     enabled: true
     state: started
+    daemon_reload: true
   tags: [observability, sla-probe]
 
 # Configure the Debian package's ARGS to mirror the legacy flags

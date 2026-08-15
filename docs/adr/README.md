@@ -101,6 +101,7 @@ See [_template.md](_template.md) for the boilerplate.
 | [0046](0046-mad-outlier-filter.md) | Accepted | MAD-based outlier filtering for VWAP inputs — log-space modified z-score, shadow-first rollout; thresholds deferred to production traffic | 2026-07-08 |
 | [0047](0047-pre-p23-classic-movement-reconstruction.md) | Accepted | Pre-P23 classic-movement reconstruction from the lake | 2026-07-10 |
 | [0048](0048-serve-by-query-shape.md) | Accepted | Serve by query shape — the account-movement archive is ClickHouse-native (amends 0047 D1) | 2026-07-10 |
+| [0049](0049-anonymous-access-and-passkey-auth.md) | Proposed | Anonymous access, open self-service registration, and passkey auth (no payment surface) — retroactive record of the shipped auth pivot | 2026-08-14 |
 
 ## Related
 

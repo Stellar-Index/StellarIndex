@@ -35,18 +35,31 @@ type FXQuote struct {
 // observed_at because it's diagnostic: the row's first observation
 // date is more useful than its most-recent.)
 //
+// INV-3 generation-guarded corrective upsert (migration 0141, audit-
+// 2026-08-14 MR-1): rate_usd is the denominator of every fiat-quoted
+// usd_volume, so the DO UPDATE is guarded by
+// `derive_generation <= EXCLUDED.derive_generation`. The live forex worker
+// writes at generation 0; the operator fx-history-backfill tool stamps a
+// POSITIVE generation ([SetDeriveGeneration]) so its corrected rate wins
+// the conflict AND survives — a later live gen-0 worker refresh can no
+// longer silently revert an operator correction (the last-writer-wins hole
+// MR-1 describes). A gen-0-over-gen-0 write (worker idempotency) still
+// re-writes the same row, exactly as before.
+//
 // Empty slice is a no-op.
 func (s *Store) InsertFXQuoteBatch(ctx context.Context, quotes []FXQuote) error {
 	if len(quotes) == 0 {
 		return nil
 	}
 	const stmt = `
-		INSERT INTO fx_quotes (bucket, ticker, rate_usd, inverse_usd, source)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO fx_quotes (bucket, ticker, rate_usd, inverse_usd, source, derive_generation)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (ticker, bucket) DO UPDATE
-		   SET rate_usd    = EXCLUDED.rate_usd,
-		       inverse_usd = EXCLUDED.inverse_usd,
-		       source      = EXCLUDED.source
+		   SET rate_usd          = EXCLUDED.rate_usd,
+		       inverse_usd       = EXCLUDED.inverse_usd,
+		       source            = EXCLUDED.source,
+		       derive_generation = EXCLUDED.derive_generation
+		 WHERE fx_quotes.derive_generation <= EXCLUDED.derive_generation
 	`
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -72,7 +85,7 @@ func (s *Store) InsertFXQuoteBatch(ctx context.Context, quotes []FXQuote) error 
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, stmt,
-			q.Bucket, q.Ticker, q.RateUSD, q.InverseUSD, q.Source,
+			q.Bucket, q.Ticker, q.RateUSD, q.InverseUSD, q.Source, s.deriveGeneration,
 		); err != nil {
 			return fmt.Errorf("timescale: InsertFXQuoteBatch ticker=%q: %w", q.Ticker, err)
 		}

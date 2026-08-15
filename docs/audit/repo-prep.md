@@ -1,6 +1,14 @@
 # Repo-prep: stellarindex — cached facts for audit/remediation agents
 
-Derived 2026-07-16 against commit `f84e2d0b` (main == origin/main, tree clean).
+> **⚠️ SNAPSHOT — verify against HEAD before trusting live-ops constraints.**
+> The toolchain/gate facts below were re-derived 2026-08-14 against a tip
+> ~1000 commits past the original 2026-07-16 `f84e2d0b` snapshot. The
+> ADR-0047 Phase-0 deploy freeze that once governed this campaign has ENDED
+> (releases v0.17.x–v0.33.x were cut and auto-deployed since), so the old
+> freeze rules no longer apply — see below. Treat every dated/pinned fact
+> here as a cache: re-check node/Next versions, the migrations head, and the
+> `verify.sh` gate list against the live tree before you rely on them.
+
 Read this BEFORE fixing, verifying, or integrating anything. It exists so
 remediation PRs pass CI on the first push.
 
@@ -17,27 +25,30 @@ correctness, VWAP/aggregation math, and completeness verdicts are the
 
 ## ⚠️ Live-ops constraints for THIS campaign
 
-- **DEPLOY FREEZE.** R1 is running the ADR-0047 Phase-0 backfill
-  (`ledger_entry_changes`, ledgers 38,115,806 → 61,999,000). A deploy
-  restarts services and swaps the ops binary Phase 0 is using.
-  **Never**: cut a tag/release, run `deploy.yml`, `cut-release.sh`, any
-  ansible playbook against r1, or any ssh/ops command on r1. Code-only;
-  merge to main is allowed. 11 commits already sit undeployed since v0.16.3.
+- **No deploy freeze in force (2026-08-14).** The ADR-0047 Phase-0 backfill
+  that once froze deploys has finished and normal release cadence resumed —
+  ~30 tags (v0.17.x–v0.33.2) were cut and auto-deployed since the original
+  snapshot. Do NOT re-impose the old freeze. Standard rule still applies:
+  committing a migration/config file ≠ running it against r1 — the runtime
+  operator action (deploy, ansible against r1, ssh) is out of scope for a
+  remediation PR and stays a separate, human-gated step. Re-verify with the
+  operator before assuming any given deploy has landed.
 - api-audit.yml fires on push-to-main when `openapi/**` or `internal/api/**`
   change and audits the **live deployed** API against the merged spec. Any
   spec change describing not-yet-deployed behavior will red it until the
-  post-Phase-0 deploy. Avoid spec/example changes that diverge from the
+  next deploy lands. Avoid spec/example changes that diverge from the
   deployed API; if unavoidable, expect and annotate the red.
 
 ## Worktrees + dependency seeding
 
 - Worktrees go INSIDE this repo: `/Users/ash/code/stellarindex/.claude/worktrees/<name>`
-  (dir exists). Base them on synced main (`f84e2d0b`) — already synced.
+  (dir exists). Base them on synced main (`git rev-parse origin/main`) —
+  keep main synced first.
 - **Go:** single module; the module cache is machine-global — worktrees need
   NO dep seeding for Go. Tools live in `$(go env GOPATH)/bin`
   (gofumpt, goimports, golangci-lint, govulncheck all installed); the
   Makefile calls them via `$(GOBIN)/…` so PATH doesn't matter for `make`.
-- **Web (pnpm v10, node 20; Next 16.2.10 / React 19 — NOT Next 15 as some docs say):** `web/explorer` and `web/status` each have
+- **Web (pnpm v10, node 22 — the version CI pins; Next 16.2.12 / React 19 — NOT Next 15 as some docs say):** `web/explorer` and `web/status` each have
   `node_modules` present in the main checkout. In a worktree, symlink before
   any web gate:
   `ln -s /Users/ash/code/stellarindex/web/explorer/node_modules <wt>/web/explorer/node_modules`
@@ -46,11 +57,18 @@ correctness, VWAP/aggregation math, and completeness verdicts are the
 
 ## Gate / verify commands
 
-- **Canonical full gate:** `make verify` = govulncheck + `scripts/dev/verify.sh`
-  (fmt → vet → lint → lint-docs → lint-imports → protocol-registry-sync →
-  lexicon → i128 → migrations-money → openapi-urls → pk-discriminators →
-  rule-structure → monitoring-check (promtool ✓ installed) → gitleaks →
-  unit tests `-race` → integration BUILD → explorer+status typecheck/lint/build).
+- **Canonical full gate:** `make verify` = govulncheck + `scripts/dev/verify.sh`.
+  As of 2026-08-14 verify.sh runs, in order: verify↔CI parity self-tests →
+  main-CI-health check → fmt → vet → lint → lint-docs → lint-imports (+
+  self-test) → protocol-registry-sync → lexicon → i128 → migrations-money →
+  migration-compat (+ self-test) → completeness-staleness →
+  deploy-protection / main-ci-health / ansible-drift / baseline-growth
+  self-tests → baseline-growth tripwire → openapi-urls → pk-discriminators →
+  rule-structure → runbook-annotations → monitoring-check (or metric-refs if
+  promtool absent) → govulncheck → gitleaks (working tree + history) →
+  generated API reference + Postman drift → unit tests `-race` → integration
+  BUILD → explorer+status typecheck/lint/test/build. This list drifts as
+  gates are added — treat `scripts/dev/verify.sh` as the source of truth.
   Note: it runs `make fmt` first, which MUTATES files — run on a committed tree.
   Note: verify.sh gates govulncheck on `command -v govulncheck` (PATH), which
   is NOT on PATH here — run `"$(go env GOPATH)/bin/govulncheck" ./...`

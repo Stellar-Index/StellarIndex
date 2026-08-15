@@ -386,7 +386,10 @@ func lowestHeldLedger(held []heldRow) (uint32, bool) {
 //   - read / tip / cursor errors → log + leave the cursor untouched; the
 //     next cycle retries the same rows.
 //   - decode failures (decode error / recovered panic) → count + SKIP the
-//     row (deterministic; a retry would re-fail) and let the cursor advance.
+//     row (deterministic; a retry would re-fail) and let the cursor advance,
+//     but mark the cycle runOutcome=decode_degraded (DATA-6 / NS-2) so a
+//     decoder regression draining a whole class of rows is not reported as a
+//     clean "ok" run and the per-source decode_error rate alert can page.
 //   - TRANSIENT sink write failures (audit-2026-07-16 C2-1) → cap the cursor
 //     at the last fully-committed ledger so the failing ledger is re-read
 //     next cycle; the idempotent downstream Insert* absorbs the retry. NEVER
@@ -725,9 +728,28 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	// but still has a pending retry above commitTo — surface it as a distinct
 	// run outcome so a genuinely-stuck source alerts rather than silently
 	// stalling under an "ok" label.
+	//
+	// DATA-6 / NS-2 (audit-2026-08-14): a decode soft-fail (a returned decode
+	// error or a recovered decoder panic) skips the row and advances the cursor
+	// past it. That is correct for genuine poison DATA — and holding instead
+	// would re-wedge a sole-writer source on a deterministic failure (COR-11) —
+	// but a shipped decoder REGRESSION breaks a whole CLASS of valid events the
+	// same way (the projector runs the SAME decoders as ingest; the phoenix
+	// 5,161-orphaned-swap class), silently draining them from the served tier
+	// while the cursor sails to tip. Before this the cycle still reported "ok",
+	// so runs_total showed a clean run over dropped rows and no run-level signal
+	// distinguished the loss. Mark a decode-dropping cycle "decode_degraded" so
+	// it is NOT counted clean; the per-source decode_error RATE alert
+	// (stellarindex_projector_decode_error_rate_high in projector.yml) is what
+	// separates a sustained spike (a regression) from scattered poison rows and
+	// pages. sink_retry keeps precedence: it means the cursor HELD (an
+	// auto-recovering visible stall) and already alerts on its own.
 	runOutcome := "ok"
-	if sinkTransientFails > 0 {
+	switch {
+	case sinkTransientFails > 0:
 		runOutcome = "sink_retry"
+	case decodeErrors > 0:
+		runOutcome = "decode_degraded"
 	}
 	obs.ProjectorRunsTotal.WithLabelValues(src.Name, runOutcome).Inc()
 	obs.ProjectorCycleDurationSeconds.WithLabelValues(src.Name).Observe(time.Since(start).Seconds())

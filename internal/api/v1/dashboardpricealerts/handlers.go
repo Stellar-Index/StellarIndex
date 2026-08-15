@@ -128,13 +128,28 @@ func (h *Handlers) HandleList(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
+// DefaultCooldownSeconds is applied when a create request OMITS
+// cooldown_seconds. NTF-PA-02: the evaluator is level-triggered, so a
+// cooldown of 0 re-fires a `price.alert` delivery every sweep tick
+// (DefaultInterval=30s) for as long as the threshold holds — thousands of
+// duplicate deliveries/day for what a customer almost always intends as a
+// single crossing notification. Defaulting the OMITTED case to a non-zero
+// minimum keeps the common case sane while still letting a caller opt into
+// the documented every-tick behaviour by sending an explicit 0. 300s (5m)
+// is the cooldown used throughout the API examples/spec as the
+// representative value.
+const DefaultCooldownSeconds = 300
+
 type createRequest struct {
-	BaseAsset       string `json:"base_asset"`
-	QuoteAsset      string `json:"quote_asset"`
-	Condition       string `json:"condition"`
-	Threshold       string `json:"threshold"`
-	CooldownSeconds int    `json:"cooldown_seconds,omitempty"`
-	Enabled         *bool  `json:"enabled,omitempty"` // pointer so absent → true default
+	BaseAsset  string `json:"base_asset"`
+	QuoteAsset string `json:"quote_asset"`
+	Condition  string `json:"condition"`
+	Threshold  string `json:"threshold"`
+	// CooldownSeconds is a pointer so an OMITTED field (nil) is
+	// distinguishable from an explicit 0: nil → DefaultCooldownSeconds,
+	// explicit 0 → the documented re-fire-every-tick behaviour.
+	CooldownSeconds *int  `json:"cooldown_seconds,omitempty"`
+	Enabled         *bool `json:"enabled,omitempty"` // pointer so absent → true default
 }
 
 // HandleCreate registers a new price alert.
@@ -169,13 +184,17 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
+	cooldown := DefaultCooldownSeconds
+	if req.CooldownSeconds != nil {
+		cooldown = *req.CooldownSeconds
+	}
 	rec := platform.PriceAlert{
 		AccountID:       sc.Account.ID,
 		BaseAsset:       req.BaseAsset,
 		QuoteAsset:      req.QuoteAsset,
 		Condition:       platform.AlertCondition(req.Condition),
 		Threshold:       req.Threshold,
-		CooldownSeconds: req.CooldownSeconds,
+		CooldownSeconds: cooldown,
 		Enabled:         enabled,
 	}
 	out, err := h.cfg.Alerts.CreatePriceAlert(r.Context(), rec, maxAlerts)
@@ -341,7 +360,7 @@ func parseCreateRequest(r *http.Request) (createRequest, int, string) {
 	if problem := validateThreshold(req.Threshold); problem != "" {
 		return createRequest{}, http.StatusBadRequest, problem
 	}
-	if req.CooldownSeconds < 0 {
+	if req.CooldownSeconds != nil && *req.CooldownSeconds < 0 {
 		return createRequest{}, http.StatusBadRequest, "cooldown_seconds must be >= 0"
 	}
 	return req, 0, ""

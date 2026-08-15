@@ -1249,10 +1249,67 @@ func TestTradeUSDVolumeViaFX_LegCrossCheck(t *testing.T) {
 		t.Fatalf("agreeing legs: stored %s, want quote-side %s", *got2, want.FloatString(8))
 	}
 
-	// Base leg unresolvable: single-leg behaviour unchanged.
+	// Base leg unresolvable + an inflated (poisoned) quote rate: the
+	// double-plant cross-check cannot fire, so W1-flow-price-serve-1
+	// requires the uncross-checkable single-leg print to be BOUNDED. Here
+	// 292,247.4 quote units x $549.43 ≈ $160.5M — above
+	// singleLegMaxUSDVolume — so the value is refused (NULL) rather than
+	// served. (Before the fix this returned the ~$160M poisoned figure.)
 	single := stubFXResolver{prices: map[string]string{quote.String(): "549.43"}}
-	got3 := tradeUSDVolumeViaFX(context.Background(), tr, md, single)
-	if got3 == nil {
-		t.Fatal("single-leg: expected quote-side value, got nil")
+	if got3 := tradeUSDVolumeViaFX(context.Background(), tr, md, single); got3 != nil {
+		t.Fatalf("single-leg above ceiling: want NULL (refused), got %q", *got3)
+	}
+}
+
+// TestTradeUSDVolumeViaFX_SingleLegBaseUnresolvableBound is the
+// W1-flow-price-serve-1 regression: when the BASE leg is unresolvable the
+// double-plant cross-check (TestTradeUSDVolumeViaFX_LegCrossCheck) cannot
+// fire, so an attacker who plants an inflated tier-3b bridge rate for the
+// QUOTE token and trades it against a fresh never-priced base can stamp an
+// arbitrarily large usd_volume off the single resolvable leg. The fix bounds
+// the single-leg print at singleLegMaxUSDVolume: an above-ceiling,
+// uncross-checkable print is refused (NULL); a plausible below-ceiling print
+// is still valued so the large legitimate unresolvable-base class is
+// preserved (the skeptic's over-NULL warning).
+func TestTradeUSDVolumeViaFX_SingleLegBaseUnresolvableBound(t *testing.T) {
+	// B: a fresh SEP-41 token with no market (resolver never knows it).
+	base := mustAsset(t, "CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7")
+	// Q: the poisoned bridge token whose quote-side rate the attacker set.
+	quote := mustAsset(t, "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75")
+	pair, err := canonical.NewPair(base, quote)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	md := external.Lookup("soroswap") // SubclassDEX
+	ts := time.Unix(1_754_800_000, 0).UTC()
+
+	mk := func(quoteAmt int64) canonical.Trade {
+		return canonical.Trade{
+			Source: "soroswap", Ledger: 63_890_100, TxHash: "b", OpIndex: 0, Timestamp: ts,
+			Pair:        pair,
+			BaseAmount:  canonical.NewAmount(big.NewInt(1_000_000_000)), // base present but unresolvable
+			QuoteAmount: canonical.NewAmount(big.NewInt(quoteAmt)),
+		}
+	}
+
+	// ATTACK: 20,000 quote units (2e11 stroops at 1e7) x an inflated
+	// $50,000 bridge rate = $1,000,000,000 off one leg — well above the
+	// ceiling. The base leg is unresolvable, so no cross-check exists.
+	// Must be refused (NULL), not served.
+	poisoned := stubFXResolver{prices: map[string]string{quote.String(): "50000"}}
+	if got := tradeUSDVolumeViaFX(context.Background(), mk(200_000_000_000), md, poisoned); got != nil {
+		t.Fatalf("poisoned single-leg print above ceiling: want NULL (refused), got %q", *got)
+	}
+
+	// LEGITIMATE: the same unresolvable-base shape but an ordinary rate and
+	// size — 20,000 quote units x $2.50 = $50,000, far below the ceiling.
+	// The fix must NOT NULL this common class (skeptic over-NULL guard).
+	honest := stubFXResolver{prices: map[string]string{quote.String(): "2.50"}}
+	got := tradeUSDVolumeViaFX(context.Background(), mk(200_000_000_000), md, honest)
+	if got == nil {
+		t.Fatal("legitimate below-ceiling single-leg print: want a value, got NULL")
+	}
+	if want := "50000.00000000"; *got != want {
+		t.Fatalf("legitimate single-leg print: got %q, want %q", *got, want)
 	}
 }

@@ -1,16 +1,36 @@
 package dashboardauth
 
 import (
+	"bytes"
 	"context"
 	"net"
 	"sort"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
+
+// mintTestSession creates an active session for the given fields and
+// returns the created row plus the plaintext cookie token that resolves
+// to it. It mirrors production mintSession's contract post
+// W1-auth-passkey-2: the cookie carries a random token, the row stores
+// only sha256(token). Tests that need an authenticated request set the
+// cookie to the returned token — NOT to sess.ID (which no longer
+// resolves on the auth path).
+func mintTestSession(t *testing.T, users *fakeUserStore, s platform.Session) (platform.Session, string) {
+	t.Helper()
+	token := uuid.NewString() + uuid.NewString() // opaque high-entropy cookie value
+	s.TokenHash = HashSessionToken(token)
+	created, err := users.CreateSession(context.Background(), s)
+	if err != nil {
+		t.Fatalf("mint test session: %v", err)
+	}
+	return created, token
+}
 
 // In-process fakes for the three platform stores. Behavioural
 // fidelity tracks what the Postgres impls do — sentinel-error
@@ -191,6 +211,25 @@ func (f *fakeUserStore) GetSession(_ context.Context, id uuid.UUID) (platform.Se
 		return platform.Session{}, platform.ErrNotFound
 	}
 	return s, nil
+}
+
+func (f *fakeUserStore) GetSessionByTokenHash(_ context.Context, tokenHash []byte) (platform.Session, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	// Mirror the Postgres partial unique index: a NULL/empty token_hash
+	// (legacy raw-PK rows) is never a lookup key.
+	if len(tokenHash) == 0 {
+		return platform.Session{}, platform.ErrNotFound
+	}
+	for _, s := range f.sessions {
+		if !s.RevokedAt.IsZero() {
+			continue
+		}
+		if bytes.Equal(s.TokenHash, tokenHash) {
+			return s, nil
+		}
+	}
+	return platform.Session{}, platform.ErrNotFound
 }
 
 func (f *fakeUserStore) TouchSession(_ context.Context, id uuid.UUID, ip net.IP, ua string) error {

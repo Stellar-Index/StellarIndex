@@ -28,6 +28,23 @@ describe('SearchModal', () => {
   });
 });
 
+// F4 (ACC-10): the result list updates as-you-type but the change was
+// never announced to assistive tech. A visually-hidden role=status /
+// aria-live=polite region must announce the count / no-match state so a
+// screen-reader user knows the results changed without blindly tabbing.
+describe('SearchModal result announcement', () => {
+  it('announces the no-match state via a polite live region on query change', () => {
+    renderOpen();
+    const input = screen.getByRole('textbox', {
+      name: /search coins, pairs, protocols/i,
+    });
+    fireEvent.change(input, { target: { value: 'zzznomatchxyz' } });
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent('No matches.');
+    expect(status.getAttribute('aria-live')).toBe('polite');
+  });
+});
+
 // The ⌘K result builder is the fourth copy of the verified-badge rule
 // (AssetsTable / HomeTopAssets / HomeTopMovers are the other three) and
 // was the only one that did not consult unverified_ticker_collision. The

@@ -112,8 +112,17 @@ groups:
         for: 10m
         labels:
           severity: page
+          team: stellarindex
+          component: archive
         annotations:
           summary: "galexie captive core is refusing catchup (invalid local state)"
+          description: |
+            The galexie captive core has logged catchup refusals ('invalid
+            local state') sustained 10+ minutes — the same signature that
+            wedged the lake for 11 hours on 2026-07-05. A sustained refusal
+            means the core cannot heal itself; the archive tip stops
+            advancing. Remedy is a galexie restart (fresh bucket catchup
+            from the archive). See the runbook.
           runbook_url: docs/operations/runbooks/galexie-catchup-refused.md
 
       - alert: stellarindex_host_swap_activity
@@ -125,6 +134,15 @@ groups:
         for: 15m
         labels:
           severity: ticket
+          team: stellarindex
+          component: infra
         annotations:
           summary: "host is swapping — a memory budget is being violated"
+          description: |
+            The host has been paging to swap (node_vmstat_pswpout) sustained
+            15+ minutes. Batch jobs are required to be memory-capped
+            (run-heavy-job.sh), so any sustained swapping means a memory
+            budget is being violated — the early-warning pressure class that
+            wedged the galexie captive core. Identify the over-budget process
+            and cap it before the core is starved. See the runbook.
           runbook_url: docs/operations/runbooks/galexie-catchup-refused.md

@@ -254,6 +254,101 @@ func TestAccountKeysCreate_Happy(t *testing.T) {
 	}
 }
 
+// TestAccountKeysCreate_ScopedCallerEmptyRequestInherits proves the
+// delegation clamp (finding F-B): a caller narrowed to ["account"]
+// that omits the scopes field must NOT mint a full-access (empty
+// scope) key — the child inherits the caller's own scopes instead, so
+// the narrowed key cannot mint an unrestricted sibling and escape its
+// confinement. Pre-fix the handler passed empty scopes straight to
+// Create, minting a full-access key.
+func TestAccountKeysCreate_ScopedCallerEmptyRequestInherits(t *testing.T) {
+	store := &fakeAccountStore{
+		rec:   auth.APIKeyRecord{KeyID: "kid_child", Label: "child"},
+		plain: "sip_child",
+	}
+	ts := newAccountTestServer(t, auth.Subject{
+		Identifier: "owner-scoped",
+		Tier:       auth.TierAPIKey,
+		Scopes:     []string{"account"},
+	}, store)
+
+	body := strings.NewReader(`{"label":"child"}`)
+	resp, err := http.Post(ts.URL+"/v1/account/keys", "application/json", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", resp.StatusCode)
+	}
+	if store.calls != 1 {
+		t.Fatalf("Create called %d times, want 1", store.calls)
+	}
+	// The minted key must carry the caller's scopes verbatim, not an
+	// empty (full-access) set.
+	if len(store.gotReq.Scopes) != 1 || store.gotReq.Scopes[0] != "account" {
+		t.Errorf("minted scopes = %v, want [account] (inherited from scoped caller, NOT full access)",
+			store.gotReq.Scopes)
+	}
+}
+
+// TestAccountKeysCreate_ScopedCallerCannotExceed proves a scoped
+// caller cannot mint a child with a scope it does not itself hold: an
+// ["account"] key requesting ["admin"] is rejected 403 and the store
+// is never touched.
+func TestAccountKeysCreate_ScopedCallerCannotExceed(t *testing.T) {
+	store := &fakeAccountStore{
+		rec:   auth.APIKeyRecord{KeyID: "kid_x", Label: "x"},
+		plain: "sip_x",
+	}
+	ts := newAccountTestServer(t, auth.Subject{
+		Identifier: "owner-scoped",
+		Tier:       auth.TierOperator,
+		Scopes:     []string{"account"},
+	}, store)
+
+	body := strings.NewReader(`{"label":"x","scopes":["admin"]}`)
+	resp, err := http.Post(ts.URL+"/v1/account/keys", "application/json", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+	if store.calls != 0 {
+		t.Errorf("Create called %d times, want 0 (escalation must be rejected before mint)", store.calls)
+	}
+}
+
+// TestAccountKeysCreate_FullAccessCallerUnchanged pins the
+// back-compat path the clamp must NOT disturb: a full-access caller
+// (empty scope list) omitting scopes still mints a full-access key.
+func TestAccountKeysCreate_FullAccessCallerUnchanged(t *testing.T) {
+	store := &fakeAccountStore{
+		rec:   auth.APIKeyRecord{KeyID: "kid_full", Label: "full"},
+		plain: "sip_full",
+	}
+	ts := newAccountTestServer(t, auth.Subject{
+		Identifier: "owner-full",
+		Tier:       auth.TierAPIKey,
+	}, store)
+
+	body := strings.NewReader(`{"label":"full"}`)
+	resp, err := http.Post(ts.URL+"/v1/account/keys", "application/json", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", resp.StatusCode)
+	}
+	if len(store.gotReq.Scopes) != 0 {
+		t.Errorf("minted scopes = %v, want empty (full-access caller mints full-access key)",
+			store.gotReq.Scopes)
+	}
+}
+
 // TestAccountKeysCreate_Unauthenticated — anonymous callers can't
 // mint keys. The handler short-circuits before touching the store.
 func TestAccountKeysCreate_Unauthenticated(t *testing.T) {

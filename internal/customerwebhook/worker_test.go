@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/Stellar-Index/StellarIndex/internal/customerwebhook"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -34,6 +35,10 @@ type fakeStore struct {
 	// getErr, when set, is returned by GetWebhook instead of consulting
 	// the map — used to simulate a transient store failure (NTF-13).
 	getErr error
+	// markErr, when set, is returned by MarkAttemptFailed instead of
+	// recording — used to simulate a store WRITE failure on a terminal
+	// mark (NTF-WH-01).
+	markErr error
 }
 
 type fail struct {
@@ -97,6 +102,11 @@ func (s *fakeStore) MarkDelivered(_ context.Context, id uuid.UUID, responseStatu
 func (s *fakeStore) MarkAttemptFailed(_ context.Context, id uuid.UUID, errMsg string, status int, next time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.markErr != nil {
+		// Write failed: the row's outcome is NOT recorded (mirrors a
+		// postgres UPDATE that errored before committing).
+		return s.markErr
+	}
 	s.failures[id] = append(s.failures[id], fail{
 		msg: errMsg, status: status, nextAt: next, terminal: next.IsZero(),
 	})
@@ -504,5 +514,49 @@ func TestWorker_MissingWebhook_IsStillTerminal(t *testing.T) {
 	}
 	if !got[0].terminal {
 		t.Error("a deleted webhook must fail the delivery TERMINALLY (zero next_attempt_at)")
+	}
+}
+
+// TestWorker_TerminalMarkWriteError_SurfacesOnMarkErrorCounter pins
+// NTF-WH-01: when a TERMINAL MarkAttemptFailed store write fails, the
+// worker must not silently discard the error. The row keeps the claim
+// lease ListPendingDeliveries set, so a dropped terminal mark re-POSTs
+// the same request every lease interval with no attempt-budget advance;
+// the only way to catch that loop is the mark_error counter. This drives
+// the disabled-webhook terminal path with a failing store and asserts the
+// failure lands on mark_error and NOT on the terminal "disabled" outcome
+// (which never persisted).
+func TestWorker_TerminalMarkWriteError_SurfacesOnMarkErrorCounter(t *testing.T) {
+	store := newFakeStore()
+	store.markErr = errors.New("UPDATE failed: cannot write to read-only replica")
+	webhookID := uuid.New()
+	store.addWebhook(platform.CustomerWebhook{
+		ID:         webhookID,
+		URL:        "https://hooks.example.com/x",
+		SecretHash: []byte("test-secret-bytes"),
+		Enabled:    false, // → terminal "disabled" path → markTerminal
+	})
+	deliveryID := uuid.New()
+	store.enqueue(platform.WebhookDelivery{
+		ID:            deliveryID,
+		WebhookID:     webhookID,
+		EventType:     string(platform.WebhookEventPriceAlert),
+		Payload:       []byte(`{}`),
+		NextAttemptAt: time.Now().Add(-time.Second),
+	})
+
+	markErrBefore := testutil.ToFloat64(obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("mark_error"))
+	disabledBefore := testutil.ToFloat64(obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("disabled"))
+
+	runOneTick(t, store, customerwebhook.Options{PollInterval: 30 * time.Millisecond})
+
+	markErrDelta := testutil.ToFloat64(obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("mark_error")) - markErrBefore
+	disabledDelta := testutil.ToFloat64(obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("disabled")) - disabledBefore
+
+	if markErrDelta != 1 {
+		t.Errorf("a failed terminal MarkAttemptFailed must advance the mark_error counter by 1, got delta %v", markErrDelta)
+	}
+	if disabledDelta != 0 {
+		t.Errorf("the terminal 'disabled' outcome must NOT be counted when its mark write failed, got delta %v", disabledDelta)
 	}
 }

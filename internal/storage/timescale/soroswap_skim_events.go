@@ -35,8 +35,10 @@ type SoroswapSkimEvent struct {
 // InsertSoroswapSkimEvent appends one Soroswap skim event row,
 // idempotent on the (ledger_close_time, ledger, tx_hash, op_index,
 // event_index) PK. Re-running the indexer or a backfill over the
-// same range writes the same rows; ON CONFLICT DO NOTHING makes the
-// replay a no-op.
+// same range writes the same rows; ON CONFLICT DO UPDATE guarded by
+// derive_generation (INV-3 / migration 0110) corrects the row in
+// place on a higher-or-equal-generation replay and no-ops a stale
+// lower-generation one.
 //
 // Defensive: rejects empty ContractID / TxHash / Amount0 / Amount1
 // and a zero LedgerCloseTime (the partition column — NULL/zero would

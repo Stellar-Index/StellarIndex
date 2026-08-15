@@ -786,7 +786,33 @@ func (s StellarConfig) Passphrase() string {
 // pattern to reference a secret store.
 type StorageConfig struct {
 	PostgresDSN string `toml:"postgres_dsn" doc:"Postgres DSN; password resolved via env: prefix." env:"STELLARINDEX_POSTGRES_DSN" default:"postgres://stellarindex@127.0.0.1:5432/stellarindex?sslmode=disable"`
-	RedisAddr   string `toml:"redis_addr" doc:"Redis master address host:port. Used when redis_sentinel_addrs is empty (single-node / direct mode). When sentinel addrs are set, this is ignored." default:"127.0.0.1:6379"`
+	// BackgroundStatementTimeout is the session-level Postgres
+	// statement_timeout the long-running INDEXER and AGGREGATOR pools
+	// apply to every connection (via a post-connect SET, the same
+	// mechanism as the API serving pool's ServingStatementTimeout —
+	// see timescale.OpenBackground). It is the SQL-side runaway
+	// backstop for REC-08 (audit-2026-08-14): before it, only the
+	// serving pool self-bounded, so a genuinely stuck indexer/aggregator
+	// query could run unbounded server-side even after the Go ctx gave up.
+	//
+	// The default is deliberately GENEROUS (30m): it must comfortably
+	// exceed every LEGITIMATE indexer/aggregator query that does NOT set
+	// its own bound, so it only ever kills a true runaway. The heavy
+	// batch scans (per_source_gaps, source_coverage, row_counts,
+	// sep41_supply_events, …) already open a transaction and `SET LOCAL
+	// statement_timeout` to their own longer value, which OVERRIDES this
+	// session default for exactly those statements — so raising their
+	// ceiling never requires touching this knob.
+	//
+	// Scope is the indexer/aggregator pools ONLY. The one-shot ops /
+	// migrate / heavy-backfill paths (stellarindex-ops, migrate) open via
+	// plain timescale.Open and stay UNBOUNDED — a global timeout there was
+	// the rejected prior fix, because it would kill legitimate multi-hour
+	// migrations, backfills, and the completeness reconcile. 0 disables it
+	// (plain Open, no session timeout), for a deployment that wants those
+	// pools unbounded too.
+	BackgroundStatementTimeout time.Duration `toml:"background_statement_timeout" doc:"Session-level Postgres statement_timeout applied to every connection in the long-running INDEXER and AGGREGATOR pools (via a post-connect SET), so a runaway background query is bounded SQL-side even after the Go ctx gives up (REC-08). Deliberately GENEROUS: it must exceed every legitimate query that does not set its own bound — the heavy batch scans SET LOCAL a longer value inside a transaction, which overrides this. Does NOT affect the one-shot ops/migrate/heavy-backfill pools (they open via plain Open and stay unbounded — a global timeout there would kill legitimate multi-hour migrations/backfills/reconcile, the rejected prior fix). 0 disables it (plain Open)." default:"30m"`
+	RedisAddr                  string        `toml:"redis_addr" doc:"Redis master address host:port. Used when redis_sentinel_addrs is empty (single-node / direct mode). When sentinel addrs are set, this is ignored." default:"127.0.0.1:6379"`
 	// Sentinel mode: when redis_sentinel_addrs is non-empty, the
 	// client uses go-redis FailoverClient and asks Sentinel for the
 	// current primary. Per ADR-0024 (Redis HA via Sentinel) this is
@@ -1647,8 +1673,9 @@ func Default() Config {
 			HistoryArchiveURL: "https://history.stellar.org/prd/core-live/core_live_001",
 		},
 		Storage: StorageConfig{
-			PostgresDSN: "postgres://stellarindex@127.0.0.1:5432/stellarindex?sslmode=disable",
-			RedisAddr:   "127.0.0.1:6379",
+			PostgresDSN:                "postgres://stellarindex@127.0.0.1:5432/stellarindex?sslmode=disable",
+			BackgroundStatementTimeout: 30 * time.Minute,
+			RedisAddr:                  "127.0.0.1:6379",
 			// RedisSentinelAddrs / RedisMasterName left empty — Default()
 			// targets dev / single-node. Production inventories override
 			// to enable Sentinel mode (ADR-0024).

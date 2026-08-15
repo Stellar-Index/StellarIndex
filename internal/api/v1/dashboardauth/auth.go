@@ -42,6 +42,21 @@ const SessionCookieName = "stellarindex_session"
 // the hex-encoded form is what the user sees in the URL.
 const MagicLinkPlaintextLen = 32
 
+// SessionTokenLen — the random-bytes length of the session cookie
+// token. 32 bytes = 256 bits: the cookie carries this token (hex),
+// and the DB stores only sha256(token), so read-access to the
+// sessions table is not directly replayable (W1-auth-passkey-2).
+const SessionTokenLen = 32
+
+// HashSessionToken returns sha256 of a session cookie token. The
+// authentication path hashes the incoming cookie with this and looks
+// the session up by hash; mintSession stores the same hash. Mirrors
+// [HashMagicLinkPlaintext] — the plaintext is never persisted.
+func HashSessionToken(token string) []byte {
+	sum := sha256.Sum256([]byte(token))
+	return sum[:]
+}
+
 // generateMagicLinkToken returns (plaintext, sha256-hash, code).
 // The plaintext is what we put in the email link;
 // the hash is what we store in magic_link_tokens;
@@ -151,6 +166,24 @@ func (g *Generator) NewToken() (plaintext string, hash []byte, code string, err 
 // user-supplied code — the code itself is never stored anywhere.
 func (g *Generator) CodeForHash(hash []byte) string {
 	return codeFromHashKeyed(g.Secret, hash)
+}
+
+// NewSessionToken mints (plaintext token, sha256 hash). The
+// plaintext goes in the cookie; the hash is stored on the session
+// row. crypto/rand in production; tests inject a fixed source via
+// Generator.Read. Mirrors [Generator.NewToken] without the 6-digit
+// code (sessions have no paste-friendly variant).
+func (g *Generator) NewSessionToken() (token string, hash []byte, err error) {
+	buf := make([]byte, SessionTokenLen)
+	n, err := g.Read(buf)
+	if err != nil {
+		return "", nil, fmt.Errorf("dashboardauth: session token entropy read: %w", err)
+	}
+	if n != SessionTokenLen {
+		return "", nil, fmt.Errorf("dashboardauth: session token short read: got %d want %d", n, SessionTokenLen)
+	}
+	token = hex.EncodeToString(buf)
+	return token, HashSessionToken(token), nil
 }
 
 // generateSessionID — 16 bytes of crypto/rand → uuid.UUID.

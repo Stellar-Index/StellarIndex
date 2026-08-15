@@ -2,6 +2,7 @@ package clickhouse
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"reflect"
 	"strings"
@@ -56,6 +57,44 @@ func (c *stubConn) Query(_ context.Context, query string, args ...any) (driver.R
 	c.queries = append(c.queries, query)
 	c.args = append(c.args, args)
 	return c.respond(query)
+}
+
+// stubRow is the single-row analogue of stubRows for readers that use
+// conn.QueryRow (e.g. ContractActivitySummaryFor's bounds/total). It routes
+// through the same per-shape responder and scans the FIRST returned row.
+type stubRow struct {
+	driver.Row
+	data []any
+	err  error
+}
+
+func (r *stubRow) Scan(dest ...any) error {
+	if r.err != nil {
+		return r.err
+	}
+	if len(dest) != len(r.data) {
+		return fmt.Errorf("stub scan: %d dests for %d columns", len(dest), len(r.data))
+	}
+	for i, d := range dest {
+		reflect.ValueOf(d).Elem().Set(reflect.ValueOf(r.data[i]))
+	}
+	return nil
+}
+
+func (r *stubRow) Err() error { return r.err }
+
+func (c *stubConn) QueryRow(_ context.Context, query string, args ...any) driver.Row {
+	c.queries = append(c.queries, query)
+	c.args = append(c.args, args)
+	rows, err := c.respond(query)
+	if err != nil {
+		return &stubRow{err: err}
+	}
+	sr, ok := rows.(*stubRows)
+	if !ok || len(sr.data) == 0 {
+		return &stubRow{err: sql.ErrNoRows}
+	}
+	return &stubRow{data: sr.data[0]}
 }
 
 // Query-shape classifiers (match the exact tables/clauses the reader emits).

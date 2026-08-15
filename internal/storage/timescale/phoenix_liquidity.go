@@ -64,8 +64,10 @@ type PhoenixLiquidityChange struct {
 // op_index, action, event_index) PK (event_index added by migration
 // 0060 / F-1324 so two provides/withdraws in one op don't collide).
 // Re-running the indexer over the same range or replaying a backfill
-// writes the same rows; ON CONFLICT DO NOTHING makes the replay a
-// no-op.
+// writes the same rows; ON CONFLICT DO UPDATE guarded by
+// derive_generation (INV-3 / migration 0110) corrects the row in
+// place on a higher-or-equal-generation replay and no-ops a stale
+// lower-generation one.
 //
 // Defensive: rejects empty Pool / TxHash / Sender, an invalid
 // Action, and empty NUMERIC amounts (AmountA / AmountB are NOT NULL)

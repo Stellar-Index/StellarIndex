@@ -271,10 +271,14 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 // LiquidityEvent. Each event is self-contained — it carries both token
 // amounts, the LP shares minted/burned, and the post-state reserves.
 // Token identities come from the factory new_pair registry (the body
-// carries only amounts); resolution is best-effort — the row is emitted
-// with empty tokens rather than dropped when the pair mapping isn't
-// seeded yet (resolvable downstream via soroswap_pairs). NEVER drop the
-// event: that is the every-event contract this arm was added to honor.
+// carries only amounts). This arm only runs AFTER Matches() has already
+// confirmed the pair is in pairTokens (Matches gates deposit/withdraw on
+// registry membership), and SeedPair always sets both tokens — so the
+// tok0/tok1 lookup below is in practice always a hit and the empty-token
+// branch is unreachable defence-in-depth, not the common case. An
+// UNSEEDED pair never reaches here: Matches returns false and the event
+// fails CLOSED into an ADR-0033 recognition gap (dropped-and-visible,
+// like the swap/trade path) — it is NOT written as a NULL-token row.
 func (d *Decoder) emitLiquidity(ev events.Event, kind string) ([]consumer.Event, error) {
 	closedAt, err := ev.EventClosedAt()
 	if err != nil {

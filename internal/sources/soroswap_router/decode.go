@@ -140,6 +140,21 @@ func decodeRouterArgs(
 	}
 
 	// Map (a0, a1) → (AmountIn, AmountOut) per function shape.
+	//
+	// CAVEAT (audit DOM-1): these are the two i128 CALL ARGS as
+	// DECLARED, not two realized amounts. Exactly ONE side is the
+	// exact/realized amount; the OTHER is a caller-declared slippage
+	// BOUND, so the amount_in/amount_out label is a trap:
+	//   - swap_exact_tokens_for_tokens: AmountIn = amount_in (exact,
+	//     realized) but AmountOut = amount_out_min — a slippage FLOOR
+	//     (the minimum acceptable output, typically BELOW what filled).
+	//   - swap_tokens_for_exact_tokens: AmountOut = amount_out (exact,
+	//     realized) but AmountIn = amount_in_max — a slippage CEILING
+	//     (the maximum acceptable input, typically ABOVE what filled).
+	// Each stored value is a FAITHFUL decode of its arg; only the
+	// column label mis-implies "realized" on the bound side. The
+	// realized per-hop amounts are recoverable from the per-pair
+	// SoroswapPair("swap") events in the same tx (sister soroswap pkg).
 	amountIn, amountOut := a0, a1 // exact_tokens_for_tokens default
 	if fnName == FnSwapTokensForExactTokens {
 		amountIn, amountOut = a1, a0

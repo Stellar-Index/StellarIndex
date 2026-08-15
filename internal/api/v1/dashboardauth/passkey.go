@@ -71,6 +71,14 @@ const PasskeyCeremonyCookieName = "stellarindex_passkey_ceremony"
 // tolerates a slow security-key fumble.
 const passkeyCeremonyTTL = 5 * time.Minute
 
+// passkeyCeremonyReserveSlack pads the begin-time reservation's TTL
+// past the ceremony's own validity (see [passkeyCeremonyReserveGuard])
+// so the reservation can only ever disappear through an allkeys-lru
+// EVICTION — the condition we must fail closed on — and never through
+// TTL expiry under a still-valid challenge, which would refuse a
+// legitimate sign-in for no security gain.
+const passkeyCeremonyReserveSlack = time.Minute
+
 // passkeyCeremonyDomain domain-separates the ceremony-cookie HMAC
 // from the login-code HMAC that shares the server secret.
 const passkeyCeremonyDomain = "stellarindex/passkey-ceremony/v1|"
@@ -274,6 +282,40 @@ func passkeyCeremonyDigest(c passkeyCeremony) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// passkeyCeremonyReserveGuard is the optional capability a ceremony
+// guard exposes when its spent-set lives in a store that can EVICT
+// under memory pressure — Redis under R1's allkeys-lru. Such a guard
+// cannot treat "marker absent == fresh": an evicted spent-marker would
+// re-open the replay window (W1-auth-passkey-1). Instead it RESERVEs
+// the ceremony at begin and, at finish, claims it only if the
+// reservation still exists, so an evicted reservation fails CLOSED (no
+// session) rather than freeing the slot for a captured request. The
+// in-process default guard doesn't evict and doesn't implement this —
+// [consumeCeremony] falls back to its plain spent-set.
+//
+// This is an optional-interface upgrade in the style of http.Flusher:
+// the base [PasskeyCeremonyGuard] contract is unchanged, and a guard
+// opts into the stronger protocol by implementing these two methods.
+type passkeyCeremonyReserveGuard interface {
+	Reserve(ctx context.Context, digest string, ttl time.Duration) error
+	ClaimReserved(ctx context.Context, digest string) (bool, error)
+}
+
+// reserveCeremony records a begin ceremony as live and single-use when
+// the guard's spent-set is evictable (see [passkeyCeremonyReserveGuard]).
+// A no-op — nil — for a non-evicting guard. Called at BEGIN, before the
+// challenge is handed to the browser, so a challenge is never issued
+// without a reservation backing its later single-use claim. The
+// reservation outlives the ceremony cookie (slack) so only a genuine
+// eviction, never TTL expiry, can make a valid finish fail closed.
+func (h *Handlers) reserveCeremony(ctx context.Context, c passkeyCeremony) error {
+	guard, ok := h.cfg.PasskeyCeremonyGuard.(passkeyCeremonyReserveGuard)
+	if !ok {
+		return nil
+	}
+	return guard.Reserve(ctx, passkeyCeremonyDigest(c), passkeyCeremonyTTL+passkeyCeremonyReserveSlack)
+}
+
 // consumeCeremony spends a ceremony so it can never be presented
 // again. Returns [errPasskeyCeremonyReplayed] for a second
 // presentation, and a wrapped store error when the spent-set is
@@ -285,6 +327,12 @@ func passkeyCeremonyDigest(c passkeyCeremony) string {
 // verifying first keeps unauthenticated callers from spending slots
 // in the shared store, and a submission that fails verification never
 // minted anything worth replaying.
+//
+// An evictable guard (Redis/allkeys-lru) claims through its begin-time
+// RESERVATION so an evicted marker fails closed instead of re-opening
+// the replay window (W1-auth-passkey-1); a non-evicting guard uses its
+// plain spent-set. Both paths report a replay as
+// [errPasskeyCeremonyReplayed] and a store outage as a wrapped error.
 func (h *Handlers) consumeCeremony(ctx context.Context, c passkeyCeremony) error {
 	guard := h.cfg.PasskeyCeremonyGuard
 	if guard == nil {
@@ -294,7 +342,18 @@ func (h *Handlers) consumeCeremony(ctx context.Context, c passkeyCeremony) error
 		// protection.
 		return errors.New("dashboardauth: no passkey ceremony guard configured")
 	}
-	claimed, err := guard.Consume(ctx, passkeyCeremonyDigest(c), passkeyCeremonyTTL)
+	digest := passkeyCeremonyDigest(c)
+	if rg, ok := guard.(passkeyCeremonyReserveGuard); ok {
+		claimed, err := rg.ClaimReserved(ctx, digest)
+		if err != nil {
+			return err
+		}
+		if !claimed {
+			return errPasskeyCeremonyReplayed
+		}
+		return nil
+	}
+	claimed, err := guard.Consume(ctx, digest, passkeyCeremonyTTL)
 	if err != nil {
 		return err
 	}
@@ -381,7 +440,17 @@ func (h *Handlers) HandlePasskeyBeginRegister(w http.ResponseWriter, r *http.Req
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
-	if err := h.setPasskeyCeremonyCookie(w, passkeyCeremony{Purpose: "register", Session: *session}); err != nil {
+	ceremony := passkeyCeremony{Purpose: "register", Session: *session}
+	// Reserve the ceremony BEFORE handing the challenge to the browser
+	// so its single-use claim survives an allkeys-lru eviction of the
+	// spent-set (W1-auth-passkey-1). A store outage here fails closed:
+	// no challenge is issued that finish couldn't safely consume.
+	if err := h.reserveCeremony(r.Context(), ceremony); err != nil {
+		h.cfg.Logger.Error("reserve passkey ceremony", "err", err, "user_id", sc.User.ID)
+		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
+		return
+	}
+	if err := h.setPasskeyCeremonyCookie(w, ceremony); err != nil {
 		h.cfg.Logger.Error("set passkey ceremony cookie", "err", err)
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
@@ -544,7 +613,17 @@ func (h *Handlers) HandlePasskeyBeginLogin(w http.ResponseWriter, r *http.Reques
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
-	if err := h.setPasskeyCeremonyCookie(w, passkeyCeremony{Purpose: "login", Session: *session}); err != nil {
+	ceremony := passkeyCeremony{Purpose: "login", Session: *session}
+	// Reserve BEFORE issuing the challenge — see the matching note in
+	// HandlePasskeyBeginRegister. This is what lets finish-login fail
+	// closed when the spent-set is evicted instead of re-minting a
+	// session for a captured request (W1-auth-passkey-1).
+	if err := h.reserveCeremony(r.Context(), ceremony); err != nil {
+		h.cfg.Logger.Error("reserve passkey ceremony", "err", err)
+		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
+		return
+	}
+	if err := h.setPasskeyCeremonyCookie(w, ceremony); err != nil {
 		h.cfg.Logger.Error("set passkey ceremony cookie", "err", err)
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return

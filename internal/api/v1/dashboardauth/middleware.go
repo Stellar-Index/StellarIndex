@@ -104,26 +104,26 @@ func resolveSession(r *http.Request, cfg *Config, tracker *touchTracker) (Sessio
 	if err != nil || cookie.Value == "" {
 		return SessionContext{}, false
 	}
-	id, err := uuid.Parse(cookie.Value)
-	if err != nil {
-		return SessionContext{}, false
-	}
-
-	sess, err := cfg.Users.GetSession(r.Context(), id)
+	// The cookie carries the random token, not the DB primary key. Hash
+	// it and look up by hash — the table stores only sha256(token), so a
+	// read of the sessions table is not directly replayable
+	// (W1-auth-passkey-2). Any non-matching / stale cookie simply misses.
+	sess, err := cfg.Users.GetSessionByTokenHash(r.Context(), HashSessionToken(cookie.Value))
 	if err != nil {
 		// ErrNotFound covers expired (already filtered server-
 		// side via the WHERE revoked_at IS NULL pred + the
 		// caller's session-scan), revoked, and absent. The
 		// user re-logs-in.
 		if !errors.Is(err, platform.ErrNotFound) {
-			// Deliberately NOT logging `id`. The session id IS the bearer
-			// credential — sessions are the one credential stored
-			// unhashed (sessions.id is the PK, unlike api_keys and
-			// magic_link_tokens which are both hashed), and this branch
-			// fires on any transient store error, so a 60-second Postgres
-			// hiccup used to emit one live 30-day session token per
-			// authenticated request into a journal that ships to Loki with
-			// 30-day retention (cold audit 2026-08-04).
+			// Log only `err`, never the cookie token or its hash. The
+			// bearer credential is the cookie token; the table now stores
+			// only sha256(token) (W1-auth-passkey-2), so the internal
+			// sess.ID is no longer a replayable secret — but the incoming
+			// cookie value still is, and this branch fires on any transient
+			// store error, so a 60-second Postgres hiccup must not emit one
+			// live 30-day token per authenticated request into a journal
+			// that ships to Loki with 30-day retention (cold audit
+			// 2026-08-04).
 			cfg.Logger.Warn("session lookup", "err", err)
 		}
 		return SessionContext{}, false
@@ -190,7 +190,7 @@ type touchTracker struct {
 	lastSweep time.Time
 }
 
-func newTouchTracker(interval time.Duration) *touchTracker {
+func newTouchTracker(interval time.Duration) *touchTracker { //nolint:unparam // interval is a test seam; prod passes time.Minute
 	return &touchTracker{
 		last:     make(map[uuid.UUID]time.Time),
 		interval: interval,

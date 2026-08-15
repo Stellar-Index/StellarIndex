@@ -183,11 +183,11 @@ func (w *Worker) evaluateOne(ctx context.Context, a platform.PriceAlert, now tim
 		return nil
 	}
 
-	enqueued, err := w.fanOut(ctx, a, base, quote, priceStr, bucketClose, now)
+	hooks, err := w.subscribedHooks(ctx, a.AccountID)
 	if err != nil {
 		return err
 	}
-	if enqueued == 0 {
+	if len(hooks) == 0 {
 		// Condition holds but the account has no webhook subscribed to
 		// price.alert. Don't mark fired — the moment they wire one up,
 		// the next tick delivers. Not an error.
@@ -195,8 +195,28 @@ func (w *Worker) evaluateOne(ctx context.Context, a platform.PriceAlert, now tim
 			"alert_id", a.ID, "account_id", a.AccountID)
 		return nil
 	}
+	payload, err := buildPayload(a, base, quote, priceStr, bucketClose, now)
+	if err != nil {
+		return fmt.Errorf("build payload: %w", err)
+	}
+	// Advance the fired-mark BEFORE enqueuing (NTF-PA-01). The persisted
+	// LastFiredAt is this crossing's idempotency key: when the mark only
+	// landed AFTER every EnqueueDelivery was durable, a transient mark
+	// failure left LastFiredAt unchanged and the next tick re-delivered
+	// the whole crossing — brand-new delivery ids the customer can't dedup
+	// on the X-StellarIndex-Delivery-Id header, silently breaking the
+	// once-per-cooldown-window guarantee. Marking first means a failure
+	// mid-fan-out cannot re-notify the webhooks that already received the
+	// crossing: the cooldown gate reads the durable mark on the next tick.
+	// A mark failure here aborts before any EnqueueDelivery, so nothing is
+	// sent twice; the residual trade is at-most-once on the narrow
+	// mark-ok/enqueue-fail window, which we accept over duplicate fan-out.
 	if err := w.alerts.MarkPriceAlertFired(ctx, a.ID, now); err != nil {
 		return fmt.Errorf("mark fired: %w", err)
+	}
+	enqueued, err := w.enqueueAll(ctx, hooks, payload)
+	if err != nil {
+		return err
 	}
 	w.logger.Info("price alert fired",
 		"alert_id", a.ID, "account_id", a.AccountID,
@@ -215,24 +235,33 @@ func (w *Worker) coolingDown(a platform.PriceAlert, now time.Time) bool {
 	return now.Sub(a.LastFiredAt) < time.Duration(a.CooldownSeconds)*time.Second
 }
 
-// fanOut enqueues one price.alert delivery per enabled account webhook
-// subscribed to the event. Returns the count enqueued. A single
-// per-webhook enqueue failure aborts (the alert is retried next tick)
-// so we never MarkFired on a partial fan-out.
-func (w *Worker) fanOut(ctx context.Context, a platform.PriceAlert, base, quote canonical.Asset, priceStr string, bucketClose, now time.Time) (int, error) {
-	hooks, err := w.webhooks.ListWebhooksForAccount(ctx, a.AccountID)
+// subscribedHooks returns the account's enabled webhooks that are
+// subscribed to the price.alert event — the fan-out targets for a
+// crossing. Resolving the targets BEFORE the fired-mark lets
+// evaluateOne skip the mark entirely when there is nothing to deliver to
+// (no subscriber yet), while still marking-before-enqueue when there is.
+func (w *Worker) subscribedHooks(ctx context.Context, accountID uuid.UUID) ([]platform.CustomerWebhook, error) {
+	hooks, err := w.webhooks.ListWebhooksForAccount(ctx, accountID)
 	if err != nil {
-		return 0, fmt.Errorf("list account webhooks: %w", err)
+		return nil, fmt.Errorf("list account webhooks: %w", err)
 	}
-	payload, err := buildPayload(a, base, quote, priceStr, bucketClose, now)
-	if err != nil {
-		return 0, fmt.Errorf("build payload: %w", err)
+	var targets []platform.CustomerWebhook
+	for _, h := range hooks {
+		if h.Enabled && subscribed(h.Events, string(platform.WebhookEventPriceAlert)) {
+			targets = append(targets, h)
+		}
 	}
+	return targets, nil
+}
+
+// enqueueAll enqueues one price.alert delivery per target webhook and
+// returns the count enqueued. A single per-webhook enqueue failure aborts
+// and returns the error; the alert is already marked fired (see
+// evaluateOne), so the crossing is not re-delivered to the webhooks that
+// already received it on the next tick.
+func (w *Worker) enqueueAll(ctx context.Context, hooks []platform.CustomerWebhook, payload []byte) (int, error) {
 	enqueued := 0
 	for _, h := range hooks {
-		if !h.Enabled || !subscribed(h.Events, string(platform.WebhookEventPriceAlert)) {
-			continue
-		}
 		d := platform.WebhookDelivery{
 			WebhookID: h.ID,
 			EventType: string(platform.WebhookEventPriceAlert),

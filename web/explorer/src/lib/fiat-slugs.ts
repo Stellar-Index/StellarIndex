@@ -38,8 +38,17 @@ export function fiatSlugFor(ticker: string): string {
   return TICKER_TO_FRIENDLY_SLUG[ticker.toUpperCase()] ?? ticker.toLowerCase();
 }
 
-// assetHrefFor wraps fiatSlugFor + the /assets/ prefix so caller
-// sites read declaratively: `<Link href={assetHrefFor('USD')}>`.
+// assetHrefFor wraps fiatSlugFor + the /external/assets/ prefix so
+// caller sites read declaratively: `<Link href={assetHrefFor('USD')}>`.
+//
+// UXP-12/AM-16/LC-001: a fiat currency has two detail pages —
+// /assets/{slug} (VerifiedCurrencyView, framed as an on-platform asset)
+// and /external/assets/{slug} (framed as a non-Stellar reference asset).
+// The external page is the DECLARED canonical for class==='fiat' (see
+// assets/[slug]/page.tsx generateMetadata: rel=canonical points crawlers
+// there). In-app nav must route to that same canonical so humans and
+// crawlers land on one URL with one framing instead of the version told
+// to Google to ignore.
 export function assetHrefFor(ticker: string): string {
-  return `/assets/${fiatSlugFor(ticker)}`;
+  return `/external/assets/${fiatSlugFor(ticker)}`;
 }

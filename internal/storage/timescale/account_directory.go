@@ -46,6 +46,15 @@ func (s *Store) ReplaceDirectory(ctx context.Context, source string, entries []D
 	if len(entries) == 0 {
 		return 0, 0, errors.New("directory: refusing to sync an empty entry set (would prune the whole source)")
 	}
+	// Entries are keyed on the JSON body's `address` field, not the tar
+	// filename, so a careless/malicious upstream can ship two files that
+	// declare the same address. Two rows with an equal address in one
+	// multi-row upsert chunk make Postgres reject the whole statement
+	// ("ON CONFLICT DO UPDATE command cannot affect row a second time"),
+	// which would abort the entire day's sync (RA-3). Collapse duplicate
+	// addresses last-wins before chunking so one bad pair can't freeze
+	// the sync.
+	entries = dedupDirectoryEntriesByAddress(entries)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, 0, fmt.Errorf("directory: begin: %w", err)
@@ -82,6 +91,27 @@ func (s *Store) ReplaceDirectory(ctx context.Context, source string, entries []D
 		return 0, 0, fmt.Errorf("directory: commit: %w", err)
 	}
 	return upserted, pruned, nil
+}
+
+// dedupDirectoryEntriesByAddress collapses entries sharing an Address
+// to a single entry, last-wins (the later occurrence in upstream
+// tar-iteration order overrides the earlier), preserving the original
+// relative order of the surviving entries. A single multi-row upsert
+// chunk can contain each conflict key at most once, so this is what
+// keeps a duplicate-address upstream from aborting ReplaceDirectory's
+// whole transaction (RA-3).
+func dedupDirectoryEntriesByAddress(entries []DirectoryEntry) []DirectoryEntry {
+	idx := make(map[string]int, len(entries))
+	out := make([]DirectoryEntry, 0, len(entries))
+	for _, e := range entries {
+		if i, seen := idx[e.Address]; seen {
+			out[i] = e // last-wins: overwrite the earlier row in place
+			continue
+		}
+		idx[e.Address] = len(out)
+		out = append(out, e)
+	}
+	return out
 }
 
 // buildDirectoryUpsert renders one multi-row upsert statement for a

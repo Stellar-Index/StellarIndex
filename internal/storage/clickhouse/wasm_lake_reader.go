@@ -146,12 +146,22 @@ func (r *ExplorerReader) contractWasmHash(ctx context.Context, cid xdr.Hash) (xd
 	// ErrContractIsSAC exactly like the legacy path.
 	if r.instanceChangesIndexAvailable(ctx) {
 		h, ok, err := r.contractWasmHashIndexed(ctx, cid)
-		if err == nil || errors.Is(err, ErrContractIsSAC) {
-			// A SAC verdict is authoritative, not an index failure.
+		if (err == nil && ok) || errors.Is(err, ErrContractIsSAC) {
+			// A RESOLVED hash or a SAC verdict is authoritative. An index
+			// MISS (ok=false, err=nil) is NOT (audit REC-04):
+			// instanceChangesIndexAvailable is a table-global LIMIT-1
+			// emptiness probe that cannot see PARTIAL backfill coverage, so
+			// an applied-but-still-backfilling instance timeline holds zero
+			// rows for a contract whose instance write the backfill has not
+			// reached yet. Trusting that miss returned a confidently-wrong
+			// ErrContractWasmUnresolved ("no wasm") for a contract whose
+			// executable the legacy current-state read can still resolve.
+			// So only a positive verdict short-circuits here.
 			return h, ok, err
 		}
-		// Genuine index error — fall through to the legacy read rather
-		// than failing the whole resolution.
+		// Index MISS (unproven by a partial index) or a genuine index
+		// error — fall through to the legacy read rather than trusting an
+		// incomplete index or failing the whole resolution.
 	}
 	return r.contractWasmHashLegacy(ctx, cid)
 }
@@ -371,9 +381,12 @@ func (r *ExplorerReader) contractCodeHistoryIndexed(ctx context.Context, cid xdr
 
 // contractWasmHashIndexed resolves the current executable from the
 // keyed instance timeline: the newest captured instance write for the
-// contract. ok=false with nil error = the instance was never written in
-// all of history (the index is genesis-complete) — an authoritative
-// not-found. ErrContractIsSAC mirrors the legacy path's verdict.
+// contract. ok=false with nil error = no instance row for this contract
+// in the index; the CALLER must NOT treat that as an authoritative
+// not-found (audit REC-04) — the availability probe cannot prove the
+// backfill has reached this contract, so contractWasmHash falls through
+// to the legacy current-state read on a miss. ErrContractIsSAC mirrors
+// the legacy path's verdict.
 func (r *ExplorerReader) contractWasmHashIndexed(ctx context.Context, cid xdr.Hash) (xdr.Hash, bool, error) {
 	rows, err := r.conn.Query(ctx,
 		`SELECT is_sac, wasm_hash FROM stellar.contract_instance_changes

@@ -470,6 +470,17 @@ export function SearchModal() {
                 <X className="h-4 w-4" />
               </button>
             </div>
+            {/* ACC-10: the result list re-renders per keystroke but a
+                screen reader hears nothing about the count or the
+                no-match state. A visually-hidden polite live region
+                announces the outcome on each query change. */}
+            <div className="sr-only" role="status" aria-live="polite">
+              {q.trim() === ''
+                ? ''
+                : results.length === 0
+                  ? 'No matches.'
+                  : `${results.length} result${results.length === 1 ? '' : 's'}.`}
+            </div>
             <ul className="max-h-96 overflow-y-auto p-2 text-sm">
               {results.length === 0 && (
                 <li className="px-3 py-2 text-xs text-ink-muted">

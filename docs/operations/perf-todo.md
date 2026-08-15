@@ -6,6 +6,18 @@ status: living doc
 
 # API performance follow-ups
 
+> **⚠️ PARTIALLY SUPERSEDED (2026-08-14).** The "Current state on R1"
+> table and several "still pending" items below describe the 2026-05 world
+> and predate the v0.28.1–v0.33.2 refresh-gate / prewarm / stale-while-
+> revalidate campaign, which SHIPPED the stale-while-revalidate serving
+> shape (item 1.2), the ordered `tx_hash_index` + backfill (item 4), and
+> materialized catalogue views (item 3 direction) — see `CHANGELOG.md`
+> (search `stale-while-revalidate`, `prewarm`, `tx_hash_index`). Do NOT
+> build fresh SWR wrappers or re-investigate the tx-index; check the
+> shipped architecture first. Items 2 (compressed-chunk recompress) and 3
+> (SLO synthetic-noise) remain open operator/tuning follow-ups. Re-anchor
+> this doc against current R1 before treating any "pending" item as unshipped.
+
 Captured during the post-#690 perf-investigation pass. The
 route-label fix in #690 stopped masking the slow-request ratio
 behind constant `route="unmatched"` denominators; the SLO recording
@@ -58,11 +70,14 @@ Cold-read fix paths, in order of ambition:
    directives. When `api.stellarindex.io` lands behind Cloudflare /
    equivalent, consumers see edge-cache hits for shareable URLs
    regardless of Redis TTL. **Smallest change; operator action.**
-2. **Stale-while-revalidate cache.** Serve the warm value
-   immediately while refreshing async. The consumer never sees a cold
-   read; Redis stays continuously hot. ~50 LOC each on top of the
-   existing `cachedOracleReader` / `cachedAssetReader` /
-   `cachedMarketsReader` wrappers in `cmd/stellarindex-api/main.go`.
+2. **Stale-while-revalidate cache. — SHIPPED (v0.28.1–v0.33.2).** Serve
+   the warm value immediately while refreshing async. The consumer never
+   sees a cold read; Redis stays continuously hot. This is now the
+   established serving shape across the API and explorer (detached
+   single-flight refresh under the class-fair refresh gate, tied to the
+   5-minute prewarm loop); do NOT add new bespoke SWR wrappers — reuse it.
+   See `CHANGELOG.md` (`stale-while-revalidate`, `prewarm`,
+   `explorer_swr_refresh`).
 3. **Materialised tables.** `markets_summary` and
    `assets_catalogue` tables maintained by the indexer on every
    trade insert; `Store.DistinctPairs` / `DistinctAssets` read
@@ -109,7 +124,14 @@ Three angles, no consensus on which is right:
 arrives — the noise is a pre-launch artifact and will heal as
 real polling fan-out dilutes it.
 
-### 4. `/v1/tx/{hash}` cold lookup ~5–6 s — `tx_hash` has no ordered index
+### 4. `/v1/tx/{hash}` cold lookup ~5–6 s — `tx_hash` has no ordered index — SHIPPED
+
+> **SHIPPED.** The ordered `stellar.tx_hash_index` (hash-keyed point
+> lookup) plus its `tx_hash_index_mv` and the `ch-txindex-backfill` ops
+> subcommand for history now back this endpoint, guarded by the hourly
+> `tx_hash_index_parity` assertion. Do NOT re-investigate the seq-scan —
+> see `CHANGELOG.md` (`tx_hash_index`). Retained below for the original
+> measurements.
 
 Investigated 2026-06-24 during the SEO audit (the transaction-detail
 entity page reads this endpoint).

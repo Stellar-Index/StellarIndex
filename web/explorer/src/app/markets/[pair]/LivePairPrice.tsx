@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react';
 
 import { API_BASE_URL } from '@/api/client';
 import { cn } from '@/lib/cn';
+import { formatSubunitPrice } from '@/lib/format';
 import { isFrameStale, useLiveClock, usePriceFlash, useTipStream } from '@/lib/live/hooks';
 
 const TIP_LIVE_STALE_MS = 30_000;
@@ -109,7 +110,7 @@ export function LivePairPrice({
 
 function formatQuotePrice(n: number, quoteIsUsd: boolean, quoteSuffix: string): string {
   const num =
-    n >= 1 ? n.toFixed(n >= 100 ? 2 : 4) : n >= 0.001 ? n.toFixed(6) : n > 0 ? n.toExponential(3) : '—';
+    n >= 1 ? n.toFixed(n >= 100 ? 2 : 4) : n >= 0.001 ? n.toFixed(6) : n > 0 ? formatSubunitPrice(n) : '—';
   if (num === '—') return num;
   return quoteIsUsd ? `$${num}` : `${num} ${quoteSuffix}`;
 }

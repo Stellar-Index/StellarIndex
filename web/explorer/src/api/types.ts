@@ -13939,7 +13939,7 @@ export interface components {
             condition: "above" | "below";
             /** @description Positive decimal string (e.g. "0.15", "1200"). Fractions / scientific notation are rejected. */
             threshold: string;
-            /** @description Optional; defaults 0. */
+            /** @description Optional; defaults to 300 (5m) when omitted. Send an explicit 0 to opt into re-firing every tick the condition holds. */
             cooldown_seconds?: number;
             /** @description Defaults true when absent. */
             enabled?: boolean;

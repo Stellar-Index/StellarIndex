@@ -268,6 +268,25 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	// re-add without a matching drop).
 	assertTableAbsent(t, db, ctx, "classic_movements")
 
+	// 0142 — the six protocol tables 0127-0132 typed derive_generation
+	// as int4 while every other derived-value table (0109/0110 core +
+	// protocol, 0141 fx_quotes) uses bigint (audit W1-migrations-3). The
+	// column carries time.Now().Unix(), so an int4 column overflows on
+	// 2038-01-19 and rejects EVERY projector write to these tables.
+	// Migration 0142 widens all six to bigint; assert the applied type
+	// so a future re-add of one of these tables (or a reverted 0142)
+	// can't silently reintroduce the 2038 cliff.
+	for _, table := range []string{
+		"soroswap_liquidity",
+		"aquarius_reserves_sync",
+		"aquarius_protocol_fee",
+		"aquarius_kill_switches",
+		"phoenix_initialize",
+		"phoenix_admin_events",
+	} {
+		assertColumnType(t, db, ctx, table, "derive_generation", "bigint")
+	}
+
 	// ─── Down: roll everything back ─────────────────────────────
 	if err := migrator.Down(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		t.Fatalf("migrate down: %v", err)
@@ -325,6 +344,27 @@ func assertTableAbsent(t *testing.T, db *sql.DB, ctx context.Context, name strin
 		// the up-path for a table a later migration drops (0113 →
 		// classic_movements), so the message stays context-neutral.
 		t.Errorf("expected table %q to be absent", name)
+	}
+}
+
+// assertColumnType checks that a column's SQL data type matches want
+// (information_schema.columns.data_type — e.g. "bigint", "integer").
+// Used to guard the derive_generation int4->bigint parity (0142): a
+// column silently left as int4 overflows time.Now().Unix() in 2038.
+func assertColumnType(t *testing.T, db *sql.DB, ctx context.Context, table, column, want string) {
+	t.Helper()
+	var got string
+	err := db.QueryRowContext(ctx, `
+        SELECT data_type FROM information_schema.columns
+        WHERE table_name = $1 AND column_name = $2`,
+		table, column,
+	).Scan(&got)
+	if err != nil {
+		t.Fatalf("read type of %s.%s: %v", table, column, err)
+	}
+	if got != want {
+		t.Errorf("%s.%s is %q, want %q (derive_generation must be bigint — an int4 overflows the unix-epoch generation stamp in 2038; audit W1-migrations-3 / migration 0142)",
+			table, column, got, want)
 	}
 }
 

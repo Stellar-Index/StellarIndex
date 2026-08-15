@@ -35,10 +35,22 @@ import (
 // SETNX — which the handler treats as "cannot prove freshness" and
 // refuses the sign-in.
 //
-// Eviction caveat: R1 runs `maxmemory-policy allkeys-lru`, so under
-// memory pressure a spent-marker can be evicted before its TTL. The
-// exposure that opens is bounded by the ceremony's own 5-minute
-// expiry, which is enforced independently of this guard.
+// Eviction hardening: R1 runs `maxmemory-policy allkeys-lru`, which
+// evicts ANY key (TTL or not, this namespace or not) under memory
+// pressure — a longer TTL, a separate logical DB, or a volatile-lru
+// namespace do NOT exempt it, because eviction is instance-wide. A
+// bare SETNX spent-marker is therefore unsafe: if the marker is
+// evicted before its TTL (e.g. while an attacker floods the shared
+// instance with no-expiry apikey mirror writes via open registration),
+// a replayed `finish-login` finds the slot free and SETNX re-claims
+// it — minting a SECOND session for the victim (W1-auth-passkey-1,
+// audit-2026-08-14). To make eviction fail CLOSED instead of open,
+// production consumes through [RedisPasskeyCeremonyGuard.Reserve] +
+// [RedisPasskeyCeremonyGuard.ClaimReserved]: the ceremony is reserved
+// at begin, and the claim REQUIRES the reservation to still exist — an
+// evicted (absent) marker refuses the sign-in rather than freeing it
+// for a captured request. [RedisPasskeyCeremonyGuard.Consume] is
+// retained for interface conformance but is not the production path.
 type RedisPasskeyCeremonyGuard struct {
 	rdb redis.Cmdable
 }
@@ -58,6 +70,52 @@ func NewRedisPasskeyCeremonyGuard(rdb redis.Cmdable) *RedisPasskeyCeremonyGuard 
 // Sole-builder pattern, matching signupLockKey / redisReplayKey.
 func passkeyCeremonyKey(digest string) string {
 	return "passkey:ceremony:" + digest
+}
+
+// liveCeremonyKey names the begin-time reservation marker for a
+// ceremony digest. Distinct from the (superseded) spent-marker
+// passkeyCeremonyKey writes, but under the same `passkey:ceremony:`
+// prefix so no Redis ACL allow-list change is needed.
+func liveCeremonyKey(digest string) string {
+	return "passkey:ceremony:live:" + digest
+}
+
+// Reserve records, at ceremony BEGIN, that a challenge is live and
+// redeemable exactly once. It is the first half of the eviction-safe
+// single-use protocol (see the type doc and [RedisPasskeyCeremonyGuard.ClaimReserved]):
+// because the later claim requires this marker to still exist, an
+// allkeys-lru eviction of it makes the sign-in fail CLOSED rather than
+// re-open the replay window. ttl must outlive the ceremony's own
+// validity so the reservation never expires under a still-valid
+// challenge. A challenge is 32 random bytes, so a pre-existing marker
+// (SETNX returning false) is a re-begin of the same ceremony, not a
+// collision — treated as already-reserved, not an error.
+func (g *RedisPasskeyCeremonyGuard) Reserve(ctx context.Context, digest string, ttl time.Duration) error {
+	key := liveCeremonyKey(digest)
+	if _, err := g.rdb.SetNX(ctx, key, "1", ttl).Result(); err != nil {
+		return fmt.Errorf("redis setnx %s: %w", key, err)
+	}
+	return nil
+}
+
+// ClaimReserved spends a ceremony reserved by [RedisPasskeyCeremonyGuard.Reserve].
+// It returns (true, nil) for the caller that removes the live marker —
+// the one and only presentation that may mint a session — and (false,
+// nil) when the marker is ABSENT for ANY reason: already claimed (a
+// replay), never reserved, or evicted under memory pressure. Treating
+// absence as "refuse" is the fix: unlike the SETNX spent-set, an
+// evicted marker can no longer be re-claimed, because the claim needs
+// the marker present rather than absent. DEL is atomic, so two
+// concurrent presentations of one captured request resolve to exactly
+// one claimant. A store outage surfaces as an error; the caller fails
+// closed on it just as it does for [RedisPasskeyCeremonyGuard.Consume].
+func (g *RedisPasskeyCeremonyGuard) ClaimReserved(ctx context.Context, digest string) (bool, error) {
+	key := liveCeremonyKey(digest)
+	removed, err := g.rdb.Del(ctx, key).Result()
+	if err != nil {
+		return false, fmt.Errorf("redis del %s: %w", key, err)
+	}
+	return removed == 1, nil
 }
 
 // Consume implements the dashboardauth.PasskeyCeremonyGuard contract:

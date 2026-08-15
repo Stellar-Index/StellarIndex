@@ -24,6 +24,15 @@ import (
 // AmountIn / AmountOut are decimal-string numerics (i128 →
 // *big.Int → string per ADR-0003). Path is the hop sequence of
 // raw token C-strkeys (≥ 2 by router precondition).
+//
+// CAVEAT (audit DOM-1): these hold the router call's two i128 args as
+// DECLARED — they are NOT both realized amounts. Exactly one side is
+// exact/realized and the other is a caller-declared slippage BOUND:
+// for swap_exact_tokens_for_tokens, amount_out is amount_out_min (a
+// FLOOR); for swap_tokens_for_exact_tokens, amount_in is amount_in_max
+// (a CEILING). Read function_name before treating either as realized;
+// the realized per-hop fills live in the per-pair soroswap `swap`
+// events (trades) for the same tx. See soroswap_router/decode.go.
 type SoroswapRouterSwap struct {
 	Ledger          uint32
 	LedgerCloseTime time.Time

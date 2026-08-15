@@ -1,0 +1,72 @@
+---
+# promtool unit tests for stellarindex_sla_probe_stale (audit-2026-08-14 OBS-2).
+#
+#   promtool test rules deploy/monitoring/rule-tests/sla-probe_test.yml
+#
+# OBS-2: the probe emits stellarindex_sla_probe_last_pass_timestamp ONLY on a
+# passing run and rewrites the whole node_exporter textfile each run, so a run
+# that fails DROPS the series. On the every-run-failed case the series is
+# therefore ABSENT (not old), so the original `time() - last_pass_timestamp >
+# 90m` branch evaluates over an empty vector and can never fire — the exact
+# case the alert documents. The fix adds an
+# `absent_over_time(...[90m])` branch that fires when no passing run has been
+# recorded in 90 min (timer dead OR every run failing).
+#
+# PROVEN-RED: revert the sla-probe.yml expr to the single
+# `(time() - last_pass_timestamp) > (90 * 60)` line and re-run — the
+# "every recent run has failed" case reports 0 firing alerts (FAIL), because
+# with the series absent nothing selects it. The healthy case passes either way,
+# so the fire test is the non-vacuous one and it exercises the real alert
+# (its 90m window and 5m `for`), not a mock.
+
+rule_files:
+  - ../rules/sla-probe.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── every recent run has failed: last_pass_timestamp went absent ──
+  # A passing run at t=0..5m stamps last_pass_timestamp; every run after
+  # fails, so the probe rewrites the textfile WITHOUT the series and it
+  # goes absent from ~t=6m onward while unit_failed stays 1. Past the 90m
+  # window + 5m `for`, sla_probe_stale must page.
+  - interval: 1m
+    name: every-run-failed drops last_pass_timestamp and the stale page fires
+    input_series:
+      - series: 'stellarindex_sla_probe_last_pass_timestamp'
+        values: '0+60x5 _x120'
+      - series: 'stellarindex_sla_probe_unit_failed'
+        values: '1x125'
+    alert_rule_test:
+      - eval_time: 105m
+        alertname: stellarindex_sla_probe_stale
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-stale.md
+              summary: "SLA probe has recorded no passing run in ≥ 90m (cadence 15m) — timer dead or every run failing"
+              description: |
+                Either the systemd timer isn't running, or every run since
+                the last pass has failed. Without the probe, we lose the
+                SLA-evidence trail required by the SLA. Runbook:
+                check systemd-unit status first; fall through to the
+                per-breach runbooks if every run is genuinely failing.
+
+  # ── healthy: last_pass_timestamp is fresh every run — no page ──
+  # Each passing run stamps last_pass_timestamp = the run's wall clock, so
+  # the series tracks time() and `time() - last_pass` stays ~0; the series
+  # is never absent. Neither branch may fire.
+  - interval: 1m
+    name: a passing probe (fresh last_pass every run) never pages
+    input_series:
+      - series: 'stellarindex_sla_probe_last_pass_timestamp'
+        values: '0+60x120'
+      - series: 'stellarindex_sla_probe_unit_failed'
+        values: '0x120'
+    alert_rule_test:
+      - eval_time: 100m
+        alertname: stellarindex_sla_probe_stale
+        exp_alerts: []
