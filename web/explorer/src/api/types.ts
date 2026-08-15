@@ -13326,6 +13326,22 @@ export interface components {
         TxDetail: components["schemas"]["TxSummary"] & {
             operations?: components["schemas"]["Operation"][];
             events?: components["schemas"]["ContractEvent"][];
+            /**
+             * @description Honest-degrade signal (mirrors the AccountMovements
+             *     coverage_note pattern), present ONLY when a non-fatal
+             *     sub-read failed while assembling this response:
+             *       - the per-operation result-code read errored — the
+             *         operations shown carry no `result_code`, which is
+             *         NOT a successful/zero result;
+             *       - the contract-event read errored — the `events`
+             *         array is incomplete, NOT genuinely empty.
+             *     Both `events` and each op's `result_code` are omitted
+             *     when absent, so without this note a failed read is
+             *     indistinguishable on the wire from a real empty.
+             *     Absent = every sub-read succeeded and empty arrays /
+             *     absent codes are real.
+             */
+            coverage_note?: string;
         };
         /** @description A contract event (tx-detail + contract-activity views). */
         ContractEvent: {
