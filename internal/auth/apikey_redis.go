@@ -53,6 +53,12 @@ type RedisAPIKeyValidator struct {
 	// See [WithAccountStatusCacheTTL] and [accountActive].
 	statusTTL      time.Duration
 	statusMaxStale time.Duration
+
+	// mirroredKeyIdleTTL is the sliding idle window re-applied to a
+	// TTL-bearing record on every successful validated Lookup — the
+	// read-path half of the [MirroredKeyIdleTTL] bound. Zero disables
+	// refresh-on-use. See [Lookup] and [refreshIdleTTL].
+	mirroredKeyIdleTTL time.Duration
 	// statusCache memoises the last-read account status per slug so the
 	// kill-switch GetBySlug is read at most once per account per
 	// statusTTL window (bounding hot-path Postgres load) and a transient
@@ -75,6 +81,20 @@ type cachedAccountStatus struct {
 // per request. Matches the 30s dwell-time the rest of the auth layer
 // uses for Redis-degradation windows.
 const DefaultAccountStatusCacheTTL = 30 * time.Second
+
+// MirroredKeyIdleTTL bounds a register-mirrored credential's lifetime in
+// the allkeys-lru validator pool as a SLIDING idle window rather than a
+// hard expiry (W1-flow-register-2). The record is written with this TTL
+// ([RedisAPIKeyStore.CreateWithSecret]) and every successful validated
+// [Lookup] slides it forward, so an actively-used key never expires while
+// a key untouched for the whole window TTLs out on its own — capping the
+// keyspace growth that open, anonymous /v1/register would otherwise make
+// unbounded, WITHOUT re-introducing the "valid key → permanent silent
+// 401" defect for keys that are actually in use.
+//
+// 90 days: comfortably longer than any plausible active-use gap, so only
+// a genuinely abandoned credential is ever dropped.
+const MirroredKeyIdleTTL = 90 * 24 * time.Hour
 
 // AccountStatusReader is the narrow slice of
 // [platform.AccountStore] the Redis validator needs to honour an
@@ -255,6 +275,14 @@ func WithAccountStatusCacheTTL(ttl time.Duration) RedisOption {
 	}
 }
 
+// WithMirroredKeyIdleTTL overrides the sliding idle window re-applied on
+// each successful Lookup (default [MirroredKeyIdleTTL]). A non-positive
+// value disables refresh-on-use. Tests inject a short window to exercise
+// the slide deterministically.
+func WithMirroredKeyIdleTTL(ttl time.Duration) RedisOption {
+	return func(v *RedisAPIKeyValidator) { v.mirroredKeyIdleTTL = ttl }
+}
+
 // NewRedisAPIKeyValidator constructs a validator that reads records
 // from rdb. rdb MUST be non-nil — callers wire this only after
 // confirming Redis is available; the auth middleware fails-loud at
@@ -264,10 +292,11 @@ func NewRedisAPIKeyValidator(rdb redis.Cmdable, opts ...RedisOption) *RedisAPIKe
 		panic("auth: NewRedisAPIKeyValidator: rdb must not be nil")
 	}
 	v := &RedisAPIKeyValidator{
-		rdb:         rdb,
-		now:         time.Now,
-		statusTTL:   DefaultAccountStatusCacheTTL,
-		statusCache: make(map[string]cachedAccountStatus),
+		rdb:                rdb,
+		now:                time.Now,
+		statusTTL:          DefaultAccountStatusCacheTTL,
+		statusCache:        make(map[string]cachedAccountStatus),
+		mirroredKeyIdleTTL: MirroredKeyIdleTTL,
 	}
 	for _, opt := range opts {
 		opt(v)
@@ -329,6 +358,17 @@ func (v *RedisAPIKeyValidator) Lookup(ctx context.Context, key string) (Subject,
 		return Subject{}, fmt.Errorf("auth: apikey ip_allowlist decode: %w", err)
 	}
 
+	// Refresh-on-use (W1-flow-register-2): a fully-validated key that
+	// carries a TTL (the register mirror) has its idle window slid
+	// forward, so an actively-used credential never hard-expires while a
+	// genuinely idle one still TTLs out of the allkeys-lru pool. Placed
+	// after every rejection gate (revoked / expired / account inactive)
+	// so a suspended account's key is NOT kept alive. Best-effort and
+	// EXPIRE ... XX, so it never touches persistent (TTL-less) operator /
+	// self-service records and a failed refresh only means the key rides
+	// its remaining TTL — never a rejected auth.
+	v.refreshIdleTTL(ctx, hash)
+
 	tier := rec.Tier
 	if tier == "" {
 		// Records seeded without an explicit tier default to the
@@ -377,6 +417,20 @@ func (v *RedisAPIKeyValidator) Lookup(ctx context.Context, key string) (Subject,
 		// metered: no 429, no log, no alert.
 		MonthlyQuota: rec.MonthlyQuota,
 	}, nil
+}
+
+// refreshIdleTTL slides a TTL-bearing record's idle window forward to
+// mirroredKeyIdleTTL. Uses EXPIRE ... XX so it is a no-op on records
+// written without a TTL (operator-seeded / self-service keys), keeping
+// their persistent semantics intact; only the register-mirror records,
+// written with an idle TTL, are re-warmed. Best-effort: any error is
+// swallowed — the worst case is the key expiring on its existing TTL, an
+// idle key by definition.
+func (v *RedisAPIKeyValidator) refreshIdleTTL(ctx context.Context, hash string) {
+	if v.mirroredKeyIdleTTL <= 0 {
+		return
+	}
+	_ = v.rdb.ExpireXX(ctx, cachekeys.APIKey(hash).String(), v.mirroredKeyIdleTTL).Err()
 }
 
 // accountActive enforces the account-level kill switch for a record

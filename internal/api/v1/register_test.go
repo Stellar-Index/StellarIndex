@@ -21,6 +21,7 @@ import (
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/signupreaper"
 )
 
 // fakeRegisterAccountStore implements the full [platform.AccountStore]
@@ -75,7 +76,17 @@ func (f *fakeRegisterAccountStore) Update(_ context.Context, a platform.Account)
 	return nil
 }
 
-func (f *fakeRegisterAccountStore) Suspend(_ context.Context, _ uuid.UUID, _ string) error {
+func (f *fakeRegisterAccountStore) Suspend(_ context.Context, id uuid.UUID, reason string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	a, ok := f.byID[id]
+	if !ok {
+		return platform.ErrNotFound
+	}
+	a.Status = platform.AccountSuspended
+	a.SuspendedReason = reason
+	a.SuspendedAt = time.Now().UTC()
+	f.byID[id] = a
 	return nil
 }
 func (f *fakeRegisterAccountStore) Unsuspend(_ context.Context, _ uuid.UUID) error { return nil }
@@ -87,6 +98,7 @@ type fakeRegisterKeyStore struct {
 	mu          sync.Mutex
 	byID        map[string]platform.APIKey
 	lastMaxKeys int
+	createErr   error // when set, Create fails (durable management-row write failure)
 }
 
 func newFakeRegisterKeyStore() *fakeRegisterKeyStore {
@@ -96,6 +108,9 @@ func newFakeRegisterKeyStore() *fakeRegisterKeyStore {
 func (f *fakeRegisterKeyStore) Create(_ context.Context, k platform.APIKey, maxActive int) (platform.APIKey, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.createErr != nil {
+		return platform.APIKey{}, f.createErr
+	}
 	k.CreatedAt = time.Now().UTC()
 	f.byID[k.ID] = k
 	f.lastMaxKeys = maxActive
@@ -443,15 +458,24 @@ func TestRegister_ValidationAndGates(t *testing.T) {
 // recordingMirror captures what the register mint writes into the
 // validator's own key store.
 type recordingMirror struct {
-	got  auth.MirroredKey
-	err  error
-	call int
+	got      auth.MirroredKey
+	err      error
+	call     int
+	revoked  []string // KeyIDs passed to RevokeKeyByID (mirror rollback)
+	revokeMu sync.Mutex
 }
 
 func (m *recordingMirror) CreateWithSecret(_ context.Context, k auth.MirroredKey) error {
 	m.call++
 	m.got = k
 	return m.err
+}
+
+func (m *recordingMirror) RevokeKeyByID(_ context.Context, _, keyID string) error {
+	m.revokeMu.Lock()
+	defer m.revokeMu.Unlock()
+	m.revoked = append(m.revoked, keyID)
+	return nil
 }
 
 // TestRegister_MirrorsKeyIntoValidatorStore is the v0.32.0
@@ -506,6 +530,92 @@ func TestRegister_MirrorFailureIsNotA200(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusOK {
 		t.Fatal("register returned 200 though the credential never reached the validator store")
+	}
+}
+
+// TestRegister_MirrorFailureSuspendsOrphanForReaper is the NS-3
+// regression: when the credential mirror fails, the register path must
+// (a) commit NO durable api_keys row (mirror-first ordering) and
+// (b) quarantine the leftover account row as a `signup-race:` suspension
+// so the existing signupreaper reclaims it — instead of leaving a
+// permanent active account + api_keys pair that can never authenticate
+// and that ReapSuspendedOrphans structurally cannot match.
+//
+// RED on the pre-fix ordering (Postgres key committed BEFORE the mirror,
+// no suspend on failure): the api_keys row persists AND the account stays
+// active.
+func TestRegister_MirrorFailureSuspendsOrphanForReaper(t *testing.T) {
+	accounts := newFakeRegisterAccountStore()
+	keys := newFakeRegisterKeyStore()
+	mirror := &recordingMirror{err: context.DeadlineExceeded}
+	ts := newRegisterTestServer(t, accounts, keys, &fakeRegisterIPThrottle{}, mirror)
+
+	resp := postRegister(t, ts.URL, "application/json", "")
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		t.Fatal("register returned 200 though the credential never reached the validator store")
+	}
+
+	// (a) Mirror-first: a mirror failure must leave NO durable api_keys
+	// row (the reaper requires no api_keys child).
+	if n := len(keys.byID); n != 0 {
+		t.Errorf("mirror failure still committed %d api_keys row(s) — a register orphan the signup-reaper cannot match (NS-3)", n)
+	}
+
+	// (b) The account row is quarantined for the reaper.
+	if len(accounts.created) != 1 {
+		t.Fatalf("want exactly 1 account created, got %d", len(accounts.created))
+	}
+	acct, err := accounts.Get(context.Background(), accounts.created[0].ID)
+	if err != nil {
+		t.Fatalf("get orphan account: %v", err)
+	}
+	if acct.Status != platform.AccountSuspended {
+		t.Errorf("orphan account status = %q, want %q so the signup-reaper reclaims it (NS-3)",
+			acct.Status, platform.AccountSuspended)
+	}
+	if !strings.HasPrefix(acct.SuspendedReason, signupreaper.SignupRaceReasonPrefix) {
+		t.Errorf("orphan suspended_reason = %q, want a prefix of %q so ReapSuspendedOrphans' LIKE matches",
+			acct.SuspendedReason, signupreaper.SignupRaceReasonPrefix)
+	}
+}
+
+// TestRegister_ManagementRowFailureRollsBackMirror covers the mirror-
+// first inversion: when the mirror succeeds but the durable management
+// row then fails, the mirrored credential must be rolled back so no
+// working key ever outlives its management record (the "unlistable/
+// unrevokable key" hazard mirror-first would otherwise introduce), and
+// the orphan account is still suspended for the reaper.
+//
+// RED on the pre-fix ordering: the mirror ran AFTER the key store, so a
+// key-store failure returned before any mirror write — the mirror is
+// never called (call==0) and never rolled back.
+func TestRegister_ManagementRowFailureRollsBackMirror(t *testing.T) {
+	accounts := newFakeRegisterAccountStore()
+	keys := newFakeRegisterKeyStore()
+	keys.createErr = context.DeadlineExceeded // durable management-row write fails
+	mirror := &recordingMirror{}              // mirror itself succeeds
+	ts := newRegisterTestServer(t, accounts, keys, &fakeRegisterIPThrottle{}, mirror)
+
+	resp := postRegister(t, ts.URL, "application/json", "")
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		t.Fatal("register returned 200 though the management row failed to commit")
+	}
+
+	if mirror.call != 1 {
+		t.Fatalf("mirror called %d times, want 1 — the mirror must be written BEFORE the management row (NS-3)", mirror.call)
+	}
+	if len(mirror.revoked) != 1 {
+		t.Errorf("mirrored credential was not rolled back after the management-row failure (revoked=%v) — a working key must never outlive its management record",
+			mirror.revoked)
+	}
+	acct, err := accounts.Get(context.Background(), accounts.created[0].ID)
+	if err != nil {
+		t.Fatalf("get orphan account: %v", err)
+	}
+	if acct.Status != platform.AccountSuspended {
+		t.Errorf("orphan account status = %q, want %q (NS-3)", acct.Status, platform.AccountSuspended)
 	}
 }
 

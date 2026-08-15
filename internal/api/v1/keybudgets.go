@@ -32,6 +32,12 @@ type SelfServiceKeyManager interface {
 // own store. Implemented by [auth.RedisAPIKeyStore].
 type KeyMirror interface {
 	CreateWithSecret(ctx context.Context, k auth.MirroredKey) error
+	// RevokeKeyByID removes a mirrored credential by KeyID, scoped to its
+	// owner identifier. The register path uses it to roll back a mirror
+	// that succeeded but whose durable management row then failed to
+	// commit, so no credential ever outlives its management record
+	// (NS-3). Implemented by [auth.RedisAPIKeyStore.RevokeKeyByID].
+	RevokeKeyByID(ctx context.Context, identifier, keyID string) error
 }
 
 type KeyCacheInvalidator interface {

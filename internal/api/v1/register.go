@@ -15,9 +15,13 @@ import (
 	"net/http"
 	"net/mail"
 	"strings"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/signupreaper"
 )
 
 // RegisterAccountCreator is the narrow platform-account boundary
@@ -28,6 +32,15 @@ import (
 // PlatformAccountStore stays Get/Update-only.
 type RegisterAccountCreator interface {
 	Create(ctx context.Context, a platform.Account) (platform.Account, error)
+	// Suspend quarantines an account behind a machine-matchable
+	// suspended_reason. The register path uses it to mark an orphan —
+	// an account whose first credential never reached the validator
+	// store — as a `signup-race:` suspension so the existing
+	// signupreaper (suspended + signup-race: reason + no child
+	// users/api_keys) reclaims it, instead of leaving a permanent active
+	// account that can never authenticate (NS-3). Backed by the same
+	// postgresstore.AccountStore.Suspend the admin path uses.
+	Suspend(ctx context.Context, id uuid.UUID, reason string) error
 }
 
 // registerRequest is the inbound POST /v1/register body. Both fields
@@ -121,13 +134,14 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, context.Canceled) {
 			return
 		}
-		// The account row exists but its first key doesn't — an
-		// orphan. Logged with the account_id so an operator can
-		// reconcile (or the caller just registers again); mirroring
-		// the signup-race posture of never failing the durable part
-		// silently.
+		// The account row exists but its first credential never reached
+		// the validator store — an orphan (NS-3). Quarantine it as a
+		// suspended `signup-race:` orphan so the signupreaper reclaims it
+		// (suspended + reason + no child users/api_keys), instead of
+		// leaving a permanent active account that can never authenticate.
 		s.logger.Error("register: key mint failed after account create (orphan account)",
 			"err", err, "account_id", acct.ID)
+		s.suspendRegisterOrphan(r.Context(), acct.ID, err)
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError,
@@ -224,19 +238,21 @@ func (s *Server) mintRegisterKey(ctx context.Context, acct platform.Account) (st
 		MonthlyQuota:    tier.MaxMonthlyQuota(),
 		Permissions:     platform.KeyPermissions{All: true},
 	}
-	out, err := s.apiKeyBudgets.Platform.Create(ctx, rec, tier.MaxActiveKeys())
-	if err != nil {
-		return "", platform.APIKey{}, fmt.Errorf("create api key: %w", err)
-	}
-	// The Postgres row above is the MANAGEMENT record (listing,
-	// tier-clamp fan-out, revocation). It is NOT necessarily what the
-	// deployment's auth middleware reads: r1 runs the REDIS validator
-	// (`backend=redis` at startup), so a Postgres-only key 401s the
-	// instant the caller uses it — found in the v0.32.0 post-deploy
-	// battery, where /v1/register returned a well-formed key that did
-	// not work. Mirror the credential into the Redis store when that
-	// store is wired, keyed by the SAME plaintext so one secret
-	// validates on either backend.
+	// Mirror the credential into the Redis validator store FIRST — before
+	// the durable Postgres management row (NS-3). r1 runs the REDIS
+	// validator (`backend=redis` at startup), so the mirror IS the working
+	// credential; the Postgres api_keys row is the MANAGEMENT record
+	// (listing, tier-clamp fan-out, revocation). A Postgres-only key 401s
+	// the instant the caller uses it — the v0.32.0 post-deploy defect.
+	//
+	// Ordering matters for orphan reaping: writing the mirror first means a
+	// mirror failure leaves NO durable api_keys row — only the account row,
+	// which handleRegister then suspends for the signupreaper to reclaim —
+	// instead of a permanent active account + api_keys pair that can never
+	// authenticate and no reaper matches. The mirror is keyed by the SAME
+	// plaintext so one secret validates on either backend, and carries an
+	// idle TTL that re-warms on use (CreateWithSecret) so it cannot grow the
+	// allkeys-lru keyspace without bound (W1-flow-register-2).
 	if s.apiKeyBudgets.RedisMirror != nil {
 		if err := s.apiKeyBudgets.RedisMirror.CreateWithSecret(ctx, auth.MirroredKey{
 			Plaintext:       plaintext,
@@ -246,13 +262,61 @@ func (s *Server) mintRegisterKey(ctx context.Context, acct platform.Account) (st
 			RateLimitPerMin: rec.RateLimitPerMin,
 			MonthlyQuota:    rec.MonthlyQuota,
 		}); err != nil {
-			// The management row exists but the credential would not
-			// authenticate — refuse rather than hand back a key that
-			// silently fails (the exact defect this guards).
+			// No management row committed yet — refuse rather than hand back
+			// a key that silently fails, and leave no durable orphan.
 			return "", platform.APIKey{}, fmt.Errorf("mirror api key to validator store: %w", err)
 		}
 	}
+
+	out, err := s.apiKeyBudgets.Platform.Create(ctx, rec, tier.MaxActiveKeys())
+	if err != nil {
+		// The credential is already live in the validator store but its
+		// durable management row failed to commit — a credential with no
+		// owner record. Roll the mirror back so we never emit an
+		// unlistable/unrevokable key (the mirror-first inversion). Best-
+		// effort: the account is suspended + reaped and the mirror carries
+		// an idle TTL, so even a failed rollback self-heals rather than
+		// persisting a working orphan credential.
+		if s.apiKeyBudgets.RedisMirror != nil {
+			if rbErr := s.apiKeyBudgets.RedisMirror.RevokeKeyByID(ctx, auth.AccountIdentifier(acct.Slug), rec.ID); rbErr != nil {
+				s.logger.Error("register: mirror rollback after management-row create failed",
+					"err", rbErr, "account_id", acct.ID, "key_id", rec.ID)
+			}
+		}
+		return "", platform.APIKey{}, fmt.Errorf("create api key: %w", err)
+	}
 	return plaintext, out, nil
+}
+
+// suspendRegisterOrphan quarantines the account left behind when key
+// minting failed after the account row committed (NS-3). It stamps a
+// `signup-race:` suspended_reason — the exact prefix
+// signupreaper.ReapSuspendedOrphans matches — so the existing reaper
+// (suspended + signup-race: reason + no child users/api_keys, older than
+// its MinAge) reclaims the row on its normal sweep. A register orphan has
+// no child user and, because the mirror is written before the durable key
+// row, no api_keys child either, so it satisfies the reaper's conservative
+// predicate exactly.
+//
+// Best-effort: the caller has already logged the orphan and is about to
+// 500, so a failed suspend only means the row waits for the next attempt
+// or an operator; it never changes the response. Runs on a detached,
+// short-deadline context so a request whose own deadline was consumed by
+// the failing mirror/key write can still quarantine the row.
+func (s *Server) suspendRegisterOrphan(ctx context.Context, accountID uuid.UUID, cause error) {
+	if s.registerAccounts == nil {
+		return
+	}
+	reason := signupreaper.SignupRaceReasonPrefix + " register orphan: first credential never reached the validator store"
+	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := s.registerAccounts.Suspend(sctx, accountID, reason); err != nil {
+		s.logger.Error("register: failed to suspend orphan account for reaper reclaim",
+			"err", err, "account_id", accountID, "orphan_cause", cause)
+		return
+	}
+	s.logger.Warn("register: suspended orphan account for signup-reaper reclaim",
+		"account_id", accountID, "orphan_cause", cause)
 }
 
 // registerSlug returns `reg-<12hex>` — a URL-safe handle with 48 bits
