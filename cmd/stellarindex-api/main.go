@@ -80,6 +80,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/customerwebhook"
 	"github.com/Stellar-Index/StellarIndex/internal/divergence"
 	"github.com/Stellar-Index/StellarIndex/internal/logincodereaper"
+	"github.com/Stellar-Index/StellarIndex/internal/magiclinkreaper"
 	"github.com/Stellar-Index/StellarIndex/internal/metadata"
 	"github.com/Stellar-Index/StellarIndex/internal/notify"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -1556,6 +1557,31 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		logger.Info("login-code-lockout reaper started",
 			"interval", logincodereaper.DefaultInterval,
 			"retention", logincodereaper.DefaultRetention)
+	}
+
+	// Magic-link token retention (PRV-2). `magic_link_tokens` is durable
+	// plaintext PII (email + requested_ip) keyed on an ATTACKER-CHOSEN
+	// email — POST /v1/auth/login is unauthenticated and inserts a
+	// permanent row for any address, and a link nobody clicks is never
+	// consumed. This sweep is the only thing that bounds the table.
+	//
+	// Like the login-code lockout reaper above, deliberately NOT gated
+	// on any toggle: it is a DoS/PII control, and it runs whenever the
+	// dashboard's Postgres token store is wired — exactly when the
+	// endpoint that writes those rows is reachable.
+	if links, ok := dashboardBundle.tokens.(magiclinkreaper.MagicLinkStore); ok && links != nil {
+		linkReaper := magiclinkreaper.New(links, magiclinkreaper.Options{
+			Logger: logger.With("component", "magic-link-token-reaper"),
+		})
+		go func() {
+			defer recoverBackgroundWorker(logger, "magic-link-token-reaper")
+			if err := linkReaper.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
+				logger.Error("magic-link-token-reaper worker exited", "err", err)
+			}
+		}()
+		logger.Info("magic-link-token reaper started",
+			"interval", magiclinkreaper.DefaultInterval,
+			"retention", magiclinkreaper.DefaultRetention)
 	}
 
 	serveErr := make(chan error, 1)

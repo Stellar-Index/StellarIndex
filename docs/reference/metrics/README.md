@@ -1363,6 +1363,51 @@ Alert: folded into
 `stellarindex_login_code_lockout_table_growing` (the `status_check` arm)
 → [login-code-lockout-table-growing](../../operations/runbooks/login-code-lockout-table-growing.md).
 
+### `stellarindex_magic_link_token_rows`
+
+Gauge, unlabelled. Refreshed by every retention sweep
+(`internal/magiclinkreaper`, hourly).
+
+Rows in `magic_link_tokens` — the single-use email-link / email-code
+sign-in + verification + invite tokens (migration 0027).
+
+Like `stellarindex_login_code_lockout_rows` this is a **security /
+privacy** signal, not capacity trivia (PRV-2). The table is durable
+plaintext PII (email + `requested_ip`) with an **attacker-chosen** key:
+`POST /v1/auth/login` is unauthenticated and inserts a permanent row for
+any well-formed address, and a link nobody clicks is never consumed. The
+retention sweep is the only bound; this gauge is how an operator sees it
+holding, instead of learning about a remote table-fill from the
+volume-level disk-full page — an alarm that names the wrong subsystem,
+after the damage.
+
+A healthy deployment sits low: rows exist only for recent mints and are
+swept once expired past retention (48 h; live, unexpired tokens exempt).
+
+### `stellarindex_magic_link_token_rows_deleted_total`
+
+Counter, unlabelled.
+
+Cumulative expired magic-link rows removed by the retention sweep.
+Charted as a `rate()` it is the production rate of expired mints; read
+next to `stellarindex_magic_link_token_rows` it separates "the table is
+small because nothing is happening" from "the table is small because the
+sweep is keeping up with a flood".
+
+### `stellarindex_magic_link_token_errors_total`
+
+Counter, label `op` (`sweep`).
+
+Failures of the magic-link retention sweep (PRV-2). The sweep is a
+background janitor and a failed pass is **invisible at the HTTP layer**,
+so — like the login-code lockout reaper it mirrors — the counter has to
+exist for an operator to tell a never-failed janitor from an absent one.
+
+- `sweep` — the retention pass (or its row count) failed; rows an
+  unauthenticated caller can create accumulate until it recovers.
+
+Pre-seeded on the `sweep` op.
+
 ### `stellarindex_aggregator_dropped_trades_total`
 
 Counter, label `reason` (`class` / `outlier`).
