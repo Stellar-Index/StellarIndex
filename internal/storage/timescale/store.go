@@ -265,6 +265,13 @@ func (s *Store) Close() error {
 // access (e.g. the migrate binary). Prefer the typed methods.
 func (s *Store) DB() *sql.DB { return s.db }
 
+// DeriveGeneration returns the re-derive generation the derived-value
+// writers currently stamp (see [SetDeriveGeneration]). 0 is the live-ingest
+// generation; a positive value means an ops re-derive / correction tool has
+// entered corrective mode. Exposed so an ops entry point (and its test) can
+// confirm it stamped a POSITIVE generation before writing corrections.
+func (s *Store) DeriveGeneration() int64 { return s.deriveGeneration }
+
 // ─── Error helpers ─────────────────────────────────────────────────
 
 // ErrNotFound indicates a row we expected to exist did not.
