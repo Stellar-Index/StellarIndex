@@ -579,7 +579,6 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	written, failed := drainAndWrite(ctx, logger, w, buf, *write)
 
 	if *write {
-
 		// ─── reset the SEP-41 supply rollup fold checkpoint ──────────────
 		// A -sep41 -write run rewrites sep41_supply_events history BELOW the
 		// aggregator's incremental sep41_supply_rollup checkpoint. The rollup

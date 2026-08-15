@@ -180,7 +180,6 @@ func TestContractEventsRecent_ActiveLedgerBound(t *testing.T) {
 	if len(conn.queries) != 3 {
 		t.Fatalf("issued %d queries, want 3 (probe + ledgers walk + bounded events)", len(conn.queries))
 	}
-
 }
 
 // TestContractEventsRecent_EmptyWalkFallsThrough is the audit
