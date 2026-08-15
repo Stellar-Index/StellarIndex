@@ -375,8 +375,58 @@ func (o *Orchestrator) publishComposite(
 	diverged, rerouted bool,
 ) string {
 	value := formatRatFixed(composite, 12)
+
+	// R-1 belt-and-suspenders: never overwrite the served direct price
+	// with a rendering that reparses to a non-positive price for a
+	// strictly-positive composite. formatRatFixed now renders
+	// magnitude-relative precision so this cannot fire for any value
+	// above 10^-formatRatMaxScale, but a pathologically tiny composite
+	// would still clamp — refuse rather than publish a zero that would be
+	// served as price 0 AND collapse the next tick's window edge graph.
+	if composite.Sign() > 0 {
+		if parsed, ok := new(big.Rat).SetString(value); !ok || parsed.Sign() <= 0 {
+			o.logger.Warn("triangulation: composite rendered non-positive — refusing to publish",
+				"chain", chain.Target.String(),
+				"window", window.String(),
+				"rendered", value)
+			return "parse_error"
+		}
+	}
+
 	key := cachekeys.VWAP(chain.Target.Base, chain.Target.Quote, window)
 	ttl := cachekeys.VWAPTTL(window)
+
+	// R-2: write the composite's QUALIFIERS (quality-flags meta and the
+	// triangulated-provenance marker) BEFORE the value they qualify, and
+	// refuse the publish if either fails. The served value is load-bearing
+	// and must never overwrite the direct price while its diverged/rerouted
+	// flags lag, are missing, or carry a prior tick's state. Ordering the
+	// dependents first makes the residual (non-atomic) read window
+	// fail-SAFE: a reader landing mid-write sees the OLD value with the NEW
+	// flags (over-warns) rather than the NEW value with stale clean flags
+	// (silently under-warns a diverged/rerouted composite).
+	if err := o.setCompositeMeta(ctx, chain.Target, window, compositeMeta{
+		PathCount:          pathCount,
+		CombinedConfidence: combinedConf,
+		LowConfidence:      false,
+		Diverged:           diverged,
+		Rerouted:           rerouted,
+	}); err != nil {
+		o.logger.Warn("triangulation: composite meta set failed — refusing to publish",
+			"chain", chain.Target.String(), "err", err)
+		return "redis_error"
+	}
+
+	// Provenance marker — lets the API set flags.triangulated=true on the
+	// Redis-fallback path.
+	provKey := cachekeys.VWAPProvenance(chain.Target.Base, chain.Target.Quote, window)
+	if err := o.cache.Set(ctx, provKey.String(), cachekeys.VWAPProvenanceTriangulated, ttl).Err(); err != nil {
+		o.logger.Warn("triangulation: provenance marker set failed — refusing to publish",
+			"chain", chain.Target.String(), "err", err)
+		return "redis_error"
+	}
+
+	// Value LAST: once it lands, its qualifiers are already in place.
 	if err := o.cache.Set(ctx, key.String(), value, ttl).Err(); err != nil {
 		o.logger.Warn("triangulation: cache set failed",
 			"chain", chain.Target.String(), "err", err)
@@ -391,25 +441,6 @@ func (o *Orchestrator) publishComposite(
 	// failed target must leave no value behind for the next tick to treat
 	// as evidence.
 	o.recordComposite(chain.Target, window, composite, corroboration, combinedConf, diverged)
-
-	// Provenance marker — lets the API set flags.triangulated=true on the
-	// Redis-fallback path. Unchanged from the static path; a failure here
-	// doesn't roll back the value write.
-	provKey := cachekeys.VWAPProvenance(chain.Target.Base, chain.Target.Quote, window)
-	if err := o.cache.Set(ctx, provKey.String(), cachekeys.VWAPProvenanceTriangulated, ttl).Err(); err != nil {
-		o.logger.Warn("triangulation: provenance marker set failed",
-			"chain", chain.Target.String(), "err", err)
-	}
-
-	// Quality flags carried for Step 3 (market-cap gating, /v1/price
-	// flags). Best-effort — enrichment, never publish-blocking.
-	o.writeCompositeMeta(ctx, chain.Target, window, compositeMeta{
-		PathCount:          pathCount,
-		CombinedConfidence: combinedConf,
-		LowConfidence:      false,
-		Diverged:           diverged,
-		Rerouted:           rerouted,
-	})
 	return "ok"
 }
 
@@ -503,21 +534,35 @@ type compositeMeta struct {
 }
 
 // writeCompositeMeta persists a composite's quality flags for Step 3.
-// Best-effort: a marshal/write failure logs at debug and is swallowed —
-// the VWAP value write is the load-bearing operation. TTL matches the
-// VWAP key so the flags can't outlive the price they describe.
+// Best-effort: a marshal/write failure logs at debug and is swallowed.
+// Used by the branches that do NOT overwrite the served value (frozen
+// target, low-confidence / below-floor reroute) — there the meta is the
+// only artefact and a miss just leaves the untouched direct value
+// without flags. The value-overwriting path uses [setCompositeMeta]
+// instead, which propagates the error so the write can be made atomic
+// with the value it qualifies (R-2). TTL matches the VWAP key so the
+// flags can't outlive the price they describe.
 func (o *Orchestrator) writeCompositeMeta(
 	ctx context.Context, target canonical.Pair, window time.Duration, meta compositeMeta,
 ) {
-	body, err := json.Marshal(meta)
-	if err != nil {
-		return
-	}
-	key := cachekeys.VWAPCompositeMeta(target.Base, target.Quote, window)
-	if err := o.cache.Set(ctx, key.String(), body, cachekeys.VWAPTTL(window)).Err(); err != nil {
+	if err := o.setCompositeMeta(ctx, target, window, meta); err != nil {
 		o.logger.Debug("triangulation: composite meta set failed",
 			"chain", target.String(), "err", err)
 	}
+}
+
+// setCompositeMeta writes the composite quality flags and returns any
+// error, so the publish path can refuse to overwrite the served value
+// when its qualifiers could not be persisted (R-2).
+func (o *Orchestrator) setCompositeMeta(
+	ctx context.Context, target canonical.Pair, window time.Duration, meta compositeMeta,
+) error {
+	body, err := json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+	key := cachekeys.VWAPCompositeMeta(target.Base, target.Quote, window)
+	return o.cache.Set(ctx, key.String(), body, cachekeys.VWAPTTL(window)).Err()
 }
 
 // isFXLeg reports whether a leg should use the X2.5 forex-snap rule.
@@ -632,6 +677,22 @@ func (o *Orchestrator) legPriceFromCache(
 			"leg", leg.String(),
 			"raw", raw)
 		return nil, "parse_error"
+	}
+	// R-1 belt-and-suspenders: a leg VWAP that parses to a non-positive
+	// price (e.g. a legacy "0.000000000000" written before the
+	// magnitude-relative render, or any future zero-reparsing string)
+	// must NOT enter the edge graph — aggregate.BuildEdges rejects a
+	// Sign()<=0 quote by nilling the ENTIRE window, turning one
+	// micro-valued pair into a window-wide triangulation outage. Treat it
+	// as an absent leg instead: the router either reroutes around it or
+	// reports this one target unreachable (missing_leg), leaving every
+	// other target in the window priced.
+	if price.Sign() <= 0 {
+		o.logger.Warn("triangulation: leg VWAP parsed non-positive — treating leg as absent",
+			"chain", chain.Target.String(),
+			"leg", leg.String(),
+			"raw", raw)
+		return nil, "missing_leg"
 	}
 	return price, ""
 }
