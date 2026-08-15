@@ -266,6 +266,11 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// Build readiness-check set. Each implements v1.ReadyChecker.
 	checks := []v1.ReadyChecker{
 		storeChecker{s: store},
+		// REC-06 (audit-2026-08-14): assert the applied schema head is
+		// at least what this binary was built against (and not dirty).
+		// Critical, so a migrations-skipped/binary-swap mismatch drains
+		// the backend (503) instead of serving stale data behind a 200.
+		v1.NewSchemaVersionChecker(schemaChecker{db: store.DB()}),
 	}
 	if rdb != nil {
 		checks = append(checks, redisChecker{rdb: rdb})
@@ -2374,6 +2379,28 @@ func (c storeChecker) Name() string   { return "postgres" }
 func (c storeChecker) Critical() bool { return true }
 func (c storeChecker) Ping(ctx context.Context) error {
 	return c.s.DB().PingContext(ctx)
+}
+
+// schemaChecker adapts the golang-migrate schema_migrations
+// bookkeeping row to v1.SchemaVersionReader for the REC-06 head
+// assertion (audit-2026-08-14). It reads over the store's *sql.DB —
+// the stellarindex-migrate binary owns writes; the API only reads —
+// keeping the raw SQL in this binary layer, mirroring storeChecker.
+type schemaChecker struct{ db *sql.DB }
+
+func (c schemaChecker) SchemaMigrationVersion(ctx context.Context) (uint, bool, error) {
+	var version uint
+	var dirty bool
+	// schema_migrations holds a single row (golang-migrate). No row =
+	// no migrations applied = version 0.
+	err := c.db.QueryRowContext(ctx, `SELECT version, dirty FROM schema_migrations LIMIT 1`).Scan(&version, &dirty)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return version, dirty, nil
 }
 
 // redisChecker adapts redis.UniversalClient to the v1.ReadyChecker

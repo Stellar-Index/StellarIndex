@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	htmltemplate "html/template"
 	"log/slog"
 	"net"
@@ -56,6 +57,76 @@ type ReadyChecker interface {
 	Ping(ctx context.Context) error
 	Name() string
 	Critical() bool
+}
+
+// ExpectedSchemaVersion is the migrations/ head this binary was built
+// against — the highest-numbered migration under migrations/. A
+// running binary REQUIRES the applied schema (schema_migrations.version)
+// to be at least this value and not dirty; otherwise its code is
+// serving against a schema older or more partial than it assumes.
+//
+// REC-06 (audit-2026-08-14): the ansible deploy runs `stellarindex-migrate
+// up` before swapping binaries, so schema>=binary on the normal path —
+// but nothing asserted that at RUNTIME. A deploy passing migrations_skip,
+// a hot-swapped binary, or a golang-migrate dirty leftover left the binary
+// serving against a stale/partial schema while /v1/healthz and /v1/readyz
+// stayed 200 — the exact "partial-outage while healthz 200" shape the
+// deploy-time guard aimed to prevent, but only at deploy time.
+// [NewSchemaVersionChecker] closes the runtime gap as a CRITICAL readiness
+// check: a schema/binary mismatch drains the backend from the load
+// balancer (503) instead of silently under-serving behind a green probe.
+//
+// The comparison is `applied >= expected` (not `==`) on purpose: a schema
+// NEWER than the binary is the safe/expected state during a rolling deploy
+// (migrations run ahead of the swap) and after a rollback (old binary,
+// newer schema). Only an applied head BELOW the binary's expectation — or
+// a dirty row — is a mismatch.
+//
+// This constant MUST equal the head under migrations/; the parity test
+// TestExpectedSchemaVersionMatchesMigrationsHead fails CI if a migration
+// is added without bumping it.
+const ExpectedSchemaVersion uint = 141
+
+// SchemaVersionReader reports the applied golang-migrate schema state
+// (schema_migrations.version + dirty). cmd/stellarindex-api adapts
+// *timescale.Store over its *sql.DB — keeping the raw SQL in the binary
+// layer, mirroring the storeChecker/redisChecker adapter pattern.
+type SchemaVersionReader interface {
+	// SchemaMigrationVersion returns the highest applied migration number
+	// and whether the last migration left the bookkeeping row dirty
+	// (partially applied). version==0 means no migrations are applied.
+	SchemaMigrationVersion(ctx context.Context) (version uint, dirty bool, err error)
+}
+
+// schemaVersionChecker is the critical ReadyChecker that asserts the
+// applied schema is at least [ExpectedSchemaVersion] and not dirty.
+type schemaVersionChecker struct {
+	reader   SchemaVersionReader
+	expected uint
+}
+
+// NewSchemaVersionChecker builds the REC-06 schema-head readiness check.
+// Critical()==true: a binary/schema mismatch must drain the backend, not
+// keep serving stale/partial data behind a green probe.
+func NewSchemaVersionChecker(reader SchemaVersionReader) ReadyChecker {
+	return schemaVersionChecker{reader: reader, expected: ExpectedSchemaVersion}
+}
+
+func (c schemaVersionChecker) Name() string   { return "schema" }
+func (c schemaVersionChecker) Critical() bool { return true }
+
+func (c schemaVersionChecker) Ping(ctx context.Context) error {
+	version, dirty, err := c.reader.SchemaMigrationVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("read schema_migrations version: %w", err)
+	}
+	if dirty {
+		return fmt.Errorf("schema_migrations is dirty at version %d: a migration is partially applied — the binary must not serve against a half-migrated schema", version)
+	}
+	if version < c.expected {
+		return fmt.Errorf("schema/binary mismatch: binary expects migrations head >= %d but only %d is applied — a deploy skipped migrations or the binary was swapped ahead of them", c.expected, version)
+	}
+	return nil
 }
 
 // Server is the HTTP handler for the Stellar Index v1 API.
