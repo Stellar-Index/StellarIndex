@@ -62,10 +62,12 @@ func decodeBlendAssetAmounts(jsonStr string) ([]BlendAssetAmount, error) {
 
 // InsertBlendNewAuction writes a `new_auction` event row.
 // Idempotent on (ledger, tx_hash, op_index, ts, event_kind,
-// event_index) — re-running over the same range is a no-op rather
-// than producing duplicates. event_index (migration 0058 / F-1324)
-// is the per-event discriminator so multiple auction events emitted
-// by one operation don't collide via ON CONFLICT DO NOTHING.
+// event_index) — re-running over the same range corrects the row in
+// place rather than producing duplicates. event_index (migration
+// 0058 / F-1324) is the per-event discriminator so multiple auction
+// events emitted by one operation don't collide; the ON CONFLICT arm
+// is DO UPDATE guarded by derive_generation (INV-3 / migration 0110),
+// not the old DO NOTHING.
 //
 // Per docs/discovery/dexes-amms/blend.md the auction lifecycle
 // produces multiple rows in this table:

@@ -48,7 +48,10 @@ type SEP41TransferRow struct {
 }
 
 // InsertSEP41TransferBatch persists rows via a single multi-row
-// INSERT. Idempotent on the full PK via ON CONFLICT DO NOTHING.
+// INSERT. On the full PK the ON CONFLICT arm is DO UPDATE guarded by
+// derive_generation (INV-3 / migration 0110): a higher-or-equal-
+// generation replay corrects the row in place, a stale
+// lower-generation one is a no-op.
 //
 //nolint:gocognit,gocyclo // per-row validation + 12-col placeholder builder; linear.
 func (s *Store) InsertSEP41TransferBatch(ctx context.Context, rows []SEP41TransferRow) error {
