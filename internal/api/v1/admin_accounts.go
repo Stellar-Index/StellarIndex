@@ -208,6 +208,8 @@ func (s *Server) handleAdminAccountOverrides(w http.ResponseWriter, r *http.Requ
 	before := adminAccountView(acct)
 	priorTier := acct.Tier
 	priorStatus := acct.Status
+	priorRateOverride := acct.RateLimitPerMinOverride
+	priorQuotaOverride := acct.MonthlyRequestQuotaOverride
 	applyAccountOverrides(&acct, req, time.Now().UTC())
 
 	if err := s.platformAccounts.Update(r.Context(), acct); err != nil {
@@ -224,7 +226,8 @@ func (s *Server) handleAdminAccountOverrides(w http.ResponseWriter, r *http.Requ
 	}
 
 	clamped, clampFailed := s.clampKeysAfterTierChange(r.Context(), subject, priorTier, acct)
-	evicted, evictFailed := s.evictKeyCacheOnSuspend(r.Context(), subject, priorStatus, acct)
+	evicted, evictFailed := s.evictKeyCacheOnEnforcementChange(
+		r.Context(), subject, priorStatus, priorRateOverride, priorQuotaOverride, acct)
 
 	after := adminAccountView(acct)
 	s.logger.Info("admin account override",
@@ -278,38 +281,48 @@ func (s *Server) clampKeysAfterTierChange(
 	return s.clampKeyBudgetsToTier(ctx, cause, s.apiKeyBudgets, acct, ceiling)
 }
 
-// evictKeyCacheOnSuspend evicts every cached API-key record for the account
-// from the auth read-through cache when this PATCH moved the account OUT of
-// the active state into a non-active one (suspended/closed) — the operator
-// kill switch (C3-010).
+// evictKeyCacheOnEnforcementChange evicts every cached API-key record for the
+// account from the auth read-through cache whenever this PATCH changed an
+// account field that feeds a key's RESOLVED enforcement state in the Postgres
+// validator, so the change takes effect on the next request rather than after
+// the validator's ~1h read-through TTL. Two such transitions exist:
 //
-// Without it, the Postgres validator's cache-HIT path
-// (auth/apikey_postgres.go cacheLookup) keeps authenticating a suspended
-// account's keys for up to the validator's ~1h read-through TTL: that path
-// checks only the KEY's own revoked/expired fields, never the account status,
-// so persisting `accounts.status='suspended'` changes nothing an already-warm
-// key can feel. The clamp above does NOT cover this — clampKeysAfterTierChange
-// early-returns unless the tier ceiling drops, so a pure status flip evicts
-// nothing. This is the same kill-switch class C3-010 fixed for the Redis
-// backend (which re-reads GetBySlug per request), still live on the Postgres
-// read-through cache.
+//   - The account left the active state (active→suspended/closed): the operator
+//     kill switch (C3-010). The validator's cache-HIT path
+//     (auth/apikey_postgres.go cacheLookup) checks only the KEY's own
+//     revoked/expired fields, never the account status, so persisting
+//     `accounts.status='suspended'` changes nothing an already-warm key can
+//     feel. The cache-MISS path DOES reject non-active accounts
+//     (`acct.Status != AccountActive`) and returns before cacheStore, so a
+//     single eviction is durable — the next request misses, re-reads Postgres,
+//     and is refused. The clamp does NOT cover this — clampKeysAfterTierChange
+//     early-returns unless the tier ceiling drops, so a pure status flip evicts
+//     nothing.
 //
-// Reuses the tier-clamp seam exactly (ListForAccount + InvalidateCachedKey).
-// A single eviction is durable: the cache-MISS path DOES reject non-active
-// accounts (apikey_postgres.go `acct.Status != AccountActive`) AND returns
-// before cacheStore, so it never re-warms a non-active account's key — the
-// next request misses, re-reads Postgres, and is refused.
+//   - The rate-limit or monthly-quota OVERRIDE changed (F-A, audit-2026-08-14).
+//     The validator RESOLVES the effective per-minute floor and monthly-quota
+//     ceiling from these account overrides at Lookup time (apikey_postgres.go
+//     :164-191) and caches the resolved Subject verbatim, so a tightened
+//     monthly-quota ceiling (or a lowered rate-limit floor) is silently
+//     unenforced on every warm key until the TTL rolls it off. Eviction is
+//     keyed on ANY override delta — not just a tightening — because the cache
+//     must reflect the persisted account row in either direction, and keying
+//     on "did an enforcement-relevant field change" (rather than one bespoke
+//     per-direction guard) is exactly the seam the override knob previously
+//     slipped through.
 //
-// Fires only on an active→non-active transition: an account already
-// non-active has no warm cache entries to evict (see above), so re-patching a
-// suspended account is a no-op here. Best-effort and idempotent — a failure on
-// one key never stops the others, and a failed eviction just means that key
-// waits out the TTL; the durable security state (status=suspended) is already
-// persisted.
-func (s *Server) evictKeyCacheOnSuspend(
-	ctx context.Context, subject auth.Subject, priorStatus platform.AccountStatus, acct platform.Account,
+// Reuses the tier-clamp eviction seam exactly (ListForAccount +
+// InvalidateCachedKey). Best-effort and idempotent — a failure on one key never
+// stops the others, and a failed eviction just means that key waits out the
+// TTL; the durable state (the persisted account row) is already written.
+func (s *Server) evictKeyCacheOnEnforcementChange(
+	ctx context.Context, subject auth.Subject, priorStatus platform.AccountStatus,
+	priorRateOverride int, priorQuotaOverride int64, acct platform.Account,
 ) (evicted, failed int) {
-	if priorStatus != platform.AccountActive || acct.Status == platform.AccountActive {
+	statusLeftActive := priorStatus == platform.AccountActive && acct.Status != platform.AccountActive
+	overrideChanged := acct.RateLimitPerMinOverride != priorRateOverride ||
+		acct.MonthlyRequestQuotaOverride != priorQuotaOverride
+	if !statusLeftActive && !overrideChanged {
 		return 0, 0
 	}
 	st := s.apiKeyBudgets
@@ -317,12 +330,12 @@ func (s *Server) evictKeyCacheOnSuspend(
 		return 0, 0
 	}
 	cause := "admin PATCH /v1/admin/accounts/" + acct.ID.String() +
-		" by " + subject.KeyID + " (" + string(priorStatus) + "→" + string(acct.Status) + ")"
+		" by " + subject.KeyID + " (" + enforcementChangeCause(statusLeftActive, overrideChanged, priorStatus, acct.Status) + ")"
 	keys, err := st.Platform.ListForAccount(ctx, acct.ID)
 	if err != nil {
 		st.note("list_keys")
-		s.logger.Error("suspend cache evict: ListForAccount failed; cached keys keep "+
-			"authenticating until the validator TTL rolls them off",
+		s.logger.Error("enforcement-change cache evict: ListForAccount failed; cached keys keep "+
+			"the stale resolved budget until the validator TTL rolls them off",
 			"cause", cause, "account_id", acct.ID, "err", err)
 		return 0, 1
 	}
@@ -333,7 +346,7 @@ func (s *Server) evictKeyCacheOnSuspend(
 		}
 		if err := st.CacheInvalidator.InvalidateCachedKey(ctx, hex.EncodeToString(k.KeyHash)); err != nil {
 			st.note("key_cache_invalidate")
-			s.logger.Warn("suspend cache evict: InvalidateCachedKey failed",
+			s.logger.Warn("enforcement-change cache evict: InvalidateCachedKey failed",
 				"cause", cause, "account_id", acct.ID, "key_id", k.ID, "err", err)
 			failed++
 			continue
@@ -341,11 +354,28 @@ func (s *Server) evictKeyCacheOnSuspend(
 		evicted++
 	}
 	if evicted > 0 {
-		s.logger.Info("suspend cache evict: evicted cached API keys for a now non-active account",
+		s.logger.Info("enforcement-change cache evict: evicted cached API keys so the persisted "+
+			"account state is enforced immediately",
 			"cause", cause, "account_id", acct.ID, "status", string(acct.Status),
 			"keys_evicted", evicted)
 	}
 	return evicted, failed
+}
+
+// enforcementChangeCause renders the human-readable trigger stamped on the
+// eviction's log lines: the status transition, the override delta, or both.
+func enforcementChangeCause(
+	statusLeftActive, overrideChanged bool,
+	priorStatus, status platform.AccountStatus,
+) string {
+	switch {
+	case statusLeftActive && overrideChanged:
+		return string(priorStatus) + "→" + string(status) + " + override change"
+	case statusLeftActive:
+		return string(priorStatus) + "→" + string(status)
+	default:
+		return "override change"
+	}
 }
 
 // applyAccountOverrides mutates acct in place from the request's set
