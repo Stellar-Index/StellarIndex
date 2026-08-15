@@ -15,21 +15,11 @@ import (
 //
 // Policy (documented once, here):
 //
-//   - CORRECTIVE (re-derive-aware). The UPDATE touches a row whose
-//     routed_via is NULL (first tag) OR whose stored tag DISTINCT-
-//     differs from the value this pass computes (a correction). The
-//     computed value is deterministic given the routers registry and
-//     the swap's call_path — COALESCE(wrapper.name, $1) — so a plain
-//     re-run over an unchanged registry rewrites nothing (equal tags
-//     are filtered out) and stays idempotent, while a re-run after
-//     the registry / call-path attribution is corrected DOES fix a
-//     wrong stored tag. This replaces the old frozen first-wins,
-//     under which a wrong routed_via could never be corrected by a
-//     re-derive (TV-2b) — the SET value is never NULL ($1 is
-//     validated non-empty), so a re-derive cannot blank a tag.
-//     Source-scoping (below) keeps a different source's sweep from
-//     ever contending for the same row, so "DISTINCT-differs" only
-//     fires on a genuine same-source correction.
+//   - FIRST-WINS. The UPDATE only touches rows whose routed_via IS
+//     NULL — an existing tag (same router or a different one) is
+//     never overwritten. Re-running any window is therefore
+//     idempotent: already-tagged rows match zero predicates and the
+//     statement is a no-op for them.
 //   - SOURCE-SCOPED. A tx can carry unrelated trades from other
 //     protocols (a composed tx that swaps on Phoenix AND calls the
 //     Soroswap router). Only trades whose `source` matches the
@@ -69,30 +59,6 @@ import (
 // chunks.
 const routedViaTsSlack = 5 * time.Minute
 
-// tagTradesRoutedViaUpdate is the corrective back-tag statement (see
-// the CORRECTIVE policy above). The `routed_via IS DISTINCT FROM
-// COALESCE(wrapper.name, $1)` predicate tags untagged rows, corrects
-// a stale tag on a re-derive, and no-ops equal tags — replacing the
-// frozen `routed_via IS NULL` that could never be corrected (TV-2b).
-const tagTradesRoutedViaUpdate = `
-        UPDATE trades t
-           SET routed_via = COALESCE(wrapper.name, $1)
-          FROM soroswap_router_swaps r
-          LEFT JOIN routers wrapper
-            ON wrapper.kind        = 'router'
-           AND r.call_kind         = 'sub_invocation'
-           AND r.call_path         IS NOT NULL
-           AND wrapper.contract_id = r.call_path[1]
-         WHERE r.ledger_close_time >= $3
-           AND r.ledger_close_time <  $4
-           AND t.ts >= $5
-           AND t.ts <  $6
-           AND t.ledger  = r.ledger
-           AND t.tx_hash = r.tx_hash
-           AND t.source  = $2
-           AND t.routed_via IS DISTINCT FROM COALESCE(wrapper.name, $1)
-    `
-
 // TagTradesRoutedVia back-tags trades.routed_via for every trade
 // that shares (ledger, tx_hash) with a soroswap_router_swaps row
 // whose ledger_close_time is in [from, to). Returns the number of
@@ -121,7 +87,25 @@ func (s *Store) TagTradesRoutedVia(ctx context.Context, routerName, tradeSource 
 	if !to.After(from) {
 		return 0, fmt.Errorf("timescale: TagTradesRoutedVia: to %v must be after from %v", to, from)
 	}
-	res, err := s.db.ExecContext(ctx, tagTradesRoutedViaUpdate,
+	const q = `
+        UPDATE trades t
+           SET routed_via = COALESCE(wrapper.name, $1)
+          FROM soroswap_router_swaps r
+          LEFT JOIN routers wrapper
+            ON wrapper.kind        = 'router'
+           AND r.call_kind         = 'sub_invocation'
+           AND r.call_path         IS NOT NULL
+           AND wrapper.contract_id = r.call_path[1]
+         WHERE r.ledger_close_time >= $3
+           AND r.ledger_close_time <  $4
+           AND t.ts >= $5
+           AND t.ts <  $6
+           AND t.ledger  = r.ledger
+           AND t.tx_hash = r.tx_hash
+           AND t.source  = $2
+           AND t.routed_via IS NULL
+    `
+	res, err := s.db.ExecContext(ctx, q,
 		routerName, tradeSource,
 		from.UTC(), to.UTC(),
 		from.UTC().Add(-routedViaTsSlack), to.UTC().Add(routedViaTsSlack),
