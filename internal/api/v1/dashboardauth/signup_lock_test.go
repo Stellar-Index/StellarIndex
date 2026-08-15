@@ -2,6 +2,7 @@ package dashboardauth
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -10,32 +11,41 @@ import (
 )
 
 // fakeEmailLocker is the in-memory analogue of [auth.RedisSignupEmailLocker]
-// for unit tests. Acquire returns true exactly once per key; Release
-// removes the key so a subsequent Acquire wins again. Mirrors the
-// SETNX-style ownership the Redis adapter implements.
+// for unit tests. Acquire returns true exactly once per key with a
+// per-acquire token; Release removes the key only when the token still
+// matches (the fencing compare-and-delete, F-C), so a subsequent Acquire
+// wins again. Mirrors the SETNX+CAD ownership the Redis adapter implements.
 type fakeEmailLocker struct {
 	mu   sync.Mutex
-	held map[string]bool
+	held map[string]string // key -> current holder's token
+	seq  int
 }
 
 func newFakeEmailLocker() *fakeEmailLocker {
-	return &fakeEmailLocker{held: map[string]bool{}}
+	return &fakeEmailLocker{held: map[string]string{}}
 }
 
-func (l *fakeEmailLocker) Acquire(_ context.Context, key string, _ time.Duration) (bool, error) {
+func (l *fakeEmailLocker) Acquire(_ context.Context, key string, _ time.Duration) (bool, string, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.held[key] {
-		return false, nil
+	if _, held := l.held[key]; held {
+		return false, "", nil
 	}
-	l.held[key] = true
-	return true, nil
+	l.seq++
+	token := fmt.Sprintf("tok-%d", l.seq)
+	l.held[key] = token
+	return true, token, nil
 }
 
-func (l *fakeEmailLocker) Release(_ context.Context, key string) error {
+func (l *fakeEmailLocker) Release(_ context.Context, key, token string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	delete(l.held, key)
+	if token == "" {
+		return nil
+	}
+	if l.held[key] == token {
+		delete(l.held, key)
+	}
 	return nil
 }
 
@@ -55,7 +65,7 @@ func TestSignupNewUser_EmailLocker_PreemptsLoser(t *testing.T) {
 	// Simulate the winner: pre-hold the lock + insert a User row
 	// behind the winner's Account so the loser's poll converges.
 	emailHash := hashEmailForLocker("ash@example.com")
-	if ok, err := locker.Acquire(context.Background(), emailHash, time.Second); !ok || err != nil {
+	if ok, _, err := locker.Acquire(context.Background(), emailHash, time.Second); !ok || err != nil {
 		t.Fatalf("pre-acquire: ok=%v err=%v", ok, err)
 	}
 

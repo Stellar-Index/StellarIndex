@@ -46,14 +46,22 @@ import (
 //   - tests / Redis-less dev: nil — the Suspend-on-conflict
 //     fallback handles the rare race without serialisation.
 //
-// `Acquire` returns (true, …) when the caller now holds the
-// lock and must call `Release`. (false, …) means another
-// caller holds it — the caller should poll `Users.GetUserByEmail`
-// briefly to find the winner's user. Errors propagate; treat
-// them as "lock not acquired, fall through to the legacy path".
+// `Acquire` returns (true, token, …) when the caller now holds
+// the lock and must call `Release` with the SAME token. (false,
+// "", …) means another caller holds it — the caller should poll
+// `Users.GetUserByEmail` briefly to find the winner's user.
+// Errors propagate; treat them as "lock not acquired, fall
+// through to the legacy path".
+//
+// The `token` is a per-acquire fencing token (F-C, audit
+// -2026-08-14): `Release` must delete the lock ONLY if it still
+// carries this caller's token, so a holder that overran its TTL
+// (a slow Account.Create + Users.CreateUser) cannot delete a
+// successor's freshly-acquired lock. `Release` with an empty
+// token is a no-op (nothing was held).
 type EmailLocker interface {
-	Acquire(ctx context.Context, emailHash string, ttl time.Duration) (bool, error)
-	Release(ctx context.Context, emailHash string) error
+	Acquire(ctx context.Context, emailHash string, ttl time.Duration) (bool, string, error)
+	Release(ctx context.Context, emailHash, token string) error
 }
 
 // LoginThrottle, when set, bounds magic-link sends to prevent inbox
@@ -909,7 +917,7 @@ func (h *Handlers) acquireSignupLock(ctx context.Context, email string) (platfor
 		return platform.User{}, false, nil, nil
 	}
 	emailHash := hashEmailForLocker(email)
-	acquired, lockErr := h.cfg.EmailLocker.Acquire(ctx, emailHash, 30*time.Second)
+	acquired, token, lockErr := h.cfg.EmailLocker.Acquire(ctx, emailHash, 30*time.Second)
 	if lockErr != nil {
 		h.cfg.Logger.Warn("signup email-lock acquire failed; falling through to non-locked path",
 			"err", lockErr, "email", maskEmail(email))
@@ -928,7 +936,7 @@ func (h *Handlers) acquireSignupLock(ctx context.Context, email string) (platfor
 		return platform.User{}, false, nil, nil
 	}
 	release := func() {
-		if relErr := h.cfg.EmailLocker.Release(ctx, emailHash); relErr != nil {
+		if relErr := h.cfg.EmailLocker.Release(ctx, emailHash, token); relErr != nil {
 			h.cfg.Logger.Warn("signup email-lock release failed",
 				"err", relErr, "email", maskEmail(email))
 		}
