@@ -28,6 +28,15 @@ type TxDetailView struct {
 	TxSummaryView
 	Operations []OpView      `json:"operations"`
 	Events     []TxEventView `json:"events,omitempty"`
+	// CoverageNote is an honest-degrade signal (mirrors AccountMovements'
+	// coverage_note): non-empty when a NON-FATAL sub-read failed while
+	// assembling this response, so a degraded answer — operations without
+	// their per-op result codes, or a tx served without its contract events —
+	// is distinguishable on the wire from a transaction that genuinely
+	// produced none. Both `events` and each op's `result_code` are omitempty,
+	// so absent this note a FAILED read is byte-identical to a real empty.
+	// Absent = every sub-read succeeded and empty arrays/absent codes are real.
+	CoverageNote string `json:"coverage_note,omitempty"`
 }
 
 // TxDetail serves GET /v1/tx/{hash}. The hash lookup uses the tx_hash
@@ -89,25 +98,57 @@ func (h *Handler) TxDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	results, err := h.Reader.OperationResultsByTx(ctx, tx.Seq, hash)
+	resultsPartial := false
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
 		}
-		results = nil // non-fatal: serve ops without per-op result codes
+		// Non-fatal: serve ops without per-op result codes, but DISCLOSE it
+		// (W1.2). result_code is omitempty, so a failed read is otherwise
+		// byte-identical to a genuinely absent code.
+		h.Logger.Error("explorer OperationResultsByTx failed", "err", err, "hash", hash)
+		results = nil
+		resultsPartial = true
 	}
 	events, err := h.Reader.EventsByTx(ctx, tx.Seq, hash)
+	eventsPartial := false
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
 		}
-		events = nil // non-fatal
+		// Non-fatal: serve the tx without its contract events, but DISCLOSE it
+		// (W1.2). events is omitempty, so a failed read is otherwise
+		// byte-identical to a tx that emitted none.
+		h.Logger.Error("explorer EventsByTx failed", "err", err, "hash", hash)
+		events = nil
+		eventsPartial = true
 	}
 
 	h.WriteJSON(w, TxDetailView{
 		TxSummaryView: txSummaryView(tx),
 		Operations:    buildTxOpViews(ops, results),
 		Events:        buildTxEventViews(events),
+		CoverageNote:  txCoverageNote(resultsPartial, eventsPartial),
 	}, false)
+}
+
+// txCoverageNote is the tx-detail feed's honest-degrade statement (mirrors
+// movementsCoverageNote / AccountMovements' coverage_note): non-empty when a
+// non-fatal sub-read failed, so a degraded response is distinguishable on the
+// wire from a genuinely-empty one. Empty = every sub-read succeeded.
+func txCoverageNote(resultsFailed, eventsFailed bool) string {
+	switch {
+	case resultsFailed && eventsFailed:
+		return "per-operation result codes and contract events are temporarily unavailable for this " +
+			"transaction; the operations shown carry no result_code and the events list is incomplete, not empty"
+	case resultsFailed:
+		return "per-operation result codes are temporarily unavailable for this transaction; the " +
+			"operations shown carry no result_code, which is not a successful/zero result"
+	case eventsFailed:
+		return "contract events are temporarily unavailable for this transaction; the events list is " +
+			"incomplete, not genuinely empty"
+	}
+	return ""
 }
 
 // buildTxOpViews decodes a transaction's operations and attaches each op's

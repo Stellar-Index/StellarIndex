@@ -9627,6 +9627,22 @@ components:
           properties:
             operations: { type: array, items: { $ref: "#/components/schemas/Operation" } }
             events: { type: array, items: { $ref: "#/components/schemas/ContractEvent" } }
+            coverage_note:
+              type: string
+              description: |
+                Honest-degrade signal (mirrors the AccountMovements
+                coverage_note pattern), present ONLY when a non-fatal
+                sub-read failed while assembling this response:
+                  - the per-operation result-code read errored — the
+                    operations shown carry no `result_code`, which is
+                    NOT a successful/zero result;
+                  - the contract-event read errored — the `events`
+                    array is incomplete, NOT genuinely empty.
+                Both `events` and each op's `result_code` are omitted
+                when absent, so without this note a failed read is
+                indistinguishable on the wire from a real empty.
+                Absent = every sub-read succeeded and empty arrays /
+                absent codes are real.
     ContractEvent:
       type: object
       description: A contract event (tx-detail + contract-activity views).
