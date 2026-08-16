@@ -102,13 +102,20 @@ and the W5 backfills — those remain the real path to v1.
 
 ### W1 — Absent-vs-zero: stop publishing false empirical claims
 
+> **✅ W1 COMPLETE (2026-08-16) — all four merged.** W1.1 `87e5b1aa` (#73),
+> W1.2 `03050689` (#74), W1.3 `96a38485` (#76), W1.4 `351bcea2` (#75). The
+> `/v1/status`, `/v1/tx`, and `/v1/protocols` surfaces now emit an explicit
+> tri-state / `coverage_note` instead of serializing a failure as an all-clear;
+> the protocols roster serves from an SWR cache (no per-request unauth scan);
+> and `DegradedBanner` renders "alert status unknown". Detail kept below for history.
+
 **Why one workstream:** three separately-tracked items are one bug class, and
 they have a strict order. `DegradedBanner.tsx:76` does
 `incs?.active_count ?? 0` — it *cannot* be fixed in the UI while the server
 sends a zero struct, because absent and zero are indistinguishable on the
 wire. Server first, then UI, then the endpoint that exhibits the same shape.
 
-**W1.1 — `/v1/status` incidents. [V]** `status.go:53` declares
+**W1.1 — `/v1/status` incidents. [V] ✅ DONE `87e5b1aa` (#73).** `status.go:53` declares
 `Incidents StatusIncidents` with **no `omitempty`**, and the assembly does
 `if incErr == nil { out.Incidents = incidents }` — so a FAILED Prometheus
 query serialises as zero counts. `DegradedBanner` and the public status page
@@ -120,7 +127,7 @@ than just omitting — the UI needs to say "unknown", and an omitted field
 would still coalesce to 0 in a `??` chain. Ship with the OpenAPI change and
 all three generators.
 
-**W1.2 — tx events + op results. [V]** `explorer/tx.go:103` sets
+**W1.2 — tx events + op results. [V] ✅ DONE `03050689` (#74).** `explorer/tx.go:103` sets
 `events = nil // non-fatal` and `:96` sets `results = nil // non-fatal`;
 both fields are `omitempty`, so a failed read is byte-identical to "this tx
 genuinely had none". Two instances, not one — the second (`results`, the
@@ -130,7 +137,7 @@ per-op result codes) was not in the original finding.
 sites at once, rather than a bespoke `events_unavailable` boolean per field.
 That convention is then the thing new handlers copy.
 
-**W1.3 — `/v1/protocols` index. [V]** `handleProtocolsList` calls
+**W1.3 — `/v1/protocols` index. [V] ✅ DONE `96a38485` (#76).** `handleProtocolsList` calls
 `protocolRoster(ctx, meta)` inside the registry loop with no server-side
 cache — only `Cache-Control: max-age=60`. For registry-empty sources that is
 a `SELECT DISTINCT … LIMIT 5000` full served-tier scan per protocol, on an
@@ -141,7 +148,7 @@ already established for the bespoke and throughput blocks, and make the
 failure path OMIT rather than zero (which is W1.1's convention). Consolidating
 here means one cache pattern and one honesty convention, not three.
 
-**W1.4 — UI residue. [V]** After `191f58cc`, what is left is `DegradedBanner`
+**W1.4 — UI residue. [V] ✅ DONE `351bcea2` (#75).** After `191f58cc`, what is left is `DegradedBanner`
 (blocked on W1.1) and `NetworkInsight.tsx`'s several `?? 0` sites.
 *Exit criteria for W1:* a grep for `?? 0` / `?? []` in explorer components
 returns only sites where the API genuinely serves a zero, and each fixed site
@@ -561,7 +568,7 @@ emitters; Phoenix pool→stake map; Blend V1 backstop schema).
 3. **W6.1 + W4.5** — one file, closes the paging gate and the SLA verdict.
    (W4.5's secure key-home + W4.6's install are now in code (`50d84d27`); this
    step is now the r1-ops key-mint + `HEALTHCHECKS_URL_*` wiring in one edit.)
-4. **W1** — server → UI → protocols, in that order (W1.1 gates W1.4).
+4. ~~**W1** — server → UI → protocols~~ ✅ DONE 2026-08-16 (#73/#74/#76/#75).
 5. **W4.2–W4.7** — unit sweep + template the pattern.
 6. **W2** — the alias registry.
 7. **W5.2** (dfees), then the [C] backfills.
