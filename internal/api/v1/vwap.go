@@ -231,8 +231,12 @@ func (s *Server) fetchVWAPTrades(
 // `?quote=fiat:USD` question answered differently depending on whether you
 // asked for a point or a series).
 //
-// A non-fiat quote reads the literal pair only — same as before, and the
-// same gate [Server.ohlcSeriesWithAliases] applies on the series side.
+// A non-fiat quote walks the XLM dual-form alias pairs (F-1340) and takes
+// the FIRST form with trades — the exact gate [Server.ohlcSeriesWithAliases]
+// applies on the series side, so the point and series paths resolve a
+// valid-but-aliased input (e.g. ?base=crypto:XLM&quote=USDC, whose SDEX
+// depth is keyed under native/USDC) identically instead of 404ing here
+// while the series served.
 //
 // The other fiat-proxy read paths are the CAGG-reading siblings:
 // ohlc_fiat_combine.go's ohlcSeriesFiatCombined for the OHLC series and
@@ -244,9 +248,29 @@ func (s *Server) tradesInRangeWithStablecoinFallback(
 	if pair.Quote.Type == canonical.AssetFiat {
 		return s.fiatCombinedTrades(ctx, pair, from, to, maxTrades)
 	}
-	trades, err := s.history.TradesInRange(ctx, pair, from, to, maxTrades)
-	if err != nil {
-		return nil, false, err
+	// Non-fiat quote: walk the XLM dual-form alias pairs the same way
+	// [Server.ohlcSeriesWithAliases] does on the series side and take the
+	// FIRST form that has trades. A literal-only read here silently omits
+	// every venue publishing XLM under the other id (native vs crypto:XLM
+	// vs the SAC), 404ing a valid-but-aliased input. First-hit — NOT a
+	// cross-form merge — is the point-rate-correct choice: blending prices
+	// across alias forms would fabricate a rate no single venue set
+	// produced (the SAC form is ordered last so a thin Soroban pool only
+	// answers when both established forms miss).
+	for _, b := range assetAliases(pair.Base) {
+		for _, q := range assetAliases(pair.Quote) {
+			ap, perr := canonical.NewPair(b, q)
+			if perr != nil {
+				continue // degenerate alias combination (identity pair)
+			}
+			trades, err := s.history.TradesInRange(ctx, ap, from, to, maxTrades)
+			if err != nil {
+				return nil, false, err
+			}
+			if len(trades) > 0 {
+				return trades, false, nil
+			}
+		}
 	}
-	return trades, false, nil
+	return nil, false, nil
 }
