@@ -153,6 +153,12 @@ var protocolRegistry = []ProtocolMeta{
 		GenesisLedger: 57_056_338,
 		EventKinds: []string{
 			"defindex.strategy.deposit", "defindex.strategy.withdraw",
+			// strategy.harvest — strategy yield realised into the vault
+			// (audit 2026-08-04 finding 4; direction=harvest, migration
+			// 0138). The decoder emits it and the sink persists it to
+			// defindex_flows, so it is part of this source's decoded
+			// vocabulary and must be listed here for the API to report it.
+			"defindex.strategy.harvest",
 			"defindex.vault.deposit", "defindex.vault.withdraw",
 		},
 		VerificationPage: "docs/protocols/defindex.md",

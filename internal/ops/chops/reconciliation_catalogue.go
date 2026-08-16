@@ -245,11 +245,20 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			// so there is no factories/creationSym preseed to run
 			// (phoenix-style; a vault verified after the snapshot needs
 			// the seed extended before its history reconciles).
-			// Computed kinds: "defindex.{strategy,vault}.{deposit,withdraw}"
-			// (defindex.Event / VaultEvent EventKind()). Both layers land
-			// in defindex_flows (layer discriminator column).
+			// Computed kinds: "defindex.strategy.{deposit,withdraw,harvest}"
+			// + "defindex.vault.{deposit,withdraw}" (defindex.Event /
+			// VaultEvent EventKind()). Both layers land in defindex_flows
+			// (layer discriminator column). strategy.harvest MUST be listed:
+			// the decoder emits it (audit 2026-08-04 finding 4 — strategy
+			// yield realised into the vault, direction=harvest, admitted by
+			// migration 0138) and the sink persists it to defindex_flows, so
+			// omitting the kind here undercounts the EXPECTED side and
+			// false-flags every genuine-harvest ledger as a projection gap
+			// (the 974-mismatched-ledger verdict whose Σ|Δ| equalled the
+			// served harvest-row count exactly).
 			{"defindex_flows", "", []string{
 				"defindex.strategy.deposit", "defindex.strategy.withdraw",
+				"defindex.strategy.harvest",
 				"defindex.vault.deposit", "defindex.vault.withdraw",
 			}},
 		}},
