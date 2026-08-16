@@ -7,7 +7,6 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
-	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
 // ParticipantAccounts returns the non-source G-account strkeys an operation
@@ -19,14 +18,22 @@ import (
 // Implementation: decode the op body and, keyed on the op type, collect ONLY
 // the fields that are genuine account addresses (payment/path-payment
 // destination, allow-trust / set-trust-line-flags trustor, clawback `from`,
-// account-merge / create-account destination, muxed destinations resolved to
-// their underlying G-account, and validated Soroban Address SCVal arguments).
+// account-merge / create-account destination, and muxed destinations resolved
+// to their underlying G-account).
 // Opaque free-text fields (a manage_data name/value, a memo, a contract string
 // arg) are NEVER interpreted as participants even when they happen to spell a
 // valid G-strkey — a per-type allowlist is the only safe way to keep an
-// attacker-controlled blob out of a victim account's history. The operation's
-// own source account is handled separately (it's a lake column), so it is NOT
-// returned here. Deduplicated + sorted (deterministic → idempotent re-derive).
+// attacker-controlled blob out of a victim account's history. Soroban
+// InvokeContract ops contribute NOTHING here: both the call arguments and the
+// SorobanAuthorizationEntry auth entries are attacker-controllable at this
+// XDR-decode layer — an auth-entry signature is verified only by the network
+// during apply (and only for consumed require_auth entries on SUCCESSFUL txs),
+// while the indexer also decodes failed-tx op bodies — so neither an arg- nor an
+// auth-derived address can establish participation. Truthful Soroban received-
+// activity belongs to the event-based /movements path (SEP-41 transfer events),
+// not to arg derivation. The operation's own source account is handled
+// separately (it's a lake column), so it is NOT returned here. Deduplicated +
+// sorted (deterministic → idempotent re-derive).
 func ParticipantAccounts(bodyB64 string) ([]string, error) {
 	var body xdr.OperationBody
 	if err := xdr.SafeUnmarshalBase64(bodyB64, &body); err != nil {
@@ -83,31 +90,18 @@ func ParticipantAccounts(bodyB64 string) ([]string, error) {
 		op := body.MustClawbackOp()
 		add(muxedAddr(op.From))
 	case xdr.OperationTypeInvokeHostFunction:
-		addInvokeHostFunctionParticipants(body.MustInvokeHostFunctionOp(), add)
+		// Deliberately contributes no participants. A Soroban InvokeContract's
+		// call args AND its op.Auth SorobanAuthorizationEntry entries are both
+		// attacker-controllable at this XDR-decode layer (auth signatures are
+		// verified only by the network during apply, and the indexer decodes
+		// failed-tx op bodies too), so neither can be trusted to name a
+		// participant — deriving one lets an attacker inject an arbitrary victim
+		// into that victim's permanent public account history. See the godoc.
+		// The op source is still indexed via operations.source_account.
 	}
 
 	sort.Strings(out)
 	return out, nil
-}
-
-// addInvokeHostFunctionParticipants collects the account addresses carried as
-// Soroban InvokeContract arguments. Only ScVal::Address arguments are
-// considered — a contract can pass a string/symbol/bytes arg that spells a
-// valid G-strkey, and those must NOT become participants. Contract (C-),
-// claimable-balance and liquidity-pool addresses are dropped by `add` (they are
-// not accounts); account and muxed-account addresses resolve to a G-account.
-func addInvokeHostFunctionParticipants(op xdr.InvokeHostFunctionOp, add func(string)) {
-	if op.HostFunction.Type != xdr.HostFunctionTypeHostFunctionTypeInvokeContract {
-		return
-	}
-	for _, arg := range op.HostFunction.MustInvokeContract().Args {
-		if arg.Type != xdr.ScValTypeScvAddress {
-			continue
-		}
-		if s, err := scval.AsAddressStrkey(arg); err == nil {
-			add(s)
-		}
-	}
 }
 
 // muxedToAccountID converts an M-strkey to its underlying G-strkey (the first
