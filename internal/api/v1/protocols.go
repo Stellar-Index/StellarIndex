@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -395,6 +396,13 @@ type ProtocolsView struct {
 	// TotalProtocols is len(protocols), for symmetric pagination-free
 	// consumers.
 	TotalProtocols int `json:"total_protocols"`
+	// CoverageNote is an honest-degrade signal (mirrors AccountMovements'
+	// coverage_note / tx.go): non-empty when a source's contract-roster read
+	// failed and no last-good count was cached, so the source is OMITTED from
+	// `protocols` rather than published with a fabricated contract_count: 0.
+	// Absent = every source's roster resolved (or is a genuine empty) and the
+	// directory is complete.
+	CoverageNote string `json:"coverage_note,omitempty"`
 }
 
 // ProtocolContractView is one registered contract instance on
@@ -610,9 +618,21 @@ type ProtocolDetailView struct {
 // handleProtocolsList serves GET /v1/protocols — the protocol
 // directory backing the explorer's Protocols pillar. The static
 // registry (protocols_registry.go) always serves; the dynamic joins
-// (contract counts, 24h events, completeness verdicts) degrade to
-// zeros/absent when their reader is nil or errors, so a deployment
-// without the optional readers still gets a useful directory.
+// (24h events, completeness verdicts) degrade to zeros/absent when
+// their reader is nil or errors, so a deployment without the optional
+// readers still gets a useful directory.
+//
+// contract_count is served from the per-server roster-count cache
+// (protocol_roster_cache.go): the registry-empty sources' roster is a
+// `SELECT DISTINCT … LIMIT 5000` served-tier scan, and this route is
+// unauthenticated + edge-cache-maskable, so scanning per protocol on
+// every origin miss was a DoS surface (W1.3). The cache is prewarmed
+// and stale-while-revalidate, so a request serves a last-good count and
+// at most one background refresh runs per source per TTL regardless of
+// request rate. When a source's roster read FAILS and no last-good count
+// exists, the source is OMITTED and named in coverage_note rather than
+// published with a fabricated contract_count: 0 (the honesty contract —
+// a failed read is not a real zero).
 func (s *Server) handleProtocolsList(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	events := s.protocolEvents24h(ctx)
@@ -620,16 +640,38 @@ func (s *Server) handleProtocolsList(w http.ResponseWriter, r *http.Request) {
 	tvls := s.protocolTVLs()
 
 	view := ProtocolsView{Protocols: make([]ProtocolView, 0, len(protocolRegistry))}
+	var degraded []string
 	for _, meta := range protocolRegistry {
-		contracts := s.protocolRoster(ctx, meta)
-		row := buildProtocolView(meta, len(contracts), events, verdicts)
+		count, ok := s.cachedRosterCount(ctx, meta)
+		if !ok {
+			// The roster read failed and no last-good count is cached —
+			// omit the source rather than serialise a fake 0.
+			degraded = append(degraded, meta.Name)
+			continue
+		}
+		row := buildProtocolView(meta, count, events, verdicts)
 		attachProtocolTVL(&row, tvls)
 		view.Protocols = append(view.Protocols, row)
 	}
 	view.TotalProtocols = len(view.Protocols)
+	view.CoverageNote = protocolsCoverageNote(degraded)
 
 	w.Header().Set("Cache-Control", "public, max-age=60")
 	writeJSON(w, view, Flags{})
+}
+
+// protocolsCoverageNote is the directory's honest-degrade statement
+// (mirrors movementsCoverageNote / txCoverageNote): non-empty when one or
+// more sources were omitted because their contract-roster read failed and
+// no last-good count was cached, so an incomplete directory is
+// distinguishable on the wire from a complete one. Empty = complete.
+func protocolsCoverageNote(omitted []string) string {
+	if len(omitted) == 0 {
+		return ""
+	}
+	return "the contract roster for " + strings.Join(omitted, ", ") +
+		" could not be read and no cached count was available; " +
+		"these sources are omitted from this directory (not shown with a zero contract_count) and will reappear once the read recovers"
 }
 
 // protocolBespokeWindowDays parses the optional ?days= query param that
@@ -827,9 +869,29 @@ func classifyContractKinds(contracts []ProtocolContractView, factories []string)
 // events into the breakdown / activity / per-contract counts. Deduped against
 // the base roster so a contract already present isn't doubled.
 func (s *Server) protocolRoster(ctx context.Context, meta ProtocolMeta) []ProtocolContractView {
-	rows := s.protocolContracts(ctx, meta.Name)
+	rows, err := s.rosterErr(ctx, meta)
+	if err != nil || rows == nil {
+		// Detail path: degrade to a non-nil empty roster exactly as before —
+		// the analytics.status field carries the honesty here. (The LIST
+		// path uses cachedRosterCount, which surfaces the error so the source
+		// is omitted rather than shown with a fabricated count.)
+		return []ProtocolContractView{}
+	}
+	return rows
+}
+
+// rosterErr returns meta's full contract roster, SURFACING a read error
+// rather than swallowing it. protocolRoster wraps it for the detail path's
+// degrade-to-empty contract; the roster-count cache uses it directly so a
+// failed read omits the source from the directory instead of publishing a
+// fake contract_count: 0 (W1.3 honesty).
+func (s *Server) rosterErr(ctx context.Context, meta ProtocolMeta) ([]ProtocolContractView, error) {
+	rows, err := s.protocolContractsErr(ctx, meta.Name)
+	if err != nil {
+		return nil, err
+	}
 	if len(meta.ExtraContracts) == 0 {
-		return rows
+		return rows, nil
 	}
 	seen := make(map[string]struct{}, len(rows))
 	for _, c := range rows {
@@ -845,7 +907,7 @@ func (s *Server) protocolRoster(ctx context.Context, meta ProtocolMeta) []Protoc
 		seen[id] = struct{}{}
 		rows = append(rows, ProtocolContractView{ContractID: id, Kind: "module"})
 	}
-	return rows
+	return rows, nil
 }
 
 // enrichProtocolAnalytics populates the lake-derived analytics on the detail
@@ -1117,28 +1179,31 @@ func (s *Server) protocolVerdicts(ctx context.Context) map[string]timescale.Comp
 	return out
 }
 
-// protocolContracts returns name's registered instances in the unified
+// protocolContractsErr returns name's registered instances in the unified
 // wire shape: soroswap_pairs for soroswap, protocol_contracts for the
-// factory-gated sources, empty for everything else (and on nil reader
-// or read error — same degradation contract as the other joins).
-func (s *Server) protocolContracts(ctx context.Context, name string) []ProtocolContractView {
+// factory-gated sources, empty for everything else. A nil reader is NOT an
+// error (the feature is simply unwired → a genuine empty roster); a store
+// read that ERRORS is returned so the caller can degrade honestly instead
+// of masking it as an empty/zero roster. protocolContracts (the detail
+// path) wraps this to preserve the historical swallow-to-empty behavior.
+func (s *Server) protocolContractsErr(ctx context.Context, name string) ([]ProtocolContractView, error) {
 	if name == "soroswap" {
-		return s.soroswapContracts(ctx)
+		return s.soroswapContractsErr(ctx)
 	}
 	if s.protocolContractsReader == nil {
-		return []ProtocolContractView{}
+		return []ProtocolContractView{}, nil
 	}
 	rows, err := s.protocolContractsReader.ListProtocolContracts(ctx, name)
 	if err != nil {
 		s.logger.Warn("protocols contract registry read failed", "source", name, "err", err)
-		return []ProtocolContractView{}
+		return nil, err
 	}
 	if len(rows) == 0 {
 		// The protocol_contracts registry is empty for this source (only blend
 		// is seeded today). Fall back to the contracts the decoder has actually
 		// captured into the projected table, so defindex/phoenix/comet/cctp/rozo
 		// get a real roster + the lake analytics scoped to it.
-		return s.protocolContractsFromProjection(ctx, name)
+		return s.protocolContractsFromProjectionErr(ctx, name)
 	}
 	out := make([]ProtocolContractView, 0, len(rows))
 	for _, row := range rows {
@@ -1148,40 +1213,45 @@ func (s *Server) protocolContracts(ctx context.Context, name string) []ProtocolC
 			FirstLedger: row.FirstLedger,
 		})
 	}
-	return out
+	return out, nil
 }
 
-// protocolContractsFromProjection is the registry-empty fallback: the distinct
-// contracts from name's projected table (nil/empty when the source has no
-// per-contract table). aquarius now populates here from aquarius_liquidity
-// (2026-07-07, #91 — previously read 0 pools despite being the busiest AMM);
-// the oracles (band/reflector-*/redstone) populate from their pinned contracts
-// in oracle_updates via a source-scoped query (#91 — they read 0 before). Only
-// sdex is op-keyed (no contract) and truly has no roster here.
-func (s *Server) protocolContractsFromProjection(ctx context.Context, name string) []ProtocolContractView {
+// protocolContractsFromProjectionErr is the registry-empty fallback: the
+// distinct contracts from name's projected table (nil/empty when the source
+// has no per-contract table), surfacing a read error rather than swallowing
+// it. aquarius now populates here from aquarius_liquidity (2026-07-07, #91 —
+// previously read 0 pools despite being the busiest AMM); the oracles
+// (band/reflector-*/redstone) populate from their pinned contracts in
+// oracle_updates via a source-scoped query (#91 — they read 0 before). Only
+// sdex is op-keyed (no contract) and truly has no roster here. This is the
+// `SELECT DISTINCT … LIMIT 5000` served-tier scan the roster-count cache
+// exists to keep off the unauthenticated request path (W1.3).
+func (s *Server) protocolContractsFromProjectionErr(ctx context.Context, name string) ([]ProtocolContractView, error) {
 	ids, err := s.protocolContractsReader.ListSourceContractsFromProjection(ctx, name)
 	if err != nil {
 		s.logger.Warn("protocols projection roster read failed", "source", name, "err", err)
-		return []ProtocolContractView{}
+		return nil, err
 	}
 	out := make([]ProtocolContractView, 0, len(ids))
 	for _, id := range ids {
 		out = append(out, ProtocolContractView{ContractID: id})
 	}
-	return out
+	return out, nil
 }
 
-// soroswapContracts projects the soroswap_pairs registry into the
+// soroswapContractsErr projects the soroswap_pairs registry into the
 // unified contract shape (pair strkey as the instance, token pair
-// attached, no factory column — the pairs table predates ADR-0035).
-func (s *Server) soroswapContracts(ctx context.Context) []ProtocolContractView {
+// attached, no factory column — the pairs table predates ADR-0035),
+// surfacing a read error rather than swallowing it. Nil reader → a
+// genuine empty roster (not an error).
+func (s *Server) soroswapContractsErr(ctx context.Context) ([]ProtocolContractView, error) {
 	if s.soroswapPairs == nil {
-		return []ProtocolContractView{}
+		return []ProtocolContractView{}, nil
 	}
 	pairs, err := s.soroswapPairs.LoadSoroswapPairRegistry(ctx)
 	if err != nil {
 		s.logger.Warn("protocols soroswap pair registry read failed", "err", err)
-		return []ProtocolContractView{}
+		return nil, err
 	}
 	out := make([]ProtocolContractView, 0, len(pairs))
 	for _, p := range pairs {
@@ -1191,7 +1261,7 @@ func (s *Server) soroswapContracts(ctx context.Context) []ProtocolContractView {
 			Token1:     p.Token1Strkey,
 		})
 	}
-	return out
+	return out, nil
 }
 
 // protocolSinceDay converts the ledger-window cutoff into the daily

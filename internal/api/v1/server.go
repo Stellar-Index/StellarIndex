@@ -212,6 +212,12 @@ type Server struct {
 	// that ran out (§2.6b). Zero value ready — see
 	// protocol_bespoke_cache.go.
 	protocolBespokeCache bespokeCache
+	// Prewarmed SWR cache for the per-source contract_count on
+	// GET /v1/protocols. The registry-empty roster is a served-tier
+	// `SELECT DISTINCT … LIMIT 5000` scan, and the route is unauthenticated,
+	// so scanning per protocol on every origin miss was a DoS surface (W1.3).
+	// Zero value ready — see protocol_roster_cache.go.
+	protocolRosterCache rosterCache
 	// Per-server TTL + single-flight cache for the broad-coverage
 	// classic circulating-supply map (one ~0.5s ClickHouse GROUP BY over
 	// the trustline slice — see cachedClassicSupply). Backs market-cap
