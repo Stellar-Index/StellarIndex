@@ -5,6 +5,8 @@ import type { components } from '@/api/types';
 import { API_BASE_URL } from '@/api/client';
 import { formatSubunitPrice } from '@/lib/format';
 
+import { LivePrice } from '../../LivePrice';
+
 const isCIStub =
   API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
 
@@ -173,9 +175,15 @@ export default async function EmbedCurrencyPage({ params }: { params: Params }) 
         </a>
       </div>
       <div className="flex items-baseline gap-2">
-        <span className="font-mono text-2xl tabular-nums">
-          {priceUSD != null ? `$${formatRate(priceUSD)}` : '—'}
-        </span>
+        {priceUSD != null ? (
+          <LivePrice
+            assetId={`fiat:${upper}`}
+            initial={`$${formatRate(priceUSD)}`}
+            format="usd"
+          />
+        ) : (
+          <span className="font-mono text-2xl tabular-nums">—</span>
+        )}
         <ChangeChip pct={change24h} label="24h" />
         <ChangeChip pct={change7d} label="7d" />
       </div>

@@ -6,6 +6,8 @@ import type { components } from '@/api/types';
 import { API_BASE_URL } from '@/api/client';
 import { formatSubunitPrice } from '@/lib/format';
 
+import { LivePrice } from '../../LivePrice';
+
 const isCIStub =
   API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
 
@@ -156,9 +158,16 @@ export default async function EmbedPairPage({ params }: { params: Params }) {
         </a>
       </div>
       <div className="flex items-baseline gap-2">
-        <span className="font-mono text-2xl tabular-nums">
-          {priceNum != null ? formatPrice(priceNum) : '—'}
-        </span>
+        {priceNum != null ? (
+          <LivePrice
+            assetId={base}
+            quote={quote}
+            initial={formatPrice(priceNum)}
+            format="plain"
+          />
+        ) : (
+          <span className="font-mono text-2xl tabular-nums">—</span>
+        )}
         <ChangeChip pct={change24h} label="24h" />
       </div>
       {points.length > 0 && <Sparkline points={points} positive={(change24h ?? 0) >= 0} />}
