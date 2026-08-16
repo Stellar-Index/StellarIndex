@@ -6026,6 +6026,15 @@ export interface paths {
          *     independently to zero / absent when its reader isn't wired,
          *     so the endpoint never 5xxes on a partial deployment. Served
          *     with `public, max-age=60`.
+         *
+         *     `contract_count` is served from a prewarmed, stale-while-
+         *     revalidate cache (the roster is a `SELECT DISTINCT … LIMIT 5000`
+         *     served-tier scan, and this route is unauthenticated, so scanning
+         *     per protocol on every origin miss was a DoS surface). When a
+         *     source's roster read FAILS and no last-good count is cached, the
+         *     source is OMITTED from `protocols` and named in `coverage_note`
+         *     rather than published with a fabricated `contract_count: 0` — a
+         *     failed read is not a real zero.
          */
         get: {
             parameters: {
@@ -6076,6 +6085,19 @@ export interface paths {
                             data?: {
                                 protocols: components["schemas"]["ProtocolRow"][];
                                 total_protocols: number;
+                                /**
+                                 * @description Honest-degrade signal (mirrors the
+                                 *     `coverage_note` on `/accounts/{id}/movements`
+                                 *     and `/tx/{hash}`): present ONLY when one or
+                                 *     more sources were OMITTED from `protocols`
+                                 *     because their contract-roster read failed and
+                                 *     no cached count was available. Names the
+                                 *     omitted sources. A degraded source is dropped
+                                 *     (never shown with a fabricated
+                                 *     `contract_count: 0`), so a complete directory
+                                 *     carries no note.
+                                 */
+                                coverage_note?: string;
                             };
                         };
                     };
