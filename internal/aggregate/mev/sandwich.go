@@ -10,26 +10,22 @@ import (
 // candidates.
 const KindSandwich = "sandwich"
 
-// NOTE (cold audit 2026-08-04): the "rows don't carry trade direction"
-// premise this detector was built on is FALSE. trades.base_asset IS the
-// direction — sdex sets base to the asset the maker sold, aquarius sets
-// it to token_in — so front/back opposition is checkable and simply
-// isn't checked. Measured on live /v1/mev: 196 of 200 sandwich events
-// have BOTH bracket legs in the same direction, which cannot be a
-// sandwich, at a median notional of $0.10.
-//
-// The guard is not a one-liner, which is why this is a corrected note
-// rather than a fix: the base/quote sign convention is INVERTED between
-// sources (sdex base = what the maker sold; aquarius base = token_in,
-// what the taker sold), so a direction check must carry a per-source
-// convention. Price is unaffected either way, so VWAP is safe.
+// Direction opposition (cold audit 2026-08-04): trades.base_asset IS the
+// trade direction — the amounts are both positive, so direction lives in
+// which asset the source places in Base, under a per-source convention
+// (see takerBaseIsReceived). A genuine sandwich front-runs then back-runs
+// the SAME pair in OPPOSITE directions; buildSandwichCandidate now
+// enforces that. Before the check, ~196/200 published candidates had both
+// bracket legs in the SAME direction and could not be sandwiches — this
+// feeds a publicly-served accusation, so same-direction (and
+// direction-unknown) brackets are dropped rather than naming an account.
 const sandwichNote = "One account's trades in two different transactions bracket at " +
 	"least one other account's trade on the same pair within a single ledger " +
-	"(tx_index application order from the raw lake). Positional signature ONLY: " +
-	"front/back opposition is NOT verified — the direction is available in the " +
-	"underlying rows but this detector does not yet check it, so most candidates " +
-	"are same-direction and cannot be sandwiches. Profit is not estimated. " +
-	"Treat as an unverified candidate, not proof, and not an accusation."
+	"(tx_index application order from the raw lake), and the account's front and " +
+	"back trades run in OPPOSITE directions on that pair — the structural signature " +
+	"of a sandwich. Direction is read from the underlying rows' base asset under a " +
+	"per-source convention; same-direction brackets are rejected. Profit is not " +
+	"estimated, so treat as an unverified candidate, not proof, and not an accusation."
 
 // OrderedLeg is one trade in an ordering-aware pattern's evidence,
 // carrying the lake-resolved tx_index that placed it. Amounts are
@@ -129,6 +125,15 @@ func buildSandwichCandidate(trades []canonical.Trade, usdVolume []string, txIdx 
 	if !ok {
 		return Candidate{}, false
 	}
+	// A real sandwich front-runs then back-runs the SAME pair in OPPOSITE
+	// directions. The positional bracket ALONE flagged ~196/200 published
+	// candidates that were same-direction and thus structurally impossible
+	// (cold audit 2026-08-04). Drop same-direction — and
+	// direction-unknown — brackets so no account is named on impossible
+	// evidence.
+	if !oppositeDirection(trades[front], trades[back]) {
+		return Candidate{}, false
+	}
 	frontIdx := txIdx[trades[front].TxHash]
 	backIdx := txIdx[trades[back].TxHash]
 
@@ -200,6 +205,63 @@ func bracketTrades(trades []canonical.Trade, txIdx map[string]uint32, idxs []int
 		return 0, 0, false // one atomic tx → arbitrage territory, not a sandwich
 	}
 	return front, back, true
+}
+
+// oppositeDirection reports whether the front and back trades sit on
+// OPPOSITE sides of the same pair — the defining shape of a sandwich
+// (front-run one way, back-run the other). If the direction of EITHER
+// leg is indeterminate (a source whose base convention we don't know),
+// it returns false: this feeds a publicly-served accusation, so we never
+// assert an opposition we cannot prove.
+func oppositeDirection(front, back canonical.Trade) bool {
+	fl, fok := takerReceivesLowAsset(front)
+	bl, bok := takerReceivesLowAsset(back)
+	return fok && bok && fl != bl
+}
+
+// takerReceivesLowAsset reports whether the taker RECEIVED the
+// orientation-independent LOW asset of the trade's pair (the same "low"
+// unorderedPairKey sorts on), collapsing the per-source base convention
+// into one comparable direction. ok is false when the source's
+// convention is unknown.
+func takerReceivesLowAsset(t canonical.Trade) (low, ok bool) {
+	received, ok := takerBaseIsReceived(t.Source)
+	if !ok {
+		return false, false
+	}
+	baseIsLow := normAsset(t.Pair.Base.String()) <= normAsset(t.Pair.Quote.String())
+	// taker received the low asset iff it received the base AND base is the
+	// low, or it received the quote AND base is the high.
+	return received == baseIsLow, true
+}
+
+// takerBaseIsReceived reports, per source, whether a trade's raw Base
+// asset is the one the TAKER received (bought). Direction is not a sign
+// on the amounts (both are positive) — it lives in which asset the
+// source places in Base, and that convention is INVERTED between the
+// classic orderbook and the Soroban AMMs:
+//
+//   - sdex writes base = the asset the maker SOLD, i.e. what the taker
+//     RECEIVED (internal/sources/sdex/decode.go).
+//   - the Soroban AMMs (aquarius, comet, phoenix, soroswap) write
+//     base = token_in = what the taker SOLD, so the taker received the
+//     QUOTE (each source's decode.go).
+//
+// These are the only on-chain sources that emit taker-attributed,
+// ledger>0 trades (off-chain venues stamp ledger 0 and are excluded by
+// orderableTrade).
+// ok is false for any other source: an unknown convention cannot yield a
+// proven direction, and dropping the candidate is the only safe move for
+// accusation data — better a missed candidate than a named innocent.
+func takerBaseIsReceived(source string) (received, ok bool) {
+	switch source {
+	case "sdex":
+		return true, true
+	case "aquarius", "comet", "phoenix", "soroswap":
+		return false, true
+	default:
+		return false, false
+	}
 }
 
 func orderedLegFrom(t canonical.Trade, txIdx map[string]uint32, role string) OrderedLeg {

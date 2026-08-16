@@ -61,12 +61,13 @@ const (
 // ── sandwich ────────────────────────────────────────────────────────
 
 // Attacker trades in two txs bracketing a victim's tx on the same
-// pair in one ledger → detected, with the (front, victim, back) legs.
+// pair in one ledger, front and back in OPPOSITE directions → detected,
+// with the (front, victim, back) legs.
 func TestDetectSandwiches_Bracket(t *testing.T) {
 	trades := []canonical.Trade{
-		mkTrade(t, tOpt{tx: txA, taker: "GATK", base: "native", quote: usdc}),
-		mkTrade(t, tOpt{tx: txB, taker: "GVIC", base: "native", quote: usdc}),
-		mkTrade(t, tOpt{tx: txC, taker: "GATK", base: "native", quote: usdc}),
+		mkTrade(t, tOpt{tx: txA, taker: "GATK", base: "native", quote: usdc}), // front: buys native
+		mkTrade(t, tOpt{tx: txB, taker: "GVIC", base: "native", quote: usdc}), // victim
+		mkTrade(t, tOpt{tx: txC, taker: "GATK", base: usdc, quote: "native"}), // back: sells native
 	}
 	idx := map[string]uint32{txA: 1, txB: 3, txC: 5}
 	got := DetectSandwiches(trades, nil, idx)
@@ -96,16 +97,65 @@ func TestDetectSandwiches_Bracket(t *testing.T) {
 }
 
 // The same pair written in the opposite orientation still groups —
-// pair identity is orientation-independent.
+// pair identity is orientation-independent. (The attacker's front/back
+// legs are in opposite directions so the group is a genuine sandwich.)
 func TestDetectSandwiches_OrientationIndependent(t *testing.T) {
 	trades := []canonical.Trade{
-		mkTrade(t, tOpt{tx: txA, taker: "GATK", base: "native", quote: usdc}),
-		mkTrade(t, tOpt{tx: txB, taker: "GVIC", base: usdc, quote: "native"}), // flipped
-		mkTrade(t, tOpt{tx: txC, taker: "GATK", base: "native", quote: usdc}),
+		mkTrade(t, tOpt{tx: txA, taker: "GATK", base: "native", quote: usdc}), // front: buys native
+		mkTrade(t, tOpt{tx: txB, taker: "GVIC", base: usdc, quote: "native"}), // victim, flipped orientation
+		mkTrade(t, tOpt{tx: txC, taker: "GATK", base: usdc, quote: "native"}), // back: sells native
 	}
 	idx := map[string]uint32{txA: 1, txB: 2, txC: 3}
 	if got := DetectSandwiches(trades, nil, idx); len(got) != 1 {
 		t.Fatalf("got %d candidates, want 1", len(got))
+	}
+}
+
+// A bracket whose front and back legs are in the SAME direction cannot
+// be a sandwich (you don't front-run and back-run the same way) — it is
+// dropped, not published. This is the ~196/200 impossible-candidate
+// class the positional-only detector used to name accounts on.
+func TestDetectSandwiches_SameDirectionDropped(t *testing.T) {
+	trades := []canonical.Trade{
+		mkTrade(t, tOpt{tx: txA, taker: "GATK", base: "native", quote: usdc}), // front: buys native
+		mkTrade(t, tOpt{tx: txB, taker: "GVIC", base: "native", quote: usdc}), // victim
+		mkTrade(t, tOpt{tx: txC, taker: "GATK", base: "native", quote: usdc}), // back: ALSO buys native — same direction
+	}
+	idx := map[string]uint32{txA: 1, txB: 3, txC: 5}
+	if got := DetectSandwiches(trades, nil, idx); len(got) != 0 {
+		t.Fatalf("same-direction bracket: got %d candidates, want 0: %+v", len(got), got)
+	}
+}
+
+// Opposition across two SOURCES with the INVERTED base convention is
+// resolved correctly: sdex base=received, aquarius base=sold. A front
+// buy on sdex and a back sell on aquarius of the same pair is a genuine
+// sandwich even though both legs are written base=native.
+func TestDetectSandwiches_CrossSourceConventionOpposition(t *testing.T) {
+	trades := []canonical.Trade{
+		// sdex: base=native = taker RECEIVED native (bought native).
+		mkTrade(t, tOpt{source: "sdex", tx: txA, taker: "GATK", base: "native", quote: usdc}),
+		mkTrade(t, tOpt{tx: txB, taker: "GVIC", base: "native", quote: usdc}),
+		// aquarius: base=native = taker SOLD native (sold native) → opposite.
+		mkTrade(t, tOpt{source: "aquarius", tx: txC, taker: "GATK", base: "native", quote: usdc}),
+	}
+	idx := map[string]uint32{txA: 1, txB: 3, txC: 5}
+	if got := DetectSandwiches(trades, nil, idx); len(got) != 1 {
+		t.Fatalf("cross-source opposition: got %d candidates, want 1: %+v", len(got), got)
+	}
+}
+
+// A source with no known base-direction convention is indeterminate:
+// we cannot prove opposition, so no account is named. Fail closed.
+func TestDetectSandwiches_UnknownSourceDropped(t *testing.T) {
+	trades := []canonical.Trade{
+		mkTrade(t, tOpt{source: "mysteryvenue", tx: txA, taker: "GATK", base: "native", quote: usdc}),
+		mkTrade(t, tOpt{tx: txB, taker: "GVIC", base: "native", quote: usdc}),
+		mkTrade(t, tOpt{source: "mysteryvenue", tx: txC, taker: "GATK", base: usdc, quote: "native"}),
+	}
+	idx := map[string]uint32{txA: 1, txB: 3, txC: 5}
+	if got := DetectSandwiches(trades, nil, idx); len(got) != 0 {
+		t.Fatalf("unknown-source bracket: got %d candidates, want 0: %+v", len(got), got)
 	}
 }
 
