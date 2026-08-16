@@ -3,6 +3,8 @@ package v1
 import (
 	"reflect"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // TestChangeSummaryCoinCandidates pins the slug→canonical expansion
@@ -32,22 +34,22 @@ func TestChangeSummaryCoinCandidates(t *testing.T) {
 			want:       []string{"soroswap"},
 		},
 		{
-			name:       "XLM expands to native + crypto:XLM",
+			name:       "XLM expands to native + crypto:XLM + SAC (last)",
 			entityType: "coin",
 			entityID:   "XLM",
-			want:       []string{"XLM", "native", "crypto:XLM"},
+			want:       []string{"XLM", "native", "crypto:XLM", canonical.XLMSacContractID},
 		},
 		{
 			name:       "lowercase xlm uppercases for the alternate forms",
 			entityType: "coin",
 			entityID:   "xlm",
-			want:       []string{"xlm", "native", "crypto:XLM"},
+			want:       []string{"xlm", "native", "crypto:XLM", canonical.XLMSacContractID},
 		},
 		{
-			name:       "native expands to crypto:XLM",
+			name:       "native expands to crypto:XLM + SAC (last)",
 			entityType: "coin",
 			entityID:   "native",
-			want:       []string{"native", "crypto:XLM"},
+			want:       []string{"native", "crypto:XLM", canonical.XLMSacContractID},
 		},
 		{
 			name:       "bare classic code expands to crypto:CODE",
@@ -70,10 +72,16 @@ func TestChangeSummaryCoinCandidates(t *testing.T) {
 			want: []string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
 		},
 		{
-			name:       "crypto:XLM does not re-add itself",
+			name:       "crypto:XLM does not re-add itself; folds in native + SAC (last)",
 			entityType: "coin",
 			entityID:   "crypto:XLM",
-			want:       []string{"crypto:XLM"},
+			want:       []string{"crypto:XLM", "native", canonical.XLMSacContractID},
+		},
+		{
+			name:       "XLM SAC C-address falls back to native + crypto:XLM",
+			entityType: "coin",
+			entityID:   canonical.XLMSacContractID,
+			want:       []string{canonical.XLMSacContractID, "native", "crypto:XLM"},
 		},
 	}
 	for _, tc := range tests {

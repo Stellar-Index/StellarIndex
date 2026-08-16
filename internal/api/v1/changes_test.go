@@ -11,6 +11,7 @@ import (
 	"time"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -29,6 +30,63 @@ func (r *stubChangeSummaryReader) GetChangeSummary(_ context.Context, entityType
 		return timescale.ChangeSummaryRow{}, r.err
 	}
 	return r.row, nil
+}
+
+// keyedChangeSummaryReader returns a row only for entity_ids present
+// in its map; every other id yields sql.ErrNoRows. Lets a test prove
+// the handler's candidate expansion reaches a specific canonical form.
+type keyedChangeSummaryReader struct {
+	rows map[string]timescale.ChangeSummaryRow
+	seen []string // entity_ids queried, in order
+}
+
+func (r *keyedChangeSummaryReader) GetChangeSummary(_ context.Context, _, entityID string) (timescale.ChangeSummaryRow, error) {
+	r.seen = append(r.seen, entityID)
+	if row, ok := r.rows[entityID]; ok {
+		return row, nil
+	}
+	return timescale.ChangeSummaryRow{}, sql.ErrNoRows
+}
+
+// TestHandleChangeSummary_ResolvesXLMSACForm is the C4-015 proven-red
+// guard: when the change-summary worker has written the XLM rollup
+// only under the SAC C-address (a Soroban-sourced row), a caller
+// asking for /v1/changes/coin/native must still resolve it. Pre-fix
+// the candidate set for `native` was [native, crypto:XLM] — the SAC
+// form was omitted, so the lookup 404'd.
+func TestHandleChangeSummary_ResolvesXLMSACForm(t *testing.T) {
+	reader := &keyedChangeSummaryReader{
+		rows: map[string]timescale.ChangeSummaryRow{
+			canonical.XLMSacContractID: {
+				EntityType:   "coin",
+				EntityID:     canonical.XLMSacContractID,
+				RefreshedAt:  time.Date(2026, 7, 3, 22, 38, 0, 0, time.UTC),
+				CurrentValue: 0.1234,
+			},
+		},
+	}
+	srv := v1.New(v1.Options{ChangeSummary: reader})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/changes/coin/native")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (the SAC form must be a candidate)", resp.StatusCode)
+	}
+	var env struct {
+		Data v1.ChangeSummaryResponse `json:"data"`
+	}
+	body, _ := readAll(resp)
+	if err := json.NewDecoder(strings.NewReader(body)).Decode(&env); err != nil {
+		t.Fatalf("decode: %v (body=%s)", err, body)
+	}
+	if env.Data.CurrentValue != "0.1234" {
+		t.Errorf("CurrentValue = %q, want \"0.1234\" (served from the SAC-keyed rollup)", env.Data.CurrentValue)
+	}
+	// Money-safety: the SAC form must be the LAST candidate tried, so a
+	// thin Soroban rollup never shadows a native/crypto:XLM row.
+	if len(reader.seen) == 0 || reader.seen[len(reader.seen)-1] != canonical.XLMSacContractID {
+		t.Errorf("candidate order = %v, want the SAC form tried last", reader.seen)
+	}
 }
 
 // TestHandleChangeSummary_503WhenReaderNil — feature-gated reader.

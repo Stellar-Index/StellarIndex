@@ -400,6 +400,110 @@ func TestComputeGlobalPrice_VWAPTierAliasUnderThreshold(t *testing.T) {
 	}
 }
 
+// aliasTierReader keys the aggregator and triangulated seams by the
+// exact base form queried, so a test can prove tryAggregatorTier and
+// tryTriangulatedTier walk the asset's alias family (not just the
+// literal base). VWAP always misses so the fallback tiers run.
+type aliasTierReader struct {
+	aggByBase map[string][]canonical.OracleUpdate
+	triByBase map[string]string
+	aggBases  []string // aggregator base forms queried, in order
+	triBases  []string // triangulation base forms queried, in order
+}
+
+func (r *aliasTierReader) LatestVWAP(_ context.Context, _, _ canonical.Asset) (string, time.Time, int64, []string, bool, error) {
+	return "", time.Time{}, 0, nil, false, nil
+}
+
+func (r *aliasTierReader) LatestAggregatorPrices(_ context.Context, base, _ canonical.Asset, _ []string) ([]canonical.OracleUpdate, error) {
+	r.aggBases = append(r.aggBases, base.String())
+	return r.aggByBase[base.String()], nil
+}
+
+func (r *aliasTierReader) LookupTriangulated(_ context.Context, base, _ canonical.Asset, _ time.Duration) (string, time.Time, bool, error) {
+	r.triBases = append(r.triBases, base.String())
+	if p, ok := r.triByBase[base.String()]; ok {
+		return p, time.Now().UTC(), true, nil
+	}
+	return "", time.Time{}, false, nil
+}
+
+// TestComputeGlobalPrice_AggregatorTierLoopsAliases pins C4-014: the
+// aggregator tier must find the headline price when the base's
+// aggregator coverage lives under an alias form (here crypto:XLM) and
+// the caller queries native. Pre-fix, tryAggregatorTier queried only
+// the literal base, so a `native` query missed the crypto:XLM
+// aggregator average and degraded to triangulated / ErrNoPrice.
+func TestComputeGlobalPrice_AggregatorTierLoopsAliases(t *testing.T) {
+	quote, err := canonical.NewFiatAsset("USD")
+	if err != nil {
+		t.Fatalf("fiat: %v", err)
+	}
+	price, _ := new(big.Int).SetString("12340000", 10) // 0.12340000 @ 8dp
+	reader := &aliasTierReader{
+		aggByBase: map[string][]canonical.OracleUpdate{
+			"crypto:XLM": {{
+				Source:    "coingecko",
+				Timestamp: time.Now().UTC(),
+				Price:     canonical.NewAmount(price),
+				Decimals:  8,
+			}},
+		},
+	}
+	opts := DefaultGlobalPriceOptions()
+	opts.AggregatorSources = []string{"coingecko"}
+	res, err := ComputeGlobalPrice(context.Background(), canonical.NativeAsset(), quote, reader, opts)
+	if err != nil {
+		t.Fatalf("ComputeGlobalPrice: %v", err)
+	}
+	if res.Authority != AuthorityAggregatorAvg {
+		t.Errorf("authority = %q, want aggregator_avg (alias loop should find the crypto:XLM average)", res.Authority)
+	}
+	if res.Price != "0.12340000000000" {
+		t.Errorf("price = %q, want 0.12340000000000", res.Price)
+	}
+	// Literal form tried first, then the alias.
+	if len(reader.aggBases) < 2 || reader.aggBases[0] != "native" || reader.aggBases[1] != "crypto:XLM" {
+		t.Errorf("aggregator query order = %v, want native then crypto:XLM", reader.aggBases)
+	}
+}
+
+// TestComputeGlobalPrice_TriangulatedTierLoopsAliasesSACLast pins
+// C4-014 for tier 3: the triangulated tier must reach the SAC form,
+// and only as the LAST resort. Pre-fix, LookupTriangulated was called
+// once with the literal base, so a `native` query never saw a bridge
+// path published under the SAC form.
+func TestComputeGlobalPrice_TriangulatedTierLoopsAliasesSACLast(t *testing.T) {
+	quote, err := canonical.NewFiatAsset("USD")
+	if err != nil {
+		t.Fatalf("fiat: %v", err)
+	}
+	reader := &aliasTierReader{
+		triByBase: map[string]string{canonical.XLMSacContractID: "0.98765000000000"},
+	}
+	opts := DefaultGlobalPriceOptions()
+	opts.AggregatorSources = []string{"coingecko"} // configured, but no rows anywhere
+	res, err := ComputeGlobalPrice(context.Background(), canonical.NativeAsset(), quote, reader, opts)
+	if err != nil {
+		t.Fatalf("ComputeGlobalPrice: %v", err)
+	}
+	if res.Authority != AuthorityTriangulated {
+		t.Errorf("authority = %q, want triangulated", res.Authority)
+	}
+	if res.Price != "0.98765000000000" {
+		t.Errorf("price = %q, want 0.98765000000000", res.Price)
+	}
+	wantOrder := []string{"native", "crypto:XLM", canonical.XLMSacContractID}
+	if len(reader.triBases) != len(wantOrder) {
+		t.Fatalf("triangulation query order = %v, want %v (SAC reached last)", reader.triBases, wantOrder)
+	}
+	for i := range wantOrder {
+		if reader.triBases[i] != wantOrder[i] {
+			t.Errorf("triangulation query[%d] = %q, want %q", i, reader.triBases[i], wantOrder[i])
+		}
+	}
+}
+
 // TestAssetAliases pins that this package's wrapper is a pure
 // delegation to [canonical.AssetAliases] (F-1340; C4-012/C4-013
 // audit-2026-07-23). The alias TABLE itself is tested once, in

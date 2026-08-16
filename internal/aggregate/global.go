@@ -165,16 +165,10 @@ func ComputeGlobalPrice(
 	}
 
 	// Tier 3 — triangulated via bridge currency.
-	price, asOf, ok, err := reader.LookupTriangulated(ctx, base, quote, opts.TriangulationWindow)
-	if err != nil {
-		return GlobalPriceResult{}, fmt.Errorf("aggregate: triangulation lookup: %w", err)
-	}
-	if ok {
-		return GlobalPriceResult{
-			Price:     price,
-			Authority: AuthorityTriangulated,
-			AsOf:      asOf,
-		}, nil
+	if res, hit, err := tryTriangulatedTier(ctx, base, quote, reader, opts); err != nil {
+		return GlobalPriceResult{}, err
+	} else if hit {
+		return res, nil
 	}
 
 	return GlobalPriceResult{}, ErrNoPrice
@@ -240,36 +234,76 @@ func tryAggregatorTier(
 	if len(opts.AggregatorSources) == 0 {
 		return GlobalPriceResult{}, false, nil
 	}
-	rows, err := reader.LatestAggregatorPrices(ctx, base, quote, opts.AggregatorSources)
-	if err != nil {
-		return GlobalPriceResult{}, false, fmt.Errorf("aggregate: aggregator-prices lookup: %w", err)
+	// C4-014 (W2-tail): loop the base's canonical aliases exactly as
+	// tryVWAPTier does. Aggregators publish under whichever form the
+	// configured pair set names (`native` vs `crypto:XLM` vs the SAC
+	// C-address); querying only the literal base degrades the headline
+	// /v1/assets/{slug} price to a lower tier when the base's coverage
+	// lives under an alias. The FIRST alias whose fresh average clears
+	// the tier wins; the SAC form is ordered last (see [assetAliases]),
+	// so a thin Soroban pool can never shadow the deep classic/CEX feeds.
+	for _, b := range assetAliases(base) {
+		rows, err := reader.LatestAggregatorPrices(ctx, b, quote, opts.AggregatorSources)
+		if err != nil {
+			return GlobalPriceResult{}, false, fmt.Errorf("aggregate: aggregator-prices lookup: %w", err)
+		}
+		if len(rows) == 0 {
+			continue
+		}
+		fresh := filterFreshAggregatorRows(rows, opts.MaxAggregatorAge)
+		if len(fresh) == 0 {
+			continue
+		}
+		// M8: drop any source grossly divergent from the consensus BEFORE
+		// averaging, so a single bad print can't drag the plain-mean
+		// headline. Both the served price and the reported Sources reflect
+		// only the survivors.
+		kept := rejectAggregatorOutliers(fresh)
+		avgPrice, latest, ok := averageAggregatorPrices(kept)
+		if !ok {
+			continue
+		}
+		sources := make([]string, 0, len(kept))
+		for _, u := range kept {
+			sources = append(sources, u.Source)
+		}
+		return GlobalPriceResult{
+			Price:     avgPrice,
+			Authority: AuthorityAggregatorAvg,
+			Sources:   sources,
+			AsOf:      latest,
+		}, true, nil
 	}
-	if len(rows) == 0 {
-		return GlobalPriceResult{}, false, nil
+	return GlobalPriceResult{}, false, nil
+}
+
+func tryTriangulatedTier(
+	ctx context.Context,
+	base, quote canonical.Asset,
+	reader GlobalPriceReader,
+	opts GlobalPriceOptions,
+) (GlobalPriceResult, bool, error) {
+	// C4-014 (W2-tail): same alias loop as tryVWAPTier / tryAggregatorTier.
+	// The triangulation worker publishes each implied VWAP under a single
+	// canonical form, so a base whose bridge path was computed under
+	// `crypto:XLM` (or the SAC) is invisible to a `native`-keyed read
+	// without walking the alias family. FIRST alias with a published path
+	// wins; the SAC form is tried last.
+	for _, b := range assetAliases(base) {
+		price, asOf, ok, err := reader.LookupTriangulated(ctx, b, quote, opts.TriangulationWindow)
+		if err != nil {
+			return GlobalPriceResult{}, false, fmt.Errorf("aggregate: triangulation lookup: %w", err)
+		}
+		if !ok {
+			continue
+		}
+		return GlobalPriceResult{
+			Price:     price,
+			Authority: AuthorityTriangulated,
+			AsOf:      asOf,
+		}, true, nil
 	}
-	fresh := filterFreshAggregatorRows(rows, opts.MaxAggregatorAge)
-	if len(fresh) == 0 {
-		return GlobalPriceResult{}, false, nil
-	}
-	// M8: drop any source grossly divergent from the consensus BEFORE
-	// averaging, so a single bad print can't drag the plain-mean
-	// headline. Both the served price and the reported Sources reflect
-	// only the survivors.
-	kept := rejectAggregatorOutliers(fresh)
-	avgPrice, latest, ok := averageAggregatorPrices(kept)
-	if !ok {
-		return GlobalPriceResult{}, false, nil
-	}
-	sources := make([]string, 0, len(kept))
-	for _, u := range kept {
-		sources = append(sources, u.Source)
-	}
-	return GlobalPriceResult{
-		Price:     avgPrice,
-		Authority: AuthorityAggregatorAvg,
-		Sources:   sources,
-		AsOf:      latest,
-	}, true, nil
+	return GlobalPriceResult{}, false, nil
 }
 
 // filterFreshAggregatorRows drops observations older than
