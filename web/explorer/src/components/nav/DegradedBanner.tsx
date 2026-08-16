@@ -25,6 +25,14 @@ import { API_BASE_URL } from '@/api/client';
 
 type Overall = 'ok' | 'degraded' | 'down' | 'unknown';
 
+// Explicit tri-state trust signal for the incidents block (W1.1,
+// /v1/status.incidents_status). The counts alone are ambiguous: a
+// failed Alertmanager query zeroes them, byte-identical to "no alerts
+// firing". "unknown" means the query FAILED (or no metrics backend is
+// wired) — the counts are NOT trustworthy and must render as "unknown",
+// never as "0 active alerts".
+type IncidentsStatus = 'ok' | 'degraded' | 'unknown';
+
 interface IncidentEntry {
   name: string;
   severity: 'page' | 'ticket' | 'informational';
@@ -33,6 +41,7 @@ interface IncidentEntry {
 interface StatusEnvelope {
   data: {
     overall: Overall;
+    incidents_status?: IncidentsStatus;
     incidents?: {
       active_count?: number;
       page_count?: number;
@@ -53,6 +62,10 @@ export function DegradedBanner() {
   const [overall, setOverall] = useState<Overall>('unknown');
   const [pageCount, setPageCount] = useState(0);
   const [activeCount, setActiveCount] = useState(0);
+  // Trust signal for the counts above. When "unknown" (alerting query
+  // failed) the counts are absence-of-signal, not an all-clear — the
+  // banner renders "alert status unknown" rather than "0 active alerts".
+  const [incidentsStatus, setIncidentsStatus] = useState<IncidentsStatus>('unknown');
   const [topAlert, setTopAlert] = useState<string | null>(null);
   // health-check: distinct from `overall` — "we could not reach the status
   // feed at all", which used to be swallowed silently and look identical
@@ -72,7 +85,13 @@ export function DegradedBanner() {
         consecutiveFailures.current = 0;
         setUnreachable(false);
         setOverall(env.data.overall);
+        // Fail closed: a missing trust signal is treated as "unknown",
+        // never assumed "ok".
+        setIncidentsStatus(env.data.incidents_status ?? 'unknown');
         const incs = env.data.incidents;
+        // Genuine zeros only — these are read/displayed solely when
+        // incidentsStatus is "ok"/"degraded" (see the render below), so
+        // an absent count here is a real zero, not a blind all-clear.
         setActiveCount(incs?.active_count ?? 0);
         setPageCount(incs?.page_count ?? 0);
         const top = (incs?.active ?? []).find((i) => i.severity === 'page')
@@ -136,14 +155,22 @@ export function DegradedBanner() {
         <span className="font-medium">{tone.label}.</span>
         {!unreachable && (
           <span className="hidden text-xs opacity-90 sm:inline">
-            {activeCount} active alert{activeCount === 1 ? '' : 's'}
-            {topAlert && (
+            {incidentsStatus === 'unknown' ? (
+              // The alerting query failed — do NOT claim "0 active
+              // alerts" (a false all-clear). Surface the blind spot.
+              'alert status unknown'
+            ) : (
               <>
-                {' '}
-                · top:{' '}
-                <code className="rounded-sm bg-surface/40 px-1 py-0.5 text-[11px]">
-                  {topAlert}
-                </code>
+                {activeCount} active alert{activeCount === 1 ? '' : 's'}
+                {topAlert && (
+                  <>
+                    {' '}
+                    · top:{' '}
+                    <code className="rounded-sm bg-surface/40 px-1 py-0.5 text-[11px]">
+                      {topAlert}
+                    </code>
+                  </>
+                )}
               </>
             )}
           </span>
