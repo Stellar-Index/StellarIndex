@@ -162,6 +162,19 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		return err
 	}
 
+	// Publish the process-wide asset alias registry BEFORE any read
+	// path runs (W2). This is what makes classic↔SAC pairs declared in
+	// [supply].sac_wrappers alias-complete on the served money paths:
+	// a classic-keyed read (e.g. USDC) now also folds in its SAC-form
+	// volume, with the SAC form ordered LAST so a thin Soroban pool
+	// never outranks classic depth. Fail-closed — a malformed wrapper is
+	// silently under-counted volume, so surface it at boot.
+	aliasRegistry, err := canonical.NewAliasRegistry(cfg.Supply.SACWrappers)
+	if err != nil {
+		return fmt.Errorf("alias registry: %w", err)
+	}
+	canonical.InstallAliasRegistry(aliasRegistry)
+
 	logger := mkLogger(cfg.Obs)
 	logger.Info(
 		"starting",
