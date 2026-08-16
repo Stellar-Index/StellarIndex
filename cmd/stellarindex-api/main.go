@@ -1403,6 +1403,10 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		defer recoverBackgroundWorker(logger, "prewarm-protocol-details")
 		const betweenSweeps = 10 * time.Minute
 		for {
+			// Warm the directory's roster counts (cheap, ~15 quick reads)
+			// before the far heavier detail sweep, so /v1/protocols is warm
+			// early (W1.3) and no first request pays for a cold roster scan.
+			apiSrv.PrewarmProtocolRosters(rootCtx)
 			apiSrv.PrewarmProtocolDetails(rootCtx)
 			select {
 			case <-rootCtx.Done():
