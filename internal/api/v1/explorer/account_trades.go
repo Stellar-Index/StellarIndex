@@ -141,6 +141,19 @@ func (h *Handler) tradesUnavailable(w http.ResponseWriter, r *http.Request) {
 		"This deployment hasn't wired the Postgres trades reader.")
 }
 
+// tradesBusy writes the retryable 503 shed when the account-trades
+// concurrency gate is full: the scan was never started, so this is an
+// instant "busy, retry" — NOT a timeout (mirrors writeRetryable's honest
+// split by cause). Same 503 + type-URL contract as the timeout path; only
+// the detail tells the truth about which condition occurred.
+func (h *Handler) tradesBusy(w http.ResponseWriter, r *http.Request) {
+	h.WriteProblem(w, r,
+		"https://api.stellarindex.io/errors/account-trades-timeout",
+		"Account trades busy", http.StatusServiceUnavailable,
+		"too many per-account trades scans are already in flight; this scan was NOT "+
+			"started on this request — retry in a moment")
+}
+
 // AccountTrades serves GET /v1/accounts/{g_strkey}/trades — the
 // address's historic trades (taker or maker side), newest first,
 // keyset-paged by the opaque (ts, ledger, tx_hash, op_index) cursor.
@@ -159,6 +172,20 @@ func (h *Handler) AccountTrades(w http.ResponseWriter, r *http.Request) {
 	}
 	cur, ok := h.parseAccountTradesCursor(w, r)
 	if !ok {
+		return
+	}
+
+	// Bound concurrent per-account trades scans. The read is 9.5-11.1s on
+	// cold chunks (taker/maker are not compression segmentby keys), so a
+	// handful of unbounded callers would pin the whole 25-connection serving
+	// pool below the rate limiter's floor and starve every other
+	// Postgres-backed endpoint. Acquire a gate slot or shed a retryable 503 —
+	// shed, don't queue past the read budget. See accountTradesGate above.
+	select {
+	case accountTradesGate <- struct{}{}:
+		defer func() { <-accountTradesGate }()
+	case <-time.After(accountTradesGateWait):
+		h.tradesBusy(w, r)
 		return
 	}
 
