@@ -17,10 +17,16 @@ export function LivePrice({
   assetId,
   initial,
   format,
+  quote = 'fiat:USD',
 }: {
   assetId: string;
   initial: string;
   format?: 'usd' | 'plain';
+  // The quote asset to price `assetId` against. Defaults to fiat:USD so
+  // the USD-denominated embeds (asset, currency) need not pass it; the
+  // pair embed passes the pair's own quote so it refreshes the same
+  // base/quote price it baked, not a USD conversion.
+  quote?: string;
 }) {
   const [price, setPrice] = useState(initial);
   const [asOf, setAsOf] = useState<string | null>(null);
@@ -30,7 +36,7 @@ export function LivePrice({
     async function tick() {
       try {
         const res = await fetch(
-          `${API_BASE}/v1/price?asset=${encodeURIComponent(assetId)}&quote=fiat:USD`,
+          `${API_BASE}/v1/price?asset=${encodeURIComponent(assetId)}&quote=${encodeURIComponent(quote)}`,
         );
         if (!res.ok) return;
         const body = (await res.json()) as {
@@ -50,7 +56,7 @@ export function LivePrice({
       cancelled = true;
       clearInterval(t);
     };
-  }, [assetId, format]);
+  }, [assetId, format, quote]);
 
   return (
     <span
