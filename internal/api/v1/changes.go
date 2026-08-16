@@ -122,7 +122,13 @@ func changeSummaryCoinCandidates(entityType, entityID string) []string {
 	// global crypto ticker form, which the aggregator publishes for
 	// CEX/FX-quoted trades. The full `<CODE>-G…` strkey form is
 	// already the literal entityID when callers provide it.
-	if upper != "" && upper != "NATIVE" && !strings.Contains(entityID, "-") && !strings.Contains(entityID, ":") {
+	//
+	// A Stellar classic asset code is at most 12 characters
+	// (SEP-11 alphanum12); the length bound keeps a 56-char strkey —
+	// e.g. an XLM SAC C-address — from being manufactured into a
+	// bogus `crypto:CAS3J7…` ticker that matches nothing.
+	if upper != "" && upper != "NATIVE" && len(upper) <= 12 &&
+		!strings.Contains(entityID, "-") && !strings.Contains(entityID, ":") {
 		add("crypto:" + upper)
 	}
 	// `native` → also try `crypto:XLM`.
@@ -134,6 +140,22 @@ func changeSummaryCoinCandidates(entityType, entityID string) []string {
 	// may differ from the input, e.g. casing).
 	if a, err := canonical.ParseAsset(entityID); err == nil {
 		add(a.String())
+	}
+	// C4-015 (W2-tail): fold in the FULL canonical alias family for
+	// every form gathered so far, so the XLM SAC C-address (and any
+	// configured classic↔SAC pair) is a candidate too — the change-
+	// summary worker writes a Soroban-sourced XLM rollup under the SAC
+	// form, which the native/crypto:XLM branches above omit. AssetAliasStrings
+	// orders the SAC form LAST, so it is only ever tried after the deep
+	// classic/CEX forms miss (money-safety: thin Soroban never shadows
+	// the established forms). Ranging over a snapshot keeps the append
+	// from feeding itself.
+	for _, id := range append([]string(nil), out...) {
+		if a, err := canonical.ParseAsset(id); err == nil {
+			for _, form := range canonical.AssetAliasStrings(a) {
+				add(form)
+			}
+		}
 	}
 	return out
 }
