@@ -760,6 +760,12 @@ func run(cfgPath string, dryRun bool) error {
 		Observer: mevObserver{},
 		Oracles:  store,
 		Auctions: store,
+		// mev_events is a non-hypertable with no TimescaleDB retention
+		// policy; bound it via the worker's prune step. The rows are
+		// re-derivable and only recent events are served, so a 90-day
+		// window (WorkerConfig default) keeps the table from growing
+		// unbounded without losing anything the /mev feed shows.
+		Pruner: store,
 	}
 	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
 		if txr, err := clickhouse.NewTxIndexReader(rootCtx, addr); err != nil {

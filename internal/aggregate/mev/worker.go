@@ -43,6 +43,16 @@ type AuctionScanner interface {
 	BlendFillsForMEVScan(ctx context.Context, since time.Time, limit int) ([]AuctionFill, error)
 }
 
+// Pruner drops mev_events past a retention cutoff so the table cannot
+// grow unbounded. mev_events is DERIVED, re-derivable output (the
+// detectors re-scan the trades/oracle hypertables every tick) and the
+// /v1/mev read path only shows recent events, so aged rows are safe to
+// delete. Production: timescale.Store.PruneMEVEvents. Optional — nil
+// disables pruning.
+type Pruner interface {
+	PruneMEVEvents(ctx context.Context, before time.Time) (removed int64, err error)
+}
+
 // TxOrderResolver resolves tx hashes to their intra-ledger
 // application order (tx_index) — the signal the served trades table
 // does not carry but the raw lake does (stellar.tx_hash_index,
@@ -120,11 +130,19 @@ type Worker struct {
 	oracles   OracleScanner   // optional
 	auctions  AuctionScanner  // optional
 	order     TxOrderResolver // optional
+	pruner    Pruner          // optional
 	logger    *slog.Logger
 	window    time.Duration
 	scanLimit int
+	retention time.Duration
 	obs       Observer
 }
+
+// defaultRetention bounds mev_events when a Pruner is wired but no
+// Retention is set. 90 days matches the retention the raw hypertables
+// historically carried (migrations 0001/0003) and keeps a quarter of
+// accusation history for the /mev feed while preventing unbounded growth.
+const defaultRetention = 90 * 24 * time.Hour
 
 // Observer records per-run outcomes. nil → no-op (NopObserver).
 type Observer interface {
@@ -138,14 +156,19 @@ type Observer interface {
 // Oracles / Auctions / Order are optional inputs: each nil seam
 // simply disables the detectors that need it (see the interface docs)
 // — detection degrades honestly rather than guessing.
+// Pruner, when set, bounds mev_events to Retention (defaulting to
+// defaultRetention). A nil Pruner disables retention — growth is then
+// unbounded, so production wiring MUST supply one.
 type WorkerConfig struct {
 	Window    time.Duration
 	ScanLimit int
+	Retention time.Duration
 	Logger    *slog.Logger
 	Observer  Observer
 	Oracles   OracleScanner
 	Auctions  AuctionScanner
 	Order     TxOrderResolver
+	Pruner    Pruner
 }
 
 // NewWorker builds a Worker. scanner + sink are required.
@@ -155,6 +178,9 @@ func NewWorker(scanner TradeScanner, sink Sink, cfg WorkerConfig) *Worker {
 	}
 	if cfg.ScanLimit <= 0 {
 		cfg.ScanLimit = 50_000
+	}
+	if cfg.Pruner != nil && cfg.Retention <= 0 {
+		cfg.Retention = defaultRetention
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -169,9 +195,11 @@ func NewWorker(scanner TradeScanner, sink Sink, cfg WorkerConfig) *Worker {
 		oracles:   cfg.Oracles,
 		auctions:  cfg.Auctions,
 		order:     cfg.Order,
+		pruner:    cfg.Pruner,
 		logger:    cfg.Logger,
 		window:    cfg.Window,
 		scanLimit: cfg.ScanLimit,
+		retention: cfg.Retention,
 		obs:       obs,
 	}
 }
@@ -213,11 +241,34 @@ func (w *Worker) RunOnce(ctx context.Context, now time.Time) (detected, inserted
 			inserted++
 		}
 	}
+	w.pruneOld(ctx, now)
 	w.obs.Run("ok", time.Since(start), detected, inserted)
 	if inserted > 0 {
 		w.logger.Info("mev: detection run", "detected", detected, "inserted", inserted, "scanned", len(trades))
 	}
 	return detected, inserted, nil
+}
+
+// pruneOld drops mev_events older than the retention window so the table
+// stays bounded. Best-effort: the rows are fully re-derivable and the
+// read feed only surfaces recent events, so a prune failure logs and is
+// retried next tick — it never fails the detection run. No-op when no
+// Pruner is wired.
+func (w *Worker) pruneOld(ctx context.Context, now time.Time) {
+	if w.pruner == nil || w.retention <= 0 {
+		return
+	}
+	before := now.Add(-w.retention)
+	removed, err := w.pruner.PruneMEVEvents(ctx, before)
+	if err != nil {
+		if ctx.Err() == nil {
+			w.logger.Warn("mev: prune of aged events failed — retention not enforced this tick", "err", err, "before", before)
+		}
+		return
+	}
+	if removed > 0 {
+		w.logger.Info("mev: pruned events past retention", "removed", removed, "before", before)
+	}
 }
 
 // Run drives RunOnce on a ticker until ctx is cancelled. It runs once

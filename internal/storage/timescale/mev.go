@@ -222,6 +222,24 @@ func (s *Store) InsertMEVEvent(ctx context.Context, e domain.MEVStoredEvent) (bo
 	return n > 0, nil
 }
 
+// PruneMEVEvents deletes mev_events whose detected_at is strictly before
+// `before`, returning the row count removed. mev_events is a plain
+// (non-hypertable) table with no TimescaleDB retention policy, and its
+// rows are DERIVED, re-derivable detector output — so the MEV worker
+// calls this each tick to bound the table to a retention window rather
+// than letting flagged-event history grow without limit. The
+// mev_events_detected_idx (detected_at DESC) index keeps the delete a
+// bounded range scan. Satisfies mev.Pruner.
+func (s *Store) PruneMEVEvents(ctx context.Context, before time.Time) (int64, error) {
+	const q = `DELETE FROM mev_events WHERE detected_at < $1`
+	res, err := s.db.ExecContext(ctx, q, before.UTC())
+	if err != nil {
+		return 0, fmt.Errorf("timescale: PruneMEVEvents: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // MEVEventRow is one mev_events row for the /v1/mev read path.
 // Amounts/detail are pass-through (the API maps to the wire shape).
 type MEVEventRow struct {
