@@ -243,6 +243,10 @@ verify-launch-ready-single-region: ## verify-launch-ready against the project's 
 lint-metric-refs: ## F-1329 dead-alert guard: every stellarindex_* expr token must resolve to an emitter or KNOWN_INERT
 	@./scripts/ci/lint-metric-refs.sh
 
+.PHONY: lint-metric-refs-test
+lint-metric-refs-test: ## Fixtures for the F-1329 guard: a comment-only mention is NOT an emitter
+	@./scripts/ci/lint-metric-refs-test.sh
+
 .PHONY: monitoring-check
 monitoring-check: ## Validate Prometheus rule files with promtool (multi-host + R1 overlay) + dead-metric-ref guard
 	@if ! command -v promtool >/dev/null 2>&1; then \

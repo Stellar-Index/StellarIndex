@@ -124,24 +124,52 @@ extract_expr_tokens() {
       gsub(/job[[:space:]]*=~?[[:space:]]*"[^"]*"/, "", s)
       return s
     }
+    function strip_hash(s) {
+      # drop `# ...` trailing YAML/PromQL comments inside the expr region
+      # so a metric NAMED ONLY in a comment (e.g. `# TODO wire
+      # stellarindex_foo`) is not enforced as a live reference. PromQL has
+      # no `#` operator, so this never truncates a real selector.
+      sub(/#.*/, "", s)
+      return s
+    }
     /^[[:space:]]*expr:[[:space:]]*\|?[[:space:]]*$/ { inexpr=1; next }
-    /^[[:space:]]*expr:/ { print strip_jobs(substr($0, index($0,"expr:")+5)); next }
+    /^[[:space:]]*expr:/ { print strip_hash(strip_jobs(substr($0, index($0,"expr:")+5))); next }
     inexpr {
       if ($0 ~ /^[[:space:]]*(for|labels|annotations):/ || $0 ~ /^[[:space:]]*-[[:space:]]+(alert|record):/) { inexpr=0; next }
-      print strip_jobs($0)
+      print strip_hash(strip_jobs($0))
     }
   ' "$1" | grep -oE 'stellarindex_[a-zA-Z0-9_]+' || true
 }
 
 self_rel="scripts/ci/lint-metric-refs.sh"
 
+# Emit the contents of an emitter file with its COMMENT lines/segments
+# blanked out, so a metric named only in a comment does not count as
+# "emitted". A metric documented in a `// TODO emit stellarindex_foo`
+# Go comment or a `# HELP stellarindex_foo` .prom header is NOT a
+# producer — the real emitter is a `Name:`/struct literal (Go) or the
+# bare metric line (.prom), neither of which is a comment. Go uses `//`,
+# shell + Prometheus textfile (.prom) use `#`. Trailing comments are
+# stripped too, not just full-comment lines.
+strip_comments() {
+  case "$1" in
+    *.go)        sed -E 's://.*$::' "$1" ;;
+    *.sh|*.prom) sed -E 's:#.*$::' "$1" ;;
+    *)           cat "$1" ;;
+  esac
+}
+
 is_emitted() {
-  # True if the token appears as a literal anywhere an emitter could live.
-  # Exclude this script (its KNOWN_INERT array would self-match) so an
-  # inert token never looks "emitted" just because it's listed here.
-  grep -rlF --include="*.go" --include="*.sh" --include="*.prom" -e "$1" "${EMITTER_PATHS[@]}" 2>/dev/null \
-    | grep -vqxF "$self_rel" \
-    && return 0
+  # True if the token appears as a literal on a NON-COMMENT line of some
+  # emitter file. Exclude this script (its KNOWN_INERT array would
+  # self-match) so an inert token never looks "emitted" just because it's
+  # listed here. We first cheaply narrow to files that contain the token
+  # at all (grep -rlF), then confirm the match survives comment-stripping.
+  local tok="$1" f
+  while IFS= read -r f; do
+    [[ "$f" == "$self_rel" ]] && continue
+    grep -qF -e "$tok" <(strip_comments "$f") && return 0
+  done < <(grep -rlF --include="*.go" --include="*.sh" --include="*.prom" -e "$tok" "${EMITTER_PATHS[@]}" 2>/dev/null)
   return 1
 }
 

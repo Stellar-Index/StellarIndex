@@ -789,7 +789,7 @@ Subcommands:
                           top-N report; -seed-flows writes one decoded row
                           per flow event into stellar.supply_flows
                           (idempotent). Read-only unless -seed-flows.
-  ch-txindex-backfill [-ch-addr H:P] [-from N] [-to N] [-window N]
+  ch-txindex-backfill (-full | -from N | -to N) [-ch-addr H:P] [-window N]
                           Fill stellar.tx_hash_index (the hash-ordered
                           GET /v1/tx/{hash} lookup table, perf-todo §4)
                           from stellar.transactions history in windowed,
@@ -797,8 +797,11 @@ Subcommands:
                           ReplacingMergeTree keyed on tx_hash). The
                           tx_hash_index_mv MV covers post-deploy ingest;
                           this covers the history behind it. -to 0 = lake
-                          tip. Prints a resume point per window; serialize
-                          it and run under the root-<2G watchdog on r1.
+                          tip. A bare invocation is REFUSED: -full runs the
+                          whole ledger-2..tip history (~10.2B rows), or pass
+                          an explicit -from (resume point) / -to bound.
+                          Prints a resume point per window; serialize it and
+                          run under the root-<2G watchdog on r1.
   ch-participant-backfill [-ch-addr H:P] [-from N] [-to N] [-window N] [-dry-run]
                           Fill stellar.operation_participants (the non-source
                           side of ADR-0038 Phase B account history) for
