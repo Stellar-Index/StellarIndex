@@ -244,6 +244,95 @@ func TestHandleIncidentsAtom_ValidXML(t *testing.T) {
 	}
 }
 
+// TestHandleIncidentsAtom_FeedUpdatedIsMostRecentEntry pins the
+// feed-level <updated> to the most recent entry's <updated>, per
+// RFC 4287 (and the handler's own doc comment). The pre-fix code set
+// it to time.Now(), so a stale feed was syndicated as freshly updated
+// on every crawl — a dishonest freshness signal to Feedly/Slack RSS.
+//
+// Entries here are deliberately in the past; the feed <updated> must
+// equal the max entry <updated> (the later of the two incidents'
+// resolved_at), NOT ~now.
+func TestHandleIncidentsAtom_FeedUpdatedIsMostRecentEntry(t *testing.T) {
+	// Two incidents. The second is the most recent (resolved later),
+	// so its resolved_at is the feed's <updated>.
+	olderResolved := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	newerResolved := time.Date(2026, 5, 6, 22, 39, 0, 0, time.UTC)
+	s := newTestServerWithLogger()
+	s.incidents = []incidents.Incident{
+		{
+			Slug:         "2026-05-06-postgres-lock",
+			Title:        "[SEV-3] Postgres lock-table-full",
+			StartedAt:    time.Date(2026, 5, 6, 15, 0, 0, 0, time.UTC),
+			ResolvedAt:   &newerResolved,
+			BodyMarkdown: "Newer incident.",
+		},
+		{
+			Slug:         "2026-03-01-earlier",
+			Title:        "[SEV-4] Earlier blip",
+			StartedAt:    time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC),
+			ResolvedAt:   &olderResolved,
+			BodyMarkdown: "Older incident.",
+		},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/incidents.atom", nil)
+	s.handleIncidentsAtom(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var feed atomFeed
+	body := rec.Body.Bytes()
+	if err := xml.Unmarshal(body, &feed); err != nil {
+		t.Fatalf("unmarshal feed: %v\nbody:\n%s", err, body)
+	}
+
+	const wantUpdated = "2026-05-06T22:39:00Z"
+	if feed.Updated != wantUpdated {
+		t.Errorf("feed <updated> = %q, want most-recent entry %q (RFC 4287)", feed.Updated, wantUpdated)
+	}
+	// Guard against the pre-fix time.Now() behaviour explicitly: the
+	// feed <updated> must not be within a few seconds of now.
+	if u, err := time.Parse(time.RFC3339, feed.Updated); err == nil {
+		if d := time.Since(u); d < 5*time.Second && d > -5*time.Second {
+			t.Errorf("feed <updated> %q is ~now — a stale feed is being syndicated as freshly updated", feed.Updated)
+		}
+	}
+}
+
+// TestHandleIncidentsAtom_EmptyFeedUsesStableSentinel — a feed with
+// zero incidents must emit a STABLE <updated> (the fixed feed-
+// established epoch), NOT time.Now(). Otherwise an empty feed churns
+// its freshness signal on every crawl.
+func TestHandleIncidentsAtom_EmptyFeedUsesStableSentinel(t *testing.T) {
+	s := newTestServerWithLogger()
+	s.incidents = nil
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/incidents.atom", nil)
+	s.handleIncidentsAtom(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var feed atomFeed
+	body := rec.Body.Bytes()
+	if err := xml.Unmarshal(body, &feed); err != nil {
+		t.Fatalf("unmarshal feed: %v\nbody:\n%s", err, body)
+	}
+
+	const wantSentinel = "2026-01-01T00:00:00Z"
+	if feed.Updated != wantSentinel {
+		t.Errorf("empty-feed <updated> = %q, want stable sentinel %q", feed.Updated, wantSentinel)
+	}
+	// And it must not be ~now (the pre-fix churn).
+	if u, err := time.Parse(time.RFC3339, feed.Updated); err == nil {
+		if d := time.Since(u); d < 5*time.Second && d > -5*time.Second {
+			t.Errorf("empty-feed <updated> %q is ~now — empty feed churns freshness every crawl", feed.Updated)
+		}
+	}
+}
+
 // newTestServerWithLogger constructs a Server suitable for atom-
 // feed testing — needs a non-nil logger because the handler logs
 // on encode errors.
