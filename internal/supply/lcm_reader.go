@@ -20,7 +20,11 @@ type AccountObservationLookup interface {
 	LatestAccountObservationAtOrBefore(ctx context.Context, accountID string, asOfLedger uint32) (AccountObservationRow, error)
 
 	// MaxAccountObservationLedger reports how far the account OBSERVER has
-	// progressed at-or-before asOfLedger, across every observed account.
+	// PROCESSED at-or-before asOfLedger — the true observer watermark, which
+	// advances every ledger the observer runs regardless of whether any
+	// watched account changed (F-1320/R-002/CS-102; storage impl reads
+	// account_observer_watermark). NOT the last balance-change ledger: a quiet
+	// reserve account must not read as a stalled observer.
 	//
 	// Deliberately part of the REQUIRED interface rather than an optional
 	// one probed by type assertion (CS-102): a missing delegate behind an
