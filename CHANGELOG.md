@@ -15,6 +15,26 @@ against.
 
 ## [Unreleased]
 
+## [v0.35.0] — 2026-08-16
+
+Tested against Stellar protocol v23. Applies migration 0144 (additive,
+old-binary-safe — a new singleton table, no re-login, no data change).
+
+### Fixed
+- **XLM circulating-supply refresh no longer falsely freezes during quiet
+  periods.** The supply freshness gate anchored on `MAX(ledger)` over
+  `account_observations`, which only rows on a watched SDF-reserve-account
+  *balance change* — so any market-quiet stretch beyond the ~1-day dormancy
+  horizon made the anchor go stale and the gate fail closed, freezing XLM
+  supply and firing a continuous `supply_refresh_error_dominant` ticket (which
+  in turn masked a genuine future observer death). The served value was always
+  correct — only its freshness signal was wrong. The gate now anchors on a true
+  per-tick observer watermark (new `account_observer_watermark` table, migration
+  0144), advanced every ledger by the indexer: a healthy-but-quiet observer
+  stays fresh, a genuinely dead observer still trips the gate. Found only by a
+  live audit of r1 — the code looked correct; the live quiet-reserve state
+  triggered the latent flaw.
+
 ## [v0.34.0] — 2026-08-16
 
 Tested against Stellar protocol v23.
