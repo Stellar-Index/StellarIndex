@@ -694,6 +694,16 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
 	// filter BOTH CTEs (empty short-circuits → planner skips); the
 	// keyset-cursor ($2) + LIMIT $3 overfetch-by-one shape is
 	// byte-for-byte the prior pagination contract.
+	//
+	// $5 is a text[] of the requested asset's ALIAS forms, not a scalar
+	// (F-1340): XLM lives under `native`, `crypto:XLM` and its SAC
+	// C-address depending on which venue's trades keyed the row, so a
+	// scalar `= $5` on `?asset=native` structurally omitted the
+	// crypto:XLM-keyed CEX markets (and vice-versa). ANY-membership on
+	// each leg matches every form the same way the price/OHLC read paths
+	// loop the alias set. AssetAliasStrings returns just `[asset]` for
+	// every non-aliased id, so single-form assets bind a one-element
+	// array — identical selectivity to the prior `= $5`.
 	// canon collapses flipped orientations of the same market (XLM/USDC
 	// and USDC/XLM — the SDEX decoder records both) into ONE row: USD
 	// volume + trade count sum across both directions, and last_price is
@@ -710,7 +720,7 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
               FROM prices_1d p
              WHERE p.bucket >= $1
                AND ($4 = '' OR $4 = ANY(p.sources))
-               AND ($5 = '' OR p.base_asset = $5 OR p.quote_asset = $5)
+               AND (cardinality($5::text[]) = 0 OR p.base_asset = ANY($5) OR p.quote_asset = ANY($5))
              GROUP BY p.base_asset, p.quote_asset
         ),
         h AS (
@@ -721,7 +731,7 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
               FROM prices_1m p
              WHERE p.bucket > NOW() - INTERVAL '24 hours'
                AND ($4 = '' OR $4 = ANY(p.sources))
-               AND ($5 = '' OR p.base_asset = $5 OR p.quote_asset = $5)
+               AND (cardinality($5::text[]) = 0 OR p.base_asset = ANY($5) OR p.quote_asset = ANY($5))
              GROUP BY p.base_asset, p.quote_asset
         ),
         raw AS (
@@ -756,6 +766,24 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
                count_24h, NULLIF(vol_24h_num, 0)::text AS vol_24h_usd, last_price
           FROM canon
     `
+	// Expand the asset filter to its full alias set (F-1340) bound as the
+	// $5 text[]: XLM lives under `native`, `crypto:XLM` and its SAC
+	// C-address depending on which venue keyed the row, so the prior scalar
+	// match omitted the alias-keyed markets. Empty asset → empty (NON-nil)
+	// array → the query's cardinality($5)=0 short-circuit disables the
+	// filter. A nil slice would bind SQL NULL, and cardinality(NULL) is
+	// NULL (not 0), which would exclude every row from the unfiltered
+	// DistinctPairs / SourceMarkets scans — hence the explicit `{}`. A
+	// non-XLM / unparseable asset resolves to a one-element set — identical
+	// selectivity to the prior scalar `= $5`.
+	assets := []string{}
+	if asset != "" {
+		if a, err := canonical.ParseAsset(asset); err == nil {
+			assets = canonical.AssetAliasStrings(a)
+		} else {
+			assets = []string{asset}
+		}
+	}
 	switch order {
 	case MarketsOrderVolume24hDesc:
 		// Cursor: "<vol_or_blank>:<base>|<quote>". Two-tuple keyset
@@ -780,14 +808,14 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
                   (base_asset || '|' || quote_asset) ASC
          LIMIT $3
         `
-		return ctes + tail, []any{since, cursor, limit + 1, source, asset}
+		return ctes + tail, []any{since, cursor, limit + 1, source, pq.Array(assets)}
 	default: // MarketsOrderPair
 		const tail = `
          WHERE ($2 = '' OR (base_asset || '|' || quote_asset) > $2)
          ORDER BY (base_asset || '|' || quote_asset) ASC
          LIMIT $3
         `
-		return ctes + tail, []any{since, cursor, limit + 1, source, asset}
+		return ctes + tail, []any{since, cursor, limit + 1, source, pq.Array(assets)}
 	}
 }
 
