@@ -15,7 +15,29 @@ against.
 
 ## [Unreleased]
 
+## [v0.34.0] — 2026-08-16
+
+Tested against Stellar protocol v23.
+
+Ships two audit campaigns: the audit-2026-08-14 internal remediation (79
+verified fixes) and the v1 launch-completion pass (asset-identity registry,
+absent-vs-zero honesty, and correctness-backlog items). Applies migrations
+0141–0143; **0143 hashes session tokens at rest and forces a one-time
+dashboard re-login.**
+
 ### Security
+- **Account-history participant injection closed.** A Soroban `InvokeContract`
+  op's call arguments and `SorobanAuthorizationEntry` entries are attacker-
+  controllable at the XDR-decode layer, so they are no longer indexed as
+  account participants. Previously an attacker could inject an arbitrary
+  victim's address into that victim's permanent, public
+  `/accounts/{g}/operations` history under the attacker's own signature.
+- **audit-2026-08-14 remediation — 79 verified fixes** across money-correctness
+  (SDEX single-leg plausibility ceiling, oracle-execution corroboration for the
+  Band adapter, MEV-detector evidence-gating + `mev_events` retention),
+  auth/data-integrity (self-service key-mint scope hardening, session token
+  hashing at rest via migration 0143), and projector durability. Each landed
+  with a proven-red regression test.
 - **Go toolchain 1.25.12 → 1.25.13.** govulncheck reported 7 standard-library
   vulnerabilities reachable from live call paths — `net/http` (GO-2026-5026,
   Punycode label handling) via the ClickHouse reader, the CoinGecko supply
@@ -25,8 +47,25 @@ against.
   the `toolchain` directive is the only pin to move. Verified clean locally:
   "0 vulnerabilities".
 
+### Changed
+- **Asset identity: one alias registry.** A binary-startup `AliasRegistry`
+  built from `[supply].sac_wrappers` folds an asset's SAC-wrapped form into a
+  single identity (SAC form ordered last), threaded through the price/volume
+  read paths. Fixes alias-blind volume/price reads across ~11 money endpoints
+  (asset detail, VWAP/TWAP/OHLC, pairs, markets, aggregate global tiers) that
+  previously split an asset's SAC and classic forms into two un-aliased
+  identities. Non-XLM folding activates per `[supply].sac_wrappers` config.
 
 ### Fixed
+- **Absent-vs-zero honesty across the read surface.** `/v1/status` incidents
+  now carry an explicit `ok|degraded|unknown` tri-state (a failed alert query
+  no longer serialises as a false all-clear); `/v1/tx` distinguishes partial
+  event / op-result coverage; `/v1/protocols` serves from an SWR cache instead
+  of a per-request unauthenticated scan; the explorer degraded-banner and
+  network-insight no longer read a failed query's zero as real data.
+- **Incidents Atom feed `<updated>`** now reflects the most-recent entry's
+  timestamp (empty feed → a stable sentinel) instead of wall-clock `now()`, so
+  a stale or empty feed is no longer syndicated as freshly updated every crawl.
 - **`TestMigrationsRoundTrip` could deadlock against TimescaleDB's own
   job scheduler, turning `main` red for 30 hours and firing the
   ci-health tripwire every two hours.** The test asserts compression
