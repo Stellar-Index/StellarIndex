@@ -19,8 +19,11 @@ import (
 //
 // It returns one row per NON-source G-account the op body touches, as decoded
 // by xdrjson.ParticipantAccounts: the payment / path-payment / account-merge
-// destination, the allow-trust / set-trust-line-flags trustor, the clawback
-// `from`, and any account-address argument of a Soroban invoke. Muxed (M-)
+// destination, the allow-trust / set-trust-line-flags trustor, and the clawback
+// `from`. Soroban InvokeContract ops deliberately contribute NO participant —
+// their call args and SorobanAuthorizationEntry auth entries are both attacker-
+// controllable at decode time, so neither can name a trusted participant (see
+// xdrjson.ParticipantAccounts). Muxed (M-)
 // destinations resolve to their underlying G. The op's own resolved
 // source_account is deliberately EXCLUDED: it is already the full-history
 // operations.source_account lake column, and the account-history reader UNIONs
