@@ -177,31 +177,75 @@ func (s *Store) LatestAccountObservationAtOrBefore(ctx context.Context, accountI
 	return row, nil
 }
 
+// UpsertAccountObserverWatermark advances the account observer's TRUE
+// processed-ledger watermark to processedLedger (migration 0144). The live
+// indexer calls this every ledger it drives the observer over — REGARDLESS of
+// whether any watched account's balance changed — so the watermark tracks the
+// observer's liveness, not its last write.
+//
+// Singleton row (id=1). Monotonic-advance guard in the WHERE clause: a
+// lower-or-equal value is a silent DB no-op, so an out-of-order or replayed
+// caller can never regress the anchor (mirrors [Store.UpsertCursor]).
+// processed_ledger is `bigint`, so no int4 cap is needed here (unlike the
+// int4-columned account_observations reads).
+func (s *Store) UpsertAccountObserverWatermark(ctx context.Context, processedLedger uint32) error {
+	const q = `
+        INSERT INTO account_observer_watermark (id, processed_ledger, updated_at)
+        VALUES (1, $1, now())
+        ON CONFLICT (id) DO UPDATE SET
+            processed_ledger = EXCLUDED.processed_ledger,
+            updated_at       = EXCLUDED.updated_at
+         WHERE EXCLUDED.processed_ledger > account_observer_watermark.processed_ledger
+    `
+	if _, err := s.db.ExecContext(ctx, q, int64(processedLedger)); err != nil {
+		return fmt.Errorf("timescale: UpsertAccountObserverWatermark@%d: %w", processedLedger, err)
+	}
+	return nil
+}
+
 // MaxAccountObservationLedger returns how far the ACCOUNT OBSERVER has
-// progressed at-or-before asOfLedger — MAX(ledger) across every observed
-// account, not any one account's last observation. Zero when the table holds
-// no observations in scope.
+// PROCESSED at-or-before asOfLedger — the true observer watermark
+// (account_observer_watermark, migration 0144), bounded by asOfLedger. Zero
+// when no watermark has been recorded yet (fresh cluster before the first live
+// tick), which the refresher's freshness gate treats as its permissive bypass.
 //
-// CS-102 (2026-07-28), third leg. The XLM freshness gate previously anchored
-// on MIN(last observation) across the configured SDF reserve accounts. Those
-// accounts move every few days-to-weeks by design, so that anchor goes stale
-// while nothing is wrong, the gate reads a stalled observer, and XLM's served
-// supply freezes — which is exactly what it was doing.
+// F-1320 / R-002 / CS-102 tail (live r1 root-cause). This USED to return
+// MAX(ledger) FROM account_observations — but that table only gets a row when
+// a watched account's balance CHANGES, so MAX(ledger) was the most recent SDF-
+// reserve balance change, NOT the observer's progress. During any quiet period
+// it went stale while the observer was healthy: the XLM freshness gate crossed
+// its dormancy horizon and false-rejected, firing a continuous
+// supply_refresh_error_dominant ticket AND freezing XLM's served as_of on a
+// value that was actually current — while MASKING a genuinely-dead observer
+// behind the same stale signal.
 //
-// Per-account last-activity answers "how busy is this account", not "is our
-// data current". The observer watermark answers the latter, and a genuinely
-// dead observer still stops advancing it for every account at once.
+// The watermark advances every ledger the indexer drives the observer over
+// (see [Store.UpsertAccountObserverWatermark]), so a healthy-but-quiet
+// observer keeps the anchor fresh (gate permissive, supply accepted as
+// current) and only a genuinely dead observer stops advancing it — at which
+// point the anchor freezes and the gate correctly fails closed past the
+// horizon (dead-observer detection preserved).
 //
-// Same int4 cap as [Store.LatestAccountObservationAtOrBefore] — see its note.
+// asOfLedger is capped at int4 for symmetry with the sibling reads, then used
+// to bound the returned value: a watermark ahead of the snapshot ledger (which
+// should not happen — the indexer advances the watermark no faster than tip)
+// is clamped so the gate never sees a negative gap.
 func (s *Store) MaxAccountObservationLedger(ctx context.Context, asOfLedger uint32) (uint32, error) {
 	const maxInt32 = uint32(math.MaxInt32)
 	if asOfLedger > maxInt32 {
 		asOfLedger = maxInt32
 	}
-	const q = `SELECT COALESCE(MAX(ledger), 0) FROM account_observations WHERE ledger <= $1`
-	var ledger uint32
-	if err := s.db.QueryRowContext(ctx, q, int(asOfLedger)).Scan(&ledger); err != nil {
+	const q = `SELECT LEAST(processed_ledger, $1) FROM account_observer_watermark WHERE id = 1`
+	var ledger int64
+	err := s.db.QueryRowContext(ctx, q, int(asOfLedger)).Scan(&ledger)
+	if errors.Is(err, sql.ErrNoRows) {
+		// No watermark recorded yet → no freshness signal. The refresher's
+		// gate reads 0 as its permissive bypass (same posture as an
+		// unbacked-freshness computer).
+		return 0, nil
+	}
+	if err != nil {
 		return 0, fmt.Errorf("timescale: MaxAccountObservationLedger@%d: %w", asOfLedger, err)
 	}
-	return ledger, nil
+	return uint32(ledger), nil
 }
