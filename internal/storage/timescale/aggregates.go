@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lib/pq"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
@@ -1655,15 +1657,20 @@ func (a *stringArray) Scan(src any) error {
 // non-USD on-chain quotes is L2.2 phase 2 (post-launch). The
 // OpenAPI surface (`volume_24h_usd`) carries the same caveat.
 func (s *Store) Volume24hUSDForAsset(ctx context.Context, assetKey string) (string, error) {
+	// Alias-complete membership: an asset's served volume is the sum
+	// across ALL its canonical forms (XLM's native / crypto:XLM / SAC
+	// split, plus any configured classic↔SAC wrapper), not just the one
+	// spelling the caller passed. Keying on a single form silently
+	// omitted the crypto:XLM (CEX) and SAC (Soroban) legs.
 	const q = `
         SELECT COALESCE(sum(volume_usd), 0)::text
           FROM prices_1m
-         WHERE (base_asset = $1 OR quote_asset = $1)
+         WHERE (base_asset = ANY($1) OR quote_asset = ANY($1))
            AND bucket >= now() - INTERVAL '24 hours'
            AND bucket  < now()
     `
 	var out string
-	if err := s.db.QueryRowContext(ctx, q, assetKey).Scan(&out); err != nil {
+	if err := s.db.QueryRowContext(ctx, q, pq.Array(assetAliasArray(assetKey))).Scan(&out); err != nil {
 		return "", fmt.Errorf("timescale: Volume24hUSDForAsset(%s): %w", assetKey, err)
 	}
 	return out, nil

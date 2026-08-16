@@ -7,7 +7,28 @@ import (
 	"strings"
 
 	"github.com/lib/pq"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
+
+// assetAliasArray returns the canonical alias forms of assetKey as a
+// []string bindable via [pq.Array] for `= ANY($n)` membership. It is
+// the single seam that makes an asset-detail read alias-complete: an
+// asset's volume/ATH/markets is the aggregate over EVERY canonical form
+// of that asset (XLM's native / crypto:XLM / SAC split, plus any
+// operator-configured classic↔SAC wrapper), not the single spelling the
+// caller happened to pass. The forms come back in canonical priority
+// order (SAC LAST — see [canonical.AssetAliases]) so a price PICK that
+// orders by array_position prefers the deep classic/native form and only
+// falls back to a thin SAC pool. A key that doesn't parse falls back to
+// itself, preserving the pre-alias single-form behaviour.
+func assetAliasArray(assetKey string) []string {
+	a, err := canonical.ParseAsset(assetKey)
+	if err != nil {
+		return []string{assetKey}
+	}
+	return canonical.AssetAliasStrings(a)
+}
 
 // AssetRow is the read-side projection of one row from the
 // asset-discovery view: classic_assets joined with whatever supply +
@@ -821,22 +842,36 @@ func (s *Store) GetAssetPriceHistory24h(ctx context.Context, assetID string) ([]
 		  ) AS bucket
 		),
 		direct_per_hour AS (
-		  SELECT date_trunc('hour', bucket) AS h, last(vwap, bucket)::numeric AS vwap
-		    FROM prices_1m
-		   WHERE base_asset = $1
-		     AND quote_asset = 'fiat:USD'
-		     AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
-		     AND vwap IS NOT NULL
-		   GROUP BY h
+		  -- Alias-complete + priority-preserving: pick, per hour, the vwap
+		  -- of the HIGHEST-priority alias form (array_position; SAC last)
+		  -- and within that form the latest bucket, so a thin SAC pool
+		  -- never outranks the deep classic/native form.
+		  SELECT h, vwap FROM (
+		    SELECT date_trunc('hour', bucket) AS h, vwap::numeric AS vwap,
+		           row_number() OVER (
+		             PARTITION BY date_trunc('hour', bucket)
+		             ORDER BY array_position($1::text[], base_asset), bucket DESC
+		           ) AS rn
+		      FROM prices_1m
+		     WHERE base_asset = ANY($1)
+		       AND quote_asset = 'fiat:USD'
+		       AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
+		       AND vwap IS NOT NULL
+		  ) z WHERE rn = 1
 		),
 		asset_xlm_per_hour AS (
-		  SELECT date_trunc('hour', bucket) AS h, last(vwap, bucket)::numeric AS vwap
-		    FROM prices_1m
-		   WHERE base_asset = $1
-		     AND quote_asset = 'native'
-		     AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
-		     AND vwap IS NOT NULL
-		   GROUP BY h
+		  SELECT h, vwap FROM (
+		    SELECT date_trunc('hour', bucket) AS h, vwap::numeric AS vwap,
+		           row_number() OVER (
+		             PARTITION BY date_trunc('hour', bucket)
+		             ORDER BY array_position($1::text[], base_asset), bucket DESC
+		           ) AS rn
+		      FROM prices_1m
+		     WHERE base_asset = ANY($1)
+		       AND quote_asset = 'native'
+		       AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
+		       AND vwap IS NOT NULL
+		  ) z WHERE rn = 1
 		),
 		xlm_usd_per_hour AS (
 		  -- Same stablecoin-proxy fallback as the listing query —
@@ -857,10 +892,10 @@ func (s *Store) GetAssetPriceHistory24h(ctx context.Context, assetID string) ([]
 		    ROUND(COALESCE(
 		      -- XLM itself: use the xlm_usd_per_hour CTE directly.
 		      -- Without this, XLM's sparkline is all nulls because
-		      -- direct_per_hour and asset_xlm_per_hour both filter
-		      -- on base_asset=$1 (= 'native') with quote_asset
-		      -- 'fiat:USD' / 'native' — neither has rows.
-		      CASE WHEN $1 = 'native' THEN xu.vwap ELSE NULL END,
+		      -- direct_per_hour and asset_xlm_per_hour filter on the
+		      -- asset's own forms (native / crypto:XLM / SAC) with
+		      -- quote_asset 'fiat:USD' / 'native' — neither has rows.
+		      CASE WHEN 'native' = ANY($1) THEN xu.vwap ELSE NULL END,
 		      d.vwap,
 		      x.vwap * xu.vwap
 		    ), 10)::text AS p
@@ -870,7 +905,7 @@ func (s *Store) GetAssetPriceHistory24h(ctx context.Context, assetID string) ([]
 		  LEFT JOIN xlm_usd_per_hour    xu ON xu.h = hours.bucket
 		 ORDER BY hours.bucket ASC
 	`
-	rows, err := s.db.QueryContext(ctx, q, assetID)
+	rows, err := s.db.QueryContext(ctx, q, pq.Array(assetAliasArray(assetID)))
 	if err != nil {
 		return nil, fmt.Errorf("timescale: GetAssetPriceHistory24h: %w", err)
 	}
@@ -910,22 +945,34 @@ func (s *Store) GetAssetPriceHistory7d(ctx context.Context, assetID string) ([]A
 		  ) AS bucket
 		),
 		direct_per_day AS (
-		  SELECT date_trunc('day', bucket) AS d, last(vwap, bucket)::numeric AS vwap
-		    FROM prices_1m
-		   WHERE base_asset = $1
-		     AND quote_asset = 'fiat:USD'
-		     AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
-		     AND vwap IS NOT NULL
-		   GROUP BY d
+		  -- Alias-complete + priority-preserving pick (SAC last); see
+		  -- GetAssetPriceHistory24h.direct_per_hour for the rationale.
+		  SELECT d, vwap FROM (
+		    SELECT date_trunc('day', bucket) AS d, vwap::numeric AS vwap,
+		           row_number() OVER (
+		             PARTITION BY date_trunc('day', bucket)
+		             ORDER BY array_position($1::text[], base_asset), bucket DESC
+		           ) AS rn
+		      FROM prices_1m
+		     WHERE base_asset = ANY($1)
+		       AND quote_asset = 'fiat:USD'
+		       AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
+		       AND vwap IS NOT NULL
+		  ) z WHERE rn = 1
 		),
 		asset_xlm_per_day AS (
-		  SELECT date_trunc('day', bucket) AS d, last(vwap, bucket)::numeric AS vwap
-		    FROM prices_1m
-		   WHERE base_asset = $1
-		     AND quote_asset = 'native'
-		     AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
-		     AND vwap IS NOT NULL
-		   GROUP BY d
+		  SELECT d, vwap FROM (
+		    SELECT date_trunc('day', bucket) AS d, vwap::numeric AS vwap,
+		           row_number() OVER (
+		             PARTITION BY date_trunc('day', bucket)
+		             ORDER BY array_position($1::text[], base_asset), bucket DESC
+		           ) AS rn
+		      FROM prices_1m
+		     WHERE base_asset = ANY($1)
+		       AND quote_asset = 'native'
+		       AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
+		       AND vwap IS NOT NULL
+		  ) z WHERE rn = 1
 		),
 		xlm_usd_per_day AS (
 		  SELECT date_trunc('day', bucket) AS d, last(vwap, bucket)::numeric AS vwap
@@ -942,7 +989,7 @@ func (s *Store) GetAssetPriceHistory7d(ctx context.Context, assetID string) ([]A
 		SELECT
 		    to_char(days.bucket, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS t,
 		    ROUND(COALESCE(
-		      CASE WHEN $1 = 'native' THEN xu.vwap ELSE NULL END,
+		      CASE WHEN 'native' = ANY($1) THEN xu.vwap ELSE NULL END,
 		      d.vwap,
 		      x.vwap * xu.vwap
 		    ), 10)::text AS p
@@ -952,7 +999,7 @@ func (s *Store) GetAssetPriceHistory7d(ctx context.Context, assetID string) ([]A
 		  LEFT JOIN xlm_usd_per_day     xu ON xu.d = days.bucket
 		 ORDER BY days.bucket ASC
 	`
-	rows, err := s.db.QueryContext(ctx, q, assetID)
+	rows, err := s.db.QueryContext(ctx, q, pq.Array(assetAliasArray(assetID)))
 	if err != nil {
 		return nil, fmt.Errorf("timescale: GetAssetPriceHistory7d: %w", err)
 	}
@@ -1018,12 +1065,15 @@ type AssetATH struct {
 // (nil, nil) cleanly when the asset has never had a USD-quoted
 // day with non-null vwap (very thin assets).
 func (s *Store) GetAssetATH(ctx context.Context, assetID string) (*AssetATH, error) {
+	// Alias-complete: the ATH is the max USD day-VWAP across EVERY
+	// canonical form of the asset. Day-VWAP is volume-weighted so a thin
+	// SAC pool's dust cannot fabricate a high (see AssetATH docs).
 	const q = `
 		SELECT
 		    vwap::text,
 		    to_char(bucket, 'YYYY-MM-DD"T"00:00:00"Z"')
 		  FROM prices_1d
-		 WHERE base_asset = $1
+		 WHERE base_asset = ANY($1)
 		   AND quote_asset IN (
 		     'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
 		     'fiat:USD'
@@ -1033,7 +1083,7 @@ func (s *Store) GetAssetATH(ctx context.Context, assetID string) (*AssetATH, err
 		 LIMIT 1
 	`
 	var ath AssetATH
-	switch err := s.db.QueryRowContext(ctx, q, assetID).Scan(&ath.USD, &ath.At); {
+	switch err := s.db.QueryRowContext(ctx, q, pq.Array(assetAliasArray(assetID))).Scan(&ath.USD, &ath.At); {
 	case err == sql.ErrNoRows:
 		return nil, nil
 	case err != nil:
@@ -1115,11 +1165,11 @@ func (s *Store) GetAssetMarketsCount(ctx context.Context, assetID string) (int64
 		  SELECT DISTINCT base_asset, quote_asset
 		    FROM prices_1m
 		   WHERE bucket >= now() - INTERVAL '24 hours'
-		     AND (base_asset = $1 OR quote_asset = $1)
+		     AND (base_asset = ANY($1) OR quote_asset = ANY($1))
 		) t
 	`
 	var n int64
-	if err := s.db.QueryRowContext(ctx, q, assetID).Scan(&n); err != nil {
+	if err := s.db.QueryRowContext(ctx, q, pq.Array(assetAliasArray(assetID))).Scan(&n); err != nil {
 		return 0, fmt.Errorf("timescale: GetAssetMarketsCount: %w", err)
 	}
 	return n, nil
@@ -1142,10 +1192,10 @@ func (s *Store) GetAssetTradeCount24h(ctx context.Context, assetID string) (int6
 		SELECT COUNT(*)
 		  FROM trades
 		 WHERE ts >= now() - INTERVAL '24 hours'
-		   AND (base_asset = $1 OR quote_asset = $1)
+		   AND (base_asset = ANY($1) OR quote_asset = ANY($1))
 	`
 	var n int64
-	if err := s.db.QueryRowContext(ctx, q, assetID).Scan(&n); err != nil {
+	if err := s.db.QueryRowContext(ctx, q, pq.Array(assetAliasArray(assetID))).Scan(&n); err != nil {
 		return 0, fmt.Errorf("timescale: GetAssetTradeCount24h: %w", err)
 	}
 	return n, nil
@@ -1161,6 +1211,11 @@ func (s *Store) GetAssetTopMarkets(ctx context.Context, assetID string, limit in
 	if limit <= 0 || limit > 20 {
 		limit = 5
 	}
+	// Alias-complete: a market where ANY canonical form of the asset is
+	// base or quote counts, and the counterparty/side CASE tests
+	// membership so a pair keyed by the asset's crypto:XLM or SAC form is
+	// labelled as the asset's own market (side base/quote) rather than
+	// being mislabelled as a counterparty.
 	const q = `
 		WITH per_pair_24h AS (
 		  SELECT base_asset, quote_asset,
@@ -1168,7 +1223,7 @@ func (s *Store) GetAssetTopMarkets(ctx context.Context, assetID string, limit in
 		    FROM prices_1m
 		   WHERE bucket >= now() - INTERVAL '24 hours'
 		     AND volume_usd IS NOT NULL
-		     AND (base_asset = $1 OR quote_asset = $1)
+		     AND (base_asset = ANY($1) OR quote_asset = ANY($1))
 		   GROUP BY base_asset, quote_asset
 		),
 		per_pair_count AS (
@@ -1176,21 +1231,21 @@ func (s *Store) GetAssetTopMarkets(ctx context.Context, assetID string, limit in
 		         COUNT(*) FILTER (WHERE ts > now() - INTERVAL '24 hours') AS n
 		    FROM trades
 		   WHERE ts >= now() - INTERVAL '24 hours'
-		     AND (base_asset = $1 OR quote_asset = $1)
+		     AND (base_asset = ANY($1) OR quote_asset = ANY($1))
 		   GROUP BY base_asset, quote_asset
 		)
 		SELECT
-		    CASE WHEN p.base_asset = $1 THEN p.quote_asset ELSE p.base_asset END AS counterparty,
-		    CASE WHEN p.base_asset = $1 THEN 'base' ELSE 'quote' END             AS side,
-		    p.vol_usd                                                            AS vol_24h_usd,
-		    COALESCE(c.n, 0)                                                     AS n_24h
+		    CASE WHEN p.base_asset = ANY($1) THEN p.quote_asset ELSE p.base_asset END AS counterparty,
+		    CASE WHEN p.base_asset = ANY($1) THEN 'base' ELSE 'quote' END             AS side,
+		    p.vol_usd                                                                 AS vol_24h_usd,
+		    COALESCE(c.n, 0)                                                          AS n_24h
 		  FROM per_pair_24h p
 		  LEFT JOIN per_pair_count c
 		    ON c.base_asset = p.base_asset AND c.quote_asset = p.quote_asset
 		 ORDER BY p.vol_usd::numeric DESC NULLS LAST
 		 LIMIT $2
 	`
-	rows, err := s.db.QueryContext(ctx, q, assetID, limit)
+	rows, err := s.db.QueryContext(ctx, q, pq.Array(assetAliasArray(assetID)), limit)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: GetAssetTopMarkets: %w", err)
 	}
@@ -1687,22 +1742,25 @@ const getNativeAssetSQL = `
 // Always returns nil error for a row that simply has no stats;
 // the LEFT JOINs evaluate to NULL.
 func (s *Store) LatestAssetStats(ctx context.Context, assetID string) (AssetRow, error) {
+	// Alias-complete: sum the asset's volume across all its canonical
+	// forms (mirrors Volume24hUSDForAsset), so the /v1/assets/{id} volume
+	// figure includes the crypto:XLM (CEX) and SAC (Soroban) legs.
 	const q = `
 		SELECT COALESCE(SUM(volume_usd), 0)::text
 		  FROM (
 		    SELECT volume_usd FROM prices_1m
-		     WHERE base_asset = $1
+		     WHERE base_asset = ANY($1)
 		       AND bucket >= now() - INTERVAL '24 hours'
 		       AND bucket  <  now()
 		    UNION ALL
 		    SELECT volume_usd FROM prices_1m
-		     WHERE quote_asset = $1
+		     WHERE quote_asset = ANY($1)
 		       AND bucket >= now() - INTERVAL '24 hours'
 		       AND bucket  <  now()
 		  ) t
 	`
 	var vol string
-	if err := s.db.QueryRowContext(ctx, q, assetID).Scan(&vol); err != nil {
+	if err := s.db.QueryRowContext(ctx, q, pq.Array(assetAliasArray(assetID))).Scan(&vol); err != nil {
 		return AssetRow{}, fmt.Errorf("timescale: LatestAssetStats: %w", err)
 	}
 	out := AssetRow{AssetID: assetID}
