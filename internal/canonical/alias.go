@@ -3,6 +3,12 @@
 
 package canonical
 
+import (
+	"fmt"
+	"sort"
+	"sync/atomic"
+)
+
 // XLMSacContractID is the pubnet Stellar Asset Contract address that
 // wraps native XLM — XLM's third canonical identity, alongside `native`
 // (the per-network strkey-less form SDEX writes) and `crypto:XLM` (the
@@ -31,18 +37,164 @@ var xlmAliasFamily = []Asset{
 	{Type: AssetSoroban, ContractID: XLMSacContractID},
 }
 
-// aliasFamilies maps every canonical asset_id that belongs to a
-// multi-form equivalence class to that class. XLM is the only member
-// today; adding a second family is a new entry here plus a case in
-// TestAssetAliases — no call site changes, because every read path goes
-// through [AssetAliases].
-var aliasFamilies = func() map[string][]Asset {
+// baseAliasFamilies maps every canonical asset_id that belongs to a
+// COMPILE-TIME-KNOWN multi-form equivalence class to that class. XLM is
+// the only such member: its three-way split (`native` / `crypto:XLM` /
+// SAC) is live on the served price path regardless of operator config,
+// so it is unified here unconditionally and forms the baseline every
+// [AliasRegistry] starts from. Config-declared classic↔SAC pairs are
+// layered on top by [NewAliasRegistry].
+var baseAliasFamilies = func() map[string][]Asset {
 	m := make(map[string][]Asset, len(xlmAliasFamily))
 	for _, a := range xlmAliasFamily {
 		m[a.String()] = xlmAliasFamily
 	}
 	return m
 }()
+
+// AliasRegistry is an immutable asset equivalence-class table: it maps
+// every canonical FORM that belongs to a multi-form asset to that
+// asset's family, in the CANONICAL PRIORITY ORDER the read paths must
+// try (SAC form LAST — see [AssetAliases] for why that ordering is a
+// money-safety invariant, not a style choice).
+//
+// It is the explicit value alias.go's history called for: the XLM
+// baseline plus every classic↔SAC pair declared in the operator's
+// `[supply].sac_wrappers`, resolved ONCE at binary start-up and then
+// read-only. A nil *AliasRegistry is valid and behaves as the XLM-only
+// baseline, so leaf-package callers with no config in scope still get
+// correct (if XLM-limited) behaviour.
+type AliasRegistry struct {
+	families map[string][]Asset
+}
+
+// defaultAliasRegistry is the XLM-only registry used until a
+// config-derived one is installed via [InstallAliasRegistry]. It is what
+// [AssetAliases] resolves against in unit tests and in binaries that
+// never call InstallAliasRegistry.
+var defaultAliasRegistry = &AliasRegistry{families: baseAliasFamilies}
+
+// activeRegistry holds the process-wide registry [AssetAliases] reads.
+// It is written at most once, at binary start-up, before any read path
+// runs; the atomic pointer makes that publish race-free (go test -race)
+// and lets tests swap a config-derived registry in and out without a
+// lock. A nil load means "not yet installed" → the default is used.
+var activeRegistry atomic.Pointer[AliasRegistry]
+
+// InstallAliasRegistry publishes r as the process-wide registry that
+// [AssetAliases] and [AssetAliasStrings] resolve against. Call it ONCE,
+// at binary start-up, after config load and before serving — this is the
+// seam that turns the ~11 alias-looping read paths (and the handlers
+// that adopt the same loop) alias-complete for every configured
+// classic↔SAC pair, with no change to AssetAliases's signature or to any
+// call site. A nil r resets to the XLM-only default (used by tests).
+func InstallAliasRegistry(r *AliasRegistry) {
+	activeRegistry.Store(r)
+}
+
+// activeAliasRegistry returns the installed registry, or the XLM-only
+// default when none has been installed.
+func activeAliasRegistry() *AliasRegistry {
+	if r := activeRegistry.Load(); r != nil {
+		return r
+	}
+	return defaultAliasRegistry
+}
+
+// NewAliasRegistry builds the process registry from the operator's SAC
+// wrapper map (`[supply].sac_wrappers`: SAC contract C-strkey →
+// classic `CODE:ISSUER`). The result is the XLM baseline PLUS one
+// two-form family per wrapper, with the SAC form ordered LAST so a thin
+// Soroban pool can never outrank the classic asset's depth on a
+// classic-keyed read (the invariant [AssetAliases] documents).
+//
+// It is strict: a malformed contract id or asset key is returned as an
+// error rather than silently dropped, because a dropped wrapper is
+// invisible under-counted volume — the exact class of defect this
+// registry exists to remove. Entries whose classic form equals their SAC
+// form (the pure-SEP-41 `contract_id → contract_id` convention) are a
+// single identity with nothing to alias and are skipped. Wrappers that
+// would touch a form already claimed by the baseline (e.g. an operator
+// listing the XLM SAC itself) are skipped so the baseline's canonical
+// families are never overwritten.
+func NewAliasRegistry(sacWrappers map[string]string) (*AliasRegistry, error) {
+	families := make(map[string][]Asset, len(baseAliasFamilies)+2*len(sacWrappers))
+	for k, v := range baseAliasFamilies {
+		families[k] = v
+	}
+
+	// Deterministic iteration: stable error reporting and stable
+	// first-wins resolution of any duplicate classic key.
+	sacIDs := make([]string, 0, len(sacWrappers))
+	for id := range sacWrappers {
+		sacIDs = append(sacIDs, id)
+	}
+	sort.Strings(sacIDs)
+
+	for _, sacID := range sacIDs {
+		classicKey := sacWrappers[sacID]
+		sac, err := NewSorobanAsset(sacID)
+		if err != nil {
+			return nil, fmt.Errorf("alias registry: sac wrapper contract id %q: %w", sacID, err)
+		}
+		classic, err := ParseAsset(classicKey)
+		if err != nil {
+			return nil, fmt.Errorf("alias registry: sac wrapper %q asset key %q: %w", sacID, classicKey, err)
+		}
+		sacStr, classicStr := sac.String(), classic.String()
+		if sacStr == classicStr {
+			// Pure SEP-41 self-map: one identity, nothing to unify.
+			continue
+		}
+		if _, ok := families[sacStr]; ok {
+			continue
+		}
+		if _, ok := families[classicStr]; ok {
+			continue
+		}
+		// SAC form LAST: money-safety invariant. The read paths take the
+		// FIRST alias that produces a usable answer, so on a classic-keyed
+		// read the deep classic form is tried before the thin SAC pool.
+		family := []Asset{classic, sac}
+		families[classicStr] = family
+		families[sacStr] = family
+	}
+	return &AliasRegistry{families: families}, nil
+}
+
+// Aliases is the [AssetAliases] contract resolved against this specific
+// registry: the literal input first, then the rest of its equivalence
+// class in canonical priority order (SAC last). A form with no family
+// returns just itself, so callers loop unconditionally.
+func (r *AliasRegistry) Aliases(asset Asset) []Asset {
+	fams := baseAliasFamilies
+	if r != nil {
+		fams = r.families
+	}
+	family, ok := fams[asset.String()]
+	if !ok {
+		return []Asset{asset}
+	}
+	out := make([]Asset, 0, len(family))
+	out = append(out, asset)
+	for _, f := range family {
+		if f.String() == asset.String() {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// AliasStrings is the string-set projection of [AliasRegistry.Aliases].
+func (r *AliasRegistry) AliasStrings(asset Asset) []string {
+	forms := r.Aliases(asset)
+	out := make([]string, 0, len(forms))
+	for _, f := range forms {
+		out = append(out, f.String())
+	}
+	return out
+}
 
 // AssetAliases returns every canonical FORM equivalent to `asset` that a
 // read path should try, in priority order: the literal input first, then
@@ -99,47 +251,31 @@ var aliasFamilies = func() map[string][]Asset {
 // undercounted Soroban XLM volume while valuing it as XLM wherever it
 // did match.
 //
-// # Known limit: only XLM, and only the leg that names it
+// # Generalising beyond XLM: the alias registry
 //
 // EVERY SAC-wrapped classic asset has the same dual identity (USDC's SAC,
-// AQUA's SAC, …), and this primitive unifies only XLM. Generalising it
-// needs a classic↔SAC registry, and the honest options are both larger
-// than a leaf-package constant:
+// AQUA's SAC, …). XLM's three-way split is unconditional (see
+// [baseAliasFamilies]); every OTHER classic↔SAC pair is operator data,
+// declared in `[supply].sac_wrappers` (SAC C-strkey → `CODE:ISSUER`).
 //
 //   - Derive: [Asset.SacContractID] is a pure function, so the
-//     classic→SAC direction needs no registry at all. The REVERSE
+//     classic→SAC direction needs no table at all. The REVERSE
 //     (C-address → classic) is not invertible — it is a hash — so a
 //     C-address seen in a trade row can only be resolved through a
-//     lookup table.
-//   - Register: `[supply].sac_wrappers` (operator TOML, 38 entries) is
-//     exactly that table, but it is loaded by the indexer/aggregator
-//     binaries, not by `canonical`, which is a leaf package with no
-//     config dependency. Wiring it in would mean either package-level
-//     MUTABLE state in a leaf package (a data race and a
-//     test-pollution hazard, and it would make AssetAliases
-//     process-dependent) or threading a registry parameter through the
-//     ten-odd api/v1 + aggregate call sites and into cmd/stellarindex-api.
+//     lookup table, which is exactly what `sac_wrappers` is.
+//   - Register: [NewAliasRegistry] builds that table from the config
+//     map at binary start-up, and [InstallAliasRegistry] publishes it as
+//     the process-wide registry this function resolves against. The
+//     publish is a single atomic store before serving, so there is no
+//     data race and no per-call config dependency threaded into the leaf
+//     package — AssetAliases keeps its signature and every call site is
+//     unchanged, while becoming alias-complete for the configured pairs.
 //
-// The deliberate decision is therefore: unify XLM here (the only asset
-// whose three-way split is demonstrably live on the served price path),
-// and leave the general case to a future explicit `AliasRegistry` value
-// constructed at binary start-up from `[supply].sac_wrappers` and passed
-// to the read paths — a change that touches wiring in three fences and
-// should land as its own unit of work, not smuggled into a leaf constant.
+// Until a registry is installed (unit tests, or a binary that never
+// serves reads) the function resolves against the XLM-only baseline, so
+// the XLM three-form behaviour is invariant either way.
 func AssetAliases(asset Asset) []Asset {
-	family, ok := aliasFamilies[asset.String()]
-	if !ok {
-		return []Asset{asset}
-	}
-	out := make([]Asset, 0, len(family))
-	out = append(out, asset)
-	for _, f := range family {
-		if f.String() == asset.String() {
-			continue
-		}
-		out = append(out, f)
-	}
-	return out
+	return activeAliasRegistry().Aliases(asset)
 }
 
 // AssetAliasStrings is the string-set projection of [AssetAliases] —
@@ -147,10 +283,5 @@ func AssetAliases(asset Asset) []Asset {
 // completeness; separated so callers building a bound array don't
 // re-implement the String() loop.
 func AssetAliasStrings(asset Asset) []string {
-	forms := AssetAliases(asset)
-	out := make([]string, 0, len(forms))
-	for _, f := range forms {
-		out = append(out, f.String())
-	}
-	return out
+	return activeAliasRegistry().AliasStrings(asset)
 }
