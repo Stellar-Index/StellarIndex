@@ -148,6 +148,17 @@ func run(cfgPath string, dryRun bool) error {
 		return err
 	}
 
+	// Publish the process-wide asset alias registry BEFORE any tier
+	// walk runs (W2). tryVWAPTier and the other alias-looping paths
+	// resolve classic↔SAC pairs from [supply].sac_wrappers through it,
+	// SAC form LAST. Fail-closed on a malformed wrapper — silently
+	// dropped, it becomes under-counted volume.
+	aliasRegistry, err := canonical.NewAliasRegistry(cfg.Supply.SACWrappers)
+	if err != nil {
+		return fmt.Errorf("alias registry: %w", err)
+	}
+	canonical.InstallAliasRegistry(aliasRegistry)
+
 	logger := mkLogger(cfg.Obs)
 	logger.Info("starting",
 		"version", version.String(),
