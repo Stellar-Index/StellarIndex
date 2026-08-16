@@ -95,11 +95,17 @@ type atomEntry struct {
 // crawls.
 func (s *Server) handleIncidentsAtom(w http.ResponseWriter, r *http.Request) {
 	const baseURL = "https://status.stellarindex.io"
+	// feedEstablished is the stable <updated> emitted when the feed
+	// has zero entries. Falling back to time.Now() here would make an
+	// empty (or stale) feed appear freshly-updated on every crawl — a
+	// dishonest freshness signal to Feedly/Slack RSS. A fixed epoch
+	// keeps an empty feed quiescent. This is the date the
+	// incidents.atom feed went live.
+	feedEstablished := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	feed := atomFeed{
-		Xmlns:   "http://www.w3.org/2005/Atom",
-		ID:      baseURL + "/feed",
-		Title:   "Stellar Index — incident history",
-		Updated: time.Now().UTC().Format(time.RFC3339),
+		Xmlns: "http://www.w3.org/2005/Atom",
+		ID:    baseURL + "/feed",
+		Title: "Stellar Index — incident history",
 		Link: []atomLink{
 			{Rel: "self", Href: "https://api.stellarindex.io/v1/incidents.atom", Type: "application/atom+xml"},
 			{Rel: "alternate", Href: baseURL + "/", Type: "text/html"},
@@ -107,10 +113,18 @@ func (s *Server) handleIncidentsAtom(w http.ResponseWriter, r *http.Request) {
 		Author: &atomAuthor{Name: "Stellar Index", URI: "https://stellarindex.io"},
 	}
 
+	// Per RFC 4287 the feed-level <updated> is the most recent entry's
+	// <updated>. Track the max of the same per-entry `updated` value we
+	// compute below (started_at, bumped to resolved_at when later) so
+	// the two never diverge.
+	var feedUpdated time.Time
 	for _, inc := range s.incidents {
 		updated := inc.StartedAt
 		if inc.ResolvedAt != nil && inc.ResolvedAt.After(updated) {
 			updated = *inc.ResolvedAt
+		}
+		if updated.After(feedUpdated) {
+			feedUpdated = updated
 		}
 		entry := atomEntry{
 			ID:      fmt.Sprintf("urn:stellarindex:incident:%s", inc.Slug),
@@ -132,6 +146,12 @@ func (s *Server) handleIncidentsAtom(w http.ResponseWriter, r *http.Request) {
 		entry.Content.CharData = inc.BodyMarkdown
 		feed.Entries = append(feed.Entries, entry)
 	}
+
+	// No entries → emit the stable sentinel rather than time.Now().
+	if feedUpdated.IsZero() {
+		feedUpdated = feedEstablished
+	}
+	feed.Updated = feedUpdated.UTC().Format(time.RFC3339)
 
 	w.Header().Set("Content-Type", "application/atom+xml; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=300")
