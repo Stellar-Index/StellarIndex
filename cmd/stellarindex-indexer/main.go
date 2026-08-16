@@ -292,6 +292,14 @@ func run(cfgPath string, dryRun bool) error {
 			"effect", "asset_supply_history will not populate; F2 fields (market_cap_usd, fdv_usd, circulating_supply, total_supply, max_supply) on /v1/assets/{id} will be null for every asset")
 	}
 
+	// The account observer (Algorithm 1 XLM reserves) is registered iff SDF
+	// reserve accounts are configured — the exact condition
+	// pipeline.RegisterSupplyEntryDecoders gates on. When it's live, the
+	// per-ledger loop advances the account observer's freshness watermark
+	// (F-1320/R-002/CS-102 tail); when it isn't, we must NOT advance a
+	// watermark for an observer that isn't running.
+	accountObserverActive := len(cfg.Supply.SDFReserveAccounts) > 0
+
 	// ─── Decoder-stats periodic flush ────────────────────────────
 	// Snapshots dispatcher.Stats() every 5 min and writes per-source
 	// deltas to the decoder_stats_5m hypertable. Powers
@@ -635,7 +643,7 @@ func run(cfgPath string, dryRun bool) error {
 		streamErr <- ledgerstream.StreamArchiveThenLive(
 			rootCtx, archiveCfg, liveCfg, from, cfg.Ingestion.LiveSeamLedger, logger,
 			func(lcm sdkxdr.LedgerCloseMeta) error {
-				if perr := processAndPersistCursor(rootCtx, disp, events, store, logger, lcm, cfg.Stellar.Passphrase()); perr != nil {
+				if perr := processAndPersistCursor(rootCtx, disp, events, store, logger, lcm, cfg.Stellar.Passphrase(), accountObserverActive); perr != nil {
 					return perr
 				}
 				// ADR-0016 append: best-effort, never stalls or fails
@@ -1504,6 +1512,7 @@ func processAndPersistCursor(
 	logger *slog.Logger,
 	lcm sdkxdr.LedgerCloseMeta,
 	networkPassphrase string,
+	accountObserverActive bool,
 ) error {
 	if err := pipeline.ProcessLedger(ctx, disp, events, logger, lcm, networkPassphrase); err != nil {
 		return err
@@ -1530,6 +1539,22 @@ func processAndPersistCursor(
 		)
 	} else {
 		recordCursorMetric(lcm.LedgerSequence())
+	}
+	// F-1320/R-002/CS-102 tail: advance the account observer's TRUE
+	// processed-ledger watermark, but ONLY when the observer is registered
+	// (SDF reserve accounts configured). This runs every live ledger the
+	// observer was driven over — regardless of whether any watched account
+	// changed — so the XLM supply freshness anchor tracks the observer's
+	// liveness (Store.MaxAccountObservationLedger reads it). Best-effort like
+	// the cursor above: a write failure must never stall ingest; the anchor
+	// simply lags a tick and the monotonic guard catches it up next ledger.
+	if accountObserverActive {
+		if err := store.UpsertAccountObserverWatermark(ctx, lcm.LedgerSequence()); err != nil {
+			logger.Warn("account observer watermark upsert",
+				"ledger", lcm.LedgerSequence(),
+				"err", err,
+			)
+		}
 	}
 	return nil
 }
