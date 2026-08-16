@@ -650,7 +650,7 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 
 	hCtx, hCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer hCancel()
-	points, err := s.history.HistoryPoints(hCtx, pair, gran, historyMaxPoints)
+	points, err := s.historyPointsWithAliases(hCtx, pair, gran)
 	if errors.Is(err, ErrUnknownGranularity) {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-granularity",
@@ -711,6 +711,34 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 		Granularity: gran,
 		Points:      wire,
 	}, Flags{Triangulated: triangulated})
+}
+
+// historyPointsWithAliases reads the point series trying each XLM
+// dual-form alias pair (F-1340) and returns the FIRST non-empty series —
+// mirroring [Server.ohlcSeriesWithAliases] on the OHLC side. A literal
+// read keyed by the requested form silently omits every venue publishing
+// XLM under the other id (native vs crypto:XLM vs the SAC), so
+// ?asset=native returned empty while crypto:XLM-keyed CEX history existed
+// one loop iteration away. First-hit matches the series endpoint;
+// cross-form point FUSION is a separate design decision. The first form's
+// error (e.g. [ErrUnknownGranularity], which is form-invariant) propagates
+// unchanged.
+func (s *Server) historyPointsWithAliases(
+	ctx context.Context, pair canonical.Pair, gran string,
+) ([]HistoryPoint, error) {
+	for _, a := range assetAliases(pair.Base) {
+		for _, q := range assetAliases(pair.Quote) {
+			ap, perr := canonical.NewPair(a, q)
+			if perr != nil {
+				continue // degenerate alias combination (identity pair)
+			}
+			points, err := s.history.HistoryPoints(ctx, ap, gran, historyMaxPoints)
+			if err != nil || len(points) > 0 {
+				return points, err
+			}
+		}
+	}
+	return nil, nil
 }
 
 // historySinceInceptionStablecoinFallback walks the operator's
