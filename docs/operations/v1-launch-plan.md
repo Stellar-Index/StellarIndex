@@ -96,7 +96,73 @@ reframed** these plan items (each verified against the merged code; details inli
 
 It did **NOT** touch the headline blockers — **W1.1** (status incidents
 absent-as-zero), **W2** (alias registry), **W3.2–3.4**, **D1** (freeze paging),
-and the W5 backfills — those remain the real path to v1.
+and the W5 backfills — those remain the real path to v1. **The
+launch-completion campaign below then closed most of them** (W1, W2, W2-tail,
+the W8 live-code items, W7.1); W3.2/W5.2/D1 remain, now bucketed with reasons.
+
+---
+
+### launch-completion campaign — landed status [V] (2026-08-16)
+
+The unattended launch-completion campaign drove the headline blockers to a
+terminal state — every item is either **merged-on-green** or **moved to an
+operator/decision bucket with a reason**. Landed on `origin/main`:
+
+- **W1 — ✅ DONE.** All four merged (see the W1 box): #73/#74/#75/#76.
+- **W2 (alias registry) — ✅ DONE `bd475a49` (#78).** `AliasRegistry` built at
+  start-up from `[supply].sac_wrappers`, SAC form ordered **last**, threaded to
+  the read paths — the keystone that folds SAC-wrapped identities. Supersedes
+  "W2 remains the real path" above.
+- **W2-tail — ✅ DONE (#85/#86/#87).** The ~11 alias-blind money readers were
+  alias-completed in three batches (8 asset-detail storage readers → `ANY(alias)`;
+  4 api-v1 pair reads → first-hit alias loop; aggregate tiers 2/3 +
+  `change_summary`). **Two readers deferred (NEEDS-COORDINATION):**
+  `GetAssetBySlug` (SQL slug resolution, no DB alias table) and `ListAssetsExt`
+  (aggregator-written rollup) — neither feeds the `/v1/assets/{id}` headline, so
+  no headline undercount remains. **r1 note:** non-XLM folding is gated on
+  `sac_wrappers` being populated for the high-volume SAC classics (USDC/AQUA/…)
+  in r1 config — the code is correct regardless, but the "53.5% of USDC volume
+  invisible" headline only actually closes once that config lands (operator).
+- **W8 (correctness backlog) live-code — ✅ merged / dispositioned.** item 3
+  (manage_data + Soroban participant injection) → #79 **plus** the W7.1 tail
+  hardening below; item 7 (MEV impossible-evidence + `mev_events` retention) →
+  #81; item 13 (`accounts/{g}/trades` gate) → #80; item 10 (build-frozen prices
+  served live) → #83/#84; item 4 Band-oracle auth-forgery corroboration → #83;
+  item 15 partials (lint-metric-refs, goleak, txindex-backfill) → #82. **NO-OP
+  (already fixed, re-derived):** W8.4b, W8.5, `/readyz` schema-head. **DEFERRED
+  with reason (bucket 3):** item 8 confidence bootstrap-cap (money-safety panel
+  REJECTED the narrow fix — the conservative cap errs safe; a real fix needs
+  cross-layer first-observation age), the ops-CLI write-gate unification
+  (flipping ~15 money-path defaults risks the INV-3 DO-NOTHING trap), and the
+  soroswap `routed_via` attribution residual (VWAP itself is unforgeable —
+  Option A accept, Option B surfaced). item 14 (ADR-0017 verify-archive) →
+  operator bucket.
+- **W3.2 (page-type cold-perf pass) — → BUCKET 2 (operator).** The harness
+  extension is code, but its value is the measurement, which needs the live r1
+  lake (cold→populated with lake-drawn ids). Prepared; not runnable here.
+- **W5.2 (dfees) — → BUCKET 2 (operator, r1-blocked).** The money-adjacent event
+  body shape is NOT derivable in-repo (do-not-invent discipline); the ~8,018
+  historical dfees are cleanly dropped, not lost. Unblock = **one**
+  contract-scoped r1-lake read of a dfees `value` blob, then the type + table
+  0144 + projector arm is mechanical.
+- **W7.1 (final cold audit) — ✅ RAN on the fixed surface, DRY.** It found
+  exactly two residual tail defects, both fixed + merged in **#88** (`e97441bb`):
+  the Soroban InvokeContract participant-injection (arg/auth-derived participants
+  removed entirely — both are attacker-controllable at decode time) and the
+  incidents Atom feed `<updated>` wall-clock lie (now the most-recent-entry
+  timestamp). A **fresh** W7.1 re-audit on the post-#88 surface came back **DRY**
+  across the security/injection, honesty/freshness, money/alias-regression, and
+  merged-diff-regression dimensions (default-reject verified).
+
+**Still the operator's to run / decide (not code):** the ordered r1-ops
+sequence (migrations→143 before the binary, replays, SLA-probe key mint+rotate,
+restore-drill run, the r1 `sac_wrappers` populate, the dfees sample read, the
+W3.2 perf run) and the launch decisions (D1 freeze-paging, D2 HA, W6.2 security
+review, W6.5/6.6/6.7, and a **new failed-tx participant** product call — a
+failed *classic* op naming a victim still lands a public participant row, since
+the account-history reader UNION has no tx-success filter; recommended default
+is to success-filter the reader). These are surfaced separately in the
+operator's audit workspace.
 
 ---
 
@@ -162,6 +228,10 @@ do NOT count toward this `?? 0`/`?? []` grep; `DegradedBanner.tsx:76` and the
 
 ### W2 — Asset identity: one registry, not ten handler patches
 
+> **✅ DONE `bd475a49` (#78) + W2-tail #85/#86/#87.** See "launch-completion —
+> landed status" above. Two readers deferred (NEEDS-COORDINATION); non-XLM
+> folding is gated on the r1 `sac_wrappers` config. Analysis below is the *why*.
+
 **Why one workstream:** the audit filed "SAC-wrapped = a second un-aliased
 identity (53.5% of USDC volume invisible)" and "ten money handlers are
 alias-blind" as separate findings. They are one defect with one fix, and the
@@ -204,7 +274,9 @@ W1-explorer-perf-1 quantized the `/v1/contracts/{id}/interactions` cache key
 (`9e42e8fb`) and REC-05/W1-explorer-perf-2 added a `max(day)` census-freshness
 gate to `/v1/contracts` (`bb64ff3c`). W3.2/W3.3/W3.4 remain untouched.)*
 
-**W3.2 — Every other page type.** Accounts, assets, ledgers, tx, operations,
+**W3.2 — Every other page type. → BUCKET 2 (operator, r1 measurement).** The
+harness extension is code; its value is the cold→populated run against the live
+r1 lake. Prepared, not runnable here. Accounts, assets, ledgers, tx, operations,
 network, protocols — measured COLD to fully-populated with lake-drawn random
 ids. *Approach:* extend `scripts/ops/contract-page-audit.py` (it already
 scores the slowest panel, counts a non-2xx/404 as UNLOADED, and takes `PACE`)
@@ -358,10 +430,13 @@ duplicate-free under per-table identity.
 The index floor is 50,457,429, which is Soroban's mainnet activation — there
 may be nothing earlier to fill. *One confirmation query, not a run.*
 
-**W5.2 — dfees. [V] still absent** — no type, table, or migration exists
-(8,018 events discarded). This is a CODE item (new event type + table +
-projector arm + `IsProjectedEvent`) that then needs a replay; it is the only
-member of the old "Tier 2" list that is genuinely unstarted.
+**W5.2 — dfees. [V] still absent → BUCKET 2 (operator, r1-blocked).** No type,
+table, or migration exists (8,018 events cleanly dropped, not lost). This is a
+CODE item (new event type + table + projector arm + `IsProjectedEvent`) that
+then needs a replay; it is the only member of the old "Tier 2" list that is
+genuinely unstarted. **The money-adjacent event body shape is NOT derivable
+in-repo (do-not-invent discipline); unblock = one contract-scoped r1-lake read
+of a dfees `value` blob, then the code is mechanical.**
 
 **W5.3 — [C]** Pre-2026-07-23 USD-volume re-stamp.
 
@@ -428,9 +503,13 @@ that is either silent or crying wolf.
 
 ### W7 — Pre-launch passes (§2.6b)
 
-**W7.1** Full cold adversarial audit — the last was 2026-07-01 and ~40 tags
-have shipped. *Run this AFTER W1+W2 land*, so it audits the fixed surface
-rather than re-finding known items.
+**W7.1 — ✅ DONE (2026-08-16), came back DRY.** Ran on the fixed surface after
+W1+W2 landed; it surfaced exactly two residual tail defects, both fixed + merged
+in #88 (`e97441bb`) — Soroban participant-injection + incidents Atom `<updated>`
+honesty — and a fresh re-audit on the post-#88 surface was DRY (see
+"launch-completion — landed status" above). *Originally: full cold adversarial
+audit — the last was 2026-07-01 and ~40 tags had shipped; run AFTER W1+W2 so it
+audits the fixed surface rather than re-finding known items.*
 
 **W7.2** Visuals-opportunity pass — every endpoint/page: what chart is
 possible from data we already serve but don't visualise.
