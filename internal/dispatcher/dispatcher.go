@@ -200,6 +200,33 @@ type ContractCallDecoder interface {
 	Decode(ctx ContractCallContext) ([]consumer.Event, error)
 }
 
+// ExecutionCorroborationRequirer is an optional interface a
+// [ContractCallDecoder] implements to declare that its routed
+// invocations must be corroborated by ACTUAL execution before Decode
+// runs — the dispatcher drops any matched call whose
+// [ContractCallContext.ExecutionCorroborated] is false instead of
+// decoding it.
+//
+// The auth tree that ContractCallDecoder routing walks
+// (extractInvokeContractCallTrees) is the submitter-supplied
+// SorobanAuthorizationEntry set. For honest txs it mirrors the real
+// call tree, but the Soroban host does NOT require every declared
+// authorization to be exercised: a successful transaction can carry a
+// source-account auth entry naming an oracle contract with FORGED price
+// args that never executed. Decoders whose output feeds a manipulation
+// surface — the price oracles — implement this so a declared-but-not-
+// executed call cannot be laundered into a recognised price. Band is
+// the canonical implementer (its relay()/force_relay() call args ARE
+// the price payload, decoded verbatim). Decoders that do NOT implement
+// it (e.g. trade-volume routers) keep the pre-existing behaviour of
+// trusting the walked tree.
+type ExecutionCorroborationRequirer interface {
+	// RequiresExecutionCorroboration reports whether this decoder's
+	// calls must be execution-corroborated. Returning false is
+	// equivalent to not implementing the interface at all.
+	RequiresExecutionCorroboration() bool
+}
+
 // ContractCallContext carries everything a ContractCallDecoder
 // needs to decode one Soroban InvokeContract call: identity of the
 // contract + function, base64-encoded argument slice, and tx-level
@@ -240,6 +267,21 @@ type ContractCallContext struct {
 	// identity enrichment that lets a decoder record WHO wrapped the
 	// call, not just at what tree depth.
 	CallPathContracts []string
+	// ExecutionCorroborated reports whether this routed invocation is
+	// backed by ACTUAL execution, not merely DECLARED in the
+	// attacker-controlled Soroban auth tree. It is true iff the call
+	// equals the op's top-level executed InvokeContract call (same
+	// contract, function, and args). The auth tree
+	// (extractInvokeContractCallTrees) is the routing source because it
+	// mirrors the real call tree for HONEST txs, but a SorobanAuthorization
+	// Entry's RootInvocation is submitter-supplied and the host does NOT
+	// require every declared entry to be exercised: a successful tx can
+	// carry a source-account auth entry naming an oracle contract with
+	// forged price args that NEVER executed. A ContractCallDecoder whose
+	// output is a manipulation surface (see [ExecutionCorroborationRequirer])
+	// must refuse such auth-only-declared calls; this flag is how the
+	// dispatcher tells it whether the routed call really ran (W8.4a).
+	ExecutionCorroborated bool
 }
 
 // LedgerEntryChangeDecoder is the contract for decoders that
@@ -455,6 +497,17 @@ type Dispatcher struct {
 	// transactions is invisible, and without this counter that is
 	// indistinguishable from a ledger in which nothing happened.
 	entryMetaUnsupported int
+
+	// uncorroboratedCalls is the per-source count of ContractCall
+	// invocations an [ExecutionCorroborationRequirer] decoder MATCHED
+	// but the dispatcher DROPPED before Decode because the call was only
+	// DECLARED in the attacker-controlled auth tree, never executed
+	// (W8.4a). A non-zero value on an oracle source is a price-forgery
+	// attempt OR a genuine routing-shape change (e.g. a relayer that
+	// starts nesting relay() under a wrapper) that needs review — either
+	// way it must not be silent, since the alternative is a forged price
+	// silently entering the corroboration surface.
+	uncorroboratedCalls map[string]int
 }
 
 // New constructs a Dispatcher with the given Soroban-event
@@ -463,9 +516,10 @@ type Dispatcher struct {
 // after construction.
 func New(decoders ...Decoder) *Dispatcher {
 	return &Dispatcher{
-		decoders:     decoders,
-		eventsSeen:   map[string]int{},
-		decodeErrors: map[string]int{},
+		decoders:            decoders,
+		eventsSeen:          map[string]int{},
+		decodeErrors:        map[string]int{},
+		uncorroboratedCalls: map[string]int{},
 	}
 }
 
@@ -609,6 +663,13 @@ type Stats struct {
 	// A sustained climb means the LedgerEntry supply observers are
 	// blind while every component table simply stops advancing.
 	EntryMetaUnsupported int
+	// UncorroboratedCalls is the per-source count of oracle-class
+	// ContractCall invocations dropped before Decode because they were
+	// only DECLARED in the auth tree, never executed (W8.4a). Non-zero on
+	// an oracle source ("band") means a price-forgery attempt was
+	// rejected OR the legitimate routing shape changed — either warrants
+	// review, and both would be invisible without this counter.
+	UncorroboratedCalls map[string]int
 }
 
 func (d *Dispatcher) Stats() Stats {
@@ -627,6 +688,10 @@ func (d *Dispatcher) Stats() Stats {
 	decodeCopied := make(map[string]int, len(d.decodeErrors))
 	for k, v := range d.decodeErrors {
 		decodeCopied[k] = v
+	}
+	uncorrCopied := make(map[string]int, len(d.uncorroboratedCalls))
+	for k, v := range d.uncorroboratedCalls {
+		uncorrCopied[k] = v
 	}
 	unmatched := d.unmatchedHits
 	txReadErrs := d.txReadErrors
@@ -652,6 +717,7 @@ func (d *Dispatcher) Stats() Stats {
 		TxReadErrors:         txReadErrs,
 		TxEventReadErrors:    txEventReadErrs,
 		EntryMetaUnsupported: entryMetaUnsup,
+		UncorroboratedCalls:  uncorrCopied,
 	}
 }
 
@@ -860,19 +926,34 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 				if opIdx < len(ops) && ops[opIdx].SourceAccount != nil {
 					opSource, _ = accountIDToStrkey(ops[opIdx].SourceAccount.ToAccountId())
 				}
+				// The op's top-level EXECUTED InvokeContract call — the
+				// operation itself, which definitionally ran in this
+				// successful tx (nil for a non-InvokeContract op or an
+				// unrenderable top-level address). A routed call is
+				// execution-corroborated iff it IS this call (same
+				// contract, function, args); everything else in `calls`
+				// came from the submitter-supplied auth tree and may have
+				// been declared without ever executing (W8.4a).
+				var topCall *invokeCall
+				if opIdx < len(invokeCalls) {
+					topCall = invokeCalls[opIdx]
+				}
 				for _, call := range calls {
+					corroborated := topCall != nil &&
+						containsCall([]*invokeCall{topCall}, call)
 					ccCtx := ContractCallContext{
-						Ledger:            ledgerSeq,
-						ClosedAt:          parsedClosedAt,
-						TxHash:            txHash,
-						TxSource:          txSource,
-						OpSource:          opSource,
-						OpIndex:           opIdx,
-						CallPath:          call.CallPath,
-						CallPathContracts: call.CallPathContracts,
-						ContractID:        call.ContractID,
-						FunctionName:      call.FunctionName,
-						Args:              call.Args,
+						Ledger:                ledgerSeq,
+						ClosedAt:              parsedClosedAt,
+						TxHash:                txHash,
+						TxSource:              txSource,
+						OpSource:              opSource,
+						OpIndex:               opIdx,
+						CallPath:              call.CallPath,
+						CallPathContracts:     call.CallPathContracts,
+						ContractID:            call.ContractID,
+						FunctionName:          call.FunctionName,
+						Args:                  call.Args,
+						ExecutionCorroborated: corroborated,
 					}
 					outs, err := d.dispatchContractCall(ccCtx)
 					if err != nil {
@@ -1144,6 +1225,19 @@ func (d *Dispatcher) bumpUnmatched() {
 	d.statsMu.Unlock()
 }
 
+// bumpUncorroborated increments the per-source count of oracle-class
+// ContractCall invocations dropped for lack of execution corroboration
+// (W8.4a) under statsMu (F-1317). Lazily initialises the map so a
+// Dispatcher built without New() still counts rather than panicking.
+func (d *Dispatcher) bumpUncorroborated(name string) {
+	d.statsMu.Lock()
+	if d.uncorroboratedCalls == nil {
+		d.uncorroboratedCalls = map[string]int{}
+	}
+	d.uncorroboratedCalls[name]++
+	d.statsMu.Unlock()
+}
+
 // contractCallPathActive reports whether ProcessLedger needs to walk
 // each op's full InvokeContract auth tree at all. True when at least
 // one ContractCallDecoder is registered (the pre-existing condition)
@@ -1188,6 +1282,19 @@ func (d *Dispatcher) dispatchContractCall(ctx ContractCallContext) ([]consumer.E
 	for _, ccd := range d.contractCallDecoders {
 		if !ccd.Matches(ctx.ContractID, ctx.FunctionName) {
 			continue
+		}
+		// Execution-corroboration gate (W8.4a). An oracle-class decoder
+		// (see [ExecutionCorroborationRequirer]) must not decode a call
+		// the attacker-controlled auth tree merely DECLARED. A forged
+		// source-account auth entry naming the oracle contract with fake
+		// price args can ride along in a successful tx without ever
+		// executing; refuse it here — before Decode reads the args as a
+		// price — and count the rejection so a manipulation attempt (or a
+		// legitimate routing-shape change) is visible instead of silent.
+		if r, ok := ccd.(ExecutionCorroborationRequirer); ok &&
+			r.RequiresExecutionCorroboration() && !ctx.ExecutionCorroborated {
+			d.bumpUncorroborated(ccd.Name())
+			return nil, nil
 		}
 		d.bumpEventsSeen(ccd.Name())
 		outs, err := ccd.Decode(ctx)
