@@ -1,13 +1,16 @@
 # systemd unit: ADR-0033 completeness-verdict refresh.
 #
-# Rendered by Ansible. Runs run-compute-completeness.sh (a self-chunking
-# per-source driver) once per timer tick. Keeps `completeness_snapshots` —
-# the authoritative "100% confidence in 100% coverage" verdict — fresh
-# instead of frozen at whatever ledger the last manual run reached.
+# Rendered by Ansible. Runs run-compute-completeness.sh (a whole-pass driver)
+# once per timer tick. Keeps `completeness_snapshots` — the authoritative
+# "100% confidence in 100% coverage" verdict — fresh instead of frozen at
+# whatever ledger the last manual run reached.
 #
 # Per ADR-0033 + ADR-0034 (-ch reads the certified ClickHouse lake, off the
-# serving Postgres). The driver chunks at 25k ledgers so the high-volume SDEX
-# projection reconcile never blows ClickHouse's 12 GiB per-query limit.
+# serving Postgres). The driver makes ONE `compute-completeness -ch -pass` call
+# that proves recognition + substrate once at full range and reconciles each
+# source's projection incrementally; the SDEX reconcile's ClickHouse memory is
+# bounded inside the tool (25k-ledger CH windowing), so no wrapper-side chunking
+# is needed.
 
 [Unit]
 Description=Stellar Index — ADR-0033 completeness-verdict refresh (daily)
@@ -23,7 +26,6 @@ EnvironmentFile=-/etc/default/stellarindex
 # Defaults. Operators override via /etc/default/compute-completeness.
 Environment=CONFIG_PATH=/etc/stellarindex.toml
 Environment=CH_ADDR=127.0.0.1:9300
-Environment=COMPLETENESS_CHUNK=25000
 
 ExecStart=/usr/local/sbin/run-heavy-job.sh compute-completeness /usr/local/sbin/run-compute-completeness.sh
 
@@ -42,9 +44,9 @@ ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
 
-# The first run (17-21 day catch-up) walks ~313k ledgers per source in 25k
-# chunks; cap generously. Steady-state ticks are one ~daily chunk and finish
-# in minutes.
+# One -pass call proves recognition (~60s) + substrate once, then reconciles
+# each source's new suffix — steady-state ticks finish in minutes. The first
+# pass additionally seeds any never-verified source from genesis; cap generously.
 TimeoutStartSec=180min
 
 [Install]

@@ -15,6 +15,25 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **The nightly completeness-verdict driver no longer times out and freezes the
+  alphabetical tail.** `run-compute-completeness.sh` re-invoked
+  `compute-completeness -ch` per source AND per 25k chunk, and every invocation
+  re-ran the load-heaviest step — the global `DistinctTopicShapes` recognition
+  scan (~60s over full history, identical regardless of `-source`/`-from`). A
+  source pinned far below tip (aquarius, recognition-capped near its genesis)
+  walked hundreds of chunks, so that one scan ran hundreds of times per night —
+  the 3h52m timeout (`Result=timeout`) that left the alphabetical tail's verdicts
+  days stale. A new `compute-completeness -ch -pass` mode proves recognition +
+  substrate ONCE at full range for the whole catalogue and reconciles each
+  source's projection incrementally from its own watermark; the wrapper now makes
+  one such call. This also (a) clears the low-tip substrate flap — a full-tip
+  substrate proof advances the tip and is never blocked by the CS-083 write guard
+  — and (b) finally gives every catalogue source a verdict, including the
+  never-seeded `blend_emitter`/`blend_backstop`/`sorocredit` (they reconcile from
+  genesis on the first pass). INV-5, the projection dirty-window mechanism, the
+  substrate/projection fail-closed claims and CS-083 are all preserved unchanged.
+
 ## [v0.36.0] — 2026-08-17
 
 Tested against Stellar protocol v23. No migration. Two completeness/data-integrity
