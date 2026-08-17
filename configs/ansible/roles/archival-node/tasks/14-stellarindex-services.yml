@@ -470,10 +470,13 @@
     mode: "0755"
 
 - name: Install run-compute-completeness.sh driver (ADR-0033 verdict refresh)
-  # compute-completeness.service runs this self-chunking per-source driver:
-  # it walks each source's [watermark, tip] in 25k-ledger windows so the
-  # SDEX projection reconcile never blows ClickHouse's 12 GiB query limit,
-  # and never regresses an already-ahead source's watermark.
+  # compute-completeness.service runs this whole-pass driver: one
+  # `compute-completeness -ch -pass` call proves recognition + substrate once
+  # at full range for the whole catalogue and reconciles each source's
+  # projection incrementally from its own watermark. The SDEX reconcile's
+  # ClickHouse memory is bounded inside the tool (25k-ledger CH windowing), so
+  # the wrapper no longer chunks — which is what removes the per-chunk repeat of
+  # the ~60s global recognition scan that timed the nightly service out.
   ansible.builtin.copy:
     src: run-compute-completeness.sh
     dest: /usr/local/sbin/run-compute-completeness.sh

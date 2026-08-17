@@ -1123,6 +1123,123 @@ func TestMergeRegistryOwners_StaticPinWins(t *testing.T) {
 	}
 }
 
+// ─── Whole-pass (-pass) driver: the nightly-timeout fix ───────────
+
+// TestProjectionFloor_PassResumesEachSourceFromItsWatermark pins the -pass
+// driver fix for the nightly completeness-verdict timeout. The deployed driver
+// re-invoked the tool per source AND per 25k chunk, and EVERY invocation re-ran
+// the load-heaviest step — the global DistinctTopicShapes recognition scan (~60s
+// over full history, identical regardless of -source/-from). A source pinned far
+// below tip (aquarius, recognition-capped near its genesis) walked hundreds of
+// chunks, so that one scan ran hundreds of times per night: the 3h52m timeout
+// that left the alphabetical tail's verdicts days stale. -pass proves
+// recognition + substrate ONCE and reconciles each source's projection from its
+// OWN prior watermark, which is exactly what projectionFloor returns.
+func TestProjectionFloor_PassResumesEachSourceFromItsWatermark(t *testing.T) {
+	const (
+		aquariusGenesis = uint32(52_728_375)
+		healthyGenesis  = uint32(50_746_266)
+		tip             = uint32(63_997_554)
+	)
+
+	// A healthy source resumes at its watermark (≈ prior tip): it reconciles ONLY
+	// the new suffix, so its verdict is identical to the old wrapper's
+	// `-from = watermark` run — verdicts unchanged for a healthy source.
+	if got := projectionFloor(healthyGenesis, true, tip-100, 0); got != tip-100 {
+		t.Fatalf("healthy source floor = %d, want its watermark %d — -pass must resume from the watermark, not re-reconcile from genesis every night", got, tip-100)
+	}
+
+	// A recognition-capped source (aquarius) resumes at its (low) watermark. The
+	// old driver walked [watermark, tip] in ~344 chunks, each re-running the 60s
+	// recognition scan; -pass runs recognition once and this floor scopes only
+	// aquarius's projection.
+	if got := projectionFloor(aquariusGenesis, true, 55_363_631, 0); got != 55_363_631 {
+		t.Fatalf("aquarius floor = %d, want its watermark 55363631 (the range the old driver re-scanned recognition for ~344 times)", got)
+	}
+}
+
+// TestProjectionFloor_PassSeedsNeverVerifiedSourceFromGenesis pins the "every
+// catalogue source gets a verdict" requirement. The old driver drove off
+// `SELECT DISTINCT source FROM completeness_snapshots`, so a never-seeded source
+// (blend_emitter/blend_backstop/sorocredit — present in the catalogue, absent
+// from the snapshots) never appeared and never got a verdict. -pass iterates the
+// catalogue; a source with no prior watermark (0) floors at genesis so its first
+// pass does the full-history reconcile that seeds it.
+func TestProjectionFloor_PassSeedsNeverVerifiedSourceFromGenesis(t *testing.T) {
+	const blendEmitterGenesis = uint32(51_499_914)
+	if got := projectionFloor(blendEmitterGenesis, true, 0 /* never seeded */, 0); got != blendEmitterGenesis {
+		t.Fatalf("never-seeded source floor = %d, want genesis %d (full-history seed on its first pass)", got, blendEmitterGenesis)
+	}
+	// A watermark below genesis (a reset/garbage row) clamps to genesis —
+	// nothing exists below it to reconcile.
+	if got := projectionFloor(blendEmitterGenesis, true, 40_000_000, 0); got != blendEmitterGenesis {
+		t.Errorf("sub-genesis watermark must clamp to genesis %d, got %d", blendEmitterGenesis, got)
+	}
+}
+
+// TestProjectionFloor_NonPassIsTheUnchangedIncrementalFloor — outside -pass,
+// projectionFloor must be exactly the old max(genesis, -from) incremental floor,
+// so the per-source / manual paths are untouched by the pass fix.
+func TestProjectionFloor_NonPassIsTheUnchangedIncrementalFloor(t *testing.T) {
+	const genesis = uint32(50_746_266)
+	// -from above genesis raises the floor.
+	if got := projectionFloor(genesis, false, 999_999, 63_000_000); got != 63_000_000 {
+		t.Errorf("non-pass -from above genesis = %d, want 63000000", got)
+	}
+	// -from of 0 floors at genesis; the prior watermark is IGNORED outside -pass.
+	if got := projectionFloor(genesis, false, 63_000_000 /* must be ignored */, 0); got != genesis {
+		t.Errorf("non-pass full run = %d, want genesis %d (watermark must be ignored outside -pass)", got, genesis)
+	}
+}
+
+// TestValidatePassFlags_RejectsTheKnobsItReplaces — -pass proves recognition +
+// substrate ONCE at full range for EVERY source and reconciles each source's
+// projection from its own watermark, so the per-source / per-chunk knobs are
+// incoherent with it and must fail CLOSED rather than silently produce a partial
+// pass that looks complete. -source would re-introduce the per-source
+// re-invocation whose repeated 60s recognition scan is the timeout; -from would
+// truncate the full-range substrate/recognition proofs; -skip-substrate would
+// skip the full-tip proof that clears the CS-083 low-tip flap; -skip-recognition
+// would carry a stale recognition verdict.
+func TestValidatePassFlags_RejectsTheKnobsItReplaces(t *testing.T) {
+	// A clean pass validates.
+	if err := validatePassFlags(true, true, "", 0, false, false); err != nil {
+		t.Fatalf("a clean -ch -pass must validate, got: %v", err)
+	}
+	// Non-pass is never constrained — the per-source/per-chunk knobs stay legal
+	// off -pass.
+	if err := validatePassFlags(false, false, "aquarius", 55_000_000, true, true); err != nil {
+		t.Fatalf("validatePassFlags must not constrain non-pass runs, got: %v", err)
+	}
+
+	cases := []struct {
+		name    string
+		useCH   bool
+		source  string
+		from    uint
+		skipSub bool
+		skipRec bool
+		wantIn  string
+	}{
+		{"pass requires -ch", false, "", 0, false, false, "requires -ch"},
+		{"pass rejects -source", true, "aquarius", 0, false, false, "-source"},
+		{"pass rejects -from", true, "", 55_000_000, false, false, "-from"},
+		{"pass rejects -skip-substrate", true, "", 0, true, false, "-skip-substrate"},
+		{"pass rejects -skip-recognition", true, "", 0, false, true, "-skip-recognition"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validatePassFlags(true, tc.useCH, tc.source, tc.from, tc.skipSub, tc.skipRec)
+			if err == nil {
+				t.Fatalf("-pass with %s must fail closed, got nil", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.wantIn) {
+				t.Errorf("error %q must name the offending flag %q", err.Error(), tc.wantIn)
+			}
+		})
+	}
+}
+
 // TestSubstrateFloorLoss pins W1-flowcompleteness-2: the substrate twin of
 // detectFloorLoss. An incremental run that scanned only [subScanFrom,tip] and
 // carried the [genesis,subScanFrom] prefix must FAIL substrate when the lake no

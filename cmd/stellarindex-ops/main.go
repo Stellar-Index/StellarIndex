@@ -1095,7 +1095,7 @@ Subcommands:
                           (reflector/redstone), cctp/rozo/defindex, blend's
                           four tables (re-derive bucketed by EventKind), and
                           sdex (LCM census). Seeds soroswap pairs via RPC.
-  compute-completeness -config PATH [-to N] [-source S]
+  compute-completeness -config PATH [-to N] [-source S] [-ch -pass]
                           ADR-0033 Phase 6: compute the per-source
                           completeness WATERMARK (substrate continuity +
                           hash chain ∧ projection reconciliation) and a
@@ -1103,6 +1103,11 @@ Subcommands:
                           completeness_snapshots for the API + status page.
                           -to defaults to the live ledgerstream tip. Run on
                           a cron; the headline replaces density/gap_free.
+                          -ch -pass is the nightly whole-pass driver: prove
+                          recognition + substrate once at full range, then
+                          reconcile every source's projection incrementally
+                          from its own watermark (one process, no per-chunk
+                          re-invocation).
   verify-usd-volume [-config PATH] [-day YYYY-MM-DD] [-days N] [-min-rows N] [-max-list N]
                           The VALUE half of the usd_volume checks (C4-055/
                           C4-066). The standing
