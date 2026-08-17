@@ -44,6 +44,12 @@ paths = [
   # 2026-07-10). ALSO rule-scoped below; duplicated for the same
   # reason as the cctp/blend_backstop/blend_emitter entries above.
   '''internal/sources/phoenix/rewards_test\.go''',
+  # Lake-derived base64-XDR golden fixtures + public C-strkey token /
+  # contract IDs for the aquarius pool-governance + defindex-harvest
+  # decode-VALUE golden tests (DAT-15, 2026-08-17). ALSO rule-scoped
+  # below; duplicated for the same reason as the entries above.
+  '''internal/sources/aquarius/golden_realbytes_test\.go''',
+  '''internal/sources/defindex/golden_realbytes_test\.go''',
 ]
 
 [[rules]]
@@ -179,6 +185,13 @@ description = "Test-only base64-encoded XDR fixtures (ScVal Address/Symbol/Vec b
 paths = [
   '''internal/sources/aquarius/liquidity_decode_test\.go''',
   '''test/integration/aquarius_liquidity_storage_test\.go''',
+]
+
+[[rules.allowlists]]
+description = "Test-only base64-encoded XDR fixtures (topics_xdr/data_xdr for real Aquarius pool-governance apply_upgrade/commit_upgrade/set_privileged_addrs/trade + defindex strategy.harvest events, captured DIRECTLY from the ClickHouse raw lake) + the public Stellar C-strkey token/contract/account IDs those events decode to (e.g. the XLM native SAC CAS3J7GY…), used by the decode-VALUE golden tests (DAT-15, 2026-08-17). XDR-encoded public ledger data + deterministic public strkeys (contract IDs are the hash of deployer + WASM), not credentials — the base64 blobs + 56-char base32 strkeys trip gitleaks' generic-api-key entropy heuristic. Same rationale as the aquarius/cctp/phoenix decoder-fixture allowlists above."
+paths = [
+  '''internal/sources/aquarius/golden_realbytes_test\.go''',
+  '''internal/sources/defindex/golden_realbytes_test\.go''',
 ]
 
 [[rules.allowlists]]
