@@ -15,6 +15,33 @@ against.
 
 ## [Unreleased]
 
+## [v0.36.0] — 2026-08-17
+
+Tested against Stellar protocol v23. No migration. Two completeness/data-integrity
+fixes found by a live audit of r1's ADR-0033 verdicts (the "why does it keep
+needing re-deriving?" investigation).
+
+### Fixed
+- **Aquarius pool governance events are no longer silently dropped.** The decoder
+  gated 7 governance topic symbols (`apply_upgrade`, `commit_upgrade`,
+  `set_privileged_addrs`, `apply_/commit_transfer_ownership`,
+  `enable_/disable_emergency_mode`) on the canonical router only — but the 337
+  registered Aquarius pools emit them too (a protocol-wide staged WASM upgrade of
+  320/337 pools). Pool-emitted governance events returned `Matches()=false`,
+  becoming an ADR-0033 recognition gap (holding aquarius completeness red) AND
+  never reaching `Decode` → ~1,679 real events lost since ledger 55,363,632. The
+  gate now accepts registered pools (`reg.Has || reg.IsFactory`; unidentified
+  emitters still fail closed), and the upgrade decoder handles the pool body
+  arities (router = 1 wasm hash, pool `apply` = 2, pool `commit` = 3 → staged
+  hashes in `attributes.wasm_hash_N`). The events now land in the already-served
+  `aquarius_admin` table. (A backfill re-processes the historical drop.)
+- **Defindex `strategy.harvest` flows are counted in the completeness verdict.**
+  The reconciliation catalogue omitted `defindex.strategy.harvest` from the
+  `defindex_flows` expected-count kinds, so the ADR-0033 verdict under-counted
+  every genuine harvest by exactly 974 (`served=1, expected=0`), false-flagging
+  defindex `complete=false`. The served data was correct; adding the kind fixes
+  the count. Count-only — no data mutation.
+
 ## [v0.35.0] — 2026-08-16
 
 Tested against Stellar protocol v23. Applies migration 0144 (additive,
