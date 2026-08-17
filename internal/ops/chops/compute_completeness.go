@@ -73,11 +73,19 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	skipSubstrate := fs.Bool("skip-substrate", false, "Skip the hash-chain re-scan and CARRY the prior substrate verdict — fast per-source iteration once substrate is proven. This run scans nothing, so it can only CONFIRM a prior clean verdict that already reached this run's tip; a FAILING or short prior verdict publishes substrate_ok=false with the unverified band named in the detail (C4-057). It no longer asserts substrate_ok=true unconditionally.")
 	skipRecognition := fs.Bool("skip-recognition", false, "Trust the prior recognition audit (recognition_ok=true) instead of re-scanning all topic shapes — the global DistinctTopicShapes scan is the load-heaviest step; skip it for gentle projection-only iteration once recognition is verified")
 	fromLedger := fs.Uint("from", 0, "INCREMENTAL verify: only check [from, tip], trusting [genesis, from] as already verified (substrate + recognition + projection all scoped to [from, tip]); the watermark still extends to tip when the window is clean. 0 = full verify from each source's genesis. The completeness timer passes min(watermark) from the prior snapshots so each run re-checks only new ledgers — minutes, not hours. An incremental run can only CONFIRM or DOWNGRADE the served `complete` axis, never upgrade it: a range it did not reconcile is carried from the prior verdict, and a FAILING prior verdict is cleared only by a full run (INV-5 — see projectionClaim).")
+	pass := fs.Bool("pass", false, "WHOLE-PASS mode: prove recognition + substrate ONCE at full range for the ENTIRE source catalogue, then reconcile EACH source's projection incrementally from its own prior watermark (projectionFloor). One process replaces the per-source, per-chunk driver that re-ran the load-heaviest global recognition scan (DistinctTopicShapes, ~60s) on EVERY 25k chunk — the nightly timeout that froze the alphabetical tail's verdicts. Because substrate is proven at FULL tip, its write advances the tip and is never blocked by the CS-083 guard (the low-tip substrate flap). Every catalogue source gets a verdict — a never-seeded source reconciles from genesis on its first pass. Requires -ch; incompatible with -source / -from / -skip-substrate / -skip-recognition (the per-chunk knobs it replaces).")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *cfgPath == "" {
 		return fmt.Errorf("-config is required")
+	}
+	// Fail CLOSED on -pass combined with the per-source / per-chunk knobs it
+	// replaces (validatePassFlags): a partial pass that publishes over a subset
+	// of sources, or carries a stale substrate/recognition verdict, would look
+	// complete while re-opening exactly the redundancy + flap this mode fixes.
+	if perr := validatePassFlags(*pass, *useCH, *only, *fromLedger, *skipSubstrate, *skipRecognition); perr != nil {
+		return fmt.Errorf("compute-completeness: %w", perr)
 	}
 
 	cfg, err := config.LoadWithEnv(*cfgPath)
@@ -105,6 +113,9 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		return fmt.Errorf("tip resolved to 0 — pass -to")
 	}
 	fmt.Fprintf(os.Stderr, "compute-completeness: tip=%d\n", tip)
+	if *pass {
+		fmt.Fprintln(os.Stderr, "compute-completeness: -pass — recognition + substrate proven once at full range; projection reconciled per source from its own watermark")
+	}
 
 	// sep41_transfers/sep41_supply are promoted into this catalogue by
 	// buildReconciliationCatalogue itself (2026-07-11, post-full-history
@@ -256,8 +267,16 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	}
 	priorProj := make(map[string]priorProjection, len(priorSnaps))
 	priorSub := make(map[string]priorProjection, len(priorSnaps))
+	// priorWatermark is each source's last published lake watermark, used as the
+	// per-source projection floor in -pass mode (projectionFloor): a whole-pass
+	// run resumes every source from where it left off, so substrate + recognition
+	// stay proven once at full range while only the projection reconcile is
+	// scoped. A source absent here (0 — never seeded) floors at genesis. This is
+	// the same value the per-source wrapper read as its -from.
+	priorWatermark := make(map[string]uint32, len(priorSnaps))
 	for _, s := range priorSnaps {
 		priorProj[s.Source] = priorProjection{known: true, ok: s.ProjectionOK, tip: s.Tip}
+		priorWatermark[s.Source] = s.Watermark
 		// C4-057: the SUBSTRATE axis needs the same prior-verdict input the
 		// projection axis has had since INV-5, for exactly the same reason —
 		// an incremental run scans only a suffix and must not publish a
@@ -418,12 +437,13 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		lakeComplete := srW.Complete && substrateOK
 		projOK := false
 		var w completeness.Watermark
-		// Incremental: only reconcile [from, srW.Ledger], trusting [genesis, from]
-		// as previously verified. projFrom = max(genesis, -from).
-		projFrom := genesis
-		if uint32(*fromLedger) > projFrom { //nolint:gosec // ledger seq fits uint32
-			projFrom = uint32(*fromLedger) //nolint:gosec // ledger seq fits uint32
-		}
+		// Incremental: only reconcile [projFrom, srW.Ledger], trusting
+		// [genesis, projFrom] as previously verified. In -pass mode projFrom is
+		// THIS source's own prior watermark, so substrate + recognition stay
+		// proven once at full range for the whole pass while only projection is
+		// scoped per source (projectionFloor). Outside -pass it is the existing
+		// global max(genesis, -from) incremental floor — byte-for-byte unchanged.
+		projFrom := projectionFloor(genesis, *pass, priorWatermark[src.name], *fromLedger)
 		// A pending replay-rewind window overrides the incremental floor:
 		// the replay rewrote served rows below the watermark, so the range
 		// MUST be re-reconciled before any claim — carried or fresh — may
@@ -604,6 +624,74 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		fmt.Fprintf(os.Stderr, "compute-completeness: recognition  unattributed=%d coverage=%.4f\n", len(unattributed), recW.CoveragePct)
 	}
 
+	return nil
+}
+
+// projectionFloor is the incremental projection reconcile floor for ONE source.
+//
+// In a whole-pass run (-pass) each source resumes from its OWN prior watermark,
+// so recognition (the ~60s global DistinctTopicShapes scan) and the full
+// substrate scan are proven ONCE for the entire pass while only the per-source
+// projection reconcile is scoped to the source's new suffix. That is what lets a
+// single process replace the per-source, per-chunk wrapper that re-ran those two
+// global scans on EVERY 25k chunk — the load that timed the nightly service out
+// and froze the alphabetical tail's verdicts. A healthy source floors at its
+// watermark (≈ prior tip), reconciling only the new suffix, so its verdict is
+// identical to the wrapper's `-from = watermark` run. A source with NO prior
+// watermark (0 — a never-seeded blend_emitter/blend_backstop/sorocredit, or a
+// freshly reset source) floors at genesis and its first pass does the
+// full-history reconcile that seeds it, so every catalogue source gets a verdict.
+//
+// Outside -pass it is the existing max(genesis, -from) incremental floor, so the
+// per-chunk driver's behaviour is unchanged. Never below genesis (nothing exists
+// there to reconcile). Pure — unit-testable.
+func projectionFloor(genesis uint32, pass bool, priorWatermark uint32, fromLedger uint) uint32 {
+	if pass {
+		if priorWatermark > genesis {
+			return priorWatermark
+		}
+		return genesis
+	}
+	if uint32(fromLedger) > genesis { //nolint:gosec // ledger seq fits uint32
+		return uint32(fromLedger) //nolint:gosec // ledger seq fits uint32
+	}
+	return genesis
+}
+
+// validatePassFlags fails CLOSED when -pass is combined with the per-source /
+// per-chunk knobs it REPLACES. A whole-pass run proves recognition + substrate
+// ONCE at full range for EVERY source, then reconciles each source's projection
+// incrementally from its own watermark (projectionFloor), so:
+//   - -source (one source) defeats the "every source in one process" property
+//     and re-introduces the per-source re-invocation whose repeated global
+//     recognition scan is the timeout the pass exists to remove;
+//   - -from is a GLOBAL floor that also raises subScanFrom (truncating the
+//     substrate scan) and cannot express a per-source projection floor — the
+//     pass derives that per source instead;
+//   - -skip-substrate / -skip-recognition CARRY a prior verdict rather than
+//     prove it fresh, which is the staleness the pass fixes; for substrate,
+//     skipping the full-tip proof is what re-opens the CS-083 low-tip flap.
+//
+// -pass also requires -ch: the full-tip substrate proof and the projection
+// re-derive it relies on are certified-ClickHouse-lake operations. Rejecting
+// these combinations rather than silently ignoring them keeps an operator (or a
+// mis-edited wrapper) from publishing a partial pass that looks complete. Pure.
+func validatePassFlags(pass, useCH bool, source string, fromLedger uint, skipSubstrate, skipRecognition bool) error {
+	if !pass {
+		return nil
+	}
+	switch {
+	case !useCH:
+		return fmt.Errorf("-pass requires -ch (the whole-pass substrate proof + projection re-derive read the certified ClickHouse lake)")
+	case source != "":
+		return fmt.Errorf("-pass computes EVERY source in one process and is incompatible with -source %q", source)
+	case fromLedger != 0:
+		return fmt.Errorf("-pass proves substrate + recognition at full range and reconciles each source from its own watermark; it is incompatible with -from %d", fromLedger)
+	case skipSubstrate:
+		return fmt.Errorf("-pass proves substrate fresh at full tip and is incompatible with -skip-substrate")
+	case skipRecognition:
+		return fmt.Errorf("-pass proves recognition fresh and is incompatible with -skip-recognition")
+	}
 	return nil
 }
 
