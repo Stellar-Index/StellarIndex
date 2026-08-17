@@ -15,6 +15,27 @@ against.
 
 ## [Unreleased]
 
+## [v0.37.0] — 2026-08-17
+
+Tested against Stellar protocol v23. No migration. Completeness-verdict
+reliability + coverage hardening from the live-audit durable-confidence plan
+(the "why does aquarius/defindex keep going red" thread).
+
+### Added
+- **Comprehensive per-source projection reconciliation + a static
+  catalogue-completeness invariant (#96).** The projection axis previously
+  reconciled only a subset of protocol tables; it now carries reconTargets for
+  the 1:1 tables it was missing (aquarius admin / protocol-fee / kill-switches /
+  liquidity / reserves-sync / rewards, soroswap_liquidity, phoenix
+  initialize/admin), with the genuine per-token fan-out tables (aquarius
+  reserves/liquidity, sdex_offer_events) explicitly `noReconcile`-waived rather
+  than left silently unvalidated. A new AST-walking invariant test asserts every
+  decoder `EventKind` that routes to a persisted table is either
+  reconciled-by-kind/census or explicitly waived — so a future decoder kind can
+  no longer silently fall out of the reconcile's EXPECTED sum (the exact class of
+  the defindex `strategy.harvest` undercount that produced a phantom
+  976-mismatch false-red).
+
 ### Fixed
 - **The nightly completeness-verdict driver no longer times out and freezes the
   alphabetical tail.** `run-compute-completeness.sh` re-invoked
