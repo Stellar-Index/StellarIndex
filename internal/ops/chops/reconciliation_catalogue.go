@@ -147,6 +147,14 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 		{name: "soroswap", genesis: 50_746_266, dec: soroswapDec, targets: []reconTarget{
 			{"trades", "source = 'soroswap'", []string{"soroswap.trade"}},
 			{"soroswap_skim_events", "", []string{"soroswap.skim"}},
+			// soroswap.liquidity → soroswap_liquidity (persistSoroswapLiquidity
+			// is a single INSERT: one decoder LiquidityEvent → one row).
+			// Lake-validated 2026-08-17: 54/54 full-history rows == distinct
+			// event identities, so the per-ledger count reconciles 1:1. Closes
+			// the "emitted (soroswap.liquidity), persisted, never reconciled"
+			// blind spot the density detector alone was covering — the exact
+			// omission the catalogue-completeness invariant now guards.
+			{"soroswap_liquidity", "", []string{"soroswap.liquidity"}},
 		}},
 		{
 			// ADR-0035/0040 contract-gated (router-anchored). The bare
@@ -159,12 +167,53 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			factories: []string{aquarius.MainnetRouter}, creationSym: aquarius.EventAddPool,
 			targets: []reconTarget{
 				{"trades", "source = 'aquarius'", []string{"aquarius.trade"}},
+				// 1:1 protocol tables — each of these Go event types has a
+				// DISTINCT coarse EventKind() that lands in exactly ONE table,
+				// and each sink persist func is a single INSERT (one decoder
+				// event → one row). Lake-validated 2026-08-17 (rows == distinct
+				// event identity, i.e. no fan-out): rewards 777004/777004,
+				// protocol_fee 409/409, admin 12/12, kill 17/17. So the
+				// per-ledger count reconciles. Closes the aquarius blind spots
+				// the density detector alone was covering (~777k rewards rows).
+				{"aquarius_rewards_events", "", []string{"aquarius.rewards"}},
+				{"aquarius_admin", "", []string{"aquarius.admin"}},
+				{"aquarius_protocol_fee", "", []string{"aquarius.fee"}},
+				{"aquarius_kill_switches", "", []string{"aquarius.kill"}},
+				// DELIBERATELY NOT reconciled here (declared in the
+				// catalogue-completeness invariant's noReconcile waiver):
+				// aquarius_reserves / aquarius_reserves_sync / aquarius_liquidity
+				// each fan ONE decoder event out to N per-token-position rows
+				// (token_index is a PK component), so the projection axis's
+				// event-count-vs-served-row-count reconcile would false-flag
+				// nearly every ledger — lake-measured ~2.0 served rows per
+				// decoder event (aquarius_reserves 843705/421793,
+				// aquarius_liquidity 12043/6021 over 62.8M–63.2M). Worse,
+				// aquarius_reserves and aquarius_reserves_sync SHARE the single
+				// coarse EventKind() "aquarius.reserves" (the sink routes on the
+				// runtime ReservesEvent.Kind field, which the reconcile's
+				// by-EventKind expected side cannot see), so no kinds split can
+				// attribute a per-ledger count to one table vs the other. These
+				// three stay on the density gap-detector until a fan-out-aware
+				// (per-event-identity) reconcile lands — surfaced as a real
+				// follow-up finding, not silently claimed complete.
 			},
 		},
 		{name: "phoenix", genesis: 51_572_016, dec: phoenix.NewDecoder(), targets: []reconTarget{
 			{"trades", "source = 'phoenix'", []string{"phoenix.trade"}},
 			{"phoenix_liquidity", "", []string{"phoenix.liquidity"}},
 			{"phoenix_stake_events", "", []string{"phoenix.stake"}},
+			// 1:1 protocol tables — self-contained decoders (no correlation
+			// buffer), one event → one row (persistPhoenixInitialize /
+			// persistPhoenixAdmin are single INSERTs). Each has a distinct
+			// coarse EventKind() landing in exactly one table. Lake-validated
+			// 2026-08-17: phoenix_initialize 24/24 rows == events;
+			// phoenix_admin_events currently 0 rows (no mainnet admin rotation
+			// yet) — reconciles clean at expected==served==0 and counts 1:1 the
+			// first time one occurs, instead of the density detector's coarse
+			// window. Closes the phoenix_initialize / phoenix_admin_events blind
+			// spots.
+			{"phoenix_initialize", "", []string{"phoenix.initialize"}},
+			{"phoenix_admin_events", "", []string{"phoenix.admin"}},
 		}},
 		{name: "comet", genesis: 51_499_546, dec: comet.NewDecoder(), targets: []reconTarget{
 			{"trades", "source = 'comet'", []string{"comet.trade"}},
