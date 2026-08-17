@@ -17,28 +17,34 @@ import (
 // Rust source. Wire types/arity/positions are exact; business-meaning
 // names beyond that are BEST-EFFORT where noted.
 //
-// GATING NOTE: every real occurrence of apply_upgrade / commit_upgrade
-// / set_privileged_addrs / apply_transfer_ownership /
-// commit_transfer_ownership sampled during this audit came from EITHER
-// the canonical router (a handful of times each — confirmed via a
-// full-history, router-scoped count: apply_upgrade x7,
-// commit_upgrade x6, set_privileged_addrs x2,
-// apply_transfer_ownership x1, commit_transfer_ownership x1) OR a
-// small family of NEITHER-pool-NOR-router contracts (e.g.
+// GATING NOTE (corrected 2026-08-17): SEVEN of these kinds —
+// apply_upgrade, commit_upgrade, set_privileged_addrs,
+// apply_transfer_ownership, commit_transfer_ownership,
+// enable_emergency_mode, disable_emergency_mode — are emitted by the
+// REGISTERED Aquarius POOLS as well as the router, so
+// dispatcher_adapter.go gates them on `reg.Has || reg.IsFactory` (the
+// same protocol trust boundary as the pool-flow kinds, plus the
+// router). A full-history r1 census (2026-08-17) counts ~1,679
+// pool-emitted events across these seven kinds (earliest ledger
+// 55,363,632): a protocol-wide staged WASM upgrade upgraded 320/337
+// pools (apply_upgrade / commit_upgrade), plus pool-level ownership
+// transfers, privileged-address sets, and emergency-mode toggles. The
+// PRIOR gate (reg.IsFactory ONLY) fail-closed every one of these into
+// an ADR-0033 recognition gap AND dropped it from Decode — real
+// governance history silently lost. Two kinds STAY router-only —
+// config_rewards and pool_gauge_switch_token — because the same census
+// finds ZERO pool-emitted occurrences of either.
+//
+// The FLAGGED parallel router CA7RQDMMV6E53P5EDZA5GPWBZ33AMW2ZNO42XLI2RGRIAP4QXIARUOJQ
+// and a small family of NEITHER-pool-NOR-router contracts (e.g.
 // CDWVENDOPYZJV7VDIA55LDWVQOPXZPPGTHJ3HQJDBRM3YC5NC4IYWN5C,
-// CAEYKKJ5LTBLVQ5EM6H433YFHKOUJRDWOW3NF355ZS3FHQZKHXLQIHKA) that
-// consistently co-occur with the FLAGGED parallel router deployment
-// CA7RQDMMV6E53P5EDZA5GPWBZ33AMW2ZNO42XLI2RGRIAP4QXIARUOJQ (see
-// docs/protocols/aquarius.md "Flagged — excluded from the gate").
-// enable_emergency_mode / disable_emergency_mode were NEVER observed
-// from the canonical router at all (zero, full history). Per ADR-0035
-// / CS-026, the dispatcher_adapter.go gate does NOT expand the trust
-// boundary to these unidentified contracts — they fail-closed exactly
-// like CA7RQDMM's trade events already do, a visible ADR-0033
-// recognition gap pending Aquarius-team confirmation of what that
-// contract family is (mirrors the "Remaining asks for the Aquarius
-// team" list in docs/protocols/aquarius.md). The decode functions
-// below are still exercised against these real bytes in
+// CAEYKKJ5LTBLVQ5EM6H433YFHKOUJRDWOW3NF355ZS3FHQZKHXLQIHKA — see
+// docs/protocols/aquarius.md "Flagged — excluded from the gate") remain
+// OUTSIDE the trust boundary: being in neither reg.Has nor
+// reg.IsFactory, they still fail-closed per ADR-0035 / CS-026, a
+// visible ADR-0033 recognition gap, never a silent mis-attribution.
+// The decode functions below are exercised against real bytes from BOTH
+// registered pools and the flagged/sibling contracts in
 // decode_admin_test.go — decode correctness and gate membership are
 // independent concerns (same split real_fixture_test.go /
 // adapter_test.go already use for the trade path).
@@ -82,52 +88,84 @@ func adminEnvelope(e *events.Event, kind AdminAction, closedAt time.Time) AdminE
 	}
 }
 
-// decodeUpgradeHashBody is shared by apply_upgrade / commit_upgrade:
-// both carry the identical wire shape, a single 32-byte Wasm hash.
+// decodeUpgradeHashBody is shared by apply_upgrade / commit_upgrade.
+// Both carry a Vec[Bytes] body of 32-byte Wasm hashes whose ARITY
+// varies by emitter and wire generation (real r1 lake bytes, full
+// history 2026-08-17):
 //
 //	topics: [Symbol(kind)]  (topic_count=1)
-//	body:   Vec[Bytes]  (length 1: the 32-byte new/proposed Wasm hash)
-func decodeUpgradeHashBody(e *events.Event, kindName string) (string, error) {
+//	body:   Vec[Bytes]  (length >= 1, each a 32-byte Wasm hash)
+//
+// Observed arities: the canonical / flagged router emits a SINGLE hash
+// (1); the registered POOLS emit 2 (apply_upgrade) or 2–3
+// (commit_upgrade) across the protocol-wide staged WASM upgrade. This
+// used to pin `len(elts) != 1` and reject every pool body — 1,372 of
+// the ~1,679 dropped pool-governance events (apply_upgrade x686 +
+// commit_upgrade x686). We now decode BY ARITY: element[0] is the
+// PRIMARY (new/applied/proposed) hash; the caller lands it in Target
+// and carries any trailing staged hashes in Attributes. Returns every
+// hash in wire order (>= 1); an empty body still fails closed.
+func decodeUpgradeHashBody(e *events.Event, kindName string) ([]string, error) {
 	body, err := scval.Parse(e.Value)
 	if err != nil {
-		return "", fmt.Errorf("%w: %s parse body: %w", ErrMalformedPayload, kindName, err)
+		return nil, fmt.Errorf("%w: %s parse body: %w", ErrMalformedPayload, kindName, err)
 	}
 	elts, err := scval.AsVec(body)
 	if err != nil {
-		return "", fmt.Errorf("%w: %s body not a vec: %w", ErrMalformedPayload, kindName, err)
+		return nil, fmt.Errorf("%w: %s body not a vec: %w", ErrMalformedPayload, kindName, err)
 	}
-	if len(elts) != 1 {
-		return "", fmt.Errorf("%w: %s body length %d != 1", ErrMalformedPayload, kindName, len(elts))
+	if len(elts) == 0 {
+		return nil, fmt.Errorf("%w: %s body is an empty vec", ErrMalformedPayload, kindName)
 	}
-	raw, err := scval.AsBytes(elts[0])
-	if err != nil {
-		return "", fmt.Errorf("%w: %s wasm_hash: %w", ErrMalformedPayload, kindName, err)
+	hashes := make([]string, len(elts))
+	for i, el := range elts {
+		raw, err := scval.AsBytes(el)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %s wasm_hash[%d]: %w", ErrMalformedPayload, kindName, i, err)
+		}
+		hashes[i] = hex.EncodeToString(raw)
 	}
-	return hex.EncodeToString(raw), nil
+	return hashes, nil
+}
+
+// setUpgradeHashes lands the decoded Wasm hashes onto av: element[0]
+// in Target (the primary new/applied/proposed hash), each trailing
+// staged hash in Attributes["wasm_hash_N"] (1-indexed) — MIRRORS the
+// addr_3 pattern decodeSetPrivilegedAddrs uses for its v2 trailing
+// element. A single-hash (router) body lands ONLY Target, leaving
+// Attributes empty.
+func setUpgradeHashes(av *AdminEvent, hashes []string) {
+	av.Target = hashes[0]
+	for i, h := range hashes[1:] {
+		av.Attributes[fmt.Sprintf("wasm_hash_%d", i+1)] = h
+	}
 }
 
 // decodeApplyUpgrade decodes `apply_upgrade` — see decodeUpgradeHashBody.
-// Target is the newly-applied Wasm hash (hex).
+// Target is the newly-applied Wasm hash (hex); pool bodies carry a
+// second staged hash in Attributes["wasm_hash_1"].
 func decodeApplyUpgrade(e *events.Event, closedAt time.Time) (AdminEvent, error) {
-	hash, err := decodeUpgradeHashBody(e, EventApplyUpgrade)
+	hashes, err := decodeUpgradeHashBody(e, EventApplyUpgrade)
 	if err != nil {
 		return AdminEvent{}, err
 	}
 	av := adminEnvelope(e, AdminApplyUpgrade, closedAt)
-	av.Target = hash
+	setUpgradeHashes(&av, hashes)
 	return av, nil
 }
 
 // decodeCommitUpgrade decodes `commit_upgrade` — see
 // decodeUpgradeHashBody. Fires BEFORE the matching apply_upgrade
-// (staged/two-phase upgrade). Target is the proposed Wasm hash (hex).
+// (staged/two-phase upgrade). Target is the proposed Wasm hash (hex);
+// pool bodies carry the further staged hashes in
+// Attributes["wasm_hash_1"] / Attributes["wasm_hash_2"].
 func decodeCommitUpgrade(e *events.Event, closedAt time.Time) (AdminEvent, error) {
-	hash, err := decodeUpgradeHashBody(e, EventCommitUpgrade)
+	hashes, err := decodeUpgradeHashBody(e, EventCommitUpgrade)
 	if err != nil {
 		return AdminEvent{}, err
 	}
 	av := adminEnvelope(e, AdminCommitUpgrade, closedAt)
-	av.Target = hash
+	setUpgradeHashes(&av, hashes)
 	return av, nil
 }
 
