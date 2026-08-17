@@ -40,9 +40,14 @@ All four flow-event kinds (`trade`/`update_reserves`/
 rewards-gauge kinds are gated IDENTICALLY on contract identity
 (ADR-0035/0040, CS-026): they match only when emitted by a REGISTERED
 Aquarius pool, so a look-alike cannot inject fabricated reserves any
-more than fabricated trades. The governance/upgrade surface (plus the
-router-scoped `config_rewards` rewards kind) gates on the CANONICAL
-ROUTER trust root instead — see "Rewards-gauge + governance topics"
+more than fabricated trades. The seven POOL-EMITTABLE governance kinds
+(`apply_upgrade`, `commit_upgrade`, `set_privileged_addrs`,
+`apply_transfer_ownership`, `commit_transfer_ownership`,
+`enable_emergency_mode`, `disable_emergency_mode`) gate on the SAME
+boundary PLUS the router (`d.reg.Has || d.reg.IsFactory`) — the
+registered pools legitimately emit them. The two ROUTER-SCOPED kinds
+(`config_rewards`, `pool_gauge_switch_token`) gate on the CANONICAL
+ROUTER trust root only — see "Rewards-gauge + governance topics"
 below. Reserves/liquidity/rewards/admin are ADDITIVE analytics —
 Aquarius has no published price, so these rows never reach VWAP.
 
@@ -149,8 +154,8 @@ lifetime counts at capture time:
 
 | Topic | Count | Table columns |
 | --- | ---: | --- |
-| `apply_upgrade` | 706 | `target` = hex(new wasm hash) |
-| `commit_upgrade` | 705 | `target` = hex(proposed wasm hash), fires before the matching `apply_upgrade` |
+| `apply_upgrade` | 706 (+686 pool) | `target` = hex(applied wasm hash); pool bodies carry a 2nd staged hash in `attributes.wasm_hash_1` |
+| `commit_upgrade` | 705 (+686 pool) | `target` = hex(proposed wasm hash), fires before the matching `apply_upgrade`; pool bodies carry further staged hashes in `attributes.wasm_hash_1` / `wasm_hash_2` |
 | `set_privileged_addrs` | 173 | `attributes: {addr_0, addr_1, addr_2, addr_list}` |
 | `apply_transfer_ownership` | 48 | `target` = new role-holder address, `attributes.role` (e.g. `"EmergencyAdmin"`) |
 | `commit_transfer_ownership` | 48 | same shape, fires before the matching `apply_transfer_ownership` |
@@ -159,17 +164,28 @@ lifetime counts at capture time:
 | `pool_gauge_switch_token` | 31 | `target` = new gauge reward token; 100% router-scoped |
 
 **Gating.** The 11 pool-scoped rewards kinds gate identically to
-`trade`/liquidity/reserves (`d.reg.Has`); `config_rewards` and the
-8 governance kinds gate on the canonical router trust root
-(`d.reg.IsFactory`). Real lake bytes show several governance kinds
+`trade`/liquidity/reserves (`d.reg.Has`). The seven POOL-EMITTABLE
+governance kinds (`apply_upgrade`, `commit_upgrade`,
+`set_privileged_addrs`, `apply_transfer_ownership`,
+`commit_transfer_ownership`, `enable_emergency_mode`,
+`disable_emergency_mode`) gate on `d.reg.Has || d.reg.IsFactory` — the
+registered pools legitimately emit them (a full-history r1 census,
+2026-08-17, counts ~1,679 pool-emitted events: a protocol-wide staged
+WASM upgrade upgraded 320/337 pools, plus pool-level ownership /
+privileged-address / emergency-mode actions). Gating these on
+`d.reg.IsFactory` ALONE (the prior code) fail-closed every pool-emitted
+occurrence into an ADR-0033 recognition gap AND dropped it from Decode.
+`config_rewards` and `pool_gauge_switch_token` stay router-only
+(`d.reg.IsFactory`): the same census finds ZERO pool-emitted
+occurrences of either. Real lake bytes show several governance kinds
 also emitted by the FLAGGED parallel router deployment
 (`CA7RQDMM…`, see "Verification 2026-07-05" in
 `docs/protocols/aquarius.md`) and a small family of as-yet-unidentified
 sibling contracts (e.g. `CDWVENDOPYZ…`, `CAEYKKJ5LT…`) that co-occur
-with it — those fail-closed exactly like `CA7RQDMM`'s trade events
-already do (visible ADR-0033 recognition gap, not silent
-mis-attribution), pending Aquarius-team confirmation of what that
-contract family is.
+with it — being in neither `d.reg.Has` nor `d.reg.IsFactory`, those
+still fail-closed exactly like `CA7RQDMM`'s trade events already do
+(visible ADR-0033 recognition gap, not silent mis-attribution), pending
+Aquarius-team confirmation of what that contract family is.
 
 **Out of scope (SEP-41 token layer, not this protocol's own event
 surface — same exclusion `comet`'s README documents for BPT

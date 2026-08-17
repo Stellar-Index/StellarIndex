@@ -79,18 +79,36 @@ func (d *Decoder) Matches(ev events.Event) bool {
 		// fabricated reserves/liquidity/rewards any more than it
 		// could inject fabricated trades (CS-026).
 		return d.reg.Has(ev.ContractID)
-	case EventConfigRewards, EventApplyUpgrade, EventCommitUpgrade, EventSetPrivilegedAddrs,
+	case EventApplyUpgrade, EventCommitUpgrade, EventSetPrivilegedAddrs,
 		EventApplyTransferOwnership, EventCommitTransferOwnership,
-		EventEnableEmergencyMode, EventDisableEmergencyMode, EventPoolGaugeSwitchToken:
-		// Router-scoped governance/upgrade surface (ROADMAP #89):
-		// gated on the canonical router trust root ONLY. Real lake
-		// bytes show a small family of unidentified non-pool,
-		// non-router contracts also emitting several of these kinds
-		// (co-occurring with the FLAGGED parallel router deployment —
-		// see decode_admin.go's package doc) — those fail-closed here
-		// exactly like CA7RQDMM's trade events already do, a visible
-		// ADR-0033 recognition gap pending Aquarius-team confirmation,
-		// not a silent mis-attribution.
+		EventEnableEmergencyMode, EventDisableEmergencyMode:
+		// Pool-EMITTABLE governance/upgrade surface (ROADMAP #89):
+		// gated on the SAME protocol trust boundary as the pool-flow
+		// kinds (reg.Has) PLUS the router trust root (reg.IsFactory).
+		// The registered Aquarius pools legitimately emit these — a
+		// protocol-wide staged WASM upgrade upgraded 320/337 pools, and
+		// pools also fire ownership/privileged-address changes and
+		// emergency-mode toggles (full-history r1 census 2026-08-17:
+		// ~1,679 pool-emitted events across these seven kinds, earliest
+		// ledger 55,363,632). Before this, gating on reg.IsFactory ONLY
+		// (the router) fail-closed every pool-emitted occurrence into an
+		// ADR-0033 recognition gap AND dropped it from Decode — real
+		// governance history (wasm-upgrade lineage, ownership transfers,
+		// trade-availability emergency toggles) silently lost. An
+		// emitter in NEITHER set (the FLAGGED parallel router CA7RQDMM
+		// and the unidentified sibling family) still fails closed
+		// exactly like its trade events do — CS-026 preserved, a visible
+		// gap, never a silent mis-attribution.
+		return d.reg.Has(ev.ContractID) || d.reg.IsFactory(ev.ContractID)
+	case EventConfigRewards, EventPoolGaugeSwitchToken:
+		// Router-SCOPED governance surface (ROADMAP #89): gated on the
+		// canonical router trust root ONLY. Unlike the seven kinds
+		// above, config_rewards and pool_gauge_switch_token are 100%
+		// router-emitted — a full-history r1 census (2026-08-17) finds
+		// ZERO pool-emitted occurrences of either — so the gate stays on
+		// reg.IsFactory. A pool or foreign contract emitting these fails
+		// closed (CS-026), a visible ADR-0033 recognition gap, not a
+		// silent mis-attribution.
 		return d.reg.IsFactory(ev.ContractID)
 	}
 	return isAddPool(&ev) && d.reg.IsFactory(ev.ContractID)

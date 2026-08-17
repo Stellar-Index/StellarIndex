@@ -41,14 +41,14 @@ func TestDecoder_MatchesRewards_gated(t *testing.T) {
 	}
 }
 
-// TestDecoder_MatchesAdmin_gated pins that the governance/upgrade
-// events (migration 0100, ROADMAP #89) are gated on the CANONICAL
-// ROUTER trust root only (not a registered pool, not an arbitrary
-// contract) — see decode_admin.go's package doc for why the gate
-// stops at the router and does not expand to the unidentified
-// contract family real lake bytes show emitting several of these
-// kinds alongside the flagged parallel router deployment.
-func TestDecoder_MatchesAdmin_gated(t *testing.T) {
+// TestDecoder_MatchesAdmin_routerOnlyGated pins that the two
+// ROUTER-SCOPED governance kinds (config_rewards, pool_gauge_switch_token
+// — migration 0100, ROADMAP #89) stay gated on the CANONICAL ROUTER
+// trust root only: a full-history r1 census (2026-08-17) finds ZERO
+// pool-emitted occurrences of either, so a registered pool (and any
+// arbitrary contract) must NOT match — see decode_admin.go's package
+// doc.
+func TestDecoder_MatchesAdmin_routerOnlyGated(t *testing.T) {
 	d := NewDecoder()
 	pool := MainnetPools[0]
 	const flaggedRouter = "CA7RQDMMV6E53P5EDZA5GPWBZ33AMW2ZNO42XLI2RGRIAP4QXIARUOJQ"
@@ -57,7 +57,6 @@ func TestDecoder_MatchesAdmin_gated(t *testing.T) {
 		name  string
 		topic []string
 	}{
-		{"apply_upgrade", []string{"AAAADwAAAA1hcHBseV91cGdyYWRlAAAA"}},
 		{"config_rewards", []string{
 			"AAAADwAAAA5jb25maWdfcmV3YXJkcwAA",
 			"AAAAEAAAAAEAAAACAAAAEgAAAAEBXYCbqoen8nj67TgxiToTyzhZ6BokJeLbYyJFVbtOGgAAABIAAAABJbT82FmuwvpjSEOMSJs8PBDJi20hvk/TyzDLaJU++Xc=",
@@ -72,19 +71,122 @@ func TestDecoder_MatchesAdmin_gated(t *testing.T) {
 			if !d.Matches(events.Event{ContractID: MainnetRouter, Topic: tc.topic}) {
 				t.Errorf("canonical router not matched for %s", tc.name)
 			}
-			// A registered POOL must not match governance topics — the
-			// trust root for this family is the router, not the pool
-			// registry.
+			// A registered POOL must not match these two kinds — the
+			// trust root for them is the router, not the pool registry
+			// (zero pool-emitted occurrences in the lake).
 			if d.Matches(events.Event{ContractID: pool, Topic: tc.topic}) {
-				t.Errorf("registered pool incorrectly matched governance topic %s", tc.name)
+				t.Errorf("registered pool incorrectly matched router-only topic %s", tc.name)
 			}
-			// The flagged parallel router deployment (real bytes show
-			// it emitting these exact topics) must still fail-closed —
-			// same CS-026 posture as its trade events.
+			// The flagged parallel router deployment must still
+			// fail-closed — same CS-026 posture as its trade events.
 			if d.Matches(events.Event{ContractID: flaggedRouter, Topic: tc.topic}) {
 				t.Errorf("flagged parallel router matched %s — CS-026 gap not closed", tc.name)
 			}
 		})
+	}
+}
+
+// TestDecoder_MatchesPoolGovernance_recognized is the recognition
+// regression for the pool-governance decoder gap (fix
+// fix/aquarius-pool-governance-events). The seven POOL-EMITTABLE
+// governance kinds — apply_upgrade, commit_upgrade, set_privileged_addrs,
+// apply_transfer_ownership, commit_transfer_ownership,
+// enable_emergency_mode, disable_emergency_mode — are legitimately
+// emitted by the REGISTERED Aquarius pools (a protocol-wide staged WASM
+// upgrade + pool-level ownership/emergency actions, ~1,679 real events).
+// Before the fix the gate was reg.IsFactory ONLY, so every pool-emitted
+// occurrence returned Matches()==false — an ADR-0033 recognition gap
+// that also dropped the event from Decode. This pins that a REGISTERED
+// pool AND the router now match, while a foreign contract and the
+// flagged parallel router still fail-closed (CS-026). Matches() reads
+// only topic[0], so a bare topic[0] proves the gate.
+func TestDecoder_MatchesPoolGovernance_recognized(t *testing.T) {
+	d := NewDecoder()
+	pool := MainnetPools[0]
+	const (
+		foreign       = "CFOREIGNFAKEPOOL0000000000000000000000000000000000000000"
+		flaggedRouter = "CA7RQDMMV6E53P5EDZA5GPWBZ33AMW2ZNO42XLI2RGRIAP4QXIARUOJQ"
+	)
+
+	cases := []struct {
+		name   string
+		topic0 string
+	}{
+		{"apply_upgrade", "AAAADwAAAA1hcHBseV91cGdyYWRlAAAA"},
+		{"commit_upgrade", "AAAADwAAAA5jb21taXRfdXBncmFkZQAA"},
+		{"set_privileged_addrs", "AAAADwAAABRzZXRfcHJpdmlsZWdlZF9hZGRycw=="},
+		{"apply_transfer_ownership", "AAAADwAAABhhcHBseV90cmFuc2Zlcl9vd25lcnNoaXA="},
+		{"commit_transfer_ownership", "AAAADwAAABljb21taXRfdHJhbnNmZXJfb3duZXJzaGlwAAAA"},
+		{"enable_emergency_mode", "AAAADwAAABVlbmFibGVfZW1lcmdlbmN5X21vZGUAAAA="},
+		{"disable_emergency_mode", "AAAADwAAABZkaXNhYmxlX2VtZXJnZW5jeV9tb2RlAAA="},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			topic := []string{tc.topic0}
+			// A registered pool must now be RECOGNIZED (gap closed).
+			if !d.Matches(events.Event{ContractID: pool, Topic: topic}) {
+				t.Errorf("registered pool NOT matched for %s — recognition gap still open", tc.name)
+			}
+			// The router still matches (its rows are unchanged).
+			if !d.Matches(events.Event{ContractID: MainnetRouter, Topic: topic}) {
+				t.Errorf("canonical router not matched for %s", tc.name)
+			}
+			// A foreign contract must still fail-closed (CS-026).
+			if d.Matches(events.Event{ContractID: foreign, Topic: topic}) {
+				t.Errorf("foreign contract matched %s — CS-026 injection vector open", tc.name)
+			}
+			// The flagged parallel router (neither reg.Has nor
+			// reg.IsFactory) must still fail-closed.
+			if d.Matches(events.Event{ContractID: flaggedRouter, Topic: topic}) {
+				t.Errorf("flagged parallel router matched %s — CS-026 gap not closed", tc.name)
+			}
+		})
+	}
+}
+
+// TestDecoder_Decode_PoolApplyUpgrade_endToEnd drives the full
+// dispatcher seam (Matches gate → Decode → AdminEvent) for a REGISTERED
+// pool's real 2-hash apply_upgrade, proving the recognition gap fix
+// carries the event all the way to a projectable AdminEvent stamped with
+// the POOL's contract_id (the aquarius_admin emitter column that
+// distinguishes pool rows from router rows).
+func TestDecoder_Decode_PoolApplyUpgrade_endToEnd(t *testing.T) {
+	d := NewDecoder()
+	const poolID = "CDKVJYMN34ZIEXSLNFYHVAFF6M6FM5E2U6OHXOTBKH2WLBULXOE53YDP"
+	ev := events.Event{
+		ContractID:     poolID,
+		Ledger:         56505116,
+		TxHash:         "f38a9207f724b9624ce39e15a1aef59197db4913bdc7cf74867db3906ef7a852",
+		EventIndex:     2,
+		LedgerClosedAt: "2025-04-07T08:42:31Z",
+		Topic:          []string{"AAAADwAAAA1hcHBseV91cGdyYWRlAAAA"},
+		Value:          "AAAAEAAAAAEAAAACAAAADQAAACAubx2u2HKIGsUr9jcygHbNgaO1pw5GUkRTo1QwnHo3hgAAAA0AAAAgWWrOi4VUNkeFEoIaLg7LApc7G60KQFfcVB/Qyk188Dc=",
+	}
+	if !d.Matches(ev) {
+		t.Fatal("registered pool apply_upgrade not matched — recognition gap still open")
+	}
+	out, err := d.Decode(ev)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("got %d events, want 1", len(out))
+	}
+	av, ok := out[0].(AdminEvent)
+	if !ok {
+		t.Fatalf("got %T, want AdminEvent", out[0])
+	}
+	if av.ContractID != poolID {
+		t.Errorf("ContractID = %q, want the emitting pool %q", av.ContractID, poolID)
+	}
+	if av.Kind != AdminApplyUpgrade {
+		t.Errorf("Kind = %q, want %q", av.Kind, AdminApplyUpgrade)
+	}
+	if av.Target != "2e6f1daed872881ac52bf637328076cd81a3b5a70e46524453a354309c7a3786" {
+		t.Errorf("Target = %q", av.Target)
+	}
+	if got := av.Attributes["wasm_hash_1"]; got != "596ace8b855436478512821a2e0ecb02973b1bad0a4057dc541fd0ca4d7cf037" {
+		t.Errorf("wasm_hash_1 = %v", got)
 	}
 }
 
