@@ -80,6 +80,13 @@ var goldenFrames = map[string]struct {
 		topics: []string{"AAAADwAAABVDb2xsYXRlcmFsSGFzaFVwZGF0ZWQAAAA="},
 		data:   "AAAAEAAAAAEAAAACAAAADQAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA0AAAAgBwl/g9rjt0bbfboyY9nMM077iKmn1UUPuWyhnzPShLA=",
 	},
+	// topics=[Symbol]; data=Vec[Address old_treasury, Address new_treasury].
+	// The recognition-audit gap: 1 real event, main contract, ledger
+	// 63,847,367 (tx 836dab51…). Config event captured verbatim.
+	"TreasuryUpdated": {
+		topics: []string{"AAAADwAAAA9UcmVhc3VyeVVwZGF0ZWQA"},
+		data:   "AAAAEAAAAAEAAAACAAAAEgAAAAAAAAAAEZtPs71BPlSCnqFeq9TIFCYNJTo5SboNEpuEDGoNoS8AAAASAAAAAAAAAADtsFSvh+1HUA2gH0Yq8MVwvPFIGYhHKe0lT+mBd36mQg==",
+	},
 }
 
 func goldenEvent(t *testing.T, name string) events.Event {
@@ -222,6 +229,7 @@ func TestGolden_ConfigEvents(t *testing.T) {
 		{"BeaconUpdated", TypeBeaconUpdated},
 		{"SupportedAssetAdded", TypeSupportedAssetAdded},
 		{"CollateralHashUpdated", TypeCollateralHashUpdated},
+		{"TreasuryUpdated", TypeTreasuryUpdated},
 	}
 	for _, c := range cases {
 		c := c
@@ -244,7 +252,7 @@ func TestGolden_ConfigEvents(t *testing.T) {
 }
 
 // TestGolden_RoundTripEveryFrame runs the full classify→decode→Event join
-// over every golden frame (all 7 event types decode without error, carry
+// over every golden frame (all 8 event types decode without error, carry
 // the parsed timestamp, and report the right source).
 func TestGolden_RoundTripEveryFrame(t *testing.T) {
 	t.Parallel()
@@ -265,7 +273,7 @@ func TestGolden_RoundTripEveryFrame(t *testing.T) {
 
 // ─── Classify ────────────────────────────────────────────────────────
 
-func TestClassify_AllSevenSymbols(t *testing.T) {
+func TestClassify_AllEightSymbols(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		topic string
@@ -278,6 +286,7 @@ func TestClassify_AllSevenSymbols(t *testing.T) {
 		{topicSymBeaconUpdated, TypeBeaconUpdated},
 		{topicSymSupportedAssetAdded, TypeSupportedAssetAdded},
 		{topicSymCollateralHashUpdated, TypeCollateralHashUpdated},
+		{topicSymTreasuryUpdated, TypeTreasuryUpdated},
 	}
 	for _, c := range cases {
 		c := c

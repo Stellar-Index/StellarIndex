@@ -1721,7 +1721,8 @@ func persistSoroCreditEvent(ctx context.Context, logger *slog.Logger, store *tim
 			EventIndex:         e.EventIndex,
 		})
 	case sorocredit.TypeWithdrawal, sorocredit.TypeBeaconUpdated,
-		sorocredit.TypeSupportedAssetAdded, sorocredit.TypeCollateralHashUpdated:
+		sorocredit.TypeSupportedAssetAdded, sorocredit.TypeCollateralHashUpdated,
+		sorocredit.TypeTreasuryUpdated:
 		err = store.InsertCreditEvent(ctx, timescale.CreditEvent{
 			EventType:          string(e.EventType),
 			CollateralContract: e.CollateralContract,
