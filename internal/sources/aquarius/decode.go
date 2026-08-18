@@ -405,13 +405,16 @@ func decodeAnnouncedPool(e *events.Event) (string, error) {
 }
 
 // decodeFee decodes an Aquarius `set_protocol_fee` or
-// `claim_protocol_fee` treasury event into a FeeEvent. The two share no
-// body shape, so `kind` (the classify() result) selects the decode:
+// `claim_protocol_fee` treasury event into a FeeEvent. `kind` (the
+// classify() result) selects the decode:
 //
-//	set_protocol_fee   — Map{ fee_protocol{0,1}_{new,old}: u32 }
+//	set_protocol_fee   — TWO real body shapes, both handled by
+//	                     decodeSetProtocolFee:
+//	                       Map[ fee_protocol{0,1}_{new,old}: u32 ] and
+//	                       Vec[ u32 ] (a single pool-wide new fraction).
 //	claim_protocol_fee — Vec[ recipient: Address, amount: i128 ]
 //
-// Decode-by-field-name for the Map (schema-evolution safe); the Vec is
+// Decode-by-field-name for the Map (schema-evolution safe); the Vecs are
 // positional per the contract. Verified against real lake bodies.
 func decodeFee(e *events.Event, closedAt time.Time, kind string) (FeeEvent, error) {
 	fe := FeeEvent{
@@ -429,10 +432,53 @@ func decodeFee(e *events.Event, closedAt time.Time, kind string) (FeeEvent, erro
 	}
 	switch kind {
 	case EventSetProtocolFee:
-		entries, err := scval.AsMap(sv)
-		if err != nil {
-			return FeeEvent{}, fmt.Errorf("%w: set_protocol_fee not a Map: %w", ErrMalformedPayload, err)
+		if err := decodeSetProtocolFee(sv, &fe); err != nil {
+			return FeeEvent{}, err
 		}
+	case EventClaimProtocolFee:
+		if err := decodeClaimFee(e, sv, &fe); err != nil {
+			return FeeEvent{}, err
+		}
+	default:
+		return FeeEvent{}, fmt.Errorf("decodeFee: unexpected kind %q", kind)
+	}
+	return fe, nil
+}
+
+// decodeSetProtocolFee fills the set_protocol_fee fields from EITHER of
+// the two real on-chain body shapes (branch on the parsed SCVal kind):
+//
+//	Map[ fee_protocol{0,1}_{new,old}: u32 ]
+//	    the per-token old→new transition, decoded by field name
+//	    (schema-evolution safe). This is the shape the migration-0129
+//	    pass first sampled (values 0→4 / 0→10). NOTE: lake evidence
+//	    (2026-08-18) finds this Map shape ONLY on contracts that are NOT
+//	    registered Aquarius pools, so contract-identity gating means it
+//	    is not actually reached in production — kept because the wire
+//	    shape is real and the decode is cheap and lossless.
+//
+//	Vec[ u32 ]
+//	    a SINGLE pool-wide NEW protocol-fee fraction — the shape EVERY
+//	    REGISTERED Aquarius pool emits. All 163 lake-wide occurrences are
+//	    the byte-identical body Vec[u32(5000)] (the June-2025 governance
+//	    sweep that set 160 registered pools in one tx — ledger
+//	    57,697,910 — plus later stragglers). The pool contract's fee API
+//	    is a SINGLE `set_protocol_fee_fraction` / `get_protocol_fee_fraction`
+//	    with a `new_fraction` topic — verified across every pool-WASM
+//	    generation's disassembly (docs/operations/wasm-audits/evidence/
+//	    r1-walk-2026-05-01/disasm: the strings `set_protocol_fee_fraction`,
+//	    `new_fraction`, `get_protocol_fee_fraction`, and NO per-token
+//	    `fee_protocol*` keys in any Aquarius pool WASM). So the one u32 is
+//	    the new fraction for the WHOLE pool; it maps to BOTH token sides
+//	    (Fee0New == Fee1New == fraction). The body carries NO old value
+//	    and NO per-token split — HasOldFee stays false so the sink lands
+//	    the fee_protocol*_old columns NULL rather than a fabricated 0
+//	    (do-not-invent: the prior fraction is genuinely not on the wire).
+//	    The raw u32 is stored verbatim; the Aquarius fee-fraction
+//	    denominator is a downstream interpretation, not asserted here.
+func decodeSetProtocolFee(sv scval.ScVal, fe *FeeEvent) error {
+	// Map form — the per-token old→new transition.
+	if entries, err := scval.AsMap(sv); err == nil {
 		for _, f := range []struct {
 			name string
 			dst  *uint32
@@ -444,22 +490,33 @@ func decodeFee(e *events.Event, closedAt time.Time, kind string) (FeeEvent, erro
 		} {
 			msv, err := scval.MustMapField(entries, f.name)
 			if err != nil {
-				return FeeEvent{}, fmt.Errorf("%w: set_protocol_fee.%s: %w", ErrMalformedPayload, f.name, err)
+				return fmt.Errorf("%w: set_protocol_fee.%s: %w", ErrMalformedPayload, f.name, err)
 			}
 			v, err := scval.AsU32(msv)
 			if err != nil {
-				return FeeEvent{}, fmt.Errorf("%w: set_protocol_fee.%s: %w", ErrMalformedPayload, f.name, err)
+				return fmt.Errorf("%w: set_protocol_fee.%s: %w", ErrMalformedPayload, f.name, err)
 			}
 			*f.dst = v
 		}
-	case EventClaimProtocolFee:
-		if err := decodeClaimFee(e, sv, &fe); err != nil {
-			return FeeEvent{}, err
-		}
-	default:
-		return FeeEvent{}, fmt.Errorf("decodeFee: unexpected kind %q", kind)
+		fe.HasOldFee = true
+		return nil
 	}
-	return fe, nil
+	// Vec form — a single pool-wide new protocol-fee fraction.
+	vec, err := scval.AsVec(sv)
+	if err != nil {
+		return fmt.Errorf("%w: set_protocol_fee body is neither Map nor Vec: %w", ErrMalformedPayload, err)
+	}
+	if len(vec) != 1 {
+		return fmt.Errorf("%w: set_protocol_fee Vec length %d, want 1 (pool-wide new fraction)", ErrMalformedPayload, len(vec))
+	}
+	fraction, err := scval.AsU32(vec[0])
+	if err != nil {
+		return fmt.Errorf("%w: set_protocol_fee new fraction: %w", ErrMalformedPayload, err)
+	}
+	// Pool-wide fraction ⇒ both token sides carry it; no old on the wire.
+	fe.Fee0New, fe.Fee1New = fraction, fraction
+	fe.HasOldFee = false
+	return nil
 }
 
 // decodeClaimFee fills the claim_protocol_fee fields: recipient +

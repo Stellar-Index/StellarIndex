@@ -241,11 +241,17 @@ type FeeEvent struct {
 	EventIndex uint32
 	ObservedAt time.Time
 	Kind       string // EventSetProtocolFee | EventClaimProtocolFee
-	// set_protocol_fee — per-token old→new protocol fee (u32).
-	Fee0New uint32
-	Fee0Old uint32
-	Fee1New uint32
-	Fee1Old uint32
+	// set_protocol_fee — per-token old→new protocol fee (u32). Two real
+	// wire shapes (see decodeSetProtocolFee): the Map form carries all
+	// four values (HasOldFee = true); the Vec form carries a single
+	// pool-wide new fraction (Fee0New == Fee1New, no old value on the
+	// wire — HasOldFee = false, so the sink lands the *_old columns NULL
+	// rather than a fabricated 0).
+	Fee0New   uint32
+	Fee0Old   uint32
+	Fee1New   uint32
+	Fee1Old   uint32
+	HasOldFee bool
 	// claim_protocol_fee — the fee-sweep destination + swept amount
 	// (i128, per ADR-0003). One event per token claimed. Token is the
 	// claimed token's contract address, carried in topic[1] (audit
