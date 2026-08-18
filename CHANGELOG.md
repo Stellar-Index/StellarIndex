@@ -15,6 +15,37 @@ against.
 
 ## [Unreleased]
 
+## [v0.38.0] — 2026-08-18
+
+Tested against Stellar protocol v23. No migration. Four completeness-verdict
+fixes closing the last per-protocol gaps found by the launch-readiness sweep —
+two genuine decoder/gating gaps and two tooling false-reds (data was correct).
+
+### Fixed
+- **soroswap recognition false-red (#100).** The ADR-0033 recognition census
+  built its dispatcher without the soroswap pair registry, so its soroswap
+  decoder's `pairTokens` map was empty and `Matches()` rejected every real
+  `SoroswapPair` protocol event — each became a false "unhandled topic" gap
+  attributed to soroswap (and the watermark clamp cascaded into spurious
+  projection floor-loss alarms), even though the indexer decodes + serves those
+  trades correctly. Both recognition-census paths now seed the soroswap decoder
+  from the same `LoadSoroswapPairRegistry` set attribution already uses.
+- **aquarius `set_protocol_fee` Vec-body decode (#101).** `set_protocol_fee`
+  events on registered Aquarius pools carry a `Vec` body (`SCV_VEC[SCV_U32]` = the
+  new pool-wide protocol-fee fraction, per the pool WASM's singular
+  `set_protocol_fee_fraction`) that the Map-only decoder dropped, blocking
+  aquarius projection with "undecodable-but-matched" blind spots. `decodeFee` now
+  branches on the SCVal kind; the absent prior fraction lands NULL (not invented).
+- **phoenix incomplete gating seed (#102).** The curated `MainnetGatedSet` was
+  missing 14 verified-genuine phoenix contracts (1 pool + 13 per-pool stake
+  contracts), so the reconcile under-counted them AND the live gated pipeline was
+  silently dropping some still-active contracts' events. All 14 were verified
+  on-chain (factory pool-create co-occurrence / shared reward keeper / stake-v1.1
+  migration events) and added to the seed; the pre-upgrade 7-field sweep-emit
+  ledger shift is absorbed via `aggregateReconcile`.
+- **defindex projection dirty window** re-verified clean and cleared (the #91
+  harvest-count fix, live since v0.36.0).
+
 ## [v0.37.0] — 2026-08-17
 
 Tested against Stellar protocol v23. No migration. Completeness-verdict
