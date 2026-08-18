@@ -50,6 +50,12 @@ paths = [
   # below; duplicated for the same reason as the entries above.
   '''internal/sources/aquarius/golden_realbytes_test\.go''',
   '''internal/sources/defindex/golden_realbytes_test\.go''',
+  # Lake-derived base64-XDR golden fixture (public on-chain
+  # set_protocol_fee Vec body) + public C-strkey pool contract IDs for
+  # the aquarius fee-Vec-decode golden test (2026-08-18). ALSO
+  # rule-scoped below; duplicated for the same reason as the entries
+  # above.
+  '''internal/sources/aquarius/fee_vec_golden_test\.go''',
 ]
 
 [[rules]]
@@ -192,6 +198,12 @@ description = "Test-only base64-encoded XDR fixtures (topics_xdr/data_xdr for re
 paths = [
   '''internal/sources/aquarius/golden_realbytes_test\.go''',
   '''internal/sources/defindex/golden_realbytes_test\.go''',
+]
+
+[[rules.allowlists]]
+description = "Test-only base64-encoded XDR fixture (data_xdr/topics_xdr for a real Aquarius set_protocol_fee Vec[u32] body, captured from the ClickHouse raw lake at ledger 57,697,910) + the public Stellar C-strkey pool contract IDs (CBL7MWLE…, CATP23X4…) that emitted it, used by the fee-Vec-decode golden test (2026-08-18). XDR-encoded public ledger data + deterministic public contract IDs, not credentials — the base64 blobs + 56-char base32 strkeys trip gitleaks' generic-api-key entropy heuristic. Same rationale as the aquarius/cctp/phoenix decoder-fixture allowlists above."
+paths = [
+  '''internal/sources/aquarius/fee_vec_golden_test\.go''',
 ]
 
 [[rules.allowlists]]

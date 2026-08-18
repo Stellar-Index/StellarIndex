@@ -1305,6 +1305,7 @@ func persistAquariusFee(ctx context.Context, logger *slog.Logger, store *timesca
 	if e.Kind == aquarius.EventSetProtocolFee {
 		row.Fee0New, row.Fee0Old = e.Fee0New, e.Fee0Old
 		row.Fee1New, row.Fee1Old = e.Fee1New, e.Fee1Old
+		row.HasOldFee = e.HasOldFee
 	} else {
 		row.Recipient = e.Recipient
 		row.Token = e.Token

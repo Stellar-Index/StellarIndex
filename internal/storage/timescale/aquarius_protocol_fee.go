@@ -26,9 +26,14 @@ type AquariusProtocolFeeEvent struct {
 	Fee0Old         uint32
 	Fee1New         uint32
 	Fee1Old         uint32
-	Recipient       string
-	Token           string // claimed token C-strkey from topic[1]; "" on set_protocol_fee (migration 0139)
-	Amount          string // decimal i128; "" on set_protocol_fee
+	// HasOldFee distinguishes the two set_protocol_fee wire shapes: the
+	// Map form carries the per-token old values (true); the Vec form
+	// carries only a single pool-wide new fraction (false), so the
+	// fee_protocol*_old columns land NULL rather than a fabricated 0.
+	HasOldFee bool
+	Recipient string
+	Token     string // claimed token C-strkey from topic[1]; "" on set_protocol_fee (migration 0139)
+	Amount    string // decimal i128; "" on set_protocol_fee
 }
 
 // InsertAquariusProtocolFee lands one protocol-fee event, idempotent on
@@ -57,9 +62,13 @@ func (s *Store) InsertAquariusProtocolFee(ctx context.Context, e AquariusProtoco
 	switch e.Kind {
 	case "set_protocol_fee":
 		fee0New = sql.NullInt64{Int64: int64(e.Fee0New), Valid: true}
-		fee0Old = sql.NullInt64{Int64: int64(e.Fee0Old), Valid: true}
 		fee1New = sql.NullInt64{Int64: int64(e.Fee1New), Valid: true}
-		fee1Old = sql.NullInt64{Int64: int64(e.Fee1Old), Valid: true}
+		// The Vec form (registered pools) carries no old value — leave
+		// the *_old columns NULL rather than fabricate a 0.
+		if e.HasOldFee {
+			fee0Old = sql.NullInt64{Int64: int64(e.Fee0Old), Valid: true}
+			fee1Old = sql.NullInt64{Int64: int64(e.Fee1Old), Valid: true}
+		}
 	case "claim_protocol_fee":
 		if e.Recipient == "" {
 			return fmt.Errorf("timescale: InsertAquariusProtocolFee: claim recipient empty (contract=%s ledger=%d)", e.ContractID, e.Ledger)
