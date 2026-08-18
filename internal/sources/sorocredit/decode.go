@@ -41,6 +41,8 @@ func classify(e *events.Event) EventType {
 		return TypeSupportedAssetAdded
 	case topicSymCollateralHashUpdated:
 		return TypeCollateralHashUpdated
+	case topicSymTreasuryUpdated:
+		return TypeTreasuryUpdated
 	default:
 		return ""
 	}

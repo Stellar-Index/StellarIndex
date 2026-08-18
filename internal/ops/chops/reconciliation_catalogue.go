@@ -361,6 +361,7 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 				{"credit_events", "", []string{
 					"sorocredit.withdrawal", "sorocredit.beacon_updated",
 					"sorocredit.supported_asset_added", "sorocredit.collateral_hash_updated",
+					"sorocredit.treasury_updated",
 				}},
 			},
 		},
