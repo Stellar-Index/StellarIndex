@@ -331,6 +331,62 @@ func TestCatalogue_OpArgsOnlyForRedstone(t *testing.T) {
 	}
 }
 
+// TestBlendEmitterDropFanoutWaived pins the 2026-08-18 blend_emitter
+// projection false-red fix. The `drop` event is a FAN-OUT: one decoder
+// DropEvent carries N recipients and the sink writes one blend_emitter_events
+// row per recipient (recipient_index is a PK component), so a per-ledger
+// event-count-vs-served-row-count reconcile false-flags every drop ledger
+// (r1-measured 2026-08-18: ledger 51,499,914 = 13 rows / 1 event identity;
+// ledger 57,467,292 = 3 / 1 → Σ|Δ|=14, data CORRECT).
+//
+// Unlike the aquarius_reserves/liquidity fan-out tables — which are ENTIRELY
+// fan-out and are waived whole — blend_emitter_events is MIXED: `distribute`
+// (465 events) and `q_swap`/`swap` (2) are strictly 1:1. So instead of waiving
+// the whole table and losing that 1:1 coverage, the catalogue carves ONLY the
+// fan-out drop rows out of the served side (whereFilter `event_kind <> 'drop'`)
+// and omits the drop kind from the re-derive: the 467/469 1:1 events keep exact
+// per-ledger reconciliation and the 2 drop ledgers are covered by the density
+// gap-detector (per_source_gaps.go). This test fails against the pre-fix
+// catalogue (kinds included "blend_emitter.drop"; whereFilter was "").
+func TestBlendEmitterDropFanoutWaived(t *testing.T) {
+	cat, _, err := buildReconciliationCatalogue(testConfigWithAllSources())
+	if err != nil {
+		t.Fatalf("buildReconciliationCatalogue: %v", err)
+	}
+	var found bool
+	for _, src := range cat {
+		if src.name != "blend_emitter" {
+			continue
+		}
+		found = true
+		if len(src.targets) != 1 {
+			t.Fatalf("blend_emitter: %d targets, want 1", len(src.targets))
+		}
+		tgt := src.targets[0]
+		if tgt.table != "blend_emitter_events" {
+			t.Errorf("blend_emitter target table = %q, want blend_emitter_events", tgt.table)
+		}
+		// The fan-out `drop` kind must NOT be reconciled by count.
+		if contains(tgt.kinds, "blend_emitter.drop") {
+			t.Errorf("blend_emitter_events reconciles kind %q — the drop fan-out (N recipient rows per event) false-flags every drop ledger; it must be waived, not counted", "blend_emitter.drop")
+		}
+		// The 1:1 kinds must STILL be reconciled per-ledger (coverage preserved).
+		for _, want := range []string{"blend_emitter.distribute", "blend_emitter.swap_config"} {
+			if !contains(tgt.kinds, want) {
+				t.Errorf("blend_emitter_events must still reconcile the 1:1 kind %q (coverage preserved); kinds=%v", want, tgt.kinds)
+			}
+		}
+		// The served side must exclude the fanned-out drop rows so the count
+		// matches the drop-free expected side.
+		if tgt.whereFilter != "event_kind <> 'drop'" {
+			t.Errorf("blend_emitter_events whereFilter = %q, want \"event_kind <> 'drop'\" (carve the fan-out drop rows out of the served count)", tgt.whereFilter)
+		}
+	}
+	if !found {
+		t.Fatal("catalogue missing blend_emitter source")
+	}
+}
+
 // TestValidateSourceFilter is the F7 fail-open regression: a -source
 // filter that names no catalogue source must fail CLOSED, not silently
 // skip every source and report success. Empty (all sources) and a real
