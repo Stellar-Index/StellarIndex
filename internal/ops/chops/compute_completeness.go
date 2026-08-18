@@ -18,6 +18,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/band"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sdex"
@@ -1519,7 +1520,22 @@ func expectedProjection(ctx context.Context, store *timescale.Store, chStreamer 
 				return nil, completeness.BlindSpots{}, fmt.Errorf("%s preseed: %w", src.name, err)
 			}
 		}
-		byKind, blind, err := completeness.ReDeriveOutputCountsByKindFromEvents(ctx, chStreamer, src.dec, src.contractIDs, src.topic0Syms, lo, hi)
+		// Factory-anchored IDENTITY-gated sources (aquarius, phoenix) opt into a
+		// contract-id PREFILTER so the re-derive reads only the gated pool set
+		// (contract-indexed) instead of streaming the whole ~6B-event lake — the
+		// fix for the -pass 120-min-deadline timeout. Built AFTER the preseed so
+		// the prefilter is a guaranteed SUPERSET of the registry the re-derive
+		// will hold at every point in [lo,hi]; Matches() stays the per-event
+		// gate, so the counts are byte-identical (see gatedPrefilter).
+		contractIDs := src.contractIDs
+		if src.newGatedDec != nil {
+			pf, pferr := gatedPrefilter(ctx, chStreamer, src, hi)
+			if pferr != nil {
+				return nil, completeness.BlindSpots{}, fmt.Errorf("%s gated prefilter: %w", src.name, pferr)
+			}
+			contractIDs = pf
+		}
+		byKind, blind, err := completeness.ReDeriveOutputCountsByKindFromEvents(ctx, chStreamer, src.dec, contractIDs, src.topic0Syms, lo, hi)
 		if err != nil {
 			return nil, completeness.BlindSpots{}, err
 		}
@@ -1527,6 +1543,86 @@ func expectedProjection(ctx context.Context, store *timescale.Store, chStreamer 
 		// every output would overcount any table that receives a subset.
 		return func(tgt reconTarget) map[uint32]int { return completeness.SumKinds(byKind, tgt.kinds...) }, blind, nil
 	}
+}
+
+// gatedPrefilter builds the contract-id prefilter for a factory-anchored
+// IDENTITY-gated source (aquarius, phoenix) so the -ch re-derive reads only
+// that source's gated contract set (factory ∪ children) instead of streaming
+// the whole ~6B-event lake. The gated set is exactly the set of contracts
+// Matches() can accept, so restricting the read to it (a contract-indexed
+// scan) is counts-identical to the whole-lake stream, just far faster — the
+// fix for the -pass 120-min-deadline timeout on aquarius's dirty-window
+// re-derive (StreamContractEvents applies no contract prefilter when
+// contractIDs is empty, so a factory-anchored source with empty catalogue
+// contractIDs streams every event in [lo,tip]).
+//
+// The returned set is a guaranteed SUPERSET of the registry the real re-derive
+// (src.dec) will hold at every point in [lo,hi], so no counted contract is
+// ever missed and no undercount (false red) is possible:
+//
+//   - (a) src.dec's gate AFTER its preseed-to-lo = the curated in-code seed ∪
+//     every child preseeded from the Postgres landing zone — i.e. the registry
+//     state the stream STARTS from. Read via GatedContractSet().
+//   - (b) every child the SAME certified lake announces through hi, walked from
+//     the factory's creation events on a THROWAWAY decoder — a superset of the
+//     children the real stream will self-seed in [lo,hi]. The throwaway keeps
+//     src.dec's just-in-time in-stream seeding UNDISTURBED, so ordering-
+//     sensitive edge cases (a pool created and traded in the same ledger with
+//     adverse tx_hash sort order) resolve byte-identically to the unfiltered
+//     stream — the prefilter only ever ADDS contract rows to the read; Matches()
+//     is still the final per-event gate.
+//
+// The factory ids are always included (via GatedSet) so their creation events
+// still stream and self-seed in-window children. Deduped + sorted (a stable
+// prefilter keeps CH query plans / logs steady across a pass).
+func gatedPrefilter(ctx context.Context, chStreamer completeness.EventStreamer, src reconSource, hi uint32) ([]string, error) {
+	set := make(map[string]struct{})
+	// (a) the registry the real re-derive starts the stream with.
+	if g, ok := src.dec.(gatedContractSetter); ok {
+		for _, c := range g.GatedContractSet() {
+			set[c] = struct{}{}
+		}
+	}
+	// (b) children announced through hi, read from the same certified lake the
+	// re-derive streams, on a throwaway decoder so src.dec is left untouched.
+	fresh := src.newGatedDec()
+	for _, f := range src.factories {
+		set[f] = struct{}{} // ensure the factory streams so its add_pool self-seeds
+		if len(src.creationSym) == 0 {
+			continue
+		}
+		werr := chStreamer.StreamContractEvents(ctx, src.genesis, hi, []string{f}, []string{src.creationSym},
+			func(ev events.Event) error {
+				if fresh.Matches(ev) {
+					// Decode registers the announced child in `fresh`'s registry
+					// (its only side effect for a creation event); a decode error
+					// on a malformed creation event is soft-failed exactly as the
+					// re-derive would, so the walk stays non-fatal.
+					_, _ = fresh.Decode(ev)
+				}
+				return nil
+			})
+		if werr != nil {
+			return nil, fmt.Errorf("walk %s creation events: %w", src.name, werr)
+		}
+	}
+	for _, c := range fresh.GatedContractSet() {
+		set[c] = struct{}{}
+	}
+	out := make([]string, 0, len(set))
+	for c := range set {
+		out = append(out, c)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// gatedContractSetter is the read-only half of gatedDecoder — a decoder that
+// can enumerate its gate. Split out so gatedPrefilter can read src.dec (typed
+// as the interface completeness.Decoder) without asserting the full
+// gatedDecoder.
+type gatedContractSetter interface {
+	GatedContractSet() []string
 }
 
 // reconcileTarget compares one target's re-derived expected counts (clipped to

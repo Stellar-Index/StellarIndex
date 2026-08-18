@@ -45,6 +45,16 @@ func NewDecoder(opts ...contractid.Option) *Decoder {
 // Name implements [dispatcher.Decoder].
 func (*Decoder) Name() string { return SourceName }
 
+// GatedContractSet returns the decoder's current gate — the router trust
+// root ∪ every registered pool (curated seed + router-announced). It is the
+// contract-id prefilter the -ch completeness re-derive scopes its lake read
+// to: Matches() accepts events ONLY from these contracts, so streaming just
+// them yields byte-identical counts to a whole-lake stream, far faster
+// (contract-indexed vs a full firehose walk). Reflects whatever Decode has
+// registered so far, so callers that need the in-window pools must seed the
+// registry (preseed / self-seed) before reading it.
+func (d *Decoder) GatedContractSet() []string { return d.reg.GatedSet() }
+
 // Matches implements [dispatcher.Decoder]. Gates on CONTRACT
 // IDENTITY, not topic bytes (ADR-0035/0040, CS-026):
 //
