@@ -512,7 +512,14 @@ jobs:
       - name: govulncheck
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
-          govulncheck ./...
+          # Gated by a documented accepted-risk allowlist
+          # (scripts/ci/govulncheck-allow.txt): the unmaintained lib/pq@v1.12.3
+          # Postgres driver (ADR-0006) carries a batch of unpatched, malicious-
+          # server/MITM-only vulns that are not exploitable in stellarindex's
+          # localhost-only deployment. The wrapper accepts exactly those reviewed
+          # ids and still fails on ANY other called vulnerability (new lib/pq CVE
+          # or a vuln in any other module). Durable fix: migrate to jackc/pgx.
+          ./scripts/ci/govulncheck-gated.sh ./...
       - name: gitleaks
         # gitleaks/gitleaks-action@v2 changed to a paid-license model
         # in late 2022 — fails every run without a GITLEAKS_LICENSE
