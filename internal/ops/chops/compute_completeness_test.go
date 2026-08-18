@@ -165,14 +165,21 @@ func TestProjectionDelta_AggregateModeToleratesShift(t *testing.T) {
 	}
 }
 
-// TestReconciliationCatalogue_OracleSourcesOptOut — only the oracle
-// sources may carry aggregateReconcile; every other source must stay
-// on the strict per-ledger default. Guards against someone quietly
-// opting a trade source out of CS-084 strictness.
+// TestReconciliationCatalogue_OracleSourcesOptOut — only sources with a
+// documented, ledger-keying-legitimate reason may carry
+// aggregateReconcile; every other source must stay on the strict
+// per-ledger default. Guards against someone quietly opting a source out
+// of CS-084 strictness. The allow-set is the four oracle sources (write-
+// vintage keying) plus phoenix (pre-upgrade 7-field sweep-emit shifts a
+// trade to a later ledger than its served row — window-total netting
+// absorbs the documented shift; see reconciliation_catalogue.go). Adding
+// a name here must be paired with a written aggregateReconcile reason on
+// its catalogue entry.
 func TestReconciliationCatalogue_OracleSourcesOptOut(t *testing.T) {
 	allowedAggregate := map[string]bool{
 		"reflector-dex": true, "reflector-cex": true, "reflector-fx": true,
 		"redstone": true,
+		"phoenix":  true, // pre-upgrade sweep-emit ledger shift (documented)
 	}
 	cfg := testConfigWithAllSources()
 	cat, _, err := buildReconciliationCatalogue(cfg)
@@ -184,10 +191,10 @@ func TestReconciliationCatalogue_OracleSourcesOptOut(t *testing.T) {
 	}
 	for _, src := range cat {
 		if src.aggregateReconcile != "" && !allowedAggregate[src.name] {
-			t.Errorf("%s opted out of strict per-ledger reconcile (%q) — only oracle sources with documented keying vintages may", src.name, src.aggregateReconcile)
+			t.Errorf("%s opted out of strict per-ledger reconcile (%q) — only the allow-listed sources with a documented ledger-keying reason may", src.name, src.aggregateReconcile)
 		}
 		if allowedAggregate[src.name] && src.aggregateReconcile == "" {
-			t.Errorf("%s should carry aggregateReconcile (documented oracle keying vintages)", src.name)
+			t.Errorf("%s should carry aggregateReconcile (documented ledger-keying reason)", src.name)
 		}
 	}
 }
