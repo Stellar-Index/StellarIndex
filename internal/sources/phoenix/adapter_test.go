@@ -246,6 +246,74 @@ func TestDecoder_GateRejectsForeignContract(t *testing.T) {
 	}
 }
 
+// TestGatedSet_SeedsVerifiedCompletenessContracts pins the 2026-08-18
+// phoenix projection-completeness seed additions: the legacy XYK pool
+// CAZ6W4WH… and the 13 per-pool stake contracts VERIFIED genuine against
+// the r1 lake (factory pool-create co-occurrence for the pool + 11
+// stakes; the phoenix reward keeper CBZ7M5B3… + phoenix-stake v1.1
+// migration events for the two pre-lake stakes — evidence in events.go).
+// Each must be in MainnetGatedSet() AND a bare PRODUCTION Decoder must
+// attribute a genuine phoenix event from it — otherwise the gated
+// re-derive scores its served rows expected=0 again (the 455
+// phoenix_liquidity + 2,513 phoenix_stake_events rows the gate dropped,
+// plus still-live emissions to ledger ~64M). Addresses are spelled
+// literally so the test cannot agree with a reverted or mistyped seed.
+func TestGatedSet_SeedsVerifiedCompletenessContracts(t *testing.T) {
+	const newPool = "CAZ6W4WHVGQBGURYTUOLCUOOHW6VQGAAPSPCD72VEDZMBBPY7H43AYEC"
+	newStakes := []string{
+		"CABWEFVXUB3XWYPTWFETEGJR2WRGE2ZKYYLZDLV3EBUVFMOU4ENK4DJC",
+		"CAIR3UPW2PEP27QZWX4XGMO65W6LJ3XCRA3F5G7Z3D52MNOVF5K5YZ56",
+		"CDP6DT2YU75ZMOPTTCQ563H2XZDDWHPWKRQ6N2W5LNVE5HHRSB4MMRNQ",
+		"CB2S5X4H6ZMMCDQV4DNKEO2SBSW7T2YXVN5A7G2BBSN3VM73CQYIIZ3C",
+		"CCP653KENMYCAYQ3PHJDT6PITMG4XYKVWV3OEDDCOAOS6Z4GOMXGYH3Z",
+		"CCIWIW6ESCCCFMEI5QOSUHDKTMBEMRJ22F7GPYNRKM2UI2FH6WYUKOUU",
+		"CBULEXIMZ5C4CSUPZ4E5LXATWDZNS6MDM2A57DAUD5GXSUG4IWKLOSOC",
+		"CD2YKNPX3JPTGDANJRPEJS42MPQLEVUVVRZKJYLLUSPJKQJA7LUANBO4",
+		"CDBMVFP7KJXW3YEFSLOU5GYUQHHJJI7QPZJPCSPDK6HHBCBZAMCHS2QY",
+		"CDH6JILIADIC5SKE6OZJAYV3GM62RTR4O54OMVNP4ZOK4HH4J2JWJPVW",
+		"CBDCTYZSZIOWCK5IGCQZNFUOJ53KMPYG2MG7GMVGE3A2LEYCFTDYYZ3S",
+		"CDOXQONPND365K6MHR3QBSVVTC3MKR44ORK6TI2GQXUXGGAS5SNDAYRI",
+		"CDEQYRWFU3IHPRR6H6VOQRUU3JFS6DTUYUL4YAQSD3ALB5IPBTEOZUFM",
+	}
+	if len(newStakes) != 13 {
+		t.Fatalf("expected 13 newly-seeded stake contracts, listed %d", len(newStakes))
+	}
+
+	gated := make(map[string]bool)
+	for _, c := range MainnetGatedSet() {
+		gated[c] = true
+	}
+	if !gated[newPool] {
+		t.Errorf("new pool %s absent from MainnetGatedSet() — its 455 phoenix_liquidity rows re-derive as expected=0", newPool)
+	}
+	for _, s := range newStakes {
+		if !gated[s] {
+			t.Errorf("new stake contract %s absent from MainnetGatedSet()", s)
+		}
+	}
+
+	// Membership in the slice is necessary but not sufficient — Matches()
+	// on a bare PRODUCTION decoder (the exact gate the reconcile re-derive
+	// and the live pipeline both build) is what actually attributes an
+	// event to phoenix.
+	d := NewDecoder()
+	if !d.Matches(events.Event{ContractID: newPool, Topic: []string{TopicSymbolProvideLiquidity, TopicSymbolPLSender}}) {
+		t.Errorf("production gate rejects provide_liquidity from seeded pool %s", newPool)
+	}
+	for _, s := range newStakes {
+		if !d.Matches(events.Event{ContractID: s, Topic: []string{TopicSymbolBond, TopicSymbolStakeUser}}) {
+			t.Errorf("production gate rejects bond from seeded stake contract %s", s)
+		}
+	}
+
+	// Non-vacuity: the SAME phoenix-shaped topics from an UNSEEDED
+	// contract must NOT match — proving the assertions above exercise the
+	// gate, not a decoder that attributes every bond-shaped event.
+	if d.Matches(events.Event{ContractID: "CFOREIGNNOTSEEDED000000000000000000000000000000000000000", Topic: []string{TopicSymbolBond, TopicSymbolStakeUser}}) {
+		t.Fatal("gate matched an unseeded contract — the membership assertions would be vacuous")
+	}
+}
+
 // makeFieldEventAt is makeFieldEvent with a controllable close time +
 // tx hash, for tests that need two swap groups on different timelines.
 func makeFieldEventAt(t *testing.T, fieldTopic, body, txHash, closedAt string) events.Event {

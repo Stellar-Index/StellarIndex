@@ -210,6 +210,18 @@ var MainnetPools = []string{
 	"CCKOC2LJTPDBKDHTL3M5UO7HFZ2WFIHSOKCELMKQP3TLCIVUBKOQL4HB",
 	"CCUCE5H5CKW3S7JBESGCES6ZGDMWLNRY3HOFET3OH33MXZWKXNJTKSM3",
 	"CDQLKNH3725BUP4HPKQKMM7OO62FDVXVTO7RCYPID527MZHJG2F3QBJW",
+	// Added 2026-08-18 (phoenix projection-completeness gap): a legacy
+	// XYK String-schema pool the 2026-05-01 query_pools() snapshot
+	// missed. VERIFIED genuine by factory deployment — it co-occurs in
+	// the phoenix factory's pool-create transaction at ledger 51,572,101
+	// (deployed together with its stake contract CDP6DT2Y…), and emits
+	// the legacy 8-event ScvString swap (23,672 field-events) +
+	// provide/withdraw_liquidity + ("initialize","XYK LP token_*")
+	// surface. Its 455 served phoenix_liquidity rows scored expected=0
+	// under the gated re-derive until this seeding (swap activity ended
+	// ~ledger 54.5M). Evidence: r1 lake stellar.contract_events, factory
+	// CB4SVAWJ… create-tx co-occurrence.
+	"CAZ6W4WHVGQBGURYTUOLCUOOHW6VQGAAPSPCD72VEDZMBBPY7H43AYEC",
 }
 
 // MainnetStakeContracts — the per-pool stake contracts that emit
@@ -222,6 +234,42 @@ var MainnetStakeContracts = []string{
 	"CBRGNWGAC25CPLMOAMR7WBPOF5QTFA5RYXQH4DEJ4K65G2QFLTLMW7RO",
 	"CAF3UJ45ZQJP6USFUIMVMGOUETUTXEC35R2247VJYIVQBGKTKBZKNBJ3",
 	"CBBUVHCEML7UE46XXZXLTMGKFMKX7KOC2XAKI3TW6WBQBKWMSARMU3YM",
+	// Added 2026-08-18 (phoenix projection-completeness gap): 13 genuine
+	// per-pool stake contracts the 2026-05-01 lake-activity snapshot
+	// missed. Together they landed 2,513 rows in phoenix_stake_events
+	// that the gated re-derive scored expected=0 — and several are STILL
+	// emitting near tip (e.g. CDOXQONPND… bond/unbond to ledger 64.0M),
+	// so the old gate was a LIVE drop, not just a reconcile artifact.
+	// Each emits the phoenix stake surface (bond/unbond → user/token/
+	// amount, withdraw_rewards, distribute_rewards,
+	// create_distribution_flow, ("initialize","LP Share token staking
+	// contract")). VERIFIED genuine (r1 lake stellar.contract_events,
+	// 2026-08-18):
+	//   • the first 11 each co-occur in their pool's phoenix-factory
+	//     create transaction (the factory deploys pool + stake together)
+	//     — a hard on-chain deployment link, paired 1:1 with a curated
+	//     pool above;
+	//   • CDOXQONPND… shares 260 transactions with curated phoenix pools
+	//     and is driven by the phoenix reward keeper CBZ7M5B3Y4WW…, which
+	//     also drives the three seeded stakes above;
+	//   • CDEQYRWFU… (created before the lake window, like the pools) is
+	//     driven by that same keeper and emits the phoenix stake v1.1
+	//     migration events (`Stake: Migration: `, `Start of migration for
+	//     user: `, `Query for user completed: `) a foreign contract has
+	//     no reason to replicate.
+	"CABWEFVXUB3XWYPTWFETEGJR2WRGE2ZKYYLZDLV3EBUVFMOU4ENK4DJC", // ↔ pool CBHCRSVX (factory create @51,572,026)
+	"CAIR3UPW2PEP27QZWX4XGMO65W6LJ3XCRA3F5G7Z3D52MNOVF5K5YZ56", // ↔ pool CBCZGGNO (factory create @51,572,030)
+	"CDP6DT2YU75ZMOPTTCQ563H2XZDDWHPWKRQ6N2W5LNVE5HHRSB4MMRNQ", // ↔ pool CAZ6W4WH (factory create @51,572,101)
+	"CB2S5X4H6ZMMCDQV4DNKEO2SBSW7T2YXVN5A7G2BBSN3VM73CQYIIZ3C", // ↔ pool CBISULYO (factory create @51,927,948)
+	"CCP653KENMYCAYQ3PHJDT6PITMG4XYKVWV3OEDDCOAOS6Z4GOMXGYH3Z", // ↔ pool CDQLKNH3 (factory create @53,853,219)
+	"CCIWIW6ESCCCFMEI5QOSUHDKTMBEMRJ22F7GPYNRKM2UI2FH6WYUKOUU", // ↔ pool CBW5G5SO (factory create @53,853,220)
+	"CBULEXIMZ5C4CSUPZ4E5LXATWDZNS6MDM2A57DAUD5GXSUG4IWKLOSOC", // ↔ pool CDMXKSLG (factory create @53,955,603)
+	"CD2YKNPX3JPTGDANJRPEJS42MPQLEVUVVRZKJYLLUSPJKQJA7LUANBO4", // ↔ pool CC6MJZN3 (factory create @54,953,243)
+	"CDBMVFP7KJXW3YEFSLOU5GYUQHHJJI7QPZJPCSPDK6HHBCBZAMCHS2QY", // ↔ pool CB5QUVK5 (factory create @54,953,245)
+	"CDH6JILIADIC5SKE6OZJAYV3GM62RTR4O54OMVNP4ZOK4HH4J2JWJPVW", // ↔ pool CCKOC2LJ (factory create @54,953,247)
+	"CBDCTYZSZIOWCK5IGCQZNFUOJ53KMPYG2MG7GMVGE3A2LEYCFTDYYZ3S", // ↔ pool CCUCE5H5 (factory create @54,953,248)
+	"CDOXQONPND365K6MHR3QBSVVTC3MKR44ORK6TI2GQXUXGGAS5SNDAYRI", // pre-lake; 260 shared tx w/ curated pools + keeper CBZ7M5B3
+	"CDEQYRWFU3IHPRR6H6VOQRUU3JFS6DTUYUL4YAQSD3ALB5IPBTEOZUFM", // pre-lake; keeper CBZ7M5B3 + phoenix v1.1 stake-migration events
 }
 
 // MainnetMapPools are Phoenix pools running the NEWER pool WASM whose
