@@ -21,6 +21,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/band"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sdex"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 	soroswap_router "github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -171,6 +172,32 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	if *skipRecognition {
 		fmt.Fprintln(os.Stderr, "compute-completeness: -skip-recognition — trusting prior recognition audit (no shape scan)")
 	}
+	// Seed the recognition census's soroswap decoder from the SAME pair
+	// registry attributeRecognitionGaps folds into ownerOf (loadRegistryOwners
+	// → LoadSoroswapPairRegistry). Without this the census dispatcher's soroswap
+	// decoder starts with an EMPTY pairTokens map, so Matches() rejects every
+	// real SoroswapPair protocol event (swap/sync/deposit/withdraw/skim — a
+	// String topic[0], so topic_0_sym=""): each becomes a false "unhandled
+	// topic" gap attributed to soroswap even though the indexer decodes + serves
+	// them (they ARE the trades). "Attribution knows a pair the census decoder
+	// does not" is the exact bug — it also cascade-clamps soroswap's projection
+	// watermark to first_problem-1, producing spurious floor-loss alarms.
+	// Matches() needs only key presence, so empty PairTokens suffice (the census
+	// only Recognize()s, never Decode()s). FAIL CLOSED on the load error — a
+	// partial registry would silently under-recognize. Skipped under
+	// -skip-recognition (no census runs).
+	var soroswapOpts []soroswap.DecoderOption
+	if !*skipRecognition {
+		pairs, perr := store.LoadSoroswapPairRegistry(ctx)
+		if perr != nil {
+			return fmt.Errorf("load soroswap pair registry for recognition census: %w", perr)
+		}
+		seed := make(map[string]soroswap.PairTokens, len(pairs))
+		for _, p := range pairs {
+			seed[p.PairStrkey] = soroswap.PairTokens{}
+		}
+		soroswapOpts = append(soroswapOpts, soroswap.WithSeededPairTokensDecoder(seed))
+	}
 	recGaps, recErr := runRecognitionScan(*skipRecognition, func() ([]completeness.RecognitionGap, error) {
 		if *useCH {
 			// Recognition (Claim 2a) is a FULL-HISTORY property — "is every
@@ -186,9 +213,9 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			// cap once P23/CAP-67 grew the distinct set), so always scan from
 			// genesis regardless of -from — which correctly scopes only the
 			// expensive row-by-row projection reconcile below.
-			return computeRecognitionGapsCH(ctx, cfg, *chAddr, gatedOpts, uint32(sorobanEraGenesis), tip)
+			return computeRecognitionGapsCH(ctx, cfg, *chAddr, gatedOpts, uint32(sorobanEraGenesis), tip, soroswapOpts...)
 		}
-		return computeRecognitionGaps(ctx, store, cfg, gatedOpts, tip)
+		return computeRecognitionGaps(ctx, store, cfg, gatedOpts, tip, soroswapOpts...)
 	})
 	if recErr != nil {
 		return recErr
@@ -1807,8 +1834,8 @@ func projectionDelta(src reconSource, table string, expected, actual map[uint32]
 // classic-token firehose — sep41 isn't enabled, so it's out of protocol scope)
 // run through the dispatcher's Recognize(). Fast + off the serving DB vs the
 // Postgres soroban_events scan in computeRecognitionGaps.
-func computeRecognitionGapsCH(ctx context.Context, cfg config.Config, chAddr string, gated map[string][]contractid.Option, from, tip uint32) ([]completeness.RecognitionGap, error) {
-	disp, err := pipeline.BuildDispatcher(cfg.Ingestion.EnabledSources, cfg.Oracle, gated)
+func computeRecognitionGapsCH(ctx context.Context, cfg config.Config, chAddr string, gated map[string][]contractid.Option, from, tip uint32, soroswapOpts ...soroswap.DecoderOption) ([]completeness.RecognitionGap, error) {
+	disp, err := pipeline.BuildDispatcher(cfg.Ingestion.EnabledSources, cfg.Oracle, gated, soroswapOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("build dispatcher: %w", err)
 	}
@@ -1835,8 +1862,8 @@ func computeRecognitionGapsCH(ctx context.Context, cfg config.Config, chAddr str
 
 // computeRecognitionGaps runs the global recognition audit over the
 // Soroban era and returns every unrecognized event shape.
-func computeRecognitionGaps(ctx context.Context, store *timescale.Store, cfg config.Config, gated map[string][]contractid.Option, tip uint32) ([]completeness.RecognitionGap, error) {
-	disp, err := pipeline.BuildDispatcher(cfg.Ingestion.EnabledSources, cfg.Oracle, gated)
+func computeRecognitionGaps(ctx context.Context, store *timescale.Store, cfg config.Config, gated map[string][]contractid.Option, tip uint32, soroswapOpts ...soroswap.DecoderOption) ([]completeness.RecognitionGap, error) {
+	disp, err := pipeline.BuildDispatcher(cfg.Ingestion.EnabledSources, cfg.Oracle, gated, soroswapOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("build dispatcher: %w", err)
 	}
