@@ -198,23 +198,46 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 				// follow-up finding, not silently claimed complete.
 			},
 		},
-		{name: "phoenix", genesis: 51_572_016, dec: phoenix.NewDecoder(), targets: []reconTarget{
-			{"trades", "source = 'phoenix'", []string{"phoenix.trade"}},
-			{"phoenix_liquidity", "", []string{"phoenix.liquidity"}},
-			{"phoenix_stake_events", "", []string{"phoenix.stake"}},
-			// 1:1 protocol tables — self-contained decoders (no correlation
-			// buffer), one event → one row (persistPhoenixInitialize /
-			// persistPhoenixAdmin are single INSERTs). Each has a distinct
-			// coarse EventKind() landing in exactly one table. Lake-validated
-			// 2026-08-17: phoenix_initialize 24/24 rows == events;
-			// phoenix_admin_events currently 0 rows (no mainnet admin rotation
-			// yet) — reconciles clean at expected==served==0 and counts 1:1 the
-			// first time one occurs, instead of the density detector's coarse
-			// window. Closes the phoenix_initialize / phoenix_admin_events blind
-			// spots.
-			{"phoenix_initialize", "", []string{"phoenix.initialize"}},
-			{"phoenix_admin_events", "", []string{"phoenix.admin"}},
-		}},
+		{
+			// Mechanism-1 fix (2026-08-18 phoenix projection-completeness):
+			// the pre-upgrade pool WASM (ledgers ~51,019,036–53,134,167)
+			// emits swaps as 7 field-events (a RawSwap needs 8), so a group
+			// is flushed only when a LATER event ages it out of the
+			// correlation buffer (sweep-emit, dispatcher_adapter.go
+			// decodeSwapEvent). The emitted trade keeps its OWN first-field
+			// ledger, but the reconcile re-derive counts it at the later
+			// sweep-triggering event's ledger — expected[realLedger]=0 vs
+			// served=1: a per-ledger MISATTRIBUTION with the window total
+			// preserved (net count unchanged, just shifted; proven at the
+			// first mismatch ledger 51,573,544 = min phoenix trade ledger).
+			// Window-total (aggregate) netting absorbs the shift. CS-084
+			// caveat: aggregate also lets a genuine per-ledger drop net
+			// against a phantom elsewhere, so this opt-out is justified ONLY
+			// for the pre-upgrade sweep shift and does NOT substitute for the
+			// curated-set seed fix (phoenix.MainnetPools /
+			// MainnetStakeContracts, extended 2026-08-18) that makes the
+			// re-derive reproduce the liquidity/stake rows so THOSE targets
+			// reconcile by identity, not by netting.
+			name: "phoenix", genesis: 51_572_016, dec: phoenix.NewDecoder(),
+			aggregateReconcile: "pre-upgrade (~51.02M–53.13M) 7-field swaps flush at sweep only when a later event ages the group out of the correlation buffer; the trade keeps its first-field ledger but the re-derive counts it at the sweep-trigger ledger — a per-ledger shift with the window total preserved. Aggregate absorbs the shift and accepts the CS-084 netting residual on this source; it does NOT replace the curated-set seed fix.",
+			targets: []reconTarget{
+				{"trades", "source = 'phoenix'", []string{"phoenix.trade"}},
+				{"phoenix_liquidity", "", []string{"phoenix.liquidity"}},
+				{"phoenix_stake_events", "", []string{"phoenix.stake"}},
+				// 1:1 protocol tables — self-contained decoders (no correlation
+				// buffer), one event → one row (persistPhoenixInitialize /
+				// persistPhoenixAdmin are single INSERTs). Each has a distinct
+				// coarse EventKind() landing in exactly one table. Lake-validated
+				// 2026-08-17: phoenix_initialize 24/24 rows == events;
+				// phoenix_admin_events currently 0 rows (no mainnet admin rotation
+				// yet) — reconciles clean at expected==served==0 and counts 1:1 the
+				// first time one occurs, instead of the density detector's coarse
+				// window. Closes the phoenix_initialize / phoenix_admin_events blind
+				// spots.
+				{"phoenix_initialize", "", []string{"phoenix.initialize"}},
+				{"phoenix_admin_events", "", []string{"phoenix.admin"}},
+			},
+		},
 		{name: "comet", genesis: 51_499_546, dec: comet.NewDecoder(), targets: []reconTarget{
 			{"trades", "source = 'comet'", []string{"comet.trade"}},
 			{"comet_liquidity", "", []string{"comet.liquidity"}},
