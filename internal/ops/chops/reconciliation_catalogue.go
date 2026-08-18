@@ -293,8 +293,26 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			name: "blend_emitter", genesis: 51_499_914, dec: blend_emitter.NewDecoder(),
 			contractIDs: blend_emitter.MainnetGatedSet(),
 			targets: []reconTarget{
-				{"blend_emitter_events", "", []string{
-					"blend_emitter.distribute", "blend_emitter.drop", "blend_emitter.swap_config",
+				// The `drop` kind FANS OUT: one decoder DropEvent carries N
+				// recipients and the sink writes one blend_emitter_events row per
+				// recipient (recipient_index is a PK component), so a per-ledger
+				// event-count-vs-served-row-count reconcile false-flags every drop
+				// ledger — r1-measured 2026-08-18: ledger 51,499,914 = 13 rows / 1
+				// event identity, ledger 57,467,292 = 3 / 1, Σ|Δ|=14, data CORRECT.
+				// It is the same fan-out class aquarius_reserves/liquidity are
+				// waived for. BUT — unlike those all-fan-out tables —
+				// blend_emitter_events is MIXED: `distribute` (465 events) and
+				// `q_swap`/`swap` (2) are strictly 1:1 (one event → one row). So
+				// rather than waive the whole table and lose that 1:1 coverage, we
+				// carve ONLY the fan-out `drop` rows out of the served side
+				// (whereFilter) and omit "blend_emitter.drop" from the re-derived
+				// kinds: the 467/469 1:1 events keep exact per-ledger reconciliation
+				// and the 2 drop ledgers are covered by the density gap-detector
+				// (per_source_gaps.go). DropEvent→blend_emitter_events is the
+				// declared noReconcile waiver in the catalogue-completeness
+				// invariant (blendEmitterDropWaiver).
+				{"blend_emitter_events", "event_kind <> 'drop'", []string{
+					"blend_emitter.distribute", "blend_emitter.swap_config",
 				}},
 			},
 		},

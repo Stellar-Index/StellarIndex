@@ -12,6 +12,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
+	blend_emitter "github.com/Stellar-Index/StellarIndex/internal/sources/blend_emitter"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
@@ -104,6 +105,22 @@ const fanoutWaiver = "fan-out: one decoder event → N per-token-position rows "
 	"(token_index PK component), so event-count vs served-row-count would false-flag; " +
 	"density gap-detector covers it pending a fan-out-aware reconcile"
 
+// blendEmitterDropWaiver covers the blend_emitter `drop` kind: one decoder
+// DropEvent carries N recipients and the sink writes one blend_emitter_events
+// row per recipient (recipient_index is a PK component), so an
+// event-count-vs-served-row-count reconcile false-flags the drop ledgers
+// (r1 2026-08-18: ledger 51,499,914 = 13 rows / 1 event identity; 57,467,292 =
+// 3 / 1; Σ|Δ|=14, data correct). Unlike the aquarius all-fan-out tables the
+// whole table is NOT waived — the reconTarget carves the drop rows out of the
+// served side (whereFilter `event_kind <> 'drop'`) and omits the drop kind, so
+// the 1:1 distribute/swap_config rows still reconcile per-ledger; the density
+// gap-detector covers drop.
+const blendEmitterDropWaiver = "fan-out: one drop event → N recipient rows " +
+	"(recipient_index PK component), so event-count vs served-row-count false-flags " +
+	"the drop ledgers; the blend_emitter_events reconTarget excludes drop rows " +
+	"(whereFilter event_kind <> 'drop') and omits the drop kind so the 1:1 " +
+	"distribute/swap_config rows still reconcile per-ledger; density gap-detector covers drop"
+
 // observationWaiver covers the five supply observers: LedgerEntry
 // observations, not soroban-event projections — they never flow through the
 // EventKind re-derive and are covered by their own observer coverage axis.
@@ -157,9 +174,13 @@ var projRoutes = []projRoute{
 	{typeName: "blend.EmissionEvent", table: "blend_emissions", disp: reconciledByKind},
 	{typeName: "blend.AdminEvent", table: "blend_admin", disp: reconciledByKind},
 	{typeName: "blend_backstop.Event", table: "blend_backstop_events", disp: reconciledByKind},
-	{typeName: "blend_emitter.DistributeEvent", table: "blend_emitter_events", disp: reconciledByKind},
-	{typeName: "blend_emitter.DropEvent", table: "blend_emitter_events", disp: reconciledByKind},
-	{typeName: "blend_emitter.SwapConfigEvent", table: "blend_emitter_events", disp: reconciledByKind},
+	// blend_emitter: distribute + swap_config are 1:1 (one event → one row) and
+	// reconcile per-ledger; drop FANS OUT (one event → N recipient rows) and is
+	// waived — the reconTarget carves drop rows out of the served side
+	// (whereFilter `event_kind <> 'drop'`) and omits the drop kind.
+	{typeName: "blend_emitter.DistributeEvent", table: "blend_emitter_events", kind: "blend_emitter.distribute", disp: reconciledByKind},
+	{typeName: "blend_emitter.DropEvent", table: "blend_emitter_events", disp: noReconcile, reason: blendEmitterDropWaiver},
+	{typeName: "blend_emitter.SwapConfigEvent", table: "blend_emitter_events", kind: "blend_emitter.swap_config", disp: reconciledByKind},
 
 	// ── cctp / rozo / sorocredit ──
 	{typeName: "cctp.Event", table: "cctp_events", disp: reconciledByKind},
@@ -414,6 +435,11 @@ func TestCatalogue_DeclaredKindsMatchDecoderOutput(t *testing.T) {
 		{aquarius.KillEvent{}, "aquarius.kill", "aquarius_kill_switches"},
 		{phoenix.InitializeEvent{}, "phoenix.initialize", "phoenix_initialize"},
 		{phoenix.AdminEvent{}, "phoenix.admin", "phoenix_admin_events"},
+		// blend_emitter: the two 1:1 kinds that stay reconciled after the drop
+		// fan-out kind was waived (2026-08-18) — pinned so the catalogue kind
+		// strings stay welded to the decoder that emits them.
+		{blend_emitter.DistributeEvent{}, "blend_emitter.distribute", "blend_emitter_events"},
+		{blend_emitter.SwapConfigEvent{}, "blend_emitter.swap_config", "blend_emitter_events"},
 		// defindex, enumerated per Direction — the harvest-regression guard.
 		// Both layers land in defindex_flows; strategy.harvest MUST be a
 		// reconciled kind (audit 2026-08-04 finding 4).
