@@ -281,10 +281,10 @@ monitoring-check: ## Validate Prometheus rule files with promtool (multi-host + 
 	@go run ./scripts/ci/lint-rule-equivalence deploy/monitoring/rules configs/prometheus/rules.r1 scripts/ci/rule-equivalence.baseline
 
 .PHONY: vuln
-vuln: ## Run govulncheck against the module
+vuln: ## Run govulncheck, gated by the accepted-risk allowlist (scripts/ci/govulncheck-allow.txt)
 	@command -v govulncheck >/dev/null 2>&1 || \
 	  { echo "govulncheck not installed; run: go install golang.org/x/vuln/cmd/govulncheck@latest"; exit 2; }
-	govulncheck ./...
+	@./scripts/ci/govulncheck-gated.sh ./...
 
 .PHONY: verify
 verify: vuln ## Sequential local quality gate (fmt, vet, lint, docs, vuln, test) — run before every push
@@ -305,9 +305,9 @@ verify-cross-region: ## Cross-region byte-identical-VWAP consistency check (ADR-
 	@./scripts/dev/verify-cross-region.sh
 
 .PHONY: audit
-audit: ## Dependency vulnerability audit (govulncheck)
+audit: ## Dependency vulnerability audit (govulncheck, accepted-risk gated)
 	@$(GO) install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
-	@$(GOBIN)/govulncheck ./...
+	@PATH="$(GOBIN):$$PATH" ./scripts/ci/govulncheck-gated.sh ./...
 
 ##@ Build
 

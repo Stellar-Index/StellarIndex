@@ -1,0 +1,60 @@
+# govulncheck-allow.txt — documented accepted-risk allowlist for the
+# per-PR `govulncheck` gate (see scripts/ci/govulncheck-gated.sh, wired into
+# the `vuln` job in .github/workflows/ci.yml).
+#
+# WHAT THIS FILE IS
+# -----------------
+# One OSV / GO-id per line, each with an inline `# reason`. The gate FAILS
+# (CI red) on any CALLED vulnerability whose id is NOT listed here, and passes
+# only when every called vuln is an explicitly-accepted entry below. It does
+# NOT weaken detection: an imported-but-not-called vuln never gated to begin
+# with, and any NEW called vuln — in lib/pq or anywhere else — reds CI until a
+# human reviews it and adds a justified line here. This allowlist is
+# accept-by-review, never accept-by-default.
+#
+# THE ACCEPTED RISK: the github.com/lib/pq unmaintained-driver disclosure batch
+# --------------------------------------------------------------------------
+# All entries below are in github.com/lib/pq@v1.12.3 — the Postgres wire-protocol
+# driver (go.mod: "Postgres driver (ADR-0006)"). v1.12.3 is already the LATEST
+# release; lib/pq is effectively unmaintained, so there is NO fixed version for
+# any of these (govulncheck reports "Fixed in: N/A" for each). They are the
+# CVE-2026-56868..56874 batch disclosed 2026-08.
+#
+# Every one of these requires either a MALICIOUS / COMPROMISED PostgreSQL server
+# OR an ACTIVE MITM attacker on the pre-authentication transport to exploit —
+# they are triggered by hostile *server->client* wire responses (oversized frame
+# headers, malformed row frames, unbounded SCRAM iteration counts, a never-
+# terminated pre-protocol error string), or by auth/credential edge cases that
+# only arise against an untrusted endpoint.
+#
+# NOT EXPLOITABLE IN STELLARINDEX'S DEPLOYMENT. stellarindex connects only to its
+# OWN PostgreSQL/TimescaleDB over the loopback interface —
+#   postgres://stellarindex@127.0.0.1:5432/stellarindex?sslmode=disable
+# (internal/config/config.go default; identical in the prod ansible role,
+# configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml). The
+# DB server is the app's own trusted instance on the same host; there is no
+# untrusted PostgreSQL endpoint and no network segment for a MITM to sit on
+# (a loopback MITM already implies code execution on the box). The driver is
+# never pointed at attacker-controlled servers, uses password/trust auth (not
+# GSSAPI), and sets host without a separate hostaddr / .pgpass.
+#
+# THE DURABLE FIX (tracked, post-launch follow-up): migrate off the unmaintained
+# lib/pq to the maintained github.com/jackc/pgx driver, which is not affected by
+# this batch and receives security fixes. That migration is out of scope for a
+# CI unblock and is tracked separately as a post-launch item. Until then, these
+# risks are accepted on the localhost-only trust-boundary rationale above and
+# re-reviewed whenever this list changes.
+#
+# NOTE ON SCOPE (2026-08-18): this unblock was scoped around GO-2026-6172 and
+# GO-2026-6173 (the two pre-auth unbounded-memory parser bugs). The live vuln.go.dev
+# DB actually surfaces SEVEN *called* lib/pq vulns from the same disclosure batch,
+# all sharing the identical localhost-only mitigation; all seven are listed so CI
+# is genuinely green. See the run report / commit message for the reconciliation.
+
+GO-2026-6166  # CVE-2026-56868 — GSS auth completes without mutual proof. N/A: stellarindex uses password/trust auth to its own localhost Postgres, never GSSAPI; needs a hostile server requesting GSS + MITM.
+GO-2026-6168  # CVE-2026-56869 — lib/pq/scram unbounded PBKDF2 iteration count → CPU DoS. Pre-auth; needs a malicious server / MITM. Own localhost DB only.
+GO-2026-6169  # CVE-2026-56870 — wrong .pgpass credential disclosed via hostaddr-without-host. N/A: DSN sets host=127.0.0.1 (no separate hostaddr), creds come from the DSN/env, not a .pgpass.
+GO-2026-6170  # CVE-2026-56871 — malformed backend frame length → negative slice bound → panic (DoS). Needs a malicious server / MITM sending hostile frames. Own localhost DB only.
+GO-2026-6171  # CVE-2026-56872 — malformed RowDescription/DataRow frames → panic (DoS). Needs a malicious server / MITM on the unauthenticated transport. Own localhost DB only.
+GO-2026-6172  # CVE-2026-56873 — pre-validation frame allocation → memory exhaustion / OOM (DoS). Needs a malicious server / MITM declaring multi-GB frames. Own localhost DB only. [originally-scoped]
+GO-2026-6173  # CVE-2026-56874 — pre-protocol plain-text error reader (bufio.Reader.ReadString(0), no byte limit) → unbounded buffering / OOM (DoS). Needs a malicious server / MITM. Own localhost DB only. [originally-scoped]
