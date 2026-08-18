@@ -236,7 +236,8 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 				// spots.
 				{"phoenix_initialize", "", []string{"phoenix.initialize"}},
 				{"phoenix_admin_events", "", []string{"phoenix.admin"}},
-			}},
+			},
+		},
 		{name: "comet", genesis: 51_499_546, dec: comet.NewDecoder(), targets: []reconTarget{
 			{"trades", "source = 'comet'", []string{"comet.trade"}},
 			{"comet_liquidity", "", []string{"comet.liquidity"}},
