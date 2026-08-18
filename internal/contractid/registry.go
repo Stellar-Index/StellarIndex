@@ -141,6 +141,45 @@ func (r *Registry) Factories() []string {
 	return out
 }
 
+// Children returns the registered factory-descendant child set (the gate's
+// Has() members), in no guaranteed order. Used by the completeness re-derive
+// to build the contract-id prefilter for the CH lake read — the gated set is
+// exactly the contracts whose events Matches() can accept, so restricting the
+// stream to it (plus the factories, see [Registry.GatedSet]) changes nothing
+// but speed.
+func (r *Registry) Children() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]string, 0, len(r.set))
+	for id := range r.set {
+		out = append(out, id)
+	}
+	return out
+}
+
+// GatedSet returns the union of the factory trust roots and the registered
+// children — the complete set of contracts whose events the decoder's
+// Matches() can accept (children via Has, factories via IsFactory). It is the
+// tightest sound contract-id prefilter for a re-derive over this decoder: the
+// factories must be included so their creation events still stream (and
+// self-seed children in-window), and every child so its business events
+// stream. Deduped (a factory is never also a child) and unordered; callers
+// needing determinism should sort.
+func (r *Registry) GatedSet() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]string, 0, len(r.set)+len(r.factories))
+	for id := range r.set {
+		out = append(out, id)
+	}
+	for id := range r.factories {
+		if _, isChild := r.set[id]; !isChild {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 // Seed registers a child contract (idempotent) and fires the persistence
 // hook (if any). The decoder calls this from Decode when it observes a
 // factory creation event. factoryID is the C-strkey of the factory that

@@ -96,6 +96,29 @@ type reconSource struct {
 	// event ledger may opt out, and they accept the netting residual
 	// the reason string acknowledges.
 	aggregateReconcile string
+
+	// newGatedDec, when non-nil, opts a factory-anchored IDENTITY-gated
+	// source (aquarius, phoenix) into the -ch re-derive contract-id
+	// PREFILTER: the lake read is scoped to the source's gated contract set
+	// (factory ∪ children) instead of streaming the whole ~6B-event lake.
+	// Correct ONLY for sources whose Matches() keys purely on contract
+	// identity — a contractIDs prefilter would BREAK any source that
+	// correlates events ACROSS contracts (defindex's same-tx vault↔strategy
+	// correlation), which is why it is an explicit per-source opt-in, not a
+	// property inferred from `factories`. It builds a THROWAWAY decoder used
+	// to enumerate the gate from the certified lake without disturbing dec's
+	// in-stream self-seeding (see gatedPrefilter). Returning the concrete
+	// gatedDecoder keeps the enumeration type-safe. See ADR-0035 gating.
+	newGatedDec func() gatedDecoder
+}
+
+// gatedDecoder is a decoder that can enumerate its gated contract set — the
+// factory trust roots ∪ registered children. Both aquarius.Decoder and
+// phoenix.Decoder satisfy it. Used by gatedPrefilter to build the -ch
+// re-derive contract-id prefilter.
+type gatedDecoder interface {
+	completeness.Decoder
+	GatedContractSet() []string
 }
 
 // buildReconciliationCatalogue assembles the per-source reconciliation
@@ -165,6 +188,14 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			// the router's add_pool events before counting.
 			name: "aquarius", genesis: 52_728_375, dec: aquarius.NewDecoder(),
 			factories: []string{aquarius.MainnetRouter}, creationSym: aquarius.EventAddPool,
+			// -ch re-derive prefilter (identity-gated, factory-anchored):
+			// scope the lake read to the router ∪ its pools instead of the
+			// whole ~6B-event lake — the fix for the -pass 120-min-deadline
+			// timeout on aquarius's dirty-window [51M,tip] re-derive. Matches()
+			// gates purely on pool identity, so the prefilter is
+			// counts-identical. gatedPrefilter walks the router's add_pool
+			// events on THIS throwaway to capture in-window pools too.
+			newGatedDec: func() gatedDecoder { return aquarius.NewDecoder() },
 			targets: []reconTarget{
 				{"trades", "source = 'aquarius'", []string{"aquarius.trade"}},
 				// 1:1 protocol tables — each of these Go event types has a
@@ -219,6 +250,15 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			// re-derive reproduce the liquidity/stake rows so THOSE targets
 			// reconcile by identity, not by netting.
 			name: "phoenix", genesis: 51_572_016, dec: phoenix.NewDecoder(),
+			// -ch re-derive prefilter (identity-gated): scope the lake read to
+			// the curated pool/stake set instead of the whole lake — latent
+			// timeout risk on phoenix's [51.5M,tip] re-derive, pre-empted the
+			// same way as aquarius. Matches() gates purely on contract
+			// identity and the correlation buffer only groups a SINGLE pool's
+			// events, so the prefilter is counts-identical. The gate is static
+			// (factory creation events predate the lake), so gatedPrefilter's
+			// walk is a no-op here — the throwaway just enumerates the seed.
+			newGatedDec:        func() gatedDecoder { return phoenix.NewDecoder() },
 			aggregateReconcile: "pre-upgrade (~51.02M–53.13M) 7-field swaps flush at sweep only when a later event ages the group out of the correlation buffer; the trade keeps its first-field ledger but the re-derive counts it at the sweep-trigger ledger — a per-ledger shift with the window total preserved. Aggregate absorbs the shift and accepts the CS-084 netting residual on this source; it does NOT replace the curated-set seed fix.",
 			targets: []reconTarget{
 				{"trades", "source = 'phoenix'", []string{"phoenix.trade"}},
