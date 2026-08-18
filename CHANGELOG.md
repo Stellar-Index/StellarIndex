@@ -15,6 +15,35 @@ against.
 
 ## [Unreleased]
 
+## [v0.38.1] — 2026-08-18
+
+Tested against Stellar protocol v23. No migration. Ops-only (compute-completeness).
+
+### Fixed
+- **Completeness reconcile no longer times out on factory-gated sources (#104).**
+  The `-pass` per-source projection re-derive streamed the entire ~6B-event CH lake
+  for identity-gated sources with empty catalogue `contractIDs` (aquarius, phoenix),
+  blowing the 120-min pass deadline (`aquarius: projection: context deadline
+  exceeded` failed the whole pass on r1). For opted-in gated sources it now scopes
+  the `-ch` re-derive to a **guaranteed superset of the gated contract set** (factory
+  ∪ curated seed ∪ protocol_contracts children ∪ lake-announced children) via the
+  contract-indexed `contractIDs` prefilter — counts-identical to the full stream
+  (`Matches()` rejects non-gated contracts regardless), just orders of magnitude
+  faster. Opt-in is pinned to `{aquarius, phoenix}`; defindex is excluded (its decode
+  correlates events across contracts in a tx, which a contract prefilter would break).
+  Fail-closed: a missing contract would under-count → a visible red, never a false green.
+
+### Security
+- **govulncheck gated behind a documented lib/pq accepted-risk allowlist (#105).**
+  The 2026-08 CVE-2026-56868..56874 batch surfaced 7 unpatched *called*
+  vulnerabilities in `github.com/lib/pq@v1.12.3` (the latest release of the now-
+  unmaintained driver), failing CI on every PR. All require a malicious/compromised
+  Postgres server or a pre-auth MITM; stellarindex connects only to its own Postgres
+  over `127.0.0.1` (`sslmode=disable`, no GSS/`.pgpass`) → not exploitable in this
+  deployment. A reviewed allowlist (`scripts/ci/govulncheck-allow.txt` + a JSON-mode
+  wrapper that still reds CI on any *other* called vuln) documents the accepted risk;
+  the durable fix (migrate to `jackc/pgx`) is tracked as a post-launch follow-up.
+
 ## [v0.38.0] — 2026-08-18
 
 Tested against Stellar protocol v23. No migration. Four completeness-verdict
