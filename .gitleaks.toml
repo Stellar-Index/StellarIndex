@@ -50,6 +50,10 @@ paths = [
   # below; duplicated for the same reason as the entries above.
   '''internal/sources/aquarius/golden_realbytes_test\.go''',
   '''internal/sources/defindex/golden_realbytes_test\.go''',
+  # Lake-derived base64-XDR ambiguous-swap fixture + public C-strkey
+  # pair/token IDs for the soroswap gen-0-phantom root-cause golden test
+  # (2026-08-18). ALSO rule-scoped below.
+  '''internal/sources/soroswap/ambiguous_swap_real_fixture_test\.go''',
   # Lake-derived base64-XDR golden fixture (public on-chain
   # set_protocol_fee Vec body) + public C-strkey pool contract IDs for
   # the aquarius fee-Vec-decode golden test (2026-08-18). ALSO
@@ -198,6 +202,7 @@ description = "Test-only base64-encoded XDR fixtures (topics_xdr/data_xdr for re
 paths = [
   '''internal/sources/aquarius/golden_realbytes_test\.go''',
   '''internal/sources/defindex/golden_realbytes_test\.go''',
+  '''internal/sources/soroswap/ambiguous_swap_real_fixture_test\.go''',
 ]
 
 [[rules.allowlists]]
