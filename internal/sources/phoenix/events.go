@@ -350,6 +350,22 @@ var (
 	TopicInitTokenA = scval.MustEncodeString("XYK LP token_a") // topic[1]
 	TopicInitTokenB = scval.MustEncodeString("XYK LP token_b")
 
+	// TopicInitLPShareStaking is the per-pool STAKE contract's initialize
+	// topic[1] — ("initialize", "LP Share token staking contract"). Unlike
+	// the pool's two token_a/token_b announcements above, this is a stake
+	// contract announcing its own LP-share token at deploy (body = a single
+	// Address). It maps to NO phoenix_initialize row (that table models the
+	// pool's token slots); it is recognized-but-NOT-projected — the raw
+	// event is preserved in the soroban_events landing zone (ADR-0029), same
+	// stance as the actionUnknown / 0-mainnet-occurrence admin events.
+	// Seeding the per-pool stake contracts into the gated set (2026-08-18)
+	// made these events Matches(); recognising this topic[1] in
+	// decodeInitializeEvent is what stops it erroring on them — 20 real lake
+	// events (20 ledgers, first=51,572,026) that were otherwise counted as
+	// undecodable-but-matched blind spots by the ADR-0033 projection
+	// re-derive (reconcile.go).
+	TopicInitLPShareStaking = scval.MustEncodeString("LP Share token staking contract")
+
 	// admin (governance rotation) topic[1] variants — ("XYK Pool: ",
 	// <phrase>). The phrases include a trailing space, faithful to
 	// pool/src/contract.rs:784-836.

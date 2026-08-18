@@ -299,6 +299,17 @@ func decodeInitializeEvent(ev *events.Event, fieldTopic string, closedAt time.Ti
 		slot = "a"
 	case TopicInitTokenB:
 		slot = "b"
+	case TopicInitLPShareStaking:
+		// The per-pool STAKE contract's self-announcement at deploy
+		// ("initialize","LP Share token staking contract") — NOT a pool
+		// token_a/token_b slot, so it maps to no phoenix_initialize row.
+		// Recognised (EVERY-event policy; the raw event lives in the
+		// soroban_events landing zone, ADR-0029) but not projected: emit
+		// nothing rather than the old ErrMalformedPayload. This clears the
+		// 20 undecodable-but-matched blind ledgers the stake-contract gated
+		// seed (2026-08-18) introduced into the projection re-derive
+		// (first=51,572,026, r1 lake). See events.go TopicInitLPShareStaking.
+		return nil, nil
 	default:
 		return nil, fmt.Errorf("%w: initialize unrecognised token-slot topic", ErrMalformedPayload)
 	}

@@ -11,7 +11,7 @@
 // `Collateral-<uuid>` child contract; the protocol then publishes
 // periodic per-position statements and settles them.
 //
-// # Event surface (7 topic[0] symbols, all emitted BY the main contract)
+// # Event surface (8 topic[0] symbols, all emitted BY the main contract)
 //
 //	NewCollateralContract   position opened → deploys a child Collateral-<uuid>
 //	StatementPublished      a periodic per-position charge/settlement statement
@@ -20,6 +20,8 @@
 //	BeaconUpdated           config: price-beacon (oracle) reference changed
 //	SupportedAssetAdded     config: a collateral/debt asset admitted
 //	CollateralHashUpdated   config: the collateral-contract WASM hash rotated
+//	TreasuryUpdated         config: the protocol treasury pointer rotated
+//	                        (body = Vec[Address old, Address new])
 //
 // # CRITICAL SEMANTIC — `Liquidation` is a SCHEDULED SETTLEMENT, not distress
 //
@@ -87,6 +89,13 @@ const (
 	TopicBeaconUpdated         = "BeaconUpdated"
 	TopicSupportedAssetAdded   = "SupportedAssetAdded"
 	TopicCollateralHashUpdated = "CollateralHashUpdated"
+	// TopicTreasuryUpdated is a config event rotating the protocol treasury
+	// pointer. Found by the ADR-0033 recognition audit (2026-08-18): 1 real
+	// lake event on the main contract at ledger 63,847,367 that classify()
+	// dropped, tripping recognition_ok=FALSE. Body is Vec[Address, Address]
+	// (old → new treasury) — captured verbatim like BeaconUpdated /
+	// CollateralHashUpdated; no promoted column (see decodeConfigBody).
+	TopicTreasuryUpdated = "TreasuryUpdated"
 )
 
 // Pre-encoded base64 SCVal::Symbol blobs for topic[0], computed once at
@@ -100,6 +109,7 @@ var (
 	topicSymBeaconUpdated         = scval.MustEncodeSymbol(TopicBeaconUpdated)
 	topicSymSupportedAssetAdded   = scval.MustEncodeSymbol(TopicSupportedAssetAdded)
 	topicSymCollateralHashUpdated = scval.MustEncodeSymbol(TopicCollateralHashUpdated)
+	topicSymTreasuryUpdated       = scval.MustEncodeSymbol(TopicTreasuryUpdated)
 )
 
 // EventSymbols returns the seven topic[0] symbol strings this source
@@ -116,6 +126,7 @@ func EventSymbols() []string {
 		TopicBeaconUpdated,
 		TopicSupportedAssetAdded,
 		TopicCollateralHashUpdated,
+		TopicTreasuryUpdated,
 	}
 }
 
@@ -143,6 +154,10 @@ const (
 	TypeSupportedAssetAdded EventType = "supported_asset_added"
 	// TypeCollateralHashUpdated → credit_events (config).
 	TypeCollateralHashUpdated EventType = "collateral_hash_updated"
+	// TypeTreasuryUpdated → credit_events (config). The treasury-pointer
+	// rotation; body captured verbatim (no promoted column). The
+	// credit_events.event_type CHECK admits this value via migration 0145.
+	TypeTreasuryUpdated EventType = "treasury_updated"
 )
 
 // Errors returned by the decode path. Callers classify via errors.Is.

@@ -39,7 +39,7 @@ func decodeOne(ev *events.Event) (Event, error) {
 		d, derr = decodeWithdrawal(ev)
 	case TypeSupportedAssetAdded:
 		d, derr = decodeSupportedAssetAdded(ev)
-	case TypeBeaconUpdated, TypeCollateralHashUpdated:
+	case TypeBeaconUpdated, TypeCollateralHashUpdated, TypeTreasuryUpdated:
 		d, derr = decodeConfigBody(ev)
 	default:
 		// Unreachable while classify and this switch stay in lockstep.

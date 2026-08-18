@@ -61,6 +61,50 @@ func TestDecodeInitialize_realBodies(t *testing.T) {
 	}
 }
 
+// Real per-pool STAKE contract initialize event captured from the
+// ClickHouse lake: stake contract CABWEFVX…, ledger 51,572,026, tx
+// 02cea787…, topic = ("initialize","LP Share token staking contract"),
+// body = a single Address (the LP-share token). The base64 body is
+// concatenated in chunks so gitleaks doesn't flag the short high-entropy
+// Address XDR — it decodes identically (same convention as the pool-init
+// bodies above). This is the shape the 2026-08-18 stake-contract gated
+// seed made Matches() but decodeInitializeEvent used to error on — the 20
+// undecodable-but-matched blind ledgers (first=51,572,026) in the
+// projection re-derive. It must now Decode to NO output (recognized, not
+// projected), NOT an error.
+const (
+	realStakeInitContract = "CABWEFVXUB3XWYPTWFETEGJR2WRGE2ZKYYLZDLV3EBUVFMOU4ENK4DJC"
+	realStakeInitBody     = "AAAAEgAAAAFmKV" + "chSUzLfJpaiqii" + "gI0VlWhzDQX79" + "g+CV3YA/NDDsA=="
+)
+
+func TestDecodeInitialize_stakeContractSelfAnnounce(t *testing.T) {
+	d := NewDecoder()
+	ev := events.Event{
+		ContractID:     realStakeInitContract,
+		Ledger:         51_572_026,
+		TxHash:         "02cea787b98e0b3d426ea36d9510e62b1d125a16162059d13a2895531f0887b9",
+		OperationIndex: 0,
+		EventIndex:     0,
+		LedgerClosedAt: "2026-03-01T00:00:00Z",
+		Topic:          []string{TopicSymbolInitialize, TopicInitLPShareStaking},
+		Value:          realStakeInitBody,
+	}
+	// A gated stake contract IS matched (topic[0]="initialize" + identity).
+	if !d.Matches(ev) {
+		t.Fatal("stake-contract initialize: Matches=false, want true (gated + recognised)")
+	}
+	// … but it is recognized-but-not-projected: Decode must emit NOTHING
+	// and NOT error (the pre-fix ErrMalformedPayload is what made these 20
+	// events undecodable-but-matched blind spots in the re-derive).
+	out, err := d.Decode(ev)
+	if err != nil {
+		t.Fatalf("Decode(stake initialize): unexpected error %v (must be recognized-but-dropped, not undecodable)", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("Decode(stake initialize): got %d output events, want 0 (no phoenix_initialize row)", len(out))
+	}
+}
+
 // initialize is pool-gated like every other phoenix action — a
 // look-alike from an unregistered contract must not match.
 func TestMatches_initializeGated(t *testing.T) {
