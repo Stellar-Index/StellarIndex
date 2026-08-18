@@ -17,10 +17,11 @@
 -- using the new value.
 BEGIN;
 
-ALTER TABLE credit_events DROP CONSTRAINT credit_events_event_type_check;
-ALTER TABLE credit_events ADD CONSTRAINT credit_events_event_type_check CHECK (event_type IN (
-    'withdrawal', 'beacon_updated',
-    'supported_asset_added', 'collateral_hash_updated',
-    'treasury_updated'));
+ALTER TABLE credit_events DROP CONSTRAINT credit_events_event_type_check;  -- migration-compat:ok widening the enum only; every value the old binary writes stays valid, replaced in the same transaction by a strict superset below
+ALTER TABLE credit_events ADD CONSTRAINT credit_events_event_type_check  -- migration-compat:ok superset CHECK: adds 'treasury_updated', removes nothing; the previous released binary never writes it (0124 freeze_reason_other parity)
+    CHECK (event_type IN (
+        'withdrawal', 'beacon_updated',
+        'supported_asset_added', 'collateral_hash_updated',
+        'treasury_updated'));
 
 COMMIT;
