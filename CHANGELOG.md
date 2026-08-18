@@ -15,6 +15,42 @@ against.
 
 ## [Unreleased]
 
+## [v0.38.2] — 2026-08-19
+
+Tested against Stellar protocol v23. Applies migration 0145 (additive,
+old-binary-safe — a CHECK widening the previous binary never writes).
+Closes the last per-protocol completeness reds found by the launch-readiness
+sweep: two genuine decoder-side gaps (phoenix, sorocredit) and one reconcile
+false-red (blend_emitter). Deploy the indexer + ops binaries and apply
+migrations (do **not** skip). Two residual over-counts (soroswap gen-0
+phantoms, sorocredit's 2 served-tier positions) are corrected by post-deploy
+`projector-replay`, not by this code.
+
+### Fixed
+- **phoenix stake-init events no longer trip `recognition_ok=FALSE` (#108).**
+  20 real `LP-share staking` init events matched no decoder shape, so the
+  ADR-0033 recognition census counted them as unhandled topics and downgraded
+  the whole source — even though they carry no financial row to project. The
+  decoder now *recognises* the init topic (`Matches()` returns true) and
+  emits nothing by design, so recognition is honest and projection is
+  unchanged. No served-data change.
+- **sorocredit `TreasuryUpdated` config event is now recognised and captured
+  (#108).** The main contract's `TreasuryUpdated` topic (a treasury-pointer
+  rotation, body `Vec[Address old, Address new]`) matched no decoder shape —
+  one real lake event at ledger 63,847,367 was dropped end-to-end, tripping
+  `recognition_ok=FALSE`. It is now captured verbatim into
+  `credit_events.attributes["body"]` (exactly like `BeaconUpdated` /
+  `CollateralHashUpdated`), with migration 0145 admitting `treasury_updated`
+  into the `credit_events_event_type_check` CHECK. No promoted column, no
+  invented semantics.
+- **blend_emitter reconcile fan-out false-red (#107).** The projection
+  reconcile compared served rows against a lake re-derive that counted the
+  `drop` event_kind — a fan-out kind the emitter carves out of the served
+  projection — inflating the expected count and reporting a phantom
+  `Σ|Δ|=14` mismatch on a source whose data was always correct. The reconcile
+  now excludes `drop` (`event_kind <> 'drop'`), so blend_emitter_events
+  reconciles exactly. No served-data change.
+
 ## [v0.38.1] — 2026-08-18
 
 Tested against Stellar protocol v23. No migration. Ops-only (compute-completeness).
