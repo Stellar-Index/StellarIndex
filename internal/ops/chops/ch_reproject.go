@@ -104,7 +104,7 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 	// keeps each variant's output (and its contractIDs prefilter) separate.
 	chBySrc := make(map[string]map[string]map[uint32]int)
 	chStart := time.Now()
-	cherr := clickhouse.StreamContractEvents(ctx, *chAddr, lo, hi, nil, func(ev events.Event) error {
+	accumulate := func(ev events.Event) error {
 		for _, src := range cat {
 			if src.dec == nil { // census-only (sdex) — op-based, not in contract_events
 				continue
@@ -135,7 +135,29 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 			}
 		}
 		return nil
-	})
+	}
+	// Window the CH stream per 1M-ledger partition — event_reader.go's rule for
+	// whole-history callers. One unbounded StreamContractEvents over the Soroban
+	// era buffers an unbounded result set and outruns the 1h per-read
+	// ReadTimeout before the first block even arrives ("clickhouse ... read:
+	// i/o timeout" on a whole-lake -from). The `cat` decoders persist across
+	// windows, so any correlation-buffer group state carries over each 1M
+	// boundary — identical output to one continuous pass, but each query stays
+	// bounded to a partition.
+	var cherr error
+	for wlo := lo; ; {
+		whi := hi
+		if aligned := (uint64(wlo)/1_000_000+1)*1_000_000 - 1; aligned < uint64(hi) {
+			whi = uint32(aligned)
+		}
+		if cherr = clickhouse.StreamContractEvents(ctx, *chAddr, wlo, whi, nil, accumulate); cherr != nil {
+			break
+		}
+		if whi >= hi {
+			break
+		}
+		wlo = whi + 1
+	}
 	if cherr != nil {
 		return fmt.Errorf("ch-reproject: clickhouse stream: %w", cherr)
 	}
