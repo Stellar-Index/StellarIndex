@@ -322,7 +322,21 @@ What is actually true:
 - **The timer is MONTHLY** (last 2026-08-01, next 2026-09-05), so this is one
   failed attempt, not a repeating failure.
 
-**RESOLVED 2026-08-19 — see BDR-04/BDR-05.** Running the UNIT (not the
+**RESOLVED + PROVEN 2026-08-19 — the drill now PASSES on its own unit,
+0 failures:**
+
+    restore: 539s; wal_drain: replay reached 1A5D/65BAE000
+    tip lag 206 ledgers; hash-chain breaks: 0
+    trades window match: 5,905,148 = 5,905,148
+
+Same backup, same box: measuring AFTER draining the archive stream gives
+**206 ledgers instead of 13,392** — a 65x drop that is entirely
+measurement, which settles that the old failure was never a backup or
+WAL-archiving problem. `r1` now has a restore verified end-to-end through
+the path that actually runs on schedule, so W6.6 (off-site decision) is
+unblocked.
+
+**How it got there — see BDR-04/BDR-05.** Running the UNIT (not the
 script) exposed three stacked blockers, each hidden behind the one before:
 `PrivateTmp=true` made the `/var/tmp` drill dataset invisible inside the
 service namespace (`226/NAMESPACE`, before `ExecStart`); then
