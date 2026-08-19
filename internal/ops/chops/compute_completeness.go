@@ -1920,6 +1920,19 @@ func projectionDelta(src reconSource, table string, expected, actual map[uint32]
 	for _, g := range gaps {
 		delta += absDiff(g.Expected, g.Actual)
 	}
+	// Opt-in surgical-remediation aid: the verdict detail names only the FIRST
+	// mismatched ledger (an operator hunting a whole class doesn't want a
+	// thousand-ledger string persisted in completeness_snapshots.detail). When
+	// SI_DUMP_GAPS is set, additionally stream EVERY per-ledger gap to stderr so
+	// a targeted over/under-count purge can be built from the authoritative
+	// per-ledger reconcile — the same numbers the verdict is derived from, not a
+	// windowed proxy. Read-only; changes no verdict, no stored detail.
+	if os.Getenv("SI_DUMP_GAPS") != "" {
+		for _, g := range gaps {
+			fmt.Fprintf(os.Stderr, "GAP\t%s\tledger=%d\texpected=%d\tserved=%d\tdelta=%+d\n",
+				table, g.Ledger, g.Expected, g.Actual, g.Actual-g.Expected)
+		}
+	}
 	first := gaps[0]
 	return delta, fmt.Sprintf("%s: %d mismatched ledger(s), Σ|Δ|=%d, first: ledger=%d expected=%d served=%d [%d,%d]",
 		table, len(gaps), delta, first.Ledger, first.Expected, first.Actual, lo, hi)
