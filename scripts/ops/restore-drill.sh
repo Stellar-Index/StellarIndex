@@ -48,6 +48,8 @@ DRILL_CH_BUCKET="${DRILL_CH_BUCKET:-galexie-archive}"
 # minutes (third drill failure mode: a daily-diff schedule means up
 # to ~24h of a busy ingest DB's WAL replays through archive-get).
 PG_START_TIMEOUT="${PG_START_TIMEOUT:-7200}"
+# Ceiling on draining the archive stream after consistency (BDR-05).
+WAL_DRAIN_TIMEOUT="${WAL_DRAIN_TIMEOUT:-3600}"
 # Evidence log + metric destinations. Both are EXPLICIT host paths
 # (env-overridable), NOT computed from $0 — the installed copy runs as
 # /usr/local/bin/restore-drill.sh, where the old $0-relative LOG_DIR
@@ -217,11 +219,57 @@ tables=$(q "SELECT count(*) FROM information_schema.tables WHERE table_name IN (
 check "core_tables" "$([[ "$tables" == "4" ]] && echo 1 || echo 0)" "found $tables/4 core tables"
 
 # 3b. Restored tip is close to the live tip (WAL archiving healthy).
+#
+# DRAIN THE ARCHIVE STREAM FIRST (BDR-05, 2026-08-19). `hot_standby = on`
+# plus `pg_ctl -w` means the scratch instance accepts connections the
+# moment CONSISTENCY is reached, while replay of the remaining archived
+# WAL continues in the background. Measuring the tip right there answers
+# "how old was the backup we restored from", NOT "how far forward can we
+# recover" — and the latter is the only claim worth making here.
+#
+# Measured 2026-08-19: lag 13,392 ledgers (~18.6h) against a diff backup
+# taken 21h earlier, i.e. the number was the backup's AGE. On a daily-diff
+# schedule that made the < 5000 threshold unpassable except by drilling
+# shortly after a diff — the 2026-07-03 pass (240 ledgers) was exactly
+# that accident. A threshold that can only be met by luck is not evidence.
+#
+# The finish line is an LSN captured from the LIVE primary now; replay is
+# drained until it reaches that point. A standby can only replay WAL that
+# has been ARCHIVED, so on a quiet primary the segment holding the target
+# may not be archived until it fills — hence bounded, and a timeout is
+# reported as its own outcome rather than silently measuring early.
+wal_target=$(qlive "SELECT pg_current_wal_lsn()")
+drain_deadline=$(( $(date +%s) + WAL_DRAIN_TIMEOUT ))
+drained=0
+drain_why=""
+while (( $(date +%s) < drain_deadline )); do
+  # Two terminal states, both meaning "everything available was applied":
+  #  - still in recovery AND replay passed the target LSN; or
+  #  - no longer in recovery at all. pgBackRest type=default writes
+  #    recovery.signal, so once the archive stream is exhausted Postgres
+  #    ENDS recovery and promotes — at which point pg_last_wal_replay_lsn()
+  #    returns NULL. Polling only the LSN would then spin to the timeout on
+  #    the very run that succeeded.
+  if [[ "$(q "SELECT pg_is_in_recovery()" 2>/dev/null)" == "f" ]]; then
+    drained=1; drain_why="recovery ended (archive stream exhausted, promoted)"
+    break
+  fi
+  replayed=$(q "SELECT coalesce(pg_last_wal_replay_lsn()::text,'')" 2>/dev/null || echo "")
+  if [[ -n "$replayed" ]] && [[ "$(q "SELECT ('$replayed'::pg_lsn >= '$wal_target'::pg_lsn)")" == "t" ]]; then
+    drained=1; drain_why="replay reached $wal_target"
+    break
+  fi
+  sleep 10
+done
+check "wal_drain" "$drained" "${drain_why:-did NOT reach $wal_target within ${WAL_DRAIN_TIMEOUT}s (last replayed: ${replayed:-none})}"
+
 restored_tip=$(q "SELECT coalesce(max(ledger_seq),0) FROM ledger_ingest_log")
 live_tip=$(qlive "SELECT coalesce(max(ledger_seq),0) FROM ledger_ingest_log")
 lag=$(( live_tip - restored_tip ))
-# One ledger ≈ 5-6s; 5000 ledgers ≈ ~7h of WAL not yet in the repo —
-# generous for a daily-diff schedule.
+# With the archive stream drained, the residual lag is only what the live
+# primary wrote DURING the drain — minutes, not hours. One ledger ≈ 5-6s,
+# so 5000 ledgers (~7h) stays a generous ceiling; it now fails on a real
+# WAL-restore gap instead of on the backup's age.
 check "tip_lag" "$(( lag >= 0 && lag < 5000 ? 1 : 0 ))" "restored tip $restored_tip vs live $live_tip (lag $lag ledgers)"
 
 # 3c. Hash-chain sanity on the restored copy (100k-ledger sample):

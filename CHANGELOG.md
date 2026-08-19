@@ -39,6 +39,24 @@ against.
   under `ProtectSystem=full`, and already hosts `history-archive`. The
   ZFS role gained optional per-dataset `dir_owner`/`dir_group`
   (`default(omit)`, so every other dataset is untouched).
+- **`tip_lag` was measuring the backup's AGE, not recoverability (BDR-05).**
+  The scratch instance runs `hot_standby = on` and is started with
+  `pg_ctl -w`, which returns the moment CONSISTENCY is reached — while
+  replay of the remaining archived WAL continues in the background. The
+  drill then measured the restored tip immediately, so the number it
+  reported was "how old was the backup we restored from". Measured
+  2026-08-19: lag 13,392 ledgers (~18.6h) against a diff taken 21h
+  earlier, while `archive-get` was demonstrably still streaming segments
+  in ~10ms each minutes later. On a daily-diff schedule that made the
+  `< 5000` threshold unpassable except by drilling shortly after a diff —
+  the 2026-07-03 pass (240 ledgers) was exactly that accident, and a
+  threshold met only by luck is not evidence. The drill now drains the
+  archive stream to an LSN captured from the live primary before
+  measuring, treating BOTH terminal states as drained (replay passed the
+  target, or recovery ended and promoted — the latter returns NULL from
+  `pg_last_wal_replay_lsn()` and would otherwise spin to the timeout on
+  the very run that succeeded). The drain is a reported check of its own,
+  so a timeout can never masquerade as a clean measurement.
 - The `ReadWritePaths` directive is gone entirely rather than repointed:
   `ProtectSystem=full` already leaves `/var` and `/srv` writable, and the
   directive's only effect here was to make a missing path a hard start
