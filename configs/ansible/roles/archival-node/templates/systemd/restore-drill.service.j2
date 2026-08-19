@@ -65,15 +65,32 @@ RuntimeMaxSec=4h
 # /var/log/restore-drill.log (BDR-03). ReadWritePaths is intentionally NOT
 # extended for these: they may not pre-exist, and a missing path in
 # ReadWritePaths fails namespace setup before ExecStart — full already
-# grants them. Only keep the historical /var/tmp/restore-drill entry
-# (the provisioned ZFS drill dataset).
-NoNewPrivileges=true
+# grants them.
+#
+# BDR-04 (2026-08-19): there is now NO ReadWritePaths at all. The single
+# remaining entry was /var/tmp/restore-drill, and that path can NEVER
+# resolve here — PrivateTmp=true (below) gives this unit its own empty
+# /tmp and /var/tmp, so the host's ZFS drill dataset is invisible inside
+# the namespace. systemd therefore failed the unit at namespace setup
+# (226/NAMESPACE) before ExecStart on every scheduled fire, which is why
+# the drill had never once run on its timer: the only passing evidence on
+# record came from manual runs, which have no namespace. The dataset moved
+# to /var/lib/stellarindex/restore-drill (defaults/main.yml), which
+# ProtectSystem=full leaves writable and PrivateTmp does not shadow — so
+# the directive that broke it is not needed at all.
+# NoNewPrivileges is deliberately NOT set (BDR-04, 2026-08-19). This unit
+# runs as root by design and DROPS privilege with `sudo -u postgres` for
+# every pg operation. no-new-privs blocks sudo's setuid transition, so the
+# drill died instantly with "unable to open /etc/sudoers: Operation not
+# permitted" — the second namespace-class blocker found the same evening.
+# It also buys almost nothing here: a process already running as root has
+# nothing left to escalate to, so the directive was pure downside — it
+# disabled the one mechanism the script uses to run with LESS privilege.
 PrivateTmp=true
 ProtectSystem=full
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
-ReadWritePaths=/var/tmp/restore-drill
 
 [Install]
 WantedBy=multi-user.target

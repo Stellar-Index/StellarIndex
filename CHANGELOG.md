@@ -15,6 +15,36 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **The pgBackRest restore drill had never once run on its schedule
+  (BDR-04).** CS-110's whole point is evidence that the backups restore,
+  and the scheduled path produced none — for three stacked reasons, each
+  hidden behind the one before it:
+  1. `PrivateTmp=true` gives the unit its own empty `/tmp` and `/var/tmp`,
+     so `DRILL_ROOT=/var/tmp/restore-drill` — a provisioned 5.2 TB ZFS
+     dataset, plainly present on the host — did not exist inside the
+     service's mount namespace. `ReadWritePaths` on that path failed
+     namespace setup and systemd aborted the unit with `226/NAMESPACE`
+     BEFORE `ExecStart`. Every passing drill on record was run by hand,
+     which has no namespace.
+  2. With that cleared, `NoNewPrivileges=true` blocked `sudo`'s setuid
+     transition ("unable to open /etc/sudoers: Operation not permitted").
+     The unit runs as root by design and DROPS privilege to `postgres`;
+     no-new-privs protects nothing on an already-root unit while
+     disabling the one mechanism it uses to run with LESS privilege.
+  3. Then `pgbackrest`, running as `postgres`, could not traverse
+     `/var/lib/stellarindex` (`drwxr-x---`).
+  The dataset now lives at `/srv/restore-drill`, postgres-owned — `/srv`
+  is world-traversable, is not shadowed by `PrivateTmp`, stays writable
+  under `ProtectSystem=full`, and already hosts `history-archive`. The
+  ZFS role gained optional per-dataset `dir_owner`/`dir_group`
+  (`default(omit)`, so every other dataset is untouched).
+- The `ReadWritePaths` directive is gone entirely rather than repointed:
+  `ProtectSystem=full` already leaves `/var` and `/srv` writable, and the
+  directive's only effect here was to make a missing path a hard start
+  failure.
+
+
 ## [v0.38.2] — 2026-08-19
 
 Tested against Stellar protocol v23. Applies migration 0145 (additive,

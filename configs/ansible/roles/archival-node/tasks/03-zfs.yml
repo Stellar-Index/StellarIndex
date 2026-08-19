@@ -160,6 +160,12 @@
     path: "{{ item.mountpoint }}"
     state: directory
     mode: "{{ item.dir_mode | default('0755') }}"
+    # Optional per-dataset ownership. default(omit) leaves every existing
+    # dataset exactly as it was; only datasets whose WRITER is not root
+    # need it (restore-drill: pgbackrest runs as postgres and creates the
+    # scratch pgdata dir inside the mountpoint — BDR-04).
+    owner: "{{ item.dir_owner | default(omit) }}"
+    group: "{{ item.dir_group | default(omit) }}"
   loop: "{{ zfs_datasets }}"
   loop_control:
     label: "{{ item.mountpoint }}"

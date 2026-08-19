@@ -166,8 +166,29 @@ zfs_datasets:
   - name: "pgbackrest"
     mountpoint: "/var/lib/pgbackrest"
     dir_mode: "0750"
+  # NOT under /var/tmp: PrivateTmp=true (which restore-drill.service sets,
+  # like every hardened unit here) gives the unit its OWN empty /tmp AND
+  # /var/tmp, so a drill root under there is invisible inside the service's
+  # mount namespace — systemd failed the unit at namespace setup with
+  # 226/NAMESPACE and the drill never once ran on its schedule (2026-08-19).
+  # A 616 GB Postgres restore is also not temp data. /var/lib stays writable
+  # under ProtectSystem=full and is not shadowed.
+  # /srv, not /var/tmp and not /var/lib/stellarindex (BDR-04, 2026-08-19):
+  #   - /var/tmp is shadowed by PrivateTmp=true, so the unit could not see
+  #     its own drill dataset and systemd failed it at namespace setup
+  #     (226/NAMESPACE) on every scheduled fire — the drill had never once
+  #     run on its timer.
+  #   - /var/lib/stellarindex is drwxr-x--- stellarindex:stellarindex, and
+  #     pgbackrest runs as POSTGRES, which cannot traverse it ([041]
+  #     Permission denied on the scratch pgdata dir).
+  # /srv is root:root 0755 (traversable by anyone) and already hosts
+  # history-archive. The mount dir itself is postgres-owned because
+  # pgbackrest creates the scratch pgdata dir inside it.
   - name: "restore-drill"
-    mountpoint: "/var/tmp/restore-drill"
+    mountpoint: "/srv/restore-drill"
+    dir_owner: "postgres"
+    dir_group: "postgres"
+    dir_mode: "0750"
 
 # ───── OS kernel tuning ──────────────────────────────────────────────
 sysctl_tunings:

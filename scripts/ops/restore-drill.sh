@@ -26,7 +26,10 @@ set -euo pipefail
 
 STANZA="${DRILL_STANZA:-stellarindex}"
 DRILL_REPO="${DRILL_REPO:-1}"
-DRILL_ROOT="${DRILL_ROOT:-/var/tmp/restore-drill}"
+# Not /var/tmp: PrivateTmp=true in restore-drill.service gives the unit a
+# private /tmp AND /var/tmp, so a drill root under there cannot be seen
+# from inside the service (226/NAMESPACE at unit start — see BDR-04).
+DRILL_ROOT="${DRILL_ROOT:-/srv/restore-drill}"
 DRILL_PG_PORT="${DRILL_PG_PORT:-5499}"
 MIN_FREE_GB="${MIN_FREE_GB:-200}"
 PG_VERSION="${PG_VERSION:-15}"
