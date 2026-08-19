@@ -322,8 +322,21 @@ What is actually true:
 - **The timer is MONTHLY** (last 2026-08-01, next 2026-09-05), so this is one
   failed attempt, not a repeating failure.
 
-**The real defect: the drill silently produces no evidence when run the way
-production runs it.** `LOG_DIR` is derived from the script's own path —
+**RESOLVED 2026-08-19 — see BDR-04/BDR-05.** Running the UNIT (not the
+script) exposed three stacked blockers, each hidden behind the one before:
+`PrivateTmp=true` made the `/var/tmp` drill dataset invisible inside the
+service namespace (`226/NAMESPACE`, before `ExecStart`); then
+`NoNewPrivileges=true` blocked `sudo`'s privilege DROP to postgres; then
+pgbackrest-as-postgres could not traverse `/var/lib/stellarindex`. The
+dataset moved to `/srv/restore-drill` (postgres-owned) and the drill now
+runs on its own unit. **The drill had therefore never once run on its
+schedule** — every passing record on file came from manual runs, which have
+no namespace. Separately, `tip_lag` was measuring the backup's AGE rather
+than recoverability (`hot_standby` + `pg_ctl -w` return at consistency while
+replay continues), so it now drains the archive stream to a live-primary LSN
+before measuring.
+
+**The original defect (BDR-03, already fixed before this pass):** `LOG_DIR` is derived from the script's own path —
 `$(dirname $0)/../../docs/operations/drills`. Installed at
 `/usr/local/bin/restore-drill.sh` that resolves to `/usr/docs/operations/drills`,
 which does not exist, and the append is guarded by `if [[ -d "$LOG_DIR" ]]`.
