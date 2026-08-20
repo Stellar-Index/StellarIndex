@@ -391,6 +391,22 @@ func isUSDQuoted(pair canonical.Pair) bool {
 // it, so a calendar-mature but sparsely-traded pair SHOULD score low.
 // See [confidence.Inputs.BaselineAgeDays] for the consumer-side
 // framing.
+//
+// W8.8 (audit-2026-08-14) DECISION — density kept over calendar age.
+// The audit flagged this as mis-capping "mature-but-sparse" pairs at the
+// 0.5 baseline-quality floor and proposed plumbing a real first-observation
+// CALENDAR timestamp to un-cap them. Rejected, on two grounds the code above
+// already states: (1) confidence in a price BASELINE is a function of how
+// many observations back it, not how long the pair has existed — a mature
+// pair that barely trades has a genuinely thin, less-trustworthy baseline, so
+// scoring it conservatively is CORRECT, not a bug; (2) un-capping by calendar
+// age moves a money-adjacent confidence signal in the LESS-safe direction
+// (higher confidence on thin baselines) — the money-safety panel refused the
+// naive Day30==nil variant for exactly this (it would also un-cap genuinely
+// new-and-immature pairs). The current behaviour errs LOW = safe. If a calendar
+// maturity signal is ever wanted it must be ADDITIVE (never a replacement for
+// density) and plumbed from storage's first-observation time — a deliberate
+// cross-layer change, not a silent flip here.
 func baselineAgeDays(multi baseline.MultiBaseline) float64 {
 	if multi.Day30 == nil {
 		return -1
