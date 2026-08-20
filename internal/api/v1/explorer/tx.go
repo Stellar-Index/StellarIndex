@@ -126,7 +126,7 @@ func (h *Handler) TxDetail(w http.ResponseWriter, r *http.Request) {
 
 	h.WriteJSON(w, TxDetailView{
 		TxSummaryView: txSummaryView(tx),
-		Operations:    buildTxOpViews(ops, results, tx.Successful),
+		Operations:    buildTxOpViews(ops, results, tx.Successful, tx.ResultCode),
 		Events:        buildTxEventViews(events),
 		CoverageNote:  txCoverageNote(resultsPartial, eventsPartial),
 	}, false)
@@ -155,14 +155,16 @@ func txCoverageNote(resultsFailed, eventsFailed bool) string {
 // parent transaction's success (so a failed tx's operations are unambiguously
 // marked, not masquerading as applied), and attaches each op's result code +
 // human slug (when known).
-func buildTxOpViews(ops []clickhouse.OpRow, results map[uint32]int32, txSuccessful bool) []OpView {
+func buildTxOpViews(ops []clickhouse.OpRow, results map[uint32]int32, txSuccessful bool, txResultCode int32) []OpView {
 	out := make([]OpView, len(ops))
 	// One immutable bool shared by every op — they all belong to this tx and
 	// share its outcome.
 	txOK := txSuccessful
+	txResult := txResultName(txResultCode)
 	for i, o := range ops {
 		ov := opView(o)
 		ov.TransactionSuccessful = &txOK
+		ov.TransactionResult = txResult
 		if code, ok := results[o.OpIndex]; ok {
 			c := code
 			ov.ResultCode = &c
