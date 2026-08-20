@@ -52,6 +52,8 @@ echo "=== Migrations money ===" && ./scripts/ci/lint-migrations.sh
 # check above). All are deterministic + network-free.
 echo "=== Migration backward-compat ===" && ./scripts/ci/lint-migration-compat.sh
 echo "=== Migration backward-compat self-test ===" && ./scripts/ci/lint-migration-compat-test.sh
+echo "=== Migration immutability ===" && ./scripts/ci/lint-migration-immutability.sh
+echo "=== Migration immutability self-test ===" && ./scripts/ci/lint-migration-immutability-test.sh
 echo "=== Completeness-staleness calibration ===" && ./scripts/ci/lint-completeness-staleness.sh
 echo "=== Deploy-protection self-test ===" && ./scripts/ci/check-deploy-protection-test.sh
 echo "=== Main-CI-health decision-core self-test ===" && ./scripts/ci/check-main-ci-health-test.sh

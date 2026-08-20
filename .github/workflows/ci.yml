@@ -349,6 +349,23 @@ jobs:
         # additive-safe. A rule-9 gate that silently stops matching is
         # worse than none.
         run: ./scripts/ci/lint-migration-compat-test.sh
+      - name: lint-migration-immutability
+        # W1-migrations-5: cmd/stellarindex-migrate is a thin golang-migrate
+        # wrapper — migrations are keyed on the version integer ONLY. It never
+        # re-runs an applied number and never content-hashes, so an in-place
+        # edit of an already-shipped migration is silently undetectable (envs
+        # that ran the old text stay diverged from fresh DBs; 0138 was edited
+        # in place, safe only by luck). This freezes every shipped migration
+        # by SHA-256 in scripts/ci/migration-immutability.sha256: editing or
+        # deleting a baselined file fails; new migrations are append-only and
+        # add their checksum (`--write`) in the same PR.
+        run: ./scripts/ci/lint-migration-immutability.sh
+      - name: lint-migration-immutability self-test
+        # The gate's own fixtures: an in-place edit of a shipped migration
+        # trips it, a deleted one trips it, a new migration missing from the
+        # baseline trips it, and a new migration added with its checksum
+        # passes. A frozen-migration gate that stops tripping is worse than none.
+        run: ./scripts/ci/lint-migration-immutability-test.sh
       - name: check-deploy-protection self-test
         # deploy-approval-gate (audit-2026-07-23): fixtures for the
         # fail-closed environment-approval assertion deploy.yml runs
