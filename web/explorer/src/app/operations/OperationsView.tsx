@@ -6,6 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
+import { Callout, TxStatusBadge } from '@/components/ui';
 import { OperationMixPanel, ThroughputPanel } from '@/components/NetworkInsight';
 import { apiGet, asExample } from '@/api/client';
 import { cn } from '@/lib/cn';
@@ -125,6 +126,15 @@ export function OperationsView() {
         </div>
       )}
 
+      {q.data?.coverage_note && (
+        // Honest-degrade banner: the parent-transaction outcome read failed,
+        // so rows without a status below are of UNKNOWN outcome (possibly a
+        // FAILED transaction), not applied.
+        <Callout tone="warn" title="Transaction outcomes partially unavailable">
+          {q.data.coverage_note}
+        </Callout>
+      )}
+
       <Panel
         title={ops.length > 0 ? `Recent operations (${formatCompact(ops.length)})` : 'Recent operations'}
         hint={following ? 'live' : undefined}
@@ -149,6 +159,7 @@ export function OperationsView() {
               <thead>
                 <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
                   <th scope="col" className="px-4 py-2">Type</th>
+                  <th scope="col" className="px-4 py-2">Status</th>
                   <th scope="col" className="px-4 py-2">Detail</th>
                   <th scope="col" className="px-4 py-2">Source</th>
                   <th scope="col" className="px-4 py-2 text-right">Ledger</th>
@@ -173,6 +184,14 @@ export function OperationsView() {
                       >
                         <code>{op.type}</code>
                       </Link>
+                    </td>
+                    <td className="px-4 py-3">
+                      {/* Failed ops stay listed — marked, never hidden. */}
+                      <TxStatusBadge
+                        successful={op.transaction_successful}
+                        result={op.transaction_result}
+                        code={op.result_code}
+                      />
                     </td>
                     <td className="px-4 py-3 font-mono text-[11px] text-ink-muted">
                       {summarize(op) || <span className="text-ink-faint">—</span>}
