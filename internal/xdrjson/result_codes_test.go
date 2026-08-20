@@ -1,4 +1,4 @@
-package explorer
+package xdrjson
 
 import (
 	"strings"
@@ -20,7 +20,7 @@ func TestTxResultNamesExhaustive(t *testing.T) {
 			continue
 		}
 		seen++
-		got := txResultName(c)
+		got := TxResultName(c)
 		if got == "" || strings.Contains(got, "unknown") {
 			t.Errorf("valid tx result code %d (%s) has no friendly slug, got %q",
 				c, xdr.TransactionResultCode(c).String(), got)
@@ -40,7 +40,7 @@ func TestOpResultNamesExhaustive(t *testing.T) {
 			continue
 		}
 		seen++
-		got := opResultName(c)
+		got := OpResultName(c)
 		if got == "" || strings.Contains(got, "unknown") {
 			t.Errorf("valid op result code %d (%s) has no friendly slug, got %q",
 				c, xdr.OperationResultCode(c).String(), got)
@@ -57,13 +57,13 @@ func TestResultNameSpecifics(t *testing.T) {
 		got  string
 		want string
 	}{
-		{"tx success", txResultName(int32(xdr.TransactionResultCodeTxSuccess)), "tx_success"},
-		{"tx failed", txResultName(int32(xdr.TransactionResultCodeTxFailed)), "tx_failed"},
-		{"tx insufficient fee", txResultName(int32(xdr.TransactionResultCodeTxInsufficientFee)), "tx_insufficient_fee"},
-		{"tx no source account", txResultName(int32(xdr.TransactionResultCodeTxNoAccount)), "tx_no_source_account"},
-		{"op inner", opResultName(int32(xdr.OperationResultCodeOpInner)), "op_inner"},
-		{"op bad auth", opResultName(int32(xdr.OperationResultCodeOpBadAuth)), "op_bad_auth"},
-		{"op no source account", opResultName(int32(xdr.OperationResultCodeOpNoAccount)), "op_no_source_account"},
+		{"tx success", TxResultName(int32(xdr.TransactionResultCodeTxSuccess)), "tx_success"},
+		{"tx failed", TxResultName(int32(xdr.TransactionResultCodeTxFailed)), "tx_failed"},
+		{"tx insufficient fee", TxResultName(int32(xdr.TransactionResultCodeTxInsufficientFee)), "tx_insufficient_fee"},
+		{"tx no source account", TxResultName(int32(xdr.TransactionResultCodeTxNoAccount)), "tx_no_source_account"},
+		{"op inner", OpResultName(int32(xdr.OperationResultCodeOpInner)), "op_inner"},
+		{"op bad auth", OpResultName(int32(xdr.OperationResultCodeOpBadAuth)), "op_bad_auth"},
+		{"op no source account", OpResultName(int32(xdr.OperationResultCodeOpNoAccount)), "op_no_source_account"},
 	}
 	for _, tc := range cases {
 		if tc.got != tc.want {
@@ -77,10 +77,10 @@ func TestResultNameSpecifics(t *testing.T) {
 // surfaces the raw integer truthfully.
 func TestResultNameUnknownFallback(t *testing.T) {
 	// 99 is not a valid TransactionResultCode.
-	if got := txResultName(99); got == "" || !strings.Contains(got, "99") {
+	if got := TxResultName(99); got == "" || !strings.Contains(got, "99") {
 		t.Errorf("unknown tx code fallback = %q, want a non-empty slug carrying the raw code", got)
 	}
-	if got := opResultName(99); got == "" || !strings.Contains(got, "99") {
+	if got := OpResultName(99); got == "" || !strings.Contains(got, "99") {
 		t.Errorf("unknown op code fallback = %q, want a non-empty slug carrying the raw code", got)
 	}
 }

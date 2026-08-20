@@ -1,4 +1,4 @@
-package explorer
+package xdrjson
 
 import (
 	"fmt"
@@ -9,20 +9,23 @@ import (
 // This file turns the raw XDR result-code integers the lake stores
 // (stellar.transactions.result_code and stellar.operation_results.result_code)
 // into stable, human-readable slugs, so a FAILED transaction is self-explaining
-// on the API and in the explorer UI — never a bare, unexplained integer. The
+// on the API and in the explorer UI — never a bare, unexplained integer. It
+// lives in xdrjson (the network-explorer classic-XDR→human decoder, ADR-0038)
+// alongside the op-body/key/entry decoders — the same category of non-SCVal
+// classic-XDR semantics, so the explorer serving layer stays xdr-free. The
 // slugs are Horizon-aligned where a precedent exists (e.g. tx_no_source_account,
 // op_no_source_account) so they read familiarly to Stellar developers.
 //
 // Design note (transparency, not suppression): failed transactions ARE indexed
 // and ARE served (an on-chain, fee-charged, permanent record — many explorers
 // show them). The honest contract is to mark them clearly. The authoritative
-// "why" is the TRANSACTION-level result code: `successful=false` +
-// `result` (e.g. "tx_failed", "tx_insufficient_fee") states, unambiguously,
-// that the whole transaction did not apply and why. The per-operation code is
-// structural detail: for a txFAILED, an operation that itself failed
-// structurally carries op_bad_auth / op_no_source_account / …; an operation
-// whose outcome is in its inner (op-type-specific) result carries op_inner,
-// with the transaction-level reason remaining the authoritative headline.
+// "why" is the TRANSACTION-level result code: successful=false + the tx result
+// (e.g. "tx_failed", "tx_insufficient_fee") states, unambiguously, that the
+// whole transaction did not apply and why. The per-operation code is structural
+// detail: for a txFAILED, an operation that itself failed structurally carries
+// op_bad_auth / op_no_source_account / …; an operation whose outcome is in its
+// inner (op-type-specific) result carries op_inner, with the transaction-level
+// reason remaining the authoritative headline.
 
 // txResultNames maps every transaction result code to its slug. Keyed by the
 // xdr typed constant so the compiler pins each entry to a real enum member;
@@ -63,21 +66,21 @@ var opResultNames = map[xdr.OperationResultCode]string{
 	xdr.OperationResultCodeOpTooManySponsoring: "op_too_many_sponsoring",
 }
 
-// txResultName returns the human-readable slug for a transaction result code
+// TxResultName returns the human-readable slug for a transaction result code
 // (the value in stellar.transactions.result_code). An unmapped/newer code
 // falls back to a truthful numeric form rather than a blank — a slug is never
 // silently empty, so the wire never implies "success" for an unknown code.
-func txResultName(code int32) string {
+func TxResultName(code int32) string {
 	if s, ok := txResultNames[xdr.TransactionResultCode(code)]; ok {
 		return s
 	}
 	return fmt.Sprintf("tx_unknown(%d)", code)
 }
 
-// opResultName returns the human-readable slug for an operation result code
+// OpResultName returns the human-readable slug for an operation result code
 // (the value in stellar.operation_results.result_code). Same fallback
-// discipline as txResultName.
-func opResultName(code int32) string {
+// discipline as TxResultName.
+func OpResultName(code int32) string {
 	if s, ok := opResultNames[xdr.OperationResultCode(code)]; ok {
 		return s
 	}

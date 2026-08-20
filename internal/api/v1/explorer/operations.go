@@ -234,7 +234,7 @@ func stitchTxOutcomes(ops []OpView, outcomes map[string]clickhouse.TxOutcome) {
 		}
 		s := o.Successful
 		ops[i].TransactionSuccessful = &s
-		ops[i].TransactionResult = txResultName(o.ResultCode)
+		ops[i].TransactionResult = xdrjson.TxResultName(o.ResultCode)
 	}
 }
 

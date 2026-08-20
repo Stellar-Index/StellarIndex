@@ -6,6 +6,7 @@ import (
 	"regexp"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
 // txHashRe matches a Stellar transaction hash: 64 lowercase hex chars (the lake
@@ -160,7 +161,7 @@ func buildTxOpViews(ops []clickhouse.OpRow, results map[uint32]int32, txSuccessf
 	// One immutable bool shared by every op — they all belong to this tx and
 	// share its outcome.
 	txOK := txSuccessful
-	txResult := txResultName(txResultCode)
+	txResult := xdrjson.TxResultName(txResultCode)
 	for i, o := range ops {
 		ov := opView(o)
 		ov.TransactionSuccessful = &txOK
@@ -168,7 +169,7 @@ func buildTxOpViews(ops []clickhouse.OpRow, results map[uint32]int32, txSuccessf
 		if code, ok := results[o.OpIndex]; ok {
 			c := code
 			ov.ResultCode = &c
-			ov.Result = opResultName(code)
+			ov.Result = xdrjson.OpResultName(code)
 		}
 		out[i] = ov
 	}

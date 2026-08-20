@@ -79,7 +79,7 @@ func txSummaryView(t clickhouse.TxSummary) TxSummaryView {
 		OperationCount: t.OperationCount,
 		Successful:     t.Successful,
 		ResultCode:     t.ResultCode,
-		Result:         txResultName(t.ResultCode),
+		Result:         xdrjson.TxResultName(t.ResultCode),
 		MemoType:       xdrjson.MemoTypeName(t.MemoType),
 		Memo:           t.Memo,
 	}
