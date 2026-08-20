@@ -10,6 +10,18 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+// sqlStateClass returns the 2-char class of a Postgres SQLSTATE code. Server
+// SQLSTATEs are always 5 chars, so in practice this is just code[:2]; guarding
+// the slice keeps a malformed/empty code (a driver or error-wrapping bug) from
+// panicking the write-fault classifier. An empty class matches no case and
+// falls through to each caller's safe default (transient / non-permanent).
+func sqlStateClass(code string) string {
+	if len(code) < 2 {
+		return ""
+	}
+	return code[:2]
+}
+
 // IsInfraError reports whether err from a write path is an
 // INFRASTRUCTURE fault — the database is unreachable, restarting, or
 // out of connection capacity — as opposed to a per-row DATA fault
@@ -61,7 +73,7 @@ func IsInfraError(err error) bool {
 	// the full 5-char SQLSTATE; the first 2 chars are its class).
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
-		if pgErr.Code[:2] == "08" { // connection_exception family
+		if sqlStateClass(pgErr.Code) == "08" { // connection_exception family
 			return true
 		}
 		switch pgErr.Code {
@@ -138,7 +150,7 @@ func IsPermanentDataError(err error) bool {
 	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
-		switch pgErr.Code[:2] { // SQLSTATE class = first 2 chars
+		switch sqlStateClass(pgErr.Code) { // SQLSTATE class = first 2 chars
 		case "22", // data_exception (numeric out of range, invalid text rep, …)
 			"23": // integrity_constraint_violation (CHECK / not-null / fk / unique)
 			return true

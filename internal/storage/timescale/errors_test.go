@@ -31,6 +31,10 @@ func TestIsInfraError(t *testing.T) {
 		{"pg cannot_connect_now 57P03", &pgconn.PgError{Code: "57P03", Message: "the database system is starting up"}, true},
 		{"pg too_many_connections 53300", &pgconn.PgError{Code: "53300"}, true},
 		{"pg connection_exception class 08", &pgconn.PgError{Code: "08006"}, true},
+		// Malformed/empty SQLSTATE (a driver or error-wrapping bug): the
+		// class guard must NOT panic and falls through to the safe default.
+		{"pg empty code (malformed) — no panic, safe default", &pgconn.PgError{Code: ""}, false},
+		{"pg one-char code (malformed) — no panic", &pgconn.PgError{Code: "0"}, false},
 		{"pg starting up (string)", errors.New("failed to connect: the database system is starting up"), true},
 		// Data faults — must NOT retry.
 		{"pg not-null violation 23502", &pgconn.PgError{Code: "23502"}, false},
