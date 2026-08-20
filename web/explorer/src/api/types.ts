@@ -11482,6 +11482,14 @@ export interface paths {
                                     /** Format: int64 */
                                     count?: number;
                                 }[];
+                                /**
+                                 * @description Present ONLY when the parent-transaction outcome read
+                                 *     failed: operations without `transaction_successful` are
+                                 *     then of UNKNOWN outcome (possibly a FAILED transaction),
+                                 *     not applied. Absent = every operation carries its true
+                                 *     transaction outcome.
+                                 */
+                                coverage_note?: string;
                             };
                         };
                     };
@@ -13319,8 +13327,12 @@ export interface components {
             fee_charged?: number;
             max_fee?: number;
             operation_count?: number;
+            /** @description Whether the transaction applied. Failed transactions ARE indexed and served (an on-chain */
             successful?: boolean;
+            /** @description Raw XDR TransactionResultCode (0 = success; negatives are failure reasons). */
             result_code?: number;
+            /** @description Human-readable slug for result_code (e.g. tx_success, tx_failed, tx_insufficient_fee). Always present. */
+            result?: string;
             /** @description Normalised: none|text|id|hash|return. */
             memo_type?: string;
             memo?: string;
@@ -13342,8 +13354,27 @@ export interface components {
             };
             /** @description Base64 body */
             raw_xdr?: string;
-            /** @description Present only in the per-transaction view. */
+            /**
+             * @description Whether this operation's PARENT transaction applied — the honesty
+             *     signal on the list views (account history, ledger op list,
+             *     /operations directory) where an operation is shown outside its
+             *     transaction. false ⇒ the transaction did NOT apply and nothing this
+             *     operation names actually moved. OMITTED (not false) when the parent
+             *     outcome was not read — a degraded response disclosed via the view's
+             *     coverage_note; absence is UNKNOWN, never "successful".
+             */
+            transaction_successful?: boolean;
+            /**
+             * @description Human-readable slug for the parent transaction's result (e.g.
+             *     tx_success, tx_failed, tx_insufficient_fee) — the authoritative WHY
+             *     paired with transaction_successful. Omitted when the parent outcome
+             *     was not read.
+             */
+            transaction_result?: string;
+            /** @description The operation's OUTER XDR OperationResultCode. Present in the per-transaction view. */
             result_code?: number;
+            /** @description Human-readable slug for result_code (e.g. op_inner, op_bad_auth, op_no_source_account). Present with result_code. */
+            result?: string;
         };
         TxDetail: components["schemas"]["TxSummary"] & {
             operations?: components["schemas"]["Operation"][];
@@ -13416,6 +13447,16 @@ export interface components {
              * @enum {string}
              */
             scope?: "all";
+            /**
+             * @description Honest-degrade signal, present ONLY when the parent-transaction
+             *     outcome read failed while assembling this page: operations without
+             *     `transaction_successful` are then of UNKNOWN outcome and may belong
+             *     to a FAILED transaction, not applied. Failed transactions ARE listed
+             *     here (on-chain, fee-charged records), so this marker is what keeps a
+             *     failed operation from masquerading as a real interaction. Absent =
+             *     every operation carries its true transaction outcome.
+             */
+            coverage_note?: string;
         };
         /** @description One row in an account's movement feed (ADR-0048 D5). */
         AccountMovement: {

@@ -8058,6 +8058,14 @@ paths:
                           properties:
                             type:  { type: string }
                             count: { type: integer, format: int64 }
+                      coverage_note:
+                        type: string
+                        description: |
+                          Present ONLY when the parent-transaction outcome read
+                          failed: operations without `transaction_successful` are
+                          then of UNKNOWN outcome (possibly a FAILED transaction),
+                          not applied. Absent = every operation carries its true
+                          transaction outcome.
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -9624,8 +9632,9 @@ components:
         fee_charged: { type: integer }
         max_fee: { type: integer }
         operation_count: { type: integer }
-        successful: { type: boolean }
-        result_code: { type: integer }
+        successful: { type: boolean, description: Whether the transaction applied. Failed transactions ARE indexed and served (an on-chain, fee-charged record). }
+        result_code: { type: integer, description: Raw XDR TransactionResultCode (0 = success; negatives are failure reasons). }
+        result: { type: string, description: "Human-readable slug for result_code (e.g. tx_success, tx_failed, tx_insufficient_fee). Always present." }
         memo_type: { type: string, description: "Normalised: none|text|id|hash|return." }
         memo: { type: string }
     Operation:
@@ -9641,7 +9650,25 @@ components:
         source_account: { type: string }
         fields: { type: object, additionalProperties: true, description: Decoded operation fields (amounts are strings, ADR-0003). }
         raw_xdr: { type: string, description: Base64 body, present only for op types not yet field-decoded. }
-        result_code: { type: integer, description: Present only in the per-transaction view. }
+        transaction_successful:
+          type: boolean
+          description: |
+            Whether this operation's PARENT transaction applied — the honesty
+            signal on the list views (account history, ledger op list,
+            /operations directory) where an operation is shown outside its
+            transaction. false ⇒ the transaction did NOT apply and nothing this
+            operation names actually moved. OMITTED (not false) when the parent
+            outcome was not read — a degraded response disclosed via the view's
+            coverage_note; absence is UNKNOWN, never "successful".
+        transaction_result:
+          type: string
+          description: |
+            Human-readable slug for the parent transaction's result (e.g.
+            tx_success, tx_failed, tx_insufficient_fee) — the authoritative WHY
+            paired with transaction_successful. Omitted when the parent outcome
+            was not read.
+        result_code: { type: integer, description: The operation's OUTER XDR OperationResultCode. Present in the per-transaction view. }
+        result: { type: string, description: "Human-readable slug for result_code (e.g. op_inner, op_bad_auth, op_no_source_account). Present with result_code." }
     TxDetail:
       allOf:
         - { $ref: "#/components/schemas/TxSummary" }
@@ -9702,6 +9729,16 @@ components:
         operations: { type: array, items: { $ref: "#/components/schemas/Operation" } }
         next_cursor: { type: string, description: "Opaque composite cursor (ledger.tx_index.op_index) for the next older page; absent on the last page." }
         scope: { type: string, enum: [all], description: "Activity scope. \"all\" = the account sourced the op OR is a non-source participant in it." }
+        coverage_note:
+          type: string
+          description: |
+            Honest-degrade signal, present ONLY when the parent-transaction
+            outcome read failed while assembling this page: operations without
+            `transaction_successful` are then of UNKNOWN outcome and may belong
+            to a FAILED transaction, not applied. Failed transactions ARE listed
+            here (on-chain, fee-charged records), so this marker is what keeps a
+            failed operation from masquerading as a real interaction. Absent =
+            every operation carries its true transaction outcome.
     AccountMovement:
       type: object
       description: One row in an account's movement feed (ADR-0048 D5).
