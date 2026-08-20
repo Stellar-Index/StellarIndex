@@ -1809,8 +1809,14 @@ export interface paths {
          *     - `?source=X` narrows to a single source (0- or 1-element array).
          *     - `?aggregate=latest` collapses to the single newest trade across
          *       sources (preserves the array wire shape; length 1).
-         *     - `flags.stale` is **always** `false` here — there is no
-         *       aggregation contract to fall short of.
+         *     - **Freshness is PER OBSERVATION, not envelope-level (W8.11).**
+         *       `flags.stale` is **always** `false` here (there is no aggregation
+         *       contract to fall short of), and the envelope `as_of` is the
+         *       RESPONSE time, not the data's age. A source can be arbitrarily
+         *       stale — a venue that last traded the pair weeks ago still returns
+         *       that last trade. Assess freshness from each observation's own
+         *       trade timestamp (`ts`); do NOT infer it from `as_of` or
+         *       `flags.stale` on this endpoint.
          *     - Cross-region consistency is **NOT** provable on this surface;
          *       use `/v1/price` for the closed-bucket guarantee.
          *     - Empty pair returns 200 with `data: []`, not 404.
