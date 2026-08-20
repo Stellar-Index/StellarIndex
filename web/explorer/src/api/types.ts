@@ -13763,7 +13763,12 @@ export interface components {
             role: "taker" | "maker";
             /** @description The other recorded account, when the venue recorded one (sdex only, today). */
             counterparty?: string;
-            /** @description Router contract attribution (migration 0025), when present. */
+            /**
+             * @description Router contract attribution (migration 0025), when present.
+             *     Descriptive, first-wins metadata from the trade's own routing
+             *     structure — not authenticated provenance and not a price input
+             *     (see the same field on the trade-history schema).
+             */
             routed_via?: string;
         };
         /**
@@ -15135,6 +15140,13 @@ export interface components {
              *     direct trades — and for very recent routed trades the
              *     attribution sweeper (1-minute cadence) hasn't tagged
              *     yet.
+             *     Descriptive metadata, first-wins (never re-tagged), derived
+             *     from the trade's own same-transaction routing structure — NOT
+             *     an authenticated fact: a trader can structure their own
+             *     transaction to carry a chosen router, so `routed_via` on
+             *     individual trades is not tamper-proof provenance. It does not
+             *     affect price/VWAP (routers are IncludeInVWAP=false and write
+             *     only to their own `_swaps` surface).
              */
             routed_via?: string;
         };
