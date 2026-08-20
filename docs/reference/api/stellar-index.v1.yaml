@@ -109,6 +109,7 @@ security:
 paths:
   /healthz:
     get:
+      operationId: getLiveness
       tags: [health]
       summary: Liveness — process is up.
       description: |
@@ -148,10 +149,11 @@ paths:
                   triangulated: false
                   divergence_warning: false
                   divergence_checked: false
-              schema: { $ref: "#/components/schemas/HealthResponse" }
+              schema: { $ref: "#/components/schemas/HealthEnvelope" }
 
   /readyz:
     get:
+      operationId: getReadiness
       tags: [health]
       summary: Readiness — serving-plane dependencies reachable.
       description: |
@@ -223,6 +225,7 @@ paths:
 
   /version:
     get:
+      operationId: getVersion
       tags: [health]
       summary: Build metadata.
       description: |
@@ -258,6 +261,7 @@ paths:
 
   /status:
     get:
+      operationId: getStatus
       tags: [health]
       summary: Comprehensive system health rollup for the public status page.
       description: |
@@ -310,6 +314,7 @@ paths:
 
   /status/notices:
     get:
+      operationId: listStatusNotices
       tags: [health]
       summary: Active operator-posted status banners.
       description: |
@@ -332,6 +337,7 @@ paths:
 
   /assets:
     get:
+      operationId: listAssets
       tags: [assets]
       summary: List Stellar assets.
       description: |
@@ -413,7 +419,8 @@ paths:
             application/json:
               example:
                 data:
-                - asset_id: xlm
+                - kind: stellar_asset
+                  asset_id: xlm
                   type: global
                   code: XLM
                   decimals: 0
@@ -428,7 +435,8 @@ paths:
                   change_1h_pct: '0.01'
                   change_7d_pct: '15.70'
                   slug: xlm
-                - asset_id: usdc
+                - kind: stellar_asset
+                  asset_id: usdc
                   type: global
                   code: USDC
                   decimals: 0
@@ -460,6 +468,7 @@ paths:
 
   /external/assets:
     get:
+      operationId: listExternalAssets
       tags: [assets]
       summary: List non-Stellar (external) assets.
       description: |
@@ -493,7 +502,8 @@ paths:
             application/json:
               example:
                 data:
-                - asset_id: chinese-yuan
+                - kind: stellar_asset
+                  asset_id: chinese-yuan
                   type: global
                   code: CNY
                   decimals: 0
@@ -503,7 +513,8 @@ paths:
                   circulating_supply: '302000000000000'
                   market_cap_usd: '44486344754441.27'
                   slug: chinese-yuan
-                - asset_id: us-dollar
+                - kind: stellar_asset
+                  asset_id: us-dollar
                   type: global
                   code: USD
                   decimals: 0
@@ -531,6 +542,7 @@ paths:
 
   /external/assets/{slug}:
     get:
+      operationId: getExternalAsset
       tags: [assets]
       summary: External asset detail (fiat / reference coin).
       description: |
@@ -553,6 +565,7 @@ paths:
             application/json:
               example:
                 data:
+                  kind: catalogue
                   ticker: USD
                   slug: us-dollar
                   name: US Dollar
@@ -581,6 +594,7 @@ paths:
 
   /assets/verified:
     get:
+      operationId: listVerifiedAssets
       tags: [assets]
       summary: Verified-currency catalogue listing.
       description: |
@@ -621,6 +635,7 @@ paths:
 
   /assets/{asset_id}:
     get:
+      operationId: getAsset
       tags: [assets]
       summary: Asset detail — per-Stellar-asset view OR verified-currency global view.
       description: |
@@ -725,6 +740,7 @@ paths:
 
   /assets/{asset_id}/metadata:
     get:
+      operationId: getAssetMetadata
       tags: [assets]
       summary: Extended metadata (SEP-1 CURRENCIES block).
       description: |
@@ -767,6 +783,7 @@ paths:
 
   /assets/{asset_id}/supply:
     get:
+      operationId: getAssetSupply
       tags: [assets]
       summary: Live per-token supply (mint − burn − clawback).
       description: |
@@ -815,6 +832,7 @@ paths:
 
   /assets/{asset_id}/holders:
     get:
+      operationId: getAssetHolders
       tags: [assets]
       summary: Top holders of an asset by current balance.
       description: |
@@ -879,6 +897,7 @@ paths:
 
   /price:
     get:
+      operationId: getPrice
       tags: [price]
       summary: Current aggregated price for one asset.
       description: |
@@ -1096,6 +1115,7 @@ paths:
 
   /price/tip:
     get:
+      operationId: getPriceTip
       tags: [price]
       summary: Rolling-window tip price (ADR-0018 tip surface).
       description: |
@@ -1172,6 +1192,7 @@ paths:
 
   /price/tip/stream:
     get:
+      operationId: streamPriceTip
       tags: [price]
       summary: SSE stream of tip-price updates (ADR-0018).
       description: |
@@ -1232,6 +1253,7 @@ paths:
 
   /price/batch:
     get:
+      operationId: getPriceBatch
       tags: [price]
       summary: Current prices for up to 100 assets.
       description: |
@@ -1289,6 +1311,7 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
     post:
+      operationId: getPriceBatchBulk
       tags: [price]
       summary: Current prices for up to 1000 assets.
       description: |
@@ -1350,6 +1373,7 @@ paths:
 
   /observations:
     get:
+      operationId: listObservations
       tags: [price]
       summary: Raw per-source observations (ADR-0018 Surface 3).
       description: |
@@ -1434,6 +1458,7 @@ paths:
 
   /observations/stream:
     get:
+      operationId: streamObservations
       tags: [price]
       summary: SSE stream of raw per-source observations (ADR-0018).
       description: |
@@ -1505,6 +1530,7 @@ paths:
 
   /price/stream:
     get:
+      operationId: streamPrices
       tags: [price]
       summary: SSE stream of closed-bucket price updates (ADR-0015).
       description: |
@@ -1577,6 +1603,7 @@ paths:
 
   /history:
     get:
+      operationId: getHistory
       tags: [history]
       summary: Raw trade history for a pair in a time window.
       description: |
@@ -1634,6 +1661,7 @@ paths:
 
   /history/since-inception:
     get:
+      operationId: getHistorySinceInception
       tags: [history]
       summary: Closed-bucket historical VWAP series for one asset/quote pair.
       description: |
@@ -1676,6 +1704,7 @@ paths:
 
   /chart:
     get:
+      operationId: getChart
       tags: [history]
       summary: Rolling-window chart series for an asset/quote pair.
       description: |
@@ -1753,6 +1782,7 @@ paths:
 
   /ohlc:
     get:
+      operationId: getOhlc
       tags: [ohlc]
       summary: OHLC bar (single window or multi-bar series) for a pair.
       description: |
@@ -1875,6 +1905,7 @@ paths:
 
   /vwap:
     get:
+      operationId: getVwap
       tags: [price]
       summary: Volume-weighted average price over a window.
       description: |
@@ -1939,6 +1970,7 @@ paths:
 
   /twap:
     get:
+      operationId: getTwap
       tags: [price]
       summary: Time-weighted average price over a window.
       description: |
@@ -1984,6 +2016,7 @@ paths:
 
   /oracle/latest:
     get:
+      operationId: getOracleLatest
       tags: [oracle]
       summary: Latest oracle reading per source for an asset.
       description: |
@@ -2053,6 +2086,7 @@ paths:
 
   /pools:
     get:
+      operationId: listPools
       tags: [markets]
       summary: DEX/AMM liquidity pools (one row per (source, base, quote)).
       description: |
@@ -2151,6 +2185,7 @@ paths:
 
   /pools/reserves:
     get:
+      operationId: getPoolReserves
       tags: [markets]
       summary: Current per-pool-contract AMM reserves + constant-product depth.
       description: |
@@ -2261,6 +2296,7 @@ paths:
 
   /liquidity-pools:
     get:
+      operationId: listLiquidityPools
       tags: [markets]
       summary: Current native (CAP-38) liquidity-pool two-sided reserves + depth.
       description: |
@@ -2371,6 +2407,7 @@ paths:
 
   /lending/pools:
     get:
+      operationId: listLendingPools
       tags: [protocols]
       summary: Lending pools (Blend) with auction + net-flow stats.
       description: |
@@ -2425,7 +2462,7 @@ paths:
                         last_seen:           { type: string, format: date-time }
                         net_supplied_30d:    { type: string, description: "Token base-units, 30d net-flow proxy (not TVL)." }
                         net_borrowed_30d:    { type: string, description: "Token base-units, 30d net-flow proxy." }
-                        utilization_30d_pct: { type: number, nullable: true, description: "Window borrow/supply ratio %; null when net supply ≤ 0." }
+                        utilization_30d_pct: { type: [number, "null"], description: "Window borrow/supply ratio %; null when net supply ≤ 0." }
         "400": { $ref: "#/components/responses/BadRequest" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
@@ -2433,6 +2470,7 @@ paths:
 
   /lending/pools/{pool}/reserves:
     get:
+      operationId: getLendingPoolReserves
       tags: [protocols]
       summary: Blend pool — REAL per-reserve current state (TVL/util/APY).
       description: |
@@ -2501,7 +2539,7 @@ paths:
                     type: object
                     properties:
                       pool:    { type: string }
-                      tvl_usd: { type: string, nullable: true, description: "Σ supplied_usd across priced reserves; null when none priced." }
+                      tvl_usd: { type: [string, "null"], description: "Σ supplied_usd across priced reserves; null when none priced." }
                       reserves:
                         type: array
                         items:
@@ -2511,17 +2549,18 @@ paths:
                             decimals:        { type: integer }
                             supplied:        { type: string, description: Total supplied, underlying token base units. }
                             borrowed:        { type: string, description: Total borrowed, underlying token base units. }
-                            supplied_usd:    { type: string, nullable: true }
-                            borrowed_usd:    { type: string, nullable: true }
+                            supplied_usd:    { type: [string, "null"] }
+                            borrowed_usd:    { type: [string, "null"] }
                             utilization_pct: { type: number, description: Borrowed/supplied, 0..100. }
-                            borrow_apr:      { type: number, nullable: true, description: "Borrow APR as a fraction (0.05 = 5%). Null when the reserve's rate-model config isn't in the captured contract-storage window." }
-                            supply_apr:      { type: number, nullable: true, description: "Supply APR as a fraction. Null when the rate-model config is uncaptured." }
+                            borrow_apr:      { type: [number, "null"], description: "Borrow APR as a fraction (0.05 = 5%). Null when the reserve's rate-model config isn't in the captured contract-storage window." }
+                            supply_apr:      { type: [number, "null"], description: "Supply APR as a fraction. Null when the rate-model config is uncaptured." }
                       as_of_ledger: { type: integer, format: int64, description: "Lake watermark this current-state read is fresh to (ADR-0041) — the highest captured ledger at serve time. Omitted when no watermark reader is wired. Pairs with flags.stale." }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /mev:
     get:
+      operationId: listMevEvents
       tags: [analytics]
       summary: Auto-flagged MEV-event feed.
       description: |
@@ -2618,11 +2657,12 @@ paths:
                         tx_hashes:          { type: array, items: { type: string } }
                         accounts:           { type: array, items: { type: string } }
                         detail:             { type: object, description: "Pattern evidence (arbitrage: assets/sources/legs/notional)." }
-                        profit_usd:         { type: string, nullable: true, description: "Attacker-profit estimate; null for arbitrage (not estimated)." }
+                        profit_usd:         { type: [string, "null"], description: "Attacker-profit estimate; null for arbitrage (not estimated)." }
         "400": { $ref: "#/components/responses/BadRequest" }
 
   /anomalies:
     get:
+      operationId: listAnomalies
       tags: [analytics]
       summary: Freeze-event timeline (ADR-0019).
       description: |
@@ -2688,13 +2728,12 @@ paths:
                             frozen_at_ledger:    { type: integer, format: int64 }
                             reason:              { type: string, enum: [single_source, divergence, outlier_storm, manual, other] }
                             frozen_value:        { type: string }
-                            recovered_at:        { type: string, format: date-time, nullable: true }
-                            recovered_at_ledger: { type: integer, format: int64, nullable: true }
+                            recovered_at:        { type: [string, "null"], format: date-time }
+                            recovered_at_ledger: { type: [integer, "null"], format: int64 }
                             firing:              { type: boolean }
                             detail:              { type: object }
                       daily:
-                        type: array
-                        nullable: true
+                        type: [array, "null"]
                         description: >-
                           Per-(UTC day, reason) freeze tally over the same
                           window as reason_tally — only populated when
@@ -2712,6 +2751,7 @@ paths:
 
   /divergence:
     get:
+      operationId: getDivergenceBoard
       tags: [analytics]
       summary: Cross-reference divergence board (ADR-0019).
       description: |
@@ -2788,6 +2828,7 @@ paths:
 
   /divergence/series:
     get:
+      operationId: getDivergenceSeries
       tags: [analytics]
       summary: Δ% time-series for one (pair, reference).
       description: |
@@ -2884,6 +2925,7 @@ paths:
 
   /oracle/streams:
     get:
+      operationId: listOracleStreams
       tags: [oracle]
       summary: Latest observation per (oracle, asset, quote) — 7d window.
       description: |
@@ -2921,6 +2963,7 @@ paths:
 
   /markets:
     get:
+      operationId: listMarkets
       tags: [markets]
       summary: Distinct trading pairs with activity summary.
       description: |
@@ -3027,6 +3070,7 @@ paths:
 
   /markets/sources:
     get:
+      operationId: getMarketSources
       tags: [markets]
       summary: Per-source 24h volume breakdown for a pair or asset.
       description: |
@@ -3107,8 +3151,7 @@ paths:
                                   type: string
                                   description: Source name (see /v1/sources).
                                 volume_24h_usd:
-                                  type: string
-                                  nullable: true
+                                  type: [string, "null"]
                                   description: SUM derivable USD volume over 24h. Decimal string per ADR-0003.
                                 trade_count_24h:
                                   type: integer
@@ -3122,6 +3165,7 @@ paths:
 
   /issuers:
     get:
+      operationId: listIssuers
       tags: [meta]
       summary: Issuer directory ranked by total observation count.
       description: |
@@ -3211,6 +3255,7 @@ paths:
 
   /issuers/{g_strkey}:
     get:
+      operationId: getIssuer
       tags: [meta]
       summary: Issuer detail — auth flags, SEP-1 metadata, issued assets.
       description: |
@@ -3286,7 +3331,7 @@ paths:
                     properties:
                       data:
                         type: object
-                        required: [g_strkey]
+                        required: [g_strkey, org_verified]
                         properties:
                           g_strkey: { type: string }
                           home_domain: { type: string }
@@ -3309,13 +3354,13 @@ paths:
                               spoofable). When false, `org_name` is unverified
                               self-declared metadata — clients must present it
                               as such, not as a verified identity (CS-100).
-                          auth_required: { type: boolean, nullable: true }
-                          auth_revocable: { type: boolean, nullable: true }
-                          auth_immutable: { type: boolean, nullable: true }
-                          auth_clawback: { type: boolean, nullable: true }
-                          sep1_resolved_at: { type: string, format: date-time, nullable: true }
-                          sep1_payload: { type: object, additionalProperties: true, nullable: true }
-                          creation_ledger: { type: integer, nullable: true }
+                          auth_required: { type: [boolean, "null"] }
+                          auth_revocable: { type: [boolean, "null"] }
+                          auth_immutable: { type: [boolean, "null"] }
+                          auth_clawback: { type: [boolean, "null"] }
+                          sep1_resolved_at: { type: [string, "null"], format: date-time }
+                          sep1_payload: { type: [object, "null"], additionalProperties: true }
+                          creation_ledger: { type: [integer, "null"] }
                           assets:
                             type: array
                             items:
@@ -3336,6 +3381,7 @@ paths:
 
   /contracts/{contract_id}/transfers:
     get:
+      operationId: getContractTransfers
       # x-stability: see the cross-reference note at /ledgers below —
       # this whole explorer/operator surface (ADR-0042) is annotated
       # the same way and kept 1:1 with spec_contract_test.go's
@@ -3487,6 +3533,7 @@ paths:
 
   /changes/{entity_type}/{id}:
     get:
+      operationId: getEntityChanges
       tags: [meta]
       summary: Multi-window delta strip for one entity.
       description: |
@@ -3585,17 +3632,16 @@ paths:
                           entity_id: { type: string }
                           refreshed_at: { type: string, format: date-time }
                           current_value: { type: string, description: "money (price/market-cap) — JSON string per INV-2" }
-                          h1_value: { type: string, nullable: true, description: "money — JSON string per INV-2" }
-                          h1_delta_pct: { type: number, nullable: true }
-                          h24_value: { type: string, nullable: true, description: "money — JSON string per INV-2" }
-                          h24_delta_pct: { type: number, nullable: true }
-                          d7_value: { type: string, nullable: true, description: "money — JSON string per INV-2" }
-                          d7_delta_pct: { type: number, nullable: true }
-                          d30_value: { type: string, nullable: true, description: "money — JSON string per INV-2" }
-                          d30_delta_pct: { type: number, nullable: true }
+                          h1_value: { type: [string, "null"], description: "money — JSON string per INV-2" }
+                          h1_delta_pct: { type: [number, "null"] }
+                          h24_value: { type: [string, "null"], description: "money — JSON string per INV-2" }
+                          h24_delta_pct: { type: [number, "null"] }
+                          d7_value: { type: [string, "null"], description: "money — JSON string per INV-2" }
+                          d7_delta_pct: { type: [number, "null"] }
+                          d30_value: { type: [string, "null"], description: "money — JSON string per INV-2" }
+                          d30_delta_pct: { type: [number, "null"] }
                           ath_value:
-                            type: string
-                            nullable: true
+                            type: [string, "null"]
                             description: >-
                               Highest observed value since this entity entered the index —
                               NOT an all-time high over the asset's full history. money —
@@ -3617,32 +3663,27 @@ paths:
                               "high-water mark observed by this index", not as a market
                               all-time high.
                           ath_at:
-                            type: string
+                            type: [string, "null"]
                             format: date-time
-                            nullable: true
                             description: Observation time of ath_value.
                           atl_value:
-                            type: string
-                            nullable: true
+                            type: [string, "null"]
                             description: >-
                               Lowest observed value since this entity entered the index —
                               NOT an all-time low over the asset's full history. money —
                               JSON string per INV-2. Same accumulation and
                               single-bad-print caveats as ath_value, via LEAST.
                           atl_at:
-                            type: string
+                            type: [string, "null"]
                             format: date-time
-                            nullable: true
                             description: Observation time of atl_value.
                           streak_direction:
-                            type: string
+                            type: [string, "null"]
                             enum: [up, down, flat]
-                            nullable: true
-                          streak_days: { type: integer, nullable: true }
+                          streak_days: { type: [integer, "null"] }
                           acceleration:
-                            type: string
+                            type: [string, "null"]
                             enum: [increasing, flat, decreasing]
-                            nullable: true
                     required: [data]
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -3652,6 +3693,7 @@ paths:
 
   /diagnostics/cursors:
     get:
+      operationId: getDiagnosticCursors
       tags: [meta]
       summary: Per-source ingest cursor positions.
       description: |
@@ -3776,6 +3818,7 @@ paths:
 
   /diagnostics/ingestion:
     get:
+      operationId: getDiagnosticIngestion
       x-stability: experimental
       tags: [meta]
       summary: Per-region ingestion snapshot — ledger tip, backfill, FX, supply, sources.
@@ -3816,6 +3859,8 @@ paths:
                     version: v0.7.6
                     build_date: '2026-07-03T22:24:02Z'
                     commit: 3d26b9d2b1bf72dc3caec9db9dceff59ca24f6b7
+                    dirty: 'false'
+                    go_version: go1.25.10
                   ledger:
                     latest_ledger: 63316172
                     lag_seconds: 0
@@ -3826,10 +3871,15 @@ paths:
                   - decoder: aquarius
                     ranges_total: 1
                     ranges_complete: 1
+                    ranges_running: 0
+                    ranges_stalled: 0
+                    ranges_active: 0
+                    oldest_lag_seconds: 0
                     newest_ledger: 62637704
                   backfill_coverage:
                   - source: aquarius
                     applies: true
+                    entries: 1
                     coverage_pct: 1
                     completeness_pct: 1
                     completeness_complete: true
@@ -3844,6 +3894,10 @@ paths:
                     latest_quote: '2026-07-03'
                     total_quotes: 244477
                     currencies_count: 132
+                  market_cap:
+                    entries_count: 187
+                    oldest_fetched_at: '2026-07-03T21:38:00Z'
+                    newest_fetched_at: '2026-07-03T22:38:00Z'
                   supply:
                     classic_assets_with_supply: 9
                     sep41_assets_with_supply: 0
@@ -3853,7 +3907,9 @@ paths:
                   - name: aquarius
                     class: exchange
                     include_in_vwap: true
+                    backfill_safe: true
                     trade_count_24h: 12946
+                    markets_count_24h: 142
                     volume_24h_usd: '2100883.02'
                 as_of: '2026-07-03T22:38:19.403102451Z'
                 flags:
@@ -3999,6 +4055,7 @@ paths:
 
   /diagnostics/archive:
     get:
+      operationId: getDiagnosticArchive
       x-stability: experimental
       tags: [meta]
       summary: Latest archive-completeness report (ADR-0017).
@@ -4110,6 +4167,7 @@ paths:
 
   /incidents:
     get:
+      operationId: listIncidents
       tags: [meta]
       summary: Customer-facing incident posts.
       description: |
@@ -4157,9 +4215,8 @@ paths:
                                   enum: [investigating, identified, monitoring, resolved]
                                 started_at: { type: string, format: date-time }
                                 resolved_at:
-                                  type: string
+                                  type: [string, "null"]
                                   format: date-time
-                                  nullable: true
                                 affected_components:
                                   type: array
                                   items: { type: string }
@@ -4189,6 +4246,7 @@ paths:
 
   /incidents.atom:
     get:
+      operationId: getIncidentsAtomFeed
       tags: [meta]
       summary: Atom feed of customer-facing incidents.
       description: |
@@ -4220,6 +4278,7 @@ paths:
 
   /coverage:
     get:
+      operationId: getCoverage
       tags: [meta]
       summary: Per-source completeness verdicts (ADR-0033/ADR-0034) — the public trust surface.
       description: |
@@ -4359,6 +4418,7 @@ paths:
               schema: { $ref: "#/components/schemas/Problem" }
   /protocols:
     get:
+      operationId: listProtocols
       tags: [protocols]
       summary: Protocol directory — one row per indexed protocol.
       description: |
@@ -4445,6 +4505,7 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
   /protocols/{name}:
     get:
+      operationId: getProtocol
       tags: [protocols]
       summary: Protocol deep-dive — directory row + contract registry + event vocabulary.
       description: |
@@ -4660,6 +4721,7 @@ paths:
               schema: { $ref: "#/components/schemas/Problem" }
   /sdex/orderbook:
     get:
+      operationId: getSdexOrderbook
       tags: [protocols]
       summary: SDEX order-book depth for one classic pair.
       description: |
@@ -4756,6 +4818,7 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
   /ledger/tip:
     get:
+      operationId: getLedgerTip
       tags: [meta]
       summary: Live-ingest frontier — latest ingested ledger + lag.
       description: |
@@ -4821,6 +4884,7 @@ paths:
 
   /ledger/stream:
     get:
+      operationId: streamLedgerTip
       tags: [meta]
       summary: SSE stream of the live-ingest frontier.
       description: |
@@ -4870,6 +4934,7 @@ paths:
 
   /network/stats:
     get:
+      operationId: getNetworkStats
       tags: [meta]
       summary: Consolidated home-page aggregate stats.
       description: |
@@ -4903,8 +4968,7 @@ paths:
                         required: [markets_count_24h, assets_indexed, latest_ledger, exchange_sources, total_sources]
                         properties:
                           volume_24h_usd:
-                            type: string
-                            nullable: true
+                            type: [string, "null"]
                             description: |
                               SUM(prices_1m.volume_usd) over the trailing
                               24h. Decimal string per ADR-0003.
@@ -4953,6 +5017,7 @@ paths:
 
   /network/throughput:
     get:
+      operationId: getNetworkThroughput
       tags: [explorer]
       summary: Daily network throughput time-series.
       description: |
@@ -5057,6 +5122,7 @@ paths:
 
   /methodology:
     get:
+      operationId: getMethodology
       tags: [meta]
       summary: Machine-readable summary of the active aggregation policy.
       description: |
@@ -5106,6 +5172,7 @@ paths:
                     paid: false
                     backfill_available: true
                     backfill_safe: true
+                    on_chain: true
                   references:
                   - id: ADR-0007
                     title: Aggregation policy + cache-key contract
@@ -5122,6 +5189,7 @@ paths:
 
   /sources:
     get:
+      operationId: listSources
       tags: [meta]
       summary: Source catalogue with class + IncludeInVWAP metadata.
       description: |
@@ -5186,6 +5254,7 @@ paths:
 
   /sources/{name}/health:
     get:
+      operationId: getSourceHealth
       tags: [meta]
       summary: One source's live health row.
       description: |
@@ -5269,6 +5338,7 @@ paths:
 
   /aggregators:
     get:
+      operationId: listAggregators
       tags: [meta]
       summary: Router / aggregator-vault registry with routed-via 24h rollup.
       description: |
@@ -5358,6 +5428,7 @@ paths:
 
   /sac-wrappers:
     get:
+      operationId: listSacWrappers
       tags: [meta]
       summary: Stellar-Asset-Contract wrapper resolution map.
       description: |
@@ -5402,6 +5473,7 @@ paths:
 
   /pairs:
     get:
+      operationId: listPairs
       tags: [markets]
       summary: Direct markets for a pair.
       description: |
@@ -5458,6 +5530,7 @@ paths:
 
   /oracle/lastprice:
     get:
+      operationId: getOracleLastPrice
       tags: [oracle]
       summary: SEP-40 lastprice-equivalent passthrough.
       description: |
@@ -5515,6 +5588,7 @@ paths:
 
   /oracle/prices:
     get:
+      operationId: getOraclePrices
       tags: [oracle]
       summary: SEP-40 prices-equivalent passthrough (N historical).
       description: |
@@ -5564,6 +5638,7 @@ paths:
 
   /oracle/x_last_price:
     get:
+      operationId: getOracleCrossPrice
       tags: [oracle]
       summary: SEP-40 x_last_price-equivalent (cross-pair).
       description: |
@@ -5617,6 +5692,7 @@ paths:
 
   /account/me:
     get:
+      operationId: getAccountMe
       tags: [account]
       summary: API-key holder info + quota status.
       description: |
@@ -5652,6 +5728,7 @@ paths:
 
   /account/usage:
     get:
+      operationId: getAccountUsage
       tags: [account]
       summary: Daily per-endpoint request counters for the authenticated key.
       description: |
@@ -5734,6 +5811,7 @@ paths:
 
   /account/keys:
     get:
+      operationId: listAccountKeys
       tags: [account]
       summary: List all API keys for the authenticated caller.
       description: |
@@ -5786,6 +5864,7 @@ paths:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
     post:
+      operationId: createAccountKey
       tags: [account]
       summary: Create a new API key.
       description: |
@@ -5858,6 +5937,7 @@ paths:
 
   /account/keys/{keyID}:
     delete:
+      operationId: deleteAccountKey
       tags: [account]
       summary: Revoke an API key by KeyID.
       description: |
@@ -5889,8 +5969,71 @@ paths:
         "503":
           description: Account store not configured.
 
+  /account/admin/lookup:
+    get:
+      operationId: adminLookupCustomer
+      tags: [admin]
+      summary: Staff — customer look-up by user email or account slug.
+      description: |
+        Staff "Customer look-up" tool (platform-spec §6): resolve an
+        account by one of its users' email address OR by account slug,
+        and return the account's tier/status plus the users on it.
+        Read-only.
+
+        Auth is a dashboard SESSION cookie, NOT an API key: the route is
+        wrapped in `RequireSession` (401 without a session) and the
+        handler additionally gates on the session user's staff flag — a
+        logged-in non-staff customer gets 403, never another customer's
+        data. (Note the deliberate mismatch with the sibling
+        `/v1/admin/*` operator endpoints, which are `APIKeyAuth`
+        operator-tier; this staff tool lives behind the dashboard session
+        instead.) Every successful look-up lands a `staff.customer.lookup`
+        audit row.
+
+        Supply EXACTLY ONE of `email` or `slug`. Supplying neither is a
+        400 (`provide ?email= or ?slug=`). The response carries
+        `Cache-Control: no-store` because the body is staff-only customer
+        PII.
+      security:
+        - SessionCookie: []
+      parameters:
+        - name: email
+          in: query
+          required: false
+          schema: { type: string, format: email }
+          description: |
+            Resolve the account via one of its users' email address
+            (case-insensitive). Mutually exclusive with `slug` — supply
+            exactly one.
+        - name: slug
+          in: query
+          required: false
+          schema: { type: string }
+          description: |
+            Resolve the account by its slug (case-insensitive). Mutually
+            exclusive with `email` — supply exactly one.
+      responses:
+        "200":
+          description: |
+            Matched customer. Served with `Cache-Control: no-store`
+            (staff-only PII).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminLookupResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: Authenticated session user is not staff.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /admin/keys:
     post:
+      operationId: createAdminKey
       tags: [admin]
       summary: Operator — mint an API key for another identifier.
       description: |
@@ -5981,6 +6124,7 @@ paths:
 
   /admin/keys/{keyID}:
     delete:
+      operationId: deleteAdminKey
       tags: [admin]
       summary: Operator — revoke another identifier's API key (kill switch).
       description: |
@@ -6036,6 +6180,7 @@ paths:
 
   /admin/accounts/{id}:
     get:
+      operationId: getAdminAccount
       tags: [admin]
       summary: Operator — read an account's tier + overrides.
       description: |
@@ -6068,6 +6213,7 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
     patch:
+      operationId: updateAdminAccount
       tags: [admin]
       summary: Operator — set an account's tier, status, and rate-limit / quota overrides.
       description: |
@@ -6156,7 +6302,7 @@ paths:
                   id: 3d8f1a6c-9e2b-4c7d-8a5f-1b6e3d9c2a4f
                   name: Acme Trading Desk
                   slug: acme-trading-desk
-                  tier: business
+                  tier: partner
                   status: active
                   billing_email: ops@acme.example.com
                   created_at: '2026-04-12T09:15:00Z'
@@ -6183,6 +6329,7 @@ paths:
 
   /admin/status-notices:
     get:
+      operationId: listAdminStatusNotices
       tags: [admin]
       summary: Operator — list all status notices (active + resolved).
       description: |
@@ -6206,6 +6353,7 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
     post:
+      operationId: createAdminStatusNotice
       tags: [admin]
       summary: Operator — post a customer-facing status banner.
       description: |
@@ -6276,6 +6424,7 @@ paths:
 
   /admin/status-notices/{id}/resolve:
     post:
+      operationId: resolveAdminStatusNotice
       tags: [admin]
       summary: Operator — resolve (clear) a status banner.
       description: |
@@ -6336,6 +6485,7 @@ paths:
 
   /register:
     post:
+      operationId: registerApiKey
       tags: [account]
       summary: Open registration — create a free account + first API key in one call.
       description: |
@@ -6440,6 +6590,7 @@ paths:
 
   /signup:
     post:
+      operationId: signup
       tags: [account]
       summary: Self-service signup — mint a first API key by email.
       description: |
@@ -6515,6 +6666,7 @@ paths:
 
   /signup/verify:
     get:
+      operationId: verifySignup
       tags: [account]
       summary: Confirm email ownership for a signup-issued API key.
       description: |
@@ -6591,6 +6743,7 @@ paths:
 
   /dashboard/keys:
     get:
+      operationId: listDashboardKeys
       tags: [dashboard]
       summary: Customer dashboard — list this account's API keys.
       security:
@@ -6630,6 +6783,7 @@ paths:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
     post:
+      operationId: createDashboardKey
       tags: [dashboard]
       summary: Customer dashboard — mint a new API key.
       security:
@@ -6687,6 +6841,7 @@ paths:
 
   /dashboard/keys/{id}:
     delete:
+      operationId: deleteDashboardKey
       tags: [dashboard]
       summary: Customer dashboard — revoke a key.
       security:
@@ -6726,6 +6881,7 @@ paths:
 
   /dashboard/webhooks:
     get:
+      operationId: listDashboardWebhooks
       tags: [dashboard]
       summary: Customer dashboard — list this account's webhooks.
       security:
@@ -6764,6 +6920,7 @@ paths:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
     post:
+      operationId: createDashboardWebhook
       tags: [dashboard]
       summary: Customer dashboard — register a new webhook.
       security:
@@ -6822,6 +6979,7 @@ paths:
 
   /dashboard/webhooks/{id}:
     patch:
+      operationId: updateDashboardWebhook
       tags: [dashboard]
       summary: Customer dashboard — update a webhook.
       security:
@@ -6876,6 +7034,7 @@ paths:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
     delete:
+      operationId: deleteDashboardWebhook
       tags: [dashboard]
       summary: Customer dashboard — delete a webhook.
       security:
@@ -6908,6 +7067,7 @@ paths:
 
   /dashboard/webhooks/{id}/deliveries:
     get:
+      operationId: getDashboardWebhookDeliveries
       tags: [dashboard]
       summary: Customer dashboard — list recent delivery attempts.
       security:
@@ -6955,6 +7115,7 @@ paths:
 
   /dashboard/price-alerts:
     get:
+      operationId: listDashboardPriceAlerts
       tags: [dashboard]
       summary: Customer dashboard — list this account's price alerts.
       security:
@@ -6991,6 +7152,7 @@ paths:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
     post:
+      operationId: createDashboardPriceAlert
       tags: [dashboard]
       summary: Customer dashboard — register a new price alert.
       security:
@@ -7048,6 +7210,7 @@ paths:
 
   /dashboard/price-alerts/{id}:
     patch:
+      operationId: updateDashboardPriceAlert
       tags: [dashboard]
       summary: Customer dashboard — update a price alert.
       security:
@@ -7106,6 +7269,7 @@ paths:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
     delete:
+      operationId: deleteDashboardPriceAlert
       tags: [dashboard]
       summary: Customer dashboard — delete a price alert.
       security:
@@ -7143,6 +7307,7 @@ paths:
 
   /auth/login:
     post:
+      operationId: requestMagicLink
       tags: [auth]
       summary: Customer dashboard — request a magic-link sign-in email.
       description: |
@@ -7212,6 +7377,7 @@ paths:
 
   /auth/callback:
     get:
+      operationId: consumeMagicLink
       tags: [auth]
       summary: Customer dashboard — consume a magic-link token + mint a session cookie.
       description: |
@@ -7271,6 +7437,7 @@ paths:
 
   /auth/verify-code:
     post:
+      operationId: verifyLoginCode
       tags: [auth]
       summary: Customer dashboard — exchange the 6-digit email code for a session cookie.
       description: |
@@ -7343,6 +7510,7 @@ paths:
 
   /auth/logout:
     post:
+      operationId: logout
       tags: [auth]
       summary: Customer dashboard — revoke the current session + clear the cookie.
       description: |
@@ -7366,6 +7534,7 @@ paths:
 
   /auth/passkey/begin-login:
     post:
+      operationId: beginPasskeyLogin
       tags: [auth]
       summary: Customer dashboard — begin a passkey (WebAuthn) sign-in.
       description: |
@@ -7411,6 +7580,7 @@ paths:
 
   /auth/passkey/finish-login:
     post:
+      operationId: finishPasskeyLogin
       tags: [auth]
       summary: Customer dashboard — finish a passkey sign-in; mints the session cookie.
       description: |
@@ -7486,6 +7656,7 @@ paths:
 
   /auth/passkey/begin-register:
     post:
+      operationId: beginPasskeyRegistration
       tags: [auth]
       summary: Customer dashboard — begin adding a passkey to the signed-in account.
       security:
@@ -7526,6 +7697,7 @@ paths:
 
   /auth/passkey/finish-register:
     post:
+      operationId: finishPasskeyRegistration
       tags: [auth]
       summary: Customer dashboard — finish adding a passkey; stores the credential.
       security:
@@ -7595,6 +7767,7 @@ paths:
 
   /auth/passkey/credentials:
     get:
+      operationId: listPasskeyCredentials
       tags: [auth]
       summary: Customer dashboard — list the signed-in user's passkeys.
       security:
@@ -7628,6 +7801,7 @@ paths:
 
   /auth/passkey/credentials/{id}:
     delete:
+      operationId: deletePasskeyCredential
       tags: [auth]
       summary: Customer dashboard — remove one of the signed-in user's passkeys.
       security:
@@ -7661,6 +7835,7 @@ paths:
 
   /auth/sep10/challenge:
     get:
+      operationId: getSep10Challenge
       tags: [auth]
       summary: SEP-10 Web Auth — issue a challenge transaction.
       description: |
@@ -7704,6 +7879,7 @@ paths:
 
   /auth/sep10/token:
     post:
+      operationId: createSep10Token
       tags: [auth]
       summary: SEP-10 Web Auth — exchange a signed challenge for a JWT.
       description: |
@@ -7765,6 +7941,7 @@ paths:
   # indefinitely. 503 when the deployment has no ClickHouse explorer reader.
   /ledgers:
     get:
+      operationId: listLedgers
       # x-stability: experimental marks the explorer/operator-only read
       # surface added under ADR-0038 and formalized as an OpenAPI
       # extension per ADR-0042 decision #4 (2026-07-08) — no wire-shape
@@ -7833,6 +8010,7 @@ paths:
 
   /ledgers/{seq}:
     get:
+      operationId: getLedger
       x-stability: experimental
       tags: [explorer]
       summary: A single ledger header.
@@ -7880,6 +8058,7 @@ paths:
 
   /ledgers/{seq}/transactions:
     get:
+      operationId: getLedgerTransactions
       x-stability: experimental
       tags: [explorer]
       summary: Transactions in a ledger.
@@ -7931,6 +8110,7 @@ paths:
 
   /tx/{hash}:
     get:
+      operationId: getTransaction
       x-stability: experimental
       tags: [explorer]
       summary: Transaction detail — summary + decoded operations + events.
@@ -7986,6 +8166,7 @@ paths:
 
   /operations:
     get:
+      operationId: listOperations
       x-stability: experimental
       tags: [explorer]
       summary: Operations — a ledger's ops, or the network-wide recent directory.
@@ -8077,6 +8258,7 @@ paths:
 
   /contracts:
     get:
+      operationId: listContracts
       x-stability: experimental
       tags: [explorer]
       summary: Contracts directory — most active contracts over a recent window.
@@ -8147,6 +8329,7 @@ paths:
 
   /contracts/{contract_id}:
     get:
+      operationId: getContract
       x-stability: experimental
       tags: [explorer]
       summary: Per-contract recent on-chain event activity.
@@ -8225,6 +8408,7 @@ paths:
 
   /contracts/{contract_id}/wasm:
     get:
+      operationId: getContractWasm
       x-stability: experimental
       tags: [explorer]
       summary: A contract's on-chain WASM — metadata, exports, disassembly.
@@ -8319,6 +8503,7 @@ paths:
 
   /contracts/{contract_id}/interactions:
     get:
+      operationId: getContractInteractions
       x-stability: experimental
       tags: [explorer]
       summary: Contract interaction map — co-occurring contracts (cross-contract calls).
@@ -8406,6 +8591,7 @@ paths:
 
   /contracts/{contract_id}/code-history:
     get:
+      operationId: getContractCodeHistory
       x-stability: experimental
       tags: [explorer]
       summary: Contract code/upgrade history — WASM-hash timeline.
@@ -8454,6 +8640,7 @@ paths:
 
   /accounts:
     get:
+      operationId: listAccounts
       x-stability: experimental
       tags: [explorer]
       summary: Accounts directory — ranked by total USD wealth.
@@ -8517,6 +8704,7 @@ paths:
 
   /directory:
     get:
+      operationId: getDirectoryLabels
       x-stability: experimental
       tags: [explorer]
       summary: Batch address labels from the curated public directory.
@@ -8575,6 +8763,7 @@ paths:
 
   /accounts/stats:
     get:
+      operationId: getAccountsStats
       x-stability: experimental
       tags: [explorer]
       summary: Network-wide account analytics — totals, wealth + trustline distribution, most-held assets.
@@ -8659,6 +8848,7 @@ paths:
 
   /accounts/{g_strkey}:
     get:
+      operationId: getAccount
       x-stability: experimental
       tags: [explorer]
       summary: Account state — balance, signers, thresholds, trustlines, offers.
@@ -8779,6 +8969,7 @@ paths:
 
   /accounts/{g_strkey}/transactions:
     get:
+      operationId: getAccountTransactions
       x-stability: experimental
       tags: [explorer]
       summary: Transactions involving an account (sourced + incoming), newest first.
@@ -8837,6 +9028,7 @@ paths:
 
   /accounts/{g_strkey}/operations:
     get:
+      operationId: getAccountOperations
       x-stability: experimental
       tags: [explorer]
       summary: Operations involving an account (sourced + incoming), newest first.
@@ -8891,6 +9083,7 @@ paths:
 
   /accounts/{g_strkey}/movements:
     get:
+      operationId: getAccountMovements
       x-stability: experimental
       tags: [explorer]
       summary: Unified account-activity feed (pre-P23 archive + post-P23 tail), newest first.
@@ -8976,6 +9169,7 @@ paths:
 
   /accounts/{g_strkey}/positions:
     get:
+      operationId: getAccountPositions
       x-stability: experimental
       tags: [explorer]
       summary: "\"Enter an address, see all your DeFi positions\" — folded per-protocol net positions."
@@ -9058,6 +9252,7 @@ paths:
 
   /accounts/{g_strkey}/trades:
     get:
+      operationId: getAccountTrades
       x-stability: experimental
       tags: [explorer]
       summary: The address's historic trades (taker or maker side), newest first.
@@ -9129,6 +9324,7 @@ paths:
 
   /accounts/{g_strkey}/activity:
     get:
+      operationId: getAccountActivity
       x-stability: experimental
       tags: [explorer]
       summary: Segmented "what has this address been doing" breakdown (all-time counts).
@@ -9196,6 +9392,7 @@ paths:
 
   /search:
     get:
+      operationId: classifySearchQuery
       x-stability: experimental
       tags: [explorer]
       summary: Classify a query (tx / ledger / account / contract / asset).
@@ -9203,7 +9400,7 @@ paths:
         Single-box search: detects the kind of `q` by its shape and returns the
         canonical detail endpoint to route to. Pure classification (no lake read).
       parameters:
-        - { name: q, in: query, required: true, description: Tx hash, ledger seq, G-account, C-contract, or asset id., schema: { type: string } }
+        - { name: q, in: query, required: true, description: "Tx hash, ledger seq, G-account, C-contract, or asset id.", schema: { type: string } }
       responses:
         "200":
           description: Classified query.
@@ -10303,10 +10500,10 @@ components:
         id:                   { type: string, format: uuid }
         event_type:           { type: string, enum: [incident.sev1, incident.resolved, anomaly.freeze, divergence.firing, price.alert] }
         attempt_count:        { type: integer, minimum: 0 }
-        next_attempt_at:      { type: string, format: date-time, nullable: true, description: "When the worker will retry. Null/zero when terminal (delivered OR retry budget exhausted)." }
-        delivered_at:         { type: string, format: date-time, nullable: true }
-        last_error:           { type: string, nullable: true }
-        last_response_status: { type: integer, nullable: true, description: "HTTP status of the most-recent attempt." }
+        next_attempt_at:      { type: [string, "null"], format: date-time, description: "When the worker will retry. Null/zero when terminal (delivered OR retry budget exhausted)." }
+        delivered_at:         { type: [string, "null"], format: date-time }
+        last_error:           { type: [string, "null"] }
+        last_response_status: { type: [integer, "null"], description: "HTTP status of the most-recent attempt." }
         created_at:           { type: string, format: date-time }
       required: [id, event_type, attempt_count, created_at]
 
@@ -10389,12 +10586,12 @@ components:
         severity:             { type: string, enum: [SEV-1, SEV-2, SEV-3] }
         status:               { type: string, enum: [investigating, identified, monitoring, resolved] }
         started_at:           { type: string, format: date-time, description: "When the incident was first detected." }
-        resolved_at:          { type: string, format: date-time, nullable: true, description: "Only present on `incident.resolved` deliveries." }
+        resolved_at:          { type: [string, "null"], format: date-time, description: "Only present on `incident.resolved` deliveries." }
         affected_components:
           type: array
           items: { type: string }
           description: "One or more impacted surfaces — names match the status-page component set (api / indexer / aggregator / storage)."
-        postmortem:           { type: string, nullable: true, description: "URL or path of the public postmortem, when published." }
+        postmortem:           { type: [string, "null"], description: "URL or path of the public postmortem, when published." }
         at:                   { type: string, format: date-time, description: "When this delivery was generated (server time, RFC 3339 nanosecond)." }
       required: [event, slug, title, severity, status, started_at, affected_components, at]
 
@@ -10543,8 +10740,7 @@ components:
         not by parsing `next`.
       properties:
         next:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: |
             Opaque token to pass as the `cursor` query parameter on
             the next request. Base64url-encoded; contents are an
@@ -10721,6 +10917,14 @@ components:
         uptime: { type: string, description: "Human-readable process uptime, truncated to the second (e.g. `3h12m4s`)." }
         status_root: { type: string, description: "Pointer at `/v1/status` — the SLA-truth rollup (F-1210)." }
       required: [status]
+
+    HealthEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/HealthResponse" }
+          required: [data]
 
     # /readyz body shape (enveloped). `status` carries three values:
     # `ok` (all checks pass), `degraded` (a non-critical dependency
@@ -10919,10 +11123,9 @@ components:
         asset_id:     { type: string }
         type:         { type: string, enum: [native, classic, soroban, fiat, global, external], description: "`global` = a catalogue-identity listing row (slug id); `external` = a reference-only (non-Stellar-issued) asset. Both appear on listing surfaces (assets.go projectCatalogueRow)." }
         code:         { type: string }
-        issuer:       { type: string, nullable: true }
+        issuer:       { type: [string, "null"] }
         contract_id:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: >-
             C-strkey contract address. For Soroban tokens this is the
             token contract itself; for classic + native assets it is the
@@ -10932,7 +11135,7 @@ components:
             asset up BY a SAC address resolves to the wrapped classic
             asset (with its price), so wallets can use contract addresses
             as the primary key for any holding.
-        home_domain:  { type: string, nullable: true }
+        home_domain:  { type: [string, "null"] }
         decimals:     { type: integer, description: "On-chain smallest-unit scale. 7 for classic + native (stroops, protocol-fixed). For Soroban tokens this is the contract's real decimals() read from its captured instance metadata; 7 when the metadata isn't derivable from the lake." }
         sep1_status:
           type: string
@@ -10946,18 +11149,18 @@ components:
             - unreachable:    fetch / parse failed (see server logs).
         # Overlay fields, populated only when sep1_status == "verified"
         # (some also present for "no_match" — org_name).
-        name:              { type: string, nullable: true }
-        description:       { type: string, nullable: true }
-        image:             { type: string, nullable: true }
-        org_name:          { type: string, nullable: true }
-        anchor_asset:      { type: string, nullable: true }
-        anchor_asset_type: { type: string, nullable: true }
+        name:              { type: [string, "null"] }
+        description:       { type: [string, "null"] }
+        image:             { type: [string, "null"] }
+        org_name:          { type: [string, "null"] }
+        anchor_asset:      { type: [string, "null"] }
+        anchor_asset_type: { type: [string, "null"] }
         # SEP-1 issuance declarations (issuer's stated commitments,
         # distinct from the live-ledger F2 fields below).
-        conditions:        { type: string, nullable: true, description: "Issuer's declared terms / conditions text." }
-        fixed_number:      { type: string, nullable: true, description: "SEP-1-declared fixed total supply (decimal string in the asset's smallest integer unit). Distinct from `total_supply` below — that's the live-ledger sum." }
-        max_number:        { type: string, nullable: true, description: "SEP-1-declared maximum supply ceiling (decimal string). Distinct from `max_supply` below which is operator/policy-derived." }
-        is_unlimited:      { type: boolean, nullable: true, description: "Issuer asserts unbounded issuance. Null when the issuer didn't address supply at all; false when they declared a bounded supply." }
+        conditions:        { type: [string, "null"], description: "Issuer's declared terms / conditions text." }
+        fixed_number:      { type: [string, "null"], description: "SEP-1-declared fixed total supply (decimal string in the asset's smallest integer unit). Distinct from `total_supply` below — that's the live-ledger sum." }
+        max_number:        { type: [string, "null"], description: "SEP-1-declared maximum supply ceiling (decimal string). Distinct from `max_supply` below which is operator/policy-derived." }
+        is_unlimited:      { type: [boolean, "null"], description: "Issuer asserts unbounded issuance. Null when the issuer didn't address supply at all; false when they declared a bounded supply." }
         # F2 fields — Market Cap / FDV / Circulating / Total / Max
         # Supply (ADR-0011).
         #
@@ -10975,18 +11178,17 @@ components:
         # available (no supply snapshot yet, no USD price for the
         # pair, max_supply unknown for an uncapped issuer) emits null
         # rather than fabricating per ADR-0011 "we don't fabricate".
-        circulating_supply: { type: string, nullable: true, description: "Raw integer in asset's smallest unit (per ADR-0011 supply derivation). Null when no snapshot exists." }
-        total_supply:       { type: string, nullable: true, description: "Raw integer in asset's smallest unit. Null when no snapshot exists." }
-        max_supply:         { type: string, nullable: true, description: "Raw integer in asset's smallest unit. Null for uncapped issuers without operator override or SEP-1 declaration." }
-        price_usd:          { type: string, nullable: true, description: "Current per-asset USD price as a fixed-precision decimal string — same value `/v1/price?asset=…&quote=fiat:USD` returns. Inlined so wallet UIs don't need a second round-trip. Null when no USD price can be derived." }
-        change_24h_pct:     { type: string, nullable: true, description: "Trailing-24h price change as a signed decimal percentage with two fractional digits (e.g. \"+1.27\", \"-0.05\", \"0.00\"). Null when the asset has no current USD price or no comparison bucket ~24h ago." }
-        market_cap_usd:     { type: string, nullable: true, description: "circulating_supply × USD price / 10^decimals, two fractional digits. Null when supply or USD price is unavailable, OR when suppressed as dust-liquidity (see market_cap_low_liquidity)." }
-        fdv_usd:            { type: string, nullable: true, description: "max_supply × USD price / 10^decimals, two fractional digits. Null when max_supply is null, USD price unavailable, OR when suppressed as dust-liquidity (see market_cap_low_liquidity)." }
+        circulating_supply: { type: [string, "null"], description: "Raw integer in asset's smallest unit (per ADR-0011 supply derivation). Null when no snapshot exists." }
+        total_supply:       { type: [string, "null"], description: "Raw integer in asset's smallest unit. Null when no snapshot exists." }
+        max_supply:         { type: [string, "null"], description: "Raw integer in asset's smallest unit. Null for uncapped issuers without operator override or SEP-1 declaration." }
+        price_usd:          { type: [string, "null"], description: "Current per-asset USD price as a fixed-precision decimal string — same value `/v1/price?asset=…&quote=fiat:USD` returns. Inlined so wallet UIs don't need a second round-trip. Null when no USD price can be derived." }
+        change_24h_pct:     { type: [string, "null"], description: "Trailing-24h price change as a signed decimal percentage with two fractional digits (e.g. \"+1.27\", \"-0.05\", \"0.00\"). Null when the asset has no current USD price or no comparison bucket ~24h ago." }
+        market_cap_usd:     { type: [string, "null"], description: "circulating_supply × USD price / 10^decimals, two fractional digits. Null when supply or USD price is unavailable, OR when suppressed as dust-liquidity (see market_cap_low_liquidity)." }
+        fdv_usd:            { type: [string, "null"], description: "max_supply × USD price / 10^decimals, two fractional digits. Null when max_supply is null, USD price unavailable, OR when suppressed as dust-liquidity (see market_cap_low_liquidity)." }
         market_cap_low_liquidity: { type: boolean, description: "True when market_cap_usd and fdv_usd were deliberately suppressed (served null) because the backing price came from negligible liquidity — a single venue AND trailing-24h USD volume below the server's aggregate.min_market_cap_volume_usd floor. Disambiguates 'suppressed on purpose' from 'no supply/price data'; the price_usd itself still serves — the guard is on the valuation, not the price. Omitted when a cap is present." }
         supply_basis:
-          type: string
+          type: [string, "null"]
           enum: [xlm_sdf_reserve_exclusion, xlm_total_only, issuer_exclusion, admin_exclusion, override, sep1_declared_max, sep41_lake_flows, no_metadata]
-          nullable: true
           description: |
             Which ADR-0011 policy produced the supply numbers.
             Surfaced so consumers can decide how much to trust the
@@ -11002,8 +11204,7 @@ components:
             (total == circulating; no admin exclusion). Null when no
             supply snapshot is available.
         volume_24h_usd:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: |
             Trailing-24h USD-denominated trade volume across every
             pair this asset participates in (as base OR quote).
@@ -11040,58 +11241,54 @@ components:
         # 2026-07-02 (board #33): these were served but unspecced.
         slug:               { type: string, description: "Catalogue slug when the asset has a verified-currency identity (e.g. \"usdc\")." }
         class:              { type: string, enum: [crypto, stablecoin, fiat], description: "Verified-currency taxonomy when catalogued." }
-        change_1h_pct:      { type: string, nullable: true, description: "Trailing-1h price change, signed decimal percentage." }
-        change_7d_pct:      { type: string, nullable: true, description: "Trailing-7d price change, signed decimal percentage." }
-        first_seen_ledger:  { type: integer, format: int64, nullable: true, description: "First ledger this asset was observed trading." }
-        last_seen_ledger:   { type: integer, format: int64, nullable: true, description: "Most recent ledger this asset was observed trading." }
-        observation_count:  { type: integer, format: int64, nullable: true, description: "Total observed trade rows for this asset. Emitted as `0` for a catalogued asset with no observations; absent only when the asset has no asset-catalogue row at all (so `0` and \"unknown\" are distinguishable)." }
-        markets_count:      { type: integer, nullable: true, description: "Distinct (base, quote) pairs over the trailing 24h." }
-        trade_count_24h:    { type: integer, nullable: true, description: "Trades the asset participated in over the trailing 24h." }
+        change_1h_pct:      { type: [string, "null"], description: "Trailing-1h price change, signed decimal percentage." }
+        change_7d_pct:      { type: [string, "null"], description: "Trailing-7d price change, signed decimal percentage." }
+        first_seen_ledger:  { type: [integer, "null"], format: int64, description: "First ledger this asset was observed trading." }
+        last_seen_ledger:   { type: [integer, "null"], format: int64, description: "Most recent ledger this asset was observed trading." }
+        observation_count:  { type: [integer, "null"], format: int64, description: "Total observed trade rows for this asset. Emitted as `0` for a catalogued asset with no observations; absent only when the asset has no asset-catalogue row at all (so `0` and \"unknown\" are distinguishable)." }
+        markets_count:      { type: [integer, "null"], description: "Distinct (base, quote) pairs over the trailing 24h." }
+        trade_count_24h:    { type: [integer, "null"], description: "Trades the asset participated in over the trailing 24h." }
         price_history_24h:
-          type: array
-          nullable: true
+          type: [array, "null"]
           description: "24 hourly USD-price samples (oldest first) for sparkline rendering."
           items:
             type: object
             properties:
               t: { type: string, format: date-time }
-              p: { type: string, nullable: true }
+              p: { type: [string, "null"] }
             required: [t]
         price_history_7d:
-          type: array
-          nullable: true
+          type: [array, "null"]
           description: "7 daily USD-price samples (oldest first)."
           items:
             type: object
             properties:
               t: { type: string, format: date-time }
-              p: { type: string, nullable: true }
+              p: { type: [string, "null"] }
             required: [t]
         ath:
-          type: object
-          nullable: true
+          type: [object, "null"]
           description: "All-time-high USD price + when it was set. Null when no USD-quoted history."
           properties:
             usd: { type: string }
             at:  { type: string, format: date-time }
           required: [usd, at]
         top_markets:
-          type: array
-          nullable: true
+          type: [array, "null"]
           description: "Top markets by 24h USD volume; each row is the counterparty of a pair the asset participated in."
           items:
             type: object
             properties:
               counterparty:    { type: string, description: "The OTHER side of the pair." }
               side:            { type: string, enum: [base, quote], description: "Which side this asset took." }
-              volume_24h_usd:  { type: string, nullable: true }
+              volume_24h_usd:  { type: [string, "null"] }
               trade_count_24h: { type: integer }
             required: [counterparty, side, trade_count_24h]
         issuer_scam_reason: { type: string, description: "Non-empty when this asset's issuer appears in the curated scam directory." }
         unverified_warning:
-          allOf:
+          oneOf:
             - { $ref: "#/components/schemas/UnverifiedWarning" }
-          nullable: true
+            - type: "null"
           description: |
             Attached when the requested asset's code matches a
             verified currency's Stellar ticker (USDC, EURC, AQUA, …)
@@ -11132,7 +11329,7 @@ components:
         verified_slug:     { type: string,  description: "Canonical slug (e.g. \"usdc\") the consumer can redirect to." }
         verified_asset_id: { type: string,  description: "Verified canonical asset_id (e.g. USDC-GA5Z…). EMPTY STRING when the ticker matches a well-known asset with NO verified Stellar issuance (USDT, XRP, BTC, …) — there is nothing on Stellar to redirect to; render the warning, do not redirect." }
         verified_name:     { type: string,  description: "Human-readable currency name (e.g. \"USD Coin\")." }
-        verified_issuer:   { type: string,  nullable: true, description: "Short attribution (e.g. \"Circle (centre.io)\"). Empty when the catalogue entry didn't include a verified_issuer_label." }
+        verified_issuer:   { type: [string, "null"], description: "Short attribution (e.g. \"Circle (centre.io)\"). Empty when the catalogue entry didn't include a verified_issuer_label." }
         note:              { type: string,  description: "One-sentence warning rendered verbatim by clients." }
       required: [verified_slug, verified_asset_id, verified_name, note]
 
@@ -11154,7 +11351,7 @@ components:
         verified_issuer:  { type: string,  description: "Short attribution string (e.g. \"Circle (centre.io)\"). Empty when the catalogue entry didn't include a verified_issuer_label." }
         coingecko_id:     { type: string,  description: "CoinGecko slug for this currency (when known)." }
         coinmarketcap_id: { type: string,  description: "CoinMarketCap integer ID for this currency (when known)." }
-        price_usd:        { type: string,  nullable: true, description: "USD price from the three-tier fallback chain. Null when no tier produced a price — consumer drills into the canonical /v1/assets/{asset_id} surface for the per-Stellar-asset price instead." }
+        price_usd:        { type: [string, "null"], description: "USD price from the three-tier fallback chain. Null when no tier produced a price — consumer drills into the canonical /v1/assets/{asset_id} surface for the per-Stellar-asset price instead." }
         price_authority:
           type: string
           enum: [vwap_native, aggregator_avg, triangulated]
@@ -11165,10 +11362,10 @@ components:
             - `triangulated`: derived via bridge currency (X_USD ≈
               X_BTC × BTC_USD or similar).
         price_sources:    { type: array, items: { type: string }, description: "Contributor venue / aggregator names — for transparency." }
-        price_as_of:      { type: string, format: date-time, nullable: true, description: "Observation timestamp of the served price." }
-        circulating_supply: { type: string, nullable: true, description: "Natural-unit amount in circulation. For fiat: M2 (broad money). Empty for crypto/stablecoin (the per-Stellar-asset F2 fields on /v1/assets/{asset_id} are the canonical source)." }
+        price_as_of:      { type: [string, "null"], format: date-time, description: "Observation timestamp of the served price." }
+        circulating_supply: { type: [string, "null"], description: "Natural-unit amount in circulation. For fiat: M2 (broad money). Empty for crypto/stablecoin (the per-Stellar-asset F2 fields on /v1/assets/{asset_id} are the canonical source)." }
         supply_decimals:  { type: integer, description: "Exponent mapping circulating_supply to display value. 0 for fiat." }
-        market_cap_usd:   { type: string, nullable: true, description: "Decimal string (2 fractional digits). Computed for fiat rows: M2 × current FX rate. Null for crypto/stablecoin (their market cap lives on the per-Stellar-asset F2 fields)." }
+        market_cap_usd:   { type: [string, "null"], description: "Decimal string (2 fractional digits). Computed for fiat rows: M2 × current FX rate. Null for crypto/stablecoin (their market cap lives on the per-Stellar-asset F2 fields)." }
         market_cap_low_liquidity: { type: boolean, description: "True when market_cap_usd was suppressed because the backing price came from negligible liquidity. Present for wire parity with the per-Stellar-asset Asset surface; the fiat market cap (M2 × deep FX rate) is never dust-gated, so this stays false on catalogue rows today. Omitted when false." }
       required: [kind, ticker, slug, name]
 
@@ -11193,8 +11390,7 @@ components:
         name:             { type: string, description: "Human-readable currency name." }
         verified_issuer:  { type: string, description: "Short attribution string (e.g. \"Circle (centre.io)\"). Empty when the catalogue entry didn't include a verified_issuer_label." }
         image:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: >-
             Asset logo URL from the issuer's SEP-1 TOML (https-only,
             sanitized). Wallets bulk-load logos from this listing.
@@ -11254,22 +11450,22 @@ components:
         matching currency block) leave the overlay fields null.
       properties:
         asset_id:        { type: string }
-        home_domain:     { type: string, nullable: true }
+        home_domain:     { type: [string, "null"] }
         sep1_status:     { type: string, enum: [not_applicable, not_fetched, verified, no_match, unreachable] }
         # SEP-1 overlay fields (populated when sep1_status=verified).
-        name:            { type: string, nullable: true }
-        description:     { type: string, nullable: true }
-        image:           { type: string, nullable: true, description: "Issuer-supplied logo URL. http(s) only — non-http schemes are stripped at overlay time." }
-        org_name:        { type: string, nullable: true }
-        anchor_asset:    { type: string, nullable: true }
-        anchor_asset_type: { type: string, nullable: true, description: "fiat / crypto / stock / etc., per SEP-1 §Currencies." }
+        name:            { type: [string, "null"] }
+        description:     { type: [string, "null"] }
+        image:           { type: [string, "null"], description: "Issuer-supplied logo URL. http(s) only — non-http schemes are stripped at overlay time." }
+        org_name:        { type: [string, "null"] }
+        anchor_asset:    { type: [string, "null"] }
+        anchor_asset_type: { type: [string, "null"], description: "fiat / crypto / stock / etc., per SEP-1 §Currencies." }
         # SEP-1 issuance declarations — the issuer's own commitments,
         # distinct from F2 supply numbers on /v1/assets/{id} which
         # observe live ledger state.
-        conditions:      { type: string, nullable: true, description: "Issuer's declared terms / conditions text." }
-        fixed_number:    { type: string, nullable: true, description: "SEP-1-declared fixed total supply (decimal string in the asset's smallest integer unit). Distinct from /v1/assets/{id}'s `total_supply` which is the live-ledger sum." }
-        max_number:      { type: string, nullable: true, description: "SEP-1-declared maximum supply ceiling (decimal string). Distinct from /v1/assets/{id}'s `max_supply` which is operator/policy-derived." }
-        is_unlimited:    { type: boolean, nullable: true, description: "Issuer asserts unbounded issuance. Null when the issuer didn't address supply at all (no fixed_number / max_number / is_unlimited declaration); false when they did and committed to a bounded supply." }
+        conditions:      { type: [string, "null"], description: "Issuer's declared terms / conditions text." }
+        fixed_number:    { type: [string, "null"], description: "SEP-1-declared fixed total supply (decimal string in the asset's smallest integer unit). Distinct from /v1/assets/{id}'s `total_supply` which is the live-ledger sum." }
+        max_number:      { type: [string, "null"], description: "SEP-1-declared maximum supply ceiling (decimal string). Distinct from /v1/assets/{id}'s `max_supply` which is operator/policy-derived." }
+        is_unlimited:    { type: [boolean, "null"], description: "Issuer asserts unbounded issuance. Null when the issuer didn't address supply at all (no fixed_number / max_number / is_unlimited declaration); false when they did and committed to a bounded supply." }
       required: [asset_id, sep1_status]
 
     AssetMetadataEnvelope:
@@ -11342,10 +11538,9 @@ components:
         # last_trade price_type) or end of the aggregation window
         # (for vwap/twap). RFC 3339, UTC.
         observed_at:       { type: string, format: date-time }
-        window_seconds:    { type: integer, nullable: true, description: "Window size for vwap/twap; omitted for last_trade." }
+        window_seconds:    { type: [integer, "null"], description: "Window size for vwap/twap; omitted for last_trade." }
         change_24h_pct:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: >-
             Trailing-24h percentage change vs the asset's USD price ~24h
             ago (signed, two fractional digits — "+1.27"). Present on
@@ -11359,10 +11554,9 @@ components:
         # pair. Omitted when no cached score is available — clients
         # that gate on confidence MUST treat the absence as "unknown",
         # not "low".
-        confidence:        { type: number, format: float, nullable: true, minimum: 0, maximum: 1, description: "Multi-factor confidence score in [0, 1] (ADR-0019)." }
+        confidence:        { type: [number, "null"], format: float, minimum: 0, maximum: 1, description: "Multi-factor confidence score in [0, 1] (ADR-0019)." }
         confidence_factors:
-          nullable: true
-          type: object
+          type: [object, "null"]
           description: "Per-factor decomposition of confidence (ADR-0019)."
           properties:
             z_score:          { type: number, format: float }
@@ -11444,24 +11638,20 @@ components:
       type: object
       properties:
         change_pct:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: >-
             Signed percentage move of the current price vs the reference
             price, two fractional digits with an explicit leading "+" on
             gains (e.g. "+3.62", "-1.04", "0.00"). Null when unavailable.
         reference_price:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: "Closed VWAP at-or-before now−horizon (decimal string). Null when unavailable."
         reference_at:
-          type: string
+          type: [string, "null"]
           format: date-time
-          nullable: true
           description: "Close time of the reference bucket (RFC 3339) — never the exact horizon instant. Null when unavailable."
         resolution:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: "CAGG resolution that served the reference bucket — one of 1m, 15m, 1h, 4h, 1d. Null when unavailable."
         available:
           type: boolean
@@ -11514,7 +11704,7 @@ components:
       properties:
         t:     { type: string, format: date-time }
         p:     { type: string }
-        v_usd: { type: string, nullable: true }
+        v_usd: { type: [string, "null"] }
       required: [t, p]
 
     HistoryEnvelope:
@@ -11659,8 +11849,7 @@ components:
           type: integer
           description: Count of trades tagged routed_via=name in the trailing 24 h. Always 0 for vault-kind entries.
         routed_volume_24h_usd:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: |
             SUM of the routed trades' USD volume, decimal string.
             Null when no routed trade in the window carried a USD
@@ -11668,9 +11857,8 @@ components:
             lag) — distinct from a zero-trade router, which reports
             `routed_trades_24h: 0`.
         last_routed_at:
-          type: string
+          type: [string, "null"]
           format: date-time
-          nullable: true
           description: ts of the most recent routed trade in the window; null when none.
         notes:
           type: array
@@ -11943,17 +12131,14 @@ components:
           description: "Start-of-day UTC of the prices_1d bucket the pair was last active in. Aligns to midnight UTC by construction. Pre-2026-05-27 (F-0065) this value was incorrectly returned as `last_trade_at`; the field is preserved for callers that want the daily bucket reference, but do NOT use it for staleness."
         trade_count_24h: { type: integer, description: "Activity count in the trailing 24h window." }
         volume_24h_usd:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: "Trailing-24h USD volume summed from prices_1m. Decimal string. Null when no USD-equivalent trades."
         last_price:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: "Most recent quote-per-base price observed for this pair (cross-source) within the trailing 24h. Decimal string. Null when no recent prices_1m bucket has a non-null last_price."
         first_trade_at:
-          type: string
+          type: [string, "null"]
           format: date-time
-          nullable: true
           description: >-
             The pair's first recorded daily bucket — "since inception =
             first recorded trade" (RFP), queryable per market. Present
@@ -11981,8 +12166,8 @@ components:
         quote:           { type: string }
         last_trade_at:   { type: string, format: date-time }
         trade_count_24h: { type: integer }
-        volume_24h_usd:  { type: string, nullable: true, description: "Decimal string. Null when no USD-equivalent trades." }
-        last_price:      { type: string, nullable: true, description: "Most recent quote-per-base price observed on THIS venue. Decimal string." }
+        volume_24h_usd:  { type: [string, "null"], description: "Decimal string. Null when no USD-equivalent trades." }
+        last_price:      { type: [string, "null"], description: "Most recent quote-per-base price observed on THIS venue. Decimal string." }
       required: [source, base, quote, last_trade_at, trade_count_24h]
 
     # /v1/pools/reserves row — one AMM pool CONTRACT's current reserve
@@ -11999,8 +12184,8 @@ components:
         as_of_ledger: { type: integer, description: "Ledger of the pool's last state change; reserves are current as of this ledger and unchanged since." }
         token0:       { $ref: "#/components/schemas/PoolReserveToken" }
         token1:       { $ref: "#/components/schemas/PoolReserveToken" }
-        mid_price_0_in_1: { type: string, nullable: true, description: "Decimals-adjusted mid price, token1 per token0. Decimal string; null when either side is empty, or when token decimals metadata was unavailable for this request (a mid price is never computed from assumed decimals)." }
-        mid_price_1_in_0: { type: string, nullable: true, description: "Inverse mid price. Null under the same conditions as mid_price_0_in_1." }
+        mid_price_0_in_1: { type: [string, "null"], description: "Decimals-adjusted mid price, token1 per token0. Decimal string; null when either side is empty, or when token decimals metadata was unavailable for this request (a mid price is never computed from assumed decimals)." }
+        mid_price_1_in_0: { type: [string, "null"], description: "Inverse mid price. Null under the same conditions as mid_price_0_in_1." }
         depth:
           type: array
           description: "Depth estimate per slippage tier (0.5% / 1% / 2%). Empty when either reserve is zero."
@@ -12045,8 +12230,8 @@ components:
         total_shares: { type: string, description: "Total issued pool-share supply, base-unit decimal string." }
         reserve_a:    { $ref: "#/components/schemas/LiquidityPoolReserveSide" }
         reserve_b:    { $ref: "#/components/schemas/LiquidityPoolReserveSide" }
-        mid_price_a_in_b: { type: string, nullable: true, description: "Decimals-adjusted mid price, asset B per asset A. Decimal string; null when either side is empty." }
-        mid_price_b_in_a: { type: string, nullable: true, description: "Inverse mid price. Null when either side is empty." }
+        mid_price_a_in_b: { type: [string, "null"], description: "Decimals-adjusted mid price, asset B per asset A. Decimal string; null when either side is empty." }
+        mid_price_b_in_a: { type: [string, "null"], description: "Inverse mid price. Null when either side is empty." }
         depth:
           type: array
           description: "Depth estimate per slippage tier (0.5% / 1% / 2%). Empty when either reserve is zero."
@@ -12387,6 +12572,41 @@ components:
           properties:
             data: { $ref: "#/components/schemas/AdminAccountView" }
           required: [data]
+
+    AdminLookupResponse:
+      type: object
+      description: |
+        Staff customer look-up result (`GET /v1/account/admin/lookup`):
+        the resolved account plus the users on it. NOT enveloped — a bare
+        `{account, users}` object, served with `Cache-Control: no-store`
+        (staff-only customer PII).
+
+        `account` reuses the operator `AdminAccountView` projection. Note
+        one behavioural difference from `GET /v1/admin/accounts/{id}`:
+        this surface omits `rate_limit_per_min_override` /
+        `monthly_request_quota_override` when they are 0 (inherit), where
+        the operator surface always emits them.
+      properties:
+        account: { $ref: "#/components/schemas/AdminAccountView" }
+        users:
+          type: array
+          items: { $ref: "#/components/schemas/AdminUserView" }
+      required: [account, users]
+
+    AdminUserView:
+      type: object
+      description: |
+        One user under the looked-up account (staff customer look-up).
+        Staff-only customer PII.
+      properties:
+        id:             { type: string, format: uuid }
+        email:          { type: string, format: email }
+        display_name:   { type: string }
+        role:           { type: string }
+        is_staff:       { type: boolean }
+        email_verified: { type: boolean }
+        last_login_at:  { type: string, format: date-time }
+      required: [id, email, role, is_staff, email_verified]
 
     StatusNotice:
       type: object
