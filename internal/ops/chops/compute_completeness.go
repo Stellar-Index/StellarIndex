@@ -1903,14 +1903,47 @@ func absDiff(a, b int) int {
 //
 // Returns Σ|per-ledger Δ| (0 = clean) and a human detail string.
 func projectionDelta(src reconSource, table string, expected, actual map[uint32]int, lo, hi uint32) (int, string) {
-	if src.aggregateReconcile != "" {
-		e, a := sumCounts(expected), sumCounts(actual)
-		if d := absDiff(e, a); d != 0 {
-			return d, fmt.Sprintf("%s: expected=%d served=%d Δ=%d [%d,%d] (aggregate compare — %s)",
-				table, e, a, d, lo, hi, src.aggregateReconcile)
-		}
-		return 0, ""
+	if src.aggregateReconcile == "" {
+		return strictPerLedgerDelta(table, expected, actual, lo, hi)
 	}
+	b := src.vintageBoundary
+	switch {
+	case b == 0 || hi <= b:
+		// No boundary, or the whole window is pre-boundary vintage → keep the
+		// documented full-window aggregate (accept the netting residual).
+		return aggregateDelta(src, table, expected, actual, lo, hi)
+	case lo > b:
+		// The whole window is POST-boundary: the served ledger keys 1:1 with
+		// the re-derive again, so the netting justification is gone — reconcile
+		// strict per-ledger (W1-flowcompleteness-3 / #15).
+		return strictPerLedgerDelta(table, expected, actual, lo, hi)
+	default:
+		// The window straddles the boundary: aggregate (netting) up to it,
+		// strict per-ledger above it, so a real post-boundary drop can no
+		// longer net against a pre-boundary phantom.
+		preD, preDetail := aggregateDelta(src, table,
+			countsAtOrBelow(expected, b), countsAtOrBelow(actual, b), lo, b)
+		postD, postDetail := strictPerLedgerDelta(table,
+			countsAbove(expected, b), countsAbove(actual, b), b+1, hi)
+		return combineVintageDelta(table, b, preD, preDetail, postD, postDetail)
+	}
+}
+
+// aggregateDelta compares WINDOW TOTALS (the CS-084 netting compare) — used for
+// an aggregateReconcile source's pre-vintage span, where the served ledger can
+// legitimately differ from the re-derive's event ledger.
+func aggregateDelta(src reconSource, table string, expected, actual map[uint32]int, lo, hi uint32) (int, string) {
+	e, a := sumCounts(expected), sumCounts(actual)
+	if d := absDiff(e, a); d != 0 {
+		return d, fmt.Sprintf("%s: expected=%d served=%d Δ=%d [%d,%d] (aggregate compare — %s)",
+			table, e, a, d, lo, hi, src.aggregateReconcile)
+	}
+	return 0, ""
+}
+
+// strictPerLedgerDelta is the default per-ledger reconcile (CS-084): a real
+// drop in one ledger cannot net against a phantom in another.
+func strictPerLedgerDelta(table string, expected, actual map[uint32]int, lo, hi uint32) (int, string) {
 	gaps := completeness.ReconcileCounts(expected, actual)
 	if len(gaps) == 0 {
 		return 0, ""
@@ -1936,6 +1969,47 @@ func projectionDelta(src reconSource, table string, expected, actual map[uint32]
 	first := gaps[0]
 	return delta, fmt.Sprintf("%s: %d mismatched ledger(s), Σ|Δ|=%d, first: ledger=%d expected=%d served=%d [%d,%d]",
 		table, len(gaps), delta, first.Ledger, first.Expected, first.Actual, lo, hi)
+}
+
+// combineVintageDelta merges the pre-boundary aggregate and post-boundary
+// strict deltas of a vintage-split source. The total Σ|Δ| drives the verdict
+// (0 = clean); the detail names the post-boundary strict signal first because
+// that is the real, previously-nettable gap the split exists to surface.
+func combineVintageDelta(table string, boundary uint32, preD int, preDetail string, postD int, postDetail string) (int, string) {
+	total := preD + postD
+	switch {
+	case total == 0:
+		return 0, ""
+	case preD == 0:
+		return total, "post-vintage strict — " + postDetail
+	case postD == 0:
+		return total, fmt.Sprintf("pre-vintage aggregate (≤%d, accepted netting) — %s", boundary, preDetail)
+	default:
+		return total, fmt.Sprintf("%s: vintage-split@%d — post-vintage strict Σ|Δ|=%d [%s]; pre-vintage aggregate Δ=%d [%s]",
+			table, boundary, postD, postDetail, preD, preDetail)
+	}
+}
+
+// countsAtOrBelow / countsAbove partition a per-ledger count map at a boundary
+// ledger (inclusive below) for the vintage split.
+func countsAtOrBelow(m map[uint32]int, b uint32) map[uint32]int {
+	out := make(map[uint32]int, len(m))
+	for l, c := range m {
+		if l <= b {
+			out[l] = c
+		}
+	}
+	return out
+}
+
+func countsAbove(m map[uint32]int, b uint32) map[uint32]int {
+	out := make(map[uint32]int, len(m))
+	for l, c := range m {
+		if l > b {
+			out[l] = c
+		}
+	}
+	return out
 }
 
 // computeRecognitionGapsCH is the CH-backed recognition audit: distinct
