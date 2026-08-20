@@ -32,6 +32,17 @@ func preseedFactoryChildren(ctx context.Context, store *timescale.Store, src rec
 	if len(src.factories) == 0 || src.dec == nil {
 		return nil
 	}
+	// A factory whose own genesis is at/after `to` deployed no children
+	// BEFORE `to`, so the [genesis, to) preseed window holds nothing to
+	// seed — and when genesis > to the window is inverted, which
+	// StreamSorobanEvents rejects outright ("to < from"). This is exactly the
+	// case a sub-range re-derive whose -from sits below a later-deploying
+	// factory's genesis hits (e.g. a whole-lake ch-reproject -from below
+	// defindex's genesis). Skip the empty walk; the re-derive over [to, hi]
+	// self-seeds from the factory's in-range creation events.
+	if src.genesis >= to {
+		return nil
+	}
 	seeded := 0
 	err := store.StreamSorobanEvents(ctx, src.genesis, to,
 		src.factories, []string{src.creationSym}, nil,
