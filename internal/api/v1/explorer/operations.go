@@ -106,9 +106,27 @@ type OpView struct {
 	SourceAccount string         `json:"source_account,omitempty"`
 	Fields        map[string]any `json:"fields,omitempty"`
 	RawXDR        string         `json:"raw_xdr,omitempty"`
-	// ResultCode is the operation's XDR result code, populated only in the
-	// per-transaction view (GET /v1/tx/{hash}); nil in the ledger op list.
+	// TransactionSuccessful reports whether the operation's PARENT transaction
+	// applied. It is the authoritative honesty signal: a failed transaction is
+	// still indexed and served (an on-chain, fee-charged, permanent record), so
+	// every surface that lists an operation — including public account history —
+	// must be able to mark it FAILED rather than let it masquerade as a real
+	// interaction. false ⇒ the transaction did not apply; nothing this operation
+	// names actually moved. Populated on every list view (account history, the
+	// ledger op list, the /v1/operations directory) and the per-tx view; a nil
+	// value means the parent outcome was not read (a degraded response, disclosed
+	// via the view's coverage_note), NOT "successful".
+	TransactionSuccessful *bool `json:"transaction_successful,omitempty"`
+	// ResultCode is the operation's OUTER XDR result code (from
+	// stellar.operation_results), populated in the per-transaction view (GET
+	// /v1/tx/{hash}); nil where not read.
 	ResultCode *int32 `json:"result_code,omitempty"`
+	// Result is the human-readable slug for ResultCode (e.g. "op_inner",
+	// "op_bad_auth", "op_no_source_account"). For a failed transaction the
+	// authoritative reason is the TRANSACTION-level result (see
+	// TxSummaryView.Result / GET /v1/tx/{hash}); this is per-operation structural
+	// detail. Empty when ResultCode is nil.
+	Result string `json:"result,omitempty"`
 }
 
 // opViewLight is the summary shape for the network-wide operations directory:
