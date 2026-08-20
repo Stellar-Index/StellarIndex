@@ -1,8 +1,6 @@
 package timescale
 
 import (
-	"database/sql/driver"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -19,21 +17,19 @@ import (
 // alias text[] and matches with ANY-membership on each leg.
 //
 // bindArrayValue renders whatever $5 arg the builder bound to its
-// Postgres array literal. On the pre-fix builder $5 is a bare string
-// (not a driver.Valuer), which fails the assertion cleanly — that is
-// the redness proof.
+// Postgres array literal. Under the pgx stdlib driver a Go []string is
+// bound directly as a text[] (no wrapper), so the builder binds the full
+// alias set as a []string. On the pre-fix builder — or any regression
+// that binds a scalar `= $5` — $5 is a bare string, not a []string, which
+// fails the assertion cleanly: that is the redness proof.
 func bindArrayValue(t *testing.T, arg any) string {
 	t.Helper()
-	v, ok := arg.(driver.Valuer)
+	forms, ok := arg.([]string)
 	if !ok {
-		t.Fatalf("$5 asset arg is %T (%v), want a bound text[] (driver.Valuer) — "+
+		t.Fatalf("$5 asset arg is %T (%v), want a bound text[] ([]string) — "+
 			"a scalar bind matches only the literal spelling and omits the alias forms", arg, arg)
 	}
-	dv, err := v.Value()
-	if err != nil {
-		t.Fatalf("$5 Value(): %v", err)
-	}
-	return fmt.Sprintf("%s", dv)
+	return "{" + strings.Join(forms, ",") + "}"
 }
 
 func TestBuildDistinctPairsQuery_AssetFilterUsesAnyMembership(t *testing.T) {

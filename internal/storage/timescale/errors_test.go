@@ -8,7 +8,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestIsInfraError(t *testing.T) {
@@ -27,17 +27,17 @@ func TestIsInfraError(t *testing.T) {
 		{"wrapped driver bad conn", fmt.Errorf("query: %w", driver.ErrBadConn), true},
 		{"net.OpError dial", &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connect: connection refused")}, true},
 		{"connection reset", errors.New("read tcp: connection reset by peer"), true},
-		{"pg admin shutdown 57P01", &pq.Error{Code: "57P01", Message: "terminating connection due to administrator command"}, true},
-		{"pg cannot_connect_now 57P03", &pq.Error{Code: "57P03", Message: "the database system is starting up"}, true},
-		{"pg too_many_connections 53300", &pq.Error{Code: "53300"}, true},
-		{"pg connection_exception class 08", &pq.Error{Code: "08006"}, true},
-		{"pg starting up (string)", errors.New("pq: the database system is starting up"), true},
+		{"pg admin shutdown 57P01", &pgconn.PgError{Code: "57P01", Message: "terminating connection due to administrator command"}, true},
+		{"pg cannot_connect_now 57P03", &pgconn.PgError{Code: "57P03", Message: "the database system is starting up"}, true},
+		{"pg too_many_connections 53300", &pgconn.PgError{Code: "53300"}, true},
+		{"pg connection_exception class 08", &pgconn.PgError{Code: "08006"}, true},
+		{"pg starting up (string)", errors.New("failed to connect: the database system is starting up"), true},
 		// Data faults — must NOT retry.
-		{"pg not-null violation 23502", &pq.Error{Code: "23502"}, false},
-		{"pg check violation 23514", &pq.Error{Code: "23514"}, false},
-		{"pg numeric overflow 22003", &pq.Error{Code: "22003"}, false},
-		{"pg deadlock 40P01 (contention, per-row fallback)", &pq.Error{Code: "40P01"}, false},
-		{"pg serialization 40001 (contention)", &pq.Error{Code: "40001"}, false},
+		{"pg not-null violation 23502", &pgconn.PgError{Code: "23502"}, false},
+		{"pg check violation 23514", &pgconn.PgError{Code: "23514"}, false},
+		{"pg numeric overflow 22003", &pgconn.PgError{Code: "22003"}, false},
+		{"pg deadlock 40P01 (contention, per-row fallback)", &pgconn.PgError{Code: "40P01"}, false},
+		{"pg serialization 40001 (contention)", &pgconn.PgError{Code: "40001"}, false},
 		{"generic validation error", errors.New("timescale: InsertTrade: invalid trade: zero amount"), false},
 	}
 	for _, tc := range tests {

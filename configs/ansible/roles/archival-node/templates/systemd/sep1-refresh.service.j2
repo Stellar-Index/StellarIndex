@@ -32,6 +32,7 @@ ExecStart=/usr/local/bin/stellarindex-ops sep1-refresh \
   -limit ${LIMIT} \
   -older-than ${OLDER_THAN} \
   -timeout ${RUN_TIMEOUT} \
+  -write \
   ${EXTRA_FLAGS}
 
 # De-privileged (CS-118, audit-2026-06-30) — the stellarindex user is

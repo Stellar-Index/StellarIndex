@@ -78,7 +78,8 @@ either down or r1 has lost outbound HTTPS.
   ```sh
   # Pull the missing range from R2 or R3's mirror (R3 keeps
   # galexie-archive locally on Vultr Object Storage per ADR-0016).
-  stellarindex-ops rehydrate-galexie-archive \
+  # fail-closed: without -write this only lists the would-copy files.
+  stellarindex-ops rehydrate-galexie-archive -write \
     --from <SEQ> --to <SEQ_END> \
     --source vultr   # or aws-r2, depending on region.
   ```

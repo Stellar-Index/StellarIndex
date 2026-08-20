@@ -252,14 +252,25 @@ func TestParseRehydrateFlags(t *testing.T) {
 		dry     bool
 	}{
 		{
-			name: "all flags set",
-			args: []string{"-config", "/tmp/x.toml", "-from", "100", "-to", "200", "-dry-run"},
-			from: 100, to: 200, dry: true,
+			// Fail-closed write-gate (W8.15c): -write opts into writing to
+			// hot, so dryRun is false.
+			name: "write opts in",
+			args: []string{"-config", "/tmp/x.toml", "-from", "100", "-to", "200", "-write"},
+			from: 100, to: 200, dry: false,
 		},
 		{
-			name: "defaults",
+			// The DEFAULT is now a fail-closed dry run — no -write means no
+			// writes, the reversal of the old default-WRITE convention.
+			name: "defaults are a fail-closed dry run",
 			args: []string{"-from", "1", "-to", "2"},
-			from: 1, to: 2, dry: false,
+			from: 1, to: 2, dry: true,
+		},
+		{
+			// -dry-run is retained as an explicit no-op alias (dry run is
+			// already the default) so existing callers keep working.
+			name: "dry-run is a no-op alias",
+			args: []string{"-from", "1", "-to", "2", "-dry-run"},
+			from: 1, to: 2, dry: true,
 		},
 		{
 			name:    "from out of range",

@@ -253,7 +253,7 @@ below is the generic path.
       run-heavy-job.sh stellarindex-ops supply seed-sac-balances \
         -config /etc/stellarindex.toml -full-history -dry-run
       run-heavy-job.sh stellarindex-ops supply seed-sac-balances \
-        -config /etc/stellarindex.toml -full-history
+        -config /etc/stellarindex.toml -full-history -write
       ```
       The printed `sum=<stroops>` per contract should rise by the
       dormant pool holding; that delta is what the gauge was showing.

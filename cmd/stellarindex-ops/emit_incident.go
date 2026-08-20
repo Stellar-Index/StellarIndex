@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/lib/pq" // postgres driver (ADR-0006)
+	_ "github.com/jackc/pgx/v5/stdlib" // postgres driver (ADR-0006)
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/customerwebhook"
@@ -174,7 +174,7 @@ func emitIncident(args []string) error {
 		return err
 	}
 
-	db, err := sql.Open("postgres", cfg.Storage.PostgresDSN)
+	db, err := sql.Open("pgx", cfg.Storage.PostgresDSN)
 	if err != nil {
 		return fmt.Errorf("postgres open: %w", err)
 	}

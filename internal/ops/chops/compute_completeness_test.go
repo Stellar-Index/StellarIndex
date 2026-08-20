@@ -165,6 +165,47 @@ func TestProjectionDelta_AggregateModeToleratesShift(t *testing.T) {
 	}
 }
 
+// TestProjectionDelta_VintageSplitClosesNettingHole pins the phoenix #15 split
+// (W1-flowcompleteness-3): an aggregateReconcile source with a vintageBoundary
+// keeps the netting tolerance BELOW the boundary but reconciles STRICT above
+// it, so a real post-boundary drop can no longer net against a pre-boundary
+// phantom the way a full-window aggregate lets it.
+func TestProjectionDelta_VintageSplitClosesNettingHole(t *testing.T) {
+	const boundary = 200
+	split := reconSource{name: "phoenix", aggregateReconcile: "sweep shift", vintageBoundary: boundary}
+	full := reconSource{name: "phoenix-nowindow", aggregateReconcile: "sweep shift"} // vintageBoundary 0
+
+	// The netting HOLE: a +2 phantom at pre-boundary ledger 100 exactly cancels
+	// a -2 real drop at post-boundary ledger 300 in a window total.
+	expected := map[uint32]int{100: 5, 300: 5}
+	actual := map[uint32]int{100: 7, 300: 3}
+
+	// Full-window aggregate (no boundary) NETS them to 0 — the bug.
+	if d, _ := projectionDelta(full, "trades", expected, actual, 100, 300); d != 0 {
+		t.Fatalf("full aggregate should net the hole to 0 (that's the bug being closed), got delta=%d", d)
+	}
+	// The vintage split CATCHES it: pre-aggregate Δ=2 (100) + post-strict Δ=2 (300).
+	d, detail := projectionDelta(split, "trades", expected, actual, 100, 300)
+	if d != 4 {
+		t.Fatalf("vintage split must surface the netted gap, delta=%d want 4", d)
+	}
+	if !strings.Contains(detail, "post-vintage strict") || !strings.Contains(detail, "300") {
+		t.Errorf("detail should name the post-boundary strict signal + ledger 300, got: %s", detail)
+	}
+
+	// A pure PRE-boundary keying shift is still tolerated (nets in the pre span).
+	if d, _ := projectionDelta(split, "trades",
+		map[uint32]int{100: 5}, map[uint32]int{150: 5}, 100, boundary); d != 0 {
+		t.Errorf("pre-boundary keying shift must still net to 0, got delta=%d", d)
+	}
+
+	// A whole-window POST-boundary drop is caught strict (no netting applies).
+	if d, _ := projectionDelta(split, "trades",
+		map[uint32]int{300: 5, 400: 5}, map[uint32]int{300: 5, 400: 3}, 300, 400); d != 2 {
+		t.Errorf("post-boundary drop must be caught strict, got delta=%d want 2", d)
+	}
+}
+
 // TestReconciliationCatalogue_OracleSourcesOptOut — only sources with a
 // documented, ledger-keying-legitimate reason may carry
 // aggregateReconcile; every other source must stay on the strict

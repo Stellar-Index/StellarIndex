@@ -10,6 +10,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/metadata"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -53,7 +54,7 @@ func sep1RefreshCmd(args []string) error {
 	limit := fs.Int("limit", 100, "Max issuers to refresh per run (1-1000)")
 	olderThan := fs.Duration("older-than", 24*time.Hour, "Skip issuers refreshed more recently than this")
 	timeout := fs.Duration("timeout", 5*time.Minute, "Wall-clock timeout for the whole run")
-	dryRun := fs.Bool("dry-run", false, "Fetch + print without writing to issuers.sep1_payload")
+	gate := opsutil.RegisterWriteGate(fs)
 	issuer := fs.String("issuer", "", "Refresh ONLY this issuer G-strkey, bypassing the staleness queue")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -61,6 +62,7 @@ func sep1RefreshCmd(args []string) error {
 	if *cfgPath == "" {
 		return errors.New("-config is required")
 	}
+	dryRun := !gate.Banner() // Banner prints the mode + returns Enabled()
 
 	cfg, err := config.LoadWithEnv(*cfgPath)
 	if err != nil {
@@ -140,7 +142,7 @@ func sep1RefreshCmd(args []string) error {
 			failed++
 			continue
 		}
-		if !*dryRun {
+		if !dryRun {
 			if err := store.SetIssuerSep1Payload(ctx, c.GStrkey, payload); err != nil {
 				fmt.Printf("FAIL  %s  write: %v\n", c.GStrkey, err)
 				markSep1Attempted(ctx, store, c.GStrkey, dryRun)
@@ -152,7 +154,7 @@ func sep1RefreshCmd(args []string) error {
 		ok++
 	}
 	fmt.Printf("\n%d succeeded, %d failed\n", ok, failed)
-	if *dryRun {
+	if dryRun {
 		fmt.Println("(dry-run; no rows written)")
 	}
 	return nil
@@ -171,8 +173,8 @@ func sep1RefreshCmd(args []string) error {
 // behind it, and the run still exits 0 reporting "N failed" (cold
 // audit 2026-08-03). Best-effort — a failure to mark is logged, not
 // fatal.
-func markSep1Attempted(ctx context.Context, store *timescale.Store, gStrkey string, dryRun *bool) {
-	if dryRun != nil && *dryRun {
+func markSep1Attempted(ctx context.Context, store *timescale.Store, gStrkey string, dryRun bool) {
+	if dryRun {
 		return
 	}
 	if err := store.MarkIssuerSep1Attempted(ctx, gStrkey); err != nil {

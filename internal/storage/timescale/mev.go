@@ -5,10 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lib/pq"
-
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/domain"
+	"github.com/Stellar-Index/StellarIndex/internal/pgarray"
 )
 
 // TradesForArbScan returns recent ON-CHAIN trades (ledger > 0, with a
@@ -212,7 +211,7 @@ func (s *Store) InsertMEVEvent(ctx context.Context, e domain.MEVStoredEvent) (bo
     `
 	res, err := s.db.ExecContext(ctx, q,
 		e.Timestamp.UTC(), int(e.DetectedAtLedger), e.Kind,
-		pq.Array(e.TxHashes), pq.Array(e.Accounts),
+		e.TxHashes, e.Accounts,
 		string(e.DetailJSON), e.DedupKey,
 	)
 	if err != nil {
@@ -288,18 +287,18 @@ func (s *Store) ListMEVEvents(ctx context.Context, kind string, limit int) ([]ME
 	for rows.Next() {
 		var (
 			r        MEVEventRow
-			accounts pq.StringArray
-			txHashes pq.StringArray
+			accounts []string
+			txHashes []string
 		)
 		if err := rows.Scan(
 			&r.EventID, &r.DetectedAt, &r.DetectedAtLedger, &r.Kind,
-			&r.AssetID, &r.QuoteID, &txHashes, &accounts,
+			&r.AssetID, &r.QuoteID, pgarray.Strings(&txHashes), pgarray.Strings(&accounts),
 			&r.Detail, &r.ProfitUSD,
 		); err != nil {
 			return nil, fmt.Errorf("timescale: ListMEVEvents scan: %w", err)
 		}
-		r.TxHashes = []string(txHashes)
-		r.Accounts = []string(accounts)
+		r.TxHashes = txHashes
+		r.Accounts = accounts
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {

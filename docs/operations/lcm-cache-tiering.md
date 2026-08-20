@@ -208,8 +208,9 @@ in real-time.
    pulls trimmed-range LCMs from AWS.
 
 **Rollback**: `stellarindex-ops rehydrate-galexie-archive -from
-<start> -to <end>` re-fetches the trimmed range from cold back
-into hot. Idempotent (`PutFileIfNotExists`).
+<start> -to <end> -write` re-fetches the trimmed range from cold back
+into hot. Idempotent (`PutFileIfNotExists`). Fail-closed: without
+`-write` it only lists the would-copy files.
 
 ## Step 5 — monthly trim cadence (deferred)
 
@@ -248,7 +249,7 @@ errors rather than masking them — this is intentional. If
 extended, rehydrate the affected range to restore hot service:
 
 ```sh
-stellarindex-ops rehydrate-galexie-archive -from <N> -to <M>
+stellarindex-ops rehydrate-galexie-archive -from <N> -to <M> -write
 ```
 
 ## Metrics
@@ -297,7 +298,7 @@ set -a; . /etc/default/stellarindex; set +a
 # carries, so no secret is retyped here.
 export AWS_ACCESS_KEY_ID=$(sed -n 's/^AWS_ACCESS_KEY_ID=//p'     /etc/default/galexie-backfill)
 export AWS_SECRET_ACCESS_KEY=$(sed -n 's/^AWS_SECRET_ACCESS_KEY=//p' /etc/default/galexie-backfill)
-stellarindex-ops rehydrate-galexie-archive -config /etc/stellarindex.toml -from <ledger> -to <ledger>
+stellarindex-ops rehydrate-galexie-archive -config /etc/stellarindex.toml -from <ledger> -to <ledger> -write
 ```
 
 - **Break-glass only:** the `local` mc alias is MinIO **root**, and the

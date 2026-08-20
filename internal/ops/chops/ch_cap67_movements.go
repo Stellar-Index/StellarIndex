@@ -50,13 +50,15 @@ func chCap67Movements(args []string) error {
 	from := fs.Uint("from", 0, "first ledger (0 = resume from the watermark, or the P23 boundary on first run)")
 	to := fs.Uint("to", 0, "last ledger (inclusive; 0 = current lake tip)")
 	window := fs.Uint("window", 50_000, "ledgers per derive window")
-	dryRun := fs.Bool("dry-run", false, "derive + count without writing rows or advancing the watermark")
+	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *window == 0 {
 		return fmt.Errorf("-window must be > 0")
 	}
+	gate.Banner()
+	dryRun := gate.DryRun()
 
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
@@ -71,7 +73,7 @@ func chCap67Movements(args []string) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "ch-cap67-movements: deriving transfers for ledgers %d..%d (window %d, dry-run=%v) on %s\n",
-		start, last, *window, *dryRun, *chAddr)
+		start, last, *window, dryRun, *chAddr)
 
 	runStart := time.Now()
 	var totalRows int64
@@ -80,12 +82,12 @@ func chCap67Movements(args []string) error {
 		if rem := last - lo; rem >= uint32(*window) { //nolint:gosec // window fits uint32
 			hi = lo + uint32(*window) - 1 //nolint:gosec // window fits uint32
 		}
-		n, err := deriveCap67MovementsWindow(ctx, *chAddr, lo, hi, *dryRun)
+		n, err := deriveCap67MovementsWindow(ctx, *chAddr, lo, hi, dryRun)
 		if err != nil {
 			return fmt.Errorf("window [%d,%d]: %w — resume with -from %d (or no -from: the watermark holds)", lo, hi, err, lo)
 		}
 		totalRows += n
-		if !*dryRun {
+		if !dryRun {
 			if err := clickhouse.SetCap67MovementsWatermark(ctx, *chAddr, hi); err != nil {
 				return fmt.Errorf("advance watermark to %d: %w", hi, err)
 			}

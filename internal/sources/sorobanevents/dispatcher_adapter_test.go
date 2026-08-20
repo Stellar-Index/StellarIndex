@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
@@ -341,7 +341,7 @@ func TestAsyncSink_FlushBatch_PermanentFaultCountsLostNotRetried(t *testing.T) {
 	t.Parallel()
 
 	var logBuf bytes.Buffer
-	permErr := &pq.Error{Code: "23505", Message: "duplicate key value violates unique constraint"}
+	permErr := &pgconn.PgError{Code: "23505", Message: "duplicate key value violates unique constraint"}
 	w := &flakyWriter{failErr: permErr, failN: -1} // always fails
 	sink := NewAsyncSink(w, AsyncSinkOptions{
 		BufferSize:    4,
@@ -363,8 +363,8 @@ func TestAsyncSink_FlushBatch_PermanentFaultCountsLostNotRetried(t *testing.T) {
 		// positively-classified permanent fault. The log-reason
 		// assertion below pins that distinction directly.
 		IsPermanentFault: func(err error) bool {
-			var pqErr *pq.Error
-			return errors.As(err, &pqErr) && pqErr.Code.Class() == "23"
+			var pgErr *pgconn.PgError
+			return errors.As(err, &pgErr) && pgErr.Code[:2] == "23"
 		},
 	})
 	sink.Start()
@@ -400,7 +400,7 @@ func TestAsyncSink_FlushBatch_PermanentFaultCountsLostNotRetried(t *testing.T) {
 func TestAsyncSink_FlushBatch_UnwiredIsPermanentFault_RetriesEvenAPqError(t *testing.T) {
 	t.Parallel()
 
-	permErr := &pq.Error{Code: "23505", Message: "duplicate key value violates unique constraint"}
+	permErr := &pgconn.PgError{Code: "23505", Message: "duplicate key value violates unique constraint"}
 	w := &flakyWriter{failErr: permErr, failN: -1} // always fails
 	sink := NewAsyncSink(w, AsyncSinkOptions{
 		BufferSize:    4,

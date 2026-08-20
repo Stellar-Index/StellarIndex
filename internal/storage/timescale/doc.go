@@ -7,10 +7,10 @@
 //
 // # Scope
 //
-// This package owns the SQL. No other package imports lib/pq or
-// writes raw SQL; callers use [Store]'s methods exclusively.
-// This keeps the "pgx vs lib/pq" choice isolated (today: lib/pq;
-// easy to swap later).
+// This package owns the SQL; callers use [Store]'s methods
+// exclusively. The Postgres driver is jackc/pgx v5 via its
+// database/sql stdlib adapter (registered as "pgx"), keeping the
+// driver choice behind the database/sql API and isolated here.
 //
 // # Invariants
 //

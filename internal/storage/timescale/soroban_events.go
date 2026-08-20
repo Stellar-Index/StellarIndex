@@ -7,9 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/lib/pq"
-
 	"github.com/Stellar-Index/StellarIndex/internal/domain"
+	"github.com/Stellar-Index/StellarIndex/internal/pgarray"
 )
 
 // InsertSorobanEventsBatch persists a slice of raw Soroban event
@@ -86,7 +85,7 @@ func (s *Store) InsertSorobanEventsBatch(ctx context.Context, rows []domain.Soro
 			base+14, base+15, base+16,
 		)
 		r := &rows[i]
-		// A nil [][]byte marshals through pq.Array to SQL NULL, which
+		// A nil [][]byte encodes (via pgx) to SQL NULL, which
 		// the NOT NULL topics_xdr column (migration 0114) rejects. A
 		// row built without the full list (e.g. a legacy topic_0..3-only
 		// constructor) writes an empty '{}' array instead, so the reader
@@ -112,7 +111,7 @@ func (s *Store) InsertSorobanEventsBatch(ctx context.Context, rows []domain.Soro
 			nullBytes(r.Topic3XDR),
 			r.BodyXDR,
 			nullBytes(r.OpArgsXDR),
-			pq.Array(topics),
+			topics,
 		)
 	}
 	sb.WriteString(` ON CONFLICT (ledger_close_time, ledger, tx_hash, op_index, event_index) DO NOTHING`)
@@ -223,14 +222,14 @@ func (s *Store) StreamSorobanEvents(
 			topic0Sym              sql.NullString
 			topic1, topic2, topic3 []byte
 			opArgs                 []byte
-			topicsXDR              pq.ByteaArray
+			topicsXDR              [][]byte
 		)
 		if err := rows.Scan(
 			&ledger, &r.LedgerCloseTime, &r.TxHash, &opIdx, &eventIdx,
 			&r.ContractID, &r.ContractIDHex,
 			&topicCount, &topic0Sym,
 			&r.Topic0XDR, &topic1, &topic2, &topic3,
-			&r.BodyXDR, &opArgs, &topicsXDR,
+			&r.BodyXDR, &opArgs, pgarray.Bytea(&topicsXDR),
 		); err != nil {
 			return fmt.Errorf("timescale: StreamSorobanEvents scan: %w", err)
 		}
@@ -245,7 +244,7 @@ func (s *Store) StreamSorobanEvents(
 		r.Topic2XDR = topic2
 		r.Topic3XDR = topic3
 		r.OpArgsXDR = opArgs
-		r.TopicsXDR = [][]byte(topicsXDR)
+		r.TopicsXDR = topicsXDR
 		if err := fn(r); err != nil {
 			return err
 		}
@@ -429,7 +428,7 @@ func nullString(v string) sql.NullString {
 
 // nullBytes maps a nil byte slice to SQL NULL and any other value
 // to the bytes verbatim. Postgres' bytea column accepts the []byte
-// form natively via lib/pq's driver.
+// form natively via the pgx driver.
 func nullBytes(v []byte) any {
 	if v == nil {
 		return nil

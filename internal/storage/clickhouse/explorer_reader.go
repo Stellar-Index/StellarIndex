@@ -1531,6 +1531,48 @@ func (r *ExplorerReader) OperationResultsByTx(ctx context.Context, seq uint32, h
 	return out, rows.Err()
 }
 
+// TxOutcome is a transaction's applied verdict + result code. It stamps the
+// operation LIST views (account history, ledger op list, /operations
+// directory) so a failed transaction's operations are marked FAILED with a
+// reason rather than shown as though they applied.
+type TxOutcome struct {
+	Successful bool
+	ResultCode int32
+}
+
+// TxOutcomesByHash batch-reads the applied verdict + result code for a page's
+// worth of transactions, keyed by tx_hash. The operation list views fetch
+// operations WITHOUT their parent transaction, so they call this to stamp each
+// op with its tx's outcome (transaction_successful + the tx result). Bounded
+// to the caller's page (≤ a few hundred distinct hashes): the tx_hash bloom
+// skip-index serves the filter and [ledgerLo, ledgerHi] prunes partitions.
+// FINAL because stellar.transactions is a ReplacingMergeTree — a re-ingested
+// row must not surface a stale/duplicate verdict. Empty input returns an
+// empty (non-nil) map.
+func (r *ExplorerReader) TxOutcomesByHash(ctx context.Context, ledgerLo, ledgerHi uint32, hashes []string) (map[string]TxOutcome, error) {
+	if len(hashes) == 0 {
+		return map[string]TxOutcome{}, nil
+	}
+	const q = `SELECT tx_hash, successful, result_code FROM stellar.transactions FINAL
+		WHERE ledger_seq >= ? AND ledger_seq <= ? AND tx_hash IN (?)`
+	rows, err := r.conn.Query(ctx, q, ledgerLo, ledgerHi, hashes)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: tx outcomes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make(map[string]TxOutcome, len(hashes))
+	for rows.Next() {
+		var hash string
+		var ok uint8
+		var code int32
+		if err := rows.Scan(&hash, &ok, &code); err != nil {
+			return nil, fmt.Errorf("clickhouse: scan tx outcome: %w", err)
+		}
+		out[hash] = TxOutcome{Successful: ok != 0, ResultCode: code}
+	}
+	return out, rows.Err()
+}
+
 // ContractActivityRow is a contract event for the contract-activity view
 // (GET /v1/contracts/{c}). Ordered most-recent-first.
 type ContractActivityRow struct {

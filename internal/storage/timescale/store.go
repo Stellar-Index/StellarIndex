@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	_ "github.com/lib/pq"
+	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
@@ -221,7 +221,7 @@ func configurePool(db *sql.DB) {
 // safety-net behind F-0151 (the 2026-05-26 cascade left dead
 // conns in the pool for ~14 h after postgres@15-main recovered).
 func Open(ctx context.Context, dsn string) (*Store, error) {
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: sql.Open: %w", err)
 	}

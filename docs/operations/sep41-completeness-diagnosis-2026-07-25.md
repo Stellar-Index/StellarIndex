@@ -424,9 +424,10 @@ credited with doing so.
 
 ```sh
 # dry-run first — prints the per-contract pre-Soroban baselines
+# (dry run is also the default now; -dry-run is an explicit alias)
 stellarindex-ops supply seed-sep41-genesis -config /etc/stellarindex.toml -dry-run
-# then, if the numbers look sane:
-stellarindex-ops supply seed-sep41-genesis -config /etc/stellarindex.toml
+# then, if the numbers look sane, -write actually applies it:
+stellarindex-ops supply seed-sep41-genesis -config /etc/stellarindex.toml -write
 ```
 
 Verify with Q7: every watched contract should have a non-NULL

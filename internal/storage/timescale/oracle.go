@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/lib/pq"
-
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
@@ -180,7 +178,7 @@ func (s *Store) LatestOracleUpdatesForAssets(ctx context.Context, assets []canon
            AND ($2 = '' OR source = $2)
          ORDER BY source, ts DESC, ledger DESC
     `
-	rows, err := s.db.QueryContext(ctx, q, pq.StringArray(keys), sourceFilter)
+	rows, err := s.db.QueryContext(ctx, q, keys, sourceFilter)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: LatestOracleUpdatesForAssets: %w", err)
 	}
@@ -259,7 +257,7 @@ func (s *Store) LatestAggregatorPricesForPair(ctx context.Context, base, quote c
          ORDER BY source, ts DESC, ledger DESC
     `
 	rows, err := s.db.QueryContext(ctx, q,
-		base.String(), quote.String(), pq.StringArray(sources))
+		base.String(), quote.String(), sources)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: LatestAggregatorPricesForPair: %w", err)
 	}
@@ -338,7 +336,7 @@ func (s *Store) LatestOracleObservation(ctx context.Context, source string, base
 		decimals int
 	)
 	err := s.db.QueryRowContext(ctx, q,
-		source, pq.StringArray(baseKeys), pq.StringArray(quoteKeys)).Scan(
+		source, baseKeys, quoteKeys).Scan(
 		&u.Source, &u.ContractID,
 		&u.Ledger, &u.TxHash, &u.OpIndex, &u.Timestamp,
 		&assetStr, &quoteStr,

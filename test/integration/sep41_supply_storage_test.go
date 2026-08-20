@@ -613,7 +613,7 @@ func TestSEP41SupplyRollupFoldReset(t *testing.T) {
 	// Raw connection for DIRECT column assertions — the exported reader hides
 	// last_ledger and the fold-vs-genesis column split, so this is the literal
 	// proof that the reset zeroes the fold columns and spares the genesis ones.
-	rawdb, err := sql.Open("postgres", dsn)
+	rawdb, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("raw open: %v", err)
 	}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/domain"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/accounts"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -45,7 +46,7 @@ func supplySeedObservations(args []string) error {
 	fs := flag.NewFlagSet("supply seed-observations", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
-	dryRun := fs.Bool("dry-run", false, "Read + print without writing to account_observations")
+	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -63,6 +64,7 @@ func supplySeedObservations(args []string) error {
 	if len(watched) == 0 {
 		return errors.New("supply seed-observations: no [supply] sdf_reserve_accounts configured — nothing to seed")
 	}
+	dryRun := !gate.Banner() // Banner prints the mode + returns Enabled()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -74,7 +76,7 @@ func supplySeedObservations(args []string) error {
 	defer func() { _ = reader.Close() }()
 
 	var store *timescale.Store
-	if !*dryRun {
+	if !dryRun {
 		store, err = timescale.Open(ctx, cfg.Storage.PostgresDSN)
 		if err != nil {
 			return err
@@ -100,7 +102,7 @@ func supplySeedObservations(args []string) error {
 		}
 		fmt.Printf("SEED     %s ledger=%d balance=%d stroops home_domain=%q\n",
 			seed.AccountID, seed.LedgerSeq, seed.Balance, seed.HomeDomain)
-		if *dryRun {
+		if dryRun {
 			seeded++
 			continue
 		}
@@ -124,7 +126,7 @@ func supplySeedObservations(args []string) error {
 	}
 
 	label := "seeded"
-	if *dryRun {
+	if dryRun {
 		label = "would seed (dry-run)"
 	}
 	fmt.Printf("\n%s %d/%d reserve accounts (%d missing from lake, %d removed)\n",

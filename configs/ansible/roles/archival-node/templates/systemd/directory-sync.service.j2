@@ -27,6 +27,7 @@ Environment=EXTRA_FLAGS=
 ExecStart=/usr/local/bin/stellarindex-ops directory-sync \
   -config ${CONFIG_PATH} \
   -timeout ${RUN_TIMEOUT} \
+  -write \
   ${EXTRA_FLAGS}
 
 # De-privileged, same shape as sep1-refresh (CS-118/CS-119): reads

@@ -4,6 +4,11 @@
 package opsutil
 
 import (
+	"bytes"
+	"flag"
+	"io"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
@@ -38,6 +43,74 @@ func TestNewBoundedLedgerStreamConfig_TolerateTrailingMissingDefault(t *testing.
 	if !got.TolerateTrailingMissing {
 		t.Fatalf("TolerateTrailingMissing = false, want true")
 	}
+}
+
+// TestWriteGate_FailsClosed pins the shared write-gate contract (ops
+// write-gate unification, W8.15c): every mutating subcommand previews by
+// DEFAULT and writes only on an explicit -write. A regression here — a
+// default that reports Enabled()==true, or -dry-run overriding -write —
+// silently re-arms the default-WRITE convention the fix removed.
+func TestWriteGate_FailsClosed(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name        string
+		args        []string
+		wantEnabled bool
+	}{
+		{"no flags is a fail-closed dry run", nil, false},
+		{"-dry-run is the (redundant) no-op alias", []string{"-dry-run"}, false},
+		{"-write opts in", []string{"-write"}, true},
+		{"-write wins even alongside -dry-run", []string{"-write", "-dry-run"}, true},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fs := flag.NewFlagSet("t", flag.ContinueOnError)
+			gate := RegisterWriteGate(fs)
+			if err := fs.Parse(tc.args); err != nil {
+				t.Fatalf("parse %v: %v", tc.args, err)
+			}
+			if gate.Enabled() != tc.wantEnabled {
+				t.Errorf("Enabled() = %v, want %v for args %v", gate.Enabled(), tc.wantEnabled, tc.args)
+			}
+			if gate.DryRun() == tc.wantEnabled {
+				t.Errorf("DryRun() = %v, want %v (the negation of Enabled) for args %v", gate.DryRun(), !tc.wantEnabled, tc.args)
+			}
+		})
+	}
+}
+
+// TestWriteGate_BannerText locks the exact loud-banner strings the
+// remediation requires: the operator must be able to tell a dry run from
+// a live write at a glance, so the text is a contract, not cosmetic.
+func TestWriteGate_BannerText(t *testing.T) {
+	if got := captureStderr(t, func() { PrintWriteBanner(false) }); !strings.Contains(got, "═══ DRY RUN — no writes; pass -write to apply ═══") {
+		t.Errorf("dry-run banner = %q, want the DRY RUN banner", got)
+	}
+	if got := captureStderr(t, func() { PrintWriteBanner(true) }); !strings.Contains(got, "═══ WRITING — applying changes ═══") {
+		t.Errorf("write banner = %q, want the WRITING banner", got)
+	}
+}
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stderr = w
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+	fn()
+	_ = w.Close()
+	os.Stderr = orig
+	return <-done
 }
 
 // TestNewBoundedLedgerStreamConfig_BucketPassThrough confirms the

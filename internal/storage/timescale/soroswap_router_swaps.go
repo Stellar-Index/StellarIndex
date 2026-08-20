@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
-	"github.com/lib/pq"
 )
 
 // SoroswapRouterSwap is one soroswap_router_swaps row — a single
@@ -174,7 +172,7 @@ func (s *Store) InsertSoroswapRouterSwap(ctx context.Context, e SoroswapRouterSw
 		callKind  interface{}
 	)
 	if e.CallKind != "" {
-		callPath = pq.Array(e.CallPath)
+		callPath = e.CallPath
 		callDepth = e.CallDepth
 		callKind = e.CallKind
 	}
@@ -182,7 +180,7 @@ func (s *Store) InsertSoroswapRouterSwap(ctx context.Context, e SoroswapRouterSw
 		int(e.Ledger), e.LedgerCloseTime.UTC(), e.TxHash, int(e.OpIndex),
 		e.ContractID, e.FunctionName,
 		nullableString(e.OpSource), nullableString(e.TxSource),
-		e.Recipient, pq.Array(e.Path),
+		e.Recipient, e.Path,
 		e.AmountIn, e.AmountOut, deadline,
 		e.CallSig,
 		callPath, callDepth, callKind,

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -53,7 +54,7 @@ func supplySeedSEP41Genesis(args []string) error {
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	genesisLedger := fs.Uint("genesis-ledger", uint(clickhouse.SorobanGenesisLedger),
 		"Exclusive upper ledger bound of the pre-Soroban baseline sum (default = protocol-20 activation)")
-	dryRun := fs.Bool("dry-run", false, "Read + print without writing to sep41_supply_rollup")
+	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -74,6 +75,8 @@ func supplySeedSEP41Genesis(args []string) error {
 	if len(watched) == 0 {
 		return errors.New("supply seed-sep41-genesis: no [supply] watched_sep41_contracts configured — nothing to seed")
 	}
+	gate.Banner()
+	dryRun := gate.DryRun()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
@@ -85,7 +88,7 @@ func supplySeedSEP41Genesis(args []string) error {
 	defer func() { _ = reader.Close() }()
 
 	var store *timescale.Store
-	if !*dryRun {
+	if !dryRun {
 		store, err = timescale.Open(ctx, cfg.Storage.PostgresDSN)
 		if err != nil {
 			return err
@@ -96,7 +99,7 @@ func supplySeedSEP41Genesis(args []string) error {
 	boundary := uint32(*genesisLedger)
 	var seeded, nonzero int
 	for _, contractID := range watched {
-		isNonZero, err := seedOneSEP41Genesis(ctx, reader, store, contractID, boundary, *dryRun)
+		isNonZero, err := seedOneSEP41Genesis(ctx, reader, store, contractID, boundary, dryRun)
 		if err != nil {
 			return err
 		}
@@ -107,7 +110,7 @@ func supplySeedSEP41Genesis(args []string) error {
 	}
 
 	label := "seeded"
-	if *dryRun {
+	if dryRun {
 		label = "would seed (dry-run)"
 	}
 	fmt.Printf("\n%s %d/%d watched SEP-41 contracts (%d with a non-zero pre-Soroban baseline, boundary ledger %d)\n",

@@ -14,6 +14,7 @@ import {
   Th,
   THead,
   TR,
+  TxStatusBadge,
 } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import {
@@ -145,8 +146,18 @@ export function OperationView() {
       >
         <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3 lg:grid-cols-4">
           <Field label="Operation index" mono value={`#${op.op_index}`} />
-          <Field label="Result">
-            <OpResultBadge code={op.result_code} />
+          <Field label="Transaction result">
+            {/* Parent-tx outcome — a failed parent means nothing this op names
+                actually moved. Prefer the op-carried signal, fall back to the
+                authoritative tx summary we fetched. */}
+            <TxStatusBadge
+              successful={op.transaction_successful ?? tx.successful}
+              result={op.transaction_result ?? tx.result}
+              code={tx.result_code}
+            />
+          </Field>
+          <Field label="Operation result">
+            <OpResultBadge code={op.result_code} result={op.result} />
           </Field>
           <Field label="Ledger">
             <Link href={`/ledgers/${tx.ledger}/`} className="font-mono text-xs text-brand-600 hover:underline">
@@ -300,21 +311,15 @@ function Shell({
   );
 }
 
-function OpResultBadge({ code }: { code?: number }) {
+function OpResultBadge({ code, result }: { code?: number; result?: string }) {
+  // result_code is a numeric XDR code: 0 = opSUCCESS. An absent code in the
+  // per-tx view is the honest-degrade case (coverage_note) — a dash, never a
+  // "success" or "0". A present code drives the shared tri-state badge, which
+  // shows the human `result` slug on failure.
   if (code == null) {
     return <span className="text-sm text-ink-muted">—</span>;
   }
-  const ok = code === 0;
-  return (
-    <span
-      className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
-        ok ? 'bg-up-subtle text-up' : 'bg-down-subtle text-down'
-      }`}
-      title={ok ? 'success' : `code ${code}`}
-    >
-      {ok ? 'success' : `code ${code}`}
-    </span>
-  );
+  return <TxStatusBadge successful={code === 0} result={result} code={code} />;
 }
 
 function errorStatus(err: unknown): number | null {

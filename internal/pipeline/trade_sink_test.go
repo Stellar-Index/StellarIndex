@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
@@ -52,14 +52,14 @@ func (f *fakeTradeStore) unhealthyErr() error {
 
 var errInfra = errors.New("dial tcp 127.0.0.1:5432: connect: connection refused")
 
-// errData is a PERMANENT data fault as lib/pq actually reports one:
+// errData is a PERMANENT data fault as the driver actually reports one:
 // SQLSTATE 23502 (not_null_violation, integrity-constraint class 23).
 // It used to be a bare errors.New whose *text* imitated pq; that made
 // the fixture indistinguishable from an unclassifiable driver error,
 // which REL-08 (audit-2026-07-23) deliberately routes to block-and-retry
 // rather than to the drop path. Same fault the test always meant to
 // simulate, now typed so the classifier can positively recognise it.
-var errData = &pq.Error{
+var errData = &pgconn.PgError{
 	Code:    "23502",
 	Message: `null value in column "quote_asset" violates not-null constraint`,
 }
@@ -68,7 +68,7 @@ var errData = &pq.Error{
 // shape of a disk-full (53100), OOM (53200) or class-58 I/O fault
 // reaching the sink today. REL-08: these must block-and-retry, never
 // drop.
-var errUnclassified = &pq.Error{
+var errUnclassified = &pgconn.PgError{
 	Code:    "53100",
 	Message: "could not extend file \"base/16384/24576\": No space left on device",
 }
@@ -291,13 +291,13 @@ func TestClassifyFault_Policy(t *testing.T) {
 	}{
 		{"connection refused (recognised infra)", errInfra, faultInfra},
 		{"disk full 53100 (unrecognised infra)", errUnclassified, faultInfra},
-		{"out of memory 53200", &pq.Error{Code: "53200", Message: "out of memory"}, faultInfra},
-		{"io error 58030", &pq.Error{Code: "58030", Message: "could not read block"}, faultInfra},
-		{"internal error XX000", &pq.Error{Code: "XX000", Message: "internal error"}, faultInfra},
-		{"deadlock 40P01 (transient contention)", &pq.Error{Code: "40P01", Message: "deadlock detected"}, faultInfra},
+		{"out of memory 53200", &pgconn.PgError{Code: "53200", Message: "out of memory"}, faultInfra},
+		{"io error 58030", &pgconn.PgError{Code: "58030", Message: "could not read block"}, faultInfra},
+		{"internal error XX000", &pgconn.PgError{Code: "XX000", Message: "internal error"}, faultInfra},
+		{"deadlock 40P01 (transient contention)", &pgconn.PgError{Code: "40P01", Message: "deadlock detected"}, faultInfra},
 		{"bare driver error (unclassifiable)", errors.New("sql: unexpected message from server"), faultInfra},
 		{"not-null violation 23502", errData, faultData},
-		{"numeric out of range 22003", &pq.Error{Code: "22003", Message: "numeric field overflow"}, faultData},
+		{"numeric out of range 22003", &pgconn.PgError{Code: "22003", Message: "numeric field overflow"}, faultData},
 		{"canonical trade validation", fmt.Errorf("timescale: InsertTrade: %w", canonical.ErrInvalidTrade), faultData},
 		{"canonical oracle validation", fmt.Errorf("%w: zero timestamp", canonical.ErrInvalidOracle), faultData},
 		{"recovered sink panic", fmt.Errorf("%w for band/band.update: boom", errSinkPanic), faultData},
@@ -325,11 +325,11 @@ func TestClassifyFault_StoragePredicatesAgree(t *testing.T) {
 		errUnclassified,
 		errData,
 		driver.ErrBadConn,
-		&pq.Error{Code: "08006", Message: "connection failure"},
-		&pq.Error{Code: "57P03", Message: "the database system is starting up"},
-		&pq.Error{Code: "53300", Message: "too many connections"},
-		&pq.Error{Code: "23505", Message: "duplicate key"},
-		&pq.Error{Code: "40001", Message: "serialization failure"},
+		&pgconn.PgError{Code: "08006", Message: "connection failure"},
+		&pgconn.PgError{Code: "57P03", Message: "the database system is starting up"},
+		&pgconn.PgError{Code: "53300", Message: "too many connections"},
+		&pgconn.PgError{Code: "23505", Message: "duplicate key"},
+		&pgconn.PgError{Code: "40001", Message: "serialization failure"},
 		errors.New("something nobody classified"),
 	}
 	for _, err := range errs {

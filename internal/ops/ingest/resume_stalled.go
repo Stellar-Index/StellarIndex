@@ -425,8 +425,7 @@ func parseResumeStalledFlags(args []string) (resumeStalledOpts, config.Config, e
 		"only resume cursors whose decoder CSV contains this source name")
 	bucketOverride := fs.String("bucket", "",
 		"galexie bucket override; default = cfg.Storage.S3BucketArchive")
-	fs.BoolVar(&opts.dryRun, "dry-run", false,
-		"print the resume plan + exit without invoking backfill")
+	gate := opsutil.RegisterWriteGate(fs)
 	fs.IntVar(&opts.parallel, "parallel", 1,
 		"per-cursor backfill parallelism (default 1 = sequential)")
 	fs.BoolVar(&opts.refreshCAGGs, "refresh-caggs", true,
@@ -449,6 +448,8 @@ func parseResumeStalledFlags(args []string) (resumeStalledOpts, config.Config, e
 	if opts.parallel < 1 {
 		return opts, cfg, fmt.Errorf("-parallel (%d) must be >= 1", opts.parallel)
 	}
+	gate.Banner()
+	opts.dryRun = gate.DryRun()
 	loaded, err := config.LoadWithEnv(opts.cfgPath)
 	if err != nil {
 		return opts, cfg, fmt.Errorf("load config: %w", err)

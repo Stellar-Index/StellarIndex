@@ -254,6 +254,18 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		}
 		logger.Info("redis configured", "mode", mode)
 	}
+	// W1-auth-passkey-3 / auth-lt-1: with Redis absent, the auth throttles and
+	// the passkey ceremony replay guard fall back to PER-PROCESS state. That is
+	// correct on one instance but unsafe across several — a finish-login replayed
+	// to a different instance bypasses the spent-ceremony set (session mint →
+	// account takeover), and per-IP/email throttle caps multiply by the replica
+	// count. A single process cannot detect its own fleet size, so require the
+	// operator to ASSERT single-instance rather than silently downgrade a
+	// session-minting path. Refuse to start otherwise. No-op when Redis is
+	// configured (rdb != nil) — the Redis backends are fleet-safe.
+	if err := assertRedisOrSingleInstance(rdb != nil, cfg.API.SingleInstance); err != nil {
+		return err
+	}
 	// F-1350: register cancel AFTER the store + redis defers so LIFO
 	// runs cancel FIRST on shutdown — the background workers (forex,
 	// prewarm, marketcap, coverage refresher, stream sub/pub, webhook
@@ -1855,6 +1867,24 @@ func buildPriceAlertHandlers(pg *postgresstore.Store, logger *slog.Logger) (*das
 		return nil, fmt.Errorf("dashboard price-alert handlers: %w", err)
 	}
 	return h, nil
+}
+
+// assertRedisOrSingleInstance refuses to start a Redis-less deployment that
+// has not asserted single-instance (W1-auth-passkey-3 / auth-lt-1). With Redis
+// absent the auth throttles + the passkey ceremony replay guard use per-process
+// state, which is safe on ONE instance but unsafe across several; a process
+// cannot detect its own fleet size, so the operator must either provide Redis
+// (fleet-safe) or explicitly assert single-instance. No-op when Redis is present.
+func assertRedisOrSingleInstance(redisEnabled, singleInstance bool) error {
+	if redisEnabled || singleInstance {
+		return nil
+	}
+	return fmt.Errorf("refusing to start: Redis is disabled (storage.redis_addr empty, no sentinels) " +
+		"and api.single_instance is not set. The auth throttles and the passkey ceremony replay guard " +
+		"fall back to per-process state, which is unsafe behind more than one API instance (cross-instance " +
+		"ceremony replay can mint a session; per-IP/email throttle caps multiply by the replica count). " +
+		"Provide Redis for any multi-instance deployment, or set api.single_instance=true to assert this is " +
+		"a single instance and accept per-process auth accounting")
 }
 
 // inProcessLoginThrottleWindow / *MaxPerIP / *MaxPerEmail mirror
@@ -4375,7 +4405,7 @@ func prewarmLight(
 	// distinct cache key per source. Without this, every page click
 	// missed cache and ran a 10-30s full-window trades-hypertable
 	// scan; sometimes returning a 503 (#1082 path), sometimes
-	// overshooting because lib/pq doesn't reliably propagate
+	// overshooting because the driver doesn't reliably propagate
 	// context cancellation mid-query. Per-DEX prewarm runs the
 	// canonical limit=100 + default order the explorer hits;
 	// subsequent users land on warm cache (sub-second). Errors are

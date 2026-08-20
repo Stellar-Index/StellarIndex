@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stellar/go-stellar-sdk/strkey"
 
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
@@ -204,7 +204,7 @@ func (s *durabilitySink) handle(ctx context.Context, ev consumer.Event) error {
 		// 40P01) — precisely the class C2-1 says the old sink swallowed.
 		// timescale.IsPermanentDataError classifies it as transient, so the
 		// projector must HOLD its cursor and retry rather than skip.
-		return &pq.Error{Code: "40P01", Message: "deadlock detected (injected)"}
+		return &pgconn.PgError{Code: "40P01", Message: "deadlock detected (injected)"}
 	}
 	// Real production write path — exercises HandleEvent's new error return.
 	return pipeline.HandleEvent(ctx, s.logger, s.store, ev)

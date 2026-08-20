@@ -8,8 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/Stellar-Index/StellarIndex/internal/pgarray"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -30,19 +31,19 @@ const webauthnCredentialCols = `id, user_id, name, credential_id, public_key,
 func scanWebAuthnCredential(row interface{ Scan(...any) error }) (platform.WebAuthnCredential, error) {
 	var (
 		c          platform.WebAuthnCredential
-		transports pq.StringArray
+		transports []string
 		aaguid     []byte
 		lastUsed   sql.NullTime
 	)
 	err := row.Scan(
 		&c.ID, &c.UserID, &c.Name, &c.CredentialID, &c.PublicKey,
-		&c.AttestationType, &transports, &c.SignCount, &c.BackupEligible,
+		&c.AttestationType, pgarray.Strings(&transports), &c.SignCount, &c.BackupEligible,
 		&c.BackupState, &aaguid, &c.CreatedAt, &lastUsed,
 	)
 	if err != nil {
 		return platform.WebAuthnCredential{}, err
 	}
-	c.Transports = []string(transports)
+	c.Transports = transports
 	c.AAGUID = aaguid
 	if lastUsed.Valid {
 		c.LastUsedAt = lastUsed.Time
@@ -60,13 +61,13 @@ func (r *WebAuthnCredentialStore) CreateWebAuthnCredential(
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING `+webauthnCredentialCols,
 		c.UserID, c.Name, c.CredentialID, c.PublicKey, c.AttestationType,
-		pq.Array(c.Transports), c.SignCount, c.BackupEligible, c.BackupState,
+		c.Transports, c.SignCount, c.BackupEligible, c.BackupState,
 		c.AAGUID,
 	)
 	created, err := scanWebAuthnCredential(row)
 	if err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == pgErrUniqueViolation {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgErrUniqueViolation {
 			return platform.WebAuthnCredential{}, fmt.Errorf("create webauthn credential: %w", platform.ErrConflict)
 		}
 		return platform.WebAuthnCredential{}, fmt.Errorf("create webauthn credential: %w", err)

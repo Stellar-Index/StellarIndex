@@ -14,6 +14,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/support/datastore"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 )
 
@@ -57,6 +58,7 @@ func rehydrateGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,fu
 	if opts.from == 0 || opts.to == 0 || opts.from > opts.to {
 		return fmt.Errorf("invalid -from / -to: from=%d to=%d (both required; from <= to)", opts.from, opts.to)
 	}
+	opsutil.PrintWriteBanner(!opts.dryRun)
 
 	// LoadWithEnv (not bare Load) so the STELLARINDEX_* env overrides —
 	// the injected Postgres DSN / Redis + ClickHouse secrets — take
@@ -307,10 +309,11 @@ func parseRehydrateFlags(args []string) (rehydrateOpts, error) {
 	fs.StringVar(&opts.cfgPath, "config", "/etc/stellarindex.toml", "Path to stellarindex.toml")
 	fs.Int64Var(&from, "from", 0, "First ledger sequence to rehydrate (inclusive)")
 	fs.Int64Var(&to, "to", 0, "Last ledger sequence to rehydrate (inclusive)")
-	fs.BoolVar(&opts.dryRun, "dry-run", false, "List would-copy files without writing to hot")
+	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return rehydrateOpts{}, err
 	}
+	opts.dryRun = gate.DryRun()
 	if from < 0 || from > int64(^uint32(0)) {
 		return rehydrateOpts{}, fmt.Errorf("-from out of uint32 range: %d", from)
 	}

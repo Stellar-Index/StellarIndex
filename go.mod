@@ -19,7 +19,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0 // TOML parser for config/ + metadata/sep1.go
 	github.com/alicebob/miniredis/v2 v2.38.0 // In-memory Redis for ratelimit/ tests (test-only)
 	github.com/golang-migrate/migrate/v4 v4.19.1 // Schema migrations; cmd/stellarindex-migrate (ADR-0006)
-	github.com/lib/pq v1.12.3 // Postgres driver (ADR-0006)
+	github.com/jackc/pgx/v5 v5.9.2 // Postgres driver — pgx v5 via the database/sql stdlib adapter (ADR-0006)
 	github.com/prometheus/client_golang v1.24.1 // /metrics + counters/gauges in internal/obs
 	github.com/redis/go-redis/v9 v9.22.0 // Redis client (ADR-0007) — rate-limit + SEP-1 cache
 	github.com/testcontainers/testcontainers-go v0.44.0 // Integration-test Postgres container
@@ -46,6 +46,12 @@ require (
 	golang.org/x/tools v0.49.0
 	google.golang.org/api v0.293.0
 	gopkg.in/yaml.v3 v3.0.1
+)
+
+require (
+	github.com/jackc/pgpassfile v1.0.0 // indirect
+	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
+	github.com/jackc/puddle/v2 v2.2.2 // indirect
 )
 
 require (
@@ -124,6 +130,7 @@ require (
 	github.com/klauspost/compress v1.19.1 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.10 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
+	github.com/lib/pq v1.10.9 // indirect
 	github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e // indirect
 	github.com/magiconair/properties v1.8.10 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect

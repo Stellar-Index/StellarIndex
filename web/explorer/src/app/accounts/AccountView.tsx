@@ -8,7 +8,7 @@ import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { AssetLink } from '@/components/AssetLink';
 import { DirectoryLabel, type DirectoryInfo } from '@/components/DirectoryLabel';
-import { Breadcrumbs } from '@/components/ui';
+import { Breadcrumbs, Callout, TxStatusBadge } from '@/components/ui';
 import { AccountPositions } from './AccountPositions';
 import { AccountMovementsPanel } from './AccountMovements';
 import { AccountDefiPositionsPanel } from './AccountDefiPositions';
@@ -655,7 +655,11 @@ function TransactionsPanel({
                   </span>
                 </Td>
                 <Td>
-                  <SuccessBadge ok={t.successful ?? false} code={t.result_code} />
+                  <TxStatusBadge
+                    successful={t.successful}
+                    result={t.result}
+                    code={t.result_code}
+                  />
                 </Td>
                 <Td align="right">
                   <span className="font-mono text-xs tabular-nums text-ink-muted">
@@ -746,6 +750,15 @@ function OperationsPanel({
       source={source}
       bodyClassName="space-y-3"
     >
+      {data.coverage_note && (
+        // Honest-degrade banner: the parent-transaction outcome read failed,
+        // so ops below without a status are of UNKNOWN outcome (possibly a
+        // FAILED transaction), not applied. Failed ops ARE listed here — this
+        // marker is what keeps one from masquerading as a real interaction.
+        <Callout tone="warn" title="Transaction outcomes partially unavailable">
+          {data.coverage_note}
+        </Callout>
+      )}
       {operations.map((op: TxOperation, i: number) => (
         <OperationCard key={`${op.tx_hash ?? ''}-${op.op_index}-${i}`} op={op} />
       ))}
@@ -766,6 +779,12 @@ function OperationCard({ op }: { op: TxOperation }) {
         <span className="text-brand-700 rounded-sm bg-brand-50 px-2 py-0.5 text-[11px] font-medium">
           {op.type}
         </span>
+        {/* Failed ops stay visible + clearly marked FAILED — never hidden. */}
+        <TxStatusBadge
+          successful={op.transaction_successful}
+          result={op.transaction_result}
+          code={op.result_code}
+        />
         {op.tx_hash && (
           <Link
             href={`/transactions/${op.tx_hash}/`}
@@ -819,25 +838,6 @@ function OperationCard({ op }: { op: TxOperation }) {
         </details>
       )}
     </div>
-  );
-}
-
-// SuccessBadge renders a transaction's result. Success comes from the
-// `successful` bool (the authoritative tx-level signal); the numeric
-// XDR `code` (int32, 0 = txSUCCESS) is shown as detail on failure.
-function SuccessBadge({ ok, code }: { ok: boolean; code?: number }) {
-  const codeLabel = code != null ? `code ${code}` : undefined;
-  return (
-    <span
-      className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
-        ok
-          ? 'bg-up-subtle text-up'
-          : 'bg-down-subtle text-down'
-      }`}
-      title={codeLabel ?? (ok ? 'success' : 'failed')}
-    >
-      {ok ? 'success' : (codeLabel ?? 'failed')}
-    </span>
   );
 }
 

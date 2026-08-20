@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/lib/pq"
+	"github.com/Stellar-Index/StellarIndex/internal/pgarray"
 )
 
 // DirectoryEntry is one curated label for a Stellar address (G-account
@@ -24,8 +24,8 @@ type DirectoryEntry struct {
 }
 
 // directoryUpsertChunk bounds the multi-row upsert: 500 rows × 5
-// params = 2500 placeholders, well under lib/pq's 65535 cap while
-// keeping the full 18.5k-entry sync to ~40 round trips.
+// params = 2500 placeholders, well under Postgres's 65535 bind-param
+// cap while keeping the full 18.5k-entry sync to ~40 round trips.
 const directoryUpsertChunk = 500
 
 // ReplaceDirectory upserts the full entry set for one source and
@@ -135,7 +135,7 @@ func buildDirectoryUpsert(chunk []DirectoryEntry, source string) (string, []any)
 		base := i * 4
 		fmt.Fprintf(&sb, "($%d, $%d, $%d, $%d, $%d, now())",
 			base+1, base+2, base+3, base+4, srcParam)
-		args = append(args, e.Address, e.Name, e.Domain, pq.Array(e.Tags))
+		args = append(args, e.Address, e.Name, e.Domain, e.Tags)
 	}
 	sb.WriteString(`
 		ON CONFLICT (address) DO UPDATE SET
@@ -158,7 +158,7 @@ func (s *Store) DirectoryEntryByAddress(ctx context.Context, address string) (Di
 		 WHERE address = $1`
 	var e DirectoryEntry
 	err := s.db.QueryRowContext(ctx, q, address).Scan(
-		&e.Address, &e.Name, &e.Domain, pq.Array(&e.Tags), &e.Source)
+		&e.Address, &e.Name, &e.Domain, pgarray.Strings(&e.Tags), &e.Source)
 	if errors.Is(err, sql.ErrNoRows) {
 		return DirectoryEntry{}, false, nil
 	}
@@ -179,7 +179,7 @@ func (s *Store) DirectoryEntriesByAddresses(ctx context.Context, addresses []str
 		SELECT address, name, domain, tags, source
 		  FROM account_directory
 		 WHERE address = ANY($1)`
-	rows, err := s.db.QueryContext(ctx, q, pq.Array(addresses))
+	rows, err := s.db.QueryContext(ctx, q, addresses)
 	if err != nil {
 		return nil, fmt.Errorf("directory: batch lookup: %w", err)
 	}
@@ -187,7 +187,7 @@ func (s *Store) DirectoryEntriesByAddresses(ctx context.Context, addresses []str
 	out := make(map[string]DirectoryEntry, len(addresses))
 	for rows.Next() {
 		var e DirectoryEntry
-		if err := rows.Scan(&e.Address, &e.Name, &e.Domain, pq.Array(&e.Tags), &e.Source); err != nil {
+		if err := rows.Scan(&e.Address, &e.Name, &e.Domain, pgarray.Strings(&e.Tags), &e.Source); err != nil {
 			return nil, fmt.Errorf("directory: batch scan: %w", err)
 		}
 		out[e.Address] = e

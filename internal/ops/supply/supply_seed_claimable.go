@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
@@ -89,7 +90,7 @@ func supplySeedClaimableBalances(args []string) error {
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	assetsRaw := fs.String("assets", "", "Comma-separated classic assets (CODE-ISSUER or CODE:ISSUER) to scope the seed to. EMPTY (the default) seeds EVERY classic credit asset — narrowing leaves every asset omitted still under-counted")
 	timeout := fs.Duration("timeout", 12*time.Hour, "Whole-run deadline; the lake scan is hours long and every insert lands at the end, so an expiring deadline loses the entire pass")
-	dryRun := fs.Bool("dry-run", false, "Read + print per-asset claimable count + summed balance without writing to claimable_observations")
+	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -104,12 +105,14 @@ func supplySeedClaimableBalances(args []string) error {
 	if err != nil {
 		return err
 	}
+	gate.Banner()
+	dryRun := gate.DryRun()
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	w := &claimableSeedWriter{dryRun: *dryRun, tallies: map[string]*claimableSeedTally{}}
-	if !*dryRun {
+	w := &claimableSeedWriter{dryRun: dryRun, tallies: map[string]*claimableSeedTally{}}
+	if !dryRun {
 		store, err := timescale.Open(ctx, cfg.Storage.PostgresDSN)
 		if err != nil {
 			return err
@@ -124,7 +127,7 @@ func supplySeedClaimableBalances(args []string) error {
 	if err := w.flush(); err != nil {
 		return err
 	}
-	printClaimableSeedSummary(w, assets, *dryRun)
+	printClaimableSeedSummary(w, assets, dryRun)
 	return nil
 }
 

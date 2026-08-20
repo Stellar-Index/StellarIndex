@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/lib/pq"
+	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/Stellar-Index/StellarIndex/internal/domain"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
@@ -82,7 +82,7 @@ func TestBlendPositionsRoundTrip(t *testing.T) {
 	}
 
 	// ─── Validate the rows via a raw COUNT ─────────────────────────
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("sql.Open: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestBlendPositionsLargeI128(t *testing.T) {
 		t.Fatalf("InsertBlendPositionEvent: %v", err)
 	}
 
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("sql.Open: %v", err)
 	}
@@ -231,7 +231,7 @@ func TestBlendEmissionsRoundTrip(t *testing.T) {
 		}
 	}
 
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("sql.Open: %v", err)
 	}
@@ -345,7 +345,7 @@ func TestBlendAdminRoundTrip(t *testing.T) {
 		}
 	}
 
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("sql.Open: %v", err)
 	}

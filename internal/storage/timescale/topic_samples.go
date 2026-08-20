@@ -7,9 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lib/pq"
-
 	"github.com/Stellar-Index/StellarIndex/internal/domain"
+	"github.com/Stellar-Index/StellarIndex/internal/pgarray"
 )
 
 // TopicSample is one representative soroban_events row for a distinct
@@ -217,14 +216,14 @@ func (s *Store) distinctSorobanTopicSamplesWindowed(ctx context.Context, from, t
 			topic0Sym                sql.NullString
 			topic1, topic2, topic3   []byte
 			opArgs                   []byte
-			topicsXDR                pq.ByteaArray
+			topicsXDR                [][]byte
 			grpCount, grpMin, grpMax int64
 		)
 		if err := rows.Scan(
 			&ledger, &r.LedgerCloseTime, &r.TxHash, &opIdx, &eventIdx,
 			&r.ContractID, &r.ContractIDHex, &topicCount, &topic0Sym,
 			&r.Topic0XDR, &topic1, &topic2, &topic3,
-			&r.BodyXDR, &opArgs, &topicsXDR,
+			&r.BodyXDR, &opArgs, pgarray.Bytea(&topicsXDR),
 			&grpCount, &grpMin, &grpMax,
 		); err != nil {
 			return nil, fmt.Errorf("timescale: DistinctSorobanTopicSamples scan: %w", err)
@@ -240,7 +239,7 @@ func (s *Store) distinctSorobanTopicSamplesWindowed(ctx context.Context, from, t
 		r.Topic2XDR = topic2
 		r.Topic3XDR = topic3
 		r.OpArgsXDR = opArgs
-		r.TopicsXDR = [][]byte(topicsXDR)
+		r.TopicsXDR = topicsXDR
 		samp.Row = r
 		samp.Count = grpCount
 		samp.MinLedger = uint32(grpMin)
@@ -348,7 +347,7 @@ func (s *Store) oneSorobanTopicSample(ctx context.Context, contractID, topic0Sym
 		topic0SymOut           sql.NullString
 		topic1, topic2, topic3 []byte
 		opArgs                 []byte
-		topicsXDR              pq.ByteaArray
+		topicsXDR              [][]byte
 	)
 	pairCtx, cancel := context.WithTimeout(ctx, oneSorobanTopicSampleTimeout)
 	defer cancel()
@@ -356,7 +355,7 @@ func (s *Store) oneSorobanTopicSample(ctx context.Context, contractID, topic0Sym
 		&ledger, &r.LedgerCloseTime, &r.TxHash, &opIdx, &eventIdx,
 		&r.ContractID, &r.ContractIDHex, &topicCount, &topic0SymOut,
 		&r.Topic0XDR, &topic1, &topic2, &topic3,
-		&r.BodyXDR, &opArgs, &topicsXDR,
+		&r.BodyXDR, &opArgs, pgarray.Bytea(&topicsXDR),
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return TopicSample{}, false, nil
@@ -381,7 +380,7 @@ func (s *Store) oneSorobanTopicSample(ctx context.Context, contractID, topic0Sym
 	r.Topic2XDR = topic2
 	r.Topic3XDR = topic3
 	r.OpArgsXDR = opArgs
-	r.TopicsXDR = [][]byte(topicsXDR)
+	r.TopicsXDR = topicsXDR
 	samp.Row = r
 	// Count/span deliberately not measured on the fallback path (see the
 	// query const's note): -1 = "dormant pair, not measured".

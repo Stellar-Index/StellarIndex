@@ -7,6 +7,8 @@ export type { ButtonVariant, ButtonSize } from './Button';
 export { Card, CardHeader, CardBody, CardFooter } from './Card';
 export { Badge } from './Badge';
 export type { BadgeTone } from './Badge';
+export { TxStatusBadge } from './TxStatusBadge';
+export type { TxStatusBadgeProps } from './TxStatusBadge';
 export { Stat, StatGrid, StatCell } from './Stat';
 export { TableWrap, Table, THead, TBody, TR, Th, Td } from './Table';
 export { Container, Section, PageHeader, Breadcrumbs, SectionHeader } from './Page';

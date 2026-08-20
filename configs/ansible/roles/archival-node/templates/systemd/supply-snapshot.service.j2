@@ -36,6 +36,7 @@ Environment=EXTRA_FLAGS=
 ExecStart=/bin/sh -c '/usr/local/bin/stellarindex-ops supply snapshot \
   -config ${CONFIG_PATH} \
   -asset ${ASSET} \
+  -write \
   $(if [ -n "${TEXTFILE_OUTPUT}" ]; then echo "-textfile-output ${TEXTFILE_OUTPUT}"; fi) \
   ${EXTRA_FLAGS}'
 

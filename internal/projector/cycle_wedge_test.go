@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -189,7 +189,7 @@ func (*decodeErrDecoder) Decode(events.Event) ([]consumer.Event, error) {
 // TestCycle_ValidationErrorDoesNotWedge pins COR-11 (audit-2026-07-23): a
 // Validate-failing row — here an OracleUpdate rejected by canonical
 // validation, exactly what Store.InsertOracleUpdate returns verbatim — is a
-// DETERMINISTIC data fault. It carries no *pq.Error, so the old
+// DETERMINISTIC data fault. It carries no *pgconn.PgError, so the old
 // permanent/transient boolean classified it transient and held the cursor
 // below its ledger FOREVER; under INV-4 there is no second writer, so the
 // whole per-source projection stopped advancing from one bad row.
@@ -250,7 +250,7 @@ func TestCycle_ValidationErrorStillAdvancesAcrossCycles(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // COR-01: a negative SEP-41 amount rejected by the store's own pre-SQL
-// validation (a plain fmt.Errorf, no sentinel, no *pq.Error) must not wedge
+// validation (a plain fmt.Errorf, no sentinel, no *pgconn.PgError) must not wedge
 // the transfers projection forever.
 // ---------------------------------------------------------------------------
 
@@ -338,7 +338,7 @@ func TestCycle_DeadlockRetriesBeforeQuarantine(t *testing.T) {
 	failing := true
 	h := newWedgeHarness(t, source, rows, 105, func(ev consumer.Event) error {
 		if failing && ev.(ledgerEvent).ledger == 101 {
-			return &pq.Error{Code: "40P01", Message: "deadlock detected"}
+			return &pgconn.PgError{Code: "40P01", Message: "deadlock detected"}
 		}
 		return nil
 	})
@@ -375,7 +375,7 @@ func TestCycle_GlobalFailureDoesNotShedRows(t *testing.T) {
 	beforeQuarantined := decodedCount(t, source, "sink_quarantined")
 
 	h := newWedgeHarness(t, source, rows, 105, func(consumer.Event) error {
-		return &pq.Error{Code: "42703", Message: `column "amount" does not exist`}
+		return &pgconn.PgError{Code: "42703", Message: `column "amount" does not exist`}
 	})
 
 	for i := 0; i < QuarantineAfterCycles*2; i++ {

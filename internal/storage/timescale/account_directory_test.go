@@ -24,7 +24,7 @@ func directoryEntriesN(n int) []DirectoryEntry {
 // TestBuildDirectoryUpsert_PlaceholderLayout — 4 params per row plus
 // exactly one shared source param at the tail position every row
 // references. A drifted placeholder count corrupts column/value
-// alignment silently (lib/pq reports nothing when counts still
+// alignment silently (the driver reports nothing when counts still
 // happen to match).
 func TestBuildDirectoryUpsert_PlaceholderLayout(t *testing.T) {
 	chunk := directoryEntriesN(3)

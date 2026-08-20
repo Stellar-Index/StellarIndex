@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { Breadcrumbs } from '@/components/ui';
+import { Breadcrumbs, TxStatusBadge } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import {
   type Envelope,
@@ -150,7 +150,11 @@ export function TxView({ hash: hashProp }: { hash?: string } = {}) {
           </Field>
           <Field label="Close time" value={formatTimestamp(tx.close_time)} />
           <Field label="Result">
-            <SuccessBadge ok={tx.successful ?? false} code={tx.result_code} />
+            <TxStatusBadge
+              successful={tx.successful}
+              result={tx.result}
+              code={tx.result_code}
+            />
           </Field>
           <Field
             label="Fee charged"
@@ -269,19 +273,15 @@ function OperationCard({ hash, op }: { hash: string; op: TxOperation }) {
           {op.type}
         </Link>
         {op.result_code != null && (
-          <span
-            // result_code is a numeric XDR code: 0 = opSUCCESS. Gate on
-            // `!= null` (0 is falsy) and derive success from `=== 0`,
-            // never from truthiness or a regex on the number.
-            className={`rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
-              op.result_code === 0
-                ? 'bg-up-subtle text-up'
-                : 'bg-down-subtle text-down'
-            }`}
-            title={op.result_code === 0 ? 'success' : `code ${op.result_code}`}
-          >
-            {op.result_code === 0 ? 'success' : `code ${op.result_code}`}
-          </span>
+          // result_code is a numeric XDR code: 0 = opSUCCESS. Gate on
+          // `!= null` (0 is falsy) and derive success from `=== 0`,
+          // never from truthiness or a regex on the number. On failure
+          // the human `op.result` slug is shown (code kept in the title).
+          <TxStatusBadge
+            successful={op.result_code === 0}
+            result={op.result}
+            code={op.result_code}
+          />
         )}
         {op.source_account && (
           <span
@@ -387,25 +387,6 @@ function EventsPanel({ hash, events }: { hash: string; events: TxEvent[] }) {
         </table>
       </div>
     </Panel>
-  );
-}
-
-// SuccessBadge renders the transaction-level result. Success is driven
-// by the `successful` bool (the authoritative tx-level signal); the
-// numeric XDR `code` is shown as detail on failure / hover.
-function SuccessBadge({ ok, code }: { ok: boolean; code?: number }) {
-  const codeLabel = code != null ? `code ${code}` : undefined;
-  return (
-    <span
-      className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
-        ok
-          ? 'bg-up-subtle text-up'
-          : 'bg-down-subtle text-down'
-      }`}
-      title={codeLabel ?? (ok ? 'success' : 'failed')}
-    >
-      {ok ? 'success' : (codeLabel ?? 'failed')}
-    </span>
   );
 }
 

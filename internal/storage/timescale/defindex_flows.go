@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
-	"github.com/lib/pq"
 )
 
 // DefindexLayer discriminates which protocol layer emitted the
@@ -147,7 +145,7 @@ func (s *Store) InsertDefindexFlow(ctx context.Context, e DefindexFlow) error {
 	}
 	var amountsVec interface{}
 	if len(e.AmountsVec) > 0 {
-		amountsVec = pq.Array(e.AmountsVec)
+		amountsVec = e.AmountsVec
 	}
 	_, err := s.db.ExecContext(ctx, q,
 		int(e.Ledger), e.LedgerCloseTime.UTC(), e.TxHash, int(e.OpIndex), int(e.EventIndex),
