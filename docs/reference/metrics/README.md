@@ -902,6 +902,28 @@ level).
 Alert: `stellarindex_monthly_quota_fail_open` →
 [monthly-quota-fail-open](../../operations/runbooks/monthly-quota-fail-open.md).
 
+### `stellarindex_monthly_quota_fail_closed_total`
+
+Counter, no labels.
+
+The dwell-guarded companion to
+`stellarindex_monthly_quota_fail_open_total`. The middleware fails
+**open** on a transient month-to-date read error (a Redis blip must not
+429 paying customers), but only inside a dwell window (default 30s,
+matching `stellarindex_ratelimit_fail_open`'s dwell). Once the counter
+has been unreadable continuously for longer than the dwell window the
+middleware flips to fail-**closed** — it rejects with `429` +
+`Retry-After` and increments this counter instead
+(`internal/api/v1/middleware/monthly_quota.go`, W1-flow-register-4).
+
+The exposure it closes: without the dwell inversion, a key already
+at/past its cap bills unmetered for the *entire* duration of a counter
+outage, unrecoverable once served. A non-zero rate here means the usage
+backend has been down long enough that metered customers are now being
+429'd — the mirror-image alerting concern to the fail-open counter, and
+worth a distinct signal. Pre-seeded at zero so "quiet" is
+distinguishable from "dead".
+
 ### `stellarindex_admin_audit_write_failures_total`
 
 Counter, label `surface` (`account_override` / `key_mint` /

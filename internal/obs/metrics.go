@@ -70,6 +70,7 @@ func registerAppMetrics() {
 		SourceInsertErrorsTotal,
 		RateLimitFailOpenTotal,
 		MonthlyQuotaFailOpenTotal,
+		MonthlyQuotaFailClosedTotal,
 		AdminAuditWriteFailuresTotal,
 		AdminKeyBudgetClampsTotal,
 		Sep1CacheOpsTotal,
@@ -1200,6 +1201,27 @@ var MonthlyQuotaFailOpenTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_monthly_quota_fail_open_total",
 		Help: "Requests that bypassed the per-key monthly quota ceiling because the month-to-date read errored.",
+	},
+)
+
+// MonthlyQuotaFailClosedTotal — counter of requests REJECTED with 429
+// because the month-to-date counter had been unreadable continuously
+// for longer than the fail-open dwell window, so the middleware flipped
+// from fail-OPEN to fail-CLOSED (W1-flow-register-4).
+//
+// The dwell-guarded companion to [MonthlyQuotaFailOpenTotal]: a
+// transient counter blip increments the fail-OPEN counter (the request
+// is still served), but a SUSTAINED outage past the dwell window
+// increments this one instead (the request is denied), so a counter
+// outage cannot become an indefinite unmetered billing window for a key
+// already at its cap. A non-zero rate here means the usage backend has
+// been down long enough that paying customers are now being 429'd —
+// alert on it distinctly from the fail-open signal. Pre-seeded at zero
+// (unlabelled counter) so "quiet" is distinguishable from "dead".
+var MonthlyQuotaFailClosedTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_monthly_quota_fail_closed_total",
+		Help: "Requests rejected (429) because the month-to-date read stayed unavailable past the fail-open dwell window.",
 	},
 )
 
