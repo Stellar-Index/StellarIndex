@@ -30,46 +30,7 @@ export interface paths {
          *     an external source goes silent, or a non-critical
          *     timer misfires.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /**
-                 * @description Alive. `status` field is `ok`; a pointer at
-                 *     `/v1/status` is included for the SLA-truth rollup.
-                 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "status": "ok",
-                         *         "uptime": "8m53s",
-                         *         "status_root": "/v1/status"
-                         *       },
-                         *       "as_of": "2026-07-03T22:37:12.743923086Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["HealthResponse"];
-                    };
-                };
-            };
-        };
+        get: operations["getLiveness"];
         put?: never;
         post?: never;
         delete?: never;
@@ -111,77 +72,7 @@ export interface paths {
          *     or `/v1/readyz` (deeper, but still serving-plane
          *     only).
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /**
-                 * @description Ready to serve. `data.checks[]` lists each
-                 *     dependency-ping result. `data.status` is `ok` when
-                 *     every check passed, or `degraded` when a NON-critical
-                 *     dependency failed (the API still serves via fallback —
-                 *     e.g. Timescale covers a Redis cache miss per ADR-0007 —
-                 *     so the backend stays in the load-balancer pool;
-                 *     `flags.stale` is `true` in the degraded case).
-                 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "status": "ok",
-                         *         "uptime": "8m54s",
-                         *         "checks": [
-                         *           {
-                         *             "name": "postgres",
-                         *             "ok": true
-                         *           },
-                         *           {
-                         *             "name": "redis",
-                         *             "ok": true
-                         *           }
-                         *         ],
-                         *         "status_root": "/v1/status"
-                         *       },
-                         *       "as_of": "2026-07-03T22:37:13.880270909Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["ReadyEnvelope"];
-                    };
-                };
-                /**
-                 * @description One or more CRITICAL serving-plane dependencies failed
-                 *     their ping under the deadline. The response is the same
-                 *     enveloped `ReadyResponse` shape as the 200 (NOT
-                 *     problem+json): `data.status` is `unready`, `flags.stale`
-                 *     is `true`, and `data.checks[]` carries the per-dependency
-                 *     breakdown so operators can see which dependency failed.
-                 */
-                503: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ReadyEnvelope"];
-                    };
-                };
-            };
-        };
+        get: operations["getReadiness"];
         put?: never;
         post?: never;
         delete?: never;
@@ -206,47 +97,7 @@ export interface paths {
          *     `go_version`. Intended for fleet-wide "what's running"
          *     checks over the API instead of shelling into hosts.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Version string, build date, git SHA. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "build_date": "2026-07-03T22:24:02Z",
-                         *         "commit": "3d26b9d2b1bf72dc3caec9db9dceff59ca24f6b7",
-                         *         "dirty": "false",
-                         *         "go_version": "go1.25.11",
-                         *         "version": "v0.7.6"
-                         *       },
-                         *       "as_of": "2026-07-03T22:37:15.007238387Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["VersionResponse"];
-                    };
-                };
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-            };
-        };
+        get: operations["getVersion"];
         put?: never;
         post?: never;
         delete?: never;
@@ -277,81 +128,7 @@ export interface paths {
          *     only the in-process surface (region label + uptime) is
          *     populated and `flags.stale=true`.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Status rollup envelope. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "overall": "ok",
-                         *         "region": {
-                         *           "name": "r1",
-                         *           "deployment": "production"
-                         *         },
-                         *         "services": [
-                         *           {
-                         *             "name": "api",
-                         *             "status": "ok",
-                         *             "last_seen": "2026-05-05T15:09:00.116Z"
-                         *           },
-                         *           {
-                         *             "name": "indexer",
-                         *             "status": "ok",
-                         *             "last_seen": "2026-05-05T15:08:46Z"
-                         *           },
-                         *           {
-                         *             "name": "aggregator",
-                         *             "status": "ok",
-                         *             "last_seen": "2026-05-05T15:08:47Z"
-                         *           }
-                         *         ],
-                         *         "latency": {
-                         *           "p50_ms": 0.6,
-                         *           "p95_ms": 3.85,
-                         *           "p99_ms": 4.77,
-                         *           "window_secs": 300,
-                         *           "p95_target_ms": 200,
-                         *           "p99_target_ms": 500
-                         *         },
-                         *         "freshness": {
-                         *           "last_aggregator_tick": "2026-05-05T15:08:57Z",
-                         *           "active_sources": 13,
-                         *           "total_sources": 17
-                         *         },
-                         *         "incidents": {
-                         *           "active_count": 0,
-                         *           "page_count": 0,
-                         *           "ticket_count": 0,
-                         *           "informational_count": 0
-                         *         },
-                         *         "incidents_status": "ok"
-                         *       },
-                         *       "as_of": "2026-05-05T15:09:00.119Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["StatusEnvelope"];
-                    };
-                };
-            };
-        };
+        get: operations["getStatus"];
         put?: never;
         post?: never;
         delete?: never;
@@ -379,26 +156,7 @@ export interface paths {
          *     Anonymous-friendly. Returns `{"notices":[],"count":0}` (never
          *     null) when no banners are active or the notice store is unwired.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Active status-notice list. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["StatusNoticesEnvelope"];
-                    };
-                };
-            };
-        };
+        get: operations["listStatusNotices"];
         put?: never;
         post?: never;
         delete?: never;
@@ -433,127 +191,7 @@ export interface paths {
          *     unified Stellar listing; omitting it returns the legacy
          *     classic-assets page.
          */
-        get: {
-            parameters: {
-                query?: {
-                    /** @description Comma-separated row enrichments. Supported: `sparkline7d` (per-row 7-day price history for chart columns; one batch read per page). */
-                    include?: string;
-                    /** @description Case-insensitive substring filter over code / asset id / slug / name, applied server-side across BOTH phases of the unified listing (catalogue + the ~191K classic long tail). */
-                    q?: string;
-                    /**
-                     * @description Maximum rows per page (1-500, default 100). Values above
-                     *     the cap return 400 rather than being silently clamped.
-                     *     Page onward with `cursor` where the endpoint supports it.
-                     */
-                    limit?: components["parameters"]["Limit"];
-                    /**
-                     * @description Opaque pagination token echoed from a prior response's
-                     *     `pagination.next`. Pass it verbatim — it is a base64url-encoded
-                     *     blob whose internal shape is an implementation detail and
-                     *     changes without notice. Clients MUST NOT parse, decode, or
-                     *     construct cursors by hand.
-                     *
-                     *     A cursor is stable across retries but not across schema
-                     *     changes; treat it as short-lived (minutes, not days). Empty
-                     *     means "start from the beginning".
-                     */
-                    cursor?: components["parameters"]["Cursor"];
-                    /**
-                     * @description Major dispatch for the listing. One of:
-                     *     - `fiat` — fiat currencies from the verified-currency catalogue.
-                     *     - `stablecoin` — fiat-pegged stablecoins from the catalogue.
-                     *     - `crypto` — cryptocurrencies from the catalogue. The
-                     *       aliases `blockchain`, `cryptocurrency`, and
-                     *       `cryptocurrencies` fold to `crypto` (the explorer's
-                     *       filter-chip label).
-                     *     - `all` — the unified cross-class listing (every catalogue
-                     *       class plus indexed Stellar assets).
-                     *
-                     *     Omitted: the legacy classic-assets page (unfiltered).
-                     */
-                    asset_class?: "fiat" | "stablecoin" | "crypto" | "blockchain" | "cryptocurrency" | "cryptocurrencies" | "all";
-                    /**
-                     * @description Filter the listing to assets minted by the supplied
-                     *     issuer G-strkey. Sourced from the same ListCoinsExt
-                     *     path the legacy issuer-scoped listing used; rows
-                     *     include the full coin-overlay shape (price_usd /
-                     *     volume_24h_usd / change_*_pct / etc) when a
-                     *     CoinsReader is wired.
-                     */
-                    issuer?: string;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Page of assets. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": [
-                         *         {
-                         *           "asset_id": "xlm",
-                         *           "type": "global",
-                         *           "code": "XLM",
-                         *           "decimals": 0,
-                         *           "class": "crypto",
-                         *           "sep1_status": "not_applicable",
-                         *           "name": "Stellar Lumens",
-                         *           "circulating_supply": "339918360790041352",
-                         *           "market_cap_usd": "6937310086.48",
-                         *           "volume_24h_usd": "2601049.43451797",
-                         *           "change_24h_pct": "3.63",
-                         *           "price_usd": "0.20401200646499857404",
-                         *           "change_1h_pct": "0.01",
-                         *           "change_7d_pct": "15.70",
-                         *           "slug": "xlm"
-                         *         },
-                         *         {
-                         *           "asset_id": "usdc",
-                         *           "type": "global",
-                         *           "code": "USDC",
-                         *           "decimals": 0,
-                         *           "class": "stablecoin",
-                         *           "sep1_status": "not_applicable",
-                         *           "name": "USD Coin",
-                         *           "circulating_supply": "2728642106735257",
-                         *           "market_cap_usd": "273375235.46",
-                         *           "volume_24h_usd": "2292696.89850489",
-                         *           "change_24h_pct": "0.33",
-                         *           "price_usd": "0.99989000000000",
-                         *           "change_1h_pct": "0.17",
-                         *           "change_7d_pct": "0.18",
-                         *           "slug": "usdc"
-                         *         }
-                         *       ],
-                         *       "as_of": "2026-07-03T22:37:16.207112941Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       },
-                         *       "pagination": {
-                         *         "next": "catalogue:2"
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["AssetListEnvelope"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["listAssets"];
         put?: never;
         post?: never;
         delete?: never;
@@ -582,97 +220,7 @@ export interface paths {
          *     `asset_id` = slug, `type` = "global", no issuer/contract_id).
          *     `market_cap_usd` is populated for fiat (fxHistory-backed).
          */
-        get: {
-            parameters: {
-                query?: {
-                    /**
-                     * @description Opaque pagination token echoed from a prior response's
-                     *     `pagination.next`. Pass it verbatim — it is a base64url-encoded
-                     *     blob whose internal shape is an implementation detail and
-                     *     changes without notice. Clients MUST NOT parse, decode, or
-                     *     construct cursors by hand.
-                     *
-                     *     A cursor is stable across retries but not across schema
-                     *     changes; treat it as short-lived (minutes, not days). Empty
-                     *     means "start from the beginning".
-                     */
-                    cursor?: components["parameters"]["Cursor"];
-                    /**
-                     * @description Maximum rows per page (1-500, default 100). Values above
-                     *     the cap return 400 rather than being silently clamped.
-                     *     Page onward with `cursor` where the endpoint supports it.
-                     */
-                    limit?: components["parameters"]["Limit"];
-                    /**
-                     * @description Optional class filter within the external set: `fiat` or
-                     *     `crypto` (reference coins). Omitted returns all external rows,
-                     *     market-cap ordered (fiats first).
-                     */
-                    asset_class?: "fiat" | "stablecoin" | "crypto" | "blockchain" | "cryptocurrency" | "cryptocurrencies";
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Page of external assets. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": [
-                         *         {
-                         *           "asset_id": "chinese-yuan",
-                         *           "type": "global",
-                         *           "code": "CNY",
-                         *           "decimals": 0,
-                         *           "class": "fiat",
-                         *           "sep1_status": "not_applicable",
-                         *           "name": "Chinese Yuan",
-                         *           "circulating_supply": "302000000000000",
-                         *           "market_cap_usd": "44486344754441.27",
-                         *           "slug": "chinese-yuan"
-                         *         },
-                         *         {
-                         *           "asset_id": "us-dollar",
-                         *           "type": "global",
-                         *           "code": "USD",
-                         *           "decimals": 0,
-                         *           "class": "fiat",
-                         *           "sep1_status": "not_applicable",
-                         *           "name": "US Dollar",
-                         *           "circulating_supply": "21700000000000",
-                         *           "market_cap_usd": "21700000000000.00",
-                         *           "price_usd": "1.00000000000000",
-                         *           "slug": "us-dollar"
-                         *         }
-                         *       ],
-                         *       "as_of": "2026-07-03T22:37:17.396303097Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       },
-                         *       "pagination": {
-                         *         "next": "2"
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["AssetListEnvelope"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["listExternalAssets"];
         put?: never;
         post?: never;
         delete?: never;
@@ -697,61 +245,7 @@ export interface paths {
          *     returns 404 on `/assets/{asset_id}` — each asset resolves on
          *     exactly one path (LC-001, no redirect).
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description Catalogue slug (e.g. `us-dollar`, `bitcoin`) or ticker (`USD`, `BTC`). */
-                    slug: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description External asset detail. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "ticker": "USD",
-                         *         "slug": "us-dollar",
-                         *         "name": "US Dollar",
-                         *         "description": "Official currency of the United States. Reserve currency for most international trade and…",
-                         *         "class": "fiat",
-                         *         "coingecko_id": "usd",
-                         *         "price_usd": "1.00000000000000",
-                         *         "price_authority": "vwap_native",
-                         *         "price_sources": [
-                         *           "identity"
-                         *         ],
-                         *         "price_as_of": "2026-07-03T22:37:18.534338873Z",
-                         *         "circulating_supply": "21700000000000",
-                         *         "market_cap_usd": "21700000000000.00"
-                         *       },
-                         *       "as_of": "2026-07-03T22:37:18.534353688Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["GlobalAssetEnvelope"];
-                    };
-                };
-                404: components["responses"]["NotFound"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getExternalAsset"];
         put?: never;
         post?: never;
         delete?: never;
@@ -781,50 +275,7 @@ export interface paths {
          *
          *     Order matches the seed-file order (deterministic).
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description List of verified-currency directory entries. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": [
-                         *         {
-                         *           "ticker": "XLM",
-                         *           "slug": "xlm",
-                         *           "name": "Stellar Lumens",
-                         *           "class": "crypto",
-                         *           "verified_issuer": "Stellar Development Foundation",
-                         *           "coingecko_id": "stellar",
-                         *           "coinmarketcap_id": "512"
-                         *         }
-                         *       ],
-                         *       "as_of": "2026-07-03T22:37:19.6906857Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["VerifiedCurrencyListEnvelope"];
-                    };
-                };
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["listVerifiedAssets"];
         put?: never;
         post?: never;
         delete?: never;
@@ -869,94 +320,7 @@ export interface paths {
          *     self-certifying. A path that is none of the above returns
          *     400.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /**
-                     * @description Canonical asset identifier. One of `native`, `<code>-<issuer>`,
-                     *     `<code>:<issuer>` (alias), or `<contract_id>`. Strkeys
-                     *     validated per SEP-23. The handler is strict — short symbols
-                     *     like `XLM` or `USDC` are NOT accepted here; use `native` or
-                     *     the full `<code>-<G…>` form.
-                     * @example native
-                     */
-                    asset_id: components["parameters"]["AssetIdPath"];
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Asset + metadata. Shape depends on whether `asset_id` is a slug or a canonical id. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "kind": "stellar_asset",
-                         *         "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *         "type": "classic",
-                         *         "code": "USDC",
-                         *         "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *         "home_domain": "centre.io",
-                         *         "decimals": 7,
-                         *         "sep1_status": "verified",
-                         *         "name": "USD Coin",
-                         *         "org_name": "Centre Consortium LLC",
-                         *         "circulating_supply": "2757874444178474",
-                         *         "total_supply": "2757874444178474",
-                         *         "market_cap_usd": "275787444.42",
-                         *         "volume_24h_usd": "2293068.58731944",
-                         *         "price_usd": "1.0002795935",
-                         *         "change_1h_pct": "-0.09",
-                         *         "change_7d_pct": "-0.14",
-                         *         "top_markets": [
-                         *           {
-                         *             "counterparty": "native",
-                         *             "side": "quote",
-                         *             "volume_24h_usd": "1184662.45607940",
-                         *             "trade_count_24h": 44334
-                         *           }
-                         *         ],
-                         *         "price_history_24h": [
-                         *           {
-                         *             "t": "2026-07-02T23:00:00Z",
-                         *             "p": "1.0018115222"
-                         *           }
-                         *         ],
-                         *         "price_history_7d": [
-                         *           {
-                         *             "t": "2026-06-27T00:00:00Z",
-                         *             "p": "1.0007031277"
-                         *           }
-                         *         ],
-                         *         "markets_count": 1236,
-                         *         "trade_count_24h": 286977,
-                         *         "slug": "USDC",
-                         *         "first_seen_ledger": 34180766,
-                         *         "last_seen_ledger": 63316034
-                         *       },
-                         *       "as_of": "2026-07-03T22:36:28.712467097Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["AssetEnvelope"] | components["schemas"]["GlobalAssetEnvelope"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                404: components["responses"]["NotFound"];
-            };
-        };
+        get: operations["getAsset"];
         put?: never;
         post?: never;
         delete?: never;
@@ -984,60 +348,7 @@ export interface paths {
          *     as an HTTP error. 404 only when the asset isn't indexed
          *     at all.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /**
-                     * @description Canonical asset identifier. One of `native`, `<code>-<issuer>`,
-                     *     `<code>:<issuer>` (alias), or `<contract_id>`. Strkeys
-                     *     validated per SEP-23. The handler is strict — short symbols
-                     *     like `XLM` or `USDC` are NOT accepted here; use `native` or
-                     *     the full `<code>-<G…>` form.
-                     * @example native
-                     */
-                    asset_id: components["parameters"]["AssetIdPath"];
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Extended metadata. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *         "home_domain": "centre.io",
-                         *         "sep1_status": "verified",
-                         *         "name": "USD Coin",
-                         *         "description": "USDC is a fully collateralized US Dollar stablecoin, based on the open source fiat stablec…",
-                         *         "image": "https://www.centre.io/images/usdc/usdc-icon-86074d9d49.png",
-                         *         "org_name": "Centre Consortium LLC",
-                         *         "anchor_asset": "USD",
-                         *         "anchor_asset_type": "fiat"
-                         *       },
-                         *       "as_of": "2026-07-03T22:37:22.027894731Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["AssetMetadataEnvelope"];
-                    };
-                };
-                404: components["responses"]["NotFound"];
-            };
-        };
+        get: operations["getAssetMetadata"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1074,57 +385,7 @@ export interface paths {
          *     is fresh to; `flags.stale` fires when the watermark's close time
          *     trails now by more than 300s.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /**
-                     * @description Canonical asset identifier. One of `native`, `<code>-<issuer>`,
-                     *     `<code>:<issuer>` (alias), or `<contract_id>`. Strkeys
-                     *     validated per SEP-23. The handler is strict — short symbols
-                     *     like `XLM` or `USDC` are NOT accepted here; use `native` or
-                     *     the full `<code>-<G…>` form.
-                     * @example native
-                     */
-                    asset_id: components["parameters"]["AssetIdPath"];
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Live supply. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "asset_id": "native",
-                         *         "total_supply": "1054439020873472865",
-                         *         "flow_count": 0,
-                         *         "source": "ledger_total_coins",
-                         *         "as_of_ledger": 63340102
-                         *       },
-                         *       "as_of": "2026-07-03T22:40:11.747021406Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["AssetSupplyEnvelope"];
-                    };
-                };
-                404: components["responses"]["NotFound"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getAssetSupply"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1158,83 +419,7 @@ export interface paths {
          *     is fresh to; `flags.stale` fires when the watermark's close time
          *     trails now by more than 300s.
          */
-        get: {
-            parameters: {
-                query?: {
-                    /** @description Maximum rows to return (1-500, default 100). Out-of-range values return 400. */
-                    limit?: number;
-                };
-                header?: never;
-                path: {
-                    /**
-                     * @description Canonical asset identifier. One of `native`, `<code>-<issuer>`,
-                     *     `<code>:<issuer>` (alias), or `<contract_id>`. Strkeys
-                     *     validated per SEP-23. The handler is strict — short symbols
-                     *     like `XLM` or `USDC` are NOT accepted here; use `native` or
-                     *     the full `<code>-<G…>` form.
-                     * @example native
-                     */
-                    asset_id: components["parameters"]["AssetIdPath"];
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Ranked holders + total holder count. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "asset": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *         "holder_count": 615912,
-                         *         "holders": [
-                         *           {
-                         *             "account_id": "GDWL5I6SENNVRK7PS7U3CRXIQTWHLFPSBXCGA3TWKTK7AQ7XO6FBXDFG",
-                         *             "balance": "353017552538442"
-                         *           },
-                         *           {
-                         *             "account_id": "GC5LF63GRVIT5ZXXCXLPI3RX2YXKJQFZVBSAO6AUELN3YIMSWPD6Z6FH",
-                         *             "balance": "282865538219201"
-                         *           }
-                         *         ],
-                         *         "as_of_ledger": 63340102
-                         *       },
-                         *       "as_of": "2026-07-03T22:37:30.738401847Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: {
-                                asset?: string;
-                                /** Format: int64 */
-                                holder_count?: number;
-                                holders?: {
-                                    account_id?: string;
-                                    balance?: string;
-                                }[];
-                                /**
-                                 * Format: int64
-                                 * @description Lake watermark this read is fresh to (ADR-0041). Omitted when no watermark reader is wired. Pairs with flags.stale.
-                                 */
-                                as_of_ledger?: number;
-                            };
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getAssetHolders"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1297,71 +482,7 @@ export interface paths {
          *     the SEP-40 oracle endpoints, and the `price_usd` enrichment on
          *     asset surfaces.
          */
-        get: {
-            parameters: {
-                query: {
-                    /** @description Aggregation window in seconds (board #43; proposal: the current-price window is query-selectable). Default 60 = the closed 1-minute bucket (ADR-0015 semantics, unchanged). 300/3600/86400 serve the aggregator's continuously-published rolling VWAP for that window; a window the aggregator has not published for the pair is a 404, never a silent substitution. Sub-minute rolling windows: /v1/price/tip. */
-                    window?: "60" | "300" | "3600" | "86400";
-                    /**
-                     * @description Canonical asset identifier — matches the `asset_id` on
-                     *     response bodies. Query-parameter form is the shorter `asset`
-                     *     per the handler implementations (/v1/price, /v1/oracle/latest).
-                     *     Strict canonical form only — `XLM` / `USDC` are rejected;
-                     *     use `native` for XLM and the full `<code>-<G…>` strkey for
-                     *     credit assets.
-                     * @example native
-                     */
-                    asset: components["parameters"]["AssetQuery"];
-                    /**
-                     * @description Quote-side asset. Either a canonical asset identifier (`native`,
-                     *     `<code>-<issuer>`, contract ID) for crypto-quoted pairs, or
-                     *     the `fiat:<ISO-4217>` form for fiat quotes (e.g. `fiat:USD`,
-                     *     `fiat:EUR`). Default `fiat:USD`.
-                     * @example fiat:USD
-                     */
-                    quote?: components["parameters"]["Quote"];
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Current price with freshness flags. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "asset_id": "native",
-                         *         "quote": "fiat:USD",
-                         *         "price": "0.159608357106",
-                         *         "price_type": "vwap",
-                         *         "observed_at": "2026-05-05T14:35:00Z",
-                         *         "window_seconds": 300
-                         *       },
-                         *       "as_of": "2026-05-05T14:35:42.881Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["PriceEnvelope"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                404: components["responses"]["NotFound"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getPrice"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1449,76 +570,7 @@ export interface paths {
          *     is this surface's promise, but an aggregated claim over a
          *     market one participant authored is still not publishable.
          */
-        get: {
-            parameters: {
-                query: {
-                    /**
-                     * @description Canonical asset identifier — matches the `asset_id` on
-                     *     response bodies. Query-parameter form is the shorter `asset`
-                     *     per the handler implementations (/v1/price, /v1/oracle/latest).
-                     *     Strict canonical form only — `XLM` / `USDC` are rejected;
-                     *     use `native` for XLM and the full `<code>-<G…>` strkey for
-                     *     credit assets.
-                     * @example native
-                     */
-                    asset: components["parameters"]["AssetQuery"];
-                    /**
-                     * @description Quote-side asset. Either a canonical asset identifier (`native`,
-                     *     `<code>-<issuer>`, contract ID) for crypto-quoted pairs, or
-                     *     the `fiat:<ISO-4217>` form for fiat quotes (e.g. `fiat:USD`,
-                     *     `fiat:EUR`). Default `fiat:USD`.
-                     * @example fiat:USD
-                     */
-                    quote?: components["parameters"]["Quote"];
-                    /** @description Rolling-window size in seconds for the VWAP. */
-                    window_seconds?: number;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Tip price (VWAP or last-good fallback). */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "asset_id": "native",
-                         *         "quote": "fiat:USD",
-                         *         "price": "0.2042667348",
-                         *         "price_type": "vwap",
-                         *         "observed_at": "2026-07-03T22:37:33.044745387Z",
-                         *         "window_seconds": 30
-                         *       },
-                         *       "as_of": "2026-07-03T22:37:33.045908618Z",
-                         *       "sources": [
-                         *         "coinbase",
-                         *         "bitstamp"
-                         *       ],
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["PriceEnvelope"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                404: components["responses"]["NotFound"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getPriceTip"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1552,66 +604,7 @@ export interface paths {
          *     - Same URL-discipline rule as `/v1/price/tip`:
          *       `?granularity=` returns 400.
          */
-        get: {
-            parameters: {
-                query: {
-                    /**
-                     * @description Canonical asset identifier — matches the `asset_id` on
-                     *     response bodies. Query-parameter form is the shorter `asset`
-                     *     per the handler implementations (/v1/price, /v1/oracle/latest).
-                     *     Strict canonical form only — `XLM` / `USDC` are rejected;
-                     *     use `native` for XLM and the full `<code>-<G…>` strkey for
-                     *     credit assets.
-                     * @example native
-                     */
-                    asset: components["parameters"]["AssetQuery"];
-                    /**
-                     * @description Quote-side asset. Either a canonical asset identifier (`native`,
-                     *     `<code>-<issuer>`, contract ID) for crypto-quoted pairs, or
-                     *     the `fiat:<ISO-4217>` form for fiat quotes (e.g. `fiat:USD`,
-                     *     `fiat:EUR`). Default `fiat:USD`.
-                     * @example fiat:USD
-                     */
-                    quote?: components["parameters"]["Quote"];
-                    /** @description Tick cadence (and rolling-VWAP window) in seconds. */
-                    window_seconds?: number;
-                };
-                header?: {
-                    /** @description Opaque ID for resuming a previously-broken stream. */
-                    "Last-Event-ID"?: string;
-                };
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description SSE stream of tip_update events. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example id: 0198a41f2b3c0001
-                         *     event: tip_update
-                         *     data: {"data":{"asset_id":"native","quote":"fiat:USD","price":"0.2042667348","price_type":"vwap","observed_at":"2026-07-03T22:37:33.044745387Z","window_seconds":30},"as_of":"2026-07-03T22:37:33.045908618Z","sources":["coinbase","bitstamp"],"flags":{"stale":false,"reduced_redundancy":false,"triangulated":false,"divergence_warning":false,"divergence_checked":false}}
-                         *
-                         *     :keepalive
-                         *
-                         *     id: 0198a41f2b3c0002
-                         *     event: tip_update
-                         *     data: {"data":{"asset_id":"native","quote":"fiat:USD","price":"0.2042701122","price_type":"vwap","observed_at":"2026-07-03T22:37:38.051902614Z","window_seconds":30},"as_of":"2026-07-03T22:37:38.052918217Z","sources":["coinbase","bitstamp"],"flags":{"stale":false,"reduced_redundancy":false,"triangulated":false,"divergence_warning":false,"divergence_checked":false}}
-                         */
-                        "text/event-stream": string;
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                404: components["responses"]["NotFound"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["streamPriceTip"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1637,79 +630,7 @@ export interface paths {
          *     envelope's `flags.stale` is the OR over per-row staleness.
          *     Above 100 ids, use the POST form (up to 1000 in the body).
          */
-        get: {
-            parameters: {
-                query: {
-                    /**
-                     * @description Comma-separated canonical asset ids, max 100. Same strict
-                     *     form as `/v1/price?asset=` — short symbols are rejected.
-                     * @example native,USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
-                     */
-                    asset_ids: string;
-                    /**
-                     * @description Quote-side asset. Either a canonical asset identifier (`native`,
-                     *     `<code>-<issuer>`, contract ID) for crypto-quoted pairs, or
-                     *     the `fiat:<ISO-4217>` form for fiat quotes (e.g. `fiat:USD`,
-                     *     `fiat:EUR`). Default `fiat:USD`.
-                     * @example fiat:USD
-                     */
-                    quote?: components["parameters"]["Quote"];
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Batch prices. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": [
-                         *         {
-                         *           "asset_id": "crypto:XLM",
-                         *           "quote": "fiat:USD",
-                         *           "price": "0.20401200646499857404",
-                         *           "price_type": "vwap",
-                         *           "observed_at": "2026-07-03T22:36:00Z",
-                         *           "window_seconds": 60,
-                         *           "change_24h_pct": "+3.62"
-                         *         },
-                         *         {
-                         *           "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *           "quote": "fiat:USD",
-                         *           "price": "1.000000000000",
-                         *           "price_type": "peg",
-                         *           "observed_at": "2026-07-03T22:37:34.197270411Z"
-                         *         }
-                         *       ],
-                         *       "as_of": "2026-07-03T22:37:34.248518093Z",
-                         *       "sources": [
-                         *         "bitstamp",
-                         *         "coinbase"
-                         *       ],
-                         *       "flags": {
-                         *         "stale": true,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": true,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["PriceBatchEnvelope"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getPriceBatch"];
         put?: never;
         /**
          * Current prices for up to 1000 assets.
@@ -1720,72 +641,7 @@ export interface paths {
          *     observations are omitted, not errored; `flags.stale` is
          *     the OR over returned rows.
          */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": {
-                        asset_ids: string[];
-                        /** @default USD */
-                        quote?: string;
-                    };
-                };
-            };
-            responses: {
-                /** @description Batch prices. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": [
-                         *         {
-                         *           "asset_id": "crypto:XLM",
-                         *           "quote": "fiat:USD",
-                         *           "price": "0.20401200646499857404",
-                         *           "price_type": "vwap",
-                         *           "observed_at": "2026-07-03T22:36:00Z",
-                         *           "window_seconds": 60,
-                         *           "change_24h_pct": "+3.62"
-                         *         },
-                         *         {
-                         *           "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *           "quote": "fiat:USD",
-                         *           "price": "1.000000000000",
-                         *           "price_type": "peg",
-                         *           "observed_at": "2026-07-03T22:37:34.197270411Z"
-                         *         }
-                         *       ],
-                         *       "as_of": "2026-07-03T22:37:34.248518093Z",
-                         *       "sources": [
-                         *         "bitstamp",
-                         *         "coinbase"
-                         *       ],
-                         *       "flags": {
-                         *         "stale": true,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": true,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["PriceBatchEnvelope"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        post: operations["getPriceBatchBulk"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1824,87 +680,7 @@ export interface paths {
          *     URL discipline: `?granularity=` and `?window_seconds=` return 400
          *     — those are closed-bucket and tip concepts respectively.
          */
-        get: {
-            parameters: {
-                query: {
-                    /**
-                     * @description Canonical asset identifier — matches the `asset_id` on
-                     *     response bodies. Query-parameter form is the shorter `asset`
-                     *     per the handler implementations (/v1/price, /v1/oracle/latest).
-                     *     Strict canonical form only — `XLM` / `USDC` are rejected;
-                     *     use `native` for XLM and the full `<code>-<G…>` strkey for
-                     *     credit assets.
-                     * @example native
-                     */
-                    asset: components["parameters"]["AssetQuery"];
-                    /**
-                     * @description Quote-side asset. Either a canonical asset identifier (`native`,
-                     *     `<code>-<issuer>`, contract ID) for crypto-quoted pairs, or
-                     *     the `fiat:<ISO-4217>` form for fiat quotes (e.g. `fiat:USD`,
-                     *     `fiat:EUR`). Default `fiat:USD`.
-                     * @example fiat:USD
-                     */
-                    quote?: components["parameters"]["Quote"];
-                    /** @description Restrict to one source's most-recent trade (0/1 row). */
-                    source?: string;
-                    /**
-                     * @description `latest` collapses to the single most-recent trade across
-                     *     all sources. Omit for one row per source.
-                     */
-                    aggregate?: "latest";
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Per-source observations array. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": [
-                         *         {
-                         *           "source": "sdex",
-                         *           "ledger": 63316220,
-                         *           "tx_hash": "825ede3a206341add5b365d22023de7843b098f710b014de56aa99d29fe7e27b",
-                         *           "op_index": 1025,
-                         *           "ts": "2026-07-03T22:42:17Z",
-                         *           "base_asset": "native",
-                         *           "quote_asset": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *           "base_amount": "55653",
-                         *           "quote_amount": "11363",
-                         *           "price": "0.2041758755"
-                         *         }
-                         *       ],
-                         *       "as_of": "2026-07-03T22:42:26.862812578Z",
-                         *       "sources": [
-                         *         "sdex"
-                         *       ],
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false,
-                         *         "single_source": true
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["EnvelopeMeta"] & {
-                            data: components["schemas"]["TradeRow"][];
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["listObservations"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1937,71 +713,7 @@ export interface paths {
          *     - URL discipline: `?granularity=` and `?window_seconds=`
          *       return 400.
          */
-        get: {
-            parameters: {
-                query: {
-                    /**
-                     * @description Canonical asset identifier — matches the `asset_id` on
-                     *     response bodies. Query-parameter form is the shorter `asset`
-                     *     per the handler implementations (/v1/price, /v1/oracle/latest).
-                     *     Strict canonical form only — `XLM` / `USDC` are rejected;
-                     *     use `native` for XLM and the full `<code>-<G…>` strkey for
-                     *     credit assets.
-                     * @example native
-                     */
-                    asset: components["parameters"]["AssetQuery"];
-                    /**
-                     * @description Quote-side asset. Either a canonical asset identifier (`native`,
-                     *     `<code>-<issuer>`, contract ID) for crypto-quoted pairs, or
-                     *     the `fiat:<ISO-4217>` form for fiat quotes (e.g. `fiat:USD`,
-                     *     `fiat:EUR`). Default `fiat:USD`.
-                     * @example fiat:USD
-                     */
-                    quote?: components["parameters"]["Quote"];
-                    /** @description Restrict to one source's most-recent trade. */
-                    source?: string;
-                    /**
-                     * @description `latest` collapses to the single most-recent trade across
-                     *     all sources.
-                     */
-                    aggregate?: "latest";
-                    /** @description Tick cadence in seconds. */
-                    interval_seconds?: number;
-                };
-                header?: {
-                    /** @description Opaque ID for resuming a previously-broken stream. */
-                    "Last-Event-ID"?: string;
-                };
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description SSE stream of observations_update events. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example id: 0198a41f6d900001
-                         *     event: observations_update
-                         *     data: {"data":[{"source":"sdex","ledger":63316220,"tx_hash":"825ede3a206341add5b365d22023de7843b098f710b014de56aa99d29fe7e27b","op_index":1025,"ts":"2026-07-03T22:42:17Z","base_asset":"native","quote_asset":"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN","base_amount":"55653","quote_amount":"11363","price":"0.2041758755"}],"as_of":"2026-07-03T22:42:26.862812578Z","sources":["sdex"],"flags":{"stale":false,"reduced_redundancy":false,"triangulated":false,"divergence_warning":false,"divergence_checked":false,"single_source":true}}
-                         *
-                         *     :keepalive
-                         *
-                         *     id: 0198a41f6d900002
-                         *     event: observations_update
-                         *     data: {"data":[],"as_of":"2026-07-03T22:42:31.870004112Z","sources":[],"flags":{"stale":false,"reduced_redundancy":false,"triangulated":false,"divergence_warning":false,"divergence_checked":false,"single_source":false}}
-                         */
-                        "text/event-stream": string;
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["streamObservations"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2049,64 +761,7 @@ export interface paths {
          *     - 503 when the deployment hasn't wired the streaming Hub
          *       (typical pre-aggregator state).
          */
-        get: {
-            parameters: {
-                query: {
-                    /**
-                     * @description Canonical asset identifier — matches the `asset_id` on
-                     *     response bodies. Query-parameter form is the shorter `asset`
-                     *     per the handler implementations (/v1/price, /v1/oracle/latest).
-                     *     Strict canonical form only — `XLM` / `USDC` are rejected;
-                     *     use `native` for XLM and the full `<code>-<G…>` strkey for
-                     *     credit assets.
-                     * @example native
-                     */
-                    asset: components["parameters"]["AssetQuery"];
-                    /**
-                     * @description Quote-side asset. Either a canonical asset identifier (`native`,
-                     *     `<code>-<issuer>`, contract ID) for crypto-quoted pairs, or
-                     *     the `fiat:<ISO-4217>` form for fiat quotes (e.g. `fiat:USD`,
-                     *     `fiat:EUR`). Default `fiat:USD`.
-                     * @example fiat:USD
-                     */
-                    quote?: components["parameters"]["Quote"];
-                    /** @description Which closed-bucket window series to follow, in seconds. The standard aggregator windows are 300, 3600, and 86400; a window the aggregator doesn't publish yields a silent (heartbeat-only) stream. */
-                    window_seconds?: number;
-                };
-                header?: {
-                    /** @description Opaque ID for resuming a previously-broken stream. */
-                    "Last-Event-ID"?: string;
-                };
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description SSE stream of price_update events. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example id: 0198a4203f100001
-                         *     event: price_update
-                         *     data: {"data":{"asset_id":"native","quote":"fiat:USD","price":"0.159608357106","price_type":"vwap","observed_at":"2026-05-05T14:35:00Z","window_seconds":300},"as_of":"2026-05-05T14:35:42.881Z","flags":{"stale":false,"reduced_redundancy":false,"triangulated":false,"divergence_warning":false}}
-                         *
-                         *     :keepalive
-                         *
-                         *     id: 0198a4203f100002
-                         *     event: price_update
-                         *     data: {"data":{"asset_id":"native","quote":"fiat:USD","price":"0.159701882234","price_type":"vwap","observed_at":"2026-05-05T14:36:00Z","window_seconds":300},"as_of":"2026-05-05T14:36:00.417Z","flags":{"stale":false,"reduced_redundancy":false,"triangulated":false,"divergence_warning":false}}
-                         */
-                        "text/event-stream": string;
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                429: components["responses"]["RateLimited"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["streamPrices"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2134,107 +789,7 @@ export interface paths {
          *     cmd/stellarindex-aggregator) on a different response shape —
          *     not this endpoint.
          */
-        get: {
-            parameters: {
-                query: {
-                    /**
-                     * @description Canonical asset identifier for the base side of a pair.
-                     *     Strict canonical form only — `USDC` / `XLM` are rejected;
-                     *     the full `<code>-<G…>` strkey is required, or `native` for
-                     *     XLM. The default example resolves to Centre's USDC issuance,
-                     *     which is the most-traded base on Stellar.
-                     * @example USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
-                     */
-                    base: components["parameters"]["Base"];
-                    /**
-                     * @description Quote-side asset (REQUIRED on this endpoint). Either a
-                     *     canonical asset identifier (`native`, `<code>-<issuer>`,
-                     *     contract ID) or the `fiat:<ISO-4217>` form (e.g. `fiat:USD`,
-                     *     `fiat:EUR`). Unlike the `/price` family, this endpoint does
-                     *     NOT default the quote — omitting it returns 400.
-                     * @example fiat:USD
-                     */
-                    quote: components["parameters"]["QuoteRequired"];
-                    /**
-                     * @description Window start (inclusive), RFC 3339 UTC — e.g.
-                     *     `2026-06-01T00:00:00Z`. Windows are half-open `[from, to)`.
-                     *     When omitted the endpoint applies its own default lookback
-                     *     from `to` (documented per endpoint). Must be before `to`
-                     *     or the request 400s.
-                     */
-                    from?: components["parameters"]["From"];
-                    /**
-                     * @description Window end (exclusive), RFC 3339 UTC. Defaults to now.
-                     *     Windows are half-open `[from, to)` — a trade exactly at
-                     *     `to` is excluded.
-                     */
-                    to?: components["parameters"]["To"];
-                    limit?: number;
-                    /**
-                     * @description Opaque pagination token echoed from a prior response's
-                     *     `pagination.next`. Pass it verbatim — it is a base64url-encoded
-                     *     blob whose internal shape is an implementation detail and
-                     *     changes without notice. Clients MUST NOT parse, decode, or
-                     *     construct cursors by hand.
-                     *
-                     *     A cursor is stable across retries but not across schema
-                     *     changes; treat it as short-lived (minutes, not days). Empty
-                     *     means "start from the beginning".
-                     */
-                    cursor?: components["parameters"]["Cursor"];
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Per-trade records. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": [
-                         *         {
-                         *           "source": "sdex",
-                         *           "ledger": 63302110,
-                         *           "tx_hash": "a34dfaf2c7a1c1ec8d4f36e9fb693ffc8462285bd9018e97109ae8d039425d3c",
-                         *           "op_index": 9216,
-                         *           "ts": "2026-07-03T00:00:17Z",
-                         *           "base_asset": "native",
-                         *           "quote_asset": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *           "base_amount": "4331",
-                         *           "quote_amount": "863",
-                         *           "price": "0.1992611406",
-                         *           "base_decimals": 7,
-                         *           "quote_decimals": 7
-                         *         }
-                         *       ],
-                         *       "as_of": "2026-07-03T22:42:25.518134702Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       },
-                         *       "pagination": {
-                         *         "next": "MTc4MzAzNjgyMzAwMDAwMDAwMDo2MzMwMjExMTpzZGV4OjM3NzE2OTY1OTE4YjgxNzI2NzVhYzVhMTBkOGIxMzA4MT…"
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["TradeHistoryEnvelope"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getHistory"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2258,81 +813,7 @@ export interface paths {
          *     bucketed history surface; `/history` remains the raw
          *     per-trade endpoint.
          */
-        get: {
-            parameters: {
-                query: {
-                    /**
-                     * @description Canonical asset identifier — matches the `asset_id` on
-                     *     response bodies. Query-parameter form is the shorter `asset`
-                     *     per the handler implementations (/v1/price, /v1/oracle/latest).
-                     *     Strict canonical form only — `XLM` / `USDC` are rejected;
-                     *     use `native` for XLM and the full `<code>-<G…>` strkey for
-                     *     credit assets.
-                     * @example native
-                     */
-                    asset: components["parameters"]["AssetQuery"];
-                    /**
-                     * @description Quote-side asset. Either a canonical asset identifier (`native`,
-                     *     `<code>-<issuer>`, contract ID) for crypto-quoted pairs, or
-                     *     the `fiat:<ISO-4217>` form for fiat quotes (e.g. `fiat:USD`,
-                     *     `fiat:EUR`). Default `fiat:USD`.
-                     * @example fiat:USD
-                     */
-                    quote?: components["parameters"]["Quote"];
-                    /**
-                     * @description Bucket width for the returned series (`1m` = 1 minute …
-                     *     `1mo` = 1 month). When omitted the server picks a sensible
-                     *     width for the requested timeframe (e.g. `1m` for `1h`,
-                     *     `1h` for `1w`) so the series stays a few hundred points.
-                     */
-                    granularity?: components["parameters"]["Granularity"];
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Since-inception series. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "asset_id": "native",
-                         *         "quote": "fiat:USD",
-                         *         "price_type": "vwap",
-                         *         "granularity": "1d",
-                         *         "points": [
-                         *           {
-                         *             "t": "2021-02-02T00:00:00Z",
-                         *             "p": "0.32955352120071295890",
-                         *             "v_usd": "0"
-                         *           }
-                         *         ]
-                         *       },
-                         *       "as_of": "2026-07-03T22:37:38.237691998Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": true,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["HistoryEnvelope"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getHistorySinceInception"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2386,109 +867,7 @@ export interface paths {
          *     rate_usd[base]` per shared day, same algebra as /v1/price's
          *     cross-rate fallback — and stamp `flags.triangulated=true`.
          */
-        get: {
-            parameters: {
-                query: {
-                    /**
-                     * @description Canonical asset identifier — matches the `asset_id` on
-                     *     response bodies. Query-parameter form is the shorter `asset`
-                     *     per the handler implementations (/v1/price, /v1/oracle/latest).
-                     *     Strict canonical form only — `XLM` / `USDC` are rejected;
-                     *     use `native` for XLM and the full `<code>-<G…>` strkey for
-                     *     credit assets.
-                     * @example native
-                     */
-                    asset: components["parameters"]["AssetQuery"];
-                    /**
-                     * @description Quote-side asset. Either a canonical asset identifier (`native`,
-                     *     `<code>-<issuer>`, contract ID) for crypto-quoted pairs, or
-                     *     the `fiat:<ISO-4217>` form for fiat quotes (e.g. `fiat:USD`,
-                     *     `fiat:EUR`). Default `fiat:USD`.
-                     * @example fiat:USD
-                     */
-                    quote?: components["parameters"]["Quote"];
-                    /**
-                     * @description Rolling lookback window anchored at now — `24h` means
-                     *     "the last 24 hours", `all` means "since first observation".
-                     *     Shorthand alternative to explicit `from`/`to` bounds on the
-                     *     chart/series surfaces. Default `24h`.
-                     */
-                    timeframe?: components["parameters"]["Timeframe"];
-                    /**
-                     * @description Bucket width for the returned series (`1m` = 1 minute …
-                     *     `1mo` = 1 month). When omitted the server picks a sensible
-                     *     width for the requested timeframe (e.g. `1m` for `1h`,
-                     *     `1h` for `1w`) so the series stays a few hundred points.
-                     */
-                    granularity?: components["parameters"]["Granularity"];
-                    /**
-                     * @description Series type. `vwap` (default) returns the volume-weighted
-                     *     price series. `twap` returns the time-weighted price series
-                     *     from the `twap_1h` / `twap_1d` continuous aggregates
-                     *     (time-weighted at 1-minute resolution; served at 1h or 1d
-                     *     granularity, the requested granularity snapped onto the
-                     *     nearer of the two). `market_cap` returns a USD-denominated
-                     *     market-cap series. For fiat:* base assets it is M2
-                     *     (verified-currency catalogue) × daily FX rate (fx_quotes).
-                     *     For on-chain (native / classic / Soroban) base assets it is
-                     *     the daily USD price × daily circulating supply (the
-                     *     `supply_1d` continuous aggregate, forward-filled). Off-chain
-                     *     `crypto:*` reference assets (BTC/ETH/…) have no on-chain
-                     *     supply we publish, so they return an empty series.
-                     */
-                    price_type?: components["parameters"]["PriceType"];
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Chart series. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "asset_id": "native",
-                         *         "quote": "fiat:USD",
-                         *         "timeframe": "24h",
-                         *         "granularity": "1h",
-                         *         "price_type": "vwap",
-                         *         "points": [
-                         *           {
-                         *             "t": "2026-07-02T23:00:00Z",
-                         *             "p": "0.19854703598674192431",
-                         *             "v_usd": "41358.47144920"
-                         *           },
-                         *           {
-                         *             "t": "2026-07-03T00:00:00Z",
-                         *             "p": "0.19768864227725027668",
-                         *             "v_usd": "29205.97729980"
-                         *           }
-                         *         ],
-                         *         "truncated": false
-                         *       },
-                         *       "as_of": "2026-07-03T22:37:39.460980449Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": true,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["ChartEnvelope"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getChart"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2541,135 +920,7 @@ export interface paths {
          *        5m, 30m, and 4h are CAGG-re-bucketed from finer-grain
          *        continuous aggregates (5m/30m ← prices_1m, 4h ← prices_1h).
          */
-        get: {
-            parameters: {
-                query: {
-                    /**
-                     * @description Canonical asset identifier for the base side of a pair.
-                     *     Strict canonical form only — `USDC` / `XLM` are rejected;
-                     *     the full `<code>-<G…>` strkey is required, or `native` for
-                     *     XLM. The default example resolves to Centre's USDC issuance,
-                     *     which is the most-traded base on Stellar.
-                     * @example USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
-                     */
-                    base: components["parameters"]["Base"];
-                    /**
-                     * @description Quote-side asset (REQUIRED on this endpoint). Either a
-                     *     canonical asset identifier (`native`, `<code>-<issuer>`,
-                     *     contract ID) or the `fiat:<ISO-4217>` form (e.g. `fiat:USD`,
-                     *     `fiat:EUR`). Unlike the `/price` family, this endpoint does
-                     *     NOT default the quote — omitting it returns 400.
-                     * @example fiat:USD
-                     */
-                    quote: components["parameters"]["QuoteRequired"];
-                    /**
-                     * @description Window start (inclusive), RFC 3339 UTC — e.g.
-                     *     `2026-06-01T00:00:00Z`. Windows are half-open `[from, to)`.
-                     *     When omitted the endpoint applies its own default lookback
-                     *     from `to` (documented per endpoint). Must be before `to`
-                     *     or the request 400s.
-                     */
-                    from?: components["parameters"]["From"];
-                    /**
-                     * @description Window end (exclusive), RFC 3339 UTC. Defaults to now.
-                     *     Windows are half-open `[from, to)` — a trade exactly at
-                     *     `to` is excluded.
-                     */
-                    to?: components["parameters"]["To"];
-                    /**
-                     * @description Bar width for multi-bar series mode. Omit for the
-                     *     single-bar response over `[from, to)`. Invalid intervals
-                     *     return 400 `errors/invalid-interval`.
-                     */
-                    interval?: "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d" | "1w" | "1mo";
-                    /**
-                     * @description Series-mode bar count (max 1000, default 100). Ignored in
-                     *     single-bar mode. Invalid values return 400
-                     *     `errors/limit-too-large`.
-                     */
-                    limit?: number;
-                    /** @description Drop trades > N σ from window mean before computing the bar (single-bar mode only). Default 4σ. Pass 0 to disable. */
-                    outlier_sigma?: number;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /**
-                 * @description OHLC response. Wire shape depends on mode:
-                 *     single-bar (no `interval`) returns `OHLCEnvelope`;
-                 *     multi-bar (`interval` set) returns
-                 *     `OHLCSeriesEnvelope`.
-                 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "base": "native",
-                         *         "quote": "fiat:USD",
-                         *         "interval": "1h",
-                         *         "from": "2026-07-03T20:00:00Z",
-                         *         "to": "2026-07-03T22:00:00Z",
-                         *         "intervals": [
-                         *           {
-                         *             "t": "2026-07-03T20:00:00Z",
-                         *             "o": "0.2038114923",
-                         *             "h": "0.2500000000",
-                         *             "l": "0.2034919999",
-                         *             "c": "0.2055899576",
-                         *             "v_base": "1751598864823776",
-                         *             "v_quote": "359971028467214.0000042405",
-                         *             "n": 11667
-                         *           },
-                         *           {
-                         *             "t": "2026-07-03T21:00:00Z",
-                         *             "o": "0.2056073590",
-                         *             "h": "0.2062000000",
-                         *             "l": "0.2033449999",
-                         *             "c": "0.2055593613",
-                         *             "v_base": "844461854722825",
-                         *             "v_quote": "173117716771324.0000032245",
-                         *             "n": 8497
-                         *           }
-                         *         ]
-                         *       },
-                         *       "as_of": "2026-07-03T22:37:40.607101334Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": true,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["OHLCEnvelope"] | components["schemas"]["OHLCSeriesEnvelope"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                /**
-                 * @description Single-bar mode only — no trades in window. Series mode
-                 *     returns 200 with `intervals: []` instead.
-                 */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getOhlc"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2698,105 +949,7 @@ export interface paths {
          *     the window end. Narrow the window and retry for an exact
          *     VWAP.
          */
-        get: {
-            parameters: {
-                query: {
-                    /**
-                     * @description Canonical asset identifier for the base side of a pair.
-                     *     Strict canonical form only — `USDC` / `XLM` are rejected;
-                     *     the full `<code>-<G…>` strkey is required, or `native` for
-                     *     XLM. The default example resolves to Centre's USDC issuance,
-                     *     which is the most-traded base on Stellar.
-                     * @example USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
-                     */
-                    base: components["parameters"]["Base"];
-                    /**
-                     * @description Quote-side asset (REQUIRED on this endpoint). Either a
-                     *     canonical asset identifier (`native`, `<code>-<issuer>`,
-                     *     contract ID) or the `fiat:<ISO-4217>` form (e.g. `fiat:USD`,
-                     *     `fiat:EUR`). Unlike the `/price` family, this endpoint does
-                     *     NOT default the quote — omitting it returns 400.
-                     * @example fiat:USD
-                     */
-                    quote: components["parameters"]["QuoteRequired"];
-                    /**
-                     * @description Window start (inclusive), RFC 3339 UTC — e.g.
-                     *     `2026-06-01T00:00:00Z`. Windows are half-open `[from, to)`.
-                     *     When omitted the endpoint applies its own default lookback
-                     *     from `to` (documented per endpoint). Must be before `to`
-                     *     or the request 400s.
-                     */
-                    from?: components["parameters"]["From"];
-                    /**
-                     * @description Window end (exclusive), RFC 3339 UTC. Defaults to now.
-                     *     Windows are half-open `[from, to)` — a trade exactly at
-                     *     `to` is excluded.
-                     */
-                    to?: components["parameters"]["To"];
-                    /** @description Drop trades > N σ from window mean. 0 disables (default). */
-                    outlier_sigma?: number;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Volume-weighted price + volumes + trade count. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "from": "2026-07-03T21:37:30Z",
-                         *         "to": "2026-07-03T22:37:30Z",
-                         *         "price": "0.2045966459",
-                         *         "base_volume": "1385735379056",
-                         *         "quote_volume": "283516810732",
-                         *         "trade_count": 2483,
-                         *         "outliers_filtered": 0,
-                         *         "truncated": false
-                         *       },
-                         *       "as_of": "2026-07-03T22:37:41.757287184Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": true,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["VWAPEnvelope"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                /** @description No trades in window. */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /** @description All trades in the window were filtered as outliers by the requested `outlier_sigma`; relax the threshold or omit it. */
-                422: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getVwap"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2820,91 +973,7 @@ export interface paths {
          *     is itself outlier-resistant (spurious prints get only
          *     their slot duration, not a full window's worth).
          */
-        get: {
-            parameters: {
-                query: {
-                    /**
-                     * @description Canonical asset identifier for the base side of a pair.
-                     *     Strict canonical form only — `USDC` / `XLM` are rejected;
-                     *     the full `<code>-<G…>` strkey is required, or `native` for
-                     *     XLM. The default example resolves to Centre's USDC issuance,
-                     *     which is the most-traded base on Stellar.
-                     * @example USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
-                     */
-                    base: components["parameters"]["Base"];
-                    /**
-                     * @description Quote-side asset (REQUIRED on this endpoint). Either a
-                     *     canonical asset identifier (`native`, `<code>-<issuer>`,
-                     *     contract ID) or the `fiat:<ISO-4217>` form (e.g. `fiat:USD`,
-                     *     `fiat:EUR`). Unlike the `/price` family, this endpoint does
-                     *     NOT default the quote — omitting it returns 400.
-                     * @example fiat:USD
-                     */
-                    quote: components["parameters"]["QuoteRequired"];
-                    /**
-                     * @description Window start (inclusive), RFC 3339 UTC — e.g.
-                     *     `2026-06-01T00:00:00Z`. Windows are half-open `[from, to)`.
-                     *     When omitted the endpoint applies its own default lookback
-                     *     from `to` (documented per endpoint). Must be before `to`
-                     *     or the request 400s.
-                     */
-                    from?: components["parameters"]["From"];
-                    /**
-                     * @description Window end (exclusive), RFC 3339 UTC. Defaults to now.
-                     *     Windows are half-open `[from, to)` — a trade exactly at
-                     *     `to` is excluded.
-                     */
-                    to?: components["parameters"]["To"];
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Time-weighted price + trade count. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "from": "2026-07-03T21:37:30Z",
-                         *         "to": "2026-07-03T22:37:30Z",
-                         *         "price": "0.2044317708",
-                         *         "trade_count": 2483,
-                         *         "truncated": false
-                         *       },
-                         *       "as_of": "2026-07-03T22:37:42.906364691Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": true,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["TWAPEnvelope"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                /** @description No trades in window. */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getTwap"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2935,95 +1004,7 @@ export interface paths {
          *     forms (`crypto:XLM`, `fiat:USD`, contract addresses) pass
          *     through unchanged.
          */
-        get: {
-            parameters: {
-                query: {
-                    /**
-                     * @description Canonical asset identifier — matches the `asset_id` on
-                     *     response bodies. Query-parameter form is the shorter `asset`
-                     *     per the handler implementations (/v1/price, /v1/oracle/latest).
-                     *     Strict canonical form only — `XLM` / `USDC` are rejected;
-                     *     use `native` for XLM and the full `<code>-<G…>` strkey for
-                     *     credit assets.
-                     * @example native
-                     */
-                    asset: components["parameters"]["AssetQuery"];
-                    /** @description Optional. Restrict to a single source name. */
-                    source?: string;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Array of OracleReading (empty when no observations). */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": [
-                         *         {
-                         *           "source": "reflector-cex",
-                         *           "contract_id": "CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN",
-                         *           "asset": "crypto:XLM",
-                         *           "quote": "fiat:USD",
-                         *           "ts": "2026-05-05T16:25:00Z",
-                         *           "price": "0.15912",
-                         *           "price_raw": "15912000000000",
-                         *           "decimals": 14,
-                         *           "confidence": 0.96,
-                         *           "observer": "GRELAYER0000000000000000000000000000000000000000000000000000"
-                         *         },
-                         *         {
-                         *           "source": "band",
-                         *           "asset": "crypto:XLM",
-                         *           "quote": "fiat:USD",
-                         *           "ts": "2026-05-05T16:25:30Z",
-                         *           "price": "0.15908",
-                         *           "price_raw": "159080000000000000",
-                         *           "decimals": 18
-                         *         },
-                         *         {
-                         *           "source": "redstone",
-                         *           "asset": "crypto:XLM",
-                         *           "quote": "fiat:USD",
-                         *           "ts": "2026-05-05T16:24:00Z",
-                         *           "price": "0.15920",
-                         *           "price_raw": "159200000",
-                         *           "decimals": 9
-                         *         },
-                         *         {
-                         *           "source": "coingecko",
-                         *           "asset": "crypto:XLM",
-                         *           "quote": "fiat:USD",
-                         *           "ts": "2026-05-05T16:25:00Z",
-                         *           "price": "0.15915",
-                         *           "price_raw": "15915",
-                         *           "decimals": 5
-                         *         }
-                         *       ],
-                         *       "as_of": "2026-05-05T16:25:42.881Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["OracleLatestEnvelope"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getOracleLatest"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3049,110 +1030,7 @@ export interface paths {
          *     "pool" is AMM/DEX terminology and applying it to centralised
          *     venues misnames the data.
          */
-        get: {
-            parameters: {
-                query?: {
-                    /**
-                     * @description Opaque pagination token echoed from a prior response's
-                     *     `pagination.next`. Pass it verbatim — it is a base64url-encoded
-                     *     blob whose internal shape is an implementation detail and
-                     *     changes without notice. Clients MUST NOT parse, decode, or
-                     *     construct cursors by hand.
-                     *
-                     *     A cursor is stable across retries but not across schema
-                     *     changes; treat it as short-lived (minutes, not days). Empty
-                     *     means "start from the beginning".
-                     */
-                    cursor?: components["parameters"]["Cursor"];
-                    /** @description Maximum rows per page (1-500, default 100). */
-                    limit?: number;
-                    order_by?: "volume_24h_usd_desc" | "pair";
-                    /**
-                     * @description Optional. Restrict to a single DEX name (soroswap /
-                     *     phoenix / aquarius / sdex / comet). Non-DEX names return
-                     *     an empty list rather than 400.
-                     */
-                    source?: string;
-                    /**
-                     * @description Optional. Canonical base asset_id (`native`, `USDC-G…`,
-                     *     etc.). Combined with `quote` gives the per-source
-                     *     breakdown for one pair — used by the pair detail page
-                     *     to render "which venues moved this pair in the last 24h".
-                     */
-                    base?: string;
-                    /** @description Optional. Canonical quote asset_id. See `base`. */
-                    quote?: string;
-                    /**
-                     * @description Optional. Canonical asset_id (`native`, `USDC-G…`,
-                     *     `fiat:USD`, …). Restricts to pools where the asset
-                     *     appears on either side (base OR quote). Use this on
-                     *     asset-detail surfaces to surface every pool touching
-                     *     the asset in one request, instead of firing parallel
-                     *     `?base=` + `?quote=` and merging client-side. Returns
-                     *     400 `invalid-asset-id` for unparseable values; 400
-                     *     `conflicting-filters` when combined with `base`/`quote`
-                     *     (the OR-shape and AND-shape filters can't be mixed).
-                     */
-                    asset?: string;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Array of pool rows. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": [
-                         *         {
-                         *           "source": "sdex",
-                         *           "base": "native",
-                         *           "quote": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *           "last_trade_at": "2026-07-03T21:59:52Z",
-                         *           "trade_count_24h": 74870,
-                         *           "volume_24h_usd": "2151631.29284562791192465110403660600000000000000000",
-                         *           "last_price": "0.20545386626821068360"
-                         *         },
-                         *         {
-                         *           "source": "aquarius",
-                         *           "base": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
-                         *           "quote": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
-                         *           "last_trade_at": "2026-07-03T21:59:52Z",
-                         *           "trade_count_24h": 7831,
-                         *           "volume_24h_usd": "1725605.79428767372866451771634747600000000000000000",
-                         *           "last_price": "4.8693065623459794"
-                         *         }
-                         *       ],
-                         *       "as_of": "2026-07-03T22:37:46.044283568Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       },
-                         *       "pagination": {
-                         *         "next": "1725605.79428767372866451771634747600000000000000000:aquarius|CCW67TSZV3SSS2HXMBQ5JFGCKJNX…"
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["EnvelopeMeta"] & {
-                            data: components["schemas"]["PoolRow"][];
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["listPools"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3203,120 +1081,7 @@ export interface paths {
          *     never zero); a pool with an empty side reports its reserves but
          *     no mid price / depth.
          */
-        get: {
-            parameters: {
-                query?: {
-                    /**
-                     * @description Optional. A pool (pair) contract C-strkey; restricts the
-                     *     response to that pool. 404 when the contract is not a
-                     *     registered Soroswap pair — unknown pools are refused, not
-                     *     silently empty.
-                     */
-                    pool?: string;
-                    /**
-                     * @description Optional venue filter. `soroswap` is the only accepted
-                     *     value today; other venues return 400 naming the coverage
-                     *     limit.
-                     */
-                    source?: "soroswap";
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Per-pool current reserves + depth, sorted by pool contract id. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": [
-                         *         {
-                         *           "pool": "CDYRXTIUEUNJ3SVAKVWKKRK3CZVIY4WOG6TAQU27R777ZHNOKNCO26NL",
-                         *           "source": "soroswap",
-                         *           "model": "constant_product",
-                         *           "fee_bps": 30,
-                         *           "as_of_ledger": 62941880,
-                         *           "token0": {
-                         *             "contract": "CBRP2VD3CZLEQIQZ4JMBXGA5AC2U6JE26YU5CCIOICIZCVWPGBO2QRUB",
-                         *             "symbol": "YBX",
-                         *             "decimals": 7,
-                         *             "reserve": "172458996"
-                         *           },
-                         *           "token1": {
-                         *             "contract": "CBY4MSZXK5L4HDMJHDXQLNLOA5MM5BIGCHQYMRG7ZAFY34UNU4UXPEJJ",
-                         *             "symbol": "LMNR",
-                         *             "decimals": 7,
-                         *             "reserve": "603291773585"
-                         *           },
-                         *           "mid_price_0_in_1": "3498.175146427270166874",
-                         *           "mid_price_1_in_0": "0.000285863331063143",
-                         *           "depth": [
-                         *             {
-                         *               "slippage_pct": "0.5",
-                         *               "token0_in": {
-                         *                 "max_input": "347694",
-                         *                 "output": "1210213039"
-                         *               },
-                         *               "token1_in": {
-                         *                 "max_input": "1216295668",
-                         *                 "output": "345955"
-                         *               }
-                         *             },
-                         *             {
-                         *               "slippage_pct": "1",
-                         *               "token0_in": {
-                         *                 "max_input": "1223076",
-                         *                 "output": "4235748731"
-                         *               },
-                         *               "token1_in": {
-                         *                 "max_input": "4278535014",
-                         *                 "output": "1210845"
-                         *               }
-                         *             },
-                         *             {
-                         *               "slippage_pct": "2",
-                         *               "token0_in": {
-                         *                 "max_input": "3000637",
-                         *                 "output": "10286818733"
-                         *               },
-                         *               "token1_in": {
-                         *                 "max_input": "10496755727",
-                         *                 "output": "2940624"
-                         *               }
-                         *             }
-                         *           ]
-                         *         }
-                         *       ],
-                         *       "as_of": "2026-07-05T12:00:00.000000000Z",
-                         *       "sources": [
-                         *         "soroswap"
-                         *       ],
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["EnvelopeMeta"] & {
-                            data: components["schemas"]["PoolReservesRow"][];
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                404: components["responses"]["NotFound"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getPoolReserves"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3369,116 +1134,7 @@ export interface paths {
          *     the only cross-pool-comparable size signal without USD pricing
          *     of arbitrary pool assets).
          */
-        get: {
-            parameters: {
-                query?: {
-                    /**
-                     * @description Optional. A native pool id — an L-strkey (SEP-23) or 32-byte
-                     *     hex. Restricts the response to that pool. 404 when the id is
-                     *     not a captured native pool; 400 when it is neither an
-                     *     L-strkey nor 32-byte hex.
-                     */
-                    pool?: string;
-                    /**
-                     * @description Optional (listing only, ignored with `?pool=`). Number of
-                     *     top-ranked pools to return. 1-100, default 25.
-                     */
-                    limit?: number;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Per-pool current two-sided reserves + depth. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": [
-                         *         {
-                         *           "pool": "LBBQAH75JTPHENBF3UJEYMPQR4GQ43VZNPAE4H5XVUYS5YRBY6NFFKVM",
-                         *           "pool_hex": "43001ffd4cde723425dd124c31f08f0d0e6eb96bc04e1fb7ad312ee221c79a52",
-                         *           "model": "constant_product",
-                         *           "fee_bps": 30,
-                         *           "as_of_ledger": 63356894,
-                         *           "trustlines": 1,
-                         *           "total_shares": "14133656465",
-                         *           "reserve_a": {
-                         *             "asset": "LibreDrone-GB7LCUIDT3C2DUOX4O2FSCCBH5NXIUJZ64YQ2N75N5POZRI4DA4AMGEE",
-                         *             "decimals": 7,
-                         *             "reserve": "109841733381"
-                         *           },
-                         *           "reserve_b": {
-                         *             "asset": "deCent-GBVRVE6CCHJFZ6IFEKYRCRODKPPJHJFPCYOZILWADK4CEZB6DEXBYTI6",
-                         *             "decimals": 7,
-                         *             "reserve": "1868365732"
-                         *           },
-                         *           "mid_price_a_in_b": "0.017009616240480621",
-                         *           "mid_price_b_in_a": "58.790274034527197162",
-                         *           "depth": [
-                         *             {
-                         *               "slippage_pct": "0.5",
-                         *               "asset_a_in": {
-                         *                 "max_input": "221451759",
-                         *                 "output": "3747975"
-                         *               },
-                         *               "asset_b_in": {
-                         *                 "max_input": "3766809",
-                         *                 "output": "220344474"
-                         *               }
-                         *             },
-                         *             {
-                         *               "slippage_pct": "1",
-                         *               "asset_a_in": {
-                         *                 "max_input": "778995707",
-                         *                 "output": "13117913"
-                         *               },
-                         *               "asset_b_in": {
-                         *                 "max_input": "13250418",
-                         *                 "output": "771205748"
-                         *               }
-                         *             },
-                         *             {
-                         *               "slippage_pct": "2",
-                         *               "asset_a_in": {
-                         *                 "max_input": "1911151277",
-                         *                 "output": "31857790"
-                         *               },
-                         *               "asset_b_in": {
-                         *                 "max_input": "32507949",
-                         *                 "output": "1872928206"
-                         *               }
-                         *             }
-                         *           ]
-                         *         }
-                         *       ],
-                         *       "as_of": "2026-07-06T12:00:00.000000000Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["EnvelopeMeta"] & {
-                            data: components["schemas"]["LiquidityPoolReservesRow"][];
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                404: components["responses"]["NotFound"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["listLiquidityPools"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3509,74 +1165,7 @@ export interface paths {
          *     supply/borrow APYs (reserve b_rate/d_rate) need the Soroban
          *     pool-storage reader; these fields stand in until it ships.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Array of LendingPool rows. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": [
-                         *         {
-                         *           "protocol": "blend",
-                         *           "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
-                         *           "auctions_24h": 29,
-                         *           "auctions_total": 7430,
-                         *           "unique_users_30d": 10946,
-                         *           "last_seen": "2026-07-03T22:37:27Z",
-                         *           "net_supplied_30d": "575363575586841",
-                         *           "net_borrowed_30d": "67357854119677",
-                         *           "utilization_30d_pct": 11.71
-                         *         }
-                         *       ],
-                         *       "as_of": "2026-07-03T22:37:47.445630311Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: {
-                                protocol?: string;
-                                pool?: string;
-                                /** Format: int64 */
-                                auctions_24h?: number;
-                                /** Format: int64 */
-                                auctions_total?: number;
-                                /** Format: int64 */
-                                unique_users_30d?: number;
-                                /** Format: date-time */
-                                last_seen?: string;
-                                /** @description Token base-units, 30d net-flow proxy (not TVL). */
-                                net_supplied_30d?: string;
-                                /** @description Token base-units, 30d net-flow proxy. */
-                                net_borrowed_30d?: string;
-                                /** @description Window borrow/supply ratio %; null when net supply ≤ 0. */
-                                utilization_30d_pct?: number | null;
-                            }[];
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["listLendingPools"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3615,100 +1204,7 @@ export interface paths {
          *     serve time); `flags.stale` fires when the watermark's close time
          *     trails now by more than 300s (a wedged sink).
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description Pool contract C-strkey. */
-                    pool: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Per-reserve current state. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
-                         *         "tvl_usd": "189548299.92",
-                         *         "reserves": [
-                         *           {
-                         *             "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
-                         *             "decimals": 7,
-                         *             "supplied": "589262319356640",
-                         *             "borrowed": "442359640330233",
-                         *             "supplied_usd": "58926231.94",
-                         *             "borrowed_usd": "44235964.03",
-                         *             "utilization_pct": 75.07,
-                         *             "borrow_apr": 0.1091,
-                         *             "supply_apr": 0.0819
-                         *           },
-                         *           {
-                         *             "asset": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
-                         *             "decimals": 7,
-                         *             "supplied": "6218654435342527",
-                         *             "borrowed": "12271342548905",
-                         *             "supplied_usd": "126950771.43",
-                         *             "borrowed_usd": "250513.42",
-                         *             "utilization_pct": 0.2,
-                         *             "borrow_apr": 0.001,
-                         *             "supply_apr": 0
-                         *           }
-                         *         ],
-                         *         "as_of_ledger": 63340102
-                         *       },
-                         *       "as_of": "2026-07-03T22:38:00.032774886Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: {
-                                pool?: string;
-                                /** @description Σ supplied_usd across priced reserves; null when none priced. */
-                                tvl_usd?: string | null;
-                                reserves?: {
-                                    /** @description Reserve underlying token (C-strkey). */
-                                    asset?: string;
-                                    decimals?: number;
-                                    /** @description Total supplied */
-                                    supplied?: string;
-                                    /** @description Total borrowed */
-                                    borrowed?: string;
-                                    supplied_usd?: string | null;
-                                    borrowed_usd?: string | null;
-                                    /** @description Borrowed/supplied */
-                                    utilization_pct?: number;
-                                    /** @description Borrow APR as a fraction (0.05 = 5%). Null when the reserve's rate-model config isn't in the captured contract-storage window. */
-                                    borrow_apr?: number | null;
-                                    /** @description Supply APR as a fraction. Null when the rate-model config is uncaptured. */
-                                    supply_apr?: number | null;
-                                }[];
-                                /**
-                                 * Format: int64
-                                 * @description Lake watermark this current-state read is fresh to (ADR-0041) — the highest captured ledger at serve time. Omitted when no watermark reader is wired. Pairs with flags.stale.
-                                 */
-                                as_of_ledger?: number;
-                            };
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getLendingPoolReserves"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3763,97 +1259,7 @@ export interface paths {
          *     200 + empty array when nothing's been detected or the reader
          *     isn't wired (feature-gated, like /v1/lending/pools).
          */
-        get: {
-            parameters: {
-                query?: {
-                    /** @description Filter to one pattern (e.g. arbitrage). */
-                    kind?: "arbitrage" | "sandwich" | "oracle_sandwich" | "oracle_deviation" | "liquidation_cascade" | "wash_trade";
-                    /** @description Maximum events to return (1-500, default 50). */
-                    limit?: number;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description MEV events, newest first. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": [
-                         *         {
-                         *           "event_id": "bb8839de-2f7f-4bbe-8e61-8f01d20d0bfa",
-                         *           "detected_at": "2026-07-03T22:32:57Z",
-                         *           "detected_at_ledger": 63316124,
-                         *           "kind": "arbitrage",
-                         *           "tx_hashes": [
-                         *             "5e0e2d198f2b61dfcf2ce7ccb102f9238f68deea627b2a978f5f8cc9c166bc14"
-                         *           ],
-                         *           "accounts": [
-                         *             "GC6V7MSQ65LUM24ROBJZ4NROWTOSI3JUXOE2T7SNRHOYGK2OZMTNV7H7"
-                         *           ],
-                         *           "detail": {
-                         *             "legs": [
-                         *               {
-                         *                 "base": "SCOP-GC6OYQJIZF3HFXCYPFCBXYXNGIBQ4TNSFUBUXQJOZWIP6F3YZK4QH3VQ",
-                         *                 "quote": "native",
-                         *                 "source": "sdex",
-                         *                 "op_index": 0,
-                         *                 "base_amount": "33238825",
-                         *                 "quote_amount": "413237"
-                         *               }
-                         *             ],
-                         *             "note": "Atomic cyclic trade by one taker in a single transaction — an arbitrage signature. Detecti…",
-                         *             "assets": [
-                         *               "SCOP-GC6OYQJIZF3HFXCYPFCBXYXNGIBQ4TNSFUBUXQJOZWIP6F3YZK4QH3VQ"
-                         *             ],
-                         *             "sources": [
-                         *               "sdex"
-                         *             ],
-                         *             "notional_usd": "0.05"
-                         *           },
-                         *           "profit_usd": null
-                         *         }
-                         *       ],
-                         *       "as_of": "2026-07-03T22:38:01.17207501Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: {
-                                /** Format: uuid */
-                                event_id?: string;
-                                /** Format: date-time */
-                                detected_at?: string;
-                                /** Format: int64 */
-                                detected_at_ledger?: number;
-                                kind?: string;
-                                asset_id?: string;
-                                quote_id?: string;
-                                tx_hashes?: string[];
-                                accounts?: string[];
-                                /** @description Pattern evidence (arbitrage: assets/sources/legs/notional). */
-                                detail?: Record<string, never>;
-                                /** @description Attacker-profit estimate; null for arbitrage (not estimated). */
-                                profit_usd?: string | null;
-                            }[];
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-            };
-        };
+        get: operations["listMevEvents"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3886,88 +1292,7 @@ export interface paths {
          *     and the window holds zero freezes). 200 + empty payload when
          *     the reader isn't wired.
          */
-        get: {
-            parameters: {
-                query?: {
-                    /** @description true → only currently-firing events. */
-                    firing?: boolean;
-                    /** @description Trailing lookback in days for the freeze-event list and the per-reason tally (1-365, default 30). */
-                    window_days?: number;
-                    /** @description Maximum rows to return (1-500, default 100). Out-of-range values return 400. */
-                    limit?: number;
-                    /** @description `daily` → also return the per-(UTC day, reason) freeze tally over the same window. */
-                    include?: "daily";
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Freeze timeline + firing count + reason tally. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "firing_count": 0,
-                         *         "reason_tally": [],
-                         *         "events": [],
-                         *         "daily": null
-                         *       },
-                         *       "as_of": "2026-07-03T22:38:02.319192694Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: {
-                                firing_count?: number;
-                                reason_tally?: {
-                                    reason?: string;
-                                    /** Format: int64 */
-                                    count?: number;
-                                }[];
-                                events?: {
-                                    asset_id?: string;
-                                    quote_id?: string;
-                                    /** Format: date-time */
-                                    frozen_at?: string;
-                                    /** Format: int64 */
-                                    frozen_at_ledger?: number;
-                                    /** @enum {string} */
-                                    reason?: "single_source" | "divergence" | "outlier_storm" | "manual" | "other";
-                                    frozen_value?: string;
-                                    /** Format: date-time */
-                                    recovered_at?: string | null;
-                                    /** Format: int64 */
-                                    recovered_at_ledger?: number | null;
-                                    firing?: boolean;
-                                    detail?: Record<string, never>;
-                                }[];
-                                /** @description Per-(UTC day, reason) freeze tally over the same window as reason_tally — only populated when `?include=daily` was requested. `null` means "not requested"; `[]` means "requested, zero freezes in the window". Days with zero freezes carry no entries. */
-                                daily?: {
-                                    /** Format: date */
-                                    day?: string;
-                                    reason?: string;
-                                    /** Format: int64 */
-                                    count?: number;
-                                }[] | null;
-                            };
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-            };
-        };
+        get: operations["listAnomalies"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3998,90 +1323,7 @@ export interface paths {
          *     `?window_days=` (default 7); `?limit=` (default 100, max 500).
          *     200 + empty payload when the reader isn't wired.
          */
-        get: {
-            parameters: {
-                query?: {
-                    /** @description true → only rows whose latest status is firing. */
-                    firing?: boolean;
-                    /** @description Trailing lookback in days for divergence rows (1-365, default 7). */
-                    window_days?: number;
-                    /** @description Maximum rows to return (1-500, default 100). Out-of-range values return 400. */
-                    limit?: number;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Latest divergence per (pair, reference). */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "observations": [
-                         *           {
-                         *             "asset_id": "crypto:BTC",
-                         *             "quote_id": "fiat:USD",
-                         *             "reference": "chainlink",
-                         *             "observed_at": "2026-07-03T22:37:08.896016Z",
-                         *             "observed_at_ledger": 0,
-                         *             "our_price": "62543.07358731602",
-                         *             "ref_price": "62608.75585288",
-                         *             "delta_pct": "-0.10490907329051442",
-                         *             "status": "clear"
-                         *           },
-                         *           {
-                         *             "asset_id": "crypto:ETH",
-                         *             "quote_id": "fiat:USD",
-                         *             "reference": "coingecko",
-                         *             "observed_at": "2026-07-03T22:37:08.90697Z",
-                         *             "observed_at_ledger": 0,
-                         *             "our_price": "1757.84660921192",
-                         *             "ref_price": "1756.21",
-                         *             "delta_pct": "0.09318983560735354",
-                         *             "status": "clear"
-                         *           }
-                         *         ]
-                         *       },
-                         *       "as_of": "2026-07-03T22:38:03.478937272Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: {
-                                observations?: {
-                                    asset_id?: string;
-                                    quote_id?: string;
-                                    /** @enum {string} */
-                                    reference?: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band";
-                                    /** Format: date-time */
-                                    observed_at?: string;
-                                    /** Format: int64 */
-                                    observed_at_ledger?: number;
-                                    our_price?: string;
-                                    ref_price?: string;
-                                    delta_pct?: string;
-                                    /** @enum {string} */
-                                    status?: "clear" | "firing";
-                                }[];
-                            };
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-            };
-        };
+        get: operations["getDivergenceBoard"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4118,90 +1360,7 @@ export interface paths {
          *     return 400. 200 + empty `points` when the reader isn't wired
          *     or the triple has no observations in the window.
          */
-        get: {
-            parameters: {
-                query: {
-                    /** @description `<asset_id>~<quote_id>`, e.g. `crypto:BTC~fiat:USD`. */
-                    pair: string;
-                    /** @description External reference to plot against. */
-                    reference: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band";
-                    /** @description Trailing window; whitelisted to 1, 7 or 30 (default 7). */
-                    days?: 1 | 7 | 30;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Bucketed divergence series for the triple. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "asset_id": "crypto:BTC",
-                         *         "quote_id": "fiat:USD",
-                         *         "reference": "coingecko",
-                         *         "days": 7,
-                         *         "bucket_seconds": 1800,
-                         *         "threshold_pct": 5,
-                         *         "points": [
-                         *           {
-                         *             "t": "2026-07-29T12:00:00Z",
-                         *             "delta_pct": "-0.104909",
-                         *             "our_price": "62543.07358731602",
-                         *             "ref_price": "62608.75585288"
-                         *           },
-                         *           {
-                         *             "t": "2026-07-29T12:30:00Z",
-                         *             "delta_pct": "6.412000",
-                         *             "our_price": "66623.11",
-                         *             "ref_price": "62608.75",
-                         *             "firing": true
-                         *           }
-                         *         ]
-                         *       },
-                         *       "as_of": "2026-07-29T12:31:03.478937272Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: {
-                                asset_id?: string;
-                                quote_id?: string;
-                                /** @enum {string} */
-                                reference?: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band";
-                                days?: number;
-                                /** @description Downsampling bucket width. Each point is the last observation inside its bucket; render the series at this resolution, not as raw ticks. */
-                                bucket_seconds?: number;
-                                /** @description The operator's divergence alert threshold (percent) — the same number the worker fires on. Omitted when unconfigured; draw no band in that case. */
-                                threshold_pct?: number;
-                                points?: {
-                                    /** Format: date-time */
-                                    t?: string;
-                                    delta_pct?: string;
-                                    our_price?: string;
-                                    ref_price?: string;
-                                    /** @description True when ANY observation in the bucket breached its threshold at observation time. Omitted when false. */
-                                    firing?: boolean;
-                                }[];
-                            };
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-            };
-        };
+        get: operations["getDivergenceSeries"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4224,54 +1383,7 @@ export interface paths {
          *     price-streams table. Sources with no observation in the
          *     window are absent from the result.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Array of OracleReading. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": [
-                         *         {
-                         *           "source": "band",
-                         *           "contract_id": "CCQXWMZVM3KRTXTUPTN53YHL272QGKF32L7XEDNZ2S6OSUFK3NFBGG5M",
-                         *           "asset": "crypto:USDC",
-                         *           "quote": "fiat:USD",
-                         *           "ts": "2026-07-03T22:06:18Z",
-                         *           "price": "0.999879000",
-                         *           "price_raw": "999879000",
-                         *           "decimals": 9,
-                         *           "observer": "GCNTSKF3QBZJHS5JTD72TI35QP2PLMCKFMFNPXJI2YCQXYBUJLRHFCZX"
-                         *         }
-                         *       ],
-                         *       "as_of": "2026-07-03T22:38:05.023074622Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["OracleLatestEnvelope"];
-                    };
-                };
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["listOracleStreams"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4301,119 +1413,7 @@ export interface paths {
          *     sub-second on a hypertable with hundreds of millions of
          *     rows.
          */
-        get: {
-            parameters: {
-                query?: {
-                    /**
-                     * @description Opaque pagination token echoed from a prior response's
-                     *     `pagination.next`. Pass it verbatim — it is a base64url-encoded
-                     *     blob whose internal shape is an implementation detail and
-                     *     changes without notice. Clients MUST NOT parse, decode, or
-                     *     construct cursors by hand.
-                     *
-                     *     A cursor is stable across retries but not across schema
-                     *     changes; treat it as short-lived (minutes, not days). Empty
-                     *     means "start from the beginning".
-                     */
-                    cursor?: components["parameters"]["Cursor"];
-                    /** @description Maximum rows per page (1-500, default 100). */
-                    limit?: number;
-                    /**
-                     * @description Sort order. `volume_24h_usd_desc` (default) orders by
-                     *     24h USD volume desc (NULLS LAST), then by
-                     *     `<base>|<quote>` for ties — surfaces the high-activity
-                     *     pairs first without paginating through ~5K alphabetic
-                     *     dust pairs.
-                     *
-                     *     `pair` returns markets in lex order of
-                     *     `<base>|<quote>` — stable for paginating the full set,
-                     *     but surfaces spam-token pairs (`0-…`, `0TAX-…`) at the
-                     *     top of the listing. Pre-2026-05-10 this was the
-                     *     default; we kept it as an explicit option so callers
-                     *     paginating the entire universe of pairs aren't broken.
-                     *
-                     *     Cursor format differs per ordering; keep using the
-                     *     cursor returned by the previous response.
-                     */
-                    order_by?: "pair" | "volume_24h_usd_desc";
-                    /**
-                     * @description Restrict the listing to markets a single source
-                     *     observed in the recency window. Must match a
-                     *     registered source name (see `/v1/sources`); an
-                     *     unknown name returns 400 `unknown-source` rather
-                     *     than an empty 200 (avoids the silent-empty-page
-                     *     anti-pattern). Mutually exclusive with `asset`.
-                     */
-                    source?: string;
-                    /**
-                     * @description Restrict the listing to markets where the given
-                     *     canonical `asset_id` appears on either side (base
-                     *     OR quote). Use this on asset-detail surfaces to
-                     *     surface every market an asset participates in
-                     *     without paying for a global scan + client-side
-                     *     filter. Returns 400 `invalid-asset-id` if the
-                     *     value isn't a parseable canonical asset_id (e.g.
-                     *     `native`, `USDC-G…`, `fiat:USD`). Mutually
-                     *     exclusive with `source`.
-                     */
-                    asset?: string;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Array of markets + optional next cursor. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": [
-                         *         {
-                         *           "base": "crypto:BTC",
-                         *           "quote": "crypto:USDT",
-                         *           "last_trade_at": "2026-07-03T22:36:00Z",
-                         *           "bucket_close_at": "2026-07-03T00:00:00Z",
-                         *           "trade_count_24h": 667311,
-                         *           "volume_24h_usd": "845925256.01203780",
-                         *           "last_price": "61977.170000000000"
-                         *         },
-                         *         {
-                         *           "base": "crypto:BTC",
-                         *           "quote": "fiat:USD",
-                         *           "last_trade_at": "2026-07-03T22:36:00Z",
-                         *           "bucket_close_at": "2026-07-03T00:00:00Z",
-                         *           "trade_count_24h": 636711,
-                         *           "volume_24h_usd": "500463722.75372090",
-                         *           "last_price": "61901.333333333333"
-                         *         }
-                         *       ],
-                         *       "as_of": "2026-07-03T22:38:06.818142585Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       },
-                         *       "pagination": {
-                         *         "next": "500463722.75372090:crypto:BTC|fiat:USD"
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["MarketsEnvelope"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["listMarkets"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4448,75 +1448,7 @@ export interface paths {
          *     Pass EITHER `base`+`quote` OR `asset` — combining them is a
          *     400.
          */
-        get: {
-            parameters: {
-                query?: {
-                    /** @description Canonical base asset_id (with `quote`, for a single pair). */
-                    base?: string;
-                    /** @description Canonical quote asset_id (with `base`, for a single pair). */
-                    quote?: string;
-                    /**
-                     * @description Canonical asset_id; aggregates every pair the asset appears
-                     *     in (base or quote side). Mutually exclusive with `base`/`quote`.
-                     */
-                    asset?: string;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Per-source breakdown (standard envelope). */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "base": "native",
-                         *         "quote": "fiat:USD",
-                         *         "window_secs": 86400,
-                         *         "sources": []
-                         *       },
-                         *       "as_of": "2026-07-03T22:38:07.960705714Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["EnvelopeMeta"] & {
-                            data?: {
-                                base?: string;
-                                quote?: string;
-                                asset?: string;
-                                /** @description Aggregation window in seconds (86400 = trailing 24h). */
-                                window_secs: number;
-                                sources: {
-                                    /** @description Source name (see /v1/sources). */
-                                    source: string;
-                                    /** @description SUM derivable USD volume over 24h. Decimal string per ADR-0003. */
-                                    volume_24h_usd?: string | null;
-                                    trade_count_24h: number;
-                                    /** @description Share of total derivable USD volume across sources (%). */
-                                    share_pct: number;
-                                }[];
-                            };
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getMarketSources"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4541,89 +1473,7 @@ export interface paths {
          *
          *     Powers the showcase `/issuers` directory page.
          */
-        get: {
-            parameters: {
-                query?: {
-                    /** @description Max rows to return; 1-500, default 100. */
-                    limit?: number;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Array of issuer summaries (standard envelope; data is the array). */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": [
-                         *         {
-                         *           "g_strkey": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *           "home_domain": "circle.com",
-                         *           "org_name": "Centre Consortium LLC",
-                         *           "org_verified": true,
-                         *           "asset_count": 1,
-                         *           "total_observation_count": 41639649
-                         *         },
-                         *         {
-                         *           "g_strkey": "GARDNV3Q7YGT4AKSDF25LT32YSCCW4EV22Y2TV3I2PU2MMXJTEDL5T55",
-                         *           "home_domain": "ultracapital.xyz",
-                         *           "org_name": "Ultra Capital LLC",
-                         *           "org_verified": true,
-                         *           "asset_count": 1,
-                         *           "total_observation_count": 32433641
-                         *         }
-                         *       ],
-                         *       "as_of": "2026-07-03T22:38:09.267785261Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["EnvelopeMeta"] & {
-                            data: {
-                                g_strkey: string;
-                                home_domain?: string;
-                                /**
-                                 * @description Issuer's organisation name from SEP-1
-                                 *     `[DOCUMENTATION].ORG_NAME`. Populated by
-                                 *     the `stellarindex-ops sep1-refresh` job;
-                                 *     empty until the issuer's stellar.toml
-                                 *     has been resolved.
-                                 */
-                                org_name?: string;
-                                /** Format: int64 */
-                                asset_count: number;
-                                /** Format: int64 */
-                                total_observation_count: number;
-                                /**
-                                 * @description True only when SEP-1 verification is
-                                 *     bidirectional (the issuer's toml lists this
-                                 *     issuer back — CS-100). When false, org_name
-                                 *     is unverified self-declared metadata.
-                                 */
-                                org_verified?: boolean;
-                                /** @description Non-empty when this issuer is in the curated scam directory (issuers.go). Render as a warning. */
-                                scam_reason?: string;
-                            }[];
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["listIssuers"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4649,135 +1499,7 @@ export interface paths {
          *
          *     Powers the explorer's `/issuers/{g_strkey}` detail page.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /**
-                     * @description Issuer account id — 56-character G-strkey (SEP-23),
-                     *     e.g. `GA5Z…KZVN`. Malformed strkeys return 400;
-                     *     well-formed accounts that have never issued an
-                     *     observed asset return 404.
-                     * @example GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
-                     */
-                    g_strkey: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description One issuer row plus issued-asset list (standard envelope). */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "g_strkey": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *         "home_domain": "circle.com",
-                         *         "org_name": "Centre Consortium LLC",
-                         *         "org_verified": true,
-                         *         "auth_required": false,
-                         *         "auth_revocable": true,
-                         *         "auth_immutable": false,
-                         *         "auth_clawback": false,
-                         *         "sep1_resolved_at": "2026-07-03T14:56:36Z",
-                         *         "sep1_payload": {
-                         *           "OrgName": "Centre Consortium LLC",
-                         *           "Currencies": [
-                         *             {
-                         *               "Code": "USDC",
-                         *               "Name": "USD Coin",
-                         *               "Issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *               "AnchorAsset": "USD",
-                         *               "Description": "USDC is a fully collateralized US Dollar stablecoin, based on the open source fiat stablec…",
-                         *               "AnchorAssetType": "fiat"
-                         *             }
-                         *           ],
-                         *           "OrgVerified": true,
-                         *           "Documentation": {
-                         *             "ORG_DBA": "Centre Consortium",
-                         *             "ORG_URL": "https://www.centre.io",
-                         *             "ORG_NAME": "Centre Consortium LLC"
-                         *           }
-                         *         },
-                         *         "creation_ledger": 34180766,
-                         *         "assets": [
-                         *           {
-                         *             "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *             "code": "USDC",
-                         *             "slug": "USDC",
-                         *             "first_seen_ledger": 34180766,
-                         *             "last_seen_ledger": 63316034,
-                         *             "observation_count": 41639649
-                         *           }
-                         *         ]
-                         *       },
-                         *       "as_of": "2026-07-03T22:38:13.056025402Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["EnvelopeMeta"] & {
-                            data: {
-                                g_strkey: string;
-                                home_domain?: string;
-                                /**
-                                 * @description Issuer's organisation name from SEP-1
-                                 *     `[DOCUMENTATION].ORG_NAME`. Same value the
-                                 *     listing endpoint surfaces. SELF-DECLARED unless
-                                 *     `org_verified` is true — do NOT render as
-                                 *     authoritative without checking `org_verified`.
-                                 */
-                                org_name?: string;
-                                /** @description Non-empty when this issuer is in the curated scam directory (issuers.go). Render as a warning. */
-                                scam_reason?: string;
-                                /**
-                                 * @description True only when the issuer's SEP-1 toml lists this
-                                 *     issuer back (bidirectional proof; one-way is
-                                 *     spoofable). When false, `org_name` is unverified
-                                 *     self-declared metadata — clients must present it
-                                 *     as such, not as a verified identity (CS-100).
-                                 */
-                                org_verified?: boolean;
-                                auth_required?: boolean | null;
-                                auth_revocable?: boolean | null;
-                                auth_immutable?: boolean | null;
-                                auth_clawback?: boolean | null;
-                                /** Format: date-time */
-                                sep1_resolved_at?: string | null;
-                                sep1_payload?: {
-                                    [key: string]: unknown;
-                                } | null;
-                                creation_ledger?: number | null;
-                                assets?: {
-                                    asset_id?: string;
-                                    code?: string;
-                                    slug?: string;
-                                    first_seen_ledger?: number;
-                                    last_seen_ledger?: number;
-                                    /** Format: int64 */
-                                    observation_count?: number;
-                                }[];
-                            };
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                404: components["responses"]["NotFound"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getIssuer"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4809,128 +1531,7 @@ export interface paths {
          *
          *     F-0021 closure (audit-2026-05-26).
          */
-        get: {
-            parameters: {
-                query?: {
-                    /**
-                     * @description Filter to events where this G/C-strkey was the
-                     *     sender (transfer.from, approve.from).
-                     */
-                    from?: string;
-                    /**
-                     * @description Filter to events where this G/C-strkey was the
-                     *     recipient (transfer.to, approve.spender,
-                     *     set_admin.new_admin, set_authorized.id).
-                     */
-                    to?: string;
-                    /** @description Maximum audit-trail rows to return (1-500, default 100). */
-                    limit?: number;
-                };
-                header?: never;
-                path: {
-                    /** @description SEP-41 token contract C-strkey. */
-                    contract_id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Per-contract audit-trail rows, newest-first (standard envelope). */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "contract_id": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
-                         *         "count": 2,
-                         *         "limit": 2,
-                         *         "decimals": 7,
-                         *         "transfers": [
-                         *           {
-                         *             "ledger": 62757524,
-                         *             "ledger_close_time": "2026-05-27T09:41:47Z",
-                         *             "tx_hash": "f35ce4e2b091debd5992cf3490a8701400e5655b033c425569eb2abbe19cb791",
-                         *             "op_index": 1,
-                         *             "event_index": 0,
-                         *             "event_kind": "transfer",
-                         *             "from": "GBK6ITJCG4QPOAJFFWMKEICDAMWFSEACFO654R4E2LDH77XYS76DPYXR",
-                         *             "to": "GCAQSQVXUJZPDND4EUWQYRCJ64IGQ3REQK2CVSXHUQQ26GCTEMIGJDSC",
-                         *             "amount": "40700000"
-                         *           },
-                         *           {
-                         *             "ledger": 62757524,
-                         *             "ledger_close_time": "2026-05-27T09:41:47Z",
-                         *             "tx_hash": "6517426650acea35cf0cd7f2ba420a4c7ec9619adffefce86c3ef015df618688",
-                         *             "op_index": 1,
-                         *             "event_index": 0,
-                         *             "event_kind": "transfer",
-                         *             "from": "GAUA7XL5K54CC2DDGP77FJ2YBHRJLT36CPZDXWPM6MP7MANOGG77PNJU",
-                         *             "to": "GCAQSQVXUJZPDND4EUWQYRCJ64IGQ3REQK2CVSXHUQQ26GCTEMIGJDSC",
-                         *             "amount": "3600000"
-                         *           }
-                         *         ]
-                         *       },
-                         *       "as_of": "2026-07-03T22:38:15.931276977Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["EnvelopeMeta"] & {
-                            data: {
-                                contract_id: string;
-                                count: number;
-                                limit: number;
-                                from?: string;
-                                to?: string;
-                                /**
-                                 * @description The token contract's on-chain `decimals()`, read
-                                 *     from its captured instance metadata — the divisor
-                                 *     exponent for every `amount` in this response
-                                 *     (display value = amount / 10^decimals). Falls back
-                                 *     to 7 (the SAC/classic default) when the contract's
-                                 *     decimals declaration isn't derivable from the lake.
-                                 */
-                                decimals: number;
-                                transfers: {
-                                    ledger: number;
-                                    /** Format: date-time */
-                                    ledger_close_time: string;
-                                    tx_hash?: string;
-                                    op_index?: number;
-                                    event_index?: number;
-                                    /** @enum {string} */
-                                    event_kind: "transfer" | "approve" | "set_admin" | "set_authorized";
-                                    from?: string;
-                                    to?: string;
-                                    /**
-                                     * @description i128 amount as a decimal string (ADR-0003).
-                                     *     Populated for transfer + approve; omitted
-                                     *     for set_admin + set_authorized.
-                                     */
-                                    amount?: string;
-                                    /** @description approve.live_until_ledger. */
-                                    live_until_ledger?: number;
-                                    /** @description set_authorized.authorize. */
-                                    authorized?: boolean;
-                                }[];
-                            };
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getContractTransfers"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4960,140 +1561,7 @@ export interface paths {
          *     503 when this deployment hasn't wired the change-summary
          *     reader.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /**
-                     * @description Which entity family the delta strip is computed over:
-                     *     `coin` (an asset's price/volume deltas), `protocol`
-                     *     (per-protocol activity), `pair` (a trading pair), or
-                     *     `source` (an ingest source). Determines how `{id}` is
-                     *     interpreted — see the `id` parameter.
-                     * @example source
-                     */
-                    entity_type: "coin" | "protocol" | "pair" | "source";
-                    /**
-                     * @description Canonical id for the entity. Form depends on
-                     *     `entity_type`:
-                     *
-                     *     - `coin`: any of the asset's identifier forms — friendly
-                     *       slug (`XLM`, `USDC`), canonical asset_id (`native`,
-                     *       `crypto:XLM`, `USDC-GA5Z…`), or bare classic code
-                     *       (`USDC` → also tries `crypto:USDC`). The handler
-                     *       expands the input into every candidate the
-                     *       change-summary worker might have keyed under and
-                     *       returns the first hit. Without expansion, a typo of
-                     *       the canonical form would 404 even when data is
-                     *       populated under a sibling form.
-                     *     - `pair`: `base/quote` form (e.g. `native/USDC-GA5Z…`).
-                     *     - `protocol`: protocol slug (e.g. `soroswap`, `blend`).
-                     *     - `source`: source name (e.g. `binance`, `coinbase`,
-                     *       `sdex`).
-                     * @example binance
-                     */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description One row from change_summary_5m (standard envelope). */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "entity_type": "coin",
-                         *         "entity_id": "crypto:XLM",
-                         *         "refreshed_at": "2026-07-03T22:38:00Z",
-                         *         "current_value": "0.2041764538697883",
-                         *         "h1_value": "0.20380247911865504",
-                         *         "h1_delta_pct": 0.1834986270778068,
-                         *         "h24_value": "0.19673099518995452",
-                         *         "h24_delta_pct": 3.784588530467602,
-                         *         "d7_value": "0.17768054591385554",
-                         *         "d7_delta_pct": 14.912104090888326,
-                         *         "d30_value": "0.21078647159614772",
-                         *         "d30_delta_pct": -3.13588328335594,
-                         *         "ath_value": "0.29758550057923283",
-                         *         "ath_at": "2026-05-30T03:52:00Z",
-                         *         "atl_value": "0.13999047864054645",
-                         *         "atl_at": "2026-05-23T08:41:00Z",
-                         *         "streak_direction": "up",
-                         *         "streak_days": 5,
-                         *         "acceleration": "decreasing"
-                         *       },
-                         *       "as_of": "2026-07-03T22:40:39.873451257Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["EnvelopeMeta"] & {
-                            data: {
-                                entity_type?: string;
-                                entity_id?: string;
-                                /** Format: date-time */
-                                refreshed_at?: string;
-                                /** @description money (price/market-cap) — JSON string per INV-2 */
-                                current_value?: string;
-                                /** @description money — JSON string per INV-2 */
-                                h1_value?: string | null;
-                                h1_delta_pct?: number | null;
-                                /** @description money — JSON string per INV-2 */
-                                h24_value?: string | null;
-                                h24_delta_pct?: number | null;
-                                /** @description money — JSON string per INV-2 */
-                                d7_value?: string | null;
-                                d7_delta_pct?: number | null;
-                                /** @description money — JSON string per INV-2 */
-                                d30_value?: string | null;
-                                d30_delta_pct?: number | null;
-                                /**
-                                 * @description Highest observed value since this entity entered the index — NOT an all-time high over the asset's full history. money — JSON string per INV-2.
-                                 *
-                                 *     The rollup scans a rolling ~30-day window, but the stored value is merged with GREATEST on every refresh, so it accumulates from the moment tracking began and never decays. It therefore reaches back further than 30 days (the oldest extreme on the reference deployment is ~80 days) but does not reach back before the entity was first indexed, and it is not backfilled from history.
-                                 *
-                                 *     Because the merge is monotonic, a single bad print is permanent: an extreme recorded before a data-quality fix landed stays until the row is rebuilt. Treat it as "high-water mark observed by this index", not as a market all-time high.
-                                 */
-                                ath_value?: string | null;
-                                /**
-                                 * Format: date-time
-                                 * @description Observation time of ath_value.
-                                 */
-                                ath_at?: string | null;
-                                /** @description Lowest observed value since this entity entered the index — NOT an all-time low over the asset's full history. money — JSON string per INV-2. Same accumulation and single-bad-print caveats as ath_value, via LEAST. */
-                                atl_value?: string | null;
-                                /**
-                                 * Format: date-time
-                                 * @description Observation time of atl_value.
-                                 */
-                                atl_at?: string | null;
-                                /** @enum {string|null} */
-                                streak_direction?: "up" | "down" | "flat" | null;
-                                streak_days?: number | null;
-                                /** @enum {string|null} */
-                                acceleration?: "increasing" | "flat" | "decreasing" | null;
-                            };
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                404: components["responses"]["NotFound"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getEntityChanges"];
         put?: never;
         post?: never;
         delete?: never;
@@ -5136,104 +1604,7 @@ export interface paths {
          *     Returns 503 when the deployment hasn't wired the cursors
          *     reader.
          */
-        get: {
-            parameters: {
-                query?: {
-                    /**
-                     * @description Semantic convenience filter (R-015). Values:
-                     *       - `active` — only rows with `lag_seconds <= 600` (10 min).
-                     *         Excludes completed backfill cursors that linger in the
-                     *         table after their range finished.
-                     *       - `stale`  — complement; only rows older than the 10-min
-                     *         boundary. Useful for spotting dead ingest paths.
-                     *       - omitted — return everything (subject to `max_age` + `source`).
-                     *     Composes with `max_age`: for `status=active` the effective
-                     *     window is whichever bound is tighter; for `status=stale` the
-                     *     window becomes `[10m, max_age]`.
-                     */
-                    status?: "active" | "stale";
-                    /**
-                     * @description Positive Go-duration string (e.g. `1h`, `30m`, `5m`,
-                     *     `0.5h`). When present, rows whose `lag_seconds`
-                     *     exceeds this value are excluded from the response.
-                     *     Empty / omitted preserves the legacy "return every
-                     *     cursor" contract.
-                     */
-                    max_age?: string;
-                    /**
-                     * @description Exact-match filter on the `source` column. Typical
-                     *     values: `ledgerstream` (the live indexer) or
-                     *     `backfill` (one row per backfill range). Unknown
-                     *     values return an empty array (not 400) — keeps the
-                     *     surface predictable when an operator typos vs. a
-                     *     brand-new source we haven't seen yet.
-                     */
-                    source?: string;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Array of cursor entries, one per (source, sub_source) (standard envelope; data is the array). */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": [
-                         *         {
-                         *           "source": "backfill",
-                         *           "sub_source": "11474999-15299997:sdex",
-                         *           "last_ledger": 15299997,
-                         *           "last_updated": "2026-05-14T18:19:34Z",
-                         *           "lag_seconds": 4335523
-                         *         }
-                         *       ],
-                         *       "as_of": "2026-07-03T22:38:18.218056301Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["EnvelopeMeta"] & {
-                            data: {
-                                source: string;
-                                sub_source?: string;
-                                last_ledger: number;
-                                /** Format: date-time */
-                                last_updated: string;
-                                /** Format: int64 */
-                                lag_seconds: number;
-                            }[];
-                        };
-                    };
-                };
-                /**
-                 * @description Either `max_age` didn't parse as a positive Go duration
-                 *     (`type=https://api.stellarindex.io/errors/invalid-max-age`),
-                 *     or `status` was set to a value other than `active` /
-                 *     `stale` (`type=https://api.stellarindex.io/errors/invalid-status`).
-                 *     Body is the standard problem+json envelope.
-                 */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getDiagnosticCursors"];
         put?: never;
         post?: never;
         delete?: never;
@@ -5274,265 +1645,7 @@ export interface paths {
          *     on second-scale (cursor updates, supply ticks); 15s smooths
          *     a refreshing status page without hiding degradation.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Snapshot of the region's ingest state (standard envelope). */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "region": {
-                         *           "name": "r1",
-                         *           "deployment": "production"
-                         *         },
-                         *         "version": {
-                         *           "version": "v0.7.6",
-                         *           "build_date": "2026-07-03T22:24:02Z",
-                         *           "commit": "3d26b9d2b1bf72dc3caec9db9dceff59ca24f6b7"
-                         *         },
-                         *         "ledger": {
-                         *           "latest_ledger": 63316172,
-                         *           "lag_seconds": 0,
-                         *           "volume_24h_usd": "2904068272.78168669",
-                         *           "markets_count_24h": 27488,
-                         *           "assets_indexed": 191015
-                         *         },
-                         *         "backfill": [
-                         *           {
-                         *             "decoder": "aquarius",
-                         *             "ranges_total": 1,
-                         *             "ranges_complete": 1,
-                         *             "newest_ledger": 62637704
-                         *           }
-                         *         ],
-                         *         "backfill_coverage": [
-                         *           {
-                         *             "source": "aquarius",
-                         *             "applies": true,
-                         *             "coverage_pct": 1,
-                         *             "completeness_pct": 1,
-                         *             "completeness_complete": true,
-                         *             "completeness_lake_complete": true
-                         *           }
-                         *         ],
-                         *         "backfill_coverage_as_of": "2026-07-03T22:38:12Z",
-                         *         "cagg_coverage": {
-                         *           "earliest_bucket": "2015-11-18T03:00:00Z",
-                         *           "latest_bucket": "2026-07-03T21:00:00Z",
-                         *           "bucket_count": 175011581
-                         *         },
-                         *         "fx_backfill": {
-                         *           "earliest_quote": "2001-05-11",
-                         *           "latest_quote": "2026-07-03",
-                         *           "total_quotes": 244477,
-                         *           "currencies_count": 132
-                         *         },
-                         *         "supply": {
-                         *           "classic_assets_with_supply": 9,
-                         *           "sep41_assets_with_supply": 0,
-                         *           "last_snapshot_at": "2026-07-03T22:38:02Z",
-                         *           "latest_ledger": 63316175
-                         *         },
-                         *         "sources": [
-                         *           {
-                         *             "name": "aquarius",
-                         *             "class": "exchange",
-                         *             "include_in_vwap": true,
-                         *             "trade_count_24h": 12946,
-                         *             "volume_24h_usd": "2100883.02"
-                         *           }
-                         *         ]
-                         *       },
-                         *       "as_of": "2026-07-03T22:38:19.403102451Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["EnvelopeMeta"] & {
-                            /** @description Operator diagnostics — the documented properties are the stable core; the handler also serves per-source coverage fields (density_pct, gap_free_pct, covered_ledgers, coverage_snapshot_at, entries_24h) and ADR-0033 completeness fields that evolve with the pipeline (board #33; x-stability: experimental per ADR-0042). */
-                            data: {
-                                region: {
-                                    /** @example r1 */
-                                    name: string;
-                                    /** @example production */
-                                    deployment: string;
-                                };
-                                version: {
-                                    /** @example v0.5.0-rc.50 */
-                                    version: string;
-                                    /** @example 2026-05-13T18:21:59Z */
-                                    build_date: string;
-                                    /** @example 539333827c1a25d3ecfdcda67aa9c9a6f30cf6d3 */
-                                    commit: string;
-                                    /** @example false */
-                                    dirty: string;
-                                    /** @example go1.25.10 */
-                                    go_version: string;
-                                };
-                                ledger: {
-                                    /** Format: int64 */
-                                    latest_ledger: number;
-                                    /** Format: int64 */
-                                    lag_seconds: number;
-                                    /** @description Decimal string per ADR-0003. */
-                                    volume_24h_usd?: string;
-                                    /** Format: int64 */
-                                    markets_count_24h: number;
-                                    /** Format: int64 */
-                                    assets_indexed: number;
-                                };
-                                backfill: {
-                                    /** @example sdex,soroswap */
-                                    decoder: string;
-                                    /** @description Total cursor rows for this decoder set. */
-                                    ranges_total: number;
-                                    /** @description last_ledger == range_end. */
-                                    ranges_complete: number;
-                                    /** @description Incomplete AND updated within the last 10 min — actively progressing. */
-                                    ranges_running: number;
-                                    /** @description Incomplete AND not updated for 10+ min — needs `-resume` restart. */
-                                    ranges_stalled: number;
-                                    /** @description Back-compat: ranges_running + ranges_stalled. */
-                                    ranges_active: number;
-                                    /** Format: date-time */
-                                    oldest_updated_at?: string;
-                                    /** Format: int64 */
-                                    oldest_lag_seconds: number;
-                                    /** Format: int64 */
-                                    newest_ledger: number;
-                                }[];
-                                /**
-                                 * @description Per-source min/max ledger + trade count from the
-                                 *     trades hypertable. Answers "do we have data
-                                 *     from genesis to tip?" — `applies=true` rows are
-                                 *     Stellar-ledger-bearing sources (sdex + Soroban
-                                 *     contracts); CEX/FX sources surface as
-                                 *     `applies=false`. Background-refreshed every
-                                 *     5 min; empty array until first refresh
-                                 *     completes after process start.
-                                 */
-                                backfill_coverage: {
-                                    /** @example sdex */
-                                    source: string;
-                                    /** @description False for CEX/FX sources whose trades have no Stellar ledger. */
-                                    applies: boolean;
-                                    /**
-                                     * Format: int64
-                                     * @description Operator-curated source genesis (1 for SDEX, contract deploy ledger for Soroban).
-                                     */
-                                    genesis_ledger?: number;
-                                    /** Format: int64 */
-                                    earliest_ledger?: number;
-                                    /** Format: int64 */
-                                    latest_ledger?: number;
-                                    /**
-                                     * Format: int64
-                                     * @description Always-on per-source ingested-entry tally — trades for exchange/DEX/CEX sources, oracle_updates for oracle sources (source_entry_counts, migration 0035). Exact even mid-backfill; renamed from trade_count 2026-05-15.
-                                     */
-                                    entries: number;
-                                    /** @description Fraction of (genesis → tip) range with any data. 1.0 = covered. Doesn't detect internal gaps. */
-                                    coverage_pct?: number;
-                                    /** @description ADR-0033 watermark coverage: (watermark - genesis + 1) / (tip - genesis + 1). No sparsity threshold — a single PROVEN gap pins it. Absent until compute-completeness has run for the source. */
-                                    completeness_pct?: number;
-                                    /**
-                                     * Format: int64
-                                     * @description Highest fully-verified ledger.
-                                     */
-                                    completeness_watermark?: number;
-                                    /** @description SERVED/combined axis of the ADR-0033/ADR-0034 two-axis verdict: substrate ∧ recognition ∧ the retention-scoped projection reconcile. */
-                                    completeness_complete?: boolean;
-                                    /** @description LAKE (archive) axis: substrate ∧ recognition only, genesis-to-tip. A source is routinely lake_complete=true with complete=false — the archive is proven genesis-complete while the served tier is still reconciling. */
-                                    completeness_lake_complete?: boolean;
-                                    /**
-                                     * Format: date-time
-                                     * @description When compute-completeness last ran for this source.
-                                     */
-                                    completeness_computed_at?: string;
-                                }[];
-                                /**
-                                 * Format: date-time
-                                 * @description When the backfill_coverage snapshot was last refreshed.
-                                 */
-                                backfill_coverage_as_of?: string;
-                                /**
-                                 * @description MIN/MAX bucket of `prices_1h`, the canonical
-                                 *     "long-lived" continuous aggregate. Real
-                                 *     source-of-truth for "do we have historical
-                                 *     OHLC since genesis?" — raw trades have a 90-day
-                                 *     retention but the hourly+ CAGGs are retained
-                                 *     forever (migration 0002).
-                                 */
-                                cagg_coverage?: {
-                                    /** Format: date-time */
-                                    earliest_bucket?: string;
-                                    /** Format: date-time */
-                                    latest_bucket?: string;
-                                    /** Format: int64 */
-                                    bucket_count: number;
-                                };
-                                fx_backfill: {
-                                    /** @example 1999-01-04 */
-                                    earliest_quote?: string;
-                                    /** @example 2026-05-13 */
-                                    latest_quote?: string;
-                                    /** Format: int64 */
-                                    total_quotes: number;
-                                    currencies_count: number;
-                                };
-                                market_cap: {
-                                    entries_count: number;
-                                    /** Format: date-time */
-                                    oldest_fetched_at?: string;
-                                    /** Format: date-time */
-                                    newest_fetched_at?: string;
-                                };
-                                supply: {
-                                    classic_assets_with_supply: number;
-                                    sep41_assets_with_supply: number;
-                                    /** Format: date-time */
-                                    last_snapshot_at?: string;
-                                    /** Format: int64 */
-                                    latest_ledger?: number;
-                                };
-                                sources: {
-                                    /** @example binance */
-                                    name: string;
-                                    /** @example exchange */
-                                    class: string;
-                                    /** @example cex */
-                                    subclass?: string;
-                                    include_in_vwap: boolean;
-                                    backfill_safe: boolean;
-                                    /** Format: int64 */
-                                    trade_count_24h: number;
-                                    volume_24h_usd?: string;
-                                    /** Format: int64 */
-                                    markets_count_24h: number;
-                                }[];
-                            };
-                        };
-                    };
-                };
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-            };
-        };
+        get: operations["getDiagnosticIngestion"];
         put?: never;
         post?: never;
         delete?: never;
@@ -5569,113 +1682,7 @@ export interface paths {
          *     file doesn't exist yet (fresh host — the daemon hasn't
          *     produced a report).
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The latest report, verbatim from the daemon. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "schema": "1",
-                         *         "scanned_at": "2026-07-03T04:00:00Z",
-                         *         "range": {
-                         *           "from": 2,
-                         *           "to": 63305532
-                         *         },
-                         *         "cross_anchor": {
-                         *           "archive_root": "/srv/history-archive",
-                         *           "expected": 989148,
-                         *           "found": 989148,
-                         *           "missing_count": 0
-                         *         }
-                         *       },
-                         *       "as_of": "2026-07-03T22:38:20.564931481Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["EnvelopeMeta"] & {
-                            data: {
-                                /** @example 1 */
-                                schema: string;
-                                /** Format: date-time */
-                                scanned_at: string;
-                                range: {
-                                    /** Format: int64 */
-                                    from: number;
-                                    /** Format: int64 */
-                                    to: number;
-                                };
-                                cross_anchor?: {
-                                    /** @example /srv/history-archive */
-                                    archive_root: string;
-                                    expected: number;
-                                    found: number;
-                                    missing_count: number;
-                                    missing?: number[];
-                                    /**
-                                     * @description True when the daemon capped the `missing`
-                                     *     list; `missing_count` stays accurate.
-                                     */
-                                    truncated?: boolean;
-                                };
-                                primary?: {
-                                    bucket_name: string;
-                                    expected: number;
-                                    found: number;
-                                    missing_count: number;
-                                    missing_ranges?: {
-                                        /** Format: int64 */
-                                        start: number;
-                                        /** Format: int64 */
-                                        end: number;
-                                    }[];
-                                };
-                            };
-                        };
-                    };
-                };
-                /**
-                 * @description The configured report file doesn't exist yet — the daemon
-                 *     hasn't completed a run on this host.
-                 */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                /** @description No archive_report_path configured on this deployment. */
-                503: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-            };
-        };
+        get: operations["getDiagnosticArchive"];
         put?: never;
         post?: never;
         delete?: never;
@@ -5706,78 +1713,7 @@ export interface paths {
          *     status.stellarindex.io. Distinct from `/v1/status` which
          *     reports the *currently active* incidents from Alertmanager.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description List of past incidents, newest first (standard envelope). */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "count": 1,
-                         *         "incidents": [
-                         *           {
-                         *             "slug": "2026-05-06-postgres-lock-table-full",
-                         *             "title": "[SEV-3] Indexer dropping ~1% of trades — Postgres lock-table-full",
-                         *             "severity": "SEV-3",
-                         *             "status": "resolved",
-                         *             "started_at": "2026-05-06T15:00:00Z",
-                         *             "resolved_at": "2026-05-06T22:39:00Z",
-                         *             "affected_components": [
-                         *               "indexer",
-                         *               "storage"
-                         *             ],
-                         *             "body_markdown": "## Identification\n\nSome trades arriving on coinbase, binance…"
-                         *           }
-                         *         ]
-                         *       },
-                         *       "as_of": "2026-05-06T22:40:00Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["EnvelopeMeta"] & {
-                            data: {
-                                incidents: {
-                                    /** @example 2026-05-06-postgres-lock-table-full */
-                                    slug: string;
-                                    title: string;
-                                    /** @enum {string} */
-                                    severity: "SEV-1" | "SEV-2" | "SEV-3";
-                                    /** @enum {string} */
-                                    status: "investigating" | "identified" | "monitoring" | "resolved";
-                                    /** Format: date-time */
-                                    started_at: string;
-                                    /** Format: date-time */
-                                    resolved_at?: string | null;
-                                    affected_components?: string[];
-                                    /** @description Optional reference to the internal post-mortem. */
-                                    postmortem?: string;
-                                    /** @description Markdown body — render with the renderer of your choice. */
-                                    body_markdown: string;
-                                }[];
-                                count: number;
-                            };
-                        };
-                    };
-                };
-                500: components["responses"]["InternalError"];
-            };
-        };
+        get: operations["listIncidents"];
         put?: never;
         post?: never;
         delete?: never;
@@ -5806,28 +1742,7 @@ export interface paths {
          *     Cache-Control: public, max-age=300 (5 min) — the corpus
          *     only changes on redeploy so longer caching is fine.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Atom 1.0 XML feed. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/atom+xml": string;
-                    };
-                };
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-            };
-        };
+        get: operations["getIncidentsAtomFeed"];
         put?: never;
         post?: never;
         delete?: never;
@@ -5867,137 +1782,7 @@ export interface paths {
          *     genesis-complete even though the served tier only reconciles
          *     within its retention window.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Latest verdict per source, source-sorted. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "sources": [
-                         *           {
-                         *             "source": "aquarius",
-                         *             "complete": true,
-                         *             "lake_complete": true,
-                         *             "substrate_ok": true,
-                         *             "recognition_ok": true,
-                         *             "projection_ok": true,
-                         *             "genesis_ledger": 52728375,
-                         *             "watermark_ledger": 63305532,
-                         *             "tip_ledger": 63305532,
-                         *             "coverage_pct": 1,
-                         *             "detail": "complete: substrate + recognition + projection verified to tip",
-                         *             "computed_at": "2026-07-03T05:30:21.937134Z"
-                         *           },
-                         *           {
-                         *             "source": "soroswap",
-                         *             "complete": false,
-                         *             "lake_complete": true,
-                         *             "substrate_ok": true,
-                         *             "recognition_ok": true,
-                         *             "projection_ok": false,
-                         *             "genesis_ledger": 61500000,
-                         *             "watermark_ledger": 63305532,
-                         *             "tip_ledger": 63305532,
-                         *             "coverage_pct": 1,
-                         *             "detail": "projection: 3 mismatched ledger(s) outside the served retention window",
-                         *             "computed_at": "2026-07-03T05:30:21.937134Z"
-                         *           }
-                         *         ],
-                         *         "complete_sources": 14,
-                         *         "lake_complete_sources": 15,
-                         *         "total_sources": 15
-                         *       },
-                         *       "as_of": "2026-07-03T22:38:20.564931481Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["EnvelopeMeta"] & {
-                            data?: {
-                                sources: {
-                                    /** @example soroswap */
-                                    source: string;
-                                    /**
-                                     * @description SERVED/combined axis: substrate ∧ recognition ∧
-                                     *     projection. Projection reconcile is
-                                     *     retention-scoped (ADR-0034: Postgres is the
-                                     *     served tier, not the archive), so this can be
-                                     *     false even when lake_complete is true.
-                                     */
-                                    complete: boolean;
-                                    /**
-                                     * @description LAKE/archive axis: substrate ∧ recognition only,
-                                     *     genesis-to-tip, decoupled from the
-                                     *     retention-scoped projection reconcile — "the
-                                     *     certified ClickHouse archive is contiguous +
-                                     *     hash-chained + recognition-complete from genesis
-                                     *     to tip for this source." Two-axis verdict per
-                                     *     notes/DECISION-genesis-complete-verdict-2026-07-16.md
-                                     *     (Option B).
-                                     */
-                                    lake_complete: boolean;
-                                    substrate_ok: boolean;
-                                    recognition_ok: boolean;
-                                    projection_ok: boolean;
-                                    /** Format: int64 */
-                                    genesis_ledger: number;
-                                    /**
-                                     * Format: int64
-                                     * @description Lake-axis watermark (substrate ∧ recognition), NOT gated by projection.
-                                     */
-                                    watermark_ledger: number;
-                                    /** Format: int64 */
-                                    tip_ledger: number;
-                                    /**
-                                     * @description Lake-axis coverage (watermark vs tip) — see
-                                     *     watermark_ledger. A FRACTION in [0,1] despite
-                                     *     the `_pct` name: 1.0 means the verdict reaches
-                                     *     the tip, not 100.
-                                     */
-                                    coverage_pct: number;
-                                    /** Format: int64 */
-                                    first_problem_ledger?: number;
-                                    detail?: string;
-                                    /** Format: date-time */
-                                    computed_at: string;
-                                }[];
-                                /** @description Count of sources with complete=true (served/combined axis). */
-                                complete_sources: number;
-                                /** @description Count of sources with lake_complete=true (lake/archive axis). */
-                                lake_complete_sources: number;
-                                total_sources: number;
-                            };
-                        };
-                    };
-                };
-                /** @description No completeness reader wired on this deployment. */
-                503: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-            };
-        };
+        get: operations["getCoverage"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6042,76 +1827,7 @@ export interface paths {
          *     rather than published with a fabricated `contract_count: 0` — a
          *     failed read is not a real zero.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Every indexed protocol, registry-ordered. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "protocols": [
-                         *           {
-                         *             "name": "sdex",
-                         *             "category": "dex",
-                         *             "description": "Stellar's protocol-native central-limit order book, traded via classic manage-offer and pa…",
-                         *             "genesis_ledger": 2,
-                         *             "factories": [],
-                         *             "contract_count": 0,
-                         *             "events_24h": 1692662,
-                         *             "completeness": {
-                         *               "complete": false,
-                         *               "watermark_ledger": 63305532
-                         *             }
-                         *           }
-                         *         ],
-                         *         "total_protocols": 15
-                         *       },
-                         *       "as_of": "2026-07-03T22:38:22.870546219Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["EnvelopeMeta"] & {
-                            data?: {
-                                protocols: components["schemas"]["ProtocolRow"][];
-                                total_protocols: number;
-                                /**
-                                 * @description Honest-degrade signal (mirrors the
-                                 *     `coverage_note` on `/accounts/{id}/movements`
-                                 *     and `/tx/{hash}`): present ONLY when one or
-                                 *     more sources were OMITTED from `protocols`
-                                 *     because their contract-roster read failed and
-                                 *     no cached count was available. Names the
-                                 *     omitted sources. A degraded source is dropped
-                                 *     (never shown with a fabricated
-                                 *     `contract_count: 0`), so a complete directory
-                                 *     carries no note.
-                                 */
-                                coverage_note?: string;
-                            };
-                        };
-                    };
-                };
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-            };
-        };
+        get: operations["listProtocols"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6138,247 +1854,7 @@ export interface paths {
          *     when a public write-up exists. Served with
          *     `public, max-age=60`.
          */
-        get: {
-            parameters: {
-                query?: {
-                    /**
-                     * @description Trailing window (days) for the `bespoke` per-category analytics
-                     *     block (its KPIs, series, and tables). Whitelisted to 1, 7, 30, or
-                     *     90 (default 90) — each admitted window is a distinct cached scan,
-                     *     so arbitrary values are rejected with a 400 problem+json rather
-                     *     than clamped. At `days=1` the bridge flow series (cctp inbound /
-                     *     outbound, rozo settled volume) are bucketed HOURLY with
-                     *     `YYYY-MM-DD"T"HH24:00` point timestamps; longer windows are daily
-                     *     (`YYYY-MM-DD`). The lake-analytics fields (`activity_series`,
-                     *     `event_breakdown`, `events_total`, `activity_window_days`) always
-                     *     cover the fixed 90-day lookback regardless of this parameter.
-                     */
-                    days?: 1 | 7 | 30 | 90;
-                };
-                header?: never;
-                path: {
-                    /** @description Canonical protocol name from the directory (`blend`, `soroswap`, …). */
-                    name: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The protocol's full detail view. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "name": "blend",
-                         *         "category": "lending",
-                         *         "description": "Blend — isolated lending pools on Soroban, deployed from the Blend pool factories.",
-                         *         "genesis_ledger": 51499546,
-                         *         "factories": [
-                         *           "CCZD6ESMOGMPWH2KRO4O7RGTAPGTUPFWFQBELQSS7ZUK63V3TZWETGAG"
-                         *         ],
-                         *         "contract_count": 27,
-                         *         "events_24h": 3211,
-                         *         "completeness": {
-                         *           "complete": true,
-                         *           "watermark_ledger": 63305532
-                         *         },
-                         *         "contracts": [
-                         *           {
-                         *             "contract_id": "CDVQVKOY2YSXS2IC7KN6MNASSHPAO7UN2UR2ON4OI2SKMFJNVAMDX6DP",
-                         *             "factory_id": "CCZD6ESMOGMPWH2KRO4O7RGTAPGTUPFWFQBELQSS7ZUK63V3TZWETGAG",
-                         *             "first_ledger": 51499915,
-                         *             "kind": "instance",
-                         *             "tokens": [
-                         *               "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
-                         *               "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
-                         *             ],
-                         *             "token_symbols": [
-                         *               "XLM",
-                         *               "USDC"
-                         *             ],
-                         *             "pair": "XLM/USDC",
-                         *             "events": 569,
-                         *             "last_seen": "2026-07-03T21:40:33Z"
-                         *           }
-                         *         ],
-                         *         "event_kinds": [
-                         *           "blend.position",
-                         *           "blend_backstop.event"
-                         *         ],
-                         *         "verification_page": "docs/protocols/blend.md",
-                         *         "event_breakdown": [
-                         *           {
-                         *             "event_type": "untyped",
-                         *             "count": 332561
-                         *           }
-                         *         ],
-                         *         "activity_series": [
-                         *           {
-                         *             "date": "2026-03-22",
-                         *             "events": 2449
-                         *           }
-                         *         ],
-                         *         "activity_window_days": 90,
-                         *         "events_total": 332561,
-                         *         "analytics": {
-                         *           "status": "ok",
-                         *           "as_of": "2026-07-03T22:38:12Z"
-                         *         }
-                         *       },
-                         *       "as_of": "2026-07-03T22:38:49.052946129Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["EnvelopeMeta"] & {
-                            data?: components["schemas"]["ProtocolRow"] & {
-                                /**
-                                 * @description Per-category analytics block (dex / amm /
-                                 *     lending / yield / oracle / bridge — see
-                                 *     internal/api/v1/protocols.go ProtocolBespoke).
-                                 *     Top-level keys vary by protocol category;
-                                 *     documented as a free-form object because the
-                                 *     per-category sub-shapes evolve with each
-                                 *     protocol integration (spec'd loosely on
-                                 *     purpose, board #33 — x-stability:
-                                 *     experimental per ADR-0042 applies).
-                                 *
-                                 *     Shared sub-shapes: `kpis` (label/value/
-                                 *     unit/hint cards), `series` (named
-                                 *     {date, value} time-series; values are
-                                 *     numeric STRINGS — ADR-0003), `tables`
-                                 *     (title/columns/rows), `notes` (caveat
-                                 *     lines), and — since 1.15.0 —
-                                 *     `breakdowns`: named composition datasets
-                                 *     for donut/pie rendering
-                                 *     ({title, unit, rows: [{label, value,
-                                 *     count}]}, value-sorted descending;
-                                 *     e.g. CCTP's "Inflows by source chain" /
-                                 *     "Outflows by destination chain").
-                                 */
-                                bespoke?: {
-                                    [key: string]: unknown;
-                                };
-                                contracts: {
-                                    /** @description Instance C-strkey. */
-                                    contract_id: string;
-                                    /** @description Deploying factory C-strkey (gated sources only). */
-                                    factory_id?: string;
-                                    /**
-                                     * Format: int64
-                                     * @description First-observed ledger (absent when unknown).
-                                     */
-                                    first_ledger?: number;
-                                    /** @description Pair token0 C-strkey (soroswap only). */
-                                    token0?: string;
-                                    /** @description Pair token1 C-strkey (soroswap only). */
-                                    token1?: string;
-                                    /** @description Ordered raw token contract C-strkeys the pool holds — 2 for a pair, 3/4 for an Aquarius stableswap, N for a Comet weighted pool, or the reserve-asset set for a lending market (blend). Parallel to token_symbols. Absent for non-pool contracts (factories, oracles). */
-                                    tokens?: string[];
-                                    /** @description Human display symbols for `tokens`, same order (XLM, USDC, AQUA, …). An unresolvable token degrades to a short truncated contract ("CAS3…OWMA") so this stays parallel to `tokens`. */
-                                    token_symbols?: string[];
-                                    /**
-                                     * @description Human roster label — token_symbols joined with "/": "XLM/USDC" for a pair, "XLM/USDC/USDT" for a 3-token stableswap, or the reserve-asset list for a lending market. Absent when no tokens resolve.
-                                     * @example XLM/USDC
-                                     */
-                                    pair?: string;
-                                    /**
-                                     * @description Role within the protocol — a verified trust-root (factory), a factory-deployed pool/vault/market (instance), or a folded-in sub-module contract that belongs to this protocol but emits on its own address (module — e.g. the Blend Backstop).
-                                     * @enum {string}
-                                     */
-                                    kind?: "factory" | "instance" | "module";
-                                    /**
-                                     * Format: int64
-                                     * @description Decoded contract-event count for this instance over activity_window_days (from the lake).
-                                     */
-                                    events?: number;
-                                    /**
-                                     * Format: date-time
-                                     * @description Close time of this instance's most recent event in the window.
-                                     */
-                                    last_seen?: string;
-                                }[];
-                                event_kinds: string[];
-                                /** @example docs/protocols/blend.md */
-                                verification_page?: string;
-                                /**
-                                 * @description Lookback (days) the lake-analytics fields below cover.
-                                 * @example 90
-                                 */
-                                activity_window_days?: number;
-                                /**
-                                 * Format: int64
-                                 * @description Total decoded contract events across the protocol over activity_window_days (sum of event_breakdown counts).
-                                 */
-                                events_total?: number;
-                                /** @description Event-type distribution (topic[0] symbol → count) over the window, descending — "which event types fired, and how often." */
-                                event_breakdown?: {
-                                    /** @example supply_collateral */
-                                    event_type?: string;
-                                    /** Format: int64 */
-                                    count?: number;
-                                }[];
-                                /** @description Daily decoded-event count over the window (the activity chart). */
-                                activity_series?: {
-                                    /** @example 2026-06-14 */
-                                    date?: string;
-                                    /** Format: int64 */
-                                    events?: number;
-                                }[];
-                                /**
-                                 * @description Explicit health of the view's analytics halves
-                                 *     (the lake-derived fields above and `bespoke`) —
-                                 *     since 1.16.0. Distinguishes a degraded build
-                                 *     from genuinely-empty data: `ok` means every
-                                 *     analytics component built successfully (an
-                                 *     absent `bespoke` under `ok` is a category with
-                                 *     none — a real absence); `stale` means the view
-                                 *     is real but served past its freshness horizon
-                                 *     while a background rebuild runs (`as_of` says
-                                 *     how old; `flags.stale` is set on the envelope
-                                 *     too); `unavailable` means at least one
-                                 *     component failed or was skipped — absent
-                                 *     blocks and zero-valued analytics fields then
-                                 *     mean DEGRADATION, not zero activity, and
-                                 *     clients should render a hint rather than the
-                                 *     values.
-                                 */
-                                analytics?: {
-                                    /**
-                                     * @description Health of the analytics in this view.
-                                     * @enum {string}
-                                     */
-                                    status: "ok" | "stale" | "unavailable";
-                                    /**
-                                     * Format: date-time
-                                     * @description When this view's analytics were built.
-                                     */
-                                    as_of?: string;
-                                };
-                            };
-                        };
-                    };
-                };
-                /** @description Unknown protocol name. */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-            };
-        };
+        get: operations["getProtocol"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6418,104 +1894,7 @@ export interface paths {
          *     `ask_offers` / `bid_offers` count each side BEFORE the `depth`
          *     cap so truncation is visible. Served with `public, max-age=30`.
          */
-        get: {
-            parameters: {
-                query: {
-                    /** @description Base asset (canonical classic id: `native` or `CODE-G...`). */
-                    selling: string;
-                    /** @description Quote asset (canonical classic id). */
-                    buying: string;
-                    /** @description Maximum aggregated price levels per side. */
-                    depth?: number;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Aggregated depth, asks ascending / bids descending by price. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "selling": "native",
-                         *         "buying": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *         "as_of_ledger": 63412345,
-                         *         "snapshot_at": "2026-07-29T12:34:56Z",
-                         *         "asks": [
-                         *           {
-                         *             "price": "0.3921569",
-                         *             "price_r": {
-                         *               "n": 20,
-                         *               "d": 51
-                         *             },
-                         *             "base_amount": "1250.0000000",
-                         *             "quote_amount": "490.1960784",
-                         *             "cum_base_amount": "1250.0000000",
-                         *             "cum_quote_amount": "490.1960784",
-                         *             "offers": 3
-                         *           }
-                         *         ],
-                         *         "bids": [
-                         *           {
-                         *             "price": "0.3910000",
-                         *             "price_r": {
-                         *               "n": 391,
-                         *               "d": 1000
-                         *             },
-                         *             "base_amount": "800.0000000",
-                         *             "quote_amount": "312.8000000",
-                         *             "cum_base_amount": "800.0000000",
-                         *             "cum_quote_amount": "312.8000000",
-                         *             "offers": 1
-                         *           }
-                         *         ],
-                         *         "ask_offers": 3,
-                         *         "bid_offers": 1,
-                         *         "depth": 25
-                         *       },
-                         *       "as_of": "2026-07-29T12:35:02.870546219Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["EnvelopeMeta"] & {
-                            data?: components["schemas"]["SDEXOrderBook"];
-                        };
-                    };
-                };
-                /** @description Invalid selling/buying asset or depth. */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                /** @description Order book snapshot still loading (or the lake reader is not wired on this deployment). */
-                503: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-            };
-        };
+        get: operations["getSdexOrderbook"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6552,63 +1931,7 @@ export interface paths {
          *     so a 2s edge cache smooths a refreshing status page without
          *     hiding a stall. For push semantics use `/v1/ledger/stream`.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Current live-ingest frontier. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "latest_ledger": 63316183,
-                         *         "ingested_at": "2026-07-03T22:38:47.833071Z",
-                         *         "lag_seconds": 2
-                         *       },
-                         *       "as_of": "2026-07-03T22:38:50.194761237Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["EnvelopeMeta"] & {
-                            data: {
-                                /**
-                                 * Format: int64
-                                 * @description Highest ledger the indexer has committed.
-                                 */
-                                latest_ledger: number;
-                                /**
-                                 * Format: date-time
-                                 * @description When that ledger's cursor was committed (RFC 3339).
-                                 */
-                                ingested_at: string;
-                                /**
-                                 * Format: int64
-                                 * @description Wall-clock age of the cursor commit.
-                                 */
-                                lag_seconds: number;
-                            };
-                        };
-                    };
-                };
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getLedgerTip"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6645,42 +1968,7 @@ export interface paths {
          *       cursor has not been established yet — once the SSE body
          *       starts there is no way to signal a non-200 status.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: {
-                    /** @description Opaque ID for resuming a previously-broken stream. */
-                    "Last-Event-ID"?: string;
-                };
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description SSE stream of ledger_update events. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example id: 0198a4214a900001
-                         *     event: ledger_update
-                         *     data: {"data":{"latest_ledger":63316183,"ingested_at":"2026-07-03T22:38:47.833071Z","lag_seconds":2},"as_of":"2026-07-03T22:38:50.194761237Z"}
-                         *
-                         *     :keepalive
-                         *
-                         *     id: 0198a4214a900002
-                         *     event: ledger_update
-                         *     data: {"data":{"latest_ledger":63316184,"ingested_at":"2026-07-03T22:38:52.611403Z","lag_seconds":2},"as_of":"2026-07-03T22:38:52.812009481Z"}
-                         */
-                        "text/event-stream": string;
-                    };
-                };
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["streamLedgerTip"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6714,81 +2002,7 @@ export interface paths {
          *     Useful for dashboards / status displays / embed widgets
          *     that just want a quick health-of-the-network number.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Aggregate stats (standard envelope). */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "volume_24h_usd": "5941104763.13358600",
-                         *         "markets_count_24h": 4934,
-                         *         "assets_indexed": 442190,
-                         *         "latest_ledger": 62450017,
-                         *         "exchange_sources": 11,
-                         *         "total_sources": 21
-                         *       },
-                         *       "as_of": "2026-05-05T15:09:00.119Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["EnvelopeMeta"] & {
-                            data: {
-                                /**
-                                 * @description SUM(prices_1m.volume_usd) over the trailing
-                                 *     24h. Decimal string per ADR-0003.
-                                 */
-                                volume_24h_usd?: string | null;
-                                /** @description Distinct (base, quote) pairs with non-null volume in 24h. */
-                                markets_count_24h: number;
-                                /** @description Total rows in classic_assets. */
-                                assets_indexed: number;
-                                /** @description Max last_ledger across non-backfill sources. */
-                                latest_ledger: number;
-                                /**
-                                 * @description Count of `class=exchange` sources REGISTERED in
-                                 *     the binary's `internal/sources/external.Registry`
-                                 *     map. Constant across regions running the same
-                                 *     build; independent of operator config.
-                                 */
-                                exchange_sources: number;
-                                /**
-                                 * @description Count of ALL registered sources (every entry in
-                                 *     `internal/sources/external.Registry`). Different
-                                 *     from `/v1/status`'s `freshness.total_sources`,
-                                 *     which counts only sources the operator has
-                                 *     ENABLED at runtime — typically a strict subset.
-                                 *     Today on r1: registry=21, enabled=17, active=15.
-                                 *     The two `total_sources` measure different things
-                                 *     by design; see the field doc on
-                                 *     `internal/api/v1.NetworkStats` for the full
-                                 *     semantic table.
-                                 */
-                                total_sources: number;
-                            };
-                        };
-                    };
-                };
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getNetworkStats"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6819,102 +2033,7 @@ export interface paths {
          *     time-series companion to the snapshot at `/v1/network/stats`;
          *     backs the explorer `/network` charts.
          */
-        get: {
-            parameters: {
-                query?: {
-                    /** @description Number of trailing days in the per-day series (1-365, default 30). */
-                    window_days?: number;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Daily throughput buckets. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "window_days": 7,
-                         *         "buckets": [
-                         *           {
-                         *             "day": "2026-06-25",
-                         *             "ledgers": 14832,
-                         *             "txs": 5210044,
-                         *             "ops": 10981233,
-                         *             "events": 7498112,
-                         *             "fee_pool": "48231457220441231",
-                         *             "total_coins": "1054439020873472922",
-                         *             "protocol_version": 23
-                         *           },
-                         *           {
-                         *             "day": "2026-06-26",
-                         *             "ledgers": 14791,
-                         *             "txs": 5232968,
-                         *             "ops": 11025463,
-                         *             "events": 7512422,
-                         *             "fee_pool": "48231989301127744",
-                         *             "total_coins": "1054439020873472922",
-                         *             "protocol_version": 23
-                         *           },
-                         *           {
-                         *             "day": "2026-06-27",
-                         *             "ledgers": 8934,
-                         *             "txs": 3160221,
-                         *             "ops": 6655109,
-                         *             "events": 4537880,
-                         *             "fee_pool": "48232301518824410",
-                         *             "total_coins": "1054439020873472922",
-                         *             "protocol_version": 23,
-                         *             "partial": true
-                         *           }
-                         *         ]
-                         *       },
-                         *       "as_of": "2026-07-03T22:38:51.364370254Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: {
-                                window_days?: number;
-                                buckets?: {
-                                    /** Format: date */
-                                    day?: string;
-                                    /** Format: int64 */
-                                    ledgers?: number;
-                                    /** Format: int64 */
-                                    txs?: number;
-                                    /** Format: int64 */
-                                    ops?: number;
-                                    /** Format: int64 */
-                                    events?: number;
-                                    /** @description Cumulative network fee pool at the day's last ledger, in stroops (decimal string — exceeds 2^53). Daily fee burn = the delta between consecutive COMPLETE days. */
-                                    fee_pool?: string;
-                                    /** @description Total XLM in existence at the day's last ledger, in stroops (decimal string — exceeds 2^53). */
-                                    total_coins?: string;
-                                    /** @description Protocol version in force at the day's last ledger. */
-                                    protocol_version?: number;
-                                    /** @description True when this bucket does not cover a whole UTC day — in practice only today, which is still accumulating. Render it distinctly and EXCLUDE it from window totals; every other bucket is a complete day (the window is day-aligned). Omitted when false. */
-                                    partial?: boolean;
-                                }[];
-                            };
-                        };
-                    };
-                };
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getNetworkThroughput"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6948,83 +2067,7 @@ export interface paths {
          *     derived from compile-time constants + the in-memory source
          *     registry + operator config.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Methodology snapshot. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "version": "1.0",
-                         *         "aggregation": {
-                         *           "price_method": "vwap",
-                         *           "outlier_filter": {
-                         *             "endpoint": "/v1/ohlc",
-                         *             "default_sigma": 4,
-                         *             "note": "OHLC's High/Low have no statistical robustness; a single dust trade can pin them. The defa…"
-                         *           },
-                         *           "stablecoin_fiat_proxy": [
-                         *             {
-                         *               "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *               "pegs_to": "fiat:USD"
-                         *             }
-                         *           ],
-                         *           "closed_bucket_window_seconds": 30
-                         *         },
-                         *         "source_classes": [
-                         *           {
-                         *             "name": "exchange",
-                         *             "contributes_to_vwap": true,
-                         *             "description": "Real trading venues — DEXes (Soroswap, Phoenix, Aquarius, Comet, sdex), CEXes (Coinbase, B…"
-                         *           }
-                         *         ],
-                         *         "sources": [
-                         *           {
-                         *             "name": "aquarius",
-                         *             "class": "exchange",
-                         *             "subclass": "dex",
-                         *             "default_weight": 100,
-                         *             "include_in_vwap": true,
-                         *             "paid": false,
-                         *             "backfill_available": true,
-                         *             "backfill_safe": true
-                         *           }
-                         *         ],
-                         *         "references": [
-                         *           {
-                         *             "id": "ADR-0007",
-                         *             "title": "Aggregation policy + cache-key contract",
-                         *             "url": "/research/adr/0007"
-                         *           }
-                         *         ]
-                         *       },
-                         *       "as_of": "2026-07-03T22:38:52.512609229Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["MethodologyEnvelope"];
-                    };
-                };
-                500: components["responses"]["InternalError"];
-            };
-        };
+        get: operations["getMethodology"];
         put?: never;
         post?: never;
         delete?: never;
@@ -7051,69 +2094,7 @@ export interface paths {
          *     venue is recognised before debugging an absence in /v1/markets
          *     or /v1/vwap.
          */
-        get: {
-            parameters: {
-                query?: {
-                    /**
-                     * @description Optional class filter. When set, only sources of the
-                     *     given class are returned. Useful for dashboards that
-                     *     split the catalogue by role.
-                     */
-                    class?: "exchange" | "aggregator" | "oracle" | "authority_sanity" | "lending" | "router";
-                    /**
-                     * @description Opt-in extras. `stats` populates each row's
-                     *     `trade_count_24h` from a single GROUP BY on the trades
-                     *     hypertable — cheap, but a DB hit so opt-in. Absent the
-                     *     param the response stays the all-static-registry
-                     *     projection.
-                     */
-                    include?: "stats";
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Array of sources, sorted by name. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": [
-                         *         {
-                         *           "name": "aquarius",
-                         *           "class": "exchange",
-                         *           "subclass": "dex",
-                         *           "include_in_vwap": true,
-                         *           "paid": false,
-                         *           "backfill_available": true,
-                         *           "backfill_safe": true,
-                         *           "default_weight": 100,
-                         *           "on_chain": true
-                         *         }
-                         *       ],
-                         *       "as_of": "2026-07-03T22:38:53.6445723Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["SourcesEnvelope"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-            };
-        };
+        get: operations["listSources"];
         put?: never;
         post?: never;
         delete?: never;
@@ -7150,81 +2131,7 @@ export interface paths {
          *     source names 404 (the registry is static per deploy — see
          *     `/v1/sources` for the catalogue).
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description Source name as listed by /v1/sources. */
-                    name: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The source's health row. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "name": "kraken",
-                         *         "class": "exchange",
-                         *         "subclass": "cex",
-                         *         "include_in_vwap": true,
-                         *         "backfill_safe": true,
-                         *         "trade_count_24h": 10023,
-                         *         "entries_24h": 10023,
-                         *         "volume_24h_usd": "1245001.55",
-                         *         "markets_count_24h": 4
-                         *       },
-                         *       "as_of": "2026-07-03T22:38:53.6445723Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["EnvelopeMeta"] & {
-                            data: {
-                                /** @example kraken */
-                                name: string;
-                                /** @example exchange */
-                                class: string;
-                                /** @example cex */
-                                subclass?: string;
-                                include_in_vwap: boolean;
-                                backfill_safe: boolean;
-                                /** Format: int64 */
-                                trade_count_24h: number;
-                                /** Format: int64 */
-                                entries_24h: number;
-                                volume_24h_usd?: string;
-                                /** Format: int64 */
-                                markets_count_24h: number;
-                            };
-                        };
-                    };
-                };
-                /** @description No registered source with that name. */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-            };
-        };
+        get: operations["getSourceHealth"];
         put?: never;
         post?: never;
         delete?: never;
@@ -7272,80 +2179,7 @@ export interface paths {
          *     The window is a rolling observation recomputed per request
          *     (like `/v1/network/stats`), not a closed-bucket series.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Array of registry entries, vaults after routers, sorted by name. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": [
-                         *         {
-                         *           "contract_id": "CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH",
-                         *           "name": "soroswap-router",
-                         *           "kind": "router",
-                         *           "protocol": "soroswap",
-                         *           "auto_discovered": false,
-                         *           "routed_trades_24h": 342,
-                         *           "routed_volume_24h_usd": "18211.4052710000000000",
-                         *           "last_routed_at": "2026-07-04T21:58:11Z",
-                         *           "notes": [
-                         *             "routed_trades_24h combines direct calls to this router, calls wrapped by an aggregator this registry doesn't recognise, and legacy rows recorded before call-path tracking (2026-07-10) — those three cases can't be told apart yet."
-                         *           ]
-                         *         },
-                         *         {
-                         *           "contract_id": "CD45PQFHSIUMIC4MVZXCQ2RD6REKXJMEHWRN56TWT3C4DV2U4DHVJRZH",
-                         *           "name": "soroswap-router-aggregator-exec",
-                         *           "kind": "router",
-                         *           "protocol": "unattributed",
-                         *           "auto_discovered": true,
-                         *           "routed_trades_24h": 11,
-                         *           "routed_volume_24h_usd": "640.1100000000000000",
-                         *           "last_routed_at": "2026-07-10T09:12:47Z",
-                         *           "notes": [
-                         *             "Evidence-observed contract, not vendor- or WASM-audit-verified (see the registry seed migration's notes).",
-                         *             "routed_trades_24h only counts router calls recorded with call_path data (live since 2026-07-10); earlier activity through this wrapper is not yet attributed pending a queued historical re-derive — a low or zero count does not mean this router carried little volume."
-                         *           ]
-                         *         },
-                         *         {
-                         *           "contract_id": "CDB2WMKQQNVZMEBY7Q7GZ5C7E7IAFSNMZ7GGVD6WKTCEWK7XOIAVZSAP",
-                         *           "name": "defindex-vault-usdc-autocompound",
-                         *           "kind": "aggregator-vault",
-                         *           "protocol": "defindex",
-                         *           "auto_discovered": false,
-                         *           "routed_trades_24h": 0,
-                         *           "routed_volume_24h_usd": null,
-                         *           "last_routed_at": null
-                         *         }
-                         *       ],
-                         *       "as_of": "2026-07-04T22:38:53.6445723Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["AggregatorsEnvelope"];
-                    };
-                };
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["listAggregators"];
         put?: never;
         post?: never;
         delete?: never;
@@ -7377,49 +2211,7 @@ export interface paths {
          *     wrappers (deployment without the `[supply.sac_wrappers]`
          *     block) — clients then degrade to showing the raw C-strkey.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Map of SAC C-strkey to canonical asset key. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "CA4L5XQ7FY7BTJAAD6VPW6JPSJ3M2A62BBULXH7XYHLHAOFFY6SBT2Z4": "PSY:GCH3HFAY25TU2CPUEMF7OT7PGHUMXQITQQOOKZV6VRETY7SCEPARAEGO",
-                         *         "CA57LR6W4XP7HTGJ3HZEXH7SVTMBPUBEUN5UI3WGB5HFKDMEECRJMXBZ": "SILICA:GBDJWO2QRXHSOBQOPSZAK6B4COVPK5NMQI62XHC4L7YNYOSYCDLCVENZ",
-                         *         "CA6FH7RO5YF7VZ3XDX4736S2YHIGCQBYGNWB7P23AM5OCQTBPDPIKEIP": "FADA:GCX3Y4MNI7ZQBQEZQMAXRFVODVFB2PRQS4LTUHP5B34MEYQQTW5LQFLR"
-                         *       },
-                         *       "as_of": "2026-07-03T22:38:54.77946276Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            /** @description SAC C-strkey → "CODE-ISSUER" or "native". */
-                            data?: {
-                                [key: string]: string;
-                            };
-                        };
-                    };
-                };
-                500: components["responses"]["InternalError"];
-            };
-        };
+        get: operations["listSacWrappers"];
         put?: never;
         post?: never;
         delete?: never;
@@ -7445,64 +2237,7 @@ export interface paths {
          *     NOT a 404, so clients can distinguish "no such pair" from
          *     a malformed request without branching on status code.
          */
-        get: {
-            parameters: {
-                query: {
-                    /**
-                     * @description Canonical asset id (e.g. `native`, `USDC-G…`).
-                     * @example native
-                     */
-                    base: string;
-                    /**
-                     * @description Canonical asset id of the quote side.
-                     * @example USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
-                     */
-                    quote: string;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Pairs. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": [
-                         *         {
-                         *           "base": "native",
-                         *           "quote": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *           "last_trade_at": "2026-07-03T22:41:49Z",
-                         *           "bucket_close_at": "2026-07-03T00:00:00Z",
-                         *           "trade_count_24h": 44295,
-                         *           "volume_24h_usd": "1184171.27591630",
-                         *           "last_price": "0.20425991362387122104"
-                         *         }
-                         *       ],
-                         *       "as_of": "2026-07-03T22:41:58.295925025Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["PairsEnvelope"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["listPairs"];
         put?: never;
         post?: never;
         delete?: never;
@@ -7531,63 +2266,7 @@ export interface paths {
          *     `/v1/price?asset=&quote=` or `/v1/oracle/x_last_price`.
          *     404 when no observation exists for the asset.
          */
-        get: {
-            parameters: {
-                query: {
-                    /**
-                     * @description SEP-40 oracle key. Reflector contracts publish under
-                     *     `crypto:<symbol>` (`crypto:XLM`, `crypto:BTC`,
-                     *     `crypto:USDC`, `crypto:ETH`, `crypto:EUROB`); the bare
-                     *     `native` / `<code>-<G…>` forms are NOT keys in the
-                     *     oracle namespace and return 404 here. Use
-                     *     `/v1/price?asset=…` for canonical-asset prices.
-                     * @example crypto:XLM
-                     */
-                    asset: string;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Price record. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "asset": "crypto:XLM",
-                         *         "price": "0.20425919235975054096",
-                         *         "timestamp": "2026-07-03T22:38:00Z"
-                         *       },
-                         *       "as_of": "2026-07-03T22:38:57.085626393Z",
-                         *       "sources": [
-                         *         "bitstamp",
-                         *         "coinbase"
-                         *       ],
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["OraclePriceEnvelope"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                404: components["responses"]["NotFound"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getOracleLastPrice"];
         put?: never;
         post?: never;
         delete?: never;
@@ -7613,58 +2292,7 @@ export interface paths {
          *     (ADR-0015). 200 with an empty array when the asset has no
          *     closed buckets yet.
          */
-        get: {
-            parameters: {
-                query: {
-                    /** @example crypto:XLM */
-                    asset: string;
-                    records?: number;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Historical records. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": [
-                         *         {
-                         *           "asset": "crypto:XLM",
-                         *           "price": "0.20425919235975054096",
-                         *           "timestamp": "2026-07-03T22:38:00Z"
-                         *         },
-                         *         {
-                         *           "asset": "crypto:XLM",
-                         *           "price": "0.20417645386978830788",
-                         *           "timestamp": "2026-07-03T22:37:00Z"
-                         *         }
-                         *       ],
-                         *       "as_of": "2026-07-03T22:38:58.304524994Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["OraclePricesEnvelope"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getOraclePrices"];
         put?: never;
         post?: never;
         delete?: never;
@@ -7690,56 +2318,7 @@ export interface paths {
          *     is implicit from the request. 404 when no observation
          *     exists for the pair.
          */
-        get: {
-            parameters: {
-                query: {
-                    /** @example native */
-                    base: string;
-                    /** @example USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN */
-                    quote: string;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Cross-pair last price. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "asset": "native",
-                         *         "price": "0.20416863139584866478",
-                         *         "timestamp": "2026-07-03T22:38:00Z"
-                         *       },
-                         *       "as_of": "2026-07-03T22:38:59.458170934Z",
-                         *       "sources": [
-                         *         "sdex"
-                         *       ],
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["OraclePriceEnvelope"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                404: components["responses"]["NotFound"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getOracleCrossPrice"];
         put?: never;
         post?: never;
         delete?: never;
@@ -7766,47 +2345,7 @@ export interface paths {
          *     identifies a credential. Anonymous callers get 401: /me
          *     is meaningless without a credential.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Account. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "key_id": "kid_8f3a2c1b9e7d4f6a",
-                         *         "label": "production-api-1",
-                         *         "tier": "apikey",
-                         *         "rate_limit_per_min": 1000,
-                         *         "created_at": "2026-04-12T09:32:18Z"
-                         *       },
-                         *       "as_of": "2026-05-05T16:25:42.881Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["AccountEnvelope"];
-                    };
-                };
-                401: components["responses"]["Unauthorized"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-            };
-        };
+        get: operations["getAccountMe"];
         put?: never;
         post?: never;
         delete?: never;
@@ -7856,86 +2395,7 @@ export interface paths {
          *     — the per-dependency `checks` field is `/readyz`-only; the
          *     `/healthz` liveness probe stays minimal by design).
          */
-        get: {
-            parameters: {
-                query?: {
-                    /**
-                     * @description Window start (inclusive), RFC 3339 UTC — e.g.
-                     *     `2026-06-01T00:00:00Z`. Windows are half-open `[from, to)`.
-                     *     When omitted the endpoint applies its own default lookback
-                     *     from `to` (documented per endpoint). Must be before `to`
-                     *     or the request 400s.
-                     */
-                    from?: components["parameters"]["From"];
-                    /**
-                     * @description Window end (exclusive), RFC 3339 UTC. Defaults to now.
-                     *     Windows are half-open `[from, to)` — a trade exactly at
-                     *     `to` is excluded.
-                     */
-                    to?: components["parameters"]["To"];
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Usage records. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": [
-                         *         {
-                         *           "date": "2026-07-01",
-                         *           "endpoint": "/v1/price",
-                         *           "requests": 18234,
-                         *           "errors": 12,
-                         *           "throttled": 0
-                         *         },
-                         *         {
-                         *           "date": "2026-07-02",
-                         *           "endpoint": "/v1/price",
-                         *           "requests": 20117,
-                         *           "errors": 3,
-                         *           "throttled": 0
-                         *         },
-                         *         {
-                         *           "date": "2026-07-02",
-                         *           "endpoint": "unmatched",
-                         *           "requests": 0,
-                         *           "errors": 0,
-                         *           "throttled": 41
-                         *         },
-                         *         {
-                         *           "date": "2026-07-02",
-                         *           "endpoint": "/v1/assets/{asset_id}",
-                         *           "requests": 512,
-                         *           "errors": 0,
-                         *           "throttled": 0
-                         *         }
-                         *       ],
-                         *       "as_of": "2026-07-03T09:00:00Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["UsageEnvelope"];
-                    };
-                };
-                401: components["responses"]["Unauthorized"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-            };
-        };
+        get: operations["getAccountUsage"];
         put?: never;
         post?: never;
         delete?: never;
@@ -7962,68 +2422,7 @@ export interface paths {
          *     Use this to render an account dashboard ("here are your
          *     keys") or verify rotation worked.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Account keys (possibly empty list). */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": [
-                         *         {
-                         *           "key_id": "7d9f2a54-4f0e-4c1a-9b3d-2f6c8e1a0b5c",
-                         *           "label": "production",
-                         *           "key_prefix": "sip_1a2b3c4d",
-                         *           "tier": "apikey",
-                         *           "rate_limit_per_min": 300,
-                         *           "created_at": "2026-06-12T08:30:00Z"
-                         *         }
-                         *       ],
-                         *       "as_of": "2026-07-03T09:00:00Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["EnvelopeMeta"] & {
-                            data?: components["schemas"]["Account"][];
-                        };
-                    };
-                };
-                /** @description Unauthenticated. */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /** @description AccountStore not configured. */
-                503: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-            };
-        };
+        get: operations["listAccountKeys"];
         put?: never;
         /**
          * Create a new API key.
@@ -8042,75 +2441,7 @@ export interface paths {
          *     the ceiling returns 409 — revoke a key via
          *     `DELETE /v1/account/keys/{keyID}` and retry.
          */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": {
-                        label: string;
-                        /**
-                         * @description Optional capability scopes. Empty = full access
-                         *     (back-compat). Unknown values 400.
-                         */
-                        scopes?: ("read" | "account" | "dashboard" | "admin")[];
-                    };
-                };
-            };
-            responses: {
-                /** @description New key — plaintext shown **once**. */
-                201: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "key_id": "kid_7f3a2c1b9e7d4f6a",
-                         *         "plaintext": "sip_7f3a2c1b9e7d4f6a8b3c2d1e9f8a7b6c5d4e3f2c1b9a8f7e6d5c4b3a2f1e9d8c",
-                         *         "key_prefix": "sip_7f3a2c1b",
-                         *         "label": "production-api-1",
-                         *         "scopes": [
-                         *           "read"
-                         *         ]
-                         *       },
-                         *       "as_of": "2026-07-03T22:44:12.611403Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["KeyCreatedEnvelope"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                401: components["responses"]["Unauthorized"];
-                /**
-                 * @description Active-key quota reached for this caller identifier. Revoke
-                 *     an existing key and retry.
-                 */
-                409: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        post: operations["createAccountKey"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8138,55 +2469,45 @@ export interface paths {
          *     that would orphan the connection mid-request. 409 in that
          *     case so the UI can prompt for an alternate credential.
          */
-        delete: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description Public-safe `kid_<hex>` identifier from /v1/account/keys. */
-                    keyID: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Revoked (or no-op when the key didn't belong to the caller). */
-                204: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Missing keyID. */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Unauthenticated. */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Caller tried to revoke the key they're using. */
-                409: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Account store not configured. */
-                503: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
+        delete: operations["deleteAccountKey"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/account/admin/lookup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
         };
+        /**
+         * Staff — customer look-up by user email or account slug.
+         * @description Staff "Customer look-up" tool (platform-spec §6): resolve an
+         *     account by one of its users' email address OR by account slug,
+         *     and return the account's tier/status plus the users on it.
+         *     Read-only.
+         *
+         *     Auth is a dashboard SESSION cookie, NOT an API key: the route is
+         *     wrapped in `RequireSession` (401 without a session) and the
+         *     handler additionally gates on the session user's staff flag — a
+         *     logged-in non-staff customer gets 403, never another customer's
+         *     data. (Note the deliberate mismatch with the sibling
+         *     `/v1/admin/*` operator endpoints, which are `APIKeyAuth`
+         *     operator-tier; this staff tool lives behind the dashboard session
+         *     instead.) Every successful look-up lands a `staff.customer.lookup`
+         *     audit row.
+         *
+         *     Supply EXACTLY ONE of `email` or `slug`. Supplying neither is a
+         *     400 (`provide ?email= or ?slug=`). The response carries
+         *     `Cache-Control: no-store` because the body is staff-only customer
+         *     PII.
+         */
+        get: operations["adminLookupCustomer"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -8220,84 +2541,7 @@ export interface paths {
          *     staff actor, carrying the reason) when the deployment wires the
          *     audit store.
          */
-        post: {
-            parameters: {
-                query?: never;
-                header: {
-                    /** @description Free-form reason captured into the audit log. */
-                    "X-Reason": string;
-                };
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": {
-                        /**
-                         * @description Owner reference the minted key authenticates as
-                         *     (e.g. `acct:<slug>`).
-                         */
-                        identifier: string;
-                        label: string;
-                        /**
-                         * @default apikey
-                         * @enum {string}
-                         */
-                        tier?: "apikey" | "operator";
-                        /** @description 0 inherits the deployment default. */
-                        rate_limit_per_min?: number;
-                        scopes?: ("read" | "account" | "dashboard" | "admin")[];
-                    };
-                };
-            };
-            responses: {
-                /** @description New key — plaintext shown **once**. */
-                201: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "key_id": "kid_2c9e6f4a1b8d3c7e",
-                         *         "plaintext": "sip_2c9e6f4a1b8d3c7e5a9f8b2d1c6e4f7a3b9c8d2e1f6a5b4c3d2e1f9a8b7c6d5e",
-                         *         "key_prefix": "sip_2c9e6f4a",
-                         *         "label": "partner-integration-key",
-                         *         "scopes": [
-                         *           "read",
-                         *           "account"
-                         *         ]
-                         *       },
-                         *       "as_of": "2026-07-03T22:44:30.117209Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["KeyCreatedEnvelope"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                401: components["responses"]["Unauthorized"];
-                /** @description Caller is not operator-tier. */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        post: operations["createAdminKey"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8336,46 +2580,7 @@ export interface paths {
          *     account instead, PATCH its `status` on
          *     `/v1/admin/accounts/{id}`.
          */
-        delete: {
-            parameters: {
-                query: {
-                    /** @description Owner reference the key belongs to (e.g. `acct:<slug>` or `signup-<hash>`). */
-                    identifier: string;
-                };
-                header: {
-                    /** @description Free-form reason captured into the audit log. */
-                    "X-Reason": string;
-                };
-                path: {
-                    /** @description Public-safe `kid_<hex>` identifier of the key to revoke. */
-                    keyID: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Revoked (or no-op when no such key exists for that identifier). */
-                204: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                400: components["responses"]["BadRequest"];
-                401: components["responses"]["Unauthorized"];
-                /** @description Caller is not operator-tier. */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        delete: operations["deleteAdminKey"];
         options?: never;
         head?: never;
         patch?: never;
@@ -8395,43 +2600,7 @@ export interface paths {
          *     (0 = inherit tier default). Operator-tier only; read-only (not
          *     audit-logged — the audit log records mutations, not reads).
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description Platform account UUID. */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Account view. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["AdminAccountEnvelope"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                401: components["responses"]["Unauthorized"];
-                /** @description Caller is not operator-tier. */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                404: components["responses"]["NotFound"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getAdminAccount"];
         put?: never;
         post?: never;
         delete?: never;
@@ -8462,103 +2631,7 @@ export interface paths {
          *     mutation lands an `account.override.set` audit row (staff actor)
          *     when the deployment wires the audit store.
          */
-        patch: {
-            parameters: {
-                query?: never;
-                header: {
-                    /** @description Free-form reason captured into the audit log. */
-                    "X-Reason": string;
-                };
-                path: {
-                    /** @description Platform account UUID. */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": {
-                        /**
-                         * @description Canonical model is `free` / `partner` (the platform
-                         *     is free; partner = staff-set per-account limits).
-                         *     Legacy paid-tier names are accepted and mapped in
-                         *     code: starter→free; pro/business/enterprise→partner.
-                         * @enum {string}
-                         */
-                        tier?: "free" | "partner" | "starter" | "pro" | "business" | "enterprise";
-                        /**
-                         * @description Account lifecycle state — the kill switch. `suspended`
-                         *     / `closed` stop the account's keys authenticating and
-                         *     deny its dashboard sessions.
-                         * @enum {string}
-                         */
-                        status?: "active" | "suspended" | "closed";
-                        /**
-                         * @description Stored alongside a suspension. Ignored when `status`
-                         *     is absent; cleared on a move back to `active`.
-                         *     Distinct from the mandatory `X-Reason` header, which
-                         *     records why the OPERATOR acted.
-                         */
-                        suspended_reason?: string;
-                        /** @description 0 clears the override (inherit tier default). */
-                        rate_limit_per_min_override?: number;
-                        /**
-                         * Format: int64
-                         * @description 0 clears the override (inherit tier default).
-                         */
-                        monthly_request_quota_override?: number;
-                    };
-                };
-            };
-            responses: {
-                /** @description Updated account view. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "id": "3d8f1a6c-9e2b-4c7d-8a5f-1b6e3d9c2a4f",
-                         *         "name": "Acme Trading Desk",
-                         *         "slug": "acme-trading-desk",
-                         *         "tier": "business",
-                         *         "status": "active",
-                         *         "billing_email": "ops@acme.example.com",
-                         *         "created_at": "2026-04-12T09:15:00Z",
-                         *         "rate_limit_per_min_override": 60000,
-                         *         "monthly_request_quota_override": 50000000
-                         *       },
-                         *       "as_of": "2026-07-03T22:44:41.902317Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["AdminAccountEnvelope"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                401: components["responses"]["Unauthorized"];
-                /** @description Caller is not operator-tier. */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                404: components["responses"]["NotFound"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        patch: operations["updateAdminAccount"];
         trace?: never;
     };
     "/admin/status-notices": {
@@ -8574,38 +2647,7 @@ export interface paths {
          *     (admin Phase 1.5 incident tooling), newest first. Operator-tier
          *     only; read-only.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Notice list. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["StatusNoticesEnvelope"];
-                    };
-                };
-                401: components["responses"]["Unauthorized"];
-                /** @description Caller is not operator-tier. */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["listAdminStatusNotices"];
         put?: never;
         /**
          * Operator — post a customer-facing status banner.
@@ -8619,72 +2661,7 @@ export interface paths {
          *     the audit log; audit-logged as `status_notice.create` (staff
          *     actor).
          */
-        post: {
-            parameters: {
-                query?: never;
-                header: {
-                    /** @description Free-form reason captured into the audit log. */
-                    "X-Reason": string;
-                };
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": {
-                        title: string;
-                        body: string;
-                        /** @enum {string} */
-                        severity: "maintenance" | "minor" | "major" | "critical";
-                    };
-                };
-            };
-            responses: {
-                /** @description Created notice. */
-                201: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "id": "6a1d9e3c-7f2b-4a8d-9c5e-3b1f6a2d8e4c",
-                         *         "title": "Delayed price freshness on r1",
-                         *         "body": "We're investigating elevated /v1/price latency on r1 (EU). No data loss; freshness is degraded up to ~2 minutes. Updates here as we learn more.",
-                         *         "severity": "minor",
-                         *         "status": "active",
-                         *         "created_at": "2026-07-03T22:45:02.004811Z",
-                         *         "updated_at": "2026-07-03T22:45:02.004811Z"
-                         *       },
-                         *       "as_of": "2026-07-03T22:45:02.004811Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["StatusNoticeEnvelope"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                401: components["responses"]["Unauthorized"];
-                /** @description Caller is not operator-tier. */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        post: operations["createAdminStatusNotice"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8708,68 +2685,7 @@ export interface paths {
          *     requires an `X-Reason` header. Audit-logged as
          *     `status_notice.resolve` (staff actor).
          */
-        post: {
-            parameters: {
-                query?: never;
-                header: {
-                    /** @description Free-form reason captured into the audit log. */
-                    "X-Reason": string;
-                };
-                path: {
-                    /** @description Status notice UUID. */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Resolved notice. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "id": "6a1d9e3c-7f2b-4a8d-9c5e-3b1f6a2d8e4c",
-                         *         "title": "Delayed price freshness on r1",
-                         *         "body": "We're investigating elevated /v1/price latency on r1 (EU). No data loss; freshness is degraded up to ~2 minutes. Updates here as we learn more.",
-                         *         "severity": "minor",
-                         *         "status": "resolved",
-                         *         "created_at": "2026-07-03T22:45:02.004811Z",
-                         *         "updated_at": "2026-07-03T23:12:47.331098Z",
-                         *         "resolved_at": "2026-07-03T23:12:47.331098Z"
-                         *       },
-                         *       "as_of": "2026-07-03T23:12:47.331098Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["StatusNoticeEnvelope"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                401: components["responses"]["Unauthorized"];
-                /** @description Caller is not operator-tier. */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                404: components["responses"]["NotFound"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        post: operations["resolveAdminStatusNotice"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8811,124 +2727,7 @@ export interface paths {
          *     Already-authenticated callers receive 400 — they should mint
          *     additional keys via POST /v1/account/keys instead.
          */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: {
-                content: {
-                    /**
-                     * @example {
-                     *       "name": "my-trading-agent",
-                     *       "email": "ops@example.com"
-                     *     }
-                     */
-                    "application/json": {
-                        /** @description Display name for the account (defaults to "api-registered account"). */
-                        name?: string;
-                        /**
-                         * Format: email
-                         * @description Optional contact address. Never verified, never required.
-                         */
-                        email?: string;
-                    };
-                };
-            };
-            responses: {
-                /** @description Account created — plaintext key shown **once**. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "account_id": "7d9f2a54-4f0e-4c1a-9b3d-2f6c8e1a0b5c",
-                         *         "api_key": "sip_4f9c1d8b3a7e2f1c9d4b8a6e3f2c1d9b8a7e6f5d4c3b2a1f4f9c1d8b3a7e2f1c",
-                         *         "key_id": "kid_8f3a2c1b9e7d4f6a8f3a2c1b",
-                         *         "key_prefix": "sip_4f9c1d8b",
-                         *         "tier": "free",
-                         *         "limits": {
-                         *           "rate_limit_per_min": 1000,
-                         *           "monthly_quota": 1000000,
-                         *           "max_active_keys": 25,
-                         *           "max_webhooks": 10,
-                         *           "max_price_alerts": 25
-                         *         }
-                         *       },
-                         *       "as_of": "2026-08-11T14:35:42.881Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["EnvelopeMeta"] & {
-                            data?: {
-                                /** Format: uuid */
-                                account_id: string;
-                                /** @description Bearer token (`sip_<64hex>`). Shown ONCE; register again if lost. */
-                                api_key: string;
-                                key_id: string;
-                                key_prefix: string;
-                                /** @enum {string} */
-                                tier: "free";
-                                limits: {
-                                    rate_limit_per_min: number;
-                                    /** Format: int64 */
-                                    monthly_quota: number;
-                                    max_active_keys: number;
-                                    max_webhooks: number;
-                                    max_price_alerts: number;
-                                };
-                            };
-                        };
-                    };
-                };
-                /** @description Invalid email / name too long / malformed body / already authenticated. */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /** @description Content-Type present but not application/json. */
-                415: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /** @description Per-IP registration throttle exhausted (shared with /v1/signup). */
-                429: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /** @description Platform account store not configured (Postgres unavailable). */
-                503: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-            };
-        };
+        post: operations["registerApiKey"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8958,97 +2757,7 @@ export interface paths {
          *     Already-authenticated callers receive 400 — they should
          *     rotate keys via POST /v1/account/keys instead.
          */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    /**
-                     * @example {
-                     *       "email": "alice@example.com",
-                     *       "label": "production-api-1"
-                     *     }
-                     */
-                    "application/json": {
-                        /** Format: email */
-                        email: string;
-                        label?: string;
-                    };
-                };
-            };
-            responses: {
-                /** @description Account created — plaintext key shown **once**. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "plaintext": "re_live_4f9c1d8b3a7e2f1c9d4b8a6e3f2c1d9b8a7e6f5d4c3b2a1f",
-                         *         "key_id": "k_8f3a2c1b9e7d4f6a",
-                         *         "identifier": "signup-3d4f9a2c1e8b7f6d",
-                         *         "label": "production-api-1",
-                         *         "tier": "apikey",
-                         *         "rate_limit_per_min": 1000
-                         *       },
-                         *       "as_of": "2026-05-05T14:35:42.881Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["EnvelopeMeta"] & {
-                            data?: {
-                                /** @description Bearer token. Show ONCE; unrecoverable. */
-                                plaintext: string;
-                                key_id: string;
-                                identifier: string;
-                                label?: string;
-                                /** @enum {string} */
-                                tier: "apikey";
-                                rate_limit_per_min: number;
-                            };
-                        };
-                    };
-                };
-                /** @description Missing or invalid email, body too large, or already authenticated. */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /** @description Email already has an account. */
-                409: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /** @description AccountStore not configured (Redis unavailable). */
-                503: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-            };
-        };
+        post: operations["signup"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9085,79 +2794,7 @@ export interface paths {
          *     success path returns the key_id so the customer's
          *     dashboard / CLI can correlate the verified key.
          */
-        get: {
-            parameters: {
-                query: {
-                    /** @description The plaintext token from the verification email. */
-                    token: string;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Token consumed; email ownership confirmed. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "verified": true,
-                         *         "key_id": "7d9f2a54-4f0e-4c1a-9b3d-2f6c8e1a0b5c",
-                         *         "detail": "email verified; API key activated"
-                         *       },
-                         *       "as_of": "2026-07-03T09:00:00Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["EnvelopeMeta"] & {
-                            data?: {
-                                verified: boolean;
-                                key_id?: string;
-                                detail?: string;
-                            };
-                        };
-                    };
-                };
-                /** @description Missing `?token=` query parameter. */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /** @description Unknown / consumed / expired token. */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /** @description SignupVerifier not configured (Redis unavailable). */
-                503: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-            };
-        };
+        get: operations["verifySignup"];
         put?: never;
         post?: never;
         delete?: never;
@@ -9180,55 +2817,7 @@ export interface paths {
          *     Plaintext is never returned by this endpoint — only
          *     the prefix (`sip_4f9c1d8b…`).
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Key list. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "keys": [
-                         *         {
-                         *           "id": "7d9f2a54-4f0e-4c1a-9b3d-2f6c8e1a0b5c",
-                         *           "name": "production",
-                         *           "description": "main backend key",
-                         *           "key_prefix": "sip_1a2b3c4d",
-                         *           "tier": "apikey",
-                         *           "rate_limit_per_min": 300,
-                         *           "monthly_quota": 1000000,
-                         *           "usage_alert_threshold_pct": 80,
-                         *           "last_used_at": "2026-07-03T08:59:41Z",
-                         *           "created_at": "2026-06-12T08:30:00Z"
-                         *         }
-                         *       ]
-                         *     }
-                         */
-                        "application/json": {
-                            keys: components["schemas"]["DashboardKey"][];
-                        };
-                    };
-                };
-                /** @description No valid session cookie. */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-            };
-        };
+        get: operations["listDashboardKeys"];
         put?: never;
         /**
          * Customer dashboard — mint a new API key.
@@ -9239,79 +2828,7 @@ export interface paths {
          *     Active-key quota is tier-aware (free 25, partner 250 —
          *     deployment-overridable); exceeding it returns 409.
          */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["CreateKeyRequest"];
-                };
-            };
-            responses: {
-                /** @description Key minted. */
-                201: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "plaintext": "sip_9d4c8b2a6f1e3d7c5a8b9e2f4d1c6a3b8e5f7d2c9a1b4e6f3d8c5a2b9e7f1d4c",
-                         *       "key": {
-                         *         "id": "7d9f2a54-4f0e-4c1a-9b3d-2f6c8e1a0b5c",
-                         *         "name": "production",
-                         *         "description": "main backend key",
-                         *         "key_prefix": "sip_9d4c8b2a",
-                         *         "tier": "apikey",
-                         *         "rate_limit_per_min": 300,
-                         *         "monthly_quota": 1000000,
-                         *         "usage_alert_threshold_pct": 80,
-                         *         "created_at": "2026-07-03T22:45:31.006204Z"
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["CreateKeyResponse"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                /** @description No valid session cookie. */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /**
-                 * @description Role can't mint keys, OR the write was blocked as cross-site:
-                 *     state-changing dashboard requests must carry an `Origin`
-                 *     (or `Referer`) matching this API or an operator-allow-listed
-                 *     site (`cross-site-request-blocked`).
-                 */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /** @description Account already at the active-key quota. */
-                409: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-            };
-        };
+        post: operations["createDashboardKey"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9335,58 +2852,7 @@ export interface paths {
          *     to a different account (same shape so attackers can't
          *     enumerate cross-account key_ids).
          */
-        delete: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Revoked. */
-                204: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description No valid session cookie. */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /**
-                 * @description Role can't revoke keys, OR the write was blocked as cross-site:
-                 *     state-changing dashboard requests must carry an `Origin`
-                 *     (or `Referer`) matching this API or an operator-allow-listed
-                 *     site (`cross-site-request-blocked`).
-                 */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /** @description Key not found. */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-            };
-        };
+        delete: operations["deleteDashboardKey"];
         options?: never;
         head?: never;
         patch?: never;
@@ -9406,55 +2872,7 @@ export interface paths {
          *     callbacks, newest first. The signing secret is never
          *     returned — only the URL, events, and enabled flag. F-1270.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Webhook list. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "webhooks": [
-                         *         {
-                         *           "id": "0b6a3f2e-9c1d-4e7a-8f5b-6d2c4a1e9b0f",
-                         *           "name": "ops-alerts",
-                         *           "url": "https://ops.example.com/hooks/stellarindex",
-                         *           "events": [
-                         *             "incident.sev1",
-                         *             "incident.resolved"
-                         *           ],
-                         *           "enabled": true,
-                         *           "created_at": "2026-06-20T10:00:00Z",
-                         *           "updated_at": "2026-06-20T10:00:00Z"
-                         *         }
-                         *       ]
-                         *     }
-                         */
-                        "application/json": {
-                            webhooks: components["schemas"]["DashboardWebhook"][];
-                        };
-                    };
-                };
-                /** @description No valid session cookie. */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-            };
-        };
+        get: operations["listDashboardWebhooks"];
         put?: never;
         /**
          * Customer dashboard — register a new webhook.
@@ -9466,80 +2884,7 @@ export interface paths {
          *     partner 100 — deployment-overridable); exceeding it
          *     returns 409.
          */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["CreateWebhookRequest"];
-                };
-            };
-            responses: {
-                /** @description Webhook registered. */
-                201: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "webhook": {
-                         *         "id": "0b6a3f2e-9c1d-4e7a-8f5b-6d2c4a1e9b0f",
-                         *         "name": "ops-alerts",
-                         *         "url": "https://ops.example.com/hooks/stellarindex",
-                         *         "events": [
-                         *           "incident.sev1",
-                         *           "incident.resolved"
-                         *         ],
-                         *         "enabled": true,
-                         *         "created_at": "2026-07-03T22:45:47.220981Z",
-                         *         "updated_at": "2026-07-03T22:45:47.220981Z"
-                         *       },
-                         *       "secret": "wsec_3f8a1c6d9e2b4f7a5c8d1e6b9f2a4c7d3e8b1f6a9c2d4e7f5a8b3c1d6e9f2a4c"
-                         *     }
-                         */
-                        "application/json": components["schemas"]["CreateWebhookResponse"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                /** @description No valid session cookie. */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /**
-                 * @description Role can't manage webhooks, OR the write was blocked as cross-site:
-                 *     state-changing dashboard requests must carry an `Origin`
-                 *     (or `Referer`) matching this API or an operator-allow-listed
-                 *     site (`cross-site-request-blocked`).
-                 */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /** @description Account at the 10-webhook quota. */
-                409: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-            };
-        };
+        post: operations["createDashboardWebhook"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9561,49 +2906,7 @@ export interface paths {
          * @description Session-gated. Hard-deletes the registry row and cascades
          *     to webhook_deliveries. Idempotent — 204 on absent.
          */
-        delete: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Deleted. */
-                204: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description No valid session cookie. */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /**
-                 * @description Cross-site write blocked: state-changing dashboard + auth
-                 *     requests must carry an `Origin` (or `Referer`) matching
-                 *     this API or an operator-allow-listed site
-                 *     (`cross-site-request-blocked`).
-                 */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-            };
-        };
+        delete: operations["deleteDashboardWebhook"];
         options?: never;
         head?: never;
         /**
@@ -9612,78 +2915,7 @@ export interface paths {
          *     SecretHash is immutable; rotation lives behind a separate
          *     endpoint when it ships.
          */
-        patch: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["UpdateWebhookRequest"];
-                };
-            };
-            responses: {
-                /** @description Updated. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "id": "0b6a3f2e-9c1d-4e7a-8f5b-6d2c4a1e9b0f",
-                         *       "name": "ops-alerts-critical-only",
-                         *       "url": "https://ops.example.com/hooks/stellarindex",
-                         *       "events": [
-                         *         "incident.sev1"
-                         *       ],
-                         *       "enabled": true,
-                         *       "created_at": "2026-06-20T10:00:00Z",
-                         *       "updated_at": "2026-07-03T22:46:03.558112Z"
-                         *     }
-                         */
-                        "application/json": components["schemas"]["DashboardWebhook"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                /** @description No valid session cookie. */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /**
-                 * @description Cross-site write blocked: state-changing dashboard + auth
-                 *     requests must carry an `Origin` (or `Referer`) matching
-                 *     this API or an operator-allow-listed site
-                 *     (`cross-site-request-blocked`).
-                 */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /** @description Webhook not found. */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-            };
-        };
+        patch: operations["updateDashboardWebhook"];
         trace?: never;
     };
     "/dashboard/webhooks/{id}/deliveries": {
@@ -9698,64 +2930,7 @@ export interface paths {
          * @description Session-gated. Most-recent first; up to 100 attempts.
          *     Powers the dashboard's delivery-log panel.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Delivery log. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "deliveries": [
-                         *         {
-                         *           "id": "5c8e1f0a-2b4d-4a6c-9e3f-7d1b0c5a8e2f",
-                         *           "event_type": "incident.sev1",
-                         *           "attempt_count": 1,
-                         *           "next_attempt_at": null,
-                         *           "delivered_at": "2026-07-01T14:03:22Z",
-                         *           "last_error": null,
-                         *           "last_response_status": 200,
-                         *           "created_at": "2026-07-01T14:03:21Z"
-                         *         }
-                         *       ]
-                         *     }
-                         */
-                        "application/json": {
-                            deliveries: components["schemas"]["WebhookDeliveryDTO"][];
-                        };
-                    };
-                };
-                /** @description No valid session cookie. */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /** @description Webhook not found. */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-            };
-        };
+        get: operations["getDashboardWebhookDeliveries"];
         put?: never;
         post?: never;
         delete?: never;
@@ -9776,54 +2951,7 @@ export interface paths {
          * @description Session-gated. Returns every price-threshold alert this
          *     account has registered, newest first. BACKLOG #60.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Price-alert list. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "alerts": [
-                         *         {
-                         *           "id": "2f1c8e0a-9b3d-4e7a-8f5b-6d2c4a1e9b0f",
-                         *           "base_asset": "native",
-                         *           "quote_asset": "fiat:USD",
-                         *           "condition": "above",
-                         *           "threshold": "0.15",
-                         *           "cooldown_seconds": 300,
-                         *           "enabled": true,
-                         *           "created_at": "2026-07-05T10:00:00Z",
-                         *           "updated_at": "2026-07-05T10:00:00Z"
-                         *         }
-                         *       ]
-                         *     }
-                         */
-                        "application/json": {
-                            alerts: components["schemas"]["DashboardPriceAlert"][];
-                        };
-                    };
-                };
-                /** @description No valid session cookie. */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-            };
-        };
+        get: operations["listDashboardPriceAlerts"];
         put?: never;
         /**
          * Customer dashboard — register a new price alert.
@@ -9836,76 +2964,7 @@ export interface paths {
          *     403. Alert quota is tier-aware (free 25, partner 1000 —
          *     deployment-overridable); exceeding it returns 409.
          */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["CreatePriceAlertRequest"];
-                };
-            };
-            responses: {
-                /** @description Price alert registered. */
-                201: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "id": "2f1c8e0a-9b3d-4e7a-8f5b-6d2c4a1e9b0f",
-                         *       "base_asset": "native",
-                         *       "quote_asset": "fiat:USD",
-                         *       "condition": "above",
-                         *       "threshold": "0.15",
-                         *       "cooldown_seconds": 300,
-                         *       "enabled": true,
-                         *       "created_at": "2026-07-03T22:46:14.882091Z",
-                         *       "updated_at": "2026-07-03T22:46:14.882091Z"
-                         *     }
-                         */
-                        "application/json": components["schemas"]["DashboardPriceAlert"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                /** @description No valid session cookie. */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /**
-                 * @description Role can't manage price alerts, OR the write was blocked as cross-site:
-                 *     state-changing dashboard requests must carry an `Origin`
-                 *     (or `Referer`) matching this API or an operator-allow-listed
-                 *     site (`cross-site-request-blocked`).
-                 */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /** @description Account at the price-alert quota for its tier. */
-                409: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-            };
-        };
+        post: operations["createDashboardPriceAlert"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9927,58 +2986,7 @@ export interface paths {
          * @description Session-gated. Removes the alert. Idempotent from the
          *     customer's view — a cross-account or absent id returns 404.
          */
-        delete: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Deleted. */
-                204: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description No valid session cookie. */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /**
-                 * @description Cross-site write blocked: state-changing dashboard + auth
-                 *     requests must carry an `Origin` (or `Referer`) matching
-                 *     this API or an operator-allow-listed site
-                 *     (`cross-site-request-blocked`).
-                 */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /** @description Price alert not found. */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-            };
-        };
+        delete: operations["deleteDashboardPriceAlert"];
         options?: never;
         head?: never;
         /**
@@ -9989,79 +2997,7 @@ export interface paths {
          *     exist OR belongs to a different account (same shape so
          *     attackers can't enumerate cross-account ids).
          */
-        patch: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["UpdatePriceAlertRequest"];
-                };
-            };
-            responses: {
-                /** @description Updated. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "id": "2f1c8e0a-9b3d-4e7a-8f5b-6d2c4a1e9b0f",
-                         *       "base_asset": "native",
-                         *       "quote_asset": "fiat:USD",
-                         *       "condition": "above",
-                         *       "threshold": "0.18",
-                         *       "cooldown_seconds": 300,
-                         *       "enabled": true,
-                         *       "last_fired_at": "2026-07-02T16:04:11Z",
-                         *       "created_at": "2026-07-03T22:46:14.882091Z",
-                         *       "updated_at": "2026-07-03T22:47:02.114873Z"
-                         *     }
-                         */
-                        "application/json": components["schemas"]["DashboardPriceAlert"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                /** @description No valid session cookie. */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /**
-                 * @description Cross-site write blocked: state-changing dashboard + auth
-                 *     requests must carry an `Origin` (or `Referer`) matching
-                 *     this API or an operator-allow-listed site
-                 *     (`cross-site-request-blocked`).
-                 */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /** @description Price alert not found. */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-            };
-        };
+        patch: operations["updateDashboardPriceAlert"];
         trace?: never;
     };
     "/auth/login": {
@@ -10102,60 +3038,7 @@ export interface paths {
          *     Returns 503 when the deployment hasn't configured the
          *     dashboard auth flow (api.dashboard.base_url empty).
          */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": {
-                        /**
-                         * Format: email
-                         * @description The address to email the magic link to.
-                         */
-                        email: string;
-                    };
-                };
-            };
-            responses: {
-                /** @description Email accepted for delivery (or silently dropped if address doesn't match an account). */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "status": "sent"
-                         *     }
-                         */
-                        "application/json": {
-                            /** @enum {string} */
-                            status: "sent";
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                /**
-                 * @description Cross-site write blocked: state-changing dashboard + auth
-                 *     requests must carry an `Origin` (or `Referer`) matching
-                 *     this API or an operator-allow-listed site
-                 *     (`cross-site-request-blocked`).
-                 */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        post: operations["requestMagicLink"];
         delete?: never;
         options?: never;
         head?: never;
@@ -10184,64 +3067,7 @@ export interface paths {
          *     a "request a fresh link" prompt distinct from the generic
          *     "invalid token" 400.
          */
-        get: {
-            parameters: {
-                query: {
-                    /** @description Hex-encoded magic-link plaintext from the email. */
-                    token: string;
-                    /**
-                     * @description Path-only redirect target after sign-in (e.g. `/keys`).
-                     *     Absolute URLs and protocol-relative paths (`//evil.com`)
-                     *     are rejected; the user lands at `/` instead.
-                     */
-                    next?: string;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Authenticated; session cookie set; redirect to dashboard. */
-                303: {
-                    headers: {
-                        /** @description HttpOnly + Secure session cookie. */
-                        "Set-Cookie"?: string;
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                400: components["responses"]["BadRequest"];
-                /**
-                 * @description The link was opened in a browser that did not request it.
-                 *     `POST /auth/login` sets a short-lived, HttpOnly
-                 *     `stellarindex_login_intent` cookie binding the link to the
-                 *     requesting browser; without a matching witness no session
-                 *     is minted (login-CSRF defence). The token is NOT consumed,
-                 *     so the originating browser can still complete the sign-in.
-                 *     Clients should fall back to the 6-digit code, or request a
-                 *     fresh link from the device in hand.
-                 */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /** @description Magic-link token expired; request a fresh one. */
-                410: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["consumeMagicLink"];
         put?: never;
         post?: never;
         delete?: never;
@@ -10279,72 +3105,7 @@ export interface paths {
          *     expired, too many attempts — return the same generic 400 so a
          *     caller can't probe which one occurred.
          */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": {
-                        /**
-                         * Format: email
-                         * @description The address the code was sent to.
-                         */
-                        email: string;
-                        /** @description The 6-digit numeric code from the sign-in email. */
-                        code: string;
-                    };
-                };
-            };
-            responses: {
-                /** @description Authenticated; session cookie set. */
-                200: {
-                    headers: {
-                        /** @description HttpOnly + Secure session cookie. */
-                        "Set-Cookie"?: string;
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "status": "ok"
-                         *     }
-                         */
-                        "application/json": {
-                            /** @enum {string} */
-                            status: "ok";
-                        };
-                    };
-                };
-                /** @description Malformed input, or invalid/expired/exhausted code (generic — modes are indistinguishable). */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /**
-                 * @description Cross-site write blocked: state-changing dashboard + auth
-                 *     requests must carry an `Origin` (or `Referer`) matching
-                 *     this API or an operator-allow-listed site
-                 *     (`cross-site-request-blocked`).
-                 */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        post: operations["verifyLoginCode"];
         delete?: never;
         options?: never;
         head?: never;
@@ -10367,39 +3128,7 @@ export interface paths {
          *     signed-out state. Sets a Max-Age=-1 cookie so the browser
          *     drops it on the next response.
          */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Session revoked (if any) and cookie cleared. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /**
-                 * @description Cross-site write blocked: state-changing dashboard + auth
-                 *     requests must carry an `Origin` (or `Referer`) matching
-                 *     this API or an operator-allow-listed site
-                 *     (`cross-site-request-blocked`).
-                 */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        post: operations["logout"];
         delete?: never;
         options?: never;
         head?: never;
@@ -10432,43 +3161,7 @@ export interface paths {
          *     challenge is valid for 5 minutes — enforced server-side, not
          *     merely by the cookie's `Max-Age` — and is single-use.
          */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description WebAuthn assertion options (challenge, rpId, …). */
-                200: {
-                    headers: {
-                        /** @description Signed ceremony cookie; challenge valid 5 minutes, single-use. */
-                        "Set-Cookie"?: string;
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": Record<string, never>;
-                    };
-                };
-                /**
-                 * @description Cross-site write blocked: state-changing dashboard + auth
-                 *     requests must carry an `Origin` (or `Referer`) matching
-                 *     this API or an operator-allow-listed site
-                 *     (`cross-site-request-blocked`).
-                 */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        post: operations["beginPasskeyLogin"];
         delete?: never;
         options?: never;
         head?: never;
@@ -10504,78 +3197,7 @@ export interface paths {
          *     and logged) — returns the same generic 400 so a caller cannot
          *     probe which credentials exist.
          */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-            responses: {
-                /** @description Authenticated; session cookie set. */
-                200: {
-                    headers: {
-                        /** @description HttpOnly + Secure session cookie. */
-                        "Set-Cookie"?: string;
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "status": "ok"
-                         *     }
-                         */
-                        "application/json": {
-                            /** @enum {string} */
-                            status: "ok";
-                        };
-                    };
-                };
-                /** @description Verification failed (generic — modes are indistinguishable). */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /**
-                 * @description Cross-site write blocked: state-changing dashboard + auth
-                 *     requests must carry an `Origin` (or `Referer`) matching
-                 *     this API or an operator-allow-listed site
-                 *     (`cross-site-request-blocked`).
-                 */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /**
-                 * @description The single-use challenge store could not be reached, so
-                 *     the ceremony's freshness could not be established. The
-                 *     sign-in is refused rather than granted on trust; email-code
-                 *     sign-in is unaffected.
-                 */
-                500: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        post: operations["finishPasskeyLogin"];
         delete?: never;
         options?: never;
         head?: never;
@@ -10608,30 +3230,7 @@ export interface paths {
          *     login, nor vice versa), with the same server-enforced
          *     5-minute, single-use challenge.
          */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description WebAuthn creation options. */
-                200: {
-                    headers: {
-                        /** @description Signed, short-lived ceremony cookie. */
-                        "Set-Cookie"?: string;
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": Record<string, never>;
-                    };
-                };
-                401: components["responses"]["Unauthorized"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        post: operations["beginPasskeyRegistration"];
         delete?: never;
         options?: never;
         head?: never;
@@ -10659,85 +3258,7 @@ export interface paths {
          *     characters (not bytes — multi-byte names keep their full
          *     character budget).
          */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": {
-                        /**
-                         * @description User-chosen label ("MacBook Touch ID"). Defaults
-                         *     to "Passkey" when empty. Display-only.
-                         */
-                        name?: string;
-                        /**
-                         * @description The serialized `PublicKeyCredential` attestation
-                         *     from `navigator.credentials.create()`.
-                         */
-                        credential: Record<string, never>;
-                    };
-                };
-            };
-            responses: {
-                /** @description Passkey stored. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "id": "9f1c2b3a-4d5e-6f70-8192-a3b4c5d6e7f8",
-                         *       "name": "MacBook Touch ID",
-                         *       "transports": [
-                         *         "internal"
-                         *       ],
-                         *       "backup_eligible": true,
-                         *       "created_at": "2026-08-11T12:00:00Z"
-                         *     }
-                         */
-                        "application/json": components["schemas"]["PasskeyCredential"];
-                    };
-                };
-                /** @description Verification failed (generic — modes are indistinguishable). */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                401: components["responses"]["Unauthorized"];
-                /** @description This credential is already registered. */
-                409: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /**
-                 * @description The single-use challenge store could not be reached, so
-                 *     the ceremony's freshness could not be established; the
-                 *     credential is not stored.
-                 */
-                500: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        post: operations["finishPasskeyRegistration"];
         delete?: never;
         options?: never;
         head?: never;
@@ -10756,46 +3277,7 @@ export interface paths {
          * @description Session-gated. Display metadata only — credential IDs and
          *     public keys never leave the server.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The user's registered passkeys, newest first. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "credentials": [
-                         *         {
-                         *           "id": "9f1c2b3a-4d5e-6f70-8192-a3b4c5d6e7f8",
-                         *           "name": "MacBook Touch ID",
-                         *           "transports": [
-                         *             "internal"
-                         *           ],
-                         *           "backup_eligible": true,
-                         *           "created_at": "2026-08-11T12:00:00Z",
-                         *           "last_used_at": "2026-08-11T12:30:00Z"
-                         *         }
-                         *       ]
-                         *     }
-                         */
-                        "application/json": {
-                            credentials: components["schemas"]["PasskeyCredential"][];
-                        };
-                    };
-                };
-                401: components["responses"]["Unauthorized"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["listPasskeyCredentials"];
         put?: never;
         post?: never;
         delete?: never;
@@ -10821,47 +3303,7 @@ export interface paths {
          *     (404 either way). Email-code sign-in always remains, so
          *     removing the last passkey cannot lock the account out.
          */
-        delete: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description The passkey's server-side id (from the list endpoint). */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Passkey removed. */
-                204: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Malformed id. */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                401: components["responses"]["Unauthorized"];
-                /** @description No such passkey on this account. */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        delete: operations["deletePasskeyCredential"];
         options?: never;
         head?: never;
         patch?: never;
@@ -10881,51 +3323,7 @@ export interface paths {
          *     carries the unsigned XDR + the network passphrase the
          *     challenge was crafted for. Unauthenticated by design.
          */
-        get: {
-            parameters: {
-                query: {
-                    /** @description Stellar G-strkey of the account being authenticated. */
-                    account: string;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Unsigned challenge transaction. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "transaction": "AAAAAgAAAADg3G3hclysZlFitS+s5zWyiiJD5B0STWy5LXCj6i5yxQAAAMgAAAAAAAAAAA…",
-                         *         "network_passphrase": "Public Global Stellar Network ; September 2015",
-                         *         "issued_at": "2026-07-03T09:00:00Z",
-                         *         "valid_until": "2026-07-03T09:15:00Z"
-                         *       },
-                         *       "as_of": "2026-07-03T09:00:00Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["EnvelopeMeta"] & {
-                            data: components["schemas"]["SEP10Challenge"];
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getSep10Challenge"];
         put?: never;
         post?: never;
         delete?: never;
@@ -10950,72 +3348,7 @@ export interface paths {
          *     carries `{transaction: <base64-XDR>}`. Unauthenticated by
          *     design — the SEP-10 protocol IS the authentication.
          */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": {
-                        /** @description Base64-encoded signed XDR of the challenge. */
-                        transaction: string;
-                    };
-                };
-            };
-            responses: {
-                /** @description Authenticated; JWT issued. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "token": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJHQjNZM0FMS0FQ...",
-                         *         "expires_at": "2026-07-03T23:45:19.000000Z",
-                         *         "account": "GB3Y3ALKAPYFMBEDS5G4KDDQBFV5FVJVGXWL4RPUCV3GTMOENIVXFAHW"
-                         *       },
-                         *       "as_of": "2026-07-03T22:45:19.000000Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": components["schemas"]["EnvelopeMeta"] & {
-                            data: components["schemas"]["SEP10Token"];
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                /** @description Signature verification failed. */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                /** @description Challenge time-bounds expired; request a fresh challenge. */
-                410: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
-                    };
-                };
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        post: operations["createSep10Token"];
         delete?: never;
         options?: never;
         head?: never;
@@ -11034,82 +3367,7 @@ export interface paths {
          * @description Recent closed ledgers, newest first. Keyset-page older with
          *     `?before=<sequence>` (use the response's `next_before`).
          */
-        get: {
-            parameters: {
-                query?: {
-                    /** @description Maximum rows to return (1-200, default 50). Out-of-range values return 400. */
-                    limit?: number;
-                    /** @description Return ledgers with sequence < this. */
-                    before?: number;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description A page of ledger headers. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "ledgers": [
-                         *           {
-                         *             "sequence": 63316166,
-                         *             "close_time": "2026-07-03T22:37:01Z",
-                         *             "hash": "734ef513eec0746fb133bc0a759adb98ffae7fa6e36e286954531a5416b437cb",
-                         *             "prev_hash": "58aee267a054f990b426f932b5c518151f789da48e76153d9722769b4d7a8b08",
-                         *             "protocol_version": 26,
-                         *             "tx_count": 299,
-                         *             "op_count": 1079,
-                         *             "soroban_event_count": 1105,
-                         *             "total_coins": "1054439020873472865",
-                         *             "fee_pool": "100768724524038",
-                         *             "base_fee": 100,
-                         *             "base_reserve": 5000000
-                         *           },
-                         *           {
-                         *             "sequence": 63316165,
-                         *             "close_time": "2026-07-03T22:36:56Z",
-                         *             "hash": "58aee267a054f990b426f932b5c518151f789da48e76153d9722769b4d7a8b08",
-                         *             "prev_hash": "ada19f6cb122d0b74b98b7dc53ef7be4e5463c86a1af14185c0ae741704986cb",
-                         *             "protocol_version": 26,
-                         *             "tx_count": 277,
-                         *             "op_count": 767,
-                         *             "soroban_event_count": 708,
-                         *             "total_coins": "1054439020873472865",
-                         *             "fee_pool": "100768720236504",
-                         *             "base_fee": 100,
-                         *             "base_reserve": 5000000
-                         *           }
-                         *         ],
-                         *         "next_before": 63316165
-                         *       },
-                         *       "as_of": "2026-07-03T22:37:10.384389772Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: {
-                                ledgers?: components["schemas"]["Ledger"][];
-                                next_before?: number;
-                            };
-                        };
-                    };
-                };
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["listLedgers"];
         put?: never;
         post?: never;
         delete?: never;
@@ -11134,66 +3392,7 @@ export interface paths {
          *     cacheable indefinitely. 404 when `seq` is beyond the
          *     ingest tip (or otherwise outside the indexed range).
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @example 63000000 */
-                    seq: number;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Ledger header. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "sequence": 63316166,
-                         *         "close_time": "2026-07-03T22:37:01Z",
-                         *         "hash": "734ef513eec0746fb133bc0a759adb98ffae7fa6e36e286954531a5416b437cb",
-                         *         "prev_hash": "58aee267a054f990b426f932b5c518151f789da48e76153d9722769b4d7a8b08",
-                         *         "protocol_version": 26,
-                         *         "tx_count": 299,
-                         *         "op_count": 1079,
-                         *         "soroban_event_count": 1105,
-                         *         "total_coins": "1054439020873472865",
-                         *         "fee_pool": "100768724524038",
-                         *         "base_fee": 100,
-                         *         "base_reserve": 5000000
-                         *       },
-                         *       "as_of": "2026-07-03T22:39:59.693177604Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: components["schemas"]["Ledger"];
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                /** @description Ledger not in the indexed range. */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getLedger"];
         put?: never;
         post?: never;
         delete?: never;
@@ -11217,68 +3416,7 @@ export interface paths {
          *     for the decoded operations + events of one transaction.
          *     A valid but empty ledger returns an empty array.
          */
-        get: {
-            parameters: {
-                query?: {
-                    /** @description Maximum transactions to return (1-1000, default 200). */
-                    limit?: number;
-                };
-                header?: never;
-                path: {
-                    /** @example 63000000 */
-                    seq: number;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The ledger's transactions. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "ledger": 63316166,
-                         *         "transactions": [
-                         *           {
-                         *             "hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
-                         *             "ledger": 63316166,
-                         *             "close_time": "2026-07-03T22:37:01Z",
-                         *             "index": 0,
-                         *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
-                         *             "fee_charged": 600,
-                         *             "max_fee": 120000,
-                         *             "operation_count": 6,
-                         *             "successful": false,
-                         *             "result_code": -1,
-                         *             "memo_type": "none"
-                         *           }
-                         *         ]
-                         *       },
-                         *       "as_of": "2026-07-03T22:39:58.530334586Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: {
-                                ledger?: number;
-                                transactions?: components["schemas"]["TxSummary"][];
-                            };
-                        };
-                    };
-                };
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getLedgerTransactions"];
         put?: never;
         post?: never;
         delete?: never;
@@ -11299,82 +3437,7 @@ export interface paths {
          * @description Full transaction: the summary, every operation decoded from XDR into
          *     clean JSON (with its result code), and the contract events it emitted.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description 64-char hex transaction hash. */
-                    hash: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Transaction detail. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
-                         *         "ledger": 63316166,
-                         *         "close_time": "2026-07-03T22:37:01Z",
-                         *         "index": 0,
-                         *         "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
-                         *         "fee_charged": 600,
-                         *         "max_fee": 120000,
-                         *         "operation_count": 6,
-                         *         "successful": false,
-                         *         "result_code": -1,
-                         *         "memo_type": "none",
-                         *         "operations": [
-                         *           {
-                         *             "ledger": 63316166,
-                         *             "close_time": "2026-07-03T22:37:01Z",
-                         *             "tx_hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
-                         *             "tx_index": 0,
-                         *             "op_index": 0,
-                         *             "type": "payment",
-                         *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
-                         *             "fields": {
-                         *               "amount": "26000000000000",
-                         *               "asset": "XLM26-GD3CO7CGKHQKJ6LFGCXBOXHF5CJNVJ346AHQWA4RLVTVPCDYGCGWWCOL",
-                         *               "destination": "GDKRYQ4K45I6MYOQ3256TOAVCHD7AZIW4O2GEF6VACE6I2ZDX7XA6RJV"
-                         *             },
-                         *             "result_code": 0
-                         *           }
-                         *         ]
-                         *       },
-                         *       "as_of": "2026-07-03T22:40:09.331893286Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: components["schemas"]["TxDetail"];
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                /** @description No transaction with that hash in the indexed range. */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getTransaction"];
         put?: never;
         post?: never;
         delete?: never;
@@ -11408,102 +3471,7 @@ export interface paths {
          *       Fetch the full decoded op from the per-ledger form above or
          *       `/v1/tx/{hash}`.
          */
-        get: {
-            parameters: {
-                query?: {
-                    /** @description Ledger sequence. Omit for the network-wide recent directory. */
-                    ledger?: number;
-                    /** @description Opaque keyset cursor (directory mode only). */
-                    cursor?: string;
-                    /** @description Page size. Mode-dependent bounds — per-ledger mode: default 500, cap 2000; directory mode: default 50, cap 200. */
-                    limit?: number;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Decoded operations (ledger-scoped or the recent directory). */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "ledger": 63316166,
-                         *         "operations": [
-                         *           {
-                         *             "ledger": 63316166,
-                         *             "close_time": "2026-07-03T22:37:01Z",
-                         *             "tx_hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
-                         *             "tx_index": 0,
-                         *             "op_index": 0,
-                         *             "type": "payment",
-                         *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
-                         *             "fields": {
-                         *               "amount": "26000000000000",
-                         *               "asset": "XLM26-GD3CO7CGKHQKJ6LFGCXBOXHF5CJNVJ346AHQWA4RLVTVPCDYGCGWWCOL",
-                         *               "destination": "GDKRYQ4K45I6MYOQ3256TOAVCHD7AZIW4O2GEF6VACE6I2ZDX7XA6RJV"
-                         *             }
-                         *           },
-                         *           {
-                         *             "ledger": 63316166,
-                         *             "close_time": "2026-07-03T22:37:01Z",
-                         *             "tx_hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
-                         *             "tx_index": 0,
-                         *             "op_index": 1,
-                         *             "type": "payment",
-                         *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
-                         *             "fields": {
-                         *               "amount": "2600000000000",
-                         *               "asset": "XRP26-GD3CO7CGKHQKJ6LFGCXBOXHF5CJNVJ346AHQWA4RLVTVPCDYGCGWWCOL",
-                         *               "destination": "GDKRYQ4K45I6MYOQ3256TOAVCHD7AZIW4O2GEF6VACE6I2ZDX7XA6RJV"
-                         *             }
-                         *           }
-                         *         ]
-                         *       },
-                         *       "as_of": "2026-07-03T22:40:10.560512468Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: {
-                                /** @description The ledger (ledger-scoped mode); 0 in directory mode. */
-                                ledger?: number;
-                                operations?: components["schemas"]["Operation"][];
-                                /** @description Directory mode: opaque cursor for the next older page; absent on the last page. */
-                                next_cursor?: string;
-                                /** @description Directory mode, first page only: per-op-type counts over the trailing ~24h. */
-                                op_type_stats?: {
-                                    type?: string;
-                                    /** Format: int64 */
-                                    count?: number;
-                                }[];
-                                /**
-                                 * @description Present ONLY when the parent-transaction outcome read
-                                 *     failed: operations without `transaction_successful` are
-                                 *     then of UNKNOWN outcome (possibly a FAILED transaction),
-                                 *     not applied. Absent = every operation carries its true
-                                 *     transaction outcome.
-                                 */
-                                coverage_note?: string;
-                            };
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["listOperations"];
         put?: never;
         post?: never;
         delete?: never;
@@ -11532,83 +3500,7 @@ export interface paths {
          *     window actually aggregated is returned in `window_days` (with its floor
          *     in `since_ledger`); read those rather than echoing the request value.
          */
-        get: {
-            parameters: {
-                query?: {
-                    /**
-                     * @description Window size in days, rounded UP to the nearest supported window
-                     *     (1, 7, 30, 90, 365). The served window is returned in `window_days`.
-                     */
-                    days?: number;
-                    /** @description Maximum rows to return (1-500, default 100). Out-of-range values return 400. */
-                    limit?: number;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Ranked contracts directory. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "window_days": 30,
-                         *         "since_ledger": 62797785,
-                         *         "contracts": [
-                         *           {
-                         *             "contract_id": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
-                         *             "events": 84013660,
-                         *             "last_ledger": 63316185,
-                         *             "last_seen": "2026-07-03T22:38:55Z"
-                         *           },
-                         *           {
-                         *             "contract_id": "CB23WRDQWGSP6YPMY4UV5C4OW5CBTXKYN3XEATG7KJEZCXMJBYEHOUOV",
-                         *             "events": 31700010,
-                         *             "last_ledger": 63316185,
-                         *             "last_seen": "2026-07-03T22:38:55Z"
-                         *           }
-                         *         ]
-                         *       },
-                         *       "as_of": "2026-07-03T22:39:07.271202524Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: {
-                                window_days?: number;
-                                /** Format: int64 */
-                                since_ledger?: number;
-                                contracts?: {
-                                    contract_id?: string;
-                                    /** Format: int64 */
-                                    events?: number;
-                                    /** Format: int64 */
-                                    last_ledger?: number;
-                                    /** Format: date-time */
-                                    last_seen?: string;
-                                    /** @description Owning protocol when attributed; absent otherwise. */
-                                    protocol?: string;
-                                }[];
-                            };
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["listContracts"];
         put?: never;
         post?: never;
         delete?: never;
@@ -11636,96 +3528,7 @@ export interface paths {
          *     a full page is returned. The SEP-41 transfer audit trail is at the
          *     sibling `/contracts/{contract_id}/transfers`.
          */
-        get: {
-            parameters: {
-                query?: {
-                    /** @description Maximum rows to return (1-500, default 100). Out-of-range values return 400. */
-                    limit?: number;
-                    /** @description Opaque keyset cursor from a prior response's next_cursor. */
-                    cursor?: string;
-                };
-                header?: never;
-                path: {
-                    /** @description C-strkey contract id. */
-                    contract_id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Recent contract events. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "contract_id": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
-                         *         "events": [
-                         *           {
-                         *             "ledger": 63316186,
-                         *             "close_time": "2026-07-03T22:39:01Z",
-                         *             "tx_hash": "f867993250a0cc767084ea5312de03786deaa3c8e0671b27e6724381696e4cf0",
-                         *             "op_index": 0,
-                         *             "event_index": 0,
-                         *             "event_type": "contract",
-                         *             "topic_0": "transfer"
-                         *           },
-                         *           {
-                         *             "ledger": 63316186,
-                         *             "close_time": "2026-07-03T22:39:01Z",
-                         *             "tx_hash": "0982c7836389f9f876704cdac95fdaacd223482b0360c2b6a4039b3a4c0ea805",
-                         *             "op_index": 0,
-                         *             "event_index": 0,
-                         *             "event_type": "contract",
-                         *             "topic_0": "transfer"
-                         *           }
-                         *         ],
-                         *         "next_cursor": "63316186.0.0"
-                         *       },
-                         *       "as_of": "2026-07-03T22:39:09.248840367Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: {
-                                contract_id?: string;
-                                /** @description Registry protocol this contract belongs to (blend */
-                                protocol?: string;
-                                events?: components["schemas"]["ContractEvent"][];
-                                /** @description Opaque cursor for the next (older) page; absent on the last page. */
-                                next_cursor?: string;
-                                directory?: components["schemas"]["DirectoryInfo"];
-                                /** @description Liveness card — lifetime bounds + a 30-day daily active-ledger series. Absent when the activity index isn't provisioned. */
-                                activity?: {
-                                    /** Format: date-time */
-                                    first_seen?: string;
-                                    /** Format: date-time */
-                                    last_seen?: string;
-                                    /** Format: int64 */
-                                    active_ledgers_total?: number;
-                                    daily?: {
-                                        date?: string;
-                                        /** Format: int64 */
-                                        active_ledgers?: number;
-                                    }[];
-                                };
-                            };
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getContract"];
         put?: never;
         post?: never;
         delete?: never;
@@ -11766,97 +3569,7 @@ export interface paths {
          *     capture window. This is a coverage limitation of the substrate, not an
          *     error.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description C-strkey contract id. */
-                    contract_id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The contract's wasm view. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "contract_id": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
-                         *         "wasm_hash": "a41fc53d6753b6c04eb15b021c55052366a4c8e0e21bc72700f461264ec1350e",
-                         *         "size_bytes": 57328,
-                         *         "exports": [
-                         *           {
-                         *             "name": "__constructor",
-                         *             "params": [
-                         *               "i64",
-                         *               "i64"
-                         *             ],
-                         *             "results": [
-                         *               "i64"
-                         *             ]
-                         *           },
-                         *           {
-                         *             "name": "propose_admin",
-                         *             "params": [
-                         *               "i64"
-                         *             ],
-                         *             "results": [
-                         *               "i64"
-                         *             ]
-                         *           }
-                         *         ],
-                         *         "wat": "(module\n  (type (;0;) (func (param i64 i64) (result i64)))\n  (type (;1;) (func (param i64)…",
-                         *         "decompiled": "export memory memory(initial: 17, max: 0);\n\nglobal g_a:int = 1048576;\nexport global data_e…",
-                         *         "source_note": "wasm resolved from the certified ClickHouse lake (contract instance → wasm hash → contract…"
-                         *       },
-                         *       "as_of": "2026-07-03T22:40:51.773640137Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: {
-                                /** @description C-strkey contract id (echoed). */
-                                contract_id: string;
-                                /** @description Hex sha256 of the wasm module (content address). */
-                                wasm_hash: string;
-                                /** @description Size of the wasm module in bytes. */
-                                size_bytes: number;
-                                /** @description Exported functions — the contract's public entry points. */
-                                exports: {
-                                    /** @description Exported function name. */
-                                    name: string;
-                                    /** @description Wasm ABI param value types (i32/i64/f32/f64). */
-                                    params: string[];
-                                    /** @description Wasm ABI result value types. */
-                                    results: string[];
-                                }[];
-                                /** @description WAT disassembly; absent when wabt isn't installed on the server. */
-                                wat?: string;
-                                /** @description wasm-decompile pseudocode (C-like, NOT Rust); absent when wabt isn't installed. */
-                                decompiled?: string;
-                                /** @description Provenance + any degraded-stage explanation. */
-                                source_note: string;
-                            };
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                404: components["responses"]["NotFound"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getContractWasm"];
         put?: never;
         post?: never;
         delete?: never;
@@ -11893,82 +3606,7 @@ export interface paths {
          *     window, so this endpoint reports a recent SAMPLE of behaviour
          *     rather than a lifetime total.
          */
-        get: {
-            parameters: {
-                query?: {
-                    /** @description Upper bound on window size in days. The served window may be narrower for busy contracts — read since_ledger. */
-                    days?: number;
-                    /** @description Maximum rows to return (1-200, default 50). Out-of-range values return 400. */
-                    limit?: number;
-                };
-                header?: never;
-                path: {
-                    /** @description C-strkey contract id. */
-                    contract_id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Ranked interaction edges. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "contract_id": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
-                         *         "window_days": 90,
-                         *         "since_ledger": 61760987,
-                         *         "interactions": [
-                         *           {
-                         *             "contract_id": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
-                         *             "shared_txs": 49067
-                         *           },
-                         *           {
-                         *             "contract_id": "CARIFTQ64I7RUTN6VAD5CAXJGU5EQRTI6KBZPWD65CO33IQPHTHBSVNS",
-                         *             "shared_txs": 16207
-                         *           }
-                         *         ]
-                         *       },
-                         *       "as_of": "2026-07-03T22:39:12.058161999Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: {
-                                contract_id?: string;
-                                window_days?: number;
-                                /** Format: int64 */
-                                since_ledger?: number;
-                                interactions?: {
-                                    contract_id?: string;
-                                    /**
-                                     * Format: int64
-                                     * @description Number of DISTINCT transactions in which this contract and the subject both emitted events, within the query window.
-                                     *
-                                     *     Corrected 2026-07-25 (audit DAT-10 / DAT-11): this previously counted co-occurring EVENTS rather than transactions, so a contract emitting many events inside one shared transaction scored its event count. It also double-counted rows from a retried partial flush that the ReplacingMergeTree had not yet merged. Values are therefore LOWER than before for busy pairs — the old figure was an event count wearing a transaction count's name.
-                                     */
-                                    shared_txs?: number;
-                                    /** @description Owning protocol when attributed; absent otherwise. */
-                                    protocol?: string;
-                                }[];
-                            };
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getContractInteractions"];
         put?: never;
         post?: never;
         delete?: never;
@@ -11993,58 +3631,7 @@ export interface paths {
          *     `ledger_entry_changes` instance entries; empty when the instance isn't
          *     in the captured window (fills with the Phase-C backfill).
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description C-strkey contract id. */
-                    contract_id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Chronological WASM-hash versions. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "contract_id": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
-                         *         "versions": []
-                         *       },
-                         *       "as_of": "2026-07-03T22:39:13.312316848Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: {
-                                contract_id?: string;
-                                versions?: {
-                                    /** Format: int64 */
-                                    ledger?: number;
-                                    /** Format: date-time */
-                                    close_time?: string;
-                                    wasm_hash?: string;
-                                }[];
-                            };
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getContractCodeHistory"];
         put?: never;
         post?: never;
         delete?: never;
@@ -12078,74 +3665,7 @@ export interface paths {
          *     serve time); `flags.stale` fires when the watermark's close time
          *     trails now by more than 300s (a wedged sink).
          */
-        get: {
-            parameters: {
-                query?: {
-                    /** @description Maximum rows to return (1-500, default 100). Out-of-range values return 400. */
-                    limit?: number;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Accounts ranked by USD wealth, descending. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "priced_assets": 11,
-                         *         "accounts": [
-                         *           {
-                         *             "account_id": "GALAXYVOIDAOPZTDLHILAJQKCVVFMD4IKLXLSZV5YHO7VY74IWZILUTO",
-                         *             "usd_value": "11319540791.76",
-                         *             "locked": true
-                         *           },
-                         *           {
-                         *             "account_id": "GDUY7J7A33TQWOSOQGDO776GGLM3UQERL4J3SPT56F6YS4ID7MLDERI4",
-                         *             "usd_value": "838665433.46"
-                         *           }
-                         *         ],
-                         *         "as_of_ledger": 63340102
-                         *       },
-                         *       "as_of": "2026-07-03T22:39:22.213002912Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: {
-                                /** @description Number of assets that contributed a price. */
-                                priced_assets?: number;
-                                accounts?: {
-                                    account_id?: string;
-                                    /** @description Total holdings value in USD (decimal string). */
-                                    usd_value?: string;
-                                    /** @description Provably unspendable burn address — master weight 0 */
-                                    locked?: boolean;
-                                }[];
-                                /**
-                                 * Format: int64
-                                 * @description Lake watermark this current-state ranking is fresh to (ADR-0041) — the highest captured ledger at serve time. Omitted when no watermark reader is wired. Pairs with flags.stale.
-                                 */
-                                as_of_ledger?: number;
-                            };
-                        };
-                    };
-                };
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["listAccounts"];
         put?: never;
         post?: never;
         delete?: never;
@@ -12180,63 +3700,7 @@ export interface paths {
          *     address fails the whole request with 400 so client bugs surface
          *     instead of silently dropping labels.
          */
-        get: {
-            parameters: {
-                query: {
-                    /** @description Comma-separated G/C strkeys (max 100). */
-                    addresses: string;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Labels for the listed subset of the requested addresses. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "entries": {
-                         *           "GDUY7J7A33TQWOSOQGDO776GGLM3UQERL4J3SPT56F6YS4ID7MLDERI4": {
-                         *             "name": "SDF Growth 3",
-                         *             "domain": "stellar.org",
-                         *             "tags": [
-                         *               "sdf",
-                         *               "custodian"
-                         *             ],
-                         *             "source": "stellar-expert"
-                         *           }
-                         *         }
-                         *       },
-                         *       "as_of": "2026-08-06T12:00:00Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: {
-                                /** @description Address → label, present addresses only; always an object, never null. */
-                                entries: {
-                                    [key: string]: components["schemas"]["DirectoryInfo"];
-                                };
-                            };
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getDirectoryLabels"];
         put?: never;
         post?: never;
         delete?: never;
@@ -12266,128 +3730,7 @@ export interface paths {
          *     503 with type `accounts-stats-warming` until the rollup's first
          *     cycle completes on a fresh deployment.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The current analytics snapshot. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "totals": {
-                         *           "accounts": 9930118,
-                         *           "trustlines": 19400000,
-                         *           "trustline_holding_accounts": 3100000,
-                         *           "xlm_held_stroops": "1049598291112345678"
-                         *         },
-                         *         "balances": {
-                         *           "avg_stroops": "1056980000",
-                         *           "median_stroops": "50000000",
-                         *           "p90_stroops": "3200000000",
-                         *           "p99_stroops": "91000000000"
-                         *         },
-                         *         "concentration": {
-                         *           "top100_xlm_stroops": "512345678901234567",
-                         *           "top100_share_pct": 48.82
-                         *         },
-                         *         "wealth_histogram": [
-                         *           {
-                         *             "bucket": -1,
-                         *             "accounts": 4100000,
-                         *             "xlm_stroops": "9876543210"
-                         *           }
-                         *         ],
-                         *         "trustline_histogram": [
-                         *           {
-                         *             "bucket": "0",
-                         *             "accounts": 6830118
-                         *           },
-                         *           {
-                         *             "bucket": "1",
-                         *             "accounts": 1400000
-                         *           }
-                         *         ],
-                         *         "top_held_assets": [
-                         *           {
-                         *             "asset": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *             "holders": 619460
-                         *           }
-                         *         ],
-                         *         "computed_at": "2026-08-08T19:30:00Z"
-                         *       },
-                         *       "as_of": "2026-08-08T19:45:00Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: {
-                                totals: {
-                                    /** Format: int64 */
-                                    accounts?: number;
-                                    /** Format: int64 */
-                                    trustlines?: number;
-                                    /** Format: int64 */
-                                    trustline_holding_accounts?: number;
-                                    /** @description Total XLM held by funded accounts */
-                                    xlm_held_stroops?: string;
-                                };
-                                balances: {
-                                    avg_stroops?: string;
-                                    median_stroops?: string;
-                                    p90_stroops?: string;
-                                    p99_stroops?: string;
-                                };
-                                concentration: {
-                                    top100_xlm_stroops?: string;
-                                    /** @description Display convenience derived from the exact stroops figures. */
-                                    top100_share_pct?: number;
-                                };
-                                wealth_histogram: {
-                                    /** @description floor(log10(balance in XLM)), clamped to [-1, 10]. */
-                                    bucket?: number;
-                                    /** Format: int64 */
-                                    accounts?: number;
-                                    xlm_stroops?: string;
-                                }[];
-                                trustline_histogram: {
-                                    /** @description Trustlines-per-account band: 0, 1, 2-5, 6-10, 11-50, or 50+. */
-                                    bucket?: string;
-                                    /** Format: int64 */
-                                    accounts?: number;
-                                }[];
-                                top_held_assets?: {
-                                    asset?: string;
-                                    /** Format: int64 */
-                                    holders?: number;
-                                }[];
-                                /**
-                                 * Format: date-time
-                                 * @description Rollup cycle timestamp — the snapshot's real age.
-                                 */
-                                computed_at: string;
-                            };
-                        };
-                    };
-                };
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getAccountsStats"];
         put?: never;
         post?: never;
         delete?: never;
@@ -12420,132 +3763,7 @@ export interface paths {
          *     is fresh to (NOT the account's `last_modified_ledger`); `flags.stale`
          *     fires when the watermark's close time trails now by more than 300s.
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description Account G-strkey. */
-                    g_strkey: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Account state (or `exists:false`). */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "account_id": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *         "exists": true,
-                         *         "balance": "235182317613",
-                         *         "seq_num": "144373126631784461",
-                         *         "num_subentries": 6,
-                         *         "flags": 2,
-                         *         "home_domain": "circle.com",
-                         *         "thresholds": {
-                         *           "master": 0,
-                         *           "low": 2,
-                         *           "med": 2,
-                         *           "high": 2
-                         *         },
-                         *         "signers": [
-                         *           {
-                         *             "key": "GAUKFO2NIYEFO773KJZKLPSPYNQ6M7INPEAIQIJCIH7EEVP2KSVQWGH4",
-                         *             "weight": 1
-                         *           },
-                         *           {
-                         *             "key": "GAXFRO4MH6FSBJMNECVZJ6R3ZXANI7CFCMVN47IDNRQDHII3J5HTOZGB",
-                         *             "weight": 1
-                         *           }
-                         *         ],
-                         *         "trustlines": [
-                         *           {
-                         *             "asset": "USDCAllow-GDIEKKIQWMIZ4LD3RP3ABPN7X5KEAEWYMR634BRHB7EULIMEVREWLF3G",
-                         *             "balance": "77129744523269078",
-                         *             "limit": "9223372036854775807",
-                         *             "flags": 1
-                         *           }
-                         *         ],
-                         *         "offers": [
-                         *           {
-                         *             "offer_id": 426903336,
-                         *             "selling": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *             "buying": "USDCAllow-GDIEKKIQWMIZ4LD3RP3ABPN7X5KEAEWYMR634BRHB7EULIMEVREWLF3G",
-                         *             "amount": "9146242292331506729",
-                         *             "price_n": 1,
-                         *             "price_d": 1
-                         *           }
-                         *         ],
-                         *         "last_modified_ledger": 63314771,
-                         *         "as_of_ledger": 63340102
-                         *       },
-                         *       "as_of": "2026-07-03T22:39:25.722776013Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: {
-                                account_id?: string;
-                                exists?: boolean;
-                                /** @description Native XLM balance in stroops. */
-                                balance?: string;
-                                seq_num?: string;
-                                num_subentries?: number;
-                                flags?: number;
-                                home_domain?: string;
-                                thresholds?: {
-                                    master?: number;
-                                    low?: number;
-                                    med?: number;
-                                    high?: number;
-                                };
-                                signers?: {
-                                    key?: string;
-                                    weight?: number;
-                                }[];
-                                trustlines?: {
-                                    asset?: string;
-                                    balance?: string;
-                                    limit?: string;
-                                    flags?: number;
-                                }[];
-                                offers?: {
-                                    /** Format: int64 */
-                                    offer_id?: number;
-                                    selling?: string;
-                                    buying?: string;
-                                    amount?: string;
-                                    price_n?: number;
-                                    price_d?: number;
-                                }[];
-                                /** Format: int64 */
-                                last_modified_ledger?: number;
-                                /**
-                                 * Format: int64
-                                 * @description Lake watermark this read is fresh to (ADR-0041) — the highest captured ledger at serve time, NOT the account's last_modified_ledger. Omitted when no watermark reader is wired. Pairs with flags.stale.
-                                 */
-                                as_of_ledger?: number;
-                                directory?: components["schemas"]["DirectoryInfo"];
-                            };
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getAccount"];
         put?: never;
         post?: never;
         delete?: never;
@@ -12575,71 +3793,7 @@ export interface paths {
          *     backfill — a transaction whose only link to the account predates
          *     participant capture surfaces once the re-derive lands.
          */
-        get: {
-            parameters: {
-                query?: {
-                    /** @description Maximum rows to return (1-200, default 50). Out-of-range values return 400. */
-                    limit?: number;
-                    /** @description Opaque keyset cursor from a prior response's next_cursor. */
-                    cursor?: string;
-                };
-                header?: never;
-                path: {
-                    /** @description G-strkey account id. */
-                    g_strkey: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Transactions involving the account (sourced + incoming). */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "account": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *         "transactions": [
-                         *           {
-                         *             "hash": "be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36",
-                         *             "ledger": 63315192,
-                         *             "close_time": "2026-07-03T21:02:29Z",
-                         *             "index": 7,
-                         *             "source_account": "GDSQAEHJLE2ZZMQZ47YWLP3O2HVPYQ4QCFWTHUKMKF6RIX2ZJJDDMK4N",
-                         *             "fee_charged": 200,
-                         *             "max_fee": 13935,
-                         *             "operation_count": 1,
-                         *             "successful": true,
-                         *             "result_code": 1,
-                         *             "memo_type": "text",
-                         *             "memo": "internal"
-                         *           }
-                         *         ],
-                         *         "next_cursor": "63315192.7",
-                         *         "scope": "all"
-                         *       },
-                         *       "as_of": "2026-07-03T22:39:31.01258567Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: components["schemas"]["AccountTransactions"];
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getAccountTransactions"];
         put?: never;
         post?: never;
         delete?: never;
@@ -12666,71 +3820,7 @@ export interface paths {
          *     SOURCED plus those where it's a non-source PARTICIPANT — see the
          *     transactions endpoint above for the coverage/backfill note.
          */
-        get: {
-            parameters: {
-                query?: {
-                    /** @description Maximum rows to return (1-200, default 50). Out-of-range values return 400. */
-                    limit?: number;
-                    /** @description Opaque keyset cursor from a prior response's next_cursor. */
-                    cursor?: string;
-                };
-                header?: never;
-                path: {
-                    /** @description G-strkey account id. */
-                    g_strkey: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Sourced operations for the account. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "account": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *         "operations": [
-                         *           {
-                         *             "ledger": 63315192,
-                         *             "close_time": "2026-07-03T21:02:29Z",
-                         *             "tx_hash": "be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36",
-                         *             "tx_index": 7,
-                         *             "op_index": 0,
-                         *             "type": "payment",
-                         *             "source_account": "GDSQAEHJLE2ZZMQZ47YWLP3O2HVPYQ4QCFWTHUKMKF6RIX2ZJJDDMK4N",
-                         *             "fields": {
-                         *               "amount": "1000000000000",
-                         *               "asset": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *               "destination": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
-                         *             }
-                         *           }
-                         *         ],
-                         *         "next_cursor": "63315192.7.0",
-                         *         "scope": "all"
-                         *       },
-                         *       "as_of": "2026-07-03T22:39:45.671725025Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: components["schemas"]["AccountOperations"];
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getAccountOperations"];
         put?: never;
         post?: never;
         delete?: never;
@@ -12786,75 +3876,7 @@ export interface paths {
          *     further back. An accepted limitation of this experimental
          *     endpoint's Postgres half.
          */
-        get: {
-            parameters: {
-                query?: {
-                    /** @description Maximum rows to return (1-200, default 25). Out-of-range values return 400. */
-                    limit?: number;
-                    /** @description Opaque keyset cursor from a prior response's next_cursor. */
-                    cursor?: string;
-                    /** @description Filter by movement_kind exact match (e.g. payment, transfer, liquidity_pool_deposit). Omitted = any kind. */
-                    kind?: string;
-                    /** @description Filter by direction. */
-                    direction?: "sent" | "received" | "self";
-                    /** @description Filter by asset — see this operation's description for the matching asymmetry between the ClickHouse archive and the Postgres tail. */
-                    asset?: string;
-                };
-                header?: never;
-                path: {
-                    /** @description G-strkey account id. */
-                    g_strkey: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The account's unified movement feed. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "account": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *         "movements": [
-                         *           {
-                         *             "ledger": 60123456,
-                         *             "ledger_close_time": "2026-07-03T21:02:29Z",
-                         *             "tx_hash": "be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36",
-                         *             "op_index": 0,
-                         *             "leg_index": 0,
-                         *             "movement_kind": "transfer",
-                         *             "direction": "sent",
-                         *             "asset": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *             "amount": "1000000000000",
-                         *             "counterparty": "GDSQAEHJLE2ZZMQZ47YWLP3O2HVPYQ4QCFWTHUKMKF6RIX2ZJJDDMK4N",
-                         *             "provenance": "cap67_event"
-                         *           }
-                         *         ],
-                         *         "next_cursor": "60123456.be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36.0.0"
-                         *       },
-                         *       "as_of": "2026-07-10T22:39:31.01258567Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: components["schemas"]["AccountMovements"];
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getAccountMovements"];
         put?: never;
         post?: never;
         delete?: never;
@@ -12898,86 +3920,7 @@ export interface paths {
          *     "net-zero" means is protocol-specific — see each `position_kind`
          *     below); `?include_closed=true` includes them.
          */
-        get: {
-            parameters: {
-                query?: {
-                    /** @description Include net-zero / closed positions (excluded by default). */
-                    include_closed?: boolean;
-                };
-                header?: never;
-                path: {
-                    /** @description G-strkey account id. */
-                    g_strkey: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The account's folded DeFi positions. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "account": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *         "positions": [
-                         *           {
-                         *             "protocol": "blend",
-                         *             "position_kind": "lending_supply",
-                         *             "venue": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
-                         *             "venue_label": "USDC/XLM",
-                         *             "assets": [
-                         *               "USDC"
-                         *             ],
-                         *             "amount": "600000000",
-                         *             "amount_semantics": "net_underlying_at_event_time",
-                         *             "last_activity": {
-                         *               "ledger": 63316200,
-                         *               "time": "2026-07-10T21:02:29Z"
-                         *             },
-                         *             "basis": "event_derived"
-                         *           },
-                         *           {
-                         *             "protocol": "sorocredit",
-                         *             "position_kind": "credit",
-                         *             "venue": "CCG5EWFY2KCWWYYEIUMIRG6WSAQFLDR5QE5FMCWY25N36XA5GYTCPQWR",
-                         *             "assets": [
-                         *               "USDC"
-                         *             ],
-                         *             "amount": "480000000",
-                         *             "amount_semantics": "stateful_current",
-                         *             "last_activity": {
-                         *               "ledger": 63316350,
-                         *               "time": "2026-07-10T21:40:11Z"
-                         *             },
-                         *             "basis": "stateful"
-                         *           }
-                         *         ],
-                         *         "include_closed": false,
-                         *         "note": "Amounts are on-chain quantities only — no USD or other valuation is applied. event_derived positions are a sum of historical per-event amounts and do NOT model interest, fees, or exchange-rate accrual since each event; see each position's amount_semantics for exactly what the number represents, and basis for whether it was derived here or read from the protocol's own published state."
-                         *       },
-                         *       "as_of": "2026-07-10T22:39:31.01258567Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: components["schemas"]["AccountPositions"];
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getAccountPositions"];
         put?: never;
         post?: never;
         delete?: never;
@@ -13016,70 +3959,7 @@ export interface paths {
          *     aggregator valued the trade at ingest time — absent means
          *     "unknown", never zero.
          */
-        get: {
-            parameters: {
-                query?: {
-                    /** @description Maximum rows to return (1-200, default 50). Out-of-range values return 400. */
-                    limit?: number;
-                    /** @description Opaque keyset cursor from a prior response's next_cursor. */
-                    cursor?: string;
-                };
-                header?: never;
-                path: {
-                    /** @description G-strkey account id. */
-                    g_strkey: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The account's attributed trades. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "account": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *         "trades": [
-                         *           {
-                         *             "ts": "2026-07-29T12:00:00Z",
-                         *             "source": "sdex",
-                         *             "base_asset": "native",
-                         *             "quote_asset": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *             "base_amount": "10000000",
-                         *             "quote_amount": "1234567",
-                         *             "usd_volume": "0.12345600",
-                         *             "tx_hash": "be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36",
-                         *             "ledger": 63000001,
-                         *             "op_index": 0,
-                         *             "role": "taker"
-                         *           }
-                         *         ],
-                         *         "next_cursor": "1785340800000000000.63000001.be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36.0",
-                         *         "note": "On-chain trades where this address is recorded as the acting account (taker) or the resting sdex offer owner (maker). Coverage: sdex, aquarius, phoenix, comet. Soroswap swaps do not yet record the acting account and off-chain CEX/FX trades carry no Stellar account, so neither can appear here."
-                         *       },
-                         *       "as_of": "2026-07-30T22:39:31.01258567Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: components["schemas"]["AccountTrades"];
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getAccountTrades"];
         put?: never;
         post?: never;
         delete?: never;
@@ -13115,78 +3995,7 @@ export interface paths {
          *     bridge rows attribute to an address (and which directions
          *     structurally cannot).
          */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description G-strkey account id. */
-                    g_strkey: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The account's segmented activity breakdown. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "account": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *         "ops_by_type": [
-                         *           {
-                         *             "op_type": "payment",
-                         *             "count": 120
-                         *           },
-                         *           {
-                         *             "op_type": "manage_buy_offer",
-                         *             "count": 14
-                         *           }
-                         *         ],
-                         *         "trades_total": 77,
-                         *         "defi_actions": [
-                         *           {
-                         *             "protocol": "blend",
-                         *             "action": "supply",
-                         *             "count": 3
-                         *           },
-                         *           {
-                         *             "protocol": "aquarius",
-                         *             "action": "position_update",
-                         *             "count": 9
-                         *           }
-                         *         ],
-                         *         "bridge_transfers": {
-                         *           "rozo_outbound_payments": 1,
-                         *           "rozo_inbound_payments": 0,
-                         *           "cctp_outbound_burns": 2,
-                         *           "cctp_inbound_mints": 0,
-                         *           "note": "rozo matches payment from_addr (outbound) / destination (inbound). cctp matches deposit_for_burn depositor (outbound) and the Stellar-side mint_and_withdraw mint recipient (inbound) — an inbound mint delivered via a forwarder contract attributes to that contract, not the end user, and an outbound burn's destination-chain recipient is not a Stellar account so it is never matched."
-                         *         }
-                         *       },
-                         *       "as_of": "2026-07-30T22:39:31.01258567Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: components["schemas"]["AccountActivity"];
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
+        get: operations["getAccountActivity"];
         put?: never;
         post?: never;
         delete?: never;
@@ -13207,59 +4016,7 @@ export interface paths {
          * @description Single-box search: detects the kind of `q` by its shape and returns the
          *     canonical detail endpoint to route to. Pure classification (no lake read).
          */
-        get: {
-            parameters: {
-                query: {
-                    /** @description Tx hash */
-                    q: string;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Classified query. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "data": {
-                         *         "query": "63316166",
-                         *         "kind": "ledger",
-                         *         "canonical": "63316166",
-                         *         "href": "/v1/ledgers/63316166",
-                         *         "supported": true
-                         *       },
-                         *       "as_of": "2026-07-03T22:41:59.42624588Z",
-                         *       "flags": {
-                         *         "stale": false,
-                         *         "reduced_redundancy": false,
-                         *         "triangulated": false,
-                         *         "divergence_warning": false,
-                         *         "divergence_checked": false
-                         *       }
-                         *     }
-                         */
-                        "application/json": {
-                            data?: {
-                                query?: string;
-                                /** @enum {string} */
-                                kind?: "transaction" | "ledger" | "account" | "contract" | "asset" | "unknown";
-                                canonical?: string;
-                                href?: string;
-                                supported?: boolean;
-                                note?: string;
-                            };
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-            };
-        };
+        get: operations["classifySearchQuery"];
         put?: never;
         post?: never;
         delete?: never;
@@ -14398,6 +5155,9 @@ export interface components {
             uptime?: string;
             /** @description Pointer at `/v1/status` — the SLA-truth rollup (F-1210). */
             status_root?: string;
+        };
+        HealthEnvelope: components["schemas"]["EnvelopeMeta"] & {
+            data: components["schemas"]["HealthResponse"];
         };
         ReadyResponse: {
             /**
@@ -15741,6 +6501,38 @@ export interface components {
             data: components["schemas"]["AdminAccountView"];
         };
         /**
+         * @description Staff customer look-up result (`GET /v1/account/admin/lookup`):
+         *     the resolved account plus the users on it. NOT enveloped — a bare
+         *     `{account, users}` object, served with `Cache-Control: no-store`
+         *     (staff-only customer PII).
+         *
+         *     `account` reuses the operator `AdminAccountView` projection. Note
+         *     one behavioural difference from `GET /v1/admin/accounts/{id}`:
+         *     this surface omits `rate_limit_per_min_override` /
+         *     `monthly_request_quota_override` when they are 0 (inherit), where
+         *     the operator surface always emits them.
+         */
+        AdminLookupResponse: {
+            account: components["schemas"]["AdminAccountView"];
+            users: components["schemas"]["AdminUserView"][];
+        };
+        /**
+         * @description One user under the looked-up account (staff customer look-up).
+         *     Staff-only customer PII.
+         */
+        AdminUserView: {
+            /** Format: uuid */
+            id: string;
+            /** Format: email */
+            email: string;
+            display_name?: string;
+            role: string;
+            is_staff: boolean;
+            email_verified: boolean;
+            /** Format: date-time */
+            last_login_at?: string;
+        };
+        /**
          * @description An operator-posted customer-facing status banner (admin Phase
          *     1.5). Distinct from the Alertmanager-derived incidents on
          *     /v1/status and the embedded post-mortems on /v1/incidents.
@@ -16064,6 +6856,904 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    getLiveness: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /**
+             * @description Alive. `status` field is `ok`; a pointer at
+             *     `/v1/status` is included for the SLA-truth rollup.
+             */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "status": "ok",
+                     *         "uptime": "8m53s",
+                     *         "status_root": "/v1/status"
+                     *       },
+                     *       "as_of": "2026-07-03T22:37:12.743923086Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["HealthEnvelope"];
+                };
+            };
+        };
+    };
+    getReadiness: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /**
+             * @description Ready to serve. `data.checks[]` lists each
+             *     dependency-ping result. `data.status` is `ok` when
+             *     every check passed, or `degraded` when a NON-critical
+             *     dependency failed (the API still serves via fallback —
+             *     e.g. Timescale covers a Redis cache miss per ADR-0007 —
+             *     so the backend stays in the load-balancer pool;
+             *     `flags.stale` is `true` in the degraded case).
+             */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "status": "ok",
+                     *         "uptime": "8m54s",
+                     *         "checks": [
+                     *           {
+                     *             "name": "postgres",
+                     *             "ok": true
+                     *           },
+                     *           {
+                     *             "name": "redis",
+                     *             "ok": true
+                     *           }
+                     *         ],
+                     *         "status_root": "/v1/status"
+                     *       },
+                     *       "as_of": "2026-07-03T22:37:13.880270909Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ReadyEnvelope"];
+                };
+            };
+            /**
+             * @description One or more CRITICAL serving-plane dependencies failed
+             *     their ping under the deadline. The response is the same
+             *     enveloped `ReadyResponse` shape as the 200 (NOT
+             *     problem+json): `data.status` is `unready`, `flags.stale`
+             *     is `true`, and `data.checks[]` carries the per-dependency
+             *     breakdown so operators can see which dependency failed.
+             */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadyEnvelope"];
+                };
+            };
+        };
+    };
+    getVersion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Version string, build date, git SHA. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "build_date": "2026-07-03T22:24:02Z",
+                     *         "commit": "3d26b9d2b1bf72dc3caec9db9dceff59ca24f6b7",
+                     *         "dirty": "false",
+                     *         "go_version": "go1.25.11",
+                     *         "version": "v0.7.6"
+                     *       },
+                     *       "as_of": "2026-07-03T22:37:15.007238387Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["VersionResponse"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Status rollup envelope. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "overall": "ok",
+                     *         "region": {
+                     *           "name": "r1",
+                     *           "deployment": "production"
+                     *         },
+                     *         "services": [
+                     *           {
+                     *             "name": "api",
+                     *             "status": "ok",
+                     *             "last_seen": "2026-05-05T15:09:00.116Z"
+                     *           },
+                     *           {
+                     *             "name": "indexer",
+                     *             "status": "ok",
+                     *             "last_seen": "2026-05-05T15:08:46Z"
+                     *           },
+                     *           {
+                     *             "name": "aggregator",
+                     *             "status": "ok",
+                     *             "last_seen": "2026-05-05T15:08:47Z"
+                     *           }
+                     *         ],
+                     *         "latency": {
+                     *           "p50_ms": 0.6,
+                     *           "p95_ms": 3.85,
+                     *           "p99_ms": 4.77,
+                     *           "window_secs": 300,
+                     *           "p95_target_ms": 200,
+                     *           "p99_target_ms": 500
+                     *         },
+                     *         "freshness": {
+                     *           "last_aggregator_tick": "2026-05-05T15:08:57Z",
+                     *           "active_sources": 13,
+                     *           "total_sources": 17
+                     *         },
+                     *         "incidents": {
+                     *           "active_count": 0,
+                     *           "page_count": 0,
+                     *           "ticket_count": 0,
+                     *           "informational_count": 0
+                     *         },
+                     *         "incidents_status": "ok"
+                     *       },
+                     *       "as_of": "2026-05-05T15:09:00.119Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["StatusEnvelope"];
+                };
+            };
+        };
+    };
+    listStatusNotices: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Active status-notice list. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusNoticesEnvelope"];
+                };
+            };
+        };
+    };
+    listAssets: {
+        parameters: {
+            query?: {
+                /** @description Comma-separated row enrichments. Supported: `sparkline7d` (per-row 7-day price history for chart columns; one batch read per page). */
+                include?: string;
+                /** @description Case-insensitive substring filter over code / asset id / slug / name, applied server-side across BOTH phases of the unified listing (catalogue + the ~191K classic long tail). */
+                q?: string;
+                /**
+                 * @description Maximum rows per page (1-500, default 100). Values above
+                 *     the cap return 400 rather than being silently clamped.
+                 *     Page onward with `cursor` where the endpoint supports it.
+                 */
+                limit?: components["parameters"]["Limit"];
+                /**
+                 * @description Opaque pagination token echoed from a prior response's
+                 *     `pagination.next`. Pass it verbatim — it is a base64url-encoded
+                 *     blob whose internal shape is an implementation detail and
+                 *     changes without notice. Clients MUST NOT parse, decode, or
+                 *     construct cursors by hand.
+                 *
+                 *     A cursor is stable across retries but not across schema
+                 *     changes; treat it as short-lived (minutes, not days). Empty
+                 *     means "start from the beginning".
+                 */
+                cursor?: components["parameters"]["Cursor"];
+                /**
+                 * @description Major dispatch for the listing. One of:
+                 *     - `fiat` — fiat currencies from the verified-currency catalogue.
+                 *     - `stablecoin` — fiat-pegged stablecoins from the catalogue.
+                 *     - `crypto` — cryptocurrencies from the catalogue. The
+                 *       aliases `blockchain`, `cryptocurrency`, and
+                 *       `cryptocurrencies` fold to `crypto` (the explorer's
+                 *       filter-chip label).
+                 *     - `all` — the unified cross-class listing (every catalogue
+                 *       class plus indexed Stellar assets).
+                 *
+                 *     Omitted: the legacy classic-assets page (unfiltered).
+                 */
+                asset_class?: "fiat" | "stablecoin" | "crypto" | "blockchain" | "cryptocurrency" | "cryptocurrencies" | "all";
+                /**
+                 * @description Filter the listing to assets minted by the supplied
+                 *     issuer G-strkey. Sourced from the same ListCoinsExt
+                 *     path the legacy issuer-scoped listing used; rows
+                 *     include the full coin-overlay shape (price_usd /
+                 *     volume_24h_usd / change_*_pct / etc) when a
+                 *     CoinsReader is wired.
+                 */
+                issuer?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Page of assets. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "kind": "stellar_asset",
+                     *           "asset_id": "xlm",
+                     *           "type": "global",
+                     *           "code": "XLM",
+                     *           "decimals": 0,
+                     *           "class": "crypto",
+                     *           "sep1_status": "not_applicable",
+                     *           "name": "Stellar Lumens",
+                     *           "circulating_supply": "339918360790041352",
+                     *           "market_cap_usd": "6937310086.48",
+                     *           "volume_24h_usd": "2601049.43451797",
+                     *           "change_24h_pct": "3.63",
+                     *           "price_usd": "0.20401200646499857404",
+                     *           "change_1h_pct": "0.01",
+                     *           "change_7d_pct": "15.70",
+                     *           "slug": "xlm"
+                     *         },
+                     *         {
+                     *           "kind": "stellar_asset",
+                     *           "asset_id": "usdc",
+                     *           "type": "global",
+                     *           "code": "USDC",
+                     *           "decimals": 0,
+                     *           "class": "stablecoin",
+                     *           "sep1_status": "not_applicable",
+                     *           "name": "USD Coin",
+                     *           "circulating_supply": "2728642106735257",
+                     *           "market_cap_usd": "273375235.46",
+                     *           "volume_24h_usd": "2292696.89850489",
+                     *           "change_24h_pct": "0.33",
+                     *           "price_usd": "0.99989000000000",
+                     *           "change_1h_pct": "0.17",
+                     *           "change_7d_pct": "0.18",
+                     *           "slug": "usdc"
+                     *         }
+                     *       ],
+                     *       "as_of": "2026-07-03T22:37:16.207112941Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       },
+                     *       "pagination": {
+                     *         "next": "catalogue:2"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["AssetListEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listExternalAssets: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Opaque pagination token echoed from a prior response's
+                 *     `pagination.next`. Pass it verbatim — it is a base64url-encoded
+                 *     blob whose internal shape is an implementation detail and
+                 *     changes without notice. Clients MUST NOT parse, decode, or
+                 *     construct cursors by hand.
+                 *
+                 *     A cursor is stable across retries but not across schema
+                 *     changes; treat it as short-lived (minutes, not days). Empty
+                 *     means "start from the beginning".
+                 */
+                cursor?: components["parameters"]["Cursor"];
+                /**
+                 * @description Maximum rows per page (1-500, default 100). Values above
+                 *     the cap return 400 rather than being silently clamped.
+                 *     Page onward with `cursor` where the endpoint supports it.
+                 */
+                limit?: components["parameters"]["Limit"];
+                /**
+                 * @description Optional class filter within the external set: `fiat` or
+                 *     `crypto` (reference coins). Omitted returns all external rows,
+                 *     market-cap ordered (fiats first).
+                 */
+                asset_class?: "fiat" | "stablecoin" | "crypto" | "blockchain" | "cryptocurrency" | "cryptocurrencies";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Page of external assets. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "kind": "stellar_asset",
+                     *           "asset_id": "chinese-yuan",
+                     *           "type": "global",
+                     *           "code": "CNY",
+                     *           "decimals": 0,
+                     *           "class": "fiat",
+                     *           "sep1_status": "not_applicable",
+                     *           "name": "Chinese Yuan",
+                     *           "circulating_supply": "302000000000000",
+                     *           "market_cap_usd": "44486344754441.27",
+                     *           "slug": "chinese-yuan"
+                     *         },
+                     *         {
+                     *           "kind": "stellar_asset",
+                     *           "asset_id": "us-dollar",
+                     *           "type": "global",
+                     *           "code": "USD",
+                     *           "decimals": 0,
+                     *           "class": "fiat",
+                     *           "sep1_status": "not_applicable",
+                     *           "name": "US Dollar",
+                     *           "circulating_supply": "21700000000000",
+                     *           "market_cap_usd": "21700000000000.00",
+                     *           "price_usd": "1.00000000000000",
+                     *           "slug": "us-dollar"
+                     *         }
+                     *       ],
+                     *       "as_of": "2026-07-03T22:37:17.396303097Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       },
+                     *       "pagination": {
+                     *         "next": "2"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["AssetListEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getExternalAsset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Catalogue slug (e.g. `us-dollar`, `bitcoin`) or ticker (`USD`, `BTC`). */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description External asset detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "kind": "catalogue",
+                     *         "ticker": "USD",
+                     *         "slug": "us-dollar",
+                     *         "name": "US Dollar",
+                     *         "description": "Official currency of the United States. Reserve currency for most international trade and…",
+                     *         "class": "fiat",
+                     *         "coingecko_id": "usd",
+                     *         "price_usd": "1.00000000000000",
+                     *         "price_authority": "vwap_native",
+                     *         "price_sources": [
+                     *           "identity"
+                     *         ],
+                     *         "price_as_of": "2026-07-03T22:37:18.534338873Z",
+                     *         "circulating_supply": "21700000000000",
+                     *         "market_cap_usd": "21700000000000.00"
+                     *       },
+                     *       "as_of": "2026-07-03T22:37:18.534353688Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["GlobalAssetEnvelope"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listVerifiedAssets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description List of verified-currency directory entries. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "ticker": "XLM",
+                     *           "slug": "xlm",
+                     *           "name": "Stellar Lumens",
+                     *           "class": "crypto",
+                     *           "verified_issuer": "Stellar Development Foundation",
+                     *           "coingecko_id": "stellar",
+                     *           "coinmarketcap_id": "512"
+                     *         }
+                     *       ],
+                     *       "as_of": "2026-07-03T22:37:19.6906857Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["VerifiedCurrencyListEnvelope"];
+                };
+            };
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getAsset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Canonical asset identifier. One of `native`, `<code>-<issuer>`,
+                 *     `<code>:<issuer>` (alias), or `<contract_id>`. Strkeys
+                 *     validated per SEP-23. The handler is strict — short symbols
+                 *     like `XLM` or `USDC` are NOT accepted here; use `native` or
+                 *     the full `<code>-<G…>` form.
+                 * @example native
+                 */
+                asset_id: components["parameters"]["AssetIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Asset + metadata. Shape depends on whether `asset_id` is a slug or a canonical id. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "kind": "stellar_asset",
+                     *         "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *         "type": "classic",
+                     *         "code": "USDC",
+                     *         "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *         "home_domain": "centre.io",
+                     *         "decimals": 7,
+                     *         "sep1_status": "verified",
+                     *         "name": "USD Coin",
+                     *         "org_name": "Centre Consortium LLC",
+                     *         "circulating_supply": "2757874444178474",
+                     *         "total_supply": "2757874444178474",
+                     *         "market_cap_usd": "275787444.42",
+                     *         "volume_24h_usd": "2293068.58731944",
+                     *         "price_usd": "1.0002795935",
+                     *         "change_1h_pct": "-0.09",
+                     *         "change_7d_pct": "-0.14",
+                     *         "top_markets": [
+                     *           {
+                     *             "counterparty": "native",
+                     *             "side": "quote",
+                     *             "volume_24h_usd": "1184662.45607940",
+                     *             "trade_count_24h": 44334
+                     *           }
+                     *         ],
+                     *         "price_history_24h": [
+                     *           {
+                     *             "t": "2026-07-02T23:00:00Z",
+                     *             "p": "1.0018115222"
+                     *           }
+                     *         ],
+                     *         "price_history_7d": [
+                     *           {
+                     *             "t": "2026-06-27T00:00:00Z",
+                     *             "p": "1.0007031277"
+                     *           }
+                     *         ],
+                     *         "markets_count": 1236,
+                     *         "trade_count_24h": 286977,
+                     *         "slug": "USDC",
+                     *         "first_seen_ledger": 34180766,
+                     *         "last_seen_ledger": 63316034
+                     *       },
+                     *       "as_of": "2026-07-03T22:36:28.712467097Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["AssetEnvelope"] | components["schemas"]["GlobalAssetEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getAssetMetadata: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Canonical asset identifier. One of `native`, `<code>-<issuer>`,
+                 *     `<code>:<issuer>` (alias), or `<contract_id>`. Strkeys
+                 *     validated per SEP-23. The handler is strict — short symbols
+                 *     like `XLM` or `USDC` are NOT accepted here; use `native` or
+                 *     the full `<code>-<G…>` form.
+                 * @example native
+                 */
+                asset_id: components["parameters"]["AssetIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Extended metadata. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *         "home_domain": "centre.io",
+                     *         "sep1_status": "verified",
+                     *         "name": "USD Coin",
+                     *         "description": "USDC is a fully collateralized US Dollar stablecoin, based on the open source fiat stablec…",
+                     *         "image": "https://www.centre.io/images/usdc/usdc-icon-86074d9d49.png",
+                     *         "org_name": "Centre Consortium LLC",
+                     *         "anchor_asset": "USD",
+                     *         "anchor_asset_type": "fiat"
+                     *       },
+                     *       "as_of": "2026-07-03T22:37:22.027894731Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["AssetMetadataEnvelope"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getAssetSupply: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Canonical asset identifier. One of `native`, `<code>-<issuer>`,
+                 *     `<code>:<issuer>` (alias), or `<contract_id>`. Strkeys
+                 *     validated per SEP-23. The handler is strict — short symbols
+                 *     like `XLM` or `USDC` are NOT accepted here; use `native` or
+                 *     the full `<code>-<G…>` form.
+                 * @example native
+                 */
+                asset_id: components["parameters"]["AssetIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Live supply. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "asset_id": "native",
+                     *         "total_supply": "1054439020873472865",
+                     *         "flow_count": 0,
+                     *         "source": "ledger_total_coins",
+                     *         "as_of_ledger": 63340102
+                     *       },
+                     *       "as_of": "2026-07-03T22:40:11.747021406Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["AssetSupplyEnvelope"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getAssetHolders: {
+        parameters: {
+            query?: {
+                /** @description Maximum rows to return (1-500, default 100). Out-of-range values return 400. */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description Canonical asset identifier. One of `native`, `<code>-<issuer>`,
+                 *     `<code>:<issuer>` (alias), or `<contract_id>`. Strkeys
+                 *     validated per SEP-23. The handler is strict — short symbols
+                 *     like `XLM` or `USDC` are NOT accepted here; use `native` or
+                 *     the full `<code>-<G…>` form.
+                 * @example native
+                 */
+                asset_id: components["parameters"]["AssetIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ranked holders + total holder count. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "asset": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *         "holder_count": 615912,
+                     *         "holders": [
+                     *           {
+                     *             "account_id": "GDWL5I6SENNVRK7PS7U3CRXIQTWHLFPSBXCGA3TWKTK7AQ7XO6FBXDFG",
+                     *             "balance": "353017552538442"
+                     *           },
+                     *           {
+                     *             "account_id": "GC5LF63GRVIT5ZXXCXLPI3RX2YXKJQFZVBSAO6AUELN3YIMSWPD6Z6FH",
+                     *             "balance": "282865538219201"
+                     *           }
+                     *         ],
+                     *         "as_of_ledger": 63340102
+                     *       },
+                     *       "as_of": "2026-07-03T22:37:30.738401847Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: {
+                            asset?: string;
+                            /** Format: int64 */
+                            holder_count?: number;
+                            holders?: {
+                                account_id?: string;
+                                balance?: string;
+                            }[];
+                            /**
+                             * Format: int64
+                             * @description Lake watermark this read is fresh to (ADR-0041). Omitted when no watermark reader is wired. Pairs with flags.stale.
+                             */
+                            as_of_ledger?: number;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getPrice: {
+        parameters: {
+            query: {
+                /** @description Aggregation window in seconds (board #43; proposal: the current-price window is query-selectable). Default 60 = the closed 1-minute bucket (ADR-0015 semantics, unchanged). 300/3600/86400 serve the aggregator's continuously-published rolling VWAP for that window; a window the aggregator has not published for the pair is a 404, never a silent substitution. Sub-minute rolling windows: /v1/price/tip. */
+                window?: "60" | "300" | "3600" | "86400";
+                /**
+                 * @description Canonical asset identifier — matches the `asset_id` on
+                 *     response bodies. Query-parameter form is the shorter `asset`
+                 *     per the handler implementations (/v1/price, /v1/oracle/latest).
+                 *     Strict canonical form only — `XLM` / `USDC` are rejected;
+                 *     use `native` for XLM and the full `<code>-<G…>` strkey for
+                 *     credit assets.
+                 * @example native
+                 */
+                asset: components["parameters"]["AssetQuery"];
+                /**
+                 * @description Quote-side asset. Either a canonical asset identifier (`native`,
+                 *     `<code>-<issuer>`, contract ID) for crypto-quoted pairs, or
+                 *     the `fiat:<ISO-4217>` form for fiat quotes (e.g. `fiat:USD`,
+                 *     `fiat:EUR`). Default `fiat:USD`.
+                 * @example fiat:USD
+                 */
+                quote?: components["parameters"]["Quote"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current price with freshness flags. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "asset_id": "native",
+                     *         "quote": "fiat:USD",
+                     *         "price": "0.159608357106",
+                     *         "price_type": "vwap",
+                     *         "observed_at": "2026-05-05T14:35:00Z",
+                     *         "window_seconds": 300
+                     *       },
+                     *       "as_of": "2026-05-05T14:35:42.881Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PriceEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
     getPriceAt: {
         parameters: {
             query: {
@@ -16203,6 +7893,8584 @@ export interface operations {
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
             503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getPriceTip: {
+        parameters: {
+            query: {
+                /**
+                 * @description Canonical asset identifier — matches the `asset_id` on
+                 *     response bodies. Query-parameter form is the shorter `asset`
+                 *     per the handler implementations (/v1/price, /v1/oracle/latest).
+                 *     Strict canonical form only — `XLM` / `USDC` are rejected;
+                 *     use `native` for XLM and the full `<code>-<G…>` strkey for
+                 *     credit assets.
+                 * @example native
+                 */
+                asset: components["parameters"]["AssetQuery"];
+                /**
+                 * @description Quote-side asset. Either a canonical asset identifier (`native`,
+                 *     `<code>-<issuer>`, contract ID) for crypto-quoted pairs, or
+                 *     the `fiat:<ISO-4217>` form for fiat quotes (e.g. `fiat:USD`,
+                 *     `fiat:EUR`). Default `fiat:USD`.
+                 * @example fiat:USD
+                 */
+                quote?: components["parameters"]["Quote"];
+                /** @description Rolling-window size in seconds for the VWAP. */
+                window_seconds?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Tip price (VWAP or last-good fallback). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "asset_id": "native",
+                     *         "quote": "fiat:USD",
+                     *         "price": "0.2042667348",
+                     *         "price_type": "vwap",
+                     *         "observed_at": "2026-07-03T22:37:33.044745387Z",
+                     *         "window_seconds": 30
+                     *       },
+                     *       "as_of": "2026-07-03T22:37:33.045908618Z",
+                     *       "sources": [
+                     *         "coinbase",
+                     *         "bitstamp"
+                     *       ],
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PriceEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    streamPriceTip: {
+        parameters: {
+            query: {
+                /**
+                 * @description Canonical asset identifier — matches the `asset_id` on
+                 *     response bodies. Query-parameter form is the shorter `asset`
+                 *     per the handler implementations (/v1/price, /v1/oracle/latest).
+                 *     Strict canonical form only — `XLM` / `USDC` are rejected;
+                 *     use `native` for XLM and the full `<code>-<G…>` strkey for
+                 *     credit assets.
+                 * @example native
+                 */
+                asset: components["parameters"]["AssetQuery"];
+                /**
+                 * @description Quote-side asset. Either a canonical asset identifier (`native`,
+                 *     `<code>-<issuer>`, contract ID) for crypto-quoted pairs, or
+                 *     the `fiat:<ISO-4217>` form for fiat quotes (e.g. `fiat:USD`,
+                 *     `fiat:EUR`). Default `fiat:USD`.
+                 * @example fiat:USD
+                 */
+                quote?: components["parameters"]["Quote"];
+                /** @description Tick cadence (and rolling-VWAP window) in seconds. */
+                window_seconds?: number;
+            };
+            header?: {
+                /** @description Opaque ID for resuming a previously-broken stream. */
+                "Last-Event-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description SSE stream of tip_update events. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example id: 0198a41f2b3c0001
+                     *     event: tip_update
+                     *     data: {"data":{"asset_id":"native","quote":"fiat:USD","price":"0.2042667348","price_type":"vwap","observed_at":"2026-07-03T22:37:33.044745387Z","window_seconds":30},"as_of":"2026-07-03T22:37:33.045908618Z","sources":["coinbase","bitstamp"],"flags":{"stale":false,"reduced_redundancy":false,"triangulated":false,"divergence_warning":false,"divergence_checked":false}}
+                     *
+                     *     :keepalive
+                     *
+                     *     id: 0198a41f2b3c0002
+                     *     event: tip_update
+                     *     data: {"data":{"asset_id":"native","quote":"fiat:USD","price":"0.2042701122","price_type":"vwap","observed_at":"2026-07-03T22:37:38.051902614Z","window_seconds":30},"as_of":"2026-07-03T22:37:38.052918217Z","sources":["coinbase","bitstamp"],"flags":{"stale":false,"reduced_redundancy":false,"triangulated":false,"divergence_warning":false,"divergence_checked":false}}
+                     */
+                    "text/event-stream": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getPriceBatch: {
+        parameters: {
+            query: {
+                /**
+                 * @description Comma-separated canonical asset ids, max 100. Same strict
+                 *     form as `/v1/price?asset=` — short symbols are rejected.
+                 * @example native,USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+                 */
+                asset_ids: string;
+                /**
+                 * @description Quote-side asset. Either a canonical asset identifier (`native`,
+                 *     `<code>-<issuer>`, contract ID) for crypto-quoted pairs, or
+                 *     the `fiat:<ISO-4217>` form for fiat quotes (e.g. `fiat:USD`,
+                 *     `fiat:EUR`). Default `fiat:USD`.
+                 * @example fiat:USD
+                 */
+                quote?: components["parameters"]["Quote"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Batch prices. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "asset_id": "crypto:XLM",
+                     *           "quote": "fiat:USD",
+                     *           "price": "0.20401200646499857404",
+                     *           "price_type": "vwap",
+                     *           "observed_at": "2026-07-03T22:36:00Z",
+                     *           "window_seconds": 60,
+                     *           "change_24h_pct": "+3.62"
+                     *         },
+                     *         {
+                     *           "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *           "quote": "fiat:USD",
+                     *           "price": "1.000000000000",
+                     *           "price_type": "peg",
+                     *           "observed_at": "2026-07-03T22:37:34.197270411Z"
+                     *         }
+                     *       ],
+                     *       "as_of": "2026-07-03T22:37:34.248518093Z",
+                     *       "sources": [
+                     *         "bitstamp",
+                     *         "coinbase"
+                     *       ],
+                     *       "flags": {
+                     *         "stale": true,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": true,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PriceBatchEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getPriceBatchBulk: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    asset_ids: string[];
+                    /** @default USD */
+                    quote?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Batch prices. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "asset_id": "crypto:XLM",
+                     *           "quote": "fiat:USD",
+                     *           "price": "0.20401200646499857404",
+                     *           "price_type": "vwap",
+                     *           "observed_at": "2026-07-03T22:36:00Z",
+                     *           "window_seconds": 60,
+                     *           "change_24h_pct": "+3.62"
+                     *         },
+                     *         {
+                     *           "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *           "quote": "fiat:USD",
+                     *           "price": "1.000000000000",
+                     *           "price_type": "peg",
+                     *           "observed_at": "2026-07-03T22:37:34.197270411Z"
+                     *         }
+                     *       ],
+                     *       "as_of": "2026-07-03T22:37:34.248518093Z",
+                     *       "sources": [
+                     *         "bitstamp",
+                     *         "coinbase"
+                     *       ],
+                     *       "flags": {
+                     *         "stale": true,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": true,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PriceBatchEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listObservations: {
+        parameters: {
+            query: {
+                /**
+                 * @description Canonical asset identifier — matches the `asset_id` on
+                 *     response bodies. Query-parameter form is the shorter `asset`
+                 *     per the handler implementations (/v1/price, /v1/oracle/latest).
+                 *     Strict canonical form only — `XLM` / `USDC` are rejected;
+                 *     use `native` for XLM and the full `<code>-<G…>` strkey for
+                 *     credit assets.
+                 * @example native
+                 */
+                asset: components["parameters"]["AssetQuery"];
+                /**
+                 * @description Quote-side asset. Either a canonical asset identifier (`native`,
+                 *     `<code>-<issuer>`, contract ID) for crypto-quoted pairs, or
+                 *     the `fiat:<ISO-4217>` form for fiat quotes (e.g. `fiat:USD`,
+                 *     `fiat:EUR`). Default `fiat:USD`.
+                 * @example fiat:USD
+                 */
+                quote?: components["parameters"]["Quote"];
+                /** @description Restrict to one source's most-recent trade (0/1 row). */
+                source?: string;
+                /**
+                 * @description `latest` collapses to the single most-recent trade across
+                 *     all sources. Omit for one row per source.
+                 */
+                aggregate?: "latest";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Per-source observations array. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "source": "sdex",
+                     *           "ledger": 63316220,
+                     *           "tx_hash": "825ede3a206341add5b365d22023de7843b098f710b014de56aa99d29fe7e27b",
+                     *           "op_index": 1025,
+                     *           "ts": "2026-07-03T22:42:17Z",
+                     *           "base_asset": "native",
+                     *           "quote_asset": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *           "base_amount": "55653",
+                     *           "quote_amount": "11363",
+                     *           "price": "0.2041758755"
+                     *         }
+                     *       ],
+                     *       "as_of": "2026-07-03T22:42:26.862812578Z",
+                     *       "sources": [
+                     *         "sdex"
+                     *       ],
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false,
+                     *         "single_source": true
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: components["schemas"]["TradeRow"][];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    streamObservations: {
+        parameters: {
+            query: {
+                /**
+                 * @description Canonical asset identifier — matches the `asset_id` on
+                 *     response bodies. Query-parameter form is the shorter `asset`
+                 *     per the handler implementations (/v1/price, /v1/oracle/latest).
+                 *     Strict canonical form only — `XLM` / `USDC` are rejected;
+                 *     use `native` for XLM and the full `<code>-<G…>` strkey for
+                 *     credit assets.
+                 * @example native
+                 */
+                asset: components["parameters"]["AssetQuery"];
+                /**
+                 * @description Quote-side asset. Either a canonical asset identifier (`native`,
+                 *     `<code>-<issuer>`, contract ID) for crypto-quoted pairs, or
+                 *     the `fiat:<ISO-4217>` form for fiat quotes (e.g. `fiat:USD`,
+                 *     `fiat:EUR`). Default `fiat:USD`.
+                 * @example fiat:USD
+                 */
+                quote?: components["parameters"]["Quote"];
+                /** @description Restrict to one source's most-recent trade. */
+                source?: string;
+                /**
+                 * @description `latest` collapses to the single most-recent trade across
+                 *     all sources.
+                 */
+                aggregate?: "latest";
+                /** @description Tick cadence in seconds. */
+                interval_seconds?: number;
+            };
+            header?: {
+                /** @description Opaque ID for resuming a previously-broken stream. */
+                "Last-Event-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description SSE stream of observations_update events. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example id: 0198a41f6d900001
+                     *     event: observations_update
+                     *     data: {"data":[{"source":"sdex","ledger":63316220,"tx_hash":"825ede3a206341add5b365d22023de7843b098f710b014de56aa99d29fe7e27b","op_index":1025,"ts":"2026-07-03T22:42:17Z","base_asset":"native","quote_asset":"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN","base_amount":"55653","quote_amount":"11363","price":"0.2041758755"}],"as_of":"2026-07-03T22:42:26.862812578Z","sources":["sdex"],"flags":{"stale":false,"reduced_redundancy":false,"triangulated":false,"divergence_warning":false,"divergence_checked":false,"single_source":true}}
+                     *
+                     *     :keepalive
+                     *
+                     *     id: 0198a41f6d900002
+                     *     event: observations_update
+                     *     data: {"data":[],"as_of":"2026-07-03T22:42:31.870004112Z","sources":[],"flags":{"stale":false,"reduced_redundancy":false,"triangulated":false,"divergence_warning":false,"divergence_checked":false,"single_source":false}}
+                     */
+                    "text/event-stream": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    streamPrices: {
+        parameters: {
+            query: {
+                /**
+                 * @description Canonical asset identifier — matches the `asset_id` on
+                 *     response bodies. Query-parameter form is the shorter `asset`
+                 *     per the handler implementations (/v1/price, /v1/oracle/latest).
+                 *     Strict canonical form only — `XLM` / `USDC` are rejected;
+                 *     use `native` for XLM and the full `<code>-<G…>` strkey for
+                 *     credit assets.
+                 * @example native
+                 */
+                asset: components["parameters"]["AssetQuery"];
+                /**
+                 * @description Quote-side asset. Either a canonical asset identifier (`native`,
+                 *     `<code>-<issuer>`, contract ID) for crypto-quoted pairs, or
+                 *     the `fiat:<ISO-4217>` form for fiat quotes (e.g. `fiat:USD`,
+                 *     `fiat:EUR`). Default `fiat:USD`.
+                 * @example fiat:USD
+                 */
+                quote?: components["parameters"]["Quote"];
+                /** @description Which closed-bucket window series to follow, in seconds. The standard aggregator windows are 300, 3600, and 86400; a window the aggregator doesn't publish yields a silent (heartbeat-only) stream. */
+                window_seconds?: number;
+            };
+            header?: {
+                /** @description Opaque ID for resuming a previously-broken stream. */
+                "Last-Event-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description SSE stream of price_update events. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example id: 0198a4203f100001
+                     *     event: price_update
+                     *     data: {"data":{"asset_id":"native","quote":"fiat:USD","price":"0.159608357106","price_type":"vwap","observed_at":"2026-05-05T14:35:00Z","window_seconds":300},"as_of":"2026-05-05T14:35:42.881Z","flags":{"stale":false,"reduced_redundancy":false,"triangulated":false,"divergence_warning":false}}
+                     *
+                     *     :keepalive
+                     *
+                     *     id: 0198a4203f100002
+                     *     event: price_update
+                     *     data: {"data":{"asset_id":"native","quote":"fiat:USD","price":"0.159701882234","price_type":"vwap","observed_at":"2026-05-05T14:36:00Z","window_seconds":300},"as_of":"2026-05-05T14:36:00.417Z","flags":{"stale":false,"reduced_redundancy":false,"triangulated":false,"divergence_warning":false}}
+                     */
+                    "text/event-stream": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getHistory: {
+        parameters: {
+            query: {
+                /**
+                 * @description Canonical asset identifier for the base side of a pair.
+                 *     Strict canonical form only — `USDC` / `XLM` are rejected;
+                 *     the full `<code>-<G…>` strkey is required, or `native` for
+                 *     XLM. The default example resolves to Centre's USDC issuance,
+                 *     which is the most-traded base on Stellar.
+                 * @example USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+                 */
+                base: components["parameters"]["Base"];
+                /**
+                 * @description Quote-side asset (REQUIRED on this endpoint). Either a
+                 *     canonical asset identifier (`native`, `<code>-<issuer>`,
+                 *     contract ID) or the `fiat:<ISO-4217>` form (e.g. `fiat:USD`,
+                 *     `fiat:EUR`). Unlike the `/price` family, this endpoint does
+                 *     NOT default the quote — omitting it returns 400.
+                 * @example fiat:USD
+                 */
+                quote: components["parameters"]["QuoteRequired"];
+                /**
+                 * @description Window start (inclusive), RFC 3339 UTC — e.g.
+                 *     `2026-06-01T00:00:00Z`. Windows are half-open `[from, to)`.
+                 *     When omitted the endpoint applies its own default lookback
+                 *     from `to` (documented per endpoint). Must be before `to`
+                 *     or the request 400s.
+                 */
+                from?: components["parameters"]["From"];
+                /**
+                 * @description Window end (exclusive), RFC 3339 UTC. Defaults to now.
+                 *     Windows are half-open `[from, to)` — a trade exactly at
+                 *     `to` is excluded.
+                 */
+                to?: components["parameters"]["To"];
+                limit?: number;
+                /**
+                 * @description Opaque pagination token echoed from a prior response's
+                 *     `pagination.next`. Pass it verbatim — it is a base64url-encoded
+                 *     blob whose internal shape is an implementation detail and
+                 *     changes without notice. Clients MUST NOT parse, decode, or
+                 *     construct cursors by hand.
+                 *
+                 *     A cursor is stable across retries but not across schema
+                 *     changes; treat it as short-lived (minutes, not days). Empty
+                 *     means "start from the beginning".
+                 */
+                cursor?: components["parameters"]["Cursor"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Per-trade records. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "source": "sdex",
+                     *           "ledger": 63302110,
+                     *           "tx_hash": "a34dfaf2c7a1c1ec8d4f36e9fb693ffc8462285bd9018e97109ae8d039425d3c",
+                     *           "op_index": 9216,
+                     *           "ts": "2026-07-03T00:00:17Z",
+                     *           "base_asset": "native",
+                     *           "quote_asset": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *           "base_amount": "4331",
+                     *           "quote_amount": "863",
+                     *           "price": "0.1992611406",
+                     *           "base_decimals": 7,
+                     *           "quote_decimals": 7
+                     *         }
+                     *       ],
+                     *       "as_of": "2026-07-03T22:42:25.518134702Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       },
+                     *       "pagination": {
+                     *         "next": "MTc4MzAzNjgyMzAwMDAwMDAwMDo2MzMwMjExMTpzZGV4OjM3NzE2OTY1OTE4YjgxNzI2NzVhYzVhMTBkOGIxMzA4MT…"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["TradeHistoryEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getHistorySinceInception: {
+        parameters: {
+            query: {
+                /**
+                 * @description Canonical asset identifier — matches the `asset_id` on
+                 *     response bodies. Query-parameter form is the shorter `asset`
+                 *     per the handler implementations (/v1/price, /v1/oracle/latest).
+                 *     Strict canonical form only — `XLM` / `USDC` are rejected;
+                 *     use `native` for XLM and the full `<code>-<G…>` strkey for
+                 *     credit assets.
+                 * @example native
+                 */
+                asset: components["parameters"]["AssetQuery"];
+                /**
+                 * @description Quote-side asset. Either a canonical asset identifier (`native`,
+                 *     `<code>-<issuer>`, contract ID) for crypto-quoted pairs, or
+                 *     the `fiat:<ISO-4217>` form for fiat quotes (e.g. `fiat:USD`,
+                 *     `fiat:EUR`). Default `fiat:USD`.
+                 * @example fiat:USD
+                 */
+                quote?: components["parameters"]["Quote"];
+                /**
+                 * @description Bucket width for the returned series (`1m` = 1 minute …
+                 *     `1mo` = 1 month). When omitted the server picks a sensible
+                 *     width for the requested timeframe (e.g. `1m` for `1h`,
+                 *     `1h` for `1w`) so the series stays a few hundred points.
+                 */
+                granularity?: components["parameters"]["Granularity"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Since-inception series. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "asset_id": "native",
+                     *         "quote": "fiat:USD",
+                     *         "price_type": "vwap",
+                     *         "granularity": "1d",
+                     *         "points": [
+                     *           {
+                     *             "t": "2021-02-02T00:00:00Z",
+                     *             "p": "0.32955352120071295890",
+                     *             "v_usd": "0"
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-07-03T22:37:38.237691998Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": true,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["HistoryEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getChart: {
+        parameters: {
+            query: {
+                /**
+                 * @description Canonical asset identifier — matches the `asset_id` on
+                 *     response bodies. Query-parameter form is the shorter `asset`
+                 *     per the handler implementations (/v1/price, /v1/oracle/latest).
+                 *     Strict canonical form only — `XLM` / `USDC` are rejected;
+                 *     use `native` for XLM and the full `<code>-<G…>` strkey for
+                 *     credit assets.
+                 * @example native
+                 */
+                asset: components["parameters"]["AssetQuery"];
+                /**
+                 * @description Quote-side asset. Either a canonical asset identifier (`native`,
+                 *     `<code>-<issuer>`, contract ID) for crypto-quoted pairs, or
+                 *     the `fiat:<ISO-4217>` form for fiat quotes (e.g. `fiat:USD`,
+                 *     `fiat:EUR`). Default `fiat:USD`.
+                 * @example fiat:USD
+                 */
+                quote?: components["parameters"]["Quote"];
+                /**
+                 * @description Rolling lookback window anchored at now — `24h` means
+                 *     "the last 24 hours", `all` means "since first observation".
+                 *     Shorthand alternative to explicit `from`/`to` bounds on the
+                 *     chart/series surfaces. Default `24h`.
+                 */
+                timeframe?: components["parameters"]["Timeframe"];
+                /**
+                 * @description Bucket width for the returned series (`1m` = 1 minute …
+                 *     `1mo` = 1 month). When omitted the server picks a sensible
+                 *     width for the requested timeframe (e.g. `1m` for `1h`,
+                 *     `1h` for `1w`) so the series stays a few hundred points.
+                 */
+                granularity?: components["parameters"]["Granularity"];
+                /**
+                 * @description Series type. `vwap` (default) returns the volume-weighted
+                 *     price series. `twap` returns the time-weighted price series
+                 *     from the `twap_1h` / `twap_1d` continuous aggregates
+                 *     (time-weighted at 1-minute resolution; served at 1h or 1d
+                 *     granularity, the requested granularity snapped onto the
+                 *     nearer of the two). `market_cap` returns a USD-denominated
+                 *     market-cap series. For fiat:* base assets it is M2
+                 *     (verified-currency catalogue) × daily FX rate (fx_quotes).
+                 *     For on-chain (native / classic / Soroban) base assets it is
+                 *     the daily USD price × daily circulating supply (the
+                 *     `supply_1d` continuous aggregate, forward-filled). Off-chain
+                 *     `crypto:*` reference assets (BTC/ETH/…) have no on-chain
+                 *     supply we publish, so they return an empty series.
+                 */
+                price_type?: components["parameters"]["PriceType"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Chart series. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "asset_id": "native",
+                     *         "quote": "fiat:USD",
+                     *         "timeframe": "24h",
+                     *         "granularity": "1h",
+                     *         "price_type": "vwap",
+                     *         "points": [
+                     *           {
+                     *             "t": "2026-07-02T23:00:00Z",
+                     *             "p": "0.19854703598674192431",
+                     *             "v_usd": "41358.47144920"
+                     *           },
+                     *           {
+                     *             "t": "2026-07-03T00:00:00Z",
+                     *             "p": "0.19768864227725027668",
+                     *             "v_usd": "29205.97729980"
+                     *           }
+                     *         ],
+                     *         "truncated": false
+                     *       },
+                     *       "as_of": "2026-07-03T22:37:39.460980449Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": true,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ChartEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getOhlc: {
+        parameters: {
+            query: {
+                /**
+                 * @description Canonical asset identifier for the base side of a pair.
+                 *     Strict canonical form only — `USDC` / `XLM` are rejected;
+                 *     the full `<code>-<G…>` strkey is required, or `native` for
+                 *     XLM. The default example resolves to Centre's USDC issuance,
+                 *     which is the most-traded base on Stellar.
+                 * @example USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+                 */
+                base: components["parameters"]["Base"];
+                /**
+                 * @description Quote-side asset (REQUIRED on this endpoint). Either a
+                 *     canonical asset identifier (`native`, `<code>-<issuer>`,
+                 *     contract ID) or the `fiat:<ISO-4217>` form (e.g. `fiat:USD`,
+                 *     `fiat:EUR`). Unlike the `/price` family, this endpoint does
+                 *     NOT default the quote — omitting it returns 400.
+                 * @example fiat:USD
+                 */
+                quote: components["parameters"]["QuoteRequired"];
+                /**
+                 * @description Window start (inclusive), RFC 3339 UTC — e.g.
+                 *     `2026-06-01T00:00:00Z`. Windows are half-open `[from, to)`.
+                 *     When omitted the endpoint applies its own default lookback
+                 *     from `to` (documented per endpoint). Must be before `to`
+                 *     or the request 400s.
+                 */
+                from?: components["parameters"]["From"];
+                /**
+                 * @description Window end (exclusive), RFC 3339 UTC. Defaults to now.
+                 *     Windows are half-open `[from, to)` — a trade exactly at
+                 *     `to` is excluded.
+                 */
+                to?: components["parameters"]["To"];
+                /**
+                 * @description Bar width for multi-bar series mode. Omit for the
+                 *     single-bar response over `[from, to)`. Invalid intervals
+                 *     return 400 `errors/invalid-interval`.
+                 */
+                interval?: "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d" | "1w" | "1mo";
+                /**
+                 * @description Series-mode bar count (max 1000, default 100). Ignored in
+                 *     single-bar mode. Invalid values return 400
+                 *     `errors/limit-too-large`.
+                 */
+                limit?: number;
+                /** @description Drop trades > N σ from window mean before computing the bar (single-bar mode only). Default 4σ. Pass 0 to disable. */
+                outlier_sigma?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /**
+             * @description OHLC response. Wire shape depends on mode:
+             *     single-bar (no `interval`) returns `OHLCEnvelope`;
+             *     multi-bar (`interval` set) returns
+             *     `OHLCSeriesEnvelope`.
+             */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "base": "native",
+                     *         "quote": "fiat:USD",
+                     *         "interval": "1h",
+                     *         "from": "2026-07-03T20:00:00Z",
+                     *         "to": "2026-07-03T22:00:00Z",
+                     *         "intervals": [
+                     *           {
+                     *             "t": "2026-07-03T20:00:00Z",
+                     *             "o": "0.2038114923",
+                     *             "h": "0.2500000000",
+                     *             "l": "0.2034919999",
+                     *             "c": "0.2055899576",
+                     *             "v_base": "1751598864823776",
+                     *             "v_quote": "359971028467214.0000042405",
+                     *             "n": 11667
+                     *           },
+                     *           {
+                     *             "t": "2026-07-03T21:00:00Z",
+                     *             "o": "0.2056073590",
+                     *             "h": "0.2062000000",
+                     *             "l": "0.2033449999",
+                     *             "c": "0.2055593613",
+                     *             "v_base": "844461854722825",
+                     *             "v_quote": "173117716771324.0000032245",
+                     *             "n": 8497
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-07-03T22:37:40.607101334Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": true,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["OHLCEnvelope"] | components["schemas"]["OHLCSeriesEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /**
+             * @description Single-bar mode only — no trades in window. Series mode
+             *     returns 200 with `intervals: []` instead.
+             */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getVwap: {
+        parameters: {
+            query: {
+                /**
+                 * @description Canonical asset identifier for the base side of a pair.
+                 *     Strict canonical form only — `USDC` / `XLM` are rejected;
+                 *     the full `<code>-<G…>` strkey is required, or `native` for
+                 *     XLM. The default example resolves to Centre's USDC issuance,
+                 *     which is the most-traded base on Stellar.
+                 * @example USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+                 */
+                base: components["parameters"]["Base"];
+                /**
+                 * @description Quote-side asset (REQUIRED on this endpoint). Either a
+                 *     canonical asset identifier (`native`, `<code>-<issuer>`,
+                 *     contract ID) or the `fiat:<ISO-4217>` form (e.g. `fiat:USD`,
+                 *     `fiat:EUR`). Unlike the `/price` family, this endpoint does
+                 *     NOT default the quote — omitting it returns 400.
+                 * @example fiat:USD
+                 */
+                quote: components["parameters"]["QuoteRequired"];
+                /**
+                 * @description Window start (inclusive), RFC 3339 UTC — e.g.
+                 *     `2026-06-01T00:00:00Z`. Windows are half-open `[from, to)`.
+                 *     When omitted the endpoint applies its own default lookback
+                 *     from `to` (documented per endpoint). Must be before `to`
+                 *     or the request 400s.
+                 */
+                from?: components["parameters"]["From"];
+                /**
+                 * @description Window end (exclusive), RFC 3339 UTC. Defaults to now.
+                 *     Windows are half-open `[from, to)` — a trade exactly at
+                 *     `to` is excluded.
+                 */
+                to?: components["parameters"]["To"];
+                /** @description Drop trades > N σ from window mean. 0 disables (default). */
+                outlier_sigma?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Volume-weighted price + volumes + trade count. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "from": "2026-07-03T21:37:30Z",
+                     *         "to": "2026-07-03T22:37:30Z",
+                     *         "price": "0.2045966459",
+                     *         "base_volume": "1385735379056",
+                     *         "quote_volume": "283516810732",
+                     *         "trade_count": 2483,
+                     *         "outliers_filtered": 0,
+                     *         "truncated": false
+                     *       },
+                     *       "as_of": "2026-07-03T22:37:41.757287184Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": true,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["VWAPEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description No trades in window. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description All trades in the window were filtered as outliers by the requested `outlier_sigma`; relax the threshold or omit it. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getTwap: {
+        parameters: {
+            query: {
+                /**
+                 * @description Canonical asset identifier for the base side of a pair.
+                 *     Strict canonical form only — `USDC` / `XLM` are rejected;
+                 *     the full `<code>-<G…>` strkey is required, or `native` for
+                 *     XLM. The default example resolves to Centre's USDC issuance,
+                 *     which is the most-traded base on Stellar.
+                 * @example USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+                 */
+                base: components["parameters"]["Base"];
+                /**
+                 * @description Quote-side asset (REQUIRED on this endpoint). Either a
+                 *     canonical asset identifier (`native`, `<code>-<issuer>`,
+                 *     contract ID) or the `fiat:<ISO-4217>` form (e.g. `fiat:USD`,
+                 *     `fiat:EUR`). Unlike the `/price` family, this endpoint does
+                 *     NOT default the quote — omitting it returns 400.
+                 * @example fiat:USD
+                 */
+                quote: components["parameters"]["QuoteRequired"];
+                /**
+                 * @description Window start (inclusive), RFC 3339 UTC — e.g.
+                 *     `2026-06-01T00:00:00Z`. Windows are half-open `[from, to)`.
+                 *     When omitted the endpoint applies its own default lookback
+                 *     from `to` (documented per endpoint). Must be before `to`
+                 *     or the request 400s.
+                 */
+                from?: components["parameters"]["From"];
+                /**
+                 * @description Window end (exclusive), RFC 3339 UTC. Defaults to now.
+                 *     Windows are half-open `[from, to)` — a trade exactly at
+                 *     `to` is excluded.
+                 */
+                to?: components["parameters"]["To"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Time-weighted price + trade count. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "from": "2026-07-03T21:37:30Z",
+                     *         "to": "2026-07-03T22:37:30Z",
+                     *         "price": "0.2044317708",
+                     *         "trade_count": 2483,
+                     *         "truncated": false
+                     *       },
+                     *       "as_of": "2026-07-03T22:37:42.906364691Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": true,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["TWAPEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description No trades in window. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getOracleLatest: {
+        parameters: {
+            query: {
+                /**
+                 * @description Canonical asset identifier — matches the `asset_id` on
+                 *     response bodies. Query-parameter form is the shorter `asset`
+                 *     per the handler implementations (/v1/price, /v1/oracle/latest).
+                 *     Strict canonical form only — `XLM` / `USDC` are rejected;
+                 *     use `native` for XLM and the full `<code>-<G…>` strkey for
+                 *     credit assets.
+                 * @example native
+                 */
+                asset: components["parameters"]["AssetQuery"];
+                /** @description Optional. Restrict to a single source name. */
+                source?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Array of OracleReading (empty when no observations). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "source": "reflector-cex",
+                     *           "contract_id": "CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN",
+                     *           "asset": "crypto:XLM",
+                     *           "quote": "fiat:USD",
+                     *           "ts": "2026-05-05T16:25:00Z",
+                     *           "price": "0.15912",
+                     *           "price_raw": "15912000000000",
+                     *           "decimals": 14,
+                     *           "confidence": 0.96,
+                     *           "observer": "GRELAYER0000000000000000000000000000000000000000000000000000"
+                     *         },
+                     *         {
+                     *           "source": "band",
+                     *           "asset": "crypto:XLM",
+                     *           "quote": "fiat:USD",
+                     *           "ts": "2026-05-05T16:25:30Z",
+                     *           "price": "0.15908",
+                     *           "price_raw": "159080000000000000",
+                     *           "decimals": 18
+                     *         },
+                     *         {
+                     *           "source": "redstone",
+                     *           "asset": "crypto:XLM",
+                     *           "quote": "fiat:USD",
+                     *           "ts": "2026-05-05T16:24:00Z",
+                     *           "price": "0.15920",
+                     *           "price_raw": "159200000",
+                     *           "decimals": 9
+                     *         },
+                     *         {
+                     *           "source": "coingecko",
+                     *           "asset": "crypto:XLM",
+                     *           "quote": "fiat:USD",
+                     *           "ts": "2026-05-05T16:25:00Z",
+                     *           "price": "0.15915",
+                     *           "price_raw": "15915",
+                     *           "decimals": 5
+                     *         }
+                     *       ],
+                     *       "as_of": "2026-05-05T16:25:42.881Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["OracleLatestEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listPools: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Opaque pagination token echoed from a prior response's
+                 *     `pagination.next`. Pass it verbatim — it is a base64url-encoded
+                 *     blob whose internal shape is an implementation detail and
+                 *     changes without notice. Clients MUST NOT parse, decode, or
+                 *     construct cursors by hand.
+                 *
+                 *     A cursor is stable across retries but not across schema
+                 *     changes; treat it as short-lived (minutes, not days). Empty
+                 *     means "start from the beginning".
+                 */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Maximum rows per page (1-500, default 100). */
+                limit?: number;
+                order_by?: "volume_24h_usd_desc" | "pair";
+                /**
+                 * @description Optional. Restrict to a single DEX name (soroswap /
+                 *     phoenix / aquarius / sdex / comet). Non-DEX names return
+                 *     an empty list rather than 400.
+                 */
+                source?: string;
+                /**
+                 * @description Optional. Canonical base asset_id (`native`, `USDC-G…`,
+                 *     etc.). Combined with `quote` gives the per-source
+                 *     breakdown for one pair — used by the pair detail page
+                 *     to render "which venues moved this pair in the last 24h".
+                 */
+                base?: string;
+                /** @description Optional. Canonical quote asset_id. See `base`. */
+                quote?: string;
+                /**
+                 * @description Optional. Canonical asset_id (`native`, `USDC-G…`,
+                 *     `fiat:USD`, …). Restricts to pools where the asset
+                 *     appears on either side (base OR quote). Use this on
+                 *     asset-detail surfaces to surface every pool touching
+                 *     the asset in one request, instead of firing parallel
+                 *     `?base=` + `?quote=` and merging client-side. Returns
+                 *     400 `invalid-asset-id` for unparseable values; 400
+                 *     `conflicting-filters` when combined with `base`/`quote`
+                 *     (the OR-shape and AND-shape filters can't be mixed).
+                 */
+                asset?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Array of pool rows. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "source": "sdex",
+                     *           "base": "native",
+                     *           "quote": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *           "last_trade_at": "2026-07-03T21:59:52Z",
+                     *           "trade_count_24h": 74870,
+                     *           "volume_24h_usd": "2151631.29284562791192465110403660600000000000000000",
+                     *           "last_price": "0.20545386626821068360"
+                     *         },
+                     *         {
+                     *           "source": "aquarius",
+                     *           "base": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                     *           "quote": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+                     *           "last_trade_at": "2026-07-03T21:59:52Z",
+                     *           "trade_count_24h": 7831,
+                     *           "volume_24h_usd": "1725605.79428767372866451771634747600000000000000000",
+                     *           "last_price": "4.8693065623459794"
+                     *         }
+                     *       ],
+                     *       "as_of": "2026-07-03T22:37:46.044283568Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       },
+                     *       "pagination": {
+                     *         "next": "1725605.79428767372866451771634747600000000000000000:aquarius|CCW67TSZV3SSS2HXMBQ5JFGCKJNX…"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: components["schemas"]["PoolRow"][];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getPoolReserves: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Optional. A pool (pair) contract C-strkey; restricts the
+                 *     response to that pool. 404 when the contract is not a
+                 *     registered Soroswap pair — unknown pools are refused, not
+                 *     silently empty.
+                 */
+                pool?: string;
+                /**
+                 * @description Optional venue filter. `soroswap` is the only accepted
+                 *     value today; other venues return 400 naming the coverage
+                 *     limit.
+                 */
+                source?: "soroswap";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Per-pool current reserves + depth, sorted by pool contract id. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "pool": "CDYRXTIUEUNJ3SVAKVWKKRK3CZVIY4WOG6TAQU27R777ZHNOKNCO26NL",
+                     *           "source": "soroswap",
+                     *           "model": "constant_product",
+                     *           "fee_bps": 30,
+                     *           "as_of_ledger": 62941880,
+                     *           "token0": {
+                     *             "contract": "CBRP2VD3CZLEQIQZ4JMBXGA5AC2U6JE26YU5CCIOICIZCVWPGBO2QRUB",
+                     *             "symbol": "YBX",
+                     *             "decimals": 7,
+                     *             "reserve": "172458996"
+                     *           },
+                     *           "token1": {
+                     *             "contract": "CBY4MSZXK5L4HDMJHDXQLNLOA5MM5BIGCHQYMRG7ZAFY34UNU4UXPEJJ",
+                     *             "symbol": "LMNR",
+                     *             "decimals": 7,
+                     *             "reserve": "603291773585"
+                     *           },
+                     *           "mid_price_0_in_1": "3498.175146427270166874",
+                     *           "mid_price_1_in_0": "0.000285863331063143",
+                     *           "depth": [
+                     *             {
+                     *               "slippage_pct": "0.5",
+                     *               "token0_in": {
+                     *                 "max_input": "347694",
+                     *                 "output": "1210213039"
+                     *               },
+                     *               "token1_in": {
+                     *                 "max_input": "1216295668",
+                     *                 "output": "345955"
+                     *               }
+                     *             },
+                     *             {
+                     *               "slippage_pct": "1",
+                     *               "token0_in": {
+                     *                 "max_input": "1223076",
+                     *                 "output": "4235748731"
+                     *               },
+                     *               "token1_in": {
+                     *                 "max_input": "4278535014",
+                     *                 "output": "1210845"
+                     *               }
+                     *             },
+                     *             {
+                     *               "slippage_pct": "2",
+                     *               "token0_in": {
+                     *                 "max_input": "3000637",
+                     *                 "output": "10286818733"
+                     *               },
+                     *               "token1_in": {
+                     *                 "max_input": "10496755727",
+                     *                 "output": "2940624"
+                     *               }
+                     *             }
+                     *           ]
+                     *         }
+                     *       ],
+                     *       "as_of": "2026-07-05T12:00:00.000000000Z",
+                     *       "sources": [
+                     *         "soroswap"
+                     *       ],
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: components["schemas"]["PoolReservesRow"][];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listLiquidityPools: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Optional. A native pool id — an L-strkey (SEP-23) or 32-byte
+                 *     hex. Restricts the response to that pool. 404 when the id is
+                 *     not a captured native pool; 400 when it is neither an
+                 *     L-strkey nor 32-byte hex.
+                 */
+                pool?: string;
+                /**
+                 * @description Optional (listing only, ignored with `?pool=`). Number of
+                 *     top-ranked pools to return. 1-100, default 25.
+                 */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Per-pool current two-sided reserves + depth. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "pool": "LBBQAH75JTPHENBF3UJEYMPQR4GQ43VZNPAE4H5XVUYS5YRBY6NFFKVM",
+                     *           "pool_hex": "43001ffd4cde723425dd124c31f08f0d0e6eb96bc04e1fb7ad312ee221c79a52",
+                     *           "model": "constant_product",
+                     *           "fee_bps": 30,
+                     *           "as_of_ledger": 63356894,
+                     *           "trustlines": 1,
+                     *           "total_shares": "14133656465",
+                     *           "reserve_a": {
+                     *             "asset": "LibreDrone-GB7LCUIDT3C2DUOX4O2FSCCBH5NXIUJZ64YQ2N75N5POZRI4DA4AMGEE",
+                     *             "decimals": 7,
+                     *             "reserve": "109841733381"
+                     *           },
+                     *           "reserve_b": {
+                     *             "asset": "deCent-GBVRVE6CCHJFZ6IFEKYRCRODKPPJHJFPCYOZILWADK4CEZB6DEXBYTI6",
+                     *             "decimals": 7,
+                     *             "reserve": "1868365732"
+                     *           },
+                     *           "mid_price_a_in_b": "0.017009616240480621",
+                     *           "mid_price_b_in_a": "58.790274034527197162",
+                     *           "depth": [
+                     *             {
+                     *               "slippage_pct": "0.5",
+                     *               "asset_a_in": {
+                     *                 "max_input": "221451759",
+                     *                 "output": "3747975"
+                     *               },
+                     *               "asset_b_in": {
+                     *                 "max_input": "3766809",
+                     *                 "output": "220344474"
+                     *               }
+                     *             },
+                     *             {
+                     *               "slippage_pct": "1",
+                     *               "asset_a_in": {
+                     *                 "max_input": "778995707",
+                     *                 "output": "13117913"
+                     *               },
+                     *               "asset_b_in": {
+                     *                 "max_input": "13250418",
+                     *                 "output": "771205748"
+                     *               }
+                     *             },
+                     *             {
+                     *               "slippage_pct": "2",
+                     *               "asset_a_in": {
+                     *                 "max_input": "1911151277",
+                     *                 "output": "31857790"
+                     *               },
+                     *               "asset_b_in": {
+                     *                 "max_input": "32507949",
+                     *                 "output": "1872928206"
+                     *               }
+                     *             }
+                     *           ]
+                     *         }
+                     *       ],
+                     *       "as_of": "2026-07-06T12:00:00.000000000Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: components["schemas"]["LiquidityPoolReservesRow"][];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listLendingPools: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Array of LendingPool rows. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "protocol": "blend",
+                     *           "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                     *           "auctions_24h": 29,
+                     *           "auctions_total": 7430,
+                     *           "unique_users_30d": 10946,
+                     *           "last_seen": "2026-07-03T22:37:27Z",
+                     *           "net_supplied_30d": "575363575586841",
+                     *           "net_borrowed_30d": "67357854119677",
+                     *           "utilization_30d_pct": 11.71
+                     *         }
+                     *       ],
+                     *       "as_of": "2026-07-03T22:37:47.445630311Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: {
+                            protocol?: string;
+                            pool?: string;
+                            /** Format: int64 */
+                            auctions_24h?: number;
+                            /** Format: int64 */
+                            auctions_total?: number;
+                            /** Format: int64 */
+                            unique_users_30d?: number;
+                            /** Format: date-time */
+                            last_seen?: string;
+                            /** @description Token base-units, 30d net-flow proxy (not TVL). */
+                            net_supplied_30d?: string;
+                            /** @description Token base-units, 30d net-flow proxy. */
+                            net_borrowed_30d?: string;
+                            /** @description Window borrow/supply ratio %; null when net supply ≤ 0. */
+                            utilization_30d_pct?: number | null;
+                        }[];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getLendingPoolReserves: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Pool contract C-strkey. */
+                pool: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Per-reserve current state. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                     *         "tvl_usd": "189548299.92",
+                     *         "reserves": [
+                     *           {
+                     *             "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                     *             "decimals": 7,
+                     *             "supplied": "589262319356640",
+                     *             "borrowed": "442359640330233",
+                     *             "supplied_usd": "58926231.94",
+                     *             "borrowed_usd": "44235964.03",
+                     *             "utilization_pct": 75.07,
+                     *             "borrow_apr": 0.1091,
+                     *             "supply_apr": 0.0819
+                     *           },
+                     *           {
+                     *             "asset": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+                     *             "decimals": 7,
+                     *             "supplied": "6218654435342527",
+                     *             "borrowed": "12271342548905",
+                     *             "supplied_usd": "126950771.43",
+                     *             "borrowed_usd": "250513.42",
+                     *             "utilization_pct": 0.2,
+                     *             "borrow_apr": 0.001,
+                     *             "supply_apr": 0
+                     *           }
+                     *         ],
+                     *         "as_of_ledger": 63340102
+                     *       },
+                     *       "as_of": "2026-07-03T22:38:00.032774886Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: {
+                            pool?: string;
+                            /** @description Σ supplied_usd across priced reserves; null when none priced. */
+                            tvl_usd?: string | null;
+                            reserves?: {
+                                /** @description Reserve underlying token (C-strkey). */
+                                asset?: string;
+                                decimals?: number;
+                                /** @description Total supplied */
+                                supplied?: string;
+                                /** @description Total borrowed */
+                                borrowed?: string;
+                                supplied_usd?: string | null;
+                                borrowed_usd?: string | null;
+                                /** @description Borrowed/supplied */
+                                utilization_pct?: number;
+                                /** @description Borrow APR as a fraction (0.05 = 5%). Null when the reserve's rate-model config isn't in the captured contract-storage window. */
+                                borrow_apr?: number | null;
+                                /** @description Supply APR as a fraction. Null when the rate-model config is uncaptured. */
+                                supply_apr?: number | null;
+                            }[];
+                            /**
+                             * Format: int64
+                             * @description Lake watermark this current-state read is fresh to (ADR-0041) — the highest captured ledger at serve time. Omitted when no watermark reader is wired. Pairs with flags.stale.
+                             */
+                            as_of_ledger?: number;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listMevEvents: {
+        parameters: {
+            query?: {
+                /** @description Filter to one pattern (e.g. arbitrage). */
+                kind?: "arbitrage" | "sandwich" | "oracle_sandwich" | "oracle_deviation" | "liquidation_cascade" | "wash_trade";
+                /** @description Maximum events to return (1-500, default 50). */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description MEV events, newest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "event_id": "bb8839de-2f7f-4bbe-8e61-8f01d20d0bfa",
+                     *           "detected_at": "2026-07-03T22:32:57Z",
+                     *           "detected_at_ledger": 63316124,
+                     *           "kind": "arbitrage",
+                     *           "tx_hashes": [
+                     *             "5e0e2d198f2b61dfcf2ce7ccb102f9238f68deea627b2a978f5f8cc9c166bc14"
+                     *           ],
+                     *           "accounts": [
+                     *             "GC6V7MSQ65LUM24ROBJZ4NROWTOSI3JUXOE2T7SNRHOYGK2OZMTNV7H7"
+                     *           ],
+                     *           "detail": {
+                     *             "legs": [
+                     *               {
+                     *                 "base": "SCOP-GC6OYQJIZF3HFXCYPFCBXYXNGIBQ4TNSFUBUXQJOZWIP6F3YZK4QH3VQ",
+                     *                 "quote": "native",
+                     *                 "source": "sdex",
+                     *                 "op_index": 0,
+                     *                 "base_amount": "33238825",
+                     *                 "quote_amount": "413237"
+                     *               }
+                     *             ],
+                     *             "note": "Atomic cyclic trade by one taker in a single transaction — an arbitrage signature. Detecti…",
+                     *             "assets": [
+                     *               "SCOP-GC6OYQJIZF3HFXCYPFCBXYXNGIBQ4TNSFUBUXQJOZWIP6F3YZK4QH3VQ"
+                     *             ],
+                     *             "sources": [
+                     *               "sdex"
+                     *             ],
+                     *             "notional_usd": "0.05"
+                     *           },
+                     *           "profit_usd": null
+                     *         }
+                     *       ],
+                     *       "as_of": "2026-07-03T22:38:01.17207501Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: {
+                            /** Format: uuid */
+                            event_id?: string;
+                            /** Format: date-time */
+                            detected_at?: string;
+                            /** Format: int64 */
+                            detected_at_ledger?: number;
+                            kind?: string;
+                            asset_id?: string;
+                            quote_id?: string;
+                            tx_hashes?: string[];
+                            accounts?: string[];
+                            /** @description Pattern evidence (arbitrage: assets/sources/legs/notional). */
+                            detail?: Record<string, never>;
+                            /** @description Attacker-profit estimate; null for arbitrage (not estimated). */
+                            profit_usd?: string | null;
+                        }[];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    listAnomalies: {
+        parameters: {
+            query?: {
+                /** @description true → only currently-firing events. */
+                firing?: boolean;
+                /** @description Trailing lookback in days for the freeze-event list and the per-reason tally (1-365, default 30). */
+                window_days?: number;
+                /** @description Maximum rows to return (1-500, default 100). Out-of-range values return 400. */
+                limit?: number;
+                /** @description `daily` → also return the per-(UTC day, reason) freeze tally over the same window. */
+                include?: "daily";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Freeze timeline + firing count + reason tally. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "firing_count": 0,
+                     *         "reason_tally": [],
+                     *         "events": [],
+                     *         "daily": null
+                     *       },
+                     *       "as_of": "2026-07-03T22:38:02.319192694Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: {
+                            firing_count?: number;
+                            reason_tally?: {
+                                reason?: string;
+                                /** Format: int64 */
+                                count?: number;
+                            }[];
+                            events?: {
+                                asset_id?: string;
+                                quote_id?: string;
+                                /** Format: date-time */
+                                frozen_at?: string;
+                                /** Format: int64 */
+                                frozen_at_ledger?: number;
+                                /** @enum {string} */
+                                reason?: "single_source" | "divergence" | "outlier_storm" | "manual" | "other";
+                                frozen_value?: string;
+                                /** Format: date-time */
+                                recovered_at?: string | null;
+                                /** Format: int64 */
+                                recovered_at_ledger?: number | null;
+                                firing?: boolean;
+                                detail?: Record<string, never>;
+                            }[];
+                            /** @description Per-(UTC day, reason) freeze tally over the same window as reason_tally — only populated when `?include=daily` was requested. `null` means "not requested"; `[]` means "requested, zero freezes in the window". Days with zero freezes carry no entries. */
+                            daily?: {
+                                /** Format: date */
+                                day?: string;
+                                reason?: string;
+                                /** Format: int64 */
+                                count?: number;
+                            }[] | null;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    getDivergenceBoard: {
+        parameters: {
+            query?: {
+                /** @description true → only rows whose latest status is firing. */
+                firing?: boolean;
+                /** @description Trailing lookback in days for divergence rows (1-365, default 7). */
+                window_days?: number;
+                /** @description Maximum rows to return (1-500, default 100). Out-of-range values return 400. */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Latest divergence per (pair, reference). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "observations": [
+                     *           {
+                     *             "asset_id": "crypto:BTC",
+                     *             "quote_id": "fiat:USD",
+                     *             "reference": "chainlink",
+                     *             "observed_at": "2026-07-03T22:37:08.896016Z",
+                     *             "observed_at_ledger": 0,
+                     *             "our_price": "62543.07358731602",
+                     *             "ref_price": "62608.75585288",
+                     *             "delta_pct": "-0.10490907329051442",
+                     *             "status": "clear"
+                     *           },
+                     *           {
+                     *             "asset_id": "crypto:ETH",
+                     *             "quote_id": "fiat:USD",
+                     *             "reference": "coingecko",
+                     *             "observed_at": "2026-07-03T22:37:08.90697Z",
+                     *             "observed_at_ledger": 0,
+                     *             "our_price": "1757.84660921192",
+                     *             "ref_price": "1756.21",
+                     *             "delta_pct": "0.09318983560735354",
+                     *             "status": "clear"
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-07-03T22:38:03.478937272Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: {
+                            observations?: {
+                                asset_id?: string;
+                                quote_id?: string;
+                                /** @enum {string} */
+                                reference?: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band";
+                                /** Format: date-time */
+                                observed_at?: string;
+                                /** Format: int64 */
+                                observed_at_ledger?: number;
+                                our_price?: string;
+                                ref_price?: string;
+                                delta_pct?: string;
+                                /** @enum {string} */
+                                status?: "clear" | "firing";
+                            }[];
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    getDivergenceSeries: {
+        parameters: {
+            query: {
+                /** @description `<asset_id>~<quote_id>`, e.g. `crypto:BTC~fiat:USD`. */
+                pair: string;
+                /** @description External reference to plot against. */
+                reference: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band";
+                /** @description Trailing window; whitelisted to 1, 7 or 30 (default 7). */
+                days?: 1 | 7 | 30;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bucketed divergence series for the triple. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "asset_id": "crypto:BTC",
+                     *         "quote_id": "fiat:USD",
+                     *         "reference": "coingecko",
+                     *         "days": 7,
+                     *         "bucket_seconds": 1800,
+                     *         "threshold_pct": 5,
+                     *         "points": [
+                     *           {
+                     *             "t": "2026-07-29T12:00:00Z",
+                     *             "delta_pct": "-0.104909",
+                     *             "our_price": "62543.07358731602",
+                     *             "ref_price": "62608.75585288"
+                     *           },
+                     *           {
+                     *             "t": "2026-07-29T12:30:00Z",
+                     *             "delta_pct": "6.412000",
+                     *             "our_price": "66623.11",
+                     *             "ref_price": "62608.75",
+                     *             "firing": true
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-07-29T12:31:03.478937272Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: {
+                            asset_id?: string;
+                            quote_id?: string;
+                            /** @enum {string} */
+                            reference?: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band";
+                            days?: number;
+                            /** @description Downsampling bucket width. Each point is the last observation inside its bucket; render the series at this resolution, not as raw ticks. */
+                            bucket_seconds?: number;
+                            /** @description The operator's divergence alert threshold (percent) — the same number the worker fires on. Omitted when unconfigured; draw no band in that case. */
+                            threshold_pct?: number;
+                            points?: {
+                                /** Format: date-time */
+                                t?: string;
+                                delta_pct?: string;
+                                our_price?: string;
+                                ref_price?: string;
+                                /** @description True when ANY observation in the bucket breached its threshold at observation time. Omitted when false. */
+                                firing?: boolean;
+                            }[];
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    listOracleStreams: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Array of OracleReading. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "source": "band",
+                     *           "contract_id": "CCQXWMZVM3KRTXTUPTN53YHL272QGKF32L7XEDNZ2S6OSUFK3NFBGG5M",
+                     *           "asset": "crypto:USDC",
+                     *           "quote": "fiat:USD",
+                     *           "ts": "2026-07-03T22:06:18Z",
+                     *           "price": "0.999879000",
+                     *           "price_raw": "999879000",
+                     *           "decimals": 9,
+                     *           "observer": "GCNTSKF3QBZJHS5JTD72TI35QP2PLMCKFMFNPXJI2YCQXYBUJLRHFCZX"
+                     *         }
+                     *       ],
+                     *       "as_of": "2026-07-03T22:38:05.023074622Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["OracleLatestEnvelope"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listMarkets: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Opaque pagination token echoed from a prior response's
+                 *     `pagination.next`. Pass it verbatim — it is a base64url-encoded
+                 *     blob whose internal shape is an implementation detail and
+                 *     changes without notice. Clients MUST NOT parse, decode, or
+                 *     construct cursors by hand.
+                 *
+                 *     A cursor is stable across retries but not across schema
+                 *     changes; treat it as short-lived (minutes, not days). Empty
+                 *     means "start from the beginning".
+                 */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Maximum rows per page (1-500, default 100). */
+                limit?: number;
+                /**
+                 * @description Sort order. `volume_24h_usd_desc` (default) orders by
+                 *     24h USD volume desc (NULLS LAST), then by
+                 *     `<base>|<quote>` for ties — surfaces the high-activity
+                 *     pairs first without paginating through ~5K alphabetic
+                 *     dust pairs.
+                 *
+                 *     `pair` returns markets in lex order of
+                 *     `<base>|<quote>` — stable for paginating the full set,
+                 *     but surfaces spam-token pairs (`0-…`, `0TAX-…`) at the
+                 *     top of the listing. Pre-2026-05-10 this was the
+                 *     default; we kept it as an explicit option so callers
+                 *     paginating the entire universe of pairs aren't broken.
+                 *
+                 *     Cursor format differs per ordering; keep using the
+                 *     cursor returned by the previous response.
+                 */
+                order_by?: "pair" | "volume_24h_usd_desc";
+                /**
+                 * @description Restrict the listing to markets a single source
+                 *     observed in the recency window. Must match a
+                 *     registered source name (see `/v1/sources`); an
+                 *     unknown name returns 400 `unknown-source` rather
+                 *     than an empty 200 (avoids the silent-empty-page
+                 *     anti-pattern). Mutually exclusive with `asset`.
+                 */
+                source?: string;
+                /**
+                 * @description Restrict the listing to markets where the given
+                 *     canonical `asset_id` appears on either side (base
+                 *     OR quote). Use this on asset-detail surfaces to
+                 *     surface every market an asset participates in
+                 *     without paying for a global scan + client-side
+                 *     filter. Returns 400 `invalid-asset-id` if the
+                 *     value isn't a parseable canonical asset_id (e.g.
+                 *     `native`, `USDC-G…`, `fiat:USD`). Mutually
+                 *     exclusive with `source`.
+                 */
+                asset?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Array of markets + optional next cursor. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "base": "crypto:BTC",
+                     *           "quote": "crypto:USDT",
+                     *           "last_trade_at": "2026-07-03T22:36:00Z",
+                     *           "bucket_close_at": "2026-07-03T00:00:00Z",
+                     *           "trade_count_24h": 667311,
+                     *           "volume_24h_usd": "845925256.01203780",
+                     *           "last_price": "61977.170000000000"
+                     *         },
+                     *         {
+                     *           "base": "crypto:BTC",
+                     *           "quote": "fiat:USD",
+                     *           "last_trade_at": "2026-07-03T22:36:00Z",
+                     *           "bucket_close_at": "2026-07-03T00:00:00Z",
+                     *           "trade_count_24h": 636711,
+                     *           "volume_24h_usd": "500463722.75372090",
+                     *           "last_price": "61901.333333333333"
+                     *         }
+                     *       ],
+                     *       "as_of": "2026-07-03T22:38:06.818142585Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       },
+                     *       "pagination": {
+                     *         "next": "500463722.75372090:crypto:BTC|fiat:USD"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["MarketsEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getMarketSources: {
+        parameters: {
+            query?: {
+                /** @description Canonical base asset_id (with `quote`, for a single pair). */
+                base?: string;
+                /** @description Canonical quote asset_id (with `base`, for a single pair). */
+                quote?: string;
+                /**
+                 * @description Canonical asset_id; aggregates every pair the asset appears
+                 *     in (base or quote side). Mutually exclusive with `base`/`quote`.
+                 */
+                asset?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Per-source breakdown (standard envelope). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "base": "native",
+                     *         "quote": "fiat:USD",
+                     *         "window_secs": 86400,
+                     *         "sources": []
+                     *       },
+                     *       "as_of": "2026-07-03T22:38:07.960705714Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data?: {
+                            base?: string;
+                            quote?: string;
+                            asset?: string;
+                            /** @description Aggregation window in seconds (86400 = trailing 24h). */
+                            window_secs: number;
+                            sources: {
+                                /** @description Source name (see /v1/sources). */
+                                source: string;
+                                /** @description SUM derivable USD volume over 24h. Decimal string per ADR-0003. */
+                                volume_24h_usd?: string | null;
+                                trade_count_24h: number;
+                                /** @description Share of total derivable USD volume across sources (%). */
+                                share_pct: number;
+                            }[];
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listIssuers: {
+        parameters: {
+            query?: {
+                /** @description Max rows to return; 1-500, default 100. */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Array of issuer summaries (standard envelope; data is the array). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "g_strkey": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *           "home_domain": "circle.com",
+                     *           "org_name": "Centre Consortium LLC",
+                     *           "org_verified": true,
+                     *           "asset_count": 1,
+                     *           "total_observation_count": 41639649
+                     *         },
+                     *         {
+                     *           "g_strkey": "GARDNV3Q7YGT4AKSDF25LT32YSCCW4EV22Y2TV3I2PU2MMXJTEDL5T55",
+                     *           "home_domain": "ultracapital.xyz",
+                     *           "org_name": "Ultra Capital LLC",
+                     *           "org_verified": true,
+                     *           "asset_count": 1,
+                     *           "total_observation_count": 32433641
+                     *         }
+                     *       ],
+                     *       "as_of": "2026-07-03T22:38:09.267785261Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: {
+                            g_strkey: string;
+                            home_domain?: string;
+                            /**
+                             * @description Issuer's organisation name from SEP-1
+                             *     `[DOCUMENTATION].ORG_NAME`. Populated by
+                             *     the `stellarindex-ops sep1-refresh` job;
+                             *     empty until the issuer's stellar.toml
+                             *     has been resolved.
+                             */
+                            org_name?: string;
+                            /** Format: int64 */
+                            asset_count: number;
+                            /** Format: int64 */
+                            total_observation_count: number;
+                            /**
+                             * @description True only when SEP-1 verification is
+                             *     bidirectional (the issuer's toml lists this
+                             *     issuer back — CS-100). When false, org_name
+                             *     is unverified self-declared metadata.
+                             */
+                            org_verified?: boolean;
+                            /** @description Non-empty when this issuer is in the curated scam directory (issuers.go). Render as a warning. */
+                            scam_reason?: string;
+                        }[];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getIssuer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Issuer account id — 56-character G-strkey (SEP-23),
+                 *     e.g. `GA5Z…KZVN`. Malformed strkeys return 400;
+                 *     well-formed accounts that have never issued an
+                 *     observed asset return 404.
+                 * @example GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+                 */
+                g_strkey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One issuer row plus issued-asset list (standard envelope). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "g_strkey": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *         "home_domain": "circle.com",
+                     *         "org_name": "Centre Consortium LLC",
+                     *         "org_verified": true,
+                     *         "auth_required": false,
+                     *         "auth_revocable": true,
+                     *         "auth_immutable": false,
+                     *         "auth_clawback": false,
+                     *         "sep1_resolved_at": "2026-07-03T14:56:36Z",
+                     *         "sep1_payload": {
+                     *           "OrgName": "Centre Consortium LLC",
+                     *           "Currencies": [
+                     *             {
+                     *               "Code": "USDC",
+                     *               "Name": "USD Coin",
+                     *               "Issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *               "AnchorAsset": "USD",
+                     *               "Description": "USDC is a fully collateralized US Dollar stablecoin, based on the open source fiat stablec…",
+                     *               "AnchorAssetType": "fiat"
+                     *             }
+                     *           ],
+                     *           "OrgVerified": true,
+                     *           "Documentation": {
+                     *             "ORG_DBA": "Centre Consortium",
+                     *             "ORG_URL": "https://www.centre.io",
+                     *             "ORG_NAME": "Centre Consortium LLC"
+                     *           }
+                     *         },
+                     *         "creation_ledger": 34180766,
+                     *         "assets": [
+                     *           {
+                     *             "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *             "code": "USDC",
+                     *             "slug": "USDC",
+                     *             "first_seen_ledger": 34180766,
+                     *             "last_seen_ledger": 63316034,
+                     *             "observation_count": 41639649
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-07-03T22:38:13.056025402Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: {
+                            g_strkey: string;
+                            home_domain?: string;
+                            /**
+                             * @description Issuer's organisation name from SEP-1
+                             *     `[DOCUMENTATION].ORG_NAME`. Same value the
+                             *     listing endpoint surfaces. SELF-DECLARED unless
+                             *     `org_verified` is true — do NOT render as
+                             *     authoritative without checking `org_verified`.
+                             */
+                            org_name?: string;
+                            /** @description Non-empty when this issuer is in the curated scam directory (issuers.go). Render as a warning. */
+                            scam_reason?: string;
+                            /**
+                             * @description True only when the issuer's SEP-1 toml lists this
+                             *     issuer back (bidirectional proof; one-way is
+                             *     spoofable). When false, `org_name` is unverified
+                             *     self-declared metadata — clients must present it
+                             *     as such, not as a verified identity (CS-100).
+                             */
+                            org_verified: boolean;
+                            auth_required?: boolean | null;
+                            auth_revocable?: boolean | null;
+                            auth_immutable?: boolean | null;
+                            auth_clawback?: boolean | null;
+                            /** Format: date-time */
+                            sep1_resolved_at?: string | null;
+                            sep1_payload?: {
+                                [key: string]: unknown;
+                            } | null;
+                            creation_ledger?: number | null;
+                            assets?: {
+                                asset_id?: string;
+                                code?: string;
+                                slug?: string;
+                                first_seen_ledger?: number;
+                                last_seen_ledger?: number;
+                                /** Format: int64 */
+                                observation_count?: number;
+                            }[];
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getContractTransfers: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Filter to events where this G/C-strkey was the
+                 *     sender (transfer.from, approve.from).
+                 */
+                from?: string;
+                /**
+                 * @description Filter to events where this G/C-strkey was the
+                 *     recipient (transfer.to, approve.spender,
+                 *     set_admin.new_admin, set_authorized.id).
+                 */
+                to?: string;
+                /** @description Maximum audit-trail rows to return (1-500, default 100). */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description SEP-41 token contract C-strkey. */
+                contract_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Per-contract audit-trail rows, newest-first (standard envelope). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "contract_id": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                     *         "count": 2,
+                     *         "limit": 2,
+                     *         "decimals": 7,
+                     *         "transfers": [
+                     *           {
+                     *             "ledger": 62757524,
+                     *             "ledger_close_time": "2026-05-27T09:41:47Z",
+                     *             "tx_hash": "f35ce4e2b091debd5992cf3490a8701400e5655b033c425569eb2abbe19cb791",
+                     *             "op_index": 1,
+                     *             "event_index": 0,
+                     *             "event_kind": "transfer",
+                     *             "from": "GBK6ITJCG4QPOAJFFWMKEICDAMWFSEACFO654R4E2LDH77XYS76DPYXR",
+                     *             "to": "GCAQSQVXUJZPDND4EUWQYRCJ64IGQ3REQK2CVSXHUQQ26GCTEMIGJDSC",
+                     *             "amount": "40700000"
+                     *           },
+                     *           {
+                     *             "ledger": 62757524,
+                     *             "ledger_close_time": "2026-05-27T09:41:47Z",
+                     *             "tx_hash": "6517426650acea35cf0cd7f2ba420a4c7ec9619adffefce86c3ef015df618688",
+                     *             "op_index": 1,
+                     *             "event_index": 0,
+                     *             "event_kind": "transfer",
+                     *             "from": "GAUA7XL5K54CC2DDGP77FJ2YBHRJLT36CPZDXWPM6MP7MANOGG77PNJU",
+                     *             "to": "GCAQSQVXUJZPDND4EUWQYRCJ64IGQ3REQK2CVSXHUQQ26GCTEMIGJDSC",
+                     *             "amount": "3600000"
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-07-03T22:38:15.931276977Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: {
+                            contract_id: string;
+                            count: number;
+                            limit: number;
+                            from?: string;
+                            to?: string;
+                            /**
+                             * @description The token contract's on-chain `decimals()`, read
+                             *     from its captured instance metadata — the divisor
+                             *     exponent for every `amount` in this response
+                             *     (display value = amount / 10^decimals). Falls back
+                             *     to 7 (the SAC/classic default) when the contract's
+                             *     decimals declaration isn't derivable from the lake.
+                             */
+                            decimals: number;
+                            transfers: {
+                                ledger: number;
+                                /** Format: date-time */
+                                ledger_close_time: string;
+                                tx_hash?: string;
+                                op_index?: number;
+                                event_index?: number;
+                                /** @enum {string} */
+                                event_kind: "transfer" | "approve" | "set_admin" | "set_authorized";
+                                from?: string;
+                                to?: string;
+                                /**
+                                 * @description i128 amount as a decimal string (ADR-0003).
+                                 *     Populated for transfer + approve; omitted
+                                 *     for set_admin + set_authorized.
+                                 */
+                                amount?: string;
+                                /** @description approve.live_until_ledger. */
+                                live_until_ledger?: number;
+                                /** @description set_authorized.authorize. */
+                                authorized?: boolean;
+                            }[];
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getEntityChanges: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Which entity family the delta strip is computed over:
+                 *     `coin` (an asset's price/volume deltas), `protocol`
+                 *     (per-protocol activity), `pair` (a trading pair), or
+                 *     `source` (an ingest source). Determines how `{id}` is
+                 *     interpreted — see the `id` parameter.
+                 * @example source
+                 */
+                entity_type: "coin" | "protocol" | "pair" | "source";
+                /**
+                 * @description Canonical id for the entity. Form depends on
+                 *     `entity_type`:
+                 *
+                 *     - `coin`: any of the asset's identifier forms — friendly
+                 *       slug (`XLM`, `USDC`), canonical asset_id (`native`,
+                 *       `crypto:XLM`, `USDC-GA5Z…`), or bare classic code
+                 *       (`USDC` → also tries `crypto:USDC`). The handler
+                 *       expands the input into every candidate the
+                 *       change-summary worker might have keyed under and
+                 *       returns the first hit. Without expansion, a typo of
+                 *       the canonical form would 404 even when data is
+                 *       populated under a sibling form.
+                 *     - `pair`: `base/quote` form (e.g. `native/USDC-GA5Z…`).
+                 *     - `protocol`: protocol slug (e.g. `soroswap`, `blend`).
+                 *     - `source`: source name (e.g. `binance`, `coinbase`,
+                 *       `sdex`).
+                 * @example binance
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One row from change_summary_5m (standard envelope). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "entity_type": "coin",
+                     *         "entity_id": "crypto:XLM",
+                     *         "refreshed_at": "2026-07-03T22:38:00Z",
+                     *         "current_value": "0.2041764538697883",
+                     *         "h1_value": "0.20380247911865504",
+                     *         "h1_delta_pct": 0.1834986270778068,
+                     *         "h24_value": "0.19673099518995452",
+                     *         "h24_delta_pct": 3.784588530467602,
+                     *         "d7_value": "0.17768054591385554",
+                     *         "d7_delta_pct": 14.912104090888326,
+                     *         "d30_value": "0.21078647159614772",
+                     *         "d30_delta_pct": -3.13588328335594,
+                     *         "ath_value": "0.29758550057923283",
+                     *         "ath_at": "2026-05-30T03:52:00Z",
+                     *         "atl_value": "0.13999047864054645",
+                     *         "atl_at": "2026-05-23T08:41:00Z",
+                     *         "streak_direction": "up",
+                     *         "streak_days": 5,
+                     *         "acceleration": "decreasing"
+                     *       },
+                     *       "as_of": "2026-07-03T22:40:39.873451257Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: {
+                            entity_type?: string;
+                            entity_id?: string;
+                            /** Format: date-time */
+                            refreshed_at?: string;
+                            /** @description money (price/market-cap) — JSON string per INV-2 */
+                            current_value?: string;
+                            /** @description money — JSON string per INV-2 */
+                            h1_value?: string | null;
+                            h1_delta_pct?: number | null;
+                            /** @description money — JSON string per INV-2 */
+                            h24_value?: string | null;
+                            h24_delta_pct?: number | null;
+                            /** @description money — JSON string per INV-2 */
+                            d7_value?: string | null;
+                            d7_delta_pct?: number | null;
+                            /** @description money — JSON string per INV-2 */
+                            d30_value?: string | null;
+                            d30_delta_pct?: number | null;
+                            /**
+                             * @description Highest observed value since this entity entered the index — NOT an all-time high over the asset's full history. money — JSON string per INV-2.
+                             *
+                             *     The rollup scans a rolling ~30-day window, but the stored value is merged with GREATEST on every refresh, so it accumulates from the moment tracking began and never decays. It therefore reaches back further than 30 days (the oldest extreme on the reference deployment is ~80 days) but does not reach back before the entity was first indexed, and it is not backfilled from history.
+                             *
+                             *     Because the merge is monotonic, a single bad print is permanent: an extreme recorded before a data-quality fix landed stays until the row is rebuilt. Treat it as "high-water mark observed by this index", not as a market all-time high.
+                             */
+                            ath_value?: string | null;
+                            /**
+                             * Format: date-time
+                             * @description Observation time of ath_value.
+                             */
+                            ath_at?: string | null;
+                            /** @description Lowest observed value since this entity entered the index — NOT an all-time low over the asset's full history. money — JSON string per INV-2. Same accumulation and single-bad-print caveats as ath_value, via LEAST. */
+                            atl_value?: string | null;
+                            /**
+                             * Format: date-time
+                             * @description Observation time of atl_value.
+                             */
+                            atl_at?: string | null;
+                            /** @enum {string|null} */
+                            streak_direction?: "up" | "down" | "flat" | null;
+                            streak_days?: number | null;
+                            /** @enum {string|null} */
+                            acceleration?: "increasing" | "flat" | "decreasing" | null;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getDiagnosticCursors: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Semantic convenience filter (R-015). Values:
+                 *       - `active` — only rows with `lag_seconds <= 600` (10 min).
+                 *         Excludes completed backfill cursors that linger in the
+                 *         table after their range finished.
+                 *       - `stale`  — complement; only rows older than the 10-min
+                 *         boundary. Useful for spotting dead ingest paths.
+                 *       - omitted — return everything (subject to `max_age` + `source`).
+                 *     Composes with `max_age`: for `status=active` the effective
+                 *     window is whichever bound is tighter; for `status=stale` the
+                 *     window becomes `[10m, max_age]`.
+                 */
+                status?: "active" | "stale";
+                /**
+                 * @description Positive Go-duration string (e.g. `1h`, `30m`, `5m`,
+                 *     `0.5h`). When present, rows whose `lag_seconds`
+                 *     exceeds this value are excluded from the response.
+                 *     Empty / omitted preserves the legacy "return every
+                 *     cursor" contract.
+                 */
+                max_age?: string;
+                /**
+                 * @description Exact-match filter on the `source` column. Typical
+                 *     values: `ledgerstream` (the live indexer) or
+                 *     `backfill` (one row per backfill range). Unknown
+                 *     values return an empty array (not 400) — keeps the
+                 *     surface predictable when an operator typos vs. a
+                 *     brand-new source we haven't seen yet.
+                 */
+                source?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Array of cursor entries, one per (source, sub_source) (standard envelope; data is the array). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "source": "backfill",
+                     *           "sub_source": "11474999-15299997:sdex",
+                     *           "last_ledger": 15299997,
+                     *           "last_updated": "2026-05-14T18:19:34Z",
+                     *           "lag_seconds": 4335523
+                     *         }
+                     *       ],
+                     *       "as_of": "2026-07-03T22:38:18.218056301Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: {
+                            source: string;
+                            sub_source?: string;
+                            last_ledger: number;
+                            /** Format: date-time */
+                            last_updated: string;
+                            /** Format: int64 */
+                            lag_seconds: number;
+                        }[];
+                    };
+                };
+            };
+            /**
+             * @description Either `max_age` didn't parse as a positive Go duration
+             *     (`type=https://api.stellarindex.io/errors/invalid-max-age`),
+             *     or `status` was set to a value other than `active` /
+             *     `stale` (`type=https://api.stellarindex.io/errors/invalid-status`).
+             *     Body is the standard problem+json envelope.
+             */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getDiagnosticIngestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Snapshot of the region's ingest state (standard envelope). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "region": {
+                     *           "name": "r1",
+                     *           "deployment": "production"
+                     *         },
+                     *         "version": {
+                     *           "version": "v0.7.6",
+                     *           "build_date": "2026-07-03T22:24:02Z",
+                     *           "commit": "3d26b9d2b1bf72dc3caec9db9dceff59ca24f6b7",
+                     *           "dirty": "false",
+                     *           "go_version": "go1.25.10"
+                     *         },
+                     *         "ledger": {
+                     *           "latest_ledger": 63316172,
+                     *           "lag_seconds": 0,
+                     *           "volume_24h_usd": "2904068272.78168669",
+                     *           "markets_count_24h": 27488,
+                     *           "assets_indexed": 191015
+                     *         },
+                     *         "backfill": [
+                     *           {
+                     *             "decoder": "aquarius",
+                     *             "ranges_total": 1,
+                     *             "ranges_complete": 1,
+                     *             "ranges_running": 0,
+                     *             "ranges_stalled": 0,
+                     *             "ranges_active": 0,
+                     *             "oldest_lag_seconds": 0,
+                     *             "newest_ledger": 62637704
+                     *           }
+                     *         ],
+                     *         "backfill_coverage": [
+                     *           {
+                     *             "source": "aquarius",
+                     *             "applies": true,
+                     *             "entries": 1,
+                     *             "coverage_pct": 1,
+                     *             "completeness_pct": 1,
+                     *             "completeness_complete": true,
+                     *             "completeness_lake_complete": true
+                     *           }
+                     *         ],
+                     *         "backfill_coverage_as_of": "2026-07-03T22:38:12Z",
+                     *         "cagg_coverage": {
+                     *           "earliest_bucket": "2015-11-18T03:00:00Z",
+                     *           "latest_bucket": "2026-07-03T21:00:00Z",
+                     *           "bucket_count": 175011581
+                     *         },
+                     *         "fx_backfill": {
+                     *           "earliest_quote": "2001-05-11",
+                     *           "latest_quote": "2026-07-03",
+                     *           "total_quotes": 244477,
+                     *           "currencies_count": 132
+                     *         },
+                     *         "market_cap": {
+                     *           "entries_count": 187,
+                     *           "oldest_fetched_at": "2026-07-03T21:38:00Z",
+                     *           "newest_fetched_at": "2026-07-03T22:38:00Z"
+                     *         },
+                     *         "supply": {
+                     *           "classic_assets_with_supply": 9,
+                     *           "sep41_assets_with_supply": 0,
+                     *           "last_snapshot_at": "2026-07-03T22:38:02Z",
+                     *           "latest_ledger": 63316175
+                     *         },
+                     *         "sources": [
+                     *           {
+                     *             "name": "aquarius",
+                     *             "class": "exchange",
+                     *             "include_in_vwap": true,
+                     *             "backfill_safe": true,
+                     *             "trade_count_24h": 12946,
+                     *             "markets_count_24h": 142,
+                     *             "volume_24h_usd": "2100883.02"
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-07-03T22:38:19.403102451Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        /** @description Operator diagnostics — the documented properties are the stable core; the handler also serves per-source coverage fields (density_pct, gap_free_pct, covered_ledgers, coverage_snapshot_at, entries_24h) and ADR-0033 completeness fields that evolve with the pipeline (board #33; x-stability: experimental per ADR-0042). */
+                        data: {
+                            region: {
+                                /** @example r1 */
+                                name: string;
+                                /** @example production */
+                                deployment: string;
+                            };
+                            version: {
+                                /** @example v0.5.0-rc.50 */
+                                version: string;
+                                /** @example 2026-05-13T18:21:59Z */
+                                build_date: string;
+                                /** @example 539333827c1a25d3ecfdcda67aa9c9a6f30cf6d3 */
+                                commit: string;
+                                /** @example false */
+                                dirty: string;
+                                /** @example go1.25.10 */
+                                go_version: string;
+                            };
+                            ledger: {
+                                /** Format: int64 */
+                                latest_ledger: number;
+                                /** Format: int64 */
+                                lag_seconds: number;
+                                /** @description Decimal string per ADR-0003. */
+                                volume_24h_usd?: string;
+                                /** Format: int64 */
+                                markets_count_24h: number;
+                                /** Format: int64 */
+                                assets_indexed: number;
+                            };
+                            backfill: {
+                                /** @example sdex,soroswap */
+                                decoder: string;
+                                /** @description Total cursor rows for this decoder set. */
+                                ranges_total: number;
+                                /** @description last_ledger == range_end. */
+                                ranges_complete: number;
+                                /** @description Incomplete AND updated within the last 10 min — actively progressing. */
+                                ranges_running: number;
+                                /** @description Incomplete AND not updated for 10+ min — needs `-resume` restart. */
+                                ranges_stalled: number;
+                                /** @description Back-compat: ranges_running + ranges_stalled. */
+                                ranges_active: number;
+                                /** Format: date-time */
+                                oldest_updated_at?: string;
+                                /** Format: int64 */
+                                oldest_lag_seconds: number;
+                                /** Format: int64 */
+                                newest_ledger: number;
+                            }[];
+                            /**
+                             * @description Per-source min/max ledger + trade count from the
+                             *     trades hypertable. Answers "do we have data
+                             *     from genesis to tip?" — `applies=true` rows are
+                             *     Stellar-ledger-bearing sources (sdex + Soroban
+                             *     contracts); CEX/FX sources surface as
+                             *     `applies=false`. Background-refreshed every
+                             *     5 min; empty array until first refresh
+                             *     completes after process start.
+                             */
+                            backfill_coverage: {
+                                /** @example sdex */
+                                source: string;
+                                /** @description False for CEX/FX sources whose trades have no Stellar ledger. */
+                                applies: boolean;
+                                /**
+                                 * Format: int64
+                                 * @description Operator-curated source genesis (1 for SDEX, contract deploy ledger for Soroban).
+                                 */
+                                genesis_ledger?: number;
+                                /** Format: int64 */
+                                earliest_ledger?: number;
+                                /** Format: int64 */
+                                latest_ledger?: number;
+                                /**
+                                 * Format: int64
+                                 * @description Always-on per-source ingested-entry tally — trades for exchange/DEX/CEX sources, oracle_updates for oracle sources (source_entry_counts, migration 0035). Exact even mid-backfill; renamed from trade_count 2026-05-15.
+                                 */
+                                entries: number;
+                                /** @description Fraction of (genesis → tip) range with any data. 1.0 = covered. Doesn't detect internal gaps. */
+                                coverage_pct?: number;
+                                /** @description ADR-0033 watermark coverage: (watermark - genesis + 1) / (tip - genesis + 1). No sparsity threshold — a single PROVEN gap pins it. Absent until compute-completeness has run for the source. */
+                                completeness_pct?: number;
+                                /**
+                                 * Format: int64
+                                 * @description Highest fully-verified ledger.
+                                 */
+                                completeness_watermark?: number;
+                                /** @description SERVED/combined axis of the ADR-0033/ADR-0034 two-axis verdict: substrate ∧ recognition ∧ the retention-scoped projection reconcile. */
+                                completeness_complete?: boolean;
+                                /** @description LAKE (archive) axis: substrate ∧ recognition only, genesis-to-tip. A source is routinely lake_complete=true with complete=false — the archive is proven genesis-complete while the served tier is still reconciling. */
+                                completeness_lake_complete?: boolean;
+                                /**
+                                 * Format: date-time
+                                 * @description When compute-completeness last ran for this source.
+                                 */
+                                completeness_computed_at?: string;
+                            }[];
+                            /**
+                             * Format: date-time
+                             * @description When the backfill_coverage snapshot was last refreshed.
+                             */
+                            backfill_coverage_as_of?: string;
+                            /**
+                             * @description MIN/MAX bucket of `prices_1h`, the canonical
+                             *     "long-lived" continuous aggregate. Real
+                             *     source-of-truth for "do we have historical
+                             *     OHLC since genesis?" — raw trades have a 90-day
+                             *     retention but the hourly+ CAGGs are retained
+                             *     forever (migration 0002).
+                             */
+                            cagg_coverage?: {
+                                /** Format: date-time */
+                                earliest_bucket?: string;
+                                /** Format: date-time */
+                                latest_bucket?: string;
+                                /** Format: int64 */
+                                bucket_count: number;
+                            };
+                            fx_backfill: {
+                                /** @example 1999-01-04 */
+                                earliest_quote?: string;
+                                /** @example 2026-05-13 */
+                                latest_quote?: string;
+                                /** Format: int64 */
+                                total_quotes: number;
+                                currencies_count: number;
+                            };
+                            market_cap: {
+                                entries_count: number;
+                                /** Format: date-time */
+                                oldest_fetched_at?: string;
+                                /** Format: date-time */
+                                newest_fetched_at?: string;
+                            };
+                            supply: {
+                                classic_assets_with_supply: number;
+                                sep41_assets_with_supply: number;
+                                /** Format: date-time */
+                                last_snapshot_at?: string;
+                                /** Format: int64 */
+                                latest_ledger?: number;
+                            };
+                            sources: {
+                                /** @example binance */
+                                name: string;
+                                /** @example exchange */
+                                class: string;
+                                /** @example cex */
+                                subclass?: string;
+                                include_in_vwap: boolean;
+                                backfill_safe: boolean;
+                                /** Format: int64 */
+                                trade_count_24h: number;
+                                volume_24h_usd?: string;
+                                /** Format: int64 */
+                                markets_count_24h: number;
+                            }[];
+                        };
+                    };
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getDiagnosticArchive: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The latest report, verbatim from the daemon. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "schema": "1",
+                     *         "scanned_at": "2026-07-03T04:00:00Z",
+                     *         "range": {
+                     *           "from": 2,
+                     *           "to": 63305532
+                     *         },
+                     *         "cross_anchor": {
+                     *           "archive_root": "/srv/history-archive",
+                     *           "expected": 989148,
+                     *           "found": 989148,
+                     *           "missing_count": 0
+                     *         }
+                     *       },
+                     *       "as_of": "2026-07-03T22:38:20.564931481Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: {
+                            /** @example 1 */
+                            schema: string;
+                            /** Format: date-time */
+                            scanned_at: string;
+                            range: {
+                                /** Format: int64 */
+                                from: number;
+                                /** Format: int64 */
+                                to: number;
+                            };
+                            cross_anchor?: {
+                                /** @example /srv/history-archive */
+                                archive_root: string;
+                                expected: number;
+                                found: number;
+                                missing_count: number;
+                                missing?: number[];
+                                /**
+                                 * @description True when the daemon capped the `missing`
+                                 *     list; `missing_count` stays accurate.
+                                 */
+                                truncated?: boolean;
+                            };
+                            primary?: {
+                                bucket_name: string;
+                                expected: number;
+                                found: number;
+                                missing_count: number;
+                                missing_ranges?: {
+                                    /** Format: int64 */
+                                    start: number;
+                                    /** Format: int64 */
+                                    end: number;
+                                }[];
+                            };
+                        };
+                    };
+                };
+            };
+            /**
+             * @description The configured report file doesn't exist yet — the daemon
+             *     hasn't completed a run on this host.
+             */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            /** @description No archive_report_path configured on this deployment. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    listIncidents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description List of past incidents, newest first (standard envelope). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "count": 1,
+                     *         "incidents": [
+                     *           {
+                     *             "slug": "2026-05-06-postgres-lock-table-full",
+                     *             "title": "[SEV-3] Indexer dropping ~1% of trades — Postgres lock-table-full",
+                     *             "severity": "SEV-3",
+                     *             "status": "resolved",
+                     *             "started_at": "2026-05-06T15:00:00Z",
+                     *             "resolved_at": "2026-05-06T22:39:00Z",
+                     *             "affected_components": [
+                     *               "indexer",
+                     *               "storage"
+                     *             ],
+                     *             "body_markdown": "## Identification\n\nSome trades arriving on coinbase, binance…"
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-05-06T22:40:00Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: {
+                            incidents: {
+                                /** @example 2026-05-06-postgres-lock-table-full */
+                                slug: string;
+                                title: string;
+                                /** @enum {string} */
+                                severity: "SEV-1" | "SEV-2" | "SEV-3";
+                                /** @enum {string} */
+                                status: "investigating" | "identified" | "monitoring" | "resolved";
+                                /** Format: date-time */
+                                started_at: string;
+                                /** Format: date-time */
+                                resolved_at?: string | null;
+                                affected_components?: string[];
+                                /** @description Optional reference to the internal post-mortem. */
+                                postmortem?: string;
+                                /** @description Markdown body — render with the renderer of your choice. */
+                                body_markdown: string;
+                            }[];
+                            count: number;
+                        };
+                    };
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getIncidentsAtomFeed: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Atom 1.0 XML feed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/atom+xml": string;
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getCoverage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Latest verdict per source, source-sorted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "sources": [
+                     *           {
+                     *             "source": "aquarius",
+                     *             "complete": true,
+                     *             "lake_complete": true,
+                     *             "substrate_ok": true,
+                     *             "recognition_ok": true,
+                     *             "projection_ok": true,
+                     *             "genesis_ledger": 52728375,
+                     *             "watermark_ledger": 63305532,
+                     *             "tip_ledger": 63305532,
+                     *             "coverage_pct": 1,
+                     *             "detail": "complete: substrate + recognition + projection verified to tip",
+                     *             "computed_at": "2026-07-03T05:30:21.937134Z"
+                     *           },
+                     *           {
+                     *             "source": "soroswap",
+                     *             "complete": false,
+                     *             "lake_complete": true,
+                     *             "substrate_ok": true,
+                     *             "recognition_ok": true,
+                     *             "projection_ok": false,
+                     *             "genesis_ledger": 61500000,
+                     *             "watermark_ledger": 63305532,
+                     *             "tip_ledger": 63305532,
+                     *             "coverage_pct": 1,
+                     *             "detail": "projection: 3 mismatched ledger(s) outside the served retention window",
+                     *             "computed_at": "2026-07-03T05:30:21.937134Z"
+                     *           }
+                     *         ],
+                     *         "complete_sources": 14,
+                     *         "lake_complete_sources": 15,
+                     *         "total_sources": 15
+                     *       },
+                     *       "as_of": "2026-07-03T22:38:20.564931481Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data?: {
+                            sources: {
+                                /** @example soroswap */
+                                source: string;
+                                /**
+                                 * @description SERVED/combined axis: substrate ∧ recognition ∧
+                                 *     projection. Projection reconcile is
+                                 *     retention-scoped (ADR-0034: Postgres is the
+                                 *     served tier, not the archive), so this can be
+                                 *     false even when lake_complete is true.
+                                 */
+                                complete: boolean;
+                                /**
+                                 * @description LAKE/archive axis: substrate ∧ recognition only,
+                                 *     genesis-to-tip, decoupled from the
+                                 *     retention-scoped projection reconcile — "the
+                                 *     certified ClickHouse archive is contiguous +
+                                 *     hash-chained + recognition-complete from genesis
+                                 *     to tip for this source." Two-axis verdict per
+                                 *     notes/DECISION-genesis-complete-verdict-2026-07-16.md
+                                 *     (Option B).
+                                 */
+                                lake_complete: boolean;
+                                substrate_ok: boolean;
+                                recognition_ok: boolean;
+                                projection_ok: boolean;
+                                /** Format: int64 */
+                                genesis_ledger: number;
+                                /**
+                                 * Format: int64
+                                 * @description Lake-axis watermark (substrate ∧ recognition), NOT gated by projection.
+                                 */
+                                watermark_ledger: number;
+                                /** Format: int64 */
+                                tip_ledger: number;
+                                /**
+                                 * @description Lake-axis coverage (watermark vs tip) — see
+                                 *     watermark_ledger. A FRACTION in [0,1] despite
+                                 *     the `_pct` name: 1.0 means the verdict reaches
+                                 *     the tip, not 100.
+                                 */
+                                coverage_pct: number;
+                                /** Format: int64 */
+                                first_problem_ledger?: number;
+                                detail?: string;
+                                /** Format: date-time */
+                                computed_at: string;
+                            }[];
+                            /** @description Count of sources with complete=true (served/combined axis). */
+                            complete_sources: number;
+                            /** @description Count of sources with lake_complete=true (lake/archive axis). */
+                            lake_complete_sources: number;
+                            total_sources: number;
+                        };
+                    };
+                };
+            };
+            /** @description No completeness reader wired on this deployment. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    listProtocols: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every indexed protocol, registry-ordered. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "protocols": [
+                     *           {
+                     *             "name": "sdex",
+                     *             "category": "dex",
+                     *             "description": "Stellar's protocol-native central-limit order book, traded via classic manage-offer and pa…",
+                     *             "genesis_ledger": 2,
+                     *             "factories": [],
+                     *             "contract_count": 0,
+                     *             "events_24h": 1692662,
+                     *             "completeness": {
+                     *               "complete": false,
+                     *               "watermark_ledger": 63305532
+                     *             }
+                     *           }
+                     *         ],
+                     *         "total_protocols": 15
+                     *       },
+                     *       "as_of": "2026-07-03T22:38:22.870546219Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data?: {
+                            protocols: components["schemas"]["ProtocolRow"][];
+                            total_protocols: number;
+                            /**
+                             * @description Honest-degrade signal (mirrors the
+                             *     `coverage_note` on `/accounts/{id}/movements`
+                             *     and `/tx/{hash}`): present ONLY when one or
+                             *     more sources were OMITTED from `protocols`
+                             *     because their contract-roster read failed and
+                             *     no cached count was available. Names the
+                             *     omitted sources. A degraded source is dropped
+                             *     (never shown with a fabricated
+                             *     `contract_count: 0`), so a complete directory
+                             *     carries no note.
+                             */
+                            coverage_note?: string;
+                        };
+                    };
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getProtocol: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Trailing window (days) for the `bespoke` per-category analytics
+                 *     block (its KPIs, series, and tables). Whitelisted to 1, 7, 30, or
+                 *     90 (default 90) — each admitted window is a distinct cached scan,
+                 *     so arbitrary values are rejected with a 400 problem+json rather
+                 *     than clamped. At `days=1` the bridge flow series (cctp inbound /
+                 *     outbound, rozo settled volume) are bucketed HOURLY with
+                 *     `YYYY-MM-DD"T"HH24:00` point timestamps; longer windows are daily
+                 *     (`YYYY-MM-DD`). The lake-analytics fields (`activity_series`,
+                 *     `event_breakdown`, `events_total`, `activity_window_days`) always
+                 *     cover the fixed 90-day lookback regardless of this parameter.
+                 */
+                days?: 1 | 7 | 30 | 90;
+            };
+            header?: never;
+            path: {
+                /** @description Canonical protocol name from the directory (`blend`, `soroswap`, …). */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The protocol's full detail view. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "name": "blend",
+                     *         "category": "lending",
+                     *         "description": "Blend — isolated lending pools on Soroban, deployed from the Blend pool factories.",
+                     *         "genesis_ledger": 51499546,
+                     *         "factories": [
+                     *           "CCZD6ESMOGMPWH2KRO4O7RGTAPGTUPFWFQBELQSS7ZUK63V3TZWETGAG"
+                     *         ],
+                     *         "contract_count": 27,
+                     *         "events_24h": 3211,
+                     *         "completeness": {
+                     *           "complete": true,
+                     *           "watermark_ledger": 63305532
+                     *         },
+                     *         "contracts": [
+                     *           {
+                     *             "contract_id": "CDVQVKOY2YSXS2IC7KN6MNASSHPAO7UN2UR2ON4OI2SKMFJNVAMDX6DP",
+                     *             "factory_id": "CCZD6ESMOGMPWH2KRO4O7RGTAPGTUPFWFQBELQSS7ZUK63V3TZWETGAG",
+                     *             "first_ledger": 51499915,
+                     *             "kind": "instance",
+                     *             "tokens": [
+                     *               "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+                     *               "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
+                     *             ],
+                     *             "token_symbols": [
+                     *               "XLM",
+                     *               "USDC"
+                     *             ],
+                     *             "pair": "XLM/USDC",
+                     *             "events": 569,
+                     *             "last_seen": "2026-07-03T21:40:33Z"
+                     *           }
+                     *         ],
+                     *         "event_kinds": [
+                     *           "blend.position",
+                     *           "blend_backstop.event"
+                     *         ],
+                     *         "verification_page": "docs/protocols/blend.md",
+                     *         "event_breakdown": [
+                     *           {
+                     *             "event_type": "untyped",
+                     *             "count": 332561
+                     *           }
+                     *         ],
+                     *         "activity_series": [
+                     *           {
+                     *             "date": "2026-03-22",
+                     *             "events": 2449
+                     *           }
+                     *         ],
+                     *         "activity_window_days": 90,
+                     *         "events_total": 332561,
+                     *         "analytics": {
+                     *           "status": "ok",
+                     *           "as_of": "2026-07-03T22:38:12Z"
+                     *         }
+                     *       },
+                     *       "as_of": "2026-07-03T22:38:49.052946129Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data?: components["schemas"]["ProtocolRow"] & {
+                            /**
+                             * @description Per-category analytics block (dex / amm /
+                             *     lending / yield / oracle / bridge — see
+                             *     internal/api/v1/protocols.go ProtocolBespoke).
+                             *     Top-level keys vary by protocol category;
+                             *     documented as a free-form object because the
+                             *     per-category sub-shapes evolve with each
+                             *     protocol integration (spec'd loosely on
+                             *     purpose, board #33 — x-stability:
+                             *     experimental per ADR-0042 applies).
+                             *
+                             *     Shared sub-shapes: `kpis` (label/value/
+                             *     unit/hint cards), `series` (named
+                             *     {date, value} time-series; values are
+                             *     numeric STRINGS — ADR-0003), `tables`
+                             *     (title/columns/rows), `notes` (caveat
+                             *     lines), and — since 1.15.0 —
+                             *     `breakdowns`: named composition datasets
+                             *     for donut/pie rendering
+                             *     ({title, unit, rows: [{label, value,
+                             *     count}]}, value-sorted descending;
+                             *     e.g. CCTP's "Inflows by source chain" /
+                             *     "Outflows by destination chain").
+                             */
+                            bespoke?: {
+                                [key: string]: unknown;
+                            };
+                            contracts: {
+                                /** @description Instance C-strkey. */
+                                contract_id: string;
+                                /** @description Deploying factory C-strkey (gated sources only). */
+                                factory_id?: string;
+                                /**
+                                 * Format: int64
+                                 * @description First-observed ledger (absent when unknown).
+                                 */
+                                first_ledger?: number;
+                                /** @description Pair token0 C-strkey (soroswap only). */
+                                token0?: string;
+                                /** @description Pair token1 C-strkey (soroswap only). */
+                                token1?: string;
+                                /** @description Ordered raw token contract C-strkeys the pool holds — 2 for a pair, 3/4 for an Aquarius stableswap, N for a Comet weighted pool, or the reserve-asset set for a lending market (blend). Parallel to token_symbols. Absent for non-pool contracts (factories, oracles). */
+                                tokens?: string[];
+                                /** @description Human display symbols for `tokens`, same order (XLM, USDC, AQUA, …). An unresolvable token degrades to a short truncated contract ("CAS3…OWMA") so this stays parallel to `tokens`. */
+                                token_symbols?: string[];
+                                /**
+                                 * @description Human roster label — token_symbols joined with "/": "XLM/USDC" for a pair, "XLM/USDC/USDT" for a 3-token stableswap, or the reserve-asset list for a lending market. Absent when no tokens resolve.
+                                 * @example XLM/USDC
+                                 */
+                                pair?: string;
+                                /**
+                                 * @description Role within the protocol — a verified trust-root (factory), a factory-deployed pool/vault/market (instance), or a folded-in sub-module contract that belongs to this protocol but emits on its own address (module — e.g. the Blend Backstop).
+                                 * @enum {string}
+                                 */
+                                kind?: "factory" | "instance" | "module";
+                                /**
+                                 * Format: int64
+                                 * @description Decoded contract-event count for this instance over activity_window_days (from the lake).
+                                 */
+                                events?: number;
+                                /**
+                                 * Format: date-time
+                                 * @description Close time of this instance's most recent event in the window.
+                                 */
+                                last_seen?: string;
+                            }[];
+                            event_kinds: string[];
+                            /** @example docs/protocols/blend.md */
+                            verification_page?: string;
+                            /**
+                             * @description Lookback (days) the lake-analytics fields below cover.
+                             * @example 90
+                             */
+                            activity_window_days?: number;
+                            /**
+                             * Format: int64
+                             * @description Total decoded contract events across the protocol over activity_window_days (sum of event_breakdown counts).
+                             */
+                            events_total?: number;
+                            /** @description Event-type distribution (topic[0] symbol → count) over the window, descending — "which event types fired, and how often." */
+                            event_breakdown?: {
+                                /** @example supply_collateral */
+                                event_type?: string;
+                                /** Format: int64 */
+                                count?: number;
+                            }[];
+                            /** @description Daily decoded-event count over the window (the activity chart). */
+                            activity_series?: {
+                                /** @example 2026-06-14 */
+                                date?: string;
+                                /** Format: int64 */
+                                events?: number;
+                            }[];
+                            /**
+                             * @description Explicit health of the view's analytics halves
+                             *     (the lake-derived fields above and `bespoke`) —
+                             *     since 1.16.0. Distinguishes a degraded build
+                             *     from genuinely-empty data: `ok` means every
+                             *     analytics component built successfully (an
+                             *     absent `bespoke` under `ok` is a category with
+                             *     none — a real absence); `stale` means the view
+                             *     is real but served past its freshness horizon
+                             *     while a background rebuild runs (`as_of` says
+                             *     how old; `flags.stale` is set on the envelope
+                             *     too); `unavailable` means at least one
+                             *     component failed or was skipped — absent
+                             *     blocks and zero-valued analytics fields then
+                             *     mean DEGRADATION, not zero activity, and
+                             *     clients should render a hint rather than the
+                             *     values.
+                             */
+                            analytics?: {
+                                /**
+                                 * @description Health of the analytics in this view.
+                                 * @enum {string}
+                                 */
+                                status: "ok" | "stale" | "unavailable";
+                                /**
+                                 * Format: date-time
+                                 * @description When this view's analytics were built.
+                                 */
+                                as_of?: string;
+                            };
+                        };
+                    };
+                };
+            };
+            /** @description Unknown protocol name. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getSdexOrderbook: {
+        parameters: {
+            query: {
+                /** @description Base asset (canonical classic id: `native` or `CODE-G...`). */
+                selling: string;
+                /** @description Quote asset (canonical classic id). */
+                buying: string;
+                /** @description Maximum aggregated price levels per side. */
+                depth?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Aggregated depth, asks ascending / bids descending by price. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "selling": "native",
+                     *         "buying": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *         "as_of_ledger": 63412345,
+                     *         "snapshot_at": "2026-07-29T12:34:56Z",
+                     *         "asks": [
+                     *           {
+                     *             "price": "0.3921569",
+                     *             "price_r": {
+                     *               "n": 20,
+                     *               "d": 51
+                     *             },
+                     *             "base_amount": "1250.0000000",
+                     *             "quote_amount": "490.1960784",
+                     *             "cum_base_amount": "1250.0000000",
+                     *             "cum_quote_amount": "490.1960784",
+                     *             "offers": 3
+                     *           }
+                     *         ],
+                     *         "bids": [
+                     *           {
+                     *             "price": "0.3910000",
+                     *             "price_r": {
+                     *               "n": 391,
+                     *               "d": 1000
+                     *             },
+                     *             "base_amount": "800.0000000",
+                     *             "quote_amount": "312.8000000",
+                     *             "cum_base_amount": "800.0000000",
+                     *             "cum_quote_amount": "312.8000000",
+                     *             "offers": 1
+                     *           }
+                     *         ],
+                     *         "ask_offers": 3,
+                     *         "bid_offers": 1,
+                     *         "depth": 25
+                     *       },
+                     *       "as_of": "2026-07-29T12:35:02.870546219Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data?: components["schemas"]["SDEXOrderBook"];
+                    };
+                };
+            };
+            /** @description Invalid selling/buying asset or depth. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            /** @description Order book snapshot still loading (or the lake reader is not wired on this deployment). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getLedgerTip: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current live-ingest frontier. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "latest_ledger": 63316183,
+                     *         "ingested_at": "2026-07-03T22:38:47.833071Z",
+                     *         "lag_seconds": 2
+                     *       },
+                     *       "as_of": "2026-07-03T22:38:50.194761237Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: {
+                            /**
+                             * Format: int64
+                             * @description Highest ledger the indexer has committed.
+                             */
+                            latest_ledger: number;
+                            /**
+                             * Format: date-time
+                             * @description When that ledger's cursor was committed (RFC 3339).
+                             */
+                            ingested_at: string;
+                            /**
+                             * Format: int64
+                             * @description Wall-clock age of the cursor commit.
+                             */
+                            lag_seconds: number;
+                        };
+                    };
+                };
+            };
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    streamLedgerTip: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Opaque ID for resuming a previously-broken stream. */
+                "Last-Event-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description SSE stream of ledger_update events. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example id: 0198a4214a900001
+                     *     event: ledger_update
+                     *     data: {"data":{"latest_ledger":63316183,"ingested_at":"2026-07-03T22:38:47.833071Z","lag_seconds":2},"as_of":"2026-07-03T22:38:50.194761237Z"}
+                     *
+                     *     :keepalive
+                     *
+                     *     id: 0198a4214a900002
+                     *     event: ledger_update
+                     *     data: {"data":{"latest_ledger":63316184,"ingested_at":"2026-07-03T22:38:52.611403Z","lag_seconds":2},"as_of":"2026-07-03T22:38:52.812009481Z"}
+                     */
+                    "text/event-stream": string;
+                };
+            };
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getNetworkStats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Aggregate stats (standard envelope). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "volume_24h_usd": "5941104763.13358600",
+                     *         "markets_count_24h": 4934,
+                     *         "assets_indexed": 442190,
+                     *         "latest_ledger": 62450017,
+                     *         "exchange_sources": 11,
+                     *         "total_sources": 21
+                     *       },
+                     *       "as_of": "2026-05-05T15:09:00.119Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: {
+                            /**
+                             * @description SUM(prices_1m.volume_usd) over the trailing
+                             *     24h. Decimal string per ADR-0003.
+                             */
+                            volume_24h_usd?: string | null;
+                            /** @description Distinct (base, quote) pairs with non-null volume in 24h. */
+                            markets_count_24h: number;
+                            /** @description Total rows in classic_assets. */
+                            assets_indexed: number;
+                            /** @description Max last_ledger across non-backfill sources. */
+                            latest_ledger: number;
+                            /**
+                             * @description Count of `class=exchange` sources REGISTERED in
+                             *     the binary's `internal/sources/external.Registry`
+                             *     map. Constant across regions running the same
+                             *     build; independent of operator config.
+                             */
+                            exchange_sources: number;
+                            /**
+                             * @description Count of ALL registered sources (every entry in
+                             *     `internal/sources/external.Registry`). Different
+                             *     from `/v1/status`'s `freshness.total_sources`,
+                             *     which counts only sources the operator has
+                             *     ENABLED at runtime — typically a strict subset.
+                             *     Today on r1: registry=21, enabled=17, active=15.
+                             *     The two `total_sources` measure different things
+                             *     by design; see the field doc on
+                             *     `internal/api/v1.NetworkStats` for the full
+                             *     semantic table.
+                             */
+                            total_sources: number;
+                        };
+                    };
+                };
+            };
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getNetworkThroughput: {
+        parameters: {
+            query?: {
+                /** @description Number of trailing days in the per-day series (1-365, default 30). */
+                window_days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Daily throughput buckets. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "window_days": 7,
+                     *         "buckets": [
+                     *           {
+                     *             "day": "2026-06-25",
+                     *             "ledgers": 14832,
+                     *             "txs": 5210044,
+                     *             "ops": 10981233,
+                     *             "events": 7498112,
+                     *             "fee_pool": "48231457220441231",
+                     *             "total_coins": "1054439020873472922",
+                     *             "protocol_version": 23
+                     *           },
+                     *           {
+                     *             "day": "2026-06-26",
+                     *             "ledgers": 14791,
+                     *             "txs": 5232968,
+                     *             "ops": 11025463,
+                     *             "events": 7512422,
+                     *             "fee_pool": "48231989301127744",
+                     *             "total_coins": "1054439020873472922",
+                     *             "protocol_version": 23
+                     *           },
+                     *           {
+                     *             "day": "2026-06-27",
+                     *             "ledgers": 8934,
+                     *             "txs": 3160221,
+                     *             "ops": 6655109,
+                     *             "events": 4537880,
+                     *             "fee_pool": "48232301518824410",
+                     *             "total_coins": "1054439020873472922",
+                     *             "protocol_version": 23,
+                     *             "partial": true
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-07-03T22:38:51.364370254Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: {
+                            window_days?: number;
+                            buckets?: {
+                                /** Format: date */
+                                day?: string;
+                                /** Format: int64 */
+                                ledgers?: number;
+                                /** Format: int64 */
+                                txs?: number;
+                                /** Format: int64 */
+                                ops?: number;
+                                /** Format: int64 */
+                                events?: number;
+                                /** @description Cumulative network fee pool at the day's last ledger, in stroops (decimal string — exceeds 2^53). Daily fee burn = the delta between consecutive COMPLETE days. */
+                                fee_pool?: string;
+                                /** @description Total XLM in existence at the day's last ledger, in stroops (decimal string — exceeds 2^53). */
+                                total_coins?: string;
+                                /** @description Protocol version in force at the day's last ledger. */
+                                protocol_version?: number;
+                                /** @description True when this bucket does not cover a whole UTC day — in practice only today, which is still accumulating. Render it distinctly and EXCLUDE it from window totals; every other bucket is a complete day (the window is day-aligned). Omitted when false. */
+                                partial?: boolean;
+                            }[];
+                        };
+                    };
+                };
+            };
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getMethodology: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Methodology snapshot. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "version": "1.0",
+                     *         "aggregation": {
+                     *           "price_method": "vwap",
+                     *           "outlier_filter": {
+                     *             "endpoint": "/v1/ohlc",
+                     *             "default_sigma": 4,
+                     *             "note": "OHLC's High/Low have no statistical robustness; a single dust trade can pin them. The defa…"
+                     *           },
+                     *           "stablecoin_fiat_proxy": [
+                     *             {
+                     *               "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *               "pegs_to": "fiat:USD"
+                     *             }
+                     *           ],
+                     *           "closed_bucket_window_seconds": 30
+                     *         },
+                     *         "source_classes": [
+                     *           {
+                     *             "name": "exchange",
+                     *             "contributes_to_vwap": true,
+                     *             "description": "Real trading venues — DEXes (Soroswap, Phoenix, Aquarius, Comet, sdex), CEXes (Coinbase, B…"
+                     *           }
+                     *         ],
+                     *         "sources": [
+                     *           {
+                     *             "name": "aquarius",
+                     *             "class": "exchange",
+                     *             "subclass": "dex",
+                     *             "default_weight": 100,
+                     *             "include_in_vwap": true,
+                     *             "paid": false,
+                     *             "backfill_available": true,
+                     *             "backfill_safe": true,
+                     *             "on_chain": true
+                     *           }
+                     *         ],
+                     *         "references": [
+                     *           {
+                     *             "id": "ADR-0007",
+                     *             "title": "Aggregation policy + cache-key contract",
+                     *             "url": "/research/adr/0007"
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-07-03T22:38:52.512609229Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["MethodologyEnvelope"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listSources: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Optional class filter. When set, only sources of the
+                 *     given class are returned. Useful for dashboards that
+                 *     split the catalogue by role.
+                 */
+                class?: "exchange" | "aggregator" | "oracle" | "authority_sanity" | "lending" | "router";
+                /**
+                 * @description Opt-in extras. `stats` populates each row's
+                 *     `trade_count_24h` from a single GROUP BY on the trades
+                 *     hypertable — cheap, but a DB hit so opt-in. Absent the
+                 *     param the response stays the all-static-registry
+                 *     projection.
+                 */
+                include?: "stats";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Array of sources, sorted by name. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "name": "aquarius",
+                     *           "class": "exchange",
+                     *           "subclass": "dex",
+                     *           "include_in_vwap": true,
+                     *           "paid": false,
+                     *           "backfill_available": true,
+                     *           "backfill_safe": true,
+                     *           "default_weight": 100,
+                     *           "on_chain": true
+                     *         }
+                     *       ],
+                     *       "as_of": "2026-07-03T22:38:53.6445723Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["SourcesEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getSourceHealth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Source name as listed by /v1/sources. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The source's health row. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "name": "kraken",
+                     *         "class": "exchange",
+                     *         "subclass": "cex",
+                     *         "include_in_vwap": true,
+                     *         "backfill_safe": true,
+                     *         "trade_count_24h": 10023,
+                     *         "entries_24h": 10023,
+                     *         "volume_24h_usd": "1245001.55",
+                     *         "markets_count_24h": 4
+                     *       },
+                     *       "as_of": "2026-07-03T22:38:53.6445723Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: {
+                            /** @example kraken */
+                            name: string;
+                            /** @example exchange */
+                            class: string;
+                            /** @example cex */
+                            subclass?: string;
+                            include_in_vwap: boolean;
+                            backfill_safe: boolean;
+                            /** Format: int64 */
+                            trade_count_24h: number;
+                            /** Format: int64 */
+                            entries_24h: number;
+                            volume_24h_usd?: string;
+                            /** Format: int64 */
+                            markets_count_24h: number;
+                        };
+                    };
+                };
+            };
+            /** @description No registered source with that name. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listAggregators: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Array of registry entries, vaults after routers, sorted by name. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "contract_id": "CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH",
+                     *           "name": "soroswap-router",
+                     *           "kind": "router",
+                     *           "protocol": "soroswap",
+                     *           "auto_discovered": false,
+                     *           "routed_trades_24h": 342,
+                     *           "routed_volume_24h_usd": "18211.4052710000000000",
+                     *           "last_routed_at": "2026-07-04T21:58:11Z",
+                     *           "notes": [
+                     *             "routed_trades_24h combines direct calls to this router, calls wrapped by an aggregator this registry doesn't recognise, and legacy rows recorded before call-path tracking (2026-07-10) — those three cases can't be told apart yet."
+                     *           ]
+                     *         },
+                     *         {
+                     *           "contract_id": "CD45PQFHSIUMIC4MVZXCQ2RD6REKXJMEHWRN56TWT3C4DV2U4DHVJRZH",
+                     *           "name": "soroswap-router-aggregator-exec",
+                     *           "kind": "router",
+                     *           "protocol": "unattributed",
+                     *           "auto_discovered": true,
+                     *           "routed_trades_24h": 11,
+                     *           "routed_volume_24h_usd": "640.1100000000000000",
+                     *           "last_routed_at": "2026-07-10T09:12:47Z",
+                     *           "notes": [
+                     *             "Evidence-observed contract, not vendor- or WASM-audit-verified (see the registry seed migration's notes).",
+                     *             "routed_trades_24h only counts router calls recorded with call_path data (live since 2026-07-10); earlier activity through this wrapper is not yet attributed pending a queued historical re-derive — a low or zero count does not mean this router carried little volume."
+                     *           ]
+                     *         },
+                     *         {
+                     *           "contract_id": "CDB2WMKQQNVZMEBY7Q7GZ5C7E7IAFSNMZ7GGVD6WKTCEWK7XOIAVZSAP",
+                     *           "name": "defindex-vault-usdc-autocompound",
+                     *           "kind": "aggregator-vault",
+                     *           "protocol": "defindex",
+                     *           "auto_discovered": false,
+                     *           "routed_trades_24h": 0,
+                     *           "routed_volume_24h_usd": null,
+                     *           "last_routed_at": null
+                     *         }
+                     *       ],
+                     *       "as_of": "2026-07-04T22:38:53.6445723Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["AggregatorsEnvelope"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listSacWrappers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Map of SAC C-strkey to canonical asset key. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "CA4L5XQ7FY7BTJAAD6VPW6JPSJ3M2A62BBULXH7XYHLHAOFFY6SBT2Z4": "PSY:GCH3HFAY25TU2CPUEMF7OT7PGHUMXQITQQOOKZV6VRETY7SCEPARAEGO",
+                     *         "CA57LR6W4XP7HTGJ3HZEXH7SVTMBPUBEUN5UI3WGB5HFKDMEECRJMXBZ": "SILICA:GBDJWO2QRXHSOBQOPSZAK6B4COVPK5NMQI62XHC4L7YNYOSYCDLCVENZ",
+                     *         "CA6FH7RO5YF7VZ3XDX4736S2YHIGCQBYGNWB7P23AM5OCQTBPDPIKEIP": "FADA:GCX3Y4MNI7ZQBQEZQMAXRFVODVFB2PRQS4LTUHP5B34MEYQQTW5LQFLR"
+                     *       },
+                     *       "as_of": "2026-07-03T22:38:54.77946276Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        /** @description SAC C-strkey → "CODE-ISSUER" or "native". */
+                        data?: {
+                            [key: string]: string;
+                        };
+                    };
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listPairs: {
+        parameters: {
+            query: {
+                /**
+                 * @description Canonical asset id (e.g. `native`, `USDC-G…`).
+                 * @example native
+                 */
+                base: string;
+                /**
+                 * @description Canonical asset id of the quote side.
+                 * @example USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+                 */
+                quote: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pairs. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "base": "native",
+                     *           "quote": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *           "last_trade_at": "2026-07-03T22:41:49Z",
+                     *           "bucket_close_at": "2026-07-03T00:00:00Z",
+                     *           "trade_count_24h": 44295,
+                     *           "volume_24h_usd": "1184171.27591630",
+                     *           "last_price": "0.20425991362387122104"
+                     *         }
+                     *       ],
+                     *       "as_of": "2026-07-03T22:41:58.295925025Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PairsEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getOracleLastPrice: {
+        parameters: {
+            query: {
+                /**
+                 * @description SEP-40 oracle key. Reflector contracts publish under
+                 *     `crypto:<symbol>` (`crypto:XLM`, `crypto:BTC`,
+                 *     `crypto:USDC`, `crypto:ETH`, `crypto:EUROB`); the bare
+                 *     `native` / `<code>-<G…>` forms are NOT keys in the
+                 *     oracle namespace and return 404 here. Use
+                 *     `/v1/price?asset=…` for canonical-asset prices.
+                 * @example crypto:XLM
+                 */
+                asset: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Price record. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "asset": "crypto:XLM",
+                     *         "price": "0.20425919235975054096",
+                     *         "timestamp": "2026-07-03T22:38:00Z"
+                     *       },
+                     *       "as_of": "2026-07-03T22:38:57.085626393Z",
+                     *       "sources": [
+                     *         "bitstamp",
+                     *         "coinbase"
+                     *       ],
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["OraclePriceEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getOraclePrices: {
+        parameters: {
+            query: {
+                /** @example crypto:XLM */
+                asset: string;
+                records?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Historical records. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "asset": "crypto:XLM",
+                     *           "price": "0.20425919235975054096",
+                     *           "timestamp": "2026-07-03T22:38:00Z"
+                     *         },
+                     *         {
+                     *           "asset": "crypto:XLM",
+                     *           "price": "0.20417645386978830788",
+                     *           "timestamp": "2026-07-03T22:37:00Z"
+                     *         }
+                     *       ],
+                     *       "as_of": "2026-07-03T22:38:58.304524994Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["OraclePricesEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getOracleCrossPrice: {
+        parameters: {
+            query: {
+                /** @example native */
+                base: string;
+                /** @example USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN */
+                quote: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cross-pair last price. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "asset": "native",
+                     *         "price": "0.20416863139584866478",
+                     *         "timestamp": "2026-07-03T22:38:00Z"
+                     *       },
+                     *       "as_of": "2026-07-03T22:38:59.458170934Z",
+                     *       "sources": [
+                     *         "sdex"
+                     *       ],
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["OraclePriceEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getAccountMe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Account. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "key_id": "kid_8f3a2c1b9e7d4f6a",
+                     *         "label": "production-api-1",
+                     *         "tier": "apikey",
+                     *         "rate_limit_per_min": 1000,
+                     *         "created_at": "2026-04-12T09:32:18Z"
+                     *       },
+                     *       "as_of": "2026-05-05T16:25:42.881Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["AccountEnvelope"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getAccountUsage: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Window start (inclusive), RFC 3339 UTC — e.g.
+                 *     `2026-06-01T00:00:00Z`. Windows are half-open `[from, to)`.
+                 *     When omitted the endpoint applies its own default lookback
+                 *     from `to` (documented per endpoint). Must be before `to`
+                 *     or the request 400s.
+                 */
+                from?: components["parameters"]["From"];
+                /**
+                 * @description Window end (exclusive), RFC 3339 UTC. Defaults to now.
+                 *     Windows are half-open `[from, to)` — a trade exactly at
+                 *     `to` is excluded.
+                 */
+                to?: components["parameters"]["To"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Usage records. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "date": "2026-07-01",
+                     *           "endpoint": "/v1/price",
+                     *           "requests": 18234,
+                     *           "errors": 12,
+                     *           "throttled": 0
+                     *         },
+                     *         {
+                     *           "date": "2026-07-02",
+                     *           "endpoint": "/v1/price",
+                     *           "requests": 20117,
+                     *           "errors": 3,
+                     *           "throttled": 0
+                     *         },
+                     *         {
+                     *           "date": "2026-07-02",
+                     *           "endpoint": "unmatched",
+                     *           "requests": 0,
+                     *           "errors": 0,
+                     *           "throttled": 41
+                     *         },
+                     *         {
+                     *           "date": "2026-07-02",
+                     *           "endpoint": "/v1/assets/{asset_id}",
+                     *           "requests": 512,
+                     *           "errors": 0,
+                     *           "throttled": 0
+                     *         }
+                     *       ],
+                     *       "as_of": "2026-07-03T09:00:00Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["UsageEnvelope"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listAccountKeys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Account keys (possibly empty list). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "key_id": "7d9f2a54-4f0e-4c1a-9b3d-2f6c8e1a0b5c",
+                     *           "label": "production",
+                     *           "key_prefix": "sip_1a2b3c4d",
+                     *           "tier": "apikey",
+                     *           "rate_limit_per_min": 300,
+                     *           "created_at": "2026-06-12T08:30:00Z"
+                     *         }
+                     *       ],
+                     *       "as_of": "2026-07-03T09:00:00Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data?: components["schemas"]["Account"][];
+                    };
+                };
+            };
+            /** @description Unauthenticated. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description AccountStore not configured. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    createAccountKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    label: string;
+                    /**
+                     * @description Optional capability scopes. Empty = full access
+                     *     (back-compat). Unknown values 400.
+                     */
+                    scopes?: ("read" | "account" | "dashboard" | "admin")[];
+                };
+            };
+        };
+        responses: {
+            /** @description New key — plaintext shown **once**. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "key_id": "kid_7f3a2c1b9e7d4f6a",
+                     *         "plaintext": "sip_7f3a2c1b9e7d4f6a8b3c2d1e9f8a7b6c5d4e3f2c1b9a8f7e6d5c4b3a2f1e9d8c",
+                     *         "key_prefix": "sip_7f3a2c1b",
+                     *         "label": "production-api-1",
+                     *         "scopes": [
+                     *           "read"
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-07-03T22:44:12.611403Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["KeyCreatedEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /**
+             * @description Active-key quota reached for this caller identifier. Revoke
+             *     an existing key and retry.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    deleteAccountKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Public-safe `kid_<hex>` identifier from /v1/account/keys. */
+                keyID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revoked (or no-op when the key didn't belong to the caller). */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing keyID. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Caller tried to revoke the key they're using. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Account store not configured. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    adminLookupCustomer: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Resolve the account via one of its users' email address
+                 *     (case-insensitive). Mutually exclusive with `slug` — supply
+                 *     exactly one.
+                 */
+                email?: string;
+                /**
+                 * @description Resolve the account by its slug (case-insensitive). Mutually
+                 *     exclusive with `email` — supply exactly one.
+                 */
+                slug?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /**
+             * @description Matched customer. Served with `Cache-Control: no-store`
+             *     (staff-only PII).
+             */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminLookupResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Authenticated session user is not staff. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    createAdminKey: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Free-form reason captured into the audit log. */
+                "X-Reason": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * @description Owner reference the minted key authenticates as
+                     *     (e.g. `acct:<slug>`).
+                     */
+                    identifier: string;
+                    label: string;
+                    /**
+                     * @default apikey
+                     * @enum {string}
+                     */
+                    tier?: "apikey" | "operator";
+                    /** @description 0 inherits the deployment default. */
+                    rate_limit_per_min?: number;
+                    scopes?: ("read" | "account" | "dashboard" | "admin")[];
+                };
+            };
+        };
+        responses: {
+            /** @description New key — plaintext shown **once**. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "key_id": "kid_2c9e6f4a1b8d3c7e",
+                     *         "plaintext": "sip_2c9e6f4a1b8d3c7e5a9f8b2d1c6e4f7a3b9c8d2e1f6a5b4c3d2e1f9a8b7c6d5e",
+                     *         "key_prefix": "sip_2c9e6f4a",
+                     *         "label": "partner-integration-key",
+                     *         "scopes": [
+                     *           "read",
+                     *           "account"
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-07-03T22:44:30.117209Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["KeyCreatedEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Caller is not operator-tier. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    deleteAdminKey: {
+        parameters: {
+            query: {
+                /** @description Owner reference the key belongs to (e.g. `acct:<slug>` or `signup-<hash>`). */
+                identifier: string;
+            };
+            header: {
+                /** @description Free-form reason captured into the audit log. */
+                "X-Reason": string;
+            };
+            path: {
+                /** @description Public-safe `kid_<hex>` identifier of the key to revoke. */
+                keyID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revoked (or no-op when no such key exists for that identifier). */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Caller is not operator-tier. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getAdminAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Platform account UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Account view. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminAccountEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Caller is not operator-tier. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    updateAdminAccount: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Free-form reason captured into the audit log. */
+                "X-Reason": string;
+            };
+            path: {
+                /** @description Platform account UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * @description Canonical model is `free` / `partner` (the platform
+                     *     is free; partner = staff-set per-account limits).
+                     *     Legacy paid-tier names are accepted and mapped in
+                     *     code: starter→free; pro/business/enterprise→partner.
+                     * @enum {string}
+                     */
+                    tier?: "free" | "partner" | "starter" | "pro" | "business" | "enterprise";
+                    /**
+                     * @description Account lifecycle state — the kill switch. `suspended`
+                     *     / `closed` stop the account's keys authenticating and
+                     *     deny its dashboard sessions.
+                     * @enum {string}
+                     */
+                    status?: "active" | "suspended" | "closed";
+                    /**
+                     * @description Stored alongside a suspension. Ignored when `status`
+                     *     is absent; cleared on a move back to `active`.
+                     *     Distinct from the mandatory `X-Reason` header, which
+                     *     records why the OPERATOR acted.
+                     */
+                    suspended_reason?: string;
+                    /** @description 0 clears the override (inherit tier default). */
+                    rate_limit_per_min_override?: number;
+                    /**
+                     * Format: int64
+                     * @description 0 clears the override (inherit tier default).
+                     */
+                    monthly_request_quota_override?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated account view. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "id": "3d8f1a6c-9e2b-4c7d-8a5f-1b6e3d9c2a4f",
+                     *         "name": "Acme Trading Desk",
+                     *         "slug": "acme-trading-desk",
+                     *         "tier": "partner",
+                     *         "status": "active",
+                     *         "billing_email": "ops@acme.example.com",
+                     *         "created_at": "2026-04-12T09:15:00Z",
+                     *         "rate_limit_per_min_override": 60000,
+                     *         "monthly_request_quota_override": 50000000
+                     *       },
+                     *       "as_of": "2026-07-03T22:44:41.902317Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["AdminAccountEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Caller is not operator-tier. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listAdminStatusNotices: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Notice list. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusNoticesEnvelope"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Caller is not operator-tier. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    createAdminStatusNotice: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Free-form reason captured into the audit log. */
+                "X-Reason": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    title: string;
+                    body: string;
+                    /** @enum {string} */
+                    severity: "maintenance" | "minor" | "major" | "critical";
+                };
+            };
+        };
+        responses: {
+            /** @description Created notice. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "id": "6a1d9e3c-7f2b-4a8d-9c5e-3b1f6a2d8e4c",
+                     *         "title": "Delayed price freshness on r1",
+                     *         "body": "We're investigating elevated /v1/price latency on r1 (EU). No data loss; freshness is degraded up to ~2 minutes. Updates here as we learn more.",
+                     *         "severity": "minor",
+                     *         "status": "active",
+                     *         "created_at": "2026-07-03T22:45:02.004811Z",
+                     *         "updated_at": "2026-07-03T22:45:02.004811Z"
+                     *       },
+                     *       "as_of": "2026-07-03T22:45:02.004811Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["StatusNoticeEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Caller is not operator-tier. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    resolveAdminStatusNotice: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Free-form reason captured into the audit log. */
+                "X-Reason": string;
+            };
+            path: {
+                /** @description Status notice UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Resolved notice. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "id": "6a1d9e3c-7f2b-4a8d-9c5e-3b1f6a2d8e4c",
+                     *         "title": "Delayed price freshness on r1",
+                     *         "body": "We're investigating elevated /v1/price latency on r1 (EU). No data loss; freshness is degraded up to ~2 minutes. Updates here as we learn more.",
+                     *         "severity": "minor",
+                     *         "status": "resolved",
+                     *         "created_at": "2026-07-03T22:45:02.004811Z",
+                     *         "updated_at": "2026-07-03T23:12:47.331098Z",
+                     *         "resolved_at": "2026-07-03T23:12:47.331098Z"
+                     *       },
+                     *       "as_of": "2026-07-03T23:12:47.331098Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["StatusNoticeEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Caller is not operator-tier. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    registerApiKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                /**
+                 * @example {
+                 *       "name": "my-trading-agent",
+                 *       "email": "ops@example.com"
+                 *     }
+                 */
+                "application/json": {
+                    /** @description Display name for the account (defaults to "api-registered account"). */
+                    name?: string;
+                    /**
+                     * Format: email
+                     * @description Optional contact address. Never verified, never required.
+                     */
+                    email?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Account created — plaintext key shown **once**. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "account_id": "7d9f2a54-4f0e-4c1a-9b3d-2f6c8e1a0b5c",
+                     *         "api_key": "sip_4f9c1d8b3a7e2f1c9d4b8a6e3f2c1d9b8a7e6f5d4c3b2a1f4f9c1d8b3a7e2f1c",
+                     *         "key_id": "kid_8f3a2c1b9e7d4f6a8f3a2c1b",
+                     *         "key_prefix": "sip_4f9c1d8b",
+                     *         "tier": "free",
+                     *         "limits": {
+                     *           "rate_limit_per_min": 1000,
+                     *           "monthly_quota": 1000000,
+                     *           "max_active_keys": 25,
+                     *           "max_webhooks": 10,
+                     *           "max_price_alerts": 25
+                     *         }
+                     *       },
+                     *       "as_of": "2026-08-11T14:35:42.881Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data?: {
+                            /** Format: uuid */
+                            account_id: string;
+                            /** @description Bearer token (`sip_<64hex>`). Shown ONCE; register again if lost. */
+                            api_key: string;
+                            key_id: string;
+                            key_prefix: string;
+                            /** @enum {string} */
+                            tier: "free";
+                            limits: {
+                                rate_limit_per_min: number;
+                                /** Format: int64 */
+                                monthly_quota: number;
+                                max_active_keys: number;
+                                max_webhooks: number;
+                                max_price_alerts: number;
+                            };
+                        };
+                    };
+                };
+            };
+            /** @description Invalid email / name too long / malformed body / already authenticated. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Content-Type present but not application/json. */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Per-IP registration throttle exhausted (shared with /v1/signup). */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Platform account store not configured (Postgres unavailable). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    signup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "email": "alice@example.com",
+                 *       "label": "production-api-1"
+                 *     }
+                 */
+                "application/json": {
+                    /** Format: email */
+                    email: string;
+                    label?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Account created — plaintext key shown **once**. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "plaintext": "re_live_4f9c1d8b3a7e2f1c9d4b8a6e3f2c1d9b8a7e6f5d4c3b2a1f",
+                     *         "key_id": "k_8f3a2c1b9e7d4f6a",
+                     *         "identifier": "signup-3d4f9a2c1e8b7f6d",
+                     *         "label": "production-api-1",
+                     *         "tier": "apikey",
+                     *         "rate_limit_per_min": 1000
+                     *       },
+                     *       "as_of": "2026-05-05T14:35:42.881Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data?: {
+                            /** @description Bearer token. Show ONCE; unrecoverable. */
+                            plaintext: string;
+                            key_id: string;
+                            identifier: string;
+                            label?: string;
+                            /** @enum {string} */
+                            tier: "apikey";
+                            rate_limit_per_min: number;
+                        };
+                    };
+                };
+            };
+            /** @description Missing or invalid email, body too large, or already authenticated. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Email already has an account. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description AccountStore not configured (Redis unavailable). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    verifySignup: {
+        parameters: {
+            query: {
+                /** @description The plaintext token from the verification email. */
+                token: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Token consumed; email ownership confirmed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "verified": true,
+                     *         "key_id": "7d9f2a54-4f0e-4c1a-9b3d-2f6c8e1a0b5c",
+                     *         "detail": "email verified; API key activated"
+                     *       },
+                     *       "as_of": "2026-07-03T09:00:00Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data?: {
+                            verified: boolean;
+                            key_id?: string;
+                            detail?: string;
+                        };
+                    };
+                };
+            };
+            /** @description Missing `?token=` query parameter. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unknown / consumed / expired token. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description SignupVerifier not configured (Redis unavailable). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    listDashboardKeys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Key list. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "keys": [
+                     *         {
+                     *           "id": "7d9f2a54-4f0e-4c1a-9b3d-2f6c8e1a0b5c",
+                     *           "name": "production",
+                     *           "description": "main backend key",
+                     *           "key_prefix": "sip_1a2b3c4d",
+                     *           "tier": "apikey",
+                     *           "rate_limit_per_min": 300,
+                     *           "monthly_quota": 1000000,
+                     *           "usage_alert_threshold_pct": 80,
+                     *           "last_used_at": "2026-07-03T08:59:41Z",
+                     *           "created_at": "2026-06-12T08:30:00Z"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": {
+                        keys: components["schemas"]["DashboardKey"][];
+                    };
+                };
+            };
+            /** @description No valid session cookie. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    createDashboardKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateKeyRequest"];
+            };
+        };
+        responses: {
+            /** @description Key minted. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "plaintext": "sip_9d4c8b2a6f1e3d7c5a8b9e2f4d1c6a3b8e5f7d2c9a1b4e6f3d8c5a2b9e7f1d4c",
+                     *       "key": {
+                     *         "id": "7d9f2a54-4f0e-4c1a-9b3d-2f6c8e1a0b5c",
+                     *         "name": "production",
+                     *         "description": "main backend key",
+                     *         "key_prefix": "sip_9d4c8b2a",
+                     *         "tier": "apikey",
+                     *         "rate_limit_per_min": 300,
+                     *         "monthly_quota": 1000000,
+                     *         "usage_alert_threshold_pct": 80,
+                     *         "created_at": "2026-07-03T22:45:31.006204Z"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["CreateKeyResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description No valid session cookie. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description Role can't mint keys, OR the write was blocked as cross-site:
+             *     state-changing dashboard requests must carry an `Origin`
+             *     (or `Referer`) matching this API or an operator-allow-listed
+             *     site (`cross-site-request-blocked`).
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Account already at the active-key quota. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    deleteDashboardKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revoked. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No valid session cookie. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description Role can't revoke keys, OR the write was blocked as cross-site:
+             *     state-changing dashboard requests must carry an `Origin`
+             *     (or `Referer`) matching this API or an operator-allow-listed
+             *     site (`cross-site-request-blocked`).
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Key not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    listDashboardWebhooks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Webhook list. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "webhooks": [
+                     *         {
+                     *           "id": "0b6a3f2e-9c1d-4e7a-8f5b-6d2c4a1e9b0f",
+                     *           "name": "ops-alerts",
+                     *           "url": "https://ops.example.com/hooks/stellarindex",
+                     *           "events": [
+                     *             "incident.sev1",
+                     *             "incident.resolved"
+                     *           ],
+                     *           "enabled": true,
+                     *           "created_at": "2026-06-20T10:00:00Z",
+                     *           "updated_at": "2026-06-20T10:00:00Z"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": {
+                        webhooks: components["schemas"]["DashboardWebhook"][];
+                    };
+                };
+            };
+            /** @description No valid session cookie. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    createDashboardWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateWebhookRequest"];
+            };
+        };
+        responses: {
+            /** @description Webhook registered. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "webhook": {
+                     *         "id": "0b6a3f2e-9c1d-4e7a-8f5b-6d2c4a1e9b0f",
+                     *         "name": "ops-alerts",
+                     *         "url": "https://ops.example.com/hooks/stellarindex",
+                     *         "events": [
+                     *           "incident.sev1",
+                     *           "incident.resolved"
+                     *         ],
+                     *         "enabled": true,
+                     *         "created_at": "2026-07-03T22:45:47.220981Z",
+                     *         "updated_at": "2026-07-03T22:45:47.220981Z"
+                     *       },
+                     *       "secret": "wsec_3f8a1c6d9e2b4f7a5c8d1e6b9f2a4c7d3e8b1f6a9c2d4e7f5a8b3c1d6e9f2a4c"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["CreateWebhookResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description No valid session cookie. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description Role can't manage webhooks, OR the write was blocked as cross-site:
+             *     state-changing dashboard requests must carry an `Origin`
+             *     (or `Referer`) matching this API or an operator-allow-listed
+             *     site (`cross-site-request-blocked`).
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Account at the 10-webhook quota. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    deleteDashboardWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No valid session cookie. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description Cross-site write blocked: state-changing dashboard + auth
+             *     requests must carry an `Origin` (or `Referer`) matching
+             *     this API or an operator-allow-listed site
+             *     (`cross-site-request-blocked`).
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    updateDashboardWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateWebhookRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "0b6a3f2e-9c1d-4e7a-8f5b-6d2c4a1e9b0f",
+                     *       "name": "ops-alerts-critical-only",
+                     *       "url": "https://ops.example.com/hooks/stellarindex",
+                     *       "events": [
+                     *         "incident.sev1"
+                     *       ],
+                     *       "enabled": true,
+                     *       "created_at": "2026-06-20T10:00:00Z",
+                     *       "updated_at": "2026-07-03T22:46:03.558112Z"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["DashboardWebhook"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description No valid session cookie. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description Cross-site write blocked: state-changing dashboard + auth
+             *     requests must carry an `Origin` (or `Referer`) matching
+             *     this API or an operator-allow-listed site
+             *     (`cross-site-request-blocked`).
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Webhook not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getDashboardWebhookDeliveries: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Delivery log. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "deliveries": [
+                     *         {
+                     *           "id": "5c8e1f0a-2b4d-4a6c-9e3f-7d1b0c5a8e2f",
+                     *           "event_type": "incident.sev1",
+                     *           "attempt_count": 1,
+                     *           "next_attempt_at": null,
+                     *           "delivered_at": "2026-07-01T14:03:22Z",
+                     *           "last_error": null,
+                     *           "last_response_status": 200,
+                     *           "created_at": "2026-07-01T14:03:21Z"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": {
+                        deliveries: components["schemas"]["WebhookDeliveryDTO"][];
+                    };
+                };
+            };
+            /** @description No valid session cookie. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Webhook not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    listDashboardPriceAlerts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Price-alert list. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "alerts": [
+                     *         {
+                     *           "id": "2f1c8e0a-9b3d-4e7a-8f5b-6d2c4a1e9b0f",
+                     *           "base_asset": "native",
+                     *           "quote_asset": "fiat:USD",
+                     *           "condition": "above",
+                     *           "threshold": "0.15",
+                     *           "cooldown_seconds": 300,
+                     *           "enabled": true,
+                     *           "created_at": "2026-07-05T10:00:00Z",
+                     *           "updated_at": "2026-07-05T10:00:00Z"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": {
+                        alerts: components["schemas"]["DashboardPriceAlert"][];
+                    };
+                };
+            };
+            /** @description No valid session cookie. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    createDashboardPriceAlert: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreatePriceAlertRequest"];
+            };
+        };
+        responses: {
+            /** @description Price alert registered. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "2f1c8e0a-9b3d-4e7a-8f5b-6d2c4a1e9b0f",
+                     *       "base_asset": "native",
+                     *       "quote_asset": "fiat:USD",
+                     *       "condition": "above",
+                     *       "threshold": "0.15",
+                     *       "cooldown_seconds": 300,
+                     *       "enabled": true,
+                     *       "created_at": "2026-07-03T22:46:14.882091Z",
+                     *       "updated_at": "2026-07-03T22:46:14.882091Z"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["DashboardPriceAlert"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description No valid session cookie. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description Role can't manage price alerts, OR the write was blocked as cross-site:
+             *     state-changing dashboard requests must carry an `Origin`
+             *     (or `Referer`) matching this API or an operator-allow-listed
+             *     site (`cross-site-request-blocked`).
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Account at the price-alert quota for its tier. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    deleteDashboardPriceAlert: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No valid session cookie. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description Cross-site write blocked: state-changing dashboard + auth
+             *     requests must carry an `Origin` (or `Referer`) matching
+             *     this API or an operator-allow-listed site
+             *     (`cross-site-request-blocked`).
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Price alert not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    updateDashboardPriceAlert: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdatePriceAlertRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "2f1c8e0a-9b3d-4e7a-8f5b-6d2c4a1e9b0f",
+                     *       "base_asset": "native",
+                     *       "quote_asset": "fiat:USD",
+                     *       "condition": "above",
+                     *       "threshold": "0.18",
+                     *       "cooldown_seconds": 300,
+                     *       "enabled": true,
+                     *       "last_fired_at": "2026-07-02T16:04:11Z",
+                     *       "created_at": "2026-07-03T22:46:14.882091Z",
+                     *       "updated_at": "2026-07-03T22:47:02.114873Z"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["DashboardPriceAlert"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description No valid session cookie. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description Cross-site write blocked: state-changing dashboard + auth
+             *     requests must carry an `Origin` (or `Referer`) matching
+             *     this API or an operator-allow-listed site
+             *     (`cross-site-request-blocked`).
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Price alert not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    requestMagicLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * Format: email
+                     * @description The address to email the magic link to.
+                     */
+                    email: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Email accepted for delivery (or silently dropped if address doesn't match an account). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "status": "sent"
+                     *     }
+                     */
+                    "application/json": {
+                        /** @enum {string} */
+                        status: "sent";
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /**
+             * @description Cross-site write blocked: state-changing dashboard + auth
+             *     requests must carry an `Origin` (or `Referer`) matching
+             *     this API or an operator-allow-listed site
+             *     (`cross-site-request-blocked`).
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    consumeMagicLink: {
+        parameters: {
+            query: {
+                /** @description Hex-encoded magic-link plaintext from the email. */
+                token: string;
+                /**
+                 * @description Path-only redirect target after sign-in (e.g. `/keys`).
+                 *     Absolute URLs and protocol-relative paths (`//evil.com`)
+                 *     are rejected; the user lands at `/` instead.
+                 */
+                next?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authenticated; session cookie set; redirect to dashboard. */
+            303: {
+                headers: {
+                    /** @description HttpOnly + Secure session cookie. */
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            /**
+             * @description The link was opened in a browser that did not request it.
+             *     `POST /auth/login` sets a short-lived, HttpOnly
+             *     `stellarindex_login_intent` cookie binding the link to the
+             *     requesting browser; without a matching witness no session
+             *     is minted (login-CSRF defence). The token is NOT consumed,
+             *     so the originating browser can still complete the sign-in.
+             *     Clients should fall back to the 6-digit code, or request a
+             *     fresh link from the device in hand.
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Magic-link token expired; request a fresh one. */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    verifyLoginCode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * Format: email
+                     * @description The address the code was sent to.
+                     */
+                    email: string;
+                    /** @description The 6-digit numeric code from the sign-in email. */
+                    code: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Authenticated; session cookie set. */
+            200: {
+                headers: {
+                    /** @description HttpOnly + Secure session cookie. */
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "status": "ok"
+                     *     }
+                     */
+                    "application/json": {
+                        /** @enum {string} */
+                        status: "ok";
+                    };
+                };
+            };
+            /** @description Malformed input, or invalid/expired/exhausted code (generic — modes are indistinguishable). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description Cross-site write blocked: state-changing dashboard + auth
+             *     requests must carry an `Origin` (or `Referer`) matching
+             *     this API or an operator-allow-listed site
+             *     (`cross-site-request-blocked`).
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    logout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Session revoked (if any) and cookie cleared. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /**
+             * @description Cross-site write blocked: state-changing dashboard + auth
+             *     requests must carry an `Origin` (or `Referer`) matching
+             *     this API or an operator-allow-listed site
+             *     (`cross-site-request-blocked`).
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    beginPasskeyLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description WebAuthn assertion options (challenge, rpId, …). */
+            200: {
+                headers: {
+                    /** @description Signed ceremony cookie; challenge valid 5 minutes, single-use. */
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /**
+             * @description Cross-site write blocked: state-changing dashboard + auth
+             *     requests must carry an `Origin` (or `Referer`) matching
+             *     this API or an operator-allow-listed site
+             *     (`cross-site-request-blocked`).
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    finishPasskeyLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Authenticated; session cookie set. */
+            200: {
+                headers: {
+                    /** @description HttpOnly + Secure session cookie. */
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "status": "ok"
+                     *     }
+                     */
+                    "application/json": {
+                        /** @enum {string} */
+                        status: "ok";
+                    };
+                };
+            };
+            /** @description Verification failed (generic — modes are indistinguishable). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description Cross-site write blocked: state-changing dashboard + auth
+             *     requests must carry an `Origin` (or `Referer`) matching
+             *     this API or an operator-allow-listed site
+             *     (`cross-site-request-blocked`).
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description The single-use challenge store could not be reached, so
+             *     the ceremony's freshness could not be established. The
+             *     sign-in is refused rather than granted on trust; email-code
+             *     sign-in is unaffected.
+             */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    beginPasskeyRegistration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description WebAuthn creation options. */
+            200: {
+                headers: {
+                    /** @description Signed, short-lived ceremony cookie. */
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    finishPasskeyRegistration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * @description User-chosen label ("MacBook Touch ID"). Defaults
+                     *     to "Passkey" when empty. Display-only.
+                     */
+                    name?: string;
+                    /**
+                     * @description The serialized `PublicKeyCredential` attestation
+                     *     from `navigator.credentials.create()`.
+                     */
+                    credential: Record<string, never>;
+                };
+            };
+        };
+        responses: {
+            /** @description Passkey stored. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "9f1c2b3a-4d5e-6f70-8192-a3b4c5d6e7f8",
+                     *       "name": "MacBook Touch ID",
+                     *       "transports": [
+                     *         "internal"
+                     *       ],
+                     *       "backup_eligible": true,
+                     *       "created_at": "2026-08-11T12:00:00Z"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PasskeyCredential"];
+                };
+            };
+            /** @description Verification failed (generic — modes are indistinguishable). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description This credential is already registered. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description The single-use challenge store could not be reached, so
+             *     the ceremony's freshness could not be established; the
+             *     credential is not stored.
+             */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listPasskeyCredentials: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The user's registered passkeys, newest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "credentials": [
+                     *         {
+                     *           "id": "9f1c2b3a-4d5e-6f70-8192-a3b4c5d6e7f8",
+                     *           "name": "MacBook Touch ID",
+                     *           "transports": [
+                     *             "internal"
+                     *           ],
+                     *           "backup_eligible": true,
+                     *           "created_at": "2026-08-11T12:00:00Z",
+                     *           "last_used_at": "2026-08-11T12:30:00Z"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": {
+                        credentials: components["schemas"]["PasskeyCredential"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    deletePasskeyCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The passkey's server-side id (from the list endpoint). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Passkey removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Malformed id. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description No such passkey on this account. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getSep10Challenge: {
+        parameters: {
+            query: {
+                /** @description Stellar G-strkey of the account being authenticated. */
+                account: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Unsigned challenge transaction. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "transaction": "AAAAAgAAAADg3G3hclysZlFitS+s5zWyiiJD5B0STWy5LXCj6i5yxQAAAMgAAAAAAAAAAA…",
+                     *         "network_passphrase": "Public Global Stellar Network ; September 2015",
+                     *         "issued_at": "2026-07-03T09:00:00Z",
+                     *         "valid_until": "2026-07-03T09:15:00Z"
+                     *       },
+                     *       "as_of": "2026-07-03T09:00:00Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: components["schemas"]["SEP10Challenge"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    createSep10Token: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Base64-encoded signed XDR of the challenge. */
+                    transaction: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Authenticated; JWT issued. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "token": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJHQjNZM0FMS0FQ...",
+                     *         "expires_at": "2026-07-03T23:45:19.000000Z",
+                     *         "account": "GB3Y3ALKAPYFMBEDS5G4KDDQBFV5FVJVGXWL4RPUCV3GTMOENIVXFAHW"
+                     *       },
+                     *       "as_of": "2026-07-03T22:45:19.000000Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: components["schemas"]["SEP10Token"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description Signature verification failed. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Challenge time-bounds expired; request a fresh challenge. */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listLedgers: {
+        parameters: {
+            query?: {
+                /** @description Maximum rows to return (1-200, default 50). Out-of-range values return 400. */
+                limit?: number;
+                /** @description Return ledgers with sequence < this. */
+                before?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of ledger headers. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "ledgers": [
+                     *           {
+                     *             "sequence": 63316166,
+                     *             "close_time": "2026-07-03T22:37:01Z",
+                     *             "hash": "734ef513eec0746fb133bc0a759adb98ffae7fa6e36e286954531a5416b437cb",
+                     *             "prev_hash": "58aee267a054f990b426f932b5c518151f789da48e76153d9722769b4d7a8b08",
+                     *             "protocol_version": 26,
+                     *             "tx_count": 299,
+                     *             "op_count": 1079,
+                     *             "soroban_event_count": 1105,
+                     *             "total_coins": "1054439020873472865",
+                     *             "fee_pool": "100768724524038",
+                     *             "base_fee": 100,
+                     *             "base_reserve": 5000000
+                     *           },
+                     *           {
+                     *             "sequence": 63316165,
+                     *             "close_time": "2026-07-03T22:36:56Z",
+                     *             "hash": "58aee267a054f990b426f932b5c518151f789da48e76153d9722769b4d7a8b08",
+                     *             "prev_hash": "ada19f6cb122d0b74b98b7dc53ef7be4e5463c86a1af14185c0ae741704986cb",
+                     *             "protocol_version": 26,
+                     *             "tx_count": 277,
+                     *             "op_count": 767,
+                     *             "soroban_event_count": 708,
+                     *             "total_coins": "1054439020873472865",
+                     *             "fee_pool": "100768720236504",
+                     *             "base_fee": 100,
+                     *             "base_reserve": 5000000
+                     *           }
+                     *         ],
+                     *         "next_before": 63316165
+                     *       },
+                     *       "as_of": "2026-07-03T22:37:10.384389772Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: {
+                            ledgers?: components["schemas"]["Ledger"][];
+                            next_before?: number;
+                        };
+                    };
+                };
+            };
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getLedger: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @example 63000000 */
+                seq: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ledger header. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "sequence": 63316166,
+                     *         "close_time": "2026-07-03T22:37:01Z",
+                     *         "hash": "734ef513eec0746fb133bc0a759adb98ffae7fa6e36e286954531a5416b437cb",
+                     *         "prev_hash": "58aee267a054f990b426f932b5c518151f789da48e76153d9722769b4d7a8b08",
+                     *         "protocol_version": 26,
+                     *         "tx_count": 299,
+                     *         "op_count": 1079,
+                     *         "soroban_event_count": 1105,
+                     *         "total_coins": "1054439020873472865",
+                     *         "fee_pool": "100768724524038",
+                     *         "base_fee": 100,
+                     *         "base_reserve": 5000000
+                     *       },
+                     *       "as_of": "2026-07-03T22:39:59.693177604Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: components["schemas"]["Ledger"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description Ledger not in the indexed range. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getLedgerTransactions: {
+        parameters: {
+            query?: {
+                /** @description Maximum transactions to return (1-1000, default 200). */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @example 63000000 */
+                seq: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The ledger's transactions. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "ledger": 63316166,
+                     *         "transactions": [
+                     *           {
+                     *             "hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
+                     *             "ledger": 63316166,
+                     *             "close_time": "2026-07-03T22:37:01Z",
+                     *             "index": 0,
+                     *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
+                     *             "fee_charged": 600,
+                     *             "max_fee": 120000,
+                     *             "operation_count": 6,
+                     *             "successful": false,
+                     *             "result_code": -1,
+                     *             "memo_type": "none"
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-07-03T22:39:58.530334586Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: {
+                            ledger?: number;
+                            transactions?: components["schemas"]["TxSummary"][];
+                        };
+                    };
+                };
+            };
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getTransaction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 64-char hex transaction hash. */
+                hash: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Transaction detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
+                     *         "ledger": 63316166,
+                     *         "close_time": "2026-07-03T22:37:01Z",
+                     *         "index": 0,
+                     *         "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
+                     *         "fee_charged": 600,
+                     *         "max_fee": 120000,
+                     *         "operation_count": 6,
+                     *         "successful": false,
+                     *         "result_code": -1,
+                     *         "memo_type": "none",
+                     *         "operations": [
+                     *           {
+                     *             "ledger": 63316166,
+                     *             "close_time": "2026-07-03T22:37:01Z",
+                     *             "tx_hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
+                     *             "tx_index": 0,
+                     *             "op_index": 0,
+                     *             "type": "payment",
+                     *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
+                     *             "fields": {
+                     *               "amount": "26000000000000",
+                     *               "asset": "XLM26-GD3CO7CGKHQKJ6LFGCXBOXHF5CJNVJ346AHQWA4RLVTVPCDYGCGWWCOL",
+                     *               "destination": "GDKRYQ4K45I6MYOQ3256TOAVCHD7AZIW4O2GEF6VACE6I2ZDX7XA6RJV"
+                     *             },
+                     *             "result_code": 0
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-07-03T22:40:09.331893286Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: components["schemas"]["TxDetail"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description No transaction with that hash in the indexed range. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listOperations: {
+        parameters: {
+            query?: {
+                /** @description Ledger sequence. Omit for the network-wide recent directory. */
+                ledger?: number;
+                /** @description Opaque keyset cursor (directory mode only). */
+                cursor?: string;
+                /** @description Page size. Mode-dependent bounds — per-ledger mode: default 500, cap 2000; directory mode: default 50, cap 200. */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Decoded operations (ledger-scoped or the recent directory). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "ledger": 63316166,
+                     *         "operations": [
+                     *           {
+                     *             "ledger": 63316166,
+                     *             "close_time": "2026-07-03T22:37:01Z",
+                     *             "tx_hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
+                     *             "tx_index": 0,
+                     *             "op_index": 0,
+                     *             "type": "payment",
+                     *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
+                     *             "fields": {
+                     *               "amount": "26000000000000",
+                     *               "asset": "XLM26-GD3CO7CGKHQKJ6LFGCXBOXHF5CJNVJ346AHQWA4RLVTVPCDYGCGWWCOL",
+                     *               "destination": "GDKRYQ4K45I6MYOQ3256TOAVCHD7AZIW4O2GEF6VACE6I2ZDX7XA6RJV"
+                     *             }
+                     *           },
+                     *           {
+                     *             "ledger": 63316166,
+                     *             "close_time": "2026-07-03T22:37:01Z",
+                     *             "tx_hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
+                     *             "tx_index": 0,
+                     *             "op_index": 1,
+                     *             "type": "payment",
+                     *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
+                     *             "fields": {
+                     *               "amount": "2600000000000",
+                     *               "asset": "XRP26-GD3CO7CGKHQKJ6LFGCXBOXHF5CJNVJ346AHQWA4RLVTVPCDYGCGWWCOL",
+                     *               "destination": "GDKRYQ4K45I6MYOQ3256TOAVCHD7AZIW4O2GEF6VACE6I2ZDX7XA6RJV"
+                     *             }
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-07-03T22:40:10.560512468Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: {
+                            /** @description The ledger (ledger-scoped mode); 0 in directory mode. */
+                            ledger?: number;
+                            operations?: components["schemas"]["Operation"][];
+                            /** @description Directory mode: opaque cursor for the next older page; absent on the last page. */
+                            next_cursor?: string;
+                            /** @description Directory mode, first page only: per-op-type counts over the trailing ~24h. */
+                            op_type_stats?: {
+                                type?: string;
+                                /** Format: int64 */
+                                count?: number;
+                            }[];
+                            /**
+                             * @description Present ONLY when the parent-transaction outcome read
+                             *     failed: operations without `transaction_successful` are
+                             *     then of UNKNOWN outcome (possibly a FAILED transaction),
+                             *     not applied. Absent = every operation carries its true
+                             *     transaction outcome.
+                             */
+                            coverage_note?: string;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listContracts: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Window size in days, rounded UP to the nearest supported window
+                 *     (1, 7, 30, 90, 365). The served window is returned in `window_days`.
+                 */
+                days?: number;
+                /** @description Maximum rows to return (1-500, default 100). Out-of-range values return 400. */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ranked contracts directory. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "window_days": 30,
+                     *         "since_ledger": 62797785,
+                     *         "contracts": [
+                     *           {
+                     *             "contract_id": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+                     *             "events": 84013660,
+                     *             "last_ledger": 63316185,
+                     *             "last_seen": "2026-07-03T22:38:55Z"
+                     *           },
+                     *           {
+                     *             "contract_id": "CB23WRDQWGSP6YPMY4UV5C4OW5CBTXKYN3XEATG7KJEZCXMJBYEHOUOV",
+                     *             "events": 31700010,
+                     *             "last_ledger": 63316185,
+                     *             "last_seen": "2026-07-03T22:38:55Z"
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-07-03T22:39:07.271202524Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: {
+                            window_days?: number;
+                            /** Format: int64 */
+                            since_ledger?: number;
+                            contracts?: {
+                                contract_id?: string;
+                                /** Format: int64 */
+                                events?: number;
+                                /** Format: int64 */
+                                last_ledger?: number;
+                                /** Format: date-time */
+                                last_seen?: string;
+                                /** @description Owning protocol when attributed; absent otherwise. */
+                                protocol?: string;
+                            }[];
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getContract: {
+        parameters: {
+            query?: {
+                /** @description Maximum rows to return (1-500, default 100). Out-of-range values return 400. */
+                limit?: number;
+                /** @description Opaque keyset cursor from a prior response's next_cursor. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description C-strkey contract id. */
+                contract_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Recent contract events. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "contract_id": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                     *         "events": [
+                     *           {
+                     *             "ledger": 63316186,
+                     *             "close_time": "2026-07-03T22:39:01Z",
+                     *             "tx_hash": "f867993250a0cc767084ea5312de03786deaa3c8e0671b27e6724381696e4cf0",
+                     *             "op_index": 0,
+                     *             "event_index": 0,
+                     *             "event_type": "contract",
+                     *             "topic_0": "transfer"
+                     *           },
+                     *           {
+                     *             "ledger": 63316186,
+                     *             "close_time": "2026-07-03T22:39:01Z",
+                     *             "tx_hash": "0982c7836389f9f876704cdac95fdaacd223482b0360c2b6a4039b3a4c0ea805",
+                     *             "op_index": 0,
+                     *             "event_index": 0,
+                     *             "event_type": "contract",
+                     *             "topic_0": "transfer"
+                     *           }
+                     *         ],
+                     *         "next_cursor": "63316186.0.0"
+                     *       },
+                     *       "as_of": "2026-07-03T22:39:09.248840367Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: {
+                            contract_id?: string;
+                            /** @description Registry protocol this contract belongs to (blend */
+                            protocol?: string;
+                            events?: components["schemas"]["ContractEvent"][];
+                            /** @description Opaque cursor for the next (older) page; absent on the last page. */
+                            next_cursor?: string;
+                            directory?: components["schemas"]["DirectoryInfo"];
+                            /** @description Liveness card — lifetime bounds + a 30-day daily active-ledger series. Absent when the activity index isn't provisioned. */
+                            activity?: {
+                                /** Format: date-time */
+                                first_seen?: string;
+                                /** Format: date-time */
+                                last_seen?: string;
+                                /** Format: int64 */
+                                active_ledgers_total?: number;
+                                daily?: {
+                                    date?: string;
+                                    /** Format: int64 */
+                                    active_ledgers?: number;
+                                }[];
+                            };
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getContractWasm: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description C-strkey contract id. */
+                contract_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The contract's wasm view. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "contract_id": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                     *         "wasm_hash": "a41fc53d6753b6c04eb15b021c55052366a4c8e0e21bc72700f461264ec1350e",
+                     *         "size_bytes": 57328,
+                     *         "exports": [
+                     *           {
+                     *             "name": "__constructor",
+                     *             "params": [
+                     *               "i64",
+                     *               "i64"
+                     *             ],
+                     *             "results": [
+                     *               "i64"
+                     *             ]
+                     *           },
+                     *           {
+                     *             "name": "propose_admin",
+                     *             "params": [
+                     *               "i64"
+                     *             ],
+                     *             "results": [
+                     *               "i64"
+                     *             ]
+                     *           }
+                     *         ],
+                     *         "wat": "(module\n  (type (;0;) (func (param i64 i64) (result i64)))\n  (type (;1;) (func (param i64)…",
+                     *         "decompiled": "export memory memory(initial: 17, max: 0);\n\nglobal g_a:int = 1048576;\nexport global data_e…",
+                     *         "source_note": "wasm resolved from the certified ClickHouse lake (contract instance → wasm hash → contract…"
+                     *       },
+                     *       "as_of": "2026-07-03T22:40:51.773640137Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: {
+                            /** @description C-strkey contract id (echoed). */
+                            contract_id: string;
+                            /** @description Hex sha256 of the wasm module (content address). */
+                            wasm_hash: string;
+                            /** @description Size of the wasm module in bytes. */
+                            size_bytes: number;
+                            /** @description Exported functions — the contract's public entry points. */
+                            exports: {
+                                /** @description Exported function name. */
+                                name: string;
+                                /** @description Wasm ABI param value types (i32/i64/f32/f64). */
+                                params: string[];
+                                /** @description Wasm ABI result value types. */
+                                results: string[];
+                            }[];
+                            /** @description WAT disassembly; absent when wabt isn't installed on the server. */
+                            wat?: string;
+                            /** @description wasm-decompile pseudocode (C-like, NOT Rust); absent when wabt isn't installed. */
+                            decompiled?: string;
+                            /** @description Provenance + any degraded-stage explanation. */
+                            source_note: string;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getContractInteractions: {
+        parameters: {
+            query?: {
+                /** @description Upper bound on window size in days. The served window may be narrower for busy contracts — read since_ledger. */
+                days?: number;
+                /** @description Maximum rows to return (1-200, default 50). Out-of-range values return 400. */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description C-strkey contract id. */
+                contract_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ranked interaction edges. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "contract_id": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                     *         "window_days": 90,
+                     *         "since_ledger": 61760987,
+                     *         "interactions": [
+                     *           {
+                     *             "contract_id": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+                     *             "shared_txs": 49067
+                     *           },
+                     *           {
+                     *             "contract_id": "CARIFTQ64I7RUTN6VAD5CAXJGU5EQRTI6KBZPWD65CO33IQPHTHBSVNS",
+                     *             "shared_txs": 16207
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-07-03T22:39:12.058161999Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: {
+                            contract_id?: string;
+                            window_days?: number;
+                            /** Format: int64 */
+                            since_ledger?: number;
+                            interactions?: {
+                                contract_id?: string;
+                                /**
+                                 * Format: int64
+                                 * @description Number of DISTINCT transactions in which this contract and the subject both emitted events, within the query window.
+                                 *
+                                 *     Corrected 2026-07-25 (audit DAT-10 / DAT-11): this previously counted co-occurring EVENTS rather than transactions, so a contract emitting many events inside one shared transaction scored its event count. It also double-counted rows from a retried partial flush that the ReplacingMergeTree had not yet merged. Values are therefore LOWER than before for busy pairs — the old figure was an event count wearing a transaction count's name.
+                                 */
+                                shared_txs?: number;
+                                /** @description Owning protocol when attributed; absent otherwise. */
+                                protocol?: string;
+                            }[];
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getContractCodeHistory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description C-strkey contract id. */
+                contract_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Chronological WASM-hash versions. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "contract_id": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                     *         "versions": []
+                     *       },
+                     *       "as_of": "2026-07-03T22:39:13.312316848Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: {
+                            contract_id?: string;
+                            versions?: {
+                                /** Format: int64 */
+                                ledger?: number;
+                                /** Format: date-time */
+                                close_time?: string;
+                                wasm_hash?: string;
+                            }[];
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listAccounts: {
+        parameters: {
+            query?: {
+                /** @description Maximum rows to return (1-500, default 100). Out-of-range values return 400. */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accounts ranked by USD wealth, descending. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "priced_assets": 11,
+                     *         "accounts": [
+                     *           {
+                     *             "account_id": "GALAXYVOIDAOPZTDLHILAJQKCVVFMD4IKLXLSZV5YHO7VY74IWZILUTO",
+                     *             "usd_value": "11319540791.76",
+                     *             "locked": true
+                     *           },
+                     *           {
+                     *             "account_id": "GDUY7J7A33TQWOSOQGDO776GGLM3UQERL4J3SPT56F6YS4ID7MLDERI4",
+                     *             "usd_value": "838665433.46"
+                     *           }
+                     *         ],
+                     *         "as_of_ledger": 63340102
+                     *       },
+                     *       "as_of": "2026-07-03T22:39:22.213002912Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: {
+                            /** @description Number of assets that contributed a price. */
+                            priced_assets?: number;
+                            accounts?: {
+                                account_id?: string;
+                                /** @description Total holdings value in USD (decimal string). */
+                                usd_value?: string;
+                                /** @description Provably unspendable burn address — master weight 0 */
+                                locked?: boolean;
+                            }[];
+                            /**
+                             * Format: int64
+                             * @description Lake watermark this current-state ranking is fresh to (ADR-0041) — the highest captured ledger at serve time. Omitted when no watermark reader is wired. Pairs with flags.stale.
+                             */
+                            as_of_ledger?: number;
+                        };
+                    };
+                };
+            };
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getDirectoryLabels: {
+        parameters: {
+            query: {
+                /** @description Comma-separated G/C strkeys (max 100). */
+                addresses: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Labels for the listed subset of the requested addresses. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "entries": {
+                     *           "GDUY7J7A33TQWOSOQGDO776GGLM3UQERL4J3SPT56F6YS4ID7MLDERI4": {
+                     *             "name": "SDF Growth 3",
+                     *             "domain": "stellar.org",
+                     *             "tags": [
+                     *               "sdf",
+                     *               "custodian"
+                     *             ],
+                     *             "source": "stellar-expert"
+                     *           }
+                     *         }
+                     *       },
+                     *       "as_of": "2026-08-06T12:00:00Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: {
+                            /** @description Address → label, present addresses only; always an object, never null. */
+                            entries: {
+                                [key: string]: components["schemas"]["DirectoryInfo"];
+                            };
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getAccountsStats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The current analytics snapshot. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "totals": {
+                     *           "accounts": 9930118,
+                     *           "trustlines": 19400000,
+                     *           "trustline_holding_accounts": 3100000,
+                     *           "xlm_held_stroops": "1049598291112345678"
+                     *         },
+                     *         "balances": {
+                     *           "avg_stroops": "1056980000",
+                     *           "median_stroops": "50000000",
+                     *           "p90_stroops": "3200000000",
+                     *           "p99_stroops": "91000000000"
+                     *         },
+                     *         "concentration": {
+                     *           "top100_xlm_stroops": "512345678901234567",
+                     *           "top100_share_pct": 48.82
+                     *         },
+                     *         "wealth_histogram": [
+                     *           {
+                     *             "bucket": -1,
+                     *             "accounts": 4100000,
+                     *             "xlm_stroops": "9876543210"
+                     *           }
+                     *         ],
+                     *         "trustline_histogram": [
+                     *           {
+                     *             "bucket": "0",
+                     *             "accounts": 6830118
+                     *           },
+                     *           {
+                     *             "bucket": "1",
+                     *             "accounts": 1400000
+                     *           }
+                     *         ],
+                     *         "top_held_assets": [
+                     *           {
+                     *             "asset": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *             "holders": 619460
+                     *           }
+                     *         ],
+                     *         "computed_at": "2026-08-08T19:30:00Z"
+                     *       },
+                     *       "as_of": "2026-08-08T19:45:00Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: {
+                            totals: {
+                                /** Format: int64 */
+                                accounts?: number;
+                                /** Format: int64 */
+                                trustlines?: number;
+                                /** Format: int64 */
+                                trustline_holding_accounts?: number;
+                                /** @description Total XLM held by funded accounts */
+                                xlm_held_stroops?: string;
+                            };
+                            balances: {
+                                avg_stroops?: string;
+                                median_stroops?: string;
+                                p90_stroops?: string;
+                                p99_stroops?: string;
+                            };
+                            concentration: {
+                                top100_xlm_stroops?: string;
+                                /** @description Display convenience derived from the exact stroops figures. */
+                                top100_share_pct?: number;
+                            };
+                            wealth_histogram: {
+                                /** @description floor(log10(balance in XLM)), clamped to [-1, 10]. */
+                                bucket?: number;
+                                /** Format: int64 */
+                                accounts?: number;
+                                xlm_stroops?: string;
+                            }[];
+                            trustline_histogram: {
+                                /** @description Trustlines-per-account band: 0, 1, 2-5, 6-10, 11-50, or 50+. */
+                                bucket?: string;
+                                /** Format: int64 */
+                                accounts?: number;
+                            }[];
+                            top_held_assets?: {
+                                asset?: string;
+                                /** Format: int64 */
+                                holders?: number;
+                            }[];
+                            /**
+                             * Format: date-time
+                             * @description Rollup cycle timestamp — the snapshot's real age.
+                             */
+                            computed_at: string;
+                        };
+                    };
+                };
+            };
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Account G-strkey. */
+                g_strkey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Account state (or `exists:false`). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "account_id": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *         "exists": true,
+                     *         "balance": "235182317613",
+                     *         "seq_num": "144373126631784461",
+                     *         "num_subentries": 6,
+                     *         "flags": 2,
+                     *         "home_domain": "circle.com",
+                     *         "thresholds": {
+                     *           "master": 0,
+                     *           "low": 2,
+                     *           "med": 2,
+                     *           "high": 2
+                     *         },
+                     *         "signers": [
+                     *           {
+                     *             "key": "GAUKFO2NIYEFO773KJZKLPSPYNQ6M7INPEAIQIJCIH7EEVP2KSVQWGH4",
+                     *             "weight": 1
+                     *           },
+                     *           {
+                     *             "key": "GAXFRO4MH6FSBJMNECVZJ6R3ZXANI7CFCMVN47IDNRQDHII3J5HTOZGB",
+                     *             "weight": 1
+                     *           }
+                     *         ],
+                     *         "trustlines": [
+                     *           {
+                     *             "asset": "USDCAllow-GDIEKKIQWMIZ4LD3RP3ABPN7X5KEAEWYMR634BRHB7EULIMEVREWLF3G",
+                     *             "balance": "77129744523269078",
+                     *             "limit": "9223372036854775807",
+                     *             "flags": 1
+                     *           }
+                     *         ],
+                     *         "offers": [
+                     *           {
+                     *             "offer_id": 426903336,
+                     *             "selling": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *             "buying": "USDCAllow-GDIEKKIQWMIZ4LD3RP3ABPN7X5KEAEWYMR634BRHB7EULIMEVREWLF3G",
+                     *             "amount": "9146242292331506729",
+                     *             "price_n": 1,
+                     *             "price_d": 1
+                     *           }
+                     *         ],
+                     *         "last_modified_ledger": 63314771,
+                     *         "as_of_ledger": 63340102
+                     *       },
+                     *       "as_of": "2026-07-03T22:39:25.722776013Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: {
+                            account_id?: string;
+                            exists?: boolean;
+                            /** @description Native XLM balance in stroops. */
+                            balance?: string;
+                            seq_num?: string;
+                            num_subentries?: number;
+                            flags?: number;
+                            home_domain?: string;
+                            thresholds?: {
+                                master?: number;
+                                low?: number;
+                                med?: number;
+                                high?: number;
+                            };
+                            signers?: {
+                                key?: string;
+                                weight?: number;
+                            }[];
+                            trustlines?: {
+                                asset?: string;
+                                balance?: string;
+                                limit?: string;
+                                flags?: number;
+                            }[];
+                            offers?: {
+                                /** Format: int64 */
+                                offer_id?: number;
+                                selling?: string;
+                                buying?: string;
+                                amount?: string;
+                                price_n?: number;
+                                price_d?: number;
+                            }[];
+                            /** Format: int64 */
+                            last_modified_ledger?: number;
+                            /**
+                             * Format: int64
+                             * @description Lake watermark this read is fresh to (ADR-0041) — the highest captured ledger at serve time, NOT the account's last_modified_ledger. Omitted when no watermark reader is wired. Pairs with flags.stale.
+                             */
+                            as_of_ledger?: number;
+                            directory?: components["schemas"]["DirectoryInfo"];
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getAccountTransactions: {
+        parameters: {
+            query?: {
+                /** @description Maximum rows to return (1-200, default 50). Out-of-range values return 400. */
+                limit?: number;
+                /** @description Opaque keyset cursor from a prior response's next_cursor. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description G-strkey account id. */
+                g_strkey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Transactions involving the account (sourced + incoming). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "account": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *         "transactions": [
+                     *           {
+                     *             "hash": "be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36",
+                     *             "ledger": 63315192,
+                     *             "close_time": "2026-07-03T21:02:29Z",
+                     *             "index": 7,
+                     *             "source_account": "GDSQAEHJLE2ZZMQZ47YWLP3O2HVPYQ4QCFWTHUKMKF6RIX2ZJJDDMK4N",
+                     *             "fee_charged": 200,
+                     *             "max_fee": 13935,
+                     *             "operation_count": 1,
+                     *             "successful": true,
+                     *             "result_code": 1,
+                     *             "memo_type": "text",
+                     *             "memo": "internal"
+                     *           }
+                     *         ],
+                     *         "next_cursor": "63315192.7",
+                     *         "scope": "all"
+                     *       },
+                     *       "as_of": "2026-07-03T22:39:31.01258567Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: components["schemas"]["AccountTransactions"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getAccountOperations: {
+        parameters: {
+            query?: {
+                /** @description Maximum rows to return (1-200, default 50). Out-of-range values return 400. */
+                limit?: number;
+                /** @description Opaque keyset cursor from a prior response's next_cursor. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description G-strkey account id. */
+                g_strkey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sourced operations for the account. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "account": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *         "operations": [
+                     *           {
+                     *             "ledger": 63315192,
+                     *             "close_time": "2026-07-03T21:02:29Z",
+                     *             "tx_hash": "be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36",
+                     *             "tx_index": 7,
+                     *             "op_index": 0,
+                     *             "type": "payment",
+                     *             "source_account": "GDSQAEHJLE2ZZMQZ47YWLP3O2HVPYQ4QCFWTHUKMKF6RIX2ZJJDDMK4N",
+                     *             "fields": {
+                     *               "amount": "1000000000000",
+                     *               "asset": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *               "destination": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+                     *             }
+                     *           }
+                     *         ],
+                     *         "next_cursor": "63315192.7.0",
+                     *         "scope": "all"
+                     *       },
+                     *       "as_of": "2026-07-03T22:39:45.671725025Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: components["schemas"]["AccountOperations"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getAccountMovements: {
+        parameters: {
+            query?: {
+                /** @description Maximum rows to return (1-200, default 25). Out-of-range values return 400. */
+                limit?: number;
+                /** @description Opaque keyset cursor from a prior response's next_cursor. */
+                cursor?: string;
+                /** @description Filter by movement_kind exact match (e.g. payment, transfer, liquidity_pool_deposit). Omitted = any kind. */
+                kind?: string;
+                /** @description Filter by direction. */
+                direction?: "sent" | "received" | "self";
+                /** @description Filter by asset — see this operation's description for the matching asymmetry between the ClickHouse archive and the Postgres tail. */
+                asset?: string;
+            };
+            header?: never;
+            path: {
+                /** @description G-strkey account id. */
+                g_strkey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The account's unified movement feed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "account": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *         "movements": [
+                     *           {
+                     *             "ledger": 60123456,
+                     *             "ledger_close_time": "2026-07-03T21:02:29Z",
+                     *             "tx_hash": "be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36",
+                     *             "op_index": 0,
+                     *             "leg_index": 0,
+                     *             "movement_kind": "transfer",
+                     *             "direction": "sent",
+                     *             "asset": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *             "amount": "1000000000000",
+                     *             "counterparty": "GDSQAEHJLE2ZZMQZ47YWLP3O2HVPYQ4QCFWTHUKMKF6RIX2ZJJDDMK4N",
+                     *             "provenance": "cap67_event"
+                     *           }
+                     *         ],
+                     *         "next_cursor": "60123456.be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36.0.0"
+                     *       },
+                     *       "as_of": "2026-07-10T22:39:31.01258567Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: components["schemas"]["AccountMovements"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getAccountPositions: {
+        parameters: {
+            query?: {
+                /** @description Include net-zero / closed positions (excluded by default). */
+                include_closed?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description G-strkey account id. */
+                g_strkey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The account's folded DeFi positions. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "account": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *         "positions": [
+                     *           {
+                     *             "protocol": "blend",
+                     *             "position_kind": "lending_supply",
+                     *             "venue": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+                     *             "venue_label": "USDC/XLM",
+                     *             "assets": [
+                     *               "USDC"
+                     *             ],
+                     *             "amount": "600000000",
+                     *             "amount_semantics": "net_underlying_at_event_time",
+                     *             "last_activity": {
+                     *               "ledger": 63316200,
+                     *               "time": "2026-07-10T21:02:29Z"
+                     *             },
+                     *             "basis": "event_derived"
+                     *           },
+                     *           {
+                     *             "protocol": "sorocredit",
+                     *             "position_kind": "credit",
+                     *             "venue": "CCG5EWFY2KCWWYYEIUMIRG6WSAQFLDR5QE5FMCWY25N36XA5GYTCPQWR",
+                     *             "assets": [
+                     *               "USDC"
+                     *             ],
+                     *             "amount": "480000000",
+                     *             "amount_semantics": "stateful_current",
+                     *             "last_activity": {
+                     *               "ledger": 63316350,
+                     *               "time": "2026-07-10T21:40:11Z"
+                     *             },
+                     *             "basis": "stateful"
+                     *           }
+                     *         ],
+                     *         "include_closed": false,
+                     *         "note": "Amounts are on-chain quantities only — no USD or other valuation is applied. event_derived positions are a sum of historical per-event amounts and do NOT model interest, fees, or exchange-rate accrual since each event; see each position's amount_semantics for exactly what the number represents, and basis for whether it was derived here or read from the protocol's own published state."
+                     *       },
+                     *       "as_of": "2026-07-10T22:39:31.01258567Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: components["schemas"]["AccountPositions"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getAccountTrades: {
+        parameters: {
+            query?: {
+                /** @description Maximum rows to return (1-200, default 50). Out-of-range values return 400. */
+                limit?: number;
+                /** @description Opaque keyset cursor from a prior response's next_cursor. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description G-strkey account id. */
+                g_strkey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The account's attributed trades. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "account": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *         "trades": [
+                     *           {
+                     *             "ts": "2026-07-29T12:00:00Z",
+                     *             "source": "sdex",
+                     *             "base_asset": "native",
+                     *             "quote_asset": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *             "base_amount": "10000000",
+                     *             "quote_amount": "1234567",
+                     *             "usd_volume": "0.12345600",
+                     *             "tx_hash": "be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36",
+                     *             "ledger": 63000001,
+                     *             "op_index": 0,
+                     *             "role": "taker"
+                     *           }
+                     *         ],
+                     *         "next_cursor": "1785340800000000000.63000001.be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36.0",
+                     *         "note": "On-chain trades where this address is recorded as the acting account (taker) or the resting sdex offer owner (maker). Coverage: sdex, aquarius, phoenix, comet. Soroswap swaps do not yet record the acting account and off-chain CEX/FX trades carry no Stellar account, so neither can appear here."
+                     *       },
+                     *       "as_of": "2026-07-30T22:39:31.01258567Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: components["schemas"]["AccountTrades"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getAccountActivity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description G-strkey account id. */
+                g_strkey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The account's segmented activity breakdown. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "account": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *         "ops_by_type": [
+                     *           {
+                     *             "op_type": "payment",
+                     *             "count": 120
+                     *           },
+                     *           {
+                     *             "op_type": "manage_buy_offer",
+                     *             "count": 14
+                     *           }
+                     *         ],
+                     *         "trades_total": 77,
+                     *         "defi_actions": [
+                     *           {
+                     *             "protocol": "blend",
+                     *             "action": "supply",
+                     *             "count": 3
+                     *           },
+                     *           {
+                     *             "protocol": "aquarius",
+                     *             "action": "position_update",
+                     *             "count": 9
+                     *           }
+                     *         ],
+                     *         "bridge_transfers": {
+                     *           "rozo_outbound_payments": 1,
+                     *           "rozo_inbound_payments": 0,
+                     *           "cctp_outbound_burns": 2,
+                     *           "cctp_inbound_mints": 0,
+                     *           "note": "rozo matches payment from_addr (outbound) / destination (inbound). cctp matches deposit_for_burn depositor (outbound) and the Stellar-side mint_and_withdraw mint recipient (inbound) — an inbound mint delivered via a forwarder contract attributes to that contract, not the end user, and an outbound burn's destination-chain recipient is not a Stellar account so it is never matched."
+                     *         }
+                     *       },
+                     *       "as_of": "2026-07-30T22:39:31.01258567Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: components["schemas"]["AccountActivity"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    classifySearchQuery: {
+        parameters: {
+            query: {
+                /** @description Tx hash, ledger seq, G-account, C-contract, or asset id. */
+                q: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Classified query. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "query": "63316166",
+                     *         "kind": "ledger",
+                     *         "canonical": "63316166",
+                     *         "href": "/v1/ledgers/63316166",
+                     *         "supported": true
+                     *       },
+                     *       "as_of": "2026-07-03T22:41:59.42624588Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: {
+                            query?: string;
+                            /** @enum {string} */
+                            kind?: "transaction" | "ledger" | "account" | "contract" | "asset" | "unknown";
+                            canonical?: string;
+                            href?: string;
+                            supported?: boolean;
+                            note?: string;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
         };
     };
 }
