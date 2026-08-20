@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
@@ -92,8 +92,8 @@ func (r *AccountStore) Create(ctx context.Context, a platform.Account) (platform
 	)
 	out, err := scanAccount(row)
 	if err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == pgErrUniqueViolation {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgErrUniqueViolation {
 			return platform.Account{}, fmt.Errorf("create account: %w", platform.ErrConflict)
 		}
 		return platform.Account{}, fmt.Errorf("create account: %w", err)

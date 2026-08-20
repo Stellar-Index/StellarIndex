@@ -122,8 +122,8 @@ type HistoryReader interface {
 	// the deferred multi-GB index build recorded here as the "durable
 	// root-cause follow-up" is work that is already deployed. Do not
 	// re-schedule it. Note Postgres PLANNING (40-210 ms over 249
-	// chunks) can exceed execution on a novel key, since lib/pq uses
-	// unnamed statements and re-plans each time.
+	// chunks) can exceed execution on a novel key, since the planner
+	// re-plans across the wide chunk set.
 	//
 	// [CachedHistoryReader] still SWR-caches this method (#29) to
 	// keep the status page's poll off the database entirely.

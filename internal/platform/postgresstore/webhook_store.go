@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
 
+	"github.com/Stellar-Index/StellarIndex/internal/pgarray"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -97,7 +97,7 @@ func (c *WebhookStore) CreateWebhook(ctx context.Context, w platform.CustomerWeb
 	events := w.Events
 	row := tx.QueryRowContext(ctx, q,
 		w.AccountID, w.Name, w.URL, w.SecretHash,
-		pq.Array(events), w.Enabled, maxPerAccount,
+		events, w.Enabled, maxPerAccount,
 	)
 	if err := row.Scan(&w.ID, &w.CreatedAt, &w.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -207,7 +207,7 @@ func (c *WebhookStore) UpdateWebhook(ctx context.Context, w platform.CustomerWeb
 		 WHERE id = $1
 	`
 	events := w.Events
-	res, err := c.s.db.ExecContext(ctx, q, w.ID, w.Name, w.URL, pq.Array(events), w.Enabled)
+	res, err := c.s.db.ExecContext(ctx, q, w.ID, w.Name, w.URL, events, w.Enabled)
 	if err != nil {
 		return fmt.Errorf("postgresstore: UpdateWebhook %s: %w", w.ID, err)
 	}
@@ -379,15 +379,15 @@ type rowScanner interface {
 func scanWebhookRow(s rowScanner) (platform.CustomerWebhook, error) {
 	var (
 		w      platform.CustomerWebhook
-		events pq.StringArray
+		events []string
 	)
 	if err := s.Scan(
 		&w.ID, &w.AccountID, &w.Name, &w.URL, &w.SecretHash,
-		&events, &w.Enabled, &w.CreatedAt, &w.UpdatedAt,
+		pgarray.Strings(&events), &w.Enabled, &w.CreatedAt, &w.UpdatedAt,
 	); err != nil {
 		return platform.CustomerWebhook{}, fmt.Errorf("postgresstore: scan webhook: %w", err)
 	}
-	w.Events = []string(events)
+	w.Events = events
 	return w, nil
 }
 

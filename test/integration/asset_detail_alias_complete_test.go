@@ -7,8 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lib/pq"
-
 	c "github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -228,7 +226,7 @@ func scanVolSum(t *testing.T, ctx context.Context, store *timescale.Store, forms
 		   AND bucket >= now() - INTERVAL '24 hours'
 		   AND bucket  < now()`
 	var out string
-	if err := store.DB().QueryRowContext(ctx, q, pq.Array(forms)).Scan(&out); err != nil {
+	if err := store.DB().QueryRowContext(ctx, q, forms).Scan(&out); err != nil {
 		t.Fatalf("scanVolSum(%v): %v", forms, err)
 	}
 	return mustFloat(t, out)

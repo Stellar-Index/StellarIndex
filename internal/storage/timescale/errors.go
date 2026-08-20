@@ -7,7 +7,7 @@ import (
 	"net"
 	"strings"
 
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // IsInfraError reports whether err from a write path is an
@@ -57,13 +57,14 @@ func IsInfraError(err error) bool {
 	if errors.As(err, &netErr) {
 		return true
 	}
-	// Postgres server-state SQLSTATEs (lib/pq exposes pq.Error.Code).
-	var pqErr *pq.Error
-	if errors.As(err, &pqErr) {
-		if pqErr.Code.Class() == "08" { // connection_exception family
+	// Postgres server-state SQLSTATEs (pgx exposes pgconn.PgError.Code as
+	// the full 5-char SQLSTATE; the first 2 chars are its class).
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		if pgErr.Code[:2] == "08" { // connection_exception family
 			return true
 		}
-		switch pqErr.Code {
+		switch pgErr.Code {
 		case "57P01", // admin_shutdown       — server is shutting down
 			"57P02", // crash_shutdown       — server crashed
 			"57P03", // cannot_connect_now   — server still starting up
@@ -71,7 +72,7 @@ func IsInfraError(err error) bool {
 			"53400": // configuration_limit_exceeded
 			return true
 		}
-		// Any other typed pq error (constraint, numeric, check, …) is a
+		// Any other typed pg error (constraint, numeric, check, …) is a
 		// data fault — do NOT retry it.
 		return false
 	}
@@ -118,7 +119,7 @@ func IsInfraError(err error) bool {
 //   - context cancellation / deadline → false (shutdown / cycle timeout;
 //     retry next cycle).
 //   - anything UNRECOGNISED (including the store's own defensive
-//     `errors.New` validation and any non-pq error) → false.
+//     `errors.New` validation and any non-pg error) → false.
 //
 // The false-default is the SAFE side for a data-integrity caller: an
 // unknown error is treated as transient (hold the cursor, retry) so we
@@ -135,9 +136,9 @@ func IsPermanentDataError(err error) bool {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
-	var pqErr *pq.Error
-	if errors.As(err, &pqErr) {
-		switch pqErr.Code.Class() {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		switch pgErr.Code[:2] { // SQLSTATE class = first 2 chars
 		case "22", // data_exception (numeric out of range, invalid text rep, …)
 			"23": // integrity_constraint_violation (CHECK / not-null / fk / unique)
 			return true
@@ -147,7 +148,7 @@ func IsPermanentDataError(err error) bool {
 		// shutdown) and everything else are transient — retry, don't skip.
 		return false
 	}
-	// Non-pq error (net fault, driver.ErrBadConn, or the store's own
+	// Non-pg error (net fault, driver.ErrBadConn, or the store's own
 	// validation sentinels): default to transient. See the godoc — the
 	// safe side for a data-integrity caller is retry-and-alert, not skip.
 	return false

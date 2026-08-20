@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
@@ -62,12 +62,12 @@ func TestParseCIDRArray(t *testing.T) {
 	if got := parseCIDRArray(nil); got != nil {
 		t.Errorf("parseCIDRArray(nil) = %v, want nil", got)
 	}
-	if got := parseCIDRArray(pq.StringArray{}); got != nil {
+	if got := parseCIDRArray([]string{}); got != nil {
 		t.Errorf("parseCIDRArray(empty) = %v, want nil", got)
 	}
 
 	// Malformed entries dropped; valid ones kept in order.
-	got := parseCIDRArray(pq.StringArray{"10.0.0.0/8", "not-a-cidr", "192.168.1.0/24"})
+	got := parseCIDRArray([]string{"10.0.0.0/8", "not-a-cidr", "192.168.1.0/24"})
 	want := []netip.Prefix{
 		netip.MustParsePrefix("10.0.0.0/8"),
 		netip.MustParsePrefix("192.168.1.0/24"),
@@ -87,7 +87,7 @@ func TestParseCIDRArray(t *testing.T) {
 		netip.MustParsePrefix("172.16.0.0/12"),
 		netip.MustParsePrefix("2001:db8::/32"),
 	}
-	back := parseCIDRArray(pq.StringArray{orig[0].String(), orig[1].String()})
+	back := parseCIDRArray([]string{orig[0].String(), orig[1].String()})
 	if len(back) != len(orig) {
 		t.Fatalf("round-trip len = %d, want %d", len(back), len(orig))
 	}
@@ -125,14 +125,14 @@ func TestFinalizeAPIKeyCreate(t *testing.T) {
 	})
 
 	t.Run("unique violation maps to conflict", func(t *testing.T) {
-		_, err := finalizeAPIKeyCreate(platform.APIKey{}, &pq.Error{Code: "23505"})
+		_, err := finalizeAPIKeyCreate(platform.APIKey{}, &pgconn.PgError{Code: "23505"})
 		if !errors.Is(err, platform.ErrConflict) {
 			t.Errorf("err = %v, want ErrConflict", err)
 		}
 	})
 
 	t.Run("other pq error passes through wrapped", func(t *testing.T) {
-		orig := &pq.Error{Code: "23502"} // not-null violation, not a conflict
+		orig := &pgconn.PgError{Code: "23502"} // not-null violation, not a conflict
 		_, err := finalizeAPIKeyCreate(platform.APIKey{}, orig)
 		if errors.Is(err, platform.ErrConflict) || errors.Is(err, platform.ErrAPIKeyQuotaExceeded) {
 			t.Errorf("err = %v; a non-23505 pq error must not map to a sentinel", err)

@@ -70,7 +70,7 @@ func TestOHLCDustFloor_CAGGExtremes(t *testing.T) {
 	dsn := startTimescale(t, ctx)
 	applyMigrations(t, dsn)
 
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("sql.Open: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestOHLCDustFloor_ServedSeriesReproducesTheWick(t *testing.T) {
 	dsn := startTimescale(t, ctx)
 	applyMigrations(t, dsn)
 
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("sql.Open: %v", err)
 	}

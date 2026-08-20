@@ -4405,7 +4405,7 @@ func prewarmLight(
 	// distinct cache key per source. Without this, every page click
 	// missed cache and ran a 10-30s full-window trades-hypertable
 	// scan; sometimes returning a 503 (#1082 path), sometimes
-	// overshooting because lib/pq doesn't reliably propagate
+	// overshooting because the driver doesn't reliably propagate
 	// context cancellation mid-query. Per-DEX prewarm runs the
 	// canonical limit=100 + default order the explorer hits;
 	// subsequent users land on warm cache (sub-second). Errors are

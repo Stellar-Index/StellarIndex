@@ -10,8 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lib/pq"
-
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
@@ -1670,7 +1668,7 @@ func (s *Store) Volume24hUSDForAsset(ctx context.Context, assetKey string) (stri
            AND bucket  < now()
     `
 	var out string
-	if err := s.db.QueryRowContext(ctx, q, pq.Array(assetAliasArray(assetKey))).Scan(&out); err != nil {
+	if err := s.db.QueryRowContext(ctx, q, assetAliasArray(assetKey)).Scan(&out); err != nil {
 		return "", fmt.Errorf("timescale: Volume24hUSDForAsset(%s): %w", assetKey, err)
 	}
 	return out, nil

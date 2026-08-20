@@ -214,8 +214,8 @@ func TestFXQuoteAtOrBeforeFXQuotesFirst(t *testing.T) {
 		// (that is USD-per-EUR = C:EURUSD, the inverse — an earlier fixture used
 		// it and, paired with the then-inverted fxSnapFromRows division, the two
 		// errors cancelled to a plausible result and masked audit M3). float64
-		// 0.92 round-trips through lib/pq as the shortest decimal "0.92", stored
-		// exactly in NUMERIC.
+		// 0.92 round-trips through the pgx driver as the shortest decimal "0.92",
+		// stored exactly in NUMERIC.
 		if err := store.InsertFXQuoteBatch(ctx, []timescale.FXQuote{{
 			Bucket: day, Ticker: "EUR", RateUSD: 0.92, InverseUSD: 1.0 / 0.92, Source: "massive",
 		}}); err != nil {

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/lib/pq"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 // TestConfigurePool_AppliesAllFourSettings is the F-0151
@@ -18,7 +18,7 @@ import (
 // We use `sql.Open` (lazy — no real connection attempted until
 // Ping) so the test runs as a pure unit test, no postgres needed.
 func TestConfigurePool_AppliesAllFourSettings(t *testing.T) {
-	db, err := sql.Open("postgres", "postgres://invalid:invalid@127.0.0.1:1/invalid")
+	db, err := sql.Open("pgx", "postgres://invalid:invalid@127.0.0.1:1/invalid")
 	if err != nil {
 		t.Fatalf("sql.Open (lazy): %v", err)
 	}

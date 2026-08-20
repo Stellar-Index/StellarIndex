@@ -84,7 +84,7 @@ func TestFetchDirectoryTarball_ParsesAccountsAndSkipsNoise(t *testing.T) {
 			t.Errorf("entry %s source = %q, want stellar-expert", e.Address, e.Source)
 		}
 		if e.Tags == nil {
-			t.Errorf("entry %s Tags is nil — must be non-nil for pq.Array", e.Address)
+			t.Errorf("entry %s Tags is nil — must be non-nil for the Postgres array binding", e.Address)
 		}
 	}
 	if !byAddr[testDirAddrG] || !byAddr[testDirAddrC] {
