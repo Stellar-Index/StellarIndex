@@ -141,7 +141,8 @@ Decision tree:
   ```sh
   stellarindex-ops freeze-unfreeze -config /etc/stellarindex.toml \
     -asset '<asset>' -quote '<quote>' \
-    -reason "phase-2 threshold retuned; false fire"
+    -reason "phase-2 threshold retuned; false fire" \
+    -write   # fail-closed: without -write this only previews the unfreeze
   ```
   Any r1 config change lands in `configs/ansible/` in the same PR
   (CLAUDE.md rule) — a hand-edited TOML will page Monday morning.
@@ -213,14 +214,15 @@ has already spent its four extensions and the ADR holds such a freeze
 # See what is actually open, with its ladder state:
 stellarindex-ops freeze-unfreeze -config /etc/stellarindex.toml -list
 
-# Rehearse:
+# Rehearse (default is a fail-closed dry run; -dry-run is an explicit alias):
 stellarindex-ops freeze-unfreeze -config /etc/stellarindex.toml \
   -asset native -quote fiat:USD -reason "..." -dry-run
 
-# Do it (-reason is REQUIRED for a mutation):
+# Do it (-reason is REQUIRED for a mutation; -write actually applies it):
 stellarindex-ops freeze-unfreeze -config /etc/stellarindex.toml \
   -asset native -quote fiat:USD \
-  -reason "oracle recovered, verified by hand against Reflector + Kraken"
+  -reason "oracle recovered, verified by hand against Reflector + Kraken" \
+  -write
 ```
 
 It does both halves in the right order: clears the Redis marker (the

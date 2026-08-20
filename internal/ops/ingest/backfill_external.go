@@ -14,6 +14,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	externalbinance "github.com/Stellar-Index/StellarIndex/internal/sources/external/binance"
 	externalbitstamp "github.com/Stellar-Index/StellarIndex/internal/sources/external/bitstamp"
@@ -39,7 +40,7 @@ func backfillExternal(args []string) error {
 	toStr := fs.String("to", "", "End time, RFC 3339 (required, e.g. 2024-12-31T00:00:00Z)")
 	granStr := fs.String("granularity", "1h", "Candle granularity as a Go duration (1m / 15m / 1h / 4h / 1d / 1w)")
 	rawTrades := fs.Bool("raw-trades", false, "kraken only: walk the /Trades fills endpoint instead of /OHLC — the deep-history path (OHLC serves only the most recent 720 candles; board #44). Slower (rate-limited pagination) but reaches the pair's full history with exact per-fill prices.")
-	dryRun := fs.Bool("dry-run", false, "Fetch + synthesise trades but don't write to Timescale")
+	gate := opsutil.RegisterWriteGate(fs)
 	progressEvery := fs.Int("progress-every", 1000, "Print a progress line every N trades inserted")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -48,6 +49,8 @@ func backfillExternal(args []string) error {
 		fs.Usage()
 		return fmt.Errorf("-config, -source, -pair, -from, -to all required")
 	}
+	gate.Banner()
+	dryRun := gate.DryRun()
 
 	from, err := time.Parse(time.RFC3339, *fromStr)
 	if err != nil {
@@ -75,7 +78,7 @@ func backfillExternal(args []string) error {
 
 	fmt.Fprintf(os.Stderr, "backfill-external: source=%s pair=%s granularity=%v from=%s to=%s dry-run=%v\n",
 		*source, pair.String(), granularity,
-		from.Format(time.RFC3339), to.Format(time.RFC3339), *dryRun)
+		from.Format(time.RFC3339), to.Format(time.RFC3339), dryRun)
 
 	t0 := time.Now()
 	var trades []canonical.Trade
@@ -99,7 +102,7 @@ func backfillExternal(args []string) error {
 	fmt.Fprintf(os.Stderr, "backfill-external: fetched %d trades in %v\n",
 		len(trades), time.Since(t0).Round(time.Millisecond))
 
-	if *dryRun {
+	if dryRun {
 		summariseDryRun(trades)
 		return nil
 	}

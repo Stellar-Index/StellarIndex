@@ -37,13 +37,15 @@ func chParticipantBackfill(args []string) error {
 	from := fs.Uint("from", 2, "first ledger (inclusive; resume point from a previous run's output)")
 	to := fs.Uint("to", 0, "last ledger (inclusive; 0 = the live-capture floor − 1, i.e. exactly the gap operation_participants doesn't already cover)")
 	window := fs.Uint("window", 500_000, "ledgers per read-decode-insert window (smaller = finer resume granularity)")
-	dryRun := fs.Bool("dry-run", false, "decode + COUNT the participants that WOULD be written per window; write nothing")
+	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *from == 0 || *window == 0 {
 		return fmt.Errorf("-from and -window must be > 0")
 	}
+	gate.Banner()
+	dryRun := gate.DryRun()
 
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
@@ -57,19 +59,19 @@ func chParticipantBackfill(args []string) error {
 	}
 
 	mode := "WRITE"
-	if *dryRun {
+	if dryRun {
 		mode = "DRY-RUN (no writes)"
 	}
 	fmt.Fprintf(os.Stderr, "ch-participant-backfill: %s — filling stellar.operation_participants for ledgers %d..%d (window %d) on %s\n",
 		mode, *from, last, *window, *chAddr)
 
-	stats, berr := clickhouse.BackfillOperationParticipants(ctx, *chAddr, uint32(*from), last, uint32(*window), *dryRun,
+	stats, berr := clickhouse.BackfillOperationParticipants(ctx, *chAddr, uint32(*from), last, uint32(*window), dryRun,
 		func(format string, a ...any) {
 			fmt.Fprintf(os.Stderr, "ch-participant-backfill: "+format+"\n", a...)
 		})
 
 	verb := "wrote"
-	if *dryRun {
+	if dryRun {
 		verb = "would write"
 	}
 	fmt.Fprintf(os.Stderr, "ch-participant-backfill: done — scanned %d ops, %s %d participant rows (%d decode-errors)\n",

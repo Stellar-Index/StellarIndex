@@ -12,6 +12,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
@@ -138,7 +139,7 @@ func supplySnapshot(args []string) error {
 	assetRaw := fs.String("asset", "native", "Asset to snapshot (native only at v1)")
 	ledgerArg := fs.Int("ledger", 0, "Ledger sequence to attribute to (default: latest from ingestion_cursors)")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address (source of the ledger close time stamped as ObservedAt)")
-	dryRun := fs.Bool("dry-run", false, "Compute + print without writing to asset_supply_history")
+	gate := opsutil.RegisterWriteGate(fs)
 	textfileOut := fs.String("textfile-output", "", "Path to write Prometheus textfile (node_exporter textfile_collector format). Empty = no metrics emit.")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -157,6 +158,8 @@ func supplySnapshot(args []string) error {
 	if err := cfg.Supply.Validate(); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
+	gate.Banner()
+	dryRun := gate.DryRun()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -208,7 +211,7 @@ func supplySnapshot(args []string) error {
 	}
 
 	printSupplySnapshot("SNAPSHOT", "native", snap.AssetKey, snap)
-	if *dryRun {
+	if dryRun {
 		fmt.Println("─── DRY RUN ─── snapshot NOT written to asset_supply_history.")
 		return nil
 	}

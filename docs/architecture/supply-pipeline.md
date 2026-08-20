@@ -352,8 +352,8 @@ default and **MUST run under `run-heavy-job.sh` on r1**, reserved for
 the small `[supply.sac_wrappers]` watched set — never a routine job.
 
 Operator surface: `stellarindex-ops supply seed-sac-balances
--config PATH -full-history` (add `-dry-run` first, per the existing
-convention). Output rows are unchanged in shape (`SEED  <contract>
+-config PATH -full-history -write` (drop `-write` — or add `-dry-run`
+— first to preview, per the fail-closed convention). Output rows are unchanged in shape (`SEED  <contract>
 <asset_key>  holders=N  sum=<stroops>`) but `sum` now includes the
 recovered pool-held balances, so `total_supply` / `circulating_supply`
 in the next Algorithm 2 refresher tick — and hence the next
@@ -523,8 +523,9 @@ map/muxed-variant aware while the PG observer is watched-set-gated +
 bare-i128, so their Soroban-era per-contract totals can legitimately
 differ — CH is used only for the pre-Soroban slice PG has no data for.
 
-Operator step: `stellarindex-ops supply seed-sep41-genesis -config PATH`
-(idempotent; re-run after any lake re-derive below the boundary).
+Operator step: `stellarindex-ops supply seed-sep41-genesis -config PATH -write`
+(fail-closed: without `-write` it only previews; idempotent — re-run
+after any lake re-derive below the boundary).
 
 **Provenance (ADR-0033 substrate reproducibility).** The pre-Soroban
 `contract_events` / `supply_flows` rows are **replay-derived**: a

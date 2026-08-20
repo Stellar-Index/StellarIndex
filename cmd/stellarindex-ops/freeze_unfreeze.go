@@ -64,7 +64,7 @@ func freezeUnfreeze(args []string) error {
 	assetFlag := fs.String("asset", "", "asset to unfreeze, canonical wire form (native | CODE-ISSUER | C-strkey)")
 	quoteFlag := fs.String("quote", "", "quote asset of the frozen pair, canonical wire form")
 	reason := fs.String("reason", "", "why this freeze is being lifted (required for a mutation; recorded in the run log)")
-	dryRun := fs.Bool("dry-run", false, "resolve and report what would be unfrozen without touching Redis or Postgres")
+	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -121,7 +121,8 @@ func freezeUnfreeze(args []string) error {
 	if err != nil {
 		return fmt.Errorf("-quote %q: %w", *quoteFlag, err)
 	}
-	return unfreezePair(ctx, sink, writer, asset, quote, *reason, *dryRun)
+	gate.Banner()
+	return unfreezePair(ctx, sink, writer, asset, quote, *reason, gate.DryRun())
 }
 
 // newFreezeWriterForOps builds the freeze.Writer this command reads and
