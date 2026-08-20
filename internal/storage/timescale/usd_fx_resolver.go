@@ -10,8 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lib/pq"
-
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
@@ -601,7 +599,7 @@ func (r *VWAPUSDFXResolver) queryXLMLeg(ctx context.Context, asset canonical.Ass
 	xlmForms := []string{canonical.NativeAsset().String(), nativeXLMSAC}
 	args := []any{
 		asset.String(),
-		pq.Array(xlmForms),
+		xlmForms,
 		at.UTC(),
 		bridgeLegMinUSDVolume,
 	}
@@ -748,7 +746,7 @@ func (r *VWAPUSDFXResolver) queryDB(ctx context.Context, asset canonical.Asset, 
 		   AND vwap * volume / %d::numeric >= $4::numeric`, pegQuoteScaleDenominator)
 	args := []any{
 		asset.String(),
-		pq.Array(r.usdPegs),
+		r.usdPegs,
 		at.UTC(),
 		directLegMinQuoteVolume,
 	}

@@ -66,8 +66,7 @@ func usageRollupBackfill(args []string) error {
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	fromStr := fs.String("from", "", "First UTC day to re-fold, YYYY-MM-DD (required)")
 	toStr := fs.String("to", "", "Last UTC day to re-fold, YYYY-MM-DD (defaults to -from)")
-	dryRun := fs.Bool("dry-run", false,
-		"Scan Redis and report what WOULD be upserted, without writing to usage_daily")
+	gate := opsutil.RegisterWriteGate(fs)
 	timeout := fs.Duration("timeout", 15*time.Minute, "Overall deadline for the whole run")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -79,6 +78,8 @@ func usageRollupBackfill(args []string) error {
 	if err != nil {
 		return err
 	}
+	gate.Banner()
+	dryRun := gate.DryRun()
 
 	cfg, err := config.LoadWithEnv(*cfgPath)
 	if err != nil {
@@ -105,10 +106,10 @@ func usageRollupBackfill(args []string) error {
 	defer func() { _ = store.Close() }()
 
 	var sink usage.RollupSink = store
-	if *dryRun {
+	if dryRun {
 		sink = &countingUsageSink{}
 	}
-	return runUsageRollupBackfill(ctx, rdb, sink, days, *dryRun)
+	return runUsageRollupBackfill(ctx, rdb, sink, days, dryRun)
 }
 
 // usageRollupDays expands the -from/-to flags into the inclusive list

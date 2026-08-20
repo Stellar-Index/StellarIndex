@@ -106,9 +106,34 @@ type OpView struct {
 	SourceAccount string         `json:"source_account,omitempty"`
 	Fields        map[string]any `json:"fields,omitempty"`
 	RawXDR        string         `json:"raw_xdr,omitempty"`
-	// ResultCode is the operation's XDR result code, populated only in the
-	// per-transaction view (GET /v1/tx/{hash}); nil in the ledger op list.
+	// TransactionSuccessful reports whether the operation's PARENT transaction
+	// applied. It is the authoritative honesty signal: a failed transaction is
+	// still indexed and served (an on-chain, fee-charged, permanent record), so
+	// every surface that lists an operation — including public account history —
+	// must be able to mark it FAILED rather than let it masquerade as a real
+	// interaction. false ⇒ the transaction did not apply; nothing this operation
+	// names actually moved. Populated on every list view (account history, the
+	// ledger op list, the /v1/operations directory) and the per-tx view; a nil
+	// value means the parent outcome was not read (a degraded response, disclosed
+	// via the view's coverage_note), NOT "successful".
+	TransactionSuccessful *bool `json:"transaction_successful,omitempty"`
+	// TransactionResult is the human-readable slug for the parent transaction's
+	// result (e.g. "tx_success", "tx_failed", "tx_insufficient_fee") — the
+	// authoritative WHY that pairs with TransactionSuccessful on the list views,
+	// where the operation is shown outside its transaction. Empty when the
+	// parent outcome was not read (same degraded case as a nil
+	// TransactionSuccessful).
+	TransactionResult string `json:"transaction_result,omitempty"`
+	// ResultCode is the operation's OUTER XDR result code (from
+	// stellar.operation_results), populated in the per-transaction view (GET
+	// /v1/tx/{hash}); nil where not read.
 	ResultCode *int32 `json:"result_code,omitempty"`
+	// Result is the human-readable slug for ResultCode (e.g. "op_inner",
+	// "op_bad_auth", "op_no_source_account"). For a failed transaction the
+	// authoritative reason is the TRANSACTION-level result (see
+	// TxSummaryView.Result / GET /v1/tx/{hash}); this is per-operation structural
+	// detail. Empty when ResultCode is nil.
+	Result string `json:"result,omitempty"`
 }
 
 // opViewLight is the summary shape for the network-wide operations directory:
@@ -161,6 +186,76 @@ func opView(o clickhouse.OpRow) OpView {
 // only — the happy path uses xdrjson's controlled snake_case vocabulary.
 func normalizeLakeOpType(s string) string {
 	return strings.ToLower(strings.TrimPrefix(s, "OperationType"))
+}
+
+// opsOutcomeCoverageNote is the honest-degrade statement for the operation LIST
+// views when the parent-transaction outcome read fails: rather than silently
+// omit the FAILED marker (which would let a failed transaction's operations
+// read as applied), the operations are served without transaction_successful
+// and this note discloses that absence means UNKNOWN, not success.
+const opsOutcomeCoverageNote = "transaction outcomes are temporarily unavailable; operations shown without " +
+	"transaction_successful are of UNKNOWN outcome and may belong to a FAILED transaction, not applied"
+
+// opRowTxKeys returns the [lo,hi] ledger span and the distinct tx hashes across
+// a page of operation rows — the partition-pruning bounds + IN-list for a
+// batched TxOutcomesByHash read.
+func opRowTxKeys(rows []clickhouse.OpRow) (lo, hi uint32, hashes []string) {
+	if len(rows) == 0 {
+		return 0, 0, nil
+	}
+	lo, hi = rows[0].Seq, rows[0].Seq
+	seen := make(map[string]struct{}, len(rows))
+	for _, o := range rows {
+		if o.Seq < lo {
+			lo = o.Seq
+		}
+		if o.Seq > hi {
+			hi = o.Seq
+		}
+		if _, ok := seen[o.TxHash]; !ok {
+			seen[o.TxHash] = struct{}{}
+			hashes = append(hashes, o.TxHash)
+		}
+	}
+	return lo, hi, hashes
+}
+
+// stitchTxOutcomes stamps each op view with its parent transaction's outcome
+// (transaction_successful + transaction_result), so a failed transaction's
+// operations are marked FAILED — with a reason — on the LIST views, where an
+// operation is shown outside its transaction context (public account history
+// especially). An op whose tx hash is absent from the map (outcome unread) is
+// left with nil TransactionSuccessful: absence is UNKNOWN, never "successful".
+func stitchTxOutcomes(ops []OpView, outcomes map[string]clickhouse.TxOutcome) {
+	for i := range ops {
+		o, ok := outcomes[ops[i].TxHash]
+		if !ok {
+			continue
+		}
+		s := o.Successful
+		ops[i].TransactionSuccessful = &s
+		ops[i].TransactionResult = xdrjson.TxResultName(o.ResultCode)
+	}
+}
+
+// stampTxOutcomes reads the parent-transaction outcomes for a page of ops and
+// stitches them onto the built views. It returns a coverage note (empty on
+// success) rather than failing the request: a transient transactions-read blip
+// degrades to "outcome unknown" (honest), not to a misleading unmarked op.
+func (h *Handler) stampTxOutcomes(ctx context.Context, ops []OpView, rows []clickhouse.OpRow) string {
+	lo, hi, hashes := opRowTxKeys(rows)
+	if len(hashes) == 0 {
+		return ""
+	}
+	outcomes, err := h.Reader.TxOutcomesByHash(ctx, lo, hi, hashes)
+	if err != nil {
+		// Non-fatal: serve the operations with UNKNOWN outcome and disclose it
+		// (a client abort lands here too, in which case the response is moot).
+		h.Logger.Warn("explorer TxOutcomesByHash failed (serving ops with unknown outcome)", "err", err)
+		return opsOutcomeCoverageNote
+	}
+	stitchTxOutcomes(ops, outcomes)
+	return ""
 }
 
 // resolveOpTypeStats returns the trailing-24h op-type breakdown from the
@@ -241,6 +336,10 @@ type OperationsView struct {
 	Operations  []OpView      `json:"operations"`
 	NextCursor  string        `json:"next_cursor,omitempty"`
 	OpTypeStats []OpTypeStatV `json:"op_type_stats,omitempty"`
+	// CoverageNote is non-empty when the parent-transaction outcome read failed
+	// while assembling this page, so operations without transaction_successful
+	// are of UNKNOWN outcome rather than known-applied (opsOutcomeCoverageNote).
+	CoverageNote string `json:"coverage_note,omitempty"`
 }
 
 // OpTypeStatV is one op-type's count in the trailing-24h window.
@@ -297,6 +396,7 @@ func (h *Handler) Operations(w http.ResponseWriter, r *http.Request) {
 	for i, o := range rows {
 		out.Operations[i] = opView(o)
 	}
+	out.CoverageNote = h.stampTxOutcomes(ctx, out.Operations, rows)
 	h.WriteJSON(w, out, false)
 }
 
@@ -428,6 +528,7 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 	for i, o := range rows {
 		out.Operations[i] = opViewLight(o) // directory = summary; body fields on the detail views
 	}
+	out.CoverageNote = h.stampTxOutcomes(ctx, out.Operations, rows)
 	if n := len(rows); n == limit {
 		last := rows[n-1]
 		out.NextCursor = encodeCursor(last.Seq, last.TxIndex, last.OpIndex)

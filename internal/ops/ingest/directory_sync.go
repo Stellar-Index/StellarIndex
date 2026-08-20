@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -62,7 +63,7 @@ func directorySync(args []string) error {
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	url := fs.String("url", directoryDefaultURL, "Tarball URL of the public-directory repo (https only)")
 	timeout := fs.Duration("timeout", 5*time.Minute, "Wall-clock timeout for the whole run")
-	dryRun := fs.Bool("dry-run", false, "Fetch + parse + report counts without writing")
+	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -72,6 +73,8 @@ func directorySync(args []string) error {
 	if !strings.HasPrefix(*url, "https://") {
 		return fmt.Errorf("-url must be https:// (got %q)", *url)
 	}
+	gate.Banner()
+	dryRun := gate.DryRun()
 
 	cfg, err := config.LoadWithEnv(*cfgPath)
 	if err != nil {
@@ -87,7 +90,7 @@ func directorySync(args []string) error {
 	}
 	fmt.Printf("Parsed %d directory entries (%d skipped: bad address/JSON).\n", len(entries), skipped)
 
-	if *dryRun {
+	if dryRun {
 		fmt.Println("Dry run — nothing written.")
 		return nil
 	}

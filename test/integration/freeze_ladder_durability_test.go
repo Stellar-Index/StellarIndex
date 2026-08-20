@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/golang-migrate/migrate/v4"
-	_ "github.com/lib/pq"
+	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/anomaly"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/freeze"
@@ -194,7 +194,7 @@ func TestFreezeLadder_DurableAcrossRedisLoss(t *testing.T) {
 
 func countFreezeRows(t *testing.T, ctx context.Context, dsn, assetID, quoteID string) int {
 	t.Helper()
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("sql.Open: %v", err)
 	}
@@ -210,7 +210,7 @@ func countFreezeRows(t *testing.T, ctx context.Context, dsn, assetID, quoteID st
 
 func countOpenFreezeRows(t *testing.T, ctx context.Context, dsn, assetID, quoteID string) int {
 	t.Helper()
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("sql.Open: %v", err)
 	}
@@ -234,7 +234,7 @@ func countOpenFreezeRows(t *testing.T, ctx context.Context, dsn, assetID, quoteI
 // collide with the rows the test writes later.
 func seedAndCompressFreezeChunk(t *testing.T, ctx context.Context, dsn string) {
 	t.Helper()
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("sql.Open: %v", err)
 	}
@@ -265,7 +265,7 @@ func seedAndCompressFreezeChunk(t *testing.T, ctx context.Context, dsn string) {
 // other assertion still passed.
 func assertFreezeChunkStillCompressed(t *testing.T, ctx context.Context, dsn string) {
 	t.Helper()
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("sql.Open: %v", err)
 	}

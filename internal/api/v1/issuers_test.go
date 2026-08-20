@@ -177,7 +177,7 @@ func TestHandleIssuersList_ReaderError500(t *testing.T) {
 
 // TestHandleIssuersList_ClientAbortedNo500 — regression for #34. When
 // the inbound request is canceled mid-flight (concurrent callers /
-// the sla-probe / a browser navigating away), lib/pq surfaces the
+// the sla-probe / a browser navigating away), the driver surfaces the
 // canceled ListIssuers query as SQLSTATE 57014. That is a client
 // abort, NOT a server fault: the handler must return quietly, never
 // a 500 (a 500 pollutes the 5xx rate + SLA availability — it was the

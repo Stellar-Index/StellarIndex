@@ -12,8 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lib/pq"
-
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -1716,7 +1714,7 @@ func (s *Store) FXQuoteAtOrBefore(
 	)
 	row := s.db.QueryRowContext(ctx, q,
 		pair.Base.String(), pair.Quote.String(),
-		cutoff.UTC(), pq.Array(fxSources),
+		cutoff.UTC(), fxSources,
 	)
 	if err := row.Scan(&gotSource, &gotTS, &baseAmt, &quoteAmt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

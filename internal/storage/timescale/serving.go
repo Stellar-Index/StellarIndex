@@ -7,7 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
 // OpenServing is [Open] with a session-level `statement_timeout` applied
@@ -95,10 +96,11 @@ func boundedConnector(dsn string, statementTimeout time.Duration) (driver.Connec
 	if statementTimeout <= 0 {
 		return nil, nil
 	}
-	base, err := pq.NewConnector(dsn)
+	cfg, err := pgx.ParseConfig(dsn)
 	if err != nil {
-		return nil, fmt.Errorf("timescale: pq.NewConnector: %w", err)
+		return nil, fmt.Errorf("timescale: pgx.ParseConfig: %w", err)
 	}
+	base := stdlib.GetConnector(*cfg)
 	return &statementTimeoutConnector{
 		base:      base,
 		timeoutMS: statementTimeout.Milliseconds(),
@@ -122,8 +124,8 @@ func (c *statementTimeoutConnector) Connect(ctx context.Context) (driver.Conn, e
 	}
 	execer, ok := conn.(driver.ExecerContext)
 	if !ok {
-		// lib/pq's *conn implements ExecerContext; this guards against a
-		// silent driver swap that would otherwise leave the pool
+		// pgx stdlib's *Conn implements ExecerContext; this guards against
+		// a silent driver swap that would otherwise leave the pool
 		// unbounded. Fail the connection rather than pretend the timeout
 		// is in force.
 		_ = conn.Close()

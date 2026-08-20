@@ -10,6 +10,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/chainlink"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -58,7 +59,7 @@ func backfillChainlink(args []string) error {
 	toBlock := fs.Uint64("to-block", 0, "Inclusive upper bound block. 0 = current head (queried via eth_blockNumber).")
 	chunkBlocks := fs.Uint64("chunk-blocks", chainlink.DefaultBackfillChunkBlocks, "Blocks per eth_getLogs call. 5000 is the safe default for Alchemy / Infura response-size caps.")
 	sleepMs := fs.Int("sleep-ms", 0, "Per-chunk pause in milliseconds. Use to throttle under provider rate limits (e.g. 100ms for ~10 req/s).")
-	dryRun := fs.Bool("dry-run", false, "Fetch + decode but don't write to Timescale.")
+	gate := opsutil.RegisterWriteGate(fs)
 	progressEvery := fs.Int("progress-every", 1000, "Print a progress line every N rounds inserted.")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -67,6 +68,8 @@ func backfillChainlink(args []string) error {
 		fs.Usage()
 		return fmt.Errorf("-config required")
 	}
+	gate.Banner()
+	dryRun := gate.DryRun()
 
 	cfg, err := config.LoadWithEnv(*cfgPath)
 	if err != nil {
@@ -112,12 +115,12 @@ func backfillChainlink(args []string) error {
 
 	fmt.Fprintf(os.Stderr,
 		"backfill-chainlink: feeds=%d from-block=%d to-block=%d chunk=%d sleep=%dms dry-run=%v\n",
-		len(pairs), *fromBlock, *toBlock, *chunkBlocks, *sleepMs, *dryRun)
+		len(pairs), *fromBlock, *toBlock, *chunkBlocks, *sleepMs, dryRun)
 
 	updates := make(chan canonical.OracleUpdate, 1024)
 
 	var store *timescale.Store
-	if !*dryRun {
+	if !dryRun {
 		store, err = timescale.Open(ctx, cfg.Storage.PostgresDSN)
 		if err != nil {
 			return fmt.Errorf("storage: %w", err)
@@ -137,7 +140,7 @@ func backfillChainlink(args []string) error {
 
 	inserted, skipped := 0, 0
 	for u := range updates {
-		if *dryRun {
+		if dryRun {
 			inserted++
 			if *progressEvery > 0 && inserted%*progressEvery == 0 {
 				fmt.Fprintf(os.Stderr, "  ... %d decoded\n", inserted)

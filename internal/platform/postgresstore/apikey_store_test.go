@@ -6,10 +6,10 @@ import (
 )
 
 // TestNonNilStringArray_NilBecomesEmpty — a nil input must
-// surface to the lib/pq driver as a non-nil zero-length
-// pq.StringArray, which serialises to the SQL `'{}'` array
-// literal. F-1262 (codex audit-2026-05-13): pre-fix the
-// bare `pq.StringArray(nil)` cast emitted SQL NULL, which
+// surface to the pgx driver as a non-nil zero-length
+// []string, which serialises to the SQL `'{}'` array
+// literal. F-1262 (codex audit-2026-05-13): pre-fix a
+// bare nil `[]string` emitted SQL NULL, which
 // violated the migration-0027 NOT NULL constraint on
 // `api_keys.referer_allowlist` and surfaced as a 500 on the
 // default dashboard create-key request shape.
@@ -33,7 +33,7 @@ func TestNonNilStringArray_NonNilPassthrough(t *testing.T) {
 	if len(got) != len(in) {
 		t.Errorf("len = %d, want %d", len(got), len(in))
 	}
-	if !reflect.DeepEqual([]string(got), in) {
+	if !reflect.DeepEqual(got, in) {
 		t.Errorf("got %v, want %v", got, in)
 	}
 }

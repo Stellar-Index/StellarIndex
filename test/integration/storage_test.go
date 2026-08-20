@@ -14,7 +14,7 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
-	_ "github.com/lib/pq"
+	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/testcontainers/testcontainers-go"
@@ -296,7 +296,7 @@ func TestCursorFirstLedgerBackfillMigration(t *testing.T) {
 	dsn := startTimescale(t, ctx)
 	applyMigrations(t, dsn)
 
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("sql.Open: %v", err)
 	}
@@ -377,7 +377,7 @@ func TestCursorFirstLedgerMigrationReversible(t *testing.T) {
 	dsn := startTimescale(t, ctx)
 	applyMigrations(t, dsn)
 
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("sql.Open: %v", err)
 	}
@@ -505,7 +505,7 @@ func startTimescale(t *testing.T, ctx context.Context) string {
 		t.Fatalf("conn str: %v", err)
 	}
 	// Pre-enable extension (dev stack does this via init script).
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -610,7 +610,7 @@ func TestTWAPPointsInRange_TimeWeighted(t *testing.T) {
 		}
 	}
 
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("sql.Open: %v", err)
 	}
@@ -735,7 +735,7 @@ func TestTWAPSampleCount_CoverageWeighted(t *testing.T) {
 		}
 	}
 
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("sql.Open: %v", err)
 	}

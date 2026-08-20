@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
-
-	"github.com/lib/pq"
 )
 
 // SourceStats is the per-source 24h activity row.
@@ -313,7 +311,7 @@ const (
 // `native` and `crypto:XLM` legs both count); pass a single-element
 // slice for a single form.
 func (s *Store) PairSourceStats(ctx context.Context, base, quote []string) ([]SourceStats, error) {
-	return s.scanSourceStats(ctx, pairSourceStatsQuery, pq.Array(base), pq.Array(quote))
+	return s.scanSourceStats(ctx, pairSourceStatsQuery, base, quote)
 }
 
 // AssetSourceStats returns trailing-24h per-source USD volume + trade
@@ -323,7 +321,7 @@ func (s *Store) PairSourceStats(ctx context.Context, base, quote []string) ([]So
 // asset is the full set of canonical FORMS to match (see
 // PairSourceStats) so a multi-form asset's legs aggregate together.
 func (s *Store) AssetSourceStats(ctx context.Context, asset []string) ([]SourceStats, error) {
-	return s.scanSourceStats(ctx, assetSourceStatsQuery, pq.Array(asset))
+	return s.scanSourceStats(ctx, assetSourceStatsQuery, asset)
 }
 
 // scanSourceStats runs a (static) per-source-breakdown query with the

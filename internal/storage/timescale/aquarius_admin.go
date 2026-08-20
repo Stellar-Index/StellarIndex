@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
-	"github.com/lib/pq"
 )
 
 // AquariusAdminKind discriminates the eight governance/upgrade admin
@@ -156,7 +154,7 @@ func (s *Store) AquariusAdminLifetimeTotal(ctx context.Context) (int64, error) {
 		          WHERE event_kind = k.kind
 		       ) agg ON true`
 	var total int64
-	if err := s.db.QueryRowContext(ctx, q, pq.Array(kinds)).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(ctx, q, kinds).Scan(&total); err != nil {
 		return 0, fmt.Errorf("timescale: AquariusAdminLifetimeTotal: %w", err)
 	}
 	return total, nil

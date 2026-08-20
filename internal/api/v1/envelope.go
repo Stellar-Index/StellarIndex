@@ -217,9 +217,9 @@ func clientAborted(r *http.Request, _ error) bool {
 // statement-cancellation error rather than wrapping
 // context.DeadlineExceeded.
 //
-// Background: lib/pq propagates a Go context cancellation to
-// PostgreSQL via the v3 cancel-request protocol, then returns the
-// resulting `pq: canceling statement due to user request` (SQLSTATE
+// Background: the Postgres driver propagates a Go context cancellation
+// to PostgreSQL via the v3 cancel-request protocol, then returns the
+// resulting `canceling statement due to user request` (SQLSTATE
 // 57014) — which does NOT unwrap to [context.DeadlineExceeded].
 // `errors.Is(err, context.DeadlineExceeded)` therefore misses every
 // case where a per-call deadline fired and the driver beat the
@@ -259,7 +259,7 @@ func handlerTimedOut(callCtx context.Context, err error) bool {
 //     [handlerTimedOut] (the per-call context hasn't deadlined).
 //     The result reaches the handler as a bare 57014; without this
 //     helper it returns 500.
-//   - **lib/pq driver-bad-conn errors.** `driver: bad connection`
+//   - **driver-bad-conn errors.** `driver: bad connection`
 //     surfaces when a Postgres backend was killed (admin restart,
 //     OOM killer, idle-connection reaper) between checkout and
 //     query execution. The connection-pool retry would normally
@@ -269,12 +269,12 @@ func handlerTimedOut(callCtx context.Context, err error) bool {
 //     request would typically succeed.
 //
 // The classifier is INTENTIONALLY string-based for the SQLSTATE
-// match — lib/pq's typed `*pq.Error.Code` would require importing
+// match — pgconn's typed `*pgconn.PgError.Code` would require importing
 // the driver into the handler layer (already a dep, but a wider
-// surface than strict). The substring `57014` is stable across
-// lib/pq versions (it's wire-format from postgres itself); the
-// 'canceling statement' fragment is the human-readable companion
-// the driver always includes.
+// surface than strict). The substring `57014` is stable (it's
+// wire-format from postgres itself, and pgx renders it into the
+// error string as `(SQLSTATE 57014)`); the 'canceling statement'
+// fragment is the human-readable companion the driver always includes.
 //
 // Caller pattern (mirrors clientAborted / handlerTimedOut order):
 //
@@ -298,7 +298,7 @@ func transientStorageErr(err error) bool {
 	if strings.Contains(s, "57014") || strings.Contains(s, "canceling statement") {
 		return true
 	}
-	// lib/pq + the standard database/sql driver-bad-connection
+	// pgx stdlib + the standard database/sql driver-bad-connection
 	// surface. Pool retry exhausted by this point.
 	if strings.Contains(s, "driver: bad connection") || strings.Contains(s, "bad connection") {
 		return true

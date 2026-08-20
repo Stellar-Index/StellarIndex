@@ -660,6 +660,23 @@ func (r *ExplorerReader) SACAssetFromEvents(ctx context.Context, contractID stri
 			// A miss here is an ANSWER, not a reason to fall back: the
 			// unbounded scan is the very cost this path exists to avoid,
 			// and non-SACs (the common case) would pay it every time.
+			//
+			// Accepted residual (W1-explorer-perf-3, deliberate): a genuine
+			// SAC whose 8 newest ACTIVE ledgers all happen to carry only
+			// shorter-topic (<3) events is reported here as non-SAC. This is
+			// bounded to error-message/label quality on the /wasm 404 branch —
+			// it never injects a wrong POSITIVE (the caller re-derives the SAC
+			// address from the returned asset and rejects a mismatch), and no
+			// served money value depends on it. It is rare by construction (a
+			// SAC emits 3-4-topic transfer/mint/burn on essentially every
+			// active ledger, so 8 consecutive misses is pathological) AND only
+			// reachable for the ~55k instance-never-captured contracts this
+			// last-resort fallback exists for. Falling through to the unbounded
+			// scan on a miss was evaluated and REJECTED: it regresses every
+			// non-SAC (which also misses) back onto the 3-8s whole-key-range
+			// walk this path was rewritten to avoid. The lever, if the residual
+			// ever matters, is a wider bounded probe window — never the
+			// unbounded fallback.
 			if name, ok, qerr := r.sacAssetFromEventsQuery(ctx, boundedQ, contractID, ledgers); qerr == nil {
 				return name, ok, nil
 			}

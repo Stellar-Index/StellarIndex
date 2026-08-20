@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -85,7 +86,7 @@ func supplySeedSACBalances(args []string) error {
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	fullHistory := fs.Bool("full-history", false, "Read stellar.ledger_entry_changes (complete to genesis) instead of the floor-limited stellar.ledger_entries_current — closes the ~62M current-state coverage floor (heavier; run-heavy-job.sh only)")
-	dryRun := fs.Bool("dry-run", false, "Read + print per-contract holder count + summed balance without writing to sac_balance_observations")
+	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -103,6 +104,8 @@ func supplySeedSACBalances(args []string) error {
 	if len(watched) == 0 {
 		return errors.New("supply seed-sac-balances: no [supply.sac_wrappers] configured — nothing to seed")
 	}
+	gate.Banner()
+	dryRun := gate.DryRun()
 
 	// The scan is a full-history FINAL read over every contract_data
 	// entry — generous budget; the heavy-job wrapper bounds memory.
@@ -110,7 +113,7 @@ func supplySeedSACBalances(args []string) error {
 	defer cancel()
 
 	var store *timescale.Store
-	if !*dryRun {
+	if !dryRun {
 		store, err = timescale.Open(ctx, cfg.Storage.PostgresDSN)
 		if err != nil {
 			return err
@@ -137,7 +140,7 @@ func supplySeedSACBalances(args []string) error {
 		t.sum.Add(t.sum, seed.Balance)
 		t.observe(seed.LedgerSeq)
 		total++
-		if *dryRun {
+		if dryRun {
 			return nil
 		}
 		return store.InsertSACBalanceObservation(ctx, timescale.SACBalanceObservation{
@@ -158,9 +161,9 @@ func supplySeedSACBalances(args []string) error {
 		return err
 	}
 
-	printSACSeedSummary(watched, tallies, total, *dryRun)
+	printSACSeedSummary(watched, tallies, total, dryRun)
 
-	if !*dryRun {
+	if !dryRun {
 		if err := writeSACSeedProvenance(ctx, store, watched, tallies, source); err != nil {
 			return fmt.Errorf("write seed provenance: %w", err)
 		}

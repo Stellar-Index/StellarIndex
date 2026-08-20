@@ -27,6 +27,7 @@ Environment=EXTRA_FLAGS=
 ExecStart=/usr/local/bin/stellarindex-ops ch-cap67-movements \
   -ch-addr ${CH_ADDR} \
   -window ${WINDOW} \
+  -write \
   ${EXTRA_FLAGS}
 
 # De-privileged, same shape as the sibling oneshots (CS-118/CS-119).

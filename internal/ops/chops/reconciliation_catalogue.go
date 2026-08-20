@@ -97,6 +97,19 @@ type reconSource struct {
 	// the reason string acknowledges.
 	aggregateReconcile string
 
+	// vintageBoundary, when > 0 on an aggregateReconcile source, CONFINES
+	// the window-totals (netting) compare to ledgers <= vintageBoundary and
+	// reverts to STRICT PER-LEDGER above it (W1-flowcompleteness-3 / the
+	// phoenix #15 split). The keying vintage that justifies the netting is
+	// historical (a WASM upgrade, a legacy backfill) with a fixed upper edge;
+	// above that edge the served `ledger` keys 1:1 with the re-derive again,
+	// so there is no reason to keep the CS-084 netting blindness there. The
+	// split narrows the netting-blind window to just the pre-boundary vintage
+	// so a REAL post-boundary drop (all live + future ledgers) is caught by
+	// strict per-ledger instead of netting against a phantom. 0 = full-window
+	// aggregate (the boundary is not a clean constant for this source).
+	vintageBoundary uint32
+
 	// newGatedDec, when non-nil, opts a factory-anchored IDENTITY-gated
 	// source (aquarius, phoenix) into the -ch re-derive contract-id
 	// PREFILTER: the lake read is scoped to the source's gated contract set
@@ -260,6 +273,13 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			// walk is a no-op here — the throwaway just enumerates the seed.
 			newGatedDec:        func() gatedDecoder { return phoenix.NewDecoder() },
 			aggregateReconcile: "pre-upgrade (~51.02M–53.13M) 7-field swaps flush at sweep only when a later event ages the group out of the correlation buffer; the trade keeps its first-field ledger but the re-derive counts it at the sweep-trigger ledger — a per-ledger shift with the window total preserved. Aggregate absorbs the shift and accepts the CS-084 netting residual on this source; it does NOT replace the curated-set seed fix.",
+			// The sweep shift is bounded ABOVE by the pool-WASM upgrade at
+			// 53,134,167: past it every swap emits its full 8-field RawSwap in
+			// one event and keys 1:1, so netting is only needed for the
+			// pre-upgrade vintage. Confine it there and strict-per-ledger above
+			// (W1-flowcompleteness-3 / #15) so a real post-upgrade drop can't
+			// net away.
+			vintageBoundary: 53_134_167,
 			targets: []reconTarget{
 				{"trades", "source = 'phoenix'", []string{"phoenix.trade"}},
 				{"phoenix_liquidity", "", []string{"phoenix.liquidity"}},

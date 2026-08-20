@@ -110,7 +110,8 @@ Per [`anomaly-freeze-engaged.md`](../../runbooks/anomaly-freeze-engaged.md):
 ```
 stellarindex-ops freeze-unfreeze -config /etc/stellarindex.toml \
   -asset native -quote fiat:USD \
-  -reason "drill: escalated freeze, oracle verified healthy by hand"
+  -reason "drill: escalated freeze, oracle verified healthy by hand" \
+  -write
 ```
 
 `-reason` is REQUIRED for a mutation — an unfreeze overrides an

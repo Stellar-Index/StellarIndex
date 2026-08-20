@@ -99,7 +99,7 @@ func (d sinkDisposition) String() string {
 // retrying changes. They are the pre-SQL twin of SQLSTATE class 22/23: e.g.
 // `Store.InsertOracleUpdate` returns `OracleUpdate.Validate`'s error verbatim,
 // so a live oracle source publishing a self-priced or out-of-range update
-// surfaces here rather than as a *pq.Error.
+// surfaces here rather than as a *pgconn.PgError.
 //
 // Deliberately EXCLUDED, though they live in the same package:
 //

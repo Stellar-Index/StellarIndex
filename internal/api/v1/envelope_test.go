@@ -316,17 +316,17 @@ func TestHandlerTimedOut(t *testing.T) {
 			t.Error("handlerTimedOut(live ctx, DeadlineExceeded) = false, want true")
 		}
 	})
-	t.Run("call ctx deadline fired, err is pq cancel", func(t *testing.T) {
-		// THE R-021 case: lib/pq returns its own
-		// `pq: canceling statement due to user request` error string
+	t.Run("call ctx deadline fired, err is a pg cancel", func(t *testing.T) {
+		// THE R-021 case: the driver returns its own
+		// `canceling statement due to user request` error string
 		// after our context.WithTimeout fires. errors.Is misses it
-		// because pq.Error doesn't wrap context.DeadlineExceeded;
+		// because the driver's PgError doesn't wrap context.DeadlineExceeded;
 		// the per-call context Err() is the authoritative signal.
 		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
 		defer cancel()
-		pqErr := errors.New("pq: canceling statement due to user request")
-		if !handlerTimedOut(ctx, pqErr) {
-			t.Error("handlerTimedOut(deadline-passed ctx, pq cancel) = false, want true")
+		cancelErr := errors.New("ERROR: canceling statement due to user request (SQLSTATE 57014)")
+		if !handlerTimedOut(ctx, cancelErr) {
+			t.Error("handlerTimedOut(deadline-passed ctx, pg cancel) = false, want true")
 		}
 	})
 	t.Run("call ctx canceled (not deadlined), arbitrary err", func(t *testing.T) {

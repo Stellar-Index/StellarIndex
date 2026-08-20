@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -82,7 +84,7 @@ func TestFetchDirectoryTarball_ParsesAccountsAndSkipsNoise(t *testing.T) {
 			t.Errorf("entry %s source = %q, want stellar-expert", e.Address, e.Source)
 		}
 		if e.Tags == nil {
-			t.Errorf("entry %s Tags is nil — must be non-nil for pq.Array", e.Address)
+			t.Errorf("entry %s Tags is nil — must be non-nil for the Postgres array binding", e.Address)
 		}
 	}
 	if !byAddr[testDirAddrG] || !byAddr[testDirAddrC] {
@@ -117,4 +119,65 @@ func TestFetchDirectoryTarball_HTTPErrorIsFatal(t *testing.T) {
 	if _, _, err := fetchDirectoryTarball(context.Background(), srv.URL); err == nil {
 		t.Fatal("non-200 fetch returned nil error")
 	}
+}
+
+// TestDirectorySync_FailsClosedByDefault pins the ops write-gate
+// unification (W8.15c): directory-sync used to WRITE unless you passed
+// -dry-run — the unsafe default-WRITE convention. After the flip it
+// previews by DEFAULT and mutates Postgres only on an explicit -write,
+// announced by a loud stderr banner. This asserts the CORRECTED default
+// (dry run, no writes) and that -write is the opt-in — the exact reversal
+// the automated systemd caller now depends on. It compiles against both
+// the pre- and post-fix directorySync signature, so reverting the gate
+// makes the default assertion fail (no DRY-RUN banner is printed): the
+// non-vacuous red.
+//
+// The banner is emitted after flag validation and BEFORE config load /
+// any network fetch, so a nonexistent config + never-resolving https URL
+// let the run announce its mode and then error out without touching
+// Postgres or the network.
+func TestDirectorySync_FailsClosedByDefault(t *testing.T) {
+	const cfg = "/nonexistent/stellarindex-directory-sync-gate-test.toml"
+	const url = "https://directory.invalid/archive.tar.gz"
+
+	// DEFAULT: no -write → fail-closed dry run.
+	_, stderrDefault := runDirectorySyncCapturingStderr(t, []string{"-config", cfg, "-url", url})
+	if !strings.Contains(stderrDefault, "DRY RUN — no writes; pass -write to apply") {
+		t.Errorf("default run must announce the fail-closed DRY RUN banner on stderr; got:\n%s", stderrDefault)
+	}
+	if strings.Contains(stderrDefault, "WRITING — applying changes") {
+		t.Errorf("default run must NOT announce WRITING — it would mutate Postgres without an explicit opt-in; got:\n%s", stderrDefault)
+	}
+
+	// -write: explicit opt-in → WRITING.
+	_, stderrWrite := runDirectorySyncCapturingStderr(t, []string{"-config", cfg, "-url", url, "-write"})
+	if !strings.Contains(stderrWrite, "WRITING — applying changes") {
+		t.Errorf("-write must announce the WRITING banner on stderr; got:\n%s", stderrWrite)
+	}
+	if strings.Contains(stderrWrite, "DRY RUN") {
+		t.Errorf("-write must NOT report DRY RUN; got:\n%s", stderrWrite)
+	}
+}
+
+// runDirectorySyncCapturingStderr runs directorySync with os.Stderr
+// redirected to a pipe and returns the run error plus everything written
+// to stderr (where the write-gate banner lands).
+func runDirectorySyncCapturingStderr(t *testing.T, args []string) (error, string) {
+	t.Helper()
+	orig := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stderr = w
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+	runErr := directorySync(args)
+	_ = w.Close()
+	os.Stderr = orig
+	return runErr, <-done
 }

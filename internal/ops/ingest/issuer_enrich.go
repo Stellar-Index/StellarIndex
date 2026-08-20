@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -28,10 +29,12 @@ func issuerEnrich(args []string) error {
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "config path")
 	chAddr := fs.String("ch", "127.0.0.1:9300", "ClickHouse native address")
 	batch := fs.Int("batch", 1000, "issuers per ClickHouse lookup batch")
-	dryRun := fs.Bool("dry-run", false, "report counts without writing")
+	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	gate.Banner()
+	dryRun := gate.DryRun()
 
 	cfg, err := config.LoadWithEnv(*cfgPath)
 	if err != nil {
@@ -53,7 +56,7 @@ func issuerEnrich(args []string) error {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "issuer-enrich: %d issuers; resolving home_domain from the lake (batch=%d, dry-run=%v)\n",
-		len(ids), *batch, *dryRun)
+		len(ids), *batch, dryRun)
 
 	found, updated, start := 0, 0, time.Now()
 	for lo := 0; lo < len(ids); lo += *batch {
@@ -66,7 +69,7 @@ func issuerEnrich(args []string) error {
 			return fmt.Errorf("home_domain batch [%d,%d): %w", lo, hi, derr)
 		}
 		found += len(domains)
-		if !*dryRun {
+		if !dryRun {
 			n, uerr := updateIssuerHomeDomains(ctx, store, domains)
 			if uerr != nil {
 				return fmt.Errorf("update home_domains: %w", uerr)

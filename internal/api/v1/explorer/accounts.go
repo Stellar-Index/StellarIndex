@@ -29,6 +29,12 @@ type AccountOperationsView struct {
 	Operations []OpView `json:"operations"`
 	NextCursor string   `json:"next_cursor,omitempty"`
 	Scope      string   `json:"scope"`
+	// CoverageNote is non-empty when the parent-transaction outcome read failed:
+	// operations without transaction_successful are then of UNKNOWN outcome, not
+	// applied. Failed transactions ARE listed here (an on-chain, fee-charged
+	// record), so this marker is what keeps a FAILED op from masquerading as a
+	// real interaction in public account history (opsOutcomeCoverageNote).
+	CoverageNote string `json:"coverage_note,omitempty"`
 }
 
 // accountScopeAll = sourced + incoming/participant activity (ADR-0038 Phase B;
@@ -144,6 +150,10 @@ func (h *Handler) AccountOperations(w http.ResponseWriter, r *http.Request) {
 	for i, o := range rows {
 		out.Operations[i] = opView(o)
 	}
+	// Stamp each op with its parent transaction's outcome so a FAILED tx's
+	// operations are clearly marked in this public account history rather than
+	// masquerading as applied (D-PART-FAILEDTX).
+	out.CoverageNote = h.stampTxOutcomes(ctx, out.Operations, rows)
 	if n := len(rows); n == limit {
 		last := rows[n-1]
 		out.NextCursor = encodeCursor(last.Seq, last.TxIndex, last.OpIndex)

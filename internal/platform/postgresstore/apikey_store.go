@@ -13,8 +13,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/Stellar-Index/StellarIndex/internal/pgarray"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -61,16 +62,16 @@ func scanAPIKey(row interface {
 		expiresAt, revokedAt, lastUsedAt sql.NullTime
 		lastUsedIP                       sql.NullString
 		permissions                      []byte
-		scopes                           pq.StringArray
-		ipAllowlist                      pq.StringArray
-		refererAllowlist                 pq.StringArray
+		scopes                           []string
+		ipAllowlist                      []string
+		refererAllowlist                 []string
 	)
 	if err := row.Scan(
 		&k.ID, &k.AccountID, &createdByUserID,
 		&k.Name, &k.Description,
 		&k.KeyHash, &k.KeyPrefix, &k.Tier,
 		&k.RateLimitPerMin, &k.MonthlyQuota,
-		&permissions, &scopes, &ipAllowlist, &refererAllowlist,
+		&permissions, pgarray.Strings(&scopes), pgarray.Strings(&ipAllowlist), pgarray.Strings(&refererAllowlist),
 		&expiresAt,
 		&revokedAt, &revokedByUserID, &k.RevokedReason,
 		&lastUsedAt, &lastUsedIP, &k.LastUsedUserAgent,
@@ -99,9 +100,9 @@ func scanAPIKey(row interface {
 		}
 	}
 	if len(scopes) > 0 {
-		k.Scopes = []string(scopes)
+		k.Scopes = scopes
 	}
-	k.RefererAllowlist = []string(refererAllowlist)
+	k.RefererAllowlist = refererAllowlist
 	k.IPAllowlist = parseCIDRArray(ipAllowlist)
 	return k, nil
 }
@@ -124,7 +125,7 @@ func parseUUIDNullString(s sql.NullString) uuid.UUID {
 // Malformed entries are skipped rather than failing the whole row;
 // the dashboard surfaces "X invalid prefixes" via a separate
 // validation pass when the operator edits the allowlist.
-func parseCIDRArray(in pq.StringArray) []netip.Prefix {
+func parseCIDRArray(in []string) []netip.Prefix {
 	if len(in) == 0 {
 		return nil
 	}
@@ -227,8 +228,8 @@ func finalizeAPIKeyCreate(out platform.APIKey, err error) (platform.APIKey, erro
 	if errors.Is(err, sql.ErrNoRows) {
 		return platform.APIKey{}, platform.ErrAPIKeyQuotaExceeded
 	}
-	var pqErr *pq.Error
-	if errors.As(err, &pqErr) && pqErr.Code == pgErrUniqueViolation {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == pgErrUniqueViolation {
 		return platform.APIKey{}, fmt.Errorf("create api key: %w", platform.ErrConflict)
 	}
 	return platform.APIKey{}, fmt.Errorf("create api key: %w", err)
@@ -486,25 +487,25 @@ func (a cidrArray) Value() (driver.Value, error) {
 	return "{" + strings.Join(parts, ",") + "}", nil
 }
 
-// nonNilStringArray defends the api_keys insert path against
-// `lib/pq` emitting SQL NULL for a `pq.StringArray(nil)` value.
-// Migration 0027 declares `referer_allowlist text[] NOT NULL
-// DEFAULT '{}'`, so a NULL insert violates the column's
-// NOT NULL constraint with `pq: null value in column
+// nonNilStringArray defends the api_keys insert path against the driver
+// encoding a nil `[]string` as SQL NULL. Migration 0027 declares
+// `referer_allowlist text[] NOT NULL DEFAULT '{}'`, so a NULL insert
+// violates the column's NOT NULL constraint with `null value in column
 // "referer_allowlist" violates not-null constraint (23502)`.
 //
 // F-1262 (codex audit-2026-05-13): the dashboard `keys/page.tsx`
 // + the auth.CreateAPIKeyRequest path both leave the optional
 // `referer_allowlist` field nil when callers don't set it, and
-// the prior `pq.StringArray(k.RefererAllowlist)` direct conversion
-// surfaced as a 500 on the default request shape. Wrap the raw
-// slice through this helper at every Postgres-bound `text[]` call
-// site so a nil slice persists as the schema-default empty array.
-func nonNilStringArray(in []string) pq.StringArray {
+// passing that nil slice straight through surfaced as a 500 on the
+// default request shape. Route the raw slice through this helper at
+// every Postgres-bound `text[]` call site so a nil slice persists as
+// the schema-default empty array (a non-nil empty `[]string` encodes
+// as `{}`, not NULL).
+func nonNilStringArray(in []string) []string {
 	if in == nil {
-		return pq.StringArray{}
+		return []string{}
 	}
-	return pq.StringArray(in)
+	return in
 }
 
 // Compile-time interface check.

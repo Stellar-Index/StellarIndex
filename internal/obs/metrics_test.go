@@ -410,6 +410,11 @@ func TestZeroSeed_F0033(t *testing.T) {
 		// alert is indistinguishable from a dead metric — which is exactly
 		// how both of these went unobserved until the audit found them.
 		`stellarindex_monthly_quota_fail_open_total 0`,
+		// W1-flow-register-4: the dwell-guarded fail-CLOSED twin. Its whole
+		// point is to be silent until a SUSTAINED counter outage forces a
+		// 429, so — like its fail-open sibling — "absent" and "zero" must be
+		// distinguishable or the alert is indistinguishable from a dead metric.
+		`stellarindex_monthly_quota_fail_closed_total 0`,
 		`stellarindex_admin_audit_write_failures_total{surface="account_override"} 0`,
 		`stellarindex_admin_audit_write_failures_total{surface="key_mint"} 0`,
 		`stellarindex_admin_audit_write_failures_total{surface="key_revoke"} 0`,

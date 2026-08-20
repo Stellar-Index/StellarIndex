@@ -12,7 +12,7 @@ severity: P3
 | Field | Value |
 | ----- | ----- |
 | Trigger | Per-source projection is stale or missing rows for a known ledger range (e.g. post-decoder-fix re-walk). |
-| Tool | `stellarindex-ops projector-replay -source <name> -from <ledger>` |
+| Tool | `stellarindex-ops projector-replay -source <name> -from <ledger> -write` (fail-closed: no `-write` = dry run) |
 | Typical wall time | ≤ 5 s SQL + projector catch-up (≈ 1 min per 100k ledgers per source) |
 | Impact | None — the projector tails `soroban_events` (ADR-0029); replay just rewinds a cursor. `ON CONFLICT DO NOTHING` makes re-writes idempotent. |
 
@@ -43,9 +43,11 @@ cursor-rewind:
 
 ```sh
 stellarindex-ops projector-replay -config /etc/stellarindex.toml \
-  -source <name> -from <ledger>
+  -source <name> -from <ledger> -write
 ```
 
+The command is fail-closed: without `-write` it prints the intended
+rewind and writes nothing (pass `-write` to actually rewind the cursor).
 The projector goroutine in `stellarindex-indexer` is already
 tailing `soroban_events`; rewinding the per-source cursor makes it
 re-project the requested window on its next cycle (≤ 5 s
@@ -78,13 +80,13 @@ ssh root@136.243.90.96 'psql -U stellarindex -d stellarindex -c \
 ## Replay procedure
 
 ```sh
-# Dry-run first to see what would happen.
+# Dry-run first to see what would happen (dry run is also the default).
 stellarindex-ops projector-replay -config /etc/stellarindex.toml \
   -source aquarius -from 62000000 -dry-run
 
-# Live.
+# Live — -write is REQUIRED to actually rewind the cursor.
 stellarindex-ops projector-replay -config /etc/stellarindex.toml \
-  -source aquarius -from 62000000
+  -source aquarius -from 62000000 -write
 ```
 
 Source names match the projector registry

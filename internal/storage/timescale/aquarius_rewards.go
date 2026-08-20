@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lib/pq"
-
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
@@ -202,7 +200,7 @@ func (s *Store) AquariusRewardsLifetimeByKind(ctx context.Context) ([]AquariusRe
 		          WHERE event_kind = kinds.k
 		       ) agg ON true
 		 ORDER BY kinds.ordinality`
-	rows, err := s.db.QueryContext(ctx, q, pq.Array(kinds))
+	rows, err := s.db.QueryContext(ctx, q, kinds)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: AquariusRewardsLifetimeByKind: %w", err)
 	}

@@ -187,9 +187,9 @@ func (s *Store) RefreshContinuousAggregate(ctx context.Context, viewName string,
 	// CALL refresh_continuous_aggregate(view, $1::timestamptz, $2::timestamptz).
 	// The first arg is REGCLASS in Timescale's signature, which pgx
 	// can't placeholder; concatenating from the allow-list is safe.
-	// Time params need explicit ::timestamptz casts: lib/pq's
-	// implementation of stored-procedure CALL doesn't propagate the
-	// declared parameter types from the procedure signature, so an
+	// Time params need explicit ::timestamptz casts: the database/sql
+	// stored-procedure CALL path doesn't propagate the declared
+	// parameter types from the procedure signature, so an
 	// untyped placeholder fails with `42P18: could not determine
 	// data type of parameter $1`. Caught live 2026-05-14 on the
 	// first real backfill that exercised this path.

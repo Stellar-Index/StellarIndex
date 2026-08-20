@@ -8,8 +8,6 @@ import (
 	"math/big"
 	"strings"
 	"time"
-
-	"github.com/lib/pq"
 )
 
 // SEP41EventKind discriminates the three supply-affecting SEP-41
@@ -833,7 +831,7 @@ func (s *Store) ListSEP41RollupCheckpoints(ctx context.Context, contractIDs []st
 	if len(contractIDs) == 0 {
 		rows, err = s.db.QueryContext(ctx, base+` ORDER BY contract_id`)
 	} else {
-		rows, err = s.db.QueryContext(ctx, base+` WHERE contract_id = ANY($1) ORDER BY contract_id`, pq.Array(contractIDs))
+		rows, err = s.db.QueryContext(ctx, base+` WHERE contract_id = ANY($1) ORDER BY contract_id`, contractIDs)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("timescale: ListSEP41RollupCheckpoints: %w", err)
@@ -977,7 +975,7 @@ func (s *Store) ResetSEP41SupplyRollupFold(ctx context.Context, contractIDs []st
                    last_ledger = 0, updated_at = now()
              WHERE contract_id = ANY($1)
         `
-		res, err = s.db.ExecContext(ctx, q, pq.Array(contractIDs))
+		res, err = s.db.ExecContext(ctx, q, contractIDs)
 	}
 	if err != nil {
 		return 0, fmt.Errorf("timescale: ResetSEP41SupplyRollupFold: %w", err)

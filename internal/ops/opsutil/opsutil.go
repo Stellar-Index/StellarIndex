@@ -16,6 +16,7 @@ package opsutil
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -68,6 +69,67 @@ func (e *ExitCodeError) Error() string {
 }
 
 func (e *ExitCodeError) Unwrap() error { return e.Err }
+
+// WriteGate is the shared fail-closed write toggle every mutating
+// stellarindex-ops subcommand registers, so the whole CLI shares ONE
+// convention: a command previews by DEFAULT and applies changes only
+// when the operator passes -write. It replaces the old split where some
+// commands wrote UNLESS you passed -dry-run — a default-WRITE shape that
+// silently mutates a money surface the moment a flag is forgotten (the
+// INV-3 DO-NOTHING/DO-DAMAGE trap). Build with [RegisterWriteGate], gate
+// the write with [WriteGate.Enabled], and announce the mode once with
+// [WriteGate.Banner].
+type WriteGate struct {
+	write  *bool
+	dryRun *bool
+}
+
+// RegisterWriteGate registers the shared -write / -dry-run flag pair on
+// fs and returns the gate.
+//
+//   - -write   applies changes. WITHOUT it the command is a fail-closed
+//     DRY RUN that reports what WOULD change and writes nothing.
+//   - -dry-run is retained as an explicit no-op alias so existing callers
+//     (scripts, runbooks, systemd units) that already pass it keep
+//     working. Dry run is the default now, so -dry-run only documents
+//     intent; -write wins if both are passed.
+func RegisterWriteGate(fs *flag.FlagSet) *WriteGate {
+	return &WriteGate{
+		write: fs.Bool("write", false,
+			"apply changes to the datastore. Without it this command is a fail-closed DRY RUN: it reports what would change and writes nothing."),
+		dryRun: fs.Bool("dry-run", false,
+			"preview only, writing nothing — the DEFAULT. Retained as an explicit no-op alias for existing callers; pass -write to actually apply."),
+	}
+}
+
+// Enabled reports whether the operator opted into writing (passed -write).
+func (g *WriteGate) Enabled() bool { return *g.write }
+
+// DryRun reports whether this run writes nothing — the default unless
+// -write was passed. It is the exact negation of [WriteGate.Enabled],
+// provided so a subcommand's existing `dryRun` control flow reads
+// unchanged after the flip.
+func (g *WriteGate) DryRun() bool { return !*g.write }
+
+// Banner prints the loud fail-closed mode banner to stderr. Call it once,
+// after flags are parsed and the command's own required-flag checks pass,
+// so the operator sees the mode before any slow or mutating work begins.
+// Returns [WriteGate.Enabled] for convenient `if gate.Banner() { … }` use.
+func (g *WriteGate) Banner() bool { return PrintWriteBanner(*g.write) }
+
+// PrintWriteBanner prints the loud fail-closed mode banner to stderr for
+// the given write mode and returns write. Subcommands that hold a
+// [WriteGate] call [WriteGate.Banner]; those that carry the gate decision
+// as a plain bool (e.g. inside an options struct) call this directly, so
+// the banner text has exactly one definition.
+func PrintWriteBanner(write bool) bool {
+	if write {
+		fmt.Fprintln(os.Stderr, "═══ WRITING — applying changes ═══")
+		return true
+	}
+	fmt.Fprintln(os.Stderr, "═══ DRY RUN — no writes; pass -write to apply ═══")
+	return false
+}
 
 // SignalContext returns a context that cancels on SIGINT / SIGTERM so
 // long-running passes (backfill-router, tag-routed-via, the ch-*

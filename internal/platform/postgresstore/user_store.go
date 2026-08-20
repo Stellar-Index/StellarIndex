@@ -8,8 +8,9 @@ import (
 	"net"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/Stellar-Index/StellarIndex/internal/pgarray"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -44,7 +45,7 @@ func scanUser(row interface {
 		&lastLoginAt,
 		&u.MFAEnabled,
 		&u.MFASecretEnc,
-		(*pq.ByteaArray)(&u.MFARecoveryCodesHashed),
+		pgarray.Bytea(&u.MFARecoveryCodesHashed),
 		&u.IsStaff,
 		&u.CreatedAt,
 	); err != nil {
@@ -73,13 +74,13 @@ func (r *UserStore) CreateUser(ctx context.Context, u platform.User) (platform.U
 	row := r.s.db.QueryRowContext(ctx, q,
 		u.AccountID, u.Email, u.DisplayName, string(u.Role),
 		u.MFAEnabled, u.MFASecretEnc,
-		pq.ByteaArray(u.MFARecoveryCodesHashed),
+		u.MFARecoveryCodesHashed,
 		u.IsStaff,
 	)
 	out, err := scanUser(row)
 	if err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == pgErrUniqueViolation {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgErrUniqueViolation {
 			return platform.User{}, fmt.Errorf("create user: %w", platform.ErrConflict)
 		}
 		return platform.User{}, fmt.Errorf("create user: %w", err)
@@ -157,7 +158,7 @@ func (r *UserStore) UpdateUser(ctx context.Context, u platform.User) error {
 		u.ID, u.DisplayName, string(u.Role),
 		emailVerifiedAt, lastLoginAt,
 		u.MFAEnabled, u.MFASecretEnc,
-		pq.ByteaArray(u.MFARecoveryCodesHashed),
+		u.MFARecoveryCodesHashed,
 	)
 	if err != nil {
 		return fmt.Errorf("update user: %w", err)

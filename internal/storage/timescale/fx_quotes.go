@@ -9,8 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lib/pq"
-
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
@@ -70,9 +68,9 @@ func (s *Store) InsertFXQuoteBatch(ctx context.Context, quotes []FXQuote) error 
 		// IsNaN is not redundant. Every comparison with NaN is false in
 		// Go, so `<= 0` lets a NaN rate through — and Postgres does not
 		// catch it either: it orders NaN ABOVE every numeric, so the
-		// column's own `CHECK (rate_usd > 0)` accepts it, and lib/pq
-		// formats a float64 NaN as the literal `NaN`, which the numeric
-		// type takes. A NaN rate would carry a NaN inverse with it, and
+		// column's own `CHECK (rate_usd > 0)` accepts it, and the driver
+		// passes a float64 NaN through as a `NaN` the numeric type takes.
+		// A NaN rate would carry a NaN inverse with it, and
 		// NaN is absorbing under sum(), so every usd_volume derived from
 		// that ticker — and every prices_* CAGG bucket containing one —
 		// becomes NaN. Latent today only because the one live producer
@@ -294,7 +292,7 @@ func (s *Store) fxQuotesSnapAtOrBefore(
          ORDER BY ticker, bucket DESC
     `
 	rows, err := s.db.QueryContext(ctx, q,
-		pq.Array(tickers), cutoff.UTC(), cutoff.UTC().Add(-fxQuotesSnapLookback),
+		tickers, cutoff.UTC(), cutoff.UTC().Add(-fxQuotesSnapLookback),
 	)
 	if err != nil {
 		return nil, time.Time{}, "", fmt.Errorf("timescale: fxQuotesSnapAtOrBefore: %w", err)

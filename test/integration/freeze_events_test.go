@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/lib/pq"
+	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/anomaly"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/freeze"
@@ -52,7 +52,7 @@ func TestFreezeEventSink_LKGVWAPLandsOnRow(t *testing.T) {
 
 	// Read it back via raw SQL — easier than threading a Lookup API
 	// just for this assertion.
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("sql.Open: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestFreezeEventSink_IdempotentOpenRow(t *testing.T) {
 		}
 	}
 
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("sql.Open: %v", err)
 	}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -39,13 +40,15 @@ func projectorReplay(args []string) error {
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	source := fs.String("source", "", "Projector source name to rewind (required); see internal/projector/registry.go for the list")
 	from := fs.Uint("from", 0, "Rewind the projector cursor to this ledger (inclusive); the projector tails forward to the live tip from here")
-	dryRun := fs.Bool("dry-run", false, "Print intended rewind without writing the cursor")
+	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *cfgPath == "" || *source == "" || *from == 0 {
 		return errors.New("-config, -source, and -from are required")
 	}
+	gate.Banner()
+	dryRun := gate.DryRun()
 
 	cfg, err := config.LoadWithEnv(*cfgPath)
 	if err != nil {
@@ -112,7 +115,7 @@ func projectorReplay(args []string) error {
 	if rewindTo > 0 {
 		rewindTo--
 	}
-	if *dryRun {
+	if dryRun {
 		_, _ = fmt.Fprintf(os.Stdout,
 			"dry-run: would RecordProjectionDirtyWindow(%q, [%d,%d]) then UpsertCursor(projector, %q, %d)\n",
 			*source, target, currentLedger, *source, rewindTo)

@@ -59,8 +59,12 @@ type TxSummaryView struct {
 	OperationCount uint16 `json:"operation_count"`
 	Successful     bool   `json:"successful"`
 	ResultCode     int32  `json:"result_code"`
-	MemoType       string `json:"memo_type,omitempty"`
-	Memo           string `json:"memo,omitempty"`
+	// Result is the human-readable slug for ResultCode (e.g. "tx_success",
+	// "tx_failed", "tx_insufficient_fee"), so a failed transaction states WHY
+	// on the wire, not just via a bare integer. Always present.
+	Result   string `json:"result"`
+	MemoType string `json:"memo_type,omitempty"`
+	Memo     string `json:"memo,omitempty"`
 }
 
 func txSummaryView(t clickhouse.TxSummary) TxSummaryView {
@@ -75,6 +79,7 @@ func txSummaryView(t clickhouse.TxSummary) TxSummaryView {
 		OperationCount: t.OperationCount,
 		Successful:     t.Successful,
 		ResultCode:     t.ResultCode,
+		Result:         xdrjson.TxResultName(t.ResultCode),
 		MemoType:       xdrjson.MemoTypeName(t.MemoType),
 		Memo:           t.Memo,
 	}

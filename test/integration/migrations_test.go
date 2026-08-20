@@ -15,7 +15,7 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
-	_ "github.com/lib/pq"
+	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -95,7 +95,7 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	// A Cmd override that silently fails to apply would look exactly
 	// like a fix while leaving the deadlock race in place.
 	{
-		probe, perr := sql.Open("postgres", dsn)
+		probe, perr := sql.Open("pgx", dsn)
 		if perr != nil {
 			t.Fatalf("open probe: %v", perr)
 		}
@@ -112,7 +112,7 @@ func TestMigrationsRoundTrip(t *testing.T) {
 
 	// Pre-create the timescaledb extension, mirroring
 	// deploy/docker-compose/init/00-timescale-extension.sql.
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("sql.Open: %v", err)
 	}
@@ -530,7 +530,7 @@ func assertInsertRejected(t *testing.T, db *sql.DB, ctx context.Context, name, s
 		t.Errorf("%s: expected CHECK constraint rejection, got nil error", name)
 		return
 	}
-	// Postgres 23514 = check_violation. lib/pq surfaces it as a
+	// Postgres 23514 = check_violation. The driver surfaces it as a
 	// string inside the error message; accept either the SQLSTATE
 	// or the "check constraint" substring.
 	msg := err.Error()

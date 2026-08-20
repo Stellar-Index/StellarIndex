@@ -6,14 +6,14 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // TestClassifySinkFault pins the three-valued taxonomy that replaced the
 // permanent/transient boolean (COR-11 / COR-01, audit-2026-07-23). The
-// load-bearing rows are the DETERMINISTIC ones that carry no *pq.Error: they
+// load-bearing rows are the DETERMINISTIC ones that carry no *pgconn.PgError: they
 // used to fall into "transient" and hold a sole-writer cursor forever.
 func TestClassifySinkFault(t *testing.T) {
 	cases := []struct {
@@ -38,12 +38,12 @@ func TestClassifySinkFault(t *testing.T) {
 		},
 		{
 			name: "postgres CHECK violation (class 23)",
-			err:  &pq.Error{Code: "23514", Message: "new row violates check constraint"},
+			err:  &pgconn.PgError{Code: "23514", Message: "new row violates check constraint"},
 			want: dispositionSkip,
 		},
 		{
 			name: "postgres numeric out of range (class 22)",
-			err:  &pq.Error{Code: "22003", Message: "numeric field overflow"},
+			err:  &pgconn.PgError{Code: "22003", Message: "numeric field overflow"},
 			want: dispositionSkip,
 		},
 		{
@@ -53,7 +53,7 @@ func TestClassifySinkFault(t *testing.T) {
 		},
 		{
 			name: "postgres shutting down (57P01)",
-			err:  &pq.Error{Code: "57P01", Message: "terminating connection due to administrator command"},
+			err:  &pgconn.PgError{Code: "57P01", Message: "terminating connection due to administrator command"},
 			want: dispositionRetry,
 		},
 		{
@@ -76,7 +76,7 @@ func TestClassifySinkFault(t *testing.T) {
 		},
 		{
 			name: "deadlock (retryable, but not positively infra)",
-			err:  &pq.Error{Code: "40P01", Message: "deadlock detected"},
+			err:  &pgconn.PgError{Code: "40P01", Message: "deadlock detected"},
 			want: dispositionUnclassified,
 		},
 		{

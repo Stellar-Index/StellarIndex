@@ -6,13 +6,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/lib/pq"
-
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // assetAliasArray returns the canonical alias forms of assetKey as a
-// []string bindable via [pq.Array] for `= ANY($n)` membership. It is
+// []string bound directly as a Postgres array for `= ANY($n)` membership. It is
 // the single seam that makes an asset-detail read alias-complete: an
 // asset's volume/ATH/markets is the aggregate over EVERY canonical form
 // of that asset (XLM's native / crypto:XLM / SAC split, plus any
@@ -905,7 +903,7 @@ func (s *Store) GetAssetPriceHistory24h(ctx context.Context, assetID string) ([]
 		  LEFT JOIN xlm_usd_per_hour    xu ON xu.h = hours.bucket
 		 ORDER BY hours.bucket ASC
 	`
-	rows, err := s.db.QueryContext(ctx, q, pq.Array(assetAliasArray(assetID)))
+	rows, err := s.db.QueryContext(ctx, q, assetAliasArray(assetID))
 	if err != nil {
 		return nil, fmt.Errorf("timescale: GetAssetPriceHistory24h: %w", err)
 	}
@@ -999,7 +997,7 @@ func (s *Store) GetAssetPriceHistory7d(ctx context.Context, assetID string) ([]A
 		  LEFT JOIN xlm_usd_per_day     xu ON xu.d = days.bucket
 		 ORDER BY days.bucket ASC
 	`
-	rows, err := s.db.QueryContext(ctx, q, pq.Array(assetAliasArray(assetID)))
+	rows, err := s.db.QueryContext(ctx, q, assetAliasArray(assetID))
 	if err != nil {
 		return nil, fmt.Errorf("timescale: GetAssetPriceHistory7d: %w", err)
 	}
@@ -1083,7 +1081,7 @@ func (s *Store) GetAssetATH(ctx context.Context, assetID string) (*AssetATH, err
 		 LIMIT 1
 	`
 	var ath AssetATH
-	switch err := s.db.QueryRowContext(ctx, q, pq.Array(assetAliasArray(assetID))).Scan(&ath.USD, &ath.At); {
+	switch err := s.db.QueryRowContext(ctx, q, assetAliasArray(assetID)).Scan(&ath.USD, &ath.At); {
 	case err == sql.ErrNoRows:
 		return nil, nil
 	case err != nil:
@@ -1122,7 +1120,7 @@ func (s *Store) GetAssetsATHBatch(ctx context.Context, assetIDs []string) (map[s
 		   AND vwap IS NOT NULL
 		 ORDER BY base_asset, vwap DESC
 	`
-	rows, err := s.db.QueryContext(ctx, q, pq.Array(assetIDs))
+	rows, err := s.db.QueryContext(ctx, q, assetIDs)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: GetAssetsATHBatch: %w", err)
 	}
@@ -1169,7 +1167,7 @@ func (s *Store) GetAssetMarketsCount(ctx context.Context, assetID string) (int64
 		) t
 	`
 	var n int64
-	if err := s.db.QueryRowContext(ctx, q, pq.Array(assetAliasArray(assetID))).Scan(&n); err != nil {
+	if err := s.db.QueryRowContext(ctx, q, assetAliasArray(assetID)).Scan(&n); err != nil {
 		return 0, fmt.Errorf("timescale: GetAssetMarketsCount: %w", err)
 	}
 	return n, nil
@@ -1195,7 +1193,7 @@ func (s *Store) GetAssetTradeCount24h(ctx context.Context, assetID string) (int6
 		   AND (base_asset = ANY($1) OR quote_asset = ANY($1))
 	`
 	var n int64
-	if err := s.db.QueryRowContext(ctx, q, pq.Array(assetAliasArray(assetID))).Scan(&n); err != nil {
+	if err := s.db.QueryRowContext(ctx, q, assetAliasArray(assetID)).Scan(&n); err != nil {
 		return 0, fmt.Errorf("timescale: GetAssetTradeCount24h: %w", err)
 	}
 	return n, nil
@@ -1245,7 +1243,7 @@ func (s *Store) GetAssetTopMarkets(ctx context.Context, assetID string, limit in
 		 ORDER BY p.vol_usd::numeric DESC NULLS LAST
 		 LIMIT $2
 	`
-	rows, err := s.db.QueryContext(ctx, q, pq.Array(assetAliasArray(assetID)), limit)
+	rows, err := s.db.QueryContext(ctx, q, assetAliasArray(assetID), limit)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: GetAssetTopMarkets: %w", err)
 	}
@@ -1760,7 +1758,7 @@ func (s *Store) LatestAssetStats(ctx context.Context, assetID string) (AssetRow,
 		  ) t
 	`
 	var vol string
-	if err := s.db.QueryRowContext(ctx, q, pq.Array(assetAliasArray(assetID))).Scan(&vol); err != nil {
+	if err := s.db.QueryRowContext(ctx, q, assetAliasArray(assetID)).Scan(&vol); err != nil {
 		return AssetRow{}, fmt.Errorf("timescale: LatestAssetStats: %w", err)
 	}
 	out := AssetRow{AssetID: assetID}
@@ -1932,7 +1930,7 @@ func (s *Store) GetAssetsPriceHistory24hBatch(ctx context.Context, assetIDs []st
 		  LEFT JOIN xlm_usd_per_hour    xu ON xu.h = hours.bucket
 		 ORDER BY w.asset_id, hours.bucket ASC
 	`
-	rows, err := s.db.QueryContext(ctx, q, pq.Array(assetIDs))
+	rows, err := s.db.QueryContext(ctx, q, assetIDs)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: GetAssetsPriceHistory24hBatch: %w", err)
 	}
@@ -2025,7 +2023,7 @@ func (s *Store) GetAssetsPriceHistory7dBatch(ctx context.Context, assetIDs []str
 		  LEFT JOIN xlm_usd_per_day    xu ON xu.d = days.bucket
 		 ORDER BY w.asset_id, days.bucket ASC
 	`
-	rows, err := s.db.QueryContext(ctx, q, pq.Array(assetIDs))
+	rows, err := s.db.QueryContext(ctx, q, assetIDs)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: GetAssetsPriceHistory7dBatch: %w", err)
 	}

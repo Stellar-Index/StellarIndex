@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lib/pq"
-
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
@@ -410,7 +408,7 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
 		           (source || '|' || base_asset || '|' || quote_asset) ASC
 		  LIMIT $3
 		`
-		args := []any{since, cursor, limit + 1, pq.Array(filter.Sources), filter.Base, filter.Quote, filter.Asset}
+		args := []any{since, cursor, limit + 1, filter.Sources, filter.Base, filter.Quote, filter.Asset}
 		return cte + tail, args
 	}
 	// FROM canon, NOT FROM pools. This tail used to read the
@@ -437,7 +435,7 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
 	// missing pre-fix, causing `pq: got 6 parameters but the
 	// statement requires 7` on every order_by=pair request — caught
 	// 2026-05-14 live on r1.
-	args := []any{since, cursor, limit + 1, pq.Array(filter.Sources), filter.Base, filter.Quote, filter.Asset}
+	args := []any{since, cursor, limit + 1, filter.Sources, filter.Base, filter.Quote, filter.Asset}
 	return cte + tail, args
 }
 
@@ -808,14 +806,14 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
                   (base_asset || '|' || quote_asset) ASC
          LIMIT $3
         `
-		return ctes + tail, []any{since, cursor, limit + 1, source, pq.Array(assets)}
+		return ctes + tail, []any{since, cursor, limit + 1, source, assets}
 	default: // MarketsOrderPair
 		const tail = `
          WHERE ($2 = '' OR (base_asset || '|' || quote_asset) > $2)
          ORDER BY (base_asset || '|' || quote_asset) ASC
          LIMIT $3
         `
-		return ctes + tail, []any{since, cursor, limit + 1, source, pq.Array(assets)}
+		return ctes + tail, []any{since, cursor, limit + 1, source, assets}
 	}
 }
 
@@ -967,7 +965,7 @@ func (s *Store) GetPairsVolumeHistory24hBatch(ctx context.Context, pairs [][2]st
 		  LEFT JOIN per_hour p ON p.pair_key = w.pair_key AND p.h = hours.bucket
 		 ORDER BY w.pair_key, hours.bucket ASC
 	`
-	rows, err := s.db.QueryContext(ctx, q, pq.Array(keys))
+	rows, err := s.db.QueryContext(ctx, q, keys)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: GetPairsVolumeHistory24hBatch: %w", err)
 	}
@@ -1015,7 +1013,7 @@ func (s *Store) FirstTradeBatch(ctx context.Context, pairs [][2]string) (map[str
          WHERE (base_asset, quote_asset) IN (
                SELECT UNNEST($1::text[]), UNNEST($2::text[]))
          GROUP BY base_asset, quote_asset`
-	rows, err := s.db.QueryContext(ctx, q, pq.Array(bases), pq.Array(quotes))
+	rows, err := s.db.QueryContext(ctx, q, bases, quotes)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: FirstTradeBatch: %w", err)
 	}

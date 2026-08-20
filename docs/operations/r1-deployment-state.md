@@ -15,7 +15,10 @@ status: historical snapshot
 > doc), so the public surface is not unauthenticated; and "15 migrations
 > applied" reflects the bringup only — the repo's migrations head is far
 > higher now (`ls migrations/ | tail`). For current r1 state, query the
-> host / operator directly rather than trusting this file.
+> host / operator directly rather than trusting this file. For the current
+> **deployed versions** of each binary (deployed-vs-tagged), see
+> [deployed-versions.md](deployed-versions.md) and the on-host sidecars it
+> points to.
 
 Snapshot of what's running on the r1 host (Hetzner FSN1 dedicated;
 public IP held in `configs/ansible/inventory/r1.yml`, gitignored)
