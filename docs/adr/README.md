@@ -60,7 +60,7 @@ See [_template.md](_template.md) for the boilerplate.
 | [0005](0005-monorepo.md) | Accepted | Monorepo with one Go module | 2026-04-22 |
 | [0006](0006-timescaledb-for-price-time-series.md) | Accepted | TimescaleDB for price time-series storage | 2026-04-22 |
 | [0007](0007-redis-cache-schema.md) | Accepted | Redis as hot-path cache + rate-limit + ephemeral state | 2026-04-22 |
-| [0008](0008-ha-topology.md) | Accepted | Per-region HA topology — colo primary + cloud DR, three-tier hot/warm/cold storage | 2026-04-27 |
+| [0008](0008-ha-topology.md) | Accepted (amended 0050) | Per-region HA topology — colo primary + cloud DR, three-tier hot/warm/cold storage | 2026-04-27 |
 | [0009](0009-latency-budget.md) | Accepted | API latency budget — per-component time slices summing to p95 ≤ 200ms / p99 ≤ 500ms | 2026-04-27 |
 | [0010](0010-off-chain-fiat-representation.md) | Accepted | Off-chain fiat currencies as AssetType "fiat" | 2026-04-22 |
 | [0011](0011-supply-algorithm.md) | Accepted | Three-domain supply algorithm — XLM hard-coded, classic from ledger entries, SEP-41 from event sums | 2026-04-27 |
@@ -68,7 +68,7 @@ See [_template.md](_template.md) for the boilerplate.
 | [0013](0013-go-stellar-sdk-xdr-for-scval.md) | Accepted | Adopt go-stellar-sdk/xdr for SCVal decoding in source connectors | 2026-04-23 |
 | [0014](0014-crypto-ticker-representation.md) | Accepted | Crypto tickers as AssetType "crypto" | 2026-04-23 |
 | [0015](0015-last-closed-bucket-rate-serving.md) | Accepted | API rates served from last-closed bucket, never in-progress | 2026-04-27 |
-| [0016](0016-per-region-storage-strategy.md) | Accepted | Per-region storage strategies (Hetzner full / AWS hybrid / Vultr hybrid) | 2026-04-27 |
+| [0016](0016-per-region-storage-strategy.md) | Superseded (0050) | Per-region storage strategies (Hetzner full / AWS hybrid / Vultr hybrid) | 2026-04-27 |
 | [0017](0017-archive-completeness-invariants.md) | Accepted | Archive completeness invariants — dual-archive integrity model with 4 hard contracts | 2026-04-27 |
 | [0018](0018-api-consistency-surfaces.md) | Accepted | API consistency surfaces — closed-bucket / tip / observations, three URLs three contracts | 2026-04-28 |
 | [0019](0019-anomaly-response-and-confidence-scoring.md) | Accepted | Anomaly response policy and confidence scoring — per-asset statistical baselines | 2026-04-28 |
@@ -102,6 +102,7 @@ See [_template.md](_template.md) for the boilerplate.
 | [0047](0047-pre-p23-classic-movement-reconstruction.md) | Accepted | Pre-P23 classic-movement reconstruction from the lake | 2026-07-10 |
 | [0048](0048-serve-by-query-shape.md) | Accepted | Serve by query shape — the account-movement archive is ClickHouse-native (amends 0047 D1) | 2026-07-10 |
 | [0049](0049-anonymous-access-and-passkey-auth.md) | Proposed | Anonymous access, open self-service registration, and passkey auth (no payment surface) — retroactive record of the shipped auth pivot | 2026-08-14 |
+| [0050](0050-multi-region-ha-architecture.md) | Accepted | Multi-region HA — active/active pricing, R1-authority lake, provider-independent archive DR (supersedes 0016, amends 0008; ratifies [multi-region-ha.md](../architecture/multi-region-ha.md)) | 2026-08-21 |
 
 ## Related
 

@@ -4,6 +4,8 @@ last_verified: 2026-07-25
 status: ratified but PARTIALLY STALE — §4.3/§8 refreshed 2026-07-18 for ClickHouse (§4.3's hardware-expansion claim corrected 2026-07-24, §8/§3.3's backup deployment status corrected 2026-07-25, audit-2026-07-23 DOC-05/DOC-06); §3 still lacks a CH tier (see top amendment)
 ---
 
+> ⚠️ **Multi-region content superseded by ADR-0050 / [`multi-region-ha.md`](multi-region-ha.md) (2026-08-21).** This plan's multi-region framing (and its "active/active out of scope for v1" stance) is overturned. The **single-region HA design** below (HAProxy / Patroni / Redis-Sentinel) remains current and is **Phase 1** of the multi-region plan — read it for that, not for the multi-region shape.
+
 > **DEPLOYMENT STATE (audit 2026-07-16):** the HAProxy/Patroni/Redis-Sentinel HA
 > below is a **ratified DESIGN, not deployed.** The roles exist under
 > `configs/ansible/roles/{haproxy,patroni,redis-sentinel}/` but **NO playbook

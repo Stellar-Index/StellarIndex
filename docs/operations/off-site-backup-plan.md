@@ -7,6 +7,8 @@ severity: P1
 
 # Off-site (S3) backup plan
 
+> ♻️ **Refined by ADR-0050 / [`../architecture/multi-region-ha.md`](../architecture/multi-region-ha.md) §5 (2026-08-21).** The plan adopts this doc's core (off-site is a P1 SPOF fix) and resolves its RTO argument: it keeps **two** off-site artifacts on Cloudflare R2 — the ~2.49 TiB raw archive (crown-jewel source of truth) *and* the ~11.6 TiB derived cold-lake copy (fast-RTO restore + the multi-region serving fallback). Use the plan doc's §5 as the current target; this doc's mechanism detail remains useful reference.
+
 Design for off-site backups of R1 — today the box is a **single point of failure with local-only backups** (pgBackRest on the same ZFS pool as the data it protects; a pool/box loss loses both). This plan puts a durable copy off-box. Execute **after** Phase A/D (the user's sequencing); the design is ready now.
 
 ## Principle: RTO-driven — re-derivability is a *last resort*, not a recovery plan

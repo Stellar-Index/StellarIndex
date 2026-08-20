@@ -9,6 +9,14 @@ superseded_by: null
 
 # ADR-0008: Per-region HA topology
 
+> ⚠️ **Amended by ADR-0050 (2026-08-21).** The **"multi-region active/active is out of
+> scope for v1" decision in this ADR is OVERTURNED.** Multi-region HA is now the plan —
+> see [`docs/architecture/multi-region-ha.md`](../architecture/multi-region-ha.md)
+> (ratified by ADR-0050), which is authoritative for anything multi-region. The
+> **single-region HA topology** (HAProxy / Patroni / Redis-Sentinel three-tier) described
+> below **carries forward** and is Phase 1 of that plan. Do not read this ADR's
+> multi-region / active-active framing as current.
+
 > **Amendment (2026-06-12, F-1353 / D2-07 + D2-08).** Two enumerations
 > below have since been superseded:
 > - The Redis "**cluster** (3 masters + 3 replicas + Sentinel)" hot
