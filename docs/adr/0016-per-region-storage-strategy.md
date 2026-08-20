@@ -1,13 +1,21 @@
 ---
 adr: 0016
 title: Per-region storage strategies for archival nodes (Hetzner full / AWS hybrid / Vultr hybrid)
-status: Accepted
+status: Superseded
 date: 2026-04-27
 supersedes: []
-superseded_by: null
+superseded_by: [0050]
 ---
 
 # ADR-0016: Per-region storage strategies for archival nodes
+
+> ⛔ **Superseded by ADR-0050 (2026-08-21).** This ADR's Model A ("Postgres replication
+> from R1 is the canonical history"), its R2-on-AWS shape, and its ClickHouse-blind
+> per-region sizing are all **rejected** — see
+> [`docs/architecture/multi-region-ha.md`](../architecture/multi-region-ha.md), which is
+> authoritative. What survives: the **"same served answers, different plumbing" principle**
+> (each region a different storage shape serving byte-identical closed-bucket output),
+> carried into ADR-0050 §4. **Do not implement a region from this ADR.**
 
 ## Context
 
