@@ -196,6 +196,7 @@ var uncoveredOperations = map[string]string{
 	"POST /dashboard/price-alerts":            "session-cookie dashboard surface",
 	"PATCH /dashboard/price-alerts/{id}":      "session-cookie dashboard surface",
 	"DELETE /dashboard/price-alerts/{id}":     "session-cookie dashboard surface",
+	"GET /account/admin/lookup":               "session-cookie dashboard surface — staff-only customer look-up",
 	"POST /auth/login":                        "magic-link browser flow",
 	"GET /auth/callback":                      "magic-link browser flow",
 	"POST /auth/verify-code":                  "magic-link browser flow",
