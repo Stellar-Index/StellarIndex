@@ -6,6 +6,8 @@ status: operator runbook
 
 # Multi-region cutover runbook
 
+> ⛔ **SUPERSEDED by ADR-0050 / [`../architecture/multi-region-ha.md`](../architecture/multi-region-ha.md) (2026-08-21). Do not run this runbook.** It sequences a Model A cutover (Patroni cross-region replicas, `pg_is_in_recovery()=t` gates) and invokes a `site.yml` playbook that does not exist. The current bring-up is Model B (independent per-region ingest) — see the plan doc's Phase 2/3.
+
 Sequenced operator runbook for **bringing R2 + R3 online** so the
 launch goes live multi-region. Closes
 [`launch-readiness-backlog.md`](../architecture/launch-readiness-backlog.md)
