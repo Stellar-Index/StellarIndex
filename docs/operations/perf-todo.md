@@ -1,29 +1,53 @@
 ---
 title: API performance follow-ups
-last_verified: 2026-07-16
+last_verified: 2026-08-20
 status: living doc
 ---
 
 # API performance follow-ups
 
-> **⚠️ PARTIALLY SUPERSEDED (2026-08-14).** The "Current state on R1"
-> table and several "still pending" items below describe the 2026-05 world
-> and predate the v0.28.1–v0.33.2 refresh-gate / prewarm / stale-while-
-> revalidate campaign, which SHIPPED the stale-while-revalidate serving
-> shape (item 1.2), the ordered `tx_hash_index` + backfill (item 4), and
-> materialized catalogue views (item 3 direction) — see `CHANGELOG.md`
-> (search `stale-while-revalidate`, `prewarm`, `tx_hash_index`). Do NOT
-> build fresh SWR wrappers or re-investigate the tx-index; check the
-> shipped architecture first. Items 2 (compressed-chunk recompress) and 3
-> (SLO synthetic-noise) remain open operator/tuning follow-ups. Re-anchor
-> this doc against current R1 before treating any "pending" item as unshipped.
+> **⚠️ PARTIALLY SUPERSEDED — reconciled 2026-08-20 (supersession first
+> flagged 2026-08-14).** The "Current state on R1" table below is a
+> **2026-05-05 historical snapshot**, not present-day behaviour — see the
+> present-day note beneath it. Several original "still pending" items have
+> since shipped; the rest are genuinely open. Do NOT build fresh SWR
+> wrappers or re-investigate the tx-index — check the shipped architecture
+> first. Evidence for every "SHIPPED" claim is in `CHANGELOG.md`.
+>
+> **Shipped since this doc was written:**
+> - **Item 1.2 (stale-while-revalidate) — SHIPPED.** Catalogue endpoints
+>   serve stale-while-revalidate off a continuously-hot Redis snapshot,
+>   refreshed by the API's 5-minute prewarm loop under the class-fair
+>   detached-refresh gate. The v0.28.1–v0.33.2 refresh-gate campaign
+>   generalised this shape across API + explorer. (`stale-while-revalidate`,
+>   `prewarm`, `explorer_swr_refresh`.)
+> - **Item 3 (SLO synthetic-monitoring noise) — SHIPPED.** Synthetic probes
+>   (`stellarindex-smoke/`, `stellarindex-probe/`, `stellarindex-prewarm/`)
+>   are dropped from the latency histogram and `slo.yml` carries a
+>   min-traffic floor, so cold synthetic reads no longer dominate the burn
+>   alerts. (`stellarindex-smoke`; `deploy/monitoring/rules/slo.yml`.)
+> - **Item 4 (ordered `tx_hash_index` + backfill) — SHIPPED.**
+>   (`tx_hash_index`.)
+>
+> **Still open:** item 1.1 (Cloudflare orange-cloud proxy in front of
+> `api.` — operator action; still grey-cloud today), item 2 (Timescale
+> `/v1/oracle/latest` compressed-chunk recompress — operator action), and
+> item 5 (`/v1/accounts/{g}/movements` extreme-address timeout, BACKLOG
+> #72). **Item 1.3 (bespoke `markets_summary` / `assets_catalogue`
+> materialised tables) was NEVER BUILT** — it was always a contingency and
+> item 1.2 removed the need; there is no such table in the schema or code,
+> so do not treat it as shipped *or* as pending.
 
 Captured during the post-#690 perf-investigation pass. The
 route-label fix in #690 stopped masking the slow-request ratio
 behind constant `route="unmatched"` denominators; the SLO recording
 rules then started reporting real signals.
 
-## Current state on R1 — 2026-05-05 (post-cache rollout)
+## Historical snapshot — R1 on 2026-05-05 (post-cache rollout)
+
+> This section is a **2026-05-05 snapshot**, retained for history. It does
+> not describe present-day serving behaviour — see the present-day note
+> after the table.
 
 All three problem endpoints from the original write-up now have
 Redis read-through caches in front of them. Cold reads still pay
@@ -41,6 +65,17 @@ request per minute they see warm reads end-to-end. The smoke
 timer firing every 5 min always hits cold cache, which is what
 keeps the synthetic-monitoring p99 around the cold-read times —
 not a user-experience issue.
+
+> **Present-day R1 (2026-08-20).** The table above no longer reflects
+> serving behaviour. The catalogue endpoints (`/v1/oracle/latest`,
+> `/v1/markets`, `/v1/assets`, and the wider explorer surface) now serve
+> **stale-while-revalidate** off a continuously-hot Redis snapshot kept
+> warm by the API's 5-minute prewarm loop under the class-fair
+> detached-refresh gate — consumers no longer meet a request-path cold
+> read, even on the first request after a TTL boundary (item 1.2). The
+> synthetic-monitoring noise described above is also resolved (item 3):
+> smoke/probe/prewarm requests are excluded from the SLO latency
+> histogram. See `CHANGELOG.md` (`stale-while-revalidate`, `prewarm`).
 
 ## What's already shipped from this investigation
 
@@ -66,10 +101,13 @@ shows up.
 
 Cold-read fix paths, in order of ambition:
 
-1. **CDN in front of R1.** Cache-Control already emits `s-maxage=N`
-   directives. When `api.stellarindex.io` lands behind Cloudflare /
-   equivalent, consumers see edge-cache hits for shareable URLs
-   regardless of Redis TTL. **Smallest change; operator action.**
+1. **CDN in front of R1. — STILL OPEN (operator action).** Cache-Control
+   already emits `s-maxage=N` directives. When `api.stellarindex.io` lands
+   behind Cloudflare / equivalent, consumers see edge-cache hits for
+   shareable URLs regardless of Redis TTL. **Smallest change; operator
+   action.** Today `api.` is DNS-live but **grey-cloud** (direct to the R1
+   origin); the orange-cloud proxy is documented in `cdn-setup.md` and
+   tracked as launch-todo P2-1 ④ — recommended, not yet enabled.
 2. **Stale-while-revalidate cache. — SHIPPED (v0.28.1–v0.33.2).** Serve
    the warm value immediately while refreshing async. The consumer never
    sees a cold read; Redis stays continuously hot. This is now the
@@ -78,13 +116,19 @@ Cold-read fix paths, in order of ambition:
    5-minute prewarm loop); do NOT add new bespoke SWR wrappers — reuse it.
    See `CHANGELOG.md` (`stale-while-revalidate`, `prewarm`,
    `explorer_swr_refresh`).
-3. **Materialised tables.** `markets_summary` and
-   `assets_catalogue` tables maintained by the indexer on every
-   trade insert; `Store.DistinctPairs` / `DistinctAssets` read
-   directly. Cold reads become O(distinct rows), not O(trades).
-   See the original perf-todo for the schema sketches. Multi-PR
-   effort; needed only if (1) and (2) prove insufficient at
-   sustained consumer volumes.
+3. **Materialised tables. — NOT BUILT (superseded by option 2).** This was
+   always a contingency: "needed only if (1) and (2) prove insufficient."
+   Option (2) — stale-while-revalidate + prewarm — shipped and removed the
+   request-path cold read, so the bespoke `markets_summary` /
+   `assets_catalogue` tables were **never built**: there is no such table
+   in the ClickHouse/Timescale schema or in code (a repo-wide search finds
+   `markets_summary` / `assets_catalogue` only in this doc). Do not treat
+   this as shipped. Revisit only if SWR + prewarm prove insufficient at
+   sustained consumer volumes. For reference, the original design:
+   `markets_summary` and `assets_catalogue` tables maintained by the
+   indexer on every trade insert; `Store.DistinctPairs` / `DistinctAssets`
+   read directly, making cold reads O(distinct rows), not O(trades). See
+   the original perf-todo history for the schema sketches. Multi-PR effort.
 
 ### 2. `/v1/oracle/latest` cold-read TimescaleDB compressed-chunk indexing
 
@@ -100,7 +144,18 @@ operation; if it goes wrong it leaves the chunk in a worse state).
 The Redis cache from #696 hides this from user-facing
 latency, so this is a "nice to have" rather than urgent.
 
-### 3. Synthetic-monitoring SLO noise
+### 3. Synthetic-monitoring SLO noise — SHIPPED
+
+> **SHIPPED.** The recommended angle (3) below landed: the HTTP metrics
+> middleware drops requests whose User-Agent identifies a synthetic probe
+> (`stellarindex-smoke/`, `stellarindex-probe/`, later also
+> `stellarindex-prewarm/`) from the latency histogram, so the SLO measures
+> real consumer experience. A second, belt-and-suspenders layer lives in
+> `slo.yml` (both the multi-host rules and the R1 overlay): a min-traffic
+> floor (~5 req/s ≈ 2× the synthetic baseline) keeps the burn alerts from
+> firing on synthetic-only traffic. See `CHANGELOG.md` (`stellarindex-smoke`)
+> and `deploy/monitoring/rules/slo.yml`. The analysis below is retained for
+> the original reasoning.
 
 The smoke timer at 5 min fires past the 30 s/60 s cache TTLs and
 always sees cold reads. With nothing but synthetic traffic on R1
@@ -120,9 +175,9 @@ Three angles, no consensus on which is right:
    SLO recording rule. Cleanest semantically; the SLO measures
    real consumer experience, not synthetic monitoring.
 
-(3) is the right move; punted to a follow-up when launch traffic
-arrives — the noise is a pre-launch artifact and will heal as
-real polling fan-out dilutes it.
+(3) was the right move and is what shipped — synthetic-UA exclusion from
+the SLO histogram — with the `slo.yml` min-traffic floor as a second
+layer. Retained here for the original reasoning.
 
 ### 4. `/v1/tx/{hash}` cold lookup ~5–6 s — `tx_hash` has no ordered index — SHIPPED
 
