@@ -1138,6 +1138,22 @@ type APIConfig struct {
 	// none never fails auth). 0 disables it.
 	FailedAuthRateLimitPerMin int `toml:"failed_auth_rate_limit_per_min" doc:"Per-IP cap on INVALID-credential (failed-auth) attempts per minute, enforced inside the Auth middleware so credential-stuffing / API-key guessing is throttled even though auth rejects before the main rate limiter (C3-5). Only active when auth_mode != none. Keyed on the resolved client IP; Redis-backed when available, in-process fixed-window fallback otherwise. 0 disables the failed-auth throttle." default:"20"`
 
+	// SingleInstance asserts the deployment runs exactly ONE API
+	// instance, unlocking the per-process Redis-less fallbacks for the
+	// auth throttles and the passkey ceremony replay guard
+	// (W1-auth-passkey-3 / auth-lt-1). Those fall back to per-PROCESS
+	// state when Redis is absent, which is correct on one instance but
+	// unsafe across several: a passkey finish-login replayed to a
+	// different instance bypasses the spent-ceremony set (session mint →
+	// account takeover), and per-IP/email throttle caps multiply by the
+	// replica count. A single process has no reliable multi-instance
+	// signal, so rather than silently downgrade a session-minting path
+	// the API REFUSES TO START when Redis is absent unless this is set —
+	// forcing the operator to either provide Redis (any multi-instance
+	// deployment) or explicitly assert single-instance. Ignored when
+	// Redis is configured (the Redis backends are fleet-safe).
+	SingleInstance bool `toml:"single_instance" doc:"Assert this deployment runs exactly ONE API instance. Only consulted when Redis is DISABLED (storage.redis_addr empty and no sentinels): the auth throttles + passkey ceremony replay guard then fall back to per-PROCESS state, which is unsafe behind more than one instance (cross-instance ceremony replay → session mint; throttle caps multiply by replica count). With Redis absent the API refuses to start unless this is true, so a multi-instance-without-Redis topology cannot silently downgrade a session-minting path. No effect when Redis is configured. Default false (the safe assumption: assume multiple instances until told otherwise)." default:"false"`
+
 	// RequestTimeout + ServingStatementTimeout are the two layers of the
 	// unauth-DoS chokepoint fix (C3-1/C3-2/P1/R1, audit-2026-07-16). The
 	// app-layer request deadline is the primary bound; the SQL
