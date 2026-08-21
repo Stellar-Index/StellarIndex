@@ -63,6 +63,7 @@ export function DivergenceFeed() {
       return env.data;
     },
     staleTime: 30_000,
+    refetchInterval: 30_000,
   });
 
   const rows = q.data?.observations ?? [];
@@ -193,6 +194,7 @@ function DivergenceSeriesPanel({
     },
     enabled: sel != null,
     staleTime: 60_000,
+    refetchInterval: 60_000,
   });
 
   const points = (sq.data?.points ?? [])

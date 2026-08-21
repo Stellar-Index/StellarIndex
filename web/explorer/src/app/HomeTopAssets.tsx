@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 
 import { useCoins, useVerifiedSlugs, type Coin } from '@/api/hooks';
+import { useLedgerFollow } from '@/lib/live/hooks';
 import {
   EmptyState,
   Skeleton,
@@ -40,6 +41,7 @@ export function HomeTopAssets() {
     { sparkline: true },
   );
   const { data: verifiedSlugs } = useVerifiedSlugs();
+  useLedgerFollow(['/v1/assets']);
 
   return (
     <section className="space-y-3">

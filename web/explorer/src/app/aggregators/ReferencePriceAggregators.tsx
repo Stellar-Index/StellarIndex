@@ -37,6 +37,7 @@ export function ReferencePriceAggregators() {
       });
       return (env.data ?? []).sort((a, b) => a.name.localeCompare(b.name));
     },
+    refetchInterval: 60_000,
   });
 
   const rows = q.data ?? [];

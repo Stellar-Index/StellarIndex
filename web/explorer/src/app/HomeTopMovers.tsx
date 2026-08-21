@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { formatSubunitPrice } from '@/lib/format';
 
 import { useCoins, useVerifiedSlugs, type Coin } from '@/api/hooks';
+import { useLedgerFollow } from '@/lib/live/hooks';
 
 /**
  * HomeTopMovers — top 5 gainers + top 5 losers by 24h % change.
@@ -18,6 +19,7 @@ import { useCoins, useVerifiedSlugs, type Coin } from '@/api/hooks';
 export function HomeTopMovers() {
   const { data, isLoading, isError } = useCoins(50);
   const { data: verifiedSlugs } = useVerifiedSlugs();
+  useLedgerFollow(['/v1/assets']);
 
   const { gainers, losers } = pickMovers(data?.coins ?? []);
 

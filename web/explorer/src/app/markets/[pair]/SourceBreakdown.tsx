@@ -42,6 +42,7 @@ export function SourceBreakdown({
     queryFn: async () =>
       (await apiGet<{ data: MarketSourcesResp }>('/v1/markets/sources', params)).data,
     staleTime: 60_000,
+    refetchInterval: 60_000,
     retry: false,
   });
 

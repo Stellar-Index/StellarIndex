@@ -8,6 +8,7 @@ import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
 import { SourceSparkline } from '@/components/SourceSparkline';
 import { useMarkets, type Market } from '@/api/hooks';
+import { useLedgerFollow } from '@/lib/live/hooks';
 import { formatCompact, formatRelative } from '@/lib/format';
 
 /**
@@ -35,6 +36,7 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
     asset: assetID,
     sparkline: true,
   });
+  useLedgerFollow(['/v1/markets']);
 
   // Sort client-side by trade_count_24h desc as a secondary order
   // — the API returns the fanned-out merge already sorted by

@@ -67,6 +67,7 @@ export function PairPathView() {
     enabled: valid,
     retry: false,
     staleTime: 60_000,
+    refetchInterval: 60_000,
     queryFn: async () =>
       (
         await apiGet<Envelope<PairPrice>>(
