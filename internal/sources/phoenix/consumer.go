@@ -17,6 +17,13 @@ type TradeEvent struct {
 // EventKind implements [consumer.Event].
 func (TradeEvent) EventKind() string { return "phoenix.trade" }
 
+// EventLedger reports the trade's own ledger — the correlation group's
+// first-field ledger. For a 7-field-era sweep rescue this differs from
+// the stream event that TRIGGERED the eviction, so the completeness
+// re-derive must count the trade here, not at the trigger (the
+// completeness.eventLedgerCarrier optional interface).
+func (e TradeEvent) EventLedger() uint32 { return e.Trade.Ledger }
+
 // Source implements [consumer.Event].
 func (TradeEvent) Source() string { return SourceName }
 
@@ -81,6 +88,10 @@ type LiquidityEvent struct {
 // EventKind implements [consumer.Event].
 func (LiquidityEvent) EventKind() string { return "phoenix.liquidity" }
 
+// EventLedger — see TradeEvent.EventLedger; same sweep-rescue
+// attribution contract for the correlation-buffered liquidity group.
+func (e LiquidityEvent) EventLedger() uint32 { return e.Change.Ledger }
+
 // Source implements [consumer.Event].
 func (LiquidityEvent) Source() string { return SourceName }
 
@@ -122,11 +133,25 @@ type StakeEvent struct {
 // EventKind implements [consumer.Event].
 func (StakeEvent) EventKind() string { return "phoenix.stake" }
 
+// EventLedger — see TradeEvent.EventLedger; same sweep-rescue
+// attribution contract for the correlation-buffered stake group.
+func (e StakeEvent) EventLedger() uint32 { return e.Change.Ledger }
+
 // Source implements [consumer.Event].
 func (StakeEvent) Source() string { return SourceName }
 
 // Compile-time check.
 var _ consumer.Event = StakeEvent{}
+
+// Compile-time: the completeness re-derive's optional own-ledger
+// attribution upgrade (completeness.eventLedgerCarrier) — every
+// correlation-buffered kind must carry it so a sweep-rescued output is
+// counted at its own ledger, not the sweep trigger's.
+var (
+	_ interface{ EventLedger() uint32 } = TradeEvent{}
+	_ interface{ EventLedger() uint32 } = LiquidityEvent{}
+	_ interface{ EventLedger() uint32 } = StakeEvent{}
+)
 
 // InitializeEvent is a pool-deploy token announcement — one of the two
 // ("initialize", "XYK LP token_a"/"token_b") events a Phoenix pool

@@ -21,6 +21,31 @@ type Decoder interface {
 	Decode(events.Event) ([]consumer.Event, error)
 }
 
+// eventLedgerCarrier is an optional-interface upgrade (http.Flusher
+// style, like the dispatcher's EvictedOrphans): a decoder whose
+// correlation buffer can emit an output while processing a LATER
+// stream event than the one the output belongs to (the phoenix
+// 7-field-era sweep rescue) exposes the output's OWN ledger here. The
+// re-derive then counts that output where its served row actually
+// lives instead of at the sweep-trigger ledger — without this, every
+// sweep-rescued trade appears as a ± per-ledger shift pair in a
+// strict reconcile (net-zero, but noise that forces sources like
+// phoenix onto aggregate netting). 1:1 decoders need not implement
+// it: their output's ledger equals the stream event's.
+type eventLedgerCarrier interface{ EventLedger() uint32 }
+
+// countLedger picks the per-ledger bucket for one decoded output: the
+// output's own declared ledger when it carries one (non-zero), else
+// the stream event/row it was decoded from.
+func countLedger(out consumer.Event, streamLedger uint32) uint32 {
+	if c, ok := out.(eventLedgerCarrier); ok {
+		if l := c.EventLedger(); l != 0 {
+			return l
+		}
+	}
+	return streamLedger
+}
+
 // SorobanEventStreamer is the read side the reconciler needs.
 // *timescale.Store satisfies it via StreamSorobanEvents.
 type SorobanEventStreamer interface {
@@ -302,7 +327,7 @@ func ReDeriveOutputCountsByKindFromEvents(
 				if byKind[k] == nil {
 					byKind[k] = make(map[uint32]int)
 				}
-				byKind[k][ev.Ledger]++
+				byKind[k][countLedger(out, ev.Ledger)]++
 			}
 			return nil
 		})
@@ -353,7 +378,7 @@ func ReDeriveOutputCountsByKind(
 				if byKind[k] == nil {
 					byKind[k] = make(map[uint32]int)
 				}
-				byKind[k][row.Ledger]++
+				byKind[k][countLedger(out, row.Ledger)]++
 			}
 			return nil
 		})
