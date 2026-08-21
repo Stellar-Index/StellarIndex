@@ -40,7 +40,7 @@ audit: cold adversarial 6-auditor audit, 2026-08-20/21 (see §13)
 | CH partitioning | `intDiv(ledger_seq, 1e6)` on all big tables **except `tx_hash_index`** (unpartitioned, hash-sorted → mandatory-hot) | `system.tables` |
 | CH replication | **none** — all plain/Replacing MergeTree, no Replicated/Distributed, single `default` Local disk | `system.disks`, `system.storage_policies` |
 | Postgres/Timescale (pricing) | **459 GiB** physical / ~1.0 TiB logical (ext4). **Standalone primary**, zero replicas/slots/publications | `pg_database_size`, `pg_stat_replication` |
-| Raw galexie-archive (the INPUT) | **2.49 TiB, genesis→tip** (`FFFFFFFF--0-63999` … `FC2F6FFF--64000000-…`), on R1 MinIO | on-disk listing |
+| Raw galexie-archive (the INPUT) | **2.49 TiB on R1 MinIO — NOT full history** (gap-scan 2026-08-21): genesis chunk `[0, 63999]` + `[49984000 → tip]` only; `[64000, 49983999]` (~50M ledgers, ~2.3 TiB) was capacity-trimmed (`ARCHIVE_FROM=49984000`) and exists locally **only via the `aws-public-blockchain` cold tier** (ADR-0027) | partition gap-scan |
 | Pricing SLO today | p95 **68 ms** / p99 **98 ms** (k6) — ~3–5× under budget | slos-and-guarantees.md |
 | CH on `/readyz` | **non-critical** — CH down ⇒ `degraded` (200), pricing serves, ~21 lake routes 503 | `clickhouseChecker.Critical()=false` |
 | Explorer | separate Next.js app, **migrating to edge SSR** (ADR-0044, accepted) | `web/explorer/` |
@@ -133,9 +133,13 @@ wanted.
   ClickHouse lake and the pricing DB are **derived projections** — reproducible from
   the archive by re-ingest. This is exactly why ADR-0043 rejects backing up the
   derived lake.
-- **We already maintain our own full-history archive** (R1 MinIO); `aws-public-blockchain`
-  is only a cold *fallback* tier (ADR-0027), and SDF `history.stellar.org` is the
-  canonical upstream. We are **not** solely dependent on AWS.
+- **⚠️ CORRECTED (2026-08-21 gap-scan): our local archive is NOT full-history.** R1's
+  MinIO holds the genesis chunk + `[49984000, tip]` (~14M ledgers); the middle
+  `[64000, 49983999]` (~50M ledgers, ~2.3 TiB) was deliberately capacity-trimmed and is
+  reachable today **only through `aws-public-blockchain`** (ADR-0027 cold tier), with SDF
+  `history.stellar.org` as the canonical upstream. So until the off-site copy below is
+  built **including a one-time pull of that middle range**, deep-history recovery DOES
+  depend on AWS's Open Data program — the exact exposure this section exists to close.
 - **The gap:** our archive sits on R1's single ZFS pool (SPOF). **Fix: replicate it
   off-site to provider-independent storage (Cloudflare R2 / Backblaze B2)** — ~$500–900/yr
   because it's the 2.49 TiB *input*, not the 14.6 TiB output. This makes us independent
@@ -143,9 +147,13 @@ wanted.
 - **Two off-site artifacts, two RTOs** — this reconciles ADR-0043 (which rejected a full
   CH backup as the *primary* strategy) with `off-site-backup-plan.md` (which correctly
   argued the re-derive RTO is too slow for a production API):
-  1. **Raw galexie-archive (~2.49 TiB, Cloudflare R2)** — the ultimate, provider-independent
-     source of truth. Cheap. Re-ingest from it (~1–2 week walk) is the **last-resort**
-     recovery and the region-bootstrap path.
+  1. **Raw galexie-archive, FULL genesis→tip (~5 TiB, Cloudflare R2)** — the ultimate,
+     provider-independent source of truth. Built from R1's local archive (genesis chunk +
+     [49984000, tip], ~2.49 TiB) **plus a one-time pull of the capacity-trimmed middle
+     [64000, 49983999] (~2.3 TiB) from `aws-public-blockchain`**, integrity-checkable
+     against SDF checkpoints. Until that pull lands, we are NOT AWS-independent for deep
+     history (gap-scan 2026-08-21). Re-ingest from it (~1–2 week walk) is the
+     **last-resort** recovery and the region-bootstrap path.
   2. **Derived cold-lake copy (~11.6 TiB, Cloudflare R2)** — *the same copy that backs the
      §3b serving fallback*. It doubles as a **fast-RTO restore source**: restoring CH parts
      is hours, not the weeks a full re-ingest takes. We keep it justified primarily by the
