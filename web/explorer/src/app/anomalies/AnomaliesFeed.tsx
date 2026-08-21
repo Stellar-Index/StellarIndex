@@ -67,6 +67,7 @@ export function AnomaliesFeed() {
       return env.data;
     },
     staleTime: 30_000,
+    refetchInterval: 30_000,
   });
 
   const data = q.data;

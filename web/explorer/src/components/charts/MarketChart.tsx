@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import { useQuery } from '@tanstack/react-query';
 
 import { API_BASE_URL } from '@/api/client';
+import { useLedgerFollow } from '@/lib/live/hooks';
 import type { components } from '@/api/types';
 
 // CandleChart pulls in lightweight-charts (~155 KB). Lazy-load it so the
@@ -94,6 +95,10 @@ export function MarketChart({
     if (next) setGrain(next.def);
   };
 
+  // Live (RT-2): refresh the active window's candles on each ledger close so
+  // the forming bar advances instead of freezing at page load. Prefix key
+  // matches every grain/limit for this pair.
+  useLedgerFollow(['/v1/ohlc', base, quote]);
   const query = useQuery<Bar[], Error>({
     queryKey: ['/v1/ohlc', base, quote, activeGrain, limit],
     queryFn: async ({ signal }) => {

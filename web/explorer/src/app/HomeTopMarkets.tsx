@@ -3,6 +3,7 @@
 import Link from 'next/link';
 
 import { useMarkets } from '@/api/hooks';
+import { useLedgerFollow } from '@/lib/live/hooks';
 import {
   EmptyState,
   Skeleton,
@@ -32,6 +33,7 @@ import { formatCompact , formatSubunitPrice } from '@/lib/format';
  */
 export function HomeTopMarkets() {
   const { data, isLoading, isError } = useMarkets(25, 'volume_24h_usd_desc');
+  useLedgerFollow(['/v1/markets']);
 
   const top = (data?.markets ?? []).slice(0, 10);
 

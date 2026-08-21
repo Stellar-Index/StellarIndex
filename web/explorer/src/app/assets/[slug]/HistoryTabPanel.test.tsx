@@ -34,6 +34,14 @@ vi.mock('@/api/hooks', async () => {
   };
 });
 
+// The panel now subscribes to the pair's observations stream for live
+// refresh; this is a pure-render test (quote scaling), so stub the live
+// hook — its behaviour is covered by src/lib/live's own tests.
+vi.mock('@/lib/live/hooks', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/live/hooks')>('@/lib/live/hooks');
+  return { ...actual, useObservationsFollow: () => undefined };
+});
+
 describe('HistoryTabPanel', () => {
   it('scales quote_amount by the quote leg (native, 7 decimals) rather than the base asset decimals prop', () => {
     // decimals=2 mimics a 2-decimal Soroban base asset detail page —

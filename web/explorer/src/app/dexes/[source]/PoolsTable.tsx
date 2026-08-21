@@ -2,6 +2,8 @@
 
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useLedgerFollow, usePriceFlash } from '@/lib/live/hooks';
+import { cn } from '@/lib/cn';
 import Link from 'next/link';
 
 import { Panel } from '@/components/reveal';
@@ -45,6 +47,8 @@ export function PoolsTable({
   const [cursor, setCursor] = useState<string>('');
   const [cursorStack, setCursorStack] = useState<string[]>([]);
 
+  // Live (RT-2): follow ledger closes so this DEX's pairs + prices tick.
+  useLedgerFollow(['/v1/markets', source]);
   const q = useQuery<{ markets: Market[]; nextCursor?: string }>({
     queryKey: ['/v1/markets', source, order, cursor],
     queryFn: async () => {
@@ -304,6 +308,9 @@ function Td({
 }
 
 function LastPriceCell({ raw }: { raw?: string | null }) {
+  // Flash on change (RT-2): watches its own value across the table's live
+  // refetches, so a changed last price ticks green/red.
+  const flash = usePriceFlash(raw ?? undefined);
   if (!raw) return <span className="text-ink-faint">—</span>;
   const n = Number(raw);
   if (!Number.isFinite(n)) return <span className="text-ink-faint">—</span>;
@@ -311,7 +318,13 @@ function LastPriceCell({ raw }: { raw?: string | null }) {
   // (@/lib/format) — three components had independently forked this exact
   // threshold ladder, risking visible drift between them.
   return (
-    <span className="font-mono tabular-nums text-ink-body">
+    <span
+      className={cn(
+        'font-mono tabular-nums text-ink-body',
+        flash === 'up' && 'flash-up',
+        flash === 'down' && 'flash-down',
+      )}
+    >
       {formatPairPrice(n)}
     </span>
   );
