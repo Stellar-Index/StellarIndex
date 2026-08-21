@@ -713,7 +713,14 @@ func accountMovementsQuery(filter AccountMovementFilter, hasCursor bool) string 
 	if hasCursor {
 		sb.WriteString(" AND (ledger, tx_hash, op_index, leg_index) < (?, ?, ?, ?)")
 	}
-	sb.WriteString(" ORDER BY ledger DESC, tx_hash DESC, op_index DESC, leg_index DESC LIMIT ?")
+	// LIMIT 1 BY = the DAT-10 read-time dedup the sibling account readers
+	// (AccountTransactions / AccountOperations) already carry: an un-merged
+	// ReplacingMergeTree duplicate part — routine while a re-derive is in
+	// flight, since InsertAccountMovements is retry-by-reinsert — would
+	// otherwise eat a LIMIT slot, repeat a row, and shift the keyset cursor.
+	// Far cheaper than FINAL: dedup applies only to the rows this address's
+	// contiguous range scan already returns.
+	sb.WriteString(" ORDER BY ledger DESC, tx_hash DESC, op_index DESC, leg_index DESC LIMIT 1 BY ledger, tx_hash, op_index, leg_index LIMIT ?")
 	sb.WriteString(explorerScanSettings)
 	return sb.String()
 }
@@ -733,12 +740,12 @@ func accountMovementsQuery(filter AccountMovementFilter, hasCursor bool) string 
 // post-P23 Postgres tail to serve the full GET
 // /v1/accounts/{g}/movements feed (ADR-0048 D5).
 //
-// No FINAL: same acceptable-eventual-consistency posture as
-// AccountOperations/AccountTransactions above — a duplicate row from
-// an in-flight re-derive merge is a rare, benign visual repeat (it
-// disappears on the next background ReplacingMergeTree merge), not a
-// correctness issue, and FINAL's read-time dedup cost isn't worth
-// paying on every paginated request.
+// No FINAL, but LIMIT 1 BY (see accountMovementsQuery): the previous
+// comment here claimed parity with AccountOperations/AccountTransactions
+// while those siblings actually dedup via LIMIT 1 BY and this reader did
+// not (audit 2026-08-21, determinism finding 2) — making this the one
+// served lake feed that could repeat rows and shift its keyset cursor
+// during a re-derive's un-merged window. Now deduped the same way.
 func (r *ExplorerReader) AccountMovements(ctx context.Context, address string, limit int, cur AccountMovementCursor, filter AccountMovementFilter) ([]AccountMovementRow, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 25

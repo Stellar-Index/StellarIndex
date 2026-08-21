@@ -1640,6 +1640,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/network/throughput", s.explorerHandler.NetworkThroughput)
 	s.mux.HandleFunc("GET /v1/healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /v1/readyz", s.handleReadyz)
+	s.mux.HandleFunc("GET /v1/livez/lake", s.handleLivezLake)
 	s.mux.HandleFunc("GET /v1/version", s.handleVersion)
 	s.mux.HandleFunc("GET /v1/status", s.handleStatus)
 	// Public list of ACTIVE operator-posted status banners (incident
@@ -2098,6 +2099,54 @@ func (s *Server) computeReadyz() (int, []byte) {
 		return render(http.StatusOK, Flags{Stale: true})
 	}
 	return render(http.StatusOK, Flags{})
+}
+
+// handleLivezLake is the LAKE-critical health probe (multi-region plan
+// §7.3 / ADR-0050). /v1/readyz deliberately treats ClickHouse as
+// NON-critical so a lake outage degrades rather than un-readies the
+// pricing surface — but that same 200 keeps a lake-dead region in a load
+// balancer's pool for the ~21 lake-backed routes it can no longer serve
+// (the 2026-08-20 multi-region audit's worst explorer-failover gap).
+// This endpoint is the complement: 200 iff the registered ClickHouse
+// checker pings; 503 when it fails OR when no lake is wired at all — a
+// lake-less deployment must never receive lake-route traffic, so absent
+// fails closed. Point lake-route LB monitors here; leave pricing
+// monitors on /v1/readyz. Unlike readyz there is no single-flight cache:
+// one cheap CH ping per probe at LB cadence (~10s) is negligible.
+func (s *Server) handleLivezLake(w http.ResponseWriter, r *http.Request) {
+	type lakeHealth struct {
+		Status string `json:"status"`
+		Detail string `json:"detail,omitempty"`
+	}
+	render := func(status int, body lakeHealth) {
+		env := Envelope{Data: body, AsOf: time.Now().UTC()}
+		b, err := json.Marshal(env)
+		if err != nil {
+			http.Error(w, `{"error":"livez render"}`, http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(status)
+		_, _ = w.Write(b)
+	}
+	for _, c := range s.checks {
+		if c.Name() != "clickhouse" {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if err := c.Ping(ctx); err != nil {
+			render(http.StatusServiceUnavailable, lakeHealth{Status: "lake-unready", Detail: err.Error()})
+			return
+		}
+		render(http.StatusOK, lakeHealth{Status: "ok"})
+		return
+	}
+	render(http.StatusServiceUnavailable, lakeHealth{
+		Status: "lake-absent",
+		Detail: "no clickhouse checker registered — this deployment serves no lake routes and must not receive lake traffic",
+	})
 }
 
 // handleVersion reports binary version + build date + VCS info.

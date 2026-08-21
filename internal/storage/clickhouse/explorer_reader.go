@@ -706,7 +706,11 @@ func (r *ExplorerReader) NetworkThroughput(ctx context.Context, windowDays int) 
 		-- close_time predicate is the authoritative, day-aligned boundary.
 		FROM stellar.ledgers FINAL
 		WHERE ledger_seq > (SELECT max(ledger_seq) FROM stellar.ledgers) - ?
-		  AND close_time >= toStartOfDay(now('UTC')) - toIntervalDay(?)
+		  -- Day window anchored to the DATA's tip close_time, not now('UTC'):
+		  -- deterministic for any two regions ingesting the same chain (the
+		  -- multi-region plan's determinism contract) and equal to wall clock
+		  -- within one ledger close when live.
+		  AND close_time >= toStartOfDay((SELECT max(close_time) FROM stellar.ledgers)) - toIntervalDay(?)
 		GROUP BY day
 		ORDER BY day ASC`
 	rows, err := r.conn.Query(ctx, q, pruneLedgers, daysBack)
@@ -714,7 +718,6 @@ func (r *ExplorerReader) NetworkThroughput(ctx context.Context, windowDays int) 
 		return nil, fmt.Errorf("clickhouse: network throughput: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	today := time.Now().UTC().Truncate(24 * time.Hour)
 	var out []ThroughputBucket
 	for rows.Next() {
 		var b ThroughputBucket
@@ -722,10 +725,15 @@ func (r *ExplorerReader) NetworkThroughput(ctx context.Context, windowDays int) 
 			&b.FeePool, &b.TotalCoins, &b.ProtocolVersion); err != nil {
 			return nil, fmt.Errorf("clickhouse: scan throughput: %w", err)
 		}
-		// Only today can be incomplete — every earlier bucket is a whole UTC
-		// day because the window is day-aligned.
-		b.Partial = !b.Day.UTC().Before(today)
 		out = append(out, b)
+	}
+	// Only the newest bucket — the one holding the tip — can be incomplete;
+	// every earlier bucket is a whole UTC day because the window is
+	// day-aligned to the tip's day. Data-derived (rows are day ASC), replacing
+	// the old wall-clock comparison that made two regions disagree on the
+	// Partial flag near a UTC day boundary.
+	if len(out) > 0 {
+		out[len(out)-1].Partial = true
 	}
 	return out, rows.Err()
 }
