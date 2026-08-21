@@ -217,10 +217,16 @@ func TestProjectionDelta_VintageSplitClosesNettingHole(t *testing.T) {
 // a name here must be paired with a written aggregateReconcile reason on
 // its catalogue entry.
 func TestReconciliationCatalogue_OracleSourcesOptOut(t *testing.T) {
+	// phoenix RETIRED its opt-out 2026-08-21: the eventLedgerCarrier
+	// own-ledger attribution counts sweep-rescued 7-field-era trades at
+	// their first-field ledger, so the shift the netting absorbed no
+	// longer exists — proven strict (0 mismatched ledgers, totals
+	// 246,725 == 246,725) before removal. Phoenix reconciles strict
+	// per-ledger; re-adding it to this allowlist requires a NEW
+	// documented ledger-keying reason, not the old one.
 	allowedAggregate := map[string]bool{
 		"reflector-dex": true, "reflector-cex": true, "reflector-fx": true,
 		"redstone": true,
-		"phoenix":  true, // pre-upgrade sweep-emit ledger shift (documented)
 	}
 	cfg := testConfigWithAllSources()
 	cat, _, err := buildReconciliationCatalogue(cfg)

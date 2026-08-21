@@ -197,6 +197,7 @@ var uncoveredOperations = map[string]string{
 	"PATCH /dashboard/price-alerts/{id}":      "session-cookie dashboard surface",
 	"DELETE /dashboard/price-alerts/{id}":     "session-cookie dashboard surface",
 	"GET /account/admin/lookup":               "session-cookie dashboard surface — staff-only customer look-up",
+	"GET /livez/lake":                         "load-balancer lake-health probe (ADR-0050 §7.3) — infrastructure surface, not an SDK data call",
 	"POST /auth/login":                        "magic-link browser flow",
 	"GET /auth/callback":                      "magic-link browser flow",
 	"POST /auth/verify-code":                  "magic-link browser flow",

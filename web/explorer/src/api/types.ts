@@ -81,6 +81,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/livez/lake": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Lake-critical health — should this instance receive lake-route traffic?
+         * @description The complement to `/v1/readyz` for the ClickHouse-lake-backed
+         *     routes (explorer browse/search, token supply and holders, pool
+         *     reserves and TVL, order books — the ~21 routes that 503 when the
+         *     lake is down). `/v1/readyz` deliberately treats ClickHouse as
+         *     NON-critical so a lake outage degrades rather than un-readies the
+         *     pricing surface — but that same 200 would keep a lake-dead
+         *     instance in a load balancer's pool for routes it can no longer
+         *     serve. This probe is lake-critical: 200 iff the registered
+         *     ClickHouse checker pings; 503 when it fails OR when no lake is
+         *     wired at all (a lake-less deployment must never receive
+         *     lake-route traffic, so absence fails closed).
+         *
+         *     Point lake-route load-balancer monitors here and pricing
+         *     monitors at `/v1/readyz` (ADR-0050 §7.3 — the per-tier health
+         *     split the multi-region design requires).
+         */
+        get: operations["getLakeLiveness"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/version": {
         parameters: {
             query?: never;
@@ -6963,6 +6997,58 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReadyEnvelope"];
+                };
+            };
+        };
+    };
+    getLakeLiveness: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The lake is reachable — route lake traffic here. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "status": "ok"
+                     *       },
+                     *       "as_of": "2026-08-21T22:40:00Z"
+                     *     }
+                     */
+                    "application/json": unknown;
+                };
+            };
+            /**
+             * @description The lake is unreachable (`data.status` = `lake-unready`,
+             *     with the ping error in `data.detail`) or this deployment has
+             *     no ClickHouse wired at all (`lake-absent`). Either way, do
+             *     not route lake traffic here; pricing routes may still be
+             *     healthy — check `/v1/readyz`.
+             */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "status": "lake-unready",
+                     *         "detail": "dial tcp 127.0.0.1:9300: connect: connection refused"
+                     *       },
+                     *       "as_of": "2026-08-21T22:40:00Z"
+                     *     }
+                     */
+                    "application/json": unknown;
                 };
             };
         };
