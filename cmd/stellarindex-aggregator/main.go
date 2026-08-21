@@ -241,16 +241,29 @@ func run(cfgPath string, dryRun bool) error {
 	}
 
 	// ─── Anomaly checker + freeze writer (ADR-0019) ─────────────
-	// Wired only when the operator has flipped anomaly.enabled in
-	// TOML. nil values mean "feature off" — orchestrator skips the
-	// evaluate-and-maybe-freeze step.
+	// The Phase 1 checker is wired only when the operator has flipped
+	// anomaly.enabled in TOML — nil means the orchestrator skips the
+	// Phase 1 evaluate-and-maybe-freeze step.
+	//
+	// The freeze WRITER is deliberately NOT gated on the checker
+	// (2026-08-22, r1 XLM/GBP incident): the Phase 2 confidence
+	// lifecycle (stepPhase2Freeze) runs on every scored bucket
+	// regardless of cfg.Anomaly, and it REFUSES publication when its
+	// 3-signal AND fires. With the old `checker != nil && rdb != nil`
+	// gate, a Phase-1-off / Phase-2-tuned deployment (exactly r1's
+	// TOML) engaged real freezes that wrote NO Redis marker — the
+	// frozen windows served their last value with flags.frozen absent,
+	// i.e. a stale price presented as fresh, the precise state the
+	// marker exists to prevent (orchestrator.Config.FreezeWriter calls
+	// it "loud-but-not-actionable"). rdb is always non-nil here (fatal
+	// at startup above), so the writer is now built unconditionally.
 	checker, err := buildAnomalyChecker(cfg.Anomaly)
 	if err != nil {
 		return fmt.Errorf("anomaly checker: %w", err)
 	}
 	var freezeWriter orchestrator.FreezeMarker
 	var freezeRecovery *freeze.Recovery
-	if checker != nil && rdb != nil {
+	if rdb != nil {
 		// Optional durable mirror: every freeze decision lands in the
 		// freeze_events hypertable so the explorer /anomalies timeline
 		// has queryable history. Idempotent on the currently-firing
