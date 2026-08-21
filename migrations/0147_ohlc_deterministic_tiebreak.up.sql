@@ -3,9 +3,9 @@
 --
 -- ─── The defect ────────────────────────────────────────────────────────
 -- The served OHLC open/close are `first/last(quote_amount/base_amount, ts)`
--- (migrations 0002/0115). `ts` is the ledger close time — WHOLE SECONDS —
--- so every bucket in which two trades share a close (same ledger, or two
--- ledgers closing within the same second) has a TIE, and TimescaleDB's
+-- (migrations 0002/0115). On-chain sources stamp `ts` with the ledger
+-- close time (whole seconds), so every bucket in which two trades share
+-- a close (same ledger — routine) has a TIE, and TimescaleDB's
 -- first()/last() resolve ties by physical scan order: whichever heap/
 -- chunk order the refresh happened to read. Two re-materializations of
 -- the same bucket can serve DIFFERENT opens/closes; a replay or a chunk
@@ -19,18 +19,34 @@
 -- first()/last() accept ANY comparable type as their ordering argument,
 -- so give them a TOTAL order: a fixed-width text key
 --
---   lpad(epoch(ts),12) ‖ lpad(ledger,10) ‖ tx_hash ‖ lpad(op_index,10) ‖ source
+--   lpad(epoch_micros(ts),19) ‖ lpad(ledger,10) ‖ tx_hash ‖ lpad(op_index,10) ‖ source
 --
 -- computed inline in the CAGG SELECT — NO schema change to the (85 GB,
--- compressed) trades hypertable, no backfilled column. The key is total
--- because (ledger, tx_hash, op_index, source) uniquely identifies a
--- trade row (the trades PK components), and it EXACTLY mirrors the
--- serve layer's raw-trades ordering (TradesInRange:
--- `ORDER BY ts, ledger, tx_hash, op_index, source` — v0.39.1), so the
--- open/close of a bar always equals the first/last row a client would
--- page through for the same window. All five components are NOT NULL;
--- tx_hash is fixed-width char(64); lpad widths cover the full int4
--- range, so lexicographic text order == the intended numeric order.
+-- compressed) trades hypertable, no backfilled column.
+--
+-- The epoch component is MICROSECONDS, not seconds — timestamptz's full
+-- internal precision. This matters because `ts` is NOT whole-second for
+-- every source: the CEX feeds (kraken RFC3339Nano, binance UnixMilli,
+-- bitstamp microtimestamp) store sub-second ts with ledger=0, and a
+-- seconds-granularity key would ROUND (`::bigint` rounds, not
+-- truncates) two genuinely-ordered cross-venue trades into one
+-- key-second and then "break the tie" by ledger/tx_hash — inverting an
+-- order the raw-ts CAGG already got RIGHT (caught by the 0147 verify
+-- panel with an executed kraken@.600 / coinbase@1.200 counterexample).
+-- At micros the key equals timestamptz's stored precision exactly, so
+-- the key's leading component == ts and the remaining components only
+-- ever order true same-instant rows.
+--
+-- The key is total: it embeds (source, ledger, tx_hash, op_index, ts) —
+-- a superset of the trades PK — and mirrors the serve layer's raw-trades
+-- ordering (TradesInRange: `ORDER BY ts, ledger, tx_hash, op_index,
+-- source` — v0.39.1), so the open/close of a bar always equals the
+-- first/last row a client would page through for the same window. All
+-- five components are NOT NULL; tx_hash is always exactly 64 chars
+-- (canonical validTxHash / CEX formatTxHash), so bpchar padding
+-- semantics never engage; lpad widths cover the full int4 range
+-- (ledger/op_index are CHECK >= 0), so lexicographic text order == the
+-- intended numeric order.
 --
 -- ─── Free rider: exact VWAP (single division) ──────────────────────────
 -- migrations/README.md rule 8 mandates `sum(quote_amount)/sum(base_amount)`
@@ -106,7 +122,11 @@ DECLARE
     -- ── THE TIE-BREAK KEY ── total order over trade rows; mirrors the
     -- serve layer's TradesInRange ORDER BY (ts, ledger, tx_hash,
     -- op_index, source). Fixed-width so text order == numeric order.
-    tie_key text := $k$(lpad(extract(epoch FROM ts)::bigint::text, 12, '0')
+    -- Epoch in MICROSECONDS (timestamptz's exact internal precision;
+    -- numeric epoch * 1e6 is exact, ::bigint is then a no-op round) —
+    -- seconds granularity would round sub-second CEX timestamps
+    -- together and invert their true order (see header).
+    tie_key text := $k$(lpad((extract(epoch FROM ts) * 1000000)::bigint::text, 19, '0')
                         || lpad(ledger::text, 10, '0')
                         || tx_hash
                         || lpad(op_index::text, 10, '0')
