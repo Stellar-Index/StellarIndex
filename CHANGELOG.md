@@ -15,7 +15,46 @@ against.
 
 ## [Unreleased]
 
+## [v0.39.0] — 2026-08-21
+
+Tested against Stellar protocol v23. Applies migration 0146 (additive —
+creates the `defindex_fees` hypertable; old-binary-safe, touches no
+existing table).
+
+### Added
+- **DeFindex `dfees` fee distributions are now modelled (W5.2, the last
+  open launch item).** Body shape proven from captured on-chain blobs
+  (`Map{"distributed_fees" → Vec[(token, i128)]}`, per-asset, empty vec
+  valid): one row per distributed-fee token into the new `defindex_fees`
+  table, with full sink/projector/reconcile registry parity. The ~12.8K
+  historical events backfill via `projected-rebuild -source defindex`
+  after this release deploys.
+- **Explorer feels alive: live data across the whole site.** Pool
+  reserves, pair tables, and lending reserves refresh on every ledger
+  close (shared `useLedgerFollow`); charts advance their forming candle;
+  the home "live USD price" actually streams and flashes; venue/DEX
+  last-price cells flash again; the asset History tab is a true live
+  trade tape over the previously-unused `/v1/observations/stream`;
+  rollup panels and activity feeds auto-poll.
+- **Failed transactions are first-class on the explorer and API** with
+  explicit failed status and failure reason (D-PART-FAILEDTX decision),
+  plus the 2026-08-14 audit's decisions batch.
+- **OpenAPI spec overhaul**: exact route parity (129/129 with unique
+  operationIds), valid OpenAPI 3.1 null unions, 0 Spectral errors,
+  regenerated Postman + types.
+
 ### Fixed
+- **Completeness re-derive counts sweep-rescued outputs at their own
+  ledger** (`eventLedgerCarrier`): a correlation-buffer rescue (phoenix
+  7-field era) is now attributed where its served row lives instead of
+  at the sweep-trigger ledger, removing the CS-084 ± shift noise from
+  strict per-ledger reconciles.
+- **`projected-rebuild` clamps `-workers` to 1 for correlation-buffer
+  decoders** — concurrent out-of-order windows starve sweep triggers and
+  silently drop groups (measured: 4 workers lost ~650 of 5,154 phoenix
+  era trades in a dry-run; 1 worker lost none).
+- **SQLSTATE class extraction guards malformed codes** (`sqlStateClass`)
+  instead of slicing blind.
 - **The pgBackRest restore drill had never once run on its schedule
   (BDR-04).** CS-110's whole point is evidence that the backups restore,
   and the scheduled path produced none — for three stacked reasons, each
