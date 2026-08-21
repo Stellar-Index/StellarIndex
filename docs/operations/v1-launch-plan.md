@@ -98,7 +98,11 @@ It did **NOT** touch the headline blockers — **W1.1** (status incidents
 absent-as-zero), **W2** (alias registry), **W3.2–3.4**, **D1** (freeze paging),
 and the W5 backfills — those remain the real path to v1. **The
 launch-completion campaign below then closed most of them** (W1, W2, W2-tail,
-the W8 live-code items, W7.1); W3.2/W5.2/D1 remain, now bucketed with reasons.
+the W8 live-code items, W7.1); W3.2/D1 remain, now bucketed with reasons.
+**W5.2 (dfees) CLOSED 2026-08-21**: body shape captured from the r1 lake
+(`Map{"distributed_fees" → Vec[(token, i128)]}`, per-asset), modelled into
+`defindex_fees` (migration 0146, PR #118), deployed in v0.39.0, 3,813
+historical rows backfilled + verified complete=true the same evening.
 
 ---
 
