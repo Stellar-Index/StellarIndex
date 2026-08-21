@@ -11,19 +11,34 @@ import (
 
 // fakeCloseTimeReader is a DB-free ledgerCloseTimeReader: it serves a preset
 // close time (or a not-found / error) for whatever ledger it's asked about,
-// recording the ledger so the plumbing can be asserted.
+// recording the ledger so the plumbing can be asserted. The exact-lookup
+// knobs serve the operator -ledger branch; the lake* knobs serve the auto
+// branch's LatestLedgerAtOrBefore clamp.
 type fakeCloseTimeReader struct {
 	closeTime time.Time
 	found     bool
 	err       error
 	gotLedger uint32
 	calls     int
+
+	lakeLedger  uint32
+	lakeClose   time.Time
+	lakeFound   bool
+	lakeErr     error
+	gotMaxSeq   uint32
+	latestCalls int
 }
 
 func (f *fakeCloseTimeReader) CloseTimeForLedger(_ context.Context, ledger uint32) (time.Time, bool, error) {
 	f.calls++
 	f.gotLedger = ledger
 	return f.closeTime, f.found, f.err
+}
+
+func (f *fakeCloseTimeReader) LatestLedgerAtOrBefore(_ context.Context, maxSeq uint32) (uint32, time.Time, bool, error) {
+	f.latestCalls++
+	f.gotMaxSeq = maxSeq
+	return f.lakeLedger, f.lakeClose, f.lakeFound, f.lakeErr
 }
 
 // TestResolveSnapshotLedger_StampsLedgerCloseTimeNotWallClock is the
@@ -135,11 +150,11 @@ func TestAutoSnapshotLedger_NoCursors(t *testing.T) {
 
 // TestResolveSnapshotLedger_AutoUsesChainCursorEndToEnd wires the same
 // scenario through resolveSnapshotLedger itself (opLedger=0), proving the
-// close-time lookup is performed for the CHAIN cursor's ledger and not the
-// ops job's.
+// lake lookup is bounded by the CHAIN cursor's ledger and not the ops
+// job's, and that the lake's landed row supplies both position and stamp.
 func TestResolveSnapshotLedger_AutoUsesChainCursorEndToEnd(t *testing.T) {
 	closeTime := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
-	reader := &fakeCloseTimeReader{closeTime: closeTime, found: true}
+	reader := &fakeCloseTimeReader{lakeLedger: 63_000_000, lakeClose: closeTime, lakeFound: true}
 	cursors := &fakeCursorReader{cursors: []timescale.Cursor{
 		{Source: "backfill", Sub: "63500000-63900000", LastLedger: 63_900_000},
 		{Source: "ledgerstream", LastLedger: 63_000_000},
@@ -152,10 +167,83 @@ func TestResolveSnapshotLedger_AutoUsesChainCursorEndToEnd(t *testing.T) {
 	if ledger != 63_000_000 {
 		t.Errorf("ledger = %d, want 63000000", ledger)
 	}
-	if reader.gotLedger != 63_000_000 {
-		t.Errorf("close time resolved for ledger %d, want 63000000", reader.gotLedger)
+	if reader.gotMaxSeq != 63_000_000 {
+		t.Errorf("lake lookup bounded by ledger %d, want 63000000 (the chain cursor, not the backfill job's)", reader.gotMaxSeq)
 	}
 	if !observedAt.Equal(closeTime) {
 		t.Errorf("observedAt = %s, want the ledger close time %s", observedAt, closeTime)
+	}
+}
+
+// TestResolveSnapshotLedger_AutoClampsToLandedLakeTip is the 2026-08-22
+// r1 regression: the ledgerstream cursor (Postgres, realtime) leads the
+// lake's stellar.ledgers (CH sink, lands seconds later), so at the moment
+// a timer-driven snapshot fires the cursor's own row is routinely absent
+// — the daily unit failed EVERY run. The auto path must clamp to the
+// newest landed ledger at or before the cursor and stamp THAT ledger's
+// close time.
+func TestResolveSnapshotLedger_AutoClampsToLandedLakeTip(t *testing.T) {
+	lakeClose := time.Date(2026, 8, 22, 1, 15, 0, 0, time.UTC)
+	reader := &fakeCloseTimeReader{lakeLedger: 64_063_584, lakeClose: lakeClose, lakeFound: true}
+	cursors := &fakeCursorReader{cursors: []timescale.Cursor{
+		{Source: "ledgerstream", LastLedger: 64_063_590}, // 6 ledgers ahead of the lake
+	}}
+
+	ledger, observedAt, err := resolveSnapshotLedger(context.Background(), cursors, reader, 0)
+	if err != nil {
+		t.Fatalf("resolveSnapshotLedger: %v (the landing race must clamp, not fail)", err)
+	}
+	if ledger != 64_063_584 {
+		t.Errorf("ledger = %d, want the lake's landed tip 64063584", ledger)
+	}
+	if !observedAt.Equal(lakeClose) {
+		t.Errorf("observedAt = %s, want the landed ledger's close time %s", observedAt, lakeClose)
+	}
+	if reader.calls != 0 {
+		t.Errorf("auto path made %d exact CloseTimeForLedger lookups, want 0 (the clamp owns the auto path)", reader.calls)
+	}
+}
+
+// TestResolveSnapshotLedger_AutoFailsClosedOnStalledLake bounds the clamp:
+// a lake trailing the cursor by more than maxAutoSnapshotClampLedgers is a
+// stalled sink, not a landing race, and stamping a snapshot that far
+// behind the chain would hide the stall.
+func TestResolveSnapshotLedger_AutoFailsClosedOnStalledLake(t *testing.T) {
+	reader := &fakeCloseTimeReader{
+		lakeLedger: 64_000_000 - maxAutoSnapshotClampLedgers - 1,
+		lakeClose:  time.Date(2026, 8, 21, 0, 0, 0, 0, time.UTC),
+		lakeFound:  true,
+	}
+	cursors := &fakeCursorReader{cursors: []timescale.Cursor{
+		{Source: "ledgerstream", LastLedger: 64_000_000},
+	}}
+	if _, _, err := resolveSnapshotLedger(context.Background(), cursors, reader, 0); err == nil {
+		t.Fatal("expected an error when the lake trails the cursor beyond the clamp bound — a silent clamp would hide a stalled lake")
+	}
+}
+
+// TestResolveSnapshotLedger_AutoFailsClosedOnEmptyLake — no landed ledger
+// at or before the cursor means the lake is empty or wholly gapped; never
+// fall back to wall-clock.
+func TestResolveSnapshotLedger_AutoFailsClosedOnEmptyLake(t *testing.T) {
+	reader := &fakeCloseTimeReader{lakeFound: false}
+	cursors := &fakeCursorReader{cursors: []timescale.Cursor{
+		{Source: "ledgerstream", LastLedger: 64_000_000},
+	}}
+	if _, _, err := resolveSnapshotLedger(context.Background(), cursors, reader, 0); err == nil {
+		t.Fatal("expected an error when the lake has no row at or before the cursor")
+	}
+}
+
+// TestResolveSnapshotLedger_OperatorLedgerStaysExact — the clamp is an
+// AUTO-path affordance only. An operator-named -ledger absent from the
+// lake is a genuine gap and must fail exactly as before, never shift.
+func TestResolveSnapshotLedger_OperatorLedgerStaysExact(t *testing.T) {
+	reader := &fakeCloseTimeReader{found: false, lakeLedger: 39_999_000, lakeFound: true}
+	if _, _, err := resolveSnapshotLedger(context.Background(), nil, reader, 40_000_000); err == nil {
+		t.Fatal("expected fail-closed for an operator-named ledger absent from the lake — clamping an explicit position would silently rewrite the operator's request")
+	}
+	if reader.latestCalls != 0 {
+		t.Errorf("operator branch consulted LatestLedgerAtOrBefore %d times, want 0", reader.latestCalls)
 	}
 }
