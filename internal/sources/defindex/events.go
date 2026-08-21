@@ -48,6 +48,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
@@ -104,6 +105,9 @@ const (
 	//   rbmanager, dfees, rebalance
 	// Of these only `rebalance` is multiplexed (four bodies share the
 	// topic — discriminate by `rebalance_method` Symbol in body).
+	// `dfees` graduated from recognised-only to fully modelled (W5.2,
+	// 2026-08 — see [DFee]) once its body shape was proven from real
+	// lake blobs; the other admin topics remain classification-only.
 	EventRescue    = "rescue"
 	EventPaused    = "paused"
 	EventUnpaused  = "unpaused"
@@ -149,7 +153,9 @@ var (
 	TopicPrefixFactory  = scval.MustEncodeString(PrefixFactory)
 	TopicSymbolDeposit  = scval.MustEncodeSymbol(EventDeposit)
 	TopicSymbolWithdraw = scval.MustEncodeSymbol(EventWithdraw)
-	// Classification-only topic[1] symbols (no decoder today).
+	// Further topic[1] symbols. harvest (strategy, audit 2026-08-04
+	// finding 4) and dfees (vault, W5.2) have decoders; the rest are
+	// classification-only today.
 	TopicSymbolHarvest   = scval.MustEncodeSymbol(EventHarvest)
 	TopicSymbolRescue    = scval.MustEncodeSymbol(EventRescue)
 	TopicSymbolPaused    = scval.MustEncodeSymbol(EventPaused)
@@ -318,6 +324,53 @@ func (e VaultEvent) EventKind() string {
 
 // Source implements [consumer.Event].
 func (e VaultEvent) Source() string { return SourceName }
+
+// DFee is one per-asset entry of a vault-layer `dfees` protocol-fee
+// distribution (W5.2, 2026-08). Body shape PROVEN from live r1-lake
+// blobs (decoded with internal/scval — never invented):
+//
+//	Map{ distributed_fees: Vec[ (token Address<contract>, amount i128) ] }
+//
+// PER-ASSET, not per-recipient: each Vec entry names the fee TOKEN
+// contract (the captured samples are SACs, e.g. USDC's CCW67TSZ…MI75)
+// and the i128 amount distributed in it. The Vec has 0..N entries; an
+// EMPTY vec is a real observed shape (a distribution ran with nothing
+// to distribute) and emits zero events.
+//
+// Lake facts at capture (2026-08): 12,785 events on 27 vault
+// contracts, ledgers 60,903,337 → tip, still firing live — every
+// sample in the SAME op as the vault deposit/withdraw flow, which is
+// why dfees lands in its own table (defindex_fees, migration 0146)
+// with FeeIndex discriminating the one-event → N-entries fan-out.
+type DFee struct {
+	Vault      string // the emitting DeFindex vault-wrapper contract C-strkey
+	Ledger     uint32
+	ClosedAt   time.Time
+	TxHash     string
+	OpIndex    int
+	EventIndex uint32           // in-tx contract event index — PK discriminator vs the same-op vault flow
+	FeeIndex   int              // position in the distributed_fees Vec — per-entry PK discriminator
+	Token      string           // fee token contract C-strkey
+	Amount     canonical.Amount // distributed amount in Token (i128, never truncated — ADR-0003)
+}
+
+// DFeesEvent wraps one DFee for the dispatcher / pipeline path. The
+// decoder emits ONE DFeesEvent per distributed_fees Vec entry, so the
+// ADR-0033 projection reconcile's expected event-count equals the
+// served defindex_fees row-count 1:1 (no fan-out waiver needed).
+type DFeesEvent struct {
+	Fee DFee
+}
+
+var _ consumer.Event = DFeesEvent{}
+
+// EventKind implements [consumer.Event].
+func (e DFeesEvent) EventKind() string {
+	return "defindex.vault." + EventDFees
+}
+
+// Source implements [consumer.Event].
+func (e DFeesEvent) Source() string { return SourceName }
 
 // Errors returned by the decode path. Callers classify via
 // errors.Is.

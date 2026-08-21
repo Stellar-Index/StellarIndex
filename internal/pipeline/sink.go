@@ -465,7 +465,7 @@ func IsProjectedEvent(ev consumer.Event) bool {
 		blend_emitter.DistributeEvent, blend_emitter.DropEvent, blend_emitter.SwapConfigEvent,
 		cctp.Event, rozo.Event,
 		sorocredit.Event,
-		defindex.Event, defindex.VaultEvent,
+		defindex.Event, defindex.VaultEvent, defindex.DFeesEvent,
 		sep41_supply.Event, sep41_transfers.Event:
 		return true
 	default:
@@ -942,6 +942,38 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 			logger.Warn("defindex vault persist failed",
 				"source", defindex.SourceName,
 				"tx_hash", e.Flow.TxHash, "ledger", e.Flow.Ledger,
+				"err", err)
+			return err
+		}
+		return nil
+	case defindex.DFeesEvent:
+		// Vault-layer per-asset protocol-fee distribution (`dfees`,
+		// W5.2). One event per distributed_fees Vec entry, one row per
+		// event — fee_index carries the Vec position. dfees fires in the
+		// SAME op as the vault deposit/withdraw flow above and fans out
+		// per token, a shape defindex_flows' one-row-per-flow schema
+		// doesn't carry — hence its own defindex_fees table (migration
+		// 0146; correlate by tx_hash + op_index).
+		bumpEntryCount(ctx, logger, store, defindex.SourceName)
+		feeRow := timescale.DefindexFee{
+			Ledger:          e.Fee.Ledger,
+			LedgerCloseTime: e.Fee.ClosedAt,
+			TxHash:          e.Fee.TxHash,
+			OpIndex:         uint32(e.Fee.OpIndex),
+			EventIndex:      e.Fee.EventIndex,
+			FeeIndex:        uint32(e.Fee.FeeIndex),
+			ContractID:      e.Fee.Vault,
+			Token:           e.Fee.Token,
+			Amount:          e.Fee.Amount.String(),
+		}
+		if err := store.InsertDefindexFee(ctx, feeRow); err != nil {
+			// Count the persist failure (audit-2026-07-16 C4-3) — see the
+			// soroswap-router case above for why. Counter only; return err
+			// (control flow) unchanged.
+			obs.SourceInsertErrorsTotal.WithLabelValues(defindex.SourceName, "defindex_fees").Inc()
+			logger.Warn("defindex dfees persist failed",
+				"source", defindex.SourceName,
+				"tx_hash", e.Fee.TxHash, "ledger", e.Fee.Ledger,
 				"err", err)
 			return err
 		}

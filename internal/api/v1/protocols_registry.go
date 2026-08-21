@@ -160,6 +160,11 @@ var protocolRegistry = []ProtocolMeta{
 			// vocabulary and must be listed here for the API to report it.
 			"defindex.strategy.harvest",
 			"defindex.vault.deposit", "defindex.vault.withdraw",
+			// vault.dfees — per-asset protocol-fee distributions (W5.2;
+			// body shape proven from real lake blobs 2026-08). One
+			// decoded event per distributed_fees entry, persisted to
+			// defindex_fees (migration 0146).
+			"defindex.vault.dfees",
 		},
 		VerificationPage: "docs/protocols/defindex.md",
 	},
