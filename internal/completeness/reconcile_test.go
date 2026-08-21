@@ -498,3 +498,57 @@ func TestBlindSpots_LedgersSortedAndDeduped(t *testing.T) {
 		t.Errorf("Rows() = %d, want 4", got.Rows())
 	}
 }
+
+// sweptOutput models a correlation-buffer rescue output: it carries its OWN
+// ledger (the group's first-field ledger) and is emitted while the decoder is
+// processing a LATER stream event — the phoenix 7-field-era sweep shape.
+type sweptOutput struct{ ledger uint32 }
+
+func (sweptOutput) Source() string        { return "swept" }
+func (sweptOutput) EventKind() string     { return "swept.trade" }
+func (o sweptOutput) EventLedger() uint32 { return o.ledger }
+
+// sweepDecoder buffers its first matched event and, on the second, emits both
+// the second event's own output (no carrier) and the FIRST event's rescued
+// output (carrier, first event's ledger) — mirroring absorb()'s evict+rescue.
+type sweepDecoder struct{ pending []uint32 }
+
+func (*sweepDecoder) Matches(ev events.Event) bool { return ev.ContractID == "MATCH" }
+func (d *sweepDecoder) Decode(ev events.Event) ([]consumer.Event, error) {
+	if len(d.pending) == 0 {
+		d.pending = append(d.pending, ev.Ledger)
+		return nil, nil // group incomplete — sits in the buffer
+	}
+	rescued := sweptOutput{ledger: d.pending[0]}
+	d.pending = d.pending[:0]
+	return []consumer.Event{fakeOutput{}, rescued}, nil
+}
+
+// TestReDeriveOutputCountsByKindFromEvents_SweptOutputCountsAtOwnLedger pins
+// the eventLedgerCarrier contract: a sweep-rescued output is counted at ITS
+// ledger (where the served row lives), not at the sweep-trigger event's —
+// while a plain output still counts at the stream event's ledger. Without the
+// carrier, the rescued trade lands at the trigger ledger and a strict
+// per-ledger reconcile reports a ± shift pair (missing at 100 / phantom at
+// 160) against a served tier that is perfectly correct — the CS-084 noise
+// that forced phoenix onto aggregate netting.
+func TestReDeriveOutputCountsByKindFromEvents_SweptOutputCountsAtOwnLedger(t *testing.T) {
+	es := fakeEventStreamer{evs: []events.Event{
+		evAt(100, "MATCH", 0), // first field of the buffered group
+		evAt(160, "MATCH", 1), // the sweep trigger, 60 ledgers later
+	}}
+	byKind, _, err := ReDeriveOutputCountsByKindFromEvents(
+		context.Background(), es, &sweepDecoder{}, nil, nil, 1, 200)
+	if err != nil {
+		t.Fatalf("ReDeriveOutputCountsByKindFromEvents: %v", err)
+	}
+	if got, want := byKind["swept.trade"][100], 1; got != want {
+		t.Errorf("swept.trade at OWN ledger 100 = %d, want %d (eventLedgerCarrier ignored?)", got, want)
+	}
+	if got := byKind["swept.trade"][160]; got != 0 {
+		t.Errorf("swept.trade at trigger ledger 160 = %d, want 0 — counted at the sweep trigger, the exact CS-084 shift", got)
+	}
+	if got, want := byKind["trade"][160], 1; got != want {
+		t.Errorf("plain trade at stream ledger 160 = %d, want %d", got, want)
+	}
+}
