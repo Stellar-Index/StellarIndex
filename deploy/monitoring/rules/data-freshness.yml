@@ -79,6 +79,35 @@ groups:
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/completeness-incomplete.md
 
+      # The system recognition census (event shapes on contracts NO source owns)
+      # is EXPECTED to be large and slowly growing — it is the rest of the
+      # Soroban ecosystem, not a gap, which is why the exporter excludes it from
+      # stellarindex_completeness_incomplete. The alertable signal is a JUMP: a
+      # protocol we DO index losing its ownership mapping drops its shapes out
+      # of per-source recognition (which then reads green over a real drop — the
+      # rozo/BACKLOG-89 blind spot) and into this count as a step change.
+      # Organic growth measured ~30 shapes/day (2026-08 census: 22,919 shapes
+      # over ~2 years); 250 in 2 days is far outside organic drift but below a
+      # typical protocol family's shape count.
+      - alert: stellarindex_recognition_unattributed_jump
+        expr: |
+          delta(stellarindex_recognition_unattributed_shapes[2d]) > 250
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: completeness
+        annotations:
+          summary: "Unattributed recognition shapes jumped by {{ $value | printf `%.0f` }} in 2 days"
+          description: |
+            stellarindex_recognition_unattributed_shapes rose by {{ $value | printf `%.0f` }}
+            over 2 days — far above organic foreign-protocol drift (~30/day). Suspect an
+            ownership-registry regression: a protocol we index lost its owner mapping, so its
+            shapes fell out of the per-source recognition axis (now reading green over a real
+            drop) and into the unattributed census. Run `stellarindex-ops ch-recognition` and
+            diff the top shapes against the enabled-source contract registries
+            (protocol_contracts / GatedRegistryOptions).
+
       # A TWAP continuous aggregate is emptied-pending-refresh: a migration
       # recreated it WITH NO DATA (0081/0115/0126) and the MANUAL
       # `refresh_continuous_aggregate` follow-up that re-materializes its

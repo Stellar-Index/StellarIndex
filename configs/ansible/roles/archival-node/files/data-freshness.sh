@@ -32,8 +32,10 @@ trap 'rm -f "$TMP"' EXIT
   echo '# TYPE stellarindex_data_freshness_age_seconds gauge'
   echo '# HELP stellarindex_data_freshness_stale 1 when a domain/source is staler than its expected cadence.'
   echo '# TYPE stellarindex_data_freshness_stale gauge'
-  echo '# HELP stellarindex_completeness_incomplete 1 when a source latest ADR-0033 verdict is complete=false (real served<>lake gap).'
+  echo '# HELP stellarindex_completeness_incomplete 1 when a source latest ADR-0033 verdict is complete=false (real served<>lake gap). Excludes the system recognition row — see stellarindex_recognition_unattributed_shapes.'
   echo '# TYPE stellarindex_completeness_incomplete gauge'
+  echo '# HELP stellarindex_recognition_unattributed_shapes Distinct (contract, topic) event shapes in the lake no enabled source claims. Expected large and slowly growing (foreign protocols); the alertable signal is a JUMP (ownership-registry regression).'
+  echo '# TYPE stellarindex_recognition_unattributed_shapes gauge'
   echo '# HELP stellarindex_twap_history_missing 1 when a TWAP continuous aggregate is missing the history prices_1m holds — a migration recreated/emptied it (WITH NO DATA) and the manual refresh_continuous_aggregate follow-up never ran.'
   echo '# TYPE stellarindex_twap_history_missing gauge'
 } > "$TMP"
@@ -106,10 +108,33 @@ SELECT 'stellarindex_supply_asset_max_age_seconds '||COALESCE(round(max(age)),0)
 SQL
 
 # Per-source completeness verdict (latest snapshot per source): 1 = incomplete.
+#
+# The system 'recognition' row is EXCLUDED: it counts event shapes on contracts
+# NO source owns — i.e. the rest of the Soroban ecosystem (~23k shapes, growing
+# ~30/day) — so complete=false there is the permanent, expected state of a
+# curated indexer, not a served<>lake gap. Folding it into this gauge kept the
+# ticket alert firing continuously (2026-08-17 onward, when W1-flowcompleteness-1
+# restored the row's refresh). Real silent-drop detection lives in each source's
+# OWN recognition axis (recognition_ok on owned contracts), which flips that
+# source's row incomplete and still alerts here. The system row is exported
+# below as a COUNT so a registry regression (a whole protocol's shapes suddenly
+# unattributed — the rozo/BACKLOG-89 class) shows as a step change instead.
 "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
 SELECT 'stellarindex_completeness_incomplete{source="'||source||'"} '||(NOT complete)::int::text
   FROM (SELECT DISTINCT ON (source) source, complete
-          FROM completeness_snapshots ORDER BY source, computed_at DESC) s;
+          FROM completeness_snapshots ORDER BY source, computed_at DESC) s
+ WHERE source <> 'recognition';
+SQL
+
+# System recognition census count, parsed from the snapshot's detail text
+# ("<N> unrecognized shape(s) on unowned contracts (earliest ledger L) — run
+# verify-recognition"; the clean state has no leading digits → 0).
+"$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
+SELECT 'stellarindex_recognition_unattributed_shapes '||
+       COALESCE(substring(detail FROM '^[0-9]+'), '0')
+  FROM (SELECT detail FROM completeness_snapshots
+         WHERE source = 'recognition'
+         ORDER BY computed_at DESC LIMIT 1) r;
 SQL
 
 # W1-migrations-1 / REC-01: the TWAP continuous aggregates (twap_1h/twap_1d)
