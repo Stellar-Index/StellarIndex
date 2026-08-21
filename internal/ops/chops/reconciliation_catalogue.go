@@ -398,7 +398,9 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			// the seed extended before its history reconciles).
 			// Computed kinds: "defindex.strategy.{deposit,withdraw,harvest}"
 			// + "defindex.vault.{deposit,withdraw}" (defindex.Event /
-			// VaultEvent EventKind()). Both layers land in defindex_flows
+			// VaultEvent EventKind()) + "defindex.vault.dfees"
+			// (DFeesEvent, second target below). Both flow layers land
+			// in defindex_flows
 			// (layer discriminator column). strategy.harvest MUST be listed:
 			// the decoder emits it (audit 2026-08-04 finding 4 — strategy
 			// yield realised into the vault, direction=harvest, admitted by
@@ -412,6 +414,17 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 				"defindex.strategy.harvest",
 				"defindex.vault.deposit", "defindex.vault.withdraw",
 			}},
+			// dfees (W5.2, 2026-08): vault-layer per-asset protocol-fee
+			// distribution into its own table (migration 0146; fires in
+			// the same op as the vault flow, fans out per
+			// distributed_fees entry with fee_index a PK component). The
+			// decoder emits ONE DFeesEvent PER Vec entry — deliberately,
+			// so expected event-count == served row-count stays a strict
+			// 1:1 per-ledger reconcile (NOT the blend_emitter-drop /
+			// aquarius sink-side fan-out class that needs a waiver). An
+			// empty distributed_fees Vec (real, observed) emits zero
+			// events and zero rows — count-consistent by construction.
+			{"defindex_fees", "", []string{"defindex.vault.dfees"}},
 		}},
 		{
 			name: "blend", genesis: blend.FactoryGenesisLedger, dec: blend.NewDecoder(),

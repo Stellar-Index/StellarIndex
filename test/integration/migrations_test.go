@@ -287,6 +287,11 @@ func TestMigrationsRoundTrip(t *testing.T) {
 		assertColumnType(t, db, ctx, table, "derive_generation", "bigint")
 	}
 
+	// 0146 (defindex_fees) types derive_generation bigint NATIVELY —
+	// the 0142 lesson applied at creation time. Asserted so a future
+	// re-add of the table can't reintroduce the 2038 int4 cliff.
+	assertColumnType(t, db, ctx, "defindex_fees", "derive_generation", "bigint")
+
 	// ─── Down: roll everything back ─────────────────────────────
 	if err := migrator.Down(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		t.Fatalf("migrate down: %v", err)

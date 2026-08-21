@@ -200,6 +200,17 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// (~5.8 days) matches the soroswap-router cadence — past
 	// observed natural sparsity, well below "writer wedged" pages.
 	{Source: "defindex", Table: "defindex_flows", LedgerColumn: "ledger", Genesis: 57_056_338, MinGapSizeOverride: 100000},
+	// defindex-fees: vault-layer dfees protocol-fee distributions
+	// (migration 0146, W5.2) — sparse and conditional (a distribution
+	// only fires when the vault has fees pending; 12,785 events lake-
+	// wide across ~3.6M ledgers at capture, with empty-vec no-row
+	// events on top), so genuine quiet stretches are normal. 700K
+	// override matches the aquarius-protocol-fee / soroswap-skim
+	// envelope for similarly sparse fee tables. Genesis is the first
+	// dfees event in the lake (2026-08 capture) — NOT the source
+	// genesis: the topic simply never fired before 60,903,337, and a
+	// floor at 57M would flag ~3.8M permanently-empty ledgers.
+	{Source: "defindex-fees", Table: "defindex_fees", LedgerColumn: "ledger", Genesis: 60_903_337, MinGapSizeOverride: 700000},
 	// phoenix-liquidity / phoenix-stake: events are user-action-triggered
 	// (provide/withdraw liquidity, bond/unbond stake) — multi-hour
 	// quiet windows are normal protocol behaviour, not data loss.

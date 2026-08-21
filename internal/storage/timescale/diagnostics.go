@@ -448,6 +448,10 @@ func (s *Store) SourceEntryCounts(ctx context.Context) (map[string]int64, error)
 //	defindex_flows                 — defindex vault + strategy flows
 //	                                 (migration 0050, both layers);
 //	                                 literal source 'defindex'.
+//	defindex_fees                  — defindex dfees fee-distribution
+//	                                 entries (migration 0146); literal
+//	                                 source 'defindex' (summed WITH
+//	                                 defindex_flows).
 //	comet_liquidity                — Comet join/exit/deposit/withdraw;
 //	                                 literal source 'comet' (summed WITH
 //	                                 the comet swaps from `trades`).
@@ -532,6 +536,13 @@ func (s *Store) SeedSourceEntryCounts(ctx context.Context) (int64, error) {
             SELECT 'soroswap-router'    AS source, count(*) AS c FROM soroswap_router_swaps
             UNION ALL
             SELECT 'defindex'           AS source, count(*) AS c FROM defindex_flows
+            UNION ALL
+            -- defindex ALSO lands dfees fee-distribution entries in their own
+            -- table (migration 0146, W5.2) — one row per bumped DFeesEvent, a
+            -- DISJOINT event set from defindex_flows (one decoded event -> one
+            -- handler -> one table), so folding it keeps the seed's 'defindex'
+            -- total equal to the full bump total (the outer GROUP BY sums both).
+            SELECT 'defindex'           AS source, count(*) AS c FROM defindex_fees
             UNION ALL
             -- Per-source non-'trades' sinks whose 'entries' tally is bumped
             -- 1/event via pipeline/sink.go::bumpEntryCount — a NON-idempotent
