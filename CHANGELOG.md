@@ -15,6 +15,35 @@ against.
 
 ## [Unreleased]
 
+## [v0.39.1] — 2026-08-21
+
+Tested against Stellar protocol v23. No migrations.
+
+### Added
+- **`GET /v1/livez/lake`** — the lake-critical LB probe (ADR-0050 §7.3):
+  200 iff ClickHouse pings; 503 on failure or when no lake is wired
+  (fail-closed). Complements `/v1/readyz`'s deliberate CH-non-criticality
+  so a lake-dead instance can be pulled for lake routes without touching
+  pricing.
+- **SLO lake-guard test**: CI now fails if any SLO'd handler
+  (`/v1/price*`, `/v1/oracle/*`) reads a ClickHouse-backed field — the
+  "no SLO'd route touches the lake" invariant, enforced.
+
+### Changed
+- **Phoenix completeness reconcile is now STRICT per-ledger** — the
+  aggregate netting opt-out is retired (own-ledger attribution removed
+  the sweep-shift it absorbed; proven with 0 mismatched ledgers before
+  removal). A real drop can no longer net against a phantom.
+
+### Fixed
+- **Served-reader determinism**: `TradesInRange` gains the full ORDER BY
+  tiebreak (raw OHLC bars no longer depend on arbitrary same-timestamp
+  ordering); `account_movements` gains the `LIMIT 1 BY` read-time dedup
+  its sibling readers already had; `NetworkThroughput` derives its day
+  window and Partial flag from the data's tip close time instead of the
+  wall clock.
+
+
 ## [v0.39.0] — 2026-08-21
 
 Tested against Stellar protocol v23. Applies migration 0146 (additive —
