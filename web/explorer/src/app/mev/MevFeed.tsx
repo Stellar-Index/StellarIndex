@@ -99,6 +99,7 @@ export function MevFeed() {
       return env.data ?? [];
     },
     staleTime: 60_000,
+    refetchInterval: 30_000,
   });
 
   const rows = q.data ?? [];

@@ -1,6 +1,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
+import { useLedgerFollow } from '@/lib/live/hooks';
 
 import { Panel } from '@/components/reveal';
 import { AssetLink } from '@/components/AssetLink';
@@ -57,6 +58,8 @@ function pct(f: number | null): string {
 }
 
 export function PoolReserves({ pool }: { pool: string }) {
+  // Live (RT-2): refresh lending-pool reserves on each ledger close.
+  useLedgerFollow(['/v1/lending/pools/{pool}/reserves']);
   const q = useQuery<ReservesResp>({
     queryKey: ['/v1/lending/pools/{pool}/reserves', pool],
     retry: false,

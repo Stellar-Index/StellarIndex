@@ -33,6 +33,7 @@ export function OraclesView() {
       const arr = env.data ?? [];
       return arr.filter((s) => s.class === 'oracle').sort((a, b) => a.name.localeCompare(b.name));
     },
+    refetchInterval: 60_000,
   });
 
   const streams = useQuery<OracleStream[]>({
@@ -41,6 +42,7 @@ export function OraclesView() {
       const env = await apiGet<{ data: OracleStream[] }>('/v1/oracle/streams', {});
       return env.data ?? [];
     },
+    refetchInterval: 60_000,
   });
 
   const oracles = sources.data ?? [];

@@ -4,6 +4,8 @@ import Link from 'next/link';
 
 import { MarketChart } from '@/components/charts/MarketChart';
 import { useNativeUsdPrice } from '@/api/hooks';
+import { cn } from '@/lib/cn';
+import { usePriceFlash, useTipStream } from '@/lib/live/hooks';
 
 /**
  * HomeHeroChart — a featured XLM/USD OHLC+volume chart on the landing
@@ -14,6 +16,13 @@ import { useNativeUsdPrice } from '@/api/hooks';
  */
 export function HomeHeroChart() {
   const { price, change24hPct: change } = useNativeUsdPrice();
+  // Make the "live USD price" label honest (RT-2): overlay the tip-price
+  // stream on the build-time-baked initial and flash on each tick.
+  const tip = useTipStream('native');
+  const tipStr = tip?.data.data.price;
+  const livePrice =
+    tipStr != null && Number.isFinite(Number(tipStr)) ? Number(tipStr) : price;
+  const flash = usePriceFlash(tipStr);
 
   return (
     <section className="rounded-card border border-line bg-surface p-5 shadow-card">
@@ -23,9 +32,15 @@ export function HomeHeroChart() {
             XLM
           </Link>
           <span className="text-sm text-ink-muted">Stellar Lumens · live USD price</span>
-          {price != null && (
-            <span className="font-mono text-lg tabular-nums text-ink">
-              ${price >= 1 ? price.toFixed(4) : price.toFixed(6)}
+          {livePrice != null && (
+            <span
+              className={cn(
+                'font-mono text-lg tabular-nums text-ink',
+                flash === 'up' && 'flash-up',
+                flash === 'down' && 'flash-down',
+              )}
+            >
+              ${livePrice >= 1 ? livePrice.toFixed(4) : livePrice.toFixed(6)}
             </span>
           )}
           {change != null && (

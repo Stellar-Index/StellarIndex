@@ -66,6 +66,7 @@ export function NetworkView() {
     queryKey: ['/v1/network/stats'],
     queryFn: async () => (await apiGet<Envelope<NetworkStats>>('/v1/network/stats', {})).data,
     staleTime: 30_000,
+    refetchInterval: 60_000,
   });
 
   const ledgersQ = useQuery<LedgersPage>({

@@ -52,6 +52,7 @@ export function DexProtocolsTable() {
           return (b.trade_count_24h ?? 0) - (a.trade_count_24h ?? 0);
         });
     },
+    refetchInterval: 60_000,
   });
 
   const rows = q.data ?? [];

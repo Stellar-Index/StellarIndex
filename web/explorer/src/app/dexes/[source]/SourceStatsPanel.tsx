@@ -52,6 +52,7 @@ export function SourceStatsPanel({
       return env.data?.find((r) => r.name === source) ?? null;
     },
     staleTime: 60_000,
+    refetchInterval: 60_000,
   });
 
   const trades = data?.trade_count_24h ?? 0;

@@ -42,6 +42,7 @@ export function IngestThroughputChart() {
     queryFn: async () =>
       (await apiGet<Envelope<ThroughputResp>>('/v1/network/throughput', { window_days: 30 })).data,
     staleTime: 60_000,
+    refetchInterval: 60_000,
   });
 
   const buckets = q.data?.buckets ?? [];
