@@ -186,3 +186,35 @@ export function useLedgerFollow(
     void queryClient.invalidateQueries({ queryKey: JSON.parse(keyStr) as unknown[] });
   }, [streamLatest, queryClient, minIntervalMs, keyStr]);
 }
+
+/**
+ * useObservationsFollow — event-driven liveness for ONE pair's trade data.
+ * Subscribes to that pair's observations stream (`observations_update`) and
+ * invalidates `queryKey` whenever a new trade lands, coalesced to
+ * `minIntervalMs`. This makes a trade list refresh the instant the pair
+ * trades — more precise than a ledger-wide follow. Opens one SSE connection
+ * per pair, so use it on single-pair pages (not multi-pair boards) to respect
+ * the per-IP stream cap. Pass `asset: null` to disable.
+ */
+export function useObservationsFollow(
+  asset: string | null,
+  quote: string,
+  queryKey: readonly unknown[],
+  minIntervalMs = 3_000,
+): void {
+  const url = asset
+    ? `${API_BASE_URL}/v1/observations/stream?asset=${encodeURIComponent(asset)}&quote=${encodeURIComponent(quote)}`
+    : null;
+  const frame = useStreamJSON<unknown>(url, 'observations_update');
+  const queryClient = useQueryClient();
+  const lastRef = useRef(0);
+  const receivedAt = frame?.receivedAt;
+  const keyStr = JSON.stringify(queryKey);
+  useEffect(() => {
+    if (receivedAt == null) return;
+    const now = Date.now();
+    if (now - lastRef.current < minIntervalMs) return;
+    lastRef.current = now;
+    void queryClient.invalidateQueries({ queryKey: JSON.parse(keyStr) as unknown[] });
+  }, [receivedAt, queryClient, minIntervalMs, keyStr]);
+}

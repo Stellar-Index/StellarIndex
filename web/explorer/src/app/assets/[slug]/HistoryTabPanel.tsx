@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
 import { useHistory, type TradeRow } from '@/api/hooks';
+import { useObservationsFollow } from '@/lib/live/hooks';
 
 const DEFAULT_QUOTE = 'native';
 const HISTORY_LIMIT = 100;
@@ -23,6 +24,9 @@ const HISTORY_LIMIT = 100;
  */
 export function HistoryTabPanel({ assetID, decimals = 7 }: { assetID: string; decimals?: number }) {
   const history = useHistory(assetID, DEFAULT_QUOTE, HISTORY_LIMIT);
+  // Live tape (RT-2): refresh the instant this pair trades, event-driven off
+  // the observations stream (one connection — single pair, cap-safe).
+  useObservationsFollow(assetID, DEFAULT_QUOTE, ['/v1/history', assetID, DEFAULT_QUOTE]);
 
   if (history.isError) {
     return (
