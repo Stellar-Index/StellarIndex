@@ -271,15 +271,18 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			// events, so the prefilter is counts-identical. The gate is static
 			// (factory creation events predate the lake), so gatedPrefilter's
 			// walk is a no-op here — the throwaway just enumerates the seed.
-			newGatedDec:        func() gatedDecoder { return phoenix.NewDecoder() },
-			aggregateReconcile: "pre-upgrade (~51.02M–53.13M) 7-field swaps flush at sweep only when a later event ages the group out of the correlation buffer; the trade keeps its first-field ledger but the re-derive counts it at the sweep-trigger ledger — a per-ledger shift with the window total preserved. Aggregate absorbs the shift and accepts the CS-084 netting residual on this source; it does NOT replace the curated-set seed fix.",
-			// The sweep shift is bounded ABOVE by the pool-WASM upgrade at
-			// 53,134,167: past it every swap emits its full 8-field RawSwap in
-			// one event and keys 1:1, so netting is only needed for the
-			// pre-upgrade vintage. Confine it there and strict-per-ledger above
-			// (W1-flowcompleteness-3 / #15) so a real post-upgrade drop can't
-			// net away.
-			vintageBoundary: 53_134_167,
+			newGatedDec: func() gatedDecoder { return phoenix.NewDecoder() },
+			// aggregateReconcile RETIRED (2026-08-21): the eventLedgerCarrier
+			// own-ledger attribution (completeness.countLedger) counts each
+			// sweep-rescued 7-field-era trade at its OWN first-field ledger —
+			// exactly where the served row lives — so the per-ledger shift the
+			// netting existed to absorb no longer occurs. Proven strict before
+			// retiring: per-ledger own-ledger expectation vs served over
+			// [51,573,544, 64,055,537] = ZERO mismatched ledgers, totals
+			// 246,725 == 246,725 (post trades-surgery, 2026-08-21). Phoenix now
+			// reconciles strict per-ledger over its FULL range, closing the
+			// CS-084 netting residual this source carried (a real drop can no
+			// longer net against a phantom elsewhere in the window).
 			targets: []reconTarget{
 				{"trades", "source = 'phoenix'", []string{"phoenix.trade"}},
 				{"phoenix_liquidity", "", []string{"phoenix.liquidity"}},

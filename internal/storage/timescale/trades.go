@@ -1485,7 +1485,7 @@ func (s *Store) TradesInRange(ctx context.Context, p canonical.Pair, from, to ti
            AND quote_asset = $2
            AND ts         >= $3
            AND ts          < $4
-         ORDER BY ts DESC, ledger DESC
+         ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC, source DESC
          LIMIT $5
     `
 	rows, err := s.db.QueryContext(ctx, q,
