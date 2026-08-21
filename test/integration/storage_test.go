@@ -528,6 +528,22 @@ func applyMigrations(t *testing.T, dsn string) {
 	if err := m.Up(); err != nil {
 		t.Fatalf("migrate up: %v", err)
 	}
+	// Quiesce the CAGG refresh policies HERE, for every test container,
+	// not per-test: 12 of the 13 files that `CALL
+	// refresh_continuous_aggregate(...)` never called
+	// quiesceCAGGRefreshPolicies and raced the policy job TimescaleDB
+	// fires shortly after add_continuous_aggregate_policy — the 55P03
+	// "concurrent refresh" flake that failed TestAPI_EndToEnd +
+	// TestVWAPUSDFXResolver_BootstrapsWithoutUSDVolume on PR #121's CI
+	// (migration 0147 lengthened the chain enough to shift the timing
+	// into collision). Integration tests materialize every view by
+	// hand; a scheduled background refresh adds nothing they assert.
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("open for policy quiesce: %v", err)
+	}
+	defer db.Close()
+	quiesceCAGGRefreshPolicies(t, context.Background(), db)
 }
 
 // quiesceCAGGRefreshPolicies unschedules every continuous-aggregate

@@ -141,6 +141,12 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	if err := migrator.Up(); err != nil {
 		t.Fatalf("migrate up: %v", err)
 	}
+	// This test drives its own migrator (not applyMigrations), so it
+	// quiesces the freshly-created CAGG refresh policies itself before
+	// the manual refresh below — same 55P03 race as everywhere else.
+	// alter_job(scheduled=>false) keeps the job ROW, so the has-a-
+	// refresh-policy assertions below still hold.
+	quiesceCAGGRefreshPolicies(t, ctx, db)
 
 	// Verify trades hypertable exists.
 	assertHypertableExists(t, db, ctx, "trades")
