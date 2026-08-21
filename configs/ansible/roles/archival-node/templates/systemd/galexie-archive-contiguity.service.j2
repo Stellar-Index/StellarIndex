@@ -1,0 +1,31 @@
+# systemd service: galexie-archive partition-contiguity scan.
+#
+# Asserts the DR mirror's SHAPE: genesis partition + the declared
+# ARCHIVE_FROM tail, with no other holes and no overlaps. Complements
+# tip-lag (#31: the newest edge advances) and archive-fill (the pipe
+# runs) — this catches a partition deleted or corrupted in the MIDDLE,
+# which neither of those can see and which would otherwise surface at
+# restore time. Found necessary by the 2026-08-21 DR review (the
+# ratified plan had drifted from the bucket's real shape unnoticed).
+#
+# Lightweight: one `mc ls` of ~220 top-level partition dirs.
+#
+# Runs as root: uses the `local` mc alias in root's ~/.mc/config.json
+# (same as galexie-archive-fill.service / galexie-archive-tip-lag).
+
+[Unit]
+Description=Stellar Index — galexie-archive contiguity scan
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-contiguity.md
+After=minio.service
+Wants=minio.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/bin/galexie-archive-contiguity
+TimeoutStartSec=120
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

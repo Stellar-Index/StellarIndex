@@ -1,0 +1,23 @@
+# systemd timer: hourly galexie-archive contiguity scan.
+#
+# Hourly is deliberate: the failure classes (trim cutoff deleting a
+# live partition, manual mc rm, MinIO heal failure, overlapping
+# re-fill) are rare but this is a DR asset — an hour bounds how long
+# a hole can exist unnoticed, and the scan is one small listing.
+#
+# :26 off the :00/:30 marks and away from the tip-lag cadence
+# (:03,:08,…) — same fleet-collision rationale as cron-create's
+# avoid-collision rule.
+
+[Unit]
+Description=Hourly galexie-archive contiguity scan
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-contiguity.md
+
+[Timer]
+OnCalendar=*-*-* *:26:00 UTC
+RandomizedDelaySec=60
+Persistent=true
+Unit=galexie-archive-contiguity.service
+
+[Install]
+WantedBy=timers.target
