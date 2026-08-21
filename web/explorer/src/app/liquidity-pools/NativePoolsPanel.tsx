@@ -2,6 +2,7 @@
 
 import { Fragment, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useLedgerFollow } from '@/lib/live/hooks';
 
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
@@ -44,6 +45,8 @@ export function NativePoolsPanel() {
   const [input, setInput] = useState('');
   const [lookup, setLookup] = useState('');
 
+  // Live (RT-2): refresh pool reserves + depth on each ledger close.
+  useLedgerFollow(['/v1/liquidity-pools']);
   const q = useQuery<LiquidityPoolRow[]>({
     queryKey: ['/v1/liquidity-pools', lookup],
     queryFn: async () => {

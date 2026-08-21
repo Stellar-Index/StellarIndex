@@ -5,6 +5,7 @@
 // subscribe to ledger closes and tip-price ticks and re-render as
 // frames arrive, sharing one connection per endpoint across the tab.
 
+import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 
 import { API_BASE_URL } from '@/api/client';
@@ -146,4 +147,42 @@ export function usePriceFlash(price: string | null | undefined): 'up' | 'down' |
   }, [price]);
 
   return flash;
+}
+
+/** Default throttle for useLedgerFollow — ledgers close ~every 5s, but
+ * most panels serve CDN-cached or 1-min-aggregated data, so refetching
+ * on every close is wasteful. One refresh per 15s keeps the table
+ * visibly moving without hammering the API. */
+export const LEDGER_FOLLOW_REFRESH_MS = 15_000;
+
+/**
+ * useLedgerFollow — turn a static `useQuery` panel into a live one: on
+ * each new ledger close (one SSE connection shared tab-wide via the
+ * multiplexer), invalidate `queryKey`, throttled to at most once per
+ * `minIntervalMs`. This is the canonical, cheapest way to make any
+ * table/panel of on-chain data tick without a bespoke stream — it
+ * generalises the MarketsTable/LedgersTable follow pattern (RT-2).
+ *
+ * Pass the query-key PREFIX to invalidate (TanStack matches by prefix),
+ * e.g. `['/v1/liquidity-pools']` — it will refresh every query whose
+ * key starts with that, regardless of trailing params.
+ */
+export function useLedgerFollow(
+  queryKey: readonly unknown[],
+  minIntervalMs: number = LEDGER_FOLLOW_REFRESH_MS,
+): void {
+  const frame = useLedgerStream();
+  const queryClient = useQueryClient();
+  const lastRefetchRef = useRef(0);
+  const streamLatest = frame?.data.latest_ledger;
+  // Serialise the key to a stable primitive so a fresh array literal
+  // each render doesn't retrigger the effect; reconstruct inside.
+  const keyStr = JSON.stringify(queryKey);
+  useEffect(() => {
+    if (streamLatest == null) return;
+    const now = Date.now();
+    if (now - lastRefetchRef.current < minIntervalMs) return;
+    lastRefetchRef.current = now;
+    void queryClient.invalidateQueries({ queryKey: JSON.parse(keyStr) as unknown[] });
+  }, [streamLatest, queryClient, minIntervalMs, keyStr]);
 }

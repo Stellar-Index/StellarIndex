@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useLedgerFollow } from '@/lib/live/hooks';
 import Link from 'next/link';
 
 import { Panel } from '@/components/reveal';
@@ -27,6 +28,8 @@ export function PairsTable({
   const [cursor, setCursor] = useState<string>('');
   const [cursorStack, setCursorStack] = useState<string[]>([]);
 
+  // Live (RT-2): follow ledger closes so this venue's pairs + prices tick.
+  useLedgerFollow(['/v1/markets', source]);
   const q = useQuery<{ markets: Market[]; nextCursor?: string }>({
     queryKey: ['/v1/markets', source, order, cursor],
     queryFn: async () => {

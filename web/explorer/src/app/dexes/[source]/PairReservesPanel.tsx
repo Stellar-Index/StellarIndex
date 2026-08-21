@@ -2,6 +2,7 @@
 
 import { Fragment, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useLedgerFollow } from '@/lib/live/hooks';
 import Link from 'next/link';
 
 import { Panel } from '@/components/reveal';
@@ -81,6 +82,8 @@ function midPriceLabel(mid: string | null): string {
 export function PairReservesPanel() {
   const [expanded, setExpanded] = useState<string | null>(null);
 
+  // Live (RT-2): refresh pool reserves + depth on each ledger close.
+  useLedgerFollow(['/v1/pools/reserves']);
   const q = useQuery<PoolReservesRow[]>({
     queryKey: ['/v1/pools/reserves'],
     queryFn: async () => {
