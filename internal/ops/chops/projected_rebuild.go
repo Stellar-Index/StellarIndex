@@ -504,6 +504,21 @@ func RunProjectedRebuild(ctx context.Context, opts ProjectedRebuildOptions) (Pro
 	if numWorkers < 1 {
 		numWorkers = 1
 	}
+	// A correlation-buffer decoder (detected via the same EvictedOrphans
+	// optional interface the dispatcher uses) correlates events ACROSS
+	// the stream: a group is emitted only when a later event completes
+	// or sweeps it. Concurrent workers claim windows out of ledger
+	// order, which starves those sweep triggers and silently DROPS
+	// groups — measured on the phoenix 7-field era (2026-08-21):
+	// workers=4 lost ~650 of 5,154 era trades, workers=1 lost none.
+	// Clamp rather than trust every operator to know this.
+	if numWorkers > 1 {
+		if _, stateful := opts.Source.Decoder.(interface{ EvictedOrphans() int }); stateful {
+			logger.Warn("projected-rebuild: workers clamped to 1 — this source's decoder correlates events across the stream; out-of-order windows silently drop sweep-emitted groups",
+				"source", opts.Source.Name, "requested_workers", numWorkers)
+			numWorkers = 1
+		}
+	}
 
 	plan := buildWindowPlan(opts.From, opts.To, windowSize)
 	result := ProjectedRebuildResult{WindowsPlanned: len(plan), KindCounts: map[string]int64{}}
