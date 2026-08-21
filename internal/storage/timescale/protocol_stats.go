@@ -31,7 +31,8 @@ import (
 //     added into 'phoenix' on top of its trades leg.
 //   - comet_liquidity (ledger_close_time) — added into 'comet'.
 //   - soroswap_skim_events (ledger_close_time) — added into 'soroswap'.
-//   - defindex_flows (ledger_close_time) — 'defindex'.
+//   - defindex_flows + defindex_fees (ledger_close_time) — summed as
+//     'defindex'.
 //   - cctp_events / rozo_events (ts) — 'cctp' / 'rozo'.
 //   - soroswap_router_swaps (ledger_close_time) — 'soroswap-router'.
 //   - oracle_updates (ts, GROUP BY source) — reflector-dex /
@@ -77,6 +78,9 @@ const countRecentEventsQuery = `
 	 WHERE ledger_close_time >= now() - interval '24 hours'
 	UNION ALL
 	SELECT 'defindex', count(*) FROM defindex_flows
+	 WHERE ledger_close_time >= now() - interval '24 hours'
+	UNION ALL
+	SELECT 'defindex', count(*) FROM defindex_fees
 	 WHERE ledger_close_time >= now() - interval '24 hours'
 	UNION ALL
 	SELECT 'cctp', count(*) FROM cctp_events

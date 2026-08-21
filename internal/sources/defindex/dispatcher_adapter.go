@@ -87,10 +87,11 @@ func (d *Decoder) Matches(ev events.Event) bool {
 }
 
 // Decode implements [dispatcher.Decoder]. Emits one Event per
-// matched flow — Event (strategy layer) or VaultEvent (vault
-// wrapper layer) — for the deposit/withdraw events we model. Every
-// OTHER recognised topic (strategy harvest; vault rebalance + the
-// eight admin events; factory `n_fee`) drops cleanly with (nil, nil):
+// matched flow — Event (strategy layer), VaultEvent (vault wrapper
+// layer), or DFeesEvent (one per dfees distributed_fees entry, W5.2)
+// — for the events we model. Every OTHER recognised topic (vault
+// rebalance + the seven remaining admin events; factory `n_fee`)
+// drops cleanly with (nil, nil):
 // "match, nothing to emit". Returning an ERROR is a "skip +
 // count-as-decode-error" signal, reserved for genuinely malformed
 // deposit/withdraw bodies (and, as of ROADMAP #7, genuinely malformed
@@ -152,15 +153,36 @@ func (d *Decoder) decodeStrategy(ev *events.Event, kind string) ([]consumer.Even
 	return []consumer.Event{Event{Flow: flow}}, nil
 }
 
-// decodeVault handles a classified DeFindexVault event. Only
-// deposit/withdraw model a VaultFlow; `rebalance` and the eight admin
-// topics (rescue / paused / unpaused / nreceiver / nmanager /
-// nemanager / rbmanager / dfees) are recognised but NOT modelled —
-// their bodies (including the four-way rebalance_method payloads) have
-// never been observed on-chain, so they drop cleanly. The rebalance
-// discriminator scaffolding lives in [DecodeRebalanceMethod]; the
-// per-method payload decode is blocked on real samples (BACKLOG #58).
+// decodeVault handles a classified DeFindexVault event.
+// deposit/withdraw model a VaultFlow; dfees models per-asset [DFee]
+// entries (W5.2 — body shape proven from real lake blobs, one
+// DFeesEvent per distributed_fees Vec entry so reconcile
+// expected-counts equal served rows). `rebalance` and the seven other
+// admin topics (rescue / paused / unpaused / nreceiver / nmanager /
+// nemanager / rbmanager, plus n_wasm) remain recognised but NOT
+// modelled — their bodies have never been observed on-chain, so they
+// drop cleanly. The rebalance discriminator scaffolding lives in
+// [DecodeRebalanceMethod]; the per-method payload decode is blocked on
+// real samples (BACKLOG #58).
 func (d *Decoder) decodeVault(ev *events.Event, kind string) ([]consumer.Event, error) {
+	if kind == EventDFees {
+		fees, err := decodeDFees(ev)
+		if err != nil {
+			return nil, err
+		}
+		if len(fees) == 0 {
+			// Empty distributed_fees Vec — a real observed shape (a
+			// distribution ran with nothing to distribute): recognised,
+			// zero rows, NOT an error and NOT ErrMalformedPayload.
+			return nil, nil
+		}
+		out := make([]consumer.Event, 0, len(fees))
+		for i := range fees {
+			fees[i].EventIndex = uint32(ev.EventIndex) //nolint:gosec // event index is small, non-negative
+			out = append(out, DFeesEvent{Fee: fees[i]})
+		}
+		return out, nil
+	}
 	if kind != EventDeposit && kind != EventWithdraw {
 		return nil, nil // rebalance / admin (unmodelled)
 	}

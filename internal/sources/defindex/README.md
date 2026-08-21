@@ -96,6 +96,29 @@ layers.
    product-taxonomy decision deferred so registry / genesis /
    status-page keys stay stable for now.
 
+## `dfees` — MODELLED (W5.2, 2026-08)
+
+The vault-layer `("DeFindexVault","dfees")` protocol-fee-distribution
+event graduated from recognised-only to fully modelled once its body
+shape was captured and proven from live r1-lake blobs (decoded with
+`internal/scval` — the do-not-invent unblock, same path `harvest`
+took):
+
+    Map{ distributed_fees: Vec[ (token Address<contract>, amount i128) ] }
+
+PER-ASSET (fee token contracts — captured samples include USDC's SAC),
+NOT per-recipient; 0..N entries, and an EMPTY Vec is a real observed
+shape (a distribution ran with nothing to distribute → zero events, no
+error). Lake facts at capture: 12,785 events on 27 vault contracts,
+ledgers 60,903,337 → tip, still firing live — every sample in the SAME
+op as the vault deposit/withdraw flow (op_index 0, event_index 5),
+which is why dfees lands in its own `defindex_fees` table (migration
+0146, `fee_index` PK discriminator for the per-entry fan-out) instead
+of a third `defindex_flows` layer. The decoder (`decodeDFees`) emits
+ONE `DFeesEvent` per Vec entry so the ADR-0033 projection reconcile
+counts 1:1; kind `defindex.vault.dfees`. Historical fill:
+`stellarindex-ops projector-replay -source defindex` (ADR-0034).
+
 ## `n_wasm` — HANDLED as classify-only (ROADMAP #89, 2026-07-10)
 
 A read-only lake topic census against the gated vault set found 2

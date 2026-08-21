@@ -860,10 +860,12 @@ func TestDecode_strategyHarvestDecodes(t *testing.T) {
 }
 
 // TestDecode_vaultRebalanceAndAdminRecognisedEmit0Events pins the
-// vault-layer clean-drop contract across the rebalance topic and all
-// eight admin topics: each is recognised (Matches true) and emits
-// nothing without erroring. Their bodies are unmodelled (blocked on
-// real on-chain samples), so they must not count as decode errors.
+// vault-layer clean-drop contract across the rebalance topic and the
+// seven remaining admin topics: each is recognised (Matches true) and
+// emits nothing without erroring. Their bodies are unmodelled (blocked
+// on real on-chain samples), so they must not count as decode errors.
+// `dfees` graduated OUT of this set (W5.2 — body shape proven from
+// real lake blobs, now fully modelled; see TestDecode_dfees*).
 func TestDecode_vaultRebalanceAndAdminRecognisedEmit0Events(t *testing.T) {
 	t.Parallel()
 	d := NewDecoder()
@@ -876,7 +878,6 @@ func TestDecode_vaultRebalanceAndAdminRecognisedEmit0Events(t *testing.T) {
 		"nmanager":  TopicSymbolNManager,
 		"nemanager": TopicSymbolNEManager,
 		"rbmanager": TopicSymbolRBManager,
-		"dfees":     TopicSymbolDFees,
 	}
 	for name, sym := range symbols {
 		t.Run(name, func(t *testing.T) {
@@ -1042,5 +1043,228 @@ func TestDecoder_strategyHarvestEmitsFlow(t *testing.T) {
 	}
 	if fe.Flow.Direction != DirectionHarvest {
 		t.Errorf("Direction = %q, want harvest", fe.Flow.Direction)
+	}
+}
+
+// ─── dfees — modelled (W5.2, 2026-08) ─────────────────────────────
+//
+// Real lake bytes: each dfeesBody* constant below is one full
+// ("DeFindexVault","dfees") event body (data XDR ScVal, base64 as the
+// r1 ClickHouse lake stores it), captured from live r1-lake blobs and
+// decoded with internal/scval — the proven shape this decoder was
+// blocked on (do-not-invent discipline; same path harvest went
+// through). Shape:
+//
+//	Map{ distributed_fees: Vec[ (token Address<contract>, amount i128) ] }
+//
+// PER-ASSET (token contracts — dfeesBodyUSDC's token is USDC's SAC),
+// NOT per-recipient. Lake facts at capture: 12,785 events on 27 vault
+// contracts, ledgers 60,903,337 → tip; every sample fires in the same
+// op as the vault deposit/withdraw flow (op_index 0, event_index 5).
+const (
+	// One entry: (CD6M4R23…BCIS, 37).
+	dfeesBodyOneEntry37 = "AAAAEQAAAAEAAAABAAAADwAAABBkaXN0cmlidXRlZF9mZWVzAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEgAAAAH8zkdb1oOBY0ttmf48gYAh7cgbHRK0bXzWu05molskIAAAAAoAAAAAAAAAAAAAAAAAAAAl"
+	// One entry: (CDTKPWPL…BQLV, 64).
+	dfeesBodyOneEntry64 = "AAAAEQAAAAEAAAABAAAADwAAABBkaXN0cmlidXRlZF9mZWVzAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEgAAAAHmp9nrdSMAakaap0g60RByR0Q8DYLmJ2PeZwhIxOl8kAAAAAoAAAAAAAAAAAAAAAAAAABA"
+	// One entry: (CCW67TSZ…MI75 — USDC's SAC, 7686).
+	dfeesBodyUSDC = "AAAAEQAAAAEAAAABAAAADwAAABBkaXN0cmlidXRlZF9mZWVzAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEgAAAAGt785ZruUpaPdgYdSUwlJbdWWfpClqZfSZ7ynlZHfklgAAAAoAAAAAAAAAAAAAAAAAAB4G"
+	// EMPTY distributed_fees Vec — REAL observed shape: a distribution
+	// ran with nothing to distribute. Must decode to zero events with
+	// NO error (count-consistent with the completeness re-derive).
+	dfeesBodyEmptyVec = "AAAAEQAAAAEAAAABAAAADwAAABBkaXN0cmlidXRlZF9mZWVzAAAAEAAAAAEAAAAA"
+)
+
+// TestDecode_dfeesRealLakeBytes drives the four REAL captured dfees
+// bodies through the production seams (Matches gate + Decode) and pins
+// the exact decoded values — token strkey, amount, kind, indices. This
+// is the redness proof for W5.2: on the pre-fix decoder every one of
+// these events clean-dropped to (nil, nil), so the len(out)=1
+// assertions fail there.
+func TestDecode_dfeesRealLakeBytes(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name       string
+		body       string
+		wantToken  string
+		wantAmount string
+	}{
+		{"one entry, amount 37", dfeesBodyOneEntry37, "CD6M4R2322BYCY2LNWM74PEBQAQ63SA3DUJLI3L4225U4ZVCLMSCBCIS", "37"},
+		{"one entry, amount 64", dfeesBodyOneEntry64, "CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV", "64"},
+		{"USDC SAC, amount 7686", dfeesBodyUSDC, "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75", "7686"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := NewDecoder()
+			ev := events.Event{
+				Type:           "contract",
+				ContractID:     MainnetVaults[0],
+				Ledger:         60_903_337,
+				LedgerClosedAt: "2026-08-01T00:00:00Z",
+				TxHash:         "dfeestx",
+				OperationIndex: 0,
+				EventIndex:     5, // every captured sample: same-op as the vault flow
+				Topic:          []string{TopicPrefixVault, TopicSymbolDFees},
+				Value:          tc.body,
+			}
+			if !d.Matches(ev) {
+				t.Fatal("Matches(vault dfees) = false, want true (curated vault)")
+			}
+			out, err := d.Decode(ev)
+			if err != nil {
+				t.Fatalf("Decode(dfees) err = %v, want decoded fee entries", err)
+			}
+			if len(out) != 1 {
+				t.Fatalf("Decode(dfees) emitted %d events, want 1 (one per distributed_fees entry)", len(out))
+			}
+			fe, ok := out[0].(DFeesEvent)
+			if !ok {
+				t.Fatalf("emitted %T, want defindex.DFeesEvent", out[0])
+			}
+			if got, want := fe.EventKind(), "defindex.vault.dfees"; got != want {
+				t.Errorf("EventKind = %q, want %q", got, want)
+			}
+			if fe.Fee.Token != tc.wantToken {
+				t.Errorf("Token = %q, want %q", fe.Fee.Token, tc.wantToken)
+			}
+			if got := fe.Fee.Amount.String(); got != tc.wantAmount {
+				t.Errorf("Amount = %q, want %q (no truncation, ADR-0003)", got, tc.wantAmount)
+			}
+			if fe.Fee.FeeIndex != 0 {
+				t.Errorf("FeeIndex = %d, want 0", fe.Fee.FeeIndex)
+			}
+			if fe.Fee.EventIndex != 5 {
+				t.Errorf("EventIndex = %d, want 5 (propagated from the event)", fe.Fee.EventIndex)
+			}
+			if fe.Fee.Vault != MainnetVaults[0] || fe.Fee.Ledger != 60_903_337 ||
+				fe.Fee.OpIndex != 0 || fe.Fee.TxHash != "dfeestx" {
+				t.Errorf("header fields not preserved: %+v", fe.Fee)
+			}
+		})
+	}
+}
+
+// TestDecode_dfeesEmptyVecEmitsZeroEventsNoError pins the empty-Vec
+// contract on the REAL captured empty-vec bytes: recognised, zero
+// events, nil error — NOT ErrMalformedPayload. This keeps live decode
+// and the ADR-0033 completeness re-derive count-consistent (both emit
+// 0 outputs for this event).
+func TestDecode_dfeesEmptyVecEmitsZeroEventsNoError(t *testing.T) {
+	t.Parallel()
+	d := NewDecoder()
+	ev := events.Event{
+		Type:           "contract",
+		ContractID:     MainnetVaults[0],
+		Ledger:         60_903_337,
+		LedgerClosedAt: "2026-08-01T00:00:00Z",
+		TxHash:         "dfeestx-empty",
+		Topic:          []string{TopicPrefixVault, TopicSymbolDFees},
+		Value:          dfeesBodyEmptyVec,
+	}
+	if !d.Matches(ev) {
+		t.Fatal("Matches(vault dfees) = false, want true")
+	}
+	out, err := d.Decode(ev)
+	if err != nil {
+		t.Errorf("Decode(empty dfees) err = %v, want nil (real observed shape)", err)
+	}
+	if len(out) != 0 {
+		t.Errorf("Decode(empty dfees) emitted %d events, want 0", len(out))
+	}
+}
+
+// TestDecode_dfeesFeeIndexOrdering proves the per-entry fan-out order
+// with a synthetic TWO-entry Vec (built with the same SCVal builders
+// as the other synthetic tests): entry i becomes the event with
+// FeeIndex = i, tokens/amounts in Vec order.
+func TestDecode_dfeesFeeIndexOrdering(t *testing.T) {
+	t.Parallel()
+	d := NewDecoder()
+	ev := events.Event{
+		ContractID:     MainnetVaults[0],
+		Ledger:         61_000_000,
+		LedgerClosedAt: "2026-08-02T00:00:00Z",
+		TxHash:         "dfeestx-two",
+		EventIndex:     5,
+		Topic:          []string{TopicPrefixVault, TopicSymbolDFees},
+		Value: mustB64(t, mapSCVal(t,
+			mapEntry(t, "distributed_fees", vecSCVal(t,
+				vecSCVal(t, addrSCVal(makeContractAddress(t, 0xA1)), i128SCVal(big.NewInt(11))),
+				vecSCVal(t, addrSCVal(makeContractAddress(t, 0xB2)), i128SCVal(big.NewInt(22))),
+			)),
+		)),
+	}
+	out, err := d.Decode(ev)
+	if err != nil {
+		t.Fatalf("Decode(two-entry dfees): %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("emitted %d events, want 2 (one per entry)", len(out))
+	}
+	for i, want := range []string{"11", "22"} {
+		fe, ok := out[i].(DFeesEvent)
+		if !ok {
+			t.Fatalf("out[%d] is %T, want defindex.DFeesEvent", i, out[i])
+		}
+		if fe.Fee.FeeIndex != i {
+			t.Errorf("out[%d].FeeIndex = %d, want %d (Vec position)", i, fe.Fee.FeeIndex, i)
+		}
+		if got := fe.Fee.Amount.String(); got != want {
+			t.Errorf("out[%d].Amount = %q, want %q", i, got, want)
+		}
+		if fe.Fee.Token == "" || fe.Fee.Token[0] != 'C' {
+			t.Errorf("out[%d].Token = %q, want a C-strkey token contract", i, fe.Fee.Token)
+		}
+		if fe.Fee.EventIndex != 5 {
+			t.Errorf("out[%d].EventIndex = %d, want 5", i, fe.Fee.EventIndex)
+		}
+	}
+	// Distinct tokens must stay attached to their own amounts.
+	if a, b := out[0].(DFeesEvent).Fee.Token, out[1].(DFeesEvent).Fee.Token; a == b {
+		t.Errorf("both entries decoded the same token %q — per-entry pairing broken", a)
+	}
+}
+
+// TestDecode_dfeesMalformedBodyErrors pins fail-loud (not silent-drop)
+// for a dfees body that doesn't match the PROVEN schema — unlike the
+// unmodelled admin topics, a broken dfees body is a genuine decode
+// error (the harvest/create policy).
+func TestDecode_dfeesMalformedBodyErrors(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"map missing distributed_fees", mustB64(t, mapSCVal(t,
+			mapEntry(t, "not_the_field", vecSCVal(t)),
+		))},
+		{"distributed_fees not a Vec", mustB64(t, mapSCVal(t,
+			mapEntry(t, "distributed_fees", i128SCVal(big.NewInt(7))),
+		))},
+		{"entry not a 2-tuple", mustB64(t, mapSCVal(t,
+			mapEntry(t, "distributed_fees", vecSCVal(t,
+				vecSCVal(t, i128SCVal(big.NewInt(1))),
+			)),
+		))},
+		{"entry token not an Address", mustB64(t, mapSCVal(t,
+			mapEntry(t, "distributed_fees", vecSCVal(t,
+				vecSCVal(t, i128SCVal(big.NewInt(1)), i128SCVal(big.NewInt(2))),
+			)),
+		))},
+		{"body not a Map at all", mustB64(t, i128SCVal(big.NewInt(1)))},
+	}
+	d := NewDecoder()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ev := events.Event{
+				ContractID:     MainnetVaults[0],
+				LedgerClosedAt: "2026-08-02T00:00:00Z",
+				Topic:          []string{TopicPrefixVault, TopicSymbolDFees},
+				Value:          tc.body,
+			}
+			if _, err := d.Decode(ev); !errors.Is(err, ErrMalformedPayload) {
+				t.Errorf("err = %v, want ErrMalformedPayload", err)
+			}
+		})
 	}
 }

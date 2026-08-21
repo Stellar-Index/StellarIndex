@@ -47,12 +47,13 @@ func classify(e *events.Event) string {
 //	topic[0] = String("DeFindexVault")     — pre-encoded, byte-equal
 //	topic[1] = Symbol("deposit"|"withdraw"|<governance/admin>)
 //
-// Per the EVERY-event policy: classifies all 11 vault-layer topic[1]
+// Per the EVERY-event policy: classifies all 12 vault-layer topic[1]
 // symbols enumerated by the upstream contract (audit-2026-05-14 §
-// "Topic structure"). Only deposit + withdraw drive a VaultFlow
-// today; the other 9 are governance / admin / multiplexed-rebalance
-// events with no decoder (yet) but recognising them satisfies the
-// closed-set completeness requirement before flipping BackfillSafe.
+// "Topic structure" + the n_wasm census). deposit + withdraw drive a
+// VaultFlow and dfees drives per-entry DFees (W5.2); the other 9 are
+// governance / admin / multiplexed-rebalance events with no decoder
+// (yet) but recognising them satisfies the closed-set completeness
+// requirement before flipping BackfillSafe.
 func classifyVault(e *events.Event) string {
 	if len(e.Topic) < 2 {
 		return ""
@@ -295,6 +296,74 @@ func decodeVaultFlow(e *events.Event, kind string) (VaultFlow, error) {
 	}
 
 	return flow, nil
+}
+
+// decodeDFees converts one classified ("DeFindexVault","dfees") event
+// into its per-asset [DFee] entries — one per distributed_fees Vec
+// element, FeeIndex = position.
+//
+// Body shape (PROVEN from live r1-lake blobs, 2026-08 — decoded with
+// internal/scval, never invented; see [DFee] for the lake facts):
+//
+//	Map{ distributed_fees: Vec[ (token Address<contract>, amount i128) ] }
+//
+// The tuple is Soroban's Vec-encoded 2-tuple (scval.AsTupleN). An
+// EMPTY distributed_fees Vec is a real observed shape — a distribution
+// ran with nothing to distribute — and yields ZERO entries with NO
+// error, keeping live-decode and the completeness re-derive
+// count-consistent (both emit 0 outputs). Field pulled by name
+// (decode-by-name per contract-schema-evolution.md). A body that
+// doesn't match this proven schema is ErrMalformedPayload — fail loud,
+// never silent-drop.
+func decodeDFees(e *events.Event) ([]DFee, error) {
+	closedAt, err := e.EventClosedAt()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrMalformedPayload, err)
+	}
+
+	body, err := scval.Parse(e.Value)
+	if err != nil {
+		return nil, fmt.Errorf("%w: parse dfees body: %w", ErrMalformedPayload, err)
+	}
+	entries, err := scval.AsMap(body)
+	if err != nil {
+		return nil, fmt.Errorf("%w: dfees body not a Map: %w", ErrMalformedPayload, err)
+	}
+	feesSv, err := scval.MustMapField(entries, "distributed_fees")
+	if err != nil {
+		return nil, fmt.Errorf("%w: dfees.distributed_fees: %w", ErrMalformedPayload, err)
+	}
+	elems, err := scval.AsVec(feesSv)
+	if err != nil {
+		return nil, fmt.Errorf("%w: dfees.distributed_fees not a Vec: %w", ErrMalformedPayload, err)
+	}
+
+	fees := make([]DFee, 0, len(elems))
+	for i, sv := range elems {
+		pair, err := scval.AsTupleN(sv, 2)
+		if err != nil {
+			return nil, fmt.Errorf("%w: dfees.distributed_fees[%d]: %w", ErrMalformedPayload, i, err)
+		}
+		token, err := scval.AsAddressStrkey(pair[0])
+		if err != nil {
+			return nil, fmt.Errorf("%w: dfees.distributed_fees[%d].token: %w", ErrMalformedPayload, i, err)
+		}
+		amount, err := scval.AsAmountFromI128(pair[1])
+		if err != nil {
+			return nil, fmt.Errorf("%w: dfees.distributed_fees[%d].amount: %w", ErrMalformedPayload, i, err)
+		}
+		fees = append(fees, DFee{
+			Vault:    e.ContractID,
+			Ledger:   e.Ledger,
+			ClosedAt: closedAt,
+			TxHash:   e.TxHash,
+			OpIndex:  e.OperationIndex,
+			FeeIndex: i,
+			Token:    token,
+			Amount:   amount,
+		})
+	}
+	return fees, nil
 }
 
 // DecodeRebalanceMethod extracts the `rebalance_method` discriminator

@@ -41,7 +41,7 @@ var protocolRowTables = []string{
 	"comet_liquidity",
 	"soroswap_skim_events", "soroswap_router_swaps",
 	"cctp_events", "rozo_events",
-	"defindex_flows",
+	"defindex_flows", "defindex_fees",
 	"sep41_supply_events", "sep41_transfers",
 	"credit_positions", "credit_statements", "credit_settlements", "credit_events",
 }
