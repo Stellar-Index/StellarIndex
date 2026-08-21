@@ -98,6 +98,7 @@ groups:
           team: stellarindex
           component: completeness
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/recognition-unattributed-jump.md
           summary: "Unattributed recognition shapes jumped by {{ $value | printf `%.0f` }} in 2 days"
           description: |
             stellarindex_recognition_unattributed_shapes rose by {{ $value | printf `%.0f` }}
@@ -107,6 +108,8 @@ groups:
             drop) and into the unattributed census. Run `stellarindex-ops ch-recognition` and
             diff the top shapes against the enabled-source contract registries
             (protocol_contracts / GatedRegistryOptions).
+
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/recognition-unattributed-jump.md
 
       # A TWAP continuous aggregate is emptied-pending-refresh: a migration
       # recreated it WITH NO DATA (0081/0115/0126) and the MANUAL
