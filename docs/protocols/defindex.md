@@ -125,7 +125,9 @@ SEP-41 `burn` events from them) — ~36% of vaults were invisible to
 > `topic_0_sym = ''` — remember `topic_0_sym` is EMPTY for String-typed
 > topics like `"DeFindexVault"`, NOT just Symbol-typed ones): **all 19
 > now emit real `("DeFindexVault","deposit"|"withdraw")` events** (plus
-> `rebalance`/`rescue`/`dfees`/`nmanager` admin topics on some), decoded
+> `rebalance`/`rescue`/`nmanager` admin topics on some; `dfees` is MODELLED
+> as of v0.39.0 — one `defindex_fees` row per distributed-fee token, see
+> migration 0146), decoded
 > by base64-XDR-verified sample bytes against `TopicPrefixVault` +
 > `TopicSymbolDeposit`/`TopicSymbolWithdraw`. All 19 are already members
 > of `defindex.MainnetVaults` (the curated gate — confirmed via grep) and
