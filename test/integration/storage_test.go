@@ -490,6 +490,22 @@ func startTimescale(t *testing.T, ctx context.Context) string {
 		tcpostgres.WithDatabase("stellarindex"),
 		tcpostgres.WithUsername("stellarindex"),
 		tcpostgres.WithPassword("stellarindex-test"),
+		// ZERO background workers — the migrations_test.go fix
+		// (2026-08-13) mirrored here 2026-08-22 after main went red on
+		// the identical deadlock through THIS bootstrap:
+		// TestTradeInsertOutcome's `migrate up` hit "deadlock detected"
+		// in 0126's DROP MATERIALIZED VIEW because a CAGG refresh
+		// policy job (created by 0081/0115 earlier in the same chain)
+		// was running concurrently. With 0147 the chain carries a
+		// second full recreate, doubling the DROP windows — which is
+		// why the flake started firing the ci-health tripwire. Tests
+		// materialize every CAGG by hand (and applyMigrations
+		// additionally unschedules the jobs post-chain), so no test
+		// here needs a background worker; policies remain ATTACHED
+		// (metadata) for anything that asserts them.
+		// APPEND to the module's own Cmd — replacing it wholesale
+		// makes the container exit 1 (see migrations_test.go).
+		testcontainers.WithCmdArgs("-c", "timescaledb.max_background_workers=0"),
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).WithStartupTimeout(60*time.Second),
@@ -512,6 +528,17 @@ func startTimescale(t *testing.T, ctx context.Context) string {
 	defer db.Close()
 	if _, err := db.ExecContext(ctx, "CREATE EXTENSION IF NOT EXISTS timescaledb"); err != nil {
 		t.Fatalf("create extension: %v", err)
+	}
+	// Prove the zero-background-workers setting took effect (same guard
+	// as migrations_test.go): a silently-unapplied Cmd override would
+	// look like a fix while leaving the migrate-up deadlock race live.
+	var workers string
+	if err := db.QueryRowContext(ctx, "SHOW timescaledb.max_background_workers").Scan(&workers); err != nil {
+		t.Fatalf("read timescaledb.max_background_workers: %v", err)
+	}
+	if workers != "0" {
+		t.Fatalf("timescaledb.max_background_workers = %q, want \"0\" — the container Cmd override did not apply, "+
+			"so policy jobs can still deadlock against the migration chain's DROPs", workers)
 	}
 	return dsn
 }
