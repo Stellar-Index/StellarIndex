@@ -102,6 +102,55 @@ groups:
             the service's last journal entries; verify the script
             can read both MinIO buckets via the `local` mc alias.
 
+      # DR-asset shape guard (2026-08-21 DR review): tip-lag proves the
+      # newest edge advances; this proves the MIDDLE is intact. The scan
+      # declares the expected coverage (genesis partition + the
+      # ARCHIVE_FROM tail, with the capacity-trim window as the ONLY
+      # permitted hole) and counts every other discontinuity or overlap.
+      # A partition deleted by a bad trim cutoff, a manual mc rm, or a
+      # MinIO heal failure would otherwise surface at RESTORE time —
+      # the worst possible moment for the mirror the off-site DR copy
+      # is pulled from (docs/architecture/multi-region-ha.md §5).
+      - alert: stellarindex_galexie_archive_gap
+        expr: galexie_archive_unexpected_gaps > 0
+        for: 1h
+        labels:
+          severity: page
+          team: stellarindex
+          component: archive
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-contiguity.md
+          summary: "galexie-archive has {{ $value }} unexpected partition gap(s)/overlap(s)"
+          description: |
+            galexie_archive_unexpected_gaps = {{ $value }} — the durable
+            mirror's partition coverage no longer matches its declared
+            shape (genesis [0,63999] + ARCHIVE_FROM→tip, capacity-trim
+            middle excluded). Either a partition was deleted/corrupted or
+            a re-fill wrote an overlapping range. Do NOT let the next
+            trim run before diagnosing. Enumerate with
+            `mc ls local/galexie-archive/` and compare against the
+            declared trim; recover a lost partition from
+            aws-public-blockchain per the runbook.
+
+      - alert: stellarindex_galexie_archive_contiguity_silent
+        # The scan itself is the canary; if its timer breaks, the shape
+        # guard is blind (the tip-lag stale alert pattern, same class).
+        expr: absent_over_time(galexie_archive_unexpected_gaps[3h])
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: archive
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-contiguity.md
+          summary: "galexie-archive contiguity scan stopped emitting"
+          description: |
+            galexie_archive_unexpected_gaps has been absent >3h (the
+            timer fires hourly). Check
+            `systemctl status galexie-archive-contiguity.timer` + the
+            service journal; verify the `local` mc alias can list the
+            bucket.
+
       - alert: stellarindex_galexie_catchup_refused
         # 2026-07-05: the captive core wedged with 'invalid local state'
         # and refused catchup for 11 hours while the lake froze — the

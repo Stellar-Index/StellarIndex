@@ -218,6 +218,8 @@ chain-link locally. See [archive-completeness.md](archive-completeness.md).
 | `stellarindex_galexie_archive_tip_lag_high` | `galexie_archive_tip_lag_ledgers` (archive newest vs live newest) | > 5,000 for 30 m | P3 | [galexie-archive-tip-lag](runbooks/galexie-archive-tip-lag.md) |
 | `stellarindex_galexie_archive_tip_lag_severe` | same | > 50,000 for 30 m | **P1** | [galexie-archive-tip-lag](runbooks/galexie-archive-tip-lag.md) |
 | `stellarindex_galexie_archive_tip_lag_metric_stale` | `time() - galexie_archive_tip_lag_updated_seconds` | > 30 m for 15 m | P3 | [galexie-archive-tip-lag](runbooks/galexie-archive-tip-lag.md) |
+| `stellarindex_galexie_archive_gap` | `galexie_archive_unexpected_gaps` — partition-level holes/overlaps in the DR mirror that are NOT the declared capacity trim (tip-lag proves the newest edge; this proves the middle) | > 0 for 1 h | **P1** | [galexie-archive-contiguity](runbooks/galexie-archive-contiguity.md) |
+| `stellarindex_galexie_archive_contiguity_silent` | `absent_over_time(galexie_archive_unexpected_gaps[3h])` | for 15 m (hourly scan dark) | P3 | [galexie-archive-contiguity](runbooks/galexie-archive-contiguity.md) |
 
 Defense-in-depth for `#26` — the original 23-day silent stall of
 `galexie-archive`. The post-`#26` fix is the hourly
