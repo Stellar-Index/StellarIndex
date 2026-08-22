@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 
 import { useMarkets } from '@/api/hooks';
+import { useLedgerStream } from '@/lib/live/hooks';
 import { apiGet } from '@/api/client';
 import {
   EmptyState,
@@ -21,6 +22,10 @@ import {
 import type { TradeRow as Trade } from '@/api/hooks';
 
 const REFRESH_INTERVAL_MS = 30_000;
+// Minimum gap between stream-nudged refetches. Ledgers close every ~5s;
+// coalescing to 10s keeps the feed visibly ledger-driven while capping
+// the fan-out at 3 pairs × 6 req/min.
+const STREAM_COALESCE_MS = 10_000;
 const TOP_PAIRS = 3;
 const PER_PAIR_LIMIT = 12;
 const DISPLAY_LIMIT = 30;
@@ -32,18 +37,20 @@ const DISPLAY_LIMIT = 30;
  * /v1/history?base=…&quote=… for each. Merged client-side by
  * `ts desc` and rendered as a table.
  *
- * Refresh cadence is 30s — same as the status page, well above
- * any per-pair second-by-second flow but keeps the feed live
- * without hammering the API. The merge cap keeps the panel a
- * fixed height regardless of fan-out depth.
+ * Live follow (RT-2): ledger closes from the shared SSE stream nudge
+ * the fan-out (coalesced to STREAM_COALESCE_MS) so new trades land
+ * within seconds of their ledger — one connection, shared with every
+ * other stream consumer on the page, never per-pair (the per-IP
+ * stream-cap rationale from MarketsTable). The 30s interval stays as
+ * the fallback when the stream is unavailable. The merge cap keeps
+ * the panel a fixed height regardless of fan-out depth.
  */
 export function HomeRecentTrades() {
   const markets = useMarkets(TOP_PAIRS, 'volume_24h_usd_desc');
   const [trades, setTrades] = useState<Trade[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  // Refetch each pair's history every REFRESH_INTERVAL_MS,
-  // merge by ts desc, take the top DISPLAY_LIMIT.
+  // Fan out per pair, merge by ts desc, take the top DISPLAY_LIMIT.
   const pairs = useMemo(
     () =>
       (markets.data?.markets ?? [])
@@ -52,39 +59,64 @@ export function HomeRecentTrades() {
     [markets.data],
   );
 
-  useEffect(() => {
+  // Generation counter invalidates in-flight polls when the pair set
+  // changes or the component unmounts (the old closure-`cancelled`
+  // flag, but shareable across the two trigger effects below).
+  const genRef = useRef(0);
+  const lastPollRef = useRef(0);
+
+  const poll = useCallback(async () => {
     if (pairs.length === 0) return;
-    let cancelled = false;
-    async function poll() {
-      try {
-        const fanouts = await Promise.all(
-          pairs.map((p) =>
-            apiGet<Trade[]>('/v1/history', {
-              base: p.base,
-              quote: p.quote,
-              limit: PER_PAIR_LIMIT,
-            }),
-          ),
-        );
-        if (cancelled) return;
-        const merged = fanouts
-          .flat()
-          .sort((a, b) => (a.ts < b.ts ? 1 : -1))
-          .slice(0, DISPLAY_LIMIT);
-        setTrades(merged);
-        setError(null);
-      } catch (e) {
-        if (cancelled) return;
-        setError(e instanceof Error ? e.message : 'Network error');
-      }
+    const gen = genRef.current;
+    lastPollRef.current = Date.now();
+    try {
+      const fanouts = await Promise.all(
+        pairs.map((p) =>
+          apiGet<Trade[]>('/v1/history', {
+            base: p.base,
+            quote: p.quote,
+            limit: PER_PAIR_LIMIT,
+          }),
+        ),
+      );
+      if (gen !== genRef.current) return;
+      const merged = fanouts
+        .flat()
+        .sort((a, b) => (a.ts < b.ts ? 1 : -1))
+        .slice(0, DISPLAY_LIMIT);
+      setTrades(merged);
+      setError(null);
+    } catch (e) {
+      if (gen !== genRef.current) return;
+      setError(e instanceof Error ? e.message : 'Network error');
     }
-    poll();
-    const id = setInterval(poll, REFRESH_INTERVAL_MS);
+  }, [pairs]);
+
+  // Fallback cadence: poll now (next tick — keeps the effect body free
+  // of state writes for the react-hooks compiler rule) + every
+  // REFRESH_INTERVAL_MS. The generation bump at effect start invalidates
+  // any in-flight poll from a previous pair set; on unmount the stale
+  // poll's setState is a React-18 no-op, so no cleanup bump is needed.
+  useEffect(() => {
+    genRef.current++;
+    if (pairs.length === 0) return;
+    const kick = setTimeout(() => void poll(), 0);
+    const id = setInterval(() => void poll(), REFRESH_INTERVAL_MS);
     return () => {
-      cancelled = true;
+      clearTimeout(kick);
       clearInterval(id);
     };
-  }, [pairs]);
+  }, [pairs, poll]);
+
+  // Stream nudge: a ledger close means possible new trades — refetch
+  // sooner than the fallback, coalesced.
+  const frame = useLedgerStream();
+  const streamLatest = frame?.data.latest_ledger;
+  useEffect(() => {
+    if (streamLatest == null || pairs.length === 0) return;
+    if (Date.now() - lastPollRef.current < STREAM_COALESCE_MS) return;
+    void poll();
+  }, [streamLatest, pairs, poll]);
 
   return (
     <section className="space-y-3">
@@ -103,7 +135,7 @@ export function HomeRecentTrades() {
           </h2>
           <p className="text-sm text-ink-body">
             Live feed merging the latest trades across the top {TOP_PAIRS}{' '}
-            pairs by 24h USD volume. Refreshes every 30s.
+            pairs by 24h USD volume. Ticks with ledger closes.
           </p>
         </div>
       </div>
