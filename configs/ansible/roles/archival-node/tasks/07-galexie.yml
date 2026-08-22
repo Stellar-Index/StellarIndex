@@ -344,6 +344,19 @@
     group: root
     mode: "0755"
 
+- name: Install galexie-archive-contiguity scan
+  # DR-asset shape guard (2026-08-21 DR review): tip-lag proves the
+  # newest edge advances; this proves the MIDDLE is intact — the
+  # genesis partition + the declared ARCHIVE_FROM tail with no other
+  # holes and no overlaps. A partition deleted by a bad trim cutoff
+  # or manual mc rm would otherwise surface only at restore time.
+  ansible.builtin.copy:
+    src: galexie-archive-contiguity.sh
+    dest: /usr/local/bin/galexie-archive-contiguity
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Template galexie-specific captive-core.cfg
   # The live-tail galexie needs its OWN captive config because the
   # PEER_PORT must differ from the backfill galexie's captive
@@ -494,6 +507,25 @@
 - name: Enable + start galexie-archive-tip-lag.timer
   ansible.builtin.systemd:
     name: galexie-archive-tip-lag.timer
+    state: started
+    enabled: true
+    daemon_reload: true
+
+# DR-asset shape guard: hourly partition-contiguity scan of the
+# durable mirror (holes/overlaps other than the declared trim page).
+- name: Install galexie-archive-contiguity systemd service + timer
+  ansible.builtin.template:
+    src: "systemd/{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: "0644"
+  loop:
+    - galexie-archive-contiguity.service
+    - galexie-archive-contiguity.timer
+  notify: Reload systemd
+
+- name: Enable + start galexie-archive-contiguity.timer
+  ansible.builtin.systemd:
+    name: galexie-archive-contiguity.timer
     state: started
     enabled: true
     daemon_reload: true
