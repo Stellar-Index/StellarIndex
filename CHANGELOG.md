@@ -15,6 +15,42 @@ against.
 
 ## [Unreleased]
 
+## [v0.40.0] — 2026-08-22
+
+### Fixed
+- **OHLC bars are now bit-for-bit reproducible** (migration 0147): the price
+  CAGGs' open/close resolve same-instant ties by a total key
+  (epoch-µs ‖ ledger ‖ tx_hash ‖ op_index ‖ source) mirroring the raw-trades
+  serve order, instead of physical scan order. VWAP switches to the exact
+  single-division form (≤1e-16 relative, below wire truncation — the
+  0115-invited free rider). ⚠ The migration recreates the seven price CAGGs +
+  twap_1h/1d WITH NO DATA; re-materialization is the deploy follow-up
+  (recent-first plan in the migration header).
+- **Freeze markers now write for Phase-2 freezes on Phase-1-off deployments**:
+  the freeze writer was gated on the Phase 1 anomaly checker while the Phase 2
+  confidence lifecycle runs unconditionally — engaged freezes (r1 XLM/GBP)
+  refused publication with no Redis marker, serving the last value with
+  `flags.frozen` absent. Writer is now built unconditionally; AST tripwire
+  added.
+- **The daily supply-snapshot writer can now actually run**: the auto
+  snapshot-ledger resolver clamps to the lake's landed tip (bounded, 512
+  ledgers) instead of demanding the realtime cursor's not-yet-landed
+  stellar.ledgers row — the structural race that failed every timed run.
+  Operator `-ledger` stays exact fail-closed; wall-clock stamping remains
+  impossible.
+- Integration tests quiesce CAGG refresh policies in the shared bootstrap
+  (the 55P03 concurrent-refresh flake).
+
+### Changed
+- Monitoring: the system recognition census is a drift gauge
+  (`stellarindex_recognition_unattributed_shapes`) with a step-change alert,
+  no longer a permanently-red `completeness_incomplete` row; new
+  galexie-archive partition-contiguity guard (hourly scan + page alert on any
+  gap/overlap outside the declared capacity trim).
+- Explorer: shared LastPriceCell (restores the tick flash DexesView's fork had
+  lost), /dexes pools board follows ledger closes, home Recent Trades ticks on
+  ledger closes instead of a blind 30s poll.
+
 ## [v0.39.1] — 2026-08-21
 
 Tested against Stellar protocol v23. No migrations.
