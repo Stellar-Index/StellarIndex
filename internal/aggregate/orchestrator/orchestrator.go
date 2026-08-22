@@ -368,9 +368,14 @@ type Config struct {
 	// pair.
 	//
 	// Nil = freeze action is observed (logged + metric incremented)
-	// but no Redis marker is written. Acceptable when Anomaly is
-	// also nil; loud-but-not-actionable when Anomaly is wired but
-	// FreezeWriter isn't.
+	// but no Redis marker is written — loud-but-not-actionable, and a
+	// Phase 2 refusal then serves its last value with flags.frozen
+	// ABSENT (a stale price presented as fresh). Only acceptable in
+	// tests/bring-up: the Phase 2 lifecycle (stepPhase2Freeze) runs
+	// regardless of Anomaly, so production deployments must wire
+	// FreezeWriter even with Anomaly nil — the aggregator binary now
+	// builds it unconditionally (2026-08-22, r1 XLM/GBP incident:
+	// Phase-1-off config froze 5m/1h windows with no marker).
 	FreezeWriter FreezeMarker
 
 	// DisableClassFilter, when true, suppresses the aggregator's
