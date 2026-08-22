@@ -20,12 +20,26 @@ import (
 
 // ledgerCloseTimeReader resolves a ledger's real on-chain close time. The
 // authoritative every-ledger source is ClickHouse stellar.ledgers (satisfied
-// by *clickhouse.ExplorerReader.CloseTimeForLedger); kept as an interface so
+// by *clickhouse.ExplorerReader); kept as an interface so
 // resolveSnapshotLedger is unit-testable without a live lake. found=false means
 // the ledger has no lake row.
 type ledgerCloseTimeReader interface {
 	CloseTimeForLedger(ctx context.Context, ledger uint32) (time.Time, bool, error)
+	// LatestLedgerAtOrBefore returns the newest stellar.ledgers row with
+	// ledger_seq <= maxSeq. Used by the AUTO snapshot-ledger path to clamp
+	// the live cursor to the lake's landed tip (see resolveSnapshotLedger).
+	LatestLedgerAtOrBefore(ctx context.Context, maxSeq uint32) (uint32, time.Time, bool, error)
 }
+
+// maxAutoSnapshotClampLedgers bounds how far the auto snapshot-ledger clamp
+// may walk back from the live cursor to the lake's landed tip. The gap the
+// clamp exists to absorb is the dual-sink landing race — seconds, single-digit
+// ledgers. A gap beyond this bound is not a race, it is a stalled lake
+// (archivist down, CH sink wedged), and stamping a snapshot half an hour
+// behind the cursor would hide that stall — so the resolver fails closed
+// exactly as it did before the clamp existed. 512 ledgers ≈ 45 min at
+// mainnet's ~5.3s cadence: far above any landing race, far below a day.
+const maxAutoSnapshotClampLedgers = 512
 
 // cursorReader is the ingestion-cursor half of resolveSnapshotLedger's
 // inputs, kept as an interface for the same reason ledgerCloseTimeReader
@@ -351,7 +365,35 @@ func resolveSnapshotLedger(ctx context.Context, store cursorReader, closeTimes l
 			return 0, time.Time{}, errors.New("no ingestion cursors yet — pass -ledger explicitly until the indexer has produced a cursor")
 		}
 		fmt.Fprintf(os.Stderr, "supply: auto-resolved snapshot ledger %d from the %q cursor\n", ledger, chosen)
+
+		// The ledgerstream cursor (Postgres, realtime) leads the lake's
+		// stellar.ledgers (CH sink, lands seconds later) by design, so the
+		// cursor's own row is routinely not landed yet at the moment a
+		// timer-driven snapshot fires — r1's daily unit failed EVERY run on
+		// exactly this race (2026-08-22). The snapshot doesn't need the
+		// cursor ledger specifically; it needs a real chain position with a
+		// real close time. Clamp to the newest LANDED ledger at or before
+		// the cursor — bounded, so a genuinely stalled lake still fails
+		// closed instead of being papered over.
+		lakeLedger, lakeClose, found, err := closeTimes.LatestLedgerAtOrBefore(ctx, ledger)
+		if err != nil {
+			return 0, time.Time{}, fmt.Errorf("resolve lake tip at or before cursor ledger %d: %w", ledger, err)
+		}
+		if !found {
+			return 0, time.Time{}, fmt.Errorf("stellar.ledgers has no row at or before cursor ledger %d — lake empty or gapped; refusing to stamp the snapshot with wall-clock time", ledger)
+		}
+		if gap := ledger - lakeLedger; gap > maxAutoSnapshotClampLedgers {
+			return 0, time.Time{}, fmt.Errorf("lake tip %d trails the %q cursor %d by %d ledgers (> %d) — that is a stalled lake, not a landing race; refusing to stamp a snapshot that far behind the chain", lakeLedger, chosen, ledger, gap, maxAutoSnapshotClampLedgers)
+		}
+		if lakeLedger != ledger {
+			fmt.Fprintf(os.Stderr, "supply: clamped snapshot ledger %d -> %d (lake landed tip; cursor leads by %d)\n", ledger, lakeLedger, ledger-lakeLedger)
+		}
+		return lakeLedger, lakeClose, nil
 	}
+
+	// Operator-named -ledger: exact fail-closed lookup, unchanged. An
+	// explicitly requested position that is absent from the lake is a
+	// genuine gap worth surfacing, never something to silently shift.
 	closeTime, found, err := closeTimes.CloseTimeForLedger(ctx, ledger)
 	if err != nil {
 		return 0, time.Time{}, fmt.Errorf("resolve close time for ledger %d: %w", ledger, err)

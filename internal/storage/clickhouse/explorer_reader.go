@@ -452,6 +452,35 @@ func (r *ExplorerReader) CloseTimeForLedger(ctx context.Context, seq uint32) (ti
 	return closeTime.UTC(), true, nil
 }
 
+// LatestLedgerAtOrBefore returns the newest stellar.ledgers row with
+// ledger_seq <= maxSeq. The supply snapshot's AUTO ledger resolver uses it to
+// clamp the live ingestion cursor to the lake's landed tip: the cursor
+// (Postgres, realtime) leads stellar.ledgers (CH sink) by seconds, so the
+// cursor's own row is routinely not landed yet when a timer-driven snapshot
+// fires (r1 supply-snapshot failed every daily run on this race, 2026-08-22).
+// FINAL for the same ReplacingMergeTree reason as CloseTimeForLedger; the
+// primary key is ledger_seq so the descending point read stays cheap.
+func (r *ExplorerReader) LatestLedgerAtOrBefore(ctx context.Context, maxSeq uint32) (uint32, time.Time, bool, error) {
+	const q = `SELECT ledger_seq, close_time FROM stellar.ledgers FINAL
+		WHERE ledger_seq <= ? ORDER BY ledger_seq DESC LIMIT 1`
+	rows, err := r.conn.Query(ctx, q, maxSeq)
+	if err != nil {
+		return 0, time.Time{}, false, fmt.Errorf("clickhouse: latest ledger at or before %d: %w", maxSeq, err)
+	}
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		return 0, time.Time{}, false, rows.Err()
+	}
+	var (
+		seq       uint32
+		closeTime time.Time
+	)
+	if err := rows.Scan(&seq, &closeTime); err != nil {
+		return 0, time.Time{}, false, fmt.Errorf("clickhouse: scan latest ledger at or before %d: %w", maxSeq, err)
+	}
+	return seq, closeTime.UTC(), true, nil
+}
+
 // LedgerTransactions returns the transactions in a ledger, ordered by tx_index.
 func (r *ExplorerReader) LedgerTransactions(ctx context.Context, seq uint32, limit int) ([]TxSummary, error) {
 	if limit <= 0 || limit > 1000 {
