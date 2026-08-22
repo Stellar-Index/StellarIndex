@@ -10,9 +10,9 @@ import { asExample } from '@/api/client';
 import { AssetLabel } from '@/components/AssetLabel';
 import { SourceSparkline } from '@/components/SourceSparkline';
 import { useMarkets } from '@/api/hooks';
-import { cn } from '@/lib/cn';
-import { formatCompact, formatPairPrice, formatRelative } from '@/lib/format';
-import { usePriceFlash, useLedgerStream } from '@/lib/live/hooks';
+import { formatCompact, formatRelative } from '@/lib/format';
+import { useLedgerStream } from '@/lib/live/hooks';
+import { LastPriceCell } from '@/components/LastPriceCell';
 import { Input, TBody, TR, Table, Td, Th, THead } from '@/components/ui';
 
 /** Minimum gap between live refetches of /v1/markets. Ledgers close
@@ -351,29 +351,5 @@ function SortHeader({
   );
 }
 
-function LastPriceCell({ raw }: { raw?: string | null }) {
-  // Flash on change (RT-2): each cell watches its own value across
-  // refetches. Hook order stays stable because the hook runs before
-  // any early return.
-  const flash = usePriceFlash(raw ?? undefined);
-  if (!raw) return <span className="text-ink-faint">—</span>;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return <span className="text-ink-faint">—</span>;
-  // Pair prices are quote-per-base — they span >9 orders of
-  // magnitude across the 5K active pairs (sub-satoshi memecoins
-  // through XLM-USD), so digits adapt to keep precision visible.
-  // COR-14/AGT-05: was a hand-copied reimplementation of formatPairPrice
-  // (@/lib/format) — three components had independently forked this exact
-  // threshold ladder, risking visible drift between them.
-  return (
-    <span
-      className={cn(
-        'font-mono tabular-nums text-ink-body',
-        flash === 'up' && 'flash-up',
-        flash === 'down' && 'flash-down',
-      )}
-    >
-      {formatPairPrice(n)}
-    </span>
-  );
-}
+// LastPriceCell moved to @/components/LastPriceCell (2026-08-21): four
+// hand-copied locals had already drifted once (COR-14/AGT-05).

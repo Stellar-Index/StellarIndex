@@ -2,14 +2,14 @@
 
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useLedgerFollow, usePriceFlash } from '@/lib/live/hooks';
-import { cn } from '@/lib/cn';
+import { useLedgerFollow } from '@/lib/live/hooks';
+import { LastPriceCell } from '@/components/LastPriceCell';
 import Link from 'next/link';
 
 import { Panel } from '@/components/reveal';
 import { AssetLabel } from '@/components/AssetLabel';
 import { apiGet, asExample } from '@/api/client';
-import { formatCompact, formatPairPrice, formatRelative } from '@/lib/format';
+import { formatCompact, formatRelative } from '@/lib/format';
 // /v1/markets row from the generated OpenAPI contract, via the shared
 // alias in src/api/hooks.ts (Market = MarketRow).
 import type { Market } from '@/api/hooks';
@@ -253,22 +253,5 @@ function Td({ children, align }: { children: React.ReactNode; align?: 'left' | '
   );
 }
 
-function LastPriceCell({ raw }: { raw?: string | null }) {
-  // Flash on change (RT-2): watches its own value across the table's live
-  // refetches, so a changed last price ticks green/red.
-  const flash = usePriceFlash(raw ?? undefined);
-  if (!raw) return <span className="text-ink-faint">—</span>;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return <span className="text-ink-faint">—</span>;
-  return (
-    <span
-      className={cn(
-        'font-mono tabular-nums text-ink-body',
-        flash === 'up' && 'flash-up',
-        flash === 'down' && 'flash-down',
-      )}
-    >
-      {formatPairPrice(n)}
-    </span>
-  );
-}
+// LastPriceCell moved to @/components/LastPriceCell (2026-08-21): four
+// hand-copied locals had already drifted once (COR-14/AGT-05).

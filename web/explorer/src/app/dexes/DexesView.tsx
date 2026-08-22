@@ -7,7 +7,9 @@ import Link from 'next/link';
 import { Panel } from '@/components/reveal';
 import { AssetLabel } from '@/components/AssetLabel';
 import { apiGet, asExample } from '@/api/client';
-import { formatCompact, formatPairPrice, formatRelative } from '@/lib/format';
+import { formatCompact, formatRelative } from '@/lib/format';
+import { LastPriceCell } from '@/components/LastPriceCell';
+import { useLedgerFollow } from '@/lib/live/hooks';
 import {
   Button,
   Container,
@@ -80,6 +82,9 @@ export function DexesView() {
   // Source filter is server-side. Empty string = all DEXes.
   const [sourceFilter, setSourceFilter] = useState<string>('');
 
+  // Live (RT-2): follow ledger closes so the pools board + prices tick —
+  // this was the one price table left static after the live-data sweep.
+  useLedgerFollow(['/v1/pools']);
   const q = useQuery<{ pools: Pool[]; nextCursor?: string }>({
     queryKey: ['/v1/pools', order, cursor, sourceFilter],
     queryFn: async () => {
@@ -427,16 +432,7 @@ function SourceChip({
   );
 }
 
-function LastPriceCell({ raw }: { raw?: string | null }) {
-  if (!raw) return <span className="text-ink-faint">—</span>;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return <span className="text-ink-faint">—</span>;
-  // COR-14/AGT-05: was a hand-copied reimplementation of formatPairPrice
-  // (@/lib/format) — three components had independently forked this exact
-  // threshold ladder, risking visible drift between them.
-  return (
-    <span className="font-mono tabular-nums text-ink-body">
-      {formatPairPrice(n)}
-    </span>
-  );
-}
+// LastPriceCell moved to @/components/LastPriceCell (2026-08-21): this
+// file's fork had ALSO silently dropped the flash-on-change every sibling
+// table has — the exact drift COR-14/AGT-05 warned about. The shared cell
+// restores it, and the useLedgerFollow above makes this board tick.
