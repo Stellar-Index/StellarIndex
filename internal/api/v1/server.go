@@ -85,7 +85,7 @@ type ReadyChecker interface {
 // This constant MUST equal the head under migrations/; the parity test
 // TestExpectedSchemaVersionMatchesMigrationsHead fails CI if a migration
 // is added without bumping it.
-const ExpectedSchemaVersion uint = 146
+const ExpectedSchemaVersion uint = 147
 
 // SchemaVersionReader reports the applied golang-migrate schema state
 // (schema_migrations.version + dirty). cmd/stellarindex-api adapts
