@@ -48,20 +48,6 @@ import { useDebouncedValue } from '@/lib/useDebouncedValue';
 // is too thin for the cap to be a confident number.
 const MARKET_CAP_VOLUME_THRESHOLD_USD = 1_000;
 
-// STELLAR_ASSET_CLASS_OPTIONS — surface labels for the Stellar-only
-// `/assets` directory. "blockchain" is the explorer's name for the
-// catalogue's "crypto" class (CMC's "Cryptocurrencies" tab); the server
-// normalises blockchain→crypto in `normaliseAssetClass`. Fiat is dropped
-// here — fiat currencies moved to the external directory (/external/assets).
-const STELLAR_ASSET_CLASS_OPTIONS: {
-  value: AssetClassFilter;
-  label: string;
-}[] = [
-  { value: 'all', label: 'All Assets' },
-  { value: 'blockchain', label: 'Crypto' },
-  { value: 'stablecoin', label: 'Stablecoin' },
-];
-
 function parseAssetClass(raw: string | null): AssetClassFilter {
   switch (raw) {
     case 'fiat':
@@ -77,7 +63,7 @@ export function AssetsTable({
   verifiedSlugs = [],
   endpoint = '/v1/assets',
   basePath = '/assets',
-  classOptions = STELLAR_ASSET_CLASS_OPTIONS,
+  classOptions,
 }: {
   /**
    * Slugs from `/v1/assets/verified` (fetched server-side and
@@ -99,8 +85,9 @@ export function AssetsTable({
    */
   basePath?: string;
   /**
-   * Class-filter chips. Defaults to the Stellar set (All / Crypto /
-   * Stablecoin — no Fiat). The external page passes its own set.
+   * Class-filter chips. Omitted on /assets (operator request
+   * 2026-08-24: no type filter on the main directory); the external
+   * page passes its own fiat/reference set and keeps the row.
    */
   classOptions?: { value: AssetClassFilter; label: string }[];
 } = {}) {
@@ -366,11 +353,12 @@ function FilterBar({
   limit: number;
   onLimitChange: (v: number) => void;
   assetClass: AssetClassFilter;
-  classOptions: { value: AssetClassFilter; label: string }[];
+  classOptions?: { value: AssetClassFilter; label: string }[];
   onAssetClassChange: (v: AssetClassFilter) => void;
 }) {
   return (
     <div className="space-y-3">
+      {classOptions && (
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="text-ink-muted">Asset type:</span>
         {classOptions.map((opt) => (
@@ -389,6 +377,7 @@ function FilterBar({
           </button>
         ))}
       </div>
+      )}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="relative">
