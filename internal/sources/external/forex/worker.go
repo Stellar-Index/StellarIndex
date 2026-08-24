@@ -63,7 +63,28 @@ const fxSource = "massive"
 type rateGuard struct {
 	lastAccepted float64
 	pending      float64
+
+	// Stuck-upstream tracking for the HISTORY band (2026-08-24, the
+	// Massive ETB=44 incident): a provider serving the SAME broken
+	// historical bar refresh after refresh is a documented, already-
+	// handled condition — the guard keeps refusing it — but counting
+	// every repeat under `history_deviation` kept the rejection alert
+	// firing for days with no new information, training operators to
+	// ignore the channel. After [stuckRejectionThreshold] consecutive
+	// refusals of the SAME value, further repeats count under the
+	// `history_deviation_stuck` reason (excluded from the alert, still
+	// WARN-logged + graphable). Any acceptance, or a DIFFERENT rejected
+	// value, resets the streak — fresh disagreement always alerts.
+	stuckRejectedRate float64
+	stuckCount        int
 }
+
+// stuckRejectionThreshold is how many consecutive identical history-bar
+// refusals reclassify the ticker as stuck. The worker refreshes hourly,
+// so 12 ≈ half a day of the provider serving the same broken bar —
+// far past the point where repeats carry signal, and long enough that
+// a real multi-refresh scale change has already fired the alert.
+const stuckRejectionThreshold = 12
 
 // Worker periodically fetches the upstream rates + names and
 // installs the result into a [Cache]. Designed to run as a
@@ -350,7 +371,11 @@ func (w *Worker) acceptRate(ticker string, rate float64) bool {
 //     acceptRate bootstrap arm). The current-rate loop runs first, so a
 //     live ticker normally already has a baseline here.
 //   - within [maxRateDeviation] of the last accepted rate → accept.
-//   - otherwise → reject, count + log (reason "history_deviation").
+//   - otherwise → reject, count + log (reason "history_deviation"; after
+//     [stuckRejectionThreshold] consecutive refusals of the SAME value the
+//     reason becomes "history_deviation_stuck" — excluded from the
+//     rejection alert, so a provider stuck on one documented broken bar
+//     stops re-paging while fresh disagreement still does).
 func (w *Worker) acceptHistoryRate(ticker string, rate float64) bool {
 	if math.IsNaN(rate) || math.IsInf(rate, 0) {
 		w.rejectRate(ticker, rate, 0, "non_finite")
@@ -365,9 +390,30 @@ func (w *Worker) acceptHistoryRate(ticker string, rate float64) bool {
 		return true
 	}
 	if withinBand(rate, g.lastAccepted) {
+		// Upstream agrees again — a later deviation is fresh news.
+		// (Writing the stuck fields does not violate this method's
+		// read-only contract, which is about lastAccepted/pending —
+		// the CURRENT-rate baseline a historical bar must never
+		// advance. The stuck streak is history-band bookkeeping.)
+		g.stuckCount = 0
+		g.stuckRejectedRate = 0
 		return true
 	}
-	w.rejectRate(ticker, rate, g.lastAccepted, "history_deviation")
+	// Same broken bar, again? Track the streak; past the threshold the
+	// repeat is reclassified so the rejection ALERT only carries fresh
+	// disagreement (the guard still refuses the bar either way — see
+	// the stuck fields on rateGuard for the incident this encodes).
+	if rate == g.stuckRejectedRate {
+		g.stuckCount++
+	} else {
+		g.stuckRejectedRate = rate
+		g.stuckCount = 1
+	}
+	reason := "history_deviation"
+	if g.stuckCount > stuckRejectionThreshold {
+		reason = "history_deviation_stuck"
+	}
+	w.rejectRate(ticker, rate, g.lastAccepted, reason)
 	return false
 }
 
