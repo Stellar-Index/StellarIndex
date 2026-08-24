@@ -8,6 +8,7 @@ import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, serializeJsonLd } from '@/lib/seo'
 import { PairsTable } from './PairsTable';
 import { VenueChart } from './VenueChart';
 
+import { Container } from '@/components/ui';
 const CEX_INFO: Record<
   string,
   { name: string; type: string; homepage: string; docsUrl: string; blurb: string }
@@ -93,7 +94,7 @@ export default async function ExchangeDetailPage({
   };
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+    <Container className="space-y-6 py-8">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: serializeJsonLd(breadcrumbLD) }}
@@ -157,7 +158,7 @@ export default async function ExchangeDetailPage({
           <ExternalLink className="h-3 w-3" />
         </a>
       </div>
-    </div>
+    </Container>
   );
 }
 

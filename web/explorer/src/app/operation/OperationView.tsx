@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import {
+import { Container,
   Breadcrumbs,
   Table,
   TableWrap,
@@ -292,7 +292,7 @@ function Shell({
       ? `${hash.slice(0, 8)}…#${idx}`
       : 'operation';
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+    <Container className="space-y-6 py-8">
       <header className="space-y-2">
         <Breadcrumbs
           items={[
@@ -307,7 +307,7 @@ function Shell({
         </h1>
       </header>
       {children}
-    </div>
+    </Container>
   );
 }
 

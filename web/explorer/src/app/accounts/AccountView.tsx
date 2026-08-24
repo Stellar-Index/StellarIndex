@@ -8,7 +8,7 @@ import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { AssetLink } from '@/components/AssetLink';
 import { DirectoryLabel, type DirectoryInfo } from '@/components/DirectoryLabel';
-import { Breadcrumbs, Callout, TxStatusBadge } from '@/components/ui';
+import { Container, Breadcrumbs, Callout, TxStatusBadge } from '@/components/ui';
 import { AccountPositions } from './AccountPositions';
 import { AccountMovementsPanel } from './AccountMovements';
 import { AccountDefiPositionsPanel } from './AccountDefiPositions';
@@ -263,7 +263,7 @@ function AccountsDirectory() {
   });
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+    <Container className="space-y-6 py-8">
       <header className="space-y-2">
         <h1 className="text-2xl font-semibold tracking-tight">Accounts</h1>
         <p className="max-w-3xl text-sm text-ink-body">
@@ -340,7 +340,7 @@ function AccountsDirectory() {
           </>
         )}
       </Panel>
-    </div>
+    </Container>
   );
 }
 
@@ -508,7 +508,7 @@ function Shell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+    <Container className="space-y-6 py-8">
       <header className="space-y-2">
         <Breadcrumbs
           items={[
@@ -520,7 +520,7 @@ function Shell({
         <h1 className="text-2xl font-semibold tracking-tight">Account</h1>
       </header>
       {children}
-    </div>
+    </Container>
   );
 }
 

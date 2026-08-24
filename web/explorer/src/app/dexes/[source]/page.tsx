@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ExternalLink } from 'lucide-react';
 
-import { Breadcrumbs } from '@/components/ui';
+import { Container, Breadcrumbs } from '@/components/ui';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, serializeJsonLd } from '@/lib/seo';
 import { DexAnalyticsSection } from './DexAnalyticsSection';
 import { PairReservesPanel } from './PairReservesPanel';
@@ -105,7 +105,7 @@ export default async function SourceDetailPage({
   };
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+    <Container className="space-y-6 py-8">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: serializeJsonLd(breadcrumbLD) }}
@@ -207,7 +207,7 @@ export default async function SourceDetailPage({
           </a>
         )}
       </div>
-    </div>
+    </Container>
   );
 }
 

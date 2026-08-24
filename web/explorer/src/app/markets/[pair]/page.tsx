@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { buildFetchData, requireRows } from '@/lib/buildFetch';
 import { formatCompact, formatPairPrice, formatSubunitPrice } from '@/lib/format';
 import { serializeJsonLd, datasetJsonLd, ogImageFor } from '@/lib/seo';
-import { Breadcrumbs } from '@/components/ui';
+import { Container, Breadcrumbs } from '@/components/ui';
 import { Sparkline } from '@/components/primitives';
 import { Suspense } from 'react';
 
@@ -361,7 +361,7 @@ export default async function PairPage({ params }: { params: Params }) {
     contentUrl: `https://api.stellarindex.io/v1/chart?asset=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}&timeframe=24h&granularity=1h`,
   });
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+    <Container className="space-y-6 py-8">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: serializeJsonLd(breadcrumbLD) }}
@@ -564,7 +564,7 @@ export default async function PairPage({ params }: { params: Params }) {
           </p>
         </Panel>
       )}
-    </div>
+    </Container>
   );
 }
 

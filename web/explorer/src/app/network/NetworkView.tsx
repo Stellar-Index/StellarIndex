@@ -7,7 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
-import {
+import { Container,
   Breadcrumbs,
   EmptyState,
   Skeleton,
@@ -114,7 +114,7 @@ export function NetworkView() {
   const tip = ledgersQ.data?.ledgers?.[0];
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+    <Container className="space-y-6 py-8">
       <header className="space-y-1">
         <Breadcrumbs items={[{ label: 'Home', href: '/' }, { label: 'Network' }]} />
         <h1 className="text-2xl font-semibold tracking-tight text-ink">Network</h1>
@@ -231,7 +231,7 @@ export function NetworkView() {
       <NetworkComposition />
 
       <DigDeeper />
-    </div>
+    </Container>
   );
 }
 
