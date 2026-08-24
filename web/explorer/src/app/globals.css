@@ -238,7 +238,11 @@
 .digit-strip {
   display: block;
   transform: translateY(-50%);
-  animation: digit-rollover 0.35s cubic-bezier(0.25, 0.6, 0.3, 1) both;
+  /* 0.65s (was 0.35s): at the ledger's ~5s cadence a 0.35s roll of one
+     11px digit read as an instant swap — measured correct in DevTools,
+     invisible to the eye (operator report 2026-08-24). The longer
+     travel with a pronounced settle makes the wheel legible. */
+  animation: digit-rollover 0.65s cubic-bezier(0.22, 0.9, 0.28, 1) both;
 }
 .digit-strip > span {
   display: block;
