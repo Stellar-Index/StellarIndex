@@ -33,7 +33,7 @@ func TestHandler_ExposesMetrics(t *testing.T) {
 	obs.AggregatorTicksTotal.WithLabelValues("_warmup").Inc()
 	obs.AggregatorVWAPWritesTotal.Inc()
 	obs.AggregatorEmptyWindowsTotal.Inc()
-	obs.AggregatorDroppedTradesTotal.WithLabelValues("_warmup").Inc()
+	obs.AggregatorDroppedTradesTotal.WithLabelValues("_warmup", "_warmup").Inc()
 
 	ts := httptest.NewServer(obs.Handler())
 	defer ts.Close()

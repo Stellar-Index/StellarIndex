@@ -75,6 +75,10 @@ tests:
                 means the upstream keeps reporting a move > 50% that the
                 two-strike confirmation is not clearing — usually a real
                 redenomination the guard needs to be told about, or an
-                upstream scale change. `non_positive` / `non_finite` mean the
-                feed is emitting garbage fields. Grep the API logs for
-                "forex: rejected upstream rate" to get the ticker(s).
+                upstream scale change. `deviation_history_conflict` means a
+                two-fetch confirmation was VETOED because the ticker's own
+                trailing-7d majority refutes the candidate — the current
+                feed is persistently serving a broken bar. `non_positive` /
+                `non_finite` mean the feed is emitting garbage fields. Grep
+                the API logs for "forex: rejected upstream rate" (or
+                "pending confirmation refuted") to get the ticker(s).

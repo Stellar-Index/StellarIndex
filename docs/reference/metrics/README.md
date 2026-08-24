@@ -407,13 +407,20 @@ without a ticker change — would silently re-scale that currency's whole
 conversion history. `persistSnapshot` previously wrote whatever the
 upstream said.
 
-`reason` is bounded at five values: `deviation` (moved > 50% from the
+`reason` is bounded at seven values: `deviation` (moved > 50% from the
 last accepted rate for that ticker with no confirming second fetch),
 `non_positive` (rate ≤ 0 — `1/rate` feeds `InverseUSD`, so it would
 poison the row both ways), `non_finite` (NaN / ±Inf),
 `history_deviation` (a trailing-7d history bar > 50% off the current
-accepted rate), and `history_deviation_stuck` (the same bar, within 1%,
-refused ≥ 12 consecutive times — excluded from the rejection alert).
+accepted rate), `history_deviation_stuck` (the same bar, within 1%,
+refused ≥ 12 consecutive times — excluded from the rejection alert),
+`deviation_history_conflict` (a two-fetch confirmation vetoed because
+the ticker's heal-grade trailing-7d majority refutes the candidate —
+a persistently-broken current feed repeating its own bad bar, the
+Massive UZS case; history refuses the confirm but never sets the
+baseline), and `deviation_history_conflict_stuck` (the same vetoed
+candidate, within 1%, refused ≥ 12 consecutive times — excluded from
+the rejection alert like `history_deviation_stuck`).
 Deliberately NOT
 labelled by ticker: ~150 currencies would be pure cardinality for a
 signal whose actionable question is "is the feed producing junk". The
@@ -1457,7 +1464,7 @@ Pre-seeded on the `sweep` op.
 
 ### `stellarindex_aggregator_dropped_trades_total`
 
-Counter, label `reason` (`class` / `outlier`).
+Counter, labels `reason` (`class` / `outlier`) and `pair`.
 
 Trades removed from the VWAP input set, broken down by which filter
 discarded them. `class` = removed by the ClassExchange-only filter
@@ -1466,6 +1473,17 @@ registered). `outlier` = removed by the σ-threshold filter
 (`OutlierSigmaThreshold > 0`). A spike in `class` is usually a venue
 mis-registered in `external.Registry`; a spike in `outlier` is
 usually a market-distress event flooding the window with anomalies.
+
+`pair` (added after the 2026-08-14 outlier_storm, where attributing a
+single-issuer SDEX token-farm spam wave took ad-hoc SQL) is the
+canonical string of the **configured** aggregate target pair whose
+refresh dropped the trade — bounded cardinality by construction (only
+`o.cfg.Pairs` entries flow through `refreshPairWindow`, ~12 in
+production). Diagnose a storm with
+`topk(5, rate(stellarindex_aggregator_dropped_trades_total{reason="outlier"}[10m]))`.
+Config-dependent, so NOT pre-seeded (the `AggregatorFXSnapFallbackTotal`
+`leg` convention); the storm/spike alerts `sum()` across labels and are
+unaffected by absent pair series.
 
 ### `stellarindex_aggregator_dropped_windows_total`
 

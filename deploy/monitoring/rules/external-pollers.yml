@@ -156,12 +156,17 @@ groups:
       # refusals of the SAME broken history bar the worker reclassifies the
       # repeats (the Massive ETB=44 incident, 2026-08-24 — the guard kept
       # correctly refusing one documented bar for days and this alert
-      # carried no new information). Fresh disagreement — a new value, a
-      # new ticker, or the current-rate band — still lands in the alerted
-      # reasons; the stuck series stays graphable for the runbook.
+      # carried no new information). reason="deviation_history_conflict_stuck"
+      # is excluded for the same reason: it is the confirm-veto's stuck
+      # variant (the Massive UZS broken CURRENT bar, 2026-08-24 — the
+      # history-majority veto keeps refusing the same documented value's
+      # pending confirmation). The FRESH deviation_history_conflict reason
+      # still alerts. Fresh disagreement — a new value, a new ticker, or
+      # the current-rate band — always lands in the alerted reasons; both
+      # stuck series stay graphable for the runbook.
       - alert: stellarindex_external_fx_rate_rejections
         expr: |
-          sum by (reason) (increase(stellarindex_external_fx_rate_rejected_total{reason!="history_deviation_stuck"}[3h])) > 2
+          sum by (reason) (increase(stellarindex_external_fx_rate_rejected_total{reason!~"history_deviation_stuck|deviation_history_conflict_stuck"}[3h])) > 2
         for: 30m
         labels:
           severity: ticket
@@ -178,9 +183,13 @@ groups:
             means the upstream keeps reporting a move > 50% that the
             two-strike confirmation is not clearing — usually a real
             redenomination the guard needs to be told about, or an
-            upstream scale change. `non_positive` / `non_finite` mean the
-            feed is emitting garbage fields. Grep the API logs for
-            "forex: rejected upstream rate" to get the ticker(s).
+            upstream scale change. `deviation_history_conflict` means a
+            two-fetch confirmation was VETOED because the ticker's own
+            trailing-7d majority refutes the candidate — the current
+            feed is persistently serving a broken bar. `non_positive` /
+            `non_finite` mean the feed is emitting garbage fields. Grep
+            the API logs for "forex: rejected upstream rate" (or
+            "pending confirmation refuted") to get the ticker(s).
 
       # Sustained error rate over 15 min — catches the case where
       # the poller is hitting the venue successfully sometimes but
