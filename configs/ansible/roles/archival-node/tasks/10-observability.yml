@@ -60,80 +60,39 @@
       TEXTFILE_OUTPUT=/var/lib/node_exporter/textfile_collector/supply_snapshot.prom
   tags: [observability, supply-snapshot]
 
-# /etc/default/sla-probe — operator override that:
-#   1. Targets the local API binary (bypasses CF + Caddy edges).
-#   2. Wires the textfile-collector output for the
-#      stellarindex_sla_probe_unit_failed gauge — without this the
-#      Prometheus alert can't read the verdict and stays stuck on
-#      whatever the previous run wrote (or stuck firing if no run
-#      ever wrote a value).
-#   3. Loosens the availability target from 99.9% (default) to
-#      99.0%. With 30s × 2-worker burst the probe collects ~430
-#      samples per endpoint; a single transient failure (TCP
-#      reset, packet drop) registers as 99.77% < 99.9% — false-
-#      positive that fired the alert constantly. 99.0% tolerates
-#      4 transient failures per probe burst, still tighter than
-#      the published customer-facing SLA (99.5%).
-- name: Install /etc/default/sla-probe (probe target + textfile wiring)
-  ansible.builtin.copy:
-    dest: /etc/default/sla-probe
-    owner: root
-    group: root
-    mode: "0644"
-    content: |
-      # Managed by ansible (archival-node role / 10-observability.yml).
-      BASE_URL=http://127.0.0.1:3000/v1
-      DURATION=30s
-      CONCURRENCY=2
-      TEXTFILE_OUTPUT=/var/lib/node_exporter/textfile_collector/sla_probe.prom
-      EXTRA_FLAGS="-availability-target 99.0"
-  tags: [observability, sla-probe]
-
-# The GO sla-probe unit was ENABLED below but never INSTALLED — nothing
-# copied deploy/systemd/sla-probe.{service,timer} into /etc/systemd/system/,
-# so a clean/DR rebuild errored on the enable and the live box only worked
-# via a hand-installed pre-rename artifact (RATESENGINE_* env, User=ratesengine).
-# Install the reference copies (same src pattern as 15-log-discipline.yml).
-- name: Install sla-probe.{service,timer} (GO probe — was enabled, never installed)
-  ansible.builtin.copy:
-    src: "{{ playbook_dir }}/../../../deploy/systemd/{{ item }}"
-    dest: "/etc/systemd/system/{{ item }}"
-    owner: root
-    group: root
-    mode: "0644"
-  loop:
-    - sla-probe.service
-    - sla-probe.timer
-  notify: Reload systemd
-  tags: [observability, sla-probe]
-
-# Durable, non-world-readable home for the minted probe key. force:false so an
-# operator-populated file is never clobbered; empty default keeps the probe
-# keyless (anonymous tier, as today) until STELLARINDEX_PROBE_API_KEY is minted
-# and set in vault (stellarindex_probe_api_key). This replaces the pre-rename
-# habit of hand-adding RATESENGINE_PROBE_API_KEY into the ansible-clobbered
-# /etc/default/sla-probe.
-- name: Provision /etc/default/sla-probe.secret (minted probe key, vault-sourced)
-  ansible.builtin.copy:
-    dest: /etc/default/sla-probe.secret
-    owner: root
-    group: stellarindex
-    mode: "0640"
-    force: false
-    content: |
-      # Managed by ansible (archival-node role / 10-observability.yml).
-      # Minted Partner/Operator-tier probe key. Set stellarindex_probe_api_key
-      # in the r1 vault to populate; leave empty to run the probe keyless.
-      STELLARINDEX_PROBE_API_KEY={{ stellarindex_probe_api_key | default('') }}
-  no_log: true
-  tags: [observability, sla-probe]
-
-- name: Enable sla-probe.timer (the GO probe; emits the textfile metric)
+# ── GO sla-probe stack RETIRED (2026-08-24) ──────────────────────
+#
+# This role used to install + enable a second probe stack here
+# (deploy/systemd/sla-probe.{service,timer} + /etc/default/sla-probe
+# + sla-probe.secret) alongside 17-stellarindex-healthchecks' wrapper
+# stack (stellarindex-sla-probe.*). Both targeted the local API and
+# wrote THE SAME textfile (sla_probe.prom) — last-writer-wins, so the
+# GO stack's runs (keyless/stale-key → 401/429s → availability ~7%)
+# stomped the wrapper's passing verdicts and held
+# stellarindex_sla_probe_unit_failed red. One owner per metric file:
+# the wrapper stack (Healthchecks.io fanout + textfile) survives; the
+# tasks below remove the GO stack wherever it was previously applied.
+- name: Retire the GO sla-probe timer + service (superseded by stellarindex-sla-probe)
   ansible.builtin.systemd:
-    name: sla-probe.timer
-    enabled: true
-    state: started
-    daemon_reload: true
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
+  loop:
+    - sla-probe.timer
+    - sla-probe.service
+  failed_when: false # already-absent units are the desired end state
+  tags: [observability, sla-probe]
+
+- name: Remove the GO sla-probe unit files + env
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/sla-probe.service
+    - /etc/systemd/system/sla-probe.timer
+    - /etc/default/sla-probe
+    - /etc/default/sla-probe.secret
+  notify: Reload systemd
   tags: [observability, sla-probe]
 
 # Configure the Debian package's ARGS to mirror the legacy flags
