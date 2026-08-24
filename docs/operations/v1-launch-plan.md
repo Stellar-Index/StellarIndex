@@ -278,13 +278,20 @@ W1-explorer-perf-1 quantized the `/v1/contracts/{id}/interactions` cache key
 (`9e42e8fb`) and REC-05/W1-explorer-perf-2 added a `max(day)` census-freshness
 gate to `/v1/contracts` (`bb64ff3c`). W3.2/W3.3/W3.4 remain untouched.)*
 
-**W3.2 — Every other page type. → BUCKET 2 (operator, r1 measurement).** The
-harness extension is code; its value is the cold→populated run against the live
-r1 lake. Prepared, not runnable here. Accounts, assets, ledgers, tx, operations,
-network, protocols — measured COLD to fully-populated with lake-drawn random
-ids. *Approach:* extend `scripts/ops/contract-page-audit.py` (it already
-scores the slowest panel, counts a non-2xx/404 as UNLOADED, and takes `PACE`)
-to a per-page-type panel map rather than writing a new harness.
+**W3.2 — [V] Every other page type: MEASURED 2026-08-22.** The harness was
+extended as planned — `scripts/ops/contract-page-audit.py` now takes
+`--type {account,asset,asset-shell,ledger,tx,pair,protocol,operations,home,
+network,protocols}` with a per-page-type panel map kept in lockstep with the
+explorer views (contract behavior unchanged/byte-compatible), and the first
+cold→fully-populated run against the live API landed. Full per-type tables +
+the id-draw method:
+`docs/operations/w32-page-type-cold-perf-2026-08-22.md`. **Residue stays
+named:** the systemic breachers found there are W3.3's existing classes
+(per-entity O(scan) cold reads — account family, asset detail on the shell
+path) plus whatever the results doc flags as worth a W3.3-style fix; the
+dependent second hops the harness cannot model statically (account
+`/price/batch` after state, home `/history` ×3 after top-markets) are noted
+unmeasured in the doc.
 
 **W3.3 — [C] The cold-read audit residue.** Per-entity ClickHouse reads are
 O(scan) for non-prewarmed keys (census 40s×160, quiet-contract inversion,
