@@ -276,8 +276,9 @@ func nullStringPtr(ns sql.NullString) *string {
 // fiat:USD pair either. The CTE-with-UNION sidesteps both.
 //
 // Price + 24h change: latest + 24h-ago snapshots, with XLM
-// triangulation when the direct asset/fiat:USD pair doesn't
-// exist. DISTINCT ON gives one "latest per asset" row without a
+// triangulation when no direct USD-quote pair (fiat:USD or the
+// USDC stablecoin proxy — see the direct_usd CTE comment)
+// exists. DISTINCT ON gives one "latest per asset" row without a
 // window function. ±30min tolerance on 24h-ago so sparse-trade
 // assets still produce a change %. Change is computed as
 // (latest / ago - 1) * 100 to two fractional digits; NULL when
@@ -305,10 +306,32 @@ const listAssetsBaseSelect = `
 		    FROM asset_volume_24h
 		),
 		direct_usd AS (
+		  -- "Direct USD" = quoted in fiat:USD (CEX feeds) OR in
+		  -- USDC — the same stablecoin-proxy policy the xlm_usd
+		  -- CTEs below already apply (CLAUDE.md: "stablecoin
+		  -- fiat-proxy is aggregator policy" — USDC ≈ USD, ~0.1%
+		  -- peg error accepted). A USDC-quoted vwap is taken AS
+		  -- the USD price. Without the USDC member, assets whose
+		  -- only markets quote in USDC (AUDD, EURC, every *allow
+		  -- variant…) had 24h volume but a NULL price_usd — 473 of
+		  -- 500 listing rows priceless (2026-08-24 operator
+		  -- report). USDC counts in BOTH identity forms: the
+		  -- classic G-issuer line AND its SAC contract (CCW67T… —
+		  -- Soroban-venue trades carry the SAC id; the
+		  -- AliasRegistry in internal/canonical/alias.go unifies
+		  -- these on serving paths, but this SQL joins literal
+		  -- strings, and USDC↔SAC is one of the two compile-time-
+		  -- known wrapper families, operator-pinned via r1's
+		  -- [supply.sac_wrappers]). DISTINCT ON + bucket DESC
+		  -- keeps the freshest row across all quote forms.
 		  SELECT DISTINCT ON (base_asset) base_asset AS asset_id, vwap,
 		         array_length(sources, 1) AS source_count
 		    FROM prices_1m
-		   WHERE quote_asset = 'fiat:USD'
+		   WHERE quote_asset IN (
+		     'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+		     'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
+		     'fiat:USD'
+		   )
 		     AND bucket >= now() - INTERVAL '7 days'
 		     AND vwap IS NOT NULL /*PUSHDOWN_BASE*/
 		   ORDER BY base_asset, bucket DESC
@@ -316,7 +339,11 @@ const listAssetsBaseSelect = `
 		direct_usd_1h AS (
 		  SELECT DISTINCT ON (base_asset) base_asset AS asset_id, vwap
 		    FROM prices_1m
-		   WHERE quote_asset = 'fiat:USD'
+		   WHERE quote_asset IN (
+		     'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+		     'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
+		     'fiat:USD'
+		   )
 		     AND bucket BETWEEN now() - INTERVAL '90 minutes'
 		                   AND now() - INTERVAL '55 minutes'
 		     AND vwap IS NOT NULL /*PUSHDOWN_BASE*/
@@ -325,7 +352,11 @@ const listAssetsBaseSelect = `
 		direct_usd_24h AS (
 		  SELECT DISTINCT ON (base_asset) base_asset AS asset_id, vwap
 		    FROM prices_1m
-		   WHERE quote_asset = 'fiat:USD'
+		   WHERE quote_asset IN (
+		     'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+		     'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
+		     'fiat:USD'
+		   )
 		     AND bucket BETWEEN now() - INTERVAL '26 hours'
 		                   AND now() - INTERVAL '23 hours 30 minutes'
 		     AND vwap IS NOT NULL /*PUSHDOWN_BASE*/
@@ -334,17 +365,29 @@ const listAssetsBaseSelect = `
 		direct_usd_7d AS (
 		  SELECT DISTINCT ON (base_asset) base_asset AS asset_id, vwap
 		    FROM prices_1m
-		   WHERE quote_asset = 'fiat:USD'
+		   WHERE quote_asset IN (
+		     'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+		     'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
+		     'fiat:USD'
+		   )
 		     AND bucket BETWEEN now() - INTERVAL '7 days 12 hours'
 		                   AND now() - INTERVAL '6 days 22 hours'
 		     AND vwap IS NOT NULL /*PUSHDOWN_BASE*/
 		   ORDER BY base_asset, bucket DESC
 		),
 		asset_vs_xlm AS (
+		  -- XLM leg in BOTH identity forms: 'native' AND its SAC
+		  -- contract (CAS3J7… = canonical.XLMSacContractID,
+		  -- alias.go) — soroswap/phoenix/aquarius trades quote in
+		  -- the SAC form, which the AliasRegistry unifies on
+		  -- serving paths but literal-string SQL must list
+		  -- explicitly. Both legs multiply by the same xlm_usd.
+		  -- (Full alias-aware folding of BASE-side identities is a
+		  -- separate follow-up.)
 		  SELECT DISTINCT ON (base_asset) base_asset AS asset_id, vwap,
 		         array_length(sources, 1) AS source_count
 		    FROM prices_1m
-		   WHERE quote_asset = 'native'
+		   WHERE quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
 		     AND bucket >= now() - INTERVAL '7 days'
 		     AND vwap IS NOT NULL /*PUSHDOWN_BASE*/
 		   ORDER BY base_asset, bucket DESC
@@ -352,7 +395,7 @@ const listAssetsBaseSelect = `
 		asset_vs_xlm_1h AS (
 		  SELECT DISTINCT ON (base_asset) base_asset AS asset_id, vwap
 		    FROM prices_1m
-		   WHERE quote_asset = 'native'
+		   WHERE quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
 		     AND bucket BETWEEN now() - INTERVAL '90 minutes'
 		                   AND now() - INTERVAL '55 minutes'
 		     AND vwap IS NOT NULL /*PUSHDOWN_BASE*/
@@ -361,7 +404,7 @@ const listAssetsBaseSelect = `
 		asset_vs_xlm_24h AS (
 		  SELECT DISTINCT ON (base_asset) base_asset AS asset_id, vwap
 		    FROM prices_1m
-		   WHERE quote_asset = 'native'
+		   WHERE quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
 		     AND bucket BETWEEN now() - INTERVAL '26 hours'
 		                   AND now() - INTERVAL '23 hours 30 minutes'
 		     AND vwap IS NOT NULL /*PUSHDOWN_BASE*/
@@ -370,7 +413,7 @@ const listAssetsBaseSelect = `
 		asset_vs_xlm_7d AS (
 		  SELECT DISTINCT ON (base_asset) base_asset AS asset_id, vwap
 		    FROM prices_1m
-		   WHERE quote_asset = 'native'
+		   WHERE quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
 		     AND bucket BETWEEN now() - INTERVAL '7 days 12 hours'
 		                   AND now() - INTERVAL '6 days 22 hours'
 		     AND vwap IS NOT NULL /*PUSHDOWN_BASE*/
@@ -476,9 +519,13 @@ const listAssetsBaseSelect = `
 		    -- precision (1e-10) which is finer than any asset's
 		    -- meaningful tick size.
 		    -- XLM itself (asset_id='native') has no rows in
-		    -- direct_usd or asset_vs_xlm — its base_asset is 'native'
-		    -- but neither (native, fiat:USD) nor (native, native)
-		    -- exists in prices_1m. Use the xlm_usd CTE directly.
+		    -- asset_vs_xlm — (native, native) never exists — and
+		    -- its 24h-bounded USD price lives in the xlm_usd CTE:
+		    -- use that first. Since the USDC quote joined
+		    -- direct_usd, native CAN pick up a direct row
+		    -- (XLM/USDC, 7d window); it only surfaces when the 24h
+		    -- xlm_usd is empty — the same 7d staleness tolerance
+		    -- every other asset gets.
 		    ROUND(COALESCE(
 		      CASE WHEN ca.asset_id = 'native'
 		           THEN (SELECT vwap FROM xlm_usd)
@@ -831,7 +878,34 @@ type AssetPricePoint struct {
 // Buckets with no underlying trades produce a null P. Callers can
 // either render a gap or interpolate; we leave that to the UI.
 func (s *Store) GetAssetPriceHistory24h(ctx context.Context, assetID string) ([]AssetPricePoint, error) {
-	const q = `
+	rows, err := s.db.QueryContext(ctx, getAssetPriceHistory24hSQL, assetAliasArray(assetID))
+	if err != nil {
+		return nil, fmt.Errorf("timescale: GetAssetPriceHistory24h: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]AssetPricePoint, 0, 24)
+	for rows.Next() {
+		var pt AssetPricePoint
+		var p sql.NullString
+		if err := rows.Scan(&pt.T, &p); err != nil {
+			return nil, fmt.Errorf("timescale: GetAssetPriceHistory24h scan: %w", err)
+		}
+		if p.Valid && p.String != "" {
+			s := p.String
+			pt.P = &s
+		}
+		out = append(out, pt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: GetAssetPriceHistory24h rows: %w", err)
+	}
+	return out, nil
+}
+
+// getAssetPriceHistory24hSQL is GetAssetPriceHistory24h's query,
+// hoisted to a package constant so the function body stays under the
+// funlen threshold (same treatment as getNativeAssetSQL).
+const getAssetPriceHistory24hSQL = `
 		WITH hours AS (
 		  SELECT generate_series(
 		    date_trunc('hour', now() - INTERVAL '23 hours'),
@@ -844,6 +918,10 @@ func (s *Store) GetAssetPriceHistory24h(ctx context.Context, assetID string) ([]
 		  -- of the HIGHEST-priority alias form (array_position; SAC last)
 		  -- and within that form the latest bucket, so a thin SAC pool
 		  -- never outranks the deep classic/native form.
+		  -- Quote set = fiat:USD OR USDC (classic or its SAC form)
+		  -- per the stablecoin-proxy policy (see the listing
+		  -- query's direct_usd CTE): a USDC-quoted vwap is taken
+		  -- AS the USD price.
 		  SELECT h, vwap FROM (
 		    SELECT date_trunc('hour', bucket) AS h, vwap::numeric AS vwap,
 		           row_number() OVER (
@@ -852,12 +930,19 @@ func (s *Store) GetAssetPriceHistory24h(ctx context.Context, assetID string) ([]
 		           ) AS rn
 		      FROM prices_1m
 		     WHERE base_asset = ANY($1)
-		       AND quote_asset = 'fiat:USD'
+		       AND quote_asset IN (
+		         'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+		         'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
+		         'fiat:USD'
+		       )
 		       AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
 		       AND vwap IS NOT NULL
 		  ) z WHERE rn = 1
 		),
 		asset_xlm_per_hour AS (
+		  -- XLM leg in BOTH identity forms — 'native' AND its SAC
+		  -- (CAS3J7… = canonical.XLMSacContractID); see the
+		  -- listing query's asset_vs_xlm CTE for the rationale.
 		  SELECT h, vwap FROM (
 		    SELECT date_trunc('hour', bucket) AS h, vwap::numeric AS vwap,
 		           row_number() OVER (
@@ -866,7 +951,7 @@ func (s *Store) GetAssetPriceHistory24h(ctx context.Context, assetID string) ([]
 		           ) AS rn
 		      FROM prices_1m
 		     WHERE base_asset = ANY($1)
-		       AND quote_asset = 'native'
+		       AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
 		       AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
 		       AND vwap IS NOT NULL
 		  ) z WHERE rn = 1
@@ -902,30 +987,7 @@ func (s *Store) GetAssetPriceHistory24h(ctx context.Context, assetID string) ([]
 		  LEFT JOIN asset_xlm_per_hour  x  ON x.h  = hours.bucket
 		  LEFT JOIN xlm_usd_per_hour    xu ON xu.h = hours.bucket
 		 ORDER BY hours.bucket ASC
-	`
-	rows, err := s.db.QueryContext(ctx, q, assetAliasArray(assetID))
-	if err != nil {
-		return nil, fmt.Errorf("timescale: GetAssetPriceHistory24h: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	out := make([]AssetPricePoint, 0, 24)
-	for rows.Next() {
-		var pt AssetPricePoint
-		var p sql.NullString
-		if err := rows.Scan(&pt.T, &p); err != nil {
-			return nil, fmt.Errorf("timescale: GetAssetPriceHistory24h scan: %w", err)
-		}
-		if p.Valid && p.String != "" {
-			s := p.String
-			pt.P = &s
-		}
-		out = append(out, pt)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: GetAssetPriceHistory24h rows: %w", err)
-	}
-	return out, nil
-}
+`
 
 // GetAssetPriceHistory7d returns up to 7 daily USD price samples
 // for the asset, ordered by bucket ASC (oldest first). Same
@@ -945,6 +1007,9 @@ func (s *Store) GetAssetPriceHistory7d(ctx context.Context, assetID string) ([]A
 		direct_per_day AS (
 		  -- Alias-complete + priority-preserving pick (SAC last); see
 		  -- GetAssetPriceHistory24h.direct_per_hour for the rationale.
+		  -- Quote set = fiat:USD OR USDC (classic or its SAC form)
+		  -- per the stablecoin-proxy policy (see the listing
+		  -- query's direct_usd CTE).
 		  SELECT d, vwap FROM (
 		    SELECT date_trunc('day', bucket) AS d, vwap::numeric AS vwap,
 		           row_number() OVER (
@@ -953,12 +1018,18 @@ func (s *Store) GetAssetPriceHistory7d(ctx context.Context, assetID string) ([]A
 		           ) AS rn
 		      FROM prices_1m
 		     WHERE base_asset = ANY($1)
-		       AND quote_asset = 'fiat:USD'
+		       AND quote_asset IN (
+		         'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+		         'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
+		         'fiat:USD'
+		       )
 		       AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
 		       AND vwap IS NOT NULL
 		  ) z WHERE rn = 1
 		),
 		asset_xlm_per_day AS (
+		  -- XLM leg in BOTH identity forms ('native' + SAC); see
+		  -- the listing query's asset_vs_xlm CTE.
 		  SELECT d, vwap FROM (
 		    SELECT date_trunc('day', bucket) AS d, vwap::numeric AS vwap,
 		           row_number() OVER (
@@ -967,7 +1038,7 @@ func (s *Store) GetAssetPriceHistory7d(ctx context.Context, assetID string) ([]A
 		           ) AS rn
 		      FROM prices_1m
 		     WHERE base_asset = ANY($1)
-		       AND quote_asset = 'native'
+		       AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
 		       AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
 		       AND vwap IS NOT NULL
 		  ) z WHERE rn = 1
@@ -1317,9 +1388,19 @@ const getAssetBySlugSQL = `
 		    ) t
 		),
 		direct_usd AS (
+		  -- Quote set = fiat:USD OR USDC — classic G-issuer AND
+		  -- its SAC contract (CCW67T…) — per the stablecoin-proxy
+		  -- policy (see the listing query's direct_usd CTE + the
+		  -- xlm_usd CTEs below): a USDC-quoted vwap is taken AS
+		  -- the USD price (~0.1% peg error accepted). ORDER BY
+		  -- bucket DESC keeps the freshest row across all quotes.
 		  SELECT vwap FROM prices_1m
 		   WHERE base_asset  = (SELECT asset_id FROM chosen)
-		     AND quote_asset = 'fiat:USD'
+		     AND quote_asset IN (
+		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+		       'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
+		       'fiat:USD'
+		     )
 		     AND bucket >= now() - INTERVAL '7 days'
 		     AND vwap IS NOT NULL
 		   ORDER BY bucket DESC LIMIT 1
@@ -1327,7 +1408,11 @@ const getAssetBySlugSQL = `
 		direct_usd_1h AS (
 		  SELECT vwap FROM prices_1m
 		   WHERE base_asset  = (SELECT asset_id FROM chosen)
-		     AND quote_asset = 'fiat:USD'
+		     AND quote_asset IN (
+		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+		       'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
+		       'fiat:USD'
+		     )
 		     AND bucket BETWEEN now() - INTERVAL '90 minutes'
 		                   AND now() - INTERVAL '55 minutes'
 		     AND vwap IS NOT NULL
@@ -1336,7 +1421,11 @@ const getAssetBySlugSQL = `
 		direct_usd_24h AS (
 		  SELECT vwap FROM prices_1m
 		   WHERE base_asset  = (SELECT asset_id FROM chosen)
-		     AND quote_asset = 'fiat:USD'
+		     AND quote_asset IN (
+		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+		       'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
+		       'fiat:USD'
+		     )
 		     AND bucket BETWEEN now() - INTERVAL '26 hours'
 		                   AND now() - INTERVAL '23 hours 30 minutes'
 		     AND vwap IS NOT NULL
@@ -1345,16 +1434,23 @@ const getAssetBySlugSQL = `
 		direct_usd_7d AS (
 		  SELECT vwap FROM prices_1m
 		   WHERE base_asset  = (SELECT asset_id FROM chosen)
-		     AND quote_asset = 'fiat:USD'
+		     AND quote_asset IN (
+		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+		       'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
+		       'fiat:USD'
+		     )
 		     AND bucket BETWEEN now() - INTERVAL '7 days 12 hours'
 		                   AND now() - INTERVAL '6 days 22 hours'
 		     AND vwap IS NOT NULL
 		   ORDER BY bucket DESC LIMIT 1
 		),
 		asset_vs_xlm AS (
+		  -- XLM leg in BOTH identity forms — 'native' AND its SAC
+		  -- (CAS3J7… = canonical.XLMSacContractID); see the
+		  -- listing query's asset_vs_xlm CTE for the rationale.
 		  SELECT vwap FROM prices_1m
 		   WHERE base_asset  = (SELECT asset_id FROM chosen)
-		     AND quote_asset = 'native'
+		     AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
 		     AND bucket >= now() - INTERVAL '7 days'
 		     AND vwap IS NOT NULL
 		   ORDER BY bucket DESC LIMIT 1
@@ -1362,7 +1458,7 @@ const getAssetBySlugSQL = `
 		asset_vs_xlm_1h AS (
 		  SELECT vwap FROM prices_1m
 		   WHERE base_asset  = (SELECT asset_id FROM chosen)
-		     AND quote_asset = 'native'
+		     AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
 		     AND bucket BETWEEN now() - INTERVAL '90 minutes'
 		                   AND now() - INTERVAL '55 minutes'
 		     AND vwap IS NOT NULL
@@ -1371,7 +1467,7 @@ const getAssetBySlugSQL = `
 		asset_vs_xlm_24h AS (
 		  SELECT vwap FROM prices_1m
 		   WHERE base_asset  = (SELECT asset_id FROM chosen)
-		     AND quote_asset = 'native'
+		     AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
 		     AND bucket BETWEEN now() - INTERVAL '26 hours'
 		                   AND now() - INTERVAL '23 hours 30 minutes'
 		     AND vwap IS NOT NULL
@@ -1380,7 +1476,7 @@ const getAssetBySlugSQL = `
 		asset_vs_xlm_7d AS (
 		  SELECT vwap FROM prices_1m
 		   WHERE base_asset  = (SELECT asset_id FROM chosen)
-		     AND quote_asset = 'native'
+		     AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
 		     AND bucket BETWEEN now() - INTERVAL '7 days 12 hours'
 		                   AND now() - INTERVAL '6 days 22 hours'
 		     AND vwap IS NOT NULL
@@ -1879,23 +1975,32 @@ func (s *Store) GetAssetsPriceHistory24hBatch(ctx context.Context, assetIDs []st
 		  ) AS bucket
 		),
 		direct_per_hour AS (
+		  -- Quote set = fiat:USD OR USDC (classic or its SAC form)
+		  -- per the stablecoin-proxy policy (see the listing
+		  -- query's direct_usd CTE).
 		  SELECT base_asset AS asset_id,
 		         date_trunc('hour', bucket) AS h,
 		         last(vwap, bucket)::numeric AS vwap
 		    FROM prices_1m
 		   WHERE base_asset = ANY($1)
-		     AND quote_asset = 'fiat:USD'
+		     AND quote_asset IN (
+		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+		       'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
+		       'fiat:USD'
+		     )
 		     AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
 		     AND vwap IS NOT NULL
 		   GROUP BY base_asset, h
 		),
 		asset_xlm_per_hour AS (
+		  -- XLM leg in BOTH identity forms ('native' + SAC); see
+		  -- the listing query's asset_vs_xlm CTE.
 		  SELECT base_asset AS asset_id,
 		         date_trunc('hour', bucket) AS h,
 		         last(vwap, bucket)::numeric AS vwap
 		    FROM prices_1m
 		   WHERE base_asset = ANY($1)
-		     AND quote_asset = 'native'
+		     AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
 		     AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
 		     AND vwap IS NOT NULL
 		   GROUP BY base_asset, h
@@ -1972,23 +2077,32 @@ func (s *Store) GetAssetsPriceHistory7dBatch(ctx context.Context, assetIDs []str
 		  ) AS bucket
 		),
 		direct_per_day AS (
+		  -- Quote set = fiat:USD OR USDC (classic or its SAC form)
+		  -- per the stablecoin-proxy policy (see the listing
+		  -- query's direct_usd CTE).
 		  SELECT base_asset AS asset_id,
 		         date_trunc('day', bucket) AS d,
 		         last(vwap, bucket)::numeric AS vwap
 		    FROM prices_1m
 		   WHERE base_asset = ANY($1)
-		     AND quote_asset = 'fiat:USD'
+		     AND quote_asset IN (
+		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+		       'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
+		       'fiat:USD'
+		     )
 		     AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
 		     AND vwap IS NOT NULL
 		   GROUP BY base_asset, d
 		),
 		asset_xlm_per_day AS (
+		  -- XLM leg in BOTH identity forms ('native' + SAC); see
+		  -- the listing query's asset_vs_xlm CTE.
 		  SELECT base_asset AS asset_id,
 		         date_trunc('day', bucket) AS d,
 		         last(vwap, bucket)::numeric AS vwap
 		    FROM prices_1m
 		   WHERE base_asset = ANY($1)
-		     AND quote_asset = 'native'
+		     AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
 		     AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
 		     AND vwap IS NOT NULL
 		   GROUP BY base_asset, d
