@@ -206,6 +206,7 @@ The fidelity is a patchwork — full only `[38M→~54M]` + `[~63M→tip]`; degra
 - **HA v1-or-fast-follow** is a genuine product decision — a single-box money system is a real SPOF.
 - **Recompression is itself heavy** — it must be per-partition and monitored; it's the enabler, so it's first.
 - **"Never again" holds structurally** once D lands: RMT idempotent-corrective + INV-3 `derive_generation` → future extractor fixes are bounded re-derives of only the affected range, never from-genesis.
+- **EUR/GBP-quoted pairs are single-reference (CoinGecko only) and can no longer auto-unfreeze** (ADR-0019 amendment 2026-08-24: release needs a corroborating lens agreeing with the fresh candidate; `success_count=1` < trust floor). Every freeze on these pairs now ends in operator judgment or a ~2h P1 escalation — 2026-08-24 saw exactly this on XLM/EUR + XLM/GBP (both genuinely calm at the reference, operator-unfrozen per runbook). Durable fix, pre-launch: give the divergence worker a **second reference for fiat-quoted pairs** — synthetic cross (Chainlink/Redstone USD price × a trusted EUR/GBP FX rate) or a second aggregator API — so `success_count ≥ 2` and the release gate can work unattended. Until then, expect recurring freeze pages on thin fiat pairs.
 
 ## 6b. Storage & HA — session findings (durable capture, 2026-07-18)
 Captured here so they survive context compaction; fold into `docs/architecture/ha-plan.md` when it's refreshed (below).
