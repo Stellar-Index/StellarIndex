@@ -221,20 +221,35 @@
     transform: translateY(0);
   }
 }
-/* Odometer roll for live counters (RollingNumber): only remounted
-   (i.e. changed) characters play this — the carry span rolls in from
-   below while untouched digits hold still. */
-.digit-roll {
-  animation: digit-roll 0.4s cubic-bezier(0.2, 0.7, 0.3, 1.05) both;
+/* Odometer rollover for live counters (RollingNumber): a changed
+   column mounts a two-digit strip [old, new] inside this clipped
+   one-line window; the animation slides the strip up one digit, so
+   the old character exits upward while the new arrives from below —
+   a mechanical wheel, not a fade. The strip's BASE transform is the
+   end position, so reduced-motion (collapsed durations) and the
+   settled state both rest on the new value. Untouched digits are
+   plain .digit-cell spans and never move. */
+.digit-window {
+  display: inline-block;
+  overflow: hidden;
+  height: 1lh;
+  vertical-align: bottom;
 }
-@keyframes digit-roll {
+.digit-strip {
+  display: block;
+  transform: translateY(-50%);
+  animation: digit-rollover 0.35s cubic-bezier(0.25, 0.6, 0.3, 1) both;
+}
+.digit-strip > span {
+  display: block;
+  height: 1lh;
+}
+@keyframes digit-rollover {
   from {
-    opacity: 0;
-    transform: translateY(0.65em);
+    transform: translateY(0);
   }
   to {
-    opacity: 1;
-    transform: translateY(0);
+    transform: translateY(-50%);
   }
 }
 .flash-up {
