@@ -16,7 +16,19 @@ import {
   useLiveClock,
 } from '@/lib/live/hooks';
 
-export function LiveLedgerBadge({ onNavigate }: { onNavigate?: () => void }) {
+export function LiveLedgerBadge({
+  onNavigate,
+  compact = false,
+}: {
+  onNavigate?: () => void;
+  /**
+   * compact renders the bare live number + pulse (no box, no "Ledger"
+   * label) for the logo row — the nav revision puts the heartbeat next
+   * to the brand mark instead of above the account card. The aria-label
+   * keeps the semantics a sighted user infers from the pulse.
+   */
+  compact?: boolean;
+}) {
   const frame = useLedgerStream();
   // Slow clock so a wedged stream drops the badge without needing a
   // new frame to trigger a render (WB-04).
@@ -25,6 +37,26 @@ export function LiveLedgerBadge({ onNavigate }: { onNavigate?: () => void }) {
   if (!frame || isFrameStale(clock, frame.receivedAt, LEDGER_LIVE_STALE_MS)) return null;
 
   const seq = frame.data.latest_ledger;
+
+  if (compact) {
+    return (
+      <Link
+        href={`/ledgers/${seq}`}
+        onClick={onNavigate}
+        className="ml-auto flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[11px] hover:bg-surface-subtle"
+        aria-label={`Latest ledger ${seq}`}
+      >
+        <span className="relative flex h-1.5 w-1.5 shrink-0" aria-hidden>
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-up opacity-60" />
+          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-up" />
+        </span>
+        <span key={seq} className="font-mono tabular-nums text-ink-muted live-tick">
+          {seq.toLocaleString('en-US')}
+        </span>
+      </Link>
+    );
+  }
+
   return (
     <div className="px-3 pb-2">
       <Link
