@@ -1104,7 +1104,7 @@ func (o *Orchestrator) refreshPairWindow( //nolint:funlen // 61>60 after the R-2
 	// confidence Inputs.SourceCount stays the raw trade count — only the
 	// freeze leg widens.
 	if o.stepPhase2Freeze(ctx, pair, window, stateKey, now,
-		conf, confOK, o.effectiveSourceCount(pair, window, trades), prevForConfidence) {
+		conf, confOK, o.effectiveSourceCount(pair, window, trades), prevForConfidence, vwap) {
 		// Refused: advance the shadow comparator with this bucket's
 		// fresh VWAP so the NEXT frozen bucket scores a per-tick
 		// return (and a post-restart frozen pair becomes scorable

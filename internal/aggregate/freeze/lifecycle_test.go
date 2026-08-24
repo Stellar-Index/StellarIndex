@@ -17,8 +17,17 @@ func firing(at time.Time) freeze.Signal {
 }
 
 // healthy is a bucket that meets the ADR-0019 auto-unfreeze
-// condition: confidence strictly above 0.30 AND z strictly below 3.0.
+// condition: confidence strictly above 0.30 AND z strictly below 3.0,
+// with a corroborating lens agreeing with the release candidate
+// (2026-08-24: calm alone earns no streak — a held manipulation is
+// calm too, so release additionally requires ReleaseCorroborated).
 func healthy(at time.Time) freeze.Signal {
+	return freeze.Signal{Now: at, Scored: true, Confidence: 0.50, ZScore: 0.4, ReleaseCorroborated: true}
+}
+
+// calmUncorroborated meets both calm legs but no lens vouches for the
+// candidate level: it must never advance the streak.
+func calmUncorroborated(at time.Time) freeze.Signal {
 	return freeze.Signal{Now: at, Scored: true, Confidence: 0.50, ZScore: 0.4}
 }
 
@@ -303,6 +312,30 @@ func TestPolicy_EscalatedFreezeNeverAutoUnfreezes(t *testing.T) {
 	}
 }
 
+// TestPolicy_UncorroboratedCalmNeverEarnsAStreak — the 2026-08-24
+// corroborated-release gate at the policy layer. Buckets that clear
+// both calm legs (confidence, z) but carry no lens agreement with the
+// release candidate must never advance the streak: under the per-tick
+// shadow comparator a HELD manipulated level produces exactly this
+// signal shape, so releasing on it is releasing the attack.
+func TestPolicy_UncorroboratedCalmNeverEarnsAStreak(t *testing.T) {
+	p := freeze.Policy{}.WithDefaults()
+	st := p.Evaluate(freeze.State{}, firing(t0)).State
+
+	now := t0.Add(freeze.DefaultUncorroboratedInitialHold + time.Minute)
+	for i := 0; i < 4; i++ {
+		out := p.Evaluate(st, calmUncorroborated(now))
+		if !out.Frozen {
+			t.Fatalf("an uncorroborated calm bucket released the freeze at iteration %d", i)
+		}
+		if out.State.UnfreezeStreak != 0 {
+			t.Fatalf("an uncorroborated calm bucket earned an unfreeze streak: %+v", out.State)
+		}
+		st = out.State
+		now = now.Add(time.Minute)
+	}
+}
+
 // TestPolicy_FiringBucketNeverEarnsAStreak — defence in depth against
 // an operator configuring overlapping fire and unfreeze bands (e.g.
 // raising confidence_max_freeze above the unfreeze bound). A bucket
@@ -315,7 +348,10 @@ func TestPolicy_FiringBucketNeverEarnsAStreak(t *testing.T) {
 	now := t0.Add(freeze.DefaultUncorroboratedInitialHold + time.Minute)
 	for i := 0; i < 4; i++ {
 		out := p.Evaluate(st, freeze.Signal{
+			// ReleaseCorroborated true so this pins the Fires check
+			// specifically, not the corroboration gate.
 			Now: now, Fires: true, Scored: true, Confidence: 0.9, ZScore: 12,
+			ReleaseCorroborated: true,
 		})
 		if !out.Frozen {
 			t.Fatalf("a still-FIRING bucket released the freeze at iteration %d", i)

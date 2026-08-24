@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"math/big"
 	"testing"
 	"time"
@@ -173,12 +174,43 @@ func (f *freezeFixture) state() freeze.State {
 // divergence worker publishes in production.
 func seedDivergence(t *testing.T, f *freezeFixture, res divergence.CachedResult) {
 	t.Helper()
+	seedDivergenceCache(t, f.rdb, f.pair, res)
+}
+
+// seedDivergenceCache is seedDivergence for harnesses that don't use
+// freezeFixture (the two-window and Phase-1 tests build their own).
+func seedDivergenceCache(t *testing.T, cache Cache, pair canonical.Pair, res divergence.CachedResult) {
+	t.Helper()
 	raw, err := json.Marshal(res)
 	if err != nil {
 		t.Fatalf("marshal divergence result: %v", err)
 	}
-	if err := f.rdb.Set(context.Background(), cachekeys.Divergence(f.pair).String(), raw, time.Hour).Err(); err != nil {
+	if err := cache.Set(context.Background(), cachekeys.Divergence(pair).String(), raw, time.Hour).Err(); err != nil {
 		t.Fatalf("seed divergence: %v", err)
+	}
+}
+
+// agreeingLens is the divergence cache entry production writes when the
+// corroborating references sit AT the given level and we are serving a
+// price at servedPrice: OurPrice is the SERVED price (the divergence
+// worker reads what the API serves — mid-freeze that is the pinned
+// LKG, never the refused candidate), Median is where the references
+// are, and DivergencePct relates the two. The release gate
+// (releaseCorroborated) reads only Median and compares it against the
+// FRESH candidate itself — that asymmetry is the 2026-08-24
+// corroborated-release repair.
+func agreeingLens(pair canonical.Pair, servedPrice, level float64) divergence.CachedResult {
+	pct := 0.0
+	if level > 0 {
+		pct = math.Abs(servedPrice-level) / level * 100
+	}
+	return divergence.CachedResult{
+		PairID:         pair.String(),
+		OurPrice:       servedPrice,
+		Median:         level,
+		DivergencePct:  pct,
+		SuccessCount:   3, // ≥ divergenceMinSources: trusted multi-reference signal
+		AgreementCount: 2,
 	}
 }
 
@@ -229,6 +261,11 @@ func TestFreezeLifecycle_SingleCleanBucketDoesNotRelease(t *testing.T) {
 // per-bucket signal reads healthy.
 func TestFreezeLifecycle_HoldSurvivesAHealthyBucket(t *testing.T) {
 	f := newFreezeFixture(t)
+	// References agree with the LKG throughout, so the return TO the LKG
+	// is corroborated and may earn the streak (2026-08-24: an
+	// uncorroboratable calm bucket no longer counts — see
+	// Signal.ReleaseCorroborated).
+	seedDivergence(t, f, agreeingLens(f.pair, 0.1242, 0.1242))
 
 	f.feed(t, manipQuoteAmount, "soroswap")
 	f.tick(t, 30*time.Second)
@@ -270,6 +307,12 @@ func TestFreezeLifecycle_AutoUnfreezeAfterTwoHealthyBucketsPastTheHold(t *testin
 	f := newFreezeFixture(t)
 	before := testutil.ToFloat64(obs.AnomalyFreezeReleasedTotal.WithLabelValues("auto"))
 
+	// References agree with the LKG: the release candidate (back at the
+	// LKG) is corroborated, which the streak requires since 2026-08-24.
+	// The lens also makes the freeze itself corroborated → the full
+	// 30-minute ADR hold.
+	seedDivergence(t, f, agreeingLens(f.pair, 0.1242, 0.1242))
+
 	f.feed(t, manipQuoteAmount, "soroswap")
 	f.tick(t, 30*time.Second)
 	if !f.state().Active() {
@@ -281,8 +324,8 @@ func TestFreezeLifecycle_AutoUnfreezeAfterTwoHealthyBucketsPastTheHold(t *testin
 	f.feed(t, lkgQuoteAmount, "soroswap")
 	f.tick(t, 30*time.Second)
 	// Two settled healthy buckets, the second landing after the initial
-	// hold (uncorroborated → 10 minutes) has expired.
-	f.tick(t, freeze.DefaultUncorroboratedInitialHold+time.Minute)
+	// hold (corroborated → 30 minutes) has expired.
+	f.tick(t, freeze.DefaultInitialHold+time.Minute)
 	if !f.state().Active() {
 		t.Fatal("released at expiry on a streak of one — the ADR wants two consecutive")
 	}
@@ -307,6 +350,46 @@ func TestFreezeLifecycle_AutoUnfreezeAfterTwoHealthyBucketsPastTheHold(t *testin
 	}
 }
 
+// TestFreezeLifecycle_NoLensMeansNoAutoRelease — the uncorroboratable
+// half of the 2026-08-24 corroborated-release repair. A pair with NO
+// corroborating lens (no cross-oracle divergence entry, no
+// triangulation chain) cannot prove that a calm, healthy-looking level
+// is the market rather than a parked manipulation — the shadow
+// comparator makes ANY held level read calm. So the calm streak must
+// not accumulate and the freeze must walk the ladder to an operator
+// instead of auto-releasing, matching the ADR's escalation posture for
+// pairs the automatic layer cannot judge.
+func TestFreezeLifecycle_NoLensMeansNoAutoRelease(t *testing.T) {
+	f := newFreezeFixture(t)
+
+	f.feed(t, manipQuoteAmount, "soroswap")
+	f.tick(t, 30*time.Second)
+	if !f.state().Active() {
+		t.Fatal("setup: freeze did not fire")
+	}
+
+	// The same shape that releases in the corroborated sibling test:
+	// settle at the LKG, then two calm buckets past the (uncorroborated →
+	// 10-minute) hold. Without a lens the streak must stay at zero and
+	// the freeze must hold.
+	f.feed(t, lkgQuoteAmount, "soroswap")
+	f.tick(t, 30*time.Second)
+	f.tick(t, freeze.DefaultUncorroboratedInitialHold+time.Minute)
+	f.tick(t, 30*time.Second)
+
+	if !f.state().Active() {
+		t.Fatal("a pair with no corroborating lens auto-released — an uncorroboratable " +
+			"calm bucket is not evidence of recovery (the shadow comparator reads any " +
+			"held level as calm), so release requires a lens that agrees with the candidate")
+	}
+	if got := f.state().UnfreezeStreak; got != 0 {
+		t.Errorf("UnfreezeStreak = %d with no lens, want 0", got)
+	}
+	if got := f.served(t); got != lkgFormatted {
+		t.Errorf("served %q; want the held LKG %q", got, lkgFormatted)
+	}
+}
+
 // TestFreezeLifecycle_ExtendsThenEscalates — the ladder. A
 // manipulation the attacker simply HOLDS produces a pair that never
 // earns its release, so each hold expiry grants one 30-minute
@@ -317,33 +400,33 @@ func TestFreezeLifecycle_AutoUnfreezeAfterTwoHealthyBucketsPastTheHold(t *testin
 // it neither bounded the freeze nor ever told an operator that one
 // had been running for two hours.
 //
-// 2026-08-24 (frozenPrevVWAPs): a HELD level is per-tick CALM (z=0), so
-// the z leg alone no longer distinguishes "attacker holds the manip"
-// from "market settled at a new level" — by ADR-0019 design that
-// discrimination belongs to the CONFIDENCE leg: a manipulated level is
-// the one the corroborating references disagree with. The fixture's
-// neutral factors gave the held manip confidence ≈0.5 (> the 0.30
-// release floor), so this test seeds what production would actually
-// see — a cross-oracle divergence result showing the references far
-// from the held price — which pins confidence below the floor and
-// keeps the ladder walking. (A held manip that ALSO fools every
-// reference is out of scope for the automatic layer, exactly per the
-// ADR's escalation rationale.)
+// 2026-08-24 (frozenPrevVWAPs + corroborated release): a HELD level is
+// per-tick CALM (z=0), so the z leg alone no longer distinguishes
+// "attacker holds the manip" from "market settled at a new level". The
+// discrimination is the release gate: the streak counts only buckets
+// whose FRESH candidate a corroborating lens agrees with
+// (Signal.ReleaseCorroborated). This test seeds the divergence state
+// production actually reaches mid-freeze — the worker compares the
+// references against the SERVED price, which is the pinned LKG, so
+// OurPrice = Median = LKG and DivergencePct ≈ 0 even while the attacker
+// holds a 61%-off level. Under that state both legacy release legs pass
+// (calm z, healthy confidence): pre-repair the held manipulation walked
+// free at hold expiry; post-repair the candidate-vs-median check (0.2000
+// vs 0.1242 → 61% ≫ 5%) refuses the streak and the ladder escalates to
+// an operator. (A held manip that ALSO drags every reference with it is
+// out of scope for the automatic layer, per the ADR's escalation
+// rationale.)
 func TestFreezeLifecycle_ExtendsThenEscalates(t *testing.T) {
 	f := newFreezeFixture(t)
 	beforeExt := testutil.ToFloat64(obs.AnomalyFreezeExtensionsTotal)
 	beforeEsc := testutil.ToFloat64(obs.AnomalyFreezeEscalatedTotal)
 
-	// The references sit at LKG while the pair prints the held manip:
-	// ~38% divergence, 3 responding references, none agreeing.
-	seedDivergence(t, f, divergence.CachedResult{
-		PairID:        f.pair.String(),
-		OurPrice:      0.2000,
-		Median:        0.1242,
-		DivergencePct: 38.0,
-		SuccessCount:  3,
-		WarningFired:  true,
-	})
+	// The REACHABLE mid-freeze lens state: references at the LKG,
+	// compared against the served LKG → agreement. (Seeding the
+	// candidate-vs-references divergence here would be the inverted-
+	// evidence mistake the 2026-08-24 panel rejected: mid-freeze the
+	// worker never sees the refused candidate.)
+	seedDivergence(t, f, agreeingLens(f.pair, 0.1242, 0.1242))
 
 	f.feed(t, manipQuoteAmount, "soroswap")
 	f.tick(t, 30*time.Second)
@@ -734,6 +817,11 @@ func TestFreezeLifecycle_SiblingWindowReleaseKeepsLongWindowFrozen(t *testing.T)
 	longKey := pair.String() + ":" + longWindow.String()
 	lkg := big.NewRat(lkgQuoteAmount, lkgBaseAmount)
 
+	// References agree with the LKG: the short window's return there is
+	// release-corroborated; the long window's swinging manipulation never
+	// is (candidate ≫ 5% from the median).
+	seedDivergenceCache(t, orch.cache, pair, agreeingLens(pair, 0.1242, 0.1242))
+
 	// Tick 1: manipulated print on BOTH windows → both freeze.
 	feed(manipQuoteAmount, manipQuoteAmount)
 	tick(30 * time.Second)
@@ -754,11 +842,11 @@ func TestFreezeLifecycle_SiblingWindowReleaseKeepsLongWindowFrozen(t *testing.T)
 	// a jump vs the shadow comparator and settles the level.
 	feed(lkgQuoteAmount, manipQuoteAmount)
 	tick(30 * time.Second)
-	// Tick past the 10-minute uncorroborated hold: short earns
+	// Tick past the 30-minute corroborated hold: short earns
 	// streak=1 (held), long keeps firing on a fresh swing — both
 	// still frozen.
 	feed(lkgQuoteAmount, manipQuoteAmount*3/2)
-	tick(freeze.DefaultUncorroboratedInitialHold + time.Minute)
+	tick(freeze.DefaultInitialHold + time.Minute)
 	if !orch.freezeStates[shortKey].Active() {
 		t.Fatal("short window released on a single healthy bucket; ADR-0019 needs two consecutive")
 	}
@@ -840,6 +928,9 @@ func TestFreezeLifecycle_OperatorOverrideReleasesAllWindows(t *testing.T) {
 // treat every later freeze as pre-existing.
 func TestFreezeLifecycle_ActiveGaugeTracksHeldFreezes(t *testing.T) {
 	f := newFreezeFixture(t)
+	// Agreeing references at the LKG so the release path is reachable
+	// (corroborated lens → 30-minute hold + streak eligibility).
+	seedDivergence(t, f, agreeingLens(f.pair, 0.1242, 0.1242))
 
 	f.feed(t, manipQuoteAmount, "soroswap")
 	f.tick(t, 30*time.Second)
@@ -851,7 +942,7 @@ func TestFreezeLifecycle_ActiveGaugeTracksHeldFreezes(t *testing.T) {
 	// comparator), then two calm buckets past the hold release.
 	f.feed(t, lkgQuoteAmount, "soroswap")
 	f.tick(t, 30*time.Second)
-	f.tick(t, freeze.DefaultUncorroboratedInitialHold+time.Minute)
+	f.tick(t, freeze.DefaultInitialHold+time.Minute)
 	f.tick(t, 30*time.Second)
 	if f.state().Active() {
 		t.Fatal("setup: expected release")
@@ -927,6 +1018,11 @@ func TestFreezeLifecycle_Phase1FreezeReleasesWhenAnomalyClears(t *testing.T) {
 	if err := rdb.Set(context.Background(), vwapKey, lkgFormatted, time.Minute).Err(); err != nil {
 		t.Fatalf("seed LKG: %v", err)
 	}
+	// References sit at the residual band level the market settles at, so
+	// the release candidate is corroborated (required for the streak
+	// since 2026-08-24) — a 2.5% residual is well inside every real
+	// reference's agreement band.
+	seedDivergenceCache(t, rdb, pair, agreeingLens(pair, 0.1242, 0.127305))
 
 	feed := func(quote int64) {
 		store.trades = []canonical.Trade{
@@ -1023,6 +1119,14 @@ func TestFreezeLifecycle_AutoUnfreezeAtANewStablePriceLevel(t *testing.T) {
 
 	f := newFreezeFixture(t)
 	before := testutil.ToFloat64(obs.AnomalyFreezeReleasedTotal.WithLabelValues("auto"))
+	// A GENUINE repricing carries the corroborating references with it:
+	// the lens median sits at the new level while OurPrice (what the
+	// worker compares — the SERVED price) is still the pinned LKG. This
+	// is exactly what production sees mid-freeze after a real market
+	// move, and it is what separates this release from the held-
+	// manipulation case in ExtendsThenEscalates (whose references stay
+	// at the LKG).
+	seedDivergence(t, f, agreeingLens(f.pair, 0.1242, 0.1317))
 
 	f.feed(t, manipQuoteAmount, "soroswap")
 	f.tick(t, 30*time.Second)
@@ -1040,9 +1144,9 @@ func TestFreezeLifecycle_AutoUnfreezeAtANewStablePriceLevel(t *testing.T) {
 	}
 
 	// Two consecutive buckets AT the new level, the second landing after
-	// the initial (uncorroborated → 10 minute) hold has expired.
+	// the initial (corroborated → 30 minute) hold has expired.
 	f.feed(t, driftedQuoteAmount, "soroswap")
-	f.tick(t, freeze.DefaultUncorroboratedInitialHold+time.Minute)
+	f.tick(t, freeze.DefaultInitialHold+time.Minute)
 	f.feed(t, driftedQuoteAmount, "soroswap")
 	f.tick(t, 30*time.Second)
 
