@@ -247,7 +247,18 @@ func (h *Handler) stampTxOutcomes(ctx context.Context, ops []OpView, rows []clic
 	if len(hashes) == 0 {
 		return ""
 	}
-	outcomes, err := h.Reader.TxOutcomesByHash(ctx, lo, hi, hashes)
+	// Detached budget (2026-08-24, operator-reported): this read runs LAST,
+	// after the ops-by-account scan — which for a long-idle account walks
+	// granules from the tip back to the account's last activity (~4s live
+	// for a 46d-idle account) and exhausts the request budget, so the
+	// outcome read deadline-exceeded despite being ~45ms once its ledger
+	// span is known. Give it its own small budget, detached from the
+	// (nearly spent) request deadline but still cancel-aware via values;
+	// WithoutCancel keeps tracing/session values without inheriting the
+	// exhausted deadline. The honest-degrade note remains the fallback.
+	octx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
+	outcomes, err := h.Reader.TxOutcomesByHash(octx, lo, hi, hashes)
 	if err != nil {
 		// Non-fatal: serve the operations with UNKNOWN outcome and disclose it
 		// (a client abort lands here too, in which case the response is moot).
