@@ -261,6 +261,11 @@ type Server struct {
 	// Same reader the explorer handler + GET /v1/directory use; nil
 	// omits the fields. DISPLAY-ONLY — never feeds pricing/verification.
 	directory explorerpkg.DirectoryReader
+	// volumeCharacter rolls the per-asset trailing-window account-structure
+	// signals + derived volume_character on /v1/assets/{id} (design §2).
+	// Nil omits the fields. ANALYTICS-only — never feeds pricing/verification
+	// and never re-ranks (that is §4).
+	volumeCharacter VolumeCharacterReader
 
 	// readyz single-flight cache (inventory #26) — see handleReadyz.
 	readyzMu             sync.Mutex
@@ -874,6 +879,14 @@ type Options struct {
 	// batch endpoint.
 	Directory explorerpkg.DirectoryReader
 
+	// VolumeCharacter, when non-nil, populates volume_character + its
+	// account-structure signals on /v1/assets/{id} (wash-and-scam-signals
+	// design §2). Production wiring: timescale.Store (the maker/taker
+	// trades live in Timescale, not the ClickHouse lake). Nil omits the
+	// fields. ANALYTICS-only — never feeds pricing/verification, never
+	// re-ranks (that is §4).
+	VolumeCharacter VolumeCharacterReader
+
 	// FXHistory, when non-nil, lets /v1/chart serve fiat:fiat pairs
 	// from the fx_quotes hypertable for ranges beyond 7d. Leave nil
 	// to keep /v1/chart fiat:fiat in 7d-only mode.
@@ -1248,6 +1261,7 @@ func New(opts Options) *Server {
 		currencies:             opts.Currencies,
 		explorer:               opts.Explorer,
 		directory:              opts.Directory,
+		volumeCharacter:        opts.VolumeCharacter,
 		fxHistory:              opts.FXHistory,
 		sessionPeeker:          opts.SessionPeeker,
 		audit:                  opts.Audit,

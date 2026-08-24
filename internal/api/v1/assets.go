@@ -308,6 +308,27 @@ type AssetDetail struct {
 	IssuerDirectoryDomain string   `json:"issuer_directory_domain,omitempty"`
 	IssuerDirectoryName   string   `json:"issuer_directory_name,omitempty"`
 
+	// VolumeCharacter classifies the asset's trailing-window trade
+	// volume by account structure (wash-and-scam-signals design §2):
+	//   - "market"       — honest multi-account market activity (default).
+	//   - "operational"  — an issuer-side mint/redeem wrap corridor
+	//                      (USDC↔USDCAllow, AUDD↔AUDR); real, but not
+	//                      market activity.
+	//   - "concentrated" — >90% of volume in one account pair on a
+	//                      market-styled pair (volume-painting wash,
+	//                      third-party ping-pong, dust-bot).
+	// ANALYTICS / DISPLAY only — it does NOT re-rank anything (that is
+	// design §4, operator-policy-gated) and does not feed pricing or
+	// verification. Omitted when the volume-character reader isn't wired.
+	VolumeCharacter string `json:"volume_character,omitempty"`
+
+	// VolumeCharacterSignals are the underlying account-structure signals
+	// VolumeCharacter is derived from — and the fields §4's
+	// concentration-adjusted ranking would sort on. Present whenever the
+	// reader is wired (zeroed for an asset with no priced trades in the
+	// window).
+	VolumeCharacterSignals *AssetVolumeCharacterSignals `json:"volume_character_signals,omitempty"`
+
 	// Slug is the friendly short identifier for the asset (e.g.
 	// "USDC" for the canonical Circle USDC, or the issuer-
 	// disambiguated form like "USDC-GA5Z…" for collisions). Mirror
@@ -2262,6 +2283,13 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// price_usd or any gate. Best-effort; a nil reader / unlisted issuer
 	// / lookup failure just omits the fields.
 	s.applyIssuerDirectoryTags(r.Context(), &detail)
+
+	// Volume-character overlay (design §2) — trailing-window account-
+	// structure signals + derived volume_character (market / operational /
+	// concentrated). ANALYTICS-only: reads nothing from and writes nothing
+	// to the price/gate surfaces, and never re-ranks (§4). Best-effort;
+	// omitted when no reader is wired or the lookup fails.
+	s.applyVolumeCharacter(r.Context(), &detail, parsed)
 
 	// Declared-peg price fill — mirrors the listing paths' call. Runs
 	// LAST among the price producers, so it fills only when neither the

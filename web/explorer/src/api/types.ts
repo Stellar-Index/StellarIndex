@@ -5542,6 +5542,44 @@ export interface components {
             /** @description Name the account_directory carries for the issuer. Display-only attribution; omitted when unlisted. */
             issuer_directory_name?: string;
             /**
+             * @description Classifies the asset's trailing-window trade volume by account
+             *     structure (wash-and-scam-signals design §2):
+             *       - `market` — honest multi-account market activity (default).
+             *       - `operational` — an issuer-side mint/redeem wrap corridor
+             *         (USDC↔USDCAllow, AUDD↔AUDR); real, but not market activity.
+             *       - `concentrated` — >90% of volume in one account pair on a
+             *         market-styled pair (volume-painting wash, third-party
+             *         ping-pong, dust-bot).
+             *     ANALYTICS / DISPLAY only — it does NOT re-rank anything (that is
+             *     design §4, operator-policy-gated) and does not feed pricing or
+             *     verification. Omitted when the reader isn't wired.
+             * @enum {string}
+             */
+            volume_character?: "market" | "operational" | "concentrated";
+            /**
+             * @description The underlying account-structure signals `volume_character` is
+             *     derived from — and the fields §4's concentration-adjusted ranking
+             *     would sort on. Shares are fractions in [0,1] (4 dp).
+             */
+            volume_character_signals?: {
+                /** @description Trailing window the signals roll over (14). */
+                window_days: number;
+                /** @description Priced (usd_volume non-null) window volume the shares are computed against, as a decimal string. */
+                volume_usd: string;
+                distinct_makers: number;
+                distinct_takers: number;
+                /** @description Max share of window volume in one UNORDERED (maker,taker) account pair. */
+                top_account_pair_vol_share: number;
+                /** @description Share of volume where maker == taker. */
+                self_cross_share: number;
+                /** @description Share of volume where the asset's issuer is maker or taker. */
+                issuer_side_share: number;
+                /** @description Share of volume against a real price surface (native / USDC / fiat). */
+                market_styled_share: number;
+                /** @description market_styled_share >= 0.5. */
+                is_market_styled: boolean;
+            };
+            /**
              * @description Attached when the requested asset's code matches a
              *     verified currency's Stellar ticker (USDC, EURC, AQUA, …)
              *     but the issuer doesn't match the verified entry. Lights
