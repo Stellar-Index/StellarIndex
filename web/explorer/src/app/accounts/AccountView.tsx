@@ -107,10 +107,10 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
 
   if (id.length === 0) {
     return (
-      <div className="space-y-6">
+      <Container className="space-y-6 py-8">
         <AccountsAnalytics />
         <AccountsDirectory />
-      </div>
+      </Container>
     );
   }
 
@@ -263,7 +263,7 @@ function AccountsDirectory() {
   });
 
   return (
-    <Container className="space-y-6 py-8">
+    <div className="space-y-6">
       <header className="space-y-2">
         <h1 className="text-2xl font-semibold tracking-tight">Accounts</h1>
         <p className="max-w-3xl text-sm text-ink-body">
@@ -340,7 +340,7 @@ function AccountsDirectory() {
           </>
         )}
       </Panel>
-    </Container>
+    </div>
   );
 }
 
