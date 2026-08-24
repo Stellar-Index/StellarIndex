@@ -793,33 +793,8 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
   // typecheck without further narrowing pain.
   const globalView = globalViewEarly as GlobalAssetView | null;
 
-  // Schema.org BreadcrumbList — gives Google a structured
-  // hierarchy (Home → Assets → XLM) so search results can
-  // render the breadcrumb path under the title.
-  const breadcrumbLD = {
-    '@context': 'https://schema.org',
-    '@type': 'BreadcrumbList',
-    itemListElement: [
-      {
-        '@type': 'ListItem',
-        position: 1,
-        name: 'Home',
-        item: 'https://stellarindex.io',
-      },
-      {
-        '@type': 'ListItem',
-        position: 2,
-        name: 'Assets',
-        item: 'https://stellarindex.io/assets',
-      },
-      {
-        '@type': 'ListItem',
-        position: 3,
-        name: coin.code,
-        item: `https://stellarindex.io/assets/${coin.slug}`,
-      },
-    ],
-  };
+  // FEC A1-6: BreadcrumbList JSON-LD derives from the visible Crumb[]
+  // inside Breadcrumbs below — no hand-rolled LD.
   // Schema.org FAQPage — the same Q/A pairs that render in the
   // visible AssetFAQ panel below. Emitting them as JSON-LD lets
   // Google pick them up for rich-snippet rendering on currency-
@@ -856,10 +831,6 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
   });
   return (
     <Container className="space-y-8 py-8 sm:py-10">
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: serializeJsonLd(breadcrumbLD) }}
-      />
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: serializeJsonLd(faqLD) }}

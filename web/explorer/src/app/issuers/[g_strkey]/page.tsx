@@ -10,7 +10,7 @@ import { asExample } from '@/api/client';
 import { buildFetchData, failBuild, requireRows } from '@/lib/buildFetch';
 import { formatCompact, formatPriceSmall, formatRelative } from '@/lib/format';
 import { isSafeHomeDomain } from '@/lib/safe-domain';
-import { serializeJsonLd, ogImageFor } from '@/lib/seo';
+import { ogImageFor } from '@/lib/seo';
 
 /**
  * /issuers/[g_strkey] — single-issuer detail page.
@@ -215,41 +215,10 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
     }
   }
 
-  // Schema.org BreadcrumbList — gives Google a structured
-  // hierarchy (Home → Issuers → <org_name>) so search results can
-  // render the breadcrumb path under the title. Same shape as
-  // /assets/[slug] and /markets/[pair].
-  const breadcrumbLD = {
-    '@context': 'https://schema.org',
-    '@type': 'BreadcrumbList',
-    itemListElement: [
-      {
-        '@type': 'ListItem',
-        position: 1,
-        name: 'Home',
-        item: 'https://stellarindex.io',
-      },
-      {
-        '@type': 'ListItem',
-        position: 2,
-        name: 'Issuers',
-        item: 'https://stellarindex.io/issuers',
-      },
-      {
-        '@type': 'ListItem',
-        position: 3,
-        name: detail.org_name || shortKey(g_strkey),
-        item: `https://stellarindex.io/issuers/${g_strkey}`,
-      },
-    ],
-  };
-
+  // FEC A1-6: BreadcrumbList JSON-LD derives from the visible Crumb[]
+  // inside Breadcrumbs below — no hand-rolled LD.
   return (
     <Container className="space-y-6 py-8">
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: serializeJsonLd(breadcrumbLD) }}
-      />
       {detail.scam_reason && (
         <div className="border-down/40 bg-down-subtle rounded-lg border-2 px-4 py-3">
           <div className="flex items-baseline gap-2">

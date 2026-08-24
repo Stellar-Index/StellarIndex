@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 
 import { OrderBookPanel } from '../markets/[pair]/OrderBookPanel';
+import { Segmented } from '@/components/ui';
 
 /**
  * SdexOrderBookSection — the live SDEX book for a handful of headline
@@ -55,23 +56,12 @@ export function SdexOrderBookSection() {
           Full {pair.label} market page →
         </Link>
       </div>
-      <div className="flex flex-wrap gap-1">
-        {HEADLINE_PAIRS.map((p, i) => (
-          <button
-            key={p.label}
-            type="button"
-            onClick={() => setIx(i)}
-            aria-pressed={i === ix}
-            className={`rounded-md px-2.5 py-1 font-mono text-xs ${
-              i === ix
-                ? 'bg-brand-600 text-white'
-                : 'border border-line text-ink-body hover:border-brand-500'
-            }`}
-          >
-            {p.label}
-          </button>
-        ))}
-      </div>
+      <Segmented
+        ariaLabel="Headline pair"
+        options={HEADLINE_PAIRS.map((p, i) => ({ label: p.label, value: String(i) }))}
+        value={String(ix)}
+        onChange={(v) => setIx(Number(v))}
+      />
       <OrderBookPanel base={pair.base} quote={pair.quote} />
     </section>
   );

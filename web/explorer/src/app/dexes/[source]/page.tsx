@@ -4,7 +4,7 @@ import { notFound } from 'next/navigation';
 import { ExternalLink } from 'lucide-react';
 
 import { Container, Breadcrumbs } from '@/components/ui';
-import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, serializeJsonLd } from '@/lib/seo';
+import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
 import { DexAnalyticsSection } from './DexAnalyticsSection';
 import { PairReservesPanel } from './PairReservesPanel';
 import { PoolsTable } from './PoolsTable';
@@ -93,23 +93,10 @@ export default async function SourceDetailPage({
   const info = DEX_INFO[source];
   if (!info) notFound();
 
-  // Schema.org BreadcrumbList — Home → DEXes → <name>.
-  const breadcrumbLD = {
-    '@context': 'https://schema.org',
-    '@type': 'BreadcrumbList',
-    itemListElement: [
-      { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://stellarindex.io' },
-      { '@type': 'ListItem', position: 2, name: 'DEXes', item: 'https://stellarindex.io/dexes' },
-      { '@type': 'ListItem', position: 3, name: info.name, item: `https://stellarindex.io/dexes/${source}` },
-    ],
-  };
-
   return (
     <Container className="space-y-6 py-8">
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: serializeJsonLd(breadcrumbLD) }}
-      />
+      {/* FEC A1-6: BreadcrumbList JSON-LD derives from this Crumb[] inside
+          Breadcrumbs — no hand-rolled LD. */}
       <Breadcrumbs
         items={[
           { label: 'Home', href: '/' },

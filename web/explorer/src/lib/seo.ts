@@ -72,6 +72,37 @@ export function serializeJsonLd(data: unknown): string {
 }
 
 /**
+ * breadcrumbJsonLd — the ONE way to build a schema.org BreadcrumbList
+ * (FEC A1-6 one-rule). The LD is derived from the SAME `Crumb[]` the
+ * visible trail renders (ui/Page `Breadcrumbs`, which PageHeader wraps),
+ * so UI and structured data cannot diverge again — the audit found both
+ * mismatch directions live (LD with no visible trail on /exchanges/[name]
+ * + /protocols/[name]; visible trails with no LD on tx/account/ledger/
+ * contract/network). `Breadcrumbs` calls this itself; pages should not.
+ *
+ * Crumbs without an `href` (the current page) emit a ListItem without
+ * `item` — explicitly allowed by Google's breadcrumb guidance for the
+ * final element. Relative hrefs resolve against the public origin.
+ */
+export function breadcrumbJsonLd(
+  crumbs: { label: string; href?: string }[],
+): Record<string, unknown> {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: crumbs.map((c, i) => {
+      const li: Record<string, unknown> = {
+        '@type': 'ListItem',
+        position: i + 1,
+        name: c.label,
+      };
+      if (c.href) li.item = new URL(c.href, 'https://stellarindex.io').toString();
+      return li;
+    }),
+  };
+}
+
+/**
  * schema.org Dataset node for our data surfaces (price/market/asset pages).
  * Makes them eligible for Google Dataset Search — a differentiator for a
  * pricing product. Pass an accurate `contentUrl` (a real public API endpoint)

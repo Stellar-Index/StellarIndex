@@ -59,20 +59,33 @@ export function TabNav({
   );
 }
 
-/** SegmentedControl — a pill-style toggle group (for compact in-card switches). */
+/**
+ * SegmentedControl — THE pill-style toggle group for compact in-card
+ * window/metric switches (FEC A3-F6.2: 7 hand-rolled aria-pressed rows
+ * folded onto this; SortPill is the one recorded sibling). Design calls
+ * recorded 2026-08-24: the quiet `bg-surface shadow-xs` active style wins
+ * over the forks' `bg-brand-600 text-white` / `bg-brand-100`, and the
+ * WindowPills a11y semantics win — role="group" + a required aria-label +
+ * a focus-visible ring on every segment.
+ */
 export function Segmented({
   options,
   value,
   onChange,
+  ariaLabel,
   className,
 }: {
   options: { label: ReactNode; value: string }[];
   value: string;
   onChange: (v: string) => void;
+  /** Accessible name for the group (absorbed from WindowPills — required). */
+  ariaLabel: string;
   className?: string;
 }) {
   return (
     <div
+      role="group"
+      aria-label={ariaLabel}
       className={cn(
         'bg-surface-subtle inline-flex rounded-lg p-0.5',
         className,
@@ -85,7 +98,7 @@ export function Segmented({
           onClick={() => onChange(o.value)}
           aria-pressed={value === o.value}
           className={cn(
-            'rounded-md px-2.5 py-1 text-[13px] font-medium transition-colors',
+            'focus-visible:ring-brand-500/60 rounded-md px-2.5 py-1 text-[13px] font-medium transition-colors focus-visible:ring-2 focus-visible:outline-hidden',
             value === o.value
               ? 'bg-surface text-ink shadow-xs'
               : 'text-ink-muted hover:text-ink',

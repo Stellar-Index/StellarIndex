@@ -8,11 +8,7 @@ import { SourceStatsPanel } from '@/app/dexes/[source]/SourceStatsPanel';
 import { SourceTopChart } from '@/app/dexes/[source]/SourceTopChart';
 import { buildFetchData, failBuild, requireRows } from '@/lib/buildFetch';
 import { formatCompact, formatPairPrice } from '@/lib/format';
-import {
-  SITE_OG_IMAGES,
-  SITE_TWITTER_IMAGES,
-  serializeJsonLd,
-} from '@/lib/seo';
+import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
 import { shortAssetText } from '@/lib/asset-label';
 
 // Sources that also have a dedicated DEX or CEX detail page — used to
@@ -182,38 +178,10 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
   };
   const cursors = allCursors.filter((c) => cursorVenue(c) === name);
 
-  // Schema.org BreadcrumbList — Home → Sources → <name>.
-  const breadcrumbLD = {
-    '@context': 'https://schema.org',
-    '@type': 'BreadcrumbList',
-    itemListElement: [
-      {
-        '@type': 'ListItem',
-        position: 1,
-        name: 'Home',
-        item: 'https://stellarindex.io',
-      },
-      {
-        '@type': 'ListItem',
-        position: 2,
-        name: 'Sources',
-        item: 'https://stellarindex.io/sources',
-      },
-      {
-        '@type': 'ListItem',
-        position: 3,
-        name,
-        item: `https://stellarindex.io/sources/${name}`,
-      },
-    ],
-  };
-
+  // FEC A1-6: BreadcrumbList JSON-LD derives from the visible Crumb[]
+  // inside Breadcrumbs below — no hand-rolled LD.
   return (
     <Container className="space-y-6 py-8">
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: serializeJsonLd(breadcrumbLD) }}
-      />
       <header className="space-y-3">
         <Breadcrumbs
           items={[

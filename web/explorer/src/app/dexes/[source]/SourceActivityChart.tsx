@@ -4,6 +4,7 @@ import { useState } from 'react';
 import dynamic from 'next/dynamic';
 
 import { formatCompact } from '@/lib/format';
+import { Segmented } from '@/components/ui';
 
 const LineChart = dynamic(
   () => import('@/components/charts/LineChart').then((m) => m.LineChart),
@@ -49,20 +50,13 @@ export function SourceActivityChart({
   return (
     <div className="space-y-2">
       {has7d && (
-        <div className="flex justify-end gap-1 text-[11px]">
-          {(['24h', '7d'] as TF[]).map((o) => (
-            <button
-              key={o}
-              type="button"
-              onClick={() => setTf(o)}
-              aria-pressed={tf === o}
-              className={`rounded px-2 py-0.5 font-mono uppercase tracking-wider ${
-                tf === o ? 'bg-brand-600 text-white' : 'text-ink-muted hover:bg-surface-subtle'
-              }`}
-            >
-              {o}
-            </button>
-          ))}
+        <div className="flex justify-end">
+          <Segmented
+            ariaLabel="Activity window"
+            options={(['24h', '7d'] as TF[]).map((o) => ({ label: o, value: o }))}
+            value={tf}
+            onChange={(v) => setTf(v as TF)}
+          />
         </div>
       )}
       <LineChart

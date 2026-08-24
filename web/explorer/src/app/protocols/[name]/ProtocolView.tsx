@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, ExternalLink } from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
 
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample, API_BASE_URL } from '@/api/client';
@@ -15,7 +15,7 @@ import { TimeSeriesChart } from './TimeSeriesChart';
 import { AnalyticsStatusNote, BespokeUnavailable } from './AnalyticsStatusNote';
 import { BespokeSection, type Bespoke } from './BespokeSection';
 import type { paths } from '@/api/types';
-import { Container } from '@/components/ui';
+import { Breadcrumbs, Container } from '@/components/ui';
 
 // ─── Wire shapes — derived from the generated OpenAPI contract
 // (src/api/types.ts, `make web-generate-api`); mirror
@@ -258,16 +258,17 @@ function Shell({
 }) {
   return (
     <Container className="space-y-6 py-8">
-      <nav className="text-xs text-ink-muted">
-        <Link
-          href="/protocols"
-          className="inline-flex items-center gap-1 hover:text-brand-600"
-        >
-          <ArrowLeft className="h-3 w-3" aria-hidden />
-          All protocols
-        </Link>{' '}
-        / <span className="text-ink-body">{label || name}</span>
-      </nav>
+      {/* FEC A1-6: the visible trail + its BreadcrumbList JSON-LD render
+          from the SAME Crumb[] (Breadcrumbs derives the LD). Replaces the
+          hand-rolled "← All protocols / <label>" nav AND the page-level
+          hand-rolled LD that had no visible counterpart. */}
+      <Breadcrumbs
+        items={[
+          { label: 'Home', href: '/' },
+          { label: 'Protocols', href: '/protocols' },
+          { label: label || name },
+        ]}
+      />
       {children}
     </Container>
   );

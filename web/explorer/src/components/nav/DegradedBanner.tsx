@@ -1,10 +1,9 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { AlertTriangle, XCircle } from 'lucide-react';
 
-import { API_BASE_URL } from '@/api/client';
+import { useStatus } from '@/api/hooks';
 
 /**
  * DegradedBanner surfaces in-product degraded / down state from
@@ -18,39 +17,11 @@ import { API_BASE_URL } from '@/api/client';
  * unless we tell them otherwise. QA finding F-01 in
  * docs/review-2026-05-13-live-site-qa.md.
  *
- * Cadence: 60s. The status endpoint is cheap server-side
- * and the underlying state changes on the order of minutes,
- * not seconds.
+ * Data: the shared useStatus query (FEC A6-6/D2 fold — this banner,
+ * the sidebar Status pill, and the /status page used to run separate
+ * poll loops over the same endpoint and could disagree in one
+ * viewport). Cadence is the shared STATUS_POLL_MS (30 s).
  */
-
-type Overall = 'ok' | 'degraded' | 'down' | 'unknown';
-
-// Explicit tri-state trust signal for the incidents block (W1.1,
-// /v1/status.incidents_status). The counts alone are ambiguous: a
-// failed Alertmanager query zeroes them, byte-identical to "no alerts
-// firing". "unknown" means the query FAILED (or no metrics backend is
-// wired) — the counts are NOT trustworthy and must render as "unknown",
-// never as "0 active alerts".
-type IncidentsStatus = 'ok' | 'degraded' | 'unknown';
-
-interface IncidentEntry {
-  name: string;
-  severity: 'page' | 'ticket' | 'informational';
-}
-
-interface StatusEnvelope {
-  data: {
-    overall: Overall;
-    incidents_status?: IncidentsStatus;
-    incidents?: {
-      active_count?: number;
-      page_count?: number;
-      active?: IncidentEntry[];
-    };
-  };
-}
-
-const POLL_INTERVAL_MS = 60_000;
 
 // health-check: consecutive failed polls before we flag the status feed
 // itself as unreachable. 2 (~2 poll intervals) rides out one transient
@@ -59,67 +30,30 @@ const POLL_INTERVAL_MS = 60_000;
 const FAILURE_THRESHOLD = 2;
 
 export function DegradedBanner() {
-  const [overall, setOverall] = useState<Overall>('unknown');
-  const [pageCount, setPageCount] = useState(0);
-  const [activeCount, setActiveCount] = useState(0);
-  // Trust signal for the counts above. When "unknown" (alerting query
-  // failed) the counts are absence-of-signal, not an all-clear — the
-  // banner renders "alert status unknown" rather than "0 active alerts".
-  const [incidentsStatus, setIncidentsStatus] =
-    useState<IncidentsStatus>('unknown');
-  const [topAlert, setTopAlert] = useState<string | null>(null);
+  const feed = useStatus().data;
+
   // health-check: distinct from `overall` — "we could not reach the status
   // feed at all", which used to be swallowed silently and look identical
   // to "everything's fine" (the one failure mode this banner exists to
   // catch: a total outage).
-  const [unreachable, setUnreachable] = useState(false);
-  const consecutiveFailures = useRef(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function poll() {
-      try {
-        const res = await fetch(`${API_BASE_URL}/v1/status`, {
-          cache: 'no-store',
-        });
-        if (!res.ok) throw new Error(`status endpoint returned ${res.status}`);
-        const env = (await res.json()) as StatusEnvelope;
-        if (cancelled) return;
-        consecutiveFailures.current = 0;
-        setUnreachable(false);
-        setOverall(env.data.overall);
-        // Fail closed: a missing trust signal is treated as "unknown",
-        // never assumed "ok".
-        setIncidentsStatus(env.data.incidents_status ?? 'unknown');
-        const incs = env.data.incidents;
-        // Genuine zeros only — these are read/displayed solely when
-        // incidentsStatus is "ok"/"degraded" (see the render below), so
-        // an absent count here is a real zero, not a blind all-clear.
-        setActiveCount(incs?.active_count ?? 0);
-        setPageCount(incs?.page_count ?? 0);
-        const top =
-          (incs?.active ?? []).find((i) => i.severity === 'page') ??
-          (incs?.active ?? [])[0];
-        setTopAlert(top?.name ?? null);
-      } catch {
-        if (cancelled) return;
-        // Don't swallow this — a status feed that can't be reached during
-        // a total outage is exactly the case this banner exists to
-        // surface. Existing console errors already tell developers; this
-        // is for the visitor reading a chart that may now be frozen/stale.
-        consecutiveFailures.current += 1;
-        if (consecutiveFailures.current >= FAILURE_THRESHOLD) {
-          setUnreachable(true);
-        }
-      }
-    }
-    poll();
-    const id = setInterval(poll, POLL_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, []);
+  const unreachable = (feed?.consecutiveFailures ?? 0) >= FAILURE_THRESHOLD;
+  const overall = feed?.status?.overall ?? 'unknown';
+  // Trust signal for the incident counts (W1.1). When "unknown" (alerting
+  // query failed) the counts are absence-of-signal, not an all-clear — the
+  // banner renders "alert status unknown" rather than "0 active alerts".
+  // Fail closed: a missing trust signal is treated as "unknown", never
+  // assumed "ok".
+  const incidentsStatus = feed?.status?.incidents_status ?? 'unknown';
+  const incs = feed?.status?.incidents;
+  // Genuine zeros only — these are read/displayed solely when
+  // incidentsStatus is "ok"/"degraded" (see the render below), so an
+  // absent count here is a real zero, not a blind all-clear.
+  const activeCount = incs?.active_count ?? 0;
+  const pageCount = incs?.page_count ?? 0;
+  const topAlert =
+    (incs?.active ?? []).find((i) => i.severity === 'page')?.name ??
+    (incs?.active ?? [])[0]?.name ??
+    null;
 
   if (!unreachable && (overall === 'ok' || overall === 'unknown')) return null;
 

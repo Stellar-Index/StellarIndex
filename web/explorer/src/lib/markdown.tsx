@@ -299,6 +299,10 @@ function renderBlock(b: Block, i: number): React.ReactElement {
     case 'table':
       return (
         <div key={i} className="overflow-x-auto">
+          {/* table-wave:allowlist prose — the markdown renderer's table
+              (operator decision D5 2026-08-24): renders arbitrary doc/blog
+              markdown, not API data; the A2-01 data-table wave (Table
+              primitives) must not sweep it. */}
           <table className="text-ink-body w-full border-collapse text-sm leading-6">
             <thead>
               <tr className="border-line-strong border-b text-left">

@@ -62,6 +62,7 @@ export function ContractsView() {
 
       <div className="flex items-center gap-3">
         <Segmented
+          ariaLabel="Contracts view"
           value={view}
           onChange={(v) => setView(v as 'active' | 'registry')}
           options={[
