@@ -192,6 +192,21 @@ Each cycle is bounded by `PerSourceTimeout=60s`. Sustained p99 >
 30s for one source is the first sign that the sink is the
 bottleneck.
 
+### `stellarindex_projector_wedged`
+
+Gauge, labels `source`.
+
+Per-source cursor-wedge flag. `1` = the adaptive window has bottomed
+out at the `MinBatchLimit` floor (25 ledgers) AND the source has failed
+to commit forward progress for `WedgeCycles` (5) consecutive cycles — a
+floor-sized range that stays over `PerSourceTimeout` (a dense +
+compressed chunk) is retried identically every cycle forever, a stuck
+cursor that will not self-recover. `0` = healthy. Cleared on any
+advancing (or caught-up) cycle. Seeded at `0` per source at startup so
+the alert reads a real zero rather than "no data". Drives the
+`stellarindex_projector_wedged` alert (ticket; manual remediation — raise
+the per-cycle budget or decompress the range). See ADR-0032.
+
 ### `http_request_success_duration_seconds`
 
 Histogram, labels `method`, `route`.

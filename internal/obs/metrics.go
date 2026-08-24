@@ -47,6 +47,7 @@ func registerAppMetrics() {
 		ProjectorRunsTotal,
 		ProjectorEventsDecoded,
 		ProjectorCycleDurationSeconds,
+		ProjectorWedged,
 		APICacheOpsTotal,
 
 		SourceEventsTotal,
@@ -681,6 +682,28 @@ var ProjectorCycleDurationSeconds = prometheus.NewHistogramVec(
 		Name:    "stellarindex_projector_cycle_duration_seconds",
 		Help:    "Wall-clock duration of one projector cycle per source.",
 		Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60},
+	},
+	[]string{"source"},
+)
+
+// ProjectorWedged flags a per-source cursor WEDGE: the adaptive window
+// has bottomed out at the MinBatchLimit floor AND the source has failed
+// to commit forward progress for `projector.WedgeCycles` consecutive
+// cycles. This is the ONE shrink-to-floor stall the adaptive window
+// cannot escape on its own — a floor-sized (25-ledger) range that stays
+// over PerSourceTimeout (a dense + compressed chunk) retries the
+// identical range every cycle forever. The shrink halves the window on a
+// deadline, but at the floor there is nothing left to halve, so lag stops
+// falling and the ONLY prior signal was a flat
+// stellarindex_projector_runs_total{outcome="error"} rate (which a busy
+// error-storm from OTHER sources can mask). 1 = wedged; 0 = healthy.
+// Cleared on any advancing cycle. Remediation is MANUAL and documented in
+// the runbook (raise the per-cycle budget or decompress the range) — the
+// projector deliberately does not change the shrink logic itself.
+var ProjectorWedged = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_projector_wedged",
+		Help: "Per-source projector wedge flag: 1 = the adaptive window is floored at MinBatchLimit and the source has failed to advance for WedgeCycles consecutive cycles (a stuck cursor that retries the identical range forever); 0 = healthy. Manual remediation — see the projector-wedged runbook.",
 	},
 	[]string{"source"},
 )
