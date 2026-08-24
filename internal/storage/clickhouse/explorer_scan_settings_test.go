@@ -36,8 +36,9 @@ func TestExplorerScanQueries_CarryBoundedSettings(t *testing.T) {
 		"accountOpTypeCountsQuery":              accountOpTypeCountsQuery,
 		"accountTransactionsQuery(first page)":  accountTransactionsQuery(false),
 		"accountTransactionsQuery(cursor)":      accountTransactionsQuery(true),
-		"accountOperationsQuery(first page)":    accountOperationsQuery(false),
-		"accountOperationsQuery(cursor)":        accountOperationsQuery(true),
+		"accountOperationsQuery(first page)":    accountOperationsQuery(false, false),
+		"accountOperationsQuery(cursor)":        accountOperationsQuery(true, false),
+		"accountOperationsQuery(watermark)":     accountOperationsQuery(true, true),
 		"contractEventsRecentQuery(first page)": contractEventsRecentQuery(false, false),
 		"contractEventsRecentQuery(cursor)":     contractEventsRecentQuery(true, false),
 		"recentContractsQuery":                  recentContractsQuery,
@@ -91,7 +92,7 @@ func TestExplorerScanQueries_ShapePreserved(t *testing.T) {
 		t.Errorf("accountTransactionsQuery cursor clause count = %d, want 2 (one per arm)", got)
 	}
 
-	opQ := accountOperationsQuery(true)
+	opQ := accountOperationsQuery(true, false)
 	for _, s := range []string{
 		"UNION ALL",
 		"(ledger_seq, tx_index, op_index) < (?, ?, ?)",

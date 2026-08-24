@@ -654,6 +654,62 @@ SELECT source_account, ledger_seq, tx_index, 4294967295 AS op_index
 FROM stellar.transactions
 WHERE source_account != '';
 
+-- ── account_activity — see deploy/clickhouse/account_activity.sql (#31) ──
+-- Per-account activity watermark: (account → the max ledger the account was
+-- EVER named in, across EVERY role the account-history readers serve — op
+-- source, tx source/fee-payer, non-source participant). ~1 row per account,
+-- tiny vs the multi-billion-row lake tables. AccountOperations reads
+-- max(last_ledger) as an EXACT UPPER BOUND (`ledger_seq <= ?`) on its per-arm
+-- reverse primary-key resolves, so a long-idle account's page stops at the
+-- account's real last activity instead of walking granules back from the tip
+-- (measured ~4s live for a 46d-idle account, 2026-08-24).
+--
+-- CORRECTNESS INVARIANT (data-hiding — read before touching the MV set): the
+-- watermark must be >= the ledger_seq of every row the account-history
+-- queries can return for the account. The three MVs below fire on inserts to
+-- the SAME tables that feed those queries' key sources (stellar.operations →
+-- ops_by_source's ops arm, stellar.operation_participants, and
+-- stellar.transactions → ops_by_source's tx-sentinel arm), so any row that
+-- can surface — including a Soroban/SAC movement that names a long-idle
+-- classic account only as a participant — also raised the watermark to at
+-- least its own ledger. A too-HIGH watermark only costs scan range; a
+-- too-LOW one HIDES DATA. Never narrow the MV set below the readers'
+-- account-role set. Readers take max() across un-merged RMT rows and fall
+-- back to the UNBOUNDED scan when an account has no row (pre-backfill
+-- accounts degrade to the old perf, never to missing rows).
+CREATE TABLE IF NOT EXISTS stellar.account_activity
+(
+    account_id  String,
+    last_ledger UInt32,
+    last_seen   DateTime('UTC')
+)
+ENGINE = ReplacingMergeTree(last_ledger)
+ORDER BY account_id;
+
+-- Per-block GROUP BY: each MV collapses an insert block to one row per
+-- account (a busy block names the same account many times); RMT merges
+-- keep the max-last_ledger row across blocks, and readers max() over
+-- whatever is not yet merged.
+CREATE MATERIALIZED VIEW IF NOT EXISTS stellar.account_activity_ops_mv
+TO stellar.account_activity AS
+SELECT source_account AS account_id, max(ledger_seq) AS last_ledger, max(close_time) AS last_seen
+FROM stellar.operations
+WHERE source_account != ''
+GROUP BY account_id;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS stellar.account_activity_tx_mv
+TO stellar.account_activity AS
+SELECT source_account AS account_id, max(ledger_seq) AS last_ledger, max(close_time) AS last_seen
+FROM stellar.transactions
+WHERE source_account != ''
+GROUP BY account_id;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS stellar.account_activity_participants_mv
+TO stellar.account_activity AS
+SELECT account AS account_id, max(ledger_seq) AS last_ledger, max(close_time) AS last_seen
+FROM stellar.operation_participants
+GROUP BY account_id;
+
 -- ── contract_active_ledgers — see deploy/clickhouse/contract_active_ledgers.sql ──
 CREATE TABLE IF NOT EXISTS stellar.contract_active_ledgers
 (

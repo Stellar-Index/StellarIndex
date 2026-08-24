@@ -178,6 +178,21 @@ type ExplorerReader struct {
 	// silent empty arm would hide the account's own transactions.
 	opsBySourceProbe schemaProbe
 
+	// accountActivityProbe probes stellar.account_activity (the per-account
+	// activity watermark, deploy/clickhouse/account_activity.sql, #31).
+	// Present + non-empty → AccountOperations bounds each keyset arm's
+	// reverse primary-key resolve with the account's last-active ledger
+	// (`ledger_seq <= ?`), so a long-idle account's page stops at its real
+	// last activity instead of walking granules back from the tip (~4s
+	// live for a 46d-idle account, 2026-08-24). Absent/empty → the
+	// unbounded resolve, exactly as before the watermark existed. The
+	// bound is a pure perf hint, never authority: a missing watermark row
+	// falls back to the unbounded scan, and an available watermark is a
+	// safe UPPER bound by construction (its MVs cover every account role
+	// the query's key sources cover — see the tier1_schema.sql invariant
+	// note; too-low would HIDE rows, which is the unacceptable direction).
+	accountActivityProbe schemaProbe
+
 	// lecVersionProbe probes whether stellar.ledger_entries_current carries a
 	// `version` column — the (ledger_seq<<32)|intra_ledger_seq RMT version
 	// that the D3 reproject introduces (deploy/clickhouse/
@@ -984,10 +999,31 @@ func (r *ExplorerReader) AccountTransactions(ctx context.Context, account string
 //
 // explorerScanSettings: same rationale as accountTransactionsQuery, with
 // the wide body_xdr column raising the per-stream buffer stakes further.
-func accountOperationsQuery(hasCursor bool) string {
+//
+// hasBound adds ` AND ledger_seq <= ?` to EACH arm's resolve over
+// stellar.operations (#31): the arm reads `ORDER BY pk DESC LIMIT n`,
+// which streams granules backwards FROM THE TIP until it accumulates the
+// account's rows — for a long-idle account that walk covers every granule
+// between the tip and its last activity (~4s live for a 46d-idle account,
+// 2026-08-24; the scan that ate the 8s budget behind PR #155's symptom).
+// The bound is the account's activity watermark
+// (accountActivityWatermark, stellar.account_activity), so partition +
+// primary-key pruning starts the reverse read AT the account's real last
+// activity. EXACT, not an approximation: every key either arm can emit
+// comes from a row whose insert also raised the watermark to >= its own
+// ledger_seq (the watermark MVs fire on the same tables that feed
+// ops_by_source and operation_participants — tier1_schema.sql documents
+// the data-hiding invariant), so `ledger_seq <= watermark` can never
+// exclude a returnable row. Callers must ONLY pass a bound derived from
+// that watermark — an under-estimate silently HIDES history.
+func accountOperationsQuery(hasCursor, hasBound bool) string {
 	cursorClause := ""
 	if hasCursor {
 		cursorClause = ` AND (ledger_seq, tx_index, op_index) < (?, ?, ?)`
+	}
+	boundClause := ""
+	if hasBound {
+		boundClause = ` AND ledger_seq <= ?`
 	}
 	// TWO-PHASE, same as accountTransactionsQuery (sub-second audit
 	// 2026-08-13) and with more at stake here: opCols carries body_xdr,
@@ -1001,13 +1037,13 @@ func accountOperationsQuery(hasCursor bool) string {
 		    (SELECT ledger_seq, tx_index, op_index FROM stellar.operations
 		       WHERE (ledger_seq, tx_index, op_index) IN (
 		            SELECT ledger_seq, tx_index, op_index FROM stellar.ops_by_source
-		            WHERE source_account = ? AND op_index != 4294967295)` + cursorClause + `
+		            WHERE source_account = ? AND op_index != 4294967295)` + boundClause + cursorClause + `
 		       ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC
 		       LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?)
 		    UNION ALL
 		    (SELECT ledger_seq, tx_index, op_index FROM stellar.operations
 		       WHERE (ledger_seq, tx_index, op_index) IN (
-		            SELECT ledger_seq, tx_index, op_index FROM stellar.operation_participants WHERE account = ?)` + cursorClause + `
+		            SELECT ledger_seq, tx_index, op_index FROM stellar.operation_participants WHERE account = ?)` + boundClause + cursorClause + `
 		       ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC
 		       LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?)
 		  ) ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT ?)
@@ -1021,7 +1057,9 @@ func accountOperationsQuery(hasCursor bool) string {
 // op_index) cursor (ADR-0038 Phase B). Sourced via the source_account
 // skip-index on stellar.operations; incoming via an account-prefixed lookup of
 // stellar.operation_participants. Incoming coverage tracks the participant-
-// index capture + backfill (see AccountTransactions).
+// index capture + backfill (see AccountTransactions). When the account has
+// an activity watermark (stellar.account_activity, #31) both arms' resolves
+// are additionally bounded by `ledger_seq <= watermark`.
 func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, limit int, cur ExplorerCursor) ([]OpRow, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -1033,11 +1071,23 @@ func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, 
 	if cur.IsSet() {
 		cursorArgs = []any{cur.Ledger, cur.A, cur.B}
 	}
-	q := accountOperationsQuery(cur.IsSet())
+	// The activity watermark bounds each arm's resolve (`ledger_seq <= ?`)
+	// so a long-idle account's page stops at its real last activity —
+	// exact, never row-hiding (see accountOperationsQuery). No watermark
+	// (table absent, backfill pending, or the account has no row) → the
+	// unbounded resolve, exactly as before the watermark existed.
+	bound, hasBound := r.accountActivityWatermark(ctx, account)
+	q := accountOperationsQuery(cur.IsSet(), hasBound)
 	args := []any{account}
+	if hasBound {
+		args = append(args, bound)
+	}
 	args = append(args, cursorArgs...)
 	args = append(args, limit)
 	args = append(args, account)
+	if hasBound {
+		args = append(args, bound)
+	}
 	args = append(args, cursorArgs...)
 	args = append(args, limit)
 	args = append(args, limit)
@@ -1314,6 +1364,43 @@ var errOpsBySourceMissing = errors.New(
 func (r *ExplorerReader) opsBySourceAvailable(ctx context.Context) bool {
 	return r.probeSchema(ctx, &r.opsBySourceProbe,
 		`SELECT ledger_seq FROM stellar.ops_by_source LIMIT 1`, false)
+}
+
+// accountActivityAvailable reports whether stellar.account_activity (the
+// per-account activity watermark, deploy/clickhouse/account_activity.sql)
+// is usable. requireRows: an existing-but-EMPTY watermark (table created,
+// MVs live, backfill not yet run, no traffic since) can bound nothing
+// anyway — treat it as unavailable now, re-probe after the retry window,
+// like the sibling requireRows probes.
+func (r *ExplorerReader) accountActivityAvailable(ctx context.Context) bool {
+	return r.probeSchema(ctx, &r.accountActivityProbe,
+		`SELECT last_ledger FROM stellar.account_activity LIMIT 1`, true)
+}
+
+// accountActivityWatermark returns the account's last-active ledger from
+// stellar.account_activity — the exact upper bound AccountOperations'
+// arms use to stop their reverse primary-key resolves at the account's
+// real last activity instead of walking granules back from the tip (#31).
+//
+// max(last_ledger), never a bare row read or FINAL: the table is
+// ReplacingMergeTree(last_ledger) fed by three MVs, so an account can
+// hold several un-merged rows and only the MAX is a safe bound — a lower
+// row would HIDE history (the invariant tier1_schema.sql documents).
+// ok=false — table absent/empty (probe), the account has no row (max()
+// over zero rows is 0), or any read error — degrades to the unbounded
+// scan: a missing watermark may only ever cost performance, never rows.
+func (r *ExplorerReader) accountActivityWatermark(ctx context.Context, account string) (uint32, bool) {
+	if !r.accountActivityAvailable(ctx) {
+		return 0, false
+	}
+	var last uint32
+	err := r.conn.QueryRow(ctx,
+		`SELECT max(last_ledger) FROM stellar.account_activity WHERE account_id = ?`,
+		account).Scan(&last)
+	if err != nil || last == 0 {
+		return 0, false
+	}
+	return last, true
 }
 
 // ledgerEntriesVersioned reports whether stellar.ledger_entries_current has
