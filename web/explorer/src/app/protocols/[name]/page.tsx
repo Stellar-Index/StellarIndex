@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { permanentRedirect } from 'next/navigation';
 import { Suspense } from 'react';
 
 import { serializeJsonLd, ogImageFor } from '@/lib/seo';
@@ -29,7 +30,12 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { name } = await params;
   const meta = protocolMeta(name);
-  const canonical = `https://stellarindex.io/protocols/${encodeURIComponent(name)}`;
+  // /protocols/sdex redirects to /sdex (the one canonical SDEX surface,
+  // nav revision follow-up 2026-08-24) — point its metadata there too.
+  const canonical =
+    name === 'sdex'
+      ? 'https://stellarindex.io/sdex'
+      : `https://stellarindex.io/protocols/${encodeURIComponent(name)}`;
   const title = meta
     ? `${meta.label} — protocol analytics`
     : `${name} — protocol analytics`;
@@ -62,6 +68,11 @@ export default async function ProtocolDetailPage({
   params: Params;
 }) {
   const { name } = await params;
+  if (name === 'sdex') {
+    // The one canonical SDEX surface is /sdex (it renders this same
+    // ProtocolView plus the SDEX-only order-book/volume sections).
+    permanentRedirect('/sdex');
+  }
   const meta = protocolMeta(name);
 
   // Schema.org BreadcrumbList — Home → Protocols → <name>.

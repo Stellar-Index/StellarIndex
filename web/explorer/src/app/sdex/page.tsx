@@ -1,61 +1,37 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
 
+import { Container } from '@/components/ui';
+import { ProtocolView } from '../protocols/[name]/ProtocolView';
 import { SdexOrderBookSection } from './SdexOrderBookSection';
 import { SdexVolumeSection } from './SdexVolumeSection';
 
-import { Container } from '@/components/ui';
 export const metadata: Metadata = {
+  alternates: { canonical: '/sdex' },
   title: 'SDEX — the Stellar Decentralized Exchange',
   description:
-    'The SDEX is the protocol-native central-limit order book built into every Stellar ledger — no smart contract required. How it works, its markets, and how Stellar Index indexes every offer and trade.',
-  alternates: { canonical: '/sdex' },
-  openGraph: { title: 'SDEX — Stellar Decentralized Exchange', description: 'Stellar’s protocol-native order book: markets, offers, and trades.', url: 'https://stellarindex.io/sdex', type: 'website' },
+    'Stellar’s protocol-native central-limit order book: live verification, activity, order-book depth and volume — ingested straight from the certified ledger lake.',
+  openGraph: {
+    title: 'SDEX — Stellar Decentralized Exchange',
+    description:
+      'Stellar’s protocol-native order book: markets, offers, and trades.',
+    url: 'https://stellarindex.io/sdex',
+    type: 'website',
+  },
 };
 
+// Nav revision follow-up (2026-08-24): /sdex is the ONE canonical SDEX
+// surface. It renders the protocol data view (the same component the
+// /protocols/[name] route uses — verification, TVL/activity, freshness)
+// plus the SDEX-only live sections (order-book depth + daily volume).
+// /protocols/sdex permanently redirects here so the two never diverge.
 export default function SdexPage() {
   return (
-    <Container className="space-y-8 py-10">
-      <header className="space-y-3">
-        <h1 className="text-3xl font-semibold tracking-tight">SDEX — Stellar Decentralized Exchange</h1>
-        <p className="text-base text-ink-body">
-          The SDEX is Stellar&rsquo;s <strong>protocol-native</strong> central-limit
-          order book — built into every ledger, no smart contract required. Anyone
-          can post an offer to trade one asset for another, and the network matches
-          them deterministically at ledger close. It predates Soroban and is
-          distinct from the on-chain AMM protocols.
-        </p>
-      </header>
-
-      <section className="space-y-3 text-[15px] leading-relaxed text-ink-body">
-        <p>
-          Stellar Index ingests every SDEX <code className="font-mono text-sm">ManageOffer</code> and
-          path-payment trade directly from the certified ledger lake, so SDEX
-          volume contributes to the same aggregate VWAP as every other venue.
-        </p>
-      </section>
-
-      {/* Live data: the in-process order book (cumulative depth + spread
-          for headline classic pairs) and the daily USD volume series from
-          the protocol analytics endpoint. */}
-      <SdexOrderBookSection />
-      <SdexVolumeSection />
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Link href="/protocols/sdex" className="rounded-xl border border-line bg-surface p-5 hover:border-brand-300 hover:bg-surface-subtle">
-          <h2 className="text-lg font-semibold text-ink">SDEX analytics</h2>
-          <p className="mt-1.5 text-sm text-ink-body">Volume, trade counts, and activity for the order book.</p>
-        </Link>
-        <Link href="/markets" className="rounded-xl border border-line bg-surface p-5 hover:border-brand-300 hover:bg-surface-subtle">
-          <h2 className="text-lg font-semibold text-ink">Markets</h2>
-          <p className="mt-1.5 text-sm text-ink-body">Aggregate per-pair prices across SDEX + every other venue.</p>
-        </Link>
-      </div>
-
-      <p className="border-t border-line pt-5 text-sm text-ink-muted">
-        For Soroban AMM protocols (Soroswap, Aquarius, Phoenix, Comet), see{' '}
-        <Link href="/amm" className="text-brand-600 hover:underline">AMM protocols</Link>.
-      </p>
-    </Container>
+    <>
+      <ProtocolView name="sdex" label="SDEX" />
+      <Container className="space-y-8 pb-10">
+        <SdexOrderBookSection />
+        <SdexVolumeSection />
+      </Container>
+    </>
   );
 }
