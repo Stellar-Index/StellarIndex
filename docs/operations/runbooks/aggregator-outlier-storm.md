@@ -1,6 +1,6 @@
 ---
 title: Runbook — aggregator-outlier-storm
-last_verified: 2026-04-25
+last_verified: 2026-08-24
 status: draft
 severity: P3
 ---
@@ -39,11 +39,12 @@ psql -d stellarindex -c \
    WHERE timestamp > now() - interval '15 minutes'
    GROUP BY pair ORDER BY 2 DESC LIMIT 10;"
 
-# 3) Sanity-check by pair: is the storm one pair or many?
-# (planned: when per-pair labels exist; for now infer from
-#  stellarindex_source_events_total per source)
-curl -fs http://localhost:9464/metrics \
-  | grep '^stellarindex_source_events_total' | sort
+# 3) Sanity-check by pair: is the storm one pair or many? The drop
+# counter carries the configured target pair (since 2026-08-14).
+# In PromQL:
+#   topk(5, rate(stellarindex_aggregator_dropped_trades_total{reason="outlier"}[10m]))
+curl -fs http://localhost:9465/metrics \
+  | grep '^stellarindex_aggregator_dropped_trades_total{reason="outlier"' | sort
 ```
 
 Decision tree:
@@ -54,6 +55,22 @@ Decision tree:
 | Yes | One pair | Pair-specific dislocation, possibly a depeg | Check the pair's primary venue; consider pausing stablecoin proxy for that quote if it was a peg break |
 | No | Many | Connector regression — every venue producing weird amounts | Check `stellarindex_source_decode_errors_total`; likely a recent decoder change |
 | No | One pair, one source | Single connector misbehaving (amount-decimal regression) | Disable that source via config; open ticket against the connector |
+
+### Spam-wave signature (2026-08-14 case)
+
+A fourth cause, seen live on 2026-08-14: an SDEX **token farm** — one
+issuer (`GBGRBCUB6…`) spamming self-trades across its own tokens —
+rather than a market event or a connector bug. Signature: the drops
+concentrate on a single configured pair, the dropped rows show wide
+price dispersion (25–37% between consecutive trades — real markets
+don't gap like that repeatedly) and **dust-sized** volumes, and all
+trace to one issuer account in the trades table. Diagnose with
+`topk` by `pair` on the drop counter (step 3 above — the `pair` label
+exists because attributing this exact wave took ad-hoc SQL), then
+confirm the single-issuer pattern in `trades` for that pair. The σ
+filter is doing its job — the VWAP input is protected; treat it as
+abuse of the venue, not of the aggregator, and wait it out unless the
+surviving sample gets too thin (then see `min_usd_volume` gating).
 
 ## Mitigation (≤ 15 min)
 
@@ -116,3 +133,5 @@ Capture for the postmortem:
 
 - 2026-04-25 — initial draft alongside the aggregator metrics
   PR #26 wire-up.
+- 2026-08-24 — per-pair `pair` label on the drop counter (task #29);
+  spam-wave signature section from the 2026-08-14 token-farm storm.

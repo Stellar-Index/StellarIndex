@@ -79,6 +79,21 @@ type rateGuard struct {
 	stuckRejectedRate float64
 	stuckCount        int
 
+	// Stuck-upstream tracking for the CONFIRM VETO (2026-08-24, the
+	// Massive UZS incident's second act): a provider persistently
+	// serving the SAME broken CURRENT bar keeps re-arming the pending
+	// slot, so every second sighting reaches the two-fetch confirm arm
+	// and is refused by the history-majority veto — correct, but the
+	// fresh `deviation_history_conflict` reason would re-page daily
+	// with no new information (the exact channel-training failure the
+	// history-band stuck fields exist for). Same shape, separate fields:
+	// the history band resets ITS streak on every in-band history bar,
+	// which for a broken-current/healthy-history upstream is every
+	// refresh — sharing the fields would reset the veto streak before
+	// it could ever engage. Reset by any accepted current rate.
+	conflictStuckRate  float64
+	conflictStuckCount int
+
 	// bootstrapUnconfirmed marks a baseline seeded from a SINGLE
 	// upstream sample (the no-baseline bootstrap arm) that nothing has
 	// corroborated yet. The 2026-08-24 Massive UZS incident: at process
@@ -158,6 +173,27 @@ type Worker struct {
 	// the ticker loop). Empty on process start: the first refresh has no
 	// baseline, so it accepts and establishes one.
 	guards map[string]*rateGuard
+
+	// historyVeto is method-scoped state for [Worker.persistSnapshot]:
+	// the per-ticker heal-grade history-majority median (see
+	// [historyMajority]) computed from the CURRENT snapshot's
+	// trailing-7d bars BEFORE the current-rate loop runs, and cleared
+	// when persistSnapshot returns. acceptRate's pending-confirm arm
+	// consults it (2026-08-24 Massive UZS, second act): after the
+	// restart-heal fixed the poisoned bootstrap, the still-broken
+	// current feed kept serving 1820 (true ≈ 11,800) — the deviation
+	// arm rejected it into pending, and the NEXT identical fetch
+	// pending-CONFIRMED it, re-poisoning the baseline the heal cannot
+	// re-fix (a confirm clears bootstrapUnconfirmed, deliberately).
+	// Two agreeing samples from ONE broken endpoint are not two
+	// independent witnesses when ≥4 mutually-agreeing dated bars refute
+	// them. MR-1 posture holds: history never SETS a baseline here — it
+	// only refuses a confirm, and a genuine devaluation confirms as
+	// soon as the trailing majority stops refuting (either it follows
+	// the move within days, or the split-level window fails the
+	// mutual-agreement test and yields no veto at all).
+	// Only touched from persistSnapshot (single-goroutine, as guards).
+	historyVeto map[string]float64
 }
 
 // NewWorker constructs the worker. interval is the refresh
@@ -300,6 +336,9 @@ func (w *Worker) persistSnapshot(ctx context.Context, snap *Snapshot) {
 	}
 	today := snap.PublishedAt.UTC().Truncate(24 * time.Hour)
 
+	w.computeHistoryVeto(snap)
+	defer func() { w.historyVeto = nil }()
+
 	batch := make([]FXQuote, 0, len(snap.Currencies)+len(snap.History7d)*7)
 	// currentRowIx remembers each ticker's current-day row position in
 	// the batch so the history-majority heal below can scrub a poisoned
@@ -368,6 +407,24 @@ func (w *Worker) persistSnapshot(ctx context.Context, snap *Snapshot) {
 	}
 }
 
+// computeHistoryVeto populates [Worker.historyVeto] with the per-ticker
+// heal-grade history-majority medians for one persistSnapshot call —
+// computed BEFORE the current-rate loop so acceptRate's pending-confirm
+// arm can consult them (the confirm veto; extracted from persistSnapshot
+// for gocognit, like healFromHistoryMajority). Computed from the FULL
+// trailing-7d series, not the rejected subset the heal uses: a healed
+// baseline accepts its history bars, and it is exactly those agreeing
+// bars that must keep refuting a still-broken current feed. The caller
+// clears the map when persistSnapshot returns.
+func (w *Worker) computeHistoryVeto(snap *Snapshot) {
+	w.historyVeto = make(map[string]float64, len(snap.History7d))
+	for ticker, points := range snap.History7d {
+		if med, ok := historyMajority(points); ok {
+			w.historyVeto[ticker] = med
+		}
+	}
+}
+
 // healFromHistoryMajority applies the history-majority heal for one
 // ticker after its history bars were banded (extracted from
 // persistSnapshot for gocognit; same behavior, pinned by the
@@ -409,6 +466,8 @@ func (w *Worker) healFromHistoryMajority(
 	g.pending = 0
 	g.stuckCount = 0
 	g.stuckRejectedRate = 0
+	g.conflictStuckRate = 0
+	g.conflictStuckCount = 0
 	g.bootstrapUnconfirmed = false
 	if ix, ok := currentRowIx[ticker]; ok {
 		batch[ix].RateUSD = 0
@@ -438,7 +497,11 @@ func (w *Worker) healFromHistoryMajority(
 //   - within [maxRateDeviation] of the last accepted rate → accept.
 //   - outside the band but WITHIN the band of the outlier we already
 //     rejected once → accept: two independent fetches agree, so this is
-//     a real move (devaluation / redenomination), not a bad bar.
+//     a real move (devaluation / redenomination), not a bad bar —
+//     UNLESS the ticker's heal-grade trailing-7d majority refutes the
+//     candidate (the confirm veto, [Worker.vetoConfirmByHistory]): a
+//     persistently-broken current feed repeats its own bad bar, which
+//     is agreement with itself, not corroboration.
 //   - otherwise → reject, remember it as pending, count + log.
 //
 // Rejecting holds the ticker on its last accepted row rather than writing
@@ -465,20 +528,76 @@ func (w *Worker) acceptRate(ticker string, rate float64) bool {
 		g.lastAccepted = rate
 		g.pending = 0
 		g.bootstrapUnconfirmed = false // second agreeing sample corroborates
+		g.conflictStuckRate = 0
+		g.conflictStuckCount = 0
 		return true
 	}
 	if g.pending > 0 && withinBand(rate, g.pending) {
+		if w.vetoConfirmByHistory(ticker, g, rate) {
+			return false
+		}
 		w.logger.Warn("forex: large FX move confirmed by a second fetch; accepting",
 			"ticker", ticker, "previous", g.lastAccepted, "rate", rate,
 			"band", maxRateDeviation)
 		g.lastAccepted = rate
 		g.pending = 0
 		g.bootstrapUnconfirmed = false
+		g.conflictStuckRate = 0
+		g.conflictStuckCount = 0
 		return true
 	}
 	g.pending = rate
 	w.rejectRate(ticker, rate, g.lastAccepted, "deviation")
 	return false
+}
+
+// vetoConfirmByHistory is the confirm veto (2026-08-24 Massive UZS,
+// second act). Called from acceptRate's pending-confirm arm only: when
+// the ticker has a heal-grade trailing-7d majority (≥ [historyHealMinBars]
+// bars mutually agreeing within [historyHealAgreement], precomputed on
+// [Worker.historyVeto]) whose median REFUTES the candidate — outside
+// [maxRateDeviation] — the confirm is refused. Two agreeing fetches of
+// the same broken current bar are the upstream repeating itself, not two
+// independent witnesses; ≥4 dated bars that all disagree with them win.
+//
+// MR-1 posture holds: history never SETS the baseline here — the guard
+// state is untouched except pending (re-armed on the latest candidate,
+// preserving the two-fetch shape for when the veto lifts) and the streak
+// bookkeeping. A genuine devaluation still confirms: within days the
+// trailing majority either follows the move (median stops refuting) or
+// spans both levels (fails mutual agreement → no veto at all), so the
+// worst case is days of held rate during a real move the ticker's own
+// history has not yet seen — against permanently re-poisoning the
+// denominator of every fiat-quoted usd_volume.
+//
+// Repeats of the same (within [stuckSameRateTolerance]) refused value
+// past [stuckRejectionThreshold] reclassify to
+// "deviation_history_conflict_stuck" — excluded from the rejection alert
+// like history_deviation_stuck, still WARN-logged + graphable — so a
+// provider stuck on one documented broken current bar stops re-paging
+// while fresh disagreement still does.
+func (w *Worker) vetoConfirmByHistory(ticker string, g *rateGuard, rate float64) bool {
+	med, ok := w.historyVeto[ticker]
+	if !ok || withinBand(rate, med) {
+		return false
+	}
+	if g.conflictStuckRate > 0 &&
+		math.Abs(rate-g.conflictStuckRate)/g.conflictStuckRate <= stuckSameRateTolerance {
+		g.conflictStuckCount++
+	} else {
+		g.conflictStuckRate = rate
+		g.conflictStuckCount = 1
+	}
+	reason := "deviation_history_conflict"
+	if g.conflictStuckCount > stuckRejectionThreshold {
+		reason = "deviation_history_conflict_stuck"
+	}
+	g.pending = rate
+	obs.ExternalFXRateRejectedTotal.WithLabelValues(fxSource, reason).Inc()
+	w.logger.Warn("forex: pending confirmation refuted by agreeing history majority; refusing",
+		"ticker", ticker, "candidate", rate, "median", med,
+		"previous", g.lastAccepted, "reason", reason, "band", maxRateDeviation)
+	return true
 }
 
 // acceptHistoryRate is the [maxRateDeviation] sanity band applied to a

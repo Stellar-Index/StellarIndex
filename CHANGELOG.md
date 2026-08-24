@@ -15,6 +15,28 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **FX guard: history-majority confirm veto (the Massive UZS second
+  act).** A persistently-broken current feed can no longer re-poison a
+  healed baseline through the two-fetch confirmation: when a ticker's
+  trailing-7d majority (≥4 bars mutually agreeing within 10%) REFUTES a
+  pending candidate, the confirm is refused
+  (`deviation_history_conflict`; repeats reclassify to
+  `…_conflict_stuck`, excluded from the rejection alert). History still
+  never SETS a baseline — genuine devaluations confirm as soon as the
+  majority stops refuting (follows the move, or the split window yields
+  no majority). Red-proven tests. (task #29)
+
+### Added
+
+- `stellarindex_aggregator_dropped_trades_total` now carries a `pair`
+  label (the configured target pair, bounded ~12), so an outlier_storm
+  is attributable with `topk` by pair instead of ad-hoc SQL — the
+  2026-08-14 single-issuer SDEX token-farm wave took the latter.
+  Storm/spike alert exprs `sum()` across labels and are unchanged.
+  (task #29)
+
 ## [v0.41.1] — 2026-08-24
 
 ### Fixed

@@ -526,6 +526,46 @@ func TestTick_OutlierFilter_ZeroSigmaIsOff(t *testing.T) {
 	}
 }
 
+func TestTick_OutlierDropCarriesConfiguredPairLabel(t *testing.T) {
+	// The 2026-08-14 outlier_storm (a single-issuer token farm spamming
+	// SDEX) needed ad-hoc SQL to attribute because class/outlier drops
+	// carried no pair. The counter must attribute each drop to the
+	// CONFIGURED target pair whose refresh discarded it — the label the
+	// runbook's topk-by-pair diagnosis reads.
+	now := time.Now()
+	store := &mockStore{
+		trades: []canonical.Trade{
+			buildTradeFrom(t, "binance",
+				big.NewInt(100_000_000), big.NewInt(20_000_000), now.Add(-4*time.Minute)),
+			buildTradeFrom(t, "binance",
+				big.NewInt(100_000_000), big.NewInt(20_000_000), now.Add(-3*time.Minute)),
+			buildTradeFrom(t, "kraken",
+				big.NewInt(100_000_000), big.NewInt(20_000_000), now.Add(-2*time.Minute)),
+			buildTradeFrom(t, "kraken", // the 1000× anomaly → outlier drop
+				big.NewInt(100_000_000), big.NewInt(20_000_000_000), now.Add(-1*time.Minute)),
+		},
+	}
+	rdb, _ := newTestRedis(t)
+	pair := xlmUsdtPair(t)
+	orch := New(store, rdb, Config{
+		Pairs:                 []canonical.Pair{pair},
+		Windows:               []time.Duration{5 * time.Minute},
+		OutlierSigmaThreshold: 1.0,
+	})
+
+	before := testutil.ToFloat64(
+		obs.AggregatorDroppedTradesTotal.WithLabelValues("outlier", pair.String()))
+	if err := orch.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	got := testutil.ToFloat64(
+		obs.AggregatorDroppedTradesTotal.WithLabelValues("outlier", pair.String())) - before
+	if got != 1 {
+		t.Errorf("dropped{outlier,pair=%q} delta = %v want 1 — outlier drops must be "+
+			"attributable to the configured pair without ad-hoc SQL", pair.String(), got)
+	}
+}
+
 func TestTick_EmitsPrometheusMetrics(t *testing.T) {
 	// Snapshot the relevant counters, run a tick that performs one
 	// VWAP write + drops one off-class trade, then assert each
@@ -547,7 +587,11 @@ func TestTick_EmitsPrometheusMetrics(t *testing.T) {
 
 	beforeOK := testutil.ToFloat64(obs.AggregatorTicksTotal.WithLabelValues("ok"))
 	beforeWrites := testutil.ToFloat64(obs.AggregatorVWAPWritesTotal)
-	beforeDroppedClass := testutil.ToFloat64(obs.AggregatorDroppedTradesTotal.WithLabelValues("class"))
+	// The drop counters carry the CONFIGURED target pair (the 2026-08-14
+	// outlier_storm attribution gap) — assert under the exact label the
+	// alert runbook's topk-by-pair diagnosis reads.
+	pairLabel := xlmUsdtPair(t).String()
+	beforeDroppedClass := testutil.ToFloat64(obs.AggregatorDroppedTradesTotal.WithLabelValues("class", pairLabel))
 
 	if err := orch.Tick(context.Background()); err != nil {
 		t.Fatalf("Tick: %v", err)
@@ -559,8 +603,8 @@ func TestTick_EmitsPrometheusMetrics(t *testing.T) {
 	if got := testutil.ToFloat64(obs.AggregatorVWAPWritesTotal) - beforeWrites; got != 1 {
 		t.Errorf("vwap_writes delta = %v want 1", got)
 	}
-	if got := testutil.ToFloat64(obs.AggregatorDroppedTradesTotal.WithLabelValues("class")) - beforeDroppedClass; got != 1 {
-		t.Errorf("dropped{class} delta = %v want 1 (coingecko row)", got)
+	if got := testutil.ToFloat64(obs.AggregatorDroppedTradesTotal.WithLabelValues("class", pairLabel)) - beforeDroppedClass; got != 1 {
+		t.Errorf("dropped{class,%s} delta = %v want 1 (coingecko row)", pairLabel, got)
 	}
 }
 
