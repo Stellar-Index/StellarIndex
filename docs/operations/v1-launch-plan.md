@@ -39,6 +39,48 @@ severity: P1
 > The distinction is the point. A plan that presents carried claims as
 > verified is the same failure mode as an API that renders absent as zero.
 
+### Reconciliation pass — 2026-08-25 (autonomous night run)
+
+Verified live against r1 / merged code; each line moves an item OUT of the
+outstanding set:
+
+- **D1 — ✅ RESOLVED BY ENGINEERING (better than the recommendation).** The
+  2026-08-24 corroborated-release amendment + the synthetic USD-cross
+  reference (#142/#149, v0.41.x) give the thin fiat pairs a second source:
+  `success_count=2` medians verified live on XLM/EUR + XLM/GBP first tick,
+  auto-release works unattended, and `writer_wired` was fixed 2026-08-22 —
+  the pager now sits behind real automatic protection. The old
+  "stop paging when sources=1" recommendation is superseded. Unblocks
+  W6.7's gating logic.
+- **W3.2 — ✅ MERGED** (#126, harness + first measurement; W3.3's
+  account-family cost is root-caused further: the ops-by-account tip-walk,
+  tracked with a designed fix in the session task list).
+- **W4 unit sweep — ✅ CLEAN.** 0 failed units on r1 (2026-08-25): the
+  lec-repair/zfs transients + retired sla-probe ghost were cleared, and the
+  one real red — `ch-schema-drift.service` — was root-caused (parser blind
+  to AS-clone staging declarations) and fixed (PR #156): live run now
+  **0 divergent**, plus two real fidelity gaps it was masking are codified
+  (ledger_entry_changes column order, contract_events ZSTD codecs), and
+  `ledger_entries_current_old` (171.5 GB Jun-18 EXCHANGE relic) dropped —
+  recorded in /root/ledger_entries_current_old-ddl-20260825.sql.
+- **W4.1 — 🔵 drill RUNNING** (manual restore-drill started 2026-08-25
+  ~00:30 CEST; verdict pending — unblocks W6.6's decision when green).
+- **W5.1 — ✅ CONFIRMED SATISFIED.** `contract_instance_changes` floor =
+  50,457,429 = Soroban activation exactly; nothing earlier exists.
+- **W5.2 — ✅ COMPLETE (stale text).** dfees is fully modelled
+  (decodeDFees), migrated (0146 hypertable), backfilled AND live-ingesting:
+  4,211 rows spanning 60,903,337 → tip. Remove from the outstanding set.
+- **W5 caveat (0126/0137/0139) — ✅ RECONCILED.** The data-freshness
+  detector has zero series and zero alerts on r1: the follow-ups are
+  satisfied; the "complete, do NOT re-run" rows stand.
+- **W6.9 — ✅ MOOT.** All 8 `supply_cross_check_divergence_stroops` series
+  read exactly 0 live (incl. PHO/BLND/EURC) — no silences needed; the
+  dispositions resolved with the supply fixes.
+
+Still genuinely open from this file: W4.1 verdict → W6.6; the [OP] set
+(W6.1/2/4/5/7 + credentials); W5.3–W5.8 heavy jobs (one at a time, after
+the drill frees the slot); W3.3/W3.4; W7.2; W8 [C] residuals.
+
 ### What this pass changed
 
 Verifying the backlog rather than reciting it moved a lot of it:
