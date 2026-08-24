@@ -327,3 +327,47 @@ func TestAcceptHistoryRate_StuckStreakToleratesJitter(t *testing.T) {
 			g.stuckCount, len(jitter), stuckRejectionThreshold)
 	}
 }
+
+// TestPersistSnapshot_SplitRejectedSeriesFailsAgreement pins the
+// mutual-agreement band itself (verifier 2026-08-24: the redenomination
+// test above actually exercises the min-bars floor — its in-band old-level
+// bars are accepted, so only 2 bars reach the rejected set). Here the
+// bootstrap sample is far from BOTH levels, every bar lands in the
+// rejected set, and that set spans two levels >10% apart: heal-grade
+// count (7 ≥ 4) but no mutual agreement → no heal, baseline held.
+// Red-proof: widening historyHealAgreement (or removing the agreement
+// loop in historyMajority) turns this test's baseline assertion red.
+func TestPersistSnapshot_SplitRejectedSeriesFailsAgreement(t *testing.T) {
+	w, cw := bandTestWorker(io.Discard)
+	ctx := context.Background()
+
+	today := time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)
+	bars := []HistoryPoint{
+		{Date: today.Add(-7 * 24 * time.Hour), RateUSD: 1800}, // old level
+		{Date: today.Add(-6 * 24 * time.Hour), RateUSD: 1810},
+		{Date: today.Add(-5 * 24 * time.Hour), RateUSD: 1805},
+		{Date: today.Add(-4 * 24 * time.Hour), RateUSD: 11800}, // new level
+		{Date: today.Add(-3 * 24 * time.Hour), RateUSD: 11810},
+		{Date: today.Add(-2 * 24 * time.Hour), RateUSD: 11790},
+		{Date: today.Add(-1 * 24 * time.Hour), RateUSD: 11805},
+	}
+	snap := snapshotWithHistory(
+		map[string]float64{"YYY": 500}, // bootstrap far from both levels
+		map[string][]HistoryPoint{"YYY": bars},
+	)
+	snap.PublishedAt = today
+	w.persistSnapshot(ctx, snap)
+
+	// No heal: a two-level rejected series is not a majority, whatever
+	// its size — the baseline (however dubious) holds for the pending
+	// confirmation to sort out.
+	if got := w.guards["YYY"].lastAccepted; got != 500 {
+		t.Errorf("split rejected series healed the baseline to %v, want 500 held — "+
+			"the mutual-agreement band is the only guard in this corner", got)
+	}
+	for _, p := range bars {
+		if hasHistoryRow(cw.batches[0], "YYY", p.Date, p.RateUSD) {
+			t.Errorf("bar %s=%v written without a heal", p.Date.Format("2006-01-02"), p.RateUSD)
+		}
+	}
+}

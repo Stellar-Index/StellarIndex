@@ -50,6 +50,16 @@ Reasons (the `reason` label):
   field). `1/rate` feeds `InverseUSD`, so this would poison the row in
   both directions.
 - **`non_finite`** — NaN or ±Inf (a parse that produced garbage).
+- **`history_deviation`** — a trailing-7d HISTORY bar moved more than 50%
+  from the ticker's current accepted rate (MR-1: past bars are banded
+  read-only, they never move the baseline).
+- **`history_deviation_stuck`** — the same (within 1%) history bar
+  refused ≥ 12 consecutive times; excluded from the alert (a documented
+  broken bar carries no new information), still WARN-logged. Since
+  2026-08-24, ≥ 4 mutually-agreeing rejected bars against a
+  still-unconfirmed bootstrap baseline instead HEAL the baseline
+  (`stellarindex_external_fx_baseline_healed_total`) — see the
+  history-majority heal in forex/worker.go.
 
 ## Quick diagnosis (≤ 5 min)
 

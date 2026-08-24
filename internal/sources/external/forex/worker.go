@@ -123,10 +123,15 @@ const stuckSameRateTolerance = 0.01
 // poisoned current-day row from the batch.
 //
 // Two deliberate limits keep this from becoming MR-1 in a new coat:
-//   - The agreement band is much tighter than [maxRateDeviation]: a real
-//     mid-week redenomination splits the 7-day series across two levels,
-//     breaks the mutual-agreement test, and the heal stays out of it —
-//     the two-fetch pending confirmation owns genuine moves.
+//   - The agreement band is much tighter than [maxRateDeviation]. Nuance
+//     (verifier 2026-08-24): for a redenomination at FIRST-EVER sighting,
+//     the in-band half of the split series is simply ACCEPTED, so the
+//     rejected subset can still be homogeneous — there the heal may flip
+//     the baseline to the other level and the two-fetch pending
+//     confirmation restores it within ~2 refreshes (per-date rows stay
+//     correct throughout; executed in the verifier's trace). The
+//     agreement test is the guard for the broken-bootstrap case where
+//     the rejected series itself spans levels.
 //   - A CONFIRMED baseline is never healed: two agreeing current fetches
 //     vs an agreeing history series means one of the provider's two
 //     endpoints is systemically broken and we cannot tell which from in

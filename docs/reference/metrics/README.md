@@ -407,17 +407,33 @@ without a ticker change — would silently re-scale that currency's whole
 conversion history. `persistSnapshot` previously wrote whatever the
 upstream said.
 
-`reason` is bounded at three values: `deviation` (moved > 50% from the
+`reason` is bounded at five values: `deviation` (moved > 50% from the
 last accepted rate for that ticker with no confirming second fetch),
 `non_positive` (rate ≤ 0 — `1/rate` feeds `InverseUSD`, so it would
-poison the row both ways), `non_finite` (NaN / ±Inf). Deliberately NOT
+poison the row both ways), `non_finite` (NaN / ±Inf),
+`history_deviation` (a trailing-7d history bar > 50% off the current
+accepted rate), and `history_deviation_stuck` (the same bar, within 1%,
+refused ≥ 12 consecutive times — excluded from the rejection alert).
+Deliberately NOT
 labelled by ticker: ~150 currencies would be pure cardinality for a
 signal whose actionable question is "is the feed producing junk". The
 rejected ticker is on the worker's WARN log line
 (`forex: rejected upstream rate`).
 
-Zero-seeded for all three reasons so an untripped band is a real zero,
-not "no data".
+Zero-seeded so an untripped band is a real zero, not "no data".
+
+### `stellarindex_external_fx_baseline_healed_total`
+
+Counter, label `source`.
+
+The forex worker re-pointed a ticker's sanity-band baseline at the
+median of ≥ 4 mutually-agreeing trailing-7d history bars that refuted a
+still-unconfirmed single-sample bootstrap baseline (the 2026-08-24
+Massive UZS poisoned-bootstrap incident). Rare by design — each
+increment is one wrong baseline corrected without operator action; the
+ticker is on the worker's WARN log line. Confirmed baselines are never
+healed (an agreeing-but-wrong history endpoint must not overwrite a
+corroborated current rate — the MR-1 direction).
 
 When to look: a single rejection is expected and self-healing — the
 guard is two-strike, so a genuine devaluation confirmed by the next
