@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -77,6 +78,21 @@ type rateGuard struct {
 	// value, resets the streak — fresh disagreement always alerts.
 	stuckRejectedRate float64
 	stuckCount        int
+
+	// bootstrapUnconfirmed marks a baseline seeded from a SINGLE
+	// upstream sample (the no-baseline bootstrap arm) that nothing has
+	// corroborated yet. The 2026-08-24 Massive UZS incident: at process
+	// restart the current feed served a broken 1820 (true level ≈
+	// 11,800), the bootstrap arm accepted it sight-unseen, and the
+	// guard then spent the rest of the day rejecting the CORRECT 7-day
+	// history against the poisoned baseline — evidence pointing the
+	// wrong way. The flag lets the history-majority heal in
+	// [Worker.persistSnapshot] also scrub the poisoned current-day row
+	// from the write batch: a bootstrap row that the ticker's own
+	// history refutes was never evidence. Cleared by any within-band
+	// acceptance or a two-fetch pending confirmation (two agreeing
+	// samples = corroborated).
+	bootstrapUnconfirmed bool
 }
 
 // stuckRejectionThreshold is how many consecutive identical history-bar
@@ -85,6 +101,41 @@ type rateGuard struct {
 // far past the point where repeats carry signal, and long enough that
 // a real multi-refresh scale change has already fired the alert.
 const stuckRejectionThreshold = 12
+
+// stuckSameRateTolerance treats consecutive rejected bars within this
+// relative distance as the SAME stuck value. The original exact float
+// equality never matched a LIVE broken upstream — Massive's UZS current
+// feed jittered (11791.69 → 11785 → 11817.69 …) around the level the
+// poisoned baseline rejected, so the streak reset on every refresh and
+// the reclassification could not engage. 1% is far tighter than any
+// genuine day-over-day FX move that should read as fresh news, and far
+// wider than provider jitter.
+const stuckSameRateTolerance = 0.01
+
+// History-majority heal (2026-08-24 Massive UZS incident): when one
+// refresh rejects at least [historyHealMinBars] of a ticker's trailing-7d
+// bars, those rejected bars agree with each other within
+// [historyHealAgreement] of their median, AND the baseline is a
+// still-unconfirmed bootstrap (one uncorroborated sample), the BASELINE
+// is the outlier, not the bars — ≥4 independent dated samples beat the
+// single sample the baseline came from. persistSnapshot then re-points
+// lastAccepted at the bars' median, admits the bars, and scrubs the
+// poisoned current-day row from the batch.
+//
+// Two deliberate limits keep this from becoming MR-1 in a new coat:
+//   - The agreement band is much tighter than [maxRateDeviation]: a real
+//     mid-week redenomination splits the 7-day series across two levels,
+//     breaks the mutual-agreement test, and the heal stays out of it —
+//     the two-fetch pending confirmation owns genuine moves.
+//   - A CONFIRMED baseline is never healed: two agreeing current fetches
+//     vs an agreeing history series means one of the provider's two
+//     endpoints is systemically broken and we cannot tell which from in
+//     here — those tickers keep rejecting (stuck-reclassified, quiet
+//     alert) and wait for an operator.
+const (
+	historyHealMinBars   = 4
+	historyHealAgreement = 0.10
+)
 
 // Worker periodically fetches the upstream rates + names and
 // installs the result into a [Cache]. Designed to run as a
@@ -245,10 +296,16 @@ func (w *Worker) persistSnapshot(ctx context.Context, snap *Snapshot) {
 	today := snap.PublishedAt.UTC().Truncate(24 * time.Hour)
 
 	batch := make([]FXQuote, 0, len(snap.Currencies)+len(snap.History7d)*7)
+	// currentRowIx remembers each ticker's current-day row position in
+	// the batch so the history-majority heal below can scrub a poisoned
+	// bootstrap row (marked by scrubbing RateUSD to 0; filtered before
+	// the insert).
+	currentRowIx := make(map[string]int, len(snap.Currencies))
 	for _, c := range snap.Currencies {
 		if !w.acceptRate(c.Ticker, c.RateUSD) {
 			continue
 		}
+		currentRowIx[c.Ticker] = len(batch)
 		batch = append(batch, FXQuote{
 			Bucket:     today,
 			Ticker:     c.Ticker,
@@ -258,8 +315,10 @@ func (w *Worker) persistSnapshot(ctx context.Context, snap *Snapshot) {
 		})
 	}
 	for ticker, points := range snap.History7d {
+		var rejected []HistoryPoint
 		for _, p := range points {
 			if !w.acceptHistoryRate(ticker, p.RateUSD) {
+				rejected = append(rejected, p)
 				continue
 			}
 			batch = append(batch, FXQuote{
@@ -270,7 +329,54 @@ func (w *Worker) persistSnapshot(ctx context.Context, snap *Snapshot) {
 				Source:     fxSource,
 			})
 		}
+		// History-majority heal (see the constants' doc). Fires ONLY
+		// against a bootstrapUnconfirmed baseline: one uncorroborated
+		// sample vs ≥historyHealMinBars mutually-agreeing dated bars is
+		// unambiguous — the sample loses. A CONFIRMED baseline (two
+		// agreeing current fetches) against an agreeing history series
+		// is genuinely ambiguous from in here (which endpoint is
+		// broken?), so it stays rejected + stuck-reclassified for an
+		// operator instead of letting a systemically-broken history
+		// endpoint overwrite a correct baseline — the MR-1 poisoning in
+		// a new coat.
+		if med, ok := historyMajority(rejected); ok {
+			g := w.guards[ticker]
+			if g == nil || !g.bootstrapUnconfirmed || withinBand(med, g.lastAccepted) {
+				continue
+			}
+			w.logger.Warn("forex: unconfirmed bootstrap baseline refuted by agreeing history majority; healing",
+				"ticker", ticker, "baseline", g.lastAccepted, "median", med,
+				"bars", len(rejected))
+			obs.ExternalFXBaselineHealedTotal.WithLabelValues(fxSource).Inc()
+			g.lastAccepted = med
+			g.pending = 0
+			g.stuckCount = 0
+			g.stuckRejectedRate = 0
+			g.bootstrapUnconfirmed = false
+			// The current-day row came from the very sample the
+			// majority refuted — scrub it (marker filtered below).
+			if ix, ok := currentRowIx[ticker]; ok {
+				batch[ix].RateUSD = 0
+			}
+			for _, p := range rejected {
+				batch = append(batch, FXQuote{
+					Bucket:     p.Date.UTC().Truncate(24 * time.Hour),
+					Ticker:     ticker,
+					RateUSD:    p.RateUSD,
+					InverseUSD: 1.0 / p.RateUSD,
+					Source:     fxSource,
+				})
+			}
+		}
 	}
+	// Drop scrubbed rows (poisoned bootstrap current-day bars).
+	clean := batch[:0]
+	for _, q := range batch {
+		if q.RateUSD > 0 {
+			clean = append(clean, q)
+		}
+	}
+	batch = clean
 
 	if err := w.writer.InsertFXQuoteBatch(ctx, batch); err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -328,12 +434,13 @@ func (w *Worker) acceptRate(ticker string, rate float64) bool {
 	}
 	g, ok := w.guards[ticker]
 	if !ok || g.lastAccepted <= 0 {
-		w.guards[ticker] = &rateGuard{lastAccepted: rate}
+		w.guards[ticker] = &rateGuard{lastAccepted: rate, bootstrapUnconfirmed: true}
 		return true
 	}
 	if withinBand(rate, g.lastAccepted) {
 		g.lastAccepted = rate
 		g.pending = 0
+		g.bootstrapUnconfirmed = false // second agreeing sample corroborates
 		return true
 	}
 	if g.pending > 0 && withinBand(rate, g.pending) {
@@ -342,6 +449,7 @@ func (w *Worker) acceptRate(ticker string, rate float64) bool {
 			"band", maxRateDeviation)
 		g.lastAccepted = rate
 		g.pending = 0
+		g.bootstrapUnconfirmed = false
 		return true
 	}
 	g.pending = rate
@@ -403,7 +511,12 @@ func (w *Worker) acceptHistoryRate(ticker string, rate float64) bool {
 	// repeat is reclassified so the rejection ALERT only carries fresh
 	// disagreement (the guard still refuses the bar either way — see
 	// the stuck fields on rateGuard for the incident this encodes).
-	if rate == g.stuckRejectedRate {
+	// "Same" is a tolerance match, not float equality: a LIVE broken
+	// upstream jitters around its wrong level (Massive UZS: 11791.69 →
+	// 11785 → 11817.69), and exact equality reset the streak on every
+	// refresh, so the reclassification never engaged.
+	if g.stuckRejectedRate > 0 &&
+		math.Abs(rate-g.stuckRejectedRate)/g.stuckRejectedRate <= stuckSameRateTolerance {
 		g.stuckCount++
 	} else {
 		g.stuckRejectedRate = rate
@@ -432,6 +545,32 @@ func (w *Worker) rejectRate(ticker string, rate, previous float64, reason string
 // caller.
 func withinBand(rate, baseline float64) bool {
 	return math.Abs(rate-baseline)/baseline <= maxRateDeviation
+}
+
+// historyMajority reports the median of a rejected history series and
+// whether the series constitutes heal-grade evidence: at least
+// [historyHealMinBars] bars, every bar within [historyHealAgreement] of
+// the median. A series split across two levels (a genuine mid-week
+// redenomination) fails the mutual-agreement test by construction.
+func historyMajority(rejected []HistoryPoint) (float64, bool) {
+	if len(rejected) < historyHealMinBars {
+		return 0, false
+	}
+	rates := make([]float64, 0, len(rejected))
+	for _, p := range rejected {
+		rates = append(rates, p.RateUSD)
+	}
+	sort.Float64s(rates)
+	med := rates[len(rates)/2]
+	if med <= 0 {
+		return 0, false
+	}
+	for _, r := range rates {
+		if math.Abs(r-med)/med > historyHealAgreement {
+			return 0, false
+		}
+	}
+	return med, true
 }
 
 // shouldRefreshHistory returns true when the worker should re-pull

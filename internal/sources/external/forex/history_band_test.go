@@ -165,3 +165,165 @@ func TestAcceptHistoryRate_StuckUpstreamReclassifies(t *testing.T) {
 		t.Fatalf("baseline mutated: lastAccepted=%v pending=%v", g.lastAccepted, g.pending)
 	}
 }
+
+// TestPersistSnapshot_BootstrapPoisonHealedByHistoryMajority is the
+// 2026-08-24 Massive UZS incident, end to end. At process restart the
+// current feed served a broken 1820 (true level ≈ 11,800); the bootstrap
+// arm accepted it sight-unseen, and the guard then rejected the ticker's
+// entire CORRECT trailing-7d series against the poisoned baseline —
+// today's wrong row reached fx_quotes while seven right rows were
+// refused. With the heal: the agreeing history majority refutes the
+// unconfirmed bootstrap, the baseline re-points at the bars' median, the
+// bars are written, and the poisoned current-day row never reaches the
+// writer.
+func TestPersistSnapshot_BootstrapPoisonHealedByHistoryMajority(t *testing.T) {
+	w, cw := bandTestWorker(io.Discard)
+	ctx := context.Background()
+
+	today := time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)
+	bars := []HistoryPoint{
+		{Date: today.Add(-7 * 24 * time.Hour), RateUSD: 11860.49},
+		{Date: today.Add(-6 * 24 * time.Hour), RateUSD: 11847},
+		{Date: today.Add(-5 * 24 * time.Hour), RateUSD: 11791.69},
+		{Date: today.Add(-4 * 24 * time.Hour), RateUSD: 11785},
+		{Date: today.Add(-3 * 24 * time.Hour), RateUSD: 11817.69},
+		{Date: today.Add(-2 * 24 * time.Hour), RateUSD: 11817},
+		{Date: today.Add(-1 * 24 * time.Hour), RateUSD: 11838.98},
+	}
+	snap := snapshotWithHistory(
+		map[string]float64{"UZS": 1820}, // the broken bootstrap sample
+		map[string][]HistoryPoint{"UZS": bars},
+	)
+	snap.PublishedAt = today
+	w.persistSnapshot(ctx, snap)
+
+	if len(cw.batches) != 1 {
+		t.Fatalf("expected 1 persisted batch, got %d", len(cw.batches))
+	}
+	batch := cw.batches[0]
+
+	// The poisoned current-day row must be scrubbed.
+	if hasHistoryRow(batch, "UZS", today, 1820) {
+		t.Errorf("poisoned bootstrap row UZS@today=1820 reached the writer; " +
+			"the ticker's own agreeing 7-day history refutes it")
+	}
+	// Every correct history bar must be written.
+	for _, p := range bars {
+		if !hasHistoryRow(batch, "UZS", p.Date, p.RateUSD) {
+			t.Errorf("correct history bar UZS@%s=%v was rejected against the "+
+				"poisoned baseline — evidence pointing the wrong way",
+				p.Date.Format("2006-01-02"), p.RateUSD)
+		}
+	}
+	// The baseline is healed: a follow-up current rate at the true level
+	// must be accepted first try.
+	if !w.acceptRate("UZS", 11795) {
+		t.Errorf("post-heal current rate at the true level was rejected; "+
+			"baseline=%v", w.guards["UZS"].lastAccepted)
+	}
+}
+
+// TestPersistSnapshot_ConfirmedBaselineIsNeverHealed pins the heal's
+// deliberate limit: a baseline corroborated by two agreeing current
+// fetches is NOT flipped by an agreeing history majority — a systemically
+// broken history endpoint against a healthy current endpoint is exactly
+// the MR-1 poisoning, and from inside the worker the two cases are
+// indistinguishable, so the confirmed baseline wins and the bars stay
+// rejected.
+func TestPersistSnapshot_ConfirmedBaselineIsNeverHealed(t *testing.T) {
+	w, cw := bandTestWorker(io.Discard)
+	ctx := context.Background()
+
+	today := time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)
+
+	// Two agreeing snapshots confirm the (correct) baseline.
+	first := snapshotOf(map[string]float64{"EUR": 0.92})
+	first.PublishedAt = today
+	w.persistSnapshot(ctx, first)
+
+	// Second refresh: same current rate (confirms), but the history
+	// endpoint now serves a decimal-shifted series (systemic glitch).
+	bars := []HistoryPoint{
+		{Date: today.Add(-4 * 24 * time.Hour), RateUSD: 9.3},
+		{Date: today.Add(-3 * 24 * time.Hour), RateUSD: 9.2},
+		{Date: today.Add(-2 * 24 * time.Hour), RateUSD: 9.25},
+		{Date: today.Add(-1 * 24 * time.Hour), RateUSD: 9.18},
+	}
+	second := snapshotWithHistory(
+		map[string]float64{"EUR": 0.92},
+		map[string][]HistoryPoint{"EUR": bars},
+	)
+	second.PublishedAt = today
+	w.persistSnapshot(ctx, second)
+
+	batch := cw.batches[len(cw.batches)-1]
+	for _, p := range bars {
+		if hasHistoryRow(batch, "EUR", p.Date, p.RateUSD) {
+			t.Errorf("decimal-shifted history bar EUR@%s=%v was written — the "+
+				"heal flipped a CONFIRMED baseline (MR-1 in a new coat)",
+				p.Date.Format("2006-01-02"), p.RateUSD)
+		}
+	}
+	if got := w.guards["EUR"].lastAccepted; got != 0.92 {
+		t.Errorf("confirmed baseline moved to %v, want 0.92 held", got)
+	}
+}
+
+// TestPersistSnapshot_RedenominationSplitSeriesDoesNotHeal — a genuine
+// mid-week redenomination splits the trailing series across two levels;
+// the mutual-agreement test must refuse to call either side a "majority",
+// leaving genuine moves to the two-fetch pending confirmation.
+func TestPersistSnapshot_RedenominationSplitSeriesDoesNotHeal(t *testing.T) {
+	w, cw := bandTestWorker(io.Discard)
+	ctx := context.Background()
+
+	today := time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)
+	bars := []HistoryPoint{
+		{Date: today.Add(-4 * 24 * time.Hour), RateUSD: 1800}, // old level
+		{Date: today.Add(-3 * 24 * time.Hour), RateUSD: 1810},
+		{Date: today.Add(-2 * 24 * time.Hour), RateUSD: 11800}, // redenominated
+		{Date: today.Add(-1 * 24 * time.Hour), RateUSD: 11810},
+	}
+	snap := snapshotWithHistory(
+		map[string]float64{"XXX": 1805},
+		map[string][]HistoryPoint{"XXX": bars},
+	)
+	snap.PublishedAt = today
+	w.persistSnapshot(ctx, snap)
+
+	// Split series: no heal. Baseline stays at the bootstrap sample and
+	// the current-day row is written.
+	if got := w.guards["XXX"].lastAccepted; got != 1805 {
+		t.Errorf("split (non-agreeing) series healed the baseline to %v, want 1805", got)
+	}
+	if !hasHistoryRow(cw.batches[0], "XXX", today, 1805) {
+		t.Errorf("current-day row was scrubbed without a heal")
+	}
+}
+
+// TestAcceptHistoryRate_StuckStreakToleratesJitter — the second half of
+// the UZS incident: the stuck reclassification keyed on EXACT float
+// equality of consecutive rejected values, and a live broken upstream
+// jitters (11791.69 → 11785 → 11817.69 …), so the streak reset every
+// refresh and the alert never quieted. Rejections within
+// [stuckSameRateTolerance] of the tracked value must extend the streak.
+func TestAcceptHistoryRate_StuckStreakToleratesJitter(t *testing.T) {
+	w, _ := bandTestWorker(io.Discard)
+	w.guards["UZS"] = &rateGuard{lastAccepted: 1820}
+
+	// Jittering rejections around one level: ±0.5% steps, all within the
+	// 1% tolerance of the tracked stuck value.
+	base := 11800.0
+	jitter := []float64{0, 12, -20, 35, -8, 22, -30, 15, -12, 28, -18, 9, 3}
+	for i, j := range jitter {
+		if w.acceptHistoryRate("UZS", base+j) {
+			t.Fatalf("bar %d unexpectedly accepted", i)
+		}
+	}
+	g := w.guards["UZS"]
+	if g.stuckCount <= stuckRejectionThreshold {
+		t.Fatalf("stuckCount = %d after %d jittering refusals, want > threshold %d — "+
+			"exact-equality streak tracking resets on every live-jitter refresh",
+			g.stuckCount, len(jitter), stuckRejectionThreshold)
+	}
+}
