@@ -39,6 +39,11 @@ const TIERS = [
 
 export default function SignupPage() {
   return (
+    // Route-frame record (FEC A1-10, operator decision D4 2026-08-24):
+    // max-w-4xl is DELIBERATE — this page carries the tier table + plan
+    // copy beside the same SignInForm; /signin stays max-w-md as the bare
+    // auth micro-surface. Vertical rhythm (py-12 sm:py-16) is the shared
+    // auth-pair rhythm. Allowlisted for the census-2 route-frame tripwire.
     <div className="mx-auto w-full max-w-4xl px-4 py-12 sm:px-6 sm:py-16">
       <header className="mb-10">
         <h1 className="text-3xl font-bold tracking-tight text-ink sm:text-4xl">
@@ -68,6 +73,9 @@ export default function SignupPage() {
           Tiers
         </h2>
         <div className="overflow-hidden rounded-xl border border-line">
+          {/* table-wave:allowlist prose — marketing tier table (operator
+              decision D5 2026-08-24): stays a hand-rolled <table>; the
+              A2-01 data-table wave (Table primitives) must not sweep it. */}
           <table className="min-w-full divide-y divide-line">
             <thead className="bg-surface-muted">
               <tr>

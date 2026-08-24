@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, act, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
+import { STATUS_POLL_MS } from '@/api/hooks';
 import { DegradedBanner } from './DegradedBanner';
 
 // health-check: the /v1/status poll used to swallow every fetch error with
@@ -9,6 +11,11 @@ import { DegradedBanner } from './DegradedBanner';
 // unreachable) rendered nothing at all, the one case this banner exists to
 // catch. Two consecutive failed polls should now flip it to a visible
 // "unreachable" state instead of staying invisible forever.
+//
+// The banner now reads the SHARED useStatus query (FEC A6-6/D2 fold), so
+// each case renders under a fresh QueryClient; the failure-counting lives
+// in the shared StatusFeed and these assertions pin that it still surfaces
+// here exactly as before.
 describe('DegradedBanner', () => {
   afterEach(() => {
     // Restore timers + the fetch spy so this file cannot pollute (or be
@@ -19,22 +26,34 @@ describe('DegradedBanner', () => {
     vi.restoreAllMocks();
   });
 
+  function renderWithClient(ui: React.ReactElement) {
+    // Fresh client per case — no cross-test query-cache leakage. Defaults
+    // are fine: useStatus sets its own retry/staleTime/refetchInterval.
+    const client = new QueryClient();
+    return render(
+      <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
+    );
+  }
+
   it('surfaces an unreachable-status banner after repeated fetch failures instead of staying silent', async () => {
     vi.useFakeTimers(); // this case drives the poll interval; the render-settle cases use real timers
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('Failed to fetch'));
 
-    render(<DegradedBanner />);
+    renderWithClient(<DegradedBanner />);
 
     // First poll fails — still within tolerance, no banner yet (avoids a
     // single blip flashing an alarming banner).
     await act(async () => {
-      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(0);
     });
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
 
-    // Second consecutive failure (one interval tick later) — now surfaced.
+    // Second consecutive failure — surfaced. (Two poll intervals: the
+    // interval timer re-arms only after the previous poll settles, so the
+    // second failure lands within the 2×30 s window — the same ~60 s
+    // time-to-alarm the banner had before the shared-query fold.)
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.advanceTimersByTimeAsync(2 * STATUS_POLL_MS);
     });
     const banner = screen.getByRole('status');
     expect(banner.textContent).toMatch(/unreachable/i);
@@ -46,13 +65,6 @@ describe('DegradedBanner', () => {
       status: 200,
       json: async () => ({ data }),
     } as Response);
-  }
-
-  function renderAndSettle() {
-    // Real timers + a findBy/waitFor at each call site deterministically
-    // await the async status fetch, rather than a fragile fixed microtask
-    // count that flaked under full-suite load.
-    render(<DegradedBanner />);
   }
 
   // W1.4 honesty residue: a failed Alertmanager query zeroes the counts
@@ -68,7 +80,7 @@ describe('DegradedBanner', () => {
       incidents: { active_count: 0, page_count: 0 },
     });
 
-    renderAndSettle();
+    renderWithClient(<DegradedBanner />);
 
     const banner = await screen.findByRole('status');
     await waitFor(() => expect(banner.textContent).toMatch(/alert status unknown/i));
@@ -88,7 +100,7 @@ describe('DegradedBanner', () => {
       },
     });
 
-    renderAndSettle();
+    renderWithClient(<DegradedBanner />);
 
     const banner = await screen.findByRole('status');
     await waitFor(() => expect(banner.textContent).toMatch(/3 active alerts/i));

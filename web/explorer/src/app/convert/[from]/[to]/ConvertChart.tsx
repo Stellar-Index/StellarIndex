@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
+import { Segmented } from '@/components/ui';
 import { API_BASE_URL, asExample } from '@/api/client';
 
 const LineChart = dynamic(
@@ -62,21 +63,12 @@ export function ConvertChart({ from, to }: { from: string; to: string }) {
       source={asExample('/v1/chart', { asset: `fiat:${from}`, quote: `fiat:${to}`, timeframe: tf })}
       bodyClassName="space-y-3"
     >
-      <div className="flex flex-wrap items-center gap-1 text-xs">
-        {TIMEFRAMES.map((o) => (
-          <button
-            key={o.key}
-            type="button"
-            onClick={() => setTf(o.key)}
-            aria-pressed={tf === o.key}
-            className={`rounded px-2 py-0.5 font-mono uppercase tracking-wider ${
-              tf === o.key ? 'bg-brand-600 text-white' : 'text-ink-muted hover:bg-surface-subtle'
-            }`}
-          >
-            {o.label}
-          </button>
-        ))}
-      </div>
+      <Segmented
+        ariaLabel="Chart timeframe"
+        options={TIMEFRAMES.map((o) => ({ label: o.label, value: o.key }))}
+        value={tf}
+        onChange={(v) => setTf(v as TF)}
+      />
       {loading && <div className="h-[260px]" />}
       {error && !loading && (
         <div className="flex h-[260px] items-center justify-center text-sm text-ink-muted">

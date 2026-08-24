@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { permanentRedirect } from 'next/navigation';
 import { Suspense } from 'react';
 
-import { serializeJsonLd, ogImageFor } from '@/lib/seo';
+import { ogImageFor } from '@/lib/seo';
 import { ProtocolView } from './ProtocolView';
 import { PROTOCOLS, protocolMeta } from '../registry';
 import { Container } from '@/components/ui';
@@ -75,28 +75,11 @@ export default async function ProtocolDetailPage({
   }
   const meta = protocolMeta(name);
 
-  // Schema.org BreadcrumbList — Home → Protocols → <name>.
-  const breadcrumbLD = {
-    '@context': 'https://schema.org',
-    '@type': 'BreadcrumbList',
-    itemListElement: [
-      { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://stellarindex.io' },
-      { '@type': 'ListItem', position: 2, name: 'Protocols', item: 'https://stellarindex.io/protocols' },
-      {
-        '@type': 'ListItem',
-        position: 3,
-        name: meta?.label ?? name,
-        item: `https://stellarindex.io/protocols/${name}`,
-      },
-    ],
-  };
-
+  // FEC A1-6: the BreadcrumbList JSON-LD now derives from the visible
+  // trail ProtocolView renders (ui Breadcrumbs emits both from one
+  // Crumb[]) — this page used to hand-roll LD with no visible crumbs.
   return (
     <>
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: serializeJsonLd(breadcrumbLD) }}
-      />
       <Suspense
         fallback={
           <Container className="py-16 text-sm text-ink-muted">

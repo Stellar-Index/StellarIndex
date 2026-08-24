@@ -13,6 +13,7 @@ import {
   Button,
   Callout,
   EmptyState,
+  Segmented,
   TBody,
   TR,
   Table,
@@ -361,21 +362,12 @@ function FilterBar({
       {classOptions && (
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="text-ink-muted">Asset type:</span>
-        {classOptions.map((opt) => (
-          <button
-            key={opt.value}
-            type="button"
-            onClick={() => onAssetClassChange(opt.value)}
-            aria-pressed={assetClass === opt.value}
-            className={`rounded-full px-3 py-1 text-xs font-medium tracking-wide ${
-              assetClass === opt.value
-                ? 'bg-brand-600 text-white'
-                : 'bg-surface-subtle text-ink-body hover:bg-line'
-            }`}
-          >
-            {opt.label}
-          </button>
-        ))}
+        <Segmented
+          ariaLabel="Asset type"
+          options={classOptions.map((opt) => ({ label: opt.label, value: opt.value }))}
+          value={assetClass}
+          onChange={(v) => onAssetClassChange(v as AssetClassFilter)}
+        />
       </div>
       )}
 

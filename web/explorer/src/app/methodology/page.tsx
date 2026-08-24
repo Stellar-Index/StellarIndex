@@ -239,6 +239,9 @@ export default function MethodologyPage() {
           <ADRRef id="0009" />
           ):
         </p>
+        {/* table-wave:allowlist prose — SLO summary table (operator
+            decision D5 2026-08-24): prose-page table, stays hand-rolled;
+            the A2-01 data-table wave must not sweep it. */}
         <table className="w-full divide-y divide-line text-sm">
           <thead>
             <tr className="text-left text-xs uppercase tracking-wider text-ink-muted">

@@ -334,31 +334,8 @@ export default async function PairPage({ params }: { params: Params }) {
     return Number.isFinite(v) ? acc + v : acc;
   }, 0);
 
-  // Schema.org BreadcrumbList — Home → Markets → BASE/QUOTE.
-  const breadcrumbLD = {
-    '@context': 'https://schema.org',
-    '@type': 'BreadcrumbList',
-    itemListElement: [
-      {
-        '@type': 'ListItem',
-        position: 1,
-        name: 'Home',
-        item: 'https://stellarindex.io',
-      },
-      {
-        '@type': 'ListItem',
-        position: 2,
-        name: 'Markets',
-        item: 'https://stellarindex.io/markets',
-      },
-      {
-        '@type': 'ListItem',
-        position: 3,
-        name: `${baseLabel} / ${quoteLabel}`,
-        item: `https://stellarindex.io/markets/${encodeURIComponent(`${base}~${quote}`)}`,
-      },
-    ],
-  };
+  // FEC A1-6: BreadcrumbList JSON-LD derives from the visible Crumb[]
+  // inside Breadcrumbs below — no hand-rolled LD.
   // schema.org Dataset — eligibility for Google Dataset Search. contentUrl
   // points at the real public /v1/chart endpoint this page already uses.
   const datasetLD = datasetJsonLd({
@@ -379,10 +356,6 @@ export default async function PairPage({ params }: { params: Params }) {
   });
   return (
     <Container className="space-y-6 py-8">
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: serializeJsonLd(breadcrumbLD) }}
-      />
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: serializeJsonLd(datasetLD) }}

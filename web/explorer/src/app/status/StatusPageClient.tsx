@@ -13,6 +13,7 @@ import { Badge, Card, Container, type BadgeTone } from '@/components/ui';
 import { isSafeHref } from '@/lib/markdown';
 import type { components, paths } from '@/api/types';
 import { API_BASE_URL } from '@/api/client';
+import { useStatus } from '@/api/hooks';
 import {
   formatCompact,
   formatDurationShort,
@@ -29,6 +30,12 @@ import {
 // Polled every 30 s — same cadence as Healthchecks.io's hosted
 // status pages and well inside the 60-s indexer/aggregator
 // heartbeat budget so a real degradation lands within one poll.
+// The /v1/status doc itself now arrives via the SHARED useStatus
+// query (STATUS_POLL_MS, same 30 s — FEC A6-6/D2: the banner and
+// this page used to poll the same endpoint on separate clocks and
+// could disagree in one viewport); this constant drives the
+// page-local ingestion + endpoint-probe loops, which stay bespoke
+// (per-region independence, latency measurement — A6-6 rationale).
 const POLL_INTERVAL_MS = 30_000;
 
 // Hot-tier endpoint probes also run at POLL_INTERVAL_MS. Warm-tier
@@ -51,8 +58,6 @@ type ServiceEntry = components['schemas']['StatusService'];
 type IncidentEntry = components['schemas']['ActiveIncident'];
 
 type StatusResponse = components['schemas']['StatusResponse'];
-
-type Envelope = components['schemas']['StatusEnvelope'];
 
 // Operator-authored status banner (GET /v1/status/notices). Distinct
 // from the alert-derived ActiveIncident above: a StatusNotice is a
@@ -402,10 +407,15 @@ export default function StatusPageClient({
   // are visible even when the live API is fully down (WB-02b).
   seedIncidents: IncidentHistoryEntry[];
 }) {
-  const [status, setStatus] = useState<StatusResponse | null>(null);
-  const [asOf, setAsOf] = useState<string>('');
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  // The /v1/status doc — from the SHARED useStatus query (one poll loop
+  // per viewport, shared with DegradedBanner + the sidebar pill). The
+  // feed keeps the last-known snapshot through failures, so the "showing
+  // the last known snapshot" degraded rendering below still works.
+  const statusQ = useStatus();
+  const status = statusQ.data?.status ?? null;
+  const asOf = statusQ.data?.asOf ?? '';
+  const error = statusQ.data?.error ?? null;
+  const loading = statusQ.isPending;
   // Seed the static (auth / streaming) endpoints once via the lazy
   // initializer — they never get a fetch fired against them, so their
   // labels are derivable up front rather than painted by a setState in
@@ -435,34 +445,6 @@ export default function StatusPageClient({
   const [ingestionByRegion, setIngestionByRegion] = useState<
     Record<string, IngestionSnapshot | null>
   >({});
-
-  useEffect(() => {
-    let cancelled = false;
-    async function poll() {
-      try {
-        const res = await fetch(`${API_BASE_URL}/v1/status`, {
-          cache: 'no-store',
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const env: Envelope = await res.json();
-        if (cancelled) return;
-        setStatus(env.data);
-        setAsOf(env.as_of);
-        setLoading(false);
-        setError(null);
-      } catch (err) {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : 'Network error');
-        setLoading(false);
-      }
-    }
-    poll();
-    const id = setInterval(poll, POLL_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, []);
 
   // Per-region ingestion snapshot. One fetch per region per
   // POLL_INTERVAL_MS (the backend response has Cache-Control

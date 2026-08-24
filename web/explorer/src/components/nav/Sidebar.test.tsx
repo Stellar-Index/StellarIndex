@@ -1,6 +1,16 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+// Hermetic by default: the Status pill's shared useStatus query fetches
+// /v1/status on mount — never let a component test reach the network.
+// (config `restoreMocks: true` un-spies between tests; the pill cases
+// re-spy with their own resolutions.)
+beforeEach(() => {
+  vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+    new TypeError('no network in tests'),
+  );
+});
 
 vi.mock('@/api/hooks', async () => {
   const actual = await vi.importActual<typeof import('@/api/hooks')>('@/api/hooks');
@@ -69,11 +79,37 @@ describe('Sidebar IA (nav revision 2026-08-24)', () => {
       'https://docs.stellarindex.io',
     );
     expect(screen.getByRole('link', { name: 'SDK' })).toHaveAttribute('href', '/sdk');
-    expect(screen.getByRole('link', { name: 'Status' })).toHaveAttribute('href', '/status');
+    // The Status row's accessible name now includes the live tone dot's
+    // sr-only state suffix (A5-03 pill revival) — match on the prefix.
+    expect(screen.getByRole('link', { name: /^Status/ })).toHaveAttribute('href', '/status');
     // Retired rail entries must NOT come back silently.
     for (const gone of ['AMM Pools', 'External Markets', 'Verification', 'Home']) {
       expect(screen.queryByRole('link', { name: gone })).not.toBeInTheDocument();
     }
+  });
+});
+
+// A5-03 / D2: the Status row carries a live tone dot fed by the SHARED
+// useStatus query (the navbar pill was lost in the console-shell redesign
+// and its hook orphaned — the rail's Status entry reflected nothing).
+describe('Sidebar Status pill', () => {
+  it('reflects the live /v1/status overall state on the Status row', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { overall: 'degraded' } }),
+    } as Response);
+    renderNav();
+    // The dot's sr-only state suffix lands in the link's accessible name.
+    expect(await screen.findByText('(degraded performance)')).toBeInTheDocument();
+  });
+
+  it('makes NO claim when the status feed cannot be reached (WB-04 honesty)', async () => {
+    // beforeEach already rejects every fetch — the pill must render the
+    // muted unknown dot, never a stale/assumed green.
+    renderNav();
+    expect(await screen.findByText('(status unknown)')).toBeInTheDocument();
+    expect(screen.queryByText('(all systems operational)')).not.toBeInTheDocument();
   });
 });
 

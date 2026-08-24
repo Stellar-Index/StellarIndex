@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
+import { Segmented } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
 import { type Envelope } from '../explorer-shared';
@@ -60,21 +61,12 @@ export function IngestThroughputChart() {
       bodyClassName="space-y-3"
     >
       <div className="flex flex-wrap items-center gap-1 text-xs">
-        {METRICS.map((m) => (
-          <button
-            key={m.key}
-            type="button"
-            onClick={() => setMetric(m.key)}
-            aria-pressed={metric === m.key}
-            className={`rounded-md px-2.5 py-1 ${
-              metric === m.key
-                ? 'bg-brand-600 text-white'
-                : 'border border-line text-ink-body hover:border-brand-500'
-            }`}
-          >
-            {m.label}
-          </button>
-        ))}
+        <Segmented
+          ariaLabel="Throughput metric"
+          options={METRICS.map((m) => ({ label: m.label, value: m.key }))}
+          value={metric}
+          onChange={(v) => setMetric(v as Metric)}
+        />
         {points.length > 0 && (
           <span className="ml-auto font-mono text-[11px] tabular-nums text-ink-muted">
             {formatCompact(total)} total

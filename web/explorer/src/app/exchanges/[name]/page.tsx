@@ -1,14 +1,14 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, ExternalLink } from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
 
 import { SourceStatsPanel } from '@/app/dexes/[source]/SourceStatsPanel';
-import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, serializeJsonLd } from '@/lib/seo';
+import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
 import { PairsTable } from './PairsTable';
 import { VenueChart } from './VenueChart';
 
-import { Container } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 const CEX_INFO: Record<
   string,
   { name: string; type: string; homepage: string; docsUrl: string; blurb: string }
@@ -82,39 +82,22 @@ export default async function ExchangeDetailPage({
   const info = CEX_INFO[name];
   if (!info) notFound();
 
-  // Schema.org BreadcrumbList — Home → Exchanges → <name>.
-  const breadcrumbLD = {
-    '@context': 'https://schema.org',
-    '@type': 'BreadcrumbList',
-    itemListElement: [
-      { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://stellarindex.io' },
-      { '@type': 'ListItem', position: 2, name: 'Exchanges', item: 'https://stellarindex.io/exchanges' },
-      { '@type': 'ListItem', position: 3, name: info.name, item: `https://stellarindex.io/exchanges/${name}` },
-    ],
-  };
-
   return (
     <Container className="space-y-6 py-8">
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: serializeJsonLd(breadcrumbLD) }}
-      />
-      <Link
-        href="/exchanges"
-        className="inline-flex items-center gap-1.5 text-sm text-ink-body hover:text-brand-600"
-      >
-        <ArrowLeft className="h-3.5 w-3.5" />
-        All exchanges
-      </Link>
-
+      {/* FEC A1-6: the visible trail + its BreadcrumbList JSON-LD render
+          from the SAME Crumb[] (via PageHeader → Breadcrumbs). This page
+          used to emit hand-rolled LD with no visible crumbs. */}
       <header className="space-y-2 border-b border-line pb-4">
-        <div className="flex flex-wrap items-baseline gap-3">
-          <h1 className="text-3xl font-semibold tracking-tight">{info.name}</h1>
-          <span className="rounded-sm bg-surface-subtle px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-ink-body">
-            {info.type}
-          </span>
-        </div>
-        <p className="max-w-3xl text-sm text-ink-body">{info.blurb}</p>
+        <PageHeader
+          breadcrumbs={[
+            { label: 'Home', href: '/' },
+            { label: 'Exchanges', href: '/exchanges' },
+            { label: info.name },
+          ]}
+          eyebrow={info.type}
+          title={info.name}
+          description={info.blurb}
+        />
         <p className="max-w-3xl rounded-md border border-warn-300 bg-warn-50 p-3 text-xs text-warn-700">
           <span className="font-semibold">Curated subscription, not a full mirror.</span>{' '}
           Stellar Index is the protocol explorer for the Stellar network, with an independent price feed; from each CEX we

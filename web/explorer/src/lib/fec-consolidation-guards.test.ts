@@ -200,6 +200,66 @@ describe('FEC guards (repo-walk)', () => {
     expect(offenders).toEqual([]);
   });
 
+  // A1-6 (decision D3): breadcrumbs one-rule. The visible trail and its
+  // schema.org BreadcrumbList render from the SAME Crumb[] — ui/Page's
+  // Breadcrumbs derives the LD via lib/seo breadcrumbJsonLd, so any
+  // PageHeader/Breadcrumbs usage co-occurs with the derived LD BY
+  // CONSTRUCTION. What can still regress is a hand-rolled fork of either
+  // half, which is exactly how UI and LD diverged in both directions
+  // (9 pages hand-rolled LD, 2 of them with no visible trail at all).
+  it('BreadcrumbList JSON-LD is built only by lib/seo breadcrumbJsonLd', () => {
+    // Quoted-string form: hand-rolled LD must spell '@type': 'BreadcrumbList'
+    // as a string literal; bare prose mentions in comments are fine.
+    const offenders = sources
+      .filter((f) => /['"`]BreadcrumbList['"`]/.test(f.text))
+      .map((f) => f.rel)
+      .filter((r) => r !== 'lib/seo.ts');
+    expect(offenders).toEqual([]);
+  });
+
+  it('visible breadcrumb trails render only through the ui Breadcrumbs primitive', () => {
+    // Any nav that self-identifies as a breadcrumb must BE the primitive
+    // (a hand-built trail would skip the derived JSON-LD and restart the
+    // UI/LD divergence). Excluded by scope: trails that don't declare the
+    // landmark can't be grepped — the primitive is the sanctioned way to
+    // get one, and A2's census re-runs catch stragglers.
+    const offenders = sources
+      .filter((f) => f.text.includes('aria-label="Breadcrumb"'))
+      .map((f) => f.rel)
+      .filter((r) => r !== 'components/ui/Page.tsx');
+    expect(offenders).toEqual([]);
+  });
+
+  // A3-F6.2 (decision D7): aria-pressed toggle rows have exactly two
+  // sanctioned homes — ui/Segmented (the in-card window/metric switch;
+  // quiet bg-surface active style + WindowPills' donated a11y) and
+  // SortPill (the recorded separate sibling). 7 hand-rolled rows with 4
+  // disagreeing active styles were folded 2026-08-24.
+  it('aria-pressed toggles exist only in ui/Segmented and SortPill', () => {
+    const allowed = new Set([
+      'components/ui/Tabs.tsx',
+      'components/SortPill.tsx',
+    ]);
+    const offenders = sources
+      .filter((f) => f.text.includes('aria-pressed'))
+      .map((f) => f.rel)
+      .filter((r) => !allowed.has(r));
+    expect(offenders).toEqual([]);
+  });
+
+  it('no ToggleGroup/WindowPills-style segmented forks are re-declared', () => {
+    // (const|function)\s+Name\b form per the A5-11 lesson — matches the
+    // declaration however it returns, not one historical body shape.
+    // BespokeSection's WindowPills survives as a thin Segmented wrapper
+    // (it maps WindowDays↔keys); it must contain no button row of its own
+    // — that is covered by the aria-pressed walk above.
+    const offenders = sources
+      .filter((f) => /(const|function)\s+(ToggleGroup|WindowPills)\b/.test(f.text))
+      .map((f) => f.rel)
+      .filter((r) => r !== 'app/protocols/[name]/BespokeSection.tsx');
+    expect(offenders).toEqual([]);
+  });
+
   // A2-06/A1-1 adjunct: truncateMiddle's canonical home is server-safe
   // lib/format.ts; ui/Mono re-exports for client back-compat. No third
   // definition may appear.

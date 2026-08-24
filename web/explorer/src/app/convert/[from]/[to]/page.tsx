@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { ArrowLeftRight } from 'lucide-react';
 
 import { Breadcrumbs } from '@/components/ui';
-import { SITE_OG_IMAGES, serializeJsonLd } from '@/lib/seo';
+import { SITE_OG_IMAGES } from '@/lib/seo';
 import { assetHrefFor } from '@/lib/fiat-slugs';
 import { buildConvertParams } from '@/lib/convert-params';
 import { ConvertPair } from './ConvertPair';
@@ -206,46 +206,12 @@ export default async function ConvertPage({ params }: { params: Params }) {
   const rate = detail?.cross_rates?.[t] ?? null;
   const inverse = rate != null && rate > 0 ? 1 / rate : null;
 
-  // Schema.org BreadcrumbList — Home → Currencies → <from> → <from> to <to>.
-  // Four-step path because the converter sits one level below the
-  // currency-detail page in the IA (the "from" currency owns the conversion).
-  const breadcrumbLD = {
-    '@context': 'https://schema.org',
-    '@type': 'BreadcrumbList',
-    itemListElement: [
-      {
-        '@type': 'ListItem',
-        position: 1,
-        name: 'Home',
-        item: 'https://stellarindex.io',
-      },
-      {
-        '@type': 'ListItem',
-        position: 2,
-        name: 'Assets',
-        item: 'https://stellarindex.io/assets',
-      },
-      {
-        '@type': 'ListItem',
-        position: 3,
-        name: f,
-        item: `https://stellarindex.io${assetHrefFor(f)}`,
-      },
-      {
-        '@type': 'ListItem',
-        position: 4,
-        name: `${f} to ${t}`,
-        item: `https://stellarindex.io/convert/${f}/${t}`,
-      },
-    ],
-  };
-
   return (
     <div className="mx-auto max-w-4xl space-y-6 px-6 py-8">
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: serializeJsonLd(breadcrumbLD) }}
-      />
+      {/* FEC A1-6: BreadcrumbList JSON-LD derives from this Crumb[] inside
+          Breadcrumbs — no hand-rolled LD. Four-step path because the
+          converter sits one level below the currency-detail page in the IA
+          (the "from" currency owns the conversion). */}
       <Breadcrumbs
         items={[
           { label: 'Home', href: '/' },
