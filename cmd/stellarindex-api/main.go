@@ -2317,7 +2317,49 @@ func buildDivergenceReferences(cfg config.DivergenceConfig, oracles divergence.O
 		}
 	}
 
-	return append(refs, buildOracleDivergenceReferences(cfg, oracles, logger)...)
+	refs = append(refs, buildOracleDivergenceReferences(cfg, oracles, logger)...)
+	return appendSyntheticCrossReference(refs, logger)
+}
+
+// appendSyntheticCrossReference derives the USD-cross reference from
+// the ALREADY-GATED reference set — no config conditional of its own
+// (the config-A/config-B wiring lesson: a new gate is a new way for a
+// feature to silently not exist). It exists whenever its ingredients
+// do: at least one USD-quoted oracle leg (reflector-cex / chainlink /
+// redstone / band — deliberately NOT CoinGecko, which is the one
+// existing DIRECT reference for non-USD-fiat pairs; using it as a leg
+// would correlate the synthetic with the only source it is meant to
+// corroborate) and the reflector-fx fiat leg.
+//
+// Purpose (2026-08-24): gives EUR/GBP-quoted pairs a second reference
+// so SuccessCount reaches the divergence trust floor and the
+// corroborated-release gate can auto-release genuine repricings
+// unattended instead of paging an operator per freeze.
+func appendSyntheticCrossReference(refs []divergence.Reference, logger *slog.Logger) []divergence.Reference {
+	var usdLegs, fxLegs []divergence.Reference
+	for _, r := range refs {
+		switch r.Name() {
+		case divergence.OracleSourceReflectorCEX,
+			divergence.ChainlinkSourceName,
+			divergence.OracleSourceRedstone,
+			divergence.OracleSourceBand:
+			usdLegs = append(usdLegs, r)
+		case divergence.OracleSourceReflectorFX:
+			fxLegs = append(fxLegs, r)
+		}
+	}
+	syn, err := divergence.NewSyntheticCrossReference(divergence.SyntheticCrossOptions{
+		USDLegs: usdLegs,
+		FXLegs:  fxLegs,
+	})
+	if err != nil {
+		// Missing a leg class — expected on minimal configs; the
+		// non-USD-fiat pairs then simply keep their single direct
+		// reference (and their operator-release posture).
+		logger.Info("divergence: synthetic USD-cross reference not constructed", "reason", err)
+		return refs
+	}
+	return append(refs, syn)
 }
 
 // buildOracleDivergenceReferences constructs the on-chain oracle
