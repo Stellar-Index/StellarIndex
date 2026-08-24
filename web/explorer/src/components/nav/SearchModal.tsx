@@ -9,6 +9,7 @@ import { createPortal } from 'react-dom';
 import { apiGet } from '@/api/client';
 import { useCoins, useVerifiedSlugs, type Coin } from '@/api/hooks';
 import { assetHrefFor } from '@/lib/fiat-slugs';
+import { truncateMiddle } from '@/lib/format';
 import { useDebouncedValue } from '@/lib/useDebouncedValue';
 import { useDialog } from '@/lib/useDialog';
 
@@ -486,13 +487,16 @@ export function SearchModal() {
                     <Link
                       href={r.href}
                       onClick={() => setOpen(false)}
-                      className="hover:bg-surface-muted flex items-center justify-between rounded-md px-3 py-2"
+                      className="hover:bg-surface-muted flex items-center justify-between gap-3 rounded-md px-3 py-2"
                     >
-                      <span className="flex items-center gap-2">
+                      {/* min-w-0 + truncate: a result label can carry a long
+                          name; without it the flex row refuses to shrink and
+                          56-char strkeys blow the modal open sideways. */}
+                      <span className="flex min-w-0 items-center gap-2">
                         <span className="bg-surface-subtle text-ink-muted rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase">
                           {r.type}
                         </span>
-                        <span className="font-medium">{r.label}</span>
+                        <span className="min-w-0 truncate font-medium">{r.label}</span>
                         {r.verified && (
                           <span
                             title="Verified currency"
@@ -520,8 +524,12 @@ export function SearchModal() {
                           </span>
                         )}
                       </span>
-                      <span className="text-ink-faint font-mono text-xs">
-                        {r.href}
+                      {/* Middle-ellipsized: account/tx/asset hrefs embed
+                          56-char strkeys and 64-char hashes; raw they break
+                          the row (operator report 2026-08-24). Head keeps the
+                          route readable, tail keeps the id recognizable. */}
+                      <span className="text-ink-faint shrink-0 font-mono text-xs">
+                        {truncateMiddle(r.href, 26, 8)}
                       </span>
                     </Link>
                   </li>
