@@ -428,11 +428,18 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.cfg.Sender.Send(r.Context(), msg); err != nil {
+		// Instrument the mail outage (task #33 / W8 recon 9c): the send
+		// failure is otherwise swallowed here (200 either way, see below),
+		// so without this counter a Resend outage that silently kills login
+		// is invisible until users complain.
+		obs.NotifySendsTotal.WithLabelValues(obs.NotifyTemplateMagicLink, obs.NotifySendResultFailed).Inc()
 		// Log + return 200 anyway — the user shouldn't see
 		// "we tried to email you and failed" because that's a
 		// signal an attacker can use to confirm an email
 		// exists. Operator gets the alert via Loki / Sentry.
 		h.cfg.Logger.Error("send magic link email", "err", err, "email", maskEmail(email))
+	} else {
+		obs.NotifySendsTotal.WithLabelValues(obs.NotifyTemplateMagicLink, obs.NotifySendResultSent).Inc()
 	}
 
 	_ = json.NewEncoder(w).Encode(loginResponse{Status: "sent"})

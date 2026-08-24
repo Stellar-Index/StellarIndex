@@ -1470,6 +1470,25 @@ exist for an operator to tell a never-failed janitor from an absent one.
 
 Pre-seeded on the `sweep` op.
 
+### `stellarindex_notify_sends_total`
+
+Counter, labels `template` (`magic-link` / `signup-verify`), `result`
+(`sent` / `failed`).
+
+Transactional-email sends through `internal/notify` (the Resend client).
+Before this counter, `internal/notify` had **zero** prometheus visibility,
+so a mail outage was silent — the magic-link login handler swallows the
+send error (returns 200 either way to avoid an enumeration oracle) and the
+signup-verify path only logs it. Incremented at every `notify.Sender.Send`
+call site: `sent` when Resend accepts, `failed` on any returned error
+(validation, provider-rejected, or transient/network). `magic-link` is the
+dashboard sign-in email; `signup-verify` is the API-signup confirmation
+email — the two are the only `notify.Sender` paths (price alerts deliver
+via webhooks, not mail). A sustained `failed` ratio drives the
+`stellarindex_notify_send_failure_ratio_high` alert. Zero-seeded across the
+two templates × {sent, failed} so the ratio reads a real 0 before the first
+email.
+
 ### `stellarindex_aggregator_dropped_trades_total`
 
 Counter, label `reason` (`class` / `outlier`).

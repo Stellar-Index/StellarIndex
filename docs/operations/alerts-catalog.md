@@ -125,6 +125,18 @@ signal lands.
 | `stellarindex_api_price_stale` | `stellarindex_price_staleness_seconds` per asset | > 120 s sustained 5 min | P2 | [price-stale](runbooks/price-stale.md) |
 | `stellarindex_api_cache_miss_rate_high` | `rate(stellarindex_api_cache_ops_total{result="miss"}[5m]) / rate(stellarindex_api_cache_ops_total[5m])` per (cache, op) | > 50 % sustained 10 min on a hot op (≥ 0.1 req/s) | P2 | [cache-miss-rate-high](runbooks/cache-miss-rate-high.md) |
 
+## Notify (transactional-email) alerts
+
+`internal/notify` (the Resend client) sends the magic-link dashboard
+login email and the API-signup confirmation email — the only two mail
+paths (price alerts deliver via webhooks). The login handler swallows the
+send error to stay enumeration-safe, so `stellarindex_notify_sends_total`
+is the only signal a mail outage leaves.
+
+| Name | Metric | Condition | Severity | Runbook |
+| ---- | ------ | --------- | -------- | ------- |
+| `stellarindex_notify_send_failure_ratio_high` | `sum by (template) (rate(stellarindex_notify_sends_total{result="failed"}[15m])) / sum by (template) (rate(stellarindex_notify_sends_total[15m]))` | > 0.5 for 15 min (a mail provider outage — new logins / signup confirmations stop delivering; existing sessions + keys unaffected) | P2 | [notify-send-failure](runbooks/notify-send-failure.md) |
+
 ## SLA-probe alerts
 
 Source: `cmd/stellarindex-sla-probe` runs every 15 min via the

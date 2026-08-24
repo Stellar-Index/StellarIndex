@@ -195,6 +195,7 @@ func registerAppMetricsTail() {
 		MagicLinkTokenRows,
 		MagicLinkTokenRowsDeletedTotal,
 		MagicLinkTokenErrorsTotal,
+		NotifySendsTotal,
 
 		DEXTradeNonstandardDecimalsTotal,
 		PriceServeDeclinedNonstandardDecimalsTotal,
@@ -292,6 +293,7 @@ func seedBoundedLabelSeries() {
 	for _, op := range []string{MagicLinkTokenOpSweep} {
 		MagicLinkTokenErrorsTotal.WithLabelValues(op)
 	}
+	seedNotifySeries()
 	// Bounded outcome set for the 2026-07-06 backpressure retry counter
 	// so the `trade_insert_backpressure` alert's rate() query reads a
 	// real zero (not "no data") before the first outage.
@@ -415,6 +417,22 @@ func seedBoundedLabelSeriesTail() {
 func seedLedgerstreamTierSeries() {
 	for _, outcome := range []string{"hot", "cold", "both_missing"} {
 		LedgerstreamTierReadTotal.WithLabelValues(outcome)
+	}
+}
+
+// seedNotifySeries pre-registers the Resend transactional-email send outcomes
+// (task #33 / W8 recon 9c). Bounded: the two notify.Sender call sites
+// (magic-link login, signup verification) × {sent, failed}. Seeded so the
+// send-failure-ratio alert reads a real 0 before the first login/signup email
+// — an absent series would make "no mail has ever failed" and "the mailer is
+// dead" the same scrape (the exact silence this counter closes). Peeled into
+// its own helper for the same gocognit ceiling that split
+// seedLedgerstreamTierSeries.
+func seedNotifySeries() {
+	for _, template := range []string{NotifyTemplateMagicLink, NotifyTemplateSignupVerify} {
+		for _, result := range []string{NotifySendResultSent, NotifySendResultFailed} {
+			NotifySendsTotal.WithLabelValues(template, result)
+		}
 	}
 }
 
@@ -1698,6 +1716,42 @@ var MagicLinkTokenErrorsTotal = prometheus.NewCounterVec(
 		Help: "Magic-link retention sweep failures by op (sweep). Non-zero = the reaper is not bounding an unauthenticated-writable PII table.",
 	},
 	[]string{"op"},
+)
+
+// Notify template + result label VALUES for [NotifySendsTotal]. Kept as
+// constants so the zero-seed loop and the send call sites cannot drift on
+// spelling. `template` is the mail's purpose; `result` is delivery outcome.
+const (
+	// NotifyTemplateMagicLink — the dashboard sign-in magic-link email
+	// (internal/api/v1/dashboardauth). A failure here blocks login.
+	NotifyTemplateMagicLink = "magic-link"
+	// NotifyTemplateSignupVerify — the API-signup email-confirmation link
+	// (cmd/stellarindex-api signupVerifyEmailerAdapter). A failure leaves
+	// the key usable but never flips email_verified.
+	NotifyTemplateSignupVerify = "signup-verify"
+
+	// NotifySendResultSent — Sender.Send returned nil (accepted by Resend).
+	NotifySendResultSent = "sent"
+	// NotifySendResultFailed — Sender.Send returned an error (validation,
+	// provider-rejected, or transient/network). The mail did not go out.
+	NotifySendResultFailed = "failed"
+)
+
+// NotifySendsTotal counts transactional-email sends per template and result.
+// internal/notify (the Resend client) had ZERO prometheus visibility, so a mail
+// outage was silent — it surfaced only as users unable to sign in or confirm
+// their signup. This counter is incremented at every notify.Sender.Send call
+// site: `result=sent` on success, `result=failed` on any returned error. A
+// sustained failed ratio drives the notify send-failure alert. Zero-seeded per
+// (template, result) so the ratio reads a real 0 before the first email — an
+// absent series would make "no mail has ever failed" and "the mailer is dead"
+// the same scrape.
+var NotifySendsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_notify_sends_total",
+		Help: "Transactional-email sends per template and result (sent|failed). A sustained failed ratio means the mail provider (Resend) is failing — magic-link login and signup-verification stop delivering.",
+	},
+	[]string{"template", "result"},
 )
 
 // MEVDetectRunsTotal — per-run outcome counter for the aggregator's

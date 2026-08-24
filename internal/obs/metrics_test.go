@@ -451,6 +451,15 @@ func TestZeroSeed_F0033(t *testing.T) {
 		// a future refactor cannot drop it from the registry list.
 		`stellarindex_login_code_lockout_rows 0`,
 		`stellarindex_login_code_lockout_rows_deleted_total 0`,
+		// Notify (Resend) sends (task #33 / W8 recon 9c). A mail outage is
+		// otherwise silent (the login handler swallows the send error), so
+		// the failure-ratio alert must read a real 0 before the first email
+		// — an absent series would make "no mail has ever failed" and "the
+		// mailer is dead" indistinguishable.
+		`stellarindex_notify_sends_total{result="sent",template="magic-link"} 0`,
+		`stellarindex_notify_sends_total{result="failed",template="magic-link"} 0`,
+		`stellarindex_notify_sends_total{result="sent",template="signup-verify"} 0`,
+		`stellarindex_notify_sends_total{result="failed",template="signup-verify"} 0`,
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(s, want) {
