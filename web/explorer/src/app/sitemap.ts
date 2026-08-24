@@ -125,7 +125,11 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // Per-protocol verification pages — pre-rendered from the static PROTOCOLS
   // registry (generateStaticParams in protocols/[name]). These were orphaned
   // from the sitemap despite being indexable, content-rich hubs.
-  const protocolPages: MetadataRoute.Sitemap = PROTOCOLS.map((p) => ({
+  // sdex's canonical surface is /sdex (already in staticPages);
+  // /protocols/sdex 308-redirects there and must not be sitemapped.
+  const protocolPages: MetadataRoute.Sitemap = PROTOCOLS.filter(
+    (p) => p.name !== 'sdex',
+  ).map((p) => ({
     url: siteURL(`/protocols/${p.name}`),
     lastModified: now,
     changeFrequency: 'daily',
