@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { loadReleases, versionSlug, type Release } from '@/lib/changelog';
-import { isSafeHref } from '@/lib/markdown';
+import { Inline } from '@/lib/markdown';
 
 // Cap the rendered changelog to the most recent N releases. The full
 // history (242+ sections) inlined to a ~4.4 MB page (audit 2026-06-19);
@@ -22,14 +22,14 @@ export default function ChangelogPage() {
     <div className="mx-auto max-w-4xl space-y-8 px-6 py-10">
       <header className="space-y-3">
         <div className="flex items-baseline justify-between">
-          <p className="font-mono text-xs uppercase tracking-widest text-brand-600">
+          <p className="text-brand-600 font-mono text-xs tracking-widest uppercase">
             Changelog
           </p>
           <a
             href="/changelog.atom"
             target="_blank"
             rel="noreferrer noopener"
-            className="text-xs text-ink-muted hover:text-brand-600"
+            className="text-ink-muted hover:text-brand-600 text-xs"
             title="Atom feed — subscribe in Feedly, Slack RSS bot, etc."
           >
             Subscribe (Atom) ↗
@@ -38,9 +38,9 @@ export default function ChangelogPage() {
         <h1 className="text-4xl font-semibold tracking-tight">
           Every release, every change.
         </h1>
-        <p className="max-w-2xl text-base text-ink-body">
+        <p className="text-ink-body max-w-2xl text-base">
           Pulled at build time from{' '}
-          <code className="rounded-sm bg-surface-subtle px-1.5 py-0.5 font-mono text-sm">
+          <code className="bg-surface-subtle rounded-sm px-1.5 py-0.5 font-mono text-sm">
             CHANGELOG.md
           </code>{' '}
           on{' '}
@@ -66,9 +66,8 @@ export default function ChangelogPage() {
       </header>
 
       {releases.length === 0 ? (
-        <div className="rounded-md border border-warn-300 bg-warn-50 p-6 text-sm text-warn-700">
-          CHANGELOG.md not found at build time — this page is a
-          stub. See the{' '}
+        <div className="border-warn-300 bg-warn-50 text-warn-700 rounded-md border p-6 text-sm">
+          CHANGELOG.md not found at build time — this page is a stub. See the{' '}
           <a
             href="https://github.com/Stellar-Index/StellarIndex/blob/main/CHANGELOG.md"
             target="_blank"
@@ -88,7 +87,7 @@ export default function ChangelogPage() {
             <ReleaseCard key={r.version} release={r} />
           ))}
           {releases.length > RECENT_RELEASES && (
-            <p className="text-sm text-ink-muted">
+            <p className="text-ink-muted text-sm">
               Showing the {RECENT_RELEASES} most recent of {releases.length}{' '}
               releases.{' '}
               <a
@@ -104,7 +103,7 @@ export default function ChangelogPage() {
         </div>
       )}
 
-      <div className="border-t border-line pt-6 text-sm text-ink-muted">
+      <div className="border-line text-ink-muted border-t pt-6 text-sm">
         <Link href="/" className="text-brand-600 hover:underline">
           ← Home
         </Link>
@@ -132,9 +131,9 @@ function ReleaseCard({ release }: { release: Release }) {
   return (
     <article
       id={id}
-      className="scroll-mt-20 rounded-lg border border-line bg-surface p-6 shadow-sm"
+      className="border-line bg-surface scroll-mt-20 rounded-lg border p-6 shadow-sm"
     >
-      <header className="mb-4 flex flex-wrap items-baseline justify-between gap-2 border-b border-line-subtle pb-3">
+      <header className="border-line-subtle mb-4 flex flex-wrap items-baseline justify-between gap-2 border-b pb-3">
         <h2 className="font-mono text-2xl font-semibold tracking-tight">
           <a href={`#${id}`} className="hover:text-brand-600">
             {release.version}
@@ -142,12 +141,12 @@ function ReleaseCard({ release }: { release: Release }) {
         </h2>
         <div className="flex items-center gap-2 text-xs">
           {isUnreleased ? (
-            <span className="rounded-sm bg-warn-50 px-2 py-0.5 font-mono uppercase tracking-wider text-warn-700">
+            <span className="bg-warn-50 text-warn-700 rounded-sm px-2 py-0.5 font-mono tracking-wider uppercase">
               unreleased
             </span>
           ) : (
             release.date && (
-              <span className="font-mono tabular-nums text-ink-muted">
+              <span className="text-ink-muted font-mono tabular-nums">
                 {release.date}
               </span>
             )
@@ -157,7 +156,7 @@ function ReleaseCard({ release }: { release: Release }) {
               href={`https://github.com/Stellar-Index/StellarIndex/releases/tag/${release.version}`}
               target="_blank"
               rel="noreferrer noopener"
-              className="rounded-sm border border-line px-2 py-0.5 font-mono text-xs hover:border-brand-500 hover:text-brand-600"
+              className="border-line hover:border-brand-500 hover:text-brand-600 rounded-sm border px-2 py-0.5 font-mono text-xs"
             >
               GitHub ↗
             </a>
@@ -203,112 +202,18 @@ function BlockSection({ block }: { block: { kind: string; lines: string[] } }) {
 
   return (
     <section>
-      <h3 className={`mb-2 text-xs font-semibold uppercase tracking-wider ${tone}`}>
+      <h3
+        className={`mb-2 text-xs font-semibold tracking-wider uppercase ${tone}`}
+      >
         {block.kind}
       </h3>
-      <ul className="space-y-2 text-sm text-ink-body">
+      <ul className="text-ink-body space-y-2 text-sm">
         {items.map((it, i) => (
           <li key={i}>
-            <MarkdownLite text={it} />
+            <Inline text={it} />
           </li>
         ))}
       </ul>
     </section>
-  );
-}
-
-/**
- * MarkdownLite — bare-bones renderer for the subset of markdown we
- * use in CHANGELOG entries: `**bold**`, `code`, and `[label](url)`
- * links. Anything more (lists nested in lists, tables, images)
- * passes through as plain text. Avoids pulling in a full markdown
- * parser for ~5 inline shapes.
- */
-function MarkdownLite({ text }: { text: string }) {
-  // Tokenize the line into a flat array of {kind, value} so React
-  // can render each fragment with appropriate styling.
-  type Tok =
-    | { kind: 'text'; value: string }
-    | { kind: 'bold'; value: string }
-    | { kind: 'code'; value: string }
-    | { kind: 'link'; value: string; href: string };
-  const tokens: Tok[] = [];
-  let rest = text;
-  // Order matters: link first (contains brackets that bold could
-  // accidentally consume), then code, then bold.
-  const patterns: { re: RegExp; mk: (m: RegExpMatchArray) => Tok }[] = [
-    {
-      re: /^\[([^\]]+)\]\(([^)]+)\)/,
-      mk: (m) => ({ kind: 'link', value: m[1]!, href: m[2]! }),
-    },
-    { re: /^`([^`]+)`/, mk: (m) => ({ kind: 'code', value: m[1]! }) },
-    { re: /^\*\*([^*]+)\*\*/, mk: (m) => ({ kind: 'bold', value: m[1]! }) },
-  ];
-  while (rest.length > 0) {
-    let matched = false;
-    for (const p of patterns) {
-      const m = rest.match(p.re);
-      if (m) {
-        tokens.push(p.mk(m));
-        rest = rest.slice(m[0].length);
-        matched = true;
-        break;
-      }
-    }
-    if (!matched) {
-      tokens.push({ kind: 'text', value: rest[0]! });
-      rest = rest.slice(1);
-      // Coalesce sequential text tokens.
-      if (
-        tokens.length >= 2 &&
-        tokens[tokens.length - 1]!.kind === 'text' &&
-        tokens[tokens.length - 2]!.kind === 'text'
-      ) {
-        const a = tokens.pop()! as Tok & { kind: 'text' };
-        const b = tokens.pop()! as Tok & { kind: 'text' };
-        tokens.push({ kind: 'text', value: b.value + a.value });
-      }
-    }
-  }
-  return (
-    <>
-      {tokens.map((t, i) => {
-        if (t.kind === 'bold')
-          return (
-            <strong key={i} className="font-semibold text-ink">
-              {t.value}
-            </strong>
-          );
-        if (t.kind === 'code')
-          return (
-            <code
-              key={i}
-              className="rounded-sm bg-surface-subtle px-1 py-0.5 font-mono text-xs"
-            >
-              {t.value}
-            </code>
-          );
-        if (t.kind === 'link') {
-          // Reject disallowed schemes (javascript:, data:, …) — render
-          // the label as plain text rather than a live anchor. Shares the
-          // scheme allowlist with lib/markdown's Inline renderer.
-          if (!isSafeHref(t.href)) {
-            return <span key={i}>{t.value}</span>;
-          }
-          return (
-            <a
-              key={i}
-              href={t.href}
-              target={t.href.startsWith('http') ? '_blank' : undefined}
-              rel={t.href.startsWith('http') ? 'noreferrer noopener' : undefined}
-              className="text-brand-600 hover:underline"
-            >
-              {t.value}
-            </a>
-          );
-        }
-        return <span key={i}>{t.value}</span>;
-      })}
-    </>
   );
 }

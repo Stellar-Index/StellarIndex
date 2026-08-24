@@ -2,13 +2,22 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
+import {
+  useQuery,
+  useQueryClient,
+  keepPreviousData,
+} from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
 import { cn } from '@/lib/cn';
 import { formatCompact } from '@/lib/format';
-import { isFrameStale, LEDGER_LIVE_STALE_MS, useLedgerStream, useLiveClock } from '@/lib/live/hooks';
+import {
+  isFrameStale,
+  LEDGER_LIVE_STALE_MS,
+  useLedgerStream,
+  useLiveClock,
+} from '@/lib/live/hooks';
 import {
   type Envelope,
   type LedgersPage,
@@ -73,7 +82,9 @@ export function LedgersTable() {
     const now = Date.now();
     if (now - lastRefetchRef.current < LIVE_REFETCH_MIN_MS) return;
     lastRefetchRef.current = now;
-    void queryClient.invalidateQueries({ queryKey: ['/v1/ledgers', PAGE_SIZE, 'tip'] });
+    void queryClient.invalidateQueries({
+      queryKey: ['/v1/ledgers', PAGE_SIZE, 'tip'],
+    });
   }, [before, streamLatest, newestShown, queryClient]);
   const following =
     before === undefined &&
@@ -145,9 +156,9 @@ export function LedgersTable() {
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-line text-sm">
+        <table className="divide-line min-w-full divide-y text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
+            <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
               <Th>Sequence</Th>
               <Th>Close time</Th>
               <Th align="right">Txs</Th>
@@ -155,26 +166,28 @@ export function LedgersTable() {
               <Th align="right">Soroban events</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-line-subtle">
+          <tbody className="divide-line-subtle divide-y">
             {ledgers.map((l) => (
               <tr
                 key={l.sequence}
                 className={cn(
                   'hover:bg-surface-muted',
-                  flashAbove != null && (l.sequence ?? 0) > flashAbove && 'live-tick',
+                  flashAbove != null &&
+                    (l.sequence ?? 0) > flashAbove &&
+                    'live-tick',
                 )}
               >
                 <Td>
                   <Link
                     href={`/ledgers/${l.sequence}/`}
-                    className="font-mono font-medium text-ink-body hover:text-brand-600"
+                    className="text-ink-body hover:text-brand-600 font-mono font-medium"
                   >
                     #{(l.sequence ?? 0).toLocaleString('en-US')}
                   </Link>
                 </Td>
                 <Td>
                   <span
-                    className="font-mono text-xs text-ink-muted"
+                    className="text-ink-muted font-mono text-xs"
                     title={formatTimestamp(l.close_time)}
                   >
                     {relativeAge(l.close_time)}
@@ -182,16 +195,16 @@ export function LedgersTable() {
                 </Td>
                 <Td align="right">
                   <span className="font-mono tabular-nums">
-                    {formatCompact(l.tx_count ?? 0)}
+                    {(l.tx_count ?? 0).toLocaleString('en-US')}
                   </span>
                 </Td>
                 <Td align="right">
-                  <span className="font-mono tabular-nums text-ink-body">
-                    {formatCompact(l.op_count ?? 0)}
+                  <span className="text-ink-body font-mono tabular-nums">
+                    {(l.op_count ?? 0).toLocaleString('en-US')}
                   </span>
                 </Td>
                 <Td align="right">
-                  <span className="font-mono tabular-nums text-ink-body">
+                  <span className="text-ink-body font-mono tabular-nums">
                     {(l.soroban_event_count ?? 0) > 0
                       ? formatCompact(l.soroban_event_count ?? 0)
                       : '—'}
@@ -203,16 +216,16 @@ export function LedgersTable() {
         </table>
       </div>
 
-      <div className="flex items-center justify-between px-4 pb-1 pt-4 text-xs">
+      <div className="flex items-center justify-between px-4 pt-4 pb-1 text-xs">
         <button
           type="button"
           onClick={() => setBefore(undefined)}
           disabled={before === undefined || isFetching}
-          className="rounded-md border border-line px-3 py-1.5 text-ink-body hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
+          className="border-line text-ink-body hover:border-brand-500 hover:text-brand-600 rounded-md border px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-40"
         >
           ← Newest
         </button>
-        <span className="font-mono text-[11px] text-ink-faint">
+        <span className="text-ink-faint font-mono text-[11px]">
           {isFetching ? 'Loading…' : ''}
         </span>
         <button
@@ -221,7 +234,7 @@ export function LedgersTable() {
             if (data.next_before != null) setBefore(data.next_before);
           }}
           disabled={data.next_before == null || isFetching}
-          className="rounded-md border border-line px-3 py-1.5 text-ink-body hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
+          className="border-line text-ink-body hover:border-brand-500 hover:text-brand-600 rounded-md border px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Load older →
         </button>

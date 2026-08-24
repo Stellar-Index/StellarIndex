@@ -6,6 +6,7 @@ import { ArrowLeft, ExternalLink } from 'lucide-react';
 import { loadIncident, loadIncidents } from '@/lib/incidents';
 import { Markdown } from '@/lib/markdown';
 import { Badge, Card, Container, type BadgeTone } from '@/components/ui';
+import { formatDurationLong } from '@/lib/format';
 
 // Each incident postmortem rendered as its own static page so
 // every event has a permanent, shareable URL — the rest of the
@@ -67,13 +68,13 @@ export default async function IncidentPage({
     <Container className="max-w-4xl space-y-6 py-10">
       <Link
         href="/status"
-        className="inline-flex items-center gap-1.5 text-sm text-ink-muted hover:text-brand-600"
+        className="text-ink-muted hover:text-brand-600 inline-flex items-center gap-1.5 text-sm"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
         Back to status
       </Link>
 
-      <header className="space-y-4 border-b border-line pb-6">
+      <header className="border-line space-y-4 border-b pb-6">
         <div className="flex flex-wrap items-center gap-2">
           <Badge tone={sevTone} dot>
             {inc.severity}
@@ -82,16 +83,16 @@ export default async function IncidentPage({
           {inc.affected_components.map((c) => (
             <span
               key={c}
-              className="inline-flex items-center rounded-full bg-surface-subtle px-2 py-0.5 font-mono text-[10px] text-ink-muted ring-1 ring-inset ring-line"
+              className="bg-surface-subtle text-ink-muted ring-line inline-flex items-center rounded-full px-2 py-0.5 font-mono text-[10px] ring-1 ring-inset"
             >
               {c}
             </span>
           ))}
-          <span className="ml-auto font-mono text-xs text-ink-faint">
+          <span className="text-ink-faint ml-auto font-mono text-xs">
             {inc.date}
           </span>
         </div>
-        <h1 className="text-h2 font-semibold text-ink">{inc.title}</h1>
+        <h1 className="text-h2 text-ink font-semibold">{inc.title}</h1>
         <Timeline started_at={inc.started_at} resolved_at={inc.resolved_at} />
         {/* The repo is private until the v1.0 public flip, so a
                 "View source" link would 404 for every customer. Gate it
@@ -103,7 +104,7 @@ export default async function IncidentPage({
             href={`${PUBLIC_REPO_URL}/blob/main/${inc.source_path}`}
             target="_blank"
             rel="noreferrer noopener"
-            className="inline-flex items-center gap-1 text-xs text-ink-faint hover:text-brand-600"
+            className="text-ink-faint hover:text-brand-600 inline-flex items-center gap-1 text-xs"
           >
             View source on GitHub
             <ExternalLink className="h-3 w-3" />
@@ -139,7 +140,7 @@ function Timeline({
       />
       <Cell
         label="Duration"
-        value={duration != null ? formatDuration(duration) : '—'}
+        value={duration != null ? formatDurationLong(duration) : '—'}
       />
     </div>
   );
@@ -148,10 +149,10 @@ function Timeline({
 function Cell({ label, value }: { label: string; value: string }) {
   return (
     <Card flat className="px-3 py-2">
-      <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
+      <div className="text-ink-faint text-[10px] font-semibold tracking-wider uppercase">
         {label}
       </div>
-      <div className="mt-0.5 font-mono text-xs text-ink">{value}</div>
+      <div className="text-ink mt-0.5 font-mono text-xs">{value}</div>
     </Card>
   );
 }
@@ -163,14 +164,6 @@ function formatTs(iso: string): string {
     .toISOString()
     .replace('T', ' ')
     .replace(/\.\d+Z$/, ' UTC');
-}
-
-function formatDuration(ms: number): string {
-  const min = Math.round(ms / 60_000);
-  if (min < 60) return `${min}m`;
-  const h = Math.floor(min / 60);
-  const m = min - h * 60;
-  return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
 // stripDuplicateH1 — incident body usually starts with `# [SEV-X]

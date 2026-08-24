@@ -11,7 +11,7 @@ export function supportsPasskeys(): boolean {
   return typeof window !== 'undefined' && !!window.PublicKeyCredential;
 }
 
-export function base64urlToBuffer(s: string): ArrayBuffer {
+function base64urlToBuffer(s: string): ArrayBuffer {
   const b64 = s.replace(/-/g, '+').replace(/_/g, '/');
   const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
   const bin = atob(padded);
@@ -20,7 +20,7 @@ export function base64urlToBuffer(s: string): ArrayBuffer {
   return bytes.buffer;
 }
 
-export function bufferToBase64url(buf: ArrayBuffer): string {
+function bufferToBase64url(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);
   let bin = '';
   for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
@@ -96,7 +96,9 @@ export async function createPasskey(
       attestationObject: bufferToBase64url(resp.attestationObject),
       clientDataJSON: bufferToBase64url(resp.clientDataJSON),
       transports:
-        typeof resp.getTransports === 'function' ? resp.getTransports() : undefined,
+        typeof resp.getTransports === 'function'
+          ? resp.getTransports()
+          : undefined,
     },
   };
 }
@@ -128,7 +130,9 @@ export async function getPasskeyAssertion(
       authenticatorData: bufferToBase64url(resp.authenticatorData),
       clientDataJSON: bufferToBase64url(resp.clientDataJSON),
       signature: bufferToBase64url(resp.signature),
-      userHandle: resp.userHandle ? bufferToBase64url(resp.userHandle) : undefined,
+      userHandle: resp.userHandle
+        ? bufferToBase64url(resp.userHandle)
+        : undefined,
     },
   };
 }

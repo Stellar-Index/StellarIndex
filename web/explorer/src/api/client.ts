@@ -11,7 +11,7 @@ export const API_BASE_URL =
 // upper bound at all — a hung connection left a query (and anything
 // gating on it, e.g. AccountGate) in "loading" forever with no escape
 // hatch. 15s is generous for a live-data round trip but still bounded.
-export const DEFAULT_FETCH_TIMEOUT_MS = 15_000;
+const DEFAULT_FETCH_TIMEOUT_MS = 15_000;
 
 /**
  * timeoutSignal — an AbortSignal that fires on whichever comes first: the
@@ -31,13 +31,17 @@ export function timeoutSignal(
   if (external.aborted) {
     abort(external.reason);
   } else {
-    external.addEventListener('abort', () => abort(external.reason), { once: true });
+    external.addEventListener('abort', () => abort(external.reason), {
+      once: true,
+    });
   }
   const timer = setTimeout(
     () => abort(new DOMException('Request timed out', 'TimeoutError')),
     ms,
   );
-  controller.signal.addEventListener('abort', () => clearTimeout(timer), { once: true });
+  controller.signal.addEventListener('abort', () => clearTimeout(timer), {
+    once: true,
+  });
   return controller.signal;
 }
 
@@ -47,7 +51,10 @@ export type RequestExample = {
   headers?: Record<string, string>;
 };
 
-export function buildUrl(path: string, params?: Record<string, string | number | undefined>): string {
+function buildUrl(
+  path: string,
+  params?: Record<string, string | number | undefined>,
+): string {
   const url = new URL(path.startsWith('/') ? path : `/${path}`, API_BASE_URL);
   if (params) {
     for (const [k, v] of Object.entries(params)) {
@@ -82,6 +89,31 @@ export async function apiGet<T>(
     throw new Error(`${res.status} ${res.statusText} on ${path}${extra}`);
   }
   return (await res.json()) as T;
+}
+
+/**
+ * Envelope — the standard /v1 response wrapper (FEC audit A3-F4:
+ * re-homed here from app/explorer-shared so src/api code can use it,
+ * and extended with `pagination` — its absence was exactly why the
+ * pager tables each inlined a private envelope type).
+ */
+export type Envelope<T> = {
+  data: T;
+  as_of?: string;
+  flags?: Record<string, unknown>;
+  pagination?: { next?: string };
+};
+
+/**
+ * apiGetData — apiGet + the `.data` unwrap that ~28 call sites
+ * re-spelled (`(await apiGet<Envelope<T>>(p)).data`). Sites that need
+ * `pagination` / `as_of` / `flags` keep envelope form via apiGet.
+ */
+export async function apiGetData<T>(
+  path: string,
+  params?: Record<string, string | number | undefined>,
+): Promise<T> {
+  return (await apiGet<Envelope<T>>(path, params)).data;
 }
 
 // Helper for the <> reveal. Every panel exports a getRequestExample()

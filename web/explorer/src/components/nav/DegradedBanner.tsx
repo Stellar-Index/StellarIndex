@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { AlertTriangle, XCircle, Info } from 'lucide-react';
+import { AlertTriangle, XCircle } from 'lucide-react';
 
 import { API_BASE_URL } from '@/api/client';
 
@@ -65,7 +65,8 @@ export function DegradedBanner() {
   // Trust signal for the counts above. When "unknown" (alerting query
   // failed) the counts are absence-of-signal, not an all-clear — the
   // banner renders "alert status unknown" rather than "0 active alerts".
-  const [incidentsStatus, setIncidentsStatus] = useState<IncidentsStatus>('unknown');
+  const [incidentsStatus, setIncidentsStatus] =
+    useState<IncidentsStatus>('unknown');
   const [topAlert, setTopAlert] = useState<string | null>(null);
   // health-check: distinct from `overall` — "we could not reach the status
   // feed at all", which used to be swallowed silently and look identical
@@ -78,7 +79,9 @@ export function DegradedBanner() {
     let cancelled = false;
     async function poll() {
       try {
-        const res = await fetch(`${API_BASE_URL}/v1/status`, { cache: 'no-store' });
+        const res = await fetch(`${API_BASE_URL}/v1/status`, {
+          cache: 'no-store',
+        });
         if (!res.ok) throw new Error(`status endpoint returned ${res.status}`);
         const env = (await res.json()) as StatusEnvelope;
         if (cancelled) return;
@@ -94,8 +97,9 @@ export function DegradedBanner() {
         // an absent count here is a real zero, not a blind all-clear.
         setActiveCount(incs?.active_count ?? 0);
         setPageCount(incs?.page_count ?? 0);
-        const top = (incs?.active ?? []).find((i) => i.severity === 'page')
-          ?? (incs?.active ?? [])[0];
+        const top =
+          (incs?.active ?? []).find((i) => i.severity === 'page') ??
+          (incs?.active ?? [])[0];
         setTopAlert(top?.name ?? null);
       } catch {
         if (cancelled) return;
@@ -166,7 +170,7 @@ export function DegradedBanner() {
                   <>
                     {' '}
                     · top:{' '}
-                    <code className="rounded-sm bg-surface/40 px-1 py-0.5 text-[11px]">
+                    <code className="bg-surface/40 rounded-sm px-1 py-0.5 text-[11px]">
                       {topAlert}
                     </code>
                   </>
@@ -187,18 +191,5 @@ export function DegradedBanner() {
         </span>
       </div>
     </div>
-  );
-}
-
-export function DegradedBannerFallback() {
-  // Server-rendered placeholder. Keeps layout stable until the
-  // client component mounts; renders nothing visible.
-  return (
-    <noscript>
-      <div className="px-4 py-2 text-xs text-ink-faint">
-        <Info className="mr-1 inline h-3 w-3" />
-        Live status updates require JavaScript.
-      </div>
-    </noscript>
   );
 }

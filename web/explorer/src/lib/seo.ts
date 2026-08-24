@@ -15,7 +15,7 @@
 
 // PNG, not SVG: Twitter/X, Facebook, LinkedIn, Slack, iMessage all reject
 // SVG og:images (no raster = no link-preview thumbnail). Keep it 1200×630.
-export const SITE_OG_IMAGE_PATH = '/og.png';
+const SITE_OG_IMAGE_PATH = '/og.png';
 
 /**
  * URL for the dynamic OG card (the CF Pages Function at functions/og/[[path]]).
@@ -99,7 +99,8 @@ export function datasetJsonLd(opts: {
     },
   };
   if (opts.keywords?.length) node.keywords = opts.keywords;
-  if (opts.variableMeasured?.length) node.variableMeasured = opts.variableMeasured;
+  if (opts.variableMeasured?.length)
+    node.variableMeasured = opts.variableMeasured;
   if (opts.contentUrl) {
     node.distribution = [
       {

@@ -8,6 +8,9 @@ import {
   formatSubunitPrice,
   formatPairPrice,
   formatRelative,
+  formatDurationShort,
+  formatDurationLong,
+  formatRelativeLong,
 } from './format';
 import { truncateMiddle } from '@/components/ui';
 
@@ -72,8 +75,13 @@ describe('scaleBaseUnits / formatBaseUnits', () => {
   it('BigInt-divides smallest-unit integer strings past 2^53 without mis-scaling', () => {
     // 554421152474348098 stroops ≈ 5.54e17 — past 2^53, where a
     // Number()-then-divide path silently rounds the integer first.
-    expect(format.formatBaseUnits('554421152474348098', 7)).toBe('55,442,115,247.4348');
-    expect(format.scaleBaseUnits('554421152474348098', 7)).toBeCloseTo(55442115247.43481, 3);
+    expect(format.formatBaseUnits('554421152474348098', 7)).toBe(
+      '55,442,115,247.4348',
+    );
+    expect(format.scaleBaseUnits('554421152474348098', 7)).toBeCloseTo(
+      55442115247.43481,
+      3,
+    );
   });
 
   it('keeps absent/garbage values as "—"/null — never NaN or a fabricated zero', () => {
@@ -129,5 +137,46 @@ describe('formatPriceSmall — no scientific notation', () => {
     for (const n of [3.353e-4, 1e-6, 9.9e-9, 2.5e-11]) {
       expect(formatPriceSmall(n)).not.toMatch(/e/i);
     }
+  });
+});
+
+// FEC audit A3-F1/F1b: the consolidated relative/duration canonicals.
+describe('formatDurationShort', () => {
+  it('formats second buckets without a suffix', () => {
+    expect(formatDurationShort(45)).toBe('45s');
+    expect(formatDurationShort(180)).toBe('3m');
+    expect(formatDurationShort(7200)).toBe('2h');
+    expect(formatDurationShort(200000)).toBe('2d');
+  });
+  it('renders negative (clock-skewed) and non-finite lags as unknown', () => {
+    expect(formatDurationShort(-5)).toBe('—');
+    expect(formatDurationShort(Number.NaN)).toBe('—');
+  });
+});
+
+describe('formatDurationLong', () => {
+  it('formats compound durations', () => {
+    expect(formatDurationLong(135 * 60_000)).toBe('2h 15m');
+    expect(formatDurationLong(30 * 60_000)).toBe('30m');
+    expect(formatDurationLong(120 * 60_000)).toBe('2h');
+  });
+  it('guards non-finite input (previously rendered "NaNm")', () => {
+    expect(formatDurationLong(Number.NaN)).toBe('—');
+  });
+});
+
+describe('formatRelative suffix option', () => {
+  it('drops the suffix for dense feeds when asked', () => {
+    const iso = new Date(Date.now() - 3 * 3600_000).toISOString();
+    expect(formatRelative(iso)).toBe('3h ago');
+    expect(formatRelative(iso, { suffix: false })).toBe('3h');
+  });
+});
+
+describe('formatRelativeLong', () => {
+  it('renders word-form buckets', () => {
+    const iso = new Date(Date.now() - 2 * 3600_000).toISOString();
+    expect(formatRelativeLong(iso)).toBe('2 hours ago');
+    expect(formatRelativeLong(null)).toBe('never');
   });
 });

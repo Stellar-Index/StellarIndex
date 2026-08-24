@@ -41,9 +41,12 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Mobile-only header — the desktop layout has no top bar. */}
-        <div className="flex h-14 items-center justify-between border-b border-line bg-surface px-4 lg:hidden">
-          <Link href="/" className="flex items-center gap-2 text-sm font-semibold tracking-tight text-ink">
-            <span className="flex h-6 w-6 items-center justify-center rounded-md bg-brand-600 text-white">
+        <div className="border-line bg-surface flex h-14 items-center justify-between border-b px-4 lg:hidden">
+          <Link
+            href="/"
+            className="text-ink flex items-center gap-2 text-sm font-semibold tracking-tight"
+          >
+            <span className="bg-brand-600 flex h-6 w-6 items-center justify-center rounded-md text-white">
               <TrendingUp className="h-3.5 w-3.5" />
             </span>
             Stellar Index
@@ -54,7 +57,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
             aria-label="Open navigation"
             aria-expanded={drawer}
             aria-controls="mobile-nav-drawer"
-            className="-mr-1 inline-flex items-center justify-center rounded-md p-2 text-ink-body hover:bg-surface-subtle"
+            className="text-ink-body hover:bg-surface-subtle -mr-1 inline-flex items-center justify-center rounded-md p-2"
           >
             <Menu className="h-5 w-5" />
           </button>
@@ -70,7 +73,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
       {drawer && (
         <div className="fixed inset-0 z-50 lg:hidden">
           <div
-            className="absolute inset-0 bg-ink/30 backdrop-blur-xs"
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
             onClick={() => setDrawer(false)}
             aria-hidden
           />
@@ -81,13 +84,13 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
             role="dialog"
             aria-modal="true"
             aria-label="Navigation"
-            className="absolute left-0 top-0 h-full w-72 max-w-[85vw] border-r border-line bg-surface shadow-elevated outline-hidden"
+            className="border-line bg-surface shadow-elevated absolute top-0 left-0 h-full w-72 max-w-[85vw] border-r outline-hidden"
           >
             <button
               type="button"
               onClick={() => setDrawer(false)}
               aria-label="Close navigation"
-              className="absolute right-2 top-3 z-10 inline-flex items-center justify-center rounded-md p-2 text-ink-body hover:bg-surface-subtle"
+              className="text-ink-body hover:bg-surface-subtle absolute top-3 right-2 z-10 inline-flex items-center justify-center rounded-md p-2"
             >
               <X className="h-5 w-5" />
             </button>

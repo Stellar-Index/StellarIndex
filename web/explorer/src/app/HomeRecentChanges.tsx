@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { Inline } from '@/lib/markdown';
 
 interface ChangeItem {
   release: string;
@@ -31,7 +32,7 @@ export function HomeRecentChanges() {
           <h2 className="text-2xl font-semibold tracking-tight">
             Recently shipped
           </h2>
-          <p className="text-sm text-ink-body">
+          <p className="text-ink-body text-sm">
             What landed in the last release. Scrolling history at{' '}
             <Link href="/changelog" className="text-brand-600 hover:underline">
               /changelog
@@ -56,24 +57,21 @@ export function HomeRecentChanges() {
       </div>
       <ul className="space-y-2">
         {items.map((it, i) => (
-          <li
-            key={i}
-            className="rounded-md border border-line bg-surface p-3"
-          >
+          <li key={i} className="border-line bg-surface rounded-md border p-3">
             <div className="mb-1 flex items-baseline gap-2">
               <span
-                className={`rounded px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider ${kindTone(
+                className={`rounded px-1.5 py-0.5 font-mono text-[10px] tracking-wider uppercase ${kindTone(
                   it.kind,
                 )}`}
               >
                 {it.kind}
               </span>
-              <span className="font-mono text-[10px] text-ink-faint">
+              <span className="text-ink-faint font-mono text-[10px]">
                 {it.release}
                 {it.date && ` · ${it.date}`}
               </span>
             </div>
-            <p className="text-sm text-ink-body">
+            <p className="text-ink-body text-sm">
               <ChangelogPreview text={it.text} />
             </p>
           </li>
@@ -142,12 +140,9 @@ function readRecentItems(n: number): ChangeItem[] {
 }
 
 function kindTone(kind: string): string {
-  if (kind === 'Added')
-    return 'bg-up-subtle text-up-strong';
-  if (kind === 'Fixed')
-    return 'bg-brand-100 text-brand-800';
-  if (kind === 'Changed')
-    return 'bg-warn-50 text-warn-700';
+  if (kind === 'Added') return 'bg-up-subtle text-up-strong';
+  if (kind === 'Fixed') return 'bg-brand-100 text-brand-800';
+  if (kind === 'Changed') return 'bg-warn-50 text-warn-700';
   if (kind === 'Removed' || kind === 'Deprecated')
     return 'bg-down-subtle text-down-strong';
   return 'bg-surface-subtle text-ink-body';
@@ -156,71 +151,10 @@ function kindTone(kind: string): string {
 // ChangelogPreview renders just the FIRST paragraph of a CHANGELOG
 // entry — bold + code + link substitutions, then truncate at the
 // first newline-newline (matches the visual rhythm where the bold
-// heading is the "what" and the rest is the "why").
+// heading is the "what" and the rest is the "why"). Tokenizing is the
+// canonical lib/markdown Inline (FEC audit A3-F9); links render as
+// plain spans because this strip is a preview, not a link surface.
 function ChangelogPreview({ text }: { text: string }) {
   const firstPara = text.split(/\n\n/)[0]!.trim();
-  type Tok =
-    | { kind: 'text'; value: string }
-    | { kind: 'bold'; value: string }
-    | { kind: 'code'; value: string }
-    | { kind: 'link'; value: string; href: string };
-  const tokens: Tok[] = [];
-  let rest = firstPara;
-  const patterns: { re: RegExp; mk: (m: RegExpMatchArray) => Tok }[] = [
-    {
-      re: /^\[([^\]]+)\]\(([^)]+)\)/,
-      mk: (m) => ({ kind: 'link', value: m[1]!, href: m[2]! }),
-    },
-    { re: /^`([^`]+)`/, mk: (m) => ({ kind: 'code', value: m[1]! }) },
-    { re: /^\*\*([^*]+)\*\*/, mk: (m) => ({ kind: 'bold', value: m[1]! }) },
-  ];
-  while (rest.length > 0) {
-    let matched = false;
-    for (const p of patterns) {
-      const m = rest.match(p.re);
-      if (m) {
-        tokens.push(p.mk(m));
-        rest = rest.slice(m[0].length);
-        matched = true;
-        break;
-      }
-    }
-    if (!matched) {
-      const last = tokens[tokens.length - 1];
-      if (last && last.kind === 'text') {
-        last.value += rest[0]!;
-      } else {
-        tokens.push({ kind: 'text', value: rest[0]! });
-      }
-      rest = rest.slice(1);
-    }
-  }
-  return (
-    <>
-      {tokens.map((t, i) => {
-        if (t.kind === 'bold')
-          return (
-            <strong key={i} className="font-semibold text-ink">
-              {t.value}
-            </strong>
-          );
-        if (t.kind === 'code')
-          return (
-            <code
-              key={i}
-              className="rounded-sm bg-surface-subtle px-1 py-0.5 font-mono text-xs"
-            >
-              {t.value}
-            </code>
-          );
-        if (t.kind === 'link')
-          return (
-            <span key={i} className="text-brand-600">
-              {t.value}
-            </span>
-          );
-        return <span key={i}>{t.value}</span>;
-      })}
-    </>
-  );
+  return <Inline text={firstPara} plainLinks />;
 }

@@ -4,18 +4,15 @@ import type { ComponentProps, ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 
 export type ButtonVariant =
-  | 'primary'
-  | 'secondary'
-  | 'ghost'
-  | 'subtle'
-  | 'danger';
+  'primary' | 'secondary' | 'ghost' | 'subtle' | 'danger';
 export type ButtonSize = 'sm' | 'md' | 'lg';
 
 const base =
   'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg font-medium transition-colors duration-150 disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-600/60 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-canvas';
 
 const variants: Record<ButtonVariant, string> = {
-  primary: 'bg-brand-600 text-white shadow-xs hover:bg-brand-700 active:bg-brand-800',
+  primary:
+    'bg-brand-600 text-white shadow-xs hover:bg-brand-700 active:bg-brand-800',
   secondary:
     'bg-surface text-ink border border-line-strong shadow-xs hover:bg-surface-muted',
   ghost: 'text-ink-body hover:bg-surface-subtle hover:text-ink',
@@ -29,7 +26,7 @@ const sizes: Record<ButtonSize, string> = {
   lg: 'h-11 px-5 text-[15px]',
 };
 
-export function buttonClass(
+function buttonClass(
   variant: ButtonVariant = 'primary',
   size: ButtonSize = 'md',
   className?: string,
@@ -50,8 +47,11 @@ export function Button({
   ...props
 }: ButtonProps) {
   return (
-    // eslint-disable-next-line react/button-has-type
-    <button type={type} className={buttonClass(variant, size, className)} {...props} />
+    <button
+      type={type}
+      className={buttonClass(variant, size, className)}
+      {...props}
+    />
   );
 }
 

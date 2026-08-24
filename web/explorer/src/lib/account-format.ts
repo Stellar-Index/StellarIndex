@@ -37,25 +37,9 @@ export function fmtDateTime(iso: string | null | undefined): string {
   });
 }
 
-/** Coarse relative time, e.g. "3 days ago", "2 hours ago", "just now". */
-export function fmtRelative(iso: string | null | undefined): string {
-  if (!iso) return 'never';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return 'never';
-  const diffMs = Date.now() - d.getTime();
-  const sec = Math.round(diffMs / 1000);
-  if (sec < 45) return 'just now';
-  const min = Math.round(sec / 60);
-  if (min < 60) return `${min} min${min === 1 ? '' : 's'} ago`;
-  const hr = Math.round(min / 60);
-  if (hr < 24) return `${hr} hour${hr === 1 ? '' : 's'} ago`;
-  const day = Math.round(hr / 24);
-  if (day < 30) return `${day} day${day === 1 ? '' : 's'} ago`;
-  const mo = Math.round(day / 30);
-  if (mo < 12) return `${mo} month${mo === 1 ? '' : 's'} ago`;
-  const yr = Math.round(mo / 12);
-  return `${yr} year${yr === 1 ? '' : 's'} ago`;
-}
+/** Coarse relative time — delegates to the canonical long-form in
+ * lib/format (FEC audit A3-F1: one word-form implementation). */
+export { formatRelativeLong as fmtRelative } from '@/lib/format';
 
 /** Capitalise the first letter — for tier / status / role labels. */
 export function titleCase(s: string | null | undefined): string {

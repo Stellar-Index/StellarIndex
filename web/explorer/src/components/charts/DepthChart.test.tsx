@@ -70,10 +70,7 @@ describe('OrderBookStatStrip', () => {
 
   it('renders — for missing sides', () => {
     render(
-      <OrderBookStatStrip
-        stats={computeBookStats([], [])}
-        quoteLabel="USDC"
-      />,
+      <OrderBookStatStrip stats={computeBookStats([], [])} quoteLabel="USDC" />,
     );
     expect(screen.getAllByText('—').length).toBe(4);
   });
@@ -92,7 +89,9 @@ describe('DepthChart', () => {
     expect(screen.getByText('Bids')).toBeInTheDocument();
     expect(screen.getByText('Asks')).toBeInTheDocument();
     expect(
-      screen.getByRole('img', { name: /2 bid levels and 2 ask levels of XLM priced in USDC/ }),
+      screen.getByRole('img', {
+        name: /2 bid levels and 2 ask levels of XLM priced in USDC/,
+      }),
     ).toBeInTheDocument();
   });
 
@@ -109,7 +108,8 @@ describe('formatDepthPrice', () => {
     expect(formatDepthPrice(1234.5678)).toBe('1234.57');
     expect(formatDepthPrice(1.23456)).toBe('1.2346');
     expect(formatDepthPrice(0.168218)).toBe('0.168218');
-    expect(formatDepthPrice(0.00001)).toBe('1.000e-5');
+    // F-A4-03: plain decimal below 1e-4 (2026-08-06 no-scientific-notation rule)
+    expect(formatDepthPrice(0.00001)).toBe('0.00001');
     expect(formatDepthPrice(Number.NaN)).toBe('—');
   });
 });

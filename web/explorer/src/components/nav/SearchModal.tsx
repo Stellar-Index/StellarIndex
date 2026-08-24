@@ -3,11 +3,14 @@
 import { useQuery } from '@tanstack/react-query';
 import { Search, X } from 'lucide-react';
 import Link from 'next/link';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { apiGet } from '@/api/client';
 import { useCoins, useVerifiedSlugs, type Coin } from '@/api/hooks';
 import { assetHrefFor } from '@/lib/fiat-slugs';
+import { useDebouncedValue } from '@/lib/useDebouncedValue';
+import { useDialog } from '@/lib/useDialog';
 
 type Result = {
   type:
@@ -71,7 +74,9 @@ function explorerHref(c: SearchClassification): string | null {
   const canonical = c.canonical?.trim();
   switch (c.kind) {
     case 'transaction':
-      return canonical ? `/transactions/${encodeURIComponent(canonical)}/` : null;
+      return canonical
+        ? `/transactions/${encodeURIComponent(canonical)}/`
+        : null;
     case 'ledger':
       return canonical ? `/ledgers/${encodeURIComponent(canonical)}/` : null;
     case 'contract':
@@ -86,7 +91,8 @@ function explorerHref(c: SearchClassification): string | null {
       // (e.g. /assets/<slug>); prefer it, else build from canonical.
       // Reject protocol-relative "//evil.com" (an open redirect) — same
       // guard as CallbackHandler's safe-next check.
-      if (c.href && c.href.startsWith('/') && !c.href.startsWith('//')) return c.href;
+      if (c.href && c.href.startsWith('/') && !c.href.startsWith('//'))
+        return c.href;
       return canonical ? `/assets/${encodeURIComponent(canonical)}` : null;
     default:
       return null;
@@ -127,9 +133,24 @@ const STATIC_PAGES: Result[] = [
     href: '/markets',
   },
   { type: 'page', label: 'Issuers', href: '/issuers' },
-  { type: 'page', label: 'Transactions', href: '/transactions', hint: 'recent network activity' },
-  { type: 'page', label: 'Contracts', href: '/contracts', hint: 'active Soroban contracts' },
-  { type: 'page', label: 'SDEX Markets', href: '/dexes/sdex', hint: 'native order book' },
+  {
+    type: 'page',
+    label: 'Transactions',
+    href: '/transactions',
+    hint: 'recent network activity',
+  },
+  {
+    type: 'page',
+    label: 'Contracts',
+    href: '/contracts',
+    hint: 'active Soroban contracts',
+  },
+  {
+    type: 'page',
+    label: 'SDEX Markets',
+    href: '/dexes/sdex',
+    hint: 'native order book',
+  },
   { type: 'page', label: 'AMM Pools', href: '/dexes' },
   { type: 'page', label: 'Lending', href: '/lending' },
   { type: 'page', label: 'Aggregators', href: '/aggregators' },
@@ -169,7 +190,12 @@ const STATIC_PAGES: Result[] = [
   },
   // S-019: /account never existed as a route (only a CF redirect
   // rescued it in production; it 404'd everywhere else).
-  { type: 'page', label: 'Account', hint: 'manage API keys', href: '/dashboard' },
+  {
+    type: 'page',
+    label: 'Account',
+    hint: 'manage API keys',
+    href: '/dashboard',
+  },
   {
     type: 'page',
     label: 'Pricing',
@@ -238,14 +264,20 @@ const PROTOCOLS: Result[] = [
 export function SearchModal() {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
-  // a11y (audit-2026-06-14 Q3): dialog focus management. dialogRef scopes the
-  // Tab-trap; restoreFocusRef returns focus to whatever was focused when the
-  // dialog opened (the ⌘K trigger or wherever the keyboard user was).
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const restoreFocusRef = useRef<HTMLElement | null>(null);
-  // Debounced query for the server-side /v1/coins?q=… call so a
-  // burst of keystrokes doesn't fan out a request per character.
-  const [debouncedQ, setDebouncedQ] = useState('');
+  // Debounced query for the server-side /v1/coins?q=… call — 200ms
+  // balances "feels live" with "doesn't fan out a request per keystroke".
+  const debouncedRaw = useDebouncedValue(q.trim(), 200);
+  // Snap to empty immediately: on modal reopen `q` resets to '' but the
+  // debounced value would otherwise serve the PREVIOUS session's query
+  // for up to 200ms — flashing its direct-jump row above the defaults.
+  const debouncedQ = q.trim() === '' ? '' : debouncedRaw;
+  // a11y: the full dialog contract (Escape / focus move-in / Tab trap /
+  // focus restore) comes from the canonical useDialog hook — FEC audit
+  // A6-2 replaced the hand-rolled versions, which diverged in three
+  // user-visible ways (ungated global Escape closed the nav drawer too;
+  // the Tab trap was escapable via body focus; focusable-selector drift).
+  const close = useCallback(() => setOpen(false), []);
+  const dialogRef = useDialog<HTMLDivElement>(open, close);
 
   // Gated on `open`: this modal is mounted in the sidebar on EVERY page, so
   // an ungated fetch cost a /v1/assets?limit=100 round-trip on every page
@@ -291,14 +323,14 @@ export function SearchModal() {
     },
   });
 
-  // Cmd-K / Ctrl-K toggles.
+  // Cmd-K / Ctrl-K toggles — the one dialog behavior useDialog deliberately
+  // does not cover (an OPEN shortcut). Escape lives in useDialog (A6-2).
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
         setOpen((v) => !v);
       }
-      if (e.key === 'Escape') setOpen(false);
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -313,47 +345,8 @@ export function SearchModal() {
     setPrevOpen(open);
     if (open) {
       setQ('');
-      setDebouncedQ('');
     }
   }
-
-  // a11y (Q3): on open, remember the element to return focus to; on close,
-  // restore it so keyboard/SR users aren't dumped on <body>.
-  useEffect(() => {
-    if (open) {
-      restoreFocusRef.current = document.activeElement as HTMLElement | null;
-    } else if (restoreFocusRef.current) {
-      restoreFocusRef.current.focus?.();
-      restoreFocusRef.current = null;
-    }
-  }, [open]);
-
-  // a11y (Q3): trap Tab within the dialog so focus can't walk out into the
-  // (still-visible) page behind the overlay.
-  function trapTab(e: React.KeyboardEvent<HTMLDivElement>) {
-    if (e.key !== 'Tab' || !dialogRef.current) return;
-    const focusables = dialogRef.current.querySelectorAll<HTMLElement>(
-      'a[href], button:not([disabled]), input, [tabindex]:not([tabindex="-1"])',
-    );
-    if (focusables.length === 0) return;
-    const first = focusables[0];
-    const last = focusables[focusables.length - 1];
-    const active = document.activeElement;
-    if (e.shiftKey && active === first) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && active === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  }
-
-  // Debounce the live input into debouncedQ — 200ms balances
-  // "feels live" with "doesn't fan out a request per keystroke".
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedQ(q.trim()), 200);
-    return () => clearTimeout(t);
-  }, [q]);
 
   const { data: verifiedSlugs } = useVerifiedSlugs();
 
@@ -428,117 +421,120 @@ export function SearchModal() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="flex w-full items-center gap-2 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink-muted shadow-xs transition-colors hover:border-line-strong hover:text-ink-body"
+        className="border-line bg-surface text-ink-muted hover:border-line-strong hover:text-ink-body flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-sm shadow-xs transition-colors"
         aria-label="Open search"
       >
         <Search className="h-4 w-4 shrink-0" />
         <span>Search</span>
-        <kbd className="ml-auto rounded-sm border border-line bg-surface-muted px-1.5 py-0.5 text-[10px] font-medium text-ink-faint">
+        <kbd className="border-line bg-surface-muted text-ink-faint ml-auto rounded-sm border px-1.5 py-0.5 text-[10px] font-medium">
           ⌘K
         </kbd>
       </button>
-      {open && (
-        <div
-          className="fixed inset-0 z-50 flex items-start justify-center bg-ink/50 p-4 pt-24"
-          onClick={() => setOpen(false)}
-        >
+      {open &&
+        createPortal(
           <div
-            ref={dialogRef}
-            className="w-full max-w-xl overflow-hidden rounded-lg bg-surface shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={trapTab}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Site search"
+            className="fixed inset-0 z-[100] flex items-start justify-center bg-black/60 p-4 pt-24 backdrop-blur-sm"
+            onClick={() => setOpen(false)}
           >
-            <div className="flex items-center gap-2 border-b border-line px-3 py-3">
-              <Search className="h-4 w-4 text-ink-faint" aria-hidden="true" />
-              <input
-                autoFocus
-                aria-label="Search coins, pairs, protocols, accounts, and transactions"
-                className="flex-1 bg-transparent text-sm outline-hidden placeholder:text-ink-faint"
-                placeholder="Coins, pairs, protocols, accounts, transactions…"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-              />
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                className="p-1 text-ink-faint hover:text-ink-body"
-                aria-label="Close"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            {/* ACC-10: the result list re-renders per keystroke but a
+            <div
+              ref={dialogRef}
+              className="bg-surface w-full max-w-xl overflow-hidden rounded-lg shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+              role="dialog"
+              tabIndex={-1}
+              aria-modal="true"
+              aria-label="Site search"
+            >
+              <div className="border-line flex items-center gap-2 border-b px-3 py-3">
+                <Search className="text-ink-faint h-4 w-4" aria-hidden="true" />
+                <input
+                  autoFocus
+                  aria-label="Search coins, pairs, protocols, accounts, and transactions"
+                  className="placeholder:text-ink-faint flex-1 bg-transparent text-sm outline-hidden"
+                  placeholder="Coins, pairs, protocols, accounts, transactions…"
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                />
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  className="text-ink-faint hover:text-ink-body p-1"
+                  aria-label="Close"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              {/* ACC-10: the result list re-renders per keystroke but a
                 screen reader hears nothing about the count or the
                 no-match state. A visually-hidden polite live region
                 announces the outcome on each query change. */}
-            <div className="sr-only" role="status" aria-live="polite">
-              {q.trim() === ''
-                ? ''
-                : results.length === 0
-                  ? 'No matches.'
-                  : `${results.length} result${results.length === 1 ? '' : 's'}.`}
-            </div>
-            <ul className="max-h-96 overflow-y-auto p-2 text-sm">
-              {results.length === 0 && (
-                <li className="px-3 py-2 text-xs text-ink-muted">
-                  No matches across the asset directory, protocols, or pages.
-                </li>
-              )}
-              {results.map((r) => (
-                <li key={`${r.type}:${r.label}:${r.href}`}>
-                  <Link
-                    href={r.href}
-                    onClick={() => setOpen(false)}
-                    className="flex items-center justify-between rounded-md px-3 py-2 hover:bg-surface-muted"
-                  >
-                    <span className="flex items-center gap-2">
-                      <span className="rounded-sm bg-surface-subtle px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-ink-muted">
-                        {r.type}
-                      </span>
-                      <span className="font-medium">{r.label}</span>
-                      {r.verified && (
-                        <span
-                          title="Verified currency"
-                          aria-label="Verified currency"
-                          className="inline-flex items-center"
-                        >
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            viewBox="0 0 20 20"
-                            fill="currentColor"
-                            className="h-3 w-3 text-up"
-                            aria-hidden="true"
+              <div className="sr-only" role="status" aria-live="polite">
+                {q.trim() === ''
+                  ? ''
+                  : results.length === 0
+                    ? 'No matches.'
+                    : `${results.length} result${results.length === 1 ? '' : 's'}.`}
+              </div>
+              <ul className="max-h-96 overflow-y-auto p-2 text-sm">
+                {results.length === 0 && (
+                  <li className="text-ink-muted px-3 py-2 text-xs">
+                    No matches across the asset directory, protocols, or pages.
+                  </li>
+                )}
+                {results.map((r) => (
+                  <li key={`${r.type}:${r.label}:${r.href}`}>
+                    <Link
+                      href={r.href}
+                      onClick={() => setOpen(false)}
+                      className="hover:bg-surface-muted flex items-center justify-between rounded-md px-3 py-2"
+                    >
+                      <span className="flex items-center gap-2">
+                        <span className="bg-surface-subtle text-ink-muted rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase">
+                          {r.type}
+                        </span>
+                        <span className="font-medium">{r.label}</span>
+                        {r.verified && (
+                          <span
+                            title="Verified currency"
+                            aria-label="Verified currency"
+                            className="inline-flex items-center"
                           >
-                            <path
-                              fillRule="evenodd"
-                              d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                              clipRule="evenodd"
-                            />
-                          </svg>
-                        </span>
-                      )}
-                      {r.hint && (
-                        <span className="text-xs text-ink-muted">
-                          — {r.hint}
-                        </span>
-                      )}
-                    </span>
-                    <span className="font-mono text-xs text-ink-faint">
-                      {r.href}
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-            <div className="border-t border-line-subtle px-3 py-1.5 text-[10px] text-ink-muted">
-              <kbd>tab</kbd> navigate · <kbd>↵</kbd> open · <kbd>esc</kbd> close
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              viewBox="0 0 20 20"
+                              fill="currentColor"
+                              className="text-up h-3 w-3"
+                              aria-hidden="true"
+                            >
+                              <path
+                                fillRule="evenodd"
+                                d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                                clipRule="evenodd"
+                              />
+                            </svg>
+                          </span>
+                        )}
+                        {r.hint && (
+                          <span className="text-ink-muted text-xs">
+                            — {r.hint}
+                          </span>
+                        )}
+                      </span>
+                      <span className="text-ink-faint font-mono text-xs">
+                        {r.href}
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+              <div className="border-line-subtle text-ink-muted border-t px-3 py-1.5 text-[10px]">
+                <kbd>tab</kbd> navigate · <kbd>↵</kbd> open · <kbd>esc</kbd>{' '}
+                close
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </>
   );
 }

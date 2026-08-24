@@ -2,6 +2,7 @@ import Link from 'next/link';
 
 import { API_BASE_URL } from '@/api/client';
 import { Badge, SectionHeader } from '@/components/ui';
+import { isCIStub } from '@/lib/buildFetch';
 
 /**
  * Mirror of `VerifiedItemListItem` on the wire.
@@ -21,8 +22,6 @@ export interface VerifiedItem {
 
 // CI builds use a stub hostname that doesn't resolve; bypass the
 // network fetch in that case so static export doesn't time out.
-const isCIStub =
-  API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
 
 const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
@@ -105,7 +104,7 @@ export function VerifiedCurrenciesStrip({
           <Link
             key={vc.slug}
             href={`/assets/${vc.slug}`}
-            className="group inline-flex items-center gap-2 rounded-md border border-up/30 bg-surface px-3 py-1.5 text-sm font-medium text-ink transition hover:border-up/40 hover:bg-up-subtle"
+            className="group border-up/30 bg-surface text-ink hover:border-up/40 hover:bg-up-subtle inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium transition"
             title={
               vc.verified_issuer
                 ? `${vc.name} — ${vc.verified_issuer}`
@@ -116,7 +115,7 @@ export function VerifiedCurrenciesStrip({
               xmlns="http://www.w3.org/2000/svg"
               viewBox="0 0 20 20"
               fill="currentColor"
-              className="h-3.5 w-3.5 text-up"
+              className="text-up h-3.5 w-3.5"
               aria-hidden="true"
             >
               <path
@@ -132,7 +131,7 @@ export function VerifiedCurrenciesStrip({
 
       {fiatChips.length > 0 && (
         <div className="space-y-2">
-          <p className="text-[11px] uppercase tracking-wider text-ink-faint">
+          <p className="text-ink-faint text-[11px] tracking-wider uppercase">
             Fiat reference rates · not Stellar assets
           </p>
           <div className="flex flex-wrap gap-2">
@@ -140,7 +139,7 @@ export function VerifiedCurrenciesStrip({
               <Link
                 key={vc.slug}
                 href={`/assets/${vc.slug}`}
-                className="inline-flex items-center rounded-md border border-line bg-surface-subtle px-2.5 py-1 text-xs font-medium text-ink-muted transition hover:border-line hover:text-ink"
+                className="border-line bg-surface-subtle text-ink-muted hover:border-line hover:text-ink inline-flex items-center rounded-md border px-2.5 py-1 text-xs font-medium transition"
                 title={
                   vc.verified_issuer
                     ? `${vc.name} — ${vc.verified_issuer}`

@@ -3,6 +3,7 @@
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
 import { MarketChart } from '@/components/charts/MarketChart';
+import { shortAssetText } from '@/lib/asset-label';
 
 // The verified Circle-issued USDC — the chart anchor quote.
 export const USDC_ASSET_ID =
@@ -27,7 +28,10 @@ export const USDC_ASSET_ID =
 //   - Everything else charts against the verified USDC asset.
 //
 // Exported for the unit test; no toggle — one honest quote per asset.
-export function chartQuoteFor(assetID: string): { quote: string; label: string } {
+export function chartQuoteFor(assetID: string): {
+  quote: string;
+  label: string;
+} {
   if (assetID === USDC_ASSET_ID) {
     return { quote: 'fiat:USD', label: 'USD' };
   }
@@ -35,16 +39,6 @@ export function chartQuoteFor(assetID: string): { quote: string; label: string }
     return { quote: 'fiat:USD', label: 'USD' };
   }
   return { quote: USDC_ASSET_ID, label: 'USDC' };
-}
-
-// shortLabel renders a compact base label for the chart caption.
-function shortLabel(assetID: string): string {
-  if (assetID === 'native') return 'XLM';
-  if (assetID.startsWith('fiat:')) return assetID.slice(5);
-  const dash = assetID.indexOf('-');
-  if (dash > 0) return assetID.slice(0, dash);
-  if (assetID.length > 10) return `${assetID.slice(0, 4)}…${assetID.slice(-4)}`;
-  return assetID;
 }
 
 /**
@@ -58,13 +52,18 @@ export function ChartPanel({ assetID }: { assetID: string }) {
     <Panel
       title="Price chart"
       hint={`OHLC + volume · quoted in ${label}`}
-      source={asExample('/v1/ohlc', { base: assetID, quote, interval: '15m', limit: 672 })}
+      source={asExample('/v1/ohlc', {
+        base: assetID,
+        quote,
+        interval: '15m',
+        limit: 672,
+      })}
       bodyClassName="space-y-3"
     >
       <MarketChart
         base={assetID}
         quote={quote}
-        baseLabel={shortLabel(assetID)}
+        baseLabel={shortAssetText(assetID)}
         quoteLabel={label}
         height={420}
       />

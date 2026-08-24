@@ -22,13 +22,17 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 // See SourceStatsPanel.test.tsx for a sibling case (the local
 // `formatCompact` fork) where the duplication *had* already drifted.
 const DUPLICATED_LADDER =
-  "n >= 1000 ? n.toFixed(2) : n >= 1 ? n.toFixed(4) : n >= 0.0001 ? n.toFixed(6) : n.toExponential(3)";
+  'n >= 1000 ? n.toFixed(2) : n >= 1 ? n.toFixed(4) : n >= 0.0001 ? n.toFixed(6) : n.toExponential(3)';
 
+// 2026-08-24 (FEC audit A3-F8): PoolsTable + PairsTable folded into the
+// shared VenueMarketsTable — the price-table set is now the two remaining
+// route tables + the shared component. (Their thin wrappers are pinned by
+// fec-consolidation-guards.test.ts; the repo-wide formatPairPrice importer
+// allowlist there is the fixed-list-proof version of this guard.)
 const files = [
   '../app/dexes/DexesView.tsx',
-  '../app/dexes/[source]/PoolsTable.tsx',
   '../app/markets/MarketsTable.tsx',
-  '../app/exchanges/[name]/PairsTable.tsx',
+  '../components/VenueMarketsTable.tsx',
 ];
 
 describe.each(files)('%s', (rel) => {

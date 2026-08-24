@@ -95,16 +95,77 @@ export function formatPairPrice(n: number): string {
 // "NaNd ago". Canonical home for what used to be ~7 copy-pasted
 // `formatRelative` helpers across the table components, two of which
 // had dropped the finite-guard and did render "NaN".
-export function formatRelative(iso: string | null | undefined): string {
+export function formatRelative(
+  iso: string | null | undefined,
+  opts?: { suffix?: boolean },
+): string {
   if (!iso) return '—';
   const ms = Date.now() - new Date(iso).getTime();
   if (!Number.isFinite(ms)) return '—';
   if (ms < 0) return 'now';
+  const suffix = opts?.suffix === false ? '' : ' ago';
   const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.round(s / 60)}m ago`;
-  if (s < 86_400) return `${Math.round(s / 3600)}h ago`;
-  return `${Math.round(s / 86_400)}d ago`;
+  if (s < 60) return `${s}s${suffix}`;
+  if (s < 3600) return `${Math.round(s / 60)}m${suffix}`;
+  if (s < 86_400) return `${Math.round(s / 3600)}h${suffix}`;
+  return `${Math.round(s / 86_400)}d${suffix}`;
+}
+
+/**
+ * formatRelativeLong — coarse long-form relative time ("2 hours ago",
+ * "3 months ago", "just now"). THE long-form canonical (FEC audit A3-F1):
+ * re-homed from lib/account-format so exactly one word-form implementation
+ * exists; account surfaces ("last active" prose) want words and >30d
+ * granularity the short form lacks.
+ */
+export function formatRelativeLong(iso: string | null | undefined): string {
+  if (!iso) return 'never';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return 'never';
+  const diffMs = Date.now() - d.getTime();
+  const sec = Math.round(diffMs / 1000);
+  if (sec < 45) return 'just now';
+  const min = Math.round(sec / 60);
+  if (min < 60) return `${min} min${min === 1 ? '' : 's'} ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 24) return `${hr} hour${hr === 1 ? '' : 's'} ago`;
+  const day = Math.round(hr / 24);
+  if (day < 30) return `${day} day${day === 1 ? '' : 's'} ago`;
+  const mo = Math.round(day / 30);
+  if (mo < 12) return `${mo} month${mo === 1 ? '' : 's'} ago`;
+  const yr = Math.round(mo / 12);
+  return `${yr} year${yr === 1 ? '' : 's'} ago`;
+}
+
+/**
+ * formatDurationShort — seconds → "45s" / "3m" / "5h" / "2d" (no suffix).
+ * FEC audit A3-F1b: consolidates the formatLag twins (diagnostics/sources)
+ * and the status page's formatAge/timeSince; formatAge's negative→'—'
+ * guard wins (a clock-skewed lag must read as unknown, not "-5s").
+ */
+export function formatDurationShort(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return '—';
+  const s = Math.floor(seconds);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+
+/**
+ * formatDurationLong — milliseconds → compound "2h 15m" (incident
+ * durations want the extra precision). Re-homed from the incident page;
+ * finite guard added on re-home (NaN previously rendered "NaNm").
+ */
+export function formatDurationLong(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '—';
+  const min = Math.round(ms / 60_000);
+  if (min < 60) return `${min}m`;
+  const h = Math.floor(min / 60);
+  const m = min - h * 60;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
 /**
@@ -175,4 +236,24 @@ export function formatBaseUnits(
     .replace(/0+$/, '');
   const out = fracStr ? `${wholeStr}.${fracStr}` : wholeStr;
   return neg ? `-${out}` : out;
+}
+
+/**
+ * Truncate a long identifier (G-strkey, C-id, tx hash) to `head…tail`.
+ * THE canonical for the whole app (FEC audit A2-06): server-safe here in
+ * lib — the previous home (ui/Mono.tsx) is a 'use client' module, so
+ * server components physically could not call it (RSC turns client-module
+ * exports into throwing client references). Null/empty renders '—'
+ * (display-site winner semantics from explorer-shared.shortHash); head/tail
+ * stay parameterized because per-context lengths (16/16, 8/6, 6/4) are
+ * deliberate.
+ */
+export function truncateMiddle(
+  s: string | null | undefined,
+  head = 6,
+  tail = 4,
+): string {
+  if (!s) return '—';
+  if (s.length <= head + tail + 1) return s;
+  return `${s.slice(0, head)}…${s.slice(-tail)}`;
 }

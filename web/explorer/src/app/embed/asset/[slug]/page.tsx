@@ -8,9 +8,7 @@ import { LivePrice } from '../../LivePrice';
 import type { Coin } from '@/api/hooks';
 import { API_BASE_URL } from '@/api/client';
 import { formatSubunitPrice } from '@/lib/format';
-
-const isCIStub =
-  API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
+import { isCIStub } from '@/lib/buildFetch';
 
 const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
@@ -228,7 +226,7 @@ export default async function EmbedAssetPage({ params }: { params: Params }) {
 
   if (!coin) {
     return (
-      <div className="flex h-full min-h-32 items-center justify-center px-3 py-3 text-sm text-ink-muted">
+      <div className="text-ink-muted flex h-full min-h-32 items-center justify-center px-3 py-3 text-sm">
         <span>No data for {slug}</span>
       </div>
     );
@@ -257,21 +255,17 @@ export default async function EmbedAssetPage({ params }: { params: Params }) {
   const liveAssetId = coin.asset_id ?? chartAsset ?? '';
 
   return (
-    <div className="flex h-full min-h-32 flex-col gap-2 bg-surface px-4 py-3 text-ink">
+    <div className="bg-surface text-ink flex h-full min-h-32 flex-col gap-2 px-4 py-3">
       <div className="flex items-baseline justify-between gap-2">
         <div className="flex items-baseline gap-2">
-          <span className="text-base font-semibold tracking-tight">
-            {code}
-          </span>
-          <span className="font-mono text-[10px] text-ink-muted">
-            Stellar
-          </span>
+          <span className="text-base font-semibold tracking-tight">{code}</span>
+          <span className="text-ink-muted font-mono text-[10px]">Stellar</span>
         </div>
         <a
           href={`https://stellarindex.io/assets/${slug}`}
           target="_blank"
           rel="noreferrer noopener"
-          className="text-[10px] text-ink-faint hover:text-brand-600"
+          className="text-ink-faint hover:text-brand-600 text-[10px]"
         >
           stellarindex.io ↗
         </a>
@@ -286,7 +280,7 @@ export default async function EmbedAssetPage({ params }: { params: Params }) {
         <ChangeChip pct={change7d} label="7d" />
       </div>
       {points.length > 0 && <Sparkline points={points} />}
-      <div className="mt-auto flex items-center justify-between text-[10px] text-ink-faint">
+      <div className="text-ink-faint mt-auto flex items-center justify-between text-[10px]">
         <span>Powered by Stellar Index</span>
         {coin.volume_24h_usd && (
           <span className="font-mono tabular-nums">
@@ -298,7 +292,13 @@ export default async function EmbedAssetPage({ params }: { params: Params }) {
   );
 }
 
-function ChangeChip({ pct, label }: { pct: number | null | undefined; label: string }) {
+function ChangeChip({
+  pct,
+  label,
+}: {
+  pct: number | null | undefined;
+  label: string;
+}) {
   if (pct == null || !Number.isFinite(pct)) return null;
   const cls =
     pct > 0
@@ -307,7 +307,9 @@ function ChangeChip({ pct, label }: { pct: number | null | undefined; label: str
         ? 'bg-down-subtle text-down'
         : 'bg-surface-subtle text-ink-body';
   return (
-    <span className={`rounded-sm px-1.5 py-0.5 font-mono text-[11px] tabular-nums ${cls}`}>
+    <span
+      className={`rounded-sm px-1.5 py-0.5 font-mono text-[11px] tabular-nums ${cls}`}
+    >
       {pct > 0 ? '+' : ''}
       {pct.toFixed(2)}% {label}
     </span>

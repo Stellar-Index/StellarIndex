@@ -65,28 +65,32 @@ export function TimeSeriesChart({
 
   if (points.length === 0) {
     return (
-      <p className="py-6 text-center text-sm text-ink-muted">
+      <p className="text-ink-muted py-6 text-center text-sm">
         No data points in the window.
       </p>
     );
   }
 
   const unitSuffix = unit ? ` ${unit}` : '';
-  const peak = points.reduce((best, p) => (p.value > best.value ? p : best), points[0]);
+  const peak = points.reduce(
+    (best, p) => (p.value > best.value ? p : best),
+    points[0],
+  );
   const total = points.reduce((s, p) => s + p.value, 0);
   const avg = total / points.length;
   // "Latest" headlines the last COMPLETE point: callers drop today's
   // accumulating daily bucket upstream (dropPartialTrailingDay), and this
   // guard keeps the headline honest even for a caller that didn't.
-  const lastComplete = [...points].reverse().find((p) => !isPartialTodayDate(p.date)) ?? null;
+  const lastComplete =
+    [...points].reverse().find((p) => !isPartialTodayDate(p.date)) ?? null;
   const ariaLabel = `${label}: ${points.length} points, peak ${formatCompact(peak.value)}${unitSuffix} on ${peak.date}, average ${formatCompact(Math.round(avg))}${unitSuffix} over the window.`;
 
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1 text-xs text-ink-muted">
+      <div className="text-ink-muted flex flex-wrap items-baseline gap-x-6 gap-y-1 text-xs">
         <span>
           Peak{' '}
-          <span className="font-mono tabular-nums text-ink-body">
+          <span className="text-ink-body font-mono tabular-nums">
             {formatCompact(peak.value)}
             {unitSuffix}
           </span>{' '}
@@ -94,14 +98,14 @@ export function TimeSeriesChart({
         </span>
         <span>
           Avg/point{' '}
-          <span className="font-mono tabular-nums text-ink-body">
+          <span className="text-ink-body font-mono tabular-nums">
             {formatCompact(Math.round(avg))}
             {unitSuffix}
           </span>
         </span>
         <span>
           Latest{' '}
-          <span className="font-mono tabular-nums text-ink-body">
+          <span className="text-ink-body font-mono tabular-nums">
             {lastComplete != null ? formatCompact(lastComplete.value) : '—'}
             {lastComplete != null ? unitSuffix : ''}
           </span>
@@ -115,17 +119,4 @@ export function TimeSeriesChart({
       />
     </div>
   );
-}
-
-// shortDate — YYYY-MM-DD → "MMM D" (UTC, no Date parse ambiguity). Shared
-// by the per-protocol page's axis/label helpers.
-export function shortDate(iso: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
-  if (!m) return iso;
-  const months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-  ];
-  const mon = months[Number(m[2]) - 1] ?? m[2];
-  return `${mon} ${Number(m[3])}`;
 }

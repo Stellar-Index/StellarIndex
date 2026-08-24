@@ -1,15 +1,16 @@
 'use client';
 
 import { Check, Copy } from 'lucide-react';
-import { useState } from 'react';
+import type { ComponentProps } from 'react';
+import { useEffect, useState } from 'react';
 
 import { cn } from '@/lib/cn';
+import { truncateMiddle } from '@/lib/format';
 
-/** Truncate a long identifier (G-strkey, C-id, tx hash) to head…tail. */
-export function truncateMiddle(s: string, head = 6, tail = 4): string {
-  if (!s || s.length <= head + tail + 1) return s;
-  return `${s.slice(0, head)}…${s.slice(-tail)}`;
-}
+// Back-compat: re-export the canonical from lib so existing
+// '@/components/ui' client-side imports keep working. Server code must
+// import from '@/lib/format' directly.
+export { truncateMiddle } from '@/lib/format';
 
 /**
  * Mono renders a monospace identifier (address / hash / contract id) with an
@@ -32,34 +33,76 @@ export function Mono({
       : truncateMiddle(value)
     : value;
   return (
-    <span className={cn('inline-flex items-center gap-1.5 font-mono text-[13px]', className)}>
+    <span
+      className={cn(
+        'inline-flex items-center gap-1.5 font-mono text-[13px]',
+        className,
+      )}
+    >
       <span className="break-all">{display}</span>
       {copy && <CopyButton value={value} />}
     </span>
   );
 }
 
-export function CopyButton({ value, className }: { value: string; className?: string }) {
+/**
+ * useCopyToClipboard — THE clipboard behavior (FEC audit A3-F7): 5 forks
+ * existed and the differences were all defects on one side or the other.
+ * This hook keeps the winning behaviors from each: unmount-safe reset
+ * timer (CopyValue's effect cleanup — Mono's bare setTimeout fired after
+ * unmount), preventDefault+stopPropagation (a copy click inside a row
+ * <Link> must not navigate — live on OperationView), and a try/catch
+ * (insecure context / permission denial must not be an unhandled
+ * rejection). Reset delay 1400ms (majority).
+ */
+export function useCopyToClipboard(value: string, resetMs = 1400) {
   const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), resetMs);
+    return () => clearTimeout(t);
+  }, [copied, resetMs]);
+  const copy = async (e?: {
+    preventDefault(): void;
+    stopPropagation(): void;
+  }) => {
+    e?.preventDefault();
+    e?.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+    } catch {
+      /* clipboard unavailable — no-op */
+    }
+  };
+  return { copied, copy };
+}
+
+export function CopyButton({
+  value,
+  className,
+  ...props
+}: { value: string } & Omit<
+  ComponentProps<'button'>,
+  'onClick' | 'type' | 'value'
+>) {
+  const { copied, copy } = useCopyToClipboard(value);
   return (
     <button
       type="button"
       aria-label="Copy to clipboard"
-      onClick={async () => {
-        try {
-          await navigator.clipboard.writeText(value);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1400);
-        } catch {
-          /* clipboard unavailable — no-op */
-        }
-      }}
+      onClick={copy}
       className={cn(
-        'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-ink-faint transition-colors hover:bg-surface-subtle hover:text-ink-body',
+        'text-ink-faint hover:bg-surface-subtle hover:text-ink-body inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-sm transition-colors',
         className,
       )}
+      {...props}
     >
-      {copied ? <Check className="h-3.5 w-3.5 text-up" /> : <Copy className="h-3.5 w-3.5" />}
+      {copied ? (
+        <Check className="text-up h-3.5 w-3.5" />
+      ) : (
+        <Copy className="h-3.5 w-3.5" />
+      )}
     </button>
   );
 }

@@ -13,6 +13,18 @@ import { Badge, Card, Container, type BadgeTone } from '@/components/ui';
 import { isSafeHref } from '@/lib/markdown';
 import type { components, paths } from '@/api/types';
 import { API_BASE_URL } from '@/api/client';
+import {
+  formatCompact,
+  formatDurationShort,
+  formatRelative,
+} from '@/lib/format';
+import {
+  isFrameStale,
+  LEDGER_LIVE_STALE_MS,
+  useLedgerStream,
+  useLiveClock,
+  type LiveLedger,
+} from '@/lib/live/hooks';
 
 // Polled every 30 s — same cadence as Healthchecks.io's hosted
 // status pages and well inside the 60-s indexer/aggregator
@@ -27,20 +39,6 @@ const WARM_PROBE_MS = 120_000;
 
 // /v1/ledger/stream (SSE) reconnect interval after a hard failure.
 // A 404 from an API binary that predates the endpoint fails the
-// EventSource without auto-reconnect (per the SSE spec a non-2xx
-// response does not retry); this slow timer lets an already-open tab
-// upgrade to streaming once the endpoint ships, without hammering
-// the 404. Transient blips are left to EventSource's own retry.
-const LEDGER_STREAM_REOPEN_MS = 60_000;
-
-// The "live" SSE badge is only trustworthy while events keep
-// arriving. If the last ledger_update is older than this, the
-// stream has gone quiet (origin death, half-open connection the
-// browser hasn't noticed) and we fall back to the 30s snapshot —
-// 2× the network's ~5s ledger cadence, generous enough not to
-// flap on a single missed close. (WB-04)
-const LEDGER_STREAM_STALE_MS = 60_000;
-
 // Client-side status union: the wire's StatusResponse.overall is
 // "ok" | "degraded" | "down"; "unknown" is this page's local state
 // before the first successful poll.
@@ -89,7 +87,8 @@ const REGIONS: RegionDef[] = [
 // generated contract, plus the evolving diagnostics fields below that the Go
 // handler serves (internal/api/v1/diagnostics_ingestion.go) but the
 // spec's inline schema doesn't declare yet.
-type IngestionSnapshotWire = (paths['/diagnostics/ingestion']['get']['responses'][200]['content']['application/json'])['data'];
+type IngestionSnapshotWire =
+  paths['/diagnostics/ingestion']['get']['responses'][200]['content']['application/json']['data'];
 
 type IngestionSnapshot = Omit<
   IngestionSnapshotWire,
@@ -591,7 +590,7 @@ export default function StatusPageClient({
       <StatusNotices />
       <OverallBanner status={status?.overall ?? 'unknown'} tone={overallTone} />
       {error && (
-        <Card className="border-bad-300 bg-bad-50 px-4 py-3 text-sm text-bad-700">
+        <Card className="border-bad-300 bg-bad-50 text-bad-700 px-4 py-3 text-sm">
           Status feed unreachable: {error}.{' '}
           {status
             ? 'Showing the last known snapshot below.'
@@ -599,7 +598,7 @@ export default function StatusPageClient({
         </Card>
       )}
       {loading && !status && !error && (
-        <Card className="px-4 py-8 text-center text-sm text-ink-faint">
+        <Card className="text-ink-faint px-4 py-8 text-center text-sm">
           Loading status…
         </Card>
       )}
@@ -628,17 +627,17 @@ function PageHead() {
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div>
-        <div className="mb-1.5 text-xs font-medium uppercase tracking-wider text-brand-600">
+        <div className="text-brand-600 mb-1.5 text-xs font-medium tracking-wider uppercase">
           System status
         </div>
-        <h1 className="text-h1 font-semibold text-ink">Stellar Index status</h1>
-        <p className="mt-2 max-w-prose text-[15px] leading-relaxed text-ink-muted">
+        <h1 className="text-h1 text-ink font-semibold">Stellar Index status</h1>
+        <p className="text-ink-muted mt-2 max-w-prose text-[15px] leading-relaxed">
           Live service health, request latency, ingest freshness, and the full
           public-endpoint matrix — probed independently from your browser.
         </p>
       </div>
-      <div className="flex items-center gap-2 whitespace-nowrap text-sm text-ink-muted">
-        <span className="inline-block h-2 w-2 animate-pulse-dot rounded-full bg-ok-500" />
+      <div className="text-ink-muted flex items-center gap-2 text-sm whitespace-nowrap">
+        <span className="animate-pulse-dot bg-ok-500 inline-block h-2 w-2 rounded-full" />
         Live · refreshed every 30 s
       </div>
     </div>
@@ -677,20 +676,20 @@ function OverallBanner({
     <Card className={`overflow-hidden border ${tone.cardBorder}`}>
       <div className={`flex items-start gap-4 p-6 ${tone.cardBg}`}>
         <div
-          className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-card bg-surface ${tone.fg} ring-1 ${tone.ring}`}
+          className={`rounded-card bg-surface flex h-12 w-12 shrink-0 items-center justify-center ${tone.fg} ring-1 ${tone.ring}`}
         >
           <Icon className="h-6 w-6" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-3">
-            <h2 className="text-h3 font-semibold text-ink">
+            <h2 className="text-h3 text-ink font-semibold">
               {headlines[status]}
             </h2>
             <Badge tone={tone.badge} dot>
               {badgeLabels[status]}
             </Badge>
           </div>
-          <p className="mt-1.5 text-sm leading-relaxed text-ink-muted">
+          <p className="text-ink-muted mt-1.5 text-sm leading-relaxed">
             {subtitles[status]}
           </p>
         </div>
@@ -757,24 +756,24 @@ function NoticeBanner({ notice }: { notice: StatusNotice }) {
     <Card className={`overflow-hidden border ${tone.cardBorder}`}>
       <div className={`flex items-start gap-4 p-5 ${tone.cardBg}`}>
         <div
-          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-card bg-surface ${tone.fg} ring-1 ${tone.ring}`}
+          className={`rounded-card bg-surface flex h-10 w-10 shrink-0 items-center justify-center ${tone.fg} ring-1 ${tone.ring}`}
         >
           <Icon className="h-5 w-5" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-3">
-            <h2 className="text-base font-semibold text-ink">{notice.title}</h2>
+            <h2 className="text-ink text-base font-semibold">{notice.title}</h2>
             <Badge tone={tone.badge}>{tone.label}</Badge>
           </div>
           {/* Plain-text body rendered as a React child — escaped by
               React, never dangerouslySetInnerHTML. `whitespace-pre-line`
               preserves operator line breaks without allowing markup. */}
-          <p className="mt-1.5 whitespace-pre-line text-sm leading-relaxed text-ink-muted">
+          <p className="text-ink-muted mt-1.5 text-sm leading-relaxed whitespace-pre-line">
             {notice.body}
           </p>
           {posted && (
-            <p className="mt-2 text-xs text-ink-faint">
-              Updated {timeSince(posted)} ago
+            <p className="text-ink-faint mt-2 text-xs">
+              Updated {formatRelative(posted)}
             </p>
           )}
         </div>
@@ -802,10 +801,10 @@ function ServiceCard({ service }: { service: ServiceEntry }) {
   return (
     <Card className="flex items-start justify-between p-4">
       <div className="min-w-0">
-        <div className="font-medium capitalize text-ink">{service.name}</div>
+        <div className="text-ink font-medium capitalize">{service.name}</div>
         {service.last_seen && (
-          <div className="mt-1 text-xs text-ink-faint">
-            Last seen {timeSince(service.last_seen)} ago
+          <div className="text-ink-faint mt-1 text-xs">
+            Last seen {formatRelative(service.last_seen)}
           </div>
         )}
       </div>
@@ -861,15 +860,17 @@ function LatencyCell({
   if (value == null) {
     return (
       <Card className="p-4">
-        <div className="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
+        <div className="text-ink-faint text-[11px] font-medium tracking-wider uppercase">
           {label}
         </div>
         <div className="mt-1 flex items-baseline gap-2">
-          <span className="tnum text-2xl font-semibold text-ink-faint">—</span>
-          <span className="text-xs text-ink-muted">not measured</span>
-          <span className="ml-auto text-xs text-ink-faint">target {target}</span>
+          <span className="tnum text-ink-faint text-2xl font-semibold">—</span>
+          <span className="text-ink-muted text-xs">not measured</span>
+          <span className="text-ink-faint ml-auto text-xs">
+            target {target}
+          </span>
         </div>
-        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-subtle" />
+        <div className="bg-surface-subtle mt-2 h-1.5 overflow-hidden rounded-full" />
       </Card>
     );
   }
@@ -887,17 +888,17 @@ function LatencyCell({
   }[tone];
   return (
     <Card className="p-4">
-      <div className="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
+      <div className="text-ink-faint text-[11px] font-medium tracking-wider uppercase">
         {label}
       </div>
       <div className="mt-1 flex items-baseline gap-2">
         <span className={`tnum text-2xl font-semibold ${fg}`}>
           {value.toFixed(1)}
         </span>
-        <span className="text-xs text-ink-muted">ms</span>
-        <span className="ml-auto text-xs text-ink-faint">target {target}</span>
+        <span className="text-ink-muted text-xs">ms</span>
+        <span className="text-ink-faint ml-auto text-xs">target {target}</span>
       </div>
-      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-subtle">
+      <div className="bg-surface-subtle mt-2 h-1.5 overflow-hidden rounded-full">
         <div className={`h-full ${bar}`} style={{ width: `${pct}%` }} />
       </div>
     </Card>
@@ -922,15 +923,15 @@ function FreshnessRow({
       <SectionHead>Ingest freshness</SectionHead>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Card className="p-4">
-          <div className="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
+          <div className="text-ink-faint text-[11px] font-medium tracking-wider uppercase">
             Last aggregator tick
           </div>
-          <div className="mt-1 font-mono text-sm text-ink">
-            {timeSince(freshness?.last_aggregator_tick ?? '')} ago
+          <div className="text-ink mt-1 font-mono text-sm">
+            {formatRelative(freshness?.last_aggregator_tick)}
           </div>
         </Card>
         <Card className="p-4">
-          <div className="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
+          <div className="text-ink-faint text-[11px] font-medium tracking-wider uppercase">
             Active sources
           </div>
           <div className="mt-1 flex items-baseline gap-2">
@@ -939,13 +940,13 @@ function FreshnessRow({
             >
               {measured ? activeSources : '—'}
             </span>
-            <span className="text-sm text-ink-muted">
+            <span className="text-ink-muted text-sm">
               {measured ? `/ ${totalSources}` : 'not measured'}
             </span>
           </div>
-          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-subtle">
+          <div className="bg-surface-subtle mt-2 h-1.5 overflow-hidden rounded-full">
             <div
-              className="h-full bg-brand-500"
+              className="bg-brand-500 h-full"
               style={{ width: `${sourcePct}%` }}
             />
           </div>
@@ -960,7 +961,7 @@ function ActiveIncidents({ incidents }: { incidents: IncidentEntry[] }) {
     <section>
       <SectionHead>Active incidents</SectionHead>
       {incidents.length === 0 ? (
-        <Card className="px-4 py-6 text-center text-sm text-ink-faint">
+        <Card className="text-ink-faint px-4 py-6 text-center text-sm">
           No active incidents.
         </Card>
       ) : (
@@ -976,7 +977,7 @@ function ActiveIncidents({ incidents }: { incidents: IncidentEntry[] }) {
               <li key={inc.name}>
                 <Card className="flex items-start justify-between p-4">
                   <div className="min-w-0">
-                    <div className="font-mono text-sm font-medium text-ink">
+                    <div className="text-ink font-mono text-sm font-medium">
                       {inc.name}
                     </div>
                     <div className="mt-1.5">
@@ -994,7 +995,7 @@ function ActiveIncidents({ incidents }: { incidents: IncidentEntry[] }) {
                       href={inc.runbook_url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="ml-4 flex shrink-0 items-center gap-1 text-xs text-ink-muted hover:text-brand-600"
+                      className="text-ink-muted hover:text-brand-600 ml-4 flex shrink-0 items-center gap-1 text-xs"
                     >
                       Runbook
                       <ExternalLink className="h-3 w-3" />
@@ -1032,20 +1033,20 @@ function EndpointMatrix({
       <div className="space-y-5">
         {grouped.map(([group, eps]) => (
           <div key={group}>
-            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">
+            <h3 className="text-ink-faint mb-2 text-[11px] font-semibold tracking-wider uppercase">
               {group}
             </h3>
             <Card flat className="overflow-hidden">
               <table className="w-full text-sm">
-                <tbody className="divide-y divide-line">
+                <tbody className="divide-line divide-y">
                   {eps.map((ep) => {
                     const probe = health[ep.path];
                     return (
                       <tr key={ep.path}>
-                        <td className="px-4 py-2.5 font-mono text-xs text-ink-body">
+                        <td className="text-ink-body px-4 py-2.5 font-mono text-xs">
                           {ep.path}
                         </td>
-                        <td className="hidden px-4 py-2.5 text-xs text-ink-muted sm:table-cell">
+                        <td className="text-ink-muted hidden px-4 py-2.5 text-xs sm:table-cell">
                           {ep.description}
                         </td>
                         <td className="px-4 py-2.5 text-right">
@@ -1251,7 +1252,7 @@ function IncidentHistory({
             href={`${API_BASE_URL}/v1/incidents.atom`}
             target="_blank"
             rel="noreferrer noopener"
-            className="text-xs text-ink-faint hover:text-brand-600"
+            className="text-ink-faint hover:text-brand-600 text-xs"
             title="Atom feed — subscribe in Feedly, Slack RSS bot, etc."
           >
             Subscribe (Atom) ↗
@@ -1261,7 +1262,7 @@ function IncidentHistory({
         Incident history
       </SectionHead>
       {entries.length === 0 ? (
-        <Card className="px-4 py-6 text-center text-sm text-ink-faint">
+        <Card className="text-ink-faint px-4 py-6 text-center text-sm">
           {feed === 'error'
             ? 'Incident feed unreachable — and no postmortems are bundled in this build. Past incidents will appear here once the feed is reachable again.'
             : 'No past incidents recorded yet. Resolved incidents will appear here once they post-mortem.'}
@@ -1279,30 +1280,30 @@ function IncidentHistory({
                     {e.slug ? (
                       <a
                         href={`/status/incident/${e.slug}/`}
-                        className="truncate font-medium text-ink hover:text-brand-600"
+                        className="text-ink hover:text-brand-600 truncate font-medium"
                       >
                         {e.title}
                       </a>
                     ) : (
-                      <span className="truncate font-medium text-ink">
+                      <span className="text-ink truncate font-medium">
                         {e.title}
                       </span>
                     )}
                   </div>
-                  <span className="shrink-0 font-mono text-xs text-ink-faint">
+                  <span className="text-ink-faint shrink-0 font-mono text-xs">
                     {e.date}
                   </span>
                 </div>
-                <p className="mt-2 text-sm leading-relaxed text-ink-muted">
+                <p className="text-ink-muted mt-2 text-sm leading-relaxed">
                   {e.summary}
                 </p>
-                <p className="mt-1 text-xs text-ink-faint">
+                <p className="text-ink-faint mt-1 text-xs">
                   Resolved: {e.resolved}
                 </p>
                 {e.slug && (
                   <a
                     href={`/status/incident/${e.slug}/`}
-                    className="mt-2 inline-block text-xs font-medium text-brand-600 hover:underline"
+                    className="text-brand-600 mt-2 inline-block text-xs font-medium hover:underline"
                   >
                     Read full postmortem →
                   </a>
@@ -1324,7 +1325,7 @@ function RegionMeta({
   region: { name: string; deployment: string };
 }) {
   return (
-    <div className="border-t border-line pt-4 text-xs text-ink-faint">
+    <div className="border-line text-ink-faint border-t pt-4 text-xs">
       Region: <span className="font-mono">{region.name}</span> ·{' '}
       <span className="font-mono">{region.deployment}</span> · Last update:{' '}
       <span className="font-mono">
@@ -1354,78 +1355,6 @@ function IngestionRegions({
   );
 }
 
-// LiveLedger is the data payload of a /v1/ledger/stream
-// `ledger_update` event (and the data field of /v1/ledger/tip).
-interface LiveLedger {
-  latest_ledger: number;
-  ingested_at: string;
-  lag_seconds: number;
-}
-
-// useLedgerStream subscribes to /v1/ledger/stream (SSE) and returns
-// the most-recent `ledger_update` payload together with the
-// wall-clock time it arrived, or null when the stream is
-// unavailable / has gone stale. The status page deploys (Cloudflare
-// Pages) ahead of the API release, so when an older API binary 404s
-// the endpoint this hook stays null and the caller MUST fall back to
-// the 30s /v1/diagnostics/ingestion snapshot.
-//
-// The `receivedAt` timestamp lets the caller drop the "live" badge
-// when the stream has silently gone quiet (half-open TCP the browser
-// hasn't surfaced as an error): a value older than
-// LEDGER_STREAM_STALE_MS is no longer "live". (WB-04)
-function useLedgerStream(
-  apiBaseUrl: string,
-): { ledger: LiveLedger; receivedAt: number } | null {
-  const [live, setLive] = useState<{
-    ledger: LiveLedger;
-    receivedAt: number;
-  } | null>(null);
-
-  useEffect(() => {
-    let es: EventSource | null = null;
-    let reopenTimer: ReturnType<typeof setTimeout> | null = null;
-    let closed = false;
-
-    function connect() {
-      if (closed) return;
-      es = new EventSource(`${apiBaseUrl}/v1/ledger/stream`);
-      es.addEventListener('ledger_update', (ev) => {
-        try {
-          const payload = JSON.parse((ev as MessageEvent).data) as {
-            data: LiveLedger;
-          };
-          setLive({ ledger: payload.data, receivedAt: Date.now() });
-        } catch {
-          // Malformed frame — keep the last good value.
-        }
-      });
-      es.onerror = () => {
-        // readyState CLOSED = a hard failure (e.g. a 404 from an API
-        // binary predating the endpoint); the browser will NOT
-        // auto-reconnect, so schedule a slow reopen. readyState
-        // CONNECTING = a transient blip the browser is already
-        // retrying — leave it alone.
-        if (es && es.readyState === EventSource.CLOSED) {
-          es = null;
-          if (!closed) {
-            reopenTimer = setTimeout(connect, LEDGER_STREAM_REOPEN_MS);
-          }
-        }
-      };
-    }
-    connect();
-
-    return () => {
-      closed = true;
-      if (reopenTimer) clearTimeout(reopenTimer);
-      es?.close();
-    };
-  }, [apiBaseUrl]);
-
-  return live;
-}
-
 function RegionPanel({
   region,
   snapshot,
@@ -1436,27 +1365,26 @@ function RegionPanel({
   // Subscribe unconditionally (hooks can't be conditional) — the
   // result is null until the first SSE event lands, and LedgerCard
   // falls back to the snapshot while it is.
+  //
+  // FEC audit A6-1: this used to be a private useLedgerStream fork with a
+  // raw EventSource (a second, unshared connection to the SAME URL the
+  // sidebar badge already holds via the multiplexer) and a 60s stale
+  // window checked every 30s (~90s worst-case "live" lie on the one page
+  // whose job is truthful liveness). Canonical hook + 30s window + 10s
+  // clock now — identical to the sidebar badge, connection shared.
   const liveLedger = useLedgerStream(region.apiBaseUrl);
+  const clock = useLiveClock();
 
-  // A `now` tick so the LedgerCard re-evaluates the stream-staleness
-  // window even when no new SSE event arrives — without it, a stream
-  // that dies right after one event would keep the "live" badge
-  // forever. (WB-04)
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), POLL_INTERVAL_MS);
-    return () => clearInterval(id);
-  }, []);
-
-  // Treat the stream as live only while events are still arriving.
+  // Treat the stream as live only while events are still arriving. (WB-04)
   const liveFresh =
-    liveLedger != null && now - liveLedger.receivedAt < LEDGER_STREAM_STALE_MS
-      ? liveLedger.ledger
+    liveLedger != null &&
+    !isFrameStale(clock, liveLedger.receivedAt, LEDGER_LIVE_STALE_MS)
+      ? liveLedger.data
       : null;
 
   if (!snapshot) {
     return (
-      <Card className="p-4 text-sm text-ink-faint">
+      <Card className="text-ink-faint p-4 text-sm">
         Waiting for first ingestion snapshot from{' '}
         <span className="font-mono">{region.name}</span>…
       </Card>
@@ -1490,25 +1418,25 @@ function RegionHeader({
   const commitShort = v.commit ? v.commit.slice(0, 7) : '—';
   const dirty = v.dirty === 'true';
   return (
-    <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-line pb-3">
+    <div className="border-line flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b pb-3">
       <div className="flex items-baseline gap-2">
-        <span className="font-mono text-sm font-semibold text-ink">
+        <span className="text-ink font-mono text-sm font-semibold">
           {region.name}
         </span>
-        <span className="text-xs uppercase tracking-wider text-ink-faint">
+        <span className="text-ink-faint text-xs tracking-wider uppercase">
           {snapshot.region.deployment}
         </span>
-        <span className="text-xs text-ink-muted">· {region.label}</span>
+        <span className="text-ink-muted text-xs">· {region.label}</span>
       </div>
       <div
-        className="font-mono text-xs text-ink-faint"
+        className="text-ink-faint font-mono text-xs"
         title={`commit ${v.commit}\nbuilt ${v.build_date}\nGo ${v.go_version}`}
       >
         {v.version}{' '}
         <span className="text-ink-muted">
           @ {commitShort}
           {dirty && (
-            <span className="ml-1 rounded-sm bg-warn-50 px-1 text-[10px] text-warn-700">
+            <span className="bg-warn-50 text-warn-700 ml-1 rounded-sm px-1 text-[10px]">
               dirty
             </span>
           )}
@@ -1546,14 +1474,18 @@ function LedgerCard({
       title="Live ledger"
       accessory={
         live ? (
-          <span className="flex items-center gap-1 text-[10px] font-medium text-ok-700">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ok-700" />
+          <span className="text-ok-700 flex items-center gap-1 text-[10px] font-medium">
+            <span className="bg-ok-700 h-1.5 w-1.5 animate-pulse rounded-full" />
             live
           </span>
         ) : null
       }
     >
-      <Row label="Latest ledger" value={latestLedger.toLocaleString('en-US')} mono />
+      <Row
+        label="Latest ledger"
+        value={latestLedger.toLocaleString('en-US')}
+        mono
+      />
       <Row
         label="Lag from tip"
         value={`${lagSeconds}s`}
@@ -1588,8 +1520,14 @@ function FXBackfillCard({ fx }: { fx: IngestionSnapshot['fx_backfill'] }) {
         }
         mono
       />
-      <Row label="Currencies" value={fx.currencies_count.toLocaleString('en-US')} />
-      <Row label="Total quotes" value={fx.total_quotes.toLocaleString('en-US')} />
+      <Row
+        label="Currencies"
+        value={fx.currencies_count.toLocaleString('en-US')}
+      />
+      <Row
+        label="Total quotes"
+        value={fx.total_quotes.toLocaleString('en-US')}
+      />
     </Panel>
   );
 }
@@ -1610,7 +1548,7 @@ function SupplyCard({ supply }: { supply: IngestionSnapshot['supply'] }) {
       />
       <Row
         label="Latest snapshot"
-        value={ageS == null ? '—' : `${formatAge(ageS)} ago`}
+        value={ageS == null ? '—' : `${formatDurationShort(ageS)} ago`}
         mono
       />
     </Panel>
@@ -1626,7 +1564,7 @@ function BackfillCoverageTable({
 }) {
   if (!rows || rows.length === 0) {
     return (
-      <div className="rounded-lg border border-warn-300 bg-warn-50 p-3 text-xs text-warn-700">
+      <div className="border-warn-300 bg-warn-50 text-warn-700 rounded-lg border p-3 text-xs">
         Coverage snapshot pending — first refresh runs ~30s after process start,
         then every 5 min.
       </div>
@@ -1637,16 +1575,16 @@ function BackfillCoverageTable({
   return (
     <div>
       <div className="mb-2 flex items-baseline justify-between">
-        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-ink-faint">
+        <h3 className="text-ink-faint text-[11px] font-semibold tracking-wider uppercase">
           Ingest coverage — genesis → tip
         </h3>
         {asOf && (
-          <span className="text-[10px] text-ink-faint">
-            snapshot {timeSince(asOf)} ago
+          <span className="text-ink-faint text-[10px]">
+            snapshot {formatRelative(asOf)}
           </span>
         )}
       </div>
-      <p className="mb-2 text-[11px] text-ink-faint">
+      <p className="text-ink-faint mb-2 text-[11px]">
         <strong>Coverage</strong> = verified completeness (ADR-0033). A green %
         is <strong>fully verified</strong>: the lake is hash-chained to the tip
         (substrate), every event shape is recognized, AND the served tier
@@ -1657,7 +1595,7 @@ function BackfillCoverageTable({
         (the verifier hasn&apos;t run), which can read ~100% for sparse or
         partially-indexed sources.
       </p>
-      <div className="overflow-hidden rounded-lg border border-line">
+      <div className="border-line overflow-hidden rounded-lg border">
         <table className="w-full text-xs">
           <thead className="bg-surface-muted text-ink-faint">
             <tr>
@@ -1669,7 +1607,7 @@ function BackfillCoverageTable({
               <th className="px-3 py-2 text-right font-medium">Entries</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-line">
+          <tbody className="divide-line divide-y">
             {onChain.map((r) => {
               // ADR-0033 truthfulness: a source's coverage is only TRUSTWORTHY
               // once its completeness watermark (completeness_pct) is computed —
@@ -1718,16 +1656,16 @@ function BackfillCoverageTable({
               };
               return (
                 <tr key={r.source}>
-                  <td className="px-3 py-2 font-mono text-ink-body">
+                  <td className="text-ink-body px-3 py-2 font-mono">
                     {r.source}
                   </td>
-                  <td className="tnum px-3 py-2 text-right font-mono text-ink-muted">
+                  <td className="tnum text-ink-muted px-3 py-2 text-right font-mono">
                     {r.genesis_ledger?.toLocaleString('en-US') ?? '—'}
                   </td>
-                  <td className="tnum px-3 py-2 text-right font-mono text-ink-body">
+                  <td className="tnum text-ink-body px-3 py-2 text-right font-mono">
                     {r.earliest_ledger?.toLocaleString('en-US') ?? '—'}
                   </td>
-                  <td className="tnum px-3 py-2 text-right font-mono text-ink-body">
+                  <td className="tnum text-ink-body px-3 py-2 text-right font-mono">
                     {r.latest_ledger?.toLocaleString('en-US') ?? '—'}
                   </td>
                   <td
@@ -1741,7 +1679,7 @@ function BackfillCoverageTable({
                   >
                     {ran && reconciled ? (
                       <div className="inline-flex items-center justify-end gap-2">
-                        <div className="h-1.5 w-16 overflow-hidden rounded-full bg-surface-subtle">
+                        <div className="bg-surface-subtle h-1.5 w-16 overflow-hidden rounded-full">
                           <div
                             className={`h-full ${colors[tone].split(' ')[0]}`}
                             style={{ width: `${Math.max(2, pct)}%` }}
@@ -1753,14 +1691,14 @@ function BackfillCoverageTable({
                       </div>
                     ) : ran ? (
                       <span
-                        className="inline-flex items-center justify-end gap-1.5 text-warn-700"
+                        className="text-warn-700 inline-flex items-center justify-end gap-1.5"
                         title={
                           lakeComplete
                             ? 'Archive PROVEN genesis-complete (ADR-0034 lake_complete=true: substrate continuity + hash chain + recognition, genesis to tip). The served tier has not reconciled to it yet (ADR-0033 complete=false), so the served numbers can still be short. No data is missing; the hourly completeness verify + lake re-derive close the gap.'
                             : 'Captured, not yet verified. The completeness watermark has been computed but NEITHER axis is complete: the archive is not yet proven genesis-complete (lake_complete=false) and the served tier has not reconciled. Genuine history may still be missing.'
                         }
                       >
-                        <span className="rounded-sm bg-line px-1 py-0.5 text-[10px] uppercase tracking-wide text-warn-700">
+                        <span className="bg-line text-warn-700 rounded-sm px-1 py-0.5 text-[10px] tracking-wide uppercase">
                           {lakeComplete ? 'archive complete' : 'reconciling'}
                         </span>
                         <span className="tnum">
@@ -1770,17 +1708,17 @@ function BackfillCoverageTable({
                       </span>
                     ) : (
                       <span
-                        className="inline-flex items-center justify-end gap-1.5 text-ink-muted"
+                        className="text-ink-muted inline-flex items-center justify-end gap-1.5"
                         title="Completeness not yet verified (ADR-0033). The figure is a gap-free liveness signal — no large gap detected — which can read ~100% for sparse or only-partially-indexed sources. Verified completeness is pending the data-recovery backfills."
                       >
-                        <span className="rounded-sm bg-line px-1 py-0.5 text-[10px] uppercase tracking-wide">
+                        <span className="bg-line rounded-sm px-1 py-0.5 text-[10px] tracking-wide uppercase">
                           unverified
                         </span>
                         <span className="tnum">{pct.toFixed(1)}% gap-free</span>
                       </span>
                     )}
                   </td>
-                  <td className="tnum px-3 py-2 text-right text-ink-muted">
+                  <td className="tnum text-ink-muted px-3 py-2 text-right">
                     {r.entries.toLocaleString('en-US')}
                   </td>
                 </tr>
@@ -1814,10 +1752,10 @@ function SourceHealthTable({ rows }: { rows: IngestionSnapshot['sources'] }) {
   if (safeRows.length === 0) return null;
   return (
     <div>
-      <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">
+      <h3 className="text-ink-faint mb-2 text-[11px] font-semibold tracking-wider uppercase">
         Sources — {safeRows.length} registered
       </h3>
-      <div className="overflow-hidden rounded-lg border border-line">
+      <div className="border-line overflow-hidden rounded-lg border">
         <table className="w-full text-xs">
           <thead className="bg-surface-muted text-ink-faint">
             <tr>
@@ -1829,7 +1767,7 @@ function SourceHealthTable({ rows }: { rows: IngestionSnapshot['sources'] }) {
               <th className="px-3 py-2 text-center font-medium">VWAP</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-line">
+          <tbody className="divide-line divide-y">
             {safeRows.map((r) => {
               const classLabel = r.subclass
                 ? `${r.class}/${r.subclass}`
@@ -1837,10 +1775,10 @@ function SourceHealthTable({ rows }: { rows: IngestionSnapshot['sources'] }) {
               const silent = r.include_in_vwap && r.entries_24h === 0;
               return (
                 <tr key={r.name}>
-                  <td className="px-3 py-2 font-mono text-ink-body">
+                  <td className="text-ink-body px-3 py-2 font-mono">
                     {r.name}
                   </td>
-                  <td className="px-3 py-2 text-ink-muted">{classLabel}</td>
+                  <td className="text-ink-muted px-3 py-2">{classLabel}</td>
                   <td
                     className={`tnum px-3 py-2 text-right ${
                       silent ? 'text-bad-700' : 'text-ink-body'
@@ -1848,10 +1786,10 @@ function SourceHealthTable({ rows }: { rows: IngestionSnapshot['sources'] }) {
                   >
                     {r.entries_24h?.toLocaleString('en-US') ?? '—'}
                   </td>
-                  <td className="tnum px-3 py-2 text-right text-ink-muted">
+                  <td className="tnum text-ink-muted px-3 py-2 text-right">
                     {r.volume_24h_usd ? formatUSD(r.volume_24h_usd) : '—'}
                   </td>
-                  <td className="tnum px-3 py-2 text-right text-ink-muted">
+                  <td className="tnum text-ink-muted px-3 py-2 text-right">
                     {r.markets_count_24h.toLocaleString('en-US')}
                   </td>
                   <td className="px-3 py-2 text-center">
@@ -1883,8 +1821,8 @@ function Panel({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-lg border border-line bg-surface-muted p-4">
-      <h3 className="mb-2 flex items-center justify-between gap-2 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">
+    <div className="border-line bg-surface-muted rounded-lg border p-4">
+      <h3 className="text-ink-faint mb-2 flex items-center justify-between gap-2 text-[11px] font-semibold tracking-wider uppercase">
         <span>{title}</span>
         {accessory}
       </h3>
@@ -1906,7 +1844,7 @@ function Row({
 }) {
   return (
     <div className="flex items-baseline justify-between gap-3">
-      <dt className="text-xs text-ink-muted">{label}</dt>
+      <dt className="text-ink-muted text-xs">{label}</dt>
       <dd
         className={`tnum text-ink ${mono ? 'font-mono text-xs' : ''} ${
           valueClass ?? ''
@@ -1923,26 +1861,14 @@ function Row({
 // The backend keeps full precision via ADR-0003 stringified
 // numerics; the UI rounds for display.
 function formatUSD(s: string): string {
+  // FEC audit F-A4-10: bucket math delegated to lib formatCompact (this
+  // was a byte-level re-implementation); the zero→'—' gate stays local.
   const n = Number(s);
   if (!Number.isFinite(n) || n === 0) return '—';
-  if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
-  if (n >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
-  if (n >= 1e3) return `$${(n / 1e3).toFixed(2)}K`;
-  return `$${n.toFixed(2)}`;
+  return `$${formatCompact(n)}`;
 }
 
 // formatAge turns seconds into "12s" / "5m" / "3h" / "2d".
-function formatAge(s: number): string {
-  if (!Number.isFinite(s) || s < 0) return '—';
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
-  const d = Math.floor(h / 24);
-  return `${d}d`;
-}
-
 // SectionHead is the page's between-block heading — an uppercase
 // kicker with an optional right-aligned aside (window label) or
 // action (a link). Mirrors the explorer's SectionHeader rhythm.
@@ -1957,10 +1883,10 @@ function SectionHead({
 }) {
   return (
     <div className="mb-3 flex items-baseline justify-between gap-3">
-      <h2 className="text-sm font-semibold uppercase tracking-wider text-ink-muted">
+      <h2 className="text-ink-muted text-sm font-semibold tracking-wider uppercase">
         {children}
         {aside && (
-          <span className="ml-2 text-xs font-normal normal-case tracking-normal text-ink-faint">
+          <span className="text-ink-faint ml-2 text-xs font-normal tracking-normal normal-case">
             · {aside}
           </span>
         )}
@@ -2081,17 +2007,4 @@ function noticeTone(severity: StatusNotice['severity']): {
 function snapshotAgeSeconds(iso: string | null | undefined): number | null {
   if (!iso) return null;
   return Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-}
-
-function timeSince(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (!Number.isFinite(then)) return '—';
-  const sec = Math.floor((Date.now() - then) / 1000);
-  if (sec < 60) return `${sec}s`;
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h`;
-  const day = Math.floor(hr / 24);
-  return `${day}d`;
 }

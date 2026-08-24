@@ -21,6 +21,7 @@ import {
   Th,
   THead,
 } from '@/components/ui';
+import { useDebouncedValue } from '@/lib/useDebouncedValue';
 
 /**
  * /assets directory table — the CMC/CoinGecko-style global asset
@@ -52,12 +53,14 @@ const MARKET_CAP_VOLUME_THRESHOLD_USD = 1_000;
 // catalogue's "crypto" class (CMC's "Cryptocurrencies" tab); the server
 // normalises blockchain→crypto in `normaliseAssetClass`. Fiat is dropped
 // here — fiat currencies moved to the external directory (/external/assets).
-const STELLAR_ASSET_CLASS_OPTIONS: { value: AssetClassFilter; label: string }[] =
-  [
-    { value: 'all', label: 'All Assets' },
-    { value: 'blockchain', label: 'Crypto' },
-    { value: 'stablecoin', label: 'Stablecoin' },
-  ];
+const STELLAR_ASSET_CLASS_OPTIONS: {
+  value: AssetClassFilter;
+  label: string;
+}[] = [
+  { value: 'all', label: 'All Assets' },
+  { value: 'blockchain', label: 'Crypto' },
+  { value: 'stablecoin', label: 'Stablecoin' },
+];
 
 function parseAssetClass(raw: string | null): AssetClassFilter {
   switch (raw) {
@@ -123,15 +126,14 @@ export function AssetsTable({
   // Local input state, debounced into the URL so the server-side
   // ?q= filter doesn't refire on every keystroke.
   const [q, setQ] = useState(queryParam);
+  // FEC audit A3-F5: debounce via the shared hook — the hand-rolled timer
+  // needed an exhaustive-deps escape hatch to stay stable.
+  const debouncedQ = useDebouncedValue(q.trim(), 250);
   useEffect(() => {
-    const trimmed = q.trim();
-    if (trimmed === queryParam) return;
-    const t = setTimeout(() => {
-      setQuery({ q: trimmed, cursor: '' });
-    }, 250);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- debounce keys on the local input `q` only; `queryParam` (the URL this effect writes back) and the stable `setQuery` setter are intentionally omitted so the timer doesn't refire when the URL it just set re-renders.
-  }, [q]);
+    if (debouncedQ === queryParam) return;
+    setQuery({ q: debouncedQ, cursor: '' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- write-back keys on the debounced input only; queryParam (the URL this effect writes) and the stable setQuery setter stay omitted so an external URL change (back/forward) isn't overwritten by stale input.
+  }, [debouncedQ]);
 
   const assets = data?.assets ?? [];
 
@@ -152,11 +154,12 @@ export function AssetsTable({
   ];
   // Default: leave the API's incoming order (market-cap-ish rank) until the
   // user clicks a header.
-  const { sorted: sortedAssets, sort, toggle, ariaSort } = useTableSort<Coin, string>(
-    assets,
-    sortColumns,
-    null,
-  );
+  const {
+    sorted: sortedAssets,
+    sort,
+    toggle,
+    ariaSort,
+  } = useTableSort<Coin, string>(assets, sortColumns, null);
 
   function setQuery(
     updates: Partial<{
@@ -213,15 +216,76 @@ export function AssetsTable({
             <THead>
               <tr>
                 <Th>#</Th>
-                <SortableTh label="Asset" sortKey="asset" sort={sort} onSort={toggle} ariaSort={ariaSort} />
-                <SortableTh label="Class" sortKey="class" sort={sort} onSort={toggle} ariaSort={ariaSort} />
-                <SortableTh label="Price" sortKey="price" sort={sort} onSort={toggle} ariaSort={ariaSort} align="right" />
-                <SortableTh label="1h %" sortKey="change_1h" sort={sort} onSort={toggle} ariaSort={ariaSort} align="right" />
-                <SortableTh label="24h %" sortKey="change_24h" sort={sort} onSort={toggle} ariaSort={ariaSort} align="right" />
-                <SortableTh label="7d %" sortKey="change_7d" sort={sort} onSort={toggle} ariaSort={ariaSort} align="right" />
-                <SortableTh label="Market cap" sortKey="market_cap" sort={sort} onSort={toggle} ariaSort={ariaSort} align="right" />
-                <SortableTh label="Volume 24h" sortKey="volume" sort={sort} onSort={toggle} ariaSort={ariaSort} align="right" />
-                <SortableTh label="Circulating" sortKey="circulating" sort={sort} onSort={toggle} ariaSort={ariaSort} align="right" />
+                <SortableTh
+                  label="Asset"
+                  sortKey="asset"
+                  sort={sort}
+                  onSort={toggle}
+                  ariaSort={ariaSort}
+                />
+                <SortableTh
+                  label="Class"
+                  sortKey="class"
+                  sort={sort}
+                  onSort={toggle}
+                  ariaSort={ariaSort}
+                />
+                <SortableTh
+                  label="Price"
+                  sortKey="price"
+                  sort={sort}
+                  onSort={toggle}
+                  ariaSort={ariaSort}
+                  align="right"
+                />
+                <SortableTh
+                  label="1h %"
+                  sortKey="change_1h"
+                  sort={sort}
+                  onSort={toggle}
+                  ariaSort={ariaSort}
+                  align="right"
+                />
+                <SortableTh
+                  label="24h %"
+                  sortKey="change_24h"
+                  sort={sort}
+                  onSort={toggle}
+                  ariaSort={ariaSort}
+                  align="right"
+                />
+                <SortableTh
+                  label="7d %"
+                  sortKey="change_7d"
+                  sort={sort}
+                  onSort={toggle}
+                  ariaSort={ariaSort}
+                  align="right"
+                />
+                <SortableTh
+                  label="Market cap"
+                  sortKey="market_cap"
+                  sort={sort}
+                  onSort={toggle}
+                  ariaSort={ariaSort}
+                  align="right"
+                />
+                <SortableTh
+                  label="Volume 24h"
+                  sortKey="volume"
+                  sort={sort}
+                  onSort={toggle}
+                  ariaSort={ariaSort}
+                  align="right"
+                />
+                <SortableTh
+                  label="Circulating"
+                  sortKey="circulating"
+                  sort={sort}
+                  onSort={toggle}
+                  ariaSort={ariaSort}
+                  align="right"
+                />
                 <Th align="right">7d chart</Th>
               </tr>
             </THead>
@@ -230,7 +294,7 @@ export function AssetsTable({
                 <tr>
                   <td
                     colSpan={11}
-                    className="py-12 text-center text-sm text-ink-muted"
+                    className="text-ink-muted py-12 text-center text-sm"
                   >
                     Loading…
                   </td>
@@ -272,15 +336,14 @@ export function AssetsTable({
         }
       />
 
-      <p className="text-xs text-ink-muted">
+      <p className="text-ink-muted text-xs">
         Live data from{' '}
-        <code className="rounded-sm bg-surface-subtle px-1 font-mono text-[11px]">
+        <code className="bg-surface-subtle rounded-sm px-1 font-mono text-[11px]">
           {endpoint}?asset_class={assetClass}
         </code>
-        . Verified catalogue rows surface first, then long-tail
-        Stellar-classic rows by 24h
-        volume. Per-asset issuer + on-chain pool detail lives on{' '}
-        <code className="rounded-sm bg-surface-subtle px-1 font-mono text-[11px]">
+        . Verified catalogue rows surface first, then long-tail Stellar-classic
+        rows by 24h volume. Per-asset issuer + on-chain pool detail lives on{' '}
+        <code className="bg-surface-subtle rounded-sm px-1 font-mono text-[11px]">
           /assets/&#123;slug&#125;
         </code>
         .
@@ -329,22 +392,22 @@ function FilterBar({
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
+          <Search className="text-ink-faint absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2" />
           <input
             type="search"
             aria-label="Search assets by code, slug, or name"
             value={q}
             onChange={(e) => onQChange(e.target.value)}
             placeholder="Search by code, slug, or name…"
-            className="w-72 rounded-md border border-line bg-surface py-1.5 pl-8 pr-3 text-sm placeholder:text-ink-faint focus:border-brand-500 focus:outline-hidden focus:ring-1 focus:ring-brand-500"
+            className="border-line bg-surface placeholder:text-ink-faint focus:border-brand-500 focus:ring-brand-500 w-72 rounded-md border py-1.5 pr-3 pl-8 text-sm focus:ring-1 focus:outline-hidden"
           />
         </div>
-        <label className="flex items-center gap-2 text-xs text-ink-muted">
+        <label className="text-ink-muted flex items-center gap-2 text-xs">
           <span>Per page</span>
           <select
             value={limit}
             onChange={(e) => onLimitChange(parseInt(e.target.value, 10))}
-            className="rounded-md border border-line bg-surface px-2 py-1 text-xs focus:border-brand-500 focus:outline-hidden focus:ring-1 focus:ring-brand-500"
+            className="border-line bg-surface focus:border-brand-500 focus:ring-brand-500 rounded-md border px-2 py-1 text-xs focus:ring-1 focus:outline-hidden"
           >
             <option value={50}>50</option>
             <option value={100}>100</option>
@@ -402,7 +465,7 @@ function AssetRow({
           href={`${basePath}/${coin.slug}`}
           className="group flex items-baseline gap-2"
         >
-          <span className="font-medium text-ink group-hover:text-brand-600">
+          <span className="text-ink group-hover:text-brand-600 font-medium">
             {coin.code}
           </span>
           {verified && (
@@ -415,7 +478,7 @@ function AssetRow({
                 xmlns="http://www.w3.org/2000/svg"
                 viewBox="0 0 20 20"
                 fill="currentColor"
-                className="h-3.5 w-3.5 text-up"
+                className="text-up h-3.5 w-3.5"
                 aria-hidden="true"
               >
                 <path
@@ -426,7 +489,7 @@ function AssetRow({
               </svg>
             </span>
           )}
-          <span className="text-[11px] text-ink-muted">
+          <span className="text-ink-muted text-[11px]">
             {coin.name ?? coin.slug}
           </span>
         </Link>
@@ -436,7 +499,7 @@ function AssetRow({
       </Td>
       <Td align="right">
         {price != null ? (
-          <span className="font-mono tabular-nums text-ink">
+          <span className="text-ink font-mono tabular-nums">
             ${formatPriceSmall(price)}
           </span>
         ) : (
@@ -454,7 +517,7 @@ function AssetRow({
       </Td>
       <Td align="right">
         {marketCap != null ? (
-          <span className="font-mono tabular-nums text-ink-body">
+          <span className="text-ink-body font-mono tabular-nums">
             ${formatCompact(marketCap)}
           </span>
         ) : (
@@ -463,7 +526,7 @@ function AssetRow({
       </Td>
       <Td align="right">
         {volume != null ? (
-          <span className="font-mono tabular-nums text-ink-body">
+          <span className="text-ink-body font-mono tabular-nums">
             ${formatCompact(volume)}
           </span>
         ) : (
@@ -472,7 +535,7 @@ function AssetRow({
       </Td>
       <Td align="right">
         {supply != null ? (
-          <span className="font-mono tabular-nums text-ink-body">
+          <span className="text-ink-body font-mono tabular-nums">
             {formatCompact(supply)}
           </span>
         ) : (
@@ -488,7 +551,7 @@ function AssetRow({
 
 function ClassBadge({ cls }: { cls?: string }) {
   if (!cls) {
-    return <span className="text-xs text-ink-faint">—</span>;
+    return <span className="text-ink-faint text-xs">—</span>;
   }
   const tone: 'warn' | 'ok' | 'brand' =
     cls === 'fiat' ? 'warn' : cls === 'stablecoin' ? 'ok' : 'brand';
@@ -497,12 +560,16 @@ function ClassBadge({ cls }: { cls?: string }) {
   return <Badge tone={tone}>{label}</Badge>;
 }
 
-function RowSparkline({ points }: { points?: { t: string; p?: string | null }[] }) {
+function RowSparkline({
+  points,
+}: {
+  points?: { t: string; p?: string | null }[];
+}) {
   const values = (points ?? [])
     .map((pt) => (pt.p ? Number(pt.p) : null))
     .filter((v): v is number => v != null && Number.isFinite(v));
   if (values.length < 2) {
-    return <span className="font-mono text-[10px] text-ink-faint">—</span>;
+    return <span className="text-ink-faint font-mono text-[10px]">—</span>;
   }
   const W = 80;
   const H = 24;
@@ -525,7 +592,14 @@ function RowSparkline({ points }: { points?: { t: string; p?: string | null }[] 
       viewBox={`0 0 ${W} ${H}`}
       className={`inline-block ${positive ? 'text-up' : 'text-down'}`}
     >
-      <path d={path} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d={path}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -554,7 +628,7 @@ function Pagination({
         <ChevronLeft className="h-3.5 w-3.5" />
         Back to top
       </Button>
-      <span className="text-xs text-ink-faint">
+      <span className="text-ink-faint text-xs">
         {hasPrev || hasNext ? 'Cursor-paginated' : ' '}
       </span>
       <Button
@@ -572,10 +646,7 @@ function Pagination({
 
 function Dash({ title }: { title?: string }) {
   return (
-    <span
-      className="text-ink-faint"
-      title={title ?? 'No data yet'}
-    >
+    <span className="text-ink-faint" title={title ?? 'No data yet'}>
       —
     </span>
   );
@@ -586,12 +657,7 @@ function ChangePct({ raw }: { raw: string | null | undefined }) {
     return <Dash title="Not enough trade history to compute this window" />;
   const n = Number(raw);
   if (!Number.isFinite(n)) return <Dash />;
-  const tone =
-    n > 0
-      ? 'text-up'
-      : n < 0
-        ? 'text-down'
-        : 'text-ink-muted';
+  const tone = n > 0 ? 'text-up' : n < 0 ? 'text-down' : 'text-ink-muted';
   const sign = n > 0 ? '+' : '';
   return (
     <span className={`font-mono tabular-nums ${tone}`}>

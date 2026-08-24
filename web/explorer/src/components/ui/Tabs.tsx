@@ -19,7 +19,12 @@ export function TabNav({
   className?: string;
 }) {
   return (
-    <div className={cn('flex items-center gap-1 overflow-x-auto border-b border-line', className)}>
+    <div
+      className={cn(
+        'border-line flex items-center gap-1 overflow-x-auto border-b',
+        className,
+      )}
+    >
       {items.map((t) => {
         const active = activeHref === t.href;
         return (
@@ -28,18 +33,20 @@ export function TabNav({
             href={t.href}
             aria-current={active ? 'page' : undefined}
             className={cn(
-              '-mb-px whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium transition-colors',
+              '-mb-px border-b-2 px-3 py-2.5 text-sm font-medium whitespace-nowrap transition-colors',
               active
                 ? 'border-brand-600 text-brand-700'
-                : 'border-transparent text-ink-muted hover:border-line-strong hover:text-ink',
+                : 'text-ink-muted hover:border-line-strong hover:text-ink border-transparent',
             )}
           >
             {t.label}
             {typeof t.count === 'number' && (
               <span
                 className={cn(
-                  'ml-1.5 rounded-full px-1.5 py-0.5 text-[11px] tnum',
-                  active ? 'bg-brand-50 text-brand-700' : 'bg-surface-subtle text-ink-muted',
+                  'tnum ml-1.5 rounded-full px-1.5 py-0.5 text-[11px]',
+                  active
+                    ? 'bg-brand-50 text-brand-700'
+                    : 'bg-surface-subtle text-ink-muted',
                 )}
               >
                 {t.count}
@@ -65,7 +72,12 @@ export function Segmented({
   className?: string;
 }) {
   return (
-    <div className={cn('inline-flex rounded-lg bg-surface-subtle p-0.5', className)}>
+    <div
+      className={cn(
+        'bg-surface-subtle inline-flex rounded-lg p-0.5',
+        className,
+      )}
+    >
       {options.map((o) => (
         <button
           key={o.value}

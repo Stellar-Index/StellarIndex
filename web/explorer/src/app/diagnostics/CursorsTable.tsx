@@ -5,7 +5,7 @@ import { useMemo, useState } from 'react';
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
 import { useCursors, type Cursor } from '@/api/hooks';
-import { formatRelative } from '@/lib/format';
+import { formatRelative, formatDurationShort } from '@/lib/format';
 
 /**
  * Live ingest-cursor table backed by `/v1/diagnostics/cursors`.
@@ -89,7 +89,7 @@ export function CursorsTable() {
       source={asExample('/v1/diagnostics/cursors')}
       bodyClassName="-mx-4"
     >
-      <div className="px-4 pb-3 pt-1">
+      <div className="px-4 pt-1 pb-3">
         <div className="flex flex-wrap items-center gap-3 text-xs">
           <input
             type="search"
@@ -97,24 +97,24 @@ export function CursorsTable() {
             placeholder="Filter sources or sub-sources…"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            className="w-64 rounded-md border border-line bg-surface px-2.5 py-1 font-mono text-[11px] placeholder:text-ink-faint focus:border-brand-500 focus:outline-hidden focus:ring-1 focus:ring-brand-500"
+            className="border-line bg-surface placeholder:text-ink-faint focus:border-brand-500 focus:ring-brand-500 w-64 rounded-md border px-2.5 py-1 font-mono text-[11px] focus:ring-1 focus:outline-hidden"
           />
-          <label className="inline-flex select-none items-center gap-1.5 font-mono text-[11px] text-ink-body">
+          <label className="text-ink-body inline-flex items-center gap-1.5 font-mono text-[11px] select-none">
             <input
               type="checkbox"
               checked={hideStale}
               onChange={(e) => setHideStale(e.target.checked)}
-              className="h-3.5 w-3.5 rounded-sm border-line-strong text-brand-600 focus:ring-brand-500"
+              className="border-line-strong text-brand-600 focus:ring-brand-500 h-3.5 w-3.5 rounded-sm"
             />
             Hide stale (&gt;1h)
           </label>
-          <span className="font-mono text-[11px] text-ink-muted">
+          <span className="text-ink-muted font-mono text-[11px]">
             {filtered.length} of {(data ?? []).length} rows
             {filter && (
               <button
                 type="button"
                 onClick={() => setFilter('')}
-                className="ml-2 text-brand-600 hover:underline"
+                className="text-brand-600 ml-2 hover:underline"
               >
                 clear
               </button>
@@ -123,9 +123,9 @@ export function CursorsTable() {
         </div>
       </div>
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-line text-sm">
+        <table className="divide-line min-w-full divide-y text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
+            <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
               <Th>Source</Th>
               <Th>Sub-source</Th>
               <Th align="right">Last ledger</Th>
@@ -133,7 +133,7 @@ export function CursorsTable() {
               <Th align="right">Lag</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-line-subtle">
+          <tbody className="divide-line-subtle divide-y">
             {grouped.map(({ source, rows }) =>
               rows.map((c, i) => (
                 <tr
@@ -148,17 +148,17 @@ export function CursorsTable() {
                     )}
                   </Td>
                   <Td>
-                    <span className="font-mono text-xs text-ink-muted">
+                    <span className="text-ink-muted font-mono text-xs">
                       {c.sub_source || '—'}
                     </span>
                   </Td>
                   <Td align="right">
-                    <span className="font-mono tabular-nums text-xs">
+                    <span className="font-mono text-xs tabular-nums">
                       #{c.last_ledger.toLocaleString('en-US')}
                     </span>
                   </Td>
                   <Td align="right">
-                    <span className="font-mono tabular-nums text-xs text-ink-muted">
+                    <span className="text-ink-muted font-mono text-xs tabular-nums">
                       {formatRelative(c.last_updated)}
                     </span>
                   </Td>
@@ -186,16 +186,9 @@ function LagPill({ seconds }: { seconds: number }) {
     <span
       className={`inline-block rounded-sm px-1.5 py-0.5 font-mono text-[11px] tabular-nums ${tone}`}
     >
-      {formatLag(seconds)}
+      {formatDurationShort(seconds)}
     </span>
   );
-}
-
-function formatLag(s: number): string {
-  if (s < 60) return `${s}s`;
-  if (s < 3600) return `${Math.round(s / 60)}m`;
-  if (s < 86_400) return `${Math.round(s / 3600)}h`;
-  return `${Math.round(s / 86_400)}d`;
 }
 
 function groupBySource(rows: Cursor[]): { source: string; rows: Cursor[] }[] {

@@ -3,9 +3,13 @@ import Link from 'next/link';
 import { ExternalLink } from 'lucide-react';
 
 import { Panel } from '@/components/reveal';
-import { Breadcrumbs } from '@/components/ui';
+import { Breadcrumbs, Container } from '@/components/ui';
 import { buildFetchData, failBuild } from '@/lib/buildFetch';
-import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, serializeJsonLd } from '@/lib/seo';
+import {
+  SITE_OG_IMAGES,
+  SITE_TWITTER_IMAGES,
+  serializeJsonLd,
+} from '@/lib/seo';
 import type { paths } from '@/api/types';
 
 import { PoolReserves } from './PoolReserves';
@@ -116,7 +120,8 @@ export async function generateMetadata({
   params: Params;
 }): Promise<Metadata> {
   const { pool } = await params;
-  const label = BLEND_POOL_LABELS[pool]?.name ?? `${pool.slice(0, 6)}…${pool.slice(-6)}`;
+  const label =
+    BLEND_POOL_LABELS[pool]?.name ?? `${pool.slice(0, 6)}…${pool.slice(-6)}`;
   const canonical = `https://stellarindex.io/lending/${pool}`;
   const title = `${label} — Blend lending pool`;
   const description = `Auction activity, user count, and contract metadata for the Blend pool at ${pool}.`;
@@ -124,8 +129,19 @@ export async function generateMetadata({
     title,
     description,
     alternates: { canonical },
-    openGraph: { title, description, url: canonical, type: 'website', images: SITE_OG_IMAGES },
-    twitter: { card: 'summary_large_image', title, description, images: SITE_TWITTER_IMAGES },
+    openGraph: {
+      title,
+      description,
+      url: canonical,
+      type: 'website',
+      images: SITE_OG_IMAGES,
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title,
+      description,
+      images: SITE_TWITTER_IMAGES,
+    },
   };
 }
 
@@ -180,14 +196,29 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
     itemListElement: [
-      { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://stellarindex.io' },
-      { '@type': 'ListItem', position: 2, name: 'Lending', item: 'https://stellarindex.io/lending' },
-      { '@type': 'ListItem', position: 3, name: poolName, item: `https://stellarindex.io/lending/${pool}` },
+      {
+        '@type': 'ListItem',
+        position: 1,
+        name: 'Home',
+        item: 'https://stellarindex.io',
+      },
+      {
+        '@type': 'ListItem',
+        position: 2,
+        name: 'Lending',
+        item: 'https://stellarindex.io/lending',
+      },
+      {
+        '@type': 'ListItem',
+        position: 3,
+        name: poolName,
+        item: `https://stellarindex.io/lending/${pool}`,
+      },
     ],
   };
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 px-6 py-8">
+    <Container className="space-y-6 py-8">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: serializeJsonLd(breadcrumbLD) }}
@@ -202,26 +233,26 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
 
       <header className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded-sm bg-up-subtle px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wider text-up-strong">
+          <span className="bg-up-subtle text-up-strong rounded-sm px-1.5 py-0.5 text-[11px] font-medium tracking-wider uppercase">
             Blend
           </span>
           {label && (
-            <span className="rounded-sm bg-brand-100 px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wider text-brand-800">
+            <span className="bg-brand-100 text-brand-800 rounded-sm px-1.5 py-0.5 text-[11px] font-medium tracking-wider uppercase">
               {label.name}
             </span>
           )}
           {label?.deployedAt && (
-            <span className="rounded-sm bg-surface-subtle px-1.5 py-0.5 text-[11px] font-mono text-ink-body">
+            <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 font-mono text-[11px]">
               deployed {label.deployedAt}
             </span>
           )}
         </div>
-        <h1 className="break-all font-mono text-2xl tracking-tight">
+        <h1 className="font-mono text-2xl tracking-tight break-all">
           {pool.slice(0, 8)}…{pool.slice(-8)}
         </h1>
-        <p className="break-all font-mono text-xs text-ink-muted">{pool}</p>
+        <p className="text-ink-muted font-mono text-xs break-all">{pool}</p>
         {label?.initiator && (
-          <p className="font-mono text-[11px] text-ink-muted">
+          <p className="text-ink-muted font-mono text-[11px]">
             Deployed by{' '}
             <a
               href={`https://stellar.expert/explorer/public/account/${label.initiator}`}
@@ -235,7 +266,10 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
           </p>
         )}
         <div className="flex flex-wrap gap-3 pt-1 text-xs">
-          <Link href="/protocols/blend" className="text-brand-600 hover:underline">
+          <Link
+            href="/protocols/blend"
+            className="text-brand-600 hover:underline"
+          >
             Blend protocol →
           </Link>
           <Link
@@ -248,7 +282,7 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
             href={`https://stellar.expert/explorer/public/contract/${pool}`}
             target="_blank"
             rel="noreferrer noopener"
-            className="inline-flex items-center gap-1 text-brand-600 hover:underline"
+            className="text-brand-600 inline-flex items-center gap-1 hover:underline"
           >
             View on stellar.expert
             <ExternalLink className="h-3 w-3" />
@@ -257,7 +291,7 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
             href="https://blend.capital"
             target="_blank"
             rel="noreferrer noopener"
-            className="inline-flex items-center gap-1 text-ink-muted hover:underline"
+            className="text-ink-muted inline-flex items-center gap-1 hover:underline"
           >
             blend.capital
             <ExternalLink className="h-3 w-3" />
@@ -267,15 +301,19 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
 
       {label?.note && (
         <Panel title="About this contract">
-          <p className="text-sm leading-relaxed text-ink-body">
-            {label.note}
-          </p>
+          <p className="text-ink-body text-sm leading-relaxed">{label.note}</p>
         </Panel>
       )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <Stat label="Auctions (24h)" value={listed ? (data?.auctions_24h ?? 0) : null} />
-        <Stat label="Auctions (total)" value={listed ? (data?.auctions_total ?? 0) : null} />
+        <Stat
+          label="Auctions (24h)"
+          value={listed ? (data?.auctions_24h ?? 0) : null}
+        />
+        <Stat
+          label="Auctions (total)"
+          value={listed ? (data?.auctions_total ?? 0) : null}
+        />
         <Stat
           label="Unique users (30d)"
           value={listed ? (data?.unique_users_30d ?? 0) : null}
@@ -285,11 +323,11 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
       {!listed && (
         <p
           role="status"
-          className="rounded-md border border-line bg-surface-subtle px-3 py-2 text-xs text-ink-muted"
+          className="border-line bg-surface-subtle text-ink-muted rounded-md border px-3 py-2 text-xs"
         >
           Auction statistics are unavailable for this build — the lending
-          listing returned no rows, so the figures above are unknown rather
-          than zero. They refresh on the next build.
+          listing returned no rows, so the figures above are unknown rather than
+          zero. They refresh on the next build.
         </p>
       )}
 
@@ -298,7 +336,7 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
           <div className="space-y-1 text-sm">
             <div className="text-ink-body">
               Most recent auction event:{' '}
-              <span className="font-mono text-ink">
+              <span className="text-ink font-mono">
                 {data.last_seen ? new Date(data.last_seen).toUTCString() : '—'}
               </span>
             </div>
@@ -307,7 +345,7 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
       )}
 
       <PoolReserves pool={pool} />
-    </div>
+    </Container>
   );
 }
 
@@ -315,11 +353,11 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
 // em-dash; a real 0 still renders "0".
 function Stat({ label, value }: { label: string; value: number | null }) {
   return (
-    <div className="rounded-xl border border-line bg-surface p-4 shadow-sm">
-      <div className="text-[10px] uppercase tracking-wider text-ink-muted">
+    <div className="border-line bg-surface rounded-xl border p-4 shadow-sm">
+      <div className="text-ink-muted text-[10px] tracking-wider uppercase">
         {label}
       </div>
-      <div className="mt-1 font-mono text-2xl tabular-nums text-ink">
+      <div className="text-ink mt-1 font-mono text-2xl tabular-nums">
         {value == null ? (
           <span className="text-ink-faint">—</span>
         ) : (

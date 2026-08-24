@@ -2,9 +2,14 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { buildFetchData, requireRows } from '@/lib/buildFetch';
-import { formatCompact, formatPairPrice, formatSubunitPrice } from '@/lib/format';
+import {
+  formatCompact,
+  formatPairPrice,
+  formatSubunitPrice,
+} from '@/lib/format';
 import { serializeJsonLd, datasetJsonLd, ogImageFor } from '@/lib/seo';
 import { Container, Breadcrumbs } from '@/components/ui';
+import { EntityNotFoundShell } from '@/components/EntityNotFoundShell';
 import { Sparkline } from '@/components/primitives';
 import { Suspense } from 'react';
 
@@ -13,6 +18,7 @@ import { OrderBookPanel } from './OrderBookPanel';
 import { PairChart } from './PairChart';
 import { PairPathView } from './PairPathView';
 import { SourceBreakdown } from './SourceBreakdown';
+import { shortAssetText } from '@/lib/asset-label';
 
 type Params = Promise<{ pair: string }>;
 
@@ -156,8 +162,8 @@ export async function generateMetadata({
   const { pair } = await params;
   const decoded = decodePairSlug(pair);
   if (!decoded) return { title: 'Pair' };
-  const baseLabel = shortAsset(decoded.base);
-  const quoteLabel = shortAsset(decoded.quote);
+  const baseLabel = shortAssetText(decoded.base);
+  const quoteLabel = shortAssetText(decoded.quote);
   // Best-effort price fetch so the social-share preview reads as
   // a real ticker rather than boilerplate.
   const price = await fetchPrice(decoded.base, decoded.quote);
@@ -257,7 +263,10 @@ interface PoolRow {
   last_trade_at: string;
 }
 
-async function fetchSourceBreakdown(base: string, quote: string): Promise<PoolRow[]> {
+async function fetchSourceBreakdown(
+  base: string,
+  quote: string,
+): Promise<PoolRow[]> {
   // /v1/pools?base=&quote= returns one row per source contributing
   // to this exact pair. Naturally sorted by 24h USD volume (the
   // endpoint default), which is the right order for the panel.
@@ -294,8 +303,8 @@ export default async function PairPage({ params }: { params: Params }) {
     fetchSourceBreakdown(base, quote),
   ]);
 
-  const baseLabel = shortAsset(base);
-  const quoteLabel = shortAsset(quote);
+  const baseLabel = shortAssetText(base);
+  const quoteLabel = shortAssetText(quote);
   const priceNum = price?.price ? Number(price.price) : null;
 
   // Per-source breakdown: count trades by source in the history sample.
@@ -311,7 +320,7 @@ export default async function PairPage({ params }: { params: Params }) {
   const points = chart?.points ?? [];
   const change24h =
     points.length >= 2 && points[0]?.p && points[points.length - 1]?.p
-      ? ((Number(points[points.length - 1].p) / Number(points[0].p) - 1) * 100)
+      ? (Number(points[points.length - 1].p) / Number(points[0].p) - 1) * 100
       : null;
   // Render the rest of the fetched /v1/chart series instead of
   // discarding it (visuals survey bug #7): the hourly VWAP trend as a
@@ -356,7 +365,15 @@ export default async function PairPage({ params }: { params: Params }) {
     name: `${baseLabel}/${quoteLabel} price & volume — Stellar Index`,
     description: `Aggregated volume-weighted average price (VWAP), OHLC candles, and trade volume for the ${baseLabel}/${quoteLabel} market on Stellar, computed by Stellar Index across on-chain venues (SDEX, AMMs) and tracked exchanges.`,
     url: `https://stellarindex.io/markets/${encodeURIComponent(`${base}~${quote}`)}`,
-    keywords: [baseLabel, quoteLabel, `${baseLabel} price`, `${baseLabel} ${quoteLabel}`, 'Stellar', 'VWAP', 'OHLC'],
+    keywords: [
+      baseLabel,
+      quoteLabel,
+      `${baseLabel} price`,
+      `${baseLabel} ${quoteLabel}`,
+      'Stellar',
+      'VWAP',
+      'OHLC',
+    ],
     variableMeasured: ['VWAP', 'OHLC', 'trade volume', '24h price change'],
     contentUrl: `https://api.stellarindex.io/v1/chart?asset=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}&timeframe=24h&granularity=1h`,
   });
@@ -380,18 +397,17 @@ export default async function PairPage({ params }: { params: Params }) {
         />
         <div className="flex flex-wrap items-baseline gap-3">
           <h1 className="text-3xl font-semibold tracking-tight">
-            <AssetBadge canonical={base} /> /{' '}
-            <AssetBadge canonical={quote} />
+            <AssetBadge canonical={base} /> / <AssetBadge canonical={quote} />
           </h1>
           {price?.price_type && (
-            <span className="rounded-sm bg-surface-subtle px-2 py-0.5 font-mono text-xs uppercase tracking-wider text-ink-body">
+            <span className="bg-surface-subtle text-ink-body rounded-sm px-2 py-0.5 font-mono text-xs tracking-wider uppercase">
               {price.price_type}
             </span>
           )}
         </div>
-        <p className="max-w-3xl text-sm text-ink-body">
-          Live VWAP, hourly chart, and the last 50 trades on this pair.
-          Pair source: <code className="font-mono">{base}</code> /{' '}
+        <p className="text-ink-body max-w-3xl text-sm">
+          Live VWAP, hourly chart, and the last 50 trades on this pair. Pair
+          source: <code className="font-mono">{base}</code> /{' '}
           <code className="font-mono">{quote}</code>.
         </p>
       </header>
@@ -409,7 +425,7 @@ export default async function PairPage({ params }: { params: Params }) {
               initialPrice={priceNum}
               initialObservedAt={price?.observed_at ?? null}
               quoteIsUsd={isUsdQuote(quote)}
-              quoteSuffix={shortAsset(quote)}
+              quoteSuffix={shortAssetText(quote)}
             />
             {change24h != null && Number.isFinite(change24h) && (
               <ChangeBadge pct={change24h} window="24h" />
@@ -427,13 +443,16 @@ export default async function PairPage({ params }: { params: Params }) {
 
         <SourceBreakdown base={base} quote={quote} />
 
-        <Panel title="Recent activity" subtitle={`last ${history.length} trades`}>
+        <Panel
+          title="Recent activity"
+          subtitle={`last ${history.length} trades`}
+        >
           <dl className="grid grid-cols-2 gap-2 text-sm">
-            <Stat label="Trades in sample" value={history.length.toLocaleString('en-US')} />
             <Stat
-              label="Sources in sample"
-              value={perSource.size.toString()}
+              label="Trades in sample"
+              value={history.length.toLocaleString('en-US')}
             />
+            <Stat label="Sources in sample" value={perSource.size.toString()} />
             {points[points.length - 1]?.v_usd && (
               <Stat
                 label="Last hour USD vol"
@@ -445,8 +464,8 @@ export default async function PairPage({ params }: { params: Params }) {
             )}
           </dl>
           {trend24h.length >= 2 && (
-            <div className="mt-3 border-t border-line-subtle pt-3">
-              <div className="mb-1 text-[11px] uppercase tracking-wider text-ink-muted">
+            <div className="border-line-subtle mt-3 border-t pt-3">
+              <div className="text-ink-muted mb-1 text-[11px] tracking-wider uppercase">
                 24h hourly VWAP
               </div>
               <Sparkline values={trend24h} width={220} height={36} />
@@ -469,7 +488,7 @@ export default async function PairPage({ params }: { params: Params }) {
                 QUOTE-asset units — the old /1e8 understated it 10× and
                 the $ prefix mislabeled non-USD quotes. */}
             <Stat
-              label={`Quote vol (${shortAsset(quote)})`}
+              label={`Quote vol (${shortAssetText(quote)})`}
               value={formatQuoteAmount(Number(ohlc.quote_volume) / 1e7, quote)}
             />
             <Stat
@@ -491,11 +510,14 @@ export default async function PairPage({ params }: { params: Params }) {
       <OrderBookPanel base={base} quote={quote} />
 
       {history.length > 0 ? (
-        <Panel title="Recent trades" subtitle={`${history.length} most recent across all sources`}>
+        <Panel
+          title="Recent trades"
+          subtitle={`${history.length} most recent across all sources`}
+        >
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-line text-sm">
+            <table className="divide-line min-w-full divide-y text-sm">
               <thead>
-                <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
+                <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
                   <th className="px-3 py-2 font-medium">Time</th>
                   <th className="px-3 py-2 font-medium">Source</th>
                   <th className="px-3 py-2 text-right font-medium">Price</th>
@@ -507,13 +529,13 @@ export default async function PairPage({ params }: { params: Params }) {
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-line-subtle font-mono text-xs">
+              <tbody className="divide-line-subtle divide-y font-mono text-xs">
                 {history.map((t, i) => (
                   <tr
                     key={`${t.tx_hash ?? ''}|${t.op_index ?? i}|${t.ts}`}
                     className="hover:bg-surface-muted"
                   >
-                    <td className="px-3 py-2 tabular-nums text-ink-muted">
+                    <td className="text-ink-muted px-3 py-2 tabular-nums">
                       {t.tx_hash ? (
                         <a
                           href={`https://stellar.expert/explorer/public/tx/${t.tx_hash}`}
@@ -528,7 +550,7 @@ export default async function PairPage({ params }: { params: Params }) {
                         formatTimestamp(t.ts)
                       )}
                     </td>
-                    <td className="px-3 py-2 uppercase tracking-wider">
+                    <td className="px-3 py-2 tracking-wider uppercase">
                       <Link
                         href={`/sources/${t.source}`}
                         className="hover:text-brand-600 hover:underline"
@@ -545,11 +567,25 @@ export default async function PairPage({ params }: { params: Params }) {
                         contract's declared decimals() for Soroban tokens),
                         falling back to 7 for native/classic/fiat where the
                         field is omitted. */}
-                    <td className="px-3 py-2 text-right tabular-nums text-ink-muted">
-                      {t.base_amount ? (Number(t.base_amount) / 10 ** (t.base_decimals ?? 7)).toLocaleString(undefined, { maximumFractionDigits: 4 }) : '—'}
+                    <td className="text-ink-muted px-3 py-2 text-right tabular-nums">
+                      {t.base_amount
+                        ? (
+                            Number(t.base_amount) /
+                            10 ** (t.base_decimals ?? 7)
+                          ).toLocaleString('en-US', {
+                            maximumFractionDigits: 4,
+                          })
+                        : '—'}
                     </td>
-                    <td className="px-3 py-2 text-right tabular-nums text-ink-muted">
-                      {t.quote_amount ? (Number(t.quote_amount) / 10 ** (t.quote_decimals ?? 7)).toLocaleString(undefined, { maximumFractionDigits: 4 }) : '—'}
+                    <td className="text-ink-muted px-3 py-2 text-right tabular-nums">
+                      {t.quote_amount
+                        ? (
+                            Number(t.quote_amount) /
+                            10 ** (t.quote_decimals ?? 7)
+                          ).toLocaleString('en-US', {
+                            maximumFractionDigits: 4,
+                          })
+                        : '—'}
                     </td>
                   </tr>
                 ))}
@@ -559,7 +595,7 @@ export default async function PairPage({ params }: { params: Params }) {
         </Panel>
       ) : (
         <Panel title="Recent trades">
-          <p className="text-sm text-ink-muted">
+          <p className="text-ink-muted text-sm">
             No trades returned for this pair in the last sample.
           </p>
         </Panel>
@@ -586,34 +622,37 @@ function SourceBreakdownPanel({ rows }: { rows: PoolRow[] }) {
       <ul className="space-y-2">
         {rows.map((r) => {
           const v = r.volume_24h_usd ? Number(r.volume_24h_usd) : null;
-          const pct = totalUSD > 0 && v != null && Number.isFinite(v) ? (v / totalUSD) * 100 : null;
+          const pct =
+            totalUSD > 0 && v != null && Number.isFinite(v)
+              ? (v / totalUSD) * 100
+              : null;
           const lp = r.last_price ? Number(r.last_price) : null;
           const lpFixed = lp == null ? null : formatPairPrice(lp);
           return (
             <li key={r.source} className="flex items-center gap-3 text-sm">
               <Link
                 href={`/sources/${r.source}`}
-                className="w-32 font-mono text-xs uppercase tracking-wider text-ink-body hover:text-brand-600"
+                className="text-ink-body hover:text-brand-600 w-32 font-mono text-xs tracking-wider uppercase"
               >
                 {r.source}
               </Link>
               <div className="flex-1">
-                <div className="h-2 overflow-hidden rounded-sm bg-surface-subtle">
+                <div className="bg-surface-subtle h-2 overflow-hidden rounded-sm">
                   <div
-                    className="h-full bg-brand-500"
+                    className="bg-brand-500 h-full"
                     style={{ width: `${pct ?? 0}%` }}
                   />
                 </div>
               </div>
-              <span className="w-24 text-right font-mono tabular-nums text-xs text-ink-muted">
+              <span className="text-ink-muted w-24 text-right font-mono text-xs tabular-nums">
                 {lpFixed ?? '—'}
               </span>
-              <span className="w-28 text-right font-mono tabular-nums text-xs text-ink-body">
+              <span className="text-ink-body w-28 text-right font-mono text-xs tabular-nums">
                 {v != null && Number.isFinite(v) && v > 0
                   ? `$${formatCompact(v)}`
                   : '—'}
               </span>
-              <span className="w-12 text-right font-mono tabular-nums text-xs text-ink-muted">
+              <span className="text-ink-muted w-12 text-right font-mono text-xs tabular-nums">
                 {pct != null ? `${pct.toFixed(0)}%` : '—'}
               </span>
             </li>
@@ -626,19 +665,17 @@ function SourceBreakdownPanel({ rows }: { rows: PoolRow[] }) {
 
 function PairNotFound() {
   return (
-    <div className="mx-auto max-w-3xl px-6 py-16 text-center">
-      <h1 className="text-2xl font-semibold">Pair not found</h1>
-      <p className="mt-2 text-sm text-ink-muted">
-        The slug must be in the form{' '}
-        <code className="font-mono">{`base${PAIR_SEPARATOR}quote`}</code>.
-      </p>
-      <Link
-        href="/markets"
-        className="mt-6 inline-flex items-center gap-1 text-sm text-brand-600 hover:underline"
-      >
-        Browse all markets →
-      </Link>
-    </div>
+    <EntityNotFoundShell
+      title="Pair not found"
+      description={
+        <>
+          The slug must be in the form{' '}
+          <code className="font-mono">{`base${PAIR_SEPARATOR}quote`}</code>.
+        </>
+      }
+      backHref="/markets"
+      backLabel="Browse all markets"
+    />
   );
 }
 
@@ -655,15 +692,13 @@ function Panel({
 }) {
   return (
     <section
-      className={`rounded-lg border border-line bg-surface p-4 ${className ?? ''}`}
+      className={`border-line bg-surface rounded-lg border p-4 ${className ?? ''}`}
     >
       <header className="mb-3 flex items-baseline justify-between">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-ink-body">
+        <h2 className="text-ink-body text-sm font-semibold tracking-wider uppercase">
           {title}
         </h2>
-        {subtitle && (
-          <span className="text-xs text-ink-faint">{subtitle}</span>
-        )}
+        {subtitle && <span className="text-ink-faint text-xs">{subtitle}</span>}
       </header>
       {children}
     </section>
@@ -673,7 +708,7 @@ function Panel({
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <dt className="text-[11px] uppercase tracking-wider text-ink-muted">
+      <dt className="text-ink-muted text-[11px] tracking-wider uppercase">
         {label}
       </dt>
       <dd className="mt-1 font-mono text-sm tabular-nums">{value}</dd>
@@ -721,20 +756,11 @@ function AssetBadge({ canonical }: { canonical: string }) {
   return (
     <Link
       href={`/assets/${encodeURIComponent(slug)}`}
-      className="transition-colors hover:text-brand-600"
+      className="hover:text-brand-600 transition-colors"
     >
       {label}
     </Link>
   );
-}
-
-function shortAsset(canonical: string): string {
-  if (canonical === 'native') return 'XLM';
-  if (canonical.startsWith('fiat:')) return canonical.replace('fiat:', '');
-  if (canonical.startsWith('crypto:')) return canonical.replace('crypto:', '');
-  const dashIx = canonical.indexOf('-');
-  if (dashIx === -1) return canonical;
-  return canonical.slice(0, dashIx);
 }
 
 function ChangeBadge({ pct, window }: { pct: number; window: string }) {
@@ -751,26 +777,33 @@ function ChangeBadge({ pct, window }: { pct: number; window: string }) {
     >
       {sign}
       {pct.toFixed(2)}%
-      <span className="ml-1 text-[10px] uppercase tracking-wider opacity-70">
+      <span className="ml-1 text-[10px] tracking-wider uppercase opacity-70">
         {window}
       </span>
     </span>
   );
 }
 
-
 // AM-06 (site audit): prices on this page are quote-per-base — a "$"
 // prefix is only honest when the quote is USD or USD-pegged. Other
 // quotes (native, AQUA, EURC…) get the quote code as a suffix.
 function isUsdQuote(quote: string): boolean {
-  return quote === 'fiat:USD' || /^USDC[:-]/.test(quote) || /^USDT[:-]/.test(quote);
+  return (
+    quote === 'fiat:USD' || /^USDC[:-]/.test(quote) || /^USDT[:-]/.test(quote)
+  );
 }
 
 function formatQuoteAmount(n: number, quote: string): string {
   const num =
-    n >= 1 ? n.toFixed(n >= 100 ? 2 : 4) : n >= 0.001 ? n.toFixed(6) : n > 0 ? formatSubunitPrice(n) : '—';
+    n >= 1
+      ? n.toFixed(n >= 100 ? 2 : 4)
+      : n >= 0.001
+        ? n.toFixed(6)
+        : n > 0
+          ? formatSubunitPrice(n)
+          : '—';
   if (num === '—') return num;
-  return isUsdQuote(quote) ? `$${num}` : `${num} ${shortAsset(quote)}`;
+  return isUsdQuote(quote) ? `$${num}` : `${num} ${shortAssetText(quote)}`;
 }
 
 function formatUsd(n: number): string {

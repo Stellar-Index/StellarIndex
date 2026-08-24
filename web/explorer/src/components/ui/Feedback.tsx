@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { ComponentProps, ReactNode } from 'react';
 
 import { cn } from '@/lib/cn';
 
@@ -19,18 +19,18 @@ export function EmptyState({
   return (
     <div
       className={cn(
-        'flex flex-col items-center justify-center rounded-card border border-dashed border-line-strong bg-surface-muted px-6 py-12 text-center',
+        'rounded-card border-line-strong bg-surface-muted flex flex-col items-center justify-center border border-dashed px-6 py-12 text-center',
         className,
       )}
     >
       {icon && (
-        <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-surface text-ink-faint ring-1 ring-line">
+        <div className="bg-surface text-ink-faint ring-line mb-3 flex h-11 w-11 items-center justify-center rounded-full ring-1">
           {icon}
         </div>
       )}
-      <h3 className="text-sm font-semibold text-ink">{title}</h3>
+      <h3 className="text-ink text-sm font-semibold">{title}</h3>
       {description && (
-        <p className="mt-1 max-w-sm text-sm text-ink-muted">{description}</p>
+        <p className="text-ink-muted mt-1 max-w-sm text-sm">{description}</p>
       )}
       {action && <div className="mt-4">{action}</div>}
     </div>
@@ -38,8 +38,13 @@ export function EmptyState({
 }
 
 /** Skeleton — a pulsing placeholder block for loading states. */
-export function Skeleton({ className }: { className?: string }) {
-  return <div className={cn('animate-pulse rounded-md bg-surface-subtle', className)} />;
+export function Skeleton({ className, ...props }: ComponentProps<'div'>) {
+  return (
+    <div
+      className={cn('bg-surface-subtle animate-pulse rounded-md', className)}
+      {...props}
+    />
+  );
 }
 
 /** Inline alert / callout for info, warnings, and errors. */

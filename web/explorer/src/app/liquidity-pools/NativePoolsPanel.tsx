@@ -12,6 +12,7 @@ import {
   assetLabel,
   displayUnits,
 } from './PoolDepthDetail';
+import { Button } from '@/components/ui';
 
 interface LiquidityPoolRow extends PoolDepthRow {
   pool_hex: string;
@@ -25,7 +26,9 @@ function midPriceLabel(mid: string | null): string {
   if (!mid) return '—';
   const n = Number(mid);
   if (!Number.isFinite(n) || n === 0) return mid;
-  return new Intl.NumberFormat('en-US', { maximumSignificantDigits: 6 }).format(n);
+  return new Intl.NumberFormat('en-US', { maximumSignificantDigits: 6 }).format(
+    n,
+  );
 }
 
 /**
@@ -50,7 +53,9 @@ export function NativePoolsPanel() {
   const q = useQuery<LiquidityPoolRow[]>({
     queryKey: ['/v1/liquidity-pools', lookup],
     queryFn: async () => {
-      const path = lookup ? `/v1/liquidity-pools?pool=${encodeURIComponent(lookup)}` : '/v1/liquidity-pools';
+      const path = lookup
+        ? `/v1/liquidity-pools?pool=${encodeURIComponent(lookup)}`
+        : '/v1/liquidity-pools';
       const env = await apiGet<{ data: LiquidityPoolRow[] }>(path);
       return env.data ?? [];
     },
@@ -79,19 +84,16 @@ export function NativePoolsPanel() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Look up a pool by id (L… or 64-char hex)"
-          className="min-w-0 flex-1 rounded-md border border-line bg-surface px-3 py-1.5 font-mono text-xs"
+          className="border-line bg-surface min-w-0 flex-1 rounded-md border px-3 py-1.5 font-mono text-xs"
           aria-label="Native liquidity-pool id"
         />
-        <button
-          type="submit"
-          className="rounded-md border border-line px-3 py-1.5 text-sm font-medium hover:bg-surface-subtle"
-        >
+        <Button type="submit" variant="secondary" size="sm">
           Look up
-        </button>
+        </Button>
         {lookup && (
           <button
             type="button"
-            className="rounded-md px-3 py-1.5 text-sm text-ink-muted hover:text-brand-600"
+            className="text-ink-muted hover:text-brand-600 rounded-md px-3 py-1.5 text-sm"
             onClick={() => {
               setInput('');
               setLookup('');
@@ -103,28 +105,32 @@ export function NativePoolsPanel() {
         )}
       </form>
 
-      {q.isLoading && <p className="text-sm text-ink-muted">Loading reserves…</p>}
+      {q.isLoading && (
+        <p className="text-ink-muted text-sm">Loading reserves…</p>
+      )}
       {q.isError && (
-        <p className="text-sm text-ink-muted">
+        <p className="text-ink-muted text-sm">
           {lookup
             ? 'No native pool found for that id.'
             : 'Reserves unavailable right now.'}
         </p>
       )}
       {!q.isLoading && !q.isError && rows.length === 0 && (
-        <p className="text-sm text-ink-muted">No captured native pool state.</p>
+        <p className="text-ink-muted text-sm">No captured native pool state.</p>
       )}
       {rows.length > 0 && (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-line text-left text-xs uppercase tracking-wider text-ink-muted">
+              <tr className="border-line text-ink-muted border-b text-left text-xs tracking-wider uppercase">
                 <th className="py-2 pr-3 font-medium">Pool</th>
                 <th className="py-2 pr-3 text-right font-medium">Reserve A</th>
                 <th className="py-2 pr-3 text-right font-medium">Reserve B</th>
                 <th className="py-2 pr-3 text-right font-medium">Mid price</th>
                 <th className="py-2 pr-3 text-right font-medium">LPs</th>
-                <th className="py-2 pr-3 text-right font-medium">As of ledger</th>
+                <th className="py-2 pr-3 text-right font-medium">
+                  As of ledger
+                </th>
                 <th className="py-2 font-medium" aria-hidden />
               </tr>
             </thead>
@@ -136,41 +142,51 @@ export function NativePoolsPanel() {
                 return (
                   <Fragment key={row.pool}>
                     <tr
-                      className="cursor-pointer border-b border-line/60 hover:bg-surface-subtle"
+                      className="border-line/60 hover:bg-surface-subtle cursor-pointer border-b"
                       onClick={() => setExpanded(open ? null : row.pool)}
                     >
                       <td className="py-2 pr-3">
-                        <span className="font-medium">{a} / {b}</span>{' '}
+                        <span className="font-medium">
+                          {a} / {b}
+                        </span>{' '}
                         <span
-                          className="font-mono text-xs text-ink-muted"
+                          className="text-ink-muted font-mono text-xs"
                           title={row.pool}
                         >
                           {row.pool.slice(0, 4)}…{row.pool.slice(-4)}
                         </span>
                       </td>
                       <td className="py-2 pr-3 text-right tabular-nums">
-                        {displayUnits(row.reserve_a.reserve, row.reserve_a.decimals)} {a}
+                        {displayUnits(
+                          row.reserve_a.reserve,
+                          row.reserve_a.decimals,
+                        )}{' '}
+                        {a}
                       </td>
                       <td className="py-2 pr-3 text-right tabular-nums">
-                        {displayUnits(row.reserve_b.reserve, row.reserve_b.decimals)} {b}
+                        {displayUnits(
+                          row.reserve_b.reserve,
+                          row.reserve_b.decimals,
+                        )}{' '}
+                        {b}
                       </td>
                       <td className="py-2 pr-3 text-right tabular-nums">
                         {row.mid_price_a_in_b
                           ? `${midPriceLabel(row.mid_price_a_in_b)} ${b}/${a}`
                           : '—'}
                       </td>
-                      <td className="py-2 pr-3 text-right tabular-nums text-ink-muted">
+                      <td className="text-ink-muted py-2 pr-3 text-right tabular-nums">
                         {row.trustlines.toLocaleString('en-US')}
                       </td>
-                      <td className="py-2 pr-3 text-right tabular-nums text-ink-muted">
+                      <td className="text-ink-muted py-2 pr-3 text-right tabular-nums">
                         {row.as_of_ledger.toLocaleString('en-US')}
                       </td>
-                      <td className="py-2 text-right text-xs text-ink-muted">
+                      <td className="text-ink-muted py-2 text-right text-xs">
                         {open ? 'Hide depth ▴' : 'Depth ▾'}
                       </td>
                     </tr>
                     {open && (
-                      <tr className="border-b border-line/60 bg-surface-subtle/50">
+                      <tr className="border-line/60 bg-surface-subtle/50 border-b">
                         <td colSpan={7} className="px-3 py-3">
                           <PoolDepthDetail row={row} />
                         </td>
