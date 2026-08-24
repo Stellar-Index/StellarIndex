@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -157,6 +158,110 @@ func TestMarkets_ReturnsPairsWithCursor(t *testing.T) {
 	}
 	if env.Pagination.Next != "next-opaque" {
 		t.Errorf("next cursor = %q, want next-opaque", env.Pagination.Next)
+	}
+}
+
+// swrStaleMarketsUpstream is a MarketsReader whose DistinctPairsExt
+// succeeds on the cold fill then errors once failNow is set — so, wrapped
+// in the real CachedMarketsReader, it drives the SWR stale-serve path (an
+// expired entry served while its background refresh keeps failing).
+// Embeds *stubMarketsReader for the rest of the interface. Atomics keep
+// `go test -race` clean under the concurrent background refresh.
+type swrStaleMarketsUpstream struct {
+	*stubMarketsReader
+	calls   atomic.Int64
+	failNow atomic.Bool
+}
+
+func (u *swrStaleMarketsUpstream) DistinctPairsExt(ctx context.Context, cursor string, limit int, order timescale.MarketsOrder) ([]v1.Market, string, error) {
+	u.calls.Add(1)
+	if u.failNow.Load() {
+		return nil, "", errors.New("swr markets refresh boom")
+	}
+	return u.stubMarketsReader.DistinctPairsExt(ctx, cursor, limit, order)
+}
+
+// TestMarkets_SWRStaleServeStampsHonestFlags is the W8-reconciliation
+// regression (#32 item 1a): /v1/markets served from the cache's
+// stale-while-revalidate path — an expired entry served while its
+// background refresh keeps failing — MUST report flags.stale=true and
+// as_of = the served rows' ACTUAL observation time, never stale:false /
+// as_of=now over arbitrarily-old rows. A fresh serve stays stale:false
+// with a recent as_of. Mirrors the /v1/contracts REC-05 stale-serve test
+// (commit bb64ff3c).
+//
+// Red against pre-fix code: handleMarkets built Envelope{Flags:Flags{}}
+// and writeEnvelope stamped as_of=now, so the stale serve reported
+// stale:false and an as_of that did NOT equal the old fill time.
+func TestMarkets_SWRStaleServeStampsHonestFlags(t *testing.T) {
+	const ttl = 40 * time.Millisecond
+	up := &swrStaleMarketsUpstream{
+		stubMarketsReader: &stubMarketsReader{
+			pairs: []v1.Market{{Base: "native", Quote: "fiat:USD", TradeCount24h: 7}},
+		},
+	}
+	cache := v1.NewCachedMarketsReader(up, ttl)
+	srv := v1.New(v1.Options{Markets: cache})
+	ts := httpTestServer(t, srv)
+
+	type envelope struct {
+		Data  []v1.Market `json:"data"`
+		AsOf  time.Time   `json:"as_of"`
+		Flags struct {
+			Stale bool `json:"stale"`
+		} `json:"flags"`
+	}
+
+	// (a) Fresh serve — cold fill. stale:false, as_of ≈ now (the fill
+	// time), data present.
+	coldStart := time.Now()
+	var fresh envelope
+	mustDecode(t, mustGet(t, ts.URL+"/v1/markets"), &fresh)
+	if len(fresh.Data) != 1 {
+		t.Fatalf("fresh serve: got %d rows, want 1", len(fresh.Data))
+	}
+	if fresh.Flags.Stale {
+		t.Errorf("fresh serve: flags.stale = true, want false")
+	}
+	if fresh.AsOf.Before(coldStart) || fresh.AsOf.After(time.Now()) {
+		t.Errorf("fresh serve: as_of = %v, want within [%v, now] (the fill time)", fresh.AsOf, coldStart)
+	}
+
+	// Arm refresh failure, then let the entry expire so the next request
+	// takes the SWR stale-serve path with a failing background refresh.
+	up.failNow.Store(true)
+	time.Sleep(2 * ttl)
+
+	// (b) Stale serve. stale:true, as_of = the OLD fill time (equal to
+	// the fresh serve's as_of), NOT now.
+	beforeStale := time.Now()
+	var stale envelope
+	mustDecode(t, mustGet(t, ts.URL+"/v1/markets"), &stale)
+	if len(stale.Data) != 1 {
+		t.Fatalf("stale serve: got %d rows, want the old rows served (1)", len(stale.Data))
+	}
+	if !stale.Flags.Stale {
+		t.Errorf("stale serve: flags.stale = false, want true (expired entry served while refresh fails)")
+	}
+	if !stale.AsOf.Equal(fresh.AsOf) {
+		t.Errorf("stale serve: as_of = %v, want the OLD fill time %v (the served data's real observation time)", stale.AsOf, fresh.AsOf)
+	}
+	if !stale.AsOf.Before(beforeStale) {
+		t.Errorf("stale serve: as_of = %v not before request time %v — as_of must be the old fill time, not now()", stale.AsOf, beforeStale)
+	}
+
+	// Confirm the SWR path (not a fresh hit) actually ran: the failing
+	// background refresh was attempted.
+	refreshed := false
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
+		if up.calls.Load() >= 2 {
+			refreshed = true
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !refreshed {
+		t.Fatalf("expected a background refresh attempt (calls>=2); got %d", up.calls.Load())
 	}
 }
 

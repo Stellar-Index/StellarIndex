@@ -101,6 +101,25 @@ type MarketsReader interface {
 	FirstTradeBatch(ctx context.Context, pairs [][2]string) (map[string]time.Time, error)
 }
 
+// marketsStaleReader is the optional capability a MarketsReader exposes
+// when it can report each served row-set's observed-at timestamp and
+// staleness — the TTL cache (CachedMarketsReader) implements it; the raw
+// store and test stubs do not. When the wired reader implements it,
+// handleMarkets stamps an honest as_of (the served data's real
+// observation time) and flags.stale, instead of the cache's SWR
+// stale-serve path silently asserting stale:false / as_of=now over
+// arbitrarily-old rows while its background refresh keeps failing (W8
+// reconciliation; mirrors the /v1/contracts REC-05 fix — commit bb64ff3c).
+//
+// The *At methods parallel MarketsReader's shape with two extra returns:
+// observedAt (the served rows' fetch time; zero → as_of=now, not stale)
+// and stale (the served bytes are past the cache TTL).
+type marketsStaleReader interface {
+	DistinctPairsExtAt(ctx context.Context, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, time.Time, bool, error)
+	SourceMarketsAt(ctx context.Context, source, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, time.Time, bool, error)
+	AssetMarketsAt(ctx context.Context, asset, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, time.Time, bool, error)
+}
+
 // Pool is the wire shape for /v1/pools entries. Same fields as
 // Market but with a `source` dimension so the same physical pair
 // traded on two DEXes shows as two rows.
@@ -517,11 +536,19 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		writeJSON(w, []Market{}, Flags{})
 		return
 	}
+	// staleReader is the wired reader when it can surface each served
+	// row-set's observed-at + staleness (the TTL cache does; the raw
+	// store does not). When present we stamp an honest as_of + stale;
+	// when absent the read is live-fresh, so as_of=now / stale=false is
+	// truthful and unchanged. See marketsStaleReader.
+	staleReader, staleAware := reader.(marketsStaleReader)
 
 	var (
-		rows []Market
-		next string
-		err  error
+		rows       []Market
+		next       string
+		observedAt time.Time
+		stale      bool
+		err        error
 	)
 	// Hard 8s ceiling — DistinctPairsExt + SourceMarkets scan the
 	// trades hypertable's 24h window and can take 10s+ on a
@@ -534,7 +561,11 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	defer mCancel()
 	switch {
 	case source != "":
-		rows, next, err = reader.SourceMarkets(mCtx, source, cursor, limit, order)
+		if staleAware {
+			rows, next, observedAt, stale, err = staleReader.SourceMarketsAt(mCtx, source, cursor, limit, order)
+		} else {
+			rows, next, err = reader.SourceMarkets(mCtx, source, cursor, limit, order)
+		}
 	case len(expandedAssets) > 0:
 		// Catalogue-slug expansion path. Fan out one AssetMarkets
 		// query per expanded asset_id, merge results in-memory,
@@ -545,12 +576,20 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		// today). The cross-chain Markets tab uses this as a
 		// summary surface — operators wanting the full per-asset_id
 		// stream pass the canonical asset_id directly.
-		rows, err = s.fanOutAssetMarkets(mCtx, reader, expandedAssets, limit, order)
+		rows, observedAt, stale, err = s.fanOutAssetMarkets(mCtx, reader, expandedAssets, limit, order)
 		next = ""
 	case asset != "":
-		rows, next, err = reader.AssetMarkets(mCtx, asset, cursor, limit, order)
+		if staleAware {
+			rows, next, observedAt, stale, err = staleReader.AssetMarketsAt(mCtx, asset, cursor, limit, order)
+		} else {
+			rows, next, err = reader.AssetMarkets(mCtx, asset, cursor, limit, order)
+		}
 	default:
-		rows, next, err = reader.DistinctPairsExt(mCtx, cursor, limit, order)
+		if staleAware {
+			rows, next, observedAt, stale, err = staleReader.DistinctPairsExtAt(mCtx, cursor, limit, order)
+		} else {
+			rows, next, err = reader.DistinctPairsExt(mCtx, cursor, limit, order)
+		}
 	}
 	if err != nil {
 		if clientAborted(r, err) {
@@ -646,9 +685,18 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		}
 	}
 
+	// Honest freshness: when the read came from the cache's SWR
+	// stale-serve path (stale=true) we stamp flags.stale and the served
+	// data's ACTUAL observation time — never now() over rows a failing
+	// refresh has let age past the TTL. A fresh serve stamps its recent
+	// observed-at (stale=false); an uncached/live read leaves observedAt
+	// zero and writeEnvelope defaults as_of to now (W8 reconciliation).
 	env := Envelope{
 		Data:  rows,
-		Flags: Flags{},
+		Flags: Flags{Stale: stale},
+	}
+	if !observedAt.IsZero() {
+		env.AsOf = observedAt.UTC()
 	}
 	if next != "" {
 		env.Pagination = &Pagination{Next: next}
@@ -712,6 +760,20 @@ func (s *Server) expandSlugToAssetIDs(slug string) []string {
 	return out
 }
 
+// assetMarketsLeg fetches one expanded asset_id's markets for the fan-out,
+// returning its rows plus the cache-staleness meta (observedAt/stale) when
+// the reader is staleness-aware, else zero/false (an uncached read is
+// live-fresh). Keeps fanOutAssetMarkets' merge loop free of the
+// capability branch.
+func assetMarketsLeg(ctx context.Context, reader MarketsReader, asset string, limit int, order timescale.MarketsOrder) ([]Market, time.Time, bool, error) {
+	if sr, ok := reader.(marketsStaleReader); ok {
+		rows, _, observedAt, stale, err := sr.AssetMarketsAt(ctx, asset, "", limit, order)
+		return rows, observedAt, stale, err
+	}
+	rows, _, err := reader.AssetMarkets(ctx, asset, "", limit, order)
+	return rows, time.Time{}, false, err
+}
+
 // fanOutAssetMarkets calls AssetMarkets in parallel for each
 // expanded asset_id, merges + dedupes the results, sorts by
 // 24h trade_count desc, caps at `limit`.
@@ -724,26 +786,44 @@ func (s *Server) expandSlugToAssetIDs(slug string) []string {
 // No pagination — fan-out cursor protocols across heterogeneous
 // underlying streams aren't well-defined. Callers wanting the
 // full stream pass the canonical asset_id directly.
-func (s *Server) fanOutAssetMarkets(ctx context.Context, reader MarketsReader, assets []string, limit int, order timescale.MarketsOrder) ([]Market, error) {
+//
+// Freshness across the merged fan-out is conservative: observedAt is the
+// OLDEST contributing read (the merged view is only as fresh as its
+// stalest leg) and stale is the OR of the legs (any stale leg taints the
+// composite). Both are zero/false when the reader can't report them (raw
+// store / test stub), so the handler falls back to as_of=now honestly.
+func (s *Server) fanOutAssetMarkets(ctx context.Context, reader MarketsReader, assets []string, limit int, order timescale.MarketsOrder) ([]Market, time.Time, bool, error) {
 	type result struct {
-		rows []Market
-		err  error
+		rows       []Market
+		observedAt time.Time
+		stale      bool
+		err        error
 	}
 	results := make([]result, len(assets))
 	forEachBounded(len(assets), readFanoutConcurrency, func(i int) {
-		rows, _, err := reader.AssetMarkets(ctx, assets[i], "", limit, order)
-		results[i] = result{rows: rows, err: err} // distinct indices — no mutex needed
+		rows, observedAt, stale, err := assetMarketsLeg(ctx, reader, assets[i], limit, order)
+		results[i] = result{rows: rows, observedAt: observedAt, stale: stale, err: err} // distinct indices — no mutex needed
 	})
 	// Surface the first error if any. We don't fail-fast on partial
 	// success because a single asset_id with no recent trades is
 	// not an error condition — it just contributes zero rows.
 	var firstErr error
+	var observedAt time.Time
+	var stale bool
 	type pairKey struct{ base, quote string }
 	seen := make(map[pairKey]struct{})
 	merged := make([]Market, 0, limit)
 	for _, r := range results {
 		if r.err != nil && firstErr == nil {
 			firstErr = r.err
+		}
+		if r.err == nil {
+			// Oldest observed-at across the contributing legs; any
+			// stale leg makes the composite stale.
+			if !r.observedAt.IsZero() && (observedAt.IsZero() || r.observedAt.Before(observedAt)) {
+				observedAt = r.observedAt
+			}
+			stale = stale || r.stale
 		}
 		for _, m := range r.rows {
 			k := pairKey{base: m.Base, quote: m.Quote}
@@ -755,7 +835,7 @@ func (s *Server) fanOutAssetMarkets(ctx context.Context, reader MarketsReader, a
 		}
 	}
 	if firstErr != nil && len(merged) == 0 {
-		return nil, firstErr
+		return nil, time.Time{}, false, firstErr
 	}
 	// Sort by trade_count_24h desc (proxy for "interesting market").
 	sort.SliceStable(merged, func(i, j int) bool {
@@ -764,7 +844,7 @@ func (s *Server) fanOutAssetMarkets(ctx context.Context, reader MarketsReader, a
 	if len(merged) > limit {
 		merged = merged[:limit]
 	}
-	return merged, nil
+	return merged, observedAt, stale, nil
 }
 
 // adjustListingPrice applies the dex-nonstandard-decimals forward
