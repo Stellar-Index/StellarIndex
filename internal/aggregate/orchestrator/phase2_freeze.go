@@ -145,7 +145,14 @@ const releaseAgreementMaxPct = 5.0
 // releaseCorroborated reports whether a corroborating lens produced a
 // reading THIS bucket that agrees with the bucket's own fresh price:
 //   - the triangulation composite (computed against the fresh VWAP by
-//     construction — triangulationDivergencePct takes it as input), or
+//     construction — triangulationDivergencePct takes it as input).
+//     NOTE: in the current wiring this leg cannot fire mid-freeze —
+//     routeTarget records no composite for a target frozen this tick
+//     and samples go stale in ~2 ticks, far shorter than any hold —
+//     so the cross-oracle median below is the operative release lens.
+//     The leg is kept because it is correct BY CONSTRUCTION (fresh-
+//     candidate-relative) if composite freshness rules ever change;
+//     do not repurpose it without re-checking that property.
 //   - the cross-oracle reference median, compared against the fresh
 //     candidate HERE — deliberately not the cached DivergencePct, which
 //     mid-freeze was computed against the pinned served price and

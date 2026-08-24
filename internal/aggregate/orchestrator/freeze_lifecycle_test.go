@@ -204,13 +204,23 @@ func agreeingLens(pair canonical.Pair, servedPrice, level float64) divergence.Ca
 	if level > 0 {
 		pct = math.Abs(servedPrice-level) / level * 100
 	}
+	// AgreementCount counts references within tolerance of OURPRICE
+	// (compare.go CountAgreeing), so when the references sit away from
+	// the served price none of them "agree" in that sense. Producible
+	// values only — the field is transparency-only (never a decision
+	// input), but seeding an impossible state is how the prior panel's
+	// unreachable-fixture complaint starts.
+	agreeing := 3
+	if pct > 5.0 {
+		agreeing = 0
+	}
 	return divergence.CachedResult{
 		PairID:         pair.String(),
 		OurPrice:       servedPrice,
 		Median:         level,
 		DivergencePct:  pct,
 		SuccessCount:   3, // ≥ divergenceMinSources: trusted multi-reference signal
-		AgreementCount: 2,
+		AgreementCount: agreeing,
 	}
 }
 
