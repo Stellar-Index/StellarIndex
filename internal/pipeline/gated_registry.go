@@ -111,22 +111,22 @@ var gatedSources = map[string]GatedMeta{
 		NewDecoder:  func(opts ...contractid.Option) dispatcher.Decoder { return aquarius.NewDecoder(opts...) },
 	},
 	defindex.SourceName: {
-		// Mixed gate (ADR-0035/0040, ROADMAP #7 residual 2026-07-10):
-		// the factory `create` event does NOT carry the new VAULT's
-		// address, so the deploy-graph cannot self-register vaults —
-		// the decoder's in-code evidence-verified seed (MainnetVaults)
-		// remains the trust root for that half of the set. STRATEGIES
-		// are different: the same `create` body DOES carry each
-		// asset's assigned BlendStrategy address(es)
-		// (defindex.decodeFactoryCreateStrategies), so this entry's
-		// live-upsert hook is an ACTIVE fan-out for strategies (no
-		// longer the "no-op unless a future WASM announces children"
-		// case other curated-set sources are in) — a new strategy
-		// self-registers the same tx it's created in, converging with
-		// MainnetStrategies at the next seed-protocol-contracts /
-		// restart. The protocol_contracts warm still exists for BOTH
-		// halves (it's the operator seam for admitting a newly
-		// verified VAULT without a redeploy).
+		// Curated-set gate (ADR-0035/0040; strategy create-body
+		// self-registration REMOVED 2026-08-25, W8 6c). Neither vaults
+		// NOR strategies self-register from factory `create` events any
+		// more: the create body's strategy addresses are attacker-
+		// controlled bytes (anyone can call the public factory naming
+		// arbitrary addresses), so auto-seeding them was a permissionless
+		// registry-poisoning vector — a named contract would then decode
+		// as a recognised DeFindex flow, contaminating TVL/flow
+		// attribution. The decoder's in-code evidence-verified seed
+		// (MainnetStrategies + MainnetVaults, lake-proven complete —
+		// the curated strategy set is byte-identical to the full
+		// create-body extraction, 16/16) is now the sole trust root, and
+		// the protocol_contracts warm is the operator seam for admitting
+		// a newly-verified vault OR strategy without a redeploy. A new
+		// strategy first appearing after the curated freeze fail-closes
+		// into an ADR-0033 recognition gap until an operator seeds it.
 		Factories:   defindex.MainnetFactories,
 		CreationSym: "create",
 		Genesis:     55_484_403, // earliest factory create event (CAVP2QLP…)
