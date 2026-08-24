@@ -61,6 +61,7 @@ func registerAppMetrics() {
 		ExternalPollerLastSuccessUnix,
 		ExternalFXLastQuoteUnix,
 		ExternalFXRateRejectedTotal,
+		ExternalFXBaselineHealedTotal,
 		ExternalDustDroppedTotal,
 		CEXStreamDisconnectTotal,
 		DiscoveryDroppedHitsTotal,
@@ -1008,6 +1009,19 @@ var ExternalFXRateRejectedTotal = prometheus.NewCounterVec(
 		Help: "Upstream FX rates refused by the forex worker's sanity band before reaching fx_quotes, per source and reason (deviation/non_positive/non_finite). Sustained non-zero means a currency is wedged on its last accepted rate.",
 	},
 	[]string{"source", "reason"},
+)
+
+// ExternalFXBaselineHealedTotal — the forex worker re-pointed a ticker's
+// sanity-band baseline at the median of an agreeing trailing-7d history
+// majority that refuted it (the 2026-08-24 Massive UZS poisoned-bootstrap
+// incident). Rare by design; each increment is one wrong baseline
+// corrected without operator action. The ticker is in the WARN log line.
+var ExternalFXBaselineHealedTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_external_fx_baseline_healed_total",
+		Help: "FX sanity-band baselines re-pointed at an agreeing history majority that refuted them, per source. Each increment is one poisoned/stale baseline self-corrected.",
+	},
+	[]string{"source"},
 )
 
 // SourceOrphanEventsTotal — per-source counter of events that
