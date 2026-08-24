@@ -334,45 +334,7 @@ func (w *Worker) persistSnapshot(ctx context.Context, snap *Snapshot) {
 				Source:     fxSource,
 			})
 		}
-		// History-majority heal (see the constants' doc). Fires ONLY
-		// against a bootstrapUnconfirmed baseline: one uncorroborated
-		// sample vs ≥historyHealMinBars mutually-agreeing dated bars is
-		// unambiguous — the sample loses. A CONFIRMED baseline (two
-		// agreeing current fetches) against an agreeing history series
-		// is genuinely ambiguous from in here (which endpoint is
-		// broken?), so it stays rejected + stuck-reclassified for an
-		// operator instead of letting a systemically-broken history
-		// endpoint overwrite a correct baseline — the MR-1 poisoning in
-		// a new coat.
-		if med, ok := historyMajority(rejected); ok {
-			g := w.guards[ticker]
-			if g == nil || !g.bootstrapUnconfirmed || withinBand(med, g.lastAccepted) {
-				continue
-			}
-			w.logger.Warn("forex: unconfirmed bootstrap baseline refuted by agreeing history majority; healing",
-				"ticker", ticker, "baseline", g.lastAccepted, "median", med,
-				"bars", len(rejected))
-			obs.ExternalFXBaselineHealedTotal.WithLabelValues(fxSource).Inc()
-			g.lastAccepted = med
-			g.pending = 0
-			g.stuckCount = 0
-			g.stuckRejectedRate = 0
-			g.bootstrapUnconfirmed = false
-			// The current-day row came from the very sample the
-			// majority refuted — scrub it (marker filtered below).
-			if ix, ok := currentRowIx[ticker]; ok {
-				batch[ix].RateUSD = 0
-			}
-			for _, p := range rejected {
-				batch = append(batch, FXQuote{
-					Bucket:     p.Date.UTC().Truncate(24 * time.Hour),
-					Ticker:     ticker,
-					RateUSD:    p.RateUSD,
-					InverseUSD: 1.0 / p.RateUSD,
-					Source:     fxSource,
-				})
-			}
-		}
+		batch = w.healFromHistoryMajority(ticker, rejected, batch, currentRowIx)
 	}
 	// Drop scrubbed rows (poisoned bootstrap current-day bars).
 	clean := batch[:0]
@@ -404,6 +366,63 @@ func (w *Worker) persistSnapshot(ctx context.Context, snap *Snapshot) {
 	if len(batch) > 0 {
 		obs.ExternalFXLastQuoteUnix.WithLabelValues(fxSource).Set(float64(time.Now().Unix()))
 	}
+}
+
+// healFromHistoryMajority applies the history-majority heal for one
+// ticker after its history bars were banded (extracted from
+// persistSnapshot for gocognit; same behavior, pinned by the
+// BootstrapPoisonHealed / ConfirmedBaselineIsNeverHealed /
+// SplitRejectedSeriesFailsAgreement tests).
+//
+// It fires ONLY against a bootstrapUnconfirmed baseline: one
+// uncorroborated sample vs ≥historyHealMinBars mutually-agreeing dated
+// bars is unambiguous — the sample loses. A CONFIRMED baseline (two
+// agreeing current fetches) against an agreeing history series is
+// genuinely ambiguous from in here (which endpoint is broken?), so it
+// stays rejected + stuck-reclassified for an operator instead of letting
+// a systemically-broken history endpoint overwrite a correct baseline —
+// the MR-1 poisoning in a new coat.
+//
+// On a heal: the baseline re-points at the bars' median, the bars are
+// appended to the batch, and the ticker's current-day row (the very
+// sample the majority refuted) is scrubbed via the RateUSD=0 marker the
+// caller filters before insert. Returns the (possibly grown) batch.
+func (w *Worker) healFromHistoryMajority(
+	ticker string,
+	rejected []HistoryPoint,
+	batch []FXQuote,
+	currentRowIx map[string]int,
+) []FXQuote {
+	med, ok := historyMajority(rejected)
+	if !ok {
+		return batch
+	}
+	g := w.guards[ticker]
+	if g == nil || !g.bootstrapUnconfirmed || withinBand(med, g.lastAccepted) {
+		return batch
+	}
+	w.logger.Warn("forex: unconfirmed bootstrap baseline refuted by agreeing history majority; healing",
+		"ticker", ticker, "baseline", g.lastAccepted, "median", med,
+		"bars", len(rejected))
+	obs.ExternalFXBaselineHealedTotal.WithLabelValues(fxSource).Inc()
+	g.lastAccepted = med
+	g.pending = 0
+	g.stuckCount = 0
+	g.stuckRejectedRate = 0
+	g.bootstrapUnconfirmed = false
+	if ix, ok := currentRowIx[ticker]; ok {
+		batch[ix].RateUSD = 0
+	}
+	for _, p := range rejected {
+		batch = append(batch, FXQuote{
+			Bucket:     p.Date.UTC().Truncate(24 * time.Hour),
+			Ticker:     ticker,
+			RateUSD:    p.RateUSD,
+			InverseUSD: 1.0 / p.RateUSD,
+			Source:     fxSource,
+		})
+	}
+	return batch
 }
 
 // acceptRate is the C2-030 sanity band. It reports whether `rate` for
