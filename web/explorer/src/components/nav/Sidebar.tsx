@@ -166,7 +166,12 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
           className="flex min-w-0 items-center gap-2 font-sans text-sm font-semibold tracking-tight text-ink"
         >
           <StellarMark className="h-5 w-5 shrink-0 text-ink" />
-          <span className="truncate">StellarIndex</span>
+          {/* Wordmark weight contrast (2026-08-24): "Stellar" carries the
+              brand weight, "Index" sits lighter — same ink, thinner cut. */}
+          <span className="truncate">
+            Stellar
+            <span className="font-light">Index</span>
+          </span>
         </Link>
         <LiveLedgerBadge onNavigate={onNavigate} compact />
       </div>

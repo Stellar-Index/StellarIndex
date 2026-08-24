@@ -31,12 +31,17 @@ function renderNav() {
 describe('Sidebar IA (nav revision 2026-08-24)', () => {
   it('renders the three sections with their entries and the Stellar wordmark', () => {
     renderNav();
-    // Section headers
+    // Section headers ("Stellar" also appears inside the split wordmark,
+    // so match on the header styling class, not bare text).
     for (const title of ['Stellar', 'External', 'Developers']) {
-      expect(screen.getByText(title)).toBeInTheDocument();
+      const headers = screen
+        .getAllByText(title)
+        .filter((el) => el.className.includes('uppercase'));
+      expect(headers).toHaveLength(1);
     }
-    // Wordmark (single word, Inter via font-sans)
-    expect(screen.getByRole('link', { name: /StellarIndex/ })).toHaveAttribute('href', '/');
+    // Wordmark — split spans ("Stellar" + lighter "Index") whose
+    // accessible name still reads StellarIndex.
+    expect(screen.getByRole('link', { name: /Stellar\s*Index/ })).toHaveAttribute('href', '/');
     // Stellar section entries, in spec order
     for (const [label, href] of [
       ['Network', '/network'],
