@@ -69,7 +69,7 @@ Severity maps to [sev-playbook.md §1](sev-playbook.md#1-severity-definitions).
 | `stellarindex_external_poller_error_rate_high` | `rate(stellarindex_external_poller_polls_total{outcome="error"}[15m]) / sum(...) ` | > 0.5 sustained 15 min | P3 | [external-poller-error-rate-high](runbooks/external-poller-error-rate-high.md) |
 | `stellarindex_external_fx_feed_stale` | `time() - max(stellarindex_external_fx_last_quote_unix)` | > 21600 s (6h) for > 15 min | P2 | [fx-feed-stale](runbooks/fx-feed-stale.md) |
 | `stellarindex_external_fx_feed_absent` | `absent(stellarindex_external_fx_last_quote_unix)` | series missing for 30 min | P2 | [fx-feed-stale](runbooks/fx-feed-stale.md) |
-| `stellarindex_external_fx_rate_rejections` | `sum by (reason) (increase(stellarindex_external_fx_rate_rejected_total{reason!="history_deviation_stuck"}[3h]))` | > 2 rejections in 3h, for 30 min (a ticker is wedged on its last accepted rate) | ticket | [fx-rate-rejected](runbooks/fx-rate-rejected.md) |
+| `stellarindex_external_fx_rate_rejections` | `sum by (reason) (increase(stellarindex_external_fx_rate_rejected_total{reason!~"history_deviation_stuck\|deviation_history_conflict_stuck"}[3h]))` | > 2 rejections in 3h, for 30 min (a ticker is wedged on its last accepted rate) | ticket | [fx-rate-rejected](runbooks/fx-rate-rejected.md) |
 
 Historical note: the former `stellarindex_ingestion_lag_high` alert was retired
 when the repo moved off the legacy orchestrator topology and the live indexer

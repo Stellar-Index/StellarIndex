@@ -2200,17 +2200,28 @@ var APICORSDecisionsTotal = prometheus.NewCounterVec(
 )
 
 // AggregatorDroppedTradesTotal — count of trades the orchestrator
-// removed from the VWAP input set, labelled by reason. "class" =
-// removed by the ClassExchange-only filter; "outlier" = removed by
-// the σ-threshold filter. Operators alert on a sudden spike in
-// "class" (a new venue mis-registered) or "outlier" (a market in
-// distress flooding the window with anomalies).
+// removed from the VWAP input set, labelled by reason and by the
+// CONFIGURED target pair. "class" = removed by the ClassExchange-only
+// filter; "outlier" = removed by the σ-threshold filter. Operators
+// alert on a sudden spike in "class" (a new venue mis-registered) or
+// "outlier" (a market in distress flooding the window with anomalies).
+//
+// `pair` (2026-08-14 outlier_storm: a single-issuer token farm spamming
+// SDEX needed ad-hoc SQL to attribute) is the canonical string of the
+// configured aggregate pair whose refresh dropped the trade — bounded
+// cardinality by construction: only pairs in the orchestrator's
+// configured set flow through refreshPairWindow (~12 in production).
+// Config-dependent labels are NOT pre-seeded, per the
+// AggregatorFXSnapFallbackTotal `leg` convention in
+// seedBoundedLabelSeries; the storm/spike alerts sum() across labels,
+// so an absent pair series never gates them. Diagnose with
+// `topk(5, rate(...{reason="outlier"}[10m]))` by pair.
 var AggregatorDroppedTradesTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_dropped_trades_total",
-		Help: "Trades removed from the VWAP input set, labelled by reason (class|outlier).",
+		Help: "Trades removed from the VWAP input set, labelled by reason (class|outlier) and configured target pair.",
 	},
-	[]string{"reason"},
+	[]string{"reason", "pair"},
 )
 
 // AggregatorDroppedWindowsTotal — count of (pair, window) refreshes
