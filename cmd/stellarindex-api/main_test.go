@@ -90,14 +90,21 @@ func TestBuildDivergenceReferences_BothWiredWhenChainlinkConfigured(t *testing.T
 		},
 	}
 	refs := buildDivergenceReferences(cfg, nil, discardLogger())
-	if len(refs) != 2 {
-		t.Fatalf("len(refs) = %d, want 2", len(refs))
+	// Three since PR #149: chainlink alone provides BOTH synthetic leg
+	// classes (crypto/USD base feeds + fiat/USD fx feeds route by pair
+	// within one FeedMap), so the USD-cross constructs even in this
+	// minimal config — a chainlink-composed cross is still a second,
+	// CoinGecko-independent reference.
+	if len(refs) != 3 {
+		t.Fatalf("len(refs) = %d, want 3", len(refs))
 	}
-	names := []string{refs[0].Name(), refs[1].Name()}
-	wantSet := map[string]bool{"coingecko": true, "chainlink": true}
-	for _, n := range names {
-		if !wantSet[n] {
-			t.Errorf("unexpected reference: %q", n)
+	wantSet := map[string]bool{
+		"coingecko": true, "chainlink": true,
+		divergence.SyntheticCrossName: true,
+	}
+	for _, r := range refs {
+		if !wantSet[r.Name()] {
+			t.Errorf("unexpected reference: %q", r.Name())
 		}
 	}
 }
@@ -138,7 +145,10 @@ func (nopOracleReader) LatestOracleObservation(_ context.Context, _ string, _, _
 // TestBuildDivergenceReferences_OnChainOraclesWired — the default-ON
 // [divergence.{reflector,redstone,band}] gates wire five on-chain
 // references (Reflector expands to its three per-contract variants)
-// when an oracle_updates reader is available.
+// when an oracle_updates reader is available, plus the synthetic
+// USD-cross derived from them (PR #149: reflector-cex/redstone/band
+// base legs × reflector-fx fx leg — both leg classes present here, so
+// the cross constructs).
 func TestBuildDivergenceReferences_OnChainOraclesWired(t *testing.T) {
 	cfg := config.DivergenceConfig{
 		Reflector: config.DivergenceOracleConfig{Enabled: true},
@@ -156,13 +166,35 @@ func TestBuildDivergenceReferences_OnChainOraclesWired(t *testing.T) {
 		divergence.OracleSourceReflectorFX,
 		divergence.OracleSourceRedstone,
 		divergence.OracleSourceBand,
+		divergence.SyntheticCrossName,
 	} {
 		if !got[want] {
-			t.Errorf("missing on-chain oracle reference %q (got %v)", want, got)
+			t.Errorf("missing reference %q (got %v)", want, got)
 		}
 	}
-	if len(refs) != 5 {
-		t.Errorf("len(refs) = %d, want 5", len(refs))
+	if len(refs) != 6 {
+		t.Errorf("len(refs) = %d, want 6", len(refs))
+	}
+}
+
+// TestBuildDivergenceReferences_SyntheticNeedsBothLegClasses — with the
+// FX leg class absent (reflector disabled ⇒ no reflector-fx, chainlink
+// disabled ⇒ no fiat feeds), the synthetic must NOT construct: a cross
+// with a missing leg would only add a permanent failure row to every
+// result. Redstone+band alone provide base legs only.
+func TestBuildDivergenceReferences_SyntheticNeedsBothLegClasses(t *testing.T) {
+	cfg := config.DivergenceConfig{
+		Redstone: config.DivergenceOracleConfig{Enabled: true},
+		Band:     config.DivergenceOracleConfig{Enabled: true},
+	}
+	refs := buildDivergenceReferences(cfg, nopOracleReader{}, discardLogger())
+	for _, r := range refs {
+		if r.Name() == divergence.SyntheticCrossName {
+			t.Fatalf("synthetic cross constructed without an FX leg class")
+		}
+	}
+	if len(refs) != 2 {
+		t.Errorf("len(refs) = %d, want 2 (redstone + band only)", len(refs))
 	}
 }
 

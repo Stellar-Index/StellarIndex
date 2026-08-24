@@ -15,6 +15,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/divergence"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/obstest"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -459,5 +460,59 @@ func TestBuildSupplyPolicy_EmptyConfigIsValid(t *testing.T) {
 	}
 	if policy.SDFReserveAccounts != nil || policy.PerAsset != nil || policy.MaxSupplyOverrides != nil {
 		t.Errorf("buildSupplyPolicy(empty) = %+v, want every field nil (matching the pre-fix supply.Policy{})", policy)
+	}
+}
+
+// nopOracleReaderAgg satisfies divergence.OracleReader for wiring
+// tests — never returns a row (the builder only needs non-nil).
+type nopOracleReaderAgg struct{}
+
+func (nopOracleReaderAgg) LatestOracleObservation(_ context.Context, _ string, _, _ []string) (*canonical.OracleUpdate, error) {
+	return nil, nil
+}
+
+// TestBuildDivergenceReferences_AggregatorParity mirrors the API
+// binary's wiring tests (the lockstep rule in
+// buildDivergenceReferences' doc): the aggregator wires the same five
+// on-chain references plus the synthetic USD-cross, and the synthetic
+// does not construct without an FX leg class. Added by the PR #149
+// verification panel — the aggregator previously had NO wiring test,
+// which is how a lockstep break would have shipped silently.
+func TestBuildDivergenceReferences_AggregatorParity(t *testing.T) {
+	cfg := config.DivergenceConfig{
+		Reflector: config.DivergenceOracleConfig{Enabled: true},
+		Redstone:  config.DivergenceOracleConfig{Enabled: true},
+		Band:      config.DivergenceOracleConfig{Enabled: true},
+	}
+	refs := buildDivergenceReferences(cfg, nopOracleReaderAgg{}, discardLogger())
+	got := make(map[string]bool, len(refs))
+	for _, r := range refs {
+		got[r.Name()] = true
+	}
+	for _, want := range []string{
+		divergence.OracleSourceReflectorDEX,
+		divergence.OracleSourceReflectorCEX,
+		divergence.OracleSourceReflectorFX,
+		divergence.OracleSourceRedstone,
+		divergence.OracleSourceBand,
+		divergence.SyntheticCrossName,
+	} {
+		if !got[want] {
+			t.Errorf("missing reference %q (got %v)", want, got)
+		}
+	}
+	if len(refs) != 6 {
+		t.Errorf("len(refs) = %d, want 6", len(refs))
+	}
+
+	// FX leg class absent → no synthetic.
+	cfg = config.DivergenceConfig{
+		Redstone: config.DivergenceOracleConfig{Enabled: true},
+		Band:     config.DivergenceOracleConfig{Enabled: true},
+	}
+	for _, r := range buildDivergenceReferences(cfg, nopOracleReaderAgg{}, discardLogger()) {
+		if r.Name() == divergence.SyntheticCrossName {
+			t.Fatalf("synthetic cross constructed without an FX leg class")
+		}
 	}
 }

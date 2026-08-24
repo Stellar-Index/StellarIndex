@@ -369,14 +369,17 @@ rpc_url = "{{ vault_chainlink_rpc_url | default('https://eth.llamarpc.com') }}"
   [divergence.chainlink.feeds."fiat:EUR/fiat:USD"]
   address = "0xb49f677943BC038e9857d61E7d053CaA2C1734C1"
   decimals = 8
+  max_age_hours = 76  # FX markets close weekends; 3h crypto default reads them dead Fri-Mon (PR #149 panel)
 
   [divergence.chainlink.feeds."fiat:GBP/fiat:USD"]
   address = "0x5c0Ab2d9b5a7ed9f470386e82BB36A3613cDd4b5"
   decimals = 8
+  max_age_hours = 76  # FX markets close weekends; 3h crypto default reads them dead Fri-Mon (PR #149 panel)
 
   [divergence.chainlink.feeds."fiat:JPY/fiat:USD"]
   address = "0xBcE206caE7f0ec07b545EddE332A47C2F75bbeb3"
   decimals = 8
+  max_age_hours = 76  # FX markets close weekends; 3h crypto default reads them dead Fri-Mon (PR #149 panel)
 
 # 2026-05-14 — Phase 2 freeze stop-gap.
 # crypto:BTC/fiat:EUR has source_count=1 structurally (only one

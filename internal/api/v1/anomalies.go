@@ -311,13 +311,16 @@ type DivergenceSeriesPointV struct {
 var divergenceSeriesDays = map[int]bool{1: true, 7: true, 30: true}
 
 // divergenceReferences mirrors the divergence_observations.reference
-// CHECK constraint (migration 0019) — the only values that can exist.
-// Rejecting everything else up front keeps garbage params from ever
-// reaching the index scan.
+// CHECK constraint (migration 0019, widened by 0148) — the only values
+// that can exist. Rejecting everything else up front keeps garbage
+// params from ever reaching the index scan. Keep in lockstep with the
+// CHECK: a source admitted to the table but missing here is invisible
+// to /v1/divergence/series (the 0148 panel's finding).
 var divergenceReferences = map[string]bool{
 	"chainlink": true, "coingecko": true,
 	"reflector-cex": true, "reflector-fx": true, "reflector-dex": true,
 	"redstone": true, "band": true,
+	"synthetic-usd-cross": true,
 }
 
 // handleDivergenceSeries serves GET /v1/divergence/series — the Δ%
@@ -346,7 +349,7 @@ func (s *Server) handleDivergenceSeries(w http.ResponseWriter, r *http.Request) 
 	if !divergenceReferences[reference] {
 		writeProblem(w, r, "https://api.stellarindex.io/errors/invalid-parameter",
 			"Invalid reference", http.StatusBadRequest,
-			"reference must be one of: chainlink, coingecko, reflector-cex, reflector-fx, reflector-dex, redstone, band")
+			"reference must be one of: chainlink, coingecko, reflector-cex, reflector-fx, reflector-dex, redstone, band, synthetic-usd-cross")
 		return
 	}
 	days := 7
