@@ -6,7 +6,7 @@ import Link from 'next/link';
 
 import { Panel } from '@/components/reveal';
 import { AssetLabel } from '@/components/AssetLabel';
-import { apiGet, asExample } from '@/api/client';
+import { type Envelope, apiGet, asExample } from '@/api/client';
 import { formatCompact, formatRelative } from '@/lib/format';
 import { LastPriceCell } from '@/components/LastPriceCell';
 import { useLedgerFollow } from '@/lib/live/hooks';
@@ -23,6 +23,8 @@ import {
 } from '@/components/ui';
 
 import { DexProtocolsTable } from './DexProtocolsTable';
+import { useCursorPager } from '@/lib/useCursorPager';
+import { SortPill } from '@/components/SortPill';
 
 interface Pool {
   source: string;
@@ -77,8 +79,8 @@ const SOURCE_TONE: Record<string, string> = {
  */
 export function DexesView() {
   const [order, setOrder] = useState<Order>('volume_24h_usd_desc');
-  const [cursor, setCursor] = useState<string>('');
-  const [cursorStack, setCursorStack] = useState<string[]>([]);
+  const pager = useCursorPager();
+  const { cursor } = pager;
   // Source filter is server-side. Empty string = all DEXes.
   const [sourceFilter, setSourceFilter] = useState<string>('');
 
@@ -88,10 +90,7 @@ export function DexesView() {
   const q = useQuery<{ pools: Pool[]; nextCursor?: string }>({
     queryKey: ['/v1/pools', order, cursor, sourceFilter],
     queryFn: async () => {
-      const env = await apiGet<{
-        data: Pool[];
-        pagination?: { next?: string };
-      }>('/v1/pools', {
+      const env = await apiGet<Envelope<Pool[]>>('/v1/pools', {
         order_by: order,
         limit: PAGE_LIMIT,
         ...(cursor ? { cursor } : {}),
@@ -107,31 +106,22 @@ export function DexesView() {
   const pools = q.data?.pools ?? [];
 
   function nextPage() {
-    const next = q.data?.nextCursor;
-    if (!next) return;
-    setCursorStack((s) => [...s, cursor]);
-    setCursor(next);
+    pager.next(q.data?.nextCursor);
   }
   function prevPage() {
-    setCursorStack((s) => {
-      const head = s[s.length - 1] ?? '';
-      setCursor(head);
-      return s.slice(0, -1);
-    });
+    pager.prev();
   }
   function changeOrder(next: Order) {
     setOrder(next);
-    setCursor('');
-    setCursorStack([]);
+    pager.reset();
   }
   function changeSource(next: string) {
     setSourceFilter(next);
-    setCursor('');
-    setCursorStack([]);
+    pager.reset();
   }
 
   const hasNext = !!q.data?.nextCursor;
-  const hasPrev = cursorStack.length > 0;
+  const hasPrev = pager.hasPrev;
 
   return (
     <Container className="space-y-8 py-8 sm:py-10">
@@ -165,7 +155,7 @@ export function DexesView() {
         })}
         bodyClassName="-mx-4"
       >
-        <div className="space-y-3 px-4 pb-3 pt-1">
+        <div className="space-y-3 px-4 pt-1 pb-3">
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="text-ink-muted">Venue:</span>
             <SourceChip
@@ -216,7 +206,10 @@ export function DexesView() {
             <TBody>
               {q.isLoading && !q.data && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-sm text-ink-muted">
+                  <td
+                    colSpan={8}
+                    className="text-ink-muted px-4 py-8 text-center text-sm"
+                  >
                     Loading pools…
                   </td>
                 </tr>
@@ -232,7 +225,7 @@ export function DexesView() {
                     <div className="text-bad-700">
                       Couldn&apos;t load pools right now.
                     </div>
-                    <div className="mt-1 text-xs text-ink-muted">
+                    <div className="text-ink-muted mt-1 text-xs">
                       The pools query is timing out (likely a hot
                       trades-hypertable scan). Retry or check{' '}
                       <a
@@ -248,7 +241,7 @@ export function DexesView() {
                     <button
                       type="button"
                       onClick={() => q.refetch()}
-                      className="mt-2 rounded-md border border-bad-500/40 px-3 py-1 text-xs text-bad-700 hover:bg-bad-50"
+                      className="border-bad-500/40 text-bad-700 hover:bg-bad-50 mt-2 rounded-md border px-3 py-1 text-xs"
                     >
                       Retry
                     </button>
@@ -257,32 +250,36 @@ export function DexesView() {
               )}
               {!q.isLoading && !q.isError && pools.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-sm text-ink-muted">
+                  <td
+                    colSpan={8}
+                    className="text-ink-muted px-4 py-8 text-center text-sm"
+                  >
                     No pools matched.
                   </td>
                 </tr>
               )}
               {pools.map((p, i) => {
                 const slug = `${p.base}~${p.quote}`;
-                const offset = cursorStack.length * PAGE_LIMIT + i + 1;
+                const offset = pager.depth * PAGE_LIMIT + i + 1;
                 const vol = p.volume_24h_usd ? Number(p.volume_24h_usd) : null;
-                const tone = SOURCE_TONE[p.source] ?? 'bg-surface-subtle text-ink-body';
+                const tone =
+                  SOURCE_TONE[p.source] ?? 'bg-surface-subtle text-ink-body';
                 return (
                   <TR key={`${p.source}|${p.base}|${p.quote}`}>
                     <Td>
-                      <span className="font-mono text-[11px] text-ink-faint">
+                      <span className="text-ink-faint font-mono text-[11px]">
                         {offset}
                       </span>
                     </Td>
                     <Td>
                       <Link
                         href={`/dexes/${p.source}`}
-                        className={`inline-block rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider hover:underline ${tone}`}
+                        className={`inline-block rounded-sm px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase hover:underline ${tone}`}
                       >
                         {p.source}
                       </Link>
                       {SOURCE_NOTE[p.source] && (
-                        <div className="mt-0.5 text-[9px] uppercase tracking-wide text-ink-muted">
+                        <div className="text-ink-muted mt-0.5 text-[9px] tracking-wide uppercase">
                           {SOURCE_NOTE[p.source]}
                         </div>
                       )}
@@ -316,14 +313,14 @@ export function DexesView() {
                       )}
                     </Td>
                     <Td align="right">
-                      <span className="font-mono tabular-nums text-ink-body">
+                      <span className="text-ink-body font-mono tabular-nums">
                         {p.trade_count_24h > 0
                           ? formatCompact(p.trade_count_24h)
                           : '0'}
                       </span>
                     </Td>
                     <Td align="right">
-                      <span className="font-mono tabular-nums text-xs text-ink-muted">
+                      <span className="text-ink-muted font-mono text-xs tabular-nums">
                         {formatRelative(p.last_trade_at)}
                       </span>
                     </Td>
@@ -334,7 +331,7 @@ export function DexesView() {
           </Table>
         </div>
 
-        <div className="flex items-center justify-between border-t border-line px-4 py-3 text-xs">
+        <div className="border-line flex items-center justify-between border-t px-4 py-3 text-xs">
           <Button
             variant="secondary"
             size="sm"
@@ -343,8 +340,8 @@ export function DexesView() {
           >
             ← Previous
           </Button>
-          <span className="font-mono text-[11px] text-ink-faint">
-            page {cursorStack.length + 1}
+          <span className="text-ink-faint font-mono text-[11px]">
+            page {pager.page}
           </span>
           <Button
             variant="secondary"
@@ -357,7 +354,7 @@ export function DexesView() {
         </div>
       </Panel>
 
-      <p className="text-xs text-ink-muted">
+      <p className="text-ink-muted text-xs">
         Drill into a single DEX&apos;s pools at{' '}
         <Link href="/dexes/sdex" className="text-brand-600 hover:underline">
           /dexes/sdex
@@ -384,30 +381,6 @@ export function DexesView() {
   );
 }
 
-function SortPill({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-md px-2 py-0.5 ${
-        active
-          ? 'bg-brand-600 text-white'
-          : 'bg-surface-subtle text-ink-body hover:bg-line'
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
-
 function SourceChip({
   active,
   onClick,
@@ -421,7 +394,7 @@ function SourceChip({
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider ${
+      className={`rounded-full px-2 py-0.5 font-mono text-[10px] tracking-wider uppercase ${
         active
           ? 'bg-brand-600 text-white'
           : 'bg-surface-subtle text-ink-body hover:bg-line'

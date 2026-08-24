@@ -49,44 +49,71 @@
 # next.config.mjs's trailingSlash:true 308-redirects the bare
 # form before _redirects evaluates. Cap _redirects below CF's
 # free-plan ~100-rule limit (R-018 finish-up).
-/currencies/us-dollar/  /assets/us-dollar/  301
-/currencies/usd/  /assets/us-dollar/  301
-/currencies/euro/  /assets/euro/  301
-/currencies/eur/  /assets/euro/  301
-/currencies/british-pound/  /assets/british-pound/  301
-/currencies/gbp/  /assets/british-pound/  301
-/currencies/japanese-yen/  /assets/japanese-yen/  301
-/currencies/jpy/  /assets/japanese-yen/  301
-/currencies/chinese-yuan/  /assets/chinese-yuan/  301
-/currencies/cny/  /assets/chinese-yuan/  301
-/currencies/indian-rupee/  /assets/indian-rupee/  301
-/currencies/inr/  /assets/indian-rupee/  301
-/currencies/swiss-franc/  /assets/swiss-franc/  301
-/currencies/chf/  /assets/swiss-franc/  301
-/currencies/canadian-dollar/  /assets/canadian-dollar/  301
-/currencies/cad/  /assets/canadian-dollar/  301
-/currencies/australian-dollar/  /assets/australian-dollar/  301
-/currencies/aud/  /assets/australian-dollar/  301
-/currencies/new-zealand-dollar/  /assets/new-zealand-dollar/  301
-/currencies/nzd/  /assets/new-zealand-dollar/  301
-/currencies/brazilian-real/  /assets/brazilian-real/  301
-/currencies/brl/  /assets/brazilian-real/  301
-/currencies/mexican-peso/  /assets/mexican-peso/  301
-/currencies/mxn/  /assets/mexican-peso/  301
-/currencies/south-korean-won/  /assets/south-korean-won/  301
-/currencies/krw/  /assets/south-korean-won/  301
-/currencies/hong-kong-dollar/  /assets/hong-kong-dollar/  301
-/currencies/hkd/  /assets/hong-kong-dollar/  301
-/currencies/singapore-dollar/  /assets/singapore-dollar/  301
-/currencies/sgd/  /assets/singapore-dollar/  301
-/currencies/south-african-rand/  /assets/south-african-rand/  301
-/currencies/zar/  /assets/south-african-rand/  301
-/currencies/turkish-lira/  /assets/turkish-lira/  301
-/currencies/try/  /assets/turkish-lira/  301
-/currencies/swedish-krona/  /assets/swedish-krona/  301
-/currencies/sek/  /assets/swedish-krona/  301
-/currencies/norwegian-krone/  /assets/norwegian-krone/  301
-/currencies/nok/  /assets/norwegian-krone/  301
+/currencies/us-dollar/  /external/assets/us-dollar/  301
+/currencies/usd/  /external/assets/us-dollar/  301
+/currencies/euro/  /external/assets/euro/  301
+/currencies/eur/  /external/assets/euro/  301
+/currencies/british-pound/  /external/assets/british-pound/  301
+/currencies/gbp/  /external/assets/british-pound/  301
+/currencies/japanese-yen/  /external/assets/japanese-yen/  301
+/currencies/jpy/  /external/assets/japanese-yen/  301
+/currencies/chinese-yuan/  /external/assets/chinese-yuan/  301
+/currencies/cny/  /external/assets/chinese-yuan/  301
+/currencies/indian-rupee/  /external/assets/indian-rupee/  301
+/currencies/inr/  /external/assets/indian-rupee/  301
+/currencies/swiss-franc/  /external/assets/swiss-franc/  301
+/currencies/chf/  /external/assets/swiss-franc/  301
+/currencies/canadian-dollar/  /external/assets/canadian-dollar/  301
+/currencies/cad/  /external/assets/canadian-dollar/  301
+/currencies/australian-dollar/  /external/assets/australian-dollar/  301
+/currencies/aud/  /external/assets/australian-dollar/  301
+/currencies/new-zealand-dollar/  /external/assets/new-zealand-dollar/  301
+/currencies/nzd/  /external/assets/new-zealand-dollar/  301
+/currencies/brazilian-real/  /external/assets/brazilian-real/  301
+/currencies/brl/  /external/assets/brazilian-real/  301
+/currencies/mexican-peso/  /external/assets/mexican-peso/  301
+/currencies/mxn/  /external/assets/mexican-peso/  301
+/currencies/south-korean-won/  /external/assets/south-korean-won/  301
+/currencies/krw/  /external/assets/south-korean-won/  301
+/currencies/hong-kong-dollar/  /external/assets/hong-kong-dollar/  301
+/currencies/hkd/  /external/assets/hong-kong-dollar/  301
+/currencies/singapore-dollar/  /external/assets/singapore-dollar/  301
+/currencies/sgd/  /external/assets/singapore-dollar/  301
+/currencies/south-african-rand/  /external/assets/south-african-rand/  301
+/currencies/zar/  /external/assets/south-african-rand/  301
+/currencies/turkish-lira/  /external/assets/turkish-lira/  301
+/currencies/try/  /external/assets/turkish-lira/  301
+/currencies/swedish-krona/  /external/assets/swedish-krona/  301
+/currencies/sek/  /external/assets/swedish-krona/  301
+/currencies/norwegian-krone/  /external/assets/norwegian-krone/  301
+/currencies/nok/  /external/assets/norwegian-krone/  301
+
+# Fiat de-duplication (2026-08-24 operator ruling): a fiat currency is an
+# external (non-Stellar) asset, so its ONE detail page is
+# /external/assets/{slug}. /assets/{slug} used to render a duplicate
+# (AM-16 split identity, canonicalized but still served); the route no
+# longer exports fiat slugs and these 301s catch old links + indexes.
+# Trailing-slash form only (next.js trailingSlash 308s the bare form).
+/assets/us-dollar/  /external/assets/us-dollar/  301
+/assets/euro/  /external/assets/euro/  301
+/assets/british-pound/  /external/assets/british-pound/  301
+/assets/japanese-yen/  /external/assets/japanese-yen/  301
+/assets/swiss-franc/  /external/assets/swiss-franc/  301
+/assets/canadian-dollar/  /external/assets/canadian-dollar/  301
+/assets/australian-dollar/  /external/assets/australian-dollar/  301
+/assets/new-zealand-dollar/  /external/assets/new-zealand-dollar/  301
+/assets/chinese-yuan/  /external/assets/chinese-yuan/  301
+/assets/indian-rupee/  /external/assets/indian-rupee/  301
+/assets/brazilian-real/  /external/assets/brazilian-real/  301
+/assets/mexican-peso/  /external/assets/mexican-peso/  301
+/assets/south-african-rand/  /external/assets/south-african-rand/  301
+/assets/singapore-dollar/  /external/assets/singapore-dollar/  301
+/assets/hong-kong-dollar/  /external/assets/hong-kong-dollar/  301
+/assets/swedish-krona/  /external/assets/swedish-krona/  301
+/assets/norwegian-krone/  /external/assets/norwegian-krone/  301
+/assets/danish-krone/  /external/assets/danish-krone/  301
+/assets/south-korean-won/  /external/assets/south-korean-won/  301
+/assets/turkish-lira/  /external/assets/turkish-lira/  301
 
 # Stellar-focus refactor: retired cross-chain routes
 /networks            /            301

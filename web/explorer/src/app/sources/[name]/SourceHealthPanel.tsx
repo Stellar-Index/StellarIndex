@@ -1,6 +1,7 @@
 'use client';
 
 import { useSourceHealth } from '@/api/hooks';
+import { formatCompact } from '@/lib/format';
 
 /**
  * SourceHealthPanel — the live health pane on /sources/[name].
@@ -20,21 +21,21 @@ export function SourceHealthPanel({ source }: { source: string }) {
   const { data, isLoading, error } = useSourceHealth(source);
 
   return (
-    <section className="rounded-lg border border-line bg-surface p-4">
+    <section className="border-line bg-surface rounded-lg border p-4">
       <header className="mb-3 flex items-baseline justify-between">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-ink-body">
+        <h2 className="text-ink-body text-sm font-semibold tracking-wider uppercase">
           Live health
         </h2>
-        <span className="text-xs text-ink-faint">
+        <span className="text-ink-faint text-xs">
           /v1/sources/{source}/health · refreshes every 15s
         </span>
       </header>
 
       {isLoading && (
-        <p className="text-sm text-ink-muted">Loading live health…</p>
+        <p className="text-ink-muted text-sm">Loading live health…</p>
       )}
       {error != null && !isLoading && (
-        <p className="text-sm text-ink-muted">
+        <p className="text-ink-muted text-sm">
           Live health unavailable right now — the registry profile above is
           still authoritative for this venue&apos;s configuration.
         </p>
@@ -60,7 +61,7 @@ export function SourceHealthPanel({ source }: { source: string }) {
             label="Volume (24h)"
             value={
               data.volume_24h_usd
-                ? `$${formatCompactUsd(data.volume_24h_usd)}`
+                ? `$${formatCompact(data.volume_24h_usd)}`
                 : '—'
             }
             sub="USD notional"
@@ -74,15 +75,6 @@ export function SourceHealthPanel({ source }: { source: string }) {
       )}
     </section>
   );
-}
-
-function formatCompactUsd(raw: string): string {
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return raw;
-  if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
-  if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
-  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
-  return n.toFixed(2);
 }
 
 function HealthStat({
@@ -100,13 +92,13 @@ function HealthStat({
     tone === 'ok' ? 'text-up' : tone === 'warn' ? 'text-warn-700' : '';
   return (
     <div>
-      <dt className="text-[10px] uppercase tracking-wider text-ink-muted">
+      <dt className="text-ink-muted text-[10px] tracking-wider uppercase">
         {label}
       </dt>
       <dd className={`mt-1 font-mono text-sm tabular-nums ${valueClass}`}>
         {value}
       </dd>
-      {sub && <div className="mt-0.5 text-[11px] text-ink-faint">{sub}</div>}
+      {sub && <div className="text-ink-faint mt-0.5 text-[11px]">{sub}</div>}
     </div>
   );
 }

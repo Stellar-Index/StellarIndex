@@ -40,6 +40,7 @@ import {
 import { fmtInt, fmtRelative } from '@/lib/account-format';
 
 import { AccountGate } from '../AccountGate';
+import { shortAssetText } from '@/lib/asset-label';
 
 const DOCS_URL = 'https://docs.stellarindex.io';
 
@@ -91,7 +92,7 @@ function PriceAlertsBody() {
     try {
       await updatePriceAlert(alert.id, { enabled: !alert.enabled });
       setNotice(
-        `Alert ${alert.enabled ? 'paused' : 'enabled'} for ${shortAsset(alert.base_asset)}/${shortAsset(alert.quote_asset)}.`,
+        `Alert ${alert.enabled ? 'paused' : 'enabled'} for ${shortAssetText(alert.base_asset)}/${shortAssetText(alert.quote_asset)}.`,
       );
       await refresh();
     } catch (err) {
@@ -106,7 +107,7 @@ function PriceAlertsBody() {
   async function handleDelete(alert: DashboardPriceAlert) {
     if (
       !confirm(
-        `Delete the ${shortAsset(alert.base_asset)}/${shortAsset(alert.quote_asset)} alert? This can't be undone.`,
+        `Delete the ${shortAssetText(alert.base_asset)}/${shortAssetText(alert.quote_asset)} alert? This can't be undone.`,
       )
     ) {
       return;
@@ -203,7 +204,7 @@ function PriceAlertsBody() {
         ) : null}
 
         {alerts && alerts.length > 0 && (
-          <p className="text-xs text-ink-faint">
+          <p className="text-ink-faint text-xs">
             {fmtInt(enabledCount)} enabled{' '}
             {enabledCount === 1 ? 'alert' : 'alerts'}
             {alerts.length > enabledCount &&
@@ -226,7 +227,7 @@ function DeliveryNote() {
   return (
     <Callout tone="info" title="How alerts are delivered">
       A firing alert is sent to your account&apos;s webhooks as a{' '}
-      <code className="rounded-sm bg-surface-subtle px-1 py-0.5 font-mono text-[12px]">
+      <code className="bg-surface-subtle rounded-sm px-1 py-0.5 font-mono text-[12px]">
         price.alert
       </code>{' '}
       event. Point a webhook at that event to receive alerts —{' '}
@@ -326,7 +327,8 @@ function CreateAlertForm({
                 value={baseAsset}
                 onChange={(e) => {
                   setBaseAsset(e.target.value);
-                  if (fieldError.base) setFieldError((f) => ({ ...f, base: undefined }));
+                  if (fieldError.base)
+                    setFieldError((f) => ({ ...f, base: undefined }));
                 }}
                 placeholder="native"
                 className="font-mono text-[13px]"
@@ -402,7 +404,9 @@ function CreateAlertForm({
               type="number"
               min={0}
               value={cooldown}
-              onChange={(e) => setCooldown(Math.max(0, Number(e.target.value) || 0))}
+              onChange={(e) =>
+                setCooldown(Math.max(0, Number(e.target.value) || 0))
+              }
               className="tnum max-w-48"
             />
           </Field>
@@ -458,17 +462,17 @@ function AlertsTable({
             return (
               <TR key={a.id} className={a.enabled ? undefined : 'opacity-60'}>
                 <Td>
-                  <span className="font-mono text-[13px] text-ink">
-                    {shortAsset(a.base_asset)}
+                  <span className="text-ink font-mono text-[13px]">
+                    {shortAssetText(a.base_asset)}
                     <span className="text-ink-faint">/</span>
-                    {shortAsset(a.quote_asset)}
+                    {shortAssetText(a.quote_asset)}
                   </span>
                 </Td>
                 <Td>
                   <span className="tnum">
                     {a.condition === 'above' ? '≥' : '≤'} {a.threshold}{' '}
                     <span className="text-ink-muted">
-                      {shortAsset(a.quote_asset)}
+                      {shortAssetText(a.quote_asset)}
                     </span>
                   </span>
                 </Td>
@@ -529,19 +533,6 @@ function AlertsTable({
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────
-
-// shortAsset renders a canonical asset id compactly for the table:
-// native → XLM, fiat:USD → USD, crypto:BTC → BTC, CODE-G… → CODE, a
-// bare C… contract → C…4-char…4-char.
-function shortAsset(id: string): string {
-  if (id === 'native') return 'XLM';
-  if (id.startsWith('fiat:')) return id.slice(5);
-  if (id.startsWith('crypto:')) return id.slice(7);
-  const dash = id.indexOf('-');
-  if (dash > 0) return id.slice(0, dash);
-  if (id.length > 12) return `${id.slice(0, 4)}…${id.slice(-4)}`;
-  return id;
-}
 
 // fmtCooldown renders the cooldown seconds as a coarse human string.
 function fmtCooldown(seconds: number): string {

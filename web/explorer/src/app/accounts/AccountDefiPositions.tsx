@@ -5,10 +5,21 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { Badge, Mono, Select, Table, TableWrap, TBody, Td, Th, THead, TR } from '@/components/ui';
+import {
+  Badge,
+  Mono,
+  Select,
+  Table,
+  TableWrap,
+  TBody,
+  Td,
+  Th,
+  THead,
+  TR,
+} from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import type { components } from '@/api/types';
-import { type Envelope } from '../explorer-shared';
+import { type Envelope, formatTimestamp } from '../explorer-shared';
 
 type AccountPositionsResp = components['schemas']['AccountPositions'];
 type AccountPosition = components['schemas']['AccountPosition'];
@@ -83,11 +94,12 @@ export function AccountDefiPositionsPanel({ id }: { id: string }) {
   });
 
   const source = asExample(`/v1/accounts/${id}/positions`, queryParams);
-  const panelHint = 'net DeFi positions folded from on-chain events — no valuation applied, see each row’s semantics';
+  const panelHint =
+    'net DeFi positions folded from on-chain events — no valuation applied, see each row’s semantics';
 
   const filters = (
-    <label className="flex items-center gap-2 text-xs text-ink-muted">
-      <span className="uppercase tracking-wider">Show</span>
+    <label className="text-ink-muted flex items-center gap-2 text-xs">
+      <span className="tracking-wider uppercase">Show</span>
       <Select
         value={includeClosed ? 'all' : 'open'}
         onChange={(e) => setIncludeClosed(e.target.value === 'all')}
@@ -102,9 +114,14 @@ export function AccountDefiPositionsPanel({ id }: { id: string }) {
 
   if (isError) {
     return (
-      <Panel title="DeFi positions" hint={panelHint} source={source} bodyClassName="space-y-3">
+      <Panel
+        title="DeFi positions"
+        hint={panelHint}
+        source={source}
+        bodyClassName="space-y-3"
+      >
         {filters}
-        <p className="text-sm text-ink-body">
+        <p className="text-ink-body text-sm">
           The positions lookup failed — reload to retry
           {error instanceof Error ? `: ${error.message}` : ''}.
         </p>
@@ -114,9 +131,14 @@ export function AccountDefiPositionsPanel({ id }: { id: string }) {
 
   if (isLoading || !data) {
     return (
-      <Panel title="DeFi positions" hint={panelHint} source={source} bodyClassName="space-y-3">
+      <Panel
+        title="DeFi positions"
+        hint={panelHint}
+        source={source}
+        bodyClassName="space-y-3"
+      >
         {filters}
-        <p className="text-sm text-ink-muted">Loading…</p>
+        <p className="text-ink-muted text-sm">Loading…</p>
       </Panel>
     );
   }
@@ -141,10 +163,12 @@ export function AccountDefiPositionsPanel({ id }: { id: string }) {
       {/* Honest top-level note (task requirement): always present, not
           conditional — every position on this endpoint is a raw
           quantity, never a valuation. */}
-      {data.note && <p className="text-xs text-ink-faint">{data.note}</p>}
+      {data.note && <p className="text-ink-faint text-xs">{data.note}</p>}
 
       {positions.length === 0 ? (
-        <p className="text-sm text-ink-muted">No DeFi positions observed for this account yet.</p>
+        <p className="text-ink-muted text-sm">
+          No DeFi positions observed for this account yet.
+        </p>
       ) : (
         Array.from(byProtocol.entries()).map(([protocol, rows]) => (
           <ProtocolGroup key={protocol} protocol={protocol} rows={rows} />
@@ -154,12 +178,18 @@ export function AccountDefiPositionsPanel({ id }: { id: string }) {
   );
 }
 
-function ProtocolGroup({ protocol, rows }: { protocol: string; rows: AccountPosition[] }) {
+function ProtocolGroup({
+  protocol,
+  rows,
+}: {
+  protocol: string;
+  rows: AccountPosition[];
+}) {
   return (
     <div className="space-y-2">
       <Link
         href={`/protocols/${encodeURIComponent(protocol)}`}
-        className="inline-block text-xs font-medium uppercase tracking-wider text-ink-muted hover:text-brand-600"
+        className="text-ink-muted hover:text-brand-600 inline-block text-xs font-medium tracking-wider uppercase"
       >
         {PROTOCOL_LABEL[protocol] ?? protocol}
       </Link>
@@ -176,7 +206,10 @@ function ProtocolGroup({ protocol, rows }: { protocol: string; rows: AccountPosi
           </THead>
           <TBody>
             {rows.map((p, i) => (
-              <PositionRow key={`${p.protocol}-${p.position_kind}-${p.venue}-${i}`} p={p} />
+              <PositionRow
+                key={`${p.protocol}-${p.position_kind}-${p.venue}-${i}`}
+                p={p}
+              />
             ))}
           </TBody>
         </Table>
@@ -186,12 +219,16 @@ function ProtocolGroup({ protocol, rows }: { protocol: string; rows: AccountPosi
 }
 
 function PositionRow({ p }: { p: AccountPosition }) {
-  const semanticsLabel = SEMANTICS_LABEL[p.amount_semantics] ?? p.amount_semantics;
-  const basisLabel = p.basis === 'stateful' ? "protocol's own state" : 'derived from events';
+  const semanticsLabel =
+    SEMANTICS_LABEL[p.amount_semantics] ?? p.amount_semantics;
+  const basisLabel =
+    p.basis === 'stateful' ? "protocol's own state" : 'derived from events';
   return (
     <TR>
       <Td>
-        <Badge tone="brand">{POSITION_KIND_LABEL[p.position_kind] ?? p.position_kind}</Badge>
+        <Badge tone="brand">
+          {POSITION_KIND_LABEL[p.position_kind] ?? p.position_kind}
+        </Badge>
       </Td>
       <Td>
         <Link
@@ -206,19 +243,26 @@ function PositionRow({ p }: { p: AccountPosition }) {
           )}
         </Link>
       </Td>
-      <Td className="text-ink-body">{p.assets && p.assets.length > 0 ? p.assets.join(' / ') : '—'}</Td>
+      <Td className="text-ink-body">
+        {p.assets && p.assets.length > 0 ? p.assets.join(' / ') : '—'}
+      </Td>
       <Td align="right" className="font-mono">
         {p.amount}
       </Td>
       <Td>
-        <div className="whitespace-nowrap text-xs text-ink-muted">
-          {p.last_activity.time ? new Date(p.last_activity.time).toLocaleString('en-US') : '—'}
+        <div className="text-ink-muted text-xs whitespace-nowrap">
+          {formatTimestamp(p.last_activity.time)}
         </div>
-        <div className="text-[11px] text-ink-faint">#{p.last_activity.ledger.toLocaleString('en-US')}</div>
+        <div className="text-ink-faint text-[11px]">
+          #{p.last_activity.ledger.toLocaleString('en-US')}
+        </div>
         {/* amount_semantics + basis surfaced as visible subtext, not
             hidden — the tooltip carries the API's exact wording for
             anyone who hovers, but the short label is always visible. */}
-        <div className="text-[11px] text-ink-faint" title={`${p.amount_semantics} — ${p.basis}`}>
+        <div
+          className="text-ink-faint text-[11px]"
+          title={`${p.amount_semantics} — ${p.basis}`}
+        >
           {semanticsLabel} · {basisLabel}
         </div>
       </Td>

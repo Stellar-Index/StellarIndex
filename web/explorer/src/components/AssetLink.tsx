@@ -6,29 +6,11 @@ import { useSACWrappers } from '@/api/hooks';
 import { cn } from '@/lib/cn';
 import { AssetLabel } from './AssetLabel';
 
-/**
- * normalizeColonForm rewrites a classic-asset id served in the colon
- * form (`<CODE>:<G-issuer>`) to the dash form (`<CODE>-<G-issuer>`)
- * every other asset-linking path on the site expects.
- *
- * The colon form shows up on GET /v1/accounts/{g}/movements' post-P23
- * tail (ADR-0048 D5): the handler resolves a SAC's asset name from its
- * on-chain CAP-67 METADATA, which Stellar itself encodes as
- * "CODE:GISSUER" (internal/api/v1/explorer/movements.go,
- * resolveSEP41MovementAsset / SACAssetFromEvents) — verified against
- * the live API (e.g. "USDC:GA5ZSEJY…", "SILICA:GBDJWO2Q…"). AssetLabel
- * already normalises this for display (site-audit S-014); this mirrors
- * it here so the slug/link agrees with what the label renders instead
- * of falling back to a dead (unlinked) asset. Deliberately narrow: only
- * a short all-alnum code followed by `:G<55 base32>` qualifies, so
- * `pool:<hex>` liquidity-pool ids and raw Soroban contract ids (which
- * never contain a colon) are left untouched.
- */
-function normalizeColonForm(canonical: string): string {
-  return /^[A-Za-z0-9]{1,12}:G[A-Z2-7]{55}$/.test(canonical)
-    ? canonical.replace(':', '-')
-    : canonical;
-}
+import { normalizeColonForm, shortAssetText } from '@/lib/asset-label';
+
+// Re-export for existing client-side importers; server code imports
+// from '@/lib/asset-label' directly (see that module's header).
+export { shortAssetText };
 
 /**
  * assetSlug maps a canonical asset_id to the SHORT slug that
@@ -91,27 +73,11 @@ export function AssetLink({
   return (
     <Link
       href={`/assets/${encodeURIComponent(slug)}`}
-      className={cn('transition-colors hover:text-brand-600', className)}
+      className={cn('hover:text-brand-600 transition-colors', className)}
     >
       <AssetLabel canonical={canonical} />
     </Link>
   );
-}
-
-/**
- * shortAssetText — compact single-line label for a canonical asset_id,
- * for dense table cells where AssetLabel's two-line form is too tall.
- */
-export function shortAssetText(canonical: string | undefined | null): string {
-  if (!canonical) return '—';
-  if (canonical === 'native' || /^\d+$/.test(canonical)) return 'XLM';
-  if (canonical.startsWith('fiat:')) return canonical.slice(5);
-  if (canonical.startsWith('crypto:')) return canonical.slice(7);
-  if (/^C[A-Za-z0-9]{55}$/.test(canonical)) return `${canonical.slice(0, 4)}…${canonical.slice(-4)}`;
-  canonical = normalizeColonForm(canonical);
-  const i = canonical.indexOf('-');
-  if (i === -1) return canonical.length > 12 ? `${canonical.slice(0, 4)}…${canonical.slice(-4)}` : canonical;
-  return canonical.slice(0, i);
 }
 
 /**
@@ -133,7 +99,10 @@ export function AssetText({
   return (
     <Link
       href={`/assets/${encodeURIComponent(slug)}`}
-      className={cn('transition-colors hover:text-brand-600 hover:underline', className)}
+      className={cn(
+        'hover:text-brand-600 transition-colors hover:underline',
+        className,
+      )}
     >
       {text}
     </Link>
@@ -161,7 +130,10 @@ export function PairLink({
   return (
     <Link
       href={`/markets/${encodeURIComponent(slug)}`}
-      className={cn('inline-flex items-center gap-1 transition-colors hover:text-brand-600', className)}
+      className={cn(
+        'hover:text-brand-600 inline-flex items-center gap-1 transition-colors',
+        className,
+      )}
     >
       {children ?? (
         <>

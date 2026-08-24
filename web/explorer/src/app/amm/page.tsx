@@ -8,7 +8,12 @@ export const metadata: Metadata = {
   description:
     'Automated market makers on Stellar (Soroban): Soroswap, Aquarius, Phoenix, and Comet — constant-product and weighted pools, swap events, and trading volume, indexed per protocol.',
   alternates: { canonical: '/amm' },
-  openGraph: { title: 'Stellar AMM protocols', description: 'Soroban AMMs on Stellar: pools, swaps, and volume.', url: 'https://stellarindex.io/amm', type: 'website' },
+  openGraph: {
+    title: 'Stellar AMM protocols',
+    description: 'Soroban AMMs on Stellar: pools, swaps, and volume.',
+    url: 'https://stellarindex.io/amm',
+    type: 'website',
+  },
 };
 
 export default function AmmPage() {
@@ -20,9 +25,17 @@ export default function AmmPage() {
       footnote={
         <>
           Looking for the order book? See{' '}
-          <Link href="/sdex" className="text-brand-600 hover:underline">SDEX</Link>. For
-          the protocol-native liquidity pools (not Soroban AMMs), see{' '}
-          <Link href="/liquidity-pools" className="text-brand-600 hover:underline">liquidity pools</Link>.
+          <Link href="/sdex" className="text-brand-600 hover:underline">
+            SDEX
+          </Link>
+          . For the protocol-native liquidity pools (not Soroban AMMs), see{' '}
+          <Link
+            href="/liquidity-pools"
+            className="text-brand-600 hover:underline"
+          >
+            liquidity pools
+          </Link>
+          .
         </>
       }
     />

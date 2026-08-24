@@ -11,9 +11,9 @@
 // unknown params).
 
 import { Check, Copy } from 'lucide-react';
-import { useEffect, useState } from 'react';
 
 import type { components, paths } from '@/api/types';
+import { useCopyToClipboard } from '@/components/ui';
 
 // ---------------------------------------------------------------------------
 // Wire shapes — every endpoint is wrapped as { data, as_of, flags }.
@@ -36,11 +36,9 @@ type GetJSON<P extends keyof paths> = paths[P] extends {
   ? B
   : never;
 
-export type Envelope<T> = {
-  data: T;
-  as_of?: string;
-  flags?: Record<string, unknown>;
-};
+// FEC audit A3-F4: Envelope's canonical home is src/api/client (so api
+// code can use it); re-exported here for the existing page importers.
+export type { Envelope } from '@/api/client';
 
 export type Ledger = Schemas['Ledger'];
 
@@ -182,7 +180,11 @@ export function renderOpFieldValue(key: string, v: unknown): string {
   ) {
     return stroopsToXlm(v);
   }
-  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+  if (
+    typeof v === 'string' ||
+    typeof v === 'number' ||
+    typeof v === 'boolean'
+  ) {
     return String(v);
   }
   try {
@@ -211,11 +213,7 @@ export function scaledUnits(baseUnits: string, decimals: number): number {
   return neg ? -n : n;
 }
 
-export function shortHash(
-  h: string | undefined | null,
-  head = 8,
-  tail = 8,
-): string {
+function shortHash(h: string | undefined | null, head = 8, tail = 8): string {
   if (!h) return '—';
   if (h.length <= head + tail + 1) return h;
   return `${h.slice(0, head)}…${h.slice(-tail)}`;
@@ -228,17 +226,10 @@ export function formatTimestamp(iso: string | undefined | null): string {
   return d.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
 }
 
-export function relativeAge(iso: string | undefined | null): string {
-  if (!iso) return '—';
-  const ms = Date.now() - new Date(iso).getTime();
-  if (!Number.isFinite(ms)) return '—';
-  if (ms < 0) return 'now';
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.round(s / 60)}m ago`;
-  if (s < 86_400) return `${Math.round(s / 3600)}h ago`;
-  return `${Math.round(s / 86_400)}d ago`;
-}
+// FEC audit A3-F1: this was a behavior-identical clone of lib/format's
+// formatRelative — delegate so the family has exactly one implementation.
+// (Kept as a named re-export: 10 explorer files import it from here.)
+export { formatRelative as relativeAge } from '@/lib/format';
 
 // ---------------------------------------------------------------------------
 // CopyHash — monospace truncated identifier with a copy-to-clipboard
@@ -257,8 +248,7 @@ export function CopyHash({
   tail?: number;
   className?: string;
 }) {
-  if (!value)
-    return <span className="text-ink-faint">—</span>;
+  if (!value) return <span className="text-ink-faint">—</span>;
   return (
     <span className={`inline-flex items-center gap-1 ${className ?? ''}`}>
       <span className="font-mono" title={value}>
@@ -273,31 +263,20 @@ export function CopyHash({
 // text. Use when the value is already shown next to it (e.g. an
 // account link) and you just want a copy affordance.
 export function CopyValue({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false);
-  useEffect(() => {
-    if (!copied) return;
-    const t = setTimeout(() => setCopied(false), 1400);
-    return () => clearTimeout(t);
-  }, [copied]);
+  // FEC audit A3-F7: behavior lives in the canonical ui hook (this file's
+  // implementation WAS the winner — cleanup + propagation guards — and
+  // was absorbed there); only the compact look stays local.
+  const { copied, copy } = useCopyToClipboard(value);
   return (
     <button
       type="button"
-      onClick={async (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        try {
-          await navigator.clipboard.writeText(value);
-          setCopied(true);
-        } catch {
-          // clipboard unavailable (insecure context) — no-op
-        }
-      }}
+      onClick={copy}
       className="text-ink-faint hover:text-brand-600"
       aria-label="Copy to clipboard"
       title="Copy to clipboard"
     >
       {copied ? (
-        <Check className="h-3 w-3 text-up-strong" />
+        <Check className="text-up-strong h-3 w-3" />
       ) : (
         <Copy className="h-3 w-3" />
       )}

@@ -148,7 +148,7 @@ export function ConvertPair({
 
 function formatRate(n: number): string {
   if (!Number.isFinite(n)) return '—';
-  if (Math.abs(n) >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  if (Math.abs(n) >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
   if (Math.abs(n) >= 1) return n.toFixed(4);
   if (Math.abs(n) >= 0.01) return n.toFixed(6);
   return n.toFixed(8);

@@ -1,5 +1,6 @@
 import { Award, Flame, TrendingDown, TrendingUp } from 'lucide-react';
 import { twMerge } from 'tailwind-merge';
+import { formatRelative } from '@/lib/format';
 
 export type StreakIndicatorProps =
   | {
@@ -27,7 +28,9 @@ export type StreakIndicatorProps =
  * design-inventory §6.4. Each variant uses a distinct colour +
  * icon so they're spottable in dense lists.
  */
-export function StreakIndicator(props: StreakIndicatorProps & { className?: string }) {
+export function StreakIndicator(
+  props: StreakIndicatorProps & { className?: string },
+) {
   const className = props.className ?? '';
   switch (props.kind) {
     case 'streak': {
@@ -56,26 +59,26 @@ export function StreakIndicator(props: StreakIndicatorProps & { className?: stri
       return (
         <span
           className={twMerge(
-            'inline-flex items-center gap-1 rounded-full bg-warn-50 px-2 py-0.5 text-xs font-medium text-warn-700',
+            'bg-warn-50 text-warn-700 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium',
             className,
           )}
           title={`All-time high reached ${props.at}`}
         >
           <Award className="h-3 w-3" aria-hidden />
-          ATH {relativeTime(props.at)}
+          ATH {formatRelative(props.at)}
         </span>
       );
     case 'atl':
       return (
         <span
           className={twMerge(
-            'inline-flex items-center gap-1 rounded-full bg-down-subtle px-2 py-0.5 text-xs font-medium text-down-strong',
+            'bg-down-subtle text-down-strong inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium',
             className,
           )}
           title={`All-time low reached ${props.at}`}
         >
           <TrendingDown className="h-3 w-3" aria-hidden />
-          ATL {relativeTime(props.at)}
+          ATL {formatRelative(props.at)}
         </span>
       );
     case 'new':
@@ -92,21 +95,4 @@ export function StreakIndicator(props: StreakIndicatorProps & { className?: stri
         </span>
       );
   }
-}
-
-/**
- * Relative-time formatter — "2h ago", "3 days ago". Intentionally
- * lo-fi (no Intl.RelativeTimeFormat); good enough for design and
- * easy to swap for a richer version later.
- */
-function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (!Number.isFinite(then)) return '';
-  const diffSec = Math.max(0, (Date.now() - then) / 1000);
-  if (diffSec < 60) return `${Math.round(diffSec)}s ago`;
-  if (diffSec < 3600) return `${Math.round(diffSec / 60)}m ago`;
-  if (diffSec < 86400) return `${Math.round(diffSec / 3600)}h ago`;
-  return `${Math.round(diffSec / 86400)} day${
-    diffSec >= 172800 ? 's' : ''
-  } ago`;
 }

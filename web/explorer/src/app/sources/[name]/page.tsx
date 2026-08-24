@@ -1,13 +1,19 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
+import { EntityNotFoundShell } from '@/components/EntityNotFoundShell';
 import { Container, Breadcrumbs } from '@/components/ui';
 import { SourceHealthPanel } from './SourceHealthPanel';
 import { SourceStatsPanel } from '@/app/dexes/[source]/SourceStatsPanel';
 import { SourceTopChart } from '@/app/dexes/[source]/SourceTopChart';
 import { buildFetchData, failBuild, requireRows } from '@/lib/buildFetch';
 import { formatCompact, formatPairPrice } from '@/lib/format';
-import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, serializeJsonLd } from '@/lib/seo';
+import {
+  SITE_OG_IMAGES,
+  SITE_TWITTER_IMAGES,
+  serializeJsonLd,
+} from '@/lib/seo';
+import { shortAssetText } from '@/lib/asset-label';
 
 // Sources that also have a dedicated DEX or CEX detail page — used to
 // offer a "view as …" cross-link from the generic source profile.
@@ -72,8 +78,19 @@ export async function generateMetadata({
     title,
     description,
     alternates: { canonical },
-    openGraph: { title, description, url: canonical, type: 'website', images: SITE_OG_IMAGES },
-    twitter: { card: 'summary_large_image', title, description, images: SITE_TWITTER_IMAGES },
+    openGraph: {
+      title,
+      description,
+      url: canonical,
+      type: 'website',
+      images: SITE_OG_IMAGES,
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title,
+      description,
+      images: SITE_TWITTER_IMAGES,
+    },
   };
 }
 
@@ -121,11 +138,7 @@ async function fetchSourceMarkets(name: string): Promise<MarketRow[] | null> {
   );
 }
 
-export default async function SourceDetailPage({
-  params,
-}: {
-  params: Params;
-}) {
+export default async function SourceDetailPage({ params }: { params: Params }) {
   const { name } = await params;
   const [source, allCursors, topMarkets] = await Promise.all([
     fetchSource(name),
@@ -143,18 +156,17 @@ export default async function SourceDetailPage({
       `/sources/${name}: promised by generateStaticParams but /v1/sources no longer lists it`,
     );
     return (
-      <div className="mx-auto max-w-3xl px-6 py-16 text-center">
-        <h1 className="text-2xl font-semibold">Source not found</h1>
-        <p className="mt-2 text-sm text-ink-muted">
-          No registered source named <code className="font-mono">{name}</code>.
-        </p>
-        <Link
-          href="/sources"
-          className="mt-6 inline-flex items-center gap-1 text-sm text-brand-600 hover:underline"
-        >
-          All sources →
-        </Link>
-      </div>
+      <EntityNotFoundShell
+        title="Source not found"
+        description={
+          <>
+            No registered source named <code className="font-mono">{name}</code>
+            .
+          </>
+        }
+        backHref="/sources"
+        backLabel="All sources"
+      />
     );
   }
 
@@ -175,9 +187,24 @@ export default async function SourceDetailPage({
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
     itemListElement: [
-      { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://stellarindex.io' },
-      { '@type': 'ListItem', position: 2, name: 'Sources', item: 'https://stellarindex.io/sources' },
-      { '@type': 'ListItem', position: 3, name, item: `https://stellarindex.io/sources/${name}` },
+      {
+        '@type': 'ListItem',
+        position: 1,
+        name: 'Home',
+        item: 'https://stellarindex.io',
+      },
+      {
+        '@type': 'ListItem',
+        position: 2,
+        name: 'Sources',
+        item: 'https://stellarindex.io/sources',
+      },
+      {
+        '@type': 'ListItem',
+        position: 3,
+        name,
+        item: `https://stellarindex.io/sources/${name}`,
+      },
     ],
   };
 
@@ -199,12 +226,12 @@ export default async function SourceDetailPage({
           <h1 className="text-3xl font-semibold tracking-tight">{name}</h1>
           <ClassBadge cls={source.class} />
           {source.subclass && (
-            <span className="rounded-sm bg-surface-subtle px-2 py-0.5 font-mono text-xs uppercase tracking-wider text-ink-body">
+            <span className="bg-surface-subtle text-ink-body rounded-sm px-2 py-0.5 font-mono text-xs tracking-wider uppercase">
               {source.subclass}
             </span>
           )}
           {source.paid && (
-            <span className="rounded-sm bg-warn-50 px-2 py-0.5 text-[11px] uppercase tracking-wider text-warn-700">
+            <span className="bg-warn-50 text-warn-700 rounded-sm px-2 py-0.5 text-[11px] tracking-wider uppercase">
               paid
             </span>
           )}
@@ -212,12 +239,18 @@ export default async function SourceDetailPage({
         {/* Cross-link to the richer category view when one exists. */}
         <div className="flex flex-wrap gap-3 text-xs">
           {(DEX_PAGES.has(name) || source.subclass === 'dex') && (
-            <Link href={`/dexes/${encodeURIComponent(name)}`} className="text-brand-600 hover:underline">
+            <Link
+              href={`/dexes/${encodeURIComponent(name)}`}
+              className="text-brand-600 hover:underline"
+            >
               View as DEX — pools &amp; chart →
             </Link>
           )}
           {EXCHANGE_PAGES.has(name) && (
-            <Link href={`/exchanges/${encodeURIComponent(name)}`} className="text-brand-600 hover:underline">
+            <Link
+              href={`/exchanges/${encodeURIComponent(name)}`}
+              className="text-brand-600 hover:underline"
+            >
               View exchange page →
             </Link>
           )}
@@ -231,16 +264,8 @@ export default async function SourceDetailPage({
 
       <Panel title="Registry profile">
         <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-          <Stat
-            label="Class"
-            value={source.class}
-            mono
-          />
-          <Stat
-            label="Subclass"
-            value={source.subclass ?? '—'}
-            mono
-          />
+          <Stat label="Class" value={source.class} mono />
+          <Stat label="Subclass" value={source.subclass ?? '—'} mono />
           <Stat
             label="Contributes to VWAP"
             value={source.include_in_vwap ? 'yes' : 'no'}
@@ -282,7 +307,11 @@ export default async function SourceDetailPage({
           under cold-cache and was eating the static-export budget. */}
       <SourceStatsPanel
         source={name}
-        unitsLabel={source.class === 'exchange' && source.subclass !== 'dex' ? 'pairs' : 'pools'}
+        unitsLabel={
+          source.class === 'exchange' && source.subclass !== 'dex'
+            ? 'pairs'
+            : 'pools'
+        }
       />
 
       <SourceTopChart source={name} sourceName={name} />
@@ -293,15 +322,15 @@ export default async function SourceDetailPage({
         bodyClassName="-mx-4"
       >
         {cursors.length === 0 ? (
-          <p className="px-4 py-3 text-sm text-ink-muted">
+          <p className="text-ink-muted px-4 py-3 text-sm">
             No cursor recorded for this source. Likely either the source has
             never been started in this deployment, or it doesn&apos;t persist
             cursors (e.g. WebSocket-only venues that backfill via REST).
           </p>
         ) : (
-          <table className="min-w-full divide-y divide-line text-sm">
+          <table className="divide-line min-w-full divide-y text-sm">
             <thead>
-              <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
+              <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
                 <th className="px-4 py-2 font-medium">Sub-source</th>
                 <th className="px-4 py-2 text-right font-medium">
                   Last ledger
@@ -310,7 +339,7 @@ export default async function SourceDetailPage({
                 <th className="px-4 py-2 text-right font-medium">Lag</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-line-subtle">
+            <tbody className="divide-line-subtle divide-y">
               {cursors.map((c, i) => (
                 <tr
                   key={`${c.sub_source ?? ''}|${i}`}
@@ -322,7 +351,7 @@ export default async function SourceDetailPage({
                   <td className="px-4 py-2 text-right font-mono tabular-nums">
                     #{c.last_ledger.toLocaleString('en-US')}
                   </td>
-                  <td className="px-4 py-2 text-right font-mono text-xs text-ink-muted">
+                  <td className="text-ink-muted px-4 py-2 text-right font-mono text-xs">
                     {c.last_updated.replace('T', ' ').slice(0, 19)} UTC
                   </td>
                   <td className="px-4 py-2 text-right">
@@ -341,21 +370,22 @@ export default async function SourceDetailPage({
         bodyClassName="-mx-4"
       >
         {!topMarkets ? (
-          <p className="px-4 py-3 text-sm text-ink-muted">
+          <p className="text-ink-muted px-4 py-3 text-sm">
             Market list unavailable for this build — the pair query didn&apos;t
             answer, so this is unknown rather than empty. It refreshes on the
             next build.
           </p>
         ) : topMarkets.length === 0 ? (
-          <p className="px-4 py-3 text-sm text-ink-muted">
+          <p className="text-ink-muted px-4 py-3 text-sm">
             No markets observed for this source in the trailing 14 days. Either
-            the venue isn&apos;t actively producing trades the indexer can decode,
-            or the cursor hasn&apos;t advanced past the recency window yet.
+            the venue isn&apos;t actively producing trades the indexer can
+            decode, or the cursor hasn&apos;t advanced past the recency window
+            yet.
           </p>
         ) : (
-          <table className="min-w-full divide-y divide-line text-sm">
+          <table className="divide-line min-w-full divide-y text-sm">
             <thead>
-              <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
+              <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
                 <th className="px-4 py-2 font-medium">Base</th>
                 <th className="px-4 py-2 font-medium">Quote</th>
                 <th className="px-4 py-2 text-right font-medium">Last price</th>
@@ -363,7 +393,7 @@ export default async function SourceDetailPage({
                 <th className="px-4 py-2 text-right font-medium">24h trades</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-line-subtle">
+            <tbody className="divide-line-subtle divide-y">
               {topMarkets.map((m) => {
                 const slug = encodeURIComponent(`${m.base}~${m.quote}`);
                 return (
@@ -374,22 +404,22 @@ export default async function SourceDetailPage({
                     <td className="px-4 py-2">
                       <Link
                         href={`/markets/${slug}`}
-                        className="font-mono text-xs hover:text-brand-600"
+                        className="hover:text-brand-600 font-mono text-xs"
                       >
-                        {shortAsset(m.base)}
+                        {shortAssetText(m.base)}
                       </Link>
                     </td>
                     <td className="px-4 py-2">
                       <Link
                         href={`/markets/${slug}`}
-                        className="font-mono text-xs hover:text-brand-600"
+                        className="hover:text-brand-600 font-mono text-xs"
                       >
-                        {shortAsset(m.quote)}
+                        {shortAssetText(m.quote)}
                       </Link>
                     </td>
                     <td className="px-4 py-2 text-right">
                       {m.last_price ? (
-                        <span className="font-mono tabular-nums text-ink-body">
+                        <span className="text-ink-body font-mono tabular-nums">
                           {formatLastPrice(m.last_price)}
                         </span>
                       ) : (
@@ -405,7 +435,7 @@ export default async function SourceDetailPage({
                         <span className="text-ink-faint">—</span>
                       )}
                     </td>
-                    <td className="px-4 py-2 text-right font-mono tabular-nums text-ink-muted">
+                    <td className="text-ink-muted px-4 py-2 text-right font-mono tabular-nums">
                       {formatCompact(m.trade_count_24h)}
                     </td>
                   </tr>
@@ -423,16 +453,6 @@ function formatLastPrice(raw: string): string {
   return formatPairPrice(Number(raw));
 }
 
-function shortAsset(canonical: string): string {
-  if (canonical === 'native') return 'XLM';
-  if (canonical.startsWith('fiat:')) return canonical.replace('fiat:', '');
-  if (canonical.startsWith('crypto:')) return canonical;
-  if (/^\d+$/.test(canonical)) return 'XLM';
-  const dashIx = canonical.indexOf('-');
-  if (dashIx === -1) return canonical;
-  return canonical.slice(0, dashIx);
-}
-
 function Panel({
   title,
   subtitle,
@@ -445,12 +465,12 @@ function Panel({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-lg border border-line bg-surface p-4">
+    <section className="border-line bg-surface rounded-lg border p-4">
       <header className="mb-3 flex items-baseline justify-between">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-ink-body">
+        <h2 className="text-ink-body text-sm font-semibold tracking-wider uppercase">
           {title}
         </h2>
-        {subtitle && <span className="text-xs text-ink-faint">{subtitle}</span>}
+        {subtitle && <span className="text-ink-faint text-xs">{subtitle}</span>}
       </header>
       <div className={bodyClassName ?? ''}>{children}</div>
     </section>
@@ -469,14 +489,10 @@ function Stat({
   mono?: boolean;
 }) {
   const valueClass =
-    tone === 'ok'
-      ? 'text-up'
-      : tone === 'warn'
-        ? 'text-warn-700'
-        : '';
+    tone === 'ok' ? 'text-up' : tone === 'warn' ? 'text-warn-700' : '';
   return (
     <div>
-      <dt className="text-[10px] uppercase tracking-wider text-ink-muted">
+      <dt className="text-ink-muted text-[10px] tracking-wider uppercase">
         {label}
       </dt>
       <dd
@@ -499,7 +515,7 @@ function ClassBadge({ cls }: { cls: Source['class'] }) {
           : 'bg-surface-subtle text-ink-body';
   return (
     <span
-      className={`rounded-sm px-2 py-0.5 font-mono text-xs uppercase tracking-wider ${tone}`}
+      className={`rounded-sm px-2 py-0.5 font-mono text-xs tracking-wider uppercase ${tone}`}
     >
       {cls}
     </span>

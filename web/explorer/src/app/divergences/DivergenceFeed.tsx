@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { AssetText } from '@/components/AssetLink';
+import { shortAssetText } from '@/lib/asset-label';
 import { apiGet, asExample } from '@/api/client';
 import { HBarList } from '@/components/charts/Bars';
 import type { paths } from '@/api/types';
@@ -29,25 +30,15 @@ const SERIES_WINDOWS = [1, 7, 30] as const;
 
 function fmtTs(iso: string): string {
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toISOString().replace('T', ' ').slice(0, 19) + 'Z';
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toISOString().replace('T', ' ').slice(0, 19) + 'Z';
 }
 
 function fmtDelta(s: string): string {
   const n = Number(s);
   if (!Number.isFinite(n)) return s;
   return `${n > 0 ? '+' : ''}${n.toFixed(2)}%`;
-}
-
-// Compact label for a canonical asset id in plain-text contexts
-// (bar labels, pills) where the AssetText component can't be used.
-function shortAsset(canonical: string | undefined | null): string {
-  if (!canonical) return '—';
-  if (canonical === 'native') return 'XLM';
-  if (canonical.startsWith('fiat:')) return canonical.replace('fiat:', '');
-  if (canonical.startsWith('crypto:')) return canonical.replace('crypto:', '');
-  const dashIx = canonical.indexOf('-');
-  if (dashIx === -1) return canonical;
-  return canonical.slice(0, dashIx);
 }
 
 type Selection = { asset: string; quote: string; reference: string };
@@ -59,7 +50,10 @@ export function DivergenceFeed() {
   const q = useQuery<DivergenceResp>({
     queryKey: ['/v1/divergence'],
     queryFn: async () => {
-      const env = await apiGet<{ data: DivergenceResp }>('/v1/divergence', { limit: 100, window_days: 7 });
+      const env = await apiGet<{ data: DivergenceResp }>('/v1/divergence', {
+        limit: 100,
+        window_days: 7,
+      });
       return env.data;
     },
     staleTime: 30_000,
@@ -72,7 +66,11 @@ export function DivergenceFeed() {
   const sel: Selection | null =
     selected ??
     (rows[0]
-      ? { asset: rows[0].asset_id ?? '', quote: rows[0].quote_id ?? '', reference: rows[0].reference ?? '' }
+      ? {
+          asset: rows[0].asset_id ?? '',
+          quote: rows[0].quote_id ?? '',
+          reference: rows[0].reference ?? '',
+        }
       : null);
 
   return (
@@ -87,22 +85,31 @@ export function DivergenceFeed() {
         source={asExample('/v1/divergence', { limit: 100, window_days: 7 })}
         bodyClassName="space-y-3"
       >
-        {q.isLoading && <p className="text-sm text-ink-muted">Loading…</p>}
-        {q.isError && <p className="text-sm text-ink-muted">The divergence board is unavailable right now.</p>}
+        {q.isLoading && <p className="text-ink-muted text-sm">Loading…</p>}
+        {q.isError && (
+          <p className="text-ink-muted text-sm">
+            The divergence board is unavailable right now.
+          </p>
+        )}
         {q.data && rows.length === 0 && (
-          <p className="text-sm text-ink-muted">
-            No cross-reference comparisons recorded in the last 7 days (the divergence worker writes one row per
-            configured (pair, reference) per tick).
+          <p className="text-ink-muted text-sm">
+            No cross-reference comparisons recorded in the last 7 days (the
+            divergence worker writes one row per configured (pair, reference)
+            per tick).
           </p>
         )}
         {rows.length > 0 && (
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-line text-left text-[11px] uppercase tracking-wider text-ink-muted">
+              <tr className="border-line text-ink-muted border-b text-left text-[11px] tracking-wider uppercase">
                 <th className="py-1.5 pr-4 font-normal">Pair</th>
                 <th className="py-1.5 pr-4 font-normal">Reference</th>
-                <th className="py-1.5 pr-4 text-right font-normal">Our price</th>
-                <th className="py-1.5 pr-4 text-right font-normal">Reference</th>
+                <th className="py-1.5 pr-4 text-right font-normal">
+                  Our price
+                </th>
+                <th className="py-1.5 pr-4 text-right font-normal">
+                  Reference
+                </th>
                 <th className="py-1.5 pr-4 text-right font-normal">Δ%</th>
                 <th className="py-1.5 pr-4 font-normal">Observed</th>
                 <th className="py-1.5 font-normal">State</th>
@@ -120,9 +127,13 @@ export function DivergenceFeed() {
                   <tr
                     key={`${d.asset_id}:${d.quote_id}:${d.reference}`}
                     onClick={() =>
-                      setSelected({ asset: d.asset_id ?? '', quote: d.quote_id ?? '', reference: d.reference ?? '' })
+                      setSelected({
+                        asset: d.asset_id ?? '',
+                        quote: d.quote_id ?? '',
+                        reference: d.reference ?? '',
+                      })
                     }
-                    className={`cursor-pointer border-b border-line/60 last:border-0 hover:bg-surface-muted ${
+                    className={`border-line/60 hover:bg-surface-muted cursor-pointer border-b last:border-0 ${
                       isSel ? 'bg-surface-muted' : ''
                     }`}
                   >
@@ -134,8 +145,12 @@ export function DivergenceFeed() {
                     <td className="py-1.5 pr-4">
                       <code className="text-[11px]">{d.reference}</code>
                     </td>
-                    <td className="py-1.5 pr-4 text-right font-mono tabular-nums">{d.our_price}</td>
-                    <td className="py-1.5 pr-4 text-right font-mono tabular-nums">{d.ref_price}</td>
+                    <td className="py-1.5 pr-4 text-right font-mono tabular-nums">
+                      {d.our_price}
+                    </td>
+                    <td className="py-1.5 pr-4 text-right font-mono tabular-nums">
+                      {d.ref_price}
+                    </td>
                     <td
                       className={`py-1.5 pr-4 text-right font-mono tabular-nums ${
                         firing ? 'text-down-strong' : 'text-ink-body'
@@ -143,14 +158,16 @@ export function DivergenceFeed() {
                     >
                       {fmtDelta(d.delta_pct ?? '')}
                     </td>
-                    <td className="py-1.5 pr-4 font-mono text-[11px] text-ink-muted">{fmtTs(d.observed_at ?? '')}</td>
+                    <td className="text-ink-muted py-1.5 pr-4 font-mono text-[11px]">
+                      {fmtTs(d.observed_at ?? '')}
+                    </td>
                     <td className="py-1.5">
                       {firing ? (
-                        <span className="rounded-sm bg-down-subtle px-1.5 py-0.5 text-[10px] font-medium uppercase text-down-strong">
+                        <span className="bg-down-subtle text-down-strong rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
                           firing
                         </span>
                       ) : (
-                        <span className="rounded-sm bg-up-subtle px-1.5 py-0.5 text-[10px] font-medium uppercase text-up-strong">
+                        <span className="bg-up-subtle text-up-strong rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
                           clear
                         </span>
                       )}
@@ -185,11 +202,14 @@ function DivergenceSeriesPanel({
   const sq = useQuery<DivergenceSeriesResp>({
     queryKey: ['/v1/divergence/series', pair, sel?.reference, days],
     queryFn: async () => {
-      const env = await apiGet<{ data: DivergenceSeriesResp }>('/v1/divergence/series', {
-        pair,
-        reference: sel?.reference ?? '',
-        days,
-      });
+      const env = await apiGet<{ data: DivergenceSeriesResp }>(
+        '/v1/divergence/series',
+        {
+          pair,
+          reference: sel?.reference ?? '',
+          days,
+        },
+      );
       return env.data;
     },
     enabled: sel != null,
@@ -198,7 +218,10 @@ function DivergenceSeriesPanel({
   });
 
   const points = (sq.data?.points ?? [])
-    .map((p) => ({ time: Math.floor(Date.parse(p.t ?? '') / 1000), value: Number(p.delta_pct) }))
+    .map((p) => ({
+      time: Math.floor(Date.parse(p.t ?? '') / 1000),
+      value: Number(p.delta_pct),
+    }))
     .filter((p) => Number.isFinite(p.time) && Number.isFinite(p.value));
   const threshold = sq.data?.threshold_pct;
   const priceLines =
@@ -208,13 +231,16 @@ function DivergenceSeriesPanel({
           { value: -threshold, label: `alert −${threshold}%` },
         ]
       : [];
-  const bucketMin = sq.data?.bucket_seconds != null ? Math.round(sq.data.bucket_seconds / 60) : null;
+  const bucketMin =
+    sq.data?.bucket_seconds != null
+      ? Math.round(sq.data.bucket_seconds / 60)
+      : null;
 
   return (
     <Panel
       title={
         sel
-          ? `Δ% history — ${shortAsset(sel.asset)}/${shortAsset(sel.quote)} vs ${sel.reference}`
+          ? `Δ% history — ${shortAssetText(sel.asset)}/${shortAssetText(sel.quote)} vs ${sel.reference}`
           : 'Δ% history'
       }
       hint={
@@ -222,7 +248,15 @@ function DivergenceSeriesPanel({
           ? `Our VWAP vs the reference over the trailing window, one point per ${bucketMin} min (last observation per bucket). Dashed lines mark the operator's alert threshold.`
           : "Our VWAP vs the selected reference over the trailing window. Dashed lines mark the operator's alert threshold."
       }
-      source={sel ? asExample('/v1/divergence/series', { pair, reference: sel.reference, days }) : undefined}
+      source={
+        sel
+          ? asExample('/v1/divergence/series', {
+              pair,
+              reference: sel.reference,
+              days,
+            })
+          : undefined
+      }
       bodyClassName="space-y-3"
     >
       <div className="flex gap-1">
@@ -233,7 +267,7 @@ function DivergenceSeriesPanel({
             className={`rounded-md px-2.5 py-1 text-xs ${
               days === d
                 ? 'bg-surface-strong text-ink'
-                : 'border border-line text-ink-body hover:border-brand-500'
+                : 'border-line text-ink-body hover:border-brand-500 border'
             }`}
           >
             {d}d
@@ -241,15 +275,22 @@ function DivergenceSeriesPanel({
         ))}
       </div>
       {sel == null && (
-        <p className="text-sm text-ink-muted">No (pair, reference) on the board yet — nothing to plot.</p>
+        <p className="text-ink-muted text-sm">
+          No (pair, reference) on the board yet — nothing to plot.
+        </p>
       )}
-      {sel != null && sq.isLoading && <p className="text-sm text-ink-muted">Loading…</p>}
+      {sel != null && sq.isLoading && (
+        <p className="text-ink-muted text-sm">Loading…</p>
+      )}
       {sel != null && sq.isError && (
-        <p className="text-sm text-ink-muted">The divergence history is unavailable right now.</p>
+        <p className="text-ink-muted text-sm">
+          The divergence history is unavailable right now.
+        </p>
       )}
       {sel != null && sq.data && points.length === 0 && (
-        <p className="text-sm text-ink-muted">
-          No observations recorded for this pair × reference in the last {days === 1 ? 'day' : `${days} days`}.
+        <p className="text-ink-muted text-sm">
+          No observations recorded for this pair × reference in the last{' '}
+          {days === 1 ? 'day' : `${days} days`}.
         </p>
       )}
       {points.length > 0 && (
@@ -259,7 +300,10 @@ function DivergenceSeriesPanel({
           area={false}
           timeVisible={days === 1}
           priceLines={priceLines}
-          legend={{ valueLabel: 'Δ%', formatValue: (n) => `${n > 0 ? '+' : ''}${n.toFixed(3)}%` }}
+          legend={{
+            valueLabel: 'Δ%',
+            formatValue: (n) => `${n > 0 ? '+' : ''}${n.toFixed(3)}%`,
+          }}
           ariaLabel={`Divergence of our VWAP vs ${sel?.reference} over the last ${days} day(s), in percent`}
         />
       )}
@@ -276,7 +320,7 @@ function BoardBars({ rows }: { rows: DivergenceResp['observations'] }) {
     .map((d) => {
       const n = Number(d.delta_pct);
       if (!Number.isFinite(n)) return null;
-      const label = `${shortAsset(d.asset_id)}/${shortAsset(d.quote_id)} · ${d.reference}`;
+      const label = `${shortAssetText(d.asset_id)}/${shortAssetText(d.quote_id)} · ${d.reference}`;
       return {
         label,
         value: Math.abs(n),

@@ -1,13 +1,14 @@
 import Link from 'next/link';
 
 import { PROTOCOLS } from '@/app/protocols/registry';
+import { Container, PageHeader } from '@/components/ui';
 import { serializeJsonLd } from '@/lib/seo';
 
 /**
  * A category landing page (SEO plan D5): "Stellar {category} protocols". Lists
  * the protocols in a category from the static registry as cards linking to
- * their /protocols/{name} detail. Used by /amm and /yield (the categories
- * without a bespoke page); /lending, /dexes, /oracles, /bridges keep their
+ * their /protocols/{name} detail. Used by /amm (the one category without a
+ * bespoke page); /lending, /dexes, /oracles, /bridges and /yield keep their
  * existing bespoke pages.
  */
 export function CategoryHub({
@@ -36,32 +37,31 @@ export function CategoryHub({
   };
 
   return (
-    <div className="mx-auto max-w-4xl space-y-8 px-6 py-10">
+    <Container className="space-y-8 py-8 sm:py-10">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: serializeJsonLd(itemListLD) }}
       />
-      <header className="space-y-3">
-        <nav aria-label="Breadcrumb" className="text-xs text-ink-muted">
-          <Link href="/" className="hover:text-brand-600">Home</Link>
-          <span aria-hidden className="px-1.5 text-ink-faint">/</span>
-          <Link href="/protocols" className="hover:text-brand-600">Protocols</Link>
-        </nav>
-        <h1 className="text-3xl font-semibold tracking-tight">{title}</h1>
-        <p className="max-w-prose text-base text-ink-body">{description}</p>
-      </header>
+      <PageHeader
+        breadcrumbs={[
+          { label: 'Home', href: '/' },
+          { label: 'Protocols', href: '/protocols' },
+        ]}
+        title={title}
+        description={description}
+      />
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {items.map((p) => (
           <Link
             key={p.name}
             href={`/protocols/${p.name}`}
-            className="group rounded-xl border border-line bg-surface p-5 transition-colors hover:border-brand-300 hover:bg-surface-subtle"
+            className="group border-line bg-surface hover:border-brand-300 hover:bg-surface-subtle rounded-xl border p-5 transition-colors"
           >
-            <h2 className="text-lg font-semibold text-ink group-hover:text-brand-600">
+            <h2 className="text-ink group-hover:text-brand-600 text-lg font-semibold">
               {p.label}
             </h2>
-            <p className="mt-1.5 text-sm leading-relaxed text-ink-body">
+            <p className="text-ink-body mt-1.5 text-sm leading-relaxed">
               {p.description}
             </p>
           </Link>
@@ -69,8 +69,10 @@ export function CategoryHub({
       </div>
 
       {footnote && (
-        <p className="border-t border-line pt-5 text-sm text-ink-muted">{footnote}</p>
+        <p className="border-line text-ink-muted border-t pt-5 text-sm">
+          {footnote}
+        </p>
       )}
-    </div>
+    </Container>
   );
 }

@@ -1,40 +1,24 @@
 'use client';
 
-import { Check, Copy } from 'lucide-react';
-import { useState } from 'react';
+import { CopyButton } from '@/components/ui';
 
 /**
  * Snippet block with a Copy button. Lifted out of WidgetsPage so
  * the parent can stay a server component (file reads, no client
  * state) while just this island opts into the browser bundle.
+ * Copy behavior is the canonical ui CopyButton (FEC audit A3-F7).
  */
 export function CopyableSnippet({ snippet }: { snippet: string }) {
-  const [copied, setCopied] = useState(false);
   return (
     <div className="relative">
-      <pre className="overflow-x-auto bg-ink px-3 py-2.5 text-[11px] leading-5 text-ink-faint">
+      <pre className="bg-surface-subtle text-ink-body overflow-x-auto px-3 py-2.5 text-[11px] leading-5">
         <code>{snippet}</code>
       </pre>
-      <button
-        type="button"
+      <CopyButton
+        value={snippet}
         aria-label="Copy snippet"
-        onClick={() => {
-          navigator.clipboard
-            .writeText(snippet)
-            .then(() => {
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1500);
-            })
-            .catch(() => {});
-        }}
-        className="absolute right-2 top-2 rounded-sm p-1 text-ink-faint hover:bg-ink hover:text-ink-faint"
-      >
-        {copied ? (
-          <Check className="h-3.5 w-3.5 text-up" />
-        ) : (
-          <Copy className="h-3.5 w-3.5" />
-        )}
-      </button>
+        className="absolute top-2 right-2"
+      />
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { apiGet, asExample } from '@/api/client';
 import { Panel } from '@/components/reveal';
+import { shortAssetText } from '@/lib/asset-label';
 import { MarketChart } from '@/components/charts/MarketChart';
 // /v1/markets row from the generated OpenAPI contract, via the shared
 // alias in src/api/hooks.ts (Market = MarketRow).
@@ -102,16 +103,10 @@ export function VenueChart({ venue }: { venue: string }) {
   );
 }
 
-// labelOf strips the canonical-form prefix so dropdown + header text
-// reads as a plain ticker (e.g. "XLM / USDT" not "crypto:XLM").
-function labelOf(canonical: string): string {
-  if (canonical === 'native') return 'XLM';
-  if (canonical.startsWith('fiat:')) return canonical.slice(5);
-  if (canonical.startsWith('crypto:')) return canonical.slice(7);
-  const dashIx = canonical.indexOf('-');
-  if (dashIx !== -1) return canonical.slice(0, dashIx);
-  return canonical.length > 12 ? `${canonical.slice(0, 6)}…` : canonical;
-}
+// labelOf delegates to the canonical shortAssetText (F2b fold,
+// 2026-08-24 review follow-up): the local fork rendered numeric
+// trustline ids as raw digits and C-strkeys head-only.
+const labelOf = shortAssetText;
 
 function PairPicker({
   pairs,

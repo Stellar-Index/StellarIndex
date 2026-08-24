@@ -10,7 +10,11 @@ import { CurrencyCombobox } from './CurrencyCombobox';
 describe('CurrencyCombobox', () => {
   it('restores focus to the trigger button after closing with Escape, even when focus had moved into the panel', () => {
     render(
-      <CurrencyCombobox tickers={['USD', 'EUR', 'GBP']} value="USD" onChange={() => {}} />,
+      <CurrencyCombobox
+        tickers={['USD', 'EUR', 'GBP']}
+        value="USD"
+        onChange={() => {}}
+      />,
     );
     const trigger = screen.getByRole('button', { name: /USD/ });
     trigger.focus();
@@ -31,11 +35,20 @@ describe('CurrencyCombobox', () => {
     expect(document.activeElement).toBe(trigger);
   });
 
-  it('marks the open panel as a dialog for assistive tech', () => {
+  it('exposes the open panel as a labelled non-modal popover (A6-3)', () => {
     render(
-      <CurrencyCombobox tickers={['USD', 'EUR']} value="USD" onChange={() => {}} />,
+      <CurrencyCombobox
+        tickers={['USD', 'EUR']}
+        value="USD"
+        onChange={() => {}}
+      />,
     );
     fireEvent.click(screen.getByRole('button', { name: /USD/ }));
-    expect(screen.getByRole('dialog')).toHaveAttribute('aria-modal', 'true');
+    // The page behind the panel stays interactive, so it must NOT claim
+    // aria-modal/dialog semantics (that tells AT the rest of the page is
+    // inert — false here). It stays labelled for AT context.
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    const panel = screen.getByLabelText(/currency/i);
+    expect(panel).not.toHaveAttribute('aria-modal');
   });
 });
