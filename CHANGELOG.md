@@ -15,6 +15,27 @@ against.
 
 ## [Unreleased]
 
+## [v0.40.1] — 2026-08-24
+
+### Fixed
+- **/v1/price p95 tail eliminated**: the serving pool now forces custom
+  plans (`plan_cache_mode=force_custom_plan` post-connect). Root cause:
+  Postgres flipped the request path's raw-trades fallback to a generic
+  plan whose build costs ~206 ms across the ~870-chunk trades hypertable
+  and is rebuilt on every plancache invalidation (~1/min) — a steady
+  ~5 % of serving binds paid 250–330 ms. Custom plans bind in 0.2–3 ms.
+  Background/ops pools keep the default plan mode.
+- **Stuck-upstream FX rejections no longer hold the alert red**: after 12
+  consecutive refusals of the SAME broken history bar (the Massive
+  ETB=44 case) repeats reclassify to `history_deviation_stuck`, excluded
+  from the alert; fresh disagreement still alerts immediately. The guard
+  refuses the bar either way.
+- Explorer: navigation revised into Stellar / External / Developers
+  sections, Stellar-mark + Inter wordmark logo with the live ledger
+  number beside it, new /insights hub, /network sub-surface links.
+
+No migrations.
+
 ## [v0.40.0] — 2026-08-22
 
 ### Fixed
