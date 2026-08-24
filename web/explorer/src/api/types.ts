@@ -5524,6 +5524,24 @@ export interface components {
             /** @description Non-empty when this asset's issuer appears in the curated scam directory. */
             issuer_scam_reason?: string;
             /**
+             * @description Curated third-party labels the account_directory table
+             *     (migration 0136; synced from the MIT-licensed
+             *     stellar-expert/public-directory) carries for this asset's
+             *     ISSUER G-address. Tags follow the upstream registry
+             *     (#exchange, #anchor, #issuer, #malicious, #unsafe, …).
+             *     DISPLAY-ONLY, third-party attribution — NEVER an input to
+             *     verification, scam-suppression, or pricing (they do not
+             *     alter `price_usd`, verified status, or any gate). Clients
+             *     should surface `malicious`/`unsafe`/`fraud`/`scam`/`hack`/
+             *     `phishing` as prominent warnings. Omitted when the issuer
+             *     isn't listed.
+             */
+            issuer_directory_tags?: string[];
+            /** @description Domain the account_directory carries for the issuer (e.g. audrev-stellar.com). Display-only attribution; omitted when unlisted. */
+            issuer_directory_domain?: string;
+            /** @description Name the account_directory carries for the issuer. Display-only attribution; omitted when unlisted. */
+            issuer_directory_name?: string;
+            /**
              * @description Attached when the requested asset's code matches a
              *     verified currency's Stellar ticker (USDC, EURC, AQUA, …)
              *     but the issuer doesn't match the verified entry. Lights

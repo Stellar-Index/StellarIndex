@@ -255,6 +255,12 @@ type Server struct {
 	currencies             CurrenciesReader
 	explorer               ExplorerReader
 	explorerHandler        *explorerpkg.Handler // network-explorer endpoints (ADR-0038); see explorer.go
+	// directory resolves curated third-party issuer labels
+	// (account_directory, migration 0136) for the additive
+	// issuer_directory_* fields on /v1/assets + /v1/assets/{id}.
+	// Same reader the explorer handler + GET /v1/directory use; nil
+	// omits the fields. DISPLAY-ONLY — never feeds pricing/verification.
+	directory explorerpkg.DirectoryReader
 
 	// readyz single-flight cache (inventory #26) — see handleReadyz.
 	readyzMu             sync.Mutex
@@ -1241,6 +1247,7 @@ func New(opts Options) *Server {
 		minMarketCapVolumeUSD:  opts.MinMarketCapVolumeUSD,
 		currencies:             opts.Currencies,
 		explorer:               opts.Explorer,
+		directory:              opts.Directory,
 		fxHistory:              opts.FXHistory,
 		sessionPeeker:          opts.SessionPeeker,
 		audit:                  opts.Audit,

@@ -11332,6 +11332,23 @@ components:
               trade_count_24h: { type: integer }
             required: [counterparty, side, trade_count_24h]
         issuer_scam_reason: { type: string, description: "Non-empty when this asset's issuer appears in the curated scam directory." }
+        issuer_directory_tags:
+          type: array
+          items: { type: string }
+          description: |
+            Curated third-party labels the account_directory table
+            (migration 0136; synced from the MIT-licensed
+            stellar-expert/public-directory) carries for this asset's
+            ISSUER G-address. Tags follow the upstream registry
+            (#exchange, #anchor, #issuer, #malicious, #unsafe, …).
+            DISPLAY-ONLY, third-party attribution — NEVER an input to
+            verification, scam-suppression, or pricing (they do not
+            alter `price_usd`, verified status, or any gate). Clients
+            should surface `malicious`/`unsafe`/`fraud`/`scam`/`hack`/
+            `phishing` as prominent warnings. Omitted when the issuer
+            isn't listed.
+        issuer_directory_domain: { type: string, description: "Domain the account_directory carries for the issuer (e.g. audrev-stellar.com). Display-only attribution; omitted when unlisted." }
+        issuer_directory_name: { type: string, description: "Name the account_directory carries for the issuer. Display-only attribution; omitted when unlisted." }
         unverified_warning:
           oneOf:
             - { $ref: "#/components/schemas/UnverifiedWarning" }

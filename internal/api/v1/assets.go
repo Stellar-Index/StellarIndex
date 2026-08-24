@@ -285,6 +285,29 @@ type AssetDetail struct {
 	// prominent warning when present.
 	IssuerScamReason string `json:"issuer_scam_reason,omitempty"`
 
+	// IssuerDirectoryTags / IssuerDirectoryDomain / IssuerDirectoryName
+	// mirror the curated third-party label the account_directory table
+	// (migration 0136; synced from the MIT-licensed
+	// stellar-expert/public-directory) carries for this asset's issuer
+	// G-address, joined additively onto the payload. Tags follow the
+	// upstream registry (#exchange, #anchor, #issuer, #malicious,
+	// #unsafe, …); clients should surface `malicious`/`unsafe`/`fraud`/
+	// `scam`/`hack`/`phishing` as prominent warnings.
+	//
+	// DISPLAY-ONLY, third-party attribution — per the table's doc
+	// contract these fields are NEVER an input to verification,
+	// scam-suppression, or pricing: they do not alter price_usd, the
+	// verified status, or any gate. Distinct from IssuerScamReason,
+	// which is the hand-curated in-binary scamIssuers list; this is the
+	// live synced directory and covers issuers the static list misses
+	// (e.g. the wash-inflated scam AUD, audrev-stellar.com). Omitted
+	// when no directory reader is wired, the issuer isn't listed, or the
+	// lookup fails (best-effort — a directory outage never fails the
+	// asset response).
+	IssuerDirectoryTags   []string `json:"issuer_directory_tags,omitempty"`
+	IssuerDirectoryDomain string   `json:"issuer_directory_domain,omitempty"`
+	IssuerDirectoryName   string   `json:"issuer_directory_name,omitempty"`
+
 	// Slug is the friendly short identifier for the asset (e.g.
 	// "USDC" for the canonical Circle USDC, or the issuer-
 	// disambiguated form like "USDC-GA5Z…" for collisions). Mirror
@@ -735,6 +758,9 @@ func (s *Server) handleAssetListFromAssets(
 	// fillDeclaredPegPricesInListing's ordering contract.
 	s.fillDeclaredPegPricesInListing(r.Context(), out)
 	s.fillImagesFromSep1(r.Context(), out)
+	// Curated third-party issuer label (account_directory) — one batch
+	// query for the page's issuer set (no N+1). DISPLAY-ONLY; additive.
+	s.fillIssuerDirectoryTags(r.Context(), out)
 	env := Envelope{Data: out, Flags: Flags{}}
 	if hasMore && len(out) > 0 {
 		last := rows[len(rows)-1]
@@ -2033,6 +2059,9 @@ func (s *Server) fetchClassicUnifiedRows(w http.ResponseWriter, r *http.Request,
 	// fillDeclaredPegPricesInListing's ordering contract.
 	s.fillDeclaredPegPricesInListing(r.Context(), out)
 	s.fillImagesFromSep1(r.Context(), out)
+	// Curated third-party issuer label (account_directory) — one batch
+	// query for the page's issuer set (no N+1). DISPLAY-ONLY; additive.
+	s.fillIssuerDirectoryTags(r.Context(), out)
 	s.attachSparkline7dIfRequested(r, out)
 	nextInner := ""
 	if hasMore && len(out) > 0 {
@@ -2225,6 +2254,14 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// for fiat:* (no asset-catalogue row); a no-op when no AssetsReader is
 	// wired or the asset has no asset-catalogue row.
 	s.applyAssetExtensionFields(r.Context(), &detail, parsed)
+
+	// Curated third-party issuer label (account_directory, migration
+	// 0136) — additive issuer_directory_{tags,domain,name}. DISPLAY-ONLY
+	// (see asset_directory_tags.go): runs AFTER every price/gate overlay
+	// and is never read by pricing/verification, so it cannot move
+	// price_usd or any gate. Best-effort; a nil reader / unlisted issuer
+	// / lookup failure just omits the fields.
+	s.applyIssuerDirectoryTags(r.Context(), &detail)
 
 	// Declared-peg price fill — mirrors the listing paths' call. Runs
 	// LAST among the price producers, so it fills only when neither the
