@@ -15,6 +15,29 @@ against.
 
 ## [Unreleased]
 
+## [v0.41.0] — 2026-08-24
+
+### Fixed
+
+- **Freeze lifecycle: escalated-freeze ratchet + restart stall + corroborated
+  release (ADR-0019 amendment 2026-08-24).** Mid-freeze buckets now score
+  per-tick returns against a shadow comparator (kills the drift-since-freeze
+  ratchet that kept XLM/GBP-style freezes from ever releasing at a new stable
+  level, and the restart→unscored stall). Because any HELD level reads calm
+  under per-tick scoring, auto-unfreeze now additionally requires a
+  corroborating lens reading that agrees within 5% with the bucket's own fresh
+  candidate price (`Signal.ReleaseCorroborated`): a genuine repricing whose
+  references follow releases; a parked manipulation walks the ladder to the
+  operator. Pairs with no usable reference never auto-release (fail-closed;
+  they escalate and page). Verified by a 3-lens adversarial panel; red-proven
+  regression tests at both the policy and orchestrator layers. (#142)
+
+### Changed
+
+- Explorer: /sdex is the one canonical SDEX surface (protocol analytics view;
+  /protocols/sdex 301s server-side). Accounts page frame + logo polish.
+  (#141, #143, #144)
+
 ## [v0.40.1] — 2026-08-24
 
 ### Fixed
