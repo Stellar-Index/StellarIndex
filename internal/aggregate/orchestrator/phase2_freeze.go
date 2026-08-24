@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/big"
 	"time"
 
@@ -131,6 +132,51 @@ func phase2FreezeFires(c confidenceWithSourceCount, t Phase2Thresholds) bool {
 		c.SourceCount <= t.SourceCountMaxFreeze
 }
 
+// releaseAgreementMaxPct bounds how far a mid-freeze RELEASE CANDIDATE
+// may sit from a corroborating lens's reading and still count as
+// "agreeing" for the auto-unfreeze streak (Signal.ReleaseCorroborated).
+// 5%: a genuine repricing carries the references with it (candidate vs
+// reference median lands within low single digits), while the held-
+// manipulation band the 2026-08-24 corroborated-release panel measured
+// (~5-40% held offsets releasing under per-tick calmness) stays
+// blocked and walks the ladder to the operator.
+const releaseAgreementMaxPct = 5.0
+
+// releaseCorroborated reports whether a corroborating lens produced a
+// reading THIS bucket that agrees with the bucket's own fresh price:
+//   - the triangulation composite (computed against the fresh VWAP by
+//     construction — triangulationDivergencePct takes it as input).
+//     NOTE: in the current wiring this leg cannot fire mid-freeze —
+//     routeTarget records no composite for a target frozen this tick
+//     and samples go stale in ~2 ticks, far shorter than any hold —
+//     so the cross-oracle median below is the operative release lens.
+//     The leg is kept because it is correct BY CONSTRUCTION (fresh-
+//     candidate-relative) if composite freshness rules ever change;
+//     do not repurpose it without re-checking that property.
+//   - the cross-oracle reference median, compared against the fresh
+//     candidate HERE — deliberately not the cached DivergencePct, which
+//     mid-freeze was computed against the pinned served price and
+//     therefore certifies the LKG, not the candidate.
+//
+// No lens reading ⇒ false ⇒ the streak holds at zero and the ladder
+// escalates to an operator, matching the pre-shadow-comparator posture
+// for uncorroboratable pairs.
+func releaseCorroborated(c confidenceComputation, candidate *big.Rat) bool {
+	if c.TriangulationChecked && math.Abs(c.TriangulationDivergencePct) <= releaseAgreementMaxPct {
+		return true
+	}
+	if crossOracleMedian := c.CrossOracleMedian; crossOracleMedian > 0 && candidate != nil {
+		cand, _ := candidate.Float64()
+		if cand > 0 {
+			pct := math.Abs(cand-crossOracleMedian) / crossOracleMedian * 100
+			if pct <= releaseAgreementMaxPct {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // confidenceWithSourceCount is the Phase 2 input bundle. Pulled
 // out of [confidenceComputation] so [phase2FreezeFires] is a pure
 // function on three floats — easy to unit-test exhaustively.
@@ -173,6 +219,7 @@ func (o *Orchestrator) stepPhase2Freeze(
 	confOK bool,
 	sourceCount int,
 	prevVWAP *big.Rat,
+	vwap *big.Rat,
 ) bool {
 	sig := freeze.Signal{Now: now}
 	decision := anomaly.Decision{
@@ -194,6 +241,7 @@ func (o *Orchestrator) stepPhase2Freeze(
 		sig.ZScore = input.ZScore
 		sig.Fires = phase2FreezeFires(input, o.cfg.Phase2Thresholds)
 		sig.Corroborated = corroborated(conf.Score.Factors)
+		sig.ReleaseCorroborated = releaseCorroborated(conf, vwap)
 		decision.Reason = fmt.Sprintf("phase2:3_signal_AND confidence=%.3f z=%.2f sources=%d",
 			input.Confidence, input.ZScore, input.SourceCount)
 	}

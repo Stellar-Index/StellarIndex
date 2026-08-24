@@ -62,6 +62,7 @@ Capture for postmortem:
 
 - **Phase-2 confidence-bootstrapping window**: for roughly the first 30 min after an aggregator restart the baseline window has not filled. Corrected 2026-08-04 — this entry used to say the freeze threshold is "intentionally lenient" during that window. There is no such leniency anywhere in the code, and the real behaviour is the opposite in a way that matters: `computeConfidence` returns `confOK=false`, so the bucket is UNSCORED and therefore not freeze-eligible at all. That also means a freeze rehydrated across the restart cannot accumulate an unfreeze streak (the streak requires a scored signal), so it climbs the ladder toward `escalated` instead of releasing. If you are looking at a sustained freeze shortly after a restart, that is the first thing to check.
 - **Stablecoin depeg masquerading as anomaly**: ADR-0026 says we late-bind stablecoin → fiat at VWAP compute time. A real depeg looks like an anomaly; check the divergence_warning flag — if it fires, the freeze is correct.
+- **Lens-less pair escalating on a calm level (expected since 2026-08-24)**: auto-unfreeze additionally requires a corroborating lens agreeing within 5% with the fresh candidate (ADR-0019 amendment 2026-08-24). A pair with no usable cross-oracle reference (SuccessCount < 2 — on the default set, the EUR/GBP-quoted pairs whose only reference is CoinGecko) can NEVER auto-release: it walks the ladder here even if the price looks perfectly calm. That is by design — calm is gameable (a held manipulated level reads calm per-tick). Your job is the judgment the machine refused to make: compare the frozen pair's fresh candidate against any reference you trust (`stellarindex-ops` divergence dump, coingecko directly, the sibling USD-quoted pair × the fiat cross), and if the level is genuine, `freeze-unfreeze -write` it. If these pages become frequent on a specific pair, the durable fix is adding a second reference source for its quote currency, not loosening the gate.
 
 ## Related
 
@@ -73,4 +74,5 @@ Capture for postmortem:
 
 ## Changelog
 
+- 2026-08-24 — corroborated-release amendment: lens-less pairs always escalate; added the expected-pattern entry.
 - 2026-05-12 — initial draft (audit-2026-05-12 F-1237 closure).

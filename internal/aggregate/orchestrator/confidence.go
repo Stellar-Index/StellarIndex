@@ -58,6 +58,20 @@ func confidenceCacheTTL(window time.Duration) time.Duration {
 type confidenceComputation struct {
 	Score  confidence.Score
 	ZScore float64
+
+	// CrossOracleMedian is the reference median price (0 when the
+	// cross-oracle lens was unchecked this bucket). See
+	// crossOracleSignal.median for why the freeze release path needs
+	// the raw median rather than the cached divergencePct.
+	CrossOracleMedian float64
+
+	// TriangulationChecked / TriangulationDivergencePct carry the FRESH
+	// composite comparison for this bucket's own VWAP (the same values
+	// fed to confidence.Compute). The freeze release path reads these
+	// rather than confidence.Factors, which folds the pct into a scored
+	// agreement factor and does not retain the raw divergence.
+	TriangulationChecked       bool
+	TriangulationDivergencePct float64
 }
 
 // computeConfidence runs the multi-factor confidence math for the
@@ -177,7 +191,17 @@ func (o *Orchestrator) computeConfidence(
 	// that an unvaluable pair passes the [confidence.LiquidityUnmeasured]
 	// sentinel instead, but the latching argument above stands on its
 	// own and drift stays out of the freeze path.
-	return confidenceComputation{Score: score, ZScore: observedZ}, true
+	med := 0.0
+	if xo.agreementCount >= 0 { // checked (see noCrossOracle sentinels)
+		med = xo.median
+	}
+	return confidenceComputation{
+		Score:                      score,
+		ZScore:                     observedZ,
+		CrossOracleMedian:          med,
+		TriangulationChecked:       triChecked,
+		TriangulationDivergencePct: triPct,
+	}, true
 }
 
 // cacheConfidence writes a previously-computed [confidence.Score]
@@ -223,6 +247,14 @@ type crossOracleSignal struct {
 	// agreementCount — references corroborating our VWAP within the
 	// divergence threshold (ADR-0019 Phase 3), or -1 when unchecked.
 	agreementCount int
+	// median — the cross-reference median PRICE itself (0 when
+	// unchecked). Carried so the freeze release path can compare a
+	// mid-freeze RELEASE CANDIDATE against the references directly:
+	// the cached divergencePct above was computed against the SERVED
+	// price, which during a freeze is the pinned last-known-good, so
+	// it says nothing about the refused fresh print (the 2026-08-24
+	// corroborated-release panel finding).
+	median float64
 }
 
 // noCrossOracle is the unchecked-state signal (both sentinels).
@@ -269,6 +301,7 @@ func (o *Orchestrator) lookupCrossOracle(ctx context.Context, pair canonical.Pai
 	return crossOracleSignal{
 		divergencePct:  cached.DivergencePct,
 		agreementCount: cached.AgreementCount,
+		median:         cached.Median,
 	}
 }
 

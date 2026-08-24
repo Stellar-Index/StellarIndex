@@ -650,6 +650,25 @@ type Orchestrator struct {
 	// not do one without the other.
 	prevVWAPs map[string]*big.Rat
 
+	// frozenPrevVWAPs is the SHADOW comparator for pairs whose bucket was
+	// REFUSED by the freeze lifecycle (2026-08-24, the XLM/GBP ratchet +
+	// unscored-stall incidents). prevVWAPs deliberately does not advance
+	// on a refused bucket — but scoring the NEXT frozen bucket against
+	// that pinned pre-freeze value makes z measure TOTAL DRIFT SINCE
+	// FREEZE (divided by a per-minute MAD), so ADR-0019's auto-unfreeze
+	// (z < 3 twice) is only reachable if the market RETURNS to the
+	// freeze-time price; any real move ratchets the ladder to escalation
+	// instead (observed: z=87 ≈ 8% drift). Worse, prevVWAPs is in-memory:
+	// after a restart a frozen pair has NO prev at all and every bucket
+	// is UNSCORED — which can neither fire nor release, stalling the
+	// freeze forever (observed live as reason "phase2:unscored"). The
+	// shadow advances with each refused bucket's FRESH computed VWAP, so
+	// a frozen pair is scored on its per-tick return — "is the market
+	// calm NOW", the condition the ADR's auto-unfreeze describes.
+	// Cleared on publish/release. Same single-Tick-at-a-time invariant
+	// as prevVWAPs.
+	frozenPrevVWAPs map[string]*big.Rat
+
 	// lastWriteAt tracks the wall-clock timestamp of the most recent
 	// successful VWAP cache-write per pair (keyed by `pair.Base.String()`,
 	// matching the `asset` label on `obs.PriceStalenessSeconds`). Used
@@ -787,15 +806,16 @@ func New(store Store, cache Cache, cfg Config) *Orchestrator {
 		logger = slog.Default()
 	}
 	return &Orchestrator{
-		store:          store,
-		cache:          cache,
-		cfg:            cfg,
-		logger:         logger,
-		prevVWAPs:      make(map[string]*big.Rat, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
-		lastWriteAt:    make(map[string]time.Time, len(cfg.Pairs)),
-		lastComposites: make(map[string]compositeSample, len(cfg.Triangulations)*max(len(cfg.Windows), 1)),
-		freezeStates:   make(map[string]freeze.State, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
-		clock:          time.Now,
+		store:           store,
+		cache:           cache,
+		cfg:             cfg,
+		logger:          logger,
+		prevVWAPs:       make(map[string]*big.Rat, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
+		frozenPrevVWAPs: make(map[string]*big.Rat),
+		lastWriteAt:     make(map[string]time.Time, len(cfg.Pairs)),
+		lastComposites:  make(map[string]compositeSample, len(cfg.Triangulations)*max(len(cfg.Windows), 1)),
+		freezeStates:    make(map[string]freeze.State, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
+		clock:           time.Now,
 	}
 }
 
@@ -1069,6 +1089,12 @@ func (o *Orchestrator) refreshPairWindow( //nolint:funlen // 61>60 after the R-2
 	// served). It also runs when the bucket could not be scored at all
 	// — an unscored bucket must not release a live freeze by default.
 	prevForConfidence := o.prevVWAPs[stateKey]
+	if shadow, frozen := o.frozenPrevVWAPs[stateKey]; frozen {
+		// Mid-freeze: score this bucket against the PREVIOUS refused
+		// bucket's fresh VWAP (per-tick return), not the pinned
+		// pre-freeze baseline — see frozenPrevVWAPs.
+		prevForConfidence = shadow
+	}
 	conf, confOK := o.computeConfidence(ctx, pair, window, vwap, prevForConfidence, trades)
 	// The freeze's source_count leg (ADR-0019 3-signal AND) reads the
 	// INDEPENDENCE signal, not just the direct trade sources: a pair
@@ -1078,9 +1104,16 @@ func (o *Orchestrator) refreshPairWindow( //nolint:funlen // 61>60 after the R-2
 	// confidence Inputs.SourceCount stays the raw trade count — only the
 	// freeze leg widens.
 	if o.stepPhase2Freeze(ctx, pair, window, stateKey, now,
-		conf, confOK, o.effectiveSourceCount(pair, window, trades), prevForConfidence) {
+		conf, confOK, o.effectiveSourceCount(pair, window, trades), prevForConfidence, vwap) {
+		// Refused: advance the shadow comparator with this bucket's
+		// fresh VWAP so the NEXT frozen bucket scores a per-tick
+		// return (and a post-restart frozen pair becomes scorable
+		// from its second bucket instead of stalling unscored).
+		o.frozenPrevVWAPs[stateKey] = vwap
 		return nil
 	}
+	// Published (or released this tick): the shadow's job is done.
+	delete(o.frozenPrevVWAPs, stateKey)
 
 	// Cache write VWAP. Aggregator writers stay in big.Rat / big.Int
 	// land; API readers parse the string back to a decimal. Float
@@ -1125,9 +1158,10 @@ func (o *Orchestrator) refreshPairWindow( //nolint:funlen // 61>60 after the R-2
 	}
 
 	// Update the prev-VWAP comparator slot ONLY on successful
-	// publish — frozen buckets keep the prior slot intact so the
-	// next tick compares against the same baseline rather than
-	// drifting forward.
+	// publish. Frozen buckets do not advance THIS slot — but they do
+	// advance frozenPrevVWAPs above, which is what mid-freeze scoring
+	// compares against; keeping the pinned value here as the sole
+	// comparator was the auto-unfreeze ratchet (see frozenPrevVWAPs).
 	o.prevVWAPs[stateKey] = vwap
 
 	// Contribute this published pair as a router edge for the

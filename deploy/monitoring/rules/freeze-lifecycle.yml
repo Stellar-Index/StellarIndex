@@ -15,8 +15,11 @@
 #   fire → hold (30 min corroborated / 10 min uncorroborated)
 #        → re-evaluate at expiry → extend 30 min, up to 4 times
 #        → escalate to operator review; NO auto-unfreeze from there
-#   auto-unfreeze: confidence > 0.30 AND z < 3.0 for two consecutive
-#   buckets, once the initial hold has been served
+#   auto-unfreeze: confidence > 0.30 AND z < 3.0 AND a corroborating
+#   lens agreeing (<=5%) with the bucket's own fresh price, for two
+#   consecutive buckets, once the initial hold has been served
+#   (2026-08-24 amendment: calm alone is gameable — a held level reads
+#   calm per-tick; no lens => no auto-unfreeze, ladder escalates)
 #
 # Producers: internal/aggregate/orchestrator (freeze lifecycle step),
 # metrics declared in internal/obs/metrics.go. Every series here is
@@ -57,7 +60,11 @@ groups:
             through its initial hold plus 4 × 30-minute extensions
             (≥ 2h) without the pair ever meeting the auto-unfreeze
             condition (confidence > 0.30 AND z < 3.0 for two
-            consecutive buckets). The freeze is now held until an
+            consecutive buckets, each corroborated by a lens agreeing
+            within 5% with the fresh candidate price — pairs with no
+            corroborating reference NEVER auto-release and always land
+            here; see the ADR-0019 2026-08-24 amendment). The freeze
+            is now held until an
             operator acts — it will NOT clear on its own, and the
             affected pair's /v1/price serves a last-known-good price
             with flags.frozen=true until then.
