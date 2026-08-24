@@ -29,7 +29,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { useMe } from '@/api/hooks';
+import { useMe, useStatus } from '@/api/hooks';
 import { API_BASE_URL } from '@/api/client';
 import { cn } from '@/lib/cn';
 import { useDialog } from '@/lib/useDialog';
@@ -37,7 +37,15 @@ import { StellarMark } from '@/components/StellarMark';
 import { LiveLedgerBadge } from './LiveLedgerBadge';
 import { SearchModal } from './SearchModal';
 
-type NavItem = { href: string; label: string; icon: LucideIcon; external?: boolean; exact?: boolean };
+type NavItem = {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  external?: boolean;
+  exact?: boolean;
+  /** Render the live status tone dot (the Status row — A5-03 revival). */
+  statusDot?: boolean;
+};
 type NavGroup = { title?: string; items: NavItem[] };
 
 // The console IA (nav revision 2026-08-24): three sections — Stellar
@@ -75,7 +83,7 @@ const NAV: NavGroup[] = [
     items: [
       { href: 'https://docs.stellarindex.io', label: 'API Docs', icon: BookOpen, external: true },
       { href: '/sdk', label: 'SDK', icon: Code2 },
-      { href: '/status', label: 'Status', icon: Activity },
+      { href: '/status', label: 'Status', icon: Activity, statusDot: true },
     ],
   },
 ];
@@ -124,6 +132,7 @@ function Row({ item, onNavigate }: { item: NavItem; onNavigate?: () => void }) {
     <>
       <Icon className={cn('h-4 w-4 shrink-0', active ? 'text-brand-600' : 'text-ink-faint group-hover:text-ink-muted')} />
       <span className="truncate">{item.label}</span>
+      {item.statusDot && <StatusDot />}
       {item.external && <ExternalLink className="ml-auto h-3 w-3 text-ink-faint" />}
     </>
   );
@@ -138,6 +147,35 @@ function Row({ item, onNavigate }: { item: NavItem; onNavigate?: () => void }) {
     <Link href={item.href} className={cls} onClick={onNavigate} aria-current={active ? 'page' : undefined}>
       {inner}
     </Link>
+  );
+}
+
+/**
+ * StatusDot — the Status row's live tone dot (green/amber/red), revived
+ * per FEC A5-03/D2: the navbar pill was lost in the console-shell redesign
+ * (36e0a3c7, Navbar deleted without re-homing it) and its data hook
+ * orphaned. Reads the SAME shared useStatus query as DegradedBanner and
+ * the /status page — one poll loop, one truth per viewport. WB-04
+ * honesty: when the latest poll failed (or none has succeeded yet) we
+ * make NO claim — a muted "unknown" dot, never a stale green.
+ */
+function StatusDot() {
+  const feed = useStatus().data;
+  const overall =
+    feed && feed.error === null ? feed.status?.overall : undefined;
+  const tone =
+    overall === 'ok'
+      ? { cls: 'bg-ok-500', label: 'all systems operational' }
+      : overall === 'degraded'
+        ? { cls: 'bg-warn-500', label: 'degraded performance' }
+        : overall === 'down'
+          ? { cls: 'bg-bad-500', label: 'major incident' }
+          : { cls: 'bg-line-strong', label: 'status unknown' };
+  return (
+    <span className="ml-auto flex items-center" title={tone.label}>
+      <span aria-hidden className={cn('h-2 w-2 rounded-full', tone.cls)} />
+      <span className="sr-only">({tone.label})</span>
+    </span>
   );
 }
 

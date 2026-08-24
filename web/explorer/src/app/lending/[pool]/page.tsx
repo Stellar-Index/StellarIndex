@@ -5,11 +5,7 @@ import { ExternalLink } from 'lucide-react';
 import { Panel } from '@/components/reveal';
 import { Breadcrumbs, Container } from '@/components/ui';
 import { buildFetchData, failBuild } from '@/lib/buildFetch';
-import {
-  SITE_OG_IMAGES,
-  SITE_TWITTER_IMAGES,
-  serializeJsonLd,
-} from '@/lib/seo';
+import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
 import type { paths } from '@/api/types';
 
 import { PoolReserves } from './PoolReserves';
@@ -190,39 +186,12 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
     );
   }
 
-  // Schema.org BreadcrumbList — Home → Lending → <pool name or short hash>.
   const poolName = label?.name || `${pool.slice(0, 8)}…${pool.slice(-8)}`;
-  const breadcrumbLD = {
-    '@context': 'https://schema.org',
-    '@type': 'BreadcrumbList',
-    itemListElement: [
-      {
-        '@type': 'ListItem',
-        position: 1,
-        name: 'Home',
-        item: 'https://stellarindex.io',
-      },
-      {
-        '@type': 'ListItem',
-        position: 2,
-        name: 'Lending',
-        item: 'https://stellarindex.io/lending',
-      },
-      {
-        '@type': 'ListItem',
-        position: 3,
-        name: poolName,
-        item: `https://stellarindex.io/lending/${pool}`,
-      },
-    ],
-  };
 
   return (
     <Container className="space-y-6 py-8">
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: serializeJsonLd(breadcrumbLD) }}
-      />
+      {/* FEC A1-6: BreadcrumbList JSON-LD derives from this Crumb[] inside
+          Breadcrumbs — no hand-rolled LD. */}
       <Breadcrumbs
         items={[
           { label: 'Home', href: '/' },

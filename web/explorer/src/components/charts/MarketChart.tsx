@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import { useQuery } from '@tanstack/react-query';
 
 import { API_BASE_URL } from '@/api/client';
+import { Segmented } from '@/components/ui';
 import { useLedgerFollow } from '@/lib/live/hooks';
 import type { components } from '@/api/types';
 
@@ -128,16 +129,17 @@ export function MarketChart({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
-        <ToggleGroup
-          options={WINDOWS.map((w) => ({ key: w.key, label: w.label }))}
+        <Segmented
+          ariaLabel="Chart window"
+          options={WINDOWS.map((w) => ({ label: w.label, value: w.key }))}
           value={winKey}
-          onSelect={(k) => selectWindow(k as Win)}
+          onChange={(k) => selectWindow(k as Win)}
         />
-        <ToggleGroup
-          options={win.grains.map((g) => ({ key: g, label: g }))}
+        <Segmented
+          ariaLabel="Candle interval"
+          options={win.grains.map((g) => ({ label: g, value: g }))}
           value={activeGrain}
-          onSelect={setGrain}
-          subtle
+          onChange={setGrain}
         />
         <span className="ml-auto font-mono uppercase tracking-wider text-ink-faint">
           {baseLabel} / {quoteLabel}
@@ -192,40 +194,6 @@ function ChartMessage({ height, children }: { height: number; children: React.Re
   );
 }
 
-// A small segmented toggle — mono uppercase, low radius, brand active state.
-function ToggleGroup({
-  options,
-  value,
-  onSelect,
-  subtle,
-}: {
-  options: { key: string; label: string }[];
-  value: string;
-  onSelect: (key: string) => void;
-  subtle?: boolean;
-}) {
-  return (
-    <div className="inline-flex gap-0.5 rounded-md border border-line bg-surface p-0.5">
-      {options.map((o) => {
-        const active = value === o.key;
-        return (
-          <button
-            key={o.key}
-            type="button"
-            onClick={() => onSelect(o.key)}
-            aria-pressed={active}
-            className={`rounded-sm px-2 py-0.5 text-[11px] font-mono uppercase tracking-wider transition-colors ${
-              active
-                ? subtle
-                  ? 'bg-surface-muted text-brand-400'
-                  : 'bg-brand-600 text-white'
-                : 'text-ink-muted hover:bg-surface-subtle hover:text-ink-body'
-            }`}
-          >
-            {o.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
+// FEC A3-F6.2 (2026-08-24): the private ToggleGroup (brand-600 + `subtle`
+// active variants) folded onto ui/Segmented — the quiet bg-surface active
+// style + WindowPills' a11y semantics won for in-card switches.

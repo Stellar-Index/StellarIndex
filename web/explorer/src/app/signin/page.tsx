@@ -13,7 +13,12 @@ export const metadata: Metadata = {
 
 export default function SignInPage() {
   return (
-    <div className="mx-auto max-w-md space-y-6 px-6 py-16">
+    // Route-frame record (FEC A1-10, operator decision D4 2026-08-24):
+    // max-w-md is DELIBERATE — the bare magic-link form is an auth
+    // micro-surface; /signup stays max-w-4xl for its tier table. Vertical
+    // rhythm is harmonized with /signup (py-12 sm:py-16); widths diverge
+    // on purpose. Allowlisted for the census-2 route-frame tripwire.
+    <div className="mx-auto max-w-md space-y-6 px-6 py-12 sm:py-16">
       <header className="space-y-2 text-center">
         <h1 className="text-3xl font-semibold tracking-tight">Sign in</h1>
         <p className="text-sm text-ink-body">

@@ -7,14 +7,13 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { apiGet, type RequestExample } from '@/api/client';
-import { cn } from '@/lib/cn';
 import { formatCompact } from '@/lib/format';
 import type { NamedLineSeries } from '@/components/charts/LineChart';
 import { CATEGORICAL_PALETTE } from '@/components/charts/DonutChart';
 import { dropPartialTrailingDay, seriesPointTime } from '@/lib/series';
 import { CopyHash } from '../../explorer-shared';
 import { TimeSeriesChart, type ChartTone } from './TimeSeriesChart';
-import { Skeleton } from '@/components/ui';
+import { Segmented, Skeleton } from '@/components/ui';
 import { BridgeShowcase, BreakdownDonuts, LineLegend } from './BridgeShowcase';
 
 const LineChart = dynamic(
@@ -124,7 +123,9 @@ export function windowLabelFor(days: WindowDays): string {
   return WINDOWS.find((w) => w.days === days)?.key ?? `${days}d`;
 }
 
-/** The shared 24h/7d/30d/90d pill row. */
+/** The shared 24h/7d/30d/90d pill row — ui/Segmented (FEC A3-F6.2 fold;
+ *  this file's WindowPills donated its role/aria-label/focus-ring a11y
+ *  semantics to Segmented, and Segmented's quiet active style won). */
 function WindowPills({
   days,
   onChange,
@@ -133,24 +134,15 @@ function WindowPills({
   onChange: (d: WindowDays) => void;
 }) {
   return (
-    <div role="group" aria-label="Analytics window" className="flex gap-1">
-      {WINDOWS.map((w) => (
-        <button
-          key={w.key}
-          type="button"
-          aria-pressed={days === w.days}
-          onClick={() => onChange(w.days)}
-          className={cn(
-            'focus-visible:ring-brand-500/60 rounded-sm px-2 py-0.5 font-mono text-[11px] focus-visible:ring-2 focus-visible:outline-hidden',
-            days === w.days
-              ? 'bg-brand-100 text-brand-700'
-              : 'text-ink-muted hover:text-ink-body',
-          )}
-        >
-          {w.key}
-        </button>
-      ))}
-    </div>
+    <Segmented
+      ariaLabel="Analytics window"
+      options={WINDOWS.map((w) => ({ label: w.key, value: w.key }))}
+      value={windowLabelFor(days)}
+      onChange={(key) => {
+        const next = WINDOWS.find((w) => w.key === key);
+        if (next) onChange(next.days);
+      }}
+    />
   );
 }
 

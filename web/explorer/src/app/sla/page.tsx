@@ -31,6 +31,9 @@ export default function SLAPage() {
         subtitle="Measured on the public edge, continuously"
       >
         <div className="overflow-x-auto">
+          {/* table-wave:allowlist prose — SLA targets table (operator
+              decision D5 2026-08-24): prose-page table, stays hand-rolled;
+              the A2-01 data-table wave must not sweep it. */}
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-line text-left text-xs uppercase tracking-wider text-ink-muted">

@@ -1,7 +1,19 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import StatusPageClient from './StatusPageClient';
+
+// The /v1/status doc now arrives via the SHARED useStatus query (FEC
+// A6-6/D2 fold), so the page renders under a fresh QueryClient per case.
+function renderPage() {
+  const client = new QueryClient();
+  return render(
+    <QueryClientProvider client={client}>
+      <StatusPageClient seedIncidents={[]} />
+    </QueryClientProvider>,
+  );
+}
 
 // EventSource doesn't exist under jsdom; the page opens one for the
 // live ledger badge.
@@ -69,7 +81,7 @@ describe('StatusPageClient measurement tiles', () => {
 
   it('renders — for latency and active sources when the measurements are absent', async () => {
     mockStatus(statusPayload({}));
-    render(<StatusPageClient seedIncidents={[]} />);
+    renderPage();
 
     await waitFor(() => expect(screen.getByText('Request latency')).toBeInTheDocument());
     // Three "not measured" latency cells; no fabricated 0.0 ms.
@@ -86,7 +98,7 @@ describe('StatusPageClient measurement tiles', () => {
         freshness: { active_sources: 0, total_sources: 17 },
       }),
     );
-    render(<StatusPageClient seedIncidents={[]} />);
+    renderPage();
 
     await waitFor(() => expect(screen.getByText('12.5')).toBeInTheDocument());
     expect(screen.getByText('40.0')).toBeInTheDocument();
