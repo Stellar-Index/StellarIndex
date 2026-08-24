@@ -72,8 +72,11 @@ export function AssetSidebar({
    *  - 'vwap1m'       — /v1/price closed 1-minute VWAP (the real thing)
    *  - 'triangulated' — composed client-side from asset/XLM × XLM/USD
    *  - 'listing'      — build-time listing cache; can lag hours–days
+   *  - 'declared_peg' — server-filled operator-declared 1:1 fiat peg ×
+   *                     current FX rate (price_basis=declared_peg); not
+   *                     a market observation
    */
-  priceProvenance?: 'vwap1m' | 'triangulated' | 'listing' | null;
+  priceProvenance?: 'vwap1m' | 'triangulated' | 'listing' | 'declared_peg' | null;
   priceStale?: boolean;
   name?: string | null;
   homeDomain?: string | null;

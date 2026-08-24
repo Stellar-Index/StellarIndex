@@ -218,6 +218,58 @@ func TestLoad_ExampleConfigValid(t *testing.T) {
 	}
 }
 
+// TestAnsibleFiatPegStanza_ValidAndComplete pins the r1 template's
+// declared fiat-peg map through the REAL decoder + validator, the same
+// wrapper-level protection the triangulation stanza gets in
+// internal/aggregate/orchestrator: nothing else in the build parses the
+// jinja template, so a typo'd issuer or ticker would otherwise surface
+// only as an API that refuses to boot on r1 (or, worse, a peg that
+// silently never fills). The stanza itself is pure TOML (no jinja
+// substitution). Pins the two operator-approved entries (2026-08-24):
+// AUDD → AUD and, transitively via the AUDD↔AUDR par corridor, AUDR → AUD.
+func TestAnsibleFiatPegStanza_ValidAndComplete(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(wd, "..", "..", "configs", "ansible", "roles",
+		"archival-node", "templates", "stellarindex.toml.j2")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Skipf("ansible template not at %s: %v", path, err)
+	}
+	// Extract the [pricing_guard] table (incl. its sub-tables) — the
+	// rest of the file carries jinja substitutions and can't round-trip
+	// the decoder whole.
+	var out []string
+	inStanza := false
+	for _, line := range strings.Split(string(raw), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") {
+			inStanza = trimmed == "[pricing_guard]" ||
+				strings.HasPrefix(trimmed, "[pricing_guard.")
+		}
+		if inStanza {
+			out = append(out, line)
+		}
+	}
+	if len(out) == 0 {
+		t.Fatalf("no [pricing_guard] stanza in %s", path)
+	}
+	c, err := cfg.LoadReader(strings.NewReader(strings.Join(out, "\n")), "stellarindex.toml.j2:pricing_guard")
+	if err != nil {
+		t.Fatalf("deployed pricing_guard stanza does not load: %v", err)
+	}
+	pegs := c.PricingGuard.FiatPeggedClassicAssets
+	want := map[string]string{
+		"AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU": "AUD",
+		"AUDR-GAAVW6EQ4N4SHNTKBLTOBXKS6CEIMT2KZI7YQ5B37ECNVPFLBIGRKLIL": "AUD",
+	}
+	if !reflect.DeepEqual(pegs, want) {
+		t.Errorf("deployed fiat_pegged_classic_assets = %v, want %v", pegs, want)
+	}
+}
+
 func TestLoad_missingFileErrorsNice(t *testing.T) {
 	_, err := cfg.Load("/absolutely/not/a/real/path.toml")
 	if err == nil {

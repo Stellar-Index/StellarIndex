@@ -248,6 +248,7 @@ the `env:` column.
 | `pricing_guard.substance_min_buckets` | `int` | `20` | — | Minimum distinct closed 1-minute buckets with at least one trade in the trailing window. 0 = pricingguard default (20). |
 | `pricing_guard.substance_min_span_minutes` | `int` | `360` | — | Minimum minutes between the oldest and newest active 1m bucket in the trailing window (persistence floor — a one-burst market never clears it). 0 = pricingguard default (360). |
 | `pricing_guard.substance_window_hours` | `int` | `24` | — | Trailing measurement window in hours. 0 = pricingguard default (24). |
+| `pricing_guard.fiat_pegged_classic_assets` | `map` | `{}` | — | Maps classic credit asset_keys (CODE-ISSUER) to the ISO-4217 fiat ticker the operator declares them 1:1-pegged to (e.g. AUDD-G… = "AUD"). The API fills the asset's listing/detail price_usd from the declared peg × current fiat→USD FX rate when no market-derived price survives the substance gate, stamped price_basis="declared_peg" on the wire. Never overwrites a market-derived price. Empty disables the fill. |
 
 ### `[decimals_guard]`
 

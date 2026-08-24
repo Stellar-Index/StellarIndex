@@ -239,6 +239,19 @@ type AssetDetail struct {
 	// proxy is disabled).
 	PriceUSD *string `json:"price_usd,omitempty"`
 
+	// PriceBasis identifies a PriceUSD that is NOT a market
+	// observation. The only value today is [priceBasisDeclaredPeg]
+	// ("declared_peg"): PriceUSD was filled from an operator-declared
+	// 1:1 fiat peg × the current fiat→USD FX rate
+	// (pricing_guard.fiat_pegged_classic_assets) because no
+	// market-derived price survived the substance gate. Absent means
+	// market-derived (the pre-existing contract, unchanged). Peg-filled
+	// rows deliberately carry NO change pills, sparkline-backed cap, or
+	// other market-history claims — the peg fill asserts a conversion
+	// basis, not a market. Additive, omitempty — consumers that don't
+	// know the field see exactly the old shape.
+	PriceBasis string `json:"price_basis,omitempty"`
+
 	// Change1hPct / Change7dPct round out the trailing-window set
 	// alongside Change24hPct. Same shape — signed percentage with
 	// two fractional digits, null when no past-bucket snapshot
@@ -717,6 +730,10 @@ func (s *Server) handleAssetListFromAssets(
 	s.stampListingCollisions(out)
 	s.applySubstanceGateToListing(r.Context(), out)
 	s.fillMarketCapsFromSupply(r.Context(), out, assetRowSourceCounts(rows))
+	// AFTER the gate (which would strip it) and AFTER the market-cap
+	// fill (so no valuation derives from it) — see
+	// fillDeclaredPegPricesInListing's ordering contract.
+	s.fillDeclaredPegPricesInListing(r.Context(), out)
 	s.fillImagesFromSep1(r.Context(), out)
 	env := Envelope{Data: out, Flags: Flags{}}
 	if hasMore && len(out) > 0 {
@@ -914,6 +931,111 @@ func pricingSubstanceGated(a canonical.Asset) bool {
 	default:
 		return false
 	}
+}
+
+// priceBasisDeclaredPeg is the wire value [AssetDetail.PriceBasis]
+// carries when PriceUSD was filled from an operator-declared 1:1 fiat
+// peg × the current fiat→USD FX rate rather than observed on a market.
+// Absent PriceBasis = market-derived (the pre-existing contract).
+const priceBasisDeclaredPeg = "declared_peg"
+
+// declaredPegFXMaxAge bounds how old the fiat→USD rate backing a
+// declared-peg fill may be. Mirrors the trailing-7-day window
+// [Server.fiatUSDPriceFor] already enforces on its authoritative
+// fx_quotes path (daily ECB reference rates; weekend/holiday gaps make
+// a few days of age normal) and extends the same ceiling to the
+// PriceReader fallback tier, whose stale flag that resolver discards.
+// An older rate does NOT fill — the row degrades to a nil price, per
+// the fx staleness discipline (a stale rate presented as current is
+// worse than no price).
+const declaredPegFXMaxAge = 7 * 24 * time.Hour
+
+// fillDeclaredPegPricesInListing applies [Server.fillDeclaredPegPrice]
+// to every listing row, memoising the FX lookup per fiat ticker so a
+// page with several pegs to the same currency (AUDD + AUDR → AUD)
+// costs one fx_quotes read, not one per row.
+//
+// ORDERING IS LOAD-BEARING — call sites run this:
+//   - AFTER applySubstanceGateToListing: the gate withholds the
+//     market-price CLAIM a thin market can't back; the peg fill then
+//     supplies the operator-declared basis in the gap. Run the other
+//     way round the gate would strip the fill (it nils PriceUSD for
+//     any substance-failing row, peg-filled or not).
+//   - AFTER fillMarketCapsFromSupply: that fill computes market_cap
+//     only for rows with a (market) price, so a peg-filled row keeps
+//     market_cap null — v1 deliberately publishes the conversion
+//     basis alone, no derived valuation claim. Change pills were
+//     already nil'd by the gate and sparklines remain governed by the
+//     raw-history policy (history is a fact, not a claim) — the peg
+//     fill itself never fabricates history.
+func (s *Server) fillDeclaredPegPricesInListing(ctx context.Context, rows []AssetDetail) {
+	if len(s.fiatPeggedClassics) == 0 {
+		return
+	}
+	memo := make(map[string]*string, 1)
+	for i := range rows {
+		s.fillDeclaredPegPrice(ctx, &rows[i], memo)
+	}
+}
+
+// fillDeclaredPegPrice fills one row's PriceUSD from the operator's
+// declared fiat peg (pricing_guard.fiat_pegged_classic_assets) when —
+// and only when — no market-derived price survived: it fills nil
+// PriceUSD exclusively, so a market price always wins. Filled rows are
+// stamped PriceBasis="declared_peg" so the wire distinguishes the
+// declared basis from a market observation. Motivating case
+// (operator-approved 2026-08-24): AUDD's only substantive market is a
+// 1:1 AUDD/AUDR settlement corridor, so the substance gate correctly
+// withholds its dust-authored USD books — the honest price is the
+// declared AUD peg × the AUD/USD rate we already serve.
+//
+// memo caches fiat ticker → resolved price across calls within one
+// request ("looked up, unavailable" is a nil value); pass nil on
+// single-row paths (asset detail).
+func (s *Server) fillDeclaredPegPrice(ctx context.Context, row *AssetDetail, memo map[string]*string) {
+	if len(s.fiatPeggedClassics) == 0 || row.PriceUSD != nil {
+		return
+	}
+	fiat, ok := s.fiatPeggedClassics[row.AssetID]
+	if !ok {
+		return
+	}
+	price, hit := memo[fiat.Code]
+	if !hit {
+		price = s.declaredPegUSDPrice(ctx, fiat)
+		if memo != nil {
+			memo[fiat.Code] = price
+		}
+	}
+	if price == nil {
+		return
+	}
+	p := *price
+	row.PriceUSD = &p
+	row.PriceBasis = priceBasisDeclaredPeg
+}
+
+// declaredPegUSDPrice resolves 1 unit of the declared peg currency in
+// USD, or nil when no FRESH rate is available. Reuses
+// [Server.fiatUSDPriceFor] — the single source of truth for the
+// fiat→USD chain (fx_quotes InverseUSD first, PriceReader last resort)
+// shared with the fiat catalogue listing + detail paths — rather than
+// growing a third resolver that could drift (the exact failure
+// COR-14 fixed). USD itself is identity, mirroring
+// [Server.fiatMarketCapUSD]'s special case. The [declaredPegFXMaxAge]
+// bound keeps a stale rate from filling; the peg price is the rate
+// string verbatim (declared 1:1 — no arithmetic, so no INV-2/ADR-0003
+// float concern).
+func (s *Server) declaredPegUSDPrice(ctx context.Context, fiat canonical.Asset) *string {
+	if fiat.Code == "USD" {
+		one := "1.00000000000000"
+		return &one
+	}
+	price, asOf, _, ok := s.fiatUSDPriceFor(ctx, fiat.Code)
+	if !ok || time.Since(asOf) > declaredPegFXMaxAge {
+		return nil
+	}
+	return &price
 }
 
 // assetRowSourceCounts projects the distinct-venue count each AssetRow's
@@ -1906,6 +2028,10 @@ func (s *Server) fetchClassicUnifiedRows(w http.ResponseWriter, r *http.Request,
 	s.stampListingCollisions(out)
 	s.applySubstanceGateToListing(r.Context(), out)
 	s.fillMarketCapsFromSupply(r.Context(), out, assetRowSourceCounts(rows))
+	// AFTER the gate (which would strip it) and AFTER the market-cap
+	// fill (so no valuation derives from it) — see
+	// fillDeclaredPegPricesInListing's ordering contract.
+	s.fillDeclaredPegPricesInListing(r.Context(), out)
 	s.fillImagesFromSep1(r.Context(), out)
 	s.attachSparkline7dIfRequested(r, out)
 	nextInner := ""
@@ -2099,6 +2225,15 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// for fiat:* (no asset-catalogue row); a no-op when no AssetsReader is
 	// wired or the asset has no asset-catalogue row.
 	s.applyAssetExtensionFields(r.Context(), &detail, parsed)
+
+	// Declared-peg price fill — mirrors the listing paths' call. Runs
+	// LAST among the price producers, so it fills only when neither the
+	// gated F2 price lookup (applyF2Fields → populatePriceUSD, whose
+	// reader withholds substanceless markets) nor the asset-catalogue
+	// overlay above left a market price, and AFTER applyF2Fields so
+	// market_cap/fdv (computed there from a market PriceUSD only) never
+	// derive from the peg. See fillDeclaredPegPrice.
+	s.fillDeclaredPegPrice(r.Context(), &detail, nil)
 
 	// Verified-currency overlay (R-018 Phase 1.1) — attaches the
 	// `unverified_warning` body + flips flags.unverified_ticker_collision
