@@ -812,6 +812,11 @@ jobs:
   branch-protection-status:
     name: branch protection status (informational)
     runs-on: ubuntu-latest
+    # Informational means informational: a flaked curl to the GitHub
+    # rules API must not take the whole push run red (it did on
+    # 2026-08-24, run 32751060492 — the only failed job on an
+    # otherwise-green squash).
+    continue-on-error: true
     # CID-01 (audit-2026-07-23): only meaningful on the branch itself —
     # a PR's merge-ref isn't "main", so this only runs on push-to-main.
     if: github.event_name == 'push'
