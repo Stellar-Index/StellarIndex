@@ -1,0 +1,98 @@
+# systemd unit: nightly verify-archive Tier B run (task #33 / W8 recon 14a).
+#
+# Rendered by Ansible. Reflects r1's EFFECTIVE running config (run through
+# the run-heavy-job.sh singleton lock + de-privileged user, same shape as
+# the Tier A unit).
+#
+# Tier B = checkpoint ANCHOR verification (ADR-0017): for each 64-ledger
+# checkpoint, cross-check our LCM's header-hash against the canonical
+# header-hash in the LOCAL /srv/history-archive mirror. This catches
+# single-source corruption that is still chain-link-consistent — the
+# failure mode Tier A (chain) is blind to. verify_archive.go has always
+# implemented `-tier checkpoint`, but only Tier A was scheduled, so the
+# anchor check never ran; this unit closes that gap.
+#
+# R1 only — the integrity leader per ADR-0016. R2/R3 trust R1.
+
+[Unit]
+Description=Stellar Index — verify-archive Tier B (nightly checkpoint anchor)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/archival-node-bringup.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Type=notify + WatchdogSec: the binary signals READY=1 at start, then
+# WATCHDOG=1 every 30s. systemd SIGTERMs only on real silence (hung /
+# crashed). Matching Go integration in cmd/stellarindex-ops/main.go.
+Type=notify
+NotifyAccess=main
+WatchdogSec=1h
+
+EnvironmentFile=-/etc/default/stellarindex-ops
+
+# Defaults. Operators override via /etc/default/stellarindex-ops.
+# MAX_RUNTIME=0 = uncapped: systemd's WatchdogSec is the only bound, so a
+# first-ever full anchor pass runs to completion and seeds the
+# -from-last-verified checkpoint high-water (a binary-side cap that fired
+# mid-pass would keep every run a full pass — the Tier A lesson).
+# FROM is the cold-start floor only; normal runs resume from the state
+# file's checkpoint high-water.
+Environment=VERIFY_ARCHIVE_FROM={{ stellarindex_archive_hot_floor | default(2) }}
+Environment=VERIFY_ARCHIVE_WORKERS=12
+Environment=VERIFY_ARCHIVE_MAX_RUNTIME=0
+Environment=VERIFY_ARCHIVE_STATE_FILE=/var/lib/stellarindex/verify-archive-state.json
+Environment=VERIFY_ARCHIVE_SAFETY_OVERLAP=5000
+Environment=VERIFY_ARCHIVE_ROOT=/srv/history-archive
+
+# Incremental scheme: -from-last-verified reads the prior run's CHECKPOINT
+# tier high-water from the shared state file (verify-archive keys the state
+# per tier, so Tier B advances only the "checkpoint" entry — independent of
+# Tier A's "chain" entry) and anchors only the recent window.
+#
+# -archive-root points at the local history-archive mirror the anchor reads
+# the canonical header-hash from. -to is omitted (resolved from the manifest
+# at start).
+#
+# Routed through run-heavy-job.sh with the SAME job name as Tier A
+# ("verify-archive") so the singleton lock makes the two units MUTUALLY
+# EXCLUSIVE — they never write the shared state file concurrently. The
+# wrapper runs as User=stellarindex (non-root) so it takes the lock then
+# `exec`s the binary in place, keeping the payload as the unit's MAIN pid
+# (Type=notify + NotifyAccess=main + WatchdogSec intact).
+ExecStart=/usr/local/sbin/run-heavy-job.sh verify-archive \
+  /usr/local/bin/stellarindex-ops verify-archive \
+  -config /etc/stellarindex.toml \
+  -from ${VERIFY_ARCHIVE_FROM} \
+  -tier checkpoint \
+  -archive-root ${VERIFY_ARCHIVE_ROOT} \
+  -workers ${VERIFY_ARCHIVE_WORKERS} \
+  -max-runtime ${VERIFY_ARCHIVE_MAX_RUNTIME} \
+  -state-file ${VERIFY_ARCHIVE_STATE_FILE} \
+  -from-last-verified \
+  -safety-overlap ${VERIFY_ARCHIVE_SAFETY_OVERLAP}
+
+# De-privileged (CS-118, audit-2026-06-30) — the stellarindex user is
+# created by 04-users.yml (CS-119). Reads the archive via S3 (network) +
+# the /srv/history-archive mirror, and writes only the state file under
+# /var/lib/stellarindex, which is stellarindex-owned.
+User=stellarindex
+Group=stellarindex
+
+# Hardening.
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# TimeoutStartSec only governs READY=1; the walk is bounded by WatchdogSec.
+TimeoutStartSec=10m
+
+# Deprioritize so the anchor pass yields CPU/IO to the API + postgres
+# during daytime hours rather than dragging p99.
+CPUWeight=20
+IOWeight=20
+
+[Install]
+WantedBy=multi-user.target

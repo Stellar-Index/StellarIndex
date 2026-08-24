@@ -300,16 +300,23 @@ the rehydrate-from-peer + disable-trim-timer steps.
 ## verify-archive timer alerts
 
 Per the ADR-0016 per-region trust model: R1 runs verify-archive Tier A
-(chain-link integrity) nightly via systemd; R2 + R3 trust R1 and run
-their own slower cadence. The timer fires once per night at 03:23 UTC
-+ jitter; node_exporter's `--collector.systemd` exports the unit
-state so failures and stale runs trigger the alerts below. See
-[verify-archive-tier-a.timer](https://github.com/Stellar-Index/StellarIndex/blob/main/deploy/systemd/verify-archive-tier-a.timer).
+(chain-link integrity) nightly at 03:23 UTC and Tier B (checkpoint anchor
+against the local `/srv/history-archive` mirror) nightly at 04:37 UTC via
+systemd; R2 + R3 trust R1 and run their own slower cadence. Tier A catches
+internal corruption / dropped ledgers; Tier B catches single-source
+corruption that is still chain-link-consistent (the failure mode Tier A is
+blind to). node_exporter's `--collector.systemd` exports the unit state so
+failures and stale runs trigger the alerts below. See
+[verify-archive-tier-a.timer](https://github.com/Stellar-Index/StellarIndex/blob/main/deploy/systemd/verify-archive-tier-a.timer)
+and
+[verify-archive-tier-b.timer](https://github.com/Stellar-Index/StellarIndex/blob/main/deploy/systemd/verify-archive-tier-b.timer).
 
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_verify_archive_unit_failed` | `node_systemd_unit_state{name="verify-archive-tier-a.service",state="failed"}` | == 1 for > 5 min | P3 | [verify-archive-unit-failed](runbooks/verify-archive-unit-failed.md) |
 | `stellarindex_verify_archive_run_stale` | `time() - node_systemd_timer_last_trigger_seconds{name="verify-archive-tier-a.timer"}` | > 36 h for > 10 min | **P2** | [verify-archive-run-stale](runbooks/verify-archive-run-stale.md) |
+| `stellarindex_verify_archive_tier_b_unit_failed` | `node_systemd_unit_state{name="verify-archive-tier-b.service",state="failed"}` | == 1 for > 5 min | P3 | [verify-archive-tier-b](runbooks/verify-archive-tier-b.md) |
+| `stellarindex_verify_archive_tier_b_run_stale` | `time() - node_systemd_timer_last_trigger_seconds{name="verify-archive-tier-b.timer"}` | > 36 h for > 10 min | P3 | [verify-archive-tier-b](runbooks/verify-archive-tier-b.md) |
 
 ## Anomaly + freeze alerts
 
