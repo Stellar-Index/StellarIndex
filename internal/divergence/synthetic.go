@@ -57,7 +57,8 @@ type SyntheticCrossOptions struct {
 	// (reflector-cex, chainlink, redstone, band).
 	USDLegs []Reference
 	// FXLegs are tried in order for the fiat-in-USD leg. Typically
-	// reflector-fx.
+	// reflector-fx first (on-chain rows, no extra RPC) with chainlink's
+	// direct fiat/USD feeds as fallback — the proven GBP/USD source.
 	FXLegs []Reference
 }
 

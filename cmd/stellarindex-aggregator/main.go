@@ -2052,18 +2052,40 @@ func buildDivergenceReferences(cfg config.DivergenceConfig, oracles divergence.O
 // corroborated-release gate can auto-release genuine repricings
 // unattended instead of paging an operator per freeze.
 func appendSyntheticCrossReference(refs []divergence.Reference, logger *slog.Logger) []divergence.Reference {
-	var usdLegs, fxLegs []divergence.Reference
+	byName := make(map[string]divergence.Reference, len(refs))
 	for _, r := range refs {
-		switch r.Name() {
-		case divergence.OracleSourceReflectorCEX,
-			divergence.ChainlinkSourceName,
-			divergence.OracleSourceRedstone,
-			divergence.OracleSourceBand:
-			usdLegs = append(usdLegs, r)
-		case divergence.OracleSourceReflectorFX:
-			fxLegs = append(fxLegs, r)
-		}
+		byName[r.Name()] = r
 	}
+	pick := func(names ...string) []divergence.Reference {
+		var out []divergence.Reference
+		for _, n := range names {
+			if r, ok := byName[n]; ok {
+				out = append(out, r)
+			}
+		}
+		return out
+	}
+	// Chainlink serves BOTH legs: its FeedMap carries crypto/USD feeds
+	// (base leg) and direct fiat/USD feeds (r1 configures
+	// fiat:EUR/fiat:USD + fiat:GBP/fiat:USD) — the reference routes by
+	// pair, answering only what its FeedMap lists, so membership in both
+	// leg sets cannot double-answer one leg. In the FX legs it is the
+	// FALLBACK after reflector-fx (on-chain rows we already index; no
+	// extra RPC) and the only proven GBP/USD source — reflector-fx's
+	// mainnet GBP coverage is unconfirmed (verification panel
+	// 2026-08-24), so without chainlink here XLM/GBP would stay
+	// single-reference, which is two of the three freezes that motivated
+	// this feature.
+	usdLegs := pick(
+		divergence.OracleSourceReflectorCEX,
+		divergence.ChainlinkSourceName,
+		divergence.OracleSourceRedstone,
+		divergence.OracleSourceBand,
+	)
+	fxLegs := pick(
+		divergence.OracleSourceReflectorFX,
+		divergence.ChainlinkSourceName,
+	)
 	syn, err := divergence.NewSyntheticCrossReference(divergence.SyntheticCrossOptions{
 		USDLegs: usdLegs,
 		FXLegs:  fxLegs,
