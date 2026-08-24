@@ -135,6 +135,19 @@ parse_schema() {
     function flush_table() {
       if (tbl == "") return
       printf "%s\tkind\t%s\n", tbl, kind
+      # `CREATE TABLE x AS db.base;` clones the base table full definition with no
+      # inline ENGINE/columns/ORDER BY of its own (the staging halves of
+      # every truncate-fill-EXCHANGE cycle are declared this way). Emitting
+      # empty engine/order/columns facts here made all six *_staging tables
+      # read as 3 drifts each against the live fully-rendered DDL (2026-08-24,
+      # the ch-schema-drift.service red). Emit an alias fact instead; the
+      # comparer resolves it against the base declaration facts.
+      if (kind == "table" && aliasbase != "" && engine == "" && cols == "") {
+        printf "%s\talias\t%s\n", tbl, aliasbase
+        tbl = ""; kind = ""; mvto = ""; engine = ""; partexpr = ""
+        orderexpr = ""; cols = ""; incols = 0; depth = 0; aliasbase = ""
+        return
+      }
       if (kind == "view") {
         # Materialized views are compared on EXISTENCE + destination
         # table only. SHOW CREATE renders an MV with a ClickHouse-
@@ -152,7 +165,7 @@ parse_schema() {
         printf "%s\tcolumns\t%s\n", tbl, cols
       }
       tbl = ""; kind = ""; mvto = ""; engine = ""; partexpr = ""
-      orderexpr = ""; cols = ""; incols = 0; depth = 0
+      orderexpr = ""; cols = ""; incols = 0; depth = 0; aliasbase = ""
     }
     function mvtarget(s,   x) {
       x = s
@@ -179,6 +192,18 @@ parse_schema() {
       sub(/^[A-Za-z0-9_]+\./, "", t)   # drop the database qualifier
       tbl = t
       mvto = (kind == "view") ? mvtarget(line) : ""
+      # AS-clone capture: `CREATE TABLE x AS stellar.base;` (no ENGINE, no
+      # column list on the statement). ENGINE ... AS SELECT is a different
+      # construct and is excluded by the ENGINE guard.
+      aliasbase = ""
+      if (kind == "table" && line !~ /ENGINE/ && line ~ / AS +[A-Za-z0-9_.\x60]+ *;? *$/) {
+        a = line
+        sub(/.* AS +/, "", a)
+        sub(/ *;? *$/, "", a)
+        gsub(/\x60/, "", a)
+        sub(/^[A-Za-z0-9_]+\./, "", a)
+        aliasbase = a
+      }
       incols = 0; depth = 0
       # a same-line "(" opens the column list (tables only; the column
       # list of an MV is ClickHouse-inferred, deliberately not compared)
@@ -187,6 +212,22 @@ parse_schema() {
     }
     tbl == "" { next }
     kind == "view" && mvto == "" { mvto = mvtarget(" " line) }
+    # ─ AS-clone on a continuation line ─
+    # tier1_schema.sql writes the clone as two lines:
+    #   CREATE TABLE IF NOT EXISTS stellar.x_staging
+    #   AS stellar.x;
+    # so the statement-start capture above never sees it (2026-08-24: the
+    # first fix only matched a same-line AS and the live check stayed red
+    # while the symmetric intent-vs-intent self-test passed — the exact
+    # same-shape blindness this harness header warns about).
+    kind == "table" && incols == 0 && cols == "" && engine == "" && line ~ /^ *AS +[A-Za-z0-9_.\x60]+ *;? *$/ {
+      a = line
+      sub(/^ *AS +/, "", a)
+      sub(/ *;? *$/, "", a)
+      gsub(/\x60/, "", a)
+      sub(/^[A-Za-z0-9_]+\./, "", a)
+      aliasbase = a
+    }
     # ─ column list ─
     kind == "table" && incols == 0 && line ~ /^ *\( *$/ { incols = 1; depth = 1; next }
     incols == 1 {
@@ -313,6 +354,18 @@ while IFS= read -r t; do
   fi
   bad=0
   keys="engine partition order columns"
+  # AS-clone declarations resolve to their base's facts (see the parser's
+  # alias note). An alias whose base is undeclared is itself drift.
+  intent_src="$t"
+  alias_base="$(fact "$work/intent.facts" "$t" alias)"
+  if [[ -n "$alias_base" ]]; then
+    if ! grep -qx "$alias_base" <<<"$declared"; then
+      note "DRIFT $t: declared AS $alias_base, but $alias_base is not declared in $(basename "$INTENT")"
+      drift=$((drift + 1)); divergent_tables=$((divergent_tables + 1))
+      continue
+    fi
+    intent_src="$alias_base"
+  fi
   if [[ "$(fact "$work/intent.facts" "$t" kind)" == "view" ]]; then
     keys="to"
     if [[ "$(fact "$work/live.facts" "$t" kind)" != "view" ]]; then
@@ -321,9 +374,15 @@ while IFS= read -r t; do
       continue
     fi
   fi
+  # The live side can be alias-parsed too (a snapshot taken from a file in
+  # the human-written form, incl. the harness's intent-vs-intent case) —
+  # resolve it the same way.
+  live_src="$t"
+  live_alias="$(fact "$work/live.facts" "$t" alias)"
+  [[ -n "$live_alias" ]] && live_src="$live_alias"
   for key in $keys; do
-    want="$(fact "$work/intent.facts" "$t" "$key")"
-    got="$(fact "$work/live.facts" "$t" "$key")"
+    want="$(fact "$work/intent.facts" "$intent_src" "$key")"
+    got="$(fact "$work/live.facts" "$live_src" "$key")"
     if [[ "$want" != "$got" ]]; then
       note "DRIFT $t.$key:"
       note "    repo: $want"

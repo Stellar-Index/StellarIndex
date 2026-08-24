@@ -138,9 +138,9 @@ CREATE TABLE IF NOT EXISTS stellar.contract_events
     event_type         LowCardinality(String),
     topic_count        UInt8,
     topic_0_sym        String,
-    topics_xdr         Array(String),
+    topics_xdr         Array(String) CODEC(ZSTD(3)),
     data_xdr           String,
-    op_args_xdr        Array(String),
+    op_args_xdr        Array(String) CODEC(ZSTD(3)),
     in_successful_call UInt8,
     ingested_at        DateTime DEFAULT now(),
     -- Bloom skip-index for per-contract activity (GET /v1/contracts/{c},
@@ -172,6 +172,13 @@ CREATE TABLE IF NOT EXISTS stellar.ledger_entry_changes
     -- DAT-04: this had drifted).
     key_xdr      String CODEC(ZSTD(3)),
     entry_xdr    String CODEC(ZSTD(3)),
+    -- ingested_at sits HERE, before the ADR-0038 columns below, because that
+    -- is the LIVE column order: account_id/asset/balance/intra_ledger_seq
+    -- were ALTER TABLE ADDed on r1 (appended after ingested_at), and the
+    -- drift check compares ordered column lists (2026-08-24: this file
+    -- declared them inline and read as .columns drift forever). A fresh
+    -- bootstrap from this file now matches the operative table exactly.
+    ingested_at  DateTime DEFAULT now(),
     -- Queryable owner + asset (ADR-0038 Phase C account-state / asset-holder
     -- reads). account_id = owning G-strkey for account-owned entries (account
     -- / trustline / offer / data); asset = canonical "CODE-ISSUER" / "native"
@@ -214,7 +221,6 @@ CREATE TABLE IF NOT EXISTS stellar.ledger_entry_changes
     -- requires DROPPING the partition first, not just re-inserting. See
     -- migrations/0120 and docs/operations/runbooks/entry-walk-renumbering.md.
     intra_ledger_seq UInt32 DEFAULT 0,
-    ingested_at  DateTime DEFAULT now(),
     INDEX idx_lec_account_id account_id TYPE bloom_filter(0.01) GRANULARITY 1,
     INDEX idx_lec_asset asset TYPE bloom_filter(0.01) GRANULARITY 1,
     -- Point lookups of a specific contract_data / ledger-entry key
