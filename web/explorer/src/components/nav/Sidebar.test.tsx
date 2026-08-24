@@ -28,6 +28,50 @@ function renderNav() {
   );
 }
 
+describe('Sidebar IA (nav revision 2026-08-24)', () => {
+  it('renders the three sections with their entries and the Stellar wordmark', () => {
+    renderNav();
+    // Section headers
+    for (const title of ['Stellar', 'External', 'Developers']) {
+      expect(screen.getByText(title)).toBeInTheDocument();
+    }
+    // Wordmark (single word, Inter via font-sans)
+    expect(screen.getByRole('link', { name: /StellarIndex/ })).toHaveAttribute('href', '/');
+    // Stellar section entries, in spec order
+    for (const [label, href] of [
+      ['Network', '/network'],
+      ['Transactions', '/transactions'],
+      ['Accounts', '/accounts'],
+      ['Contracts', '/contracts'],
+      ['SDEX', '/sdex'],
+      ['Protocols', '/protocols'],
+      ['Oracles', '/oracles'],
+      ['Insights', '/insights'],
+    ] as const) {
+      expect(screen.getByRole('link', { name: label })).toHaveAttribute('href', href);
+    }
+    // External: Markets → the CEX board; Assets → external assets.
+    expect(screen.getByRole('link', { name: 'Markets' })).toHaveAttribute('href', '/exchanges');
+    // Two "Assets" links exist (Stellar + External) — assert both hrefs.
+    const assetLinks = screen.getAllByRole('link', { name: 'Assets' });
+    expect(assetLinks.map((a) => a.getAttribute('href')).sort()).toEqual([
+      '/assets',
+      '/external/assets',
+    ]);
+    // Developers
+    expect(screen.getByRole('link', { name: /API Docs/ })).toHaveAttribute(
+      'href',
+      'https://docs.stellarindex.io',
+    );
+    expect(screen.getByRole('link', { name: 'SDK' })).toHaveAttribute('href', '/sdk');
+    expect(screen.getByRole('link', { name: 'Status' })).toHaveAttribute('href', '/status');
+    // Retired rail entries must NOT come back silently.
+    for (const gone of ['AMM Pools', 'External Markets', 'Verification', 'Home']) {
+      expect(screen.queryByRole('link', { name: gone })).not.toBeInTheDocument();
+    }
+  });
+});
+
 describe('Sidebar AccountMenu', () => {
   it('restores focus to the trigger button after closing with Escape, even when focus had moved into the panel', () => {
     renderNav();

@@ -123,6 +123,24 @@ export function NetworkView() {
           over time, what the network is doing right now, and the markets and
           sources feeding the lake.
         </p>
+        {/* Nav revision 2026-08-24: the rail carries one Network entry;
+            the chain sub-surfaces are reached from this hub. */}
+        <nav aria-label="Network sub-surfaces" className="flex flex-wrap gap-2 pt-2">
+          {[
+            { href: '/network/ledgers', label: 'Ledgers' },
+            { href: '/network/operations', label: 'Operations' },
+            { href: '/transactions', label: 'Transactions' },
+            { href: '/sources', label: 'Sources' },
+          ].map((l) => (
+            <Link
+              key={l.href}
+              href={l.href}
+              className="rounded-lg border border-line bg-surface px-3 py-1 text-sm font-medium text-ink-body shadow-xs hover:border-brand-500 hover:text-brand-600"
+            >
+              {l.label} →
+            </Link>
+          ))}
+        </nav>
       </header>
 
       <HeroStats stats={s} tip={tip} />

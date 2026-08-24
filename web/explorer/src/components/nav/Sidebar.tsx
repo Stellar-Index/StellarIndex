@@ -4,34 +4,24 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   Activity,
-  ArrowLeftRight,
-  BadgeCheck,
   BarChart3,
   BellRing,
-  Blocks,
   BookOpen,
   Boxes,
   Building2,
   Code2,
   Coins,
-  CreditCard,
   ExternalLink,
   FileCode,
-  GitCompare,
   Gauge,
   Globe,
   KeyRound,
-  Landmark,
   LayoutDashboard,
-  ListTree,
   LogOut,
-  Network,
   Radio,
   Receipt,
   Settings,
-  Share2,
   ShieldCheck,
-  TrendingUp,
   User,
   Wallet,
   Zap,
@@ -43,69 +33,47 @@ import { useMe } from '@/api/hooks';
 import { API_BASE_URL } from '@/api/client';
 import { cn } from '@/lib/cn';
 import { useDialog } from '@/lib/useDialog';
+import { StellarMark } from '@/components/StellarMark';
 import { LiveLedgerBadge } from './LiveLedgerBadge';
 import { SearchModal } from './SearchModal';
 
 type NavItem = { href: string; label: string; icon: LucideIcon; external?: boolean; exact?: boolean };
 type NavGroup = { title?: string; items: NavItem[] };
 
-// The console IA — an entity-centric explorer. Grouped so a data-heavy
-// site stays navigable. Secondary/marketing pages (Methodology,
-// Diagnostics, Sources, the CEX board) live in the footer + search, not
-// the primary rail. The API is the flagship product, so Pricing
-// sits in the Developers group (LC-060). Transactions / Contracts / SDEX
-// Markets land here as their pages ship (kept out until then so there
-// are no dead links).
+// The console IA (nav revision 2026-08-24): three sections — Stellar
+// (on-chain entities + protocol surfaces), External (off-chain reference
+// data), Developers. One entry per entity class; sub-surfaces live on
+// their hub pages (Network hosts operations/ledgers, Insights hosts
+// anomalies/divergence/MEV, Protocols hosts the per-category venue
+// views). Secondary/marketing pages (Pricing, Methodology, Diagnostics,
+// Sources, Issuers, AMM boards) stay reachable via hubs, footer +
+// search — the rail is deliberately one screen tall.
 const NAV: NavGroup[] = [
   {
+    title: 'Stellar',
     items: [
-      { href: '/', label: 'Home', icon: LayoutDashboard, exact: true },
       { href: '/network', label: 'Network', icon: Gauge },
       { href: '/transactions', label: 'Transactions', icon: Receipt },
-      { href: '/operations', label: 'Operations', icon: ListTree },
-      { href: '/ledgers', label: 'Ledgers', icon: Blocks },
       { href: '/accounts', label: 'Accounts', icon: Wallet },
       { href: '/assets', label: 'Assets', icon: Coins },
-      { href: '/external/assets', label: 'External assets', icon: Globe },
-      { href: '/issuers', label: 'Issuers', icon: BadgeCheck },
       { href: '/contracts', label: 'Contracts', icon: FileCode, exact: true },
-      { href: '/dexes/sdex', label: 'SDEX Markets', icon: BarChart3 },
-      { href: '/dexes', label: 'AMM Pools', icon: Boxes, exact: true },
-    ],
-  },
-  {
-    title: 'Protocols',
-    items: [
-      // S-001: the label promises a venue view — /dexes IS that view
-      // (per-protocol 24h activity + every pool). /protocols (the
-      // verification index) keeps its own entry below.
-      { href: '/dexes', label: 'DEX / AMM', icon: ArrowLeftRight },
-      { href: '/lending', label: 'Lending', icon: Landmark },
-      { href: '/aggregators', label: 'Aggregators', icon: Share2 },
-      { href: '/bridges', label: 'Bridges', icon: Network },
+      { href: '/sdex', label: 'SDEX', icon: BarChart3 },
+      { href: '/protocols', label: 'Protocols', icon: Boxes },
       { href: '/oracles', label: 'Oracles', icon: Radio },
-      // S-017: a single protocol's verification page was promoted to
-      // the top-level rail; the whole verification INDEX (all 15
-      // protocols incl. soroswap-router) is the right rail item.
-      { href: '/protocols', label: 'Verification', icon: Boxes },
+      { href: '/insights', label: 'Insights', icon: Zap },
     ],
   },
   {
-    items: [{ href: '/exchanges', label: 'External Markets', icon: Building2 }],
-  },
-  {
-    title: 'Analytics',
+    title: 'External',
     items: [
-      { href: '/anomalies', label: 'Anomalies', icon: Zap },
-      { href: '/divergences', label: 'Divergence', icon: GitCompare },
-      { href: '/mev', label: 'MEV', icon: Activity },
+      { href: '/exchanges', label: 'Markets', icon: Building2 },
+      { href: '/external/assets', label: 'Assets', icon: Globe },
     ],
   },
   {
     title: 'Developers',
     items: [
-      { href: '/pricing', label: 'Pricing', icon: CreditCard },
-      { href: 'https://docs.stellarindex.io', label: 'API docs', icon: BookOpen, external: true },
+      { href: 'https://docs.stellarindex.io', label: 'API Docs', icon: BookOpen, external: true },
       { href: '/sdk', label: 'SDK', icon: Code2 },
       { href: '/status', label: 'Status', icon: Activity },
     ],
@@ -187,18 +155,20 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const groups = signedIn ? [...NAV, accountGroup] : NAV;
   return (
     <div className="flex h-full flex-col bg-surface-muted">
-      {/* Logo */}
-      <div className="flex h-14 shrink-0 items-center px-4">
+      {/* Logo — the official Stellar mark + wordmark in Inter (per
+          design-system.stellar.org typography), with the live ledger
+          number to its right: bare number, pulsing while the stream is
+          fresh, linking to the ledger. */}
+      <div className="flex h-14 shrink-0 items-center gap-2 px-4">
         <Link
           href="/"
           onClick={onNavigate}
-          className="flex items-center gap-2 text-sm font-semibold tracking-tight text-ink"
+          className="flex min-w-0 items-center gap-2 font-sans text-sm font-semibold tracking-tight text-ink"
         >
-          <span className="flex h-6 w-6 items-center justify-center rounded-md bg-brand-600 text-white">
-            <TrendingUp className="h-3.5 w-3.5" />
-          </span>
-          Stellar Index
+          <StellarMark className="h-5 w-5 shrink-0 text-ink" />
+          <span className="truncate">StellarIndex</span>
         </Link>
+        <LiveLedgerBadge onNavigate={onNavigate} compact />
       </div>
 
       {/* Search — directly below the logo */}
@@ -221,9 +191,6 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
           </div>
         ))}
       </nav>
-
-      {/* Live network heartbeat — just above the account card. */}
-      <LiveLedgerBadge onNavigate={onNavigate} />
 
       {/* Account — bottom-left */}
       <div className="shrink-0 border-t border-line p-3">
