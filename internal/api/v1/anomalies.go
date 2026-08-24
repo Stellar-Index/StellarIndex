@@ -349,7 +349,7 @@ func (s *Server) handleDivergenceSeries(w http.ResponseWriter, r *http.Request) 
 	if !divergenceReferences[reference] {
 		writeProblem(w, r, "https://api.stellarindex.io/errors/invalid-parameter",
 			"Invalid reference", http.StatusBadRequest,
-			"reference must be one of: chainlink, coingecko, reflector-cex, reflector-fx, reflector-dex, redstone, band")
+			"reference must be one of: chainlink, coingecko, reflector-cex, reflector-fx, reflector-dex, redstone, band, synthetic-usd-cross")
 		return
 	}
 	days := 7
