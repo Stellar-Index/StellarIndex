@@ -114,3 +114,54 @@ func hasHistoryRow(batch []FXQuote, ticker string, date time.Time, rate float64)
 	}
 	return false
 }
+
+// TestAcceptHistoryRate_StuckUpstreamReclassifies is the Massive ETB=44
+// incident (2026-08-24): a provider serving the SAME broken history bar
+// refresh after refresh must keep being REFUSED, but stop counting as
+// fresh `history_deviation` once the streak passes the threshold — so
+// the rejection alert only carries new information. A different rejected
+// value, or an in-band acceptance, resets the streak.
+func TestAcceptHistoryRate_StuckUpstreamReclassifies(t *testing.T) {
+	w, _ := bandTestWorker(io.Discard)
+	w.guards["ETB"] = &rateGuard{lastAccepted: 161.75}
+
+	// Threshold refusals: all classified as fresh deviation, all refused.
+	for i := 0; i < stuckRejectionThreshold; i++ {
+		if w.acceptHistoryRate("ETB", 44) {
+			t.Fatalf("refusal %d: broken bar must be rejected", i+1)
+		}
+	}
+	g := w.guards["ETB"]
+	if g.stuckCount != stuckRejectionThreshold {
+		t.Fatalf("stuckCount = %d, want %d", g.stuckCount, stuckRejectionThreshold)
+	}
+
+	// Past the threshold: still refused, now classified stuck.
+	if w.acceptHistoryRate("ETB", 44) {
+		t.Fatal("stuck bar must STILL be rejected — reclassification never accepts")
+	}
+	if g.stuckCount != stuckRejectionThreshold+1 {
+		t.Fatalf("stuckCount = %d, want %d", g.stuckCount, stuckRejectionThreshold+1)
+	}
+
+	// A DIFFERENT out-of-band value is fresh news: streak restarts at 1.
+	if w.acceptHistoryRate("ETB", 55) {
+		t.Fatal("different out-of-band value must be rejected")
+	}
+	if g.stuckCount != 1 || g.stuckRejectedRate != 55 {
+		t.Fatalf("streak after new value = (%d, %v), want (1, 55)", g.stuckCount, g.stuckRejectedRate)
+	}
+
+	// An in-band bar resets the streak entirely.
+	if !w.acceptHistoryRate("ETB", 160.0) {
+		t.Fatal("in-band history bar must be accepted")
+	}
+	if g.stuckCount != 0 || g.stuckRejectedRate != 0 {
+		t.Fatalf("streak after acceptance = (%d, %v), want (0, 0)", g.stuckCount, g.stuckRejectedRate)
+	}
+	// And the guard's current-rate baseline must be untouched throughout
+	// (the method's read-only contract on lastAccepted/pending).
+	if g.lastAccepted != 161.75 || g.pending != 0 {
+		t.Fatalf("baseline mutated: lastAccepted=%v pending=%v", g.lastAccepted, g.pending)
+	}
+}

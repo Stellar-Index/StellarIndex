@@ -97,16 +97,21 @@ Reasons (the `reason` label):
 
 - **ETB history bar = 44 (Massive, ongoing since ≥ 2026-08-21).** The
   trailing-7d history refresh serves an ETB bar of **44** against a
-  held baseline of **~160.7**; the guard rejects it hourly with
-  `reason="history_deviation"` (log: `ticker=ETB rate=44
-  previous=160.7`). 44 is Ethiopia's pre-float official rate (~2022);
-  the real post-float rate is ~155–165/USD — Massive is serving an
-  ancient bar in its daily grouped FX history. Our current-rate path
-  is unaffected (baseline stays correct); only the broken history bar
-  is refused, which is exactly MR-1's design. No action on our side
-  beyond confirming the log signature matches; if the CURRENT rate
-  starts rejecting too, or a second ticker joins, treat as a fresh
-  incident. Consider reporting to Massive if it persists.
+  held baseline of **~161.75**; the guard rejects it hourly (log:
+  `ticker=ETB rate=44 previous=161.75`). 44 is Ethiopia's pre-float
+  official rate (~2022); the real post-float rate is ~155–165/USD —
+  Massive is serving an ancient bar in its daily grouped FX history.
+  Our current-rate path is unaffected (baseline stays correct); only
+  the broken history bar is refused, which is exactly MR-1's design.
+  Since 2026-08-24 the worker reclassifies such repeats: after 12
+  consecutive refusals of the SAME value the reason becomes
+  `history_deviation_stuck`, which the alert excludes — so this known
+  bar no longer keeps the alert red, while a NEW value, a new ticker,
+  or a current-rate rejection still alerts immediately. The stuck
+  series remains on
+  `stellarindex_external_fx_rate_rejected_total{reason="history_deviation_stuck"}`
+  for graphing. If the CURRENT rate starts rejecting too, treat as a
+  fresh incident. Consider reporting to Massive if it persists.
 
 ## Do NOT
 

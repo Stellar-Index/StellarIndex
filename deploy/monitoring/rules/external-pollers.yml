@@ -152,9 +152,16 @@ groups:
       # refreshes, so a single bad bar plus its confirmation cannot trip
       # it. The rejected TICKER is on the worker's WARN log line (the
       # metric is deliberately not labelled by ticker).
+      # reason="history_deviation_stuck" is EXCLUDED: after 12 consecutive
+      # refusals of the SAME broken history bar the worker reclassifies the
+      # repeats (the Massive ETB=44 incident, 2026-08-24 — the guard kept
+      # correctly refusing one documented bar for days and this alert
+      # carried no new information). Fresh disagreement — a new value, a
+      # new ticker, or the current-rate band — still lands in the alerted
+      # reasons; the stuck series stays graphable for the runbook.
       - alert: stellarindex_external_fx_rate_rejections
         expr: |
-          sum by (reason) (increase(stellarindex_external_fx_rate_rejected_total[3h])) > 2
+          sum by (reason) (increase(stellarindex_external_fx_rate_rejected_total{reason!="history_deviation_stuck"}[3h])) > 2
         for: 30m
         labels:
           severity: ticket
