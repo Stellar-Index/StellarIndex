@@ -61,7 +61,7 @@ func (s *Server) applyAssetExtensionFields(ctx context.Context, detail *AssetDet
 	row, rowErr := s.lookupAssetRow(cctx, asset, assetID)
 	results := s.fetchAssetExtensionResults(cctx, assetID)
 
-	s.applyAssetRowToDetail(detail, row, rowErr, assetID)
+	s.applyAssetRowToDetail(cctx, detail, asset, row, rowErr, assetID)
 	applyAssetExtensionResults(detail, results)
 	s.logAssetExtensionFailures(assetID, results)
 }
@@ -104,7 +104,7 @@ func (s *Server) fetchAssetExtensionResults(ctx context.Context, assetID string)
 // applyAssetRowToDetail mirrors scalar fields from AssetRow onto
 // AssetDetail. sql.ErrNoRows is the expected "no asset-catalogue row" case —
 // silent skip. Other errors are logged at Debug.
-func (s *Server) applyAssetRowToDetail(detail *AssetDetail, row timescale.AssetRow, err error, assetID string) {
+func (s *Server) applyAssetRowToDetail(ctx context.Context, detail *AssetDetail, asset canonical.Asset, row timescale.AssetRow, err error, assetID string) {
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			s.logger.Debug("asset extension: row lookup failed",
@@ -112,6 +112,23 @@ func (s *Server) applyAssetRowToDetail(detail *AssetDetail, row timescale.AssetR
 		}
 		return
 	}
+	// #28: the catalogue row's price_usd — the same 7-day catalogue SQL
+	// the LISTING enrichment reads, computed entirely outside /v1/price's
+	// gated read path — was the last aggregated-price surface that
+	// bypassed the thin-market substance gate: the listing withheld a
+	// dust-authored price (applySubstanceGateToListing) while this
+	// overlay copied the SAME price onto /v1/assets/{id} ungated, so a
+	// substanceless market kept a detail-page headline (AUDD served
+	// $0.78 bot dust on the detail while the listing correctly withheld
+	// it, 2026-08-24). Apply the SAME per-pair verdict the listing uses
+	// (listingPriceAllowed — cached ~60s per pair, so the marginal cost
+	// is one bounded index scan per quote-class per minute). The change
+	// pills derive from that price, so a gated-out row loses them too —
+	// dust pills must not outlive their price (mirrors the listing gate).
+	// Withholding here also lets the declared-peg fill downstream
+	// (fillDeclaredPegPrice, which fills nil PriceUSD only) supply the
+	// operator-declared basis for peg-configured assets.
+	priceAllowed := s.substance == nil || s.listingPriceAllowed(ctx, asset)
 	// Fill PriceUSD from the asset-catalogue row ONLY when the canonical
 	// price path (F2 populatePriceUSD → lookupUSDPrice, run earlier)
 	// left it nil. The asset-catalogue row's USD price is the listing-query
@@ -123,13 +140,13 @@ func (s *Server) applyAssetRowToDetail(detail *AssetDetail, row timescale.AssetR
 	// /v1/assets/native in agreement with /v1/price and
 	// /v1/assets/crypto:XLM, while still pricing the XLM-triangulated
 	// long tail (SHX, AQUA, …) that the canonical reader can't reach.
-	if row.PriceUSD != nil && detail.PriceUSD == nil {
+	if priceAllowed && row.PriceUSD != nil && detail.PriceUSD == nil {
 		detail.PriceUSD = row.PriceUSD
 	}
-	if row.Change1hPct != nil {
+	if priceAllowed && row.Change1hPct != nil {
 		detail.Change1hPct = row.Change1hPct
 	}
-	if row.Change7dPct != nil {
+	if priceAllowed && row.Change7dPct != nil {
 		detail.Change7dPct = row.Change7dPct
 	}
 	if reason := scamReason(row.IssuerGStrkey); reason != "" {
