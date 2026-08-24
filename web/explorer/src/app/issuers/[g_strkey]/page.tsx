@@ -5,7 +5,7 @@ import { IssuerPathView } from './IssuerPathView';
 import Link from 'next/link';
 
 import { Panel } from '@/components/reveal';
-import { Breadcrumbs } from '@/components/ui';
+import { Container, Breadcrumbs } from '@/components/ui';
 import { asExample } from '@/api/client';
 import { buildFetchData, failBuild, requireRows } from '@/lib/buildFetch';
 import { formatCompact } from '@/lib/format';
@@ -155,7 +155,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
       `/issuers/${g_strkey}: promised by generateStaticParams but /v1/issuers returned no row`,
     );
     return (
-      <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+      <Container className="space-y-6 py-8">
         <header className="space-y-3">
           <Breadcrumbs
             items={[
@@ -178,7 +178,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
             ChangeTrust op the indexer has seen.
           </p>
         </Panel>
-      </div>
+      </Container>
     );
   }
 
@@ -224,7 +224,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
   };
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+    <Container className="space-y-6 py-8">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: serializeJsonLd(breadcrumbLD) }}
@@ -542,7 +542,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
           </div>
         )}
       </Panel>
-    </div>
+    </Container>
   );
 }
 

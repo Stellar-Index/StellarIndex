@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
-import { Breadcrumbs, EmptyState, Skeleton } from '@/components/ui';
+import { Container, Breadcrumbs, EmptyState, Skeleton } from '@/components/ui';
 
 import { useLastPathSegment } from '@/lib/useLastPathSegment';
 import { shortAssetText } from '@/components/AssetLink';
@@ -81,7 +81,7 @@ export function PairPathView() {
   const title = valid ? `${baseLabel} / ${quoteLabel}` : 'Pair';
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+    <Container className="space-y-6 py-8">
       <header className="space-y-1">
         <Breadcrumbs
           items={[
@@ -145,6 +145,6 @@ export function PairPathView() {
           .
         </p>
       )}
-    </div>
+    </Container>
   );
 }

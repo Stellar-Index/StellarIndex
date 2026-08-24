@@ -17,6 +17,7 @@ import {
   stroopsToXlm,
 } from '../explorer-shared';
 
+import { Container } from '@/components/ui';
 /**
  * TransactionsView — recent network transactions. Defaults to the latest
  * ledger's transactions and lets you page backward/forward by ledger
@@ -59,7 +60,7 @@ export function TransactionsView() {
   });
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+    <Container className="space-y-6 py-8">
       <header className="space-y-3">
         <div>
           <p className="text-xs uppercase tracking-wider text-ink-muted">Explorer</p>
@@ -105,7 +106,7 @@ export function TransactionsView() {
         error={txQ.error ?? tipQ.error}
         rows={txQ.data?.transactions}
       />
-    </div>
+    </Container>
   );
 }
 

@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { SourcesTable } from './SourcesTable';
 
+import { Container } from '@/components/ui';
 export const metadata: Metadata = {
   alternates: { canonical: '/sources' },
   title: 'Stellar sources — every on-chain venue we index',
@@ -24,7 +25,7 @@ export const metadata: Metadata = {
  */
 export default function SourcesPage() {
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+    <Container className="space-y-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Stellar sources</h1>
         <p className="max-w-3xl text-sm text-ink-body">
@@ -41,6 +42,6 @@ export default function SourcesPage() {
       </header>
 
       <SourcesTable />
-    </div>
+    </Container>
   );
 }

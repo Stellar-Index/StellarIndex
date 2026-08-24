@@ -6,7 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { Callout, TxStatusBadge } from '@/components/ui';
+import { Container, Callout, TxStatusBadge } from '@/components/ui';
 import { OperationMixPanel, ThroughputPanel } from '@/components/NetworkInsight';
 import { apiGet, asExample } from '@/api/client';
 import { cn } from '@/lib/cn';
@@ -106,7 +106,7 @@ export function OperationsView() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+    <Container className="space-y-6 py-8">
       <header className="space-y-1">
         <p className="text-xs uppercase tracking-wider text-ink-muted">Explorer</p>
         <h1 className="text-2xl font-semibold tracking-tight text-ink">Operations</h1>
@@ -254,6 +254,6 @@ export function OperationsView() {
           </Link>
         </div>
       )}
-    </div>
+    </Container>
   );
 }

@@ -4,6 +4,7 @@ import { Suspense } from 'react';
 import { serializeJsonLd, ogImageFor } from '@/lib/seo';
 import { ProtocolView } from './ProtocolView';
 import { PROTOCOLS, protocolMeta } from '../registry';
+import { Container } from '@/components/ui';
 
 // Static-export dynamic route. The protocol name set is the bounded
 // registry (../registry.ts, mirrored from internal/api/v1/
@@ -87,9 +88,9 @@ export default async function ProtocolDetailPage({
       />
       <Suspense
         fallback={
-          <div className="mx-auto max-w-7xl px-6 py-16 text-sm text-ink-muted">
+          <Container className="py-16 text-sm text-ink-muted">
             Loading {meta?.label ?? name}…
-          </div>
+          </Container>
         }
       >
         <ProtocolView name={name} label={meta?.label ?? name} />

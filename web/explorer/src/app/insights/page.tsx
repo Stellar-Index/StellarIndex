@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Activity, GitCompare, Zap } from 'lucide-react';
 
+import { Container } from '@/components/ui';
 export const metadata: Metadata = {
   alternates: { canonical: '/insights' },
   title: 'Insights — anomalies, divergence and MEV on Stellar',
@@ -39,7 +40,7 @@ const SURFACES = [
 
 export default function InsightsPage() {
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+    <Container className="space-y-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Insights</h1>
         <p className="max-w-3xl text-sm text-ink-body">
@@ -68,6 +69,6 @@ export default function InsightsPage() {
           );
         })}
       </div>
-    </div>
+    </Container>
   );
 }

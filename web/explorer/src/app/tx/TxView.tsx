@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { Breadcrumbs, TxStatusBadge } from '@/components/ui';
+import { Container, Breadcrumbs, TxStatusBadge } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import {
   type Envelope,
@@ -208,7 +208,7 @@ function Shell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+    <Container className="space-y-6 py-8">
       <header className="space-y-2">
         <Breadcrumbs
           items={[
@@ -220,7 +220,7 @@ function Shell({
         <h1 className="text-2xl font-semibold tracking-tight">Transaction</h1>
       </header>
       {children}
-    </div>
+    </Container>
   );
 }
 

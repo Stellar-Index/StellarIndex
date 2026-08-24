@@ -5,6 +5,7 @@ import { Panel } from '@/components/reveal';
 
 import { AnomaliesFeed } from './AnomaliesFeed';
 
+import { Container } from '@/components/ui';
 export const metadata: Metadata = {
   title: 'Anomalies — freeze and outlier timeline',
   description:
@@ -47,7 +48,7 @@ const REASONS: { name: string; trigger: string; meaning: string }[] = [
 
 export default function AnomaliesPage() {
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+    <Container className="space-y-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Anomalies</h1>
         <p className="max-w-3xl text-sm text-ink-body">
@@ -123,6 +124,6 @@ export default function AnomaliesPage() {
           .
         </p>
       </Panel>
-    </div>
+    </Container>
   );
 }

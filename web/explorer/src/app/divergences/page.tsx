@@ -5,6 +5,7 @@ import { Panel } from '@/components/reveal';
 
 import { DivergenceFeed } from './DivergenceFeed';
 
+import { Container } from '@/components/ui';
 export const metadata: Metadata = {
   alternates: { canonical: '/divergences' },
   title: 'Divergences — cross-reference monitor',
@@ -91,7 +92,7 @@ function RefStatusBadge({ status }: { status: RefStatus }) {
 
 export default function DivergencesPage() {
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+    <Container className="space-y-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Divergences</h1>
         <p className="max-w-3xl text-sm text-ink-body">
@@ -216,6 +217,6 @@ export default function DivergencesPage() {
           .
         </p>
       </Panel>
-    </div>
+    </Container>
   );
 }

@@ -6,7 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { Breadcrumbs } from '@/components/ui';
+import { Container, Breadcrumbs } from '@/components/ui';
 import { DirectoryLabel } from '@/components/DirectoryLabel';
 import { Sparkline } from '@/components/primitives';
 import { apiGet, asExample, API_BASE_URL } from '@/api/client';
@@ -808,7 +808,7 @@ function Shell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+    <Container className="space-y-6 py-8">
       <header className="space-y-2">
         <Breadcrumbs
           items={[
@@ -820,7 +820,7 @@ function Shell({
         <h1 className="text-2xl font-semibold tracking-tight">Contract</h1>
       </header>
       {children}
-    </div>
+    </Container>
   );
 }
 

@@ -15,6 +15,7 @@ import { TimeSeriesChart } from './TimeSeriesChart';
 import { AnalyticsStatusNote, BespokeUnavailable } from './AnalyticsStatusNote';
 import { BespokeSection, type Bespoke } from './BespokeSection';
 import type { paths } from '@/api/types';
+import { Container } from '@/components/ui';
 
 // ─── Wire shapes — derived from the generated OpenAPI contract
 // (src/api/types.ts, `make web-generate-api`); mirror
@@ -256,7 +257,7 @@ function Shell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+    <Container className="space-y-6 py-8">
       <nav className="text-xs text-ink-muted">
         <Link
           href="/protocols"
@@ -268,7 +269,7 @@ function Shell({
         / <span className="text-ink-body">{label || name}</span>
       </nav>
       {children}
-    </div>
+    </Container>
   );
 }
 
