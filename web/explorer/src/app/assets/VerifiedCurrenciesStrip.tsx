@@ -138,7 +138,10 @@ export function VerifiedCurrenciesStrip({
             {fiatChips.map((vc) => (
               <Link
                 key={vc.slug}
-                href={`/assets/${vc.slug}`}
+                // Fiat detail pages live under /external/assets only —
+                // the chip row's own caption says "not Stellar assets"
+                // (2026-08-24 de-duplication; /assets/{fiat} now 301s).
+                href={`/external/assets/${vc.slug}`}
                 className="border-line bg-surface-subtle text-ink-muted hover:border-line hover:text-ink inline-flex items-center rounded-md border px-2.5 py-1 text-xs font-medium transition"
                 title={
                   vc.verified_issuer

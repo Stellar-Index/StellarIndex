@@ -67,11 +67,15 @@ export async function generateStaticParams() {
   // generateStaticParams runs first, so this primes the cache for
   // the per-page renders that follow. One API call does double duty.
   const cache = await getBuildCoinsCache();
-  // Verified-currency catalogue slugs (us-dollar, chinese-yuan,
-  // usdc, …) aren't in the assets listing (which only knows about
-  // Stellar-network assets), but they ARE valid /assets/[slug]
-  // routes that render the cross-chain identity view. Pull them
-  // from /v1/assets/verified so they get pre-rendered too.
+  // Verified-currency catalogue slugs (usdc, btc, …) aren't in the
+  // assets listing (which only knows about Stellar-network assets),
+  // but they ARE valid /assets/[slug] routes that render the
+  // cross-chain identity view. Pull them from /v1/assets/verified so
+  // they get pre-rendered too — EXCEPT class==='fiat': a fiat
+  // currency's one detail page is /external/assets/{slug} (operator
+  // ruling 2026-08-24, closing AM-16's split identity for good — the
+  // old /assets/{fiat} duplicates now 301 there via _redirects, so
+  // this route must stop exporting them).
   const verifiedSlugs = await fetchVerifiedSlugsForStaticParams();
   if (!cache || cache.bySlug.size === 0 || verifiedSlugs.length === 0) {
     // Real build: an empty listing or catalogue means the API is
@@ -297,7 +301,11 @@ function getBuildCoinsCache(): Promise<BuildCoinsCache | null> {
 // generateStaticParams).
 async function fetchVerifiedSlugsForStaticParams(): Promise<string[]> {
   const map = await getCatalogue();
-  return Array.from(map.keys());
+  // Fiat catalogue entries are excluded: their detail page lives at
+  // /external/assets/{slug} only (see generateStaticParams).
+  return Array.from(map.entries())
+    .filter(([, view]) => view.class !== 'fiat')
+    .map(([slug]) => slug);
 }
 
 // fetchCoinDirect fetches /v1/assets/{idOrSlug} and returns the rich
