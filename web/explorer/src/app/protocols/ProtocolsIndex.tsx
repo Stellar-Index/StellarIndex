@@ -201,7 +201,8 @@ function ProtocolCardView({ card, poolsBySource }: { card: ProtocolCard; poolsBy
   const label = protocolMeta(card.name)?.label ?? card.name;
   return (
     <Link
-      href={`/protocols/${encodeURIComponent(card.name)}`}
+      // sdex's canonical surface is /sdex (nav revision 2026-08-24).
+      href={card.name === 'sdex' ? '/sdex' : `/protocols/${encodeURIComponent(card.name)}`}
       className="group flex flex-col rounded-card border border-line bg-surface p-5 shadow-card transition-shadow duration-150 hover:border-line-strong hover:shadow-elevated focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-600/60 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-canvas"
     >
       <div className="flex items-start justify-between gap-2">
