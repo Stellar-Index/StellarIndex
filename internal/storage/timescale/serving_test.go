@@ -130,7 +130,7 @@ func TestStatementTimeoutConnector_PropagatesDialError(t *testing.T) {
 // query is bounded SQL-side. Before REC-08 those pools opened via plain
 // Open with NO connector at all.
 func TestBoundedConnector_PositiveTimeoutSetsBackstop(t *testing.T) {
-	conn, err := boundedConnector("postgres://u@127.0.0.1:5432/db?sslmode=disable", 30*time.Minute)
+	conn, err := boundedConnector("postgres://u@127.0.0.1:5432/db?sslmode=disable", 30*time.Minute, false)
 	if err != nil {
 		t.Fatalf("boundedConnector: %v", err)
 	}
@@ -150,12 +150,58 @@ func TestBoundedConnector_PositiveTimeoutSetsBackstop(t *testing.T) {
 // fix).
 func TestBoundedConnector_NonPositiveTimeoutIsUnbounded(t *testing.T) {
 	for _, d := range []time.Duration{0, -time.Second} {
-		conn, err := boundedConnector("postgres://u@127.0.0.1:5432/db?sslmode=disable", d)
+		conn, err := boundedConnector("postgres://u@127.0.0.1:5432/db?sslmode=disable", d, true)
 		if err != nil {
 			t.Fatalf("boundedConnector(%v): %v", d, err)
 		}
 		if conn != nil {
 			t.Fatalf("boundedConnector(%v) = %T, want nil (unbounded fallback)", d, conn)
+		}
+	}
+}
+
+// TestStatementTimeoutConnector_ForceCustomPlans pins the 2026-08-24
+// /v1/price p95-tail fix: the SERVING pool's connections must ALSO set
+// plan_cache_mode = force_custom_plan (generic-plan builds over the
+// ~870-chunk trades hypertable cost ~206 ms and are rebuilt on every
+// plancache invalidation — the measured 250-325 ms binds on the request
+// path). Order matters only in that both SETs run before the conn is
+// handed out; a failure on the second SET must fail-close like the first.
+func TestStatementTimeoutConnector_ForceCustomPlans(t *testing.T) {
+	fc := &fakeConn{}
+	c := &statementTimeoutConnector{
+		base:             &fakeConnector{conn: fc},
+		timeoutMS:        30000,
+		forceCustomPlans: true,
+	}
+	if _, err := c.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	want := []string{
+		"SET statement_timeout = 30000",
+		"SET plan_cache_mode = force_custom_plan",
+	}
+	if len(fc.execs) != 2 || fc.execs[0] != want[0] || fc.execs[1] != want[1] {
+		t.Fatalf("execs = %v, want %v", fc.execs, want)
+	}
+}
+
+// TestStatementTimeoutConnector_BackgroundPoolKeepsDefaultPlanMode — the
+// indexer/aggregator pools must NOT force custom plans: their long-lived
+// batch statements are exactly where generic plans pay off.
+func TestStatementTimeoutConnector_BackgroundPoolKeepsDefaultPlanMode(t *testing.T) {
+	fc := &fakeConn{}
+	c := &statementTimeoutConnector{
+		base:      &fakeConnector{conn: fc},
+		timeoutMS: 30000,
+		// forceCustomPlans deliberately false (OpenBackground).
+	}
+	if _, err := c.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	for _, q := range fc.execs {
+		if q == "SET plan_cache_mode = force_custom_plan" {
+			t.Fatal("background pool must not force custom plans")
 		}
 	}
 }

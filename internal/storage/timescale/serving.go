@@ -28,15 +28,36 @@ import (
 // request-path read (no explicit SET LOCAL) inherits this session default
 // and is bounded by it.
 //
-// statementTimeout <= 0 falls back to plain [Open] (no session timeout).
+// statementTimeout <= 0 falls back to plain [Open] (no session timeout,
+// and no plan-mode override — the two session settings ride the same
+// post-connect mechanism).
 //
-// The timeout is set via a post-connect `SET statement_timeout` run on
-// every new pooled connection (a wrapping driver.Connector), rather than
-// by string-munging the operator DSN — so it works identically for URL
+// The serving pool ADDITIONALLY runs `SET plan_cache_mode =
+// force_custom_plan` on every connection (2026-08-24, the /v1/price p95
+// tail): the request path's raw-trades fallback (TradesInRange) is a
+// parameterised query over the trades hypertable, and Postgres's
+// prepared-statement logic flips it to a GENERIC plan after five
+// executions. Building that generic plan means planning across every
+// chunk of an ~870-chunk hypertable — measured 206 ms on r1 — and the
+// plancache invalidates roughly once a minute in steady state
+// (autovacuum/analyze on hot chunks, compression jobs, chunk DDL), so a
+// steady ~5 % of serving requests paid a 250–325 ms BIND (caught
+// verbatim in the slow-query log) while p50 stayed ~15 ms. Custom plans
+// for the same query measure 0.2–3 ms per bind, and TimescaleDB's
+// planner prunes chunks far better with known parameters. Forcing
+// custom plans on the SERVING pool trades ≤3 ms of per-query planning
+// for eliminating the rebuild-tail class entirely. The
+// indexer/aggregator (OpenBackground) and ops pools keep the default
+// plan_cache_mode: their long-lived batch statements are exactly where
+// generic plans pay off.
+//
+// Both settings are applied via a post-connect SET run on every new
+// pooled connection (a wrapping driver.Connector), rather than by
+// string-munging the operator DSN — so it works identically for URL
 // and keyword-form DSNs and never disturbs the configured connection
 // string.
 func OpenServing(ctx context.Context, dsn string, statementTimeout time.Duration) (*Store, error) {
-	return openWithStatementTimeout(ctx, dsn, statementTimeout)
+	return openWithSessionSetup(ctx, dsn, statementTimeout, true)
 }
 
 // OpenBackground is [Open] with a session-level `statement_timeout` applied
@@ -61,15 +82,18 @@ func OpenServing(ctx context.Context, dsn string, statementTimeout time.Duration
 //
 // statementTimeout <= 0 falls back to plain [Open] (no session timeout).
 func OpenBackground(ctx context.Context, dsn string, statementTimeout time.Duration) (*Store, error) {
-	return openWithStatementTimeout(ctx, dsn, statementTimeout)
+	return openWithSessionSetup(ctx, dsn, statementTimeout, false)
 }
 
-// openWithStatementTimeout is the shared implementation behind OpenServing
-// and OpenBackground: a pool whose every connection runs `SET
-// statement_timeout` on dial (via [statementTimeoutConnector]), Ping'd
-// before returning. statementTimeout <= 0 falls back to plain [Open].
-func openWithStatementTimeout(ctx context.Context, dsn string, statementTimeout time.Duration) (*Store, error) {
-	connector, err := boundedConnector(dsn, statementTimeout)
+// openWithSessionSetup is the shared implementation behind OpenServing
+// and OpenBackground: a pool whose every connection runs its session
+// SETs on dial (via [statementTimeoutConnector]), Ping'd before
+// returning. statementTimeout <= 0 falls back to plain [Open] — the
+// serving plan-mode override rides the same connector, so it also
+// requires a positive timeout (the serving pool always configures one;
+// see StorageConfig.ServingStatementTimeout's default).
+func openWithSessionSetup(ctx context.Context, dsn string, statementTimeout time.Duration, forceCustomPlans bool) (*Store, error) {
+	connector, err := boundedConnector(dsn, statementTimeout, forceCustomPlans)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +116,7 @@ func openWithStatementTimeout(ctx context.Context, dsn string, statementTimeout 
 // connector for a positive timeout, or returns (nil, nil) to signal "no
 // bound — use plain [Open]". Split out so the timeout-arithmetic and the
 // bounded/unbounded decision are unit-testable without a live Postgres.
-func boundedConnector(dsn string, statementTimeout time.Duration) (driver.Connector, error) {
+func boundedConnector(dsn string, statementTimeout time.Duration, forceCustomPlans bool) (driver.Connector, error) {
 	if statementTimeout <= 0 {
 		return nil, nil
 	}
@@ -102,8 +126,9 @@ func boundedConnector(dsn string, statementTimeout time.Duration) (driver.Connec
 	}
 	base := stdlib.GetConnector(*cfg)
 	return &statementTimeoutConnector{
-		base:      base,
-		timeoutMS: statementTimeout.Milliseconds(),
+		base:             base,
+		timeoutMS:        statementTimeout.Milliseconds(),
+		forceCustomPlans: forceCustomPlans,
 	}, nil
 }
 
@@ -115,6 +140,9 @@ func boundedConnector(dsn string, statementTimeout time.Duration) (driver.Connec
 type statementTimeoutConnector struct {
 	base      driver.Connector
 	timeoutMS int64
+	// forceCustomPlans additionally sets `plan_cache_mode =
+	// force_custom_plan` (serving pool only — see OpenServing).
+	forceCustomPlans bool
 }
 
 func (c *statementTimeoutConnector) Connect(ctx context.Context) (driver.Conn, error) {
@@ -139,6 +167,12 @@ func (c *statementTimeoutConnector) Connect(ctx context.Context) (driver.Conn, e
 	if _, err := execer.ExecContext(ctx, stmt, nil); err != nil {
 		_ = conn.Close()
 		return nil, fmt.Errorf("timescale: set statement_timeout: %w", err)
+	}
+	if c.forceCustomPlans {
+		if _, err := execer.ExecContext(ctx, "SET plan_cache_mode = force_custom_plan", nil); err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("timescale: set plan_cache_mode: %w", err)
+		}
 	}
 	return conn, nil
 }
