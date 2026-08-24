@@ -163,7 +163,7 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
         <Link
           href="/"
           onClick={onNavigate}
-          className="flex min-w-0 items-center gap-2 font-sans text-sm font-semibold tracking-tight text-ink"
+          className="flex min-w-0 items-center gap-2 font-sans text-base font-semibold tracking-tight text-ink"
         >
           <StellarMark className="h-5 w-5 shrink-0 text-ink" />
           {/* Wordmark weight contrast (2026-08-24): "Stellar" carries the
