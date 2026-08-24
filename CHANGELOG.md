@@ -15,6 +15,33 @@ against.
 
 ## [Unreleased]
 
+## [v0.41.1] — 2026-08-24
+
+### Fixed
+
+- **FX guard: history-majority heal for poisoned bootstrap baselines +
+  jitter-tolerant stuck streak (the Massive UZS incident).** A broken
+  current-feed bar bootstrap-accepted at restart no longer poisons the
+  baseline against the ticker's own correct 7-day history: ≥4
+  mutually-agreeing rejected bars refute an unconfirmed single-sample
+  baseline (median wins, the poisoned current-day row is scrubbed
+  before write). Confirmed baselines are never healed; split series
+  never heal. Stuck-streak reclassification now tolerance-matches
+  (exact float equality never matched a live jittering upstream).
+  Two-lens verified; red-proven tests. (#146)
+
+### Added
+
+- **Synthetic USD-cross divergence reference** — non-USD-fiat pairs
+  (XLM/EUR, XLM/GBP, …) get a second reference (on-chain oracle
+  base/USD ÷ reflector-fx or chainlink fiat/USD), so SuccessCount
+  reaches the divergence trust floor and ADR-0019's corroborated
+  release can auto-release genuine repricings unattended — four
+  operator freeze-releases on 2026-08-24 alone were this class.
+  Migration 0148 admits the source to divergence_observations
+  (pure-widening CHECK; decompress dance). Two-lens verified incl.
+  live migration exercise against compressed chunks. (#149)
+
 ## [v0.41.0] — 2026-08-24
 
 ### Fixed
