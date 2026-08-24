@@ -7,9 +7,8 @@ import { API_BASE_URL } from '@/api/client';
 import { formatSubunitPrice } from '@/lib/format';
 
 import { LivePrice } from '../../LivePrice';
-
-const isCIStub =
-  API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
+import { isCIStub } from '@/lib/buildFetch';
+import { shortAssetText } from '@/lib/asset-label';
 
 const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
@@ -65,7 +64,7 @@ export async function generateMetadata({
   const { pair } = await params;
   const decoded = decodePairSlug(pair);
   const label = decoded
-    ? `${shortAsset(decoded.base)} / ${shortAsset(decoded.quote)}`
+    ? `${shortAssetText(decoded.base)} / ${shortAssetText(decoded.quote)}`
     : 'pair';
   return {
     title: `${label} — embeddable price widget`,
@@ -74,7 +73,10 @@ export async function generateMetadata({
   };
 }
 
-async function fetchPrice(base: string, quote: string): Promise<PriceResp | null> {
+async function fetchPrice(
+  base: string,
+  quote: string,
+): Promise<PriceResp | null> {
   if (isCIStub) return null;
   try {
     const res = await fetch(
@@ -89,7 +91,10 @@ async function fetchPrice(base: string, quote: string): Promise<PriceResp | null
   }
 }
 
-async function fetchChart(base: string, quote: string): Promise<ChartResp | null> {
+async function fetchChart(
+  base: string,
+  quote: string,
+): Promise<ChartResp | null> {
   if (isCIStub) return null;
   try {
     const res = await fetch(
@@ -117,7 +122,7 @@ export default async function EmbedPairPage({ params }: { params: Params }) {
   const decoded = decodePairSlug(pair);
   if (!decoded) {
     return (
-      <div className="flex h-full min-h-32 items-center justify-center px-3 py-3 text-sm text-ink-muted">
+      <div className="text-ink-muted flex h-full min-h-32 items-center justify-center px-3 py-3 text-sm">
         Invalid pair slug
       </div>
     );
@@ -135,24 +140,24 @@ export default async function EmbedPairPage({ params }: { params: Params }) {
       ? (Number(points[points.length - 1].p) / Number(points[0].p) - 1) * 100
       : null;
 
-  const baseLabel = shortAsset(base);
-  const quoteLabel = shortAsset(quote);
+  const baseLabel = shortAssetText(base);
+  const quoteLabel = shortAssetText(quote);
   const linkSlug = encodeURIComponent(`${base}${PAIR_SEPARATOR}${quote}`);
 
   return (
-    <div className="flex h-full min-h-32 flex-col gap-2 bg-surface px-4 py-3 text-ink">
+    <div className="bg-surface text-ink flex h-full min-h-32 flex-col gap-2 px-4 py-3">
       <div className="flex items-baseline justify-between gap-2">
         <div className="flex items-baseline gap-2">
           <span className="text-base font-semibold tracking-tight">
             {baseLabel} / {quoteLabel}
           </span>
-          <span className="font-mono text-[10px] text-ink-muted">Stellar</span>
+          <span className="text-ink-muted font-mono text-[10px]">Stellar</span>
         </div>
         <a
           href={`https://stellarindex.io/markets/${linkSlug}`}
           target="_blank"
           rel="noreferrer noopener"
-          className="text-[10px] text-ink-faint hover:text-brand-600"
+          className="text-ink-faint hover:text-brand-600 text-[10px]"
         >
           stellarindex.io ↗
         </a>
@@ -170,15 +175,23 @@ export default async function EmbedPairPage({ params }: { params: Params }) {
         )}
         <ChangeChip pct={change24h} label="24h" />
       </div>
-      {points.length > 0 && <Sparkline points={points} positive={(change24h ?? 0) >= 0} />}
-      <div className="mt-auto text-[10px] text-ink-faint">
+      {points.length > 0 && (
+        <Sparkline points={points} positive={(change24h ?? 0) >= 0} />
+      )}
+      <div className="text-ink-faint mt-auto text-[10px]">
         Powered by Stellar Index
       </div>
     </div>
   );
 }
 
-function ChangeChip({ pct, label }: { pct: number | null | undefined; label: string }) {
+function ChangeChip({
+  pct,
+  label,
+}: {
+  pct: number | null | undefined;
+  label: string;
+}) {
   if (pct == null || !Number.isFinite(pct)) return null;
   const cls =
     pct > 0
@@ -187,14 +200,22 @@ function ChangeChip({ pct, label }: { pct: number | null | undefined; label: str
         ? 'bg-down-subtle text-down'
         : 'bg-surface-subtle text-ink-body';
   return (
-    <span className={`rounded-sm px-1.5 py-0.5 font-mono text-[11px] tabular-nums ${cls}`}>
+    <span
+      className={`rounded-sm px-1.5 py-0.5 font-mono text-[11px] tabular-nums ${cls}`}
+    >
       {pct > 0 ? '+' : ''}
       {pct.toFixed(2)}% {label}
     </span>
   );
 }
 
-function Sparkline({ points, positive }: { points: { p?: string | null }[]; positive: boolean }) {
+function Sparkline({
+  points,
+  positive,
+}: {
+  points: { p?: string | null }[];
+  positive: boolean;
+}) {
   const w = 280;
   const h = 32;
   const valid = points
@@ -259,15 +280,6 @@ function Sparkline({ points, positive }: { points: { p?: string | null }[]; posi
       />
     </svg>
   );
-}
-
-function shortAsset(canonical: string): string {
-  if (canonical === 'native') return 'XLM';
-  if (canonical.startsWith('fiat:')) return canonical.replace('fiat:', '');
-  if (canonical.startsWith('crypto:')) return canonical.replace('crypto:', '');
-  const dashIx = canonical.indexOf('-');
-  if (dashIx === -1) return canonical;
-  return canonical.slice(0, dashIx);
 }
 
 function formatPrice(n: number): string {

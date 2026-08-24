@@ -9,6 +9,7 @@ import {
   OrderBookStatStrip,
   computeBookStats,
 } from '@/components/charts/DepthChart';
+import { shortAssetText } from '@/lib/asset-label';
 
 type OrderBook = components['schemas']['SDEXOrderBook'];
 type Level = components['schemas']['SDEXOrderBookLevel'];
@@ -33,7 +34,13 @@ const DEPTH = 12;
  * offers renders an explicit empty state, and non-classic pairs render
  * nothing at all.
  */
-export function OrderBookPanel({ base, quote }: { base: string; quote: string }) {
+export function OrderBookPanel({
+  base,
+  quote,
+}: {
+  base: string;
+  quote: string;
+}) {
   const classic = isClassicAssetId(base) && isClassicAssetId(quote);
   const q = useQuery<OrderBook>({
     queryKey: ['/v1/sdex/orderbook', base, quote],
@@ -57,29 +64,32 @@ export function OrderBookPanel({ base, quote }: { base: string; quote: string })
   const empty = book && book.asks.length === 0 && book.bids.length === 0;
 
   return (
-    <section className="rounded-lg border border-line bg-surface p-4">
+    <section className="border-line bg-surface rounded-lg border p-4">
       <header className="mb-3 flex items-baseline justify-between">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-ink-body">
+        <h2 className="text-ink-body text-sm font-semibold tracking-wider uppercase">
           SDEX order book
         </h2>
         {book && (
-          <span className="text-xs text-ink-faint">
+          <span className="text-ink-faint text-xs">
             as of ledger {book.as_of_ledger.toLocaleString('en-US')}
           </span>
         )}
       </header>
 
-      {q.isLoading && <p className="text-sm text-ink-muted">Loading order book…</p>}
+      {q.isLoading && (
+        <p className="text-ink-muted text-sm">Loading order book…</p>
+      )}
       {loading503 && (
-        <p className="text-sm text-ink-muted">
-          The order-book snapshot is still loading after a server restart — check back shortly.
+        <p className="text-ink-muted text-sm">
+          The order-book snapshot is still loading after a server restart —
+          check back shortly.
         </p>
       )}
       {q.isError && !loading503 && (
-        <p className="text-sm text-ink-muted">Order book unavailable.</p>
+        <p className="text-ink-muted text-sm">Order book unavailable.</p>
       )}
       {empty && (
-        <p className="text-sm text-ink-muted">
+        <p className="text-ink-muted text-sm">
           No live SDEX offers on this pair right now.
         </p>
       )}
@@ -94,17 +104,27 @@ export function OrderBookPanel({ base, quote }: { base: string; quote: string })
               snapshot rather than printing a negative spread. */}
           <OrderBookStatStrip
             stats={computeBookStats(book.bids, book.asks)}
-            quoteLabel={shortCode(book.buying)}
+            quoteLabel={shortAssetText(book.buying)}
           />
           <DepthChart
             bids={book.bids}
             asks={book.asks}
-            baseLabel={shortCode(book.selling)}
-            quoteLabel={shortCode(book.buying)}
+            baseLabel={shortAssetText(book.selling)}
+            quoteLabel={shortAssetText(book.buying)}
           />
           <div className="grid gap-4 sm:grid-cols-2">
-            <DepthTable side="Bids" levels={book.bids} tone="up" truncated={book.bid_offers} />
-            <DepthTable side="Asks" levels={book.asks} tone="down" truncated={book.ask_offers} />
+            <DepthTable
+              side="Bids"
+              levels={book.bids}
+              tone="up"
+              truncated={book.bid_offers}
+            />
+            <DepthTable
+              side="Asks"
+              levels={book.asks}
+              tone="down"
+              truncated={book.ask_offers}
+            />
           </div>
         </div>
       )}
@@ -123,11 +143,12 @@ function DepthTable({
   tone: 'up' | 'down';
   truncated: number;
 }) {
-  const maxCum = levels.length > 0 ? Number(levels[levels.length - 1].cum_base_amount) : 0;
+  const maxCum =
+    levels.length > 0 ? Number(levels[levels.length - 1].cum_base_amount) : 0;
   const barClass = tone === 'up' ? 'bg-up-subtle' : 'bg-warn-50';
   return (
     <div>
-      <div className="mb-1 flex items-baseline justify-between text-[10px] uppercase tracking-wider text-ink-muted">
+      <div className="text-ink-muted mb-1 flex items-baseline justify-between text-[10px] tracking-wider uppercase">
         <span>{side}</span>
         <span className="text-ink-faint">
           {truncated > levels.reduce((n, l) => n + l.offers, 0)
@@ -137,7 +158,7 @@ function DepthTable({
       </div>
       <table className="min-w-full text-xs">
         <thead>
-          <tr className="text-[10px] uppercase tracking-wider text-ink-muted">
+          <tr className="text-ink-muted text-[10px] tracking-wider uppercase">
             <th className="py-1 text-left font-medium">Price</th>
             <th className="py-1 text-right font-medium">Amount</th>
             <th className="py-1 text-right font-medium">Total</th>
@@ -145,7 +166,10 @@ function DepthTable({
         </thead>
         <tbody>
           {levels.map((l) => {
-            const pct = maxCum > 0 ? Math.min(100, (Number(l.cum_base_amount) / maxCum) * 100) : 0;
+            const pct =
+              maxCum > 0
+                ? Math.min(100, (Number(l.cum_base_amount) / maxCum) * 100)
+                : 0;
             return (
               <tr key={`${l.price_r.n}/${l.price_r.d}`} className="relative">
                 <td className="relative py-0.5 pr-2 font-mono tabular-nums">
@@ -159,7 +183,7 @@ function DepthTable({
                 <td className="relative py-0.5 text-right font-mono tabular-nums">
                   {trimTrailingZeros(l.base_amount)}
                 </td>
-                <td className="relative py-0.5 text-right font-mono tabular-nums text-ink-muted">
+                <td className="text-ink-muted relative py-0.5 text-right font-mono tabular-nums">
                   {trimTrailingZeros(l.cum_base_amount)}
                 </td>
               </tr>
@@ -169,13 +193,6 @@ function DepthTable({
       </table>
     </div>
   );
-}
-
-/** shortCode — "USDC-GA5Z…" → "USDC", "native" → "XLM". */
-function shortCode(canonical: string): string {
-  if (canonical === 'native') return 'XLM';
-  const dashIx = canonical.indexOf('-');
-  return dashIx === -1 ? canonical : canonical.slice(0, dashIx);
 }
 
 /** trimTrailingZeros — "10.5000000" → "10.5", "0.5000000" → "0.5". */

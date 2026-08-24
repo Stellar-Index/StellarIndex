@@ -17,12 +17,31 @@ interface CurrencyRow {
 // FEATURED — kept short so the dropdown isn't overwhelming. Users
 // can switch to "All currencies" to see every ticker the forex
 // snapshot returns.
-const FEATURED = ['USD', 'EUR', 'GBP', 'JPY', 'CHF', 'CAD', 'AUD', 'CNY', 'INR', 'BRL', 'MXN'];
+const FEATURED = [
+  'USD',
+  'EUR',
+  'GBP',
+  'JPY',
+  'CHF',
+  'CAD',
+  'AUD',
+  'CNY',
+  'INR',
+  'BRL',
+  'MXN',
+];
 // AM-26: the full verified fiat set — the "show all" branch was a
 // fiction while the batch only requested the featured ten.
 const ALL_FIAT = [
   ...FEATURED,
-  'KRW', 'HKD', 'SGD', 'SEK', 'NOK', 'ZAR', 'TRY', 'NZD',
+  'KRW',
+  'HKD',
+  'SGD',
+  'SEK',
+  'NOK',
+  'ZAR',
+  'TRY',
+  'NZD',
 ];
 
 /**
@@ -68,7 +87,10 @@ export function AssetConverter({
         .join(',');
       const env = await apiGet<{
         data: Array<{ asset_id: string; price: string | null }>;
-      }>(`/v1/price/batch?asset_ids=${encodeURIComponent(assetIds)}&quote=fiat:USD`, {});
+      }>(
+        `/v1/price/batch?asset_ids=${encodeURIComponent(assetIds)}&quote=fiat:USD`,
+        {},
+      );
       const rows: CurrencyRow[] = [];
       for (const row of env.data ?? []) {
         const ticker = row.asset_id.replace(/^fiat:/, '');
@@ -135,13 +157,19 @@ export function AssetConverter({
   return (
     <Panel
       title="Converter"
-      hint={priceUSD != null ? `Live ${symbol}/USD price + forex snapshot` : 'Awaiting live price'}
+      hint={
+        priceUSD != null
+          ? `Live ${symbol}/USD price + forex snapshot`
+          : 'Awaiting live price'
+      }
       source={asExample('/v1/price', { asset: symbol, quote: 'fiat:USD' })}
     >
       <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-[1fr_auto_1fr]">
         <label className="space-y-1">
-          <span className="text-xs uppercase tracking-wider text-ink-muted">From</span>
-          <div className="flex items-center gap-2 rounded-md border border-line bg-surface p-2">
+          <span className="text-ink-muted text-xs tracking-wider uppercase">
+            From
+          </span>
+          <div className="border-line bg-surface flex items-center gap-2 rounded-md border p-2">
             <input
               type="number"
               value={amount}
@@ -149,7 +177,7 @@ export function AssetConverter({
               min="0"
               step="any"
               inputMode="decimal"
-              className="w-full bg-transparent text-2xl font-mono tabular-nums focus:outline-hidden"
+              className="w-full bg-transparent font-mono text-2xl tabular-nums focus:outline-hidden"
             />
             {direction === 'fiat-to-asset' ? (
               <CurrencyCombobox
@@ -161,7 +189,7 @@ export function AssetConverter({
                 tickers={allTickers}
               />
             ) : (
-              <span className="rounded-sm bg-surface-subtle px-1.5 py-0.5 font-mono text-xs uppercase tracking-wider text-ink-body">
+              <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 font-mono text-xs tracking-wider uppercase">
                 {fromUnit}
               </span>
             )}
@@ -172,17 +200,21 @@ export function AssetConverter({
           type="button"
           aria-label="Swap direction"
           onClick={() =>
-            setDirection((d) => (d === 'fiat-to-asset' ? 'asset-to-fiat' : 'fiat-to-asset'))
+            setDirection((d) =>
+              d === 'fiat-to-asset' ? 'asset-to-fiat' : 'fiat-to-asset',
+            )
           }
-          className="self-center rounded-md border border-line px-2 py-1 text-xs text-ink-muted hover:border-brand-500 hover:text-brand-600 sm:mb-1"
+          className="border-line text-ink-muted hover:border-brand-500 hover:text-brand-600 self-center rounded-md border px-2 py-1 text-xs sm:mb-1"
         >
           ⇄
         </button>
 
         <label className="space-y-1">
-          <span className="text-xs uppercase tracking-wider text-ink-muted">To</span>
-          <div className="flex items-center gap-2 rounded-md border border-line bg-surface p-2">
-            <span className="w-full text-2xl font-mono tabular-nums text-ink">
+          <span className="text-ink-muted text-xs tracking-wider uppercase">
+            To
+          </span>
+          <div className="border-line bg-surface flex items-center gap-2 rounded-md border p-2">
+            <span className="text-ink w-full font-mono text-2xl tabular-nums">
               {result != null ? formatResult(result) : '—'}
             </span>
             {direction === 'asset-to-fiat' ? (
@@ -195,25 +227,30 @@ export function AssetConverter({
                 tickers={allTickers}
               />
             ) : (
-              <span className="rounded-sm bg-surface-subtle px-1.5 py-0.5 font-mono text-xs uppercase tracking-wider text-ink-body">
+              <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 font-mono text-xs tracking-wider uppercase">
                 {toUnit}
               </span>
             )}
           </div>
         </label>
       </div>
-      {priceUSD != null && priceUSD > 0 && targetRate != null && targetRate > 0 && (
-        <p className="mt-3 text-xs text-ink-muted">
-          1 {symbol} = {formatResult(priceUSD * targetRate)} {target} · 1 {target} ={' '}
-          {formatResult(1 / (priceUSD * targetRate))} {symbol}
-          {target !== 'USD' && (
-            <>
-              <span className="mx-2 text-ink-faint">·</span>
-              <span>FX leg: 1 USD = {formatResult(targetRate)} {target}</span>
-            </>
-          )}
-        </p>
-      )}
+      {priceUSD != null &&
+        priceUSD > 0 &&
+        targetRate != null &&
+        targetRate > 0 && (
+          <p className="text-ink-muted mt-3 text-xs">
+            1 {symbol} = {formatResult(priceUSD * targetRate)} {target} · 1{' '}
+            {target} = {formatResult(1 / (priceUSD * targetRate))} {symbol}
+            {target !== 'USD' && (
+              <>
+                <span className="text-ink-faint mx-2">·</span>
+                <span>
+                  FX leg: 1 USD = {formatResult(targetRate)} {target}
+                </span>
+              </>
+            )}
+          </p>
+        )}
     </Panel>
   );
 }
@@ -223,7 +260,8 @@ export function AssetConverter({
 function formatResult(n: number): string {
   if (!Number.isFinite(n)) return '—';
   if (n === 0) return '0';
-  if (n >= 1_000_000) return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  if (n >= 1_000_000)
+    return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
   if (n >= 1) return n.toFixed(4);
   if (n >= 0.0001) return n.toFixed(6);
   return formatSubunitPrice(n);

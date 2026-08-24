@@ -8,8 +8,16 @@ import type { RequestExample } from '@/api/client';
 import { cn } from '@/lib/cn';
 import { formatCompact } from '@/lib/format';
 import { dropPartialTrailingDay, seriesPointTime } from '@/lib/series';
-import type { NamedLineSeries, LineSeriesTone } from '@/components/charts/LineChart';
-import { DonutChart, CATEGORICAL_PALETTE, type DonutSlice } from '@/components/charts/DonutChart';
+import type {
+  NamedLineSeries,
+  LineSeriesTone,
+} from '@/components/charts/LineChart';
+import {
+  DonutChart,
+  CATEGORICAL_PALETTE,
+  type DonutSlice,
+} from '@/components/charts/DonutChart';
+import { Skeleton } from '@/components/ui';
 import {
   toChartNumber,
   BespokeTablePanel,
@@ -92,7 +100,10 @@ export function flowLines(series: BespokeSeries[]): NamedLineSeries[] {
   const inbound = series.find((s) => s.name === INBOUND_TOTAL);
   const outbound = series.find((s) => s.name === OUTBOUND_TOTAL);
   if (inbound && outbound) {
-    return [toLine(inbound, inbound.name, 'up'), toLine(outbound, outbound.name, 'brand')];
+    return [
+      toLine(inbound, inbound.name, 'up'),
+      toLine(outbound, outbound.name, 'brand'),
+    ];
   }
   const single = series.find((s) => !isAuxSeries(s));
   return single ? [toLine(single, single.name, 'brand')] : [];
@@ -126,7 +137,10 @@ export function chainColor(label: string): string {
 // perChainLines — the "Inbound · <chain>" / "Outbound · <chain>" series
 // (already top-5, volume-descending from the server) as palette-colored
 // lines labelled by bare chain name.
-export function perChainLines(series: BespokeSeries[], prefix: string): NamedLineSeries[] {
+export function perChainLines(
+  series: BespokeSeries[],
+  prefix: string,
+): NamedLineSeries[] {
   return series
     .filter((s) => s.name.startsWith(prefix))
     .map((s) => {
@@ -144,7 +158,9 @@ export function donutSlices(b: BespokeBreakdown): DonutSlice[] {
       return value == null || value <= 0 ? [] : [{ label: r.label, value }];
     })
     .sort((a, x) => x.value - a.value);
-  const top = rows.slice(0, 6).map((r) => ({ ...r, color: chainColor(r.label) }));
+  const top = rows
+    .slice(0, 6)
+    .map((r) => ({ ...r, color: chainColor(r.label) }));
   const rest = rows.slice(6);
   if (rest.length > 0) {
     top.push({
@@ -192,7 +208,9 @@ export function BreakdownDonuts({
           >
             <DonutChart
               data={slices}
-              centerLabel={formatCompact(slices.reduce((s, x) => s + x.value, 0))}
+              centerLabel={formatCompact(
+                slices.reduce((s, x) => s + x.value, 0),
+              )}
               centerSub={b.unit || undefined}
               formatValue={formatCompact}
             />
@@ -209,19 +227,24 @@ export function BreakdownDonuts({
 export function LineLegend({ lines }: { lines: NamedLineSeries[] }) {
   if (lines.length === 0) return null;
   return (
-    <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-muted">
+    <ul className="text-ink-muted flex flex-wrap gap-x-4 gap-y-1 text-xs">
       {lines.map((l) => (
         <li key={l.label} className="flex items-center gap-1.5">
           <span
             aria-hidden
             className={cn(
               'inline-block h-2 w-2 rounded-full',
-              !l.color && (l.tone === 'up' ? 'bg-up' : l.tone === 'down' ? 'bg-down' : 'bg-brand-500'),
+              !l.color &&
+                (l.tone === 'up'
+                  ? 'bg-up'
+                  : l.tone === 'down'
+                    ? 'bg-down'
+                    : 'bg-brand-500'),
             )}
             style={l.color ? { backgroundColor: l.color } : undefined}
           />
           <span>{l.label}</span>
-          <span className="font-mono tabular-nums text-ink-body">
+          <span className="text-ink-body font-mono tabular-nums">
             {formatCompact(l.data.reduce((s, p) => s + p.value, 0))}
           </span>
         </li>
@@ -254,8 +277,14 @@ export function BridgeShowcase({
   const series = useMemo(() => active?.series ?? [], [active]);
 
   const lines = useMemo(() => flowLines(series), [series]);
-  const inboundChainLines = useMemo(() => perChainLines(series, PER_CHAIN_IN), [series]);
-  const outboundChainLines = useMemo(() => perChainLines(series, PER_CHAIN_OUT), [series]);
+  const inboundChainLines = useMemo(
+    () => perChainLines(series, PER_CHAIN_IN),
+    [series],
+  );
+  const outboundChainLines = useMemo(
+    () => perChainLines(series, PER_CHAIN_OUT),
+    [series],
+  );
   // The cumulative series is all-time and window-independent — always
   // render it from the page's initial fetch so pill switches never blank
   // the headline chart.
@@ -304,17 +333,17 @@ export function BridgeShowcase({
           {hasPoints && <LineLegend lines={lines} />}
 
           {isError ? (
-            <p className="py-6 text-center text-sm text-ink-muted">
+            <p className="text-ink-muted py-6 text-center text-sm">
               Couldn&apos;t load this window — retry, or pick another window.
             </p>
           ) : isFetching ? (
-            <div
+            <Skeleton
               aria-hidden
-              className="h-56 w-full animate-pulse rounded-md bg-surface-subtle"
+              className="h-56 w-full"
               data-testid="bridge-flows-loading"
             />
           ) : !hasPoints ? (
-            <p className="py-6 text-center text-sm text-ink-muted">
+            <p className="text-ink-muted py-6 text-center text-sm">
               No transfers in this window.
             </p>
           ) : (
@@ -323,7 +352,10 @@ export function BridgeShowcase({
               series={lines}
               height={224}
               timeVisible={days === 1}
-              legend={{ valueLabel: lines[0]?.label ?? '', formatValue: formatCompact }}
+              legend={{
+                valueLabel: lines[0]?.label ?? '',
+                formatValue: formatCompact,
+              }}
               ariaLabel={`${dual ? 'Inbound and outbound bridge flow' : (lines[0]?.label ?? 'Flow')} over the last ${windowLabel}${unit ? `, in ${unit}` : ''}.`}
             />
           )}
@@ -332,7 +364,11 @@ export function BridgeShowcase({
 
       {/* ── Where funds come from / go (window-reactive donuts) ── */}
       {breakdowns.length > 0 && (
-        <BreakdownDonuts breakdowns={breakdowns} source={source} windowLabel={windowLabel} />
+        <BreakdownDonuts
+          breakdowns={breakdowns}
+          source={source}
+          windowLabel={windowLabel}
+        />
       )}
 
       {/* ── Per-chain top-5 lines, both directions ── */}
@@ -351,7 +387,10 @@ export function BridgeShowcase({
                   series={inboundChainLines}
                   height={200}
                   timeVisible={days === 1}
-                  legend={{ valueLabel: inboundChainLines[0]?.label ?? '', formatValue: formatCompact }}
+                  legend={{
+                    valueLabel: inboundChainLines[0]?.label ?? '',
+                    formatValue: formatCompact,
+                  }}
                   ariaLabel={`Inbound USDC per source chain over the last ${windowLabel}.`}
                 />
               </div>
@@ -370,7 +409,10 @@ export function BridgeShowcase({
                   series={outboundChainLines}
                   height={200}
                   timeVisible={days === 1}
-                  legend={{ valueLabel: outboundChainLines[0]?.label ?? '', formatValue: formatCompact }}
+                  legend={{
+                    valueLabel: outboundChainLines[0]?.label ?? '',
+                    formatValue: formatCompact,
+                  }}
                   ariaLabel={`Outbound USDC per destination chain over the last ${windowLabel}.`}
                 />
               </div>

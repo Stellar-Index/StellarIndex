@@ -7,6 +7,7 @@ import { ogImageFor } from '@/lib/seo';
 import { formatSubunitPrice } from '@/lib/format';
 import { Badge, Breadcrumbs, Callout, Container } from '@/components/ui';
 import { type GlobalAssetView } from '../../../assets/catalogue';
+import { isCIStub } from '@/lib/buildFetch';
 
 /**
  * /external/assets/[slug] — detail page for a NON-Stellar reference
@@ -25,8 +26,6 @@ import { type GlobalAssetView } from '../../../assets/catalogue';
 // Static export hits every page once at build time. CI's stub
 // hostname doesn't resolve, so bypass the network entirely when the
 // URL looks like a CI placeholder (mirrors the Stellar page).
-const isCIStub =
-  API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
 
 // 8s per fetch, matching the Stellar detail page's build budget.
 const BUILD_FETCH_TIMEOUT_MS = 8_000;
@@ -91,7 +90,9 @@ async function fetchExternalAsset(slug: string): Promise<ExternalAssetResult> {
     if (res.status >= 400 && res.status < 500) return { status: 'not-tracked' };
     if (!res.ok) return { status: 'unavailable' };
     const env = (await res.json()) as { data?: GlobalAssetView };
-    return env.data ? { status: 'ok', view: env.data } : { status: 'unavailable' };
+    return env.data
+      ? { status: 'ok', view: env.data }
+      : { status: 'unavailable' };
   } catch {
     return { status: 'unavailable' };
   }
@@ -148,7 +149,7 @@ export default async function ExternalAssetDetailPage({
               { label: slug },
             ]}
           />
-          <h1 className="text-h1 font-semibold text-ink">{slug}</h1>
+          <h1 className="text-h1 text-ink font-semibold">{slug}</h1>
         </header>
         {result.status === 'not-tracked' ? (
           <Callout tone="warn" title="External asset not found">
@@ -164,7 +165,7 @@ export default async function ExternalAssetDetailPage({
             <p className="mt-2">
               <Link
                 href="/external/assets"
-                className="font-medium text-brand-600 hover:text-brand-700"
+                className="text-brand-600 hover:text-brand-700 font-medium"
               >
                 ← External assets
               </Link>
@@ -173,15 +174,14 @@ export default async function ExternalAssetDetailPage({
         ) : (
           <Callout tone="info" title="Asset detail unavailable">
             <p>
-              We couldn&apos;t read{' '}
-              <code className="font-mono">{slug}</code> when this page was
-              built — that means unknown, not untracked. It refreshes on the
-              next build.
+              We couldn&apos;t read <code className="font-mono">{slug}</code>{' '}
+              when this page was built — that means unknown, not untracked. It
+              refreshes on the next build.
             </p>
             <p className="mt-2">
               <Link
                 href="/external/assets"
-                className="font-medium text-brand-600 hover:text-brand-700"
+                className="text-brand-600 hover:text-brand-700 font-medium"
               >
                 ← External assets
               </Link>
@@ -198,7 +198,7 @@ export default async function ExternalAssetDetailPage({
   const hasPrice =
     priceNum != null && Number.isFinite(priceNum) && priceNum > 0;
   const authorityLabel = view.price_authority
-    ? PRICE_AUTHORITY_LABELS[view.price_authority] ?? view.price_authority
+    ? (PRICE_AUTHORITY_LABELS[view.price_authority] ?? view.price_authority)
     : null;
 
   return (
@@ -211,18 +211,18 @@ export default async function ExternalAssetDetailPage({
             { label: view.name || view.ticker },
           ]}
         />
-        <div className="text-xs font-medium uppercase tracking-wider text-brand-600">
+        <div className="text-brand-600 text-xs font-medium tracking-wider uppercase">
           External asset
         </div>
-        <h1 className="flex flex-wrap items-baseline gap-3 text-h1 font-semibold text-ink">
+        <h1 className="text-h1 text-ink flex flex-wrap items-baseline gap-3 font-semibold">
           <span>{view.name}</span>
-          <span className="font-mono text-base text-ink-muted">
+          <span className="text-ink-muted font-mono text-base">
             {view.ticker}
           </span>
           <ClassBadge cls={view.class} />
         </h1>
         {view.verified_issuer && (
-          <p className="text-sm text-ink-body">
+          <p className="text-ink-body text-sm">
             Reference issuer:{' '}
             <span className="font-medium">{view.verified_issuer}</span>
           </p>
@@ -240,13 +240,13 @@ export default async function ExternalAssetDetailPage({
         bodyClassName="space-y-3"
       >
         <div className="flex flex-wrap items-baseline gap-4">
-          <span className="font-mono text-3xl tabular-nums text-ink">
+          <span className="text-ink font-mono text-3xl tabular-nums">
             {hasPrice ? `$${formatHeadlinePrice(priceNum)}` : '—'}
           </span>
-          <span className="text-sm text-ink-muted">USD</span>
+          <span className="text-ink-muted text-sm">USD</span>
           {authorityLabel && (
             <span
-              className="rounded-sm bg-brand-50 px-2 py-0.5 text-[11px] uppercase tracking-wider text-brand-700"
+              className="bg-brand-50 text-brand-700 rounded-sm px-2 py-0.5 text-[11px] tracking-wider uppercase"
               title="How this price was derived"
             >
               {authorityLabel}
@@ -254,15 +254,15 @@ export default async function ExternalAssetDetailPage({
           )}
         </div>
         {!hasPrice && (
-          <p className="text-sm text-ink-muted">
+          <p className="text-ink-muted text-sm">
             No live USD price is currently available for this asset from our
             off-chain feeds.
           </p>
         )}
         {view.price_sources && view.price_sources.length > 0 && (
-          <p className="text-xs text-ink-muted">
+          <p className="text-ink-muted text-xs">
             Sources:{' '}
-            <span className="font-mono text-ink-body">
+            <span className="text-ink-body font-mono">
               {view.price_sources.join(', ')}
             </span>
           </p>
@@ -273,17 +273,18 @@ export default async function ExternalAssetDetailPage({
         {view.description && (
           <p className="leading-relaxed">{view.description}</p>
         )}
-        <p className="leading-relaxed text-ink-muted">
-          <span className="font-medium text-ink-body">{view.name}</span> is a
-          non-Stellar {view.class === 'fiat' ? 'fiat currency' : 'reference asset'}{' '}
-          tracked by Stellar Index for pricing — it is{' '}
-          <span className="font-medium">not issued on Stellar</span>. We index it
-          from off-chain venues and reference feeds so on-Stellar pairs (and the
-          aggregated VWAP) have a fiat/reference anchor. Stellar-issued assets
-          live on{' '}
+        <p className="text-ink-muted leading-relaxed">
+          <span className="text-ink-body font-medium">{view.name}</span> is a
+          non-Stellar{' '}
+          {view.class === 'fiat' ? 'fiat currency' : 'reference asset'} tracked
+          by Stellar Index for pricing — it is{' '}
+          <span className="font-medium">not issued on Stellar</span>. We index
+          it from off-chain venues and reference feeds so on-Stellar pairs (and
+          the aggregated VWAP) have a fiat/reference anchor. Stellar-issued
+          assets live on{' '}
           <Link
             href="/assets"
-            className="font-medium text-brand-600 hover:text-brand-700"
+            className="text-brand-600 hover:text-brand-700 font-medium"
           >
             /assets
           </Link>
@@ -291,10 +292,10 @@ export default async function ExternalAssetDetailPage({
         </p>
       </Panel>
 
-      <p className="text-sm text-ink-muted">
+      <p className="text-ink-muted text-sm">
         <Link
           href="/external/assets"
-          className="font-medium text-brand-600 hover:text-brand-700"
+          className="text-brand-600 hover:text-brand-700 font-medium"
         >
           ← External assets
         </Link>

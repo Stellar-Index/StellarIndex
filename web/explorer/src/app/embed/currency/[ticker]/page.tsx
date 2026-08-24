@@ -6,9 +6,7 @@ import { API_BASE_URL } from '@/api/client';
 import { formatSubunitPrice } from '@/lib/format';
 
 import { LivePrice } from '../../LivePrice';
-
-const isCIStub =
-  API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
+import { isCIStub } from '@/lib/buildFetch';
 
 const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
@@ -63,7 +61,11 @@ export async function generateStaticParams() {
   }
 }
 
-export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
+export async function generateMetadata({
+  params,
+}: {
+  params: Params;
+}): Promise<Metadata> {
   const { ticker } = await params;
   return {
     title: `${ticker.toUpperCase()} — embeddable currency widget`,
@@ -77,7 +79,9 @@ type ChartPoint = components['schemas']['HistoryPoint'];
 // fetchFxSeries pulls the trailing-7d daily FX series (1 ticker = X USD)
 // from /v1/chart so the widget shows a real sparkline + 7d change rather
 // than a static price. Degrades to [] on any error (price-only render).
-async function fetchFxSeries(ticker: string): Promise<{ date: string; inverse_usd: number }[]> {
+async function fetchFxSeries(
+  ticker: string,
+): Promise<{ date: string; inverse_usd: number }[]> {
   if (isCIStub) return [];
   try {
     const res = await fetch(
@@ -118,7 +122,7 @@ async function fetchCurrency(ticker: string): Promise<CurrencyDetail | null> {
       ticker: view.ticker,
       name: view.name,
       rate_usd: 1 / priceUSD, // 1 USD = X local
-      inverse_usd: priceUSD,  // 1 local = X USD
+      inverse_usd: priceUSD, // 1 local = X USD
     };
   } catch {
     return null;
@@ -132,7 +136,11 @@ async function fetchCurrency(ticker: string): Promise<CurrencyDetail | null> {
  * rate / 7d change / sparkline / "powered by" attribution. SEO
  * opted-out via robots noindex.
  */
-export default async function EmbedCurrencyPage({ params }: { params: Params }) {
+export default async function EmbedCurrencyPage({
+  params,
+}: {
+  params: Params;
+}) {
   const { ticker } = await params;
   const upper = ticker.toUpperCase();
   const [cur, series] = await Promise.all([
@@ -142,7 +150,7 @@ export default async function EmbedCurrencyPage({ params }: { params: Params }) 
 
   if (!cur) {
     return (
-      <div className="flex h-full min-h-32 items-center justify-center px-3 py-3 text-sm text-ink-muted">
+      <div className="text-ink-muted flex h-full min-h-32 items-center justify-center px-3 py-3 text-sm">
         <span>No data for {upper}</span>
       </div>
     );
@@ -154,22 +162,28 @@ export default async function EmbedCurrencyPage({ params }: { params: Params }) 
   // chip stays hidden — better honest than fabricated.
   const change7d: number | null =
     series.length >= 2 && series[0].inverse_usd > 0
-      ? ((series[series.length - 1].inverse_usd - series[0].inverse_usd) / series[0].inverse_usd) * 100
+      ? ((series[series.length - 1].inverse_usd - series[0].inverse_usd) /
+          series[0].inverse_usd) *
+        100
       : null;
   const change24h: number | null = null;
 
   return (
-    <div className="flex h-full min-h-32 flex-col gap-2 bg-surface px-4 py-3 text-ink">
+    <div className="bg-surface text-ink flex h-full min-h-32 flex-col gap-2 px-4 py-3">
       <div className="flex items-baseline justify-between gap-2">
         <div className="flex items-baseline gap-2">
-          <span className="text-base font-semibold tracking-tight">{upper}</span>
-          <span className="font-mono text-[10px] text-ink-muted">{cur.name}</span>
+          <span className="text-base font-semibold tracking-tight">
+            {upper}
+          </span>
+          <span className="text-ink-muted font-mono text-[10px]">
+            {cur.name}
+          </span>
         </div>
         <a
           href={`https://stellarindex.io${assetHrefFor(upper)}`}
           target="_blank"
           rel="noreferrer noopener"
-          className="text-[10px] text-ink-faint hover:text-brand-600"
+          className="text-ink-faint hover:text-brand-600 text-[10px]"
         >
           stellarindex.io ↗
         </a>
@@ -193,7 +207,7 @@ export default async function EmbedCurrencyPage({ params }: { params: Params }) 
           positive={(change7d ?? 0) >= 0}
         />
       )}
-      <div className="mt-auto flex items-center justify-between text-[10px] text-ink-faint">
+      <div className="text-ink-faint mt-auto flex items-center justify-between text-[10px]">
         <span>Powered by Stellar Index</span>
         {cur.rate_usd > 0 && (
           <span className="font-mono tabular-nums">
@@ -205,7 +219,13 @@ export default async function EmbedCurrencyPage({ params }: { params: Params }) 
   );
 }
 
-function ChangeChip({ pct, label }: { pct: number | null | undefined; label: string }) {
+function ChangeChip({
+  pct,
+  label,
+}: {
+  pct: number | null | undefined;
+  label: string;
+}) {
   if (pct == null || !Number.isFinite(pct)) return null;
   const cls =
     pct > 0
@@ -214,14 +234,22 @@ function ChangeChip({ pct, label }: { pct: number | null | undefined; label: str
         ? 'bg-down-subtle text-down'
         : 'bg-surface-subtle text-ink-body';
   return (
-    <span className={`rounded-sm px-1.5 py-0.5 font-mono text-[11px] tabular-nums ${cls}`}>
+    <span
+      className={`rounded-sm px-1.5 py-0.5 font-mono text-[11px] tabular-nums ${cls}`}
+    >
       {pct > 0 ? '+' : ''}
       {pct.toFixed(2)}% {label}
     </span>
   );
 }
 
-function Sparkline({ points, positive }: { points: number[]; positive: boolean }) {
+function Sparkline({
+  points,
+  positive,
+}: {
+  points: number[];
+  positive: boolean;
+}) {
   const valid = points.filter((n) => Number.isFinite(n) && n > 0);
   if (valid.length < 2) return null;
   const min = Math.min(...valid);
@@ -235,22 +263,35 @@ function Sparkline({ points, positive }: { points: number[]; positive: boolean }
     y: h - ((p - min) / range) * h,
   }));
   const path = xy
-    .map((pt, i) => `${i === 0 ? 'M' : 'L'}${pt.x.toFixed(2)},${pt.y.toFixed(2)}`)
+    .map(
+      (pt, i) => `${i === 0 ? 'M' : 'L'}${pt.x.toFixed(2)},${pt.y.toFixed(2)}`,
+    )
     .join(' ');
   const area = `${path} L${xy[xy.length - 1].x.toFixed(2)},${h} L${xy[0].x.toFixed(2)},${h} Z`;
   const stroke = positive ? 'var(--color-up)' : 'var(--color-down)';
   const fill = positive ? 'var(--color-up-subtle)' : 'var(--color-down-subtle)';
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="h-9 w-full">
+    <svg
+      viewBox={`0 0 ${w} ${h}`}
+      preserveAspectRatio="none"
+      className="h-9 w-full"
+    >
       <path d={area} fill={fill} stroke="none" />
-      <path d={path} fill="none" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d={path}
+        fill="none"
+        stroke={stroke}
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
 
 function formatRate(n: number): string {
   if (!Number.isFinite(n) || n <= 0) return '—';
-  if (n >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  if (n >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
   if (n >= 1) return n.toFixed(4);
   if (n >= 0.0001) return n.toFixed(6);
   return formatSubunitPrice(n);

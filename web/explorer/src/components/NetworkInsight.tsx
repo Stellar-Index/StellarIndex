@@ -47,12 +47,12 @@ export type ThroughputMetric = 'ops' | 'txs' | 'events' | 'ledgers';
  * genuine "zero operations in the window" and never fabricate the
  * latter claim.
  */
-export function useOpTypeStats() {
+function useOpTypeStats() {
   return useQuery<OpTypeStat[] | null>({
     queryKey: ['/v1/operations', 'type-mix'],
     queryFn: async () =>
-      (await apiGet<Envelope<OperationsResp>>('/v1/operations', { limit: 1 })).data
-        .op_type_stats ?? null,
+      (await apiGet<Envelope<OperationsResp>>('/v1/operations', { limit: 1 }))
+        .data.op_type_stats ?? null,
     staleTime: 60_000,
     retry: false,
   });
@@ -79,12 +79,14 @@ export function OperationMixPanel({ linkRows = true }: { linkRows?: boolean }) {
     >
       {isLoading && <Skeleton className="h-40 w-full" />}
       {isError && (
-        <p className="text-sm text-ink-muted">Operation stats are unavailable right now.</p>
+        <p className="text-ink-muted text-sm">
+          Operation stats are unavailable right now.
+        </p>
       )}
       {/* Absent (null) ≠ empty ([]): the aggregate simply isn't computed
           yet on a cold load — never claim "no operations" for it. */}
       {!isLoading && !isError && stats == null && (
-        <p className="text-sm text-ink-muted">
+        <p className="text-ink-muted text-sm">
           Operation stats unavailable — computing, refresh shortly.
         </p>
       )}
@@ -97,17 +99,17 @@ export function OperationMixPanel({ linkRows = true }: { linkRows?: boolean }) {
         const row = (
           <>
             <div className="mb-0.5 flex items-baseline justify-between gap-2 text-xs">
-              <code className="truncate text-ink-body group-hover:text-brand-600">
+              <code className="text-ink-body group-hover:text-brand-600 truncate">
                 {st.type}
               </code>
-              <span className="shrink-0 font-mono tabular-nums text-ink-muted">
+              <span className="text-ink-muted shrink-0 font-mono tabular-nums">
                 {formatCompact(count)}
-                <span className="ml-1 text-ink-faint">{pct.toFixed(1)}%</span>
+                <span className="text-ink-faint ml-1">{pct.toFixed(1)}%</span>
               </span>
             </div>
-            <div className="h-1.5 overflow-hidden rounded-full bg-surface-muted">
+            <div className="bg-surface-muted h-1.5 overflow-hidden rounded-full">
               <div
-                className="h-full rounded-full bg-brand-500 transition-all group-hover:bg-brand-600"
+                className="bg-brand-500 group-hover:bg-brand-600 h-full rounded-full transition-all"
                 style={{ width: `${(count / max) * 100}%` }}
               />
             </div>
@@ -201,7 +203,7 @@ export function ThroughputPanel({
             className={`rounded-md px-2.5 py-1 text-xs ${
               metric === m
                 ? 'bg-brand-600 text-white'
-                : 'border border-line text-ink-body hover:border-brand-500'
+                : 'border-line text-ink-body hover:border-brand-500 border'
             }`}
           >
             {labels[m]}

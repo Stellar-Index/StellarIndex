@@ -7,7 +7,13 @@ import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
 import { SourceSparkline } from '@/components/SourceSparkline';
 import { DonutChart } from '@/components/charts/DonutChart';
-import { useSources, useCursors, isOnChainSource, type Source } from '@/api/hooks';
+import {
+  useSources,
+  useCursors,
+  isOnChainSource,
+  type Source,
+} from '@/api/hooks';
+import { formatDurationShort } from '@/lib/format';
 
 /**
  * Live sources directory backed by `/v1/sources`.
@@ -24,7 +30,9 @@ export function SourcesTable() {
   // table can show the most-active venues at the top of each
   // class group. The opt-in matches the public docs so any caller
   // using /v1/sources directly sees the same shape.
-  const { data, isLoading, isError, error } = useSources(undefined, true, { sparkline: true });
+  const { data, isLoading, isError, error } = useSources(undefined, true, {
+    sparkline: true,
+  });
   const cursors = useCursors();
   const [filter, setFilter] = useState('');
 
@@ -48,7 +56,10 @@ export function SourcesTable() {
   const classMix = useMemo(() => {
     const m = new Map<string, number>();
     for (const s of stellar) m.set(s.class, (m.get(s.class) ?? 0) + 1);
-    return Array.from(m, ([label, value]) => ({ label: titleCase(label), value }));
+    return Array.from(m, ([label, value]) => ({
+      label: titleCase(label),
+      value,
+    }));
   }, [stellar]);
 
   // Aggregate the cursors slice by VENUE — one venue can have many
@@ -72,7 +83,10 @@ export function SourcesTable() {
   // backfill last touched 2026-05-03). Those describe historical work,
   // never live freshness, so they must not feed a freshness column.
   const latestBySource = useMemo(() => {
-    const m = new Map<string, { last_ledger: number; lag_seconds: number; last_updated: string }>();
+    const m = new Map<
+      string,
+      { last_ledger: number; lag_seconds: number; last_updated: string }
+    >();
     for (const c of cursors.data ?? []) {
       if (isOneShotCursor(c)) continue;
       const venue = cursorVenue(c);
@@ -133,15 +147,15 @@ export function SourcesTable() {
           placeholder="Filter by source name, class, or subclass…"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          className="w-72 rounded-md border border-line bg-surface px-2.5 py-1 text-xs placeholder:text-ink-faint focus:border-brand-500 focus:outline-hidden focus:ring-1 focus:ring-brand-500"
+          className="border-line bg-surface placeholder:text-ink-faint focus:border-brand-500 focus:ring-brand-500 w-72 rounded-md border px-2.5 py-1 text-xs focus:ring-1 focus:outline-hidden"
         />
-        <span className="font-mono text-[11px] text-ink-muted">
+        <span className="text-ink-muted font-mono text-[11px]">
           {filteredData.length} of {stellar.length} sources
           {filter && (
             <button
               type="button"
               onClick={() => setFilter('')}
-              className="ml-2 text-brand-600 hover:underline"
+              className="text-brand-600 ml-2 hover:underline"
             >
               clear
             </button>
@@ -154,7 +168,11 @@ export function SourcesTable() {
           hint="Stellar on-chain source composition — only exchange-class (DEX) contributes to VWAP"
           source={asExample('/v1/sources')}
         >
-          <DonutChart data={classMix} centerLabel={String(stellar.length)} centerSub="sources" />
+          <DonutChart
+            data={classMix}
+            centerLabel={String(stellar.length)}
+            centerSub="sources"
+          />
         </Panel>
       )}
       {filter && grouped.length === 0 && (
@@ -175,9 +193,9 @@ export function SourcesTable() {
           bodyClassName="-mx-4"
         >
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-line text-sm">
+            <table className="divide-line min-w-full divide-y text-sm">
               <thead>
-                <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
+                <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
                   <Th>Source</Th>
                   <Th>Subclass</Th>
                   <Th align="right">Default weight</Th>
@@ -187,24 +205,21 @@ export function SourcesTable() {
                   <Th align="right">Flags</Th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-line-subtle">
+              <tbody className="divide-line-subtle divide-y">
                 {rows.map((s) => {
                   const cursor = latestBySource.get(s.name);
                   return (
-                    <tr
-                      key={s.name}
-                      className="hover:bg-surface-muted"
-                    >
+                    <tr key={s.name} className="hover:bg-surface-muted">
                       <Td>
                         <Link
                           href={`/sources/${encodeURIComponent(s.name)}`}
-                          className="font-mono hover:text-brand-600 hover:underline"
+                          className="hover:text-brand-600 font-mono hover:underline"
                         >
                           {s.name}
                         </Link>
                       </Td>
                       <Td>
-                        <span className="text-xs text-ink-muted">
+                        <span className="text-ink-muted text-xs">
                           {s.subclass ?? '—'}
                         </span>
                       </Td>
@@ -216,13 +231,11 @@ export function SourcesTable() {
                       <Td align="right">
                         {typeof s.trade_count_24h === 'number' &&
                         s.trade_count_24h > 0 ? (
-                          <span className="font-mono tabular-nums text-ink-body">
+                          <span className="text-ink-body font-mono tabular-nums">
                             {s.trade_count_24h.toLocaleString('en-US')}
                           </span>
                         ) : (
-                          <span className="text-[11px] text-ink-faint">
-                            —
-                          </span>
+                          <span className="text-ink-faint text-[11px]">—</span>
                         )}
                       </Td>
                       <Td>
@@ -233,9 +246,7 @@ export function SourcesTable() {
                       </Td>
                       <Td align="right">
                         <div className="flex flex-wrap justify-end gap-1">
-                          {s.include_in_vwap && (
-                            <Pill tone="up">in VWAP</Pill>
-                          )}
+                          {s.include_in_vwap && <Pill tone="up">in VWAP</Pill>}
                           {s.paid && <Pill tone="amber">paid</Pill>}
                           {s.backfill_available && !s.backfill_safe && (
                             <Pill tone="amber">backfill unaudited</Pill>
@@ -263,10 +274,12 @@ export function SourcesTable() {
 function CursorAgo({
   cursor,
 }: {
-  cursor: { last_ledger: number; lag_seconds: number; last_updated: string } | undefined;
+  cursor:
+    | { last_ledger: number; lag_seconds: number; last_updated: string }
+    | undefined;
 }) {
   if (!cursor) {
-    return <span className="text-[11px] text-ink-faint">—</span>;
+    return <span className="text-ink-faint text-[11px]">—</span>;
   }
   // Tone bucket: <60s green, <10min amber, else red. Matches the
   // home System health panel's threshold so the two views agree
@@ -280,20 +293,13 @@ function CursorAgo({
   return (
     <div className="text-right">
       <div className={`font-mono text-[11px] ${tone}`}>
-        {formatLag(cursor.lag_seconds)} ago
+        {formatDurationShort(cursor.lag_seconds)} ago
       </div>
-      <div className="font-mono text-[10px] text-ink-faint">
+      <div className="text-ink-faint font-mono text-[10px]">
         #{cursor.last_ledger.toLocaleString('en-US')}
       </div>
     </div>
   );
-}
-
-function formatLag(s: number): string {
-  if (s < 60) return `${s}s`;
-  if (s < 3600) return `${Math.round(s / 60)}m`;
-  if (s < 86400) return `${Math.round(s / 3600)}h`;
-  return `${Math.round(s / 86400)}d`;
 }
 
 function Pill({
@@ -311,7 +317,7 @@ function Pill({
         : 'bg-surface-subtle text-ink-body';
   return (
     <span
-      className={`inline-block rounded-sm px-1.5 py-0.5 text-[10px] uppercase tracking-wider ${cls}`}
+      className={`inline-block rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase ${cls}`}
     >
       {children}
     </span>
@@ -380,7 +386,9 @@ function cursorVenue(c: { sub_source?: string }): string {
   return colon >= 0 ? ss.slice(colon + 1) : ss;
 }
 
-function groupByClass(rows: Source[]): { klass: Source['class']; rows: Source[] }[] {
+function groupByClass(
+  rows: Source[],
+): { klass: Source['class']; rows: Source[] }[] {
   // Includes the on-chain non-exchange classes (lending / router /
   // bridge) — without them, blend / cctp / rozo / defindex /
   // soroswap-router fell into the map but were never emitted. The

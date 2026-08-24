@@ -16,6 +16,7 @@ import {
   supportsPasskeys,
   type ServerRequestOptions,
 } from '@/lib/webauthn';
+import { Button } from '@/components/ui';
 
 // Stable no-op subscription for useSyncExternalStore — the passkey
 // capability of a browser never changes mid-session.
@@ -28,7 +29,11 @@ type State =
   | { kind: 'verifying' }
   | { kind: 'success' };
 
-export function SignInForm({ mode = 'signin' }: { mode?: 'signin' | 'signup' }) {
+export function SignInForm({
+  mode = 'signin',
+}: {
+  mode?: 'signin' | 'signup';
+}) {
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
   const [state, setState] = useState<State>({ kind: 'email' });
@@ -93,7 +98,10 @@ export function SignInForm({ mode = 'signin' }: { mode?: 'signin' | 'signup' }) 
       if (!res.ok) {
         let detail: string | undefined;
         try {
-          const body = (await res.json()) as { detail?: string; title?: string };
+          const body = (await res.json()) as {
+            detail?: string;
+            title?: string;
+          };
           detail = body.detail ?? body.title;
         } catch {
           // ignore
@@ -128,7 +136,8 @@ export function SignInForm({ mode = 'signin' }: { mode?: 'signin' | 'signup' }) 
     } catch (err) {
       const detail =
         err instanceof ApiError
-          ? (err.detail ?? 'That code didn’t work. Check the email or request a new one.')
+          ? (err.detail ??
+            'That code didn’t work. Check the email or request a new one.')
           : 'Network error — please try again.';
       setError(detail);
       setState({ kind: 'code' });
@@ -136,11 +145,15 @@ export function SignInForm({ mode = 'signin' }: { mode?: 'signin' | 'signup' }) 
   }
 
   // ─── Step 2: enter the code (also accept the magic link) ──────────
-  if (state.kind === 'code' || state.kind === 'verifying' || state.kind === 'success') {
+  if (
+    state.kind === 'code' ||
+    state.kind === 'verifying' ||
+    state.kind === 'success'
+  ) {
     const busy = state.kind === 'verifying' || state.kind === 'success';
     return (
       <form onSubmit={onSubmitCode} className="space-y-4">
-        <div className="rounded-lg border border-line bg-surface-muted p-4 text-sm text-ink-body">
+        <div className="border-line bg-surface-muted text-ink-body rounded-lg border p-4 text-sm">
           We emailed a sign-in code to{' '}
           <span className="font-mono font-medium">{email}</span>. Enter it
           below, or just click the link in that email — either signs you in
@@ -148,7 +161,9 @@ export function SignInForm({ mode = 'signin' }: { mode?: 'signin' | 'signup' }) 
         </div>
 
         <label className="block space-y-1">
-          <span className="text-sm font-medium text-ink-body">6-digit code</span>
+          <span className="text-ink-body text-sm font-medium">
+            6-digit code
+          </span>
           <input
             type="text"
             inputMode="numeric"
@@ -156,30 +171,35 @@ export function SignInForm({ mode = 'signin' }: { mode?: 'signin' | 'signup' }) 
             pattern="[0-9]*"
             maxLength={6}
             value={code}
-            onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+            onChange={(e) =>
+              setCode(e.target.value.replace(/\D/g, '').slice(0, 6))
+            }
             autoFocus
             placeholder="123456"
-            className="w-full rounded-md border border-line bg-surface px-3 py-2 text-center font-mono text-lg tracking-[0.4em] placeholder:tracking-[0.4em] placeholder:text-ink-faint focus:border-brand-500 focus:outline-hidden focus:ring-1 focus:ring-brand-500"
+            className="border-line bg-surface placeholder:text-ink-faint focus:border-brand-500 focus:ring-brand-500 w-full rounded-md border px-3 py-2 text-center font-mono text-lg tracking-[0.4em] placeholder:tracking-[0.4em] focus:ring-1 focus:outline-hidden"
           />
         </label>
 
         {error && (
-          <div role="alert" className="flex items-start gap-2 rounded-md border border-bad-300 bg-bad-50 p-3 text-sm text-bad-700">
+          <div
+            role="alert"
+            className="border-bad-300 bg-bad-50 text-bad-700 flex items-start gap-2 rounded-md border p-3 text-sm"
+          >
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
             <span>{error}</span>
           </div>
         )}
 
-        <button
+        <Button
           type="submit"
           disabled={busy || code.length !== 6}
-          className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+          className="w-full"
         >
           {busy && <Loader2 className="h-4 w-4 animate-spin" />}
           {state.kind === 'success' ? 'Signing you in…' : 'Verify code'}
-        </button>
+        </Button>
 
-        <p className="text-xs text-ink-muted">
+        <p className="text-ink-muted text-xs">
           Didn&apos;t get it? Check spam, or{' '}
           <button
             type="button"
@@ -202,9 +222,9 @@ export function SignInForm({ mode = 'signin' }: { mode?: 'signin' | 'signup' }) 
   return (
     <form onSubmit={onSubmitEmail} className="space-y-4">
       <label className="block space-y-1">
-        <span className="text-sm font-medium text-ink-body">Email</span>
+        <span className="text-ink-body text-sm font-medium">Email</span>
         <div className="relative">
-          <Mail className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
+          <Mail className="text-ink-faint absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2" />
           <input
             type="email"
             value={email}
@@ -212,39 +232,44 @@ export function SignInForm({ mode = 'signin' }: { mode?: 'signin' | 'signup' }) 
             required
             autoComplete="email"
             placeholder="you@example.com"
-            className="w-full rounded-md border border-line bg-surface py-2 pl-8 pr-3 text-sm placeholder:text-ink-faint focus:border-brand-500 focus:outline-hidden focus:ring-1 focus:ring-brand-500"
+            className="border-line bg-surface placeholder:text-ink-faint focus:border-brand-500 focus:ring-brand-500 w-full rounded-md border py-2 pr-3 pl-8 text-sm focus:ring-1 focus:outline-hidden"
           />
         </div>
       </label>
 
       {error && (
-        <div role="alert" className="flex items-start gap-2 rounded-md border border-bad-300 bg-bad-50 p-3 text-sm text-bad-700">
+        <div
+          role="alert"
+          className="border-bad-300 bg-bad-50 text-bad-700 flex items-start gap-2 rounded-md border p-3 text-sm"
+        >
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{error}</span>
         </div>
       )}
 
-      <button
+      <Button
         type="submit"
         disabled={state.kind === 'sendingEmail' || !email.trim()}
-        className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+        className="w-full"
       >
-        {state.kind === 'sendingEmail' && <Loader2 className="h-4 w-4 animate-spin" />}
+        {state.kind === 'sendingEmail' && (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        )}
         {mode === 'signup' ? 'Create account' : 'Send sign-in code'}
-      </button>
+      </Button>
 
       {passkeyReady && (
         <>
-          <div className="flex items-center gap-3 text-xs text-ink-faint">
-            <span className="h-px flex-1 bg-line" aria-hidden />
+          <div className="text-ink-faint flex items-center gap-3 text-xs">
+            <span className="bg-line h-px flex-1" aria-hidden />
             or
-            <span className="h-px flex-1 bg-line" aria-hidden />
+            <span className="bg-line h-px flex-1" aria-hidden />
           </div>
           <button
             type="button"
             onClick={onPasskey}
             disabled={passkeyBusy}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-line bg-surface px-4 py-2 text-sm font-medium text-ink-body hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-60"
+            className="border-line bg-surface text-ink-body hover:bg-surface-muted inline-flex w-full items-center justify-center gap-2 rounded-md border px-4 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60"
           >
             {passkeyBusy ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -256,11 +281,10 @@ export function SignInForm({ mode = 'signin' }: { mode?: 'signin' | 'signup' }) 
         </>
       )}
 
-      <p className="text-xs text-ink-muted">
-        Passwordless sign-in — we email a 6-digit code (and a one-click
-        link), valid for 15 minutes. New emails create an account on
-        first sign-in. Passkeys can be added from the dashboard once
-        you&apos;re in.
+      <p className="text-ink-muted text-xs">
+        Passwordless sign-in — we email a 6-digit code (and a one-click link),
+        valid for 15 minutes. New emails create an account on first sign-in.
+        Passkeys can be added from the dashboard once you&apos;re in.
       </p>
     </form>
   );

@@ -14,11 +14,8 @@ import { CATEGORICAL_PALETTE } from '@/components/charts/DonutChart';
 import { dropPartialTrailingDay, seriesPointTime } from '@/lib/series';
 import { CopyHash } from '../../explorer-shared';
 import { TimeSeriesChart, type ChartTone } from './TimeSeriesChart';
-import {
-  BridgeShowcase,
-  BreakdownDonuts,
-  LineLegend,
-} from './BridgeShowcase';
+import { Skeleton } from '@/components/ui';
+import { BridgeShowcase, BreakdownDonuts, LineLegend } from './BridgeShowcase';
 
 const LineChart = dynamic(
   () => import('@/components/charts/LineChart').then((m) => m.LineChart),
@@ -111,7 +108,7 @@ function categoryLabel(category: string): string {
 // refetches `/v1/protocols/{name}?days=N`; the server keys its detail
 // cache on (name, days) and buckets the 24h window hourly.
 
-export const WINDOWS = [
+const WINDOWS = [
   { key: '24h', days: 1 },
   { key: '7d', days: 7 },
   { key: '30d', days: 30 },
@@ -121,7 +118,7 @@ export const WINDOWS = [
 export type WindowDays = (typeof WINDOWS)[number]['days'];
 
 /** The page's initial fetch covers the server default window (90d). */
-export const DEFAULT_WINDOW_DAYS: WindowDays = 90;
+const DEFAULT_WINDOW_DAYS: WindowDays = 90;
 
 export function windowLabelFor(days: WindowDays): string {
   return WINDOWS.find((w) => w.days === days)?.key ?? `${days}d`;
@@ -144,7 +141,7 @@ function WindowPills({
           aria-pressed={days === w.days}
           onClick={() => onChange(w.days)}
           className={cn(
-            'rounded-sm px-2 py-0.5 font-mono text-[11px] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500/60',
+            'focus-visible:ring-brand-500/60 rounded-sm px-2 py-0.5 font-mono text-[11px] focus-visible:ring-2 focus-visible:outline-hidden',
             days === w.days
               ? 'bg-brand-100 text-brand-700'
               : 'text-ink-muted hover:text-ink-body',
@@ -339,11 +336,11 @@ export function BespokeSection({
   return (
     <section
       aria-labelledby="bespoke-heading"
-      className="space-y-4 rounded-xl border border-brand-100 bg-linear-to-b from-brand-50/60 to-transparent p-4"
+      className="border-brand-100 from-brand-50/60 space-y-4 rounded-xl border bg-linear-to-b to-transparent p-4"
     >
       {/* ── Category chip + heading + the shared window pills ── */}
       <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded-sm bg-brand-100 px-2 py-0.5 font-mono text-[11px] uppercase tracking-wider text-brand-700">
+        <span className="bg-brand-100 text-brand-700 rounded-sm px-2 py-0.5 font-mono text-[11px] tracking-wider uppercase">
           {bespoke.category}
         </span>
         <h2
@@ -352,7 +349,7 @@ export function BespokeSection({
         >
           {categoryLabel(bespoke.category)}
         </h2>
-        <span className="text-xs text-ink-muted">
+        <span className="text-ink-muted text-xs">
           tailored on-chain metrics for this protocol
         </span>
         <div className="ml-auto">
@@ -362,9 +359,9 @@ export function BespokeSection({
 
       {/* ── Bespoke KPI cards (window-reactive with the rest) ── */}
       {loading && hasKpis ? (
-        <div
+        <Skeleton
           aria-hidden
-          className="h-24 w-full animate-pulse rounded-lg bg-surface-subtle"
+          className="h-24 w-full rounded-lg"
           data-testid="bespoke-kpis-loading"
         />
       ) : (
@@ -394,17 +391,17 @@ export function BespokeSection({
           source={source}
         />
       ) : failed ? (
-        <p className="py-6 text-center text-sm text-ink-muted">
+        <p className="text-ink-muted py-6 text-center text-sm">
           Couldn&apos;t load this window — retry, or pick another window.
         </p>
       ) : loading ? (
-        <div
+        <Skeleton
           aria-hidden
-          className="h-56 w-full animate-pulse rounded-md bg-surface-subtle"
+          className="h-56 w-full"
           data-testid="bespoke-window-loading"
         />
       ) : active === null ? (
-        <p className="py-6 text-center text-sm text-ink-muted">
+        <p className="text-ink-muted py-6 text-center text-sm">
           No analytics in this window.
         </p>
       ) : (
@@ -461,10 +458,10 @@ export function BespokeSection({
 
       {/* ── Notes / caveats ── */}
       {notes.length > 0 && (
-        <ul className="space-y-1 px-1 text-xs text-ink-muted">
+        <ul className="text-ink-muted space-y-1 px-1 text-xs">
           {notes.map((n, i) => (
             <li key={i} className="flex gap-1.5">
-              <span aria-hidden className="select-none text-ink-faint">
+              <span aria-hidden className="text-ink-faint select-none">
                 ·
               </span>
               <span>{n}</span>
@@ -480,16 +477,16 @@ export function BespokeSection({
 
 function BespokeKpiCard({ kpi }: { kpi: BespokeKpi }) {
   return (
-    <div className="rounded-lg border border-brand-200/70 bg-surface/80 p-3 shadow-sm">
+    <div className="border-brand-200/70 bg-surface/80 rounded-lg border p-3 shadow-sm">
       <div
-        className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-ink-muted"
+        className="text-ink-muted flex items-center gap-1 text-[10px] tracking-wider uppercase"
         title={kpi.hint || undefined}
       >
         <span className="truncate">{kpi.label}</span>
         {kpi.hint && (
           <span
             aria-hidden
-            className="cursor-help text-ink-faint"
+            className="text-ink-faint cursor-help"
             title={kpi.hint}
           >
             ⓘ
@@ -497,15 +494,15 @@ function BespokeKpiCard({ kpi }: { kpi: BespokeKpi }) {
         )}
       </div>
       <div className="mt-1 flex items-baseline gap-1">
-        <span className="text-2xl font-semibold tabular-nums text-brand-700">
+        <span className="text-brand-700 text-2xl font-semibold tabular-nums">
           {kpi.value}
         </span>
         {kpi.unit && (
-          <span className="text-xs font-medium text-ink-muted">{kpi.unit}</span>
+          <span className="text-ink-muted text-xs font-medium">{kpi.unit}</span>
         )}
       </div>
       {kpi.hint && (
-        <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-ink-faint">
+        <p className="text-ink-faint mt-1 line-clamp-2 text-[11px] leading-snug">
           {kpi.hint}
         </p>
       )}
@@ -534,9 +531,9 @@ export function BespokeTablePanel({
   return (
     <Panel title={table.title} source={source} bodyClassName="-mx-4">
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-line text-sm">
+        <table className="divide-line min-w-full divide-y text-sm">
           <thead>
-            <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
+            <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
               {table.columns.map((c, ci) => (
                 <th
                   key={ci}
@@ -548,28 +545,25 @@ export function BespokeTablePanel({
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-line-subtle">
+          <tbody className="divide-line-subtle divide-y">
             {table.rows.length === 0 ? (
               <tr>
                 <td
                   colSpan={table.columns.length}
-                  className="px-4 py-6 text-center text-sm text-ink-muted"
+                  className="text-ink-muted px-4 py-6 text-center text-sm"
                 >
                   No rows in the window.
                 </td>
               </tr>
             ) : (
               table.rows.map((row, ri) => (
-                <tr
-                  key={ri}
-                  className="hover:bg-surface-muted"
-                >
+                <tr key={ri} className="hover:bg-surface-muted">
                   {table.columns.map((_, ci) => (
                     <td
                       key={ci}
                       className={`px-4 py-2 ${
                         numericCols[ci]
-                          ? 'text-right font-mono tabular-nums text-ink-body'
+                          ? 'text-ink-body text-right font-mono tabular-nums'
                           : ''
                       }`}
                     >
@@ -676,6 +670,3 @@ function looksNumeric(v: string): boolean {
   const compact = cleaned.replace(/[KMBTkmbt]$/, '');
   return Number.isFinite(Number(compact));
 }
-
-// Re-export so the host page can format the at-a-glance line consistently.
-export { formatCompact };

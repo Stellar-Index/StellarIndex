@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { AssetLink } from '@/components/AssetLink';
+import { AssetLink, assetSlug, shortAssetText } from '@/components/AssetLink';
 import { DonutChart } from '@/components/charts/DonutChart';
 import {
   Stat,
@@ -18,7 +18,7 @@ import {
   TR,
 } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
-import { formatCompact, formatSubunitPrice } from '@/lib/format';
+import { formatCompact, formatPriceSmall } from '@/lib/format';
 import { scaledUnits } from '../explorer-shared';
 
 // Mirror of the slice of AccountStateResp we need (kept local so this
@@ -65,7 +65,11 @@ export function AccountPositions({ id }: { id: string }) {
     enabled: id.length > 0,
     retry: false,
     queryFn: async () =>
-      (await apiGet<{ data: AccountStateResp }>(`/v1/accounts/${encodeURIComponent(id)}`)).data,
+      (
+        await apiGet<{ data: AccountStateResp }>(
+          `/v1/accounts/${encodeURIComponent(id)}`,
+        )
+      ).data,
     staleTime: 30_000,
   });
 
@@ -118,13 +122,18 @@ export function AccountPositions({ id }: { id: string }) {
 
   const priceMap = pricesQ.data ?? {};
   const holdings: Holding[] = assetIds.map((asset) => {
-    const raw = asset === 'native' ? state.balance ?? '0' : (state.trustlines ?? []).find((t) => t.asset === asset)?.balance ?? '0';
+    const raw =
+      asset === 'native'
+        ? (state.balance ?? '0')
+        : ((state.trustlines ?? []).find((t) => t.asset === asset)?.balance ??
+          '0');
     // Balances are stroop integers (7 decimals, ADR-0003); scale via the
     // string-split path so a >9e8-XLM holding doesn't lose low digits to
     // Number() before it feeds the USD total / allocation split.
     const amount = scaledUnits(raw, 7);
     const priceUSD = priceMap[asset] ?? null;
-    const valueUSD = priceUSD != null && Number.isFinite(amount) ? amount * priceUSD : null;
+    const valueUSD =
+      priceUSD != null && Number.isFinite(amount) ? amount * priceUSD : null;
     return { asset, amount, priceUSD, valueUSD };
   });
   holdings.sort((a, b) => (b.valueUSD ?? -1) - (a.valueUSD ?? -1));
@@ -133,11 +142,18 @@ export function AccountPositions({ id }: { id: string }) {
   const pricedCount = holdings.filter((h) => h.valueUSD != null).length;
   const slices = holdings
     .filter((h) => h.valueUSD != null && h.valueUSD > 0)
-    .map((h) => ({
-      label: shortAsset(h.asset),
-      value: h.valueUSD as number,
-      href: `/assets/${encodeURIComponent(assetSlug(h.asset))}`,
-    }));
+    .map((h) => {
+      // FEC audit A5-05: the local assetSlug fork lacked the canonical's
+      // colon-form/C-id/length guards and could emit 404 links — the exact
+      // failure its own comment said it prevented. Canonical returns null
+      // for unlinkable ids; the slice then renders unlinked.
+      const slug = assetSlug(h.asset);
+      return {
+        label: shortAssetText(h.asset),
+        value: h.valueUSD as number,
+        ...(slug ? { href: `/assets/${encodeURIComponent(slug)}` } : {}),
+      };
+    });
 
   if (holdings.length === 0) {
     return (
@@ -156,16 +172,27 @@ export function AccountPositions({ id }: { id: string }) {
     >
       <StatGrid cols={3}>
         <StatCell>
-          <Stat label="Portfolio value" value={total > 0 ? usdFmt.format(total) : '—'} />
+          <Stat
+            label="Portfolio value"
+            value={total > 0 ? usdFmt.format(total) : '—'}
+          />
         </StatCell>
         <StatCell>
-          <Stat label="Holdings" value={holdings.length.toLocaleString('en-US')} sub={`${pricedCount} priced`} />
+          <Stat
+            label="Holdings"
+            value={holdings.length.toLocaleString('en-US')}
+            sub={`${pricedCount} priced`}
+          />
         </StatCell>
         <StatCell>
           <Stat
             label="Top holding"
             value={slices[0] ? slices[0].label : '—'}
-            sub={slices[0] && total > 0 ? `${((slices[0].value / total) * 100).toFixed(1)}% of value` : undefined}
+            sub={
+              slices[0] && total > 0
+                ? `${((slices[0].value / total) * 100).toFixed(1)}% of value`
+                : undefined
+            }
           />
         </StatCell>
       </StatGrid>
@@ -196,17 +223,21 @@ export function AccountPositions({ id }: { id: string }) {
                 <Td>
                   <AssetLink canonical={h.asset} />
                 </Td>
-                <Td align="right" className="font-mono text-ink-body">
+                <Td align="right" className="text-ink-body font-mono">
                   {formatCompact(h.amount)}
                 </Td>
                 <Td align="right" className="font-mono">
-                  {h.priceUSD != null ? `$${formatPrice(h.priceUSD)}` : '—'}
+                  {h.priceUSD != null
+                    ? `$${formatPriceSmall(h.priceUSD)}`
+                    : '—'}
                 </Td>
                 <Td align="right" className="font-mono">
                   {h.valueUSD != null ? usdFmt.format(h.valueUSD) : '—'}
                 </Td>
-                <Td align="right" className="font-mono text-ink-muted">
-                  {h.valueUSD != null && total > 0 ? `${((h.valueUSD / total) * 100).toFixed(1)}%` : '—'}
+                <Td align="right" className="text-ink-muted font-mono">
+                  {h.valueUSD != null && total > 0
+                    ? `${((h.valueUSD / total) * 100).toFixed(1)}%`
+                    : '—'}
                 </Td>
               </TR>
             ))}
@@ -215,26 +246,4 @@ export function AccountPositions({ id }: { id: string }) {
       </TableWrap>
     </Panel>
   );
-}
-
-function formatPrice(n: number): string {
-  if (!Number.isFinite(n)) return '—';
-  if (n >= 1) return n.toFixed(n >= 100 ? 2 : 4);
-  if (n >= 0.0001) return n.toFixed(6);
-  return formatSubunitPrice(n);
-}
-
-function shortAsset(canonical: string): string {
-  if (canonical === 'native') return 'XLM';
-  if (canonical.startsWith('fiat:')) return canonical.slice(5);
-  if (canonical.startsWith('crypto:')) return canonical.slice(7);
-  const i = canonical.indexOf('-');
-  return i === -1 ? canonical : canonical.slice(0, i);
-}
-
-// assetSlug — the static-export-safe short slug for the asset link
-// (long-form asset_ids 404). native → native; otherwise the code.
-function assetSlug(canonical: string): string {
-  if (canonical === 'native') return 'native';
-  return shortAsset(canonical);
 }

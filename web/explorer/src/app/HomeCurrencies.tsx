@@ -47,7 +47,10 @@ export function HomeCurrencies() {
       const assetIds = FEATURED.map((f) => `fiat:${f.ticker}`).join(',');
       const env = await apiGet<{
         data: Array<{ asset_id: string; price: string | null }>;
-      }>(`/v1/price/batch?asset_ids=${encodeURIComponent(assetIds)}&quote=fiat:USD`, {});
+      }>(
+        `/v1/price/batch?asset_ids=${encodeURIComponent(assetIds)}&quote=fiat:USD`,
+        {},
+      );
       const map: Record<string, CurrencyRow> = {};
       // /v1/price/batch returns "price of asset in quote", i.e.
       // 1 EUR = X USD. That's exactly the rate_usd field shape
@@ -73,10 +76,12 @@ export function HomeCurrencies() {
     <section className="space-y-3">
       <div className="flex items-baseline justify-between">
         <div className="space-y-1">
-          <h2 className="text-2xl font-semibold tracking-tight">World currencies</h2>
-          <p className="text-sm text-ink-body">
-            Live USD-base rates for the major fiat currencies — full
-            ~200-ticker coverage at{' '}
+          <h2 className="text-2xl font-semibold tracking-tight">
+            World currencies
+          </h2>
+          <p className="text-ink-body text-sm">
+            Live USD-base rates for the major fiat currencies — full ~200-ticker
+            coverage at{' '}
             <Link href="/assets" className="text-brand-600 hover:underline">
               /assets
             </Link>
@@ -85,13 +90,13 @@ export function HomeCurrencies() {
         </div>
         <Link
           href="/assets"
-          className="inline-flex items-center gap-1 text-xs text-brand-600 hover:underline"
+          className="text-brand-600 inline-flex items-center gap-1 text-xs hover:underline"
         >
           All assets <ArrowRight className="h-3 w-3" />
         </Link>
       </div>
       {q.isError && (
-        <div className="rounded-md border border-warn-300 bg-warn-50 px-4 py-3 text-sm text-warn-700">
+        <div className="border-warn-300 bg-warn-50 text-warn-700 rounded-md border px-4 py-3 text-sm">
           Couldn&apos;t load live currency rates. The full directory at{' '}
           <Link href="/assets" className="underline hover:no-underline">
             /assets
@@ -115,37 +120,41 @@ export function HomeCurrencies() {
             <Link
               key={t}
               href={assetHrefFor(t)}
-              className="rounded-xl border border-line bg-surface p-3 transition-colors hover:border-brand-500"
+              className="border-line bg-surface hover:border-brand-500 rounded-xl border p-3 transition-colors"
             >
               <div className="flex items-center justify-between">
                 <span className="font-mono text-sm font-medium">{t}</span>
-                <span className="text-[10px] uppercase tracking-wider text-ink-muted">
+                <span className="text-ink-muted text-[10px] tracking-wider uppercase">
                   vs USD
                 </span>
               </div>
-              <div className="mt-2 font-mono text-lg tabular-nums text-ink">
+              <div className="text-ink mt-2 font-mono text-lg tabular-nums">
                 {row && row.rate_usd > 0 ? formatRate(row.rate_usd) : '—'}
               </div>
               {row && (
                 <div className="flex items-baseline justify-between gap-2">
-                  <span className="text-[11px] text-ink-muted line-clamp-1" title={row.name}>
+                  <span
+                    className="text-ink-muted line-clamp-1 text-[11px]"
+                    title={row.name}
+                  >
                     {row.name}
                   </span>
-                  {row.change_24h_pct != null && Number.isFinite(row.change_24h_pct) && (
-                    <span
-                      className={`font-mono text-[11px] tabular-nums ${
-                        row.change_24h_pct > 0
-                          ? 'text-up'
-                          : row.change_24h_pct < 0
-                            ? 'text-down'
-                            : 'text-ink-muted'
-                      }`}
-                      title="24h % change in USD value (daily-grain feed)"
-                    >
-                      {row.change_24h_pct > 0 ? '+' : ''}
-                      {row.change_24h_pct.toFixed(2)}%
-                    </span>
-                  )}
+                  {row.change_24h_pct != null &&
+                    Number.isFinite(row.change_24h_pct) && (
+                      <span
+                        className={`font-mono text-[11px] tabular-nums ${
+                          row.change_24h_pct > 0
+                            ? 'text-up'
+                            : row.change_24h_pct < 0
+                              ? 'text-down'
+                              : 'text-ink-muted'
+                        }`}
+                        title="24h % change in USD value (daily-grain feed)"
+                      >
+                        {row.change_24h_pct > 0 ? '+' : ''}
+                        {row.change_24h_pct.toFixed(2)}%
+                      </span>
+                    )}
                 </div>
               )}
             </Link>
@@ -158,7 +167,7 @@ export function HomeCurrencies() {
 
 function formatRate(n: number): string {
   if (!Number.isFinite(n) || n <= 0) return '—';
-  if (n >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  if (n >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
   if (n >= 1) return n.toFixed(4);
   return n.toFixed(6);
 }

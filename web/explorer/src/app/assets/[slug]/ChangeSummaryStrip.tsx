@@ -7,7 +7,7 @@ import {
   StreakIndicator,
   type DeltaWindow,
 } from '@/components/primitives';
-import { formatPrice } from '@/lib/format';
+import { formatPriceSmall } from '@/lib/format';
 
 /**
  * unwrapChangeSummary — the /v1/changes/{entity_type}/{id} endpoint
@@ -75,7 +75,7 @@ export function ChangeSummaryStrip({
 
   return (
     <div
-      className={`flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-line-subtle pt-3 ${className ?? ''}`}
+      className={`border-line-subtle flex flex-wrap items-center gap-x-3 gap-y-2 border-t pt-3 ${className ?? ''}`}
       data-testid="change-summary-strip"
     >
       {hasAny && <MultiWindowDelta windows={windows} compact />}
@@ -94,13 +94,13 @@ export function ChangeSummaryStrip({
       )}
       {atl != null && Number.isFinite(atl) && (
         <span
-          className="inline-flex items-center gap-1 rounded-full bg-surface-subtle px-2 py-0.5 font-mono text-xs tabular-nums text-ink-muted"
+          className="bg-surface-subtle text-ink-muted inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-xs tabular-nums"
           title={`Lowest USD value observed since this asset entered the index${summary.atl_at ? ` (${summary.atl_at.slice(0, 10)})` : ''} — not an all-time low over full market history.`}
         >
-          <span className="text-[10px] uppercase tracking-wider">
+          <span className="text-[10px] tracking-wider uppercase">
             low since indexed
           </span>
-          ${formatPrice(atl)}
+          ${formatPriceSmall(atl)}
         </span>
       )}
     </div>

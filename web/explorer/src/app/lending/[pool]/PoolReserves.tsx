@@ -10,6 +10,7 @@ import { HBarList, PairedBars } from '@/components/charts/Bars';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
 import { scaledUnits } from '../../explorer-shared';
+import { shortAssetText } from '@/lib/asset-label';
 
 interface ReserveRow {
   asset: string;
@@ -29,20 +30,11 @@ interface ReservesResp {
   reserves: ReserveRow[];
 }
 
-const usdFmt = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
-
-function shortAsset(asset: string): string {
-  return `${asset.slice(0, 4)}…${asset.slice(-4)}`;
-}
-
-// reserveLabel — friendly per-reserve chart label: "native" → XLM,
-// "CODE-ISSUER" → CODE, a bare C-strkey SAC → shortened id.
-function reserveLabel(asset: string): string {
-  if (asset === 'native') return 'XLM';
-  const dash = asset.indexOf('-');
-  if (dash > 0) return asset.slice(0, dash);
-  return shortAsset(asset);
-}
+const usdFmt = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  maximumFractionDigits: 0,
+});
 
 function tokenAmount(base: string, decimals: number): string {
   // Reserve amounts are exact i128 base-unit strings (ADR-0003); scale
@@ -50,7 +42,10 @@ function tokenAmount(base: string, decimals: number): string {
   // loses precision above 2^53.
   const n = scaledUnits(base, decimals);
   if (!Number.isFinite(n)) return base;
-  return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(n);
+  return new Intl.NumberFormat('en-US', {
+    notation: 'compact',
+    maximumFractionDigits: 2,
+  }).format(n);
 }
 
 function pct(f: number | null): string {
@@ -64,7 +59,10 @@ export function PoolReserves({ pool }: { pool: string }) {
     queryKey: ['/v1/lending/pools/{pool}/reserves', pool],
     retry: false,
     queryFn: async () => {
-      const env = await apiGet<{ data: ReservesResp }>(`/v1/lending/pools/${encodeURIComponent(pool)}/reserves`, {});
+      const env = await apiGet<{ data: ReservesResp }>(
+        `/v1/lending/pools/${encodeURIComponent(pool)}/reserves`,
+        {},
+      );
       return env.data;
     },
     staleTime: 60_000,
@@ -84,15 +82,20 @@ export function PoolReserves({ pool }: { pool: string }) {
       bodyClassName="space-y-3"
     >
       {q.data?.tvl_usd && (
-        <div className="text-sm text-ink-body">
-          Pool TVL: <span className="font-mono text-ink">{usdFmt.format(Number(q.data.tvl_usd))}</span>{' '}
-          <span className="text-ink-muted">(Σ supplied across priced reserves)</span>
+        <div className="text-ink-body text-sm">
+          Pool TVL:{' '}
+          <span className="text-ink font-mono">
+            {usdFmt.format(Number(q.data.tvl_usd))}
+          </span>{' '}
+          <span className="text-ink-muted">
+            (Σ supplied across priced reserves)
+          </span>
         </div>
       )}
       {priced.length > 0 && totalUsd > 0 && (
         <DonutChart
           data={priced.map((rv) => ({
-            label: shortAsset(rv.asset),
+            label: shortAssetText(rv.asset),
             value: Number(rv.supplied_usd),
           }))}
           centerLabel={`$${formatCompact(totalUsd)}`}
@@ -102,16 +105,16 @@ export function PoolReserves({ pool }: { pool: string }) {
       )}
       {/* ── Real per-reserve bars (replaces the old 16px in-cell strips) ── */}
       {priced.length > 0 && (
-        <div className="space-y-4 border-y border-line/60 py-4">
+        <div className="border-line/60 space-y-4 border-y py-4">
           <div className="space-y-1.5">
-            <h4 className="text-[11px] font-medium uppercase tracking-wider text-ink-muted">
+            <h4 className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
               Supplied vs borrowed — USD, priced reserves
             </h4>
             <PairedBars
               ariaLabel={`Supplied vs borrowed per priced reserve: ${priced
                 .map(
                   (rv) =>
-                    `${reserveLabel(rv.asset)} $${formatCompact(Number(rv.supplied_usd))} supplied, $${formatCompact(Number(rv.borrowed_usd ?? 0))} borrowed`,
+                    `${shortAssetText(rv.asset)} $${formatCompact(Number(rv.supplied_usd))} supplied, $${formatCompact(Number(rv.borrowed_usd ?? 0))} borrowed`,
                 )
                 .join('; ')}`}
               aLabel="Supplied"
@@ -119,7 +122,7 @@ export function PoolReserves({ pool }: { pool: string }) {
               aColor="var(--color-up)"
               bColor="var(--color-brand-500)"
               rows={priced.map((rv) => ({
-                label: reserveLabel(rv.asset),
+                label: shortAssetText(rv.asset),
                 a: Number(rv.supplied_usd),
                 b: Number(rv.borrowed_usd ?? 0),
                 aDisplay: `$${formatCompact(Number(rv.supplied_usd))}`,
@@ -133,16 +136,19 @@ export function PoolReserves({ pool }: { pool: string }) {
           </div>
 
           <div className="space-y-1.5">
-            <h4 className="text-[11px] font-medium uppercase tracking-wider text-ink-muted">
+            <h4 className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
               Utilization — borrowed / supplied, fixed 0–100% scale
             </h4>
             <HBarList
               ariaLabel={`Utilization per reserve: ${reserves
-                .map((rv) => `${reserveLabel(rv.asset)} ${rv.utilization_pct.toFixed(1)}%`)
+                .map(
+                  (rv) =>
+                    `${shortAssetText(rv.asset)} ${rv.utilization_pct.toFixed(1)}%`,
+                )
                 .join(', ')}`}
               max={100}
               items={reserves.map((rv) => ({
-                label: reserveLabel(rv.asset),
+                label: shortAssetText(rv.asset),
                 value: Math.max(0, Math.min(100, rv.utilization_pct)),
                 display: `${rv.utilization_pct.toFixed(1)}%`,
                 color:
@@ -155,17 +161,21 @@ export function PoolReserves({ pool }: { pool: string }) {
             />
           </div>
 
-          {reserves.some((rv) => rv.supply_apr != null || rv.borrow_apr != null) && (
+          {reserves.some(
+            (rv) => rv.supply_apr != null || rv.borrow_apr != null,
+          ) && (
             <div className="space-y-1.5">
-              <h4 className="text-[11px] font-medium uppercase tracking-wider text-ink-muted">
+              <h4 className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
                 Interest rates — supply vs borrow APR
               </h4>
               <PairedBars
                 ariaLabel={`APR per reserve: ${reserves
-                  .filter((rv) => rv.supply_apr != null || rv.borrow_apr != null)
+                  .filter(
+                    (rv) => rv.supply_apr != null || rv.borrow_apr != null,
+                  )
                   .map(
                     (rv) =>
-                      `${reserveLabel(rv.asset)} supply ${pct(rv.supply_apr)}, borrow ${pct(rv.borrow_apr)}`,
+                      `${shortAssetText(rv.asset)} supply ${pct(rv.supply_apr)}, borrow ${pct(rv.borrow_apr)}`,
                   )
                   .join('; ')}`}
                 aLabel="Supply APR"
@@ -174,9 +184,11 @@ export function PoolReserves({ pool }: { pool: string }) {
                 bColor="var(--color-down)"
                 formatValue={(n) => `${(n * 100).toFixed(2)}%`}
                 rows={reserves
-                  .filter((rv) => rv.supply_apr != null || rv.borrow_apr != null)
+                  .filter(
+                    (rv) => rv.supply_apr != null || rv.borrow_apr != null,
+                  )
                   .map((rv) => ({
-                    label: reserveLabel(rv.asset),
+                    label: shortAssetText(rv.asset),
                     a: rv.supply_apr ?? 0,
                     b: rv.borrow_apr ?? 0,
                     aDisplay: pct(rv.supply_apr),
@@ -189,41 +201,53 @@ export function PoolReserves({ pool }: { pool: string }) {
         </div>
       )}
 
-      {q.isLoading && <p className="text-sm text-ink-muted">Loading reserve state…</p>}
+      {q.isLoading && (
+        <p className="text-ink-muted text-sm">Loading reserve state…</p>
+      )}
       {q.isError && (
-        <p className="text-sm text-ink-muted">
-          Reserve state is unavailable right now (the contract-storage capture is still filling, or this isn&apos;t a
-          reserve-bearing pool).
+        <p className="text-ink-muted text-sm">
+          Reserve state is unavailable right now (the contract-storage capture
+          is still filling, or this isn&apos;t a reserve-bearing pool).
         </p>
       )}
       {q.data && reserves.length === 0 && !q.isLoading && (
-        <p className="text-sm text-ink-muted">
-          No reserve state captured for this pool yet — the lake&apos;s contract-storage window hasn&apos;t recorded its
-          reserves.
+        <p className="text-ink-muted text-sm">
+          No reserve state captured for this pool yet — the lake&apos;s
+          contract-storage window hasn&apos;t recorded its reserves.
         </p>
       )}
       {reserves.length > 0 && (
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead>
-              <tr className="border-b border-line text-left text-[11px] uppercase tracking-wider text-ink-muted">
+              <tr className="border-line text-ink-muted border-b text-left text-[11px] tracking-wider uppercase">
                 <th className="py-1.5 pr-4 font-normal">Asset</th>
                 <th className="py-1.5 pr-4 text-right font-normal">Supplied</th>
                 <th className="py-1.5 pr-4 text-right font-normal">Borrowed</th>
                 <th className="py-1.5 pr-4 text-right font-normal">Util</th>
-                <th className="py-1.5 pr-4 text-right font-normal">Supply APR</th>
+                <th className="py-1.5 pr-4 text-right font-normal">
+                  Supply APR
+                </th>
                 <th className="py-1.5 text-right font-normal">Borrow APR</th>
               </tr>
             </thead>
             <tbody>
               {reserves.map((rv) => (
-                <tr key={rv.asset} className="border-b border-line/60 last:border-0 hover:bg-surface-muted">
-                  <td className="py-1.5 pr-4 font-mono text-[11px]" title={rv.asset}>
+                <tr
+                  key={rv.asset}
+                  className="border-line/60 hover:bg-surface-muted border-b last:border-0"
+                >
+                  <td
+                    className="py-1.5 pr-4 font-mono text-[11px]"
+                    title={rv.asset}
+                  >
                     <AssetLink canonical={rv.asset} />
                   </td>
                   <td className="py-1.5 pr-4 text-right font-mono tabular-nums">
                     {rv.supplied_usd ? (
-                      <span title={`${tokenAmount(rv.supplied, rv.decimals)} tokens`}>
+                      <span
+                        title={`${tokenAmount(rv.supplied, rv.decimals)} tokens`}
+                      >
                         {usdFmt.format(Number(rv.supplied_usd))}
                       </span>
                     ) : (
@@ -231,26 +255,34 @@ export function PoolReserves({ pool }: { pool: string }) {
                     )}
                   </td>
                   <td className="py-1.5 pr-4 text-right font-mono tabular-nums">
-                    {rv.borrowed_usd ? usdFmt.format(Number(rv.borrowed_usd)) : tokenAmount(rv.borrowed, rv.decimals)}
+                    {rv.borrowed_usd
+                      ? usdFmt.format(Number(rv.borrowed_usd))
+                      : tokenAmount(rv.borrowed, rv.decimals)}
                   </td>
                   {/* The old 16px in-cell strip is superseded by the real
                       0–100%-scaled utilization bars above the table. */}
                   <td className="py-1.5 pr-4 text-right font-mono tabular-nums">
                     {rv.utilization_pct.toFixed(1)}%
                   </td>
-                  <td className="py-1.5 pr-4 text-right font-mono tabular-nums text-up-strong">{pct(rv.supply_apr)}</td>
-                  <td className="py-1.5 text-right font-mono tabular-nums text-down-strong">{pct(rv.borrow_apr)}</td>
+                  <td className="text-up-strong py-1.5 pr-4 text-right font-mono tabular-nums">
+                    {pct(rv.supply_apr)}
+                  </td>
+                  <td className="text-down-strong py-1.5 text-right font-mono tabular-nums">
+                    {pct(rv.borrow_apr)}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
-      <p className="text-[11px] text-ink-muted">
-        Supplied / borrowed / utilisation are exact current-state from the reserve&apos;s on-chain b_rate/d_rate.
-        APR (the pool&apos;s own interest-rate model) shows when the reserve&apos;s rate config is in the captured
-        storage window, else <span className="font-mono">—</span>. USD values are shown for reserves we hold a price
-        for. Distinct from the auction-stream window proxy on the pools list.
+      <p className="text-ink-muted text-[11px]">
+        Supplied / borrowed / utilisation are exact current-state from the
+        reserve&apos;s on-chain b_rate/d_rate. APR (the pool&apos;s own
+        interest-rate model) shows when the reserve&apos;s rate config is in the
+        captured storage window, else <span className="font-mono">—</span>. USD
+        values are shown for reserves we hold a price for. Distinct from the
+        auction-stream window proxy on the pools list.
       </p>
     </Panel>
   );

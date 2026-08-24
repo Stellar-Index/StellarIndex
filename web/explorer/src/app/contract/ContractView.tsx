@@ -111,7 +111,7 @@ export function ContractView({ id: idProp }: { id?: string } = {}) {
             This page needs an <code className="font-mono">?id=</code> query
             parameter — a 56-character Soroban contract ID (starts with{' '}
             <code className="font-mono">C</code>). Use the search box (
-            <kbd className="rounded-sm border border-line-strong px-1 text-[10px]">
+            <kbd className="border-line-strong rounded-sm border px-1 text-[10px]">
               ⌘K
             </kbd>
             ) to look one up.
@@ -129,7 +129,7 @@ export function ContractView({ id: idProp }: { id?: string } = {}) {
           bodyClassName="text-sm text-ink-body"
         >
           <p>
-            <span className="break-all font-mono">{id}</span> isn&apos;t a valid
+            <span className="font-mono break-all">{id}</span> isn&apos;t a valid
             Soroban contract ID. Contract IDs are 56 characters, starting with{' '}
             <code className="font-mono">C</code>.
           </p>
@@ -186,7 +186,7 @@ export function ContractView({ id: idProp }: { id?: string } = {}) {
           <div>
             <Link
               href={`/protocols/${encodeURIComponent(data.protocol)}`}
-              className="inline-flex items-center rounded-sm bg-brand-100 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-brand-800 hover:bg-brand-200"
+              className="bg-brand-100 text-brand-800 hover:bg-brand-200 inline-flex items-center rounded-sm px-1.5 py-0.5 font-mono text-[10px] tracking-wider uppercase"
               title={`Registered ${data.protocol} contract — protocol verification page`}
             >
               {data.protocol}
@@ -194,7 +194,7 @@ export function ContractView({ id: idProp }: { id?: string } = {}) {
           </div>
         )}
         <div>
-          <div className="text-[11px] uppercase tracking-wider text-ink-muted">
+          <div className="text-ink-muted text-[11px] tracking-wider uppercase">
             Contract ID
           </div>
           <div className="mt-0.5">
@@ -208,22 +208,40 @@ export function ContractView({ id: idProp }: { id?: string } = {}) {
           {data.activity && (
             <div className="mt-3 flex flex-wrap items-end gap-x-8 gap-y-2">
               <div>
-                <div className="text-[11px] uppercase tracking-wider text-ink-muted">First seen</div>
-                <div className="mt-0.5 font-mono text-sm">{data.activity.first_seen?.slice(0, 10)}</div>
+                <div className="text-ink-muted text-[11px] tracking-wider uppercase">
+                  First seen
+                </div>
+                <div className="mt-0.5 font-mono text-sm">
+                  {data.activity.first_seen?.slice(0, 10)}
+                </div>
               </div>
               <div>
-                <div className="text-[11px] uppercase tracking-wider text-ink-muted">Last active</div>
-                <div className="mt-0.5 font-mono text-sm">{data.activity.last_seen?.slice(0, 10)}</div>
+                <div className="text-ink-muted text-[11px] tracking-wider uppercase">
+                  Last active
+                </div>
+                <div className="mt-0.5 font-mono text-sm">
+                  {data.activity.last_seen?.slice(0, 10)}
+                </div>
               </div>
               <div>
-                <div className="text-[11px] uppercase tracking-wider text-ink-muted">Active ledgers</div>
-                <div className="mt-0.5 font-mono text-sm">{(data.activity.active_ledgers_total ?? 0).toLocaleString('en-US')}</div>
+                <div className="text-ink-muted text-[11px] tracking-wider uppercase">
+                  Active ledgers
+                </div>
+                <div className="mt-0.5 font-mono text-sm">
+                  {(data.activity.active_ledgers_total ?? 0).toLocaleString(
+                    'en-US',
+                  )}
+                </div>
               </div>
               {(data.activity.daily?.length ?? 0) >= 2 && (
                 <div title="Ledgers with activity per day, last 30 days">
-                  <div className="text-[11px] uppercase tracking-wider text-ink-muted">30d activity</div>
+                  <div className="text-ink-muted text-[11px] tracking-wider uppercase">
+                    30d activity
+                  </div>
                   <Sparkline
-                    values={(data.activity.daily ?? []).map((d) => d.active_ledgers ?? 0)}
+                    values={(data.activity.daily ?? []).map(
+                      (d) => d.active_ledgers ?? 0,
+                    )}
                     width={160}
                     height={28}
                   />
@@ -232,7 +250,7 @@ export function ContractView({ id: idProp }: { id?: string } = {}) {
             </div>
           )}
         </div>
-        <ul className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-ink-body">
+        <ul className="text-ink-body flex flex-wrap gap-x-6 gap-y-1 text-xs">
           <li>
             <a
               href={`https://stellar.expert/explorer/public/contract/${data.contract_id || id}`}
@@ -314,27 +332,26 @@ function SacIdentity({ id }: { id: string }) {
   if (!isSac) return null;
   const code = sacAsset ? sacAsset.split(/[:-]/)[0] : null;
   return (
-    <div className="rounded-md bg-surface-sunken px-3 py-2.5 text-sm">
+    <div className="bg-surface-sunken rounded-md px-3 py-2.5 text-sm">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded-sm bg-brand-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-brand-700">
+        <span className="bg-brand-100 text-brand-700 rounded-sm px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase">
           Stellar Asset Contract
         </span>
         {sacAsset && (
           <Link
             href={`/assets/${encodeURIComponent(sacAsset)}`}
-            className="font-medium text-brand-600 hover:underline"
+            className="text-brand-600 font-medium hover:underline"
           >
             {code} — asset detail →
           </Link>
         )}
       </div>
-      <p className="mt-1.5 text-xs leading-relaxed text-ink-body">
+      <p className="text-ink-body mt-1.5 text-xs leading-relaxed">
         This address is the built-in token contract for the classic asset{' '}
-        {sacAsset ? <span className="font-mono">{sacAsset}</span> : 'it wraps'}
-        {' '}— Soroban&apos;s host-implemented interface to the same balances
-        classic operations use. It runs no user-uploaded code, so there is no
-        WASM to audit; trust derives from the asset&apos;s issuer, not from
-        bytecode.
+        {sacAsset ? <span className="font-mono">{sacAsset}</span> : 'it wraps'}{' '}
+        — Soroban&apos;s host-implemented interface to the same balances classic
+        operations use. It runs no user-uploaded code, so there is no WASM to
+        audit; trust derives from the asset&apos;s issuer, not from bytecode.
       </p>
     </div>
   );
@@ -348,13 +365,24 @@ function SacIdentity({ id }: { id: string }) {
  * to a short, non-alarming note rather than an error card.
  */
 function WasmPanel({ id }: { id: string }) {
-  const { data, isLoading, isError, error, isSac: hookSac, sacAsset } = useContractWasm(id);
+  const {
+    data,
+    isLoading,
+    isError,
+    error,
+    isSac: hookSac,
+    sacAsset,
+  } = useContractWasm(id);
 
   const source = asExample(`/v1/contracts/${id}/wasm`);
 
   if (isLoading) {
     return (
-      <Panel title="Code (WASM)" source={source} bodyClassName="text-sm text-ink-muted">
+      <Panel
+        title="Code (WASM)"
+        source={source}
+        bodyClassName="text-sm text-ink-muted"
+      >
         Loading code…
       </Panel>
     );
@@ -395,7 +423,7 @@ function WasmPanel({ id }: { id: string }) {
     >
       <div className="flex flex-wrap gap-x-8 gap-y-2 text-xs">
         <div>
-          <div className="text-[11px] uppercase tracking-wider text-ink-muted">
+          <div className="text-ink-muted text-[11px] tracking-wider uppercase">
             WASM hash
           </div>
           <div className="mt-0.5">
@@ -403,10 +431,10 @@ function WasmPanel({ id }: { id: string }) {
           </div>
         </div>
         <div>
-          <div className="text-[11px] uppercase tracking-wider text-ink-muted">
+          <div className="text-ink-muted text-[11px] tracking-wider uppercase">
             Size
           </div>
-          <div className="mt-0.5 font-mono tabular-nums text-ink-body">
+          <div className="text-ink-body mt-0.5 font-mono tabular-nums">
             {formatBytes(data.size_bytes)}
           </div>
         </div>
@@ -415,9 +443,9 @@ function WasmPanel({ id }: { id: string }) {
       {/* Exported entry points — the contract's real API surface. */}
       {data.exports.length > 0 && (
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-line text-sm">
+          <table className="divide-line min-w-full divide-y text-sm">
             <thead>
-              <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
+              <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
                 <th scope="col" className="py-2 pr-4">
                   Export
                 </th>
@@ -426,13 +454,13 @@ function WasmPanel({ id }: { id: string }) {
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-line-subtle">
+            <tbody className="divide-line-subtle divide-y">
               {data.exports.map((e) => (
                 <tr key={e.name}>
-                  <td className="py-1.5 pr-4 font-mono text-brand-700">
+                  <td className="text-brand-700 py-1.5 pr-4 font-mono">
                     {e.name}
                   </td>
-                  <td className="py-1.5 font-mono text-xs text-ink-muted">
+                  <td className="text-ink-muted py-1.5 font-mono text-xs">
                     {exportSignature(e)}
                   </td>
                 </tr>
@@ -447,7 +475,9 @@ function WasmPanel({ id }: { id: string }) {
         <CodeDisclosure label="Decompiled pseudocode" code={data.decompiled} />
       )}
 
-      <p className="text-[11px] leading-snug text-ink-faint">{data.source_note}</p>
+      <p className="text-ink-faint text-[11px] leading-snug">
+        {data.source_note}
+      </p>
     </Panel>
   );
 }
@@ -456,14 +486,14 @@ function WasmPanel({ id }: { id: string }) {
 // and height-capped so a large module doesn't dominate the page.
 function CodeDisclosure({ label, code }: { label: string; code: string }) {
   return (
-    <details className="group rounded-lg border border-line">
-      <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-ink-body marker:text-ink-faint hover:text-brand-600">
+    <details className="group border-line rounded-lg border">
+      <summary className="text-ink-body marker:text-ink-faint hover:text-brand-600 cursor-pointer px-3 py-2 text-xs font-medium select-none">
         {label}{' '}
         <span className="text-ink-faint">
           ({code.split('\n').length.toLocaleString('en-US')} lines)
         </span>
       </summary>
-      <pre className="max-h-96 overflow-auto border-t border-line bg-surface-muted p-3 text-[11px] leading-relaxed text-ink-body">
+      <pre className="border-line bg-surface-muted text-ink-body max-h-96 overflow-auto border-t p-3 text-[11px] leading-relaxed">
         {code}
       </pre>
     </details>
@@ -502,21 +532,33 @@ function CodeHistoryPanel({ id }: { id: string }) {
 
   if (isLoading) {
     return (
-      <Panel title="Code history" source={source} bodyClassName="text-sm text-ink-muted">
+      <Panel
+        title="Code history"
+        source={source}
+        bodyClassName="text-sm text-ink-muted"
+      >
         Loading upgrade history…
       </Panel>
     );
   }
   if (isError) {
     return (
-      <Panel title="Code history" source={source} bodyClassName="text-sm text-ink-muted">
+      <Panel
+        title="Code history"
+        source={source}
+        bodyClassName="text-sm text-ink-muted"
+      >
         The code-history lookup failed — reload to retry.
       </Panel>
     );
   }
   if (versions.length === 0) {
     return (
-      <Panel title="Code history" source={source} bodyClassName="text-sm text-ink-muted">
+      <Panel
+        title="Code history"
+        source={source}
+        bodyClassName="text-sm text-ink-muted"
+      >
         No code changes in the captured ledger window — the contract has not
         been upgraded since capture began.
       </Panel>
@@ -525,34 +567,61 @@ function CodeHistoryPanel({ id }: { id: string }) {
   return (
     <Panel
       title={`Code history (${versions.length} version${versions.length === 1 ? '' : 's'})`}
-      hint={versions.length > 1 ? 'in-place upgrades over time' : 'deployed executable'}
+      hint={
+        versions.length > 1
+          ? 'in-place upgrades over time'
+          : 'deployed executable'
+      }
       source={source}
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-line text-sm">
+        <table className="divide-line min-w-full divide-y text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
-              <th scope="col" className="px-4 py-2">#</th>
-              <th scope="col" className="px-4 py-2">From ledger</th>
-              <th scope="col" className="px-4 py-2">When</th>
-              <th scope="col" className="px-4 py-2">WASM hash</th>
+            <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
+              <th scope="col" className="px-4 py-2">
+                #
+              </th>
+              <th scope="col" className="px-4 py-2">
+                From ledger
+              </th>
+              <th scope="col" className="px-4 py-2">
+                When
+              </th>
+              <th scope="col" className="px-4 py-2">
+                WASM hash
+              </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-line-subtle">
+          <tbody className="divide-line-subtle divide-y">
             {versions.map((v, i) => (
-              <tr key={`${v.ledger}-${v.wasm_hash}`} className="hover:bg-surface-muted">
-                <td className="px-4 py-3 font-mono text-xs text-ink-faint">{i + 1}</td>
+              <tr
+                key={`${v.ledger}-${v.wasm_hash}`}
+                className="hover:bg-surface-muted"
+              >
+                <td className="text-ink-faint px-4 py-3 font-mono text-xs">
+                  {i + 1}
+                </td>
                 <td className="px-4 py-3">
-                  <Link href={`/ledgers/${v.ledger}/`} className="font-mono text-xs text-brand-600 hover:underline">
+                  <Link
+                    href={`/ledgers/${v.ledger}/`}
+                    className="text-brand-600 font-mono text-xs hover:underline"
+                  >
                     #{(v.ledger ?? 0).toLocaleString('en-US')}
                   </Link>
                 </td>
-                <td className="px-4 py-3 text-xs text-ink-muted" title={formatTimestamp(v.close_time)}>
+                <td
+                  className="text-ink-muted px-4 py-3 text-xs"
+                  title={formatTimestamp(v.close_time)}
+                >
                   {relativeAge(v.close_time)}
                 </td>
-                <td className="px-4 py-3 font-mono text-xs text-ink-body" title={v.wasm_hash}>
-                  {(v.wasm_hash ?? '').slice(0, 12)}…{(v.wasm_hash ?? '').slice(-8)}
+                <td
+                  className="text-ink-body px-4 py-3 font-mono text-xs"
+                  title={v.wasm_hash}
+                >
+                  {(v.wasm_hash ?? '').slice(0, 12)}…
+                  {(v.wasm_hash ?? '').slice(-8)}
                 </td>
               </tr>
             ))}
@@ -595,7 +664,7 @@ interface TransferRow {
 function transferAmount(amount: string, decimals: number): string {
   const n = scaledUnits(amount, decimals);
   if (!Number.isFinite(n)) return amount;
-  return n.toLocaleString(undefined, { maximumFractionDigits: 4 });
+  return n.toLocaleString('en-US', { maximumFractionDigits: 4 });
 }
 
 /**
@@ -613,10 +682,9 @@ function TransfersPanel({ id }: { id: string }) {
     staleTime: 30_000,
     queryFn: async () =>
       (
-        await apiGet<Envelope<{ transfers?: TransferRow[]; decimals?: number }>>(
-          `/v1/contracts/${encodeURIComponent(id)}/transfers`,
-          { limit: 25 },
-        )
+        await apiGet<
+          Envelope<{ transfers?: TransferRow[]; decimals?: number }>
+        >(`/v1/contracts/${encodeURIComponent(id)}/transfers`, { limit: 25 })
       ).data,
   });
   const rows = data?.transfers ?? [];
@@ -630,7 +698,7 @@ function TransfersPanel({ id }: { id: string }) {
     g && /^G[A-Z2-7]{55}$/.test(g) ? (
       <Link
         href={`/accounts/${g}/`}
-        className="font-mono text-xs text-brand-600 hover:underline"
+        className="text-brand-600 font-mono text-xs hover:underline"
         title={g}
       >
         {g.slice(0, 6)}…{g.slice(-4)}
@@ -648,9 +716,9 @@ function TransfersPanel({ id }: { id: string }) {
       source={asExample(`/v1/contracts/${id}/transfers`, { limit: 25 })}
       bodyClassName="-mx-4 overflow-x-auto"
     >
-      <table className="min-w-full divide-y divide-line text-sm">
+      <table className="divide-line min-w-full divide-y text-sm">
         <thead>
-          <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
+          <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
             <th className="px-4 py-2">Time</th>
             <th className="px-4 py-2">Kind</th>
             <th className="px-4 py-2">From</th>
@@ -659,10 +727,10 @@ function TransfersPanel({ id }: { id: string }) {
             <th className="px-4 py-2">Tx</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-line-subtle">
+        <tbody className="divide-line-subtle divide-y">
           {rows.map((t, i) => (
             <tr key={`${t.tx_hash}-${i}`} className="hover:bg-surface-muted">
-              <td className="whitespace-nowrap px-4 py-2 text-xs text-ink-muted">
+              <td className="text-ink-muted px-4 py-2 text-xs whitespace-nowrap">
                 {t.ledger_close_time ? relativeAge(t.ledger_close_time) : '—'}
               </td>
               <td className="px-4 py-2">
@@ -677,7 +745,7 @@ function TransfersPanel({ id }: { id: string }) {
                 {t.tx_hash ? (
                   <Link
                     href={`/transactions/${t.tx_hash}/`}
-                    className="font-mono text-xs text-brand-600 hover:underline"
+                    className="text-brand-600 font-mono text-xs hover:underline"
                   >
                     {t.tx_hash.slice(0, 8)}…
                   </Link>
@@ -709,26 +777,41 @@ function InteractionsPanel({ id }: { id: string }) {
     },
   });
 
-  const source = asExample(`/v1/contracts/${id}/interactions`, { days: 90, limit: 50 });
+  const source = asExample(`/v1/contracts/${id}/interactions`, {
+    days: 90,
+    limit: 50,
+  });
   const edges = data?.interactions ?? [];
 
   if (isLoading) {
     return (
-      <Panel title="Interaction map" source={source} bodyClassName="text-sm text-ink-muted">
+      <Panel
+        title="Interaction map"
+        source={source}
+        bodyClassName="text-sm text-ink-muted"
+      >
         Loading interactions…
       </Panel>
     );
   }
   if (isError) {
     return (
-      <Panel title="Interaction map" source={source} bodyClassName="text-sm text-ink-muted">
+      <Panel
+        title="Interaction map"
+        source={source}
+        bodyClassName="text-sm text-ink-muted"
+      >
         The interaction-map scan failed or timed out — reload to retry.
       </Panel>
     );
   }
   if (edges.length === 0) {
     return (
-      <Panel title="Interaction map" source={source} bodyClassName="text-sm text-ink-muted">
+      <Panel
+        title="Interaction map"
+        source={source}
+        bodyClassName="text-sm text-ink-muted"
+      >
         No cross-contract interactions observed in the last 90 days — this
         contract didn’t share transactions with other contracts in the window.
       </Panel>
@@ -743,34 +826,43 @@ function InteractionsPanel({ id }: { id: string }) {
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-line text-sm">
+        <table className="divide-line min-w-full divide-y text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
-              <th scope="col" className="px-4 py-2">Contract</th>
-              <th scope="col" className="px-4 py-2">Protocol</th>
-              <th scope="col" className="px-4 py-2 text-right">Shared txs</th>
+            <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
+              <th scope="col" className="px-4 py-2">
+                Contract
+              </th>
+              <th scope="col" className="px-4 py-2">
+                Protocol
+              </th>
+              <th scope="col" className="px-4 py-2 text-right">
+                Shared txs
+              </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-line-subtle">
+          <tbody className="divide-line-subtle divide-y">
             {edges.map((e) => (
               <tr key={e.contract_id} className="hover:bg-surface-muted">
                 <td className="px-4 py-3">
                   <Link
                     href={`/contracts/${encodeURIComponent(e.contract_id ?? '')}/`}
-                    className="font-mono text-xs text-brand-600 hover:underline"
+                    className="text-brand-600 font-mono text-xs hover:underline"
                     title={e.contract_id}
                   >
-                    {(e.contract_id ?? '').slice(0, 8)}…{(e.contract_id ?? '').slice(-6)}
+                    {(e.contract_id ?? '').slice(0, 8)}…
+                    {(e.contract_id ?? '').slice(-6)}
                   </Link>
                   {(() => {
                     const wrapped =
-                      e.contract_id === 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA'
+                      e.contract_id ===
+                      'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA'
                         ? 'native'
                         : sacMap?.[e.contract_id ?? ''];
                     if (!wrapped) return null;
-                    const code = wrapped === 'native' ? 'XLM' : wrapped.split(/[:-]/)[0];
+                    const code =
+                      wrapped === 'native' ? 'XLM' : wrapped.split(/[:-]/)[0];
                     return (
-                      <span className="ml-2 rounded-sm bg-surface-muted px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider text-ink-muted">
+                      <span className="bg-surface-muted text-ink-muted ml-2 rounded-sm px-1.5 py-0.5 text-[9px] font-medium tracking-wider uppercase">
                         {code} SAC
                       </span>
                     );
@@ -780,7 +872,7 @@ function InteractionsPanel({ id }: { id: string }) {
                   {e.protocol ? (
                     <Link
                       href={`/protocols/${encodeURIComponent(e.protocol)}`}
-                      className="inline-flex items-center rounded-sm bg-brand-100 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-brand-800 hover:bg-brand-200"
+                      className="bg-brand-100 text-brand-800 hover:bg-brand-200 inline-flex items-center rounded-sm px-1.5 py-0.5 font-mono text-[10px] tracking-wider uppercase"
                     >
                       {e.protocol}
                     </Link>
@@ -788,7 +880,7 @@ function InteractionsPanel({ id }: { id: string }) {
                     <span className="text-ink-faint">—</span>
                   )}
                 </td>
-                <td className="px-4 py-3 text-right font-mono tabular-nums text-ink-body">
+                <td className="text-ink-body px-4 py-3 text-right font-mono tabular-nums">
                   {(e.shared_txs ?? 0).toLocaleString('en-US')}
                 </td>
               </tr>
@@ -860,9 +952,9 @@ function EventsPanel({
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-line text-sm">
+        <table className="divide-line min-w-full divide-y text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
+            <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
               <Th>Ledger</Th>
               <Th>Close time</Th>
               <Th>Tx</Th>
@@ -871,7 +963,7 @@ function EventsPanel({
               <Th>Detail</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-line-subtle">
+          <tbody className="divide-line-subtle divide-y">
             {events.map((ev, i) => (
               <tr
                 key={`${ev.tx_hash}-${ev.op_index}-${ev.event_index ?? i}`}
@@ -880,14 +972,14 @@ function EventsPanel({
                 <Td>
                   <Link
                     href={`/ledgers/${ev.ledger}/`}
-                    className="font-mono text-xs text-brand-600 hover:underline"
+                    className="text-brand-600 font-mono text-xs hover:underline"
                   >
                     #{(ev.ledger ?? 0).toLocaleString('en-US')}
                   </Link>
                 </Td>
                 <Td>
                   <span
-                    className="font-mono text-xs text-ink-muted"
+                    className="text-ink-muted font-mono text-xs"
                     title={formatTimestamp(ev.close_time)}
                   >
                     {relativeAge(ev.close_time)}
@@ -896,19 +988,20 @@ function EventsPanel({
                 <Td>
                   <Link
                     href={`/transactions/${ev.tx_hash}/`}
-                    className="font-mono text-xs text-brand-600 hover:underline"
+                    className="text-brand-600 font-mono text-xs hover:underline"
                     title={ev.tx_hash}
                   >
-                    {(ev.tx_hash ?? '').slice(0, 8)}…{(ev.tx_hash ?? '').slice(-6)}
+                    {(ev.tx_hash ?? '').slice(0, 8)}…
+                    {(ev.tx_hash ?? '').slice(-6)}
                   </Link>
                 </Td>
                 <Td>
-                  <span className="font-mono text-xs text-ink-body">
+                  <span className="text-ink-body font-mono text-xs">
                     {ev.event_type || '—'}
                   </span>
                 </Td>
                 <Td>
-                  <span className="font-mono text-xs text-ink-muted">
+                  <span className="text-ink-muted font-mono text-xs">
                     {ev.topic_0 || '—'}
                   </span>
                 </Td>
@@ -917,23 +1010,35 @@ function EventsPanel({
                       as links, amounts as numbers, instead of fifty
                       bare 'transfer' rows. */}
                   <span
-                    className="block max-w-md truncate font-mono text-[11px] text-ink-muted"
-                    title={[...(ev.topics ?? []), ev.data ?? ''].filter(Boolean).join(' · ')}
+                    className="text-ink-muted block max-w-md truncate font-mono text-[11px]"
+                    title={[...(ev.topics ?? []), ev.data ?? '']
+                      .filter(Boolean)
+                      .join(' · ')}
                   >
-                    {(ev.topics ?? []).map((t: string, ti: number) => (
+                    {(ev.topics ?? []).map((t: string, ti: number) =>
                       /^G[A-Z2-7]{55}$/.test(t) ? (
-                        <Link key={ti} href={`/accounts/${t}/`} className="text-brand-600 hover:underline">
+                        <Link
+                          key={ti}
+                          href={`/accounts/${t}/`}
+                          className="text-brand-600 hover:underline"
+                        >
                           {t.slice(0, 4)}…{t.slice(-4)}{' '}
                         </Link>
                       ) : /^C[A-Z2-7]{55}$/.test(t) ? (
-                        <Link key={ti} href={`/contracts/${t}/`} className="text-brand-600 hover:underline">
+                        <Link
+                          key={ti}
+                          href={`/contracts/${t}/`}
+                          className="text-brand-600 hover:underline"
+                        >
                           {t.slice(0, 4)}…{t.slice(-4)}{' '}
                         </Link>
                       ) : (
                         <span key={ti}>{t} </span>
-                      )
-                    ))}
-                    {ev.data ? <span className="text-ink-faint">{ev.data}</span> : null}
+                      ),
+                    )}
+                    {ev.data ? (
+                      <span className="text-ink-faint">{ev.data}</span>
+                    ) : null}
                   </span>
                 </Td>
               </tr>
@@ -942,23 +1047,23 @@ function EventsPanel({
         </table>
       </div>
 
-      <div className="flex items-center justify-between px-4 pb-1 pt-4 text-xs">
+      <div className="flex items-center justify-between px-4 pt-4 pb-1 text-xs">
         <button
           type="button"
           onClick={onNewest}
           disabled={cursor === undefined || isFetching}
-          className="rounded-md border border-line px-3 py-1.5 text-ink-body hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
+          className="border-line text-ink-body hover:border-brand-500 hover:text-brand-600 rounded-md border px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-40"
         >
           ← Newest
         </button>
-        <span className="font-mono text-[11px] text-ink-faint">
+        <span className="text-ink-faint font-mono text-[11px]">
           {isFetching ? 'Loading…' : ''}
         </span>
         <button
           type="button"
           onClick={onOlder}
           disabled={nextCursor == null || isFetching}
-          className="rounded-md border border-line px-3 py-1.5 text-ink-body hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
+          className="border-line text-ink-body hover:border-brand-500 hover:text-brand-600 rounded-md border px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Load older →
         </button>

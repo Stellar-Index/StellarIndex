@@ -6,9 +6,9 @@ import { formatCompact, formatPairPrice } from '@/lib/format';
 // /v1/pools row from the generated OpenAPI contract (spec PoolRow, via
 // the shared alias in src/api/hooks.ts).
 import type { Pool as PoolRow } from '@/api/hooks';
+import { isCIStub } from '@/lib/buildFetch';
+import { shortAssetText } from '@/lib/asset-label';
 
-const isCIStub =
-  API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
 const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
 /**
@@ -25,7 +25,9 @@ async function fetchPoolsForAsset(assetID: string): Promise<PoolRow[] | null> {
   if (isCIStub) return null;
   try {
     const url = `${API_BASE_URL}/v1/pools?asset=${encodeURIComponent(assetID)}&limit=100&order_by=volume_24h_usd_desc`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) });
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
+    });
     if (!res.ok) return null;
     const env = (await res.json()) as { data?: PoolRow[] };
     return env.data ?? [];
@@ -61,7 +63,10 @@ export async function LiquidityTabPanel({
   // region runs a release that includes the filter.
   const merged = (rows ?? [])
     .filter((p) => p.base === assetID || p.quote === assetID)
-    .map((p) => ({ ...p, side: (p.base === assetID ? 'base' : 'quote') as 'base' | 'quote' }))
+    .map((p) => ({
+      ...p,
+      side: (p.base === assetID ? 'base' : 'quote') as 'base' | 'quote',
+    }))
     .sort((a, b) => {
       const av = Number(a.volume_24h_usd ?? '0');
       const bv = Number(b.volume_24h_usd ?? '0');
@@ -72,26 +77,30 @@ export async function LiquidityTabPanel({
     <Panel
       title={`Liquidity — every DEX pool that touches ${code}`}
       hint="Per-source breakdown across DEXes. Backed by /v1/pools?asset= (base OR quote)."
-      source={asExample('/v1/pools', { asset: assetID, limit: 100, order_by: 'volume_24h_usd_desc' })}
+      source={asExample('/v1/pools', {
+        asset: assetID,
+        limit: 100,
+        order_by: 'volume_24h_usd_desc',
+      })}
       bodyClassName="-mx-4"
     >
       {rows == null ? (
-        <p className="px-4 py-3 text-sm text-ink-muted">
-          Pool list unavailable for this build — the liquidity query
-          didn&apos;t answer, so {code}&apos;s DEX pools are unknown rather than
-          absent. It refreshes on the next build.
+        <p className="text-ink-muted px-4 py-3 text-sm">
+          Pool list unavailable for this build — the liquidity query didn&apos;t
+          answer, so {code}&apos;s DEX pools are unknown rather than absent. It
+          refreshes on the next build.
         </p>
       ) : merged.length === 0 ? (
-        <p className="px-4 py-3 text-sm text-ink-muted">
-          No DEX pools observed touching {code} in the trailing 14 days.
-          Either the asset only trades on CEX feeds or the dispatcher
-          hasn&apos;t decoded a swap involving it yet.
+        <p className="text-ink-muted px-4 py-3 text-sm">
+          No DEX pools observed touching {code} in the trailing 14 days. Either
+          the asset only trades on CEX feeds or the dispatcher hasn&apos;t
+          decoded a swap involving it yet.
         </p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-line text-sm">
+          <table className="divide-line min-w-full divide-y text-sm">
             <thead>
-              <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
+              <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
                 <th className="px-4 py-2 font-medium">Venue</th>
                 <th className="px-4 py-2 font-medium">Pair</th>
                 <th className="px-4 py-2 font-medium">Side</th>
@@ -100,7 +109,7 @@ export async function LiquidityTabPanel({
                 <th className="px-4 py-2 text-right font-medium">24h trades</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-line-subtle">
+            <tbody className="divide-line-subtle divide-y">
               {merged.map((p) => {
                 const slug = encodeURIComponent(`${p.base}~${p.quote}`);
                 const lp = p.last_price ? Number(p.last_price) : null;
@@ -113,7 +122,7 @@ export async function LiquidityTabPanel({
                     <td className="px-4 py-2">
                       <Link
                         href={`/sources/${p.source}`}
-                        className="font-mono text-xs uppercase tracking-wider text-ink-body hover:text-brand-600"
+                        className="text-ink-body hover:text-brand-600 font-mono text-xs tracking-wider uppercase"
                       >
                         {p.source}
                       </Link>
@@ -121,19 +130,19 @@ export async function LiquidityTabPanel({
                     <td className="px-4 py-2">
                       <Link
                         href={`/markets/${slug}`}
-                        className="font-mono text-xs hover:text-brand-600"
+                        className="hover:text-brand-600 font-mono text-xs"
                       >
-                        {shortAsset(p.base)} / {shortAsset(p.quote)}
+                        {shortAssetText(p.base)} / {shortAssetText(p.quote)}
                       </Link>
                     </td>
                     <td className="px-4 py-2">
-                      <span className="rounded-sm bg-surface-subtle px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-ink-body">
+                      <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase">
                         {p.side}
                       </span>
                     </td>
                     <td className="px-4 py-2 text-right">
                       {lpFixed ? (
-                        <span className="font-mono tabular-nums text-ink-body">
+                        <span className="text-ink-body font-mono tabular-nums">
                           {lpFixed}
                         </span>
                       ) : (
@@ -150,7 +159,7 @@ export async function LiquidityTabPanel({
                       )}
                     </td>
                     <td className="px-4 py-2 text-right">
-                      <span className="font-mono tabular-nums text-ink-muted">
+                      <span className="text-ink-muted font-mono tabular-nums">
                         {formatCompact(p.trade_count_24h)}
                       </span>
                     </td>
@@ -163,14 +172,4 @@ export async function LiquidityTabPanel({
       )}
     </Panel>
   );
-}
-
-function shortAsset(canonical: string): string {
-  if (canonical === 'native') return 'XLM';
-  if (canonical.startsWith('fiat:')) return canonical.replace('fiat:', '');
-  if (canonical.startsWith('crypto:')) return canonical;
-  if (/^\d+$/.test(canonical)) return 'XLM';
-  const dashIx = canonical.indexOf('-');
-  if (dashIx === -1) return canonical;
-  return canonical.slice(0, dashIx);
 }

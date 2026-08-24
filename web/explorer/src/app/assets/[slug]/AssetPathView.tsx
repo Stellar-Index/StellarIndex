@@ -11,6 +11,7 @@ import { useLastPathSegment } from '@/lib/useLastPathSegment';
 import type { Envelope } from '@/app/explorer-shared';
 
 import { LiveAssetPrice } from './LiveAssetPrice';
+import { formatCompact } from '@/lib/format';
 
 interface AssetShellDetail {
   asset_id?: string;
@@ -42,7 +43,10 @@ export function AssetPathView() {
   const detail = useQuery({
     queryKey: ['asset-shell', slug],
     enabled: Boolean(slug),
-    queryFn: () => apiGet<Envelope<AssetShellDetail>>(`/v1/assets/${encodeURIComponent(slug!)}`),
+    queryFn: () =>
+      apiGet<Envelope<AssetShellDetail>>(
+        `/v1/assets/${encodeURIComponent(slug!)}`,
+      ),
     retry: false,
   });
 
@@ -95,20 +99,23 @@ export function AssetPathView() {
           initialProvenance={null}
         />
         {d.unverified_warning?.note && (
-          <p className="rounded-md border border-warn-300 bg-warn-50 p-3 text-sm text-warn-800">
+          <p className="border-warn-300 bg-warn-50 text-warn-800 rounded-md border p-3 text-sm">
             {d.unverified_warning.note}
           </p>
         )}
         <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
           <div>
             <dt className="text-ink-muted">Canonical asset id</dt>
-            <dd className="break-all font-mono">{d.asset_id}</dd>
+            <dd className="font-mono break-all">{d.asset_id}</dd>
           </div>
           {d.issuer && (
             <div>
               <dt className="text-ink-muted">Issuer</dt>
-              <dd className="break-all font-mono">
-                <Link className="underline decoration-dotted" href={`/issuers/${d.issuer}`}>
+              <dd className="font-mono break-all">
+                <Link
+                  className="underline decoration-dotted"
+                  href={`/issuers/${d.issuer}`}
+                >
                   {d.issuer}
                 </Link>
               </dd>
@@ -123,7 +130,9 @@ export function AssetPathView() {
           {d.volume_24h_usd && (
             <div>
               <dt className="text-ink-muted">Volume (24h)</dt>
-              <dd className="font-mono">${Number(d.volume_24h_usd).toLocaleString('en-US')}</dd>
+              <dd className="font-mono">
+                ${formatCompact(Number(d.volume_24h_usd))}
+              </dd>
             </div>
           )}
         </dl>

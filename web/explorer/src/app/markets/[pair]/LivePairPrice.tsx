@@ -7,12 +7,16 @@
 // baked value still paints first; the browser then re-fetches
 // /v1/price on mount + every 60s, and while /v1/price/tip/stream is
 // fresh the headline ticks in real time with a direction flash.
-import { useEffect, useState } from 'react';
 
-import { API_BASE_URL } from '@/api/client';
 import { cn } from '@/lib/cn';
 import { formatSubunitPrice } from '@/lib/format';
-import { isFrameStale, useLiveClock, usePriceFlash, useTipStream } from '@/lib/live/hooks';
+import {
+  isFrameStale,
+  useLiveClock,
+  usePriceFlash,
+  usePricePoll,
+  useTipStream,
+} from '@/lib/live/hooks';
 
 const TIP_LIVE_STALE_MS = 30_000;
 
@@ -33,9 +37,14 @@ export function LivePairPrice({
   /** Short label appended for non-USD quotes (e.g. "XLM"). */
   quoteSuffix: string;
 }) {
-  const [price, setPrice] = useState<number | null>(initialPrice);
-  const [observedAt, setObservedAt] = useState<string | null>(initialObservedAt);
-  const [polled, setPolled] = useState(false);
+  // FEC audit A6-5: the 60s poll loop lives in the canonical usePricePoll.
+  const poll = usePricePoll({
+    asset: base,
+    quote,
+    initialPrice,
+    initialObservedAt,
+  });
+  const { price, observedAt, polled } = poll;
 
   const tip = useTipStream(base, quote);
   const clock = useLiveClock();
@@ -46,34 +55,6 @@ export function LivePairPrice({
   const tipNumber = tipPriceStr != null ? Number(tipPriceStr) : NaN;
   const tipActive = Number.isFinite(tipNumber) && tipNumber > 0;
   const flash = usePriceFlash(tipActive ? tipPriceStr : undefined);
-
-  useEffect(() => {
-    let cancelled = false;
-    const tick = async () => {
-      try {
-        const r = await fetch(
-          `${API_BASE_URL}/v1/price?asset=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}`,
-        );
-        if (cancelled || !r.ok) return;
-        const body = (await r.json()) as {
-          data?: { price?: string; observed_at?: string };
-        };
-        const n = Number(body.data?.price);
-        if (!Number.isFinite(n) || n <= 0) return;
-        setPrice(n);
-        setObservedAt(body.data?.observed_at ?? null);
-        setPolled(true);
-      } catch {
-        // Network blip — keep whatever we have.
-      }
-    };
-    void tick();
-    const id = setInterval(() => void tick(), 60_000);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [base, quote]);
 
   const shown = tipActive ? tipNumber : price;
 
@@ -89,16 +70,27 @@ export function LivePairPrice({
         {shown != null ? formatQuotePrice(shown, quoteIsUsd, quoteSuffix) : '—'}
       </span>
       {tipActive ? (
-        <span className="flex items-center gap-1.5 text-xs text-ink-muted">
-          <span className="relative flex h-2 w-2" aria-label="live" role="status">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-up opacity-60" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-up" />
+        <span className="text-ink-muted flex items-center gap-1.5 text-xs">
+          <span
+            className="relative flex h-2 w-2"
+            aria-label="live"
+            role="status"
+          >
+            <span className="bg-up absolute inline-flex h-full w-full animate-ping rounded-full opacity-60" />
+            <span className="bg-up relative inline-flex h-2 w-2 rounded-full" />
           </span>
           live · streaming
         </span>
+      ) : poll.withheld ? (
+        // Mirrors the asset-page sibling: a withheld verdict replaces the
+        // timestamp caption — "as of <ts>" under a — price implies the
+        // server is stale rather than deliberately refusing to quote.
+        <span className="text-ink-muted text-xs">
+          price withheld · market too thin to aggregate
+        </span>
       ) : (
         observedAt && (
-          <span className="text-xs text-ink-muted">
+          <span className="text-ink-muted text-xs">
             as of {formatTimestamp(observedAt)}
             {!polled && ' (at build)'}
           </span>
@@ -108,9 +100,19 @@ export function LivePairPrice({
   );
 }
 
-function formatQuotePrice(n: number, quoteIsUsd: boolean, quoteSuffix: string): string {
+function formatQuotePrice(
+  n: number,
+  quoteIsUsd: boolean,
+  quoteSuffix: string,
+): string {
   const num =
-    n >= 1 ? n.toFixed(n >= 100 ? 2 : 4) : n >= 0.001 ? n.toFixed(6) : n > 0 ? formatSubunitPrice(n) : '—';
+    n >= 1
+      ? n.toFixed(n >= 100 ? 2 : 4)
+      : n >= 0.001
+        ? n.toFixed(6)
+        : n > 0
+          ? formatSubunitPrice(n)
+          : '—';
   if (num === '—') return num;
   return quoteIsUsd ? `$${num}` : `${num} ${quoteSuffix}`;
 }

@@ -9,10 +9,27 @@
  * people search "from" and "to". Keep in sync with the route's intent; this is
  * the single source of truth for both the page and the sitemap.
  */
-export const HUB_TICKERS = [
-  'USD', 'EUR', 'GBP', 'JPY', 'CHF', 'CAD', 'AUD', 'CNY',
-  'INR', 'BRL', 'MXN', 'ZAR', 'NZD', 'SGD', 'HKD', 'SEK',
-  'NOK', 'KRW', 'TRY', 'PLN',
+const HUB_TICKERS = [
+  'USD',
+  'EUR',
+  'GBP',
+  'JPY',
+  'CHF',
+  'CAD',
+  'AUD',
+  'CNY',
+  'INR',
+  'BRL',
+  'MXN',
+  'ZAR',
+  'NZD',
+  'SGD',
+  'HKD',
+  'SEK',
+  'NOK',
+  'KRW',
+  'TRY',
+  'PLN',
 ];
 
 /**

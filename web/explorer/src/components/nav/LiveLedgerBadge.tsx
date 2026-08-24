@@ -2,12 +2,16 @@
 
 // LiveLedgerBadge — the sidebar's heartbeat (live-tick program RT-2).
 // Subscribes to /v1/ledger/stream via the shared multiplexer and shows
-// the latest closed ledger with a pulse; every tick nudges the number.
+// the latest closed ledger with a pulse; every tick rolls the changed
+// digits in odometer-style (RollingNumber — the carry span animates,
+// untouched digits hold still).
 // Renders nothing while the stream is unavailable or silent (WB-04:
 // a quiet stream must not claim "live"), so older API binaries or
 // blocked SSE degrade to the exact pre-badge sidebar.
 
 import Link from 'next/link';
+
+import { RollingNumber } from '@/components/primitives/RollingNumber';
 
 import {
   isFrameStale,
@@ -50,9 +54,7 @@ export function LiveLedgerBadge({
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-up opacity-60" />
           <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-up" />
         </span>
-        <span key={seq} className="font-mono tabular-nums text-ink-muted live-tick">
-          {seq.toLocaleString('en-US')}
-        </span>
+        <RollingNumber value={seq} className="font-mono text-ink-muted" />
       </Link>
     );
   }
@@ -70,9 +72,7 @@ export function LiveLedgerBadge({
           <span className="relative inline-flex h-2 w-2 rounded-full bg-up" />
         </span>
         <span className="text-ink-muted">Ledger</span>
-        <span key={seq} className="font-mono tabular-nums text-ink live-tick">
-          {seq.toLocaleString('en-US')}
-        </span>
+        <RollingNumber value={seq} className="font-mono text-ink" />
       </Link>
     </div>
   );

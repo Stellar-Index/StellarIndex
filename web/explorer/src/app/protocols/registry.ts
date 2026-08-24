@@ -62,7 +62,8 @@ export const PROTOCOLS: ProtocolRegistryEntry[] = [
     name: 'sorocredit',
     category: 'lending',
     label: 'SoroCredit',
-    description: 'On-chain consumer USDC credit / CDP with scheduled settlements.',
+    description:
+      'On-chain consumer USDC credit / CDP with scheduled settlements.',
   },
   {
     name: 'defindex',
@@ -130,7 +131,7 @@ export function protocolMeta(name: string): ProtocolRegistryEntry | undefined {
 // this maps it to the slate/brand palette used across the explorer. Unknown
 // categories fall through to a neutral chip (keeps rendering if the Go
 // registry adds a category before this map is updated).
-export const CATEGORY_TONE: Record<string, string> = {
+const CATEGORY_TONE: Record<string, string> = {
   dex: 'bg-line text-ink',
   amm: 'bg-up-subtle text-up-strong',
   lending: 'bg-brand-100 text-brand-800',
@@ -141,8 +142,5 @@ export const CATEGORY_TONE: Record<string, string> = {
 };
 
 export function categoryTone(category: string): string {
-  return (
-    CATEGORY_TONE[category] ??
-    'bg-surface-subtle text-ink-body'
-  );
+  return CATEGORY_TONE[category] ?? 'bg-surface-subtle text-ink-body';
 }

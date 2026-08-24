@@ -1,7 +1,8 @@
 'use client';
 
-import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
+
+import { TabNav } from '@/components/ui';
 
 export type AssetTab =
   | 'overview'
@@ -18,7 +19,13 @@ export type AssetTab =
  * the parent server component renders all tab bodies and toggles
  * visibility based on the active tab.
  */
-export function AssetTabs({ slug, hasIssuer }: { slug: string; hasIssuer: boolean }) {
+export function AssetTabs({
+  slug,
+  hasIssuer,
+}: {
+  slug: string;
+  hasIssuer: boolean;
+}) {
   const params = useSearchParams();
   // Chart is the default (the bare /assets/{slug} URL) — the page leads
   // with price action, with the dense stats always present in the rail.
@@ -36,25 +43,18 @@ export function AssetTabs({ slug, hasIssuer }: { slug: string; hasIssuer: boolea
     { key: 'overview', label: 'About' },
   ];
 
+  // FEC audit A2-06: this was the app's only underline tab strip and it
+  // duplicated ui/TabNav's exact shape with drifted tokens. TabNav's tokens
+  // win; the URL semantics (default tab = bare /assets/[slug], ?tab= for the
+  // rest) stay, expressed through TabNav's href/activeHref API.
+  const hrefFor = (key: AssetTab) =>
+    key === 'chart' ? `/assets/${slug}` : `/assets/${slug}?tab=${key}`;
+
   return (
-    <nav className="flex gap-1 overflow-x-auto border-b border-line text-sm">
-      {tabs.map((t) => (
-        <Link
-          key={t.key}
-          href={
-            t.key === 'chart' ? `/assets/${slug}` : `/assets/${slug}?tab=${t.key}`
-          }
-          aria-current={t.key === active ? 'page' : undefined}
-          className={`border-b-2 px-3 py-2 ${
-            t.key === active
-              ? 'border-brand-500 font-medium text-brand-600'
-              : 'border-transparent text-ink-body hover:text-brand-600'
-          }`}
-        >
-          {t.label}
-        </Link>
-      ))}
-    </nav>
+    <TabNav
+      items={tabs.map((t) => ({ label: t.label, href: hrefFor(t.key) }))}
+      activeHref={hrefFor(active)}
+    />
   );
 }
 

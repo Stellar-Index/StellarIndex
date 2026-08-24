@@ -167,11 +167,11 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     changeFrequency: 'weekly',
     priority: 0.5,
   }));
-  // Per-currency detail pages now live under /assets/{friendly-slug}
-  // after the assets-unification migration. One entry per ticker —
-  // canonical URL is the friendly form (us-dollar, japanese-yen, …).
+  // Per-currency detail pages live under /external/assets/{friendly-slug}
+  // (2026-08-24 fiat de-duplication: /assets/{fiat} no longer exports and
+  // 301s there). One entry per ticker — friendly form (us-dollar, …).
   const currencyPages: MetadataRoute.Sitemap = currencyTickers.map((ticker) => ({
-    url: siteURL(`/assets/${fiatSlugFor(ticker)}`),
+    url: siteURL(`/external/assets/${fiatSlugFor(ticker)}`),
     lastModified: now,
     changeFrequency: 'daily',
     priority: 0.7,

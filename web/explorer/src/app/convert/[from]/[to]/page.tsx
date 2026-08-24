@@ -9,9 +9,7 @@ import { buildConvertParams } from '@/lib/convert-params';
 import { ConvertPair } from './ConvertPair';
 import { ConvertChart } from './ConvertChart';
 import { API_BASE_URL } from '@/api/client';
-
-const isCIStub =
-  API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
+import { isCIStub } from '@/lib/buildFetch';
 
 const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
@@ -19,8 +17,22 @@ const BUILD_FETCH_TIMEOUT_MS = 8_000;
 // produces a meaningful matrix. Same set as /currencies/[ticker]'s
 // fallback so the two routes stay aligned.
 const FALLBACK_TICKERS = [
-  'USD', 'EUR', 'GBP', 'JPY', 'CHF', 'CAD', 'AUD', 'CNY',
-  'INR', 'BRL', 'MXN', 'ZAR', 'NZD', 'SGD', 'HKD', 'SEK',
+  'USD',
+  'EUR',
+  'GBP',
+  'JPY',
+  'CHF',
+  'CAD',
+  'AUD',
+  'CNY',
+  'INR',
+  'BRL',
+  'MXN',
+  'ZAR',
+  'NZD',
+  'SGD',
+  'HKD',
+  'SEK',
 ];
 
 // Common amounts to render as static "X = Y" snippets for SEO body
@@ -103,7 +115,10 @@ export async function generateStaticParams() {
 // rather than every ticker the pre-rc.48 endpoint returned. The
 // SSR shell only ever reads cross_rates[to], so the surface area
 // is unchanged.
-async function fetchDetail(from: string, to: string): Promise<CurrencyDetail | null> {
+async function fetchDetail(
+  from: string,
+  to: string,
+): Promise<CurrencyDetail | null> {
   if (isCIStub) return null;
   try {
     const [identityRes, priceRes] = await Promise.all([
@@ -151,15 +166,18 @@ async function fetchDetail(from: string, to: string): Promise<CurrencyDetail | n
   }
 }
 
-export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
+export async function generateMetadata({
+  params,
+}: {
+  params: Params;
+}): Promise<Metadata> {
   const { from, to } = await params;
   const f = from.toUpperCase();
   const t = to.toUpperCase();
   const detail = await fetchDetail(f, t);
   const rate = detail?.cross_rates?.[t];
-  const ratePart = rate != null
-    ? ` 1 ${f} = ${formatRateForMeta(rate)} ${t}.`
-    : '';
+  const ratePart =
+    rate != null ? ` 1 ${f} = ${formatRateForMeta(rate)} ${t}.` : '';
   return {
     title: `${f} to ${t} — live exchange rate + currency converter`,
     description: `Convert ${f} to ${t} at the live mid-market rate.${ratePart} Real-time forex rate, interactive converter, and ${f}/${t} cross-rates at common amounts (1, 10, 100, 1000, 10000).`,
@@ -168,9 +186,10 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
     },
     openGraph: {
       title: `${f} to ${t} converter`,
-      description: rate != null
-        ? `1 ${f} = ${formatRateForMeta(rate)} ${t} — live forex rate.`
-        : `Live ${f} to ${t} forex rate + converter.`,
+      description:
+        rate != null
+          ? `1 ${f} = ${formatRateForMeta(rate)} ${t} — live forex rate.`
+          : `Live ${f} to ${t} forex rate + converter.`,
       url: `https://stellarindex.io/convert/${f}/${t}`,
       type: 'website',
       images: SITE_OG_IMAGES,
@@ -194,10 +213,30 @@ export default async function ConvertPage({ params }: { params: Params }) {
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
     itemListElement: [
-      { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://stellarindex.io' },
-      { '@type': 'ListItem', position: 2, name: 'Assets', item: 'https://stellarindex.io/assets' },
-      { '@type': 'ListItem', position: 3, name: f, item: `https://stellarindex.io${assetHrefFor(f)}` },
-      { '@type': 'ListItem', position: 4, name: `${f} to ${t}`, item: `https://stellarindex.io/convert/${f}/${t}` },
+      {
+        '@type': 'ListItem',
+        position: 1,
+        name: 'Home',
+        item: 'https://stellarindex.io',
+      },
+      {
+        '@type': 'ListItem',
+        position: 2,
+        name: 'Assets',
+        item: 'https://stellarindex.io/assets',
+      },
+      {
+        '@type': 'ListItem',
+        position: 3,
+        name: f,
+        item: `https://stellarindex.io${assetHrefFor(f)}`,
+      },
+      {
+        '@type': 'ListItem',
+        position: 4,
+        name: `${f} to ${t}`,
+        item: `https://stellarindex.io/convert/${f}/${t}`,
+      },
     ],
   };
 
@@ -216,35 +255,40 @@ export default async function ConvertPage({ params }: { params: Params }) {
         ]}
       />
 
-      <header className="space-y-3 border-b border-line pb-5">
+      <header className="border-line space-y-3 border-b pb-5">
         <h1 className="text-3xl font-semibold tracking-tight">
           {f} to {t}
           {detail?.name && (
-            <span className="ml-3 text-base font-normal text-ink-muted">
+            <span className="text-ink-muted ml-3 text-base font-normal">
               {detail.name} → {t}
             </span>
           )}
         </h1>
         {rate != null ? (
-          <p className="text-2xl font-mono tabular-nums text-ink">
+          <p className="text-ink font-mono text-2xl tabular-nums">
             1 {f} = {formatRate(rate)} {t}
           </p>
         ) : (
-          <p className="text-sm text-ink-muted">Rate currently unavailable.</p>
+          <p className="text-ink-muted text-sm">Rate currently unavailable.</p>
         )}
         {inverse != null && (
-          <p className="text-sm font-mono tabular-nums text-ink-body">
+          <p className="text-ink-body font-mono text-sm tabular-nums">
             1 {t} = {formatRate(inverse)} {f}
           </p>
         )}
       </header>
 
-      <ConvertPair from={f} to={t} initialRate={rate} initialInverse={inverse} />
+      <ConvertPair
+        from={f}
+        to={t}
+        initialRate={rate}
+        initialInverse={inverse}
+      />
 
       <ConvertChart from={f} to={t} />
 
       {rate != null && (
-        <section className="rounded-card border border-line bg-surface p-5">
+        <section className="rounded-card border-line bg-surface border p-5">
           <h2 className="mb-4 text-lg font-semibold tracking-tight">
             {f} to {t} at common amounts
           </h2>
@@ -252,20 +296,21 @@ export default async function ConvertPage({ params }: { params: Params }) {
             {SNIPPET_AMOUNTS.map((amt) => (
               <div
                 key={amt}
-                className="flex items-baseline justify-between rounded-md bg-surface-muted px-3 py-2"
+                className="bg-surface-muted flex items-baseline justify-between rounded-md px-3 py-2"
               >
-                <span className="font-mono tabular-nums text-ink-body">
+                <span className="text-ink-body font-mono tabular-nums">
                   {amt.toLocaleString('en-US')} {f}
                 </span>
-                <span className="font-mono tabular-nums font-medium text-ink">
+                <span className="text-ink font-mono font-medium tabular-nums">
                   {formatRate(amt * rate)} {t}
                 </span>
               </div>
             ))}
           </div>
-          <p className="mt-4 text-xs text-ink-muted">
-            All values calculated at the current mid-market rate of 1 {f} = {formatRate(rate)} {t}.
-            Rates update on each forex-source refresh tick.
+          <p className="text-ink-muted mt-4 text-xs">
+            All values calculated at the current mid-market rate of 1 {f} ={' '}
+            {formatRate(rate)} {t}. Rates update on each forex-source refresh
+            tick.
           </p>
         </section>
       )}
@@ -273,20 +318,20 @@ export default async function ConvertPage({ params }: { params: Params }) {
       <section className="flex flex-wrap gap-2 text-sm">
         <Link
           href={`/convert/${t}/${f}`}
-          className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface px-3 py-2 text-ink-body hover:border-brand-500 hover:text-brand-600"
+          className="border-line bg-surface text-ink-body hover:border-brand-500 hover:text-brand-600 inline-flex items-center gap-1.5 rounded-md border px-3 py-2"
         >
           <ArrowLeftRight className="h-3.5 w-3.5" />
           Convert {t} to {f} instead
         </Link>
         <Link
           href={assetHrefFor(f)}
-          className="inline-flex items-center rounded-md border border-line bg-surface px-3 py-2 text-ink-body hover:border-brand-500 hover:text-brand-600"
+          className="border-line bg-surface text-ink-body hover:border-brand-500 hover:text-brand-600 inline-flex items-center rounded-md border px-3 py-2"
         >
           {f} cross-rates
         </Link>
         <Link
           href={assetHrefFor(t)}
-          className="inline-flex items-center rounded-md border border-line bg-surface px-3 py-2 text-ink-body hover:border-brand-500 hover:text-brand-600"
+          className="border-line bg-surface text-ink-body hover:border-brand-500 hover:text-brand-600 inline-flex items-center rounded-md border px-3 py-2"
         >
           {t} cross-rates
         </Link>
@@ -297,7 +342,8 @@ export default async function ConvertPage({ params }: { params: Params }) {
 
 function formatRate(n: number): string {
   if (!Number.isFinite(n)) return '—';
-  if (Math.abs(n) >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  if (Math.abs(n) >= 1000)
+    return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
   if (Math.abs(n) >= 1) return n.toFixed(4);
   if (Math.abs(n) >= 0.01) return n.toFixed(6);
   return n.toFixed(8);
@@ -309,4 +355,3 @@ function formatRateForMeta(n: number): string {
   if (Math.abs(n) >= 1) return n.toFixed(4);
   return n.toFixed(6);
 }
-

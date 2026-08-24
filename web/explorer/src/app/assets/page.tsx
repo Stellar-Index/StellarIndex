@@ -4,10 +4,7 @@ import { Suspense } from 'react';
 
 import { Container, PageHeader, Skeleton } from '@/components/ui';
 import { AssetsTable } from './AssetsTable';
-import {
-  VerifiedCurrenciesStrip,
-  fetchVerifiedCurrencies,
-} from './VerifiedCurrenciesStrip';
+import { fetchVerifiedCurrencies } from './verified-currencies';
 
 export const metadata: Metadata = {
   alternates: { canonical: '/assets' },
@@ -47,7 +44,6 @@ export default async function AssetsPage() {
           External assets →
         </Link>
       </p>
-      <VerifiedCurrenciesStrip verified={verified} />
       <Suspense fallback={<Skeleton className="h-96 w-full" />}>
         <AssetsTable verifiedSlugs={verifiedSlugs} />
       </Suspense>

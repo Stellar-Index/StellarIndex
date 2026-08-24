@@ -5,15 +5,18 @@ import { Suspense } from 'react';
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
 import type { components } from '@/api/types';
-import { buildFetchData, buildFetchEnvelope, failBuild } from '@/lib/buildFetch';
-import { formatCompact, formatPrice, formatSubunitPrice } from '@/lib/format';
-import { serializeJsonLd, datasetJsonLd, ogImageFor } from '@/lib/seo';
 import {
-  Badge,
-  Breadcrumbs,
-  Callout,
-  Container,
-} from '@/components/ui';
+  buildFetchData,
+  buildFetchEnvelope,
+  failBuild,
+} from '@/lib/buildFetch';
+import {
+  formatCompact,
+  formatPriceSmall,
+  formatSubunitPrice,
+} from '@/lib/format';
+import { serializeJsonLd, datasetJsonLd, ogImageFor } from '@/lib/seo';
+import { Badge, Breadcrumbs, Callout, Container } from '@/components/ui';
 import { AssetClientFallback } from './AssetClientFallback';
 import { AssetPathView } from './AssetPathView';
 import { AssetSidebar } from './AssetSidebar';
@@ -29,7 +32,11 @@ import { HoldersTabPanel } from './HoldersTabPanel';
 import { MarketsTabPanel } from './MarketsTabPanel';
 import { HistoryTabPanel } from './HistoryTabPanel';
 import { SupplyTabPanel } from './SupplyTabPanel';
-import { lookupGlobalAsset, getCatalogue, type GlobalAssetView } from '../catalogue';
+import {
+  lookupGlobalAsset,
+  getCatalogue,
+  type GlobalAssetView,
+} from '../catalogue';
 
 /**
  * /assets/[slug] — single asset detail page.
@@ -60,11 +67,15 @@ export async function generateStaticParams() {
   // generateStaticParams runs first, so this primes the cache for
   // the per-page renders that follow. One API call does double duty.
   const cache = await getBuildCoinsCache();
-  // Verified-currency catalogue slugs (us-dollar, chinese-yuan,
-  // usdc, …) aren't in the assets listing (which only knows about
-  // Stellar-network assets), but they ARE valid /assets/[slug]
-  // routes that render the cross-chain identity view. Pull them
-  // from /v1/assets/verified so they get pre-rendered too.
+  // Verified-currency catalogue slugs (usdc, btc, …) aren't in the
+  // assets listing (which only knows about Stellar-network assets),
+  // but they ARE valid /assets/[slug] routes that render the
+  // cross-chain identity view. Pull them from /v1/assets/verified so
+  // they get pre-rendered too — EXCEPT class==='fiat': a fiat
+  // currency's one detail page is /external/assets/{slug} (operator
+  // ruling 2026-08-24, closing AM-16's split identity for good — the
+  // old /assets/{fiat} duplicates now 301 there via _redirects, so
+  // this route must stop exporting them).
   const verifiedSlugs = await fetchVerifiedSlugsForStaticParams();
   if (!cache || cache.bySlug.size === 0 || verifiedSlugs.length === 0) {
     // Real build: an empty listing or catalogue means the API is
@@ -290,7 +301,11 @@ function getBuildCoinsCache(): Promise<BuildCoinsCache | null> {
 // generateStaticParams).
 async function fetchVerifiedSlugsForStaticParams(): Promise<string[]> {
   const map = await getCatalogue();
-  return Array.from(map.keys());
+  // Fiat catalogue entries are excluded: their detail page lives at
+  // /external/assets/{slug} only (see generateStaticParams).
+  return Array.from(map.entries())
+    .filter(([, view]) => view.class !== 'fiat')
+    .map(([slug]) => slug);
 }
 
 // fetchCoinDirect fetches /v1/assets/{idOrSlug} and returns the rich
@@ -499,7 +514,7 @@ async function fetchGlobalAsset(slug: string): Promise<GlobalAssetView | null> {
   return lookupGlobalAsset(slug);
 }
 
-// Exported for unit tests only (fetchPriceDirect.test.ts) — not part of
+// Exported for unit tests only (fetchPrice.test.ts) — not part of
 // the page's public surface (this is a server component build-time module).
 export async function fetchPriceDirect(
   asset: string,
@@ -577,10 +592,7 @@ export async function fetchPrice(assetId: string): Promise<PriceResp | null> {
   return {
     price: triangulated,
     quote: 'fiat:USD',
-    age_seconds: Math.max(
-      vsXlm.age_seconds ?? 0,
-      xlmUsd.age_seconds ?? 0,
-    ),
+    age_seconds: Math.max(vsXlm.age_seconds ?? 0, xlmUsd.age_seconds ?? 0),
     // AGT-06: a triangulated price built from a stale leg is itself
     // stale — propagate the real per-leg `flags.stale` rather than only
     // ever reporting `triangulated: true`.
@@ -604,7 +616,8 @@ export async function generateMetadata({
   if (slug.toLowerCase() === 'shell') {
     return {
       title: 'Asset',
-      description: 'Stellar asset detail, rendered live from the Stellar Index API.',
+      description:
+        'Stellar asset detail, rendered live from the Stellar Index API.',
     };
   }
   const metaResults = await Promise.all([
@@ -678,7 +691,9 @@ export async function generateMetadata({
     // Numeric-only asset codes ("9", "818") are legal on Stellar but
     // read as junk results in a search index — serve the page, keep
     // it out of the index (the sitemap also skips them).
-    ...(/^\d+$/.test(canonicalSlug) ? { robots: { index: false, follow: true } } : {}),
+    ...(/^\d+$/.test(canonicalSlug)
+      ? { robots: { index: false, follow: true } }
+      : {}),
     openGraph: {
       title,
       description,
@@ -759,7 +774,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
           <Breadcrumbs
             items={[{ label: 'Assets', href: '/assets' }, { label: slug }]}
           />
-          <h1 className="text-h1 font-semibold text-ink">{slug}</h1>
+          <h1 className="text-h1 text-ink font-semibold">{slug}</h1>
         </header>
         <AssetClientFallback slug={slug} />
       </Container>
@@ -831,7 +846,12 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
     description: `Aggregated price (VWAP), market cap, supply, and trading data for ${coin.code}${coin.issuer ? ` (issuer ${coin.issuer})` : ''} on Stellar, computed by Stellar Index.`,
     url: `https://stellarindex.io/assets/${coin.slug}`,
     keywords: [coin.code, `${coin.code} price`, 'Stellar', 'asset', 'VWAP'],
-    variableMeasured: ['price (USD)', 'market cap', 'circulating supply', '24h volume'],
+    variableMeasured: [
+      'price (USD)',
+      'market cap',
+      'circulating supply',
+      '24h volume',
+    ],
     contentUrl: `https://api.stellarindex.io/v1/assets/${encodeURIComponent(coin.slug)}`,
   });
   return (
@@ -850,19 +870,12 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
       />
       <header className="space-y-3">
         <Breadcrumbs
-          items={[
-            { label: 'Assets', href: '/assets' },
-            { label: coin.code },
-          ]}
+          items={[{ label: 'Assets', href: '/assets' }, { label: coin.code }]}
         />
         <div className="flex flex-wrap items-baseline gap-4">
-          <h1 className="text-h1 font-semibold text-ink">
-            {coin.code}
-          </h1>
+          <h1 className="text-h1 text-ink font-semibold">{coin.code}</h1>
           {globalView?.name && globalView.name !== coin.code && (
-            <span className="text-lg text-ink-muted">
-              {globalView.name}
-            </span>
+            <span className="text-ink-muted text-lg">{globalView.name}</span>
           )}
           {globalView && (
             <Badge
@@ -889,20 +902,18 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
               Verified
             </Badge>
           )}
-          {detail?.type && (
-            <Badge title="Asset type">{detail.type}</Badge>
-          )}
+          {detail?.type && <Badge title="Asset type">{detail.type}</Badge>}
         </div>
         {globalView?.verified_issuer && (
-          <p className="text-sm text-ink-body">
+          <p className="text-ink-body text-sm">
             Issued by{' '}
-            <span className="font-medium text-ink-body">
+            <span className="text-ink-body font-medium">
               {globalView.verified_issuer}
             </span>
           </p>
         )}
         {!globalView?.verified_issuer && detail?.home_domain && (
-          <p className="text-sm text-ink-body">
+          <p className="text-ink-body text-sm">
             Issuer home domain:{' '}
             <code className="font-mono">{detail.home_domain}</code>
           </p>
@@ -912,34 +923,33 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
             <Callout tone="bad" title="Known scam asset">
               {coin.issuer_scam_reason}. The issuer is on the stellar.expert
               curated directory of malicious accounts — do not trust this asset,
-              do not establish trustlines, and do not execute the prices below as
-              if they reflected an honest market.
+              do not establish trustlines, and do not execute the prices below
+              as if they reflected an honest market.
             </Callout>
           </div>
         )}
         {detail?.unverified_warning && (
           <div
             role="alert"
-            className="rounded-md border border-warn-300 bg-warn-50 p-3 text-sm text-warn-700"
+            className="border-warn-300 bg-warn-50 text-warn-700 rounded-md border p-3 text-sm"
           >
             <div className="mb-1 flex items-center gap-2">
-              <strong className="font-semibold">
-                Unverified {coin.code}
-              </strong>
+              <strong className="font-semibold">Unverified {coin.code}</strong>
               <Badge tone="warn">Ticker collision</Badge>
             </div>
             <p>
-              {detail.unverified_warning.note} The verified asset is
-              available at{' '}
+              {detail.unverified_warning.note} The verified asset is available
+              at{' '}
               <Link
                 href={`/assets/${detail.unverified_warning.verified_slug}`}
-                className="font-medium underline hover:text-warn-700"
+                className="hover:text-warn-700 font-medium underline"
               >
                 {detail.unverified_warning.verified_name}
               </Link>
               {detail.unverified_warning.verified_issuer && (
                 <span>
-                  {' '}— issued by{' '}
+                  {' '}
+                  — issued by{' '}
                   <span className="font-medium">
                     {detail.unverified_warning.verified_issuer}
                   </span>
@@ -1001,9 +1011,19 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
               }
               chart={<ChartPanel assetID={coin.asset_id} />}
               markets={<MarketsTabPanel assetID={coin.asset_id} />}
-              history={<HistoryTabPanel assetID={coin.asset_id} decimals={detail?.decimals ?? 7} />}
+              history={
+                <HistoryTabPanel
+                  assetID={coin.asset_id}
+                  decimals={detail?.decimals ?? 7}
+                />
+              }
               supply={<SupplyTabPanel assetID={coin.asset_id} />}
-              holders={<HoldersTabPanel assetID={coin.asset_id} decimals={detail?.decimals ?? 7} />}
+              holders={
+                <HoldersTabPanel
+                  assetID={coin.asset_id}
+                  decimals={detail?.decimals ?? 7}
+                />
+              }
               liquidity={
                 <LiquidityTabPanel assetID={coin.asset_id} code={coin.code} />
               }
@@ -1041,14 +1061,17 @@ function OverviewBody({
               ? 'last closed 1-min VWAP · USD · triangulated via XLM'
               : 'last closed 1-min VWAP · USD'
           }
-          source={asExample('/v1/price', { asset: coin.asset_id, quote: 'fiat:USD' })}
+          source={asExample('/v1/price', {
+            asset: coin.asset_id,
+            quote: 'fiat:USD',
+          })}
           panelId="price-card"
           className="lg:col-span-2"
           bodyClassName="space-y-4"
         >
           <div className="flex flex-wrap items-baseline gap-4">
             <span className="font-mono text-3xl tabular-nums">
-              {priceNum != null ? `$${formatPrice(priceNum)}` : '—'}
+              {priceNum != null ? `$${formatPriceSmall(priceNum)}` : '—'}
             </span>
             {(() => {
               const peg = peggedTo(coin.code);
@@ -1070,12 +1093,12 @@ function OverviewBody({
               );
             })()}
             {price?.flags?.stale && (
-              <span className="rounded-sm bg-warn-50 px-2 py-0.5 text-[11px] uppercase tracking-wider text-warn-700">
+              <span className="bg-warn-50 text-warn-700 rounded-sm px-2 py-0.5 text-[11px] tracking-wider uppercase">
                 Stale
               </span>
             )}
             {price?.flags?.triangulated && (
-              <span className="rounded-sm bg-brand-100 px-2 py-0.5 text-[11px] uppercase tracking-wider text-brand-800">
+              <span className="bg-brand-100 text-brand-800 rounded-sm px-2 py-0.5 text-[11px] tracking-wider uppercase">
                 Triangulated via XLM
               </span>
             )}
@@ -1084,7 +1107,7 @@ function OverviewBody({
             points24h={coin.price_history_24h ?? []}
             points7d={coin.price_history_7d ?? []}
           />
-          <dl className="grid grid-cols-2 gap-3 border-t border-line pt-3 text-sm sm:grid-cols-3 lg:grid-cols-5">
+          <dl className="border-line grid grid-cols-2 gap-3 border-t pt-3 text-sm sm:grid-cols-3 lg:grid-cols-5">
             <Stat
               label="Volume 24h"
               value={fmtUsd(detail?.volume_24h_usd ?? coin.volume_24h_usd)}
@@ -1109,11 +1132,7 @@ function OverviewBody({
               )}
             />
             <Stat
-              label={
-                coin.ath?.at
-                  ? `ATH · ${coin.ath.at.slice(0, 10)}`
-                  : 'ATH'
-              }
+              label={coin.ath?.at ? `ATH · ${coin.ath.at.slice(0, 10)}` : 'ATH'}
               value={fmtUsd(coin.ath?.usd ?? null)}
               accent={athDrawdown(coin.price_usd, coin.ath?.usd)?.label}
               accentTone={athDrawdown(coin.price_usd, coin.ath?.usd)?.tone}
@@ -1123,10 +1142,7 @@ function OverviewBody({
 
         <Panel title="Observations" panelId="obs-card">
           <dl className="grid grid-cols-2 gap-2 text-sm">
-            <Stat
-              label="Total"
-              value={formatCompact(coin.observation_count)}
-            />
+            <Stat label="Total" value={formatCompact(coin.observation_count)} />
             <Stat
               label="Trades 24h"
               value={
@@ -1178,12 +1194,14 @@ function OverviewBody({
               }
               target="_blank"
               rel="noreferrer noopener"
-              className="inline-flex items-center gap-1.5 hover:text-brand-600 hover:underline"
+              className="hover:text-brand-600 inline-flex items-center gap-1.5 hover:underline"
             >
               stellar.expert
-              <span className="text-[10px] uppercase tracking-wider text-ink-faint">↗</span>
+              <span className="text-ink-faint text-[10px] tracking-wider uppercase">
+                ↗
+              </span>
             </a>
-            <span className="ml-2 text-xs text-ink-faint">
+            <span className="text-ink-faint ml-2 text-xs">
               holders, supply, on-chain history
             </span>
           </li>
@@ -1191,11 +1209,11 @@ function OverviewBody({
             <li>
               <Link
                 href={`/issuers/${coin.issuer}`}
-                className="inline-flex items-center gap-1.5 hover:text-brand-600 hover:underline"
+                className="hover:text-brand-600 inline-flex items-center gap-1.5 hover:underline"
               >
                 Issuer detail
               </Link>
-              <span className="ml-2 font-mono text-xs text-ink-faint">
+              <span className="text-ink-faint ml-2 font-mono text-xs">
                 {coin.issuer.slice(0, 8)}…{coin.issuer.slice(-4)}
               </span>
             </li>
@@ -1211,16 +1229,20 @@ function OverviewBody({
           bodyClassName="-mx-4"
         >
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-line text-sm">
+            <table className="divide-line min-w-full divide-y text-sm">
               <thead>
-                <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
+                <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
                   <th className="px-4 py-2 font-medium">Side</th>
                   <th className="px-4 py-2 font-medium">vs</th>
-                  <th className="px-4 py-2 text-right font-medium">24h volume</th>
-                  <th className="px-4 py-2 text-right font-medium">24h trades</th>
+                  <th className="px-4 py-2 text-right font-medium">
+                    24h volume
+                  </th>
+                  <th className="px-4 py-2 text-right font-medium">
+                    24h trades
+                  </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-line-subtle">
+              <tbody className="divide-line-subtle divide-y">
                 {coin.top_markets.map((m) => {
                   const pairURL = topMarketHref(coin.asset_id, m);
                   return (
@@ -1229,7 +1251,7 @@ function OverviewBody({
                       className="hover:bg-surface-muted"
                     >
                       <td className="px-4 py-3">
-                        <span className="rounded-sm bg-surface-subtle px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-ink-body">
+                        <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase">
                           {m.side}
                         </span>
                       </td>
@@ -1254,7 +1276,7 @@ function OverviewBody({
                           <span className="text-ink-faint">—</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-right font-mono tabular-nums text-ink-muted">
+                      <td className="text-ink-muted px-4 py-3 text-right font-mono tabular-nums">
                         {fmtCompact(m.trade_count_24h)}
                       </td>
                     </tr>
@@ -1270,7 +1292,9 @@ function OverviewBody({
         <Panel
           title="Supply"
           hint="From /v1/assets — circulating / total / max where the supply pipeline has computed them."
-          source={asExample('/v1/assets/{asset_id}', { asset_id: coin.asset_id })}
+          source={asExample('/v1/assets/{asset_id}', {
+            asset_id: coin.asset_id,
+          })}
         >
           <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
             {detail?.circulating_supply != null && (
@@ -1301,13 +1325,10 @@ function OverviewBody({
         </Panel>
       )}
       {coin.issuer && (
-        <Panel
-          title="Issuer"
-          source={asExample(`/v1/issuers/${coin.issuer}`)}
-        >
+        <Panel title="Issuer" source={asExample(`/v1/issuers/${coin.issuer}`)}>
           <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
             <div>
-              <dt className="text-[11px] uppercase tracking-wider text-ink-muted">
+              <dt className="text-ink-muted text-[11px] tracking-wider uppercase">
                 G-strkey
               </dt>
               <dd className="font-mono text-xs">
@@ -1426,7 +1447,7 @@ function peggedTo(code: string): string | null {
 
 function PeggedBadge({ currency }: { currency: string }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-sm bg-brand-50 px-2 py-0.5 font-mono text-xs uppercase tracking-wider text-brand-700">
+    <span className="bg-brand-50 text-brand-700 inline-flex items-center gap-1 rounded-sm px-2 py-0.5 font-mono text-xs tracking-wider uppercase">
       <span className="text-[10px] opacity-70">PEG</span>
       {currency}
     </span>
@@ -1456,7 +1477,7 @@ function ChangePctLabel({
     >
       {sign}
       {n.toFixed(2)}%
-      <span className="ml-1 text-[10px] uppercase tracking-wider opacity-70">
+      <span className="ml-1 text-[10px] tracking-wider uppercase opacity-70">
         {window}
       </span>
     </span>
@@ -1476,10 +1497,7 @@ function fmtCompact(n: number): string {
 // the counterparty is the OTHER asset_id. Counterparty strings
 // like `fiat:USD` aren't routable on /markets/[pair] (no asset_id),
 // so we return null in that case and fall back to plain text.
-function topMarketHref(
-  ourAssetID: string,
-  m: TopMarket,
-): string | null {
+function topMarketHref(ourAssetID: string, m: TopMarket): string | null {
   const cp = m.counterparty;
   if (!cp || cp.startsWith('fiat:') || cp.startsWith('crypto:')) return null;
   const base = m.side === 'base' ? ourAssetID : cp;
@@ -1528,13 +1546,13 @@ function Stat({
           : 'text-ink-muted';
   return (
     <div>
-      <dt className="text-[11px] uppercase tracking-wider text-ink-muted">
+      <dt className="text-ink-muted text-[11px] tracking-wider uppercase">
         {label}
       </dt>
       <dd className={mono ? 'font-mono text-xs' : 'tabular-nums'}>
         {value}
         {accent && (
-          <span className={`ml-1.5 text-[11px] font-mono ${accentColor}`}>
+          <span className={`ml-1.5 font-mono text-[11px] ${accentColor}`}>
             {accent}
           </span>
         )}
@@ -1562,7 +1580,8 @@ function VerifiedCurrencyView({
   slug: string;
   view: GlobalAssetView;
 }) {
-  const isFiat = (view as GlobalAssetView & { class?: string }).class === 'fiat';
+  const isFiat =
+    (view as GlobalAssetView & { class?: string }).class === 'fiat';
   // For fiat tickers the canonical chart asset_id is `fiat:<ISO>`.
   // For crypto verified slugs we don't have a slug-level chart.
   const chartAssetID = isFiat ? `fiat:${view.ticker}` : null;
@@ -1571,14 +1590,11 @@ function VerifiedCurrencyView({
     <Container className="space-y-8 py-8 sm:py-10">
       <header className="space-y-3">
         <Breadcrumbs
-          items={[
-            { label: 'Assets', href: '/assets' },
-            { label: view.ticker },
-          ]}
+          items={[{ label: 'Assets', href: '/assets' }, { label: view.ticker }]}
         />
-        <h1 className="flex flex-wrap items-baseline gap-3 text-h1 font-semibold text-ink">
+        <h1 className="text-h1 text-ink flex flex-wrap items-baseline gap-3 font-semibold">
           <span>{view.name}</span>
-          <span className="font-mono text-base text-ink-muted">
+          <span className="text-ink-muted font-mono text-base">
             {view.ticker}
           </span>
           <Badge>
@@ -1586,13 +1602,16 @@ function VerifiedCurrencyView({
           </Badge>
         </h1>
         {priceNum != null && Number.isFinite(priceNum) && (
-          <div className="font-mono text-2xl tnum text-ink">
-            ${priceNum < 0.001 ? formatSubunitPrice(priceNum) : priceNum.toFixed(priceNum >= 100 ? 2 : 6)}
-            <span className="ml-2 text-xs text-ink-muted">USD</span>
+          <div className="tnum text-ink font-mono text-2xl">
+            $
+            {priceNum < 0.001
+              ? formatSubunitPrice(priceNum)
+              : priceNum.toFixed(priceNum >= 100 ? 2 : 6)}
+            <span className="text-ink-muted ml-2 text-xs">USD</span>
           </div>
         )}
         {view.description && (
-          <p className="max-w-prose text-[15px] leading-relaxed text-ink-muted">
+          <p className="text-ink-muted max-w-prose text-[15px] leading-relaxed">
             {view.description}
           </p>
         )}
@@ -1615,9 +1634,8 @@ function VerifiedCurrencyView({
       <MarketsTabPanel assetID={view.slug} />
 
       {slug && (
-        <p className="text-xs text-ink-muted">
-          Slug:{' '}
-          <code className="font-mono">{slug}</code>
+        <p className="text-ink-muted text-xs">
+          Slug: <code className="font-mono">{slug}</code>
         </p>
       )}
     </Container>

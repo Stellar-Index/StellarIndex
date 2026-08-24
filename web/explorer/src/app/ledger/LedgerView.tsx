@@ -55,10 +55,7 @@ export function LedgerView({ seq: seqProp }: { seq?: string } = {}) {
   if (seq == null) {
     return (
       <Shell seq={null}>
-        <Panel
-          title="No ledger selected"
-          bodyClassName="text-sm text-ink-body"
-        >
+        <Panel title="No ledger selected" bodyClassName="text-sm text-ink-body">
           <p>
             This page needs a <code className="font-mono">?seq=</code> query
             parameter — e.g.{' '}
@@ -81,8 +78,9 @@ export function LedgerView({ seq: seqProp }: { seq?: string } = {}) {
           bodyClassName="text-sm text-ink-body"
         >
           <p>
-            No ledger <span className="font-mono">#{seq.toLocaleString('en-US')}</span>{' '}
-            in the served tier, or the lookup failed:{' '}
+            No ledger{' '}
+            <span className="font-mono">#{seq.toLocaleString('en-US')}</span> in
+            the served tier, or the lookup failed:{' '}
             {ledgerQ.error instanceof Error
               ? ledgerQ.error.message
               : 'unknown error'}
@@ -127,8 +125,14 @@ export function LedgerView({ seq: seqProp }: { seq?: string } = {}) {
           />
           <Field label="Close time" value={formatTimestamp(l.close_time)} />
           <Field label="Protocol" mono value={String(l.protocol_version)} />
-          <Field label="Transactions" value={formatCompact(l.tx_count ?? 0)} />
-          <Field label="Operations" value={formatCompact(l.op_count ?? 0)} />
+          <Field
+            label="Transactions"
+            value={(l.tx_count ?? 0).toLocaleString('en-US')}
+          />
+          <Field
+            label="Operations"
+            value={(l.op_count ?? 0).toLocaleString('en-US')}
+          />
           <Field
             label="Soroban events"
             value={
@@ -169,7 +173,7 @@ export function LedgerView({ seq: seqProp }: { seq?: string } = {}) {
               <span className="inline-flex items-center gap-2">
                 <Link
                   href={`/ledgers/${sequence - 1}/`}
-                  className="font-mono text-xs text-brand-600 hover:underline"
+                  className="text-brand-600 font-mono text-xs hover:underline"
                   title={`Ledger #${(sequence - 1).toLocaleString('en-US')}`}
                 >
                   ← #{(sequence - 1).toLocaleString('en-US')}
@@ -215,13 +219,13 @@ function Shell({
           <div className="flex items-center gap-3 text-xs">
             <Link
               href={`/ledgers/${seq - 1}/`}
-              className="rounded-md border border-line px-2.5 py-1 text-ink-body hover:border-brand-500 hover:text-brand-600"
+              className="border-line text-ink-body hover:border-brand-500 hover:text-brand-600 rounded-md border px-2.5 py-1"
             >
               ← Prev ledger
             </Link>
             <Link
               href={`/ledgers/${seq + 1}/`}
-              className="rounded-md border border-line px-2.5 py-1 text-ink-body hover:border-brand-500 hover:text-brand-600"
+              className="border-line text-ink-body hover:border-brand-500 hover:text-brand-600 rounded-md border px-2.5 py-1"
             >
               Next ledger →
             </Link>
@@ -289,9 +293,9 @@ function TransactionsPanel({
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-line text-sm">
+        <table className="divide-line min-w-full divide-y text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
+            <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
               <Th>Hash</Th>
               <Th>Source</Th>
               <Th align="right">Ops</Th>
@@ -300,16 +304,13 @@ function TransactionsPanel({
               <Th>Memo</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-line-subtle">
+          <tbody className="divide-line-subtle divide-y">
             {transactions.map((t) => (
-              <tr
-                key={t.hash}
-                className="hover:bg-surface-muted"
-              >
+              <tr key={t.hash} className="hover:bg-surface-muted">
                 <Td>
                   <Link
                     href={`/transactions/${t.hash}/`}
-                    className="font-mono text-xs text-brand-600 hover:underline"
+                    className="text-brand-600 font-mono text-xs hover:underline"
                     title={t.hash}
                   >
                     {(t.hash ?? '').slice(0, 10)}…{(t.hash ?? '').slice(-6)}
@@ -318,38 +319,40 @@ function TransactionsPanel({
                 <Td>
                   <Link
                     href={`/accounts/${encodeURIComponent(t.source_account ?? '')}/`}
-                    className="font-mono text-xs text-ink-body hover:text-brand-600"
+                    className="text-ink-body hover:text-brand-600 font-mono text-xs"
                     title={t.source_account}
                   >
-                    {(t.source_account ?? '').slice(0, 6)}…{(t.source_account ?? '').slice(-4)}
+                    {(t.source_account ?? '').slice(0, 6)}…
+                    {(t.source_account ?? '').slice(-4)}
                   </Link>
                 </Td>
                 <Td align="right">
-                  <span className="font-mono tabular-nums text-ink-body">
+                  <span className="text-ink-body font-mono tabular-nums">
                     {t.operation_count}
                   </span>
                 </Td>
                 <Td>
-                  <SuccessBadge ok={t.successful ?? false} code={t.result_code} />
+                  <SuccessBadge
+                    ok={t.successful ?? false}
+                    code={t.result_code}
+                  />
                 </Td>
                 <Td align="right">
-                  <span className="font-mono text-xs tabular-nums text-ink-muted">
+                  <span className="text-ink-muted font-mono text-xs tabular-nums">
                     {t.fee_charged != null ? stroopsToXlm(t.fee_charged) : '—'}
                   </span>
                 </Td>
                 <Td>
                   {t.memo_type && t.memo_type !== 'none' ? (
                     <span
-                      className="font-mono text-[11px] text-ink-muted"
+                      className="text-ink-muted font-mono text-[11px]"
                       title={t.memo ?? ''}
                     >
                       {t.memo_type}
                       {t.memo ? `: ${truncate(t.memo, 18)}` : ''}
                     </span>
                   ) : (
-                    <span className="text-ink-faint">
-                      —
-                    </span>
+                    <span className="text-ink-faint">—</span>
                   )}
                 </Td>
               </tr>
@@ -368,10 +371,8 @@ function SuccessBadge({ ok, code }: { ok: boolean; code?: number }) {
   const codeLabel = code != null ? `code ${code}` : undefined;
   return (
     <span
-      className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
-        ok
-          ? 'bg-up-subtle text-up'
-          : 'bg-down-subtle text-down'
+      className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase ${
+        ok ? 'bg-up-subtle text-up' : 'bg-down-subtle text-down'
       }`}
       title={codeLabel ?? (ok ? 'success' : 'failed')}
     >
@@ -395,7 +396,7 @@ function Field({
 }) {
   return (
     <div>
-      <dt className="text-[11px] uppercase tracking-wider text-ink-muted">
+      <dt className="text-ink-muted text-[11px] tracking-wider uppercase">
         {label}
       </dt>
       <dd className={mono ? 'mt-0.5 font-mono text-xs' : 'mt-0.5 tabular-nums'}>
@@ -414,7 +415,7 @@ function FieldWide({
 }) {
   return (
     <div className="col-span-2 sm:col-span-3 lg:col-span-4">
-      <dt className="text-[11px] uppercase tracking-wider text-ink-muted">
+      <dt className="text-ink-muted text-[11px] tracking-wider uppercase">
         {label}
       </dt>
       <dd className="mt-0.5">{children}</dd>

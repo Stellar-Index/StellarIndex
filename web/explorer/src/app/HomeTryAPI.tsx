@@ -1,9 +1,10 @@
 'use client';
 
-import { Check, Copy, Play } from 'lucide-react';
+import { Play } from 'lucide-react';
 import { useState } from 'react';
 
 import { API_BASE_URL } from '@/api/client';
+import { CopyButton } from '@/components/ui';
 
 type Lang = 'curl' | 'js' | 'python' | 'go';
 
@@ -107,7 +108,6 @@ const EXAMPLES: Example[] = [
 export function HomeTryAPI() {
   const [activeIx, setActiveIx] = useState(0);
   const [lang, setLang] = useState<Lang>('curl');
-  const [copied, setCopied] = useState(false);
   const [running, setRunning] = useState(false);
   const [response, setResponse] = useState<string | null>(null);
   const [responseTone, setResponseTone] = useState<'ok' | 'err' | null>(null);
@@ -145,7 +145,7 @@ export function HomeTryAPI() {
   }
 
   return (
-    <div className="rounded-xl border border-line bg-surface p-4 shadow-sm">
+    <div className="border-line bg-surface rounded-xl border p-4 shadow-sm">
       <div className="mb-3 flex flex-wrap gap-1">
         {EXAMPLES.map((ex, i) => (
           <button
@@ -162,13 +162,13 @@ export function HomeTryAPI() {
           </button>
         ))}
       </div>
-      <div className="mb-2 flex items-center gap-1 border-b border-line pb-2">
+      <div className="border-line mb-2 flex items-center gap-1 border-b pb-2">
         {LANGS.map((l) => (
           <button
             key={l.key}
             type="button"
             onClick={() => setLang(l.key)}
-            className={`rounded px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider ${
+            className={`rounded px-2 py-0.5 font-mono text-[10px] tracking-wider uppercase ${
               lang === l.key
                 ? 'bg-line text-ink'
                 : 'text-ink-muted hover:text-ink'
@@ -178,46 +178,30 @@ export function HomeTryAPI() {
           </button>
         ))}
       </div>
-      <div className="relative rounded-lg bg-ink px-3 py-2.5 font-mono text-[11px] text-ink-faint">
-        <pre className="overflow-x-auto whitespace-pre-wrap break-all pr-20">
-          <code>{lang === 'curl' ? '$ ' : ''}{cmd}</code>
+      <div className="border-line bg-surface-subtle text-ink-body relative rounded-lg border px-3 py-2.5 font-mono text-[11px]">
+        <pre className="overflow-x-auto pr-20 break-all whitespace-pre-wrap">
+          <code>
+            {lang === 'curl' ? '$ ' : ''}
+            {cmd}
+          </code>
         </pre>
-        <div className="absolute right-2 top-2 flex gap-1">
+        <div className="absolute top-2 right-2 flex gap-1">
           <button
             type="button"
             aria-label="Run live"
             onClick={runLive}
             disabled={running}
-            className="rounded-sm p-1 text-ink-faint hover:bg-ink hover:text-up disabled:opacity-50"
+            className="text-ink-faint hover:bg-surface-muted hover:text-up rounded-sm p-1 disabled:opacity-50"
           >
             <Play className="h-3.5 w-3.5" />
           </button>
-          <button
-            type="button"
-            aria-label="Copy command"
-            onClick={() => {
-              navigator.clipboard
-                .writeText(cmd)
-                .then(() => {
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 1500);
-                })
-                .catch(() => {});
-            }}
-            className="rounded-sm p-1 text-ink-faint hover:bg-ink hover:text-ink-faint"
-          >
-            {copied ? (
-              <Check className="h-3.5 w-3.5 text-up" />
-            ) : (
-              <Copy className="h-3.5 w-3.5" />
-            )}
-          </button>
+          <CopyButton value={cmd} aria-label="Copy command" />
         </div>
       </div>
       {response != null && (
-        <div className="mt-2 overflow-hidden rounded-lg border border-line bg-surface-muted">
+        <div className="border-line bg-surface-muted mt-2 overflow-hidden rounded-lg border">
           <div
-            className={`flex items-center justify-between px-3 py-1 text-[10px] uppercase tracking-wider ${
+            className={`flex items-center justify-between px-3 py-1 text-[10px] tracking-wider uppercase ${
               responseTone === 'ok'
                 ? 'bg-up-subtle/40 text-up'
                 : 'bg-down-subtle/40 text-down'
@@ -229,23 +213,20 @@ export function HomeTryAPI() {
               {response.length === 4000 && ' (truncated)'}
             </span>
           </div>
-          <pre className="max-h-72 overflow-auto px-3 py-2 font-mono text-[11px] text-ink-body">
+          <pre className="text-ink-body max-h-72 overflow-auto px-3 py-2 font-mono text-[11px]">
             {response}
           </pre>
         </div>
       )}
-      <p className="mt-2 text-[11px] text-ink-muted">
-        No auth needed for the public tier — every endpoint here
-        responds in milliseconds. Hit ▶ to run live; click any
-        example tab above to see the curl.
+      <p className="text-ink-muted mt-2 text-[11px]">
+        No auth needed for the public tier — every endpoint here responds in
+        milliseconds. Hit ▶ to run live; click any example tab above to see the
+        curl.
         {lang === 'go' && (
           <>
             {' '}
             For idiomatic Go using the official SDK, see{' '}
-            <a
-              href="/sdk"
-              className="text-brand-600 hover:underline"
-            >
+            <a href="/sdk" className="text-brand-600 hover:underline">
               /sdk
             </a>
             .

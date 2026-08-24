@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState } from 'react';
 
 import { cn } from '@/lib/cn';
+import { formatSubunitPrice } from '@/lib/format';
 
 /**
  * One aggregated order-book level, as served by GET /v1/sdex/orderbook
@@ -35,11 +36,21 @@ export type BookStats = {
  * `bids` arrive best (highest) first, `asks` best (lowest) first — the
  * /v1/sdex/orderbook contract. Missing sides yield nulls, never zeros.
  */
-export function computeBookStats(bids: DepthLevel[], asks: DepthLevel[]): BookStats {
+export function computeBookStats(
+  bids: DepthLevel[],
+  asks: DepthLevel[],
+): BookStats {
   const bestBid = bids.length > 0 ? toFinite(bids[0].price) : null;
   const bestAsk = asks.length > 0 ? toFinite(asks[0].price) : null;
   if (bestBid == null || bestAsk == null) {
-    return { bestBid, bestAsk, spread: null, mid: null, spreadBps: null, crossed: false };
+    return {
+      bestBid,
+      bestAsk,
+      spread: null,
+      mid: null,
+      spreadBps: null,
+      crossed: false,
+    };
   }
   const spread = bestAsk - bestBid;
   const mid = (bestBid + bestAsk) / 2;
@@ -166,21 +177,25 @@ export function DepthChart({
       side = 'ask';
     }
     const at = side === 'bid' ? bid : side === 'ask' ? ask : null;
-    setHover({ frac, price, side, cum: at?.cum ?? null, cumQuote: at?.cumQuote ?? null });
+    setHover({
+      frac,
+      price,
+      side,
+      cum: at?.cum ?? null,
+      cumQuote: at?.cumQuote ?? null,
+    });
   }
 
   return (
     <div className={className}>
-      <div className="mb-1 flex items-baseline justify-between font-mono text-[10px] uppercase tracking-wider">
+      <div className="mb-1 flex items-baseline justify-between font-mono text-[10px] tracking-wider uppercase">
         <span className="text-up">Bids</span>
-        <span className="text-ink-faint">
-          cumulative {baseLabel} depth
-        </span>
+        <span className="text-ink-faint">cumulative {baseLabel} depth</span>
         <span className="text-down">Asks</span>
       </div>
       <div
         ref={containerRef}
-        className="relative w-full overflow-hidden rounded-sm border border-line-subtle bg-surface-subtle/40"
+        className="border-line-subtle bg-surface-subtle/40 relative w-full overflow-hidden rounded-sm border"
         style={{ height }}
         onMouseMove={onMove}
         onMouseLeave={() => setHover(null)}
@@ -220,11 +235,11 @@ export function DepthChart({
           <>
             <div
               aria-hidden
-              className="pointer-events-none absolute inset-y-0 w-px bg-line-strong"
+              className="bg-line-strong pointer-events-none absolute inset-y-0 w-px"
               style={{ left: `${hover.frac * 100}%` }}
             />
             <div
-              className="pointer-events-none absolute top-2 z-10 rounded-sm border border-line bg-surface/95 px-2 py-1 font-mono text-[11px] text-ink-body shadow-card"
+              className="border-line bg-surface/95 text-ink-body shadow-card pointer-events-none absolute top-2 z-10 rounded-sm border px-2 py-1 font-mono text-[11px]"
               style={
                 hover.frac > 0.55
                   ? { right: `${(1 - hover.frac) * 100}%`, marginRight: 8 }
@@ -240,7 +255,8 @@ export function DepthChart({
                   {formatDepthAmount(hover.cum)} {baseLabel}
                   {hover.cumQuote != null && hover.cumQuote > 0 && (
                     <span className="text-ink-muted">
-                      {' '}· {formatDepthAmount(hover.cumQuote)} {quoteLabel}
+                      {' '}
+                      · {formatDepthAmount(hover.cumQuote)} {quoteLabel}
                     </span>
                   )}
                 </div>
@@ -251,9 +267,11 @@ export function DepthChart({
           </>
         )}
       </div>
-      <div className="mt-1 flex justify-between font-mono text-[10px] tabular-nums text-ink-muted">
+      <div className="text-ink-muted mt-1 flex justify-between font-mono text-[10px] tabular-nums">
         <span>{formatDepthPrice(min)}</span>
-        <span className="text-ink-faint">price ({quoteLabel} per {baseLabel})</span>
+        <span className="text-ink-faint">
+          price ({quoteLabel} per {baseLabel})
+        </span>
         <span>{formatDepthPrice(min + span)}</span>
       </div>
     </div>
@@ -289,7 +307,9 @@ export function OrderBookStatStrip({
         <StatCell
           label={`Mid (${quoteLabel})`}
           value={
-            !stats.crossed && stats.mid != null ? formatDepthPrice(stats.mid) : '—'
+            !stats.crossed && stats.mid != null
+              ? formatDepthPrice(stats.mid)
+              : '—'
           }
         />
         <StatCell
@@ -302,7 +322,7 @@ export function OrderBookStatStrip({
         />
       </dl>
       {stats.crossed && (
-        <p className="mt-2 rounded-sm bg-warn-50 px-2 py-1 text-xs text-warn-700">
+        <p className="bg-warn-50 text-warn-700 mt-2 rounded-sm px-2 py-1 text-xs">
           The served snapshot is crossed (best bid ≥ best ask), so mid and
           spread aren&rsquo;t meaningful market facts for it — both sides are
           drawn as served.
@@ -323,7 +343,9 @@ function StatCell({
 }) {
   return (
     <div>
-      <dt className="text-[11px] uppercase tracking-wider text-ink-muted">{label}</dt>
+      <dt className="text-ink-muted text-[11px] tracking-wider uppercase">
+        {label}
+      </dt>
       <dd
         className={cn(
           'mt-0.5 font-mono text-sm tabular-nums',
@@ -341,7 +363,10 @@ function StatCell({
 // ascending x; y is the depth at-and-beyond that point in the side's
 // fill direction. Bids fill leftward from the best bid (last point);
 // asks rightward from the best ask (first point).
-function stepPath(pts: { x: number; y: number }[], side: 'bid' | 'ask'): string | null {
+function stepPath(
+  pts: { x: number; y: number }[],
+  side: 'bid' | 'ask',
+): string | null {
   if (pts.length === 0) return null;
   const parts: string[] = [];
   parts.push(`M ${f(pts[0].x)} 100`, `L ${f(pts[0].x)} ${f(pts[0].y)}`);
@@ -350,13 +375,19 @@ function stepPath(pts: { x: number; y: number }[], side: 'bid' | 'ask'): string 
     // between two bid prices the depth is the shallower (next-better)
     // cumulative, so the vertical drop happens at the LEFT point.
     for (let i = 1; i < pts.length; i++) {
-      parts.push(`L ${f(pts[i - 1].x)} ${f(pts[i].y)}`, `L ${f(pts[i].x)} ${f(pts[i].y)}`);
+      parts.push(
+        `L ${f(pts[i - 1].x)} ${f(pts[i].y)}`,
+        `L ${f(pts[i].x)} ${f(pts[i].y)}`,
+      );
     }
   } else {
     // Asks ascend in price AND depth: between two ask prices the depth
     // is the previous cumulative, so the rise happens at the RIGHT point.
     for (let i = 1; i < pts.length; i++) {
-      parts.push(`L ${f(pts[i].x)} ${f(pts[i - 1].y)}`, `L ${f(pts[i].x)} ${f(pts[i].y)}`);
+      parts.push(
+        `L ${f(pts[i].x)} ${f(pts[i - 1].y)}`,
+        `L ${f(pts[i].x)} ${f(pts[i].y)}`,
+      );
     }
   }
   parts.push(`L ${f(pts[pts.length - 1].x)} 100`, 'Z');
@@ -395,7 +426,11 @@ function depthAt(
   return acc ? { cum: acc.cum, cumQuote: acc.cumQuote } : null;
 }
 
-/** Adaptive price formatter shared by the chart, axis, and stat strip. */
+/** Adaptive price formatter shared by the chart, axis, and stat strip.
+ * FEC audit F-A4-03: the sub-1e-4 tail previously used toExponential(3),
+ * violating the recorded 2026-08-06 operator decision (no scientific
+ * notation anywhere a price renders); it now shares the canonical
+ * plain-decimal subunit path. */
 export function formatDepthPrice(n: number): string {
   if (!Number.isFinite(n)) return '—';
   const abs = Math.abs(n);
@@ -403,12 +438,12 @@ export function formatDepthPrice(n: number): string {
   if (abs >= 1) return n.toFixed(4);
   if (abs >= 0.0001) return n.toFixed(7).replace(/0+$/, '').replace(/\.$/, '');
   if (abs === 0) return '0';
-  return n.toExponential(3);
+  return formatSubunitPrice(n);
 }
 
 function formatDepthAmount(n: number): string {
   if (!Number.isFinite(n)) return '—';
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
 }

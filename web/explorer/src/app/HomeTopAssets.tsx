@@ -16,7 +16,7 @@ import {
   THead,
   TR,
 } from '@/components/ui';
-import { formatCompact , formatSubunitPrice } from '@/lib/format';
+import { formatCompact, formatPriceSmall } from '@/lib/format';
 import { isSafePublicImageUrl } from '@/lib/safe-domain';
 
 /**
@@ -50,16 +50,12 @@ export function HomeTopAssets() {
           <h2 className="text-2xl font-semibold tracking-tight">
             Top assets by activity
           </h2>
-          <p className="text-sm text-ink-body">
-            Ranked by total observation count across every venue we
-            ingest from. 24h volume sums every (base, quote) pair the
-            asset participates in.
+          <p className="text-ink-body text-sm">
+            Ranked by total observation count across every venue we ingest from.
+            24h volume sums every (base, quote) pair the asset participates in.
           </p>
         </div>
-        <Link
-          href="/assets"
-          className="text-sm text-brand-600 hover:underline"
-        >
+        <Link href="/assets" className="text-brand-600 text-sm hover:underline">
           See all →
         </Link>
       </div>
@@ -88,7 +84,8 @@ export function HomeTopAssets() {
               </TR>
             </THead>
             <TBody>
-              {isLoading && !data &&
+              {isLoading &&
+                !data &&
                 Array.from({ length: 8 }).map((_, i) => (
                   <TR key={`sk-${i}`} className="hover:bg-transparent">
                     <Td colSpan={7}>
@@ -138,7 +135,7 @@ function Row({
           className="group flex items-center gap-2"
         >
           <AssetIcon image={coin.image} code={coin.code} />
-          <span className="font-medium text-ink group-hover:text-brand-600">
+          <span className="text-ink group-hover:text-brand-600 font-medium">
             {coin.code}
           </span>
           {verified && (
@@ -151,7 +148,7 @@ function Row({
                 xmlns="http://www.w3.org/2000/svg"
                 viewBox="0 0 20 20"
                 fill="currentColor"
-                className="h-3.5 w-3.5 text-up"
+                className="text-up h-3.5 w-3.5"
                 aria-hidden="true"
               >
                 <path
@@ -162,12 +159,12 @@ function Row({
               </svg>
             </span>
           )}
-          <span className="text-[11px] text-ink-muted">{coin.slug}</span>
+          <span className="text-ink-muted text-[11px]">{coin.slug}</span>
         </Link>
       </Td>
       <Td align="right">
         {price != null ? (
-          <span className="font-mono text-ink">${formatPrice(price)}</span>
+          <span className="text-ink font-mono">${formatPriceSmall(price)}</span>
         ) : (
           <Dash />
         )}
@@ -177,7 +174,9 @@ function Row({
       </Td>
       <Td align="right">
         {volume != null ? (
-          <span className="font-mono text-ink-body">${formatCompact(volume)}</span>
+          <span className="text-ink-body font-mono">
+            ${formatCompact(volume)}
+          </span>
         ) : (
           <Dash />
         )}
@@ -186,7 +185,7 @@ function Row({
         <RowSparkline points={coin.price_history_24h} />
       </Td>
       <Td align="right">
-        <span className="font-mono text-ink-body">
+        <span className="text-ink-body font-mono">
           {formatCompact(coin.observation_count)}
         </span>
       </Td>
@@ -198,13 +197,6 @@ function parseDec(s: string | null | undefined): number | null {
   if (!s) return null;
   const n = Number(s);
   return Number.isFinite(n) ? n : null;
-}
-
-function formatPrice(n: number): string {
-  if (n >= 1) return n.toFixed(n >= 100 ? 2 : 4);
-  if (n >= 0.001) return n.toFixed(6);
-  if (n > 0) return formatSubunitPrice(n);
-  return '0';
 }
 
 function Dash() {
@@ -220,7 +212,7 @@ function RowSparkline({
     .map((pt) => (pt.p ? Number(pt.p) : null))
     .filter((v): v is number => v != null && Number.isFinite(v));
   if (values.length < 2) {
-    return <span className="font-mono text-[10px] text-ink-faint">—</span>;
+    return <span className="text-ink-faint font-mono text-[10px]">—</span>;
   }
   const W = 80;
   const H = 22;
@@ -247,7 +239,14 @@ function RowSparkline({
       role="img"
       aria-label="24h price chart"
     >
-      <path d={path} fill="none" stroke="currentColor" strokeWidth={1.25} strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d={path}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.25}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -256,12 +255,7 @@ function ChangePct({ raw }: { raw: string | null | undefined }) {
   if (raw == null) return <Dash />;
   const n = Number(raw);
   if (!Number.isFinite(n)) return <Dash />;
-  const tone =
-    n > 0
-      ? 'text-up'
-      : n < 0
-        ? 'text-down'
-        : 'text-ink-muted';
+  const tone = n > 0 ? 'text-up' : n < 0 ? 'text-down' : 'text-ink-muted';
   const sign = n > 0 ? '+' : '';
   return (
     <span className={`font-mono tabular-nums ${tone}`}>
@@ -302,14 +296,14 @@ function AssetIcon({ image, code }: { image?: string | null; code: string }) {
         height={24}
         loading="lazy"
         onError={() => setBroken(true)}
-        className="h-6 w-6 rounded-full bg-surface-subtle object-contain"
+        className="bg-surface-subtle h-6 w-6 rounded-full object-contain"
       />
     );
   }
   return (
     <span
       aria-hidden
-      className="flex h-6 w-6 items-center justify-center rounded-full bg-surface-subtle font-mono text-xs"
+      className="bg-surface-subtle flex h-6 w-6 items-center justify-center rounded-full font-mono text-xs"
     >
       {iconForCode(code)}
     </span>

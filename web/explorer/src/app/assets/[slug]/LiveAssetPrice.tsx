@@ -1,9 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-
-import { API_BASE_URL } from '@/api/client';
-import { isFrameStale, useLiveClock, usePriceFlash, useTipStream } from '@/lib/live/hooks';
+import {
+  isFrameStale,
+  useLiveClock,
+  usePriceFlash,
+  usePricePoll,
+  useTipStream,
+} from '@/lib/live/hooks';
 import { cn } from '@/lib/cn';
 import { formatPriceSmall } from '@/lib/format';
 
@@ -52,11 +55,19 @@ export function LiveAssetPrice({
   /** Rendered beside the price (the 24h change pill — server-derived). */
   changePill?: React.ReactNode;
 }) {
-  const [price, setPrice] = useState<number | null>(initialPrice);
-  const [provenance, setProvenance] = useState<PriceProvenance>(initialProvenance);
-  const [stale, setStale] = useState<boolean>(Boolean(initialStale));
-  const [live, setLive] = useState(false);
-  const [withheld, setWithheld] = useState(false);
+  // FEC audit A6-5: the 60s poll loop lives in the canonical usePricePoll;
+  // this component keeps only the provenance/caption mapping.
+  const poll = usePricePoll({ asset: assetID, initialPrice });
+  const price = poll.price;
+  const withheld = poll.withheld;
+  const live = poll.polled;
+  const stale = poll.polled ? poll.stale : Boolean(initialStale);
+  const provenance: PriceProvenance =
+    poll.polled && !poll.withheld
+      ? poll.triangulated
+        ? 'triangulated'
+        : 'vwap1m'
+      : initialProvenance;
 
   // Tip stream (disabled once the server says withheld — the stream's
   // own pre-flight would keep 404ing anyway).
@@ -64,52 +75,12 @@ export function LiveAssetPrice({
   // Slow clock so a wedged stream loses its "live" claim without
   // waiting for the next poll render (WB-04).
   const clock = useLiveClock();
-  const tipFresh = tip != null && !isFrameStale(clock, tip.receivedAt, TIP_LIVE_STALE_MS);
+  const tipFresh =
+    tip != null && !isFrameStale(clock, tip.receivedAt, TIP_LIVE_STALE_MS);
   const tipPriceStr = tipFresh ? tip.data.data?.price : undefined;
   const tipNumber = tipPriceStr != null ? Number(tipPriceStr) : NaN;
   const tipActive = Number.isFinite(tipNumber) && tipNumber > 0;
   const flash = usePriceFlash(tipActive ? tipPriceStr : undefined);
-
-  useEffect(() => {
-    let cancelled = false;
-    const tick = async () => {
-      try {
-        const r = await fetch(
-          `${API_BASE_URL}/v1/price?asset=${encodeURIComponent(assetID)}&quote=fiat:USD`,
-        );
-        if (cancelled) return;
-        if (r.status === 404) {
-          const body = (await r.json().catch(() => null)) as { type?: string } | null;
-          if (body?.type?.endsWith('/price-withheld')) {
-            setWithheld(true);
-            setPrice(null);
-            setLive(true);
-          }
-          return; // plain not-found: keep the baked value + caption
-        }
-        if (!r.ok) return;
-        const body = (await r.json()) as {
-          data?: { price?: string };
-          flags?: { stale?: boolean; triangulated?: boolean };
-        };
-        const n = Number(body.data?.price);
-        if (!Number.isFinite(n) || n <= 0) return;
-        setPrice(n);
-        setProvenance(body.flags?.triangulated ? 'triangulated' : 'vwap1m');
-        setStale(Boolean(body.flags?.stale));
-        setWithheld(false);
-        setLive(true);
-      } catch {
-        // Network blip — keep whatever we have.
-      }
-    };
-    void tick();
-    const id = setInterval(() => void tick(), 60_000);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [assetID]);
 
   const shown = tipActive ? tipNumber : price;
 
@@ -118,7 +89,7 @@ export function LiveAssetPrice({
       <div className="mt-3 flex flex-wrap items-baseline gap-2">
         <span
           className={cn(
-            'font-mono text-3xl tabular-nums text-ink',
+            'text-ink font-mono text-3xl tabular-nums',
             flash === 'up' && 'flash-up',
             flash === 'down' && 'flash-down',
           )}
@@ -127,20 +98,41 @@ export function LiveAssetPrice({
         </span>
         {changePill}
         {tipActive && (
-          <span className="relative flex h-2 w-2" aria-label="live" role="status">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-up opacity-60" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-up" />
+          <span
+            className="relative flex h-2 w-2"
+            aria-label="live"
+            role="status"
+          >
+            <span className="bg-up absolute inline-flex h-full w-full animate-ping rounded-full opacity-60" />
+            <span className="bg-up relative inline-flex h-2 w-2 rounded-full" />
           </span>
         )}
       </div>
-      <p className="mt-1 text-[11px] uppercase tracking-wider text-ink-muted">
+      <p className="text-ink-muted mt-1 text-[11px] tracking-wider uppercase">
         {withheld && 'price withheld · market too thin to aggregate'}
         {!withheld && tipActive && 'live tip price · USD · streaming'}
-        {!withheld && !tipActive && shown != null && provenance === 'vwap1m' && '1-min VWAP · USD'}
-        {!withheld && !tipActive && shown != null && provenance === 'triangulated' && '1-min VWAP · USD · triangulated via XLM'}
-        {!withheld && !tipActive && shown != null && provenance === 'listing' && 'listing snapshot · not a live aggregated price'}
+        {!withheld &&
+          !tipActive &&
+          shown != null &&
+          provenance === 'vwap1m' &&
+          '1-min VWAP · USD'}
+        {!withheld &&
+          !tipActive &&
+          shown != null &&
+          provenance === 'triangulated' &&
+          '1-min VWAP · USD · triangulated via XLM'}
+        {!withheld &&
+          !tipActive &&
+          shown != null &&
+          provenance === 'listing' &&
+          'listing snapshot · not a live aggregated price'}
         {!withheld && !tipActive && shown != null && stale && ' · stale'}
-        {!withheld && !tipActive && shown != null && !live && provenance !== 'listing' && ' · as baked at deploy'}
+        {!withheld &&
+          !tipActive &&
+          shown != null &&
+          !live &&
+          provenance !== 'listing' &&
+          ' · as baked at deploy'}
       </p>
     </>
   );

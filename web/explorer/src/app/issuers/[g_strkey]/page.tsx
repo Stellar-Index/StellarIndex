@@ -8,7 +8,7 @@ import { Panel } from '@/components/reveal';
 import { Container, Breadcrumbs } from '@/components/ui';
 import { asExample } from '@/api/client';
 import { buildFetchData, failBuild, requireRows } from '@/lib/buildFetch';
-import { formatCompact } from '@/lib/format';
+import { formatCompact, formatPriceSmall, formatRelative } from '@/lib/format';
 import { isSafeHomeDomain } from '@/lib/safe-domain';
 import { serializeJsonLd, ogImageFor } from '@/lib/seo';
 
@@ -66,7 +66,8 @@ export async function generateStaticParams() {
     '/v1/issuers listing for /issuers/[g_strkey] static params',
   );
   const keys = rows.map((i) => i.g_strkey).filter(Boolean);
-  const params = keys.length > 0 ? keys.map((g_strkey) => ({ g_strkey })) : fallback;
+  const params =
+    keys.length > 0 ? keys.map((g_strkey) => ({ g_strkey })) : fallback;
   return [{ g_strkey: 'shell' }, ...params];
 }
 
@@ -95,7 +96,9 @@ interface CoinPriceRow {
   decimals?: number;
 }
 
-async function fetchIssuerCoins(gStrkey: string): Promise<Map<string, CoinPriceRow>> {
+async function fetchIssuerCoins(
+  gStrkey: string,
+): Promise<Map<string, CoinPriceRow>> {
   const out = new Map<string, CoinPriceRow>();
   // /v1/assets?issuer= (rc.47 R-018 finish). Wire shape is
   // `{data: [AssetDetail]}` — fields match CoinPriceRow for the read
@@ -123,8 +126,19 @@ export async function generateMetadata({
     title,
     description,
     alternates: { canonical },
-    openGraph: { title, description, url: canonical, type: 'website', images: [ogImageFor('issuers', g_strkey)] },
-    twitter: { card: 'summary_large_image', title, description, images: [ogImageFor('issuers', g_strkey)] },
+    openGraph: {
+      title,
+      description,
+      url: canonical,
+      type: 'website',
+      images: [ogImageFor('issuers', g_strkey)],
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title,
+      description,
+      images: [ogImageFor('issuers', g_strkey)],
+    },
   };
 }
 
@@ -168,14 +182,11 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
             {shortKey(g_strkey)}
           </h1>
         </header>
-        <Panel
-          title="Issuer not found"
-          bodyClassName="text-sm text-ink-body"
-        >
+        <Panel title="Issuer not found" bodyClassName="text-sm text-ink-body">
           <p>
-            No row found for that G-strkey, or the issuer hasn&apos;t
-            issued a classic asset that&apos;s appeared in any trade or
-            ChangeTrust op the indexer has seen.
+            No row found for that G-strkey, or the issuer hasn&apos;t issued a
+            classic asset that&apos;s appeared in any trade or ChangeTrust op
+            the indexer has seen.
           </p>
         </Panel>
       </Container>
@@ -212,8 +223,18 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
     itemListElement: [
-      { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://stellarindex.io' },
-      { '@type': 'ListItem', position: 2, name: 'Issuers', item: 'https://stellarindex.io/issuers' },
+      {
+        '@type': 'ListItem',
+        position: 1,
+        name: 'Home',
+        item: 'https://stellarindex.io',
+      },
+      {
+        '@type': 'ListItem',
+        position: 2,
+        name: 'Issuers',
+        item: 'https://stellarindex.io/issuers',
+      },
       {
         '@type': 'ListItem',
         position: 3,
@@ -230,16 +251,16 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
         dangerouslySetInnerHTML={{ __html: serializeJsonLd(breadcrumbLD) }}
       />
       {detail.scam_reason && (
-        <div className="rounded-lg border-2 border-down/40 bg-down-subtle px-4 py-3">
+        <div className="border-down/40 bg-down-subtle rounded-lg border-2 px-4 py-3">
           <div className="flex items-baseline gap-2">
-            <span className="rounded-sm bg-down px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white">
+            <span className="bg-down rounded-sm px-2 py-0.5 text-[10px] font-bold tracking-wider text-white uppercase">
               Warning
             </span>
-            <span className="text-sm font-medium text-down-strong">
+            <span className="text-down-strong text-sm font-medium">
               This issuer is flagged as malicious or unsafe.
             </span>
           </div>
-          <p className="mt-1.5 text-xs text-down-strong">
+          <p className="text-down-strong mt-1.5 text-xs">
             {detail.scam_reason}. Do not trust assets issued from this account.
             Source: stellar.expert directory.
           </p>
@@ -267,20 +288,20 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
               {detail.org_verified ? (
                 <span
                   title="SEP-1 verified — the organisation's stellar.toml lists this issuer back (bidirectional)"
-                  className="rounded-sm bg-up-subtle px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-up-strong"
+                  className="bg-up-subtle text-up-strong rounded-sm px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase"
                 >
                   ✓ Verified
                 </span>
               ) : (
                 <span
                   title="Unverified — this organisation name is self-declared in the issuer's SEP-1 toml and is NOT cross-confirmed by the organisation. Do not treat it as a verified identity."
-                  className="rounded-sm bg-surface-sunk px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-ink-muted"
+                  className="bg-surface-sunk text-ink-muted rounded-sm px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase"
                 >
                   Unverified
                 </span>
               )}
             </div>
-            <p className="font-mono text-xs text-ink-muted break-all">
+            <p className="text-ink-muted font-mono text-xs break-all">
               {g_strkey}
             </p>
           </>
@@ -290,7 +311,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
           </h1>
         )}
         {detail.home_domain && (
-          <p className="text-sm text-ink-body">
+          <p className="text-ink-body text-sm">
             {/* home_domain is attacker-controlled on-chain data — only
                 link it when it parses as a strict hostname, else render
                 as plain text (phishing guard, WA-02). */}
@@ -299,13 +320,13 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
                 href={`https://${detail.home_domain}`}
                 target="_blank"
                 rel="noreferrer noopener nofollow"
-                className="font-mono hover:text-brand-600 hover:underline"
+                className="hover:text-brand-600 font-mono hover:underline"
               >
                 {detail.home_domain}
               </a>
             ) : (
               <span
-                className="font-mono text-ink-muted"
+                className="text-ink-muted font-mono"
                 title="Unverified issuer-supplied domain"
               >
                 {detail.home_domain}
@@ -345,7 +366,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
               label="SEP-1 resolved"
               value={
                 detail.sep1_resolved_at
-                  ? relativeAge(detail.sep1_resolved_at)
+                  ? formatRelative(detail.sep1_resolved_at)
                   : '—'
               }
             />
@@ -360,7 +381,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
             // The account-flag reader hasn't populated this issuer yet —
             // show that honestly rather than four "unknown" dots that
             // read as a broken panel (audit 2026-06-19).
-            <p className="text-xs text-ink-muted">
+            <p className="text-ink-muted text-xs">
               Not yet resolved. Issuer account flags populate as the
               account-flag reader processes the issuer; meanwhile see{' '}
               <a
@@ -395,14 +416,14 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
               href={`https://stellar.expert/explorer/public/account/${g_strkey}`}
               target="_blank"
               rel="noreferrer noopener"
-              className="inline-flex items-center gap-1.5 hover:text-brand-600 hover:underline"
+              className="hover:text-brand-600 inline-flex items-center gap-1.5 hover:underline"
             >
               stellar.expert
-              <span className="text-[10px] uppercase tracking-wider text-ink-faint">
+              <span className="text-ink-faint text-[10px] tracking-wider uppercase">
                 ↗
               </span>
             </a>
-            <span className="ml-2 text-xs text-ink-faint">
+            <span className="text-ink-faint ml-2 text-xs">
               account history, balance, signers
             </span>
           </li>
@@ -411,14 +432,14 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
               href={`https://stellarchain.io/accounts/${g_strkey}`}
               target="_blank"
               rel="noreferrer noopener"
-              className="inline-flex items-center gap-1.5 hover:text-brand-600 hover:underline"
+              className="hover:text-brand-600 inline-flex items-center gap-1.5 hover:underline"
             >
               stellarchain.io
-              <span className="text-[10px] uppercase tracking-wider text-ink-faint">
+              <span className="text-ink-faint text-[10px] tracking-wider uppercase">
                 ↗
               </span>
             </a>
-            <span className="ml-2 text-xs text-ink-faint">
+            <span className="text-ink-faint ml-2 text-xs">
               ledger entries, operations log
             </span>
           </li>
@@ -428,14 +449,14 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
                 href={`https://${detail.home_domain}/.well-known/stellar.toml`}
                 target="_blank"
                 rel="noreferrer noopener nofollow"
-                className="inline-flex items-center gap-1.5 hover:text-brand-600 hover:underline"
+                className="hover:text-brand-600 inline-flex items-center gap-1.5 hover:underline"
               >
                 stellar.toml
-                <span className="text-[10px] uppercase tracking-wider text-ink-faint">
+                <span className="text-ink-faint text-[10px] tracking-wider uppercase">
                   ↗
                 </span>
               </a>
-              <span className="ml-2 text-xs text-ink-faint">
+              <span className="text-ink-faint ml-2 text-xs">
                 SEP-1 source on {detail.home_domain}
               </span>
             </li>
@@ -450,19 +471,19 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
         bodyClassName="-mx-4"
       >
         {!assets ? (
-          <p className="px-4 py-3 text-sm text-ink-muted">
+          <p className="text-ink-muted px-4 py-3 text-sm">
             Issued-asset list unavailable — the per-asset read didn&apos;t
             return, so this is unknown rather than empty. Retry shortly.
           </p>
         ) : assets.length === 0 ? (
-          <p className="px-4 py-3 text-sm text-ink-muted">
+          <p className="text-ink-muted px-4 py-3 text-sm">
             No issued assets observed.
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-line text-sm">
+            <table className="divide-line min-w-full divide-y text-sm">
               <thead>
-                <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
+                <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
                   <Th>Code</Th>
                   <Th align="right">Price</Th>
                   <Th align="right">24h %</Th>
@@ -473,27 +494,24 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
                   <Th align="right">First seen</Th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-line-subtle">
+              <tbody className="divide-line-subtle divide-y">
                 {assets.map((a) => {
                   const coin = coinPrices.get(a.asset_id);
                   return (
-                    <tr
-                      key={a.asset_id}
-                      className="hover:bg-surface-muted"
-                    >
+                    <tr key={a.asset_id} className="hover:bg-surface-muted">
                       <Td>
                         <Link
                           href={`/assets/${a.slug}`}
-                          className="font-medium hover:text-brand-600"
+                          className="hover:text-brand-600 font-medium"
                         >
                           {a.code}
                         </Link>
-                        <span className="ml-2 font-mono text-[11px] text-ink-muted">
+                        <span className="text-ink-muted ml-2 font-mono text-[11px]">
                           {a.slug}
                         </span>
                         <Link
                           href={`/markets?asset=${encodeURIComponent(a.asset_id)}`}
-                          className="ml-2 text-[11px] text-brand-600 hover:underline"
+                          className="text-brand-600 ml-2 text-[11px] hover:underline"
                           title={`All markets for ${a.code}`}
                         >
                           markets →
@@ -550,18 +568,6 @@ function shortKey(g: string): string {
   return `${g.slice(0, 8)}…${g.slice(-4)}`;
 }
 
-function relativeAge(iso: string): string {
-  const ms = Date.now() - Date.parse(iso);
-  if (!Number.isFinite(ms)) return iso;
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
-}
-
 function Stat({
   label,
   value,
@@ -573,7 +579,7 @@ function Stat({
 }) {
   return (
     <div>
-      <dt className="text-[11px] uppercase tracking-wider text-ink-muted">
+      <dt className="text-ink-muted text-[11px] tracking-wider uppercase">
         {label}
       </dt>
       <dd className={mono ? 'font-mono text-xs' : 'tabular-nums'}>{value}</dd>
@@ -642,11 +648,13 @@ function PriceCell({ raw }: { raw?: string | null }) {
   if (!raw) return <span className="text-ink-faint">—</span>;
   const n = Number(raw);
   if (!Number.isFinite(n)) return <span className="text-ink-faint">—</span>;
-  // 6 dp for sub-dollar (USDC/scam tokens), 4 dp otherwise.
-  const fixed = n < 1 ? n.toFixed(6) : n.toFixed(4);
+  // FEC audit F-A4-02: the bare toFixed(6) ladder rendered sub-1e-6 prices
+  // (the scam-token class this cell exists to show) as "$0.000000" — LDEX
+  // was live-wrong on this page. formatPriceSmall is the COR-14 canonical
+  // with the subunit-safe plain-decimal tail.
   return (
-    <span className="font-mono tabular-nums text-ink-body">
-      ${fixed}
+    <span className="text-ink-body font-mono tabular-nums">
+      ${formatPriceSmall(n)}
     </span>
   );
 }
@@ -655,12 +663,7 @@ function ChangeCell({ raw }: { raw?: string | null }) {
   if (!raw) return <span className="text-ink-faint">—</span>;
   const n = Number(raw);
   if (!Number.isFinite(n)) return <span className="text-ink-faint">—</span>;
-  const tone =
-    n > 0
-      ? 'text-up'
-      : n < 0
-        ? 'text-down'
-        : 'text-ink-muted';
+  const tone = n > 0 ? 'text-up' : n < 0 ? 'text-down' : 'text-ink-muted';
   const sign = n > 0 ? '+' : '';
   return (
     <span className={`font-mono tabular-nums ${tone}`}>
@@ -675,7 +678,7 @@ function UsdVolumeCell({ raw }: { raw?: string | null }) {
   const n = Number(raw);
   if (!Number.isFinite(n)) return <span className="text-ink-faint">—</span>;
   return (
-    <span className="font-mono tabular-nums text-ink-body">
+    <span className="text-ink-body font-mono tabular-nums">
       ${formatCompact(n)}
     </span>
   );

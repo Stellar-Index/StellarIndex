@@ -25,7 +25,10 @@ export interface StreamFrame<T> {
  * disable (hook order stays stable). Malformed frames keep the last
  * good value.
  */
-export function useStreamJSON<T>(url: string | null, eventType: string): StreamFrame<T> | null {
+function useStreamJSON<T>(
+  url: string | null,
+  eventType: string,
+): StreamFrame<T> | null {
   const [frame, setFrame] = useState<StreamFrame<T> | null>(null);
   // Reset during render when the url changes (the sanctioned
   // derived-state pattern) — a frame from the OLD pair must never be
@@ -70,7 +73,11 @@ export function useLiveClock(intervalMs = 10_000): number {
 
 /** Staleness verdict from a live clock reading: false while the clock
  * has no reading yet (see useLiveClock). */
-export function isFrameStale(clock: number, receivedAt: number, staleMs: number): boolean {
+export function isFrameStale(
+  clock: number,
+  receivedAt: number,
+  staleMs: number,
+): boolean {
   return clock > 0 && clock - receivedAt > staleMs;
 }
 
@@ -92,7 +99,9 @@ export const LEDGER_LIVE_STALE_MS = 30_000;
  * over one connection. `apiBaseUrl` defaults to the configured API;
  * the status page passes per-region bases.
  */
-export function useLedgerStream(apiBaseUrl: string = API_BASE_URL): StreamFrame<LiveLedger> | null {
+export function useLedgerStream(
+  apiBaseUrl: string = API_BASE_URL,
+): StreamFrame<LiveLedger> | null {
   const frame = useStreamJSON<{ data: LiveLedger }>(
     `${apiBaseUrl}/v1/ledger/stream`,
     'ledger_update',
@@ -116,7 +125,10 @@ export interface LiveTip {
  * stream; the multiplexer's slow-reopen keeps the retry cost near
  * zero and the hook simply stays null.
  */
-export function useTipStream(asset: string | null, quote = 'fiat:USD'): StreamFrame<LiveTip> | null {
+export function useTipStream(
+  asset: string | null,
+  quote = 'fiat:USD',
+): StreamFrame<LiveTip> | null {
   const url = asset
     ? `${API_BASE_URL}/v1/price/tip/stream?asset=${encodeURIComponent(asset)}&quote=${encodeURIComponent(quote)}`
     : null;
@@ -124,14 +136,16 @@ export function useTipStream(asset: string | null, quote = 'fiat:USD'): StreamFr
 }
 
 /** How long a tick flash stays visible. */
-export const FLASH_MS = 900;
+const FLASH_MS = 900;
 
 /**
  * usePriceFlash — compare successive price strings and return the tick
  * direction ('up' | 'down') for FLASH_MS after each change, else null.
  * Drive flash animations from this: className={flash === 'up' ? … }.
  */
-export function usePriceFlash(price: string | null | undefined): 'up' | 'down' | null {
+export function usePriceFlash(
+  price: string | null | undefined,
+): 'up' | 'down' | null {
   const prev = useRef<string | null>(null);
   const [flash, setFlash] = useState<'up' | 'down' | null>(null);
 
@@ -153,7 +167,7 @@ export function usePriceFlash(price: string | null | undefined): 'up' | 'down' |
  * most panels serve CDN-cached or 1-min-aggregated data, so refetching
  * on every close is wasteful. One refresh per 15s keeps the table
  * visibly moving without hammering the API. */
-export const LEDGER_FOLLOW_REFRESH_MS = 15_000;
+const LEDGER_FOLLOW_REFRESH_MS = 15_000;
 
 /**
  * useLedgerFollow — turn a static `useQuery` panel into a live one: on
@@ -183,7 +197,9 @@ export function useLedgerFollow(
     const now = Date.now();
     if (now - lastRefetchRef.current < minIntervalMs) return;
     lastRefetchRef.current = now;
-    void queryClient.invalidateQueries({ queryKey: JSON.parse(keyStr) as unknown[] });
+    void queryClient.invalidateQueries({
+      queryKey: JSON.parse(keyStr) as unknown[],
+    });
   }, [streamLatest, queryClient, minIntervalMs, keyStr]);
 }
 
@@ -215,6 +231,103 @@ export function useObservationsFollow(
     const now = Date.now();
     if (now - lastRef.current < minIntervalMs) return;
     lastRef.current = now;
-    void queryClient.invalidateQueries({ queryKey: JSON.parse(keyStr) as unknown[] });
+    void queryClient.invalidateQueries({
+      queryKey: JSON.parse(keyStr) as unknown[],
+    });
   }, [receivedAt, queryClient, minIntervalMs, keyStr]);
+}
+
+/**
+ * usePricePoll — the 60s /v1/price polling fallback that runs under the
+ * tip stream (FEC audit A6-5: LiveAssetPrice, LivePairPrice, and the
+ * embed LivePrice each hand-rolled this loop; the two page components now
+ * share it — the embed stays standalone by design, bundle-light).
+ *
+ * Superset semantics (LiveAssetPrice's, the winning behavior): a 404
+ * whose problem type ends in /price-withheld REPLACES the baked price
+ * with the withheld verdict (the server deliberately refused to
+ * aggregate; a lower-trust snapshot must not stand in). A plain 404 /
+ * non-OK / network blip keeps whatever we have — never a blank flash.
+ */
+export function usePricePoll({
+  asset,
+  quote = 'fiat:USD',
+  initialPrice = null,
+  initialObservedAt = null,
+  intervalMs = 60_000,
+}: {
+  asset: string;
+  quote?: string;
+  initialPrice?: number | null;
+  initialObservedAt?: string | null;
+  intervalMs?: number;
+}): {
+  price: number | null;
+  observedAt: string | null;
+  stale: boolean;
+  triangulated: boolean;
+  withheld: boolean;
+  /** True after the first successful poll (including a withheld verdict). */
+  polled: boolean;
+} {
+  const [state, setState] = useState({
+    price: initialPrice,
+    observedAt: initialObservedAt,
+    stale: false,
+    triangulated: false,
+    withheld: false,
+    polled: false,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const r = await fetch(
+          `${API_BASE_URL}/v1/price?asset=${encodeURIComponent(asset)}&quote=${encodeURIComponent(quote)}`,
+        );
+        if (cancelled) return;
+        if (r.status === 404) {
+          const body = (await r.json().catch(() => null)) as {
+            type?: string;
+          } | null;
+          if (!cancelled && body?.type?.endsWith('/price-withheld')) {
+            setState((s) => ({
+              ...s,
+              price: null,
+              withheld: true,
+              polled: true,
+            }));
+          }
+          return; // plain not-found: keep the baked value + caption
+        }
+        if (!r.ok) return;
+        const body = (await r.json()) as {
+          data?: { price?: string; observed_at?: string };
+          flags?: { stale?: boolean; triangulated?: boolean };
+        };
+        const n = Number(body.data?.price);
+        if (!Number.isFinite(n) || n <= 0) return;
+        if (cancelled) return;
+        setState({
+          price: n,
+          observedAt: body.data?.observed_at ?? null,
+          stale: Boolean(body.flags?.stale),
+          triangulated: Boolean(body.flags?.triangulated),
+          withheld: false,
+          polled: true,
+        });
+      } catch {
+        // Network blip — keep whatever we have.
+      }
+    };
+    void tick();
+    const id = setInterval(() => void tick(), intervalMs);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [asset, quote, intervalMs]);
+
+  return state;
 }

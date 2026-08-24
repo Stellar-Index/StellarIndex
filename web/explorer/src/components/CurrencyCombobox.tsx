@@ -95,17 +95,23 @@ export function CurrencyCombobox({
 
   return (
     <div ref={wrapRef} className="relative">
-      <button type="button" onClick={() => setOpen((v) => !v)} className={triggerCls}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={triggerCls}
+      >
         {value} ▾
       </button>
       {open && (
+        // FEC audit A6-3 nit: this is a POPOVER — the page behind stays
+        // fully interactive, so aria-modal="true" (which tells AT the rest
+        // of the page is inert) was false. Follow the sidebar AccountMenu
+        // disclosure pattern instead.
         <div
           ref={panelRef}
-          role="dialog"
-          aria-modal="true"
           aria-label={placeholder}
           tabIndex={-1}
-          className="absolute right-0 top-full z-20 mt-1 w-56 overflow-hidden rounded-md border border-line bg-surface shadow-lg outline-hidden"
+          className="border-line bg-surface absolute top-full right-0 z-20 mt-1 w-56 overflow-hidden rounded-md border shadow-lg outline-hidden"
         >
           <input
             ref={inputRef}
@@ -125,11 +131,11 @@ export function CurrencyCombobox({
               // Escape-to-close is handled by useDialog (panelRef) above.
             }}
             placeholder={placeholder}
-            className="w-full border-b border-line bg-surface px-3 py-2 text-sm focus:outline-hidden"
+            className="border-line bg-surface w-full border-b px-3 py-2 text-sm focus:outline-hidden"
           />
           <ul className="max-h-64 overflow-y-auto py-1 text-sm">
             {filtered.length === 0 && (
-              <li className="px-3 py-2 text-xs text-ink-muted">No matches</li>
+              <li className="text-ink-muted px-3 py-2 text-xs">No matches</li>
             )}
             {filtered.map((t, i) => (
               <li key={t}>
@@ -137,7 +143,7 @@ export function CurrencyCombobox({
                   type="button"
                   onClick={() => commit(t)}
                   onMouseEnter={() => setHighlight(i)}
-                  className={`flex w-full items-center justify-between px-3 py-1.5 font-mono text-xs uppercase tracking-wider ${
+                  className={`flex w-full items-center justify-between px-3 py-1.5 font-mono text-xs tracking-wider uppercase ${
                     i === highlight
                       ? 'bg-brand-50 text-brand-900'
                       : 'text-ink-body'
@@ -145,7 +151,7 @@ export function CurrencyCombobox({
                 >
                   <span>{t}</span>
                   {t === value && (
-                    <span className="text-[10px] text-ink-faint">current</span>
+                    <span className="text-ink-faint text-[10px]">current</span>
                   )}
                 </button>
               </li>

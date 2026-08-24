@@ -2,6 +2,12 @@
 
 import { useEffect, useRef } from 'react';
 
+// FEC audit A6-2: stacked dialogs (e.g. mobile nav drawer -> search modal).
+// Escape must close only the TOPMOST dialog; because document-level keydown
+// listeners fire in registration order, the bottom dialog's handler runs
+// first and would also close without this stack.
+const dialogStack: symbol[] = [];
+
 const FOCUSABLE = [
   'a[href]',
   'button:not([disabled])',
@@ -36,6 +42,8 @@ export function useDialog<T extends HTMLElement>(
 
     const node = ref.current;
     restoreRef.current = (document.activeElement as HTMLElement) ?? null;
+    const stackToken = Symbol('dialog');
+    dialogStack.push(stackToken);
 
     const focusables = (): HTMLElement[] =>
       node
@@ -49,6 +57,8 @@ export function useDialog<T extends HTMLElement>(
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        // Only the topmost dialog in the stack responds (A6-2).
+        if (dialogStack[dialogStack.length - 1] !== stackToken) return;
         e.preventDefault();
         onClose();
         return;
@@ -75,7 +85,24 @@ export function useDialog<T extends HTMLElement>(
     document.addEventListener('keydown', onKeyDown);
     return () => {
       document.removeEventListener('keydown', onKeyDown);
-      restoreRef.current?.focus?.();
+      const ix = dialogStack.indexOf(stackToken);
+      if (ix !== -1) dialogStack.splice(ix, 1);
+      // FEC audit A6-3: restore focus ONLY if the user hasn't already
+      // focused something outside the dialog. The popover consumers
+      // (CurrencyCombobox, sidebar AccountMenu) close on outside-mousedown
+      // with no backdrop — the browser focuses the clicked control, and an
+      // unconditional restore here yanked focus back to the trigger
+      // (keystrokes lost). Modals with a backdrop are unaffected: focus at
+      // close is inside the dialog (or on body after unmount), so the
+      // restore still runs.
+      const active = document.activeElement;
+      if (
+        !active ||
+        active === document.body ||
+        (node ? node.contains(active) : false)
+      ) {
+        restoreRef.current?.focus?.();
+      }
     };
   }, [open, onClose]);
 

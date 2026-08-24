@@ -107,17 +107,26 @@ function tokenize(md: string): Block[] {
     // branch and render as a wall of literal pipes.
     const isDelimRow = (l: string) =>
       /^[\s|:-]+$/.test(l) && l.includes('-') && l.includes('|');
-    if (line.includes('|') && i + 1 < lines.length && isDelimRow(lines[i + 1]!)) {
+    if (
+      line.includes('|') &&
+      i + 1 < lines.length &&
+      isDelimRow(lines[i + 1]!)
+    ) {
       const splitRow = (r: string): string[] => {
         let cells = r.trim().split('|');
         if (cells[0] === '') cells = cells.slice(1);
-        if (cells.length && cells[cells.length - 1] === '') cells = cells.slice(0, -1);
+        if (cells.length && cells[cells.length - 1] === '')
+          cells = cells.slice(0, -1);
         return cells.map((c) => c.trim());
       };
       const headers = splitRow(line);
       i += 2; // consume header + delimiter
       const rows: string[][] = [];
-      while (i < lines.length && lines[i]!.includes('|') && lines[i]!.trim() !== '') {
+      while (
+        i < lines.length &&
+        lines[i]!.includes('|') &&
+        lines[i]!.trim() !== ''
+      ) {
         rows.push(splitRow(lines[i]!));
         i++;
       }
@@ -158,7 +167,7 @@ const GH_TREE = 'https://github.com/Stellar-Index/StellarIndex/tree/main/';
 // ADR cross-refs map to their in-site page (every docs/adr/NNNN-*.md renders);
 // everything else (sibling docs, code, CHANGELOG, configs) maps to the GitHub
 // source, which always resolves.
-export function resolveDocLink(href: string, sourcePath: string): string {
+function resolveDocLink(href: string, sourcePath: string): string {
   const h = href.trim();
   if (/^(https?:|mailto:|tel:|#|\/)/i.test(h)) return href; // external / anchor / absolute
   const m = h.match(/^([^#?]*)([#?].*)?$/);
@@ -217,7 +226,7 @@ function renderBlock(b: Block, i: number): React.ReactElement {
       return (
         <h2
           key={i}
-          className="mt-8 text-xl font-semibold tracking-tight border-b border-line pb-1"
+          className="border-line mt-8 border-b pb-1 text-xl font-semibold tracking-tight"
         >
           <Inline text={b.text} />
         </h2>
@@ -230,19 +239,25 @@ function renderBlock(b: Block, i: number): React.ReactElement {
       );
     case 'h4':
       return (
-        <h4 key={i} className="mt-4 text-sm font-semibold uppercase tracking-wider text-ink-muted">
+        <h4
+          key={i}
+          className="text-ink-muted mt-4 text-sm font-semibold tracking-wider uppercase"
+        >
           <Inline text={b.text} />
         </h4>
       );
     case 'p':
       return (
-        <p key={i} className="text-sm leading-6 text-ink-body">
+        <p key={i} className="text-ink-body text-sm leading-6">
           <Inline text={b.text} />
         </p>
       );
     case 'ul':
       return (
-        <ul key={i} className="ml-5 list-disc space-y-1 text-sm leading-6 text-ink-body">
+        <ul
+          key={i}
+          className="text-ink-body ml-5 list-disc space-y-1 text-sm leading-6"
+        >
           {b.items.map((it, j) => (
             <li key={j}>
               <Inline text={it} />
@@ -252,7 +267,10 @@ function renderBlock(b: Block, i: number): React.ReactElement {
       );
     case 'ol':
       return (
-        <ol key={i} className="ml-5 list-decimal space-y-1 text-sm leading-6 text-ink-body">
+        <ol
+          key={i}
+          className="text-ink-body ml-5 list-decimal space-y-1 text-sm leading-6"
+        >
           {b.items.map((it, j) => (
             <li key={j}>
               <Inline text={it} />
@@ -264,7 +282,7 @@ function renderBlock(b: Block, i: number): React.ReactElement {
       return (
         <pre
           key={i}
-          className="overflow-x-auto rounded-lg border border-line bg-surface-muted p-3 text-xs leading-5"
+          className="border-line bg-surface-muted overflow-x-auto rounded-lg border p-3 text-xs leading-5"
         >
           <code>{b.code}</code>
         </pre>
@@ -273,7 +291,7 @@ function renderBlock(b: Block, i: number): React.ReactElement {
       return (
         <blockquote
           key={i}
-          className="border-l-2 border-line-strong pl-4 text-sm italic text-ink-body"
+          className="border-line-strong text-ink-body border-l-2 pl-4 text-sm italic"
         >
           <Inline text={b.text} />
         </blockquote>
@@ -281,11 +299,11 @@ function renderBlock(b: Block, i: number): React.ReactElement {
     case 'table':
       return (
         <div key={i} className="overflow-x-auto">
-          <table className="w-full border-collapse text-sm leading-6 text-ink-body">
+          <table className="text-ink-body w-full border-collapse text-sm leading-6">
             <thead>
-              <tr className="border-b border-line-strong text-left">
+              <tr className="border-line-strong border-b text-left">
                 {b.headers.map((h, j) => (
-                  <th key={j} className="px-3 py-2 font-semibold text-ink">
+                  <th key={j} className="text-ink px-3 py-2 font-semibold">
                     <Inline text={h} />
                   </th>
                 ))}
@@ -293,7 +311,7 @@ function renderBlock(b: Block, i: number): React.ReactElement {
             </thead>
             <tbody>
               {b.rows.map((row, r) => (
-                <tr key={r} className="border-b border-line align-top">
+                <tr key={r} className="border-line border-b align-top">
                   {row.map((cell, c) => (
                     <td key={c} className="px-3 py-2">
                       <Inline text={cell} />
@@ -346,9 +364,19 @@ export function isSafeHref(href: string): boolean {
   return scheme === 'http' || scheme === 'https' || scheme === 'mailto';
 }
 
-// Inline tokenizer — same shape as MarkdownLite in changelog/page.tsx
-// but kept here so research pages don't depend on changelog code.
-function Inline({ text }: { text: string }) {
+// Inline tokenizer — THE canonical for the **bold** / `code` / [link](url)
+// inline subset (FEC audit A3-F9: this was triplicated in changelog
+// MarkdownLite and HomeRecentChanges, and the copies had drifted on the
+// code-chip size; lib/ is the correct home — pages depend on lib, not on
+// each other). `plainLinks` renders link tokens as non-anchor spans (the
+// home changelog strip is a preview, not a link surface).
+export function Inline({
+  text,
+  plainLinks,
+}: {
+  text: string;
+  plainLinks?: boolean;
+}) {
   type Tok =
     | { kind: 'text'; value: string }
     | { kind: 'bold'; value: string }
@@ -394,7 +422,7 @@ function Inline({ text }: { text: string }) {
       {tokens.map((t, i) => {
         if (t.kind === 'bold')
           return (
-            <strong key={i} className="font-semibold text-ink">
+            <strong key={i} className="text-ink font-semibold">
               {t.value}
             </strong>
           );
@@ -402,12 +430,19 @@ function Inline({ text }: { text: string }) {
           return (
             <code
               key={i}
-              className="rounded-sm bg-surface-subtle px-1 py-0.5 font-mono text-[0.85em]"
+              className="bg-surface-subtle rounded-sm px-1 py-0.5 font-mono text-[0.85em]"
             >
               {t.value}
             </code>
           );
         if (t.kind === 'link') {
+          if (plainLinks) {
+            return (
+              <span key={i} className="text-brand-600">
+                {t.value}
+              </span>
+            );
+          }
           // Reject disallowed schemes (javascript:, data:, …) — render
           // the label as plain text rather than a live anchor.
           if (!isSafeHref(t.href)) {
@@ -418,7 +453,9 @@ function Inline({ text }: { text: string }) {
               key={i}
               href={t.href}
               target={t.href.startsWith('http') ? '_blank' : undefined}
-              rel={t.href.startsWith('http') ? 'noreferrer noopener' : undefined}
+              rel={
+                t.href.startsWith('http') ? 'noreferrer noopener' : undefined
+              }
               className="text-brand-600 hover:underline"
             >
               {t.value}
