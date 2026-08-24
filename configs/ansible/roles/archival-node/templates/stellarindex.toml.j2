@@ -188,6 +188,30 @@ usd_pegged_classic_assets = [
 ]
 
 # ──────────────────────────────────────────────────────────────────
+# Pricing guard — declared fiat pegs (2026-08-24).
+# Operator-approved: "I am happy to link AUDD to AUD and thus to 1
+# Australian dollar in US dollars" (and AUDR to AUDD). Evidence: the
+# only substantive AUDD market is the 1:1 AUDD↔AUDR settlement
+# corridor — $4.8M/30d at exactly 1.000000 on SDEX (2026-08-24
+# census) — while its USD-quoted books are inconsistent bot dust
+# ($0.78–$0.85 implied vs the real AUD ≈ $0.655), correctly withheld
+# by the substance gate. Each entry fills the asset's listing/detail
+# price_usd from the declared peg × the AUD/USD rate we already
+# serve (fx_quotes), stamped price_basis="declared_peg" on the wire;
+# a market-derived price is never overwritten and a stale FX rate
+# does not fill.
+# ──────────────────────────────────────────────────────────────────
+[pricing_guard]
+
+  [pricing_guard.fiat_pegged_classic_assets]
+  # AUDD — AUD Digital, declared 1:1 AUD (operator approval 2026-08-24).
+  "AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU" = "AUD"
+  # AUDR — pegged to AUD transitively through the AUDD↔AUDR 1:1
+  # settlement corridor ($4.8M/30d at exactly 1.000000 on SDEX,
+  # 2026-08-24 census) + the same operator approval.
+  "AUDR-GAAVW6EQ4N4SHNTKBLTOBXKS6CEIMT2KZI7YQ5B37ECNVPFLBIGRKLIL" = "AUD"
+
+# ──────────────────────────────────────────────────────────────────
 # External — off-chain CEX/FX/aggregator connectors.
 # Added 2026-05-05 to close the crypto:XLM/fiat:USD 404 + provide
 # CEX coverage. Free venues only on r1 today (no API

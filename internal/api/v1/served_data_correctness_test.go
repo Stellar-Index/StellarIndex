@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -81,7 +82,7 @@ func TestApplyAssetRowYieldsToCanonicalPrice(t *testing.T) {
 	// Canonical price already set — asset-catalogue overlay must yield.
 	canonicalPrice := "0.20114638079663692765"
 	detail := &AssetDetail{PriceUSD: &canonicalPrice}
-	s.applyAssetRowToDetail(detail, row, nil, "native")
+	s.applyAssetRowToDetail(context.Background(), detail, canonical.NativeAsset(), row, nil, "native")
 	if detail.PriceUSD == nil || *detail.PriceUSD != canonicalPrice {
 		t.Fatalf("asset-catalogue overlay overwrote the canonical price: got %v, want %q",
 			detail.PriceUSD, canonicalPrice)
@@ -89,7 +90,7 @@ func TestApplyAssetRowYieldsToCanonicalPrice(t *testing.T) {
 
 	// No canonical price — asset-catalogue overlay fills the long tail (SHX, AQUA…).
 	detail2 := &AssetDetail{}
-	s.applyAssetRowToDetail(detail2, row, nil, "native")
+	s.applyAssetRowToDetail(context.Background(), detail2, canonical.NativeAsset(), row, nil, "native")
 	if detail2.PriceUSD == nil || *detail2.PriceUSD != rowPrice {
 		t.Fatalf("asset-catalogue overlay did not fill an absent price: got %v, want %q",
 			detail2.PriceUSD, rowPrice)

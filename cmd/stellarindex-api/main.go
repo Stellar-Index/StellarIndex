@@ -797,6 +797,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	cachedNetworkStats := v1.NewCachedNetworkStatsReader(store, 30*time.Second)
 
 	usdPegs := parseUSDPeggedClassics(cfg.Trades.USDPeggedClassicAssets, logger)
+	fiatPegs := parseFiatPeggedClassics(cfg.PricingGuard.FiatPeggedClassicAssets, logger)
 
 	// Load the verified-currency catalogue (R-018 Phase 1.1).
 	// Failure here is fatal — the seed YAML is embedded; a parse
@@ -1345,6 +1346,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		SACWrappers:          cfg.Supply.SACWrappers,
 		NetworkPassphrase:    stellarNetworkPassphrase(),
 		USDPeggedClassics:    usdPegs,
+		FiatPeggedClassics:   fiatPegs,
 		VerifiedCurrencies:   verifiedCurrencies,
 		BackfillCoverage:     backfillCoverageCache,
 		NonstandardDecimals:  nonstandardDecimalsCache,
@@ -4032,6 +4034,38 @@ func parseUSDPeggedClassics(raws []string, logger *slog.Logger) []canonical.Asse
 			continue
 		}
 		out = append(out, a)
+	}
+	return out
+}
+
+// parseFiatPeggedClassics resolves the operator's
+// pricing_guard.fiat_pegged_classic_assets map (classic asset_key →
+// ISO-4217 ticker) into the asset_id → canonical fiat Asset map the
+// declared-peg price fill consumes. Config.Validate already hard-fails
+// malformed entries at load; the soft-fail here is belt-and-braces for
+// non-Validate construction paths, mirroring parseUSDPeggedClassics
+// (a missing peg is a smaller failure than refusing to start). Keys
+// are re-canonicalised via Asset.String() so lookup never depends on
+// the operator's exact spelling.
+func parseFiatPeggedClassics(raw map[string]string, logger *slog.Logger) map[string]canonical.Asset {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make(map[string]canonical.Asset, len(raw))
+	for rawAsset, ticker := range raw {
+		a, err := canonical.ParseAsset(rawAsset)
+		if err != nil || a.Type != canonical.AssetClassic {
+			logger.Warn("fiat_pegged_classic_assets: skipping non-classic or malformed key",
+				"raw", rawAsset, "err", err)
+			continue
+		}
+		fiat, err := canonical.NewFiatAsset(ticker)
+		if err != nil {
+			logger.Warn("fiat_pegged_classic_assets: skipping unknown fiat ticker",
+				"raw", rawAsset, "ticker", ticker, "err", err)
+			continue
+		}
+		out[a.String()] = fiat
 	}
 	return out
 }

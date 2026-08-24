@@ -273,6 +273,22 @@ type PricingGuardConfig struct {
 
 	// SubstanceWindowHours is the trailing measurement window.
 	SubstanceWindowHours int `toml:"substance_window_hours" doc:"Trailing measurement window in hours. 0 = pricingguard default (24)." default:"24"`
+
+	// FiatPeggedClassicAssets maps a classic credit asset_key
+	// (canonical "CODE-ISSUER" wire form) to the ISO-4217 ticker of
+	// the fiat currency the OPERATOR declares it 1:1-pegged to (e.g.
+	// AUDD-G… → "AUD"). The API's asset listing + detail surfaces
+	// then fill `price_usd` for such an asset from the current
+	// fiat→USD FX rate (fx_quotes) WHEN no market-derived price
+	// survives the substance gate, stamping `price_basis:
+	// "declared_peg"` on the wire so consumers can tell the declared
+	// basis from a market observation. The companion to the
+	// substance gate above: the gate withholds a price CLAIM a thin
+	// market can't back; this map supplies the operator-declared
+	// peg basis instead — it never overwrites a market-derived
+	// price. Entries are validated at load: the asset_key must be a
+	// classic credit asset and the ticker a known fiat (ADR-0010).
+	FiatPeggedClassicAssets map[string]string `toml:"fiat_pegged_classic_assets" doc:"Maps classic credit asset_keys (CODE-ISSUER) to the ISO-4217 fiat ticker the operator declares them 1:1-pegged to (e.g. AUDD-G… = \"AUD\"). The API fills the asset's listing/detail price_usd from the declared peg × current fiat→USD FX rate when no market-derived price survives the substance gate, stamped price_basis=\"declared_peg\" on the wire. Never overwrites a market-derived price. Empty disables the fill." default:"{}"`
 }
 
 // validate rejects negative floors — a negative value is always a
@@ -290,6 +306,26 @@ func (pg PricingGuardConfig) validate() error {
 	}
 	if pg.SubstanceWindowHours < 0 {
 		return fmt.Errorf("%w: pricing_guard: substance_window_hours must be >= 0", ErrInvalidConfig)
+	}
+	// Declared fiat pegs: fail at load, loudly, like the
+	// usd_pegged_classic_assets sibling (TradesConfig.validate). A
+	// non-classic key or an unknown fiat ticker is always an operator
+	// typo, and a silently-skipped peg would just leave the asset
+	// priceless with no signal why.
+	for rawAsset, ticker := range pg.FiatPeggedClassicAssets {
+		asset, err := canonical.ParseAsset(rawAsset)
+		if err != nil {
+			return fmt.Errorf("%w: pricing_guard: fiat_pegged_classic_assets key %q: %w", ErrInvalidConfig, rawAsset, err)
+		}
+		if asset.Type != canonical.AssetClassic {
+			return fmt.Errorf(
+				"%w: pricing_guard: fiat_pegged_classic_assets key %q must be a classic credit asset "+
+					"in CODE-ISSUER form (got %s)",
+				ErrInvalidConfig, rawAsset, asset.Type)
+		}
+		if _, err := canonical.NewFiatAsset(ticker); err != nil {
+			return fmt.Errorf("%w: pricing_guard: fiat_pegged_classic_assets[%q] ticker %q: %w", ErrInvalidConfig, rawAsset, ticker, err)
+		}
 	}
 	return nil
 }

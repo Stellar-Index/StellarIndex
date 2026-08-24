@@ -979,7 +979,12 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
                   ? 'triangulated'
                   : 'vwap1m'
                 : coin.price_usd
-                  ? 'listing'
+                  ? coin.price_basis === 'declared_peg'
+                    ? // Server-declared fiat peg × FX rate (substance
+                      // gate withheld the market books) — captioned so
+                      // it never reads as a market observation.
+                      'declared_peg'
+                    : 'listing'
                   : null
             }
             priceStale={Boolean(price?.flags?.stale)}

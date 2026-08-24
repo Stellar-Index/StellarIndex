@@ -92,6 +92,17 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 		"usd peg native not classic":   {func(c *config.Config) { c.Trades.USDPeggedClassicAssets = []string{"native"} }, "classic"},
 		"usd peg crypto not classic":   {func(c *config.Config) { c.Trades.USDPeggedClassicAssets = []string{"crypto:USDT"} }, "classic"},
 		"usd peg fiat not classic":     {func(c *config.Config) { c.Trades.USDPeggedClassicAssets = []string{"fiat:USD"} }, "classic"},
+		"fiat peg unknown ticker": {func(c *config.Config) {
+			c.PricingGuard.FiatPeggedClassicAssets = map[string]string{
+				"AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU": "AUX",
+			}
+		}, "fiat_pegged_classic_assets"},
+		"fiat peg unparseable key": {func(c *config.Config) {
+			c.PricingGuard.FiatPeggedClassicAssets = map[string]string{"not an asset": "AUD"}
+		}, "fiat_pegged_classic_assets"},
+		"fiat peg native not classic": {func(c *config.Config) {
+			c.PricingGuard.FiatPeggedClassicAssets = map[string]string{"native": "AUD"}
+		}, "classic"},
 
 		// CFG-05 (audit-2026-07-23): history_archive_url must be a
 		// full URL like its sibling fields, not just anything
@@ -253,6 +264,21 @@ func TestValidate_USDPeggedClassicAssetsAccepted(t *testing.T) {
 	})
 	if err := c.Validate(); err != nil {
 		t.Fatalf("valid classic USD peg rejected: %v", err)
+	}
+}
+
+func TestValidate_FiatPeggedClassicAssetsAccepted(t *testing.T) {
+	// A classic credit asset mapped to a known ISO-4217 fiat ticker is
+	// the accepted shape for a declared fiat peg (the AUDD → AUD entry
+	// operator-approved 2026-08-24).
+	c := withBad(func(c *config.Config) {
+		c.PricingGuard.FiatPeggedClassicAssets = map[string]string{
+			"AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU": "AUD",
+			"AUDR-GAAVW6EQ4N4SHNTKBLTOBXKS6CEIMT2KZI7YQ5B37ECNVPFLBIGRKLIL": "AUD",
+		}
+	})
+	if err := c.Validate(); err != nil {
+		t.Fatalf("valid classic fiat peg rejected: %v", err)
 	}
 }
 
