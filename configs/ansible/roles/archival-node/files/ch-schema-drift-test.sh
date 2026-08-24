@@ -212,6 +212,87 @@ if [[ -r "$real_intent" ]]; then
     "$real_intent" "$real_intent"
 fi
 
+# ── AS-clone (alias) declarations ──────────────────────────────────
+# tier1_schema.sql declares every *_staging table as a two-line clone
+# (`CREATE TABLE x_staging` / `AS stellar.x;`) with no ENGINE/columns of
+# its own, while SHOW CREATE renders the clone fully. The 2026-08-24
+# incident: the parser emitted empty facts for the clone → 3 drifts per
+# staging table forever; and the symmetric intent-vs-intent test above
+# could never catch it. These fixtures are deliberately ASYMMETRIC.
+cat > "$tmp/alias_intent.sql" <<SQL
+CREATE TABLE IF NOT EXISTS stellar.base_t
+(
+    metric String,
+    value  Int64
+)
+ENGINE = MergeTree
+ORDER BY metric;
+
+CREATE TABLE IF NOT EXISTS stellar.base_t_staging
+AS stellar.base_t;
+SQL
+cat > "$tmp/alias_live.sql" <<SQL
+CREATE TABLE stellar.base_t
+(
+    ${bt}metric${bt} String,
+    ${bt}value${bt} Int64
+)
+ENGINE = MergeTree
+ORDER BY metric
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE stellar.base_t_staging
+(
+    ${bt}metric${bt} String,
+    ${bt}value${bt} Int64
+)
+ENGINE = MergeTree
+ORDER BY metric
+SETTINGS index_granularity = 8192;
+SQL
+run "AS-clone staging table resolves against its base (no false drift)" 0 \
+  "$tmp/alias_intent.sql" "$tmp/alias_live.sql"
+
+# A clone whose LIVE half genuinely diverged from the base must still drift.
+cat > "$tmp/alias_live_bad.sql" <<SQL
+CREATE TABLE stellar.base_t
+(
+    ${bt}metric${bt} String,
+    ${bt}value${bt} Int64
+)
+ENGINE = MergeTree
+ORDER BY metric
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE stellar.base_t_staging
+(
+    ${bt}metric${bt} String,
+    ${bt}value${bt} Int64
+)
+ENGINE = MergeTree
+ORDER BY value
+SETTINGS index_granularity = 8192;
+SQL
+expect_msg "AS-clone with a diverged live ORDER BY still drifts" \
+  "DRIFT base_t_staging.order" "$tmp/alias_intent.sql" "$tmp/alias_live_bad.sql"
+
+# A clone of an undeclared base is itself drift, never a silent pass.
+cat > "$tmp/alias_orphan.sql" <<SQL
+CREATE TABLE IF NOT EXISTS stellar.ghost_staging
+AS stellar.ghost;
+SQL
+cat > "$tmp/alias_orphan_live.sql" <<SQL
+CREATE TABLE stellar.ghost_staging
+(
+    ${bt}metric${bt} String
+)
+ENGINE = MergeTree
+ORDER BY metric
+SETTINGS index_granularity = 8192;
+SQL
+expect_msg "AS-clone of an undeclared base reports drift" \
+  "not declared" "$tmp/alias_orphan.sql" "$tmp/alias_orphan_live.sql"
+
 echo
 echo "ch-schema-drift-test: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]
