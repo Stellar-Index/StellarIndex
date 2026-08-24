@@ -6,31 +6,29 @@ import { cn } from '@/lib/cn';
 
 /**
  * RollingNumber — odometer-style live counter. Only the characters that
- * actually changed roll in: a normal tick rolls the last digit; a carry
- * rolls exactly the carried span (…09→…10 rolls two digits, …99→…100
- * rolls three, and so on). Unchanged digits hold perfectly still
- * (tabular-nums keeps their columns fixed).
+ * actually changed roll over: a normal tick rolls the last digit; a
+ * carry rolls exactly the carried span. Unchanged digits hold perfectly
+ * still (tabular-nums keeps their columns fixed).
  *
- * Mechanism (v2 — the v1 "key on (length, position, char)" scheme made
- * the WHOLE number roll on first paint and on every badge remount, and
- * re-keyed every digit when the length changed):
+ * v3 — a TRUE mechanical rollover (v2's fade-in read as a flash: the
+ * old digit vanished instantly and the new one blinked in). A changed
+ * column now mounts a two-digit strip [old, new] inside a clipped
+ * 1-line window; the `digit-rollover` animation slides the strip up by
+ * one digit, so the old character visibly exits upward while the new
+ * one arrives from below — the odometer wheel. The strip's BASE
+ * transform is the end position (new digit showing), so reduced-motion
+ * (which collapses animation durations) and the settled state both rest
+ * on the new value.
  *
- *  - Characters are keyed on (column-from-the-right, char), so a value
- *    change remounts exactly the columns whose character changed, and a
- *    length change (a carry into a new digit) keeps every surviving
- *    column's key stable.
- *  - The `.digit-roll` animation class is assigned at BIRTH only: a span
- *    mounts with it iff its column differs from the PREVIOUS committed
- *    value (tracked in a ref). The first render of a mount has no
- *    previous value, so nothing animates on page load or when the badge
- *    unmounts/remounts around a stream hiccup — the flash Ash reported.
- *  - On later renders an unchanged column computes no animation class;
- *    removing `.digit-roll` from a settled span is visually a no-op (the
- *    animation already completed at its natural resting styles), and
- *    React never replays an animation on a node it merely updates.
+ * Keying (from v2, load-bearing): columns are keyed from the RIGHT on
+ * (column, char), so a value change remounts exactly the columns whose
+ * character changed, a length change keeps surviving columns' keys
+ * stable, and the FIRST render of a mount (no previous value) animates
+ * nothing — no page-load or badge-remount flash. A brand-new column
+ * (the number grew a digit) appears without animation.
  *
- * Reduced motion is handled by the global prefers-reduced-motion
- * override. The full number is duplicated sr-only for assistive tech.
+ * The full number is duplicated sr-only for assistive tech; the visual
+ * cells are aria-hidden.
  */
 export function RollingNumber({
   value,
@@ -43,8 +41,7 @@ export function RollingNumber({
   // Previous committed value, tracked with the adjust-state-during-render
   // pattern (same as SearchModal's open-reset): when the value changes we
   // record the outgoing one, and React immediately re-renders with the
-  // adjusted state before committing. First render has no previous value,
-  // so nothing rolls on mount.
+  // adjusted state before committing.
   const [hist, setHist] = useState<{ cur: string; prev: string | null }>({
     cur: formatted,
     prev: null,
@@ -60,15 +57,21 @@ export function RollingNumber({
       <span className="sr-only">{formatted}</span>
       {chars.map((ch, i) => {
         const col = chars.length - i; // column index from the right
-        const prevCh = prev == null ? null : prev[prev.length - col];
-        const rolls = prev != null && prevCh !== ch;
+        const prevCh = prev == null ? undefined : prev[prev.length - col];
+        const rolls = prev != null && prevCh != null && prevCh !== ch;
+        if (!rolls) {
+          return (
+            <span key={`${col}:${ch}`} aria-hidden className="digit-cell inline-block">
+              {ch}
+            </span>
+          );
+        }
         return (
-          <span
-            key={`${col}:${ch}`}
-            aria-hidden
-            className={cn('digit-cell inline-block', rolls && 'digit-roll')}
-          >
-            {ch}
+          <span key={`${col}:${ch}`} aria-hidden className="digit-cell digit-window">
+            <span className="digit-strip">
+              <span>{prevCh}</span>
+              <span>{ch}</span>
+            </span>
           </span>
         );
       })}
