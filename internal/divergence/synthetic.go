@@ -136,7 +136,12 @@ func (s *SyntheticCrossReference) lookupLeg(ctx context.Context, legs []Referenc
 		lastErr = err
 	}
 	if sawTransient {
-		return 0, fmt.Errorf("%w: %v", ErrPriceUnavailable, lastErr)
+		// Deliberately NOT %w on lastErr (errorlint appeased via
+		// .Error()): the leg's last error may itself wrap
+		// ErrAssetUnsupported, and double-wrapping would make this
+		// error match BOTH sentinels — Compare's unsupported-vs-
+		// degraded classification must see exactly ErrPriceUnavailable.
+		return 0, fmt.Errorf("%w: %s", ErrPriceUnavailable, lastErr.Error())
 	}
 	return 0, fmt.Errorf("%w: no leg lists %s", ErrAssetUnsupported, pair.String())
 }

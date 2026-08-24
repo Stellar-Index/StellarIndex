@@ -20,8 +20,13 @@ SELECT decompress_chunk(c, true) FROM show_chunks('divergence_observations') c;
 
 ALTER TABLE divergence_observations
     DROP CONSTRAINT divergence_observations_reference_check;
+-- Old-binary safety: this is a pure WIDENING of the dropped CHECK (the
+-- old value set is a strict subset), so the previous released binary —
+-- which writes only the seven pre-existing reference values, all still
+-- admitted — runs unaffected against the new schema. Verified
+-- empirically by the PR #149 panel against timescaledb 2.26.4.
 ALTER TABLE divergence_observations
-    ADD CONSTRAINT divergence_observations_reference_check CHECK (reference IN
+    ADD CONSTRAINT divergence_observations_reference_check CHECK (reference IN -- migration-compat:ok pure widening; old value set is a strict subset (see above)
         ('chainlink','coingecko',
          'reflector-cex','reflector-fx','reflector-dex',
          'redstone','band',
