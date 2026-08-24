@@ -2317,7 +2317,71 @@ func buildDivergenceReferences(cfg config.DivergenceConfig, oracles divergence.O
 		}
 	}
 
-	return append(refs, buildOracleDivergenceReferences(cfg, oracles, logger)...)
+	refs = append(refs, buildOracleDivergenceReferences(cfg, oracles, logger)...)
+	return appendSyntheticCrossReference(refs, logger)
+}
+
+// appendSyntheticCrossReference derives the USD-cross reference from
+// the ALREADY-GATED reference set — no config conditional of its own
+// (the config-A/config-B wiring lesson: a new gate is a new way for a
+// feature to silently not exist). It exists whenever its ingredients
+// do: at least one USD-quoted oracle leg (reflector-cex / chainlink /
+// redstone / band — deliberately NOT CoinGecko, which is the one
+// existing DIRECT reference for non-USD-fiat pairs; using it as a leg
+// would correlate the synthetic with the only source it is meant to
+// corroborate) and the reflector-fx fiat leg.
+//
+// Purpose (2026-08-24): gives EUR/GBP-quoted pairs a second reference
+// so SuccessCount reaches the divergence trust floor and the
+// corroborated-release gate can auto-release genuine repricings
+// unattended instead of paging an operator per freeze.
+func appendSyntheticCrossReference(refs []divergence.Reference, logger *slog.Logger) []divergence.Reference {
+	byName := make(map[string]divergence.Reference, len(refs))
+	for _, r := range refs {
+		byName[r.Name()] = r
+	}
+	pick := func(names ...string) []divergence.Reference {
+		var out []divergence.Reference
+		for _, n := range names {
+			if r, ok := byName[n]; ok {
+				out = append(out, r)
+			}
+		}
+		return out
+	}
+	// Chainlink serves BOTH legs: its FeedMap carries crypto/USD feeds
+	// (base leg) and direct fiat/USD feeds (r1 configures
+	// fiat:EUR/fiat:USD + fiat:GBP/fiat:USD) — the reference routes by
+	// pair, answering only what its FeedMap lists, so membership in both
+	// leg sets cannot double-answer one leg. In the FX legs it is the
+	// FALLBACK after reflector-fx (on-chain rows we already index; no
+	// extra RPC) and the only proven GBP/USD source — reflector-fx's
+	// mainnet GBP coverage is unconfirmed (verification panel
+	// 2026-08-24), so without chainlink here XLM/GBP would stay
+	// single-reference, which is two of the three freezes that motivated
+	// this feature.
+	usdLegs := pick(
+		divergence.OracleSourceReflectorCEX,
+		divergence.ChainlinkSourceName,
+		divergence.OracleSourceRedstone,
+		divergence.OracleSourceBand,
+	)
+	fxLegs := pick(
+		divergence.OracleSourceReflectorFX,
+		divergence.ChainlinkSourceName,
+	)
+	syn, err := divergence.NewSyntheticCrossReference(divergence.SyntheticCrossOptions{
+		USDLegs: usdLegs,
+		FXLegs:  fxLegs,
+	})
+	if err != nil {
+		// Missing a leg class — expected on minimal configs; the
+		// non-USD-fiat pairs then simply keep their single direct
+		// reference (and their operator-release posture).
+		logger.Info("divergence: synthetic USD-cross reference not constructed", "reason", err)
+		return refs
+	}
+	return append(refs, syn)
 }
 
 // buildOracleDivergenceReferences constructs the on-chain oracle

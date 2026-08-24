@@ -230,7 +230,11 @@ func defaultChainlinkFeedMap() map[string]chainlinkFeedSpec {
 }
 
 // Name implements [Reference].
-func (*ChainlinkReference) Name() string { return "chainlink" }
+// ChainlinkSourceName is the stable source label for the Chainlink
+// reference (see SyntheticCrossName for the naming contract).
+const ChainlinkSourceName = "chainlink"
+
+func (*ChainlinkReference) Name() string { return ChainlinkSourceName }
 
 // LookupPrice implements [Reference].
 //
