@@ -104,6 +104,14 @@
 /account/           /dashboard/         301
 /account/*          /dashboard/:splat   301
 
+# /protocols/sdex → /sdex (2026-08-24 sdex unification, PR #143's server
+# half). The Next page does permanentRedirect, but under static export
+# that ships an __next_error__ shell that only redirects after JS
+# hydration — crawlers and no-JS agents saw a 200 error shell. This
+# rule makes it a real HTTP 301. Trailing-slash form only (next.js
+# trailingSlash 308s the bare form first, same as /currencies rules).
+/protocols/sdex/  /sdex/  301
+
 # Restructure (SEO plan D5) — singular category + /external aliases resolve to
 # the existing (indexed) category/source pages, so the plan's URL names work
 # without re-indexing churn. New dedicated sections (/amm, /yield, /sdex,
