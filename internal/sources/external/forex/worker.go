@@ -558,7 +558,17 @@ func historyMajority(rejected []HistoryPoint) (float64, bool) {
 	}
 	rates := make([]float64, 0, len(rejected))
 	for _, p := range rejected {
+		// Belt-and-braces (verifier note): fetchHistory already drops
+		// non-finite/non-positive bars, but a NaN member here would be
+		// invisible to both the med<=0 guard and the agreement check
+		// (NaN comparisons are all false) and could bless a NaN median.
+		if math.IsNaN(p.RateUSD) || math.IsInf(p.RateUSD, 0) || p.RateUSD <= 0 {
+			continue
+		}
 		rates = append(rates, p.RateUSD)
+	}
+	if len(rates) < historyHealMinBars {
+		return 0, false
 	}
 	sort.Float64s(rates)
 	med := rates[len(rates)/2]
