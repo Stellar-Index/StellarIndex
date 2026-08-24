@@ -91,6 +91,36 @@ superseded_by: null
 > it. The ladder already spent two hours asking whether the pair had
 > recovered, and a human has been paged.
 >
+> **Amendment (2026-08-24) — auto-unfreeze additionally requires a
+> corroborating lens that AGREES with the release candidate.** The
+> two-calm-buckets condition (confidence > 0.30 AND z < 3.0) is
+> necessary but no longer sufficient. Once mid-freeze buckets score
+> per-tick returns (the shadow comparator that fixed the
+> drift-since-freeze ratchet), ANY price level an attacker simply
+> holds reads calm, and the cached divergence result is computed
+> against the SERVED price — the pinned last-known-good — so it is
+> evidence about the LKG, not about the candidate. Calm therefore
+> cannot distinguish "the market repriced" from "the manipulation is
+> parked". The added leg: a streak bucket must also carry
+> `release_corroborated` — a corroborating lens reading from this
+> bucket that agrees within 5% with the bucket's own fresh price (the
+> cross-oracle reference median compared against the candidate
+> directly; 5% mirrors the divergence lens's own firing threshold).
+> Note the asymmetry with the fire-side "corroborated" above, which
+> deliberately means "a lens was CONSULTED": for selecting the hold, a
+> disagreeing lens is the strongest evidence the freeze is true; for
+> ending the freeze, only agreement with the candidate is evidence of
+> recovery. A pair with no lens (single reference, no chain output)
+> can no longer auto-release at all — it serves the LKG up the ladder
+> to the 2-hour escalation and a human. That is the fail-closed cost
+> of the calmness legs being gameable, it is bounded by the existing
+> escalation page + runbook, and on the current default-pair set it
+> applies to the EUR/GBP-quoted pairs whose only reference is
+> CoinGecko. (The triangulation composite is nominally a second
+> agreement lens, but composites are not recorded for a frozen target
+> and go stale in ~60s, so in practice it cannot certify a release
+> mid-hold; the cross-oracle median is the operative lens.)
+>
 > Two mechanics worth recording because they are not obvious from the
 > section: the **`prevVWAP` comparator is pinned for the duration of a
 > freeze** (the orchestrator does not advance it on a refused bucket),

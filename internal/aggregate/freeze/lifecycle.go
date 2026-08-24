@@ -294,6 +294,26 @@ type Signal struct {
 	// ADR-0019 amendment for why the agreement-only reading was
 	// rejected.
 	Corroborated bool
+
+	// ReleaseCorroborated is the AGREEMENT reading Corroborated
+	// deliberately is not — but taken against the FRESH release
+	// candidate, never against the served price. It reports that a
+	// corroborating lens produced a reading this bucket that agrees
+	// with the bucket's own computed price (the one an auto-unfreeze
+	// would publish).
+	//
+	// It exists because the calm legs alone cannot release safely
+	// (2026-08-24 corroborated-release panel): under the per-tick
+	// shadow comparator ANY held level reads calm, and mid-freeze the
+	// cached divergence result compares the references against the
+	// SERVED last-known-good — evidence about the LKG, not about the
+	// candidate. Gating the streak on this field is what separates "the
+	// market genuinely repriced and the references followed" (releases)
+	// from "an attacker parks a manipulated level" (holds, walks the
+	// ladder, escalates). False here for every pair with no lens: an
+	// uncorroboratable calm bucket is the absence of evidence, and
+	// those freezes end only by operator override or ladder escalation.
+	ReleaseCorroborated bool
 }
 
 // Transition names what the lifecycle did on one evaluation. Stable
@@ -455,13 +475,22 @@ func (p Policy) minimumServed(st State, now time.Time) bool {
 // streak advances (or resets) the consecutive-healthy-bucket counter
 // that ADR-0019's auto-unfreeze condition requires.
 //
-// Fail-closed in three places, each of which has been a real bug
+// Fail-closed in four places, each of which has been a real bug
 // class somewhere in this pipeline: an unscored bucket earns nothing,
 // a bucket that still FIRES earns nothing even if an operator has
-// configured overlapping fire/unfreeze bands, and the counter
+// configured overlapping fire/unfreeze bands, a bucket whose candidate
+// no corroborating lens agrees with earns nothing (a held manipulation
+// is calm too — see Signal.ReleaseCorroborated), and the counter
 // saturates rather than growing without bound.
 func (p Policy) streak(prev int, sig Signal) int {
 	if !sig.Scored || sig.Fires {
+		return 0
+	}
+	if !sig.ReleaseCorroborated {
+		// Calm but uncorroborated: not evidence of health at the
+		// candidate LEVEL (a held manipulation is calm too). Holds the
+		// streak at zero so the ladder keeps walking — see
+		// Signal.ReleaseCorroborated.
 		return 0
 	}
 	if sig.Confidence > p.UnfreezeConfidenceMin && sig.ZScore < p.UnfreezeZScoreMax {
