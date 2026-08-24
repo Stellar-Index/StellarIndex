@@ -63,8 +63,11 @@ outstanding set:
   (ledger_entry_changes column order, contract_events ZSTD codecs), and
   `ledger_entries_current_old` (171.5 GB Jun-18 EXCHANGE relic) dropped —
   recorded in /root/ledger_entries_current_old-ddl-20260825.sql.
-- **W4.1 — 🔵 drill RUNNING** (manual restore-drill started 2026-08-25
-  ~00:30 CEST; verdict pending — unblocks W6.6's decision when green).
+- **W4.1 — ✅ DRILL PASSED** (manual restore-drill 2026-08-25 00:25→00:50
+  CEST, 34min, systemd Result=success/exit 0): pgBackRest restore →
+  table-presence + ledger-hash-continuity + trade-count checks → clean
+  teardown. Restore-from-backup is proven; W6.6's decision is no longer
+  blind (the provisioning of the OFF-SITE copy stays Ash-deferred).
 - **W5.1 — ✅ CONFIRMED SATISFIED.** `contract_instance_changes` floor =
   50,457,429 = Soroban activation exactly; nothing earlier exists.
 - **W5.2 — ✅ COMPLETE (stale text).** dfees is fully modelled
