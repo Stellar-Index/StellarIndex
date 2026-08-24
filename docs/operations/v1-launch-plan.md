@@ -640,6 +640,44 @@ is a lightweight documentation sign-off, not open work.
 
 ---
 
+### W8 — Correctness backlog [C — RECONCILED 2026-08-25, see box below]
+
+> **✅ RECONCILED 2026-08-25 (autonomous run, two independent read-only
+> passes over HEAD ~7ce2d213 — full table in the private audit mirror
+> `w8-reconciliation-2026-08-25.md`).** Of 26 sub-items:
+> **14 FIXED**, 2 STALE-CLAIM (never reproduced: 4c auth-deadlock —
+> request-path middleware is lock-free; 6b defindex-emitter — identity-gated
+> since 07-05), 5 NEEDS-DATA (r1-only: 1c XLM 2.11×, 8c/8d confidence
+> data-halves, 13b movements watermark, 14b archive chmod), 1 WONT-FIX by
+> recorded decision (8a confidence cap). **No money- or security-critical
+> item remains open.** The 7 CONFIRMED-OPEN are all medium-or-lower:
+> 1. **1a `/v1/markets` stale-as_of lie** (medium, money-honesty) — SWR
+>    serves unbounded-age rows as `stale:false, as_of=now`; REC-05
+>    freshness-gate pattern (`bb64ff3c`, /v1/contracts) never copied.
+> 2. **6c defindex gate poisoning** (med-low security) — factory-create
+>    fan-out durably seeds the registry with no provenance check (TVL/flow
+>    stats surface, not prices).
+> 3. **9b MinBatchLimit wedge** (medium ops) — projector cursor can wedge
+>    forever at the 25-ledger floor; only `ProjectorRunsTotal{error}` shows.
+> 4. **14a contract-4 anchor verification never scheduled** (low-med) —
+>    Tier-B code exists; no timer runs `-tier all`/checkpoint.
+> 5. **9c zero mail instrumentation** (low-med) — a Resend outage silently
+>    kills magic-link + price-alert mail, no counter/alert.
+> 6. **10a convert-page build-frozen residue** (low-med honesty) —
+>    `convert/[from]/[to]/page.tsx` static header/table labeled "current
+>    rate"; only ConvertPair re-fetches live.
+> 7. **12 LP/trustline history gap** (low) — no pre-63.3M entry-delta
+>    backfill; operator decision (accept documented cutoff vs build it).
+> **Item 2** (SDEX sub-$100M base-unresolvable volume) reproduces but is the
+> DISCLOSED, accepted residual with a documented path (both-legs-corroborate
+> / bridge-quote gating), not a hidden gap.
+>
+> The ORIGINAL box below (audit-2026-08-14) is a stale snapshot kept for
+> history — it over-claims openness (readyz pool-exhaustion fixed 08-08
+> `a1c5c2e5`; item 8 co-equal fixed 08-02 `c120e912`; item 11 fixed 08-08
+> v0.30.0; oracle-forgery fixed `46cd2139` #83) AND under-credits the later
+> merges. Trust the reconciliation box above, not the paragraph below.
+
 ### W8 — Correctness backlog [C — all carried, none re-verified this pass]
 
 Each item's first step is to REPRODUCE it; several 2026-08-04 findings have
