@@ -10,7 +10,12 @@ import {
 import { cn } from '@/lib/cn';
 import { formatPriceSmall } from '@/lib/format';
 
-export type PriceProvenance = 'vwap1m' | 'triangulated' | 'listing' | null;
+export type PriceProvenance =
+  | 'vwap1m'
+  | 'triangulated'
+  | 'listing'
+  | 'declared_peg'
+  | null;
 
 /** A tip tick is "live" while fresher than this (producer window is
  * 5s; 30s of silence = wedged stream or backgrounded tab). */
@@ -58,8 +63,16 @@ export function LiveAssetPrice({
   // FEC audit A6-5: the 60s poll loop lives in the canonical usePricePoll;
   // this component keeps only the provenance/caption mapping.
   const poll = usePricePoll({ asset: assetID, initialPrice });
-  const price = poll.price;
-  const withheld = poll.withheld;
+  // Declared-peg exception to the withheld-replaces-baked rule: for a
+  // peg-basis row the /v1/price withheld verdict is EXPECTED — the
+  // server refuses the (dust-authored) MARKET price while the assets
+  // surface serves the operator-declared peg basis, which is not a
+  // market claim and therefore not the "lower-trust snapshot" the rule
+  // exists to purge. Keep the peg price + its honest caption instead
+  // of blanking it on every poll.
+  const pegged = initialProvenance === 'declared_peg';
+  const withheld = poll.withheld && !pegged;
+  const price = poll.withheld && pegged ? initialPrice : poll.price;
   const live = poll.polled;
   const stale = poll.polled ? poll.stale : Boolean(initialStale);
   const provenance: PriceProvenance =
@@ -126,12 +139,18 @@ export function LiveAssetPrice({
           shown != null &&
           provenance === 'listing' &&
           'listing snapshot · not a live aggregated price'}
+        {!withheld &&
+          !tipActive &&
+          shown != null &&
+          provenance === 'declared_peg' &&
+          'pegged · declared 1:1 fiat peg × fx rate · not a market price'}
         {!withheld && !tipActive && shown != null && stale && ' · stale'}
         {!withheld &&
           !tipActive &&
           shown != null &&
           !live &&
           provenance !== 'listing' &&
+          provenance !== 'declared_peg' &&
           ' · as baked at deploy'}
       </p>
     </>

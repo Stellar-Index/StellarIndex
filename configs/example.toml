@@ -560,6 +560,21 @@ enabled = false
 # ]
 
 # ──────────────────────────────────────────────────────────────────
+# Pricing guard — serving-side price policy. The thin-market
+# substance gate runs on library defaults (see the config reference)
+# unless tuned here. `fiat_pegged_classic_assets` is the gate's
+# companion: classic assets the operator declares 1:1-pegged to a
+# fiat currency get their listing/detail `price_usd` filled from the
+# declared peg × the current fiat→USD FX rate (fx_quotes) WHEN no
+# market-derived price survives the gate, stamped
+# `price_basis = "declared_peg"` on the wire. A market-derived price
+# is never overwritten and a stale FX rate does not fill.
+# ──────────────────────────────────────────────────────────────────
+[pricing_guard]
+# [pricing_guard.fiat_pegged_classic_assets]
+# "AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU" = "AUD"
+
+# ──────────────────────────────────────────────────────────────────
 # Decimals guard — internal/decimalsguard's one-time startup backfill
 # pass. The periodic freshness sweep only enumerates a short (20m)
 # trailing window, so a non-7-decimal Soroban token that traded and

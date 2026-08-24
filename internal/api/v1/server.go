@@ -372,6 +372,14 @@ type Server struct {
 	// each entry until one returns data, marking the response
 	// `triangulated: true` for transparency.
 	usdPeggedClassics []canonical.Asset
+	// fiatPeggedClassics maps a classic asset_id to the fiat currency
+	// the OPERATOR declares it 1:1-pegged to (pricing_guard.
+	// fiat_pegged_classic_assets). Drives the declared-peg price fill
+	// on the asset listing + detail surfaces: a configured row whose
+	// price_usd is nil AFTER the substance gate ran gets price_usd =
+	// current fiat→USD FX rate, stamped price_basis="declared_peg".
+	// See [Server.fillDeclaredPegPrice] for the ordering invariant.
+	fiatPeggedClassics map[string]canonical.Asset
 	// ingestionSnapshot caches a fully-built IngestionDiagnostics
 	// computed every ~15s by a background goroutine launched via
 	// [Server.StartIngestionSnapshotRefresh]. Powers
@@ -1081,6 +1089,17 @@ type Options struct {
 	// literal pair when one exists.
 	USDPeggedClassics []canonical.Asset
 
+	// FiatPeggedClassics maps a classic asset_id (canonical
+	// "CODE-ISSUER" wire form) to the fiat asset the operator
+	// declares it 1:1-pegged to. Wired from
+	// pricing_guard.fiat_pegged_classic_assets. Configured rows on
+	// the asset listing + detail surfaces whose price_usd is nil
+	// after the substance gate ran get price_usd filled from the
+	// current fiat→USD FX rate (FXHistory / Prices — the same
+	// fiatUSDPriceFor chain the fiat catalogue rows use), stamped
+	// price_basis="declared_peg". Empty disables the fill.
+	FiatPeggedClassics map[string]canonical.Asset
+
 	// SessionAuth, when non-nil, wraps every handler so a present
 	// dashboard session cookie populates a SessionContext on the
 	// request context. Anonymous + bearer-token requests pass
@@ -1257,6 +1276,7 @@ func New(opts Options) *Server {
 		sacWrappers:            opts.SACWrappers,
 		networkPassphrase:      opts.NetworkPassphrase,
 		usdPeggedClassics:      opts.USDPeggedClassics,
+		fiatPeggedClassics:     opts.FiatPeggedClassics,
 		// 120s TTL on /v1/assets/{id} responses. MUST exceed the
 		// selfPrewarmAssetEndpoints cadence (60s) with margin — at the
 		// old 30s TTL the cache expired for 30 of every 60 seconds

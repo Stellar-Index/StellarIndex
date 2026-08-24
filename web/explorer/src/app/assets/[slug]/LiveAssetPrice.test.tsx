@@ -54,6 +54,78 @@ describe('LiveAssetPrice', () => {
     expect(screen.getByRole('status', { name: 'live' })).toBeInTheDocument();
   });
 
+  it('a baked declared-peg price renders the pegged caption, never a market claim', () => {
+    useTipStream.mockReturnValue(null);
+    render(
+      <LiveAssetPrice
+        assetID="AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU"
+        initialPrice={0.655}
+        initialProvenance="declared_peg"
+      />,
+    );
+    expect(screen.getByText(/\$0\.655/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/pegged · declared 1:1 fiat peg × fx rate · not a market price/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/VWAP/i)).not.toBeInTheDocument();
+  });
+
+  it('a price-withheld poll verdict does NOT blank a declared-peg price', async () => {
+    // The withheld-replaces-baked rule exists to purge lower-trust
+    // MARKET snapshots; a declared-peg basis is not a market claim, so
+    // the peg price + caption must survive the server's (expected)
+    // price-withheld verdict for the same asset's market books.
+    useTipStream.mockReturnValue(null);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        status: 404,
+        ok: false,
+        json: async () => ({
+          type: 'https://api.stellarindex.io/errors/price-withheld',
+        }),
+      }),
+    );
+    render(
+      <LiveAssetPrice
+        assetID="AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU"
+        initialPrice={0.655}
+        initialProvenance="declared_peg"
+      />,
+    );
+    // Wait for the poll's withheld verdict to land, then assert the
+    // peg price is still on screen with its honest caption.
+    await vi.waitFor(() => {
+      expect(fetch).toHaveBeenCalled();
+    });
+    expect(await screen.findByText(/\$0\.655/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/pegged · declared 1:1 fiat peg × fx rate · not a market price/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/price withheld/i)).not.toBeInTheDocument();
+  });
+
+  it('a price-withheld poll verdict still replaces a market-provenance baked price', async () => {
+    useTipStream.mockReturnValue(null);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        status: 404,
+        ok: false,
+        json: async () => ({
+          type: 'https://api.stellarindex.io/errors/price-withheld',
+        }),
+      }),
+    );
+    render(
+      <LiveAssetPrice assetID="native" initialPrice={0.17} initialProvenance="listing" />,
+    );
+    expect(
+      await screen.findByText(/price withheld · market too thin to aggregate/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/\$0\.17/)).not.toBeInTheDocument();
+  });
+
   it('a stale tip frame does NOT claim live (WB-04)', () => {
     useTipStream.mockReturnValue({
       data: { data: { price: '0.1745' }, as_of: '2026-08-08T00:00:00Z' },

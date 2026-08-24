@@ -490,6 +490,19 @@ function AssetRow({
         {price != null ? (
           <span className="text-ink font-mono tabular-nums">
             ${formatPriceSmall(price)}
+            {/* Declared-peg provenance (price_basis=declared_peg): the
+                server filled this price from an operator-declared 1:1
+                fiat peg × the current FX rate because no market price
+                survived the substance gate — annotate it so a peg-based
+                figure is never presented as a market observation. */}
+            {coin.price_basis === 'declared_peg' && (
+              <span
+                className="text-ink-muted ml-1 text-[10px] font-sans uppercase tracking-wider"
+                title="Declared 1:1 fiat peg × current FX rate — not a market-observed price"
+              >
+                pegged
+              </span>
+            )}
           </span>
         ) : (
           <Dash />

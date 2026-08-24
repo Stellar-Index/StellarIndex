@@ -264,6 +264,15 @@ type AssetDetail struct {
 	// proxy). F-1271 (audit-2026-05-12).
 	PriceUSD *string `json:"price_usd,omitempty"`
 
+	// PriceBasis identifies a PriceUSD that is NOT a market
+	// observation. The only value today is "declared_peg": the price
+	// was filled from an operator-declared 1:1 fiat peg × the current
+	// fiat→USD FX rate because no market-derived price survived the
+	// server's substance gate. Empty means market-derived (the
+	// pre-existing contract, unchanged). Peg-priced rows carry no
+	// change pills or market-history-derived valuation fields.
+	PriceBasis string `json:"price_basis,omitempty"`
+
 	// MarketCapUSD = circulating × USD price / 10^Decimals,
 	// formatted to two fractional digits. Null when supply or USD
 	// price is unavailable.
