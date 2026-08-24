@@ -6,6 +6,7 @@ import { Panel } from '@/components/reveal';
 import { ReferencePriceAggregators } from './ReferencePriceAggregators';
 import { RoutedVolumePanel } from './RoutedVolumePanel';
 
+import { Container } from '@/components/ui';
 export const metadata: Metadata = {
   title: 'Aggregators — routers and yield wrappers on Stellar',
   description:
@@ -75,7 +76,7 @@ const ENTRIES: Entry[] = [
 
 export default function AggregatorsPage() {
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+    <Container className="space-y-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Aggregators</h1>
         <p className="max-w-3xl text-sm text-ink-body">
@@ -120,7 +121,7 @@ export default function AggregatorsPage() {
       <RoutedVolumePanel />
 
       <ReferencePriceAggregators />
-    </div>
+    </Container>
   );
 }
 

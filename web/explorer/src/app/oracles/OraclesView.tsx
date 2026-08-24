@@ -15,6 +15,7 @@ import { formatRelative , formatSubunitPrice } from '@/lib/format';
 import type { Source as SourceRow } from '@/api/hooks';
 import type { components } from '@/api/types';
 
+import { Container } from '@/components/ui';
 type OracleStream = components['schemas']['OracleReading'];
 
 const TONE: Record<string, string> = {
@@ -75,7 +76,7 @@ export function OraclesView() {
   }, [streamRows]);
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+    <Container className="space-y-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Oracles</h1>
         <p className="max-w-3xl text-sm text-ink-body">
@@ -260,7 +261,7 @@ export function OraclesView() {
           without touching the calling contract.
         </p>
       </Panel>
-    </div>
+    </Container>
   );
 }
 

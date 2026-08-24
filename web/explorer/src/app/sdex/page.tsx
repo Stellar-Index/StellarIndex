@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { SdexOrderBookSection } from './SdexOrderBookSection';
 import { SdexVolumeSection } from './SdexVolumeSection';
 
+import { Container } from '@/components/ui';
 export const metadata: Metadata = {
   title: 'SDEX — the Stellar Decentralized Exchange',
   description:
@@ -14,7 +15,7 @@ export const metadata: Metadata = {
 
 export default function SdexPage() {
   return (
-    <div className="mx-auto max-w-3xl space-y-8 px-6 py-10">
+    <Container className="space-y-8 py-10">
       <header className="space-y-3">
         <h1 className="text-3xl font-semibold tracking-tight">SDEX — Stellar Decentralized Exchange</h1>
         <p className="text-base text-ink-body">
@@ -55,6 +56,6 @@ export default function SdexPage() {
         For Soroban AMM protocols (Soroswap, Aquarius, Phoenix, Comet), see{' '}
         <Link href="/amm" className="text-brand-600 hover:underline">AMM protocols</Link>.
       </p>
-    </div>
+    </Container>
   );
 }

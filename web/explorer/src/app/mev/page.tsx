@@ -5,6 +5,7 @@ import { Panel } from '@/components/reveal';
 
 import { MevFeed } from './MevFeed';
 
+import { Container } from '@/components/ui';
 export const metadata: Metadata = {
   title: 'MEV — on-chain MEV detector',
   description:
@@ -56,7 +57,7 @@ const PATTERNS: { name: string; kind: string; description: string; caveat: strin
 
 export default function MevPage() {
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+    <Container className="space-y-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">MEV</h1>
         <p className="max-w-3xl text-sm text-ink-body">
@@ -140,6 +141,6 @@ export default function MevPage() {
           .
         </p>
       </Panel>
-    </div>
+    </Container>
   );
 }

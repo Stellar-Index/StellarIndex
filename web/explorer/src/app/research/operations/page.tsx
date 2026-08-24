@@ -4,6 +4,7 @@ import { Wrench } from 'lucide-react';
 
 import { loadOperationsDocs } from '@/lib/operations';
 
+import { Container } from '@/components/ui';
 export const metadata: Metadata = {
   alternates: { canonical: '/research/operations' },
   title: 'Operations runbooks — Stellar Index research',
@@ -14,7 +15,7 @@ export const metadata: Metadata = {
 export default function OperationsIndexPage() {
   const docs = loadOperationsDocs();
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+    <Container className="space-y-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">
           Operations runbooks
@@ -49,6 +50,6 @@ export default function OperationsIndexPage() {
           </Link>
         ))}
       </div>
-    </div>
+    </Container>
   );
 }

@@ -7,6 +7,7 @@ import { loadArchitectureDocs } from '@/lib/architecture';
 import { loadOperationsDocs } from '@/lib/operations';
 import { StatusBadge } from './StatusBadge';
 
+import { Container } from '@/components/ui';
 export const metadata: Metadata = {
   alternates: { canonical: '/research' },
   title: 'Research — architecture decisions and methodology',
@@ -39,7 +40,7 @@ export default function ResearchPage() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl space-y-10 px-6 py-8">
+    <Container className="space-y-10 py-8">
       <header className="space-y-3">
         <h1 className="text-3xl font-semibold tracking-tight">Research</h1>
         <p className="max-w-3xl text-base text-ink-body">
@@ -250,6 +251,6 @@ export default function ResearchPage() {
           alternative&quot; section; every alert has a runbook.
         </p>
       </section>
-    </div>
+    </Container>
   );
 }

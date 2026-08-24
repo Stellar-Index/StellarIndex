@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import { LedgersTable } from './LedgersTable';
 import { ThroughputPanel } from '@/components/NetworkInsight';
 
+import { Container } from '@/components/ui';
 export const metadata: Metadata = {
   alternates: { canonical: '/ledgers' },
   title: 'Ledgers — recent Stellar ledgers',
@@ -21,7 +22,7 @@ export const metadata: Metadata = {
  */
 export default function LedgersPage() {
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+    <Container className="space-y-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Ledgers</h1>
         <p className="max-w-3xl text-sm text-ink-body">
@@ -48,6 +49,6 @@ export default function LedgersPage() {
           a client component in Suspense here ONLY if it calls
           useSearchParams. */}
       <LedgersTable />
-    </div>
+    </Container>
   );
 }
