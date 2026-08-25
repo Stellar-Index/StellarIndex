@@ -15,6 +15,45 @@ against.
 
 ## [Unreleased]
 
+## [v0.44.0] — 2026-08-25
+
+Tested against Stellar protocol 22.
+
+### Added
+- Materialized `volume_character` rollup (design §2): a worker-maintained
+  per-asset table (migration 0149) computes the wash-vs-market
+  account-structure signals in one all-asset pass on the aggregate cadence.
+  The `/v1/assets/{id}` detail now reads it as a keyed lookup instead of a
+  per-request 14-day roll (which timed out at 4s on high-volume assets like
+  USDC), and `volume_character` is now carried on the `/v1/assets` listing.
+  (#35)
+- §4-B "annotate + demote": the default `volume_24h_usd_desc` sort ranks by
+  concentration-adjusted volume (`raw × (1 − top_account_pair_vol_share)`
+  for concentrated/operational assets), so wash/operational volume no longer
+  tops the directory. The raw `volume_24h_usd` chain fact stays visible and
+  every asset stays present — a sort-key overlay only, never a value change
+  or a hidden row. (#35)
+
+### Security
+- Bumped `golang.org/x/mod` v0.39→v0.40 (CVE-2026-56864, CVE-2026-56865 —
+  malicious GOPROXY/GOSUMDB) and `github.com/moby/go-archive` v0.2→v0.3
+  (CVE-2026-17106 — tar path traversal). `govulncheck` clean. (#169)
+
+### Fixed
+- `TestExternalFleet_EndToEnd` integration flake: the consumer goroutine
+  inserted drained events with the fleet context that shutdown cancels
+  mid-drain; inserts now use a decoupled context. (#169)
+
+### CI / tooling
+- Dependabot ignores TypeScript major bumps in the explorer (openapi-typescript
+  is not yet TS7-compatible), stopping a recurring red PR. (#169)
+- Corrected the stale `ansible-drift` comment: the vault secrets are restored
+  and the check works; a failure now signals genuine r1 drift. (#169)
+
+### Operator notes
+- Migration 0149 (`asset_volume_character` rollup table) applies via the
+  standard deploy migration step. No new Prometheus rules or systemd units.
+
 ## [v0.43.0] — 2026-08-25
 
 Tested against Stellar protocol 22.
