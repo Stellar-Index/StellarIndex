@@ -23,6 +23,24 @@ against.
   USD line from `/v1/chart`, and USDC — the dollar reference, which has no
   USDC/USD series of its own — shows a "≈ $1.00 reference" panel (linking
   the divergence board for depeg watching) instead of an empty grid.
+- `/v1/protocols/{name}` per-contract activity ran the raw
+  `contract_events FINAL` scan (merge-on-read of the 12.8B-row
+  ReplacingMergeTree), which blew ClickHouse's 2 GiB per-query memory
+  limit (Code 241) — that memory kill *was* the "certified-lake reader
+  unavailable" verdict on the protocol page, and the 57s / 3.2B-row scans
+  were a primary CH-load source behind the API p95/p99 latency alerts and
+  the tx-outcome read timeouts. Now routed through the existing
+  `contract_events_daily` pre-aggregation (like the daily-activity and
+  event-breakdown views already are) — measured **0.5s vs 57s**, no memory
+  kill. Last-seen is day-grain (sufficient for the roster column).
+- `/v1/anomalies` returned 500 on every request — `FreezeReasonCounts`
+  and `FreezeDailyReasonCounts` used the same fragile `($1 || ' days')`
+  interval concat that took down `/v1/divergence`: it types `$1` as
+  `text`, but the handler passes an `int`, and pgx v5 has no int→text
+  encode plan. Also fixed the latent same bug in `ListDivergenceSeries`
+  (`/v1/divergence/series`, `$4`/`$5`). All now use `make_interval`, and
+  a package-wide test forbids the concat form so it can't return a third
+  time.
 
 ## [v0.44.1] — 2026-08-25
 

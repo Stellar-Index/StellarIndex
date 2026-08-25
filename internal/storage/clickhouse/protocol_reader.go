@@ -350,6 +350,44 @@ func (r *ExplorerReader) ProtocolDailyActivityFast(ctx context.Context, contract
 	return out, rows.Err()
 }
 
+// ProtocolContractActivityFast is ProtocolContractActivity over the daily
+// pre-aggregation — per-contract event counts (uniqCombined-merged) +
+// last-seen at day grain. It REPLACES the raw `contract_events FINAL`
+// per-contract scan, which merge-on-read of the 12.8B-row ReplacingMergeTree
+// blew ClickHouse's 2 GiB per-query memory limit (Code 241) — the memory
+// kill IS the certified-lake "unavailable" verdict on /v1/protocols/{name},
+// and the 57s/3.2B-row scans starved the customer API (the CH-side twin of
+// the volume_character regression). sinceDay bounds the window; last-seen is
+// therefore day-precise, which is sufficient for the roster's "last active"
+// column. Counts match the raw path's `count() … FINAL` (both dedup the
+// natural key) within the daily rollup's ~0.1-0.5% uniqCombined error.
+func (r *ExplorerReader) ProtocolContractActivityFast(ctx context.Context, contractIDs []string, sinceDay time.Time) ([]ProtocolContractActivity, error) {
+	if len(contractIDs) == 0 {
+		return nil, nil
+	}
+	const q = `SELECT contract_id,
+		       toUInt64(uniqCombinedMerge(17)(events)) AS c,
+		       toDateTime(max(day)) AS last_seen
+		FROM stellar.contract_events_daily
+		WHERE contract_id IN (?) AND event_type = 'contract' AND day >= ?
+		  AND day < toDate(now())
+		GROUP BY contract_id ORDER BY c DESC LIMIT 1000`
+	rows, err := r.conn.Query(ctx, q, contractIDs, sinceDay)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: protocol contract activity (fast): %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []ProtocolContractActivity
+	for rows.Next() {
+		var a ProtocolContractActivity
+		if err := rows.Scan(&a.ContractID, &a.Events, &a.LastSeen); err != nil {
+			return nil, fmt.Errorf("clickhouse: scan contract activity (fast): %w", err)
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 // ProtocolEventBreakdownFast is ProtocolEventBreakdown over the daily
 // pre-aggregation, preserving the topic name-recovery for events whose
 // topic[0] isn't a Symbol (the t1_xdr / t0_xdr columns carry the raw
