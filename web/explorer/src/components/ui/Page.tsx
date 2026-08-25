@@ -67,7 +67,10 @@ export function PageHeader({
  */
 export function Breadcrumbs({ items }: { items: Crumb[] }) {
   return (
-    <nav aria-label="Breadcrumb" className="mb-2 flex flex-wrap items-center gap-1.5 text-xs text-ink-muted">
+    <nav
+      aria-label="Breadcrumb"
+      className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-muted"
+    >
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{
@@ -75,14 +78,29 @@ export function Breadcrumbs({ items }: { items: Crumb[] }) {
         }}
       />
       {items.map((c, i) => (
-        <span key={`${c.label}-${i}`} className="flex items-center gap-1.5">
-          {i > 0 && <span aria-hidden className="text-ink-faint">/</span>}
+        <span key={`${c.label}-${i}`} className="flex items-center gap-x-2">
+          {/* Chevron reads as hierarchy ("Assets › USD"); a slash looked
+              like a path fragment. Rendered only between crumbs — never
+              trailing, so no orphaned separator. */}
+          {i > 0 && (
+            <span aria-hidden className="text-ink-faint select-none">
+              ›
+            </span>
+          )}
           {c.href ? (
-            <Link href={c.href} className="transition-colors hover:text-brand-600">
+            <Link
+              href={c.href}
+              className="transition-colors hover:text-brand-600"
+            >
               {c.label}
             </Link>
           ) : (
-            <span className="text-ink-body" aria-current="page">
+            // Current page — the leaf of the trail: brighter + medium so the
+            // hierarchy reads muted-parent › bold-current at a glance.
+            <span
+              className="max-w-[60vw] truncate font-medium text-ink-body sm:max-w-none"
+              aria-current="page"
+            >
               {c.label}
             </span>
           )}

@@ -12,6 +12,15 @@ export type MultiWindowDeltaProps = {
   windows: DeltaWindow[];
   /** Compact = inline strip, tighter spacing for dense tables. */
   compact?: boolean;
+  /**
+   * Wrap = let the windows flow onto multiple lines instead of one
+   * non-wrapping inline row. Needed in narrow columns (e.g. the asset
+   * sidebar's ~300px card) where the four canonical windows overflow
+   * their container and clip the trailing pill. The interpunct
+   * separators are dropped in this mode — gap spacing carries the
+   * rhythm, and a `·` orphaned at a line break reads as a glitch.
+   */
+  wrap?: boolean;
   className?: string;
 };
 
@@ -27,13 +36,15 @@ export type MultiWindowDeltaProps = {
 export function MultiWindowDelta({
   windows,
   compact,
+  wrap,
   className,
 }: MultiWindowDeltaProps) {
   return (
     <div
       className={twMerge(
-        'inline-flex items-center text-xs',
-        compact ? 'gap-1' : 'gap-2',
+        'items-center text-xs',
+        wrap ? 'flex flex-wrap gap-x-2 gap-y-1.5' : 'inline-flex',
+        !wrap && (compact ? 'gap-1' : 'gap-2'),
         className,
       )}
     >
@@ -41,7 +52,7 @@ export function MultiWindowDelta({
         <span key={w.label} className="inline-flex items-center gap-1">
           <span className="text-ink-muted">{w.label}:</span>
           <DirectionPill deltaPct={w.deltaPct} compact={compact} />
-          {i < windows.length - 1 && (
+          {!wrap && i < windows.length - 1 && (
             <span
               className="text-ink-faint"
               aria-hidden

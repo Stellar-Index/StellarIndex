@@ -250,6 +250,23 @@ const PROTOCOLS: Result[] = [
   { type: 'oracle', label: 'Band', href: '/oracles' },
 ];
 
+// Empty-query orienting hints — the entity scopes the search grammar
+// recognizes (tx hash / account / asset / ledger), shown before the user
+// types so the box explains what it accepts. The `example` mirrors the
+// shape each scope's detector matches (looksLikeExplorerEntity + search()).
+// `prefill` is set only where a canned value genuinely resolves (Asset:XLM),
+// so a tap never lands the user on a fabricated dead entity.
+const SEARCH_SCOPES: {
+  label: string;
+  example: string;
+  prefill?: string;
+}[] = [
+  { label: 'Tx hash', example: '64-char hex' },
+  { label: 'Account', example: 'G… address' },
+  { label: 'Asset', example: 'XLM · USDC', prefill: 'XLM' },
+  { label: 'Ledger', example: 'sequence #' },
+];
+
 /**
  * Cmd-K search modal. Mounts globally via the Navbar; opens on
  * Cmd-K / Ctrl-K and on the Navbar's search-icon button.
@@ -476,8 +493,53 @@ export function SearchModal() {
                     ? 'No matches.'
                     : `${results.length} result${results.length === 1 ? '' : 's'}.`}
               </div>
+              {/* Empty query → orient the user with the searchable scopes
+                  before showing the top-assets starter list below. */}
+              {q.trim() === '' && (
+                <div className="border-line-subtle border-b px-3 py-3">
+                  <p className="text-ink-faint mb-2 text-[10px] tracking-wider uppercase">
+                    Search by
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {SEARCH_SCOPES.map((s) =>
+                      s.prefill ? (
+                        <button
+                          key={s.label}
+                          type="button"
+                          onClick={() => setQ(s.prefill as string)}
+                          className="border-line bg-surface-subtle text-ink-muted hover:border-brand-500 hover:text-ink-body inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors"
+                        >
+                          <span className="text-ink-body font-medium">
+                            {s.label}
+                          </span>
+                          <span className="text-ink-faint font-mono text-[10px]">
+                            {s.example}
+                          </span>
+                        </button>
+                      ) : (
+                        <span
+                          key={s.label}
+                          className="border-line bg-surface-subtle text-ink-muted inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs"
+                        >
+                          <span className="text-ink-body font-medium">
+                            {s.label}
+                          </span>
+                          <span className="text-ink-faint font-mono text-[10px]">
+                            {s.example}
+                          </span>
+                        </span>
+                      ),
+                    )}
+                  </div>
+                </div>
+              )}
               <ul className="max-h-96 overflow-y-auto p-2 text-sm">
-                {results.length === 0 && (
+                {q.trim() === '' && results.length > 0 && (
+                  <li className="text-ink-faint px-3 pb-1 pt-1 text-[10px] tracking-wider uppercase">
+                    Top assets
+                  </li>
+                )}
+                {q.trim() !== '' && results.length === 0 && (
                   <li className="text-ink-muted px-3 py-2 text-xs">
                     No matches across the asset directory, protocols, or pages.
                   </li>
@@ -493,7 +555,7 @@ export function SearchModal() {
                           name; without it the flex row refuses to shrink and
                           56-char strkeys blow the modal open sideways. */}
                       <span className="flex min-w-0 items-center gap-2">
-                        <span className="bg-surface-subtle text-ink-muted rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase">
+                        <span className="bg-surface-subtle text-ink-muted shrink-0 rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase">
                           {r.type}
                         </span>
                         <span className="min-w-0 truncate font-medium">{r.label}</span>
@@ -501,7 +563,7 @@ export function SearchModal() {
                           <span
                             title="Verified currency"
                             aria-label="Verified currency"
-                            className="inline-flex items-center"
+                            className="inline-flex shrink-0 items-center"
                           >
                             <svg
                               xmlns="http://www.w3.org/2000/svg"
@@ -519,7 +581,7 @@ export function SearchModal() {
                           </span>
                         )}
                         {r.hint && (
-                          <span className="text-ink-muted text-xs">
+                          <span className="text-ink-muted min-w-0 truncate text-xs">
                             — {r.hint}
                           </span>
                         )}
