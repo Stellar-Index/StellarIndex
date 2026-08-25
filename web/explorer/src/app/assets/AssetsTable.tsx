@@ -8,6 +8,7 @@ import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import { useAssets, type AssetClassFilter, type Coin } from '@/api/hooks';
 import { useTableSort, SortableTh, type SortColumn } from '@/lib/useTableSort';
 import { formatCompact, formatPriceSmall } from '@/lib/format';
+import { scamFlagTags } from '@/lib/directory-tags';
 import {
   Badge,
   Button,
@@ -474,6 +475,7 @@ function AssetRow({
             {coin.name ?? coin.slug}
           </span>
         </Link>
+        <ScamBadge tags={coin.issuer_directory_tags} />
       </Td>
       <Td>
         <ClassBadge cls={coin.class} />
@@ -540,6 +542,26 @@ function AssetRow({
         <RowSparkline points={coin.price_history_7d} />
       </Td>
     </TR>
+  );
+}
+
+// ScamBadge — compact directory-flag pill in the asset row. Renders only
+// when the issuer's curated directory tags include a scam-warning flag
+// (malicious/unsafe/fraud/scam/hack/phishing). DISPLAY-ONLY, third-party
+// attribution — never gates price, verification, or ranking.
+function ScamBadge({ tags }: { tags?: string[] | null }) {
+  const flagged = scamFlagTags(tags);
+  if (flagged.length === 0) return null;
+  return (
+    <Badge
+      tone="bad"
+      className="mt-1"
+      title={`Flagged by the stellar-expert community directory as: ${flagged.join(
+        ', ',
+      )} (third-party attribution — display-only, not a StellarIndex verification signal)`}
+    >
+      ⚠ Flagged
+    </Badge>
   );
 }
 

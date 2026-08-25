@@ -388,6 +388,44 @@ type AssetDetail struct {
 	ATH              *ATHPoint        `json:"ath,omitempty"`
 	IssuerScamReason string           `json:"issuer_scam_reason,omitempty"`
 	TopMarkets       []AssetTopMarket `json:"top_markets,omitempty"`
+
+	// IssuerDirectoryTags / Domain / Name are the live stellar-expert
+	// account_directory attribution for the issuer (e.g. the
+	// {malicious,unsafe} tags + audrev-stellar.com domain on the
+	// wash-inflated scam AUD). Display-only, third-party attribution —
+	// never an input to verification. Omitted when no directory reader is
+	// wired, the issuer isn't listed, or the lookup failed.
+	IssuerDirectoryTags   []string `json:"issuer_directory_tags,omitempty"`
+	IssuerDirectoryDomain string   `json:"issuer_directory_domain,omitempty"`
+	IssuerDirectoryName   string   `json:"issuer_directory_name,omitempty"`
+
+	// VolumeCharacter classifies the asset's trailing-window trade volume
+	// by account structure: "market" (honest multi-account, default),
+	// "operational" (issuer-side wrap corridor), or "concentrated" (>90%
+	// in one account pair on a market-styled pair — wash/ping-pong/dust).
+	// ANALYTICS / DISPLAY only — it does NOT re-rank and never feeds
+	// pricing or verification. Omitted when the reader isn't wired.
+	VolumeCharacter string `json:"volume_character,omitempty"`
+
+	// VolumeCharacterSignals are the account-structure signals
+	// VolumeCharacter is derived from. Present whenever the reader is
+	// wired (zeroed for an asset with no priced trades in the window).
+	VolumeCharacterSignals *AssetVolumeCharacterSignals `json:"volume_character_signals,omitempty"`
+}
+
+// AssetVolumeCharacterSignals are the underlying account-structure signals
+// AssetDetail.VolumeCharacter is derived from. Shares are fractions in
+// [0,1]. Mirrors the server-side response shape (design §2).
+type AssetVolumeCharacterSignals struct {
+	WindowDays             int     `json:"window_days"`
+	VolumeUSD              string  `json:"volume_usd"`
+	DistinctMakers         int64   `json:"distinct_makers"`
+	DistinctTakers         int64   `json:"distinct_takers"`
+	TopAccountPairVolShare float64 `json:"top_account_pair_vol_share"`
+	SelfCrossShare         float64 `json:"self_cross_share"`
+	IssuerSideShare        float64 `json:"issuer_side_share"`
+	MarketStyledShare      float64 `json:"market_styled_share"`
+	IsMarketStyled         bool    `json:"is_market_styled"`
 }
 
 // UnverifiedWarning is the warning body attached to AssetDetail
