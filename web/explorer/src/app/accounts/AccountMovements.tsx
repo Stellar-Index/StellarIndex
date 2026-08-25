@@ -20,6 +20,7 @@ import {
 } from '@/components/ui';
 import { DivergingColumns, type DivergingBucket } from '@/components/charts/Bars';
 import { apiGet, asExample } from '@/api/client';
+import { useLedgerFollow } from '@/lib/live/hooks';
 import type { components } from '@/api/types';
 import {
   type Envelope,
@@ -32,6 +33,13 @@ type AccountMovementsResp = components['schemas']['AccountMovements'];
 type AccountMovement = components['schemas']['AccountMovement'];
 
 const PAGE_SIZE = 25;
+
+// Live-follow cadence for the tip page. Ledgers close ~every 5s; coalesce
+// the ledger-close nudges to at most one refetch per 4s so the feed moves
+// the moment a new movement can land without hammering the API. The 20s
+// fallback poll only matters if the SSE ledger stream is unavailable.
+const MOVEMENTS_FOLLOW_MS = 4_000;
+const MOVEMENTS_FALLBACK_POLL_MS = 20_000;
 
 const DAY_FMT = new Intl.DateTimeFormat('en-US', {
   month: 'short',
@@ -117,6 +125,11 @@ export function AccountMovementsPanel({ id }: { id: string }) {
   const [kind, setKind] = useState('');
   const [direction, setDirection] = useState('');
 
+  // A blockchain explorer's movement feed must tick live — users watch
+  // their transactions land. We follow the tip ONLY on the first page
+  // (no cursor): a keyset walk into history must not be yanked back.
+  const atTip = cursor === undefined;
+
   const queryParams: Record<string, string | number | undefined> = {
     limit: PAGE_SIZE,
     ...(cursor ? { cursor } : {}),
@@ -124,12 +137,23 @@ export function AccountMovementsPanel({ id }: { id: string }) {
     ...(direction ? { direction } : {}),
   };
 
+  // Nudge a refetch on each ledger close (SSE, shared tab-wide), fast
+  // (movements are the headline live surface), gated to the tip page.
+  useLedgerFollow(
+    ['/v1/accounts/{id}/movements', id, 'tip', kind, direction],
+    MOVEMENTS_FOLLOW_MS,
+    atTip && id.length > 0,
+  );
+
   const { data, isLoading, isError, error, isFetching } =
     useQuery<AccountMovementsResp>({
       queryKey: ['/v1/accounts/{id}/movements', id, cursor ?? 'tip', kind, direction],
       enabled: id.length > 0,
       retry: false,
       placeholderData: keepPreviousData,
+      // Fallback poll at the tip in case the SSE stream is unavailable;
+      // off entirely once paginated into history.
+      refetchInterval: atTip ? MOVEMENTS_FALLBACK_POLL_MS : false,
       queryFn: async () => {
         const env = await apiGet<Envelope<AccountMovementsResp>>(
           `/v1/accounts/${encodeURIComponent(id)}/movements`,
