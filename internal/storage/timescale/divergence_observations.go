@@ -126,7 +126,7 @@ func (s *Store) ListDivergenceLatest(ctx context.Context, sinceDays int, firingO
 			       asset_id, quote_id, reference, observed_at, observed_at_ledger,
 			       our_price::text, ref_price::text, delta_pct::text, status
 			  FROM divergence_observations
-			 WHERE observed_at > now() - ($1 || ' days')::interval
+			 WHERE observed_at > now() - make_interval(days => $1)
 			 ORDER BY asset_id, quote_id, reference, observed_at DESC
 		)
 		SELECT asset_id, quote_id, reference, observed_at, observed_at_ledger,
