@@ -76,6 +76,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/anomaly"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/assetcharacterrollup"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/assetvolrollup"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/baseline"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/changesummary"
@@ -627,6 +628,29 @@ func run(cfgPath string, dryRun bool) error {
 		defer refresherWG.Done()
 		if err := assetVolRollup.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("asset-volume rollup worker exited with error", "err", err)
+		}
+	}()
+
+	// ─── Asset volume-character rollup worker (§2) ──────────────
+	// Folds the trailing-window all-asset account-structure roll over
+	// `trades` (each trade counted on BOTH sides, folded onto canonical
+	// assets) into asset_volume_character (migration 0149) so
+	// /v1/assets{,/{id}} read a keyed-on-PK lookup instead of the ~4s
+	// per-request trades roll (measured 4.09s on the USDC detail, tripping
+	// the 4s per-request timeout → null). Always on (backs a core API
+	// read). Gated on store non-nil like its sibling rollups. Runs after
+	// the alias registry is installed (above), so its canonical fold
+	// matches the per-asset read.
+	assetCharRollup := assetcharacterrollup.New(store, assetcharacterrollup.Options{
+		Interval: assetcharacterrollup.DefaultInterval,
+		Logger:   logger.With("component", "asset-character-rollup"),
+	})
+	refresherWG.Add(1)
+	go func() {
+		defer worker.Recover(logger, "asset-character-rollup")
+		defer refresherWG.Done()
+		if err := assetCharRollup.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("asset-character rollup worker exited with error", "err", err)
 		}
 	}()
 

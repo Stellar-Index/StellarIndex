@@ -79,6 +79,22 @@ type AssetRow struct {
 	// which serve verified currencies that are never dust) — a nil count is
 	// treated as "unmeasured" and never suppresses.
 	SourceCount *int
+
+	// VolumeCharacter is the derived market|operational|concentrated label
+	// from the asset_volume_character rollup (migration 0149,
+	// wash-and-scam-signals design §2), LEFT JOINed by canonical asset_id.
+	// Nil when the asset has no rolled row (no priced trades in the window,
+	// or the worker hasn't run). ANALYTICS / DISPLAY — the raw
+	// Volume24hUSD chain-fact is never altered by it.
+	VolumeCharacter *string
+	// SortVolume24hUSD is the concentration-adjusted 24h volume the default
+	// AssetsOrderVolume24hUSDDesc sort ranks on (§4-B "annotate + demote":
+	// raw × (1 − top_account_pair_vol_share) for concentrated/operational,
+	// raw otherwise). It is a SORT KEY only — the keyset cursor encodes it
+	// so pagination stays consistent with the ORDER BY. Never the displayed
+	// number: Volume24hUSD stays the raw, visible chain fact. Nil outside
+	// the listing query (the single-asset reads don't sort).
+	SortVolume24hUSD *string
 }
 
 // AssetsOrder controls the sort + cursor scheme used by ListAssets.
@@ -231,12 +247,15 @@ func scanAssetRow(scanner interface {
 		change24hPct            sql.NullString
 		change7dPct             sql.NullString
 		sourceCount             sql.NullInt64
+		volumeCharacter         sql.NullString
+		sortVolume24hUSD        sql.NullString
 	)
 	if err := scanner.Scan(
 		&r.Slug, &r.AssetID, &r.Code, &r.IssuerGStrkey,
 		&firstLedger, &lastLedger, &r.ObservationCount,
 		&priceUSD, &volume24hUSD, &marketCapUSD, &circulatingSupply,
 		&change1hPct, &change24hPct, &change7dPct, &sourceCount,
+		&volumeCharacter, &sortVolume24hUSD,
 	); err != nil {
 		return AssetRow{}, fmt.Errorf("timescale: scan asset: %w", err)
 	}
@@ -253,6 +272,8 @@ func scanAssetRow(scanner interface {
 		v := int(sourceCount.Int64)
 		r.SourceCount = &v
 	}
+	r.VolumeCharacter = nullStringPtr(volumeCharacter)
+	r.SortVolume24hUSD = nullStringPtr(sortVolume24hUSD)
 	return r, nil
 }
 
@@ -263,6 +284,29 @@ func nullStringPtr(ns sql.NullString) *string {
 	s := ns.String
 	return &s
 }
+
+// adjustedVolume24hExpr is the §4-B "annotate + demote" concentration-
+// adjusted 24h volume the default AssetsOrderVolume24hUSDDesc sort ranks on
+// (wash-and-scam-signals design §4, operator-CONFIRMED). It multiplies the
+// RAW 24h USD volume (asset_volume_24h rollup, LEFT JOIN alias `vol`) by
+// (1 − top_account_pair_vol_share) for assets the asset_volume_character
+// rollup (LEFT JOIN alias `avc`) labels `concentrated` or `operational`,
+// and leaves `market` / unrated assets at their raw volume. Effect: a
+// wash/operational asset with fabricated volume sinks in the ranking
+// proportional to how concentrated it is, so it no longer sits atop the
+// directory painting legitimacy — while the raw volume_24h_usd chain fact
+// stays UNCHANGED and visible in the payload, and the asset stays present
+// (annotate + demote, never hide or alter the raw number).
+//
+// It is the SORT KEY, not a displayed value. It is referenced in THREE
+// places that must stay identical — the listing SELECT (as sort_vol_usd,
+// so the keyset cursor can encode it), assetsOrderBy, and
+// assetsCursorPredicate — which is why it is one const: an all-NUMERIC
+// expression so the cursor round-trips exactly (::text out, ::numeric in).
+const adjustedVolume24hExpr = `(COALESCE(vol.vol_usd, 0) * ` +
+	`CASE WHEN avc.character IN ('concentrated', 'operational') ` +
+	`THEN GREATEST(0::numeric, 1::numeric - avc.top_account_pair_vol_share::numeric) ` +
+	`ELSE 1::numeric END)`
 
 // listAssetsBaseSelect is the CTE-laden SELECT shared by every
 // permutation of WHERE-clause buildAssetsQuery composes. Pulled
@@ -610,7 +654,9 @@ const listAssetsBaseSelect = `
 		    -- always liquid) and for any asset with no per-asset bucket.
 		    CASE WHEN ca.asset_id = 'native' THEN NULL::int
 		         ELSE COALESCE(direct.source_count, vs_xlm.source_count)
-		    END                                   AS source_count
+		    END                                   AS source_count,
+		    avc.character                         AS volume_character,
+		    ` + adjustedVolume24hExpr + ` AS sort_vol_usd
 		  FROM classic_assets ca
 		  LEFT JOIN per_asset_24h_vol vol         ON vol.asset_id        = ca.asset_id
 		  LEFT JOIN direct_usd        direct      ON direct.asset_id     = ca.asset_id
@@ -621,6 +667,7 @@ const listAssetsBaseSelect = `
 		  LEFT JOIN asset_vs_xlm_1h   vs_xlm_1h   ON vs_xlm_1h.asset_id  = ca.asset_id
 		  LEFT JOIN asset_vs_xlm_24h  vs_xlm_24h  ON vs_xlm_24h.asset_id = ca.asset_id
 		  LEFT JOIN asset_vs_xlm_7d   vs_xlm_7d   ON vs_xlm_7d.asset_id  = ca.asset_id
+		  LEFT JOIN asset_volume_character avc    ON avc.asset_id        = ca.asset_id
 `
 
 // listAssetsBaseSelectSQL renders [listAssetsBaseSelect] with optional
@@ -828,13 +875,17 @@ func assetsCursorArgs(cursor string, order AssetsOrder) []any {
 // ordering. `argEnd` is the index of the last cursor placeholder.
 func assetsCursorPredicate(order AssetsOrder, argEnd int) string {
 	if order == AssetsOrderVolume24hUSDDesc {
-		// Mixed-direction tuple compare: volume DESC, asset_id ASC.
-		// Encode as `(v < cv) OR (v = cv AND asset_id > cid)`.
-		// COALESCE-to-zero so NULL volumes compare as 0 (sorts last).
+		// Mixed-direction tuple compare: adjusted-volume DESC, asset_id ASC.
+		// Encode as `(v < cv) OR (v = cv AND asset_id > cid)`. The sort key
+		// is the §4-B concentration-adjusted volume (adjustedVolume24hExpr),
+		// so the keyset cursor encodes the SAME value the ORDER BY ranks on
+		// (the listing emits it as sort_vol_usd). The expression is
+		// COALESCE-to-zero on the raw volume, so a NULL-volume asset sorts
+		// last as 0 exactly as before.
 		return fmt.Sprintf(
-			"(COALESCE(vol.vol_usd, 0) < $%d::numeric "+
-				"OR (COALESCE(vol.vol_usd, 0) = $%d::numeric AND ca.asset_id > $%d))",
-			argEnd-1, argEnd-1, argEnd)
+			"(%s < $%d::numeric "+
+				"OR (%s = $%d::numeric AND ca.asset_id > $%d))",
+			adjustedVolume24hExpr, argEnd-1, adjustedVolume24hExpr, argEnd-1, argEnd)
 	}
 	return fmt.Sprintf(
 		"(ca.observation_count, ca.asset_id) < ($%d, $%d)",
@@ -843,7 +894,10 @@ func assetsCursorPredicate(order AssetsOrder, argEnd int) string {
 
 func assetsOrderBy(order AssetsOrder) string {
 	if order == AssetsOrderVolume24hUSDDesc {
-		return " ORDER BY COALESCE(vol.vol_usd, 0) DESC, ca.asset_id ASC"
+		// §4-B "annotate + demote": rank by the concentration-adjusted
+		// volume, not raw, so wash/operational assets don't sit atop the
+		// directory. The raw volume_24h_usd stays the visible payload value.
+		return " ORDER BY " + adjustedVolume24hExpr + " DESC, ca.asset_id ASC"
 	}
 	return " ORDER BY ca.observation_count DESC, ca.asset_id ASC"
 }
@@ -1636,7 +1690,12 @@ const getAssetBySlugSQL = `
 		    -- Single-row slug lookup serves catalogue-verified currencies,
 		    -- which are never dust — leave source_count unmeasured so the
 		    -- valuation guard never suppresses here (shared scanAssetRow shape).
-		    NULL::int                             AS source_count
+		    NULL::int                             AS source_count,
+		    -- volume_character / sort_vol_usd are listing-only (single-asset
+		    -- reads don't rank); the detail stamps volume_character via the
+		    -- keyed AssetVolumeCharacterRollup lookup, not this projector.
+		    NULL::text                            AS volume_character,
+		    NULL::numeric                         AS sort_vol_usd
 		  FROM chosen
 		  JOIN classic_assets ca ON ca.asset_id = chosen.asset_id
 		  LEFT JOIN per_asset_24h_vol vol ON true
@@ -1826,7 +1885,9 @@ const getNativeAssetSQL = `
 		    END                                    AS change_7d_pct,
 		    -- Native XLM is always deep-liquidity — leave source_count
 		    -- unmeasured (shared scanAssetRow shape); the guard never fires.
-		    NULL::int                              AS source_count
+		    NULL::int                              AS source_count,
+		    NULL::text                             AS volume_character,
+		    NULL::numeric                          AS sort_vol_usd
 		  FROM ledger_bounds lb
 		  LEFT JOIN per_asset_24h_vol vol ON true
 `

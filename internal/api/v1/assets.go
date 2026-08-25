@@ -1485,6 +1485,14 @@ func assetDetailFromAssetRow(row timescale.AssetRow) AssetDetail {
 	if row.Volume24hUSD != nil {
 		d.VolumeUSD24h = row.Volume24hUSD
 	}
+	// §2 volume_character on the LISTING (was detail-only): the label from
+	// the asset_volume_character rollup, LEFT JOINed by canonical asset_id.
+	// The listing carries only the derived label; the full signals stay a
+	// detail-only field (stamped there by applyVolumeCharacter). ANALYTICS
+	// / DISPLAY — never alters the raw VolumeUSD24h chain fact above.
+	if row.VolumeCharacter != nil {
+		d.VolumeCharacter = *row.VolumeCharacter
+	}
 	if row.MarketCapUSD != nil {
 		d.MarketCapUSD = row.MarketCapUSD
 	}
@@ -2094,12 +2102,16 @@ func (s *Server) fetchClassicUnifiedRows(w http.ResponseWriter, r *http.Request,
 	nextInner := ""
 	if hasMore && len(out) > 0 {
 		last := rows[len(rows)-1]
-		// Volume24hUSDDesc cursor shape: <vol_or_blank>:<asset_id>.
-		volStr := ""
-		if last.Volume24hUSD != nil {
-			volStr = *last.Volume24hUSD
+		// Volume24hUSDDesc cursor shape: <sort_vol_or_blank>:<asset_id>.
+		// The prefix is the §4-B concentration-adjusted SORT key
+		// (SortVolume24hUSD), NOT the raw volume — the keyset cursor must
+		// encode the same value the ORDER BY ranks on, or pagination skips
+		// or repeats rows. The raw Volume24hUSD stays the visible payload.
+		sortVolStr := ""
+		if last.SortVolume24hUSD != nil {
+			sortVolStr = *last.SortVolume24hUSD
 		}
-		nextInner = volStr + ":" + last.AssetID
+		nextInner = sortVolStr + ":" + last.AssetID
 	}
 	return out, nextInner, true
 }
