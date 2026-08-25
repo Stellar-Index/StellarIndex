@@ -32,6 +32,13 @@ against.
   **open** on a directory outage. Deliberately overturns the directory's
   historical "display-only, tags never gate pricing" invariant. (#182)
 ### Fixed
+- Explorer asset-page price chart was blank for **USDC and every fiat
+  currency**: those chart against `fiat:USD`, which the `/v1/ohlc` candle
+  path has no rows for (a fiat pair has no on-chain constituent; only
+  `/v1/chart` carries the fx-cross series). Fiat currencies now render a
+  USD line from `/v1/chart`, and USDC — the dollar reference, which has no
+  USDC/USD series of its own — shows a "≈ $1.00 reference" panel (linking
+  the divergence board for depeg watching) instead of an empty grid.
 - Explorer "Top assets by activity" ranked by all-time `observation_count`
   (a cumulative counter that floats long-lived stablecoins to the top) and
   omitted native XLM entirely (it has no `classic_assets` row, so it never
