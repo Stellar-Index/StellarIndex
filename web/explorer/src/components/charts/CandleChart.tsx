@@ -5,9 +5,11 @@ import {
   CandlestickSeries,
   createChart,
   HistogramSeries,
+  LineStyle,
   type CandlestickData,
   type HistogramData,
   type IChartApi,
+  type IPriceLine,
   type ISeriesApi,
   type Time,
 } from 'lightweight-charts';
@@ -31,6 +33,15 @@ export type CandleChartProps = {
   height?: number;
   className?: string;
   /**
+   * Live tip price (asset in the chart's quote units). When set, it
+   * drives the right-axis current-price line so the label TICKS with
+   * each trade instead of freezing at the last closed candle's close.
+   * The series' own static last-value label is hidden while a live
+   * price is present, so there's exactly one price line. Null/absent →
+   * the static last-close label is shown as before.
+   */
+  livePrice?: number | null;
+  /**
    * Text alternative for the canvas-rendered chart (WCAG 1.1.1).
    * lightweight-charts paints to a <canvas> with no DOM text, so
    * screen readers get nothing without this.
@@ -47,11 +58,18 @@ export type CandleChartProps = {
  * The component owns the chart lifecycle: create on mount, dispose on unmount.
  * Data updates push via setData rather than tearing down the chart.
  */
-export function CandleChart({ data, height = 360, className, ariaLabel }: CandleChartProps) {
+export function CandleChart({
+  data,
+  height = 360,
+  className,
+  livePrice,
+  ariaLabel,
+}: CandleChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
+  const priceLineRef = useRef<IPriceLine | null>(null);
   const themeRef = useRef<ChartTheme | null>(null);
 
   const hasVolume = data.some((p) => p.volume != null && Number.isFinite(p.volume));
@@ -123,6 +141,10 @@ export function CandleChart({ data, height = 360, className, ariaLabel }: Candle
       chartRef.current = null;
       seriesRef.current = null;
       volumeRef.current = null;
+      // The price line is owned by the disposed series; drop the handle so
+      // the live-price effect recreates it against the fresh series rather
+      // than calling applyOptions on a dead one.
+      priceLineRef.current = null;
     };
   }, [height, hasVolume]);
 
@@ -141,6 +163,55 @@ export function CandleChart({ data, height = 360, className, ariaLabel }: Candle
     if (theme) volumeRef.current?.setData(toVolume(data, theme));
     chartRef.current?.timeScale().fitContent();
   }, [data]);
+
+  // Live current-price line (RT-2): mirror the headline's live tip onto the
+  // chart's right axis so the current-price label ticks with each trade
+  // instead of freezing at the last closed candle. While a live price is
+  // present we hide the series' own static last-value label (else two labels
+  // stack on the axis) and drive a single price line that we recolour +
+  // reprice on every tick. No live tip → restore the static label.
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+    const hasLive =
+      livePrice != null && Number.isFinite(livePrice) && livePrice > 0;
+
+    series.applyOptions({
+      lastValueVisible: !hasLive,
+      priceLineVisible: !hasLive,
+    });
+
+    if (!hasLive) {
+      if (priceLineRef.current) {
+        series.removePriceLine(priceLineRef.current);
+        priceLineRef.current = null;
+      }
+      return;
+    }
+
+    // Colour by where the live tick sits vs the last closed candle — up
+    // (green) above, down (red) below — the same direction semantics the
+    // headline price flashes on.
+    const theme = themeRef.current;
+    const lastClose = data.length ? data[data.length - 1].close : null;
+    const color =
+      lastClose != null && (livePrice as number) < lastClose
+        ? (theme?.down ?? '#f6465d')
+        : (theme?.up ?? '#31c48d');
+    const opts = {
+      price: livePrice as number,
+      color,
+      lineWidth: 1 as const,
+      lineStyle: LineStyle.Solid,
+      axisLabelVisible: true,
+      title: '',
+    };
+    if (priceLineRef.current) {
+      priceLineRef.current.applyOptions(opts);
+    } else {
+      priceLineRef.current = series.createPriceLine(opts);
+    }
+  }, [data, livePrice]);
 
   return (
     <div

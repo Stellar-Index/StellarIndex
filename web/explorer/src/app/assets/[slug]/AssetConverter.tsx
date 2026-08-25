@@ -45,13 +45,21 @@ const ALL_FIAT = [
 ];
 
 /**
- * AssetConverter — bidirectional USD ↔ asset converter.
- * Pure client-side maths off the price prop; refreshes when the
- * parent re-fetches the price.
+ * AssetConverter — the sidebar's "exchange readout": the panel leads
+ * with the live equivalence `1 {asset} = $X` (asset → USD, the framing
+ * a reader expects from a ticker), with the target currency selectable
+ * inside the headline. Below it, a compact amount row converts any
+ * quantity in either direction; the headline equivalence stays fixed on
+ * "1 unit of the asset".
  *
- * No FX leg yet — converts to USD only. Cross-currency conversion
- * (asset → EUR, JPY, etc.) lands when the asset detail page wires
- * the forex snapshot from /v1/currencies.
+ * Pure client-side maths off the price prop; refreshes when the parent
+ * re-fetches the price.
+ *
+ * F-1201 migration: pre-rc.48 this read /v1/currencies (a single bulk
+ * endpoint already in "1 USD = N target" shape). rc.48 removed that
+ * route; we now use /v1/price/batch ("1 unit of asset = X USD") and
+ * invert at the boundary. Names are missing from the batch response —
+ * we don't render them in this converter, so that's fine.
  */
 export function AssetConverter({
   symbol,
@@ -60,25 +68,19 @@ export function AssetConverter({
   symbol: string;
   priceUSD: number | null;
 }) {
-  const [direction, setDirection] = useState<'fiat-to-asset' | 'asset-to-fiat'>(
-    'fiat-to-asset',
+  // 'asset-to-fiat' (DEFAULT): type an asset amount → target value. This
+  // matches the fixed headline framing ("1 XLM = $0.19"); the old default
+  // was the inverse ("1 USD = N XLM"), which read backwards for a ticker.
+  const [direction, setDirection] = useState<'asset-to-fiat' | 'fiat-to-asset'>(
+    'asset-to-fiat',
   );
   const [amount, setAmount] = useState('1');
   const [target, setTarget] = useState('USD');
   const [showAll, setShowAll] = useState(false);
 
   // Pull the forex snapshot to power non-USD targets. Stale data is
-  // fine — the snapshot refreshes every 5 min, and a stale FX leg
-  // on a crypto-asset converter is dominated by the crypto's own
-  // volatility anyway.
-  //
-  // F-1201 migration: pre-rc.48 this called /v1/currencies (single
-  // bulk endpoint with `rate_usd` already in the "1 USD = N target"
-  // shape this converter expects). rc.48 removed that route; we
-  // now use /v1/price/batch which returns "1 unit of asset = X
-  // USD" and invert at the boundary. Names are missing from the
-  // batch response — we don't render them in this converter so
-  // that's fine.
+  // fine — the snapshot refreshes every 5 min, and a stale FX leg on a
+  // crypto-asset converter is dominated by the crypto's own volatility.
   const fx = useQuery<CurrencyRow[]>({
     queryKey: ['/v1/price/batch', 'forAssetConverter'],
     queryFn: async () => {
@@ -111,32 +113,33 @@ export function AssetConverter({
     return m;
   }, [fx.data]);
 
-  // rate_usd here means "1 USD = N target" so 1 asset = N * priceUSD target.
+  // rate_usd means "1 USD = N target" so 1 asset = N × priceUSD target.
   const targetRate = fxByTicker[target] ?? null;
+  const priceable = priceUSD != null && priceUSD > 0 && targetRate != null;
+
+  // The headline equivalence: value of ONE asset unit, in the target.
+  const unitValue = priceable ? (priceUSD as number) * (targetRate as number) : null;
+
   const numeric = Number(amount);
   const validInput = Number.isFinite(numeric) && numeric >= 0;
 
   let result: number | null = null;
-  if (priceUSD != null && priceUSD > 0 && targetRate != null && validInput) {
-    if (direction === 'fiat-to-asset') {
-      // amount target → asset: convert target → USD (÷ targetRate),
-      // then USD → asset (÷ priceUSD).
-      result = numeric / targetRate / priceUSD;
-    } else {
-      // asset → target: convert asset → USD (× priceUSD), then
-      // USD → target (× targetRate).
-      result = numeric * priceUSD * targetRate;
-    }
+  if (priceable && validInput) {
+    result =
+      direction === 'asset-to-fiat'
+        ? // asset → target: × priceUSD (→ USD), × targetRate (→ target)
+          numeric * (priceUSD as number) * (targetRate as number)
+        : // target → asset: ÷ targetRate (→ USD), ÷ priceUSD (→ asset)
+          numeric / (targetRate as number) / (priceUSD as number);
   }
 
-  const fromUnit = direction === 'fiat-to-asset' ? target : symbol;
-  const toUnit = direction === 'fiat-to-asset' ? symbol : target;
+  const fromUnit = direction === 'asset-to-fiat' ? symbol : target;
+  const toUnit = direction === 'asset-to-fiat' ? target : symbol;
+  const targetIsUSD = target === 'USD';
 
-  // Available targets — featured first, then the rest if "show all"
-  // is toggled. Filter against the forex snapshot so we don't list
-  // tickers we can't actually convert.
-  // Memoise the ticker set so its identity is stable across renders
-  // (otherwise the useEffect dependency tracker reruns on every render).
+  // Available targets — featured first, then the long tail once "show
+  // all" is toggled. Filter against the forex snapshot so we never list
+  // a ticker we can't convert. Memoised so its identity is stable.
   const tickerSet = useMemo(() => {
     const s = new Set((fx.data ?? []).map((c) => c.ticker));
     s.add('USD');
@@ -145,11 +148,9 @@ export function AssetConverter({
 
   const allTickers = useMemo(() => Array.from(tickerSet).sort(), [tickerSet]);
 
-  // Once any currency outside the FEATURED set is picked
-  // (e.g. via the searchable combobox typing "ZAR"), promote to
-  // showAll mode so the combobox keeps the long-tail list visible.
-  // Adjust state during render rather than in an effect — the guard on
-  // `!showAll` makes this idempotent (fires at most once per promotion).
+  // Once any currency outside FEATURED is picked (e.g. typing "ZAR" in
+  // the combobox), promote to showAll so the long-tail stays visible.
+  // Adjust state during render; the `!showAll` guard keeps it idempotent.
   if (!showAll && tickerSet.has(target) && !FEATURED.includes(target)) {
     setShowAll(true);
   }
@@ -163,13 +164,64 @@ export function AssetConverter({
           : 'Awaiting live price'
       }
       source={asExample('/v1/price', { asset: symbol, quote: 'fiat:USD' })}
+      bodyClassName="space-y-3"
     >
-      <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-[1fr_auto_1fr]">
-        <label className="space-y-1">
-          <span className="text-ink-muted text-xs tracking-wider uppercase">
-            From
+      {/* Exchange readout — the hero. A single equivalence statement,
+          "1 {asset} = {value} {target}", typeset as an equation with the
+          target unit selectable in place. This is the primary reading;
+          the amount row below is the working surface. */}
+      <div className="border-line bg-surface-canvas rounded-md border px-3 py-2.5">
+        <div className="text-ink-faint flex items-center justify-between text-[10px] tracking-wider uppercase">
+          <span>Exchange rate</span>
+          {!priceable && <span>awaiting price</span>}
+        </div>
+        <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-1 font-mono tabular-nums">
+          <span className="text-ink-body text-sm">1</span>
+          <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 text-xs tracking-wider uppercase">
+            {symbol}
           </span>
-          <div className="border-line bg-surface flex items-center gap-2 rounded-md border p-2">
+          {/* The equals sign is the one bold accent — the pivot of the
+              equation, in brand ink. */}
+          <span className="text-brand-500 text-lg leading-none">=</span>
+          <span className="text-ink text-2xl leading-none">
+            {unitValue != null
+              ? `${targetIsUSD ? '$' : ''}${formatResult(unitValue)}`
+              : '—'}
+          </span>
+          <CurrencyCombobox
+            value={target}
+            onChange={(v) => {
+              setTarget(v);
+              setShowAll(true);
+            }}
+            tickers={allTickers}
+          />
+        </div>
+      </div>
+
+      {/* Amount converter — the working row. Left field is the editable
+          input, right is the computed value; Reverse swaps which unit you
+          type in without touching the headline framing. */}
+      <div>
+        <div className="mb-1 flex items-center justify-between">
+          <span className="text-ink-muted text-xs tracking-wider uppercase">
+            Amount
+          </span>
+          <button
+            type="button"
+            aria-label="Reverse conversion direction"
+            onClick={() =>
+              setDirection((d) =>
+                d === 'asset-to-fiat' ? 'fiat-to-asset' : 'asset-to-fiat',
+              )
+            }
+            className="border-line text-ink-muted hover:border-brand-500 hover:text-brand-600 inline-flex items-center gap-1 rounded-sm border px-1.5 py-0.5 text-[10px] tracking-wider uppercase transition-colors"
+          >
+            ⇄ Reverse
+          </button>
+        </div>
+        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+          <div className="border-line bg-surface flex items-center gap-1.5 rounded-md border px-2 py-1.5">
             <input
               type="number"
               value={amount}
@@ -177,85 +229,44 @@ export function AssetConverter({
               min="0"
               step="any"
               inputMode="decimal"
-              className="w-full bg-transparent font-mono text-2xl tabular-nums focus:outline-hidden"
+              aria-label={`Amount in ${fromUnit}`}
+              className="w-full min-w-0 bg-transparent font-mono text-base tabular-nums focus:outline-hidden"
             />
-            {direction === 'fiat-to-asset' ? (
-              <CurrencyCombobox
-                value={target}
-                onChange={(v) => {
-                  setTarget(v);
-                  setShowAll(true);
-                }}
-                tickers={allTickers}
-              />
-            ) : (
-              <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 font-mono text-xs tracking-wider uppercase">
-                {fromUnit}
-              </span>
-            )}
+            <span className="bg-surface-subtle text-ink-body shrink-0 rounded-sm px-1 py-0.5 font-mono text-[10px] tracking-wider uppercase">
+              {fromUnit}
+            </span>
           </div>
-        </label>
-
-        <button
-          type="button"
-          aria-label="Swap direction"
-          onClick={() =>
-            setDirection((d) =>
-              d === 'fiat-to-asset' ? 'asset-to-fiat' : 'fiat-to-asset',
-            )
-          }
-          className="border-line text-ink-muted hover:border-brand-500 hover:text-brand-600 self-center rounded-md border px-2 py-1 text-xs sm:mb-1"
-        >
-          ⇄
-        </button>
-
-        <label className="space-y-1">
-          <span className="text-ink-muted text-xs tracking-wider uppercase">
-            To
+          <span className="text-ink-faint text-xs" aria-hidden>
+            →
           </span>
-          <div className="border-line bg-surface flex items-center gap-2 rounded-md border p-2">
-            <span className="text-ink w-full font-mono text-2xl tabular-nums">
+          <div className="border-line-subtle bg-surface-subtle flex items-center gap-1.5 rounded-md border px-2 py-1.5">
+            <span className="text-ink w-full min-w-0 truncate font-mono text-base tabular-nums">
               {result != null ? formatResult(result) : '—'}
             </span>
-            {direction === 'asset-to-fiat' ? (
-              <CurrencyCombobox
-                value={target}
-                onChange={(v) => {
-                  setTarget(v);
-                  setShowAll(true);
-                }}
-                tickers={allTickers}
-              />
-            ) : (
-              <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 font-mono text-xs tracking-wider uppercase">
-                {toUnit}
-              </span>
-            )}
+            <span className="bg-surface text-ink-body shrink-0 rounded-sm px-1 py-0.5 font-mono text-[10px] tracking-wider uppercase">
+              {toUnit}
+            </span>
           </div>
-        </label>
+        </div>
       </div>
-      {priceUSD != null &&
-        priceUSD > 0 &&
-        targetRate != null &&
-        targetRate > 0 && (
-          <p className="text-ink-muted mt-3 text-xs">
-            1 {symbol} = {formatResult(priceUSD * targetRate)} {target} · 1{' '}
-            {target} = {formatResult(1 / (priceUSD * targetRate))} {symbol}
-            {target !== 'USD' && (
-              <>
-                <span className="text-ink-faint mx-2">·</span>
-                <span>
-                  FX leg: 1 USD = {formatResult(targetRate)} {target}
-                </span>
-              </>
-            )}
-          </p>
-        )}
+
+      {/* Secondary rates — the inverse + FX leg, kept quiet. */}
+      {unitValue != null && unitValue > 0 && (
+        <p className="text-ink-muted text-xs">
+          1 {target} = {formatResult(1 / unitValue)} {symbol}
+          {!targetIsUSD && (
+            <>
+              <span className="text-ink-faint mx-2">·</span>
+              <span>
+                FX: 1 USD = {formatResult(targetRate as number)} {target}
+              </span>
+            </>
+          )}
+        </p>
+      )}
     </Panel>
   );
 }
-
-// (CurrencySelect replaced by the searchable @/components/CurrencyCombobox.)
 
 function formatResult(n: number): string {
   if (!Number.isFinite(n)) return '—';

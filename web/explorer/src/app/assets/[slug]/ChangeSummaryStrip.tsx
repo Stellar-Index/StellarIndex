@@ -78,7 +78,7 @@ export function ChangeSummaryStrip({
       className={`border-line-subtle flex flex-wrap items-center gap-x-3 gap-y-2 border-t pt-3 ${className ?? ''}`}
       data-testid="change-summary-strip"
     >
-      {hasAny && <MultiWindowDelta windows={windows} compact />}
+      {hasAny && <MultiWindowDelta windows={windows} compact wrap />}
       {streakOk && (
         <StreakIndicator
           kind="streak"

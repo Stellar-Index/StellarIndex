@@ -6,8 +6,19 @@ import { useQuery } from '@tanstack/react-query';
 
 import { API_BASE_URL } from '@/api/client';
 import { Segmented } from '@/components/ui';
-import { useLedgerFollow } from '@/lib/live/hooks';
+import {
+  isFrameStale,
+  useLedgerFollow,
+  useLiveClock,
+  useTipStream,
+} from '@/lib/live/hooks';
 import type { components } from '@/api/types';
+
+/** A tip tick drives the chart's live price line while fresher than this
+ * (producer window ~5s; 30s of silence = wedged stream / backgrounded tab
+ * → drop the live line, fall back to the last-closed-candle label). Mirrors
+ * LiveAssetPrice's TIP_LIVE_STALE_MS so the chart and headline agree. */
+const TIP_LIVE_STALE_MS = 30_000;
 
 // CandleChart pulls in lightweight-charts (~155 KB). Lazy-load it so the
 // surrounding page renders without paying the bundle tax up front.
@@ -74,6 +85,7 @@ export function MarketChart({
   quoteLabel,
   height = 380,
   defaultTimeframe = '7d',
+  liveTip = false,
 }: {
   base: string;
   quote: string;
@@ -81,6 +93,13 @@ export function MarketChart({
   quoteLabel: string;
   height?: number;
   defaultTimeframe?: Win;
+  /**
+   * Opt in to a live current-price line on the right axis, fed by the
+   * shared /v1/price/tip/stream for THIS pair (same source the headline
+   * LiveAssetPrice uses). Off by default so multi-chart boards don't each
+   * open an SSE tip connection — turn it on for single-pair/asset pages.
+   */
+  liveTip?: boolean;
 }) {
   const [winKey, setWinKey] = useState<Win>(defaultTimeframe);
   const win = WINDOWS.find((w) => w.key === winKey) ?? WINDOWS[1];
@@ -126,6 +145,19 @@ export function MarketChart({
   // window, history is truncated (backfill in progress) — say so honestly.
   const coverageNote = coverage(data, win.spanSec);
 
+  // Live current-price line: subscribe to this pair's tip stream (same
+  // multiplexed source as the headline LiveAssetPrice) so the right-axis
+  // price label ticks with each trade. Quoted in the chart's OWN quote so
+  // the tip value shares the candles' price scale. Disabled unless liveTip
+  // is set; a wedged/quiet stream (or a withheld pair) simply yields null →
+  // the static last-closed-candle label is shown instead.
+  const tip = useTipStream(liveTip ? base : null, quote);
+  const clock = useLiveClock();
+  const tipFresh =
+    tip != null && !isFrameStale(clock, tip.receivedAt, TIP_LIVE_STALE_MS);
+  const tipNum = tipFresh ? Number(tip.data.data?.price) : NaN;
+  const livePrice = Number.isFinite(tipNum) && tipNum > 0 ? tipNum : null;
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
@@ -161,6 +193,7 @@ export function MarketChart({
           <CandleChart
             data={data}
             height={height}
+            livePrice={livePrice}
             ariaLabel={`${baseLabel}/${quoteLabel} OHLC candlestick chart with volume, ${activeGrain} candles`}
           />
           {coverageNote && (

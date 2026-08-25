@@ -66,6 +66,7 @@ export function ChartPanel({ assetID }: { assetID: string }) {
         baseLabel={shortAssetText(assetID)}
         quoteLabel={label}
         height={420}
+        liveTip
       />
     </Panel>
   );
