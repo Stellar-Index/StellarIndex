@@ -81,7 +81,7 @@ func TestScamGate_Withheld(t *testing.T) {
 
 	// scam-flagged issuer → withheld.
 	fd := &fakeDir{entry: timescale.DirectoryEntry{Tags: []string{"unsafe"}}, found: true}
-	g := NewScamGate(fd, nil)
+	g := NewScamGate(fd, ScamGateOptions{})
 	if !g.Withheld(ctx, classic("RIO", "GBNL"), "price_read") {
 		t.Error("flagged issuer must be withheld")
 	}
@@ -92,20 +92,20 @@ func TestScamGate_Withheld(t *testing.T) {
 	}
 
 	// clean issuer → not withheld.
-	g2 := NewScamGate(&fakeDir{entry: timescale.DirectoryEntry{Tags: []string{"kyc"}}, found: true}, nil)
+	g2 := NewScamGate(&fakeDir{entry: timescale.DirectoryEntry{Tags: []string{"kyc"}}, found: true}, ScamGateOptions{})
 	if g2.Withheld(ctx, classic("USDC", "GA5Z"), "price_read") {
 		t.Error("clean issuer must not be withheld")
 	}
 
 	// unlisted issuer → not withheld.
-	g3 := NewScamGate(&fakeDir{found: false}, nil)
+	g3 := NewScamGate(&fakeDir{found: false}, ScamGateOptions{})
 	if g3.Withheld(ctx, classic("FOO", "GXXX"), "price_read") {
 		t.Error("unlisted issuer must not be withheld")
 	}
 
 	// non-classic assets have no directory-flaggable issuer.
 	gd := &fakeDir{entry: timescale.DirectoryEntry{Tags: []string{"scam"}}, found: true}
-	gg := NewScamGate(gd, nil)
+	gg := NewScamGate(gd, ScamGateOptions{})
 	if gg.Withheld(ctx, canonical.Asset{Type: canonical.AssetNative}, "price_read") {
 		t.Error("native asset cannot be scam-gated")
 	}
@@ -115,7 +115,7 @@ func TestScamGate_Withheld(t *testing.T) {
 
 	// fail-OPEN: a directory error must NOT withhold, and must not cache.
 	fe := &fakeDir{err: errors.New("db down")}
-	ge := NewScamGate(fe, nil)
+	ge := NewScamGate(fe, ScamGateOptions{})
 	if ge.Withheld(ctx, classic("RIO", "GBNL"), "price_read") {
 		t.Error("directory error must fail OPEN (not withhold)")
 	}

@@ -98,15 +98,22 @@ type ScamGate struct {
 	cache map[string]scamVerdict // keyed by issuer G-address
 }
 
+// ScamGateOptions tunes a ScamGate. Logger rides here (not as a
+// positional constructor param) per the repo's constructor idiom —
+// mirrors SubstanceGateOptions.
+type ScamGateOptions struct {
+	Logger *slog.Logger
+}
+
 // NewScamGate builds a gate over the directory reader. A nil reader
 // yields a nil gate (withholds nothing) so deployments without the
 // directory table stay unguarded transparently — same shape as the
 // directory overlay's nil handling.
-func NewScamGate(dir ScamDirectoryReader, logger *slog.Logger) *ScamGate {
+func NewScamGate(dir ScamDirectoryReader, opts ScamGateOptions) *ScamGate {
 	if dir == nil {
 		return nil
 	}
-	return &ScamGate{dir: dir, logger: logger, cache: make(map[string]scamVerdict)}
+	return &ScamGate{dir: dir, logger: opts.Logger, cache: make(map[string]scamVerdict)}
 }
 
 // Withheld reports whether the aggregated price for `base` must be

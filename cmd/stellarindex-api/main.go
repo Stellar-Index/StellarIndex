@@ -630,7 +630,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// so every reader-backed price surface (/v1/price, /v1/price/batch,
 	// /v1/twap, /v1/vwap, the SEP-40 oracle price paths, the asset headline)
 	// is covered by ONE gate. Nil when the directory reader is absent.
-	scamGate := pricingguard.NewScamGate(store, logger)
+	scamGate := pricingguard.NewScamGate(store, pricingguard.ScamGateOptions{Logger: logger})
 	priceReader := storePriceReader{s: store, logger: logger, substance: substanceGate, scam: scamGate}
 
 	// Oracle reader — Redis-cached read-through wrapper around the
