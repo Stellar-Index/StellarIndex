@@ -2329,6 +2329,15 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// derive from the peg. See fillDeclaredPegPrice.
 	s.fillDeclaredPegPrice(r.Context(), &detail, nil)
 
+	// Scam-issuer price suppression — the payload-side twin of the
+	// reader-seam ScamGate (which withholds /v1/price etc.). Runs AFTER
+	// every price producer, including the declared-peg fill above, so a
+	// re-fill can't resurrect the value: a directory-scam-flagged issuer
+	// publishes no price_usd / market_cap_usd / fdv_usd / change_*, while
+	// keeping circulating_supply + the scam warning. This deliberately
+	// overturns the historical display-only invariant (2026-08-25).
+	suppressScamIssuerPricing(&detail)
+
 	// Verified-currency overlay (R-018 Phase 1.1) — attaches the
 	// `unverified_warning` body + flips flags.unverified_ticker_collision
 	// when the asset code matches a verified Stellar ticker but the

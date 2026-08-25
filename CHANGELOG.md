@@ -15,6 +15,23 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Scam-pricing gate.** An asset whose issuer is flagged scam-class
+  (`malicious`/`unsafe`/`fraud`/`scam`/`hack`/`phishing`) in the curated
+  account directory now has its aggregated **price AND market cap/FDV
+  withheld** — a scam token no longer publishes a value that lends it
+  legitimacy, even when its market clears the thin-market substance floor
+  (RIO-GBNLJIYH… did: it showed a $0.0072 price + a $540k market cap on a
+  deprecated-scam issuer). Wired at the **price-reader seam** so one gate
+  covers `/v1/price`, `/v1/price/batch`, `/v1/twap`, `/v1/vwap`, the SEP-40
+  oracle price paths, the asset headline and the live tip (keyed on the
+  base, so it holds across quotes incl. XLM triangulation), plus a payload
+  suppression on the `/v1/assets` listing + detail (market_cap / fdv /
+  price / change). Raw trade surfaces (`/v1/ohlc`, `/v1/observations`,
+  `/v1/history`) and `circulating_supply` stay visible; the gate fails
+  **open** on a directory outage. Deliberately overturns the directory's
+  historical "display-only, tags never gate pricing" invariant. (#182)
+
 ## [v0.44.1] — 2026-08-25
 
 Tested against Stellar protocol 22.

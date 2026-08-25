@@ -625,7 +625,13 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// plus the v1 server's tip path, so all surfaces agree (and share
 	// the verdict cache) on which pairs are too thin to price.
 	substanceGate := buildSubstanceGate(cfg.PricingGuard, store, logger)
-	priceReader := storePriceReader{s: store, logger: logger, substance: substanceGate}
+	// Scam-pricing gate: withhold the aggregated price for issuers flagged
+	// scam-class in the curated account directory. Wired at the reader seam
+	// so every reader-backed price surface (/v1/price, /v1/price/batch,
+	// /v1/twap, /v1/vwap, the SEP-40 oracle price paths, the asset headline)
+	// is covered by ONE gate. Nil when the directory reader is absent.
+	scamGate := pricingguard.NewScamGate(store, logger)
+	priceReader := storePriceReader{s: store, logger: logger, substance: substanceGate, scam: scamGate}
 
 	// Oracle reader — Redis-cached read-through wrapper around the
 	// store reader. /v1/oracle/latest's DISTINCT ON (source) sort
@@ -1226,6 +1232,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		RequireEmailVerified: requireEmailVerifiedOrNil(cfg.API.SignupRequireEmailVerification),
 		Divergence:           divergenceLooker,
 		Substance:            substanceGate,
+		Scam:                 scamGate,
 		Confidence:           redisConfidenceLooker{rdb: rdb},
 		Triangulated:         redisTriangulatedLooker{rdb: rdb},
 		Freeze:               freezeLooker,
@@ -1359,6 +1366,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			},
 			logger:    logger,
 			substance: substanceGate,
+			scam:      scamGate,
 		},
 		GlobalPriceOpts: aggregate.GlobalPriceOptions{
 			AggregatorSources: external.AggregatorSources(),
@@ -3162,6 +3170,7 @@ type globalPriceReader struct {
 	pkPairFor func(base, quote canonical.Asset) (canonical.Pair, error)
 	logger    *slog.Logger                // nil → no guard logging
 	substance *pricingguard.SubstanceGate // nil → no thin-market gate
+	scam      *pricingguard.ScamGate      // nil → no scam gate
 }
 
 func (g globalPriceReader) LatestVWAP(ctx context.Context, base, quote canonical.Asset) (string, time.Time, int64, []string, bool, error) {
@@ -3185,7 +3194,8 @@ func (g globalPriceReader) LatestVWAP(ctx context.Context, base, quote canonical
 	// degrade to "no data" here — the caller falls through to its
 	// aggregator tier, whose orchestrator applies its own min-USD-volume
 	// floor.
-	if !g.substance.Allowed(ctx, base, quote, "asset_headline") {
+	if !g.substance.Allowed(ctx, base, quote, "asset_headline") ||
+		g.scam.Withheld(ctx, base, "asset_headline") {
 		return "", time.Time{}, 0, nil, false, nil
 	}
 	// Same raw-CAGG serving-sanity guard as /v1/price
@@ -3392,6 +3402,7 @@ type storePriceReader struct {
 	now           func() time.Time            // nil → time.Now
 	logger        *slog.Logger                // nil → no guard logging
 	substance     *pricingguard.SubstanceGate // nil → no thin-market gate
+	scam          *pricingguard.ScamGate      // nil → no scam-issuer gate
 }
 
 // buildSubstanceGate maps the [pricing_guard] config section onto the
@@ -3460,7 +3471,8 @@ func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 		// whose entire history (baseline included) is attacker-authored
 		// (2026-08-04 valuation incident). ErrPriceWithheld deliberately
 		// bypasses the handler's fallback chain — see its doc comment.
-		if !r.substance.Allowed(ctx, asset, quote, "price_read") {
+		if !r.substance.Allowed(ctx, asset, quote, "price_read") ||
+			r.scam.Withheld(ctx, asset, "price_read") {
 			return v1.PriceSnapshot{}, nil, false, v1.ErrPriceWithheld
 		}
 		served, lowConfidence := pricingguard.GuardServedVWAP1mConfidence(ctx, r.s, r.logger, pair, row)
@@ -3541,7 +3553,8 @@ func (r storePriceReader) RecentClosedSnapshots(ctx context.Context, asset, quot
 	// Thin-market substance gate: a snapshot SERIES is an aggregated
 	// price claim per bucket, and the SEP-40 oracle surface is the last
 	// place a substanceless market's rate belongs.
-	if !r.substance.Allowed(ctx, asset, quote, "oracle") {
+	if !r.substance.Allowed(ctx, asset, quote, "oracle") ||
+		r.scam.Withheld(ctx, asset, "oracle") {
 		return nil, v1.ErrPriceWithheld
 	}
 	out := make([]v1.PriceSnapshot, len(rows))
