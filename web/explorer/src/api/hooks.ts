@@ -603,6 +603,47 @@ export function useAssets(
   });
 }
 
+/**
+ * useFiatUsdSeries — the trailing-week daily USD price series for an
+ * asset from /v1/chart, shaped as {time, value} for LineChart.
+ *
+ * WHY a separate path: the asset-page candle chart (MarketChart over
+ * /v1/ohlc) is EMPTY for fiat:USD-quoted charts — a fiat currency has no
+ * on-chain constituent, so /v1/ohlc has no rows; only /v1/chart carries
+ * the fx-cross series. So fiat currencies (EUR, GBP, …) must chart from
+ * /v1/chart, not OHLC, or their price tab renders blank.
+ */
+export function useFiatUsdSeries(
+  assetID: string,
+  options?: { enabled?: boolean },
+) {
+  return useQuery<{ time: number; value: number }[]>({
+    queryKey: ['/v1/chart', assetID, 'fiat:USD', '1w-line'],
+    enabled: options?.enabled ?? true,
+    retry: false,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const env = await apiGet<{
+        data: { points?: { t?: string; p?: string | null }[] };
+      }>('/v1/chart', {
+        asset: assetID,
+        quote: 'fiat:USD',
+        timeframe: '1w',
+        granularity: '1d',
+      });
+      return (env.data?.points ?? [])
+        .map((pt) => ({
+          time: pt.t ? Math.floor(new Date(pt.t).getTime() / 1000) : NaN,
+          value: pt.p != null ? Number(pt.p) : NaN,
+        }))
+        .filter(
+          (d) =>
+            Number.isFinite(d.time) && Number.isFinite(d.value) && d.value > 0,
+        );
+    },
+  });
+}
+
 export function useCoins(
   limit = 100,
   issuer?: string,

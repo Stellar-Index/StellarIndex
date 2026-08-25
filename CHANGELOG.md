@@ -15,6 +15,15 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- Explorer asset-page price chart was blank for **USDC and every fiat
+  currency**: those chart against `fiat:USD`, which the `/v1/ohlc` candle
+  path has no rows for (a fiat pair has no on-chain constituent; only
+  `/v1/chart` carries the fx-cross series). Fiat currencies now render a
+  USD line from `/v1/chart`, and USDC — the dollar reference, which has no
+  USDC/USD series of its own — shows a "≈ $1.00 reference" panel (linking
+  the divergence board for depeg watching) instead of an empty grid.
+
 ## [v0.44.1] — 2026-08-25
 
 Tested against Stellar protocol 22.
