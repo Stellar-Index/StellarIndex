@@ -1,0 +1,64 @@
+---
+# Priceless-popular pricing-coverage tripwire (task #28 Part B).
+#
+# The aggregator's internal/pricelesscoverage sweep counts assets that are
+# popular by MARKET-CHARACTER volume (single-account-pair wash excluded, so
+# a volume-painting scam farm cannot self-select in) yet have NO served
+# price and NO recorded withheld verdict — an unexplained pricing-coverage
+# gap. Before this tripwire such gaps waited for an operator to notice
+# USDC-quoted assets rendering priceless while browsing /assets; now they
+# page a ticket. Analytics-adjacent, not an SLO: ticket severity.
+
+groups:
+  - name: stellarindex.pricing_coverage
+    interval: 60s
+    rules:
+
+      # A genuinely-traded asset has no price and no reason we recorded for
+      # it. The gauge is the COUNT of such assets at the last sweep; > 0
+      # sustained an hour means the gap is real (not a just-listed asset
+      # mid-pricing), so page. The market-character floor + withheld-verdict
+      # exclusion are applied by the worker's classifier, so this expr is a
+      # plain threshold on the published count.
+      - alert: stellarindex_assets_popular_priceless
+        expr: stellarindex_assets_popular_priceless > 0
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: pricing-coverage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/assets-popular-priceless.md
+          summary: "Market-popular assets have no price and no withheld verdict (P3)"
+          description: |
+            stellarindex_assets_popular_priceless > 0 for 1h+ — at least one
+            asset is above the popularity floor (7d market-character volume
+            > $10k OR > 5k trades, wash EXCLUDED) yet serves no USD price and
+            has no recorded withheld verdict (its recent market clears the
+            substance serve floor). That is an unexplained pricing-coverage
+            gap: a real, actively-traded asset renders priceless on /assets.
+            Find the assets in the aggregator's
+            `priceless-popular coverage gap` warn logs, then work the
+            runbook (usually a missing quote-path / USD-proxy bridge).
+
+      # The tripwire itself has gone silent — the worker wedged or its
+      # catalogue read is failing, so a fresh coverage gap would be invisible
+      # even while the count gauge sits at a stale 0. `time() - last_success`
+      # exceeds three sweep intervals (30 min).
+      - alert: stellarindex_priceless_coverage_check_stale
+        expr: (time() - stellarindex_priceless_coverage_check_last_success_unix) > 1800
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: pricing-coverage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/assets-popular-priceless.md
+          summary: "Priceless-popular coverage tripwire has stopped sweeping (P3)"
+          description: |
+            The priceless-popular coverage sweep has not succeeded in over
+            30 min (three intervals). The count gauge is now stale, so a new
+            pricing-coverage gap would go unseen. Check the aggregator's
+            `priceless-popular coverage tripwire: wired` startup log and its
+            `candidate read failed` warns (Postgres reachability), then the
+            runbook.

@@ -1,0 +1,104 @@
+---
+# promtool unit tests for the priceless-popular coverage tripwire
+# (task #28 Part B).
+#
+#   promtool test rules deploy/monitoring/rule-tests/pricing-coverage_test.yml
+#
+# PROVEN-RED: with either alert removed from pricing-coverage.yml, promtool
+# reports "no rule with alertname …" and the matching case FAILS — the test
+# exercises the real rules (their `for` gates, threshold, and the
+# silent-on-healthy behaviour), not a mock.
+
+rule_files:
+  - ../rules/pricing-coverage.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── a real coverage gap: count > 0 held past the 1h for-gate ──
+  - interval: 1m
+    name: a sustained popular-priceless count pages a ticket
+    input_series:
+      - series: 'stellarindex_assets_popular_priceless'
+        values: '2x90'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: stellarindex_assets_popular_priceless
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: pricing-coverage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/assets-popular-priceless.md
+              summary: "Market-popular assets have no price and no withheld verdict (P3)"
+              description: |
+                stellarindex_assets_popular_priceless > 0 for 1h+ — at least one
+                asset is above the popularity floor (7d market-character volume
+                > $10k OR > 5k trades, wash EXCLUDED) yet serves no USD price and
+                has no recorded withheld verdict (its recent market clears the
+                substance serve floor). That is an unexplained pricing-coverage
+                gap: a real, actively-traded asset renders priceless on /assets.
+                Find the assets in the aggregator's
+                `priceless-popular coverage gap` warn logs, then work the
+                runbook (usually a missing quote-path / USD-proxy bridge).
+
+  # ── the gap has not yet held for 1h ──────────────────────────────
+  - interval: 1m
+    name: a popular-priceless count under the 1h for-gate is still pending
+    input_series:
+      - series: 'stellarindex_assets_popular_priceless'
+        values: '2x90'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: stellarindex_assets_popular_priceless
+        exp_alerts: []
+
+  # ── healthy: every popular asset is priced or explained (count 0) ──
+  - interval: 1m
+    name: a zero popular-priceless count never fires
+    input_series:
+      - series: 'stellarindex_assets_popular_priceless'
+        values: '0x90'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: stellarindex_assets_popular_priceless
+        exp_alerts: []
+
+  # ── the tripwire wedged: last_success frozen, staleness climbs ────
+  # last_success stuck at 0 while wall-clock advances; time()-0 crosses
+  # 1800 at 30m and is held past the 30m for-gate by 70m → pages.
+  - interval: 1m
+    name: a frozen coverage sweep trips the staleness alert
+    input_series:
+      - series: 'stellarindex_priceless_coverage_check_last_success_unix'
+        values: '0x90'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: stellarindex_priceless_coverage_check_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: pricing-coverage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/assets-popular-priceless.md
+              summary: "Priceless-popular coverage tripwire has stopped sweeping (P3)"
+              description: |
+                The priceless-popular coverage sweep has not succeeded in over
+                30 min (three intervals). The count gauge is now stale, so a new
+                pricing-coverage gap would go unseen. Check the aggregator's
+                `priceless-popular coverage tripwire: wired` startup log and its
+                `candidate read failed` warns (Postgres reachability), then the
+                runbook.
+
+  # ── healthy: last_success tracks wall-clock, staleness stays ~0 ────
+  - interval: 1m
+    name: a freshly-updating coverage sweep never trips staleness
+    input_series:
+      - series: 'stellarindex_priceless_coverage_check_last_success_unix'
+        values: '0+60x90'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: stellarindex_priceless_coverage_check_stale
+        exp_alerts: []

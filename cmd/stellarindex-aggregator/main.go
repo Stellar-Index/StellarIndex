@@ -93,6 +93,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 	"github.com/Stellar-Index/StellarIndex/internal/pricealerts"
+	"github.com/Stellar-Index/StellarIndex/internal/pricelesscoverage"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/redisclient"
@@ -913,6 +914,28 @@ func run(cfgPath string, dryRun bool) error {
 		}()
 		logger.Info("price-alert evaluator: wired", "interval_seconds", cfg.PriceAlerts.IntervalSeconds)
 	}
+
+	// ─── Priceless-popular coverage tripwire (task #28 Part B) ────
+	// Sweeps the catalogue for assets that are popular by MARKET-CHARACTER
+	// volume (single-account-pair wash excluded) yet have NO served price
+	// and NO recorded withheld verdict — an unexplained pricing-coverage
+	// gap. Publishes stellarindex_assets_popular_priceless; the alert +
+	// runbook turn "an operator eventually notices USDC-quoted assets
+	// showing priceless on /assets" into a page. Always on (no config
+	// gate): a coverage regression must not depend on an opt-in flag.
+	pricelessTripwire := pricelesscoverage.New(store, pricelesscoverage.Options{
+		Interval: pricelesscoverage.DefaultInterval,
+		Logger:   logger.With("component", "priceless-coverage"),
+	})
+	refresherWG.Add(1)
+	go func() {
+		defer worker.Recover(logger, "priceless-coverage")
+		defer refresherWG.Done()
+		if err := pricelessTripwire.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("priceless-popular coverage tripwire exited with error", "err", err)
+		}
+	}()
+	logger.Info("priceless-popular coverage tripwire: wired", "interval", pricelesscoverage.DefaultInterval)
 
 	// ─── Run ─────────────────────────────────────────────────────
 	logger.Info("orchestrator starting")

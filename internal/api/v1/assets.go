@@ -2071,6 +2071,13 @@ func (s *Server) fetchClassicUnifiedRows(w http.ResponseWriter, r *http.Request,
 	for _, row := range rows {
 		out = append(out, assetDetailFromAssetRow(row))
 	}
+	// Alias-fold FIRST (task #28 Part A): collapse a SAC-form base row into
+	// its canonical classic/native row before the verified-catalogue twin
+	// suppression, so a configured classic↔SAC family folds its SAC volume
+	// onto the classic twin the catalogue phase then represents. This is
+	// what stops "USDC shows twice" (classic USDC in the catalogue phase +
+	// its CCW67T… SAC leaking a second row through here).
+	out = s.foldAliasTwins(out)
 	out = s.suppressCatalogueTwins(out)
 	s.stampListingCollisions(out)
 	s.applySubstanceGateToListing(r.Context(), out)
@@ -2187,6 +2194,16 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// to native so the WHOLE AssetDetail is consistent — see
 	// normalizeXLMAliases.
 	parsed = normalizeXLMAliases(parsed)
+
+	// Configured classic↔SAC wrappers (task #28 Part A): a SAC-form
+	// asset_id resolves to its canonical classic identity straight from the
+	// AliasRegistry (config-fed, no lake round-trip), so /v1/assets/{sac}
+	// serves the SAME detail as /v1/assets/{classic} — the directory fold's
+	// per-asset counterpart. XLM is already collapsed above; an unconfigured
+	// SAC is returned unchanged here and falls through to the lake-backed
+	// resolveSACToClassic below (which handles arbitrary on-chain SACs the
+	// operator hasn't declared).
+	parsed = canonical.CanonicalAsset(parsed)
 
 	// SAC → classic identity (board #40, RFP audit): a C-address that
 	// is a Stellar Asset Contract resolves to the CLASSIC asset it
@@ -2974,6 +2991,139 @@ func (s *Server) suppressCatalogueTwins(rows []AssetDetail) []AssetDetail {
 		out = append(out, row)
 	}
 	return out
+}
+
+// foldAliasTwins collapses each listing row that is a NON-canonical alias
+// form (a classic asset's SAC wrapper, or crypto:XLM) into the canonical
+// row for its equivalence class, so an asset with a Soroban twin appears
+// ONCE in the directory rather than as two ranked rows. This is the "USDC
+// shows twice" fix: the catalogue/classic listing SQL joins literal
+// asset_ids (base_asset), so a USDC-SAC base row (CCW67T…) surfaces
+// alongside classic USDC even though the AliasRegistry unifies the two on
+// every OTHER Go serving path — the base-side folding the SQL's own
+// asset_vs_xlm comment deferred as "a separate follow-up".
+//
+// The canonical asset_id (classic form / native) is the surviving row; the
+// alias form's trailing-24h volume and trade count aggregate onto it before
+// it is dropped. Price / supply / change pills stay the canonical form's
+// own — the SAC pool is the thin fallback, never the headline (see
+// canonical.AssetAliases's SAC-last money-safety invariant).
+//
+// Runs BEFORE suppressCatalogueTwins so a family whose canonical form is a
+// verified currency (USDC, XLM) folds its SAC volume onto the classic twin
+// first. When the canonical row is NOT present in the page — its classic
+// twin was already the verified-catalogue row served in the catalogue
+// phase, or it paged elsewhere — the lone alias row is still suppressed:
+// its identity is represented by the canonical row on another surface, and
+// a stray SAC row in the directory is exactly the duplicate this removes.
+func (s *Server) foldAliasTwins(rows []AssetDetail) []AssetDetail {
+	// canonical asset_id → index of the surviving primary row in `out`.
+	primaryIdx := make(map[string]int, len(rows))
+	out := rows[:0]
+	for _, row := range rows {
+		canonID := canonicalAssetID(row.AssetID)
+		if canonID == row.AssetID {
+			// Canonical (or unaliased) form — keep it and remember where,
+			// so a later alias form in the same page can aggregate onto it.
+			primaryIdx[canonID] = len(out)
+			out = append(out, row)
+			continue
+		}
+		// Non-canonical alias form (SAC / crypto:XLM): fold onto its
+		// canonical primary if present, otherwise suppress the stray twin.
+		if i, ok := primaryIdx[canonID]; ok {
+			mergeAliasVolume(&out[i], row)
+		}
+	}
+	return out
+}
+
+// canonicalAssetID resolves an asset_id string to its equivalence-class
+// canonical asset_id via the process AliasRegistry. An id that doesn't
+// parse (never expected for a stored row) folds onto itself, so the row is
+// preserved untouched rather than silently dropped.
+func canonicalAssetID(assetID string) string {
+	a, err := canonical.ParseAsset(assetID)
+	if err != nil {
+		return assetID
+	}
+	return canonical.CanonicalAsset(a).String()
+}
+
+// mergeAliasVolume aggregates an alias row's trailing-24h volume and trade
+// count onto its canonical row. Only the additive activity counters merge;
+// every other field stays the canonical form's own.
+func mergeAliasVolume(dst *AssetDetail, alias AssetDetail) {
+	dst.VolumeUSD24h = addDecimalStrings(dst.VolumeUSD24h, alias.VolumeUSD24h)
+	if alias.TradeCount24h != nil {
+		sum := *alias.TradeCount24h
+		if dst.TradeCount24h != nil {
+			sum += *dst.TradeCount24h
+		}
+		dst.TradeCount24h = &sum
+	}
+}
+
+// addDecimalStrings returns the decimal-string sum of two optional
+// NUMERIC-safe volume strings, preserving nil when both are absent and the
+// lone operand when only one is present. Exact big.Rat arithmetic (ADR-0003
+// — never big.Float for a money-adjacent value); the summed string keeps
+// the greater fractional precision of its operands so it matches the
+// NUMERIC text the rollup emits, with trailing fractional zeros trimmed.
+func addDecimalStrings(a, b *string) *string {
+	ar := ratFromOptionalString(a)
+	br := ratFromOptionalString(b)
+	switch {
+	case ar == nil && br == nil:
+		return nil
+	case ar == nil:
+		return b
+	case br == nil:
+		return a
+	}
+	sum := new(big.Rat).Add(ar, br)
+	frac := maxFractionDigits(*a, *b)
+	s := sum.FloatString(frac)
+	if frac > 0 && strings.Contains(s, ".") {
+		s = strings.TrimRight(s, "0")
+		s = strings.TrimSuffix(s, ".")
+	}
+	return &s
+}
+
+// ratFromOptionalString parses an optional decimal string to an exact
+// big.Rat. A nil, blank, or unparseable value returns nil so a bad operand
+// can never corrupt a sum (the caller keeps the good operand instead).
+func ratFromOptionalString(s *string) *big.Rat {
+	if s == nil {
+		return nil
+	}
+	t := strings.TrimSpace(*s)
+	if t == "" {
+		return nil
+	}
+	r, ok := new(big.Rat).SetString(t)
+	if !ok {
+		return nil
+	}
+	return r
+}
+
+// maxFractionDigits returns the greater count of post-decimal digits across
+// two decimal strings — the fractional precision addDecimalStrings formats
+// the sum to so it never invents nor drops significant digits.
+func maxFractionDigits(a, b string) int {
+	f := func(s string) int {
+		if i := strings.IndexByte(s, '.'); i >= 0 {
+			return len(s) - i - 1
+		}
+		return 0
+	}
+	na, nb := f(a), f(b)
+	if na > nb {
+		return na
+	}
+	return nb
 }
 
 // fillCatalogueStatsForPage merges each catalogue row's Stellar-network
