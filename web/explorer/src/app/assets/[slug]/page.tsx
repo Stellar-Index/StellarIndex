@@ -839,6 +839,15 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
   // never gate price or verification.
   const flaggedDirTags = scamFlagTags(coin.issuer_directory_tags);
   const directorySourceUrl = stellarExpertDirectoryUrl(coin.issuer);
+  // Warning consolidation (2026-08-25): issuer_scam_reason (the curated
+  // stellar.expert scam list) and the directory scam-tags
+  // (issuer_directory_tags, the SAME public directory) were rendering as
+  // two near-duplicate banners here, plus a third "Known scam issuer" note
+  // inside IssuerPanel — three restatements of one finding from one source.
+  // Merge them into a single primary "malicious asset" banner; the distinct
+  // ticker-collision notice (a different fact) stays separate below.
+  const scamReason = coin.issuer_scam_reason?.trim() || null;
+  const isMaliciousAsset = Boolean(scamReason) || flaggedDirTags.length > 0;
   return (
     <Container className="space-y-8 py-8 sm:py-10">
       <script
@@ -899,42 +908,49 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
             <code className="font-mono">{detail.home_domain}</code>
           </p>
         )}
-        {coin.issuer_scam_reason && (
-          <div role="alert">
-            <Callout tone="bad" title="Known scam asset">
-              {coin.issuer_scam_reason}. The issuer is on the stellar.expert
-              curated directory of malicious accounts — do not trust this asset,
-              do not establish trustlines, and do not execute the prices below
-              as if they reflected an honest market.
-            </Callout>
-          </div>
-        )}
-        {flaggedDirTags.length > 0 && (
-          <div role="alert">
-            <Callout tone="bad" title="Flagged by community directory">
-              ⚠ Flagged by the stellar-expert community directory as:{' '}
-              <strong className="font-semibold">
-                {flaggedDirTags.join(', ')}
-              </strong>
+        {/* One consolidated scam/malicious banner (Callout sets role=alert):
+            the curated scam reason, the community directory attribution, and
+            the directory-source link — all one finding from stellar.expert,
+            no longer three overlapping banners. */}
+        {isMaliciousAsset && (
+          <Callout
+            tone="bad"
+            title={scamReason ? 'Known scam asset' : 'Flagged by community directory'}
+          >
+            {scamReason && <p>{scamReason}.</p>}
+            <p className={scamReason ? 'mt-1' : undefined}>
+              Flagged by the stellar.expert community directory
+              {flaggedDirTags.length > 0 && (
+                <>
+                  {' '}
+                  as{' '}
+                  <strong className="font-semibold">
+                    {flaggedDirTags.join(', ')}
+                  </strong>
+                </>
+              )}
               {coin.issuer_directory_domain && (
                 <> ({coin.issuer_directory_domain})</>
               )}
-              . This is third-party attribution from the public directory —
-              display-only, not a StellarIndex verification signal. Review
-              carefully before trusting this asset, establishing trustlines, or
-              executing the prices below.{' '}
+              . This is third-party attribution from the public directory, not a
+              StellarIndex verification signal — do not trust this asset,
+              establish trustlines, or execute the prices below as if they
+              reflected an honest market.
               {directorySourceUrl && (
-                <a
-                  href={directorySourceUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="font-medium underline"
-                >
-                  View directory entry ↗
-                </a>
+                <>
+                  {' '}
+                  <a
+                    href={directorySourceUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium underline"
+                  >
+                    View directory entry ↗
+                  </a>
+                </>
               )}
-            </Callout>
-          </div>
+            </p>
+          </Callout>
         )}
         {detail?.unverified_warning && (
           <div

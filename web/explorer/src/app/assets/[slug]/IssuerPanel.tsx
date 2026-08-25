@@ -49,15 +49,21 @@ export function IssuerPanel({ gStrkey }: { gStrkey: string }) {
   return (
     <div className="space-y-4">
       {data.scam_reason && (
+        // Warning consolidation (2026-08-25): the full scam reason + guidance
+        // now lives in ONE primary banner in the page header (which surfaces
+        // the same stellar.expert directory finding). This is the slim,
+        // table-scoped pointer — the one fact the header can't: every asset
+        // in the table below shares this flagged issuer. No restated reason.
         <div
-          role="alert"
-          className="rounded-md border border-bad-300 bg-bad-50 p-3 text-sm text-bad-700"
+          role="note"
+          className="flex items-center gap-2 rounded-md border border-bad-300 bg-bad-50 px-3 py-2 text-xs text-bad-700"
         >
-          <strong className="font-semibold">Known scam issuer</strong> ·{' '}
-          {data.scam_reason}. Every asset in the table below was
-          minted by this account. Treat all of them with the same
-          warning the page header surfaces — do not establish
-          trustlines.
+          <span aria-hidden>⚠</span>
+          <span>
+            <strong className="font-semibold">Scam issuer.</strong> Every asset
+            below was minted by this flagged account — see the warning at the
+            top of the page.
+          </span>
         </div>
       )}
       <Panel
