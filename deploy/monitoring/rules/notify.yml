@@ -1,0 +1,49 @@
+---
+# Transactional-email (notify / Resend) alerts (task #33 / W8 recon 9c).
+#
+# internal/notify is the mail client behind magic-link dashboard login and
+# API-signup email confirmation. It had ZERO prometheus visibility, so a
+# Resend outage was silent: the login handler swallows the send error
+# (returns 200 either way, to avoid an email-enumeration oracle) and the
+# signup path only logs it. stellarindex_notify_sends_total{template,result}
+# is emitted at every send call site; a sustained failed ratio is the alert.
+#
+# Every alert here has a runbook at docs/operations/runbooks/.
+
+groups:
+  - name: stellarindex.notify
+    interval: 60s
+    rules:
+
+      # Sustained mail-send failure ratio per template. Ratio (not absolute
+      # rate) so a single stray 4xx in a quiet window doesn't page; a 15m
+      # window + for:15m means a genuine provider outage, not a blip. When
+      # there is zero mail traffic the ratio is 0/0 = NaN and the comparison
+      # drops it (no false page during quiet hours). Severity ticket, not
+      # page: existing sessions + API keys keep working — only NEW logins and
+      # signup confirmations stop delivering — but it needs prompt action
+      # because both are user-facing auth flows.
+      - alert: stellarindex_notify_send_failure_ratio_high
+        expr: |
+          sum by (template) (rate(stellarindex_notify_sends_total{result="failed"}[15m]))
+          /
+          sum by (template) (rate(stellarindex_notify_sends_total[15m]))
+          > 0.5
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: notify
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/notify-send-failure.md
+          summary: "Transactional email ({{ $labels.template }}) failing > 50% of sends"
+          description: |
+            More than half of {{ $labels.template }} email sends have failed
+            for 15+ minutes ({{ $value | humanizePercentage }} failed). The
+            mail provider (Resend) is likely down, the API key is rotated/
+            invalid, or the sending domain is unverified. Customer impact:
+            magic-link dashboard LOGIN and/or API-signup CONFIRMATION stop
+            delivering — existing sessions and API keys are unaffected. Check
+            the Resend status + credentials per the runbook.
+
+            Runbook: docs/operations/runbooks/notify-send-failure.md

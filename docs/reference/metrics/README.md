@@ -192,6 +192,21 @@ Each cycle is bounded by `PerSourceTimeout=60s`. Sustained p99 >
 30s for one source is the first sign that the sink is the
 bottleneck.
 
+### `stellarindex_projector_wedged`
+
+Gauge, labels `source`.
+
+Per-source cursor-wedge flag. `1` = the adaptive window has bottomed
+out at the `MinBatchLimit` floor (25 ledgers) AND the source has failed
+to commit forward progress for `WedgeCycles` (5) consecutive cycles — a
+floor-sized range that stays over `PerSourceTimeout` (a dense +
+compressed chunk) is retried identically every cycle forever, a stuck
+cursor that will not self-recover. `0` = healthy. Cleared on any
+advancing (or caught-up) cycle. Seeded at `0` per source at startup so
+the alert reads a real zero rather than "no data". Drives the
+`stellarindex_projector_wedged` alert (ticket; manual remediation — raise
+the per-cycle budget or decompress the range). See ADR-0032.
+
 ### `http_request_success_duration_seconds`
 
 Histogram, labels `method`, `route`.
@@ -1461,6 +1476,25 @@ exist for an operator to tell a never-failed janitor from an absent one.
   unauthenticated caller can create accumulate until it recovers.
 
 Pre-seeded on the `sweep` op.
+
+### `stellarindex_notify_sends_total`
+
+Counter, labels `template` (`magic-link` / `signup-verify`), `result`
+(`sent` / `failed`).
+
+Transactional-email sends through `internal/notify` (the Resend client).
+Before this counter, `internal/notify` had **zero** prometheus visibility,
+so a mail outage was silent — the magic-link login handler swallows the
+send error (returns 200 either way to avoid an enumeration oracle) and the
+signup-verify path only logs it. Incremented at every `notify.Sender.Send`
+call site: `sent` when Resend accepts, `failed` on any returned error
+(validation, provider-rejected, or transient/network). `magic-link` is the
+dashboard sign-in email; `signup-verify` is the API-signup confirmation
+email — the two are the only `notify.Sender` paths (price alerts deliver
+via webhooks, not mail). A sustained `failed` ratio drives the
+`stellarindex_notify_send_failure_ratio_high` alert. Zero-seeded across the
+two templates × {sent, failed} so the ratio reads a real 0 before the first
+email.
 
 ### `stellarindex_aggregator_dropped_trades_total`
 
