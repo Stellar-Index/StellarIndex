@@ -2,26 +2,20 @@
 
 import { useState, useMemo } from 'react';
 import { ArrowLeftRight } from 'lucide-react';
-import { useQuery } from '@tanstack/react-query';
 
-import { apiGet } from '@/api/client';
+import { useConvertRate } from './ConvertLive';
 
 /**
  * ConvertPair — interactive client-side converter for the
  * `/convert/[from]/[to]` static page. The server-rendered page
- * already shows the rate and snippet ladder; this component lets
+ * shows the headline rate and snippet ladder; this component lets
  * the visitor type a custom amount.
  *
- * Refreshes the rate every 60s so a tab left open all afternoon
- * doesn't go stale. SSR-rendered initial value comes from
- * `initialRate` so the first paint is correct without a client
- * roundtrip.
- *
- * F-1201 migration (audit-2026-05-12): pre-rc.48 this called
- * /v1/currencies/{from} which carried a cross_rates map covering
- * every currency in one RT. rc.48 removed the route; we now hit
- * /v1/price/batch?asset_ids=fiat:{to}&quote=fiat:{from} which
- * returns the same single-pair rate the converter actually uses.
+ * The live rate comes from the shared `useConvertRate` hook so this
+ * widget, the header, and the ladder all read ONE deduped
+ * `/v1/price/batch` query (refreshed every 60s). SSR-rendered initial
+ * value comes from `initialRate` so the first paint is correct without
+ * a client roundtrip.
  */
 export function ConvertPair({
   from,
@@ -37,35 +31,14 @@ export function ConvertPair({
   const [amount, setAmount] = useState('1');
   const [direction, setDirection] = useState<'forward' | 'reverse'>('forward');
 
-  // Live-refresh the rate so the converter doesn't go stale.
-  const q = useQuery<number | null>({
-    queryKey: ['/v1/price/batch', from, to, 'for-convert'],
-    queryFn: async () => {
-      const env = await apiGet<{
-        data: Array<{ asset_id: string; price: string | null }>;
-      }>(
-        `/v1/price/batch?asset_ids=${encodeURIComponent(`fiat:${to}`)}&quote=${encodeURIComponent(`fiat:${from}`)}`,
-        {},
-      );
-      const row = (env.data ?? []).find((r) => r.asset_id === `fiat:${to}`);
-      // batch(asset_ids=fiat:{to}, quote=fiat:{from}) returns the value
-      // of 1 {to} in {from} units; the widget displays "1 {from} = ? {to}",
-      // the INVERSE. Invert here so the live rate matches the SSR
-      // `fromToRate` (page.tsx) — otherwise it silently overwrites the
-      // correct initialRate with the wrong direction (audit MONEY-2).
-      const price = row?.price ? Number(row.price) : 0;
-      return price > 0 ? 1 / price : null;
-    },
-    refetchInterval: 60_000,
-    staleTime: 30_000,
+  // Live-refresh the rate so the converter doesn't go stale. Shared
+  // with the header + ladder so all three read ONE deduped query.
+  const { rate, inverse, updatedAt } = useConvertRate({
+    from,
+    to,
+    initialRate,
+    initialInverse,
   });
-
-  const liveRate = q.data;
-  const rate = liveRate != null && Number.isFinite(liveRate) ? liveRate : initialRate;
-  const inverse = useMemo(
-    () => (rate != null && rate > 0 ? 1 / rate : initialInverse),
-    [rate, initialInverse],
-  );
 
   const numeric = Number(amount);
   const result = useMemo(() => {
@@ -131,10 +104,10 @@ export function ConvertPair({
               {formatRate(direction === 'forward' ? rate : inverse)}
             </span>{' '}
             {toLabel}
-            {q.dataUpdatedAt > 0 && (
+            {updatedAt > 0 && (
               <>
                 <span className="mx-1.5">·</span>
-                Updated {formatRelativeTime(q.dataUpdatedAt)}
+                Updated {formatRelativeTime(updatedAt)}
               </>
             )}
           </>
