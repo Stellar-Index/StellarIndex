@@ -42,25 +42,43 @@ func NewCachedNetworkStatsReader(upstream NetworkStatsReader, ttl time.Duration)
 	return &CachedNetworkStatsReader{upstream: upstream, ttl: ttl}
 }
 
-// GetNetworkStats implements NetworkStatsReader with SWR semantics.
+// GetNetworkStats implements NetworkStatsReader with SWR semantics. It
+// delegates to GetNetworkStatsAt and drops the freshness signals for
+// callers that don't stamp them.
 func (c *CachedNetworkStatsReader) GetNetworkStats(ctx context.Context) (timescale.NetworkStats, error) {
+	v, _, _, err := c.GetNetworkStatsAt(ctx)
+	return v, err
+}
+
+// GetNetworkStatsAt is GetNetworkStats plus honest freshness: it returns
+// the served value's observation time and whether it came from the SWR
+// stale-serve path (the value is a prior success the cache kept past its
+// TTL while a refresh is pending/failing). The handler stamps flags.stale
+// + an honest as_of from these, instead of silently asserting stale:false
+// / as_of=now over data a failing refresh has let age (REC-05; mirrors
+// CachedMarketsReader.SourceMarketsAt). A zero observedAt means "live /
+// uncached read" — the handler defaults as_of to now and stale=false.
+func (c *CachedNetworkStatsReader) GetNetworkStatsAt(ctx context.Context) (timescale.NetworkStats, time.Time, bool, error) {
 	if c.ttl <= 0 {
-		return c.upstream.GetNetworkStats(ctx)
+		v, err := c.upstream.GetNetworkStats(ctx)
+		return v, time.Time{}, false, err // live read: caller stamps as_of=now, not stale
 	}
 	c.mu.Lock()
 
 	// (A) Fresh hit.
 	if c.hasVal && c.flight == nil && time.Since(c.at) < c.ttl {
-		v := c.val
+		v, at := c.val, c.at
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("network_stats", "get", "hit").Inc()
-		return v, nil
+		return v, at, false, nil
 	}
 
 	// (A') Stale-while-revalidate: a prior success exists but is expired.
-	// Serve stale immediately; kick exactly one background refresh.
+	// Serve stale immediately; kick exactly one background refresh. The
+	// returned observedAt (the aged c.at) + stale=true let the handler
+	// tell the truth about the freshness of what it just served.
 	if c.hasVal {
-		v := c.val
+		v, at := c.val, c.at
 		if c.flight == nil {
 			done := make(chan struct{})
 			c.flight = done
@@ -72,11 +90,11 @@ func (c *CachedNetworkStatsReader) GetNetworkStats(ctx context.Context) (timesca
 			// instant the stale response is written; reusing it would abort
 			// every refresh, defeating the point of serving stale.
 			go c.refresh(done)
-			return v, nil
+			return v, at, true, nil
 		}
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("network_stats", "get", "stale").Inc()
-		return v, nil
+		return v, at, true, nil
 	}
 
 	// (B) Cold fetch already in flight (nothing stale to serve) — join it.
@@ -86,16 +104,16 @@ func (c *CachedNetworkStatsReader) GetNetworkStats(ctx context.Context) (timesca
 		select {
 		case <-ch:
 			c.mu.Lock()
-			v, ok := c.val, c.hasVal
+			v, at, ok := c.val, c.at, c.hasVal
 			c.mu.Unlock()
 			if !ok {
 				obs.APICacheOpsTotal.WithLabelValues("network_stats", "get", "miss").Inc()
-				return timescale.NetworkStats{}, errNetworkStatsColdFailed
+				return timescale.NetworkStats{}, time.Time{}, false, errNetworkStatsColdFailed
 			}
 			obs.APICacheOpsTotal.WithLabelValues("network_stats", "get", "hit").Inc()
-			return v, nil
+			return v, at, false, nil // freshly refreshed by the leader — not stale
 		case <-ctx.Done():
-			return timescale.NetworkStats{}, ctx.Err()
+			return timescale.NetworkStats{}, time.Time{}, false, ctx.Err()
 		}
 	}
 
@@ -108,15 +126,17 @@ func (c *CachedNetworkStatsReader) GetNetworkStats(ctx context.Context) (timesca
 	v, err := c.upstream.GetNetworkStats(ctx)
 
 	c.mu.Lock()
+	var at time.Time
 	if err == nil {
 		c.val = v
 		c.at = time.Now()
 		c.hasVal = true
+		at = c.at
 	}
 	c.flight = nil
 	c.mu.Unlock()
 	close(done)
-	return v, err
+	return v, at, false, err // just fetched live — not stale
 }
 
 // refresh runs the upstream call OFF the request path for the (A') branch:
