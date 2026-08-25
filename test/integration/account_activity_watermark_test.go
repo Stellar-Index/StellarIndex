@@ -51,8 +51,20 @@ func TestClickHouseAccountActivityWatermarkBoundedOps(t *testing.T) {
 		participant = uint32(6_310_007)  // idle is a NON-SOURCE participant here (postdates sourced)
 		tip         = uint32(82_310_001) // decoy activity in a far-higher partition (the "tip")
 	)
+	// Shared-ClickHouse isolation: these ledgers land in the same
+	// stellar.ledgers as every other integration test, and
+	// TestNetworkThroughput_DedupsReingestedLedger anchors its window on the
+	// GLOBAL max(close_time) (reserving a 2027 close_time as the tip). The
+	// decoy `tip` seq is ~82M, so a per-second offset would put its
+	// close_time in ~2028 and steal that global tip — pushing the throughput
+	// test's ledger out of its 1-day window. Scale the offset to
+	// MILLISECONDS so even the far-higher decoy partition stays inside
+	// 2026-05-01 (max ~+21h) and never becomes the global close_time tip.
+	// close_time granularity is irrelevant to THIS test — every assertion
+	// keys on ledger_seq (the watermark is max(last_ledger); the bounded
+	// read orders by ledger_seq), so same-second sourced rows are fine.
 	closeAt := func(seq uint32) time.Time {
-		return time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(seq-sourcedLo) * time.Second)
+		return time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(seq-sourcedLo) * time.Millisecond)
 	}
 	hash := func(seq uint32) string { return fmt.Sprintf("%064d", seq) }
 
