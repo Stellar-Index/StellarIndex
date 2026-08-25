@@ -8,6 +8,7 @@ import { Panel } from '@/components/reveal';
 import { AssetLabel } from '@/components/AssetLabel';
 import { type Envelope, apiGet, asExample } from '@/api/client';
 import { formatCompact, formatRelative } from '@/lib/format';
+import { sourceToneClass } from '@/lib/pillTone';
 import { LastPriceCell } from '@/components/LastPriceCell';
 import { useLedgerFollow } from '@/lib/live/hooks';
 import {
@@ -54,21 +55,6 @@ const ALL_DEXES = ['aquarius', 'comet', 'phoenix', 'sdex', 'soroswap'];
 // docs/operations/wasm-audits/comet.md.
 const SOURCE_NOTE: Record<string, string> = {
   comet: 'Blend backstop',
-};
-
-// Source name → category styling. Anything outside this list still
-// renders, just without a coloured chip — keeps the table working
-// when new sources land before this map gets updated.
-const SOURCE_TONE: Record<string, string> = {
-  soroswap: 'bg-up-subtle text-up-strong',
-  phoenix: 'bg-warn-50 text-warn-700',
-  aquarius: 'bg-brand-100 text-brand-800',
-  sdex: 'bg-line text-ink',
-  comet: 'bg-violet-100 text-violet-800',
-  binance: 'bg-yellow-100 text-yellow-800',
-  coinbase: 'bg-brand-100 text-brand-800',
-  kraken: 'bg-purple-100 text-purple-800',
-  bitstamp: 'bg-teal-100 text-teal-800',
 };
 
 /**
@@ -262,8 +248,7 @@ export function DexesView() {
                 const slug = `${p.base}~${p.quote}`;
                 const offset = pager.depth * PAGE_LIMIT + i + 1;
                 const vol = p.volume_24h_usd ? Number(p.volume_24h_usd) : null;
-                const tone =
-                  SOURCE_TONE[p.source] ?? 'bg-surface-subtle text-ink-body';
+                const tone = sourceToneClass(p.source);
                 return (
                   <TR key={`${p.source}|${p.base}|${p.quote}`}>
                     <Td>

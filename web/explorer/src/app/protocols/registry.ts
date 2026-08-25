@@ -128,19 +128,8 @@ export function protocolMeta(name: string): ProtocolRegistryEntry | undefined {
 }
 
 // Category → chip tone. The API serves the authoritative category string;
-// this maps it to the slate/brand palette used across the explorer. Unknown
-// categories fall through to a neutral chip (keeps rendering if the Go
-// registry adds a category before this map is updated).
-const CATEGORY_TONE: Record<string, string> = {
-  dex: 'bg-line text-ink',
-  amm: 'bg-up-subtle text-up-strong',
-  lending: 'bg-brand-100 text-brand-800',
-  yield: 'bg-violet-100 text-violet-800',
-  bridge: 'bg-warn-50 text-warn-700',
-  oracle: 'bg-indigo-100 text-brand-800',
-  token: 'bg-teal-100 text-teal-800',
-};
-
-export function categoryTone(category: string): string {
-  return CATEGORY_TONE[category] ?? 'bg-surface-subtle text-ink-body';
-}
+// the tone mapping + adaptive class strings live in the shared pill-tone
+// helper (src/lib/pillTone.ts) so every category/venue/type chip stays on the
+// same dark-surface-safe palette. Re-exported here to keep the call sites that
+// import `categoryTone` from the registry working.
+export { categoryToneClass as categoryTone } from '@/lib/pillTone';

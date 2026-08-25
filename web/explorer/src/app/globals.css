@@ -73,6 +73,28 @@
   --color-timepin: #241c0c;
   --color-timepin-ring: #e0a63c;
 
+  /* Accent hues — extra adaptive families for category / venue / type chips
+     that want a DISTINCT colour beyond the semantic six (brand/up/down/warn/
+     bad/ok). Authored the same way as those: a dark-tint *-subtle background
+     paired with a bright *-strong text, so every pill reads correctly on the
+     dark surface (all ≥ 8.7:1 WCAG contrast). Route pills through these via
+     src/lib/pillTone.ts — never a raw Tailwind -100/-800 pair (those are
+     fixed light values that glare on dark). */
+  --color-violet-subtle: #1c1533;
+  --color-violet-strong: #c9b6ff;
+
+  --color-teal-subtle: #0c2422;
+  --color-teal-strong: #5ee9d0;
+
+  --color-indigo-subtle: #161a3a;
+  --color-indigo-strong: #aab7ff;
+
+  --color-purple-subtle: #271140;
+  --color-purple-strong: #e6a6f7;
+
+  --color-yellow-subtle: #2a2408;
+  --color-yellow-strong: #f6d45f;
+
   /* Type — serif display + Inter body + JetBrains Mono data.
      next/font sets --font-sans/mono/serif on <html>; these reference them. */
   --font-sans: var(--font-sans), system-ui, sans-serif;

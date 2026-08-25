@@ -141,7 +141,7 @@ function readRecentItems(n: number): ChangeItem[] {
 
 function kindTone(kind: string): string {
   if (kind === 'Added') return 'bg-up-subtle text-up-strong';
-  if (kind === 'Fixed') return 'bg-brand-100 text-brand-800';
+  if (kind === 'Fixed') return 'bg-brand-50 text-brand-700';
   if (kind === 'Changed') return 'bg-warn-50 text-warn-700';
   if (kind === 'Removed' || kind === 'Deprecated')
     return 'bg-down-subtle text-down-strong';
