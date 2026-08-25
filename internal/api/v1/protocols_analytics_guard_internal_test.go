@@ -95,16 +95,16 @@ type probeAnswer struct{ avail, definitive bool }
 type scriptedFastStub struct {
 	prewarmActivityStub
 
-	mu          sync.Mutex
-	answers     []probeAnswer
-	probeCalls  int
-	tipCalls    int
+	mu           sync.Mutex
+	answers      []probeAnswer
+	probeCalls   int
+	tipCalls     int
 	fastSeries   int
 	fastBreak    int
 	fastContract int
 	rawSeries    int
 	rawBreak     int
-	seriesPoint []clickhouse.ProtocolDailyPoint
+	seriesPoint  []clickhouse.ProtocolDailyPoint
 }
 
 func (s *scriptedFastStub) DailyActivityAvailable(context.Context) (bool, bool) {
