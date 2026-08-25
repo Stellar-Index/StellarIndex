@@ -140,6 +140,13 @@ func TestExternalFleet_EndToEnd(t *testing.T) {
 
 	// Persist goroutine — the same shape as cmd/stellarindex-indexer's
 	// persistEvents but without panic recovery / obs metrics.
+	// persistCtx is DECOUPLED from the fleet ctx: `cancel()` below stops the
+	// streamers/pollers, but the consumer keeps draining events already
+	// buffered on the channel AFTER the cancel — inserting those with the
+	// cancelled fleet ctx flaked as "InsertOracleUpdate: context canceled".
+	// Same reasoning the post-drain assertions already use a fresh assertCtx.
+	persistCtx, persistCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer persistCancel()
 	persistDone := make(chan struct{})
 	var insertedTrades, insertedUpdates int
 	go func() {
@@ -151,13 +158,13 @@ func TestExternalFleet_EndToEnd(t *testing.T) {
 				// is exercised end-to-end only here, so a swallowed insert (e.g.
 				// a NUMERIC-scale/schema drift) would otherwise pass silently.
 				// t.Errorf (not Fatal) is goroutine-safe.
-				if err := store.InsertTrade(ctx, ev.Trade); err != nil {
+				if err := store.InsertTrade(persistCtx, ev.Trade); err != nil {
 					t.Errorf("InsertTrade: %v", err)
 					continue
 				}
 				insertedTrades++
 			case external.UpdateEvent:
-				if err := store.InsertOracleUpdate(ctx, ev.Update); err != nil {
+				if err := store.InsertOracleUpdate(persistCtx, ev.Update); err != nil {
 					t.Errorf("InsertOracleUpdate: %v", err)
 					continue
 				}
