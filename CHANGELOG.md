@@ -16,6 +16,16 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- `/v1/protocols/{name}` per-contract activity ran the raw
+  `contract_events FINAL` scan (merge-on-read of the 12.8B-row
+  ReplacingMergeTree), which blew ClickHouse's 2 GiB per-query memory
+  limit (Code 241) — that memory kill *was* the "certified-lake reader
+  unavailable" verdict on the protocol page, and the 57s / 3.2B-row scans
+  were a primary CH-load source behind the API p95/p99 latency alerts and
+  the tx-outcome read timeouts. Now routed through the existing
+  `contract_events_daily` pre-aggregation (like the daily-activity and
+  event-breakdown views already are) — measured **0.5s vs 57s**, no memory
+  kill. Last-seen is day-grain (sufficient for the roster column).
 - `/v1/anomalies` returned 500 on every request — `FreezeReasonCounts`
   and `FreezeDailyReasonCounts` used the same fragile `($1 || ' days')`
   interval concat that took down `/v1/divergence`: it types `$1` as
