@@ -1111,7 +1111,7 @@ function OverviewBody({
               </span>
             )}
             {price?.flags?.triangulated && (
-              <span className="bg-brand-100 text-brand-800 rounded-sm px-2 py-0.5 text-[11px] tracking-wider uppercase">
+              <span className="bg-brand-50 text-brand-700 rounded-sm px-2 py-0.5 text-[11px] tracking-wider uppercase">
                 Triangulated via XLM
               </span>
             )}

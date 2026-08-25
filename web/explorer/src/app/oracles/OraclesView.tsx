@@ -8,6 +8,7 @@ import { Panel } from '@/components/reveal';
 import { AssetLink } from '@/components/AssetLink';
 import { apiGet, asExample } from '@/api/client';
 import { formatRelative , formatSubunitPrice } from '@/lib/format';
+import { sourceToneClass } from '@/lib/pillTone';
 
 // Wire shapes from the generated OpenAPI contract: /v1/sources rows via
 // the shared hooks alias; /v1/oracle/streams rows are the spec's
@@ -17,14 +18,6 @@ import type { components } from '@/api/types';
 
 import { Container } from '@/components/ui';
 type OracleStream = components['schemas']['OracleReading'];
-
-const TONE: Record<string, string> = {
-  'reflector-dex': 'bg-up-subtle text-up-strong',
-  'reflector-cex': 'bg-brand-50 text-brand-700',
-  'reflector-fx': 'bg-brand-100 text-brand-900',
-  redstone: 'bg-down-subtle text-down-strong',
-  band: 'bg-warn-50 text-warn-700',
-};
 
 export function OraclesView() {
   const sources = useQuery<SourceRow[]>({
@@ -127,7 +120,7 @@ export function OraclesView() {
               )}
               {oracles.map((o) => {
                 const perSrc = perSourceCounts[o.name];
-                const tone = TONE[o.name] ?? 'bg-surface-subtle text-ink-body';
+                const tone = sourceToneClass(o.name);
                 return (
                   <tr key={o.name} className="hover:bg-surface-muted">
                     <Td>
@@ -208,7 +201,7 @@ export function OraclesView() {
                 </tr>
               )}
               {streamRows.map((s, i) => {
-                const tone = TONE[s.source] ?? 'bg-surface-subtle text-ink-body';
+                const tone = sourceToneClass(s.source);
                 return (
                   <tr key={`${s.source}|${s.asset}|${s.quote}|${i}`} className="hover:bg-surface-muted">
                     <Td>

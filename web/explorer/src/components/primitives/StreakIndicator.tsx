@@ -85,7 +85,7 @@ export function StreakIndicator(
       return (
         <span
           className={twMerge(
-            'inline-flex items-center gap-1 rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-800',
+            'inline-flex items-center gap-1 rounded-full bg-purple-subtle px-2 py-0.5 text-xs font-medium text-purple-strong',
             className,
           )}
           title={`First seen ${props.since}`}

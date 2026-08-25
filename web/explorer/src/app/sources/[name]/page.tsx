@@ -477,7 +477,7 @@ function ClassBadge({ cls }: { cls: Source['class'] }) {
     cls === 'exchange'
       ? 'bg-up-subtle text-up-strong'
       : cls === 'oracle'
-        ? 'bg-brand-100 text-brand-800'
+        ? 'bg-brand-50 text-brand-700'
         : cls === 'aggregator'
           ? 'bg-warn-50 text-warn-700'
           : 'bg-surface-subtle text-ink-body';

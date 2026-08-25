@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
+import { sourceToneClass } from '@/lib/pillTone';
 import { SourceSparkline } from '@/components/SourceSparkline';
 import { useProtocolTvls, type ProtocolTvl } from './useProtocolTvls';
 
@@ -23,14 +24,6 @@ interface SourceRow {
   volume_24h_usd?: string | null;
   volume_history_24h?: VolumeBucket[];
 }
-
-const TONE: Record<string, string> = {
-  soroswap: 'bg-up-subtle text-up-strong',
-  phoenix: 'bg-warn-50 text-warn-700',
-  aquarius: 'bg-brand-100 text-brand-800',
-  sdex: 'bg-line text-ink',
-  comet: 'bg-violet-100 text-violet-800',
-};
 
 /**
  * DexProtocolsTable — per-DEX summary row (volume, trades, markets).
@@ -117,7 +110,7 @@ export function DexProtocolsTable() {
             )}
             {rows.map((r) => {
               const vol = r.volume_24h_usd ? Number(r.volume_24h_usd) : null;
-              const tone = TONE[r.name] ?? 'bg-surface-subtle text-ink-body';
+              const tone = sourceToneClass(r.name);
               return (
                 <tr key={r.name} className="hover:bg-surface-muted">
                   <Td>

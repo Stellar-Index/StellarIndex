@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact, formatPairPrice } from '@/lib/format';
+import { sourceToneClass } from '@/lib/pillTone';
 import { SourceSparkline } from '@/components/SourceSparkline';
 import {
   Container,
@@ -24,13 +25,6 @@ import {
 // /v1/sources + /v1/markets rows from the generated OpenAPI contract,
 // via the shared aliases in src/api/hooks.ts.
 import type { Market, Source as SourceRow } from '@/api/hooks';
-
-const TONE: Record<string, string> = {
-  binance: 'bg-yellow-100 text-yellow-800',
-  coinbase: 'bg-brand-100 text-brand-800',
-  kraken: 'bg-purple-100 text-purple-800',
-  bitstamp: 'bg-teal-100 text-teal-800',
-};
 
 const LABEL: Record<string, string> = {
   binance: 'Binance',
@@ -162,7 +156,7 @@ export function ExchangesView() {
               )}
               {rows.map((r, i) => {
                 const vol = r.volume_24h_usd ? Number(r.volume_24h_usd) : 0;
-                const tone = TONE[r.name] ?? 'bg-surface-subtle text-ink-body';
+                const tone = sourceToneClass(r.name);
                 const label = LABEL[r.name] ?? r.name;
                 const share = totalVol > 0 ? (vol / totalVol) * 100 : 0;
                 return (
@@ -331,7 +325,7 @@ function AllCEXMarkets() {
             {markets.map((m, i) => {
               const slug = `${m.base}~${m.quote}`;
               const vol = m.volume_24h_usd ? Number(m.volume_24h_usd) : null;
-              const tone = TONE[m.source ?? ''] ?? 'bg-surface-subtle text-ink-body';
+              const tone = sourceToneClass(m.source ?? '');
               return (
                 <TR key={`${m.source}|${m.base}|${m.quote}`}>
                   <Td>
