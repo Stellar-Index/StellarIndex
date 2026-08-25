@@ -932,10 +932,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
               {coin.issuer_directory_domain && (
                 <> ({coin.issuer_directory_domain})</>
               )}
-              . This is third-party attribution from the public directory, not a
-              StellarIndex verification signal — do not trust this asset,
-              establish trustlines, or execute the prices below as if they
-              reflected an honest market.
+              .
               {directorySourceUrl && (
                 <>
                   {' '}
@@ -949,6 +946,12 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
                   </a>
                 </>
               )}
+            </p>
+            <p className="mt-1 font-medium">
+              Do not trust this asset, establish trustlines, or execute the
+              prices below as if they reflected an honest market. StellarIndex
+              relays this third-party directory flag; it does not imply the
+              asset is safe.
             </p>
           </Callout>
         )}
