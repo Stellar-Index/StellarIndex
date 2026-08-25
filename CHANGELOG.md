@@ -15,6 +15,46 @@ against.
 
 ## [Unreleased]
 
+## [v0.43.0] — 2026-08-25
+
+Tested against Stellar protocol 22.
+
+### Added
+- Alias-aware asset directory: SAC/alias twins fold onto their canonical
+  classic row (summing 24h volume + trades with exact `big.Rat`); a configured
+  SAC `asset_id` resolves to its classic on the detail path. (#28)
+- Priceless-popular pricing-coverage tripwire: an aggregator sweep pages when a
+  genuinely popular asset (market-character volume, wash excluded) has no served
+  price. New `stellarindex_assets_popular_priceless` gauge + sweep-health
+  metrics, bounded by a 5m per-sweep timeout. (#28)
+- stellar-expert scam-label + `volume_character` signals surfaced on the asset
+  directory + detail (`issuer_directory_{tags,domain,name}`, `volume_character`,
+  `volume_character_signals`). (#30)
+- Per-account activity watermark bounds the ops-by-account ClickHouse scan
+  (fail-safe: a missing watermark falls back to the pre-existing unbounded
+  scan). (#31)
+- W8 ops observability: projector-wedge gauge, notify-send metric, and a
+  verify-archive Tier-B nightly timer. (#33)
+
+### Fixed
+- `/v1/network/stats` stamps honest `flags.stale` + `as_of` on the
+  stale-while-revalidate serve path instead of silently asserting fresh (REC-05,
+  same class as `/v1/markets`).
+- `/v1/markets` stamps honest stale + `as_of` on SWR stale-serve. (#160)
+- Convert page hydrates header/inverse/ladder live off the shared query instead
+  of serving build-frozen residue. (#32.10a)
+
+### Security
+- Removed permissionless DeFindex strategy self-registration: the curated
+  `MainnetStrategies` set is the sole trust root; a factory `create` body can no
+  longer seed a poisoned strategy into the gated registry. (W8 6c)
+
+### Operator notes
+- New Prometheus alert rules (`notify`, `pricing-coverage`, `projector`,
+  `verify-archive`), the `verify-archive-tier-b` systemd timer, and the
+  `account_activity` ClickHouse table + MVs are config/schema that a
+  binary-only deploy does not apply — apply them alongside the binaries.
+
 ## [v0.42.0] — 2026-08-25
 
 ### Added
