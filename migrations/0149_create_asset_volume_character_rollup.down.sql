@@ -1,0 +1,11 @@
+-- 0149 down — drop the asset_volume_character rollup.
+--
+-- Correctness-safe: with the table absent, the /v1/assets listing's
+-- LEFT JOIN returns no rows (volume_character renders absent →
+-- omitempty; the default volume sort falls back to raw volume, no
+-- demotion) and the /v1/assets/{id} detail's keyed lookup misses
+-- (volume_character omitted). The pre-0149 live per-request roll is not
+-- auto-restored (the detail now reads the rollup), so a full rollback
+-- also needs the code reverted; on its own this only blanks the
+-- volume_character overlay.
+DROP TABLE IF EXISTS asset_volume_character;

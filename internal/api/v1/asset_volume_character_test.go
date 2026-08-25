@@ -16,12 +16,13 @@ import (
 )
 
 type stubVolumeCharacterReader struct {
-	vc  timescale.AssetVolumeCharacter
-	err error
+	vc       timescale.AssetVolumeCharacter
+	notFound bool
+	err      error
 }
 
-func (s *stubVolumeCharacterReader) AssetVolumeCharacter(_ context.Context, _ string) (timescale.AssetVolumeCharacter, error) {
-	return s.vc, s.err
+func (s *stubVolumeCharacterReader) AssetVolumeCharacterRollup(_ context.Context, _ string) (timescale.AssetVolumeCharacter, bool, error) {
+	return s.vc, !s.notFound, s.err
 }
 
 // scamAUDVolumeCharacter is the concentrated verdict the census produces

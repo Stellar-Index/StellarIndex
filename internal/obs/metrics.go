@@ -181,6 +181,9 @@ func registerAppMetricsTail() {
 		AssetVolumeRollupSweepsTotal,
 		AssetVolumeRollupSweepDurationSeconds,
 
+		AssetCharacterRollupSweepsTotal,
+		AssetCharacterRollupSweepDurationSeconds,
+
 		PriceAlertEvalTotal,
 		PriceAlertEvalDurationSeconds,
 
@@ -273,6 +276,7 @@ func seedBoundedLabelSeries() {
 	for _, outcome := range []string{"ok", "refresh_error"} {
 		ProtocolEventsRollupSweepsTotal.WithLabelValues(outcome)
 		AssetVolumeRollupSweepsTotal.WithLabelValues(outcome)
+		AssetCharacterRollupSweepsTotal.WithLabelValues(outcome)
 	}
 	for _, outcome := range []string{"ok", "list_error", "partial_error"} {
 		PriceAlertEvalTotal.WithLabelValues(outcome)
@@ -1485,6 +1489,50 @@ var AssetVolumeRollupSweepDurationSeconds = prometheus.NewHistogramVec(
 		Name:    "stellarindex_asset_volume_rollup_sweep_duration_seconds",
 		Help:    "Asset-volume rollup sweep latency, labelled by outcome (ok|refresh_error).",
 		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60},
+	},
+	[]string{"outcome"},
+)
+
+// AssetCharacterRollupSweepsTotal — per-sweep outcome counter for the
+// aggregator's asset-volume-character rollup worker
+// (internal/aggregate/assetcharacterrollup, wash-and-scam-signals design
+// §2), which folds the trailing-window all-asset account-structure roll
+// over `trades` (each trade counted on BOTH sides, folded onto canonical
+// assets) into the asset_volume_character table so /v1/assets{,/{id}} read
+// a keyed-on-PK lookup instead of the ~4s per-request trades roll (measured
+// 4.09s on the USDC detail, tripping the 4s per-request timeout → null).
+// Labels:
+//
+//   - `ok`            — sweep completed; rollup rows upserted + pruned.
+//   - `refresh_error` — the roll/upsert transaction failed (Postgres
+//     unreachable, migration 0149 missing). The rollup keeps its previous
+//     rows; volume_character goes stale, not blank.
+//
+// A sustained `refresh_error` rate means the volume_character overlay stops
+// advancing — informational severity (pricing/verification are unaffected;
+// the field is analytics-only).
+var AssetCharacterRollupSweepsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_asset_character_rollup_sweeps_total",
+		Help: "Asset-volume-character rollup worker sweep outcomes (ok|refresh_error).",
+	},
+	[]string{"outcome"},
+)
+
+// AssetCharacterRollupSweepDurationSeconds — latency histogram for one
+// asset-volume-character rollup sweep (the all-asset trailing-window trades
+// roll + batched upsert + prune), labelled by outcome so operators chart
+// `ok` p95/p99 separately from the fail-fast error path.
+//
+// Buckets span 50 ms → 120 s: this is the heaviest asset rollup (a
+// full-window all-asset `trades` scan with unordered account-pair
+// aggregation), so watching its p95 here is how an operator learns the roll
+// is getting heavier — long before it would surface as a slow endpoint.
+var AssetCharacterRollupSweepDurationSeconds = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "stellarindex_asset_character_rollup_sweep_duration_seconds",
+		Help:    "Asset-volume-character rollup sweep latency, labelled by outcome (ok|refresh_error).",
+		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120},
 	},
 	[]string{"outcome"},
 )

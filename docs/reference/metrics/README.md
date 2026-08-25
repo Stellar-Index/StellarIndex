@@ -1293,6 +1293,41 @@ operator learns the served-tier volume scan is getting heavier as the
 prices_1m history grows. If it climbs toward the 2-minute cadence the
 sweeps start overlapping and the rollup lag becomes user-visible.
 
+### `stellarindex_asset_character_rollup_sweeps_total`
+
+Counter, label `outcome` (`ok` / `refresh_error`).
+
+Per-sweep outcome of the aggregator's asset-volume-character rollup worker
+(`internal/aggregate/assetcharacterrollup`, wash-and-scam-signals design
+§2), which folds the trailing-window all-asset account-structure roll over
+the `trades` hypertable (each trade counted on BOTH sides, folded onto its
+canonical asset) into the `asset_volume_character` table (migration 0149).
+That table backs the `volume_character` label + signals on `/v1/assets`
+(listing) and `/v1/assets/{id}` (detail), so both read a keyed-on-PK lookup
+instead of the ~4s per-request trades roll (measured 4.09s on the USDC
+detail, tripping the 4s per-request timeout → null).
+
+When to look at it: asset pages show a stale or missing `volume_character`
+label, or the directory's demote-adjusted order stops moving. Sustained
+`refresh_error` = the roll/upsert transaction is failing (Postgres
+unreachable, or migration 0149 missing on this deployment). The rollup keeps
+its last-good rows, so the label goes stale, not blank. Informational
+severity: `volume_character` is analytics-only — pricing, verification, and
+the raw `volume_24h_usd` chain fact are unaffected.
+
+### `stellarindex_asset_character_rollup_sweep_duration_seconds`
+
+Histogram, label `outcome` (matches
+`stellarindex_asset_character_rollup_sweeps_total`). Buckets 50 ms – 120 s.
+
+Wall-clock of one rollup sweep: the all-asset trailing-window `trades` roll
+(with unordered account-pair aggregation) + batched upsert + prune. This is
+the heaviest asset rollup and the query the rollup moved off the
+`/v1/assets{,/{id}}` request path, so watching `ok` p95/p99 here is how an
+operator learns the roll is getting heavier as the `trades` history grows —
+long before it would surface as a slow endpoint. If it climbs toward the
+15-minute cadence the sweeps start overlapping.
+
 ### `stellarindex_price_alert_eval_total`
 
 Counter, label `outcome` (`ok` / `list_error` / `partial_error`).
