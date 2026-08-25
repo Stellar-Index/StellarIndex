@@ -145,6 +145,19 @@ type PriceSubstanceGate interface {
 	Allowed(ctx context.Context, base, quote canonical.Asset, surface string) bool
 }
 
+// PriceScamGate is the serving-side scam-issuer gate seam: it withholds
+// the aggregated price for an asset whose ISSUER is flagged scam-class in
+// the curated directory. Production impl:
+// internal/pricingguard.ScamGate. Like the substance gate, the v1 server
+// consults it only on paths that compute a price WITHOUT going through
+// PriceReader (the tip rolling-window VWAP); reader-backed paths get the
+// gate inside the readers themselves (cmd/stellarindex-api wiring). It is
+// keyed on the base alone, so it gates every quote (defeating the
+// frontend's XLM triangulation). Nil-safe: a nil gate withholds nothing.
+type PriceScamGate interface {
+	Withheld(ctx context.Context, base canonical.Asset, surface string) bool
+}
+
 // writePriceWithheldProblem is the single serializer for the withheld
 // verdict so every surface emits the identical problem type + guidance.
 func writePriceWithheldProblem(w http.ResponseWriter, r *http.Request, asset, quote canonical.Asset) {

@@ -1665,6 +1665,31 @@ first), while a jump after a config deploy means the
 Verdicts are cached ~60s per pair, so the counter tracks withheld
 REQUESTS, not distinct pairs. Dashboard-only, no alert rule.
 
+### `stellarindex_price_serve_scam_withheld_total`
+
+Counter, label `surface` (`price_read` | `tip` | `oracle` |
+`asset_headline`).
+
+Fires once per aggregated-price serve WITHHELD by the serving-side
+scam-pricing gate (`internal/pricingguard.ScamGate`): the requested
+asset's ISSUER carries a scam-class tag
+(`malicious`/`unsafe`/`fraud`/`scam`/`hack`/`phishing`) in the curated
+account directory (migration 0136), so the surface returned the
+`price-withheld` verdict instead of a price, and the listing/detail
+payload suppressed market_cap/fdv/change too. Raw surfaces
+(`/v1/observations`, `/v1/ohlc`, `/v1/history`) and the raw
+`circulating_supply` still serve — the gate withholds the aggregated
+CLAIM, not the underlying data.
+
+When to look at it: unlike the substance gate a non-zero rate here is
+tied to the (small, slow-moving) set of scam-flagged issuers that are
+also actively traded. The gate FAILS OPEN — a directory-reader error
+does NOT withhold — so a drop to zero while flagged issuers still
+trade can mean the gate is failing open (the local directory table is
+unreachable); the paired `scam pricing gate: directory lookup failed`
+warn log is the corroborating signal. Verdicts are cached ~60s per
+issuer. Dashboard-only, no alert rule.
+
 ## Supply derivation (aggregator binary)
 
 ### `stellarindex_supply_cross_check_divergence_stroops`

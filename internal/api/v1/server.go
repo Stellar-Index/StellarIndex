@@ -160,6 +160,7 @@ type Server struct {
 	divergence          DivergenceLooker
 	freeze              FrozenLooker
 	substance           PriceSubstanceGate
+	scam                PriceScamGate
 	supply              SupplyLooker
 	tokenSupply         TokenSupplyReader
 	tokenDecimals       TokenDecimalsReader
@@ -614,6 +615,12 @@ type Options struct {
 	// the wired readers. Nil disables handler-side gating (the readers
 	// may still gate independently).
 	Substance PriceSubstanceGate
+
+	// Scam, when non-nil, withholds the aggregated price for
+	// directory-scam-flagged issuers on the paths the server gates
+	// directly (the tip VWAP). Reader-backed paths gate inside the
+	// readers. Production impl internal/pricingguard.ScamGate.
+	Scam PriceScamGate
 
 	// Supply, when non-nil, populates the F2 fields
 	// (total_supply, circulating_supply, max_supply, market_cap_usd,
@@ -1207,7 +1214,7 @@ type Options struct {
 }
 
 // New constructs a Server and mounts all v1 routes.
-func New(opts Options) *Server {
+func New(opts Options) *Server { //nolint:funlen // pure field-mapping constructor — one line per Options field; splitting the wiring into helpers would scatter it and gains nothing.
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -1235,6 +1242,7 @@ func New(opts Options) *Server {
 		divergence:             opts.Divergence,
 		freeze:                 opts.Freeze,
 		substance:              opts.Substance,
+		scam:                   opts.Scam,
 		supply:                 opts.Supply,
 		tokenSupply:            opts.TokenSupply,
 		tokenDecimals:          opts.TokenDecimals,
