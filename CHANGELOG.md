@@ -15,7 +15,31 @@ against.
 
 ## [Unreleased]
 
+## [v0.44.1] — 2026-08-25
+
+Tested against Stellar protocol 22.
+
+### Added
+- Live account-movements feed: the `/accounts/{id}` movements view now
+  auto-follows the ledger tip — an SSE-nudged refetch (~4s coalesced,
+  shared tab-wide) gated to the first page so a keyset walk into history
+  is never yanked back, with a 20s fallback poll if the stream drops.
+  Classic-asset movement lag is cut from ~5min to ~30s by tightening the
+  incremental cap67 derive timer (the derive runs in ~0s per fire; true
+  up-to-the-second via a continuous follow-worker is a follow-on). (#172)
+
 ### Fixed
+- **cap67 account-movements derive could permanently lose movements**
+  under lake pressure. The `LiveSink` drops whole ledgers under buffer
+  pressure, leaving holes near the tip, but the derive resolved its upper
+  bound with raw `MaxLedger` and advanced its watermark past any hole
+  with no trailing re-derive — so a dropped ledger's classic/native
+  account movements were never revisited (the raw lake self-heals via
+  ch-live-catchup; this derive did not → a permanent gap in account
+  history). Now clamped to `ContiguousWatermark` (mirroring the real-time
+  projector), so the derive stalls at a hole until catch-up heals it —
+  delayed, never lost. Found by an adversarial audit of the
+  real-time-movements plan. (#174)
 - `/v1/divergence` (the per-reference divergence board) returned 500 on
   **every** request — `ListDivergenceLatest` wrote its trailing-window
   filter as `now() - ($1 || ' days')::interval`, which makes Postgres
@@ -23,7 +47,17 @@ against.
   pgx v5 has no int→text encode plan, so the query failed before
   executing (`unable to encode 7 into text format for text (OID 25)`).
   The window is now `make_interval(days => $1)`, which types `$1` as an
-  integer. Adds a regression test that forbids the text-concat form.
+  integer. Adds a regression test that forbids the text-concat form. (#176)
+- The `volume_character` rollup worker refreshed the all-asset 14-day
+  account-structure roll every 15 minutes; each pass is a multi-minute
+  full scan of the `trades` hypertable (72M rows/7d), so it ran
+  effectively continuously and starved the customer API (the p99 2259ms
+  regression introduced in v0.44.0). The cadence is now 6h and the roll
+  caps its own `max_parallel_workers_per_gather` + `statement_timeout` so
+  a single refresh can't monopolize the primary. (#175)
+- Explorer pill contrast: category / venue / type chips now route through
+  the adaptive design tokens instead of hard-coded colors, fixing
+  low-contrast pills in the dark theme. (#173)
 
 ## [v0.44.0] — 2026-08-25
 
