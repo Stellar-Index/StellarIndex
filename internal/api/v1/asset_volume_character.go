@@ -3,23 +3,23 @@ package v1
 import (
 	"context"
 	"strconv"
-	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// volumeCharacterTimeout caps the trailing-window account-structure roll
-// on /v1/assets/{id}. One bounded trades scan; the detail response cache
-// (120s) amortises it across repeat requests.
-const volumeCharacterTimeout = 4 * time.Second
-
-// VolumeCharacterReader computes the per-asset trailing-window
-// account-structure signals + derived volume_character (design §2).
-// Production impl is *timescale.Store (the maker/taker trades live in
-// Timescale, not the ClickHouse lake). Nil omits the fields.
+// VolumeCharacterReader reads the pre-computed per-asset trailing-window
+// account-structure signals + derived volume_character (design §2) from the
+// asset_volume_character rollup (migration 0149) — a keyed-on-PK lookup,
+// folded to the asset's canonical form. Production impl is *timescale.Store.
+//
+// It REPLACES the pre-rollup per-request trades roll, which measured 4.09s
+// on the USDC detail and tripped a 4s timeout, returning null: the rollup
+// worker moved that compute off the request path. A nil reader, a
+// fiat/native-only asset, a rollup miss (found=false), or a lookup error
+// all leave the fields omitted and never fail the asset response.
 type VolumeCharacterReader interface {
-	AssetVolumeCharacter(ctx context.Context, assetID string) (timescale.AssetVolumeCharacter, error)
+	AssetVolumeCharacterRollup(ctx context.Context, assetID string) (timescale.AssetVolumeCharacter, bool, error)
 }
 
 // AssetVolumeCharacterSignals is the wire form of the §2 signals. Shares
@@ -47,16 +47,21 @@ func (s *Server) applyVolumeCharacter(ctx context.Context, detail *AssetDetail, 
 		return
 	}
 	// fiat:* assets are off-chain reference rows with no trades-table
-	// presence — the roll would always be empty. Skip cleanly.
+	// presence — they never carry a rolled row. Skip cleanly.
 	if asset.Type == canonical.AssetFiat {
 		return
 	}
-	cctx, cancel := context.WithTimeout(ctx, volumeCharacterTimeout)
-	defer cancel()
-
-	vc, err := s.volumeCharacter.AssetVolumeCharacter(cctx, asset.String())
+	// Keyed-on-PK rollup lookup (~instant) — the pre-rollup 4s per-request
+	// trades roll (and its timeout) is gone.
+	vc, found, err := s.volumeCharacter.AssetVolumeCharacterRollup(ctx, asset.String())
 	if err != nil {
-		s.logger.Debug("volume character lookup failed", "asset_id", asset.String(), "err", err)
+		s.logger.Debug("volume character rollup lookup failed", "asset_id", asset.String(), "err", err)
+		return
+	}
+	if !found {
+		// No rolled row (no priced trades in the window, or the worker
+		// hasn't run yet) — omit the fields, same best-effort posture as a
+		// lookup miss.
 		return
 	}
 	detail.VolumeCharacter = vc.Character

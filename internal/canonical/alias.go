@@ -210,6 +210,34 @@ func (r *AliasRegistry) Canonical(asset Asset) Asset {
 	return asset
 }
 
+// AliasForms returns every alias FORM this registry knows that is NOT its
+// own family-canonical form, mapped to that canonical form's string. It is
+// the SQL-translation projection of the registry: a rollup that folds
+// trades onto their canonical asset — the same fold [AssetAliasStrings]
+// applies per-asset through the alias array — GROUP BYs on
+// COALESCE(map[form], form), so a SAC twin and its classic agree. A form
+// that is already its family's canonical (native; the classic side of a
+// classic↔SAC pair) is omitted: it maps to itself, which the COALESCE
+// fallback already covers. A nil registry projects the XLM-only baseline.
+func (r *AliasRegistry) AliasForms() map[string]string {
+	fams := baseAliasFamilies
+	if r != nil {
+		fams = r.families
+	}
+	out := make(map[string]string, len(fams))
+	for form, family := range fams {
+		if len(family) == 0 {
+			continue
+		}
+		canon := family[0].String()
+		if form == canon {
+			continue
+		}
+		out[form] = canon
+	}
+	return out
+}
+
 // AliasStrings is the string-set projection of [AliasRegistry.Aliases].
 func (r *AliasRegistry) AliasStrings(asset Asset) []string {
 	forms := r.Aliases(asset)
@@ -308,6 +336,16 @@ func AssetAliases(asset Asset) []Asset {
 // re-implement the String() loop.
 func AssetAliasStrings(asset Asset) []string {
 	return activeAliasRegistry().AliasStrings(asset)
+}
+
+// AllAliasForms is the process-registry projection of
+// [AliasRegistry.AliasForms] — every non-canonical alias form mapped to its
+// canonical form's string, resolved against the installed registry (the
+// XLM-only baseline until one installs). It is what a SQL rollup binds to
+// fold each raw trades asset side onto its canonical asset, keeping the
+// fold consistent with the per-asset [AssetAliasStrings] read.
+func AllAliasForms() map[string]string {
+	return activeAliasRegistry().AliasForms()
 }
 
 // CanonicalAsset resolves asset to the priority-first form of its

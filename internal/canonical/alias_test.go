@@ -110,3 +110,58 @@ func TestAssetAliasStrings(t *testing.T) {
 		}
 	}
 }
+
+// TestAllAliasForms pins the SQL-fold projection the volume-character rollup
+// binds: every NON-canonical form maps to its canonical form, and the
+// canonical form itself is NOT a key (it maps to itself via the caller's
+// COALESCE fallback). On the XLM-only baseline that is exactly
+// {crypto:XLM → native, <XLM SAC> → native}.
+func TestAllAliasForms(t *testing.T) {
+	// Reset to the XLM-only baseline so the test is independent of any
+	// config-derived registry a prior test installed.
+	InstallAliasRegistry(nil)
+
+	got := AllAliasForms()
+	want := map[string]string{
+		"crypto:XLM":     "native",
+		XLMSacContractID: "native",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("AllAliasForms() = %v, want %v", got, want)
+	}
+	for form, canon := range want {
+		if got[form] != canon {
+			t.Errorf("AllAliasForms()[%q] = %q, want %q", form, got[form], canon)
+		}
+	}
+	// The canonical form must NEVER appear as a key — a self-map would
+	// fold native onto native redundantly and, worse, signal the SQL to
+	// treat a canonical row as an alias.
+	if _, ok := got["native"]; ok {
+		t.Errorf("AllAliasForms() maps the canonical form 'native' — it must be omitted")
+	}
+}
+
+// TestAliasForms_ConfigRegistry proves a configured classic↔SAC pair adds
+// exactly its SAC→classic entry (SAC folds onto the classic, never the
+// reverse), on top of the XLM baseline.
+func TestAliasForms_ConfigRegistry(t *testing.T) {
+	// USDC classic ↔ its SAC (the operator's canonical example).
+	const usdcClassic = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	const usdcSAC = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
+	reg, err := NewAliasRegistry(map[string]string{usdcSAC: usdcClassic})
+	if err != nil {
+		t.Fatalf("NewAliasRegistry: %v", err)
+	}
+	got := reg.AliasForms()
+	if got[usdcSAC] != usdcClassic {
+		t.Errorf("AliasForms()[USDC SAC] = %q, want %q (classic)", got[usdcSAC], usdcClassic)
+	}
+	if _, ok := got[usdcClassic]; ok {
+		t.Errorf("AliasForms() maps the canonical classic USDC form — it must be omitted")
+	}
+	// XLM baseline still present.
+	if got["crypto:XLM"] != "native" {
+		t.Errorf("AliasForms()[crypto:XLM] = %q, want native", got["crypto:XLM"])
+	}
+}

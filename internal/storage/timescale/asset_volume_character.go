@@ -138,21 +138,11 @@ func (s *Store) AssetVolumeCharacter(ctx context.Context, assetID string) (Asset
 		return AssetVolumeCharacter{}, fmt.Errorf("timescale: AssetVolumeCharacter %s: %w", assetID, err)
 	}
 
-	out := AssetVolumeCharacter{
-		WindowDays:     int(volumeCharacterWindow.Hours()) / 24,
-		VolumeUSD:      total,
-		DistinctMakers: makers,
-		DistinctTakers: takers,
-	}
-	if total > 0 {
-		out.TopAccountPairVolShare = round4(topPair / total)
-		out.SelfCrossShare = round4(selfCross / total)
-		out.IssuerSideShare = round4(issuerSide / total)
-		out.MarketStyledShare = round4(marketStyled / total)
-	}
-	out.IsMarketStyled = out.MarketStyledShare >= volumeCharacterMarketStyledThreshold
-	out.Character = deriveVolumeCharacter(out)
-	return out, nil
+	// Shared derivation: the all-asset rollup
+	// (RefreshAssetVolumeCharacter) turns the SAME raw double-precision
+	// sums into shares + character through this exact path, so the rollup
+	// can never drift from the value this per-request read produces.
+	return volumeCharacterFromSums(total, topPair, selfCross, issuerSide, marketStyled, makers, takers), nil
 }
 
 // deriveVolumeCharacter maps the signals to a character. Pure — the design
