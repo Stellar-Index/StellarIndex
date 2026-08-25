@@ -15,6 +15,16 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- `/v1/divergence` (the per-reference divergence board) returned 500 on
+  **every** request — `ListDivergenceLatest` wrote its trailing-window
+  filter as `now() - ($1 || ' days')::interval`, which makes Postgres
+  infer `$1` as `text`, but the handler passes `sinceDays` as an `int`.
+  pgx v5 has no int→text encode plan, so the query failed before
+  executing (`unable to encode 7 into text format for text (OID 25)`).
+  The window is now `make_interval(days => $1)`, which types `$1` as an
+  integer. Adds a regression test that forbids the text-concat form.
+
 ## [v0.44.0] — 2026-08-25
 
 Tested against Stellar protocol 22.
