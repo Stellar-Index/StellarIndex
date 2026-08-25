@@ -152,16 +152,45 @@ func TestAcceptHistoryRate_StuckUpstreamReclassifies(t *testing.T) {
 		t.Fatalf("streak after new value = (%d, %v), want (1, 55)", g.stuckCount, g.stuckRejectedRate)
 	}
 
-	// An in-band bar resets the streak entirely.
+	// An in-band bar is accepted but must NOT reset the streak (the ETB
+	// fix). A good sibling bar in the same sweep clearing a different
+	// broken bar's streak is exactly what kept `_stuck` from ever
+	// engaging. The 55-streak persists across the in-band accept.
 	if !w.acceptHistoryRate("ETB", 160.0) {
 		t.Fatal("in-band history bar must be accepted")
 	}
-	if g.stuckCount != 0 || g.stuckRejectedRate != 0 {
-		t.Fatalf("streak after acceptance = (%d, %v), want (0, 0)", g.stuckCount, g.stuckRejectedRate)
+	if g.stuckCount != 1 || g.stuckRejectedRate != 55 {
+		t.Fatalf("streak after in-band accept = (%d, %v), want (1, 55) — acceptance must NOT clear the streak", g.stuckCount, g.stuckRejectedRate)
+	}
+}
+
+// TestAcceptHistoryRate_BrokenBarWithGoodSiblingsReachesStuck is the ETB
+// incident in miniature: a persistently-broken dated bar (44), refused
+// sweep after sweep, INTERLEAVED with the accepted good sibling bars (160)
+// of the same trailing window. It must still accumulate to the _stuck
+// threshold. Before the fix, each sweep's good bars reset the streak the
+// broken bar had just incremented, so it oscillated 0↔1 and the alert
+// never de-noised — the bar paged for days.
+func TestAcceptHistoryRate_BrokenBarWithGoodSiblingsReachesStuck(t *testing.T) {
+	w, _ := bandTestWorker(io.Discard)
+	w.guards["ETB"] = &rateGuard{lastAccepted: 160}
+
+	// Each sweep: some in-band sibling bars (accepted) + the one broken
+	// dated bar (refused). Repeat past the threshold.
+	for i := 0; i <= stuckRejectionThreshold; i++ {
+		w.acceptHistoryRate("ETB", 160) // good sibling, in-band
+		w.acceptHistoryRate("ETB", 161) // another good sibling
+		if w.acceptHistoryRate("ETB", 44) {
+			t.Fatalf("sweep %d: broken bar must be rejected", i+1)
+		}
+	}
+	g := w.guards["ETB"]
+	if g.stuckCount <= stuckRejectionThreshold {
+		t.Fatalf("broken bar interleaved with good siblings never reached _stuck: stuckCount=%d, want > %d", g.stuckCount, stuckRejectionThreshold)
 	}
 	// And the guard's current-rate baseline must be untouched throughout
 	// (the method's read-only contract on lastAccepted/pending).
-	if g.lastAccepted != 161.75 || g.pending != 0 {
+	if g.lastAccepted != 160 || g.pending != 0 {
 		t.Fatalf("baseline mutated: lastAccepted=%v pending=%v", g.lastAccepted, g.pending)
 	}
 }

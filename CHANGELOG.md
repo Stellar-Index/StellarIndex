@@ -15,6 +15,27 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- `completeness_incomplete{source=comet}` fired persistently after the
+  2026-08-25 Blend/Comet exploit — NOT a data gap (the lake is 100%
+  complete, watermark at tip) but a verdict artifact: the exploit's 36
+  self-pair swaps (`token_in == token_out`) fail `canonical.NewPair`, so
+  the comet decoder returned an error and the completeness re-derive
+  counted each as an undecodable blind spot, holding the source
+  `complete=false` forever (the INV-3 do-nothing re-derive trap). The
+  decoder now returns "zero rows, no error" for determinate business-rule
+  rejections (self-pair swap, non-positive amounts) so the re-derive
+  counts them as `expected=0`; the error path stays reserved for
+  indeterminate parse failures.
+- `external_fx_rate_rejections{reason=history_deviation}` paged
+  indefinitely on a correctly-refused broken **ETB** history bar
+  (2026-08-19 = 44, the pre-float peg vs the correct ~160). The band was
+  right to refuse it; the `_stuck` reclassification that de-noises the
+  alert never engaged because the in-band branch cleared the stuck streak
+  that a good sibling bar in the same trailing-7d sweep had just
+  incremented. Removed the reset so a persistently-broken bar reaches the
+  `_stuck` threshold (and drops out of the alert), while a genuinely new
+  bad feed still pages.
 ### Added
 - **Scam-pricing gate.** An asset whose issuer is flagged scam-class
   (`malicious`/`unsafe`/`fraud`/`scam`/`hack`/`phishing`) in the curated
