@@ -78,6 +78,15 @@ updates:
     labels:
       - dependencies
       - web
+    ignore:
+      # openapi-typescript's codegen is incompatible with typescript 7.x
+      # (TypeError: reading 'createKeywordTypeNode') — the explorer's
+      # "Generated API types are in sync" CI gate fails on EVERY rebase of
+      # a TS-major bump PR, a recurring failure email for no benefit. Hold
+      # typescript MAJOR bumps until openapi-typescript ships TS7 support;
+      # minor/patch (incl. security) still flow through npm-minor-patch.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
     groups:
       npm-minor-patch:
         patterns: ["*"]

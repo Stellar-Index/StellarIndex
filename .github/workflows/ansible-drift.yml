@@ -44,20 +44,19 @@ name: ansible-drift
 #     not untracking (see docs/operations/credential-rotation.md).
 # Untracking stops the LEAK GROWING (no future host/topology change is
 # published); it does not undo the past.
-# NOTE (2026-07-25, CID-24, audit-2026-07-23): ANSIBLE_VAULT_PASSWORD /
-# ANSIBLE_VAULT_FILE_B64 are not merely stale — the 2026-07-20 scheduled
-# run's own log shows both env vars EMPTY (`VAULT_PASS: `,
-# `VAULT_FILE_B64: `), i.e. the secrets are currently UNSET on this repo,
-# not mismatched. Every run since has failed at "Dry-run the playbook
-# against r1" with `[ERROR]: Invalid vault password was provided from
-# file`, before ever reaching PLAY RECAP — this is NOT a drift signal, it
-# is a missing-credential signal, and no drift verdict has been produced
-# since the rotation. This cannot be fixed from inside the repository: an
-# operator must set both secrets from the current r1 vault (repo Settings
-# → Secrets → Actions), then re-run this workflow. The "Vault password"
-# step below now fails fast with an explicit message instead of silently
-# writing empty files and letting ansible's generic error surface several
-# steps later.
+# HISTORY (2026-07-25 → RESOLVED 2026-08-24): ANSIBLE_VAULT_PASSWORD /
+# ANSIBLE_VAULT_FILE_B64 were UNSET (empty) after the 2026-07-20 rotation,
+# so every run failed at "Vault password" / "Dry-run against r1" as a
+# missing-credential signal, not drift. The operator RESTORED all secrets
+# (ANSIBLE_VAULT_PASSWORD / ANSIBLE_VAULT_FILE_B64 on 2026-07-27;
+# R1_INVENTORY_B64 / R1_SSH_KNOWN_HOSTS on 2026-08-24), and the workflow
+# now runs end-to-end and produces a real drift verdict (playbook dry-run
+# reaches PLAY RECAP, unreachable=0). ⇒ From 2026-08-24 on, a FAILURE here
+# is a GENUINE DRIFT signal (host≠codified: e.g. a `changed>0` diff or a
+# missing systemd unit), NOT a credential problem — reconcile r1 (or the
+# playbook), do not assume the secrets lapsed again. The "Vault password"
+# step still fails fast with an explicit message if a secret is ever unset
+# again (see the missing-secret guard below).
 #
 # SCHEDULING: the "this cron has never fired" claim that used to live here
 # was wrong and has been removed — `gh run list --workflow=ansible-drift.yml`
