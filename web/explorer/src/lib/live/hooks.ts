@@ -184,6 +184,7 @@ const LEDGER_FOLLOW_REFRESH_MS = 15_000;
 export function useLedgerFollow(
   queryKey: readonly unknown[],
   minIntervalMs: number = LEDGER_FOLLOW_REFRESH_MS,
+  enabled: boolean = true,
 ): void {
   const frame = useLedgerStream();
   const queryClient = useQueryClient();
@@ -193,6 +194,10 @@ export function useLedgerFollow(
   // each render doesn't retrigger the effect; reconstruct inside.
   const keyStr = JSON.stringify(queryKey);
   useEffect(() => {
+    // `enabled` lets a paginated panel follow the tip only on its first
+    // page — a keyset walk into history must NOT be yanked back to the
+    // tip by a ledger-close nudge.
+    if (!enabled) return;
     if (streamLatest == null) return;
     const now = Date.now();
     if (now - lastRefetchRef.current < minIntervalMs) return;
@@ -200,7 +205,7 @@ export function useLedgerFollow(
     void queryClient.invalidateQueries({
       queryKey: JSON.parse(keyStr) as unknown[],
     });
-  }, [streamLatest, queryClient, minIntervalMs, keyStr]);
+  }, [streamLatest, queryClient, minIntervalMs, keyStr, enabled]);
 }
 
 /**
