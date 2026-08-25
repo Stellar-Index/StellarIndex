@@ -3,7 +3,12 @@
 import { useState } from 'react';
 import Link from 'next/link';
 
-import { useCoins, useVerifiedSlugs, type Coin } from '@/api/hooks';
+import {
+  useCoins,
+  useNativeCoin,
+  useVerifiedSlugs,
+  type Coin,
+} from '@/api/hooks';
 import { useLedgerFollow } from '@/lib/live/hooks';
 import {
   EmptyState,
@@ -20,13 +25,15 @@ import { formatCompact, formatPriceSmall } from '@/lib/format';
 import { isSafePublicImageUrl } from '@/lib/safe-domain';
 
 /**
- * HomeTopAssets — the activity-ranked top 10 from /v1/coins.
+ * HomeTopAssets — the top 10 assets ranked by trailing-24h trading
+ * volume across every venue we ingest.
  *
- * The endpoint orders by observation_count desc (a proxy for
- * activity), so the first page roughly = "most active assets
- * across all of Stellar." Volume is the trailing-24h USD figure
- * computed from prices_1m. Fields the API doesn't yet expose
- * (price_usd / market_cap_usd) render as `—`.
+ * TWO corrections vs the old grid: (1) it ranked by observation_count
+ * (an all-time cumulative counter that just floats long-lived stablecoins
+ * to the top) instead of activity — now `volume_24h_usd_desc`; and (2)
+ * native XLM has NO /v1/assets row, so the most-traded asset on Stellar
+ * was invisible and USDC ranked #1 — we now inject native (via
+ * useNativeCoin) and re-rank, so XLM takes the top spot it earns on volume.
  *
  * Server-rendered list this isn't — we want this to refresh on
  * the same TanStack cadence as the rest of the home page.
@@ -37,11 +44,14 @@ export function HomeTopAssets() {
     undefined,
     undefined,
     undefined,
-    undefined,
+    'volume_24h_usd_desc',
     { sparkline: true },
   );
+  const { data: nativeCoin } = useNativeCoin({ sparkline: true });
   const { data: verifiedSlugs } = useVerifiedSlugs();
   useLedgerFollow(['/v1/assets']);
+
+  const coins = rankTopAssets(nativeCoin, data?.coins);
 
   return (
     <section className="space-y-3">
@@ -51,8 +61,9 @@ export function HomeTopAssets() {
             Top assets by activity
           </h2>
           <p className="text-ink-body text-sm">
-            Ranked by total observation count across every venue we ingest from.
-            24h volume sums every (base, quote) pair the asset participates in.
+            Ranked by trailing-24h trading volume across every venue we ingest —
+            native XLM included. Volume sums every (base, quote) pair the asset
+            trades in.
           </p>
         </div>
         <Link href="/assets" className="text-brand-600 text-sm hover:underline">
@@ -93,7 +104,7 @@ export function HomeTopAssets() {
                     </Td>
                   </TR>
                 ))}
-              {data?.coins.map((coin, idx) => (
+              {coins.map((coin, idx) => (
                 <Row
                   key={coin.asset_id}
                   coin={coin}
@@ -197,6 +208,25 @@ function parseDec(s: string | null | undefined): number | null {
   if (!s) return null;
   const n = Number(s);
   return Number.isFinite(n) ? n : null;
+}
+
+// rankTopAssets injects native XLM (absent from /v1/assets) into the listed
+// rows and re-ranks the union by trailing-24h volume, returning the top 10.
+// Native is deduped by asset_id (belt-and-suspenders — the listing never
+// returns it). Rows with no volume sort last.
+function rankTopAssets(
+  native: Coin | null | undefined,
+  listed: Coin[] | undefined,
+): Coin[] {
+  const rows = [...(listed ?? [])];
+  if (native && !rows.some((c) => c.asset_id === native.asset_id)) {
+    rows.push(native);
+  }
+  rows.sort(
+    (a, b) =>
+      (parseDec(b.volume_24h_usd) ?? 0) - (parseDec(a.volume_24h_usd) ?? 0),
+  );
+  return rows.slice(0, 10);
 }
 
 function Dash() {
