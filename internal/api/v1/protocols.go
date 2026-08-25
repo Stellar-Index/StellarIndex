@@ -268,6 +268,7 @@ type protocolFastActivityReader interface {
 	DailyActivityAvailable(ctx context.Context) (available, definitive bool)
 	ProtocolDailyActivityFast(ctx context.Context, contractIDs []string, sinceDay time.Time) ([]clickhouse.ProtocolDailyPoint, error)
 	ProtocolEventBreakdownFast(ctx context.Context, contractIDs []string, sinceDay time.Time) ([]clickhouse.ProtocolEventTypeCount, error)
+	ProtocolContractActivityFast(ctx context.Context, contractIDs []string, sinceDay time.Time) ([]clickhouse.ProtocolContractActivity, error)
 }
 
 // ProtocolBespokeReader builds the per-category bespoke analytics block from the
@@ -959,7 +960,7 @@ func (s *Server) enrichProtocolAnalytics(ctx context.Context, meta ProtocolMeta,
 	go func() { defer wg.Done(); breakdownOK = s.fillProtocolBreakdown(ctx, meta.Name, ids, plan, view) }()
 	go func() {
 		defer wg.Done()
-		contractsOK = s.fillProtocolContractActivity(ctx, meta.Name, ids, plan.sinceLedger, view)
+		contractsOK = s.fillProtocolContractActivity(ctx, meta.Name, ids, plan, view)
 	}()
 	wg.Wait()
 	reconcileProtocolBreakdown(view)
@@ -1058,8 +1059,19 @@ func (s *Server) fillProtocolSeries(ctx context.Context, name string, ids []stri
 
 // fillProtocolContractActivity merges per-contract event counts + last-seen onto
 // the roster (degrades on error).
-func (s *Server) fillProtocolContractActivity(ctx context.Context, name string, ids []string, since uint32, view *ProtocolDetailView) bool {
-	act, err := s.protocolActivity.ProtocolContractActivity(ctx, ids, since)
+func (s *Server) fillProtocolContractActivity(ctx context.Context, name string, ids []string, plan protocolActivityPlan, view *ProtocolDetailView) bool {
+	var act []clickhouse.ProtocolContractActivity
+	var err error
+	if plan.fast != nil {
+		// Fast path: per-contract counts over the daily pre-aggregation
+		// (sub-second) instead of the raw `contract_events FINAL` scan
+		// (57s / 2 GiB-limit kill — the certified-lake "unavailable" root
+		// cause + a primary CH-load source). Falls back to raw when the
+		// daily table isn't available (mirrors the daily/breakdown paths).
+		act, err = plan.fast.ProtocolContractActivityFast(ctx, ids, plan.sinceDay)
+	} else {
+		act, err = s.protocolActivity.ProtocolContractActivity(ctx, ids, plan.sinceLedger)
+	}
 	if err != nil {
 		s.logger.Warn("protocol contract activity failed", "source", name, "err", err)
 		return false
