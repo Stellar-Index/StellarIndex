@@ -15,27 +15,10 @@ against.
 
 ## [Unreleased]
 
-### Fixed
-- `completeness_incomplete{source=comet}` fired persistently after the
-  2026-08-25 Blend/Comet exploit — NOT a data gap (the lake is 100%
-  complete, watermark at tip) but a verdict artifact: the exploit's 36
-  self-pair swaps (`token_in == token_out`) fail `canonical.NewPair`, so
-  the comet decoder returned an error and the completeness re-derive
-  counted each as an undecodable blind spot, holding the source
-  `complete=false` forever (the INV-3 do-nothing re-derive trap). The
-  decoder now returns "zero rows, no error" for determinate business-rule
-  rejections (self-pair swap, non-positive amounts) so the re-derive
-  counts them as `expected=0`; the error path stays reserved for
-  indeterminate parse failures.
-- `external_fx_rate_rejections{reason=history_deviation}` paged
-  indefinitely on a correctly-refused broken **ETB** history bar
-  (2026-08-19 = 44, the pre-float peg vs the correct ~160). The band was
-  right to refuse it; the `_stuck` reclassification that de-noises the
-  alert never engaged because the in-band branch cleared the stuck streak
-  that a good sibling bar in the same trailing-7d sweep had just
-  incremented. Removed the reset so a persistently-broken bar reaches the
-  `_stuck` threshold (and drops out of the alert), while a genuinely new
-  bad feed still pages.
+## [v0.44.2] — 2026-08-25
+
+Tested against Stellar protocol 22.
+
 ### Added
 - **Scam-pricing gate.** An asset whose issuer is flagged scam-class
   (`malicious`/`unsafe`/`fraud`/`scam`/`hack`/`phishing`) in the curated
@@ -52,24 +35,45 @@ against.
   `/v1/history`) and `circulating_supply` stay visible; the gate fails
   **open** on a directory outage. Deliberately overturns the directory's
   historical "display-only, tags never gate pricing" invariant. (#182)
+
 ### Fixed
+- `completeness_incomplete{source=comet}` fired persistently after the
+  2026-08-25 Blend/Comet exploit — NOT a data gap (the lake is 100%
+  complete, watermark at tip) but a verdict artifact: the exploit's 36
+  self-pair swaps (`token_in == token_out`) fail `canonical.NewPair`, so
+  the comet decoder returned an error and the completeness re-derive
+  counted each as an undecodable blind spot, holding the source
+  `complete=false` forever (the INV-3 do-nothing re-derive trap). The
+  decoder now returns "zero rows, no error" for determinate business-rule
+  rejections (self-pair swap, non-positive amounts) so the re-derive
+  counts them as `expected=0`; the error path stays reserved for
+  indeterminate parse failures. (#185)
+- `external_fx_rate_rejections{reason=history_deviation}` paged
+  indefinitely on a correctly-refused broken **ETB** history bar
+  (2026-08-19 = 44, the pre-float peg vs the correct ~160). The band was
+  right to refuse it; the `_stuck` reclassification that de-noises the
+  alert never engaged because the in-band branch cleared the stuck streak
+  that a good sibling bar in the same trailing-7d sweep had just
+  incremented. Removed the reset so a persistently-broken bar reaches the
+  `_stuck` threshold (and drops out of the alert), while a genuinely new
+  bad feed still pages. (#185)
 - Explorer asset-page price chart was blank for **USDC and every fiat
   currency**: those chart against `fiat:USD`, which the `/v1/ohlc` candle
   path has no rows for (a fiat pair has no on-chain constituent; only
   `/v1/chart` carries the fx-cross series). Fiat currencies now render a
   USD line from `/v1/chart`, and USDC — the dollar reference, which has no
   USDC/USD series of its own — shows a "≈ $1.00 reference" panel (linking
-  the divergence board for depeg watching) instead of an empty grid.
+  the divergence board for depeg watching) instead of an empty grid. (#184)
 - Explorer "Top assets by activity" ranked by all-time `observation_count`
   (a cumulative counter that floats long-lived stablecoins to the top) and
   omitted native XLM entirely (it has no `classic_assets` row, so it never
   appears in `/v1/assets`) — so USDC ranked #1 and XLM, the most-traded
   asset on Stellar, was absent. Now ranks by trailing-24h volume and injects
   native XLM (`useNativeCoin` over `/v1/assets/native`); XLM takes the #1
-  spot it earns on volume (~$43M vs USDC's ~$36M).
+  spot it earns on volume (~$43M vs USDC's ~$36M). (#181)
 - Explorer nav: restored a top-level **Ledgers** entry in the Stellar
   section (it had been folded into the Network hub, making it undiscoverable
-  from the rail).
+  from the rail). (#181)
 - `/v1/protocols/{name}` per-contract activity ran the raw
   `contract_events FINAL` scan (merge-on-read of the 12.8B-row
   ReplacingMergeTree), which blew ClickHouse's 2 GiB per-query memory
@@ -79,7 +83,7 @@ against.
   the tx-outcome read timeouts. Now routed through the existing
   `contract_events_daily` pre-aggregation (like the daily-activity and
   event-breakdown views already are) — measured **0.5s vs 57s**, no memory
-  kill. Last-seen is day-grain (sufficient for the roster column).
+  kill. Last-seen is day-grain (sufficient for the roster column). (#180)
 - `/v1/anomalies` returned 500 on every request — `FreezeReasonCounts`
   and `FreezeDailyReasonCounts` used the same fragile `($1 || ' days')`
   interval concat that took down `/v1/divergence`: it types `$1` as
@@ -87,7 +91,7 @@ against.
   encode plan. Also fixed the latent same bug in `ListDivergenceSeries`
   (`/v1/divergence/series`, `$4`/`$5`). All now use `make_interval`, and
   a package-wide test forbids the concat form so it can't return a third
-  time.
+  time. (#179)
 
 ## [v0.44.1] — 2026-08-25
 
