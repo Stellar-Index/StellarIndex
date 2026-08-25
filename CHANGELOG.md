@@ -36,6 +36,58 @@ against.
   incremented. Removed the reset so a persistently-broken bar reaches the
   `_stuck` threshold (and drops out of the alert), while a genuinely new
   bad feed still pages.
+### Added
+- **Scam-pricing gate.** An asset whose issuer is flagged scam-class
+  (`malicious`/`unsafe`/`fraud`/`scam`/`hack`/`phishing`) in the curated
+  account directory now has its aggregated **price AND market cap/FDV
+  withheld** — a scam token no longer publishes a value that lends it
+  legitimacy, even when its market clears the thin-market substance floor
+  (RIO-GBNLJIYH… did: it showed a $0.0072 price + a $540k market cap on a
+  deprecated-scam issuer). Wired at the **price-reader seam** so one gate
+  covers `/v1/price`, `/v1/price/batch`, `/v1/twap`, `/v1/vwap`, the SEP-40
+  oracle price paths, the asset headline and the live tip (keyed on the
+  base, so it holds across quotes incl. XLM triangulation), plus a payload
+  suppression on the `/v1/assets` listing + detail (market_cap / fdv /
+  price / change). Raw trade surfaces (`/v1/ohlc`, `/v1/observations`,
+  `/v1/history`) and `circulating_supply` stay visible; the gate fails
+  **open** on a directory outage. Deliberately overturns the directory's
+  historical "display-only, tags never gate pricing" invariant. (#182)
+### Fixed
+- Explorer asset-page price chart was blank for **USDC and every fiat
+  currency**: those chart against `fiat:USD`, which the `/v1/ohlc` candle
+  path has no rows for (a fiat pair has no on-chain constituent; only
+  `/v1/chart` carries the fx-cross series). Fiat currencies now render a
+  USD line from `/v1/chart`, and USDC — the dollar reference, which has no
+  USDC/USD series of its own — shows a "≈ $1.00 reference" panel (linking
+  the divergence board for depeg watching) instead of an empty grid.
+- Explorer "Top assets by activity" ranked by all-time `observation_count`
+  (a cumulative counter that floats long-lived stablecoins to the top) and
+  omitted native XLM entirely (it has no `classic_assets` row, so it never
+  appears in `/v1/assets`) — so USDC ranked #1 and XLM, the most-traded
+  asset on Stellar, was absent. Now ranks by trailing-24h volume and injects
+  native XLM (`useNativeCoin` over `/v1/assets/native`); XLM takes the #1
+  spot it earns on volume (~$43M vs USDC's ~$36M).
+- Explorer nav: restored a top-level **Ledgers** entry in the Stellar
+  section (it had been folded into the Network hub, making it undiscoverable
+  from the rail).
+- `/v1/protocols/{name}` per-contract activity ran the raw
+  `contract_events FINAL` scan (merge-on-read of the 12.8B-row
+  ReplacingMergeTree), which blew ClickHouse's 2 GiB per-query memory
+  limit (Code 241) — that memory kill *was* the "certified-lake reader
+  unavailable" verdict on the protocol page, and the 57s / 3.2B-row scans
+  were a primary CH-load source behind the API p95/p99 latency alerts and
+  the tx-outcome read timeouts. Now routed through the existing
+  `contract_events_daily` pre-aggregation (like the daily-activity and
+  event-breakdown views already are) — measured **0.5s vs 57s**, no memory
+  kill. Last-seen is day-grain (sufficient for the roster column).
+- `/v1/anomalies` returned 500 on every request — `FreezeReasonCounts`
+  and `FreezeDailyReasonCounts` used the same fragile `($1 || ' days')`
+  interval concat that took down `/v1/divergence`: it types `$1` as
+  `text`, but the handler passes an `int`, and pgx v5 has no int→text
+  encode plan. Also fixed the latent same bug in `ListDivergenceSeries`
+  (`/v1/divergence/series`, `$4`/`$5`). All now use `make_interval`, and
+  a package-wide test forbids the concat form so it can't return a third
+  time.
 
 ## [v0.44.1] — 2026-08-25
 

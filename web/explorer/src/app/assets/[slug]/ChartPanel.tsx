@@ -3,6 +3,8 @@
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
 import { MarketChart } from '@/components/charts/MarketChart';
+import { LineChart } from '@/components/charts/LineChart';
+import { useFiatUsdSeries } from '@/api/hooks';
 import { shortAssetText } from '@/lib/asset-label';
 
 // The verified Circle-issued USDC — the chart anchor quote.
@@ -42,12 +44,26 @@ export function chartQuoteFor(assetID: string): {
 }
 
 /**
- * Chart tab for /assets/[slug]?tab=chart — real OHLC candles + volume
- * (the shared MarketChart over /v1/ohlc), quoted per [chartQuoteFor].
+ * Chart tab for /assets/[slug]?tab=chart. Three real cases, so a blank
+ * candle chart never renders where a price exists in another shape:
+ *   - USDC: it IS the dollar reference every chart is quoted against, so
+ *     a USDC/USD candle chart is empty by construction — show a reference
+ *     panel, not an empty grid.
+ *   - Fiat currencies (fiat:*): the OHLC candle path has no on-chain
+ *     constituent to build from; only /v1/chart carries the fx series, so
+ *     render that as a line.
+ *   - Everything else (incl. native XLM): real OHLC candles + volume via
+ *     the shared MarketChart, quoted per [chartQuoteFor].
  */
 export function ChartPanel({ assetID }: { assetID: string }) {
-  const { quote, label } = chartQuoteFor(assetID);
+  if (assetID === USDC_ASSET_ID) {
+    return <UsdcReferencePanel />;
+  }
+  if (assetID.startsWith('fiat:')) {
+    return <FiatUsdChartPanel assetID={assetID} />;
+  }
 
+  const { quote, label } = chartQuoteFor(assetID);
   return (
     <Panel
       title="Price chart"
@@ -68,6 +84,65 @@ export function ChartPanel({ assetID }: { assetID: string }) {
         height={420}
         liveTip
       />
+    </Panel>
+  );
+}
+
+/**
+ * FiatUsdChartPanel — a fiat currency's USD price as a line over
+ * /v1/chart (the OHLC candle path is empty for fiat:USD — see ChartPanel).
+ */
+function FiatUsdChartPanel({ assetID }: { assetID: string }) {
+  const { data, isLoading } = useFiatUsdSeries(assetID);
+  const hasSeries = !!data && data.length >= 2;
+  return (
+    <Panel
+      title="Price chart"
+      hint="USD price · daily · trailing week"
+      source={asExample('/v1/chart', {
+        asset: assetID,
+        quote: 'fiat:USD',
+        timeframe: '1w',
+        granularity: '1d',
+      })}
+      bodyClassName="space-y-3"
+    >
+      {hasSeries ? (
+        <LineChart
+          data={data}
+          height={340}
+          area
+          positive={data[data.length - 1].value >= data[0].value}
+          ariaLabel={`${shortAssetText(assetID)} USD price, trailing week`}
+        />
+      ) : (
+        <div className="text-ink-muted flex h-[340px] items-center justify-center text-sm">
+          {isLoading ? 'Loading…' : 'No recent USD price series for this currency.'}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+/**
+ * UsdcReferencePanel — USDC has no on-chain USDC/USD series (it is the
+ * dollar reference), so rather than an empty candle chart, state that.
+ */
+function UsdcReferencePanel() {
+  return (
+    <Panel title="Price chart" hint="USD reference">
+      <div className="flex flex-col items-center justify-center gap-3 py-14 text-center">
+        <div className="text-ink font-mono text-4xl tracking-tight">≈ $1.00</div>
+        <p className="text-ink-muted max-w-md text-sm">
+          USDC is the dollar reference every other asset is charted against,
+          so it has no USDC-denominated chart of its own. To watch for a
+          depeg, see the{' '}
+          <a href="/divergences" className="text-brand-600 hover:underline">
+            divergence board
+          </a>
+          .
+        </p>
+      </div>
     </Panel>
   );
 }

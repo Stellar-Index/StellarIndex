@@ -16,6 +16,7 @@ import {
   Gauge,
   Globe,
   KeyRound,
+  Layers,
   LayoutDashboard,
   LogOut,
   Radio,
@@ -61,6 +62,7 @@ const NAV: NavGroup[] = [
     title: 'Stellar',
     items: [
       { href: '/network', label: 'Network', icon: Gauge },
+      { href: '/ledgers', label: 'Ledgers', icon: Layers },
       { href: '/transactions', label: 'Transactions', icon: Receipt },
       { href: '/accounts', label: 'Accounts', icon: Wallet },
       { href: '/assets', label: 'Assets', icon: Coins },

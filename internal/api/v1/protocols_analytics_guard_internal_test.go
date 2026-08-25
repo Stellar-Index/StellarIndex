@@ -95,15 +95,16 @@ type probeAnswer struct{ avail, definitive bool }
 type scriptedFastStub struct {
 	prewarmActivityStub
 
-	mu          sync.Mutex
-	answers     []probeAnswer
-	probeCalls  int
-	tipCalls    int
-	fastSeries  int
-	fastBreak   int
-	rawSeries   int
-	rawBreak    int
-	seriesPoint []clickhouse.ProtocolDailyPoint
+	mu           sync.Mutex
+	answers      []probeAnswer
+	probeCalls   int
+	tipCalls     int
+	fastSeries   int
+	fastBreak    int
+	fastContract int
+	rawSeries    int
+	rawBreak     int
+	seriesPoint  []clickhouse.ProtocolDailyPoint
 }
 
 func (s *scriptedFastStub) DailyActivityAvailable(context.Context) (bool, bool) {
@@ -135,6 +136,13 @@ func (s *scriptedFastStub) ProtocolEventBreakdownFast(context.Context, []string,
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.fastBreak++
+	return nil, nil
+}
+
+func (s *scriptedFastStub) ProtocolContractActivityFast(context.Context, []string, time.Time) ([]clickhouse.ProtocolContractActivity, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fastContract++
 	return nil, nil
 }
 
@@ -247,6 +255,12 @@ func TestEnrichProtocolAnalytics_SharedPlanSingleTipRead(t *testing.T) {
 	}
 	if stub.fastSeries != 1 || stub.fastBreak != 1 {
 		t.Errorf("fast series/breakdown = %d/%d, want 1/1 (both fills on the fast source)", stub.fastSeries, stub.fastBreak)
+	}
+	// Per-contract activity must also serve from the fast pre-aggregation —
+	// the raw `contract_events FINAL` path is the 2 GiB-limit kill that made
+	// /v1/protocols/{name} return the certified-lake "unavailable" verdict.
+	if stub.fastContract != 1 {
+		t.Errorf("fast contract-activity = %d, want 1 (must use the fast source, not the raw FINAL scan)", stub.fastContract)
 	}
 	if stub.rawSeries != 0 || stub.rawBreak != 0 {
 		t.Errorf("raw series/breakdown = %d/%d, want 0/0 when the fast path serves", stub.rawSeries, stub.rawBreak)

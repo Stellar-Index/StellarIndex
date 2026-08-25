@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -13,14 +14,18 @@ import (
 // stellar-expert/public-directory) and stamps the additive
 // issuer_directory_{tags,domain,name} fields onto AssetDetail.
 //
-// DISPLAY-ONLY invariant (the table's doc contract): these fields are
-// third-party attribution and are NEVER read by any pricing or
-// verification path — stamping them cannot alter price_usd, the verified
-// status, or any gate. They are set here, AFTER every price/gate overlay,
-// purely as presentation metadata. Best-effort: a nil reader, an unlisted
-// issuer (the common case), or a lookup failure just leaves the fields
-// omitted and never fails the asset response — a directory outage must
-// not take the asset surface down with it.
+// DISPLAY-ONLY invariant — with ONE deliberate exception (2026-08-25).
+// The tags remain third-party attribution that never affects the verified
+// status or the substance/decimals gates. The exception: a SCAM-CLASS tag
+// (malicious/unsafe/fraud/scam/hack/phishing) now WITHHOLDS the published
+// price + market cap, via suppressScamIssuerPricing below and the
+// reader-seam pricingguard.ScamGate — a scam token must not publish a
+// price/market-cap that lends it legitimacy, even when its market clears
+// the substance floor (RIO-GBNLJIYH… did). Raw trade surfaces stay
+// visible. Best-effort: a nil reader, an unlisted issuer (the common
+// case), or a lookup failure just leaves the fields omitted and never
+// fails the asset response — a directory outage must not take the asset
+// surface down with it (the suppression fails OPEN too).
 
 // stampIssuerDirectory copies one curated directory label onto the
 // detail. Tags are set only when non-empty so an unlabelled entry
@@ -84,6 +89,29 @@ func (s *Server) fillIssuerDirectoryTags(ctx context.Context, rows []AssetDetail
 		}
 		if e, ok := found[*iss]; ok {
 			stampIssuerDirectory(&rows[i], e)
+			suppressScamIssuerPricing(&rows[i])
 		}
 	}
+}
+
+// suppressScamIssuerPricing withholds an asset's published PRICE claim on
+// the payload when its issuer carries a scam-class directory tag
+// (malicious/unsafe/fraud/scam/hack/phishing — pricingguard classifier):
+// price_usd, market_cap_usd, fdv_usd, and the price-derived change_* are
+// nulled, while circulating_supply (a raw chain fact) and the scam
+// warning fields are kept. This is the payload-side twin of the
+// reader-seam pricingguard.ScamGate (which withholds /v1/price and every
+// reader-backed surface); together they ensure a scam issuer publishes
+// neither a price nor a market cap. Fails OPEN — an unlisted/untagged
+// issuer is left untouched. Idempotent + nil-safe.
+func suppressScamIssuerPricing(d *AssetDetail) {
+	if d == nil || !pricingguard.IsDirectoryScamFlagged(d.IssuerDirectoryTags) {
+		return
+	}
+	d.PriceUSD = nil
+	d.MarketCapUSD = nil
+	d.FDVUSD = nil
+	d.Change1hPct = nil
+	d.Change24hPct = nil
+	d.Change7dPct = nil
 }

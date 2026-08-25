@@ -167,6 +167,13 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	if s.substance != nil && !s.substance.Allowed(ctx, asset, quote, "tip") {
 		return PriceSnapshot{}, nil, ErrPriceWithheld
 	}
+	// Scam-issuer gate: same posture as the substance gate on this
+	// surface — a directory-scam-flagged issuer's live tip is still an
+	// aggregated price claim we decline to publish. Keyed on the base, so
+	// it covers every quote (including the XLM-triangulated headline).
+	if s.scam != nil && s.scam.Withheld(ctx, asset, "tip") {
+		return PriceSnapshot{}, nil, ErrPriceWithheld
+	}
 	if snap, sources, ok := s.tipWindowVWAP(ctx, asset, quote, windowSeconds); ok {
 		return snap, sources, nil
 	}

@@ -603,6 +603,73 @@ export function useAssets(
   });
 }
 
+/**
+ * useFiatUsdSeries — the trailing-week daily USD price series for an
+ * asset from /v1/chart, shaped as {time, value} for LineChart.
+ *
+ * WHY a separate path: the asset-page candle chart (MarketChart over
+ * /v1/ohlc) is EMPTY for fiat:USD-quoted charts — a fiat currency has no
+ * on-chain constituent, so /v1/ohlc has no rows; only /v1/chart carries
+ * the fx-cross series. So fiat currencies (EUR, GBP, …) must chart from
+ * /v1/chart, not OHLC, or their price tab renders blank.
+ */
+export function useFiatUsdSeries(
+  assetID: string,
+  options?: { enabled?: boolean },
+) {
+  return useQuery<{ time: number; value: number }[]>({
+    queryKey: ['/v1/chart', assetID, 'fiat:USD', '1w-line'],
+    enabled: options?.enabled ?? true,
+    retry: false,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const env = await apiGet<{
+        data: { points?: { t?: string; p?: string | null }[] };
+      }>('/v1/chart', {
+        asset: assetID,
+        quote: 'fiat:USD',
+        timeframe: '1w',
+        granularity: '1d',
+      });
+      return (env.data?.points ?? [])
+        .map((pt) => ({
+          time: pt.t ? Math.floor(new Date(pt.t).getTime() / 1000) : NaN,
+          value: pt.p != null ? Number(pt.p) : NaN,
+        }))
+        .filter(
+          (d) =>
+            Number.isFinite(d.time) && Number.isFinite(d.value) && d.value > 0,
+        );
+    },
+  });
+}
+
+/**
+ * useNativeCoin — native XLM shaped as a Coin row for the "Top assets by
+ * activity" grid. Native has NO classic_assets row, so it never appears in
+ * /v1/assets (useCoins) — which is why that grid ranked USDC #1 and XLM,
+ * definitionally the most-traded Stellar asset, was invisible. Sourced from
+ * /v1/assets/native (the special native detail path): it carries price_usd,
+ * volume_24h_usd, change_24h_pct, observation_count, and the 24h sparkline.
+ * `code` is null on that path, so backfill 'XLM'.
+ */
+export function useNativeCoin(options?: { sparkline?: boolean; enabled?: boolean }) {
+  return useQuery<Coin | null>({
+    queryKey: ['/v1/assets/native', 'coin', options?.sparkline ? 'sparkline' : ''],
+    enabled: options?.enabled ?? true,
+    retry: false,
+    staleTime: 30_000,
+    queryFn: async () => {
+      const env = await apiGet<{ data: Coin | null }>('/v1/assets/native', {
+        ...(options?.sparkline ? { sparkline: 'true' } : {}),
+      });
+      const c = env.data;
+      if (!c) return null;
+      return { ...c, code: c.code ?? 'XLM' };
+    },
+  });
+}
+
 export function useCoins(
   limit = 100,
   issuer?: string,
