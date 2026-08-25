@@ -183,6 +183,10 @@ func registerAppMetricsTail() {
 		PriceAlertEvalTotal,
 		PriceAlertEvalDurationSeconds,
 
+		AssetsPopularPriceless,
+		PricelessCoverageCheckRunsTotal,
+		PricelessCoverageCheckLastSuccessUnix,
+
 		SignupReaperRunsTotal,
 		SignupReaperRunDurationSeconds,
 		SignupReaperRowsDeletedTotal,
@@ -1486,6 +1490,56 @@ var PriceAlertEvalDurationSeconds = prometheus.NewHistogramVec(
 		Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
 	},
 	[]string{"outcome"},
+)
+
+// AssetsPopularPriceless — the priceless-popular pricing-coverage tripwire
+// gauge (task #28 Part B). Set each sweep by the aggregator's
+// internal/pricelesscoverage worker to the COUNT of assets that are:
+//
+//   - above the popularity floor by MARKET-CHARACTER volume (7d priced USD
+//     volume > $10k OR 7d trades > 5k, with single-account-pair wash
+//     EXCLUDED so a volume-painting scam farm cannot self-select in), AND
+//   - priceless (no servable USD/XLM-proxy price), AND
+//   - not deliberately withheld (their recent 24h market clears the
+//     substance serve floor, so the gate is NOT the reason they're
+//     priceless — this is an unexplained coverage gap, not a fail-closed
+//     thin market).
+//
+// > 0 means a genuinely-traded asset has no price and no recorded reason —
+// a pricing-coverage gap that should page instead of waiting for an
+// operator to notice it while browsing /assets. 0 is the healthy steady
+// state (every popular asset is priced or explained).
+var AssetsPopularPriceless = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_assets_popular_priceless",
+		Help: "Count of market-popular, priceless, non-withheld assets at the most recent coverage-check sweep. > 0 is an unexplained pricing-coverage gap.",
+	},
+)
+
+// PricelessCoverageCheckRunsTotal — per-sweep outcome counter for the
+// priceless-popular tripwire. `ok` = the candidate read + classify pass
+// completed; `error` = the catalogue read failed (Postgres unreachable /
+// query error), leaving the gauge stale. A sustained `error` rate (or a
+// stalled `last_success_unix`) means the tripwire itself is blind — the
+// paging-not-browsing guarantee is off until it recovers.
+var PricelessCoverageCheckRunsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_priceless_coverage_check_runs_total",
+		Help: "Priceless-popular coverage-check sweep outcomes (ok|error).",
+	},
+	[]string{"outcome"},
+)
+
+// PricelessCoverageCheckLastSuccessUnix — wall-clock unix seconds of the
+// most recent successful tripwire sweep. `time() - this` powers the
+// staleness alert: a wedged worker stops updating the gauge, so a fresh
+// coverage gap would go unseen; the staleness guard catches the silent
+// worker even when the count gauge itself sits at a stale 0.
+var PricelessCoverageCheckLastSuccessUnix = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_priceless_coverage_check_last_success_unix",
+		Help: "Unix seconds of the most recent successful priceless-popular coverage-check sweep.",
+	},
 )
 
 // SignupReaperRunsTotal — per-sweep outcome counter for the API
