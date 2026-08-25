@@ -382,8 +382,12 @@ const listAssetsBaseSelect = `
 		  -- the SAC form, which the AliasRegistry unifies on
 		  -- serving paths but literal-string SQL must list
 		  -- explicitly. Both legs multiply by the same xlm_usd.
-		  -- (Full alias-aware folding of BASE-side identities is a
-		  -- separate follow-up.)
+		  -- BASE-side identity folding (a SAC-form base_asset row
+		  -- surfacing alongside its classic twin — "USDC shows
+		  -- twice") is now done in the API listing handler by
+		  -- v1.Server.foldAliasTwins, which collapses each
+		  -- non-canonical alias row onto its canonical row via the
+		  -- same AliasRegistry (task #28 Part A).
 		  SELECT DISTINCT ON (base_asset) base_asset AS asset_id, vwap,
 		         array_length(sources, 1) AS source_count
 		    FROM prices_1m

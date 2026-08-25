@@ -1328,6 +1328,48 @@ sweep over a handful of alerts sits well under 100 ms; approaching the
 tick cadence (default 30 s) means the alert set or per-account webhook
 fan-out has grown enough that sweeps overlap.
 
+### `stellarindex_assets_popular_priceless`
+
+Gauge, no labels.
+
+Count of assets that, at the most recent coverage-check sweep, are
+market-popular yet priceless with no recorded reason
+(`internal/pricelesscoverage`, task #28 Part B). "Popular" is measured
+on MARKET-CHARACTER volume — 7-day priced USD volume > $10k OR > 5k
+trades, with volume concentrated in a single `(maker, taker)` account
+pair EXCLUDED so a volume-painting wash farm (the scam-AUD pattern)
+cannot self-select in. "Priceless" = no servable USD/XLM-proxy price;
+"no recorded reason" = its recent 24 h market clears the substance serve
+floor, so the gate is not deliberately withholding it.
+
+When to look at it: `> 0` means a genuinely-traded asset renders
+priceless on `/v1/assets` with no explanation — a pricing-coverage gap
+that should page rather than wait for an operator to notice it while
+browsing. Alert: `stellarindex_assets_popular_priceless`
+(deploy/monitoring/rules/pricing-coverage.yml +
+configs/prometheus/rules.r1/pricing-coverage.yml). The aggregator warns
+one log line per firing asset (`priceless-popular coverage gap`) with
+its `asset_id` + signals.
+
+### `stellarindex_priceless_coverage_check_runs_total`
+
+Counter, label `outcome` (`ok` / `error`).
+
+Per-sweep outcome of the priceless-popular coverage tripwire. `error` =
+the candidate read failed (Postgres unreachable / query error), so the
+gauge is stale for that tick. A sustained `error` rate means the
+tripwire is blind — pair it with the staleness gauge below.
+
+### `stellarindex_priceless_coverage_check_last_success_unix`
+
+Gauge, no labels.
+
+Unix seconds of the most recent SUCCESSFUL tripwire sweep. `time() -
+this` is the staleness signal: a wedged worker stops updating it, so a
+new coverage gap would go unseen even while the count gauge sits at a
+stale 0. Alert: `stellarindex_priceless_coverage_check_stale` (> 30 min,
+three sweep intervals).
+
 ### `stellarindex_signup_reaper_runs_total`
 
 Counter, label `outcome` (`ok` / `error`).

@@ -186,6 +186,30 @@ func (r *AliasRegistry) Aliases(asset Asset) []Asset {
 	return out
 }
 
+// Canonical returns the PRIORITY-FIRST form of asset's equivalence class:
+// the classic asset for a configured classic↔SAC pair, `native` for any
+// XLM form (native / crypto:XLM / the XLM SAC). Unlike [AliasRegistry.Aliases],
+// which leads with the caller's own spelling, Canonical always returns the
+// family's FIRST member — the established form the SAC is deliberately
+// ordered behind (see [AssetAliases]) — so it is a STABLE group key
+// independent of which form a row arrived as.
+//
+// It is the directory fold key: two listing rows whose Canonical forms are
+// Equal are the same asset and must collapse to one row (the SAC twin that
+// leaks past literal-asset_id catalogue SQL — the "USDC shows twice"
+// defect). An asset in no family is its own canonical form, so callers fold
+// unconditionally.
+func (r *AliasRegistry) Canonical(asset Asset) Asset {
+	fams := baseAliasFamilies
+	if r != nil {
+		fams = r.families
+	}
+	if family, ok := fams[asset.String()]; ok && len(family) > 0 {
+		return family[0]
+	}
+	return asset
+}
+
 // AliasStrings is the string-set projection of [AliasRegistry.Aliases].
 func (r *AliasRegistry) AliasStrings(asset Asset) []string {
 	forms := r.Aliases(asset)
@@ -284,4 +308,14 @@ func AssetAliases(asset Asset) []Asset {
 // re-implement the String() loop.
 func AssetAliasStrings(asset Asset) []string {
 	return activeAliasRegistry().AliasStrings(asset)
+}
+
+// CanonicalAsset resolves asset to the priority-first form of its
+// equivalence class against the process-wide registry — the directory
+// fold key the listing paths group non-canonical (SAC / crypto:XLM) twins
+// onto, and the per-asset detail path collapses a SAC-form request onto.
+// See [AliasRegistry.Canonical]; mirrors [AssetAliases]'s process-registry
+// resolution and its XLM-only fallback before a config registry installs.
+func CanonicalAsset(asset Asset) Asset {
+	return activeAliasRegistry().Canonical(asset)
 }
