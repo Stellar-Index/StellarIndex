@@ -186,7 +186,7 @@ export function ContractView({ id: idProp }: { id?: string } = {}) {
           <div>
             <Link
               href={`/protocols/${encodeURIComponent(data.protocol)}`}
-              className="bg-brand-100 text-brand-800 hover:bg-brand-200 inline-flex items-center rounded-sm px-1.5 py-0.5 font-mono text-[10px] tracking-wider uppercase"
+              className="bg-brand-50 text-brand-700 hover:bg-brand-100 inline-flex items-center rounded-sm px-1.5 py-0.5 font-mono text-[10px] tracking-wider uppercase"
               title={`Registered ${data.protocol} contract — protocol verification page`}
             >
               {data.protocol}
@@ -872,7 +872,7 @@ function InteractionsPanel({ id }: { id: string }) {
                   {e.protocol ? (
                     <Link
                       href={`/protocols/${encodeURIComponent(e.protocol)}`}
-                      className="bg-brand-100 text-brand-800 hover:bg-brand-200 inline-flex items-center rounded-sm px-1.5 py-0.5 font-mono text-[10px] tracking-wider uppercase"
+                      className="bg-brand-50 text-brand-700 hover:bg-brand-100 inline-flex items-center rounded-sm px-1.5 py-0.5 font-mono text-[10px] tracking-wider uppercase"
                     >
                       {e.protocol}
                     </Link>

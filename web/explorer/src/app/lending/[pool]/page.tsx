@@ -206,7 +206,7 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
             Blend
           </span>
           {label && (
-            <span className="bg-brand-100 text-brand-800 rounded-sm px-1.5 py-0.5 text-[11px] font-medium tracking-wider uppercase">
+            <span className="bg-brand-50 text-brand-700 rounded-sm px-1.5 py-0.5 text-[11px] font-medium tracking-wider uppercase">
               {label.name}
             </span>
           )}

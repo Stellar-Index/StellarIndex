@@ -188,7 +188,7 @@ function MostActivePanel({ sacMap }: { sacMap: SACMap }) {
                     {c.protocol ? (
                       <Link
                         href={`/protocols/${encodeURIComponent(c.protocol)}`}
-                        className="inline-flex items-center rounded-sm px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider bg-brand-100 text-brand-800 hover:bg-brand-200"
+                        className="inline-flex items-center rounded-sm px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider bg-brand-50 text-brand-700 hover:bg-brand-100"
                       >
                         {c.protocol}
                       </Link>
