@@ -108,8 +108,12 @@ func TestAssetVolumeCharacterRollup_OracleMatchesPerAsset(t *testing.T) {
 	// (3) Healthy market asset: six distinct account pairs on fiat:USD, no
 	// pair dominant, issuer uninvolved → market.
 	marketPairs := [][2]string{
-		{"acct-05", "acct-06"}, {"acct-07", "acct-08"}, {"acct-09", "acct-10"},
-		{"acct-11", "acct-12"}, {"acct-13", "acct-14"}, {"acct-15", "acct-16"},
+		{"acct-05", "acct-06"},
+		{"acct-07", "acct-08"},
+		{"acct-09", "acct-10"},
+		{"acct-11", "acct-12"},
+		{"acct-13", "acct-14"},
+		{"acct-15", "acct-16"},
 	}
 	for _, p := range marketPairs {
 		insertCharTrade(t, ctx, db, next(), ts, goodID, "fiat:USD", p[0], p[1], 1000)
