@@ -33,7 +33,17 @@ import (
 // rollups — so a slow cadence keeps aggregator load modest. A
 // volume-character label a few minutes stale is immaterial to the analytics
 // overlay it feeds (the window itself is 14 days).
-const DefaultInterval = 15 * time.Minute
+// DefaultInterval — the all-asset roll scans the FULL 14-day trailing
+// window of the `trades` hypertable (72M rows / 7d on r1), so a single
+// refresh is a multi-minute read. It must NOT run often: at 15m it was
+// effectively always running and starved the customer API (v0.44.1
+// regression — p99 2259ms). volume_character is a slow-moving wash-vs-market
+// label + the §4-B demote-rank input, both tolerant of hours-stale data, so
+// a 6h cadence is ample. rollAssetVolumeCharacter additionally caps the
+// roll's parallelism + statement_timeout so even the 6h refresh can't
+// monopolize the primary. (A proper fix — incremental maintenance instead of
+// a full re-scan — is a follow-up.)
+const DefaultInterval = 6 * time.Hour
 
 // Refresher recomputes and atomically replaces the asset_volume_character
 // rollup. Production wiring is *timescale.Store.RefreshAssetVolumeCharacter;
