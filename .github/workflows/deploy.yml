@@ -62,6 +62,19 @@ on:
         required: false
         type: boolean
         default: false
+      config_acknowledged:
+        # config-apply gate (2026-08-25 declared-peg + rules.d incidents):
+        # deploy-binary.yml swaps BINARIES ONLY — it does not render the
+        # ansible stellarindex.toml, sync Prometheus rules, install systemd
+        # units, or apply DB schema. When a release changed any of those
+        # surfaces the post-deploy config-apply gate FAILS unless this is
+        # set true, asserting the operator has applied / will apply the
+        # config per docs/operations/deploy-config-apply.md. A config-free
+        # release passes the gate regardless.
+        description: 'Acknowledge you have applied (or will apply) any config/schema this release changed — binary deploy does NOT apply it. See docs/operations/deploy-config-apply.md.'
+        required: false
+        type: boolean
+        default: false
 
 # Concurrency: at most one deploy per region in flight. Prevents two
 # operators racing each other and producing inconsistent state.
@@ -92,6 +105,10 @@ jobs:
     steps:
       - name: Checkout (for Ansible playbook)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # Full history + tags: the config-apply gate diffs the deploying
+          # tag against the previous release tag over the config surfaces.
+          fetch-depth: 0
 
       - name: Assert the production approval gate is configured
         # deploy-approval-gate (audit-2026-07-23): the `environment:`
@@ -466,6 +483,22 @@ jobs:
             -e "health_grace_seconds=${HEALTH_GRACE}" \
             -e "migrations_skip=${MIGRATIONS_SKIP}" \
             configs/ansible/playbooks/deploy-binary.yml
+
+      - name: Config-apply gate
+        # Runs AFTER the binaries are deployed. deploy-binary.yml swaps
+        # binaries only; when a release changed the ansible config,
+        # Prometheus rules, systemd units, or DB schema, the feature they
+        # gate ships DEAD + SILENT unless an operator applies the config
+        # too (2026-08-25 declared-peg + rules.d incidents). This FAILS the
+        # job when such a surface changed since the previous release tag and
+        # config_acknowledged != true — a loud, NON-destructive forcing
+        # function (the binaries are already live; a red gate only flags the
+        # outstanding config-apply). See docs/operations/deploy-config-apply.md.
+        env:
+          VERSION: ${{ inputs.version }}
+          CONFIG_ACK: ${{ inputs.config_acknowledged }}
+        run: |
+          bash scripts/ci/config-apply-gate.sh "$VERSION" "$CONFIG_ACK"
 
       - name: Summary
         if: always()
