@@ -33,6 +33,14 @@ import (
 // full-catalogue scan cheap.
 const DefaultInterval = 10 * time.Minute
 
+// DefaultSweepTimeout bounds one sweep's candidate read. The full-catalogue
+// scan measures ~55s warm against the live trades hypertable and can run
+// longer on a cold cache or under DB load; this ceiling is comfortably
+// above that yet stops a pathological sweep from holding a connection
+// indefinitely. A timed-out sweep is best-effort-skipped (the gauge holds
+// its last good value), never fatal. Options.SweepTimeout <= 0 uses this.
+const DefaultSweepTimeout = 5 * time.Minute
+
 // Popularity + market-character thresholds. The floor numbers are the
 // task-directed values; the concentration + substance thresholds match the
 // serving stack so the tripwire's notion of "popular" and "withheld" agree
@@ -72,7 +80,10 @@ type CandidateReader interface {
 type Options struct {
 	// Interval is the sweep cadence. <= 0 falls back to DefaultInterval.
 	Interval time.Duration
-	Logger   *slog.Logger
+	// SweepTimeout bounds one sweep's candidate read. <= 0 falls back to
+	// DefaultSweepTimeout.
+	SweepTimeout time.Duration
+	Logger       *slog.Logger
 	// Clock lets tests pin "now" for the last-success timestamp. Defaults
 	// to time.Now().UTC.
 	Clock func() time.Time
@@ -81,10 +92,11 @@ type Options struct {
 // Worker sweeps the catalogue on a ticker and publishes the
 // priceless-popular coverage gauge + sweep-health metrics.
 type Worker struct {
-	reader   CandidateReader
-	interval time.Duration
-	logger   *slog.Logger
-	now      func() time.Time
+	reader       CandidateReader
+	interval     time.Duration
+	sweepTimeout time.Duration
+	logger       *slog.Logger
+	now          func() time.Time
 }
 
 // New builds a Worker. Panics if reader is nil (a wiring bug — the caller
@@ -94,13 +106,17 @@ func New(reader CandidateReader, opts Options) *Worker {
 		panic("pricelesscoverage: New requires a non-nil reader")
 	}
 	w := &Worker{
-		reader:   reader,
-		interval: opts.Interval,
-		logger:   opts.Logger,
-		now:      opts.Clock,
+		reader:       reader,
+		interval:     opts.Interval,
+		sweepTimeout: opts.SweepTimeout,
+		logger:       opts.Logger,
+		now:          opts.Clock,
 	}
 	if w.interval <= 0 {
 		w.interval = DefaultInterval
+	}
+	if w.sweepTimeout <= 0 {
+		w.sweepTimeout = DefaultSweepTimeout
 	}
 	if w.logger == nil {
 		w.logger = slog.Default()
@@ -135,9 +151,14 @@ func (w *Worker) Run(ctx context.Context) error {
 // is only updated on success so a read failure leaves the last good count
 // standing rather than flapping to a false 0.
 func (w *Worker) Sweep(ctx context.Context) {
-	sigs, err := w.reader.PopularPricelessCandidates(ctx)
+	sweepCtx, cancel := context.WithTimeout(ctx, w.sweepTimeout)
+	defer cancel()
+	sigs, err := w.reader.PopularPricelessCandidates(sweepCtx)
 	if err != nil {
-		if errors.Is(err, context.Canceled) {
+		// A parent cancellation (shutdown) is silent; a sweep-timeout or
+		// DB error is recorded so the sweep-health metric shows it, and
+		// the gauge is left holding its last good value.
+		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
 			return
 		}
 		w.logger.Warn("priceless-popular coverage sweep: candidate read failed", "err", err)

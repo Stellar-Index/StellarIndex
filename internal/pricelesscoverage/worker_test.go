@@ -160,3 +160,50 @@ func TestSweep_ReadErrorDoesNotClobberGauge(t *testing.T) {
 		t.Errorf("gauge = %v, want the last good 3 (read error must not clobber it)", got)
 	}
 }
+
+// deadlineReader captures the deadline of the context it is handed.
+type deadlineReader struct {
+	sawDeadline bool
+	within      time.Duration
+}
+
+func (d *deadlineReader) PopularPricelessCandidates(ctx context.Context) ([]timescale.AssetCoverageSignals, error) {
+	if dl, ok := ctx.Deadline(); ok {
+		d.sawDeadline = true
+		d.within = time.Until(dl)
+	}
+	return nil, nil
+}
+
+// TestSweep_BoundsReadWithTimeout proves the sweep hands the reader a
+// deadline-bearing context (the full-catalogue scan is ~55s warm and can
+// balloon under load; an unbounded read could pin a DB connection). The
+// live smoke that motivated this measured 54.5s, so the ceiling must sit
+// above that yet be finite. Red-proof: pass ctx straight through in Sweep
+// and sawDeadline goes false.
+func TestSweep_BoundsReadWithTimeout(t *testing.T) {
+	r := &deadlineReader{}
+	w := New(r, Options{SweepTimeout: 90 * time.Second})
+	w.Sweep(context.Background())
+	if !r.sawDeadline {
+		t.Fatal("reader got a context with NO deadline — the sweep read is unbounded")
+	}
+	if r.within <= 0 || r.within > 90*time.Second {
+		t.Errorf("deadline %v, want (0, 90s] (the configured SweepTimeout)", r.within)
+	}
+}
+
+// TestSweepTimeout_DefaultApplied proves an unset SweepTimeout falls back to
+// DefaultSweepTimeout rather than leaving the read unbounded.
+func TestSweepTimeout_DefaultApplied(t *testing.T) {
+	r := &deadlineReader{}
+	w := New(r, Options{}) // no SweepTimeout
+	w.Sweep(context.Background())
+	if !r.sawDeadline {
+		t.Fatal("reader got no deadline with a zero SweepTimeout — default not applied")
+	}
+	// Allow a little slack below DefaultSweepTimeout for elapsed time.
+	if r.within <= DefaultSweepTimeout-5*time.Second || r.within > DefaultSweepTimeout {
+		t.Errorf("deadline %v, want ~= DefaultSweepTimeout %v", r.within, DefaultSweepTimeout)
+	}
+}
