@@ -17,12 +17,18 @@
 > - **Gate status:** ✅ GATED (ADR-0035/0040, shipped 2026-07-05): curated
 >   evidence-verified set — 85 vaults + 16 strategies in-code
 >   (`defindex.MainnetGatedSet`), 4 factory trust roots; **9 no-proof
->   emitters excluded + flagged below**. VAULTS do NOT self-register (the
->   create event omits the vault's own address — this remains the one open
->   question); they fail-close into recognition gaps until verified and
->   seeded via `protocol_contracts` (no redeploy needed). STRATEGIES now DO
->   self-register (2026-07-10): the same create event's body carries each
->   asset's assigned strategy address(es), decoded live.
+>   emitters excluded + flagged below**. NEITHER vaults NOR strategies
+>   self-register from factory `create` events (strategy self-registration
+>   REMOVED 2026-08-25, W8 6c): the create body's strategy addresses are
+>   attacker-controlled (anyone can call the public factory naming
+>   arbitrary addresses), so auto-seeding them was a permissionless
+>   registry-poisoning vector. Both fail-close into recognition gaps until
+>   verified and seeded via `protocol_contracts` (no redeploy needed). The
+>   curated `MainnetStrategies` set is the sole strategy trust root and was
+>   proven byte-identical to the full create-body extraction (16/16), so
+>   removing the auto-seed dropped nothing live — and r1's persisted set is
+>   exactly those 16, zero poisoned rows (verified 2026-08-25: the vector
+>   was live-exploitable but never exploited).
 
 ## Factories (4)
 
