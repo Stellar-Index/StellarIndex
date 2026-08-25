@@ -102,6 +102,36 @@ func TestDecoder_Decode_MalformedBodyReturnsError(t *testing.T) {
 	}
 }
 
+// TestDecoder_Decode_SelfPairSwap_NoEventNoError pins the completeness
+// verdict fix: a self-pair swap (token_in == token_out — the 2026-08
+// Blend/Comet exploit's primitive) decodes cleanly but maps to ZERO rows,
+// so Decode must return (nil, nil) — NOT an error. Returning an error made
+// the completeness re-derive count each as an undecodable blind spot and
+// hold the `comet` source `complete=false` forever (the 36 exploit
+// self-swaps → the INV-3 do-nothing re-derive trap).
+func TestDecoder_Decode_SelfPairSwap_NoEventNoError(t *testing.T) {
+	d := NewDecoder()
+	caller := accountStrkeyFromSeed(t, 0x10)
+	token := contractStrkeyFromSeed(t, 0x20) // SAME token in AND out
+	body := encodeSwapBody(t, caller, token, token,
+		big.NewInt(1_000_000), big.NewInt(900_000))
+	ev := events.Event{
+		Topic:          []string{TopicSymbolPool, TopicSymbolSwap},
+		Value:          body,
+		Ledger:         64_112_340, // the exploit's first ledger
+		TxHash:         "deadbeef",
+		OperationIndex: 0,
+		LedgerClosedAt: "2026-08-25T03:51:02Z",
+	}
+	out, err := d.Decode(ev)
+	if err != nil {
+		t.Fatalf("self-pair swap must NOT error (an error fails the completeness verdict closed): %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("self-pair swap must produce zero events, got %d", len(out))
+	}
+}
+
 // TestDecoder_GateRejectsForeignContract pins ADR-0035/0040 (CS-026,
 // closed 2026-07-08 — this is the FLIP of the former
 // TestDecoder_Decode_NoContractIDDiscrimination, whose comment

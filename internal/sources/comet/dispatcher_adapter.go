@@ -1,6 +1,9 @@
 package comet
 
 import (
+	"errors"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
@@ -91,6 +94,25 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	if kind == EventSwap {
 		trade, err := decodeSwap(&ev, closedAt)
 		if err != nil {
+			// Determinate "not a serveable trade": the body decoded
+			// cleanly but maps to ZERO rows — a self-pair swap (token_in
+			// == token_out, the 2026-08 Blend/Comet exploit's primitive →
+			// canonical.NewPair's ErrPairMismatch) or non-positive amounts.
+			// Return zero output with NO error so the completeness
+			// re-derive counts these as expected=0, NOT as undecodable
+			// blind spots (which fail the source's verdict closed forever —
+			// the INV-3 do-nothing re-derive trap: the 36 exploit
+			// self-swaps kept `comet` permanently `complete=false`). Safe
+			// precisely because the body FULLY decoded — we read both token
+			// addresses and saw they're equal — so there is no hidden-drop
+			// risk. The error path stays reserved for INDETERMINATE parse
+			// failures, which must remain blind. (Precedent for
+			// recognised-but-unserved → (nil, nil):
+			// internal/sources/classicmovements/decode.go.)
+			if errors.Is(err, canonical.ErrPairMismatch) ||
+				errors.Is(err, ErrNonPositiveAmounts) {
+				return nil, nil
+			}
 			return nil, err
 		}
 		return []consumer.Event{TradeEvent{Trade: trade}}, nil

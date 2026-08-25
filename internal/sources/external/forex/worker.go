@@ -641,13 +641,16 @@ func (w *Worker) acceptHistoryRate(ticker string, rate float64) bool {
 		return true
 	}
 	if withinBand(rate, g.lastAccepted) {
-		// Upstream agrees again — a later deviation is fresh news.
-		// (Writing the stuck fields does not violate this method's
-		// read-only contract, which is about lastAccepted/pending —
-		// the CURRENT-rate baseline a historical bar must never
-		// advance. The stuck streak is history-band bookkeeping.)
-		g.stuckCount = 0
-		g.stuckRejectedRate = 0
+		// Do NOT zero the stuck streak here. A ticker's trailing-7d window
+		// is scored bar-by-bar within ONE sweep, so an in-band sibling bar
+		// (ETB's six good ~160 bars) would clear the streak that the one
+		// persistently-broken dated bar (08-19 = 44, the pre-float peg)
+		// just incremented — stuckCount oscillated 0↔1 and the `_stuck`
+		// reclassification that de-noises the alert never engaged, so a
+		// correctly-refused broken bar paged forever. A genuinely NEW
+		// broken value still resets to count=1 via the else branch below
+		// (fresh disagreement keeps paging); only the SAME broken bar,
+		// refused sweep after sweep, accumulates to the _stuck threshold.
 		return true
 	}
 	// Same broken bar, again? Track the streak; past the threshold the
