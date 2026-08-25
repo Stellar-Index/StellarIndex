@@ -15,6 +15,39 @@ against.
 
 ## [Unreleased]
 
+## [v0.42.0] — 2026-08-25
+
+### Added
+- Declared fiat-peg pricing (AUDD/AUDR → AUD × served fx), price_basis=declared_peg. (#154)
+- USDC + SAC quote bridges for directory pricing. (#152)
+
+### Fixed
+- FX confirm-veto: an agreeing 7d history majority refuses a pending confirm, stopping the persistent-broken-upstream (UZS) re-poison; genuine devaluations still confirm. Outlier-drop counter gains a pair label. (#157)
+- /v1/assets/{id} detail overlay is substance-gated; dust prices no longer leak onto detail. (#154)
+- Account ops pages: detached budget for the tx-outcome stitch. (#155)
+
+### Fixed
+
+- **FX guard: history-majority confirm veto (the Massive UZS second
+  act).** A persistently-broken current feed can no longer re-poison a
+  healed baseline through the two-fetch confirmation: when a ticker's
+  trailing-7d majority (≥4 bars mutually agreeing within 10%) REFUTES a
+  pending candidate, the confirm is refused
+  (`deviation_history_conflict`; repeats reclassify to
+  `…_conflict_stuck`, excluded from the rejection alert). History still
+  never SETS a baseline — genuine devaluations confirm as soon as the
+  majority stops refuting (follows the move, or the split window yields
+  no majority). Red-proven tests. (task #29)
+
+### Added
+
+- `stellarindex_aggregator_dropped_trades_total` now carries a `pair`
+  label (the configured target pair, bounded ~12), so an outlier_storm
+  is attributable with `topk` by pair instead of ad-hoc SQL — the
+  2026-08-14 single-issuer SDEX token-farm wave took the latter.
+  Storm/spike alert exprs `sum()` across labels and are unchanged.
+  (task #29)
+
 ## [v0.41.1] — 2026-08-24
 
 ### Fixed

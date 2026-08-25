@@ -64,12 +64,13 @@ Severity maps to [sev-playbook.md §1](sev-playbook.md#1-severity-definitions).
 | `stellarindex_projector_error_rate_high` | `rate(stellarindex_projector_runs_total{outcome="error"}[15m])` per source | > 0.05/s sustained 15 min | P3 | [projector-lag](runbooks/projector-lag.md) |
 | `stellarindex_projector_row_quarantined` | `increase(stellarindex_projector_events_decoded_total{outcome="sink_quarantined"}[15m])` | > 0 for 15 min (a poison row was skipped so the sole-writer projector could advance) | ticket | [projector-row-quarantined](runbooks/projector-row-quarantined.md) |
 | `stellarindex_projector_decode_error_rate_high` | `sum by (source) (rate(stellarindex_projector_events_decoded_total{outcome="decode_error"}[10m]))` per source | > 0.1/s sustained 15 min (a decoder regression drained a whole class of events; cursor advanced past them) | ticket | [projector-decode-error-rate](runbooks/projector-decode-error-rate.md) |
+| `stellarindex_projector_wedged` | `max by (source) (stellarindex_projector_wedged)` | > 0 for 5 min (the adaptive window floored at MinBatchLimit and the source has failed to advance for WedgeCycles+ cycles — a stuck cursor retrying the identical range forever; manual remediation) | ticket | [projector-wedged](runbooks/projector-wedged.md) |
 | `stellarindex_external_poller_stale` | `time() - stellarindex_external_poller_last_success_unix{source!="ecb"}` | > 1800 s for > 5 min | P2 | [external-poller-stale](runbooks/external-poller-stale.md) |
 | `stellarindex_external_poller_stale_ecb` | `time() - stellarindex_external_poller_last_success_unix{source="ecb"}` | > 43200 s (12h) for > 10 min | P3 | [external-poller-stale](runbooks/external-poller-stale.md) |
 | `stellarindex_external_poller_error_rate_high` | `rate(stellarindex_external_poller_polls_total{outcome="error"}[15m]) / sum(...) ` | > 0.5 sustained 15 min | P3 | [external-poller-error-rate-high](runbooks/external-poller-error-rate-high.md) |
 | `stellarindex_external_fx_feed_stale` | `time() - max(stellarindex_external_fx_last_quote_unix)` | > 21600 s (6h) for > 15 min | P2 | [fx-feed-stale](runbooks/fx-feed-stale.md) |
 | `stellarindex_external_fx_feed_absent` | `absent(stellarindex_external_fx_last_quote_unix)` | series missing for 30 min | P2 | [fx-feed-stale](runbooks/fx-feed-stale.md) |
-| `stellarindex_external_fx_rate_rejections` | `sum by (reason) (increase(stellarindex_external_fx_rate_rejected_total{reason!="history_deviation_stuck"}[3h]))` | > 2 rejections in 3h, for 30 min (a ticker is wedged on its last accepted rate) | ticket | [fx-rate-rejected](runbooks/fx-rate-rejected.md) |
+| `stellarindex_external_fx_rate_rejections` | `sum by (reason) (increase(stellarindex_external_fx_rate_rejected_total{reason!~"history_deviation_stuck\|deviation_history_conflict_stuck"}[3h]))` | > 2 rejections in 3h, for 30 min (a ticker is wedged on its last accepted rate) | ticket | [fx-rate-rejected](runbooks/fx-rate-rejected.md) |
 
 Historical note: the former `stellarindex_ingestion_lag_high` alert was retired
 when the repo moved off the legacy orchestrator topology and the live indexer
@@ -123,6 +124,18 @@ signal lands.
 | `stellarindex_api_error_rate_critical` | same | > 5 % for > 2 min | **P1** | [api-5xx](runbooks/api-5xx.md) |
 | `stellarindex_api_price_stale` | `stellarindex_price_staleness_seconds` per asset | > 120 s sustained 5 min | P2 | [price-stale](runbooks/price-stale.md) |
 | `stellarindex_api_cache_miss_rate_high` | `rate(stellarindex_api_cache_ops_total{result="miss"}[5m]) / rate(stellarindex_api_cache_ops_total[5m])` per (cache, op) | > 50 % sustained 10 min on a hot op (≥ 0.1 req/s) | P2 | [cache-miss-rate-high](runbooks/cache-miss-rate-high.md) |
+
+## Notify (transactional-email) alerts
+
+`internal/notify` (the Resend client) sends the magic-link dashboard
+login email and the API-signup confirmation email — the only two mail
+paths (price alerts deliver via webhooks). The login handler swallows the
+send error to stay enumeration-safe, so `stellarindex_notify_sends_total`
+is the only signal a mail outage leaves.
+
+| Name | Metric | Condition | Severity | Runbook |
+| ---- | ------ | --------- | -------- | ------- |
+| `stellarindex_notify_send_failure_ratio_high` | `sum by (template) (rate(stellarindex_notify_sends_total{result="failed"}[15m])) / sum by (template) (rate(stellarindex_notify_sends_total[15m]))` | > 0.5 for 15 min (a mail provider outage — new logins / signup confirmations stop delivering; existing sessions + keys unaffected) | P2 | [notify-send-failure](runbooks/notify-send-failure.md) |
 
 ## SLA-probe alerts
 
@@ -287,16 +300,23 @@ the rehydrate-from-peer + disable-trim-timer steps.
 ## verify-archive timer alerts
 
 Per the ADR-0016 per-region trust model: R1 runs verify-archive Tier A
-(chain-link integrity) nightly via systemd; R2 + R3 trust R1 and run
-their own slower cadence. The timer fires once per night at 03:23 UTC
-+ jitter; node_exporter's `--collector.systemd` exports the unit
-state so failures and stale runs trigger the alerts below. See
-[verify-archive-tier-a.timer](https://github.com/Stellar-Index/StellarIndex/blob/main/deploy/systemd/verify-archive-tier-a.timer).
+(chain-link integrity) nightly at 03:23 UTC and Tier B (checkpoint anchor
+against the local `/srv/history-archive` mirror) nightly at 04:37 UTC via
+systemd; R2 + R3 trust R1 and run their own slower cadence. Tier A catches
+internal corruption / dropped ledgers; Tier B catches single-source
+corruption that is still chain-link-consistent (the failure mode Tier A is
+blind to). node_exporter's `--collector.systemd` exports the unit state so
+failures and stale runs trigger the alerts below. See
+[verify-archive-tier-a.timer](https://github.com/Stellar-Index/StellarIndex/blob/main/deploy/systemd/verify-archive-tier-a.timer)
+and
+[verify-archive-tier-b.timer](https://github.com/Stellar-Index/StellarIndex/blob/main/deploy/systemd/verify-archive-tier-b.timer).
 
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_verify_archive_unit_failed` | `node_systemd_unit_state{name="verify-archive-tier-a.service",state="failed"}` | == 1 for > 5 min | P3 | [verify-archive-unit-failed](runbooks/verify-archive-unit-failed.md) |
 | `stellarindex_verify_archive_run_stale` | `time() - node_systemd_timer_last_trigger_seconds{name="verify-archive-tier-a.timer"}` | > 36 h for > 10 min | **P2** | [verify-archive-run-stale](runbooks/verify-archive-run-stale.md) |
+| `stellarindex_verify_archive_tier_b_unit_failed` | `node_systemd_unit_state{name="verify-archive-tier-b.service",state="failed"}` | == 1 for > 5 min | P3 | [verify-archive-tier-b](runbooks/verify-archive-tier-b.md) |
+| `stellarindex_verify_archive_tier_b_run_stale` | `time() - node_systemd_timer_last_trigger_seconds{name="verify-archive-tier-b.timer"}` | > 36 h for > 10 min | P3 | [verify-archive-tier-b](runbooks/verify-archive-tier-b.md) |
 
 ## Anomaly + freeze alerts
 

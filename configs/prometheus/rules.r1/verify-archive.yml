@@ -85,3 +85,69 @@ groups:
               - `systemctl status verify-archive-tier-a.timer` — is it active?
               - `journalctl -u verify-archive-tier-a.service` — what's failing?
               - check `archive_files_missing` — a gap upstream blocks verify.
+
+      # Tier B checkpoint ANCHOR (task #33 / W8 recon 14a). Mirror of the
+      # rules in deploy/monitoring/rules/verify-archive.yml. verify_archive.go
+      # has always implemented `-tier checkpoint` (anchor each 64-ledger
+      # checkpoint against the local /srv/history-archive mirror) but only the
+      # Tier A (chain) unit was scheduled, so this single-source-corruption
+      # check never ran. Both alerts are ticket — Tier B is defence-in-depth
+      # over the page-level Tier A chain check.
+      - alert: stellarindex_verify_archive_tier_b_unit_failed
+        expr: |
+          node_systemd_unit_state{
+            name="verify-archive-tier-b.service",
+            state="failed"
+          } == 1
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: archive
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive-tier-b.md
+          summary: "verify-archive Tier B checkpoint anchor failed on {{ $labels.instance }}"
+          description: |
+            The most-recent run of `verify-archive-tier-b.service` exited in the
+            `failed` state. Possible causes:
+              - Checkpoint anchor mismatch — our LCM's header-hash for a
+                checkpoint ledger disagrees with the canonical hash in the local
+                /srv/history-archive mirror. A single-source-corruption signal
+                (Tier A chain-link can pass while this fails).
+              - The local /srv/history-archive mirror is missing/stale for the
+                checked range — every checkpoint "missed", which Tier B treats
+                as inconclusive-and-fatal (DAT-09).
+              - max-runtime / watchdog — investigate journald
+                (`journalctl -u verify-archive-tier-b`).
+            Customer impact: zero immediate; the API serves from existing data.
+
+            Runbook: docs/operations/runbooks/verify-archive-tier-b.md
+
+      - alert: stellarindex_verify_archive_tier_b_run_stale
+        expr: |
+          (
+            time()
+            -
+            (node_systemd_timer_last_trigger_seconds{
+              name="verify-archive-tier-b.timer"
+            } > 0)
+          ) > (36 * 3600)
+        for: 10m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: archive
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive-tier-b.md
+          summary: "verify-archive Tier B checkpoint anchor hasn't run cleanly in {{ $value | humanizeDuration }}"
+          description: |
+            The Tier B checkpoint-anchor timer hasn't fired cleanly in 36h+
+            (24h cadence + 12h cushion) — either the timer isn't enabled or
+            every recent attempt failed. The single-source-corruption anchor
+            check is not running. Lower urgency than the Tier A chain staleness
+            page (Tier B is defence-in-depth), but investigate. Diagnosis:
+              - `systemctl status verify-archive-tier-b.timer` — is it active?
+              - `journalctl -u verify-archive-tier-b.service` — what's failing?
+              - is the /srv/history-archive mirror synced to the checked range?
+
+            Runbook: docs/operations/runbooks/verify-archive-tier-b.md

@@ -192,6 +192,21 @@ Each cycle is bounded by `PerSourceTimeout=60s`. Sustained p99 >
 30s for one source is the first sign that the sink is the
 bottleneck.
 
+### `stellarindex_projector_wedged`
+
+Gauge, labels `source`.
+
+Per-source cursor-wedge flag. `1` = the adaptive window has bottomed
+out at the `MinBatchLimit` floor (25 ledgers) AND the source has failed
+to commit forward progress for `WedgeCycles` (5) consecutive cycles — a
+floor-sized range that stays over `PerSourceTimeout` (a dense +
+compressed chunk) is retried identically every cycle forever, a stuck
+cursor that will not self-recover. `0` = healthy. Cleared on any
+advancing (or caught-up) cycle. Seeded at `0` per source at startup so
+the alert reads a real zero rather than "no data". Drives the
+`stellarindex_projector_wedged` alert (ticket; manual remediation — raise
+the per-cycle budget or decompress the range). See ADR-0032.
+
 ### `http_request_success_duration_seconds`
 
 Histogram, labels `method`, `route`.
@@ -407,13 +422,20 @@ without a ticker change — would silently re-scale that currency's whole
 conversion history. `persistSnapshot` previously wrote whatever the
 upstream said.
 
-`reason` is bounded at five values: `deviation` (moved > 50% from the
+`reason` is bounded at seven values: `deviation` (moved > 50% from the
 last accepted rate for that ticker with no confirming second fetch),
 `non_positive` (rate ≤ 0 — `1/rate` feeds `InverseUSD`, so it would
 poison the row both ways), `non_finite` (NaN / ±Inf),
 `history_deviation` (a trailing-7d history bar > 50% off the current
-accepted rate), and `history_deviation_stuck` (the same bar, within 1%,
-refused ≥ 12 consecutive times — excluded from the rejection alert).
+accepted rate), `history_deviation_stuck` (the same bar, within 1%,
+refused ≥ 12 consecutive times — excluded from the rejection alert),
+`deviation_history_conflict` (a two-fetch confirmation vetoed because
+the ticker's heal-grade trailing-7d majority refutes the candidate —
+a persistently-broken current feed repeating its own bad bar, the
+Massive UZS case; history refuses the confirm but never sets the
+baseline), and `deviation_history_conflict_stuck` (the same vetoed
+candidate, within 1%, refused ≥ 12 consecutive times — excluded from
+the rejection alert like `history_deviation_stuck`).
 Deliberately NOT
 labelled by ticker: ~150 currencies would be pure cardinality for a
 signal whose actionable question is "is the feed producing junk". The
@@ -1455,9 +1477,28 @@ exist for an operator to tell a never-failed janitor from an absent one.
 
 Pre-seeded on the `sweep` op.
 
+### `stellarindex_notify_sends_total`
+
+Counter, labels `template` (`magic-link` / `signup-verify`), `result`
+(`sent` / `failed`).
+
+Transactional-email sends through `internal/notify` (the Resend client).
+Before this counter, `internal/notify` had **zero** prometheus visibility,
+so a mail outage was silent — the magic-link login handler swallows the
+send error (returns 200 either way to avoid an enumeration oracle) and the
+signup-verify path only logs it. Incremented at every `notify.Sender.Send`
+call site: `sent` when Resend accepts, `failed` on any returned error
+(validation, provider-rejected, or transient/network). `magic-link` is the
+dashboard sign-in email; `signup-verify` is the API-signup confirmation
+email — the two are the only `notify.Sender` paths (price alerts deliver
+via webhooks, not mail). A sustained `failed` ratio drives the
+`stellarindex_notify_send_failure_ratio_high` alert. Zero-seeded across the
+two templates × {sent, failed} so the ratio reads a real 0 before the first
+email.
+
 ### `stellarindex_aggregator_dropped_trades_total`
 
-Counter, label `reason` (`class` / `outlier`).
+Counter, labels `reason` (`class` / `outlier`) and `pair`.
 
 Trades removed from the VWAP input set, broken down by which filter
 discarded them. `class` = removed by the ClassExchange-only filter
@@ -1466,6 +1507,17 @@ registered). `outlier` = removed by the σ-threshold filter
 (`OutlierSigmaThreshold > 0`). A spike in `class` is usually a venue
 mis-registered in `external.Registry`; a spike in `outlier` is
 usually a market-distress event flooding the window with anomalies.
+
+`pair` (added after the 2026-08-14 outlier_storm, where attributing a
+single-issuer SDEX token-farm spam wave took ad-hoc SQL) is the
+canonical string of the **configured** aggregate target pair whose
+refresh dropped the trade — bounded cardinality by construction (only
+`o.cfg.Pairs` entries flow through `refreshPairWindow`, ~12 in
+production). Diagnose a storm with
+`topk(5, rate(stellarindex_aggregator_dropped_trades_total{reason="outlier"}[10m]))`.
+Config-dependent, so NOT pre-seeded (the `AggregatorFXSnapFallbackTotal`
+`leg` convention); the storm/spike alerts `sum()` across labels and are
+unaffected by absent pair series.
 
 ### `stellarindex_aggregator_dropped_windows_total`
 

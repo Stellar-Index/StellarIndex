@@ -1017,14 +1017,19 @@ func (o *Orchestrator) refreshPairWindow( //nolint:funlen // 61>60 after the R-2
 	if !o.cfg.DisableClassFilter {
 		trades = filterForVWAP(trades)
 		if dropped := preFilter - len(trades); dropped > 0 {
-			obs.AggregatorDroppedTradesTotal.WithLabelValues("class").Add(float64(dropped))
+			// `pair` is the CONFIGURED target pair (bounded: only
+			// o.cfg.Pairs entries reach here) — the 2026-08-14
+			// outlier_storm needed ad-hoc SQL to attribute a
+			// single-issuer SDEX token farm because drops carried
+			// no pair.
+			obs.AggregatorDroppedTradesTotal.WithLabelValues("class", pair.String()).Add(float64(dropped))
 		}
 	}
 	if o.cfg.OutlierSigmaThreshold > 0 {
 		preOutlier := len(trades)
 		trades = aggregate.FilterOutliers(trades, o.cfg.OutlierSigmaThreshold)
 		if dropped := preOutlier - len(trades); dropped > 0 {
-			obs.AggregatorDroppedTradesTotal.WithLabelValues("outlier").Add(float64(dropped))
+			obs.AggregatorDroppedTradesTotal.WithLabelValues("outlier", pair.String()).Add(float64(dropped))
 		}
 	}
 	if len(trades) == 0 {

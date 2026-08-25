@@ -47,6 +47,7 @@ func registerAppMetrics() {
 		ProjectorRunsTotal,
 		ProjectorEventsDecoded,
 		ProjectorCycleDurationSeconds,
+		ProjectorWedged,
 		APICacheOpsTotal,
 
 		SourceEventsTotal,
@@ -194,6 +195,7 @@ func registerAppMetricsTail() {
 		MagicLinkTokenRows,
 		MagicLinkTokenRowsDeletedTotal,
 		MagicLinkTokenErrorsTotal,
+		NotifySendsTotal,
 
 		DEXTradeNonstandardDecimalsTotal,
 		PriceServeDeclinedNonstandardDecimalsTotal,
@@ -291,6 +293,7 @@ func seedBoundedLabelSeries() {
 	for _, op := range []string{MagicLinkTokenOpSweep} {
 		MagicLinkTokenErrorsTotal.WithLabelValues(op)
 	}
+	seedNotifySeries()
 	// Bounded outcome set for the 2026-07-06 backpressure retry counter
 	// so the `trade_insert_backpressure` alert's rate() query reads a
 	// real zero (not "no data") before the first outage.
@@ -414,6 +417,22 @@ func seedBoundedLabelSeriesTail() {
 func seedLedgerstreamTierSeries() {
 	for _, outcome := range []string{"hot", "cold", "both_missing"} {
 		LedgerstreamTierReadTotal.WithLabelValues(outcome)
+	}
+}
+
+// seedNotifySeries pre-registers the Resend transactional-email send outcomes
+// (task #33 / W8 recon 9c). Bounded: the two notify.Sender call sites
+// (magic-link login, signup verification) × {sent, failed}. Seeded so the
+// send-failure-ratio alert reads a real 0 before the first login/signup email
+// — an absent series would make "no mail has ever failed" and "the mailer is
+// dead" the same scrape (the exact silence this counter closes). Peeled into
+// its own helper for the same gocognit ceiling that split
+// seedLedgerstreamTierSeries.
+func seedNotifySeries() {
+	for _, template := range []string{NotifyTemplateMagicLink, NotifyTemplateSignupVerify} {
+		for _, result := range []string{NotifySendResultSent, NotifySendResultFailed} {
+			NotifySendsTotal.WithLabelValues(template, result)
+		}
 	}
 }
 
@@ -681,6 +700,28 @@ var ProjectorCycleDurationSeconds = prometheus.NewHistogramVec(
 		Name:    "stellarindex_projector_cycle_duration_seconds",
 		Help:    "Wall-clock duration of one projector cycle per source.",
 		Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60},
+	},
+	[]string{"source"},
+)
+
+// ProjectorWedged flags a per-source cursor WEDGE: the adaptive window
+// has bottomed out at the MinBatchLimit floor AND the source has failed
+// to commit forward progress for `projector.WedgeCycles` consecutive
+// cycles. This is the ONE shrink-to-floor stall the adaptive window
+// cannot escape on its own — a floor-sized (25-ledger) range that stays
+// over PerSourceTimeout (a dense + compressed chunk) retries the
+// identical range every cycle forever. The shrink halves the window on a
+// deadline, but at the floor there is nothing left to halve, so lag stops
+// falling and the ONLY prior signal was a flat
+// stellarindex_projector_runs_total{outcome="error"} rate (which a busy
+// error-storm from OTHER sources can mask). 1 = wedged; 0 = healthy.
+// Cleared on any advancing cycle. Remediation is MANUAL and documented in
+// the runbook (raise the per-cycle budget or decompress the range) — the
+// projector deliberately does not change the shrink logic itself.
+var ProjectorWedged = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_projector_wedged",
+		Help: "Per-source projector wedge flag: 1 = the adaptive window is floored at MinBatchLimit and the source has failed to advance for WedgeCycles consecutive cycles (a stuck cursor that retries the identical range forever); 0 = healthy. Manual remediation — see the projector-wedged runbook.",
 	},
 	[]string{"source"},
 )
@@ -1677,6 +1718,42 @@ var MagicLinkTokenErrorsTotal = prometheus.NewCounterVec(
 	[]string{"op"},
 )
 
+// Notify template + result label VALUES for [NotifySendsTotal]. Kept as
+// constants so the zero-seed loop and the send call sites cannot drift on
+// spelling. `template` is the mail's purpose; `result` is delivery outcome.
+const (
+	// NotifyTemplateMagicLink — the dashboard sign-in magic-link email
+	// (internal/api/v1/dashboardauth). A failure here blocks login.
+	NotifyTemplateMagicLink = "magic-link"
+	// NotifyTemplateSignupVerify — the API-signup email-confirmation link
+	// (cmd/stellarindex-api signupVerifyEmailerAdapter). A failure leaves
+	// the key usable but never flips email_verified.
+	NotifyTemplateSignupVerify = "signup-verify"
+
+	// NotifySendResultSent — Sender.Send returned nil (accepted by Resend).
+	NotifySendResultSent = "sent"
+	// NotifySendResultFailed — Sender.Send returned an error (validation,
+	// provider-rejected, or transient/network). The mail did not go out.
+	NotifySendResultFailed = "failed"
+)
+
+// NotifySendsTotal counts transactional-email sends per template and result.
+// internal/notify (the Resend client) had ZERO prometheus visibility, so a mail
+// outage was silent — it surfaced only as users unable to sign in or confirm
+// their signup. This counter is incremented at every notify.Sender.Send call
+// site: `result=sent` on success, `result=failed` on any returned error. A
+// sustained failed ratio drives the notify send-failure alert. Zero-seeded per
+// (template, result) so the ratio reads a real 0 before the first email — an
+// absent series would make "no mail has ever failed" and "the mailer is dead"
+// the same scrape.
+var NotifySendsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_notify_sends_total",
+		Help: "Transactional-email sends per template and result (sent|failed). A sustained failed ratio means the mail provider (Resend) is failing — magic-link login and signup-verification stop delivering.",
+	},
+	[]string{"template", "result"},
+)
+
 // MEVDetectRunsTotal — per-run outcome counter for the aggregator's
 // MEV detection worker (internal/aggregate/mev). Labels:
 //
@@ -2200,17 +2277,28 @@ var APICORSDecisionsTotal = prometheus.NewCounterVec(
 )
 
 // AggregatorDroppedTradesTotal — count of trades the orchestrator
-// removed from the VWAP input set, labelled by reason. "class" =
-// removed by the ClassExchange-only filter; "outlier" = removed by
-// the σ-threshold filter. Operators alert on a sudden spike in
-// "class" (a new venue mis-registered) or "outlier" (a market in
-// distress flooding the window with anomalies).
+// removed from the VWAP input set, labelled by reason and by the
+// CONFIGURED target pair. "class" = removed by the ClassExchange-only
+// filter; "outlier" = removed by the σ-threshold filter. Operators
+// alert on a sudden spike in "class" (a new venue mis-registered) or
+// "outlier" (a market in distress flooding the window with anomalies).
+//
+// `pair` (2026-08-14 outlier_storm: a single-issuer token farm spamming
+// SDEX needed ad-hoc SQL to attribute) is the canonical string of the
+// configured aggregate pair whose refresh dropped the trade — bounded
+// cardinality by construction: only pairs in the orchestrator's
+// configured set flow through refreshPairWindow (~12 in production).
+// Config-dependent labels are NOT pre-seeded, per the
+// AggregatorFXSnapFallbackTotal `leg` convention in
+// seedBoundedLabelSeries; the storm/spike alerts sum() across labels,
+// so an absent pair series never gates them. Diagnose with
+// `topk(5, rate(...{reason="outlier"}[10m]))` by pair.
 var AggregatorDroppedTradesTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_dropped_trades_total",
-		Help: "Trades removed from the VWAP input set, labelled by reason (class|outlier).",
+		Help: "Trades removed from the VWAP input set, labelled by reason (class|outlier) and configured target pair.",
 	},
-	[]string{"reason"},
+	[]string{"reason", "pair"},
 )
 
 // AggregatorDroppedWindowsTotal — count of (pair, window) refreshes

@@ -2,6 +2,7 @@ import Link from 'next/link';
 import type { ComponentProps, ReactNode } from 'react';
 
 import { cn } from '@/lib/cn';
+import { breadcrumbJsonLd, serializeJsonLd } from '@/lib/seo';
 
 /** The console content frame: centered, capped at max-w-page (1728px), with
  *  responsive horizontal padding. */
@@ -58,9 +59,21 @@ export function PageHeader({
   );
 }
 
+/**
+ * Breadcrumbs — the visible trail AND its schema.org BreadcrumbList in one
+ * place (FEC A1-6 one-rule). The JSON-LD is derived from the same `items`
+ * array the nav renders, via lib/seo's breadcrumbJsonLd — pages must not
+ * hand-roll BreadcrumbList (guarded in lib/fec-consolidation-guards.test.ts).
+ */
 export function Breadcrumbs({ items }: { items: Crumb[] }) {
   return (
     <nav aria-label="Breadcrumb" className="mb-2 flex flex-wrap items-center gap-1.5 text-xs text-ink-muted">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: serializeJsonLd(breadcrumbJsonLd(items)),
+        }}
+      />
       {items.map((c, i) => (
         <span key={`${c.label}-${i}`} className="flex items-center gap-1.5">
           {i > 0 && <span aria-hidden className="text-ink-faint">/</span>}

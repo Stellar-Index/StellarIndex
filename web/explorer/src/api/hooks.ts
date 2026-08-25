@@ -17,8 +17,8 @@
 
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
-import { apiGet, timeoutSignal } from './client';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { API_BASE_URL, apiGet, timeoutSignal } from './client';
 import type { components, paths } from './types';
 
 // ---------------------------------------------------------------------------
@@ -157,23 +157,80 @@ export function useSACWrappers() {
 }
 
 /**
- * useStatus — fetches the API's live system-status aggregate.
- * Powers the navbar Status pill (green/amber/red) so the
- * indicator actually reflects state rather than always rendering
- * green. Polls every 60 s — any faster wastes load and the
- * status doc itself is cached for 30 s downstream.
+ * The one /v1/status poll cadence (FEC A5-03 + A6-6, decision D2
+ * 2026-08-24). The status page's 30 s cadence won over the banner's 60 s;
+ * every consumer shares the ['/v1/status'] query so a viewport holds ONE
+ * poll loop regardless of how many status surfaces render.
+ */
+export const STATUS_POLL_MS = 30_000;
+
+/**
+ * StatusFeed — what useStatus serves. The queryFn never throws: poll
+ * failures are part of the data so every consumer sees the SAME truth —
+ * the last-known snapshot (never silently dropped during an outage), the
+ * latest poll error, and how many consecutive polls have failed (the
+ * DegradedBanner flips to "status feed unreachable" at 2 — WB-04 honesty:
+ * a fetch we could not complete is absence-of-signal, not an all-clear).
+ */
+export interface StatusFeed {
+  /** Last-known good snapshot; null until the first successful poll. */
+  status: StatusResponse | null;
+  /** Envelope `as_of` of that snapshot; '' until the first success. */
+  asOf: string;
+  /** Latest poll failure message; null when the latest poll succeeded. */
+  error: string | null;
+  /** Failed polls since the last success (0 when healthy). */
+  consecutiveFailures: number;
+}
+
+/**
+ * useStatus — THE shared /v1/status poll. Powers the sidebar Status pill
+ * (green/amber/red), the DegradedBanner, and the /status page from one
+ * query — one truth per viewport, no duplicate poll loops disagreeing
+ * about whether the API is degraded.
  */
 export function useStatus() {
-  return useQuery<StatusResponse>({
+  const queryClient = useQueryClient();
+  return useQuery<StatusFeed>({
     queryKey: ['/v1/status'],
     queryFn: async () => {
-      const env = await apiGet<{ data: StatusResponse }>('/v1/status');
-      return env.data;
+      const prev = queryClient.getQueryData<StatusFeed>(['/v1/status']);
+      try {
+        // Raw fetch (not apiGet): status must bypass every cache layer —
+        // a stale "ok" during an outage is the exact lie this feed exists
+        // to prevent (both pre-fold pollers used cache: 'no-store').
+        const res = await fetch(`${API_BASE_URL}/v1/status`, {
+          cache: 'no-store',
+          signal: timeoutSignal(),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const env = (await res.json()) as {
+          data: StatusResponse;
+          as_of?: string;
+        };
+        return {
+          status: env.data,
+          asOf: env.as_of ?? '',
+          error: null,
+          consecutiveFailures: 0,
+        };
+      } catch (err) {
+        // Keep the last-known snapshot; surface the failure alongside it.
+        return {
+          status: prev?.status ?? null,
+          asOf: prev?.asOf ?? '',
+          error: err instanceof Error ? err.message : 'Network error',
+          consecutiveFailures: (prev?.consecutiveFailures ?? 0) + 1,
+        };
+      }
     },
-    refetchInterval: 60_000,
-    // Don't burst the API on every page navigation — share the
-    // cached result across components for 30 s.
-    staleTime: 30_000,
+    refetchInterval: STATUS_POLL_MS,
+    // Share the cached result across mounting consumers for one cadence
+    // instead of bursting the API on every navigation.
+    staleTime: STATUS_POLL_MS,
+    // The queryFn never rejects, so retry/error state never engages —
+    // failure semantics live in StatusFeed where all consumers share them.
+    retry: false,
   });
 }
 

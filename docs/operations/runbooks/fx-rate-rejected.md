@@ -1,6 +1,6 @@
 ---
 title: Runbook — fx-rate-rejected
-last_verified: 2026-07-26
+last_verified: 2026-08-24
 status: draft
 severity: P3
 ---
@@ -60,6 +60,21 @@ Reasons (the `reason` label):
   still-unconfirmed bootstrap baseline instead HEAL the baseline
   (`stellarindex_external_fx_baseline_healed_total`) — see the
   history-majority heal in forex/worker.go.
+- **`deviation_history_conflict`** — a two-fetch confirmation was
+  VETOED: the second agreeing fetch would normally confirm a > 50%
+  move, but the ticker's trailing-7d history majority (≥ 4 bars
+  mutually agreeing within 10%) REFUTES the candidate, so the confirm
+  is refused. Two repeats of one broken current bar are the upstream
+  agreeing with itself, not corroboration (the Massive UZS
+  persistently-broken current feed, 2026-08-24). History never SETS
+  the baseline (MR-1) — it only refuses the confirm; a genuine
+  devaluation confirms as soon as the trailing majority stops refuting
+  (it follows the move within days, or the split-level window fails
+  mutual agreement and yields no veto). Log line:
+  `forex: pending confirmation refuted by agreeing history majority`.
+- **`deviation_history_conflict_stuck`** — the same (within 1%) vetoed
+  candidate refused ≥ 12 consecutive times; excluded from the alert
+  like `history_deviation_stuck`, still WARN-logged + graphable.
 
 ## Quick diagnosis (≤ 5 min)
 
@@ -122,6 +137,18 @@ Reasons (the `reason` label):
   `stellarindex_external_fx_rate_rejected_total{reason="history_deviation_stuck"}`
   for graphing. If the CURRENT rate starts rejecting too, treat as a
   fresh incident. Consider reporting to Massive if it persists.
+
+- **UZS current bar = 1820 (Massive, ongoing since ≥ 2026-08-24).** The
+  CURRENT feed persistently serves a UZS bar of **~1820** (jittering
+  ±1%) against a true level of **~11,800** — a broken current endpoint,
+  not a one-off bar. The restart-heal fixes the poisoned bootstrap
+  baseline, and the confirm veto (`deviation_history_conflict`) then
+  keeps the repeating broken value from pending-confirming its way back
+  in: the ticker's own agreeing 7-day history refutes it every refresh.
+  After 12 consecutive refusals the reason reclassifies to
+  `deviation_history_conflict_stuck` (excluded from the alert, still
+  graphable). UZS is held on its last accepted row while the upstream
+  stays broken — stale, never wrong. Report to Massive if it persists.
 
 ## Do NOT
 

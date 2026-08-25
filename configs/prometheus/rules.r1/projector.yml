@@ -111,3 +111,36 @@ groups:
             projector-replay -source {{ $labels.source }}`.
 
             Runbook: docs/operations/runbooks/projector-decode-error-rate.md
+
+      # Mirror of the rule in deploy/monitoring/rules/projector.yml (the
+      # wave-96 monitoring-rules CI dual-validation pattern). PROJECTOR WEDGE
+      # (task #33 / W8 recon 9b): the adaptive window has shrunk to the
+      # MinBatchLimit floor and STILL cannot advance for WedgeCycles+ consecutive
+      # cycles — a floor-sized range stuck over PerSourceTimeout (a dense +
+      # compressed chunk) retried identically forever. The gauge flips to 1 on a
+      # wedge, clears on any advancing cycle; remediation is manual (raise the
+      # per-cycle budget or decompress) per the runbook.
+      - alert: stellarindex_projector_wedged
+        expr: |
+          max by (source) (stellarindex_projector_wedged) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: projector
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-wedged.md
+          summary: "Projector source {{ $labels.source }} is WEDGED — cursor stuck at the window floor"
+          description: |
+            The ADR-0032 projector for {{ $labels.source }} has shrunk its
+            adaptive window to the MinBatchLimit floor (25 ledgers) and STILL
+            cannot commit forward progress — it has failed to advance for
+            WedgeCycles+ consecutive cycles. A floor-sized range that stays over
+            PerSourceTimeout (a dense + compressed chunk) is retried identically
+            every cycle forever, so this source's projection stops advancing
+            while every OTHER source keeps flowing. No data is lost (the raw
+            events survive in the lake) but this source will NOT self-recover.
+            Manual remediation: raise the per-cycle budget (PerSourceTimeout) or
+            decompress the offending range, then confirm the wedge clears.
+
+            Runbook: docs/operations/runbooks/projector-wedged.md

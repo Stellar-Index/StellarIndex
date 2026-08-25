@@ -114,6 +114,7 @@ type wedgeHarness struct {
 	src     Source
 	window  uint32
 	tracker poisonTracker
+	wedge   wedgeTracker
 }
 
 func newWedgeHarness(t *testing.T, name string, rows []sorobanevents.Row, tip uint32, sink func(ev consumer.Event) error) *wedgeHarness {
@@ -142,7 +143,7 @@ func (h *wedgeHarness) cycle() {
 }
 
 func (h *wedgeHarness) cycleCtx(ctx context.Context) {
-	h.proj.cycleOneSource(ctx, h.src, &h.window, &h.tracker)
+	h.proj.cycleOneSource(ctx, h.src, &h.window, &h.tracker, &h.wedge)
 }
 
 // ledgerEchoDecoder matches every row and emits one consumer.Event carrying
@@ -486,8 +487,9 @@ func TestCycle_DecoderRegressionMarksRunDegradedNotOK(t *testing.T) {
 	src := Source{Name: source, Decoder: &decodeErrDecoder{}}
 	window := uint32(BatchLimit)
 	var tracker poisonTracker
+	var wedge wedgeTracker
 
-	p.cycleOneSource(context.Background(), src, &window, &tracker)
+	p.cycleOneSource(context.Background(), src, &window, &tracker, &wedge)
 
 	// The cursor still advances past the broken class (poison-row escape /
 	// COR-11 — do NOT re-wedge a sole-writer source on a deterministic fault).
@@ -505,6 +507,101 @@ func TestCycle_DecoderRegressionMarksRunDegradedNotOK(t *testing.T) {
 	// ...it is surfaced as "decode_degraded" so the silent drop is visible.
 	if got := runsCount(t, source, "decode_degraded") - beforeDegraded; got != 1 {
 		t.Errorf("runs_total{outcome=decode_degraded} delta = %v, want 1 (the dropped-rows cycle must surface as degraded)", got)
+	}
+}
+
+func wedgeGauge(t *testing.T, source string) float64 {
+	t.Helper()
+	return testutil.ToFloat64(obs.ProjectorWedged.WithLabelValues(source))
+}
+
+// TestCycle_FlooredDeadlineStallSetsAndClearsWedgeGauge pins 9b (task #33 / W8
+// recon): a source pinned at the MinBatchLimit window floor that keeps blowing
+// the per-cycle deadline WITHOUT committing forward progress — a floor-sized
+// range that stays over PerSourceTimeout (a dense + compressed chunk) — is a
+// SILENT cursor wedge. It retries the identical range every cycle forever and
+// the only prior signal was a flat stellarindex_projector_runs_total{outcome=
+// "error"} rate (easily masked by an error storm from other sources). After
+// WedgeCycles consecutive floor-stalls the projector must flip
+// stellarindex_projector_wedged to 1; a single advancing cycle must clear it
+// back to 0. The adaptive shrink logic itself is deliberately unchanged — this
+// only makes the terminal stall observable/alertable.
+func TestCycle_FlooredDeadlineStallSetsAndClearsWedgeGauge(t *testing.T) {
+	const source = "wedge-floor-stall"
+	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2)}
+
+	// Every write fast-fails with the deadline the projector sees once cycleCtx
+	// is spent mid-batch; the parent context below is born expired so
+	// cycleCtx.Err() != nil every cycle (the sink-budget wedge shape).
+	h := newWedgeHarness(t, source, rows, 2000, func(consumer.Event) error {
+		return context.DeadlineExceeded
+	})
+	// Start already AT the floor so each failing cycle is a floor-stall — this
+	// isolates the wedge threshold from the (separately-tested) shrink ramp.
+	h.window = MinBatchLimit
+	obs.ProjectorWedged.WithLabelValues(source).Set(0) // explicit healthy baseline
+
+	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	// Below the budget: NOT yet wedged. This is the non-vacuous half — the
+	// gauge must read a real 0 for the first WedgeCycles-1 floor-stalls, or the
+	// alert would fire on a single slow cycle instead of a genuine wedge.
+	for i := 1; i < WedgeCycles; i++ {
+		h.cycleCtx(expired)
+		if got := h.store.cursor(); got != 100 {
+			t.Fatalf("cycle %d: cursor = %d, want 100 (a floored deadline holds the cursor, never advances)", i, got)
+		}
+		if got := wedgeGauge(t, source); got != 0 {
+			t.Fatalf("cycle %d: wedged = %v, want 0 (must not flag before %d consecutive floor-stalls)", i, got, WedgeCycles)
+		}
+	}
+
+	// The WedgeCycles-th consecutive floor-stall flips the flag.
+	h.cycleCtx(expired)
+	if got := wedgeGauge(t, source); got != 1 {
+		t.Fatalf("wedged = %v after %d consecutive floor-stalls, want 1 (a stuck cursor must be observable)", got, WedgeCycles)
+	}
+
+	// A single healthy cycle (budget + sink both recovered) commits forward
+	// progress and must clear the wedge.
+	h.proj.sink = func(context.Context, consumer.Event) error { return nil }
+	h.cycle()
+	if got := h.store.cursor(); got == 100 {
+		t.Fatal("recovery cycle did not advance the cursor (still 100) — test harness broken")
+	}
+	if got := wedgeGauge(t, source); got != 0 {
+		t.Fatalf("wedged = %v after a healthy advancing cycle, want 0 (any advance clears the wedge)", got)
+	}
+}
+
+// TestCycle_NonFlooredDeadlineDoesNotWedge is the anti-false-positive half: a
+// source that keeps blowing the deadline but is STILL SHRINKING (window above
+// the floor) is adapting, not wedged — the flag must stay 0 until the window
+// bottoms out. Guards against paging on the healthy shrink ramp.
+func TestCycle_NonFlooredDeadlineDoesNotWedge(t *testing.T) {
+	const source = "wedge-still-shrinking"
+	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2)}
+
+	h := newWedgeHarness(t, source, rows, 2000, func(consumer.Event) error {
+		return context.DeadlineExceeded
+	})
+	// Window well above the floor; it will halve each cycle but not reach 25
+	// within the loop below (100 -> 50 -> 25 takes two shrinks).
+	h.window = 100
+	obs.ProjectorWedged.WithLabelValues(source).Set(0)
+
+	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	// One cycle: 100 -> 50, still above the floor, so no floor-stall even at
+	// WedgeCycles+ repetitions of an above-floor deadline.
+	h.cycleCtx(expired)
+	if h.window != 50 {
+		t.Fatalf("window = %d, want 50 (deadline halves the window)", h.window)
+	}
+	if got := wedgeGauge(t, source); got != 0 {
+		t.Fatalf("wedged = %v, want 0 (a still-shrinking source is adapting, not wedged)", got)
 	}
 }
 

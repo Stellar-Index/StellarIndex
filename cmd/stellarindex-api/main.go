@@ -4131,7 +4131,15 @@ func (a *signupVerifyEmailerAdapter) SendSignupVerification(ctx context.Context,
 			"source": "stellarindex-api",
 		},
 	}
-	return a.sender.Send(ctx, msg)
+	// Instrument the mail send (task #33 / W8 recon 9c): internal/notify had
+	// zero prometheus visibility, so a Resend outage that stops signup
+	// confirmations from delivering was silent. Count sent vs failed here.
+	if err := a.sender.Send(ctx, msg); err != nil {
+		obs.NotifySendsTotal.WithLabelValues(obs.NotifyTemplateSignupVerify, obs.NotifySendResultFailed).Inc()
+		return err
+	}
+	obs.NotifySendsTotal.WithLabelValues(obs.NotifyTemplateSignupVerify, obs.NotifySendResultSent).Inc()
+	return nil
 }
 
 // apiKeyEmailVerifierOrNil returns the v1.APIKeyEmailVerifier
