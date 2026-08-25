@@ -48,7 +48,7 @@ set. (The previous revision filtered on a mislabeled 3-contract
 
 ```
 events.go              — source name, topic prefix bytes, event symbols, StrategyFlow
-decode.go              — classify() + decodeFlow() → StrategyFlow, decodeFactoryCreateStrategies() → strategy fan-out
+decode.go              — classify() + decodeFlow() → StrategyFlow (factory `create` bodies are recognised but NOT decoded/trusted — see below)
 dispatcher_adapter.go  — implements dispatcher.Decoder (topic-matched + contract-identity gated)
 README.md              — this file
 ```
@@ -66,19 +66,30 @@ layers.
 - `BackfillSafe` is `true` (audited 2026-05-19 against the real
   deployed hash `11329c24…988`; see
   `docs/operations/wasm-audits/defindex.md`).
-- **Factory `create` → strategy fan-out (2026-07-10, ROADMAP #7).**
-  A `("DeFindexFactory","create")` event's body carries, per asset, a
-  `strategies` Vec of `{address, name, paused}` — `decodeFactoryCreateStrategies`
-  extracts every `address` and `Decoder.Decode` seeds it into the
-  contract-identity registry (`contractid.Registry.Seed`), the same
-  live-upsert path Blend/Soroswap/Aquarius use. Verified against
-  every create-shaped body in the r1 lake (all 3 create-emitting
-  factories, 2026-07-10): mechanical extraction reproduces
-  `MainnetStrategies` exactly (16/16). **This does NOT extend to
-  vaults** — no create body has ever been observed to carry the new
-  vault's own address (see "Open question" in
-  `docs/protocols/defindex.md`), so `MainnetVaults` remains
-  curated-set only.
+- **Factory `create` bodies are recognised but NOT trusted for
+  registry fan-out (task #34, W8 recon 6c).** A
+  `("DeFindexFactory","create")` event is recognised (so the
+  drop-counter doesn't file it as an unmatched topic) and drops
+  cleanly with no output; its body is **not decoded**. The DeFindex
+  factory is PERMISSIONLESS — anyone can create a vault, and the
+  create body's `assets[].strategies[].address` fields are
+  attacker-controlled — so a canonical-factory emitter does not vouch
+  for the addresses it names. The earlier ROADMAP #7 fan-out (which
+  Seeded every named `address` into the registry) was a
+  permissionless-poisoning vector: an attacker could register
+  arbitrary contracts as "strategies" merely by naming them, whereupon
+  their subsequent `("BlendStrategy",…)` events decoded as recognised
+  DeFindex flows and contaminated flow/TVL stats. It has been removed.
+- **Both layers now register the same way: curated set + operator
+  seed only.** No execution-corroboration signal (the dispatcher's
+  `ExecutionCorroborated`) is available on this event decode path, so
+  the decoder fails closed. `MainnetStrategies` (evidence-verified,
+  16/16 as of 2026-07-10) and `MainnetVaults` are the always-seeded
+  trust roots; the `protocol_contracts` warm is the operator seam for
+  admitting a newly VERIFIED strategy or vault. A new, un-verified
+  strategy fail-closes into an ADR-0033 recognition gap — exactly the
+  posture vaults already had (no create body carries the vault's own
+  address either).
 
 ## Phase B follow-ups
 

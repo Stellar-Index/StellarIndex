@@ -313,11 +313,11 @@ func TestClassifyFactory_createNfee(t *testing.T) {
 // `ErrUnknownEvent` sentinel — for a factory match. This is the
 // closed-loop completeness check: Matches() returns true → Decode()
 // returns no error and no events, the event is consumed cleanly
-// rather than recorded as an unmatched-topic drop. Uses `n_fee`
-// (never body-decoded, so a bare Value is fine) — the `create` path's
-// body decode is covered separately by
-// TestDecode_factoryCreate_seedsStrategiesFromRealLakeBytes since
-// ROADMAP #7 (2026-07-10) made `create` parse its body.
+// rather than recorded as an unmatched-topic drop. Uses `n_fee`, but
+// `create` behaves identically now (task #34 / W8 recon 6c removed the
+// create-body fan-out): both recognise + drop cleanly and never decode
+// their body — see TestDecode_factoryCreate_doesNotSeedFromBody and
+// TestDecode_factoryCreate_ignoresBody.
 func TestDecode_factoryEvent_isClassifiedButEmits0Events(t *testing.T) {
 	t.Parallel()
 	d := NewDecoder()
@@ -337,13 +337,15 @@ func TestDecode_factoryEvent_isClassifiedButEmits0Events(t *testing.T) {
 	}
 }
 
-// ─── Factory `create` → strategy fan-out (ROADMAP #7, 2026-07-10) ──
+// ─── Factory `create` bodies — untrusted, never seeded (task #34) ──
 //
 // Real lake bytes (data_xdr) captured 2026-07-10 via ClickHouse HTTP
 // against r1's certified raw lake, contract-scoped to the 3
 // create-emitting DeFindexFactory instances. Each constant is one
 // full `("DeFindexFactory","create")` event body, byte-identical to
-// what the contract emitted on-chain.
+// what the contract emitted on-chain. They NAME real curated
+// strategies, but the fix (W8 recon 6c) no longer seeds from these
+// bodies at all — see TestDecode_factoryCreate_doesNotSeedFromBody.
 const (
 	// createBodyTwoStrategies — CDKFHFJI… (current factory), ledger
 	// 57,057,068. One asset with TWO strategies:
@@ -369,46 +371,60 @@ const (
 	createBodyEarliestFactory = "AAAAEQAAAAEAAAADAAAADwAAAAZhc3NldHMAAAAAABAAAAABAAAAAQAAABEAAAABAAAAAgAAAA8AAAAHYWRkcmVzcwAAAAASAAAAASW0/NhZrsL6Y0hDjEibPDwQyYttIb5P08swy2iVPvl3AAAADwAAAApzdHJhdGVnaWVzAAAAAAAQAAAAAQAAAAEAAAARAAAAAQAAAAMAAAAPAAAAB2FkZHJlc3MAAAAAEgAAAAFnf2w30jxNVNqTCwuM6wPG4DaWDNl4NsGuiz8NDKweKQAAAA8AAAAEbmFtZQAAAA4AAAAOQmxlbmQgU3RyYXRlZ3kAAAAAAA8AAAAGcGF1c2VkAAAAAAAAAAAAAAAAAA8AAAAFcm9sZXMAAAAAAAARAAAAAQAAAAQAAAADAAAAAAAAABIAAAAAAAAAAI/sKanankkaQEGC08WiRi97yjWn3C73URmgU+eSxFGvAAAAAwAAAAEAAAASAAAAAAAAAACP7Cmp2p5JGkBBgtPFokYve8o1p9wu91EZoFPnksRRrwAAAAMAAAACAAAAEgAAAAAAAAAAj+wpqdqeSRpAQYLTxaJGL3vKNafcLvdRGaBT55LEUa8AAAADAAAAAwAAABIAAAAAAAAAAI/sKanankkaQEGC08WiRi97yjWn3C73URmgU+eSxFGvAAAADwAAAAl2YXVsdF9mZWUAAAAAAAADAAAAZA=="
 )
 
-// TestDecode_factoryCreate_seedsStrategiesFromRealLakeBytes pins the
-// live strategy fan-out (ROADMAP #7, 2026-07-10): a `create` event
-// from a canonical factory trust root Seeds every strategy address
-// its body announces, and the strategy immediately passes Matches()
-// for its own BlendStrategy flow topics — no operator step, no code
-// change, matching the Blend/Soroswap/Aquarius fan-out pattern.
-func TestDecode_factoryCreate_seedsStrategiesFromRealLakeBytes(t *testing.T) {
+// TestDecode_factoryCreate_doesNotSeedFromBody is the security
+// regression for task #34 / W8 recon 6c. The DeFindex factory is
+// PERMISSIONLESS — anyone can create a vault — so a `create` body's
+// NAMED strategy addresses (`assets[].strategies[].address`) are
+// attacker-controlled and must NOT auto-register: a canonical-factory
+// emitter does not vouch for them. A create is still RECOGNISED
+// (Matches true, drops cleanly with no error and no events) but seeds
+// NOTHING — the old ROADMAP #7 fan-out is removed.
+//
+// Uses real lake create bytes (which happen to name real curated
+// strategies) against a BARE registry — factory trust roots only, the
+// curated child set WITHHELD — so any Has() hit could only have come
+// from a create-body seed. That is exactly the permissionless-poisoning
+// path this fix closes.
+//
+// RED-PROOF: against the pre-fix code (Decode called
+// decodeFactoryCreateStrategies + d.reg.Seed), reg.Has(named) is true
+// and reg.Len() > 0 here — this test FAILS. The fix makes them false/0.
+func TestDecode_factoryCreate_doesNotSeedFromBody(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name       string
-		factory    string
-		body       string
-		wantSeeded []string
+		name    string
+		factory string
+		body    string
+		named   []string // strategy addresses this body NAMES
 	}{
 		{
-			name:    "two strategies (current factory)",
+			name:    "two strategies (current factory) are NOT seeded",
 			factory: "CDKFHFJIET3A73A2YN4KV7NSV32S6YGQMUFH3DNJXLBWL4SKEGVRNFKI",
 			body:    createBodyTwoStrategies,
-			wantSeeded: []string{
+			named: []string{
 				"CDB2WMKQQNVZMEBY7Q7GZ5C7E7IAFSNMZ7GGVD6WKTCEWK7XOIAVZSAP",
 				"CCSRX5E4337QMCMC3KO3RDFYI57T5NZV5XB3W3TWE4USCASKGL5URKJL",
 			},
 		},
 		{
-			name:       "zero strategies is legitimate, not malformed",
-			factory:    "CDKFHFJIET3A73A2YN4KV7NSV32S6YGQMUFH3DNJXLBWL4SKEGVRNFKI",
-			body:       createBodyZeroStrategies,
-			wantSeeded: nil,
+			name:    "zero strategies also seeds nothing",
+			factory: "CDKFHFJIET3A73A2YN4KV7NSV32S6YGQMUFH3DNJXLBWL4SKEGVRNFKI",
+			body:    createBodyZeroStrategies,
+			named:   nil,
 		},
 		{
-			name:       "earliest factory — same field layout",
-			factory:    "CAVP2QLPIG7FQNHI57KXF7KS6NIAAUQKHZZDM3AGVADE64WHFBC5YURX",
-			body:       createBodyEarliestFactory,
-			wantSeeded: []string{"CBTX63BX2I6E2VG2SMFQXDHLAPDOANUWBTMXQNWBV2FT6DIMVQPCSOBW"},
+			name:    "earliest factory strategy is NOT seeded",
+			factory: "CAVP2QLPIG7FQNHI57KXF7KS6NIAAUQKHZZDM3AGVADE64WHFBC5YURX",
+			body:    createBodyEarliestFactory,
+			named:   []string{"CBTX63BX2I6E2VG2SMFQXDHLAPDOANUWBTMXQNWBV2FT6DIMVQPCSOBW"},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			d := NewDecoder() // fresh registry per case — curated set already contains these, so use a bare (unseeded) child gate to prove the SEED, not the curated fallback
+			d := NewDecoder()
+			// Bare registry: factory trust roots only, curated child set
+			// WITHHELD — so a Has() hit can only be a create-body seed.
 			d.reg = contractid.New(contractid.WithFactories(MainnetFactories))
 
 			ev := events.Event{
@@ -422,45 +438,86 @@ func TestDecode_factoryCreate_seedsStrategiesFromRealLakeBytes(t *testing.T) {
 			}
 			out, err := d.Decode(ev)
 			if err != nil {
-				t.Fatalf("Decode(create) err = %v, want nil", err)
+				t.Fatalf("Decode(create) err = %v, want nil (recognised, drops cleanly)", err)
 			}
 			if len(out) != 0 {
 				t.Errorf("Decode(create) emitted %d consumer.Event(s), want 0", len(out))
 			}
-			for _, want := range tc.wantSeeded {
-				if !d.reg.Has(want) {
-					t.Errorf("strategy %s not seeded after Decode(create)", want)
+			if got := d.reg.Len(); got != 0 {
+				t.Errorf("registry grew to %d child(ren) after Decode(create); want 0 — create bodies must not seed", got)
+			}
+			for _, named := range tc.named {
+				if d.reg.Has(named) {
+					t.Errorf("strategy %s was seeded from the create body — permissionless-poisoning path still open", named)
 				}
-				// The newly-seeded strategy must now pass its own
-				// BlendStrategy flow gate — the whole point of fan-out.
-				flowEv := events.Event{ContractID: want, Topic: []string{TopicPrefixStrategy, TopicSymbolDeposit}}
-				if !d.Matches(flowEv) {
-					t.Errorf("strategy %s seeded but its own deposit topic still fails to match", want)
+				// Its own BlendStrategy flow topic must NOT be recognised.
+				flowEv := events.Event{ContractID: named, Topic: []string{TopicPrefixStrategy, TopicSymbolDeposit}}
+				if d.Matches(flowEv) {
+					t.Errorf("named-but-unseeded strategy %s still matches its own deposit topic — poisoning not closed", named)
 				}
 			}
 		})
 	}
 }
 
-// TestDecode_factoryCreate_malformedBodyErrors pins that a `create`
-// event whose body doesn't have the expected top-level `assets` Map
-// field is a genuine decode error (ErrMalformedPayload) — unlike
-// harvest/rebalance/admin topics, which are recognised-but-unmodelled
-// and must NOT error (BACKLOG #58 policy).
-func TestDecode_factoryCreate_malformedBodyErrors(t *testing.T) {
+// TestDecode_curatedStrategy_stillRecognised proves the fix preserves
+// LEGITIMATE DeFindex flows. A strategy in the evidence-verified
+// curated trust root (MainnetStrategies) is seeded by NewDecoder and
+// its own BlendStrategy deposit topic still matches, so real
+// vault↔strategy flows are unaffected by removing the create-body
+// fan-out; only the attacker-controlled named-but-unverified path is
+// closed.
+func TestDecode_curatedStrategy_stillRecognised(t *testing.T) {
+	t.Parallel()
+	d := NewDecoder() // production gate: full curated seed (MainnetGatedSet)
+
+	strategy := MainnetStrategies[0]
+	if !d.reg.Has(strategy) {
+		t.Fatalf("curated strategy %s not seeded by NewDecoder", strategy)
+	}
+	flowEv := events.Event{ContractID: strategy, Topic: []string{TopicPrefixStrategy, TopicSymbolDeposit}}
+	if !d.Matches(flowEv) {
+		t.Errorf("curated strategy %s deposit topic does not match — a legitimate flow was broken by the fix", strategy)
+	}
+
+	// A contract that is NEITHER curated NOR create-body-seeded stays
+	// fail-closed (the honest recognition gap).
+	attacker := events.Event{
+		ContractID: "CATTACKERSTRATEGY00000000000000000000000000000000000000000",
+		Topic:      []string{TopicPrefixStrategy, TopicSymbolDeposit},
+	}
+	if d.Matches(attacker) {
+		t.Error("unregistered contract matched a BlendStrategy topic — gate is not fail-closed")
+	}
+}
+
+// TestDecode_factoryCreate_ignoresBody pins that a `create` event's
+// body is not decoded at all after the task #34 / W8 recon 6c fix:
+// even a body that isn't a Map (which the old fan-out would have
+// flagged as ErrMalformedPayload) now drops cleanly — recognised, no
+// error, no events, no seeding. Factory bodies are untrusted, so we
+// never parse them.
+func TestDecode_factoryCreate_ignoresBody(t *testing.T) {
 	t.Parallel()
 	d := NewDecoder()
+	before := d.reg.Len()
 	ev := events.Event{
 		ContractID: MainnetFactories[0],
 		Topic:      []string{TopicPrefixFactory, TopicSymbolCreate},
-		Value:      mustB64(t, i128SCVal(big.NewInt(1))), // not a Map at all
+		Value:      mustB64(t, i128SCVal(big.NewInt(1))), // not a Map — would have errored under the old fan-out
 	}
 	if !d.Matches(ev) {
 		t.Fatal("Matches(create) = false, want true")
 	}
-	_, err := d.Decode(ev)
-	if !errors.Is(err, ErrMalformedPayload) {
-		t.Errorf("Decode(malformed create) err = %v, want ErrMalformedPayload", err)
+	out, err := d.Decode(ev)
+	if err != nil {
+		t.Errorf("Decode(create with non-Map body) err = %v, want nil (body untrusted, not decoded)", err)
+	}
+	if len(out) != 0 {
+		t.Errorf("Decode(create) emitted %d events, want 0", len(out))
+	}
+	if d.reg.Len() != before {
+		t.Errorf("registry changed size (%d → %d) on a create — bodies must not seed", before, d.reg.Len())
 	}
 }
 
