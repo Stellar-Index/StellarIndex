@@ -81,6 +81,18 @@ const MinBatchLimit = 25
 // downstream sink can't block other sources past this.
 const PerSourceTimeout = 60 * time.Second
 
+// WedgeCycles is how many CONSECUTIVE cycles a source must sit at the
+// MinBatchLimit floor while a per-cycle deadline keeps it from committing
+// forward progress before the projector flags it as WEDGED (obs.ProjectorWedged
+// → 1). The adaptive window shrinks on a deadline, but at the floor there is
+// nothing left to halve: a floor-sized range that stays over PerSourceTimeout
+// retries the identical range forever (the 2026-07-10 / 2026-08-01 incidents).
+// 5 was picked so the flag means "stuck", not "one slow cycle" — each floored
+// deadline cycle can burn up to PerSourceTimeout, so 5 is minutes of provably
+// non-advancing work, not a transient blip. The shrink logic itself is
+// unchanged; this only makes the terminal stall observable/alertable.
+const WedgeCycles = 5
+
 // SinkFunc is the per-event handler the projector calls after
 // successful decode. `internal/pipeline/sink.go::HandleEvent` is the
 // production wiring (it persists the decoded event to its per-source
@@ -300,6 +312,35 @@ func processEventSafely(src Source, ev events.Event, sink func(consumer.Event) e
 	return emitted, false, nil
 }
 
+// wedgeTracker counts the CONSECUTIVE cycles a single source has spent at the
+// adaptive-window floor (MinBatchLimit) while a per-cycle deadline keeps it from
+// committing forward progress — the shrink-to-floor stall the adaptive window
+// cannot escape on its own (a floor-sized range that stays over PerSourceTimeout
+// retries the identical range every cycle forever). Owned by the per-source
+// goroutine like `window` and the poisonTracker, so no locking is needed. At
+// WedgeCycles consecutive floor-stalls it raises obs.ProjectorWedged; any
+// advancing (or caught-up) cycle clears both the count and the gauge.
+type wedgeTracker struct {
+	floorStalls int
+}
+
+// floorStall records one cycle that ended at the window floor, under a deadline,
+// without advancing the cursor. It raises the wedge gauge once the stall has
+// persisted WedgeCycles consecutive cycles (and keeps it raised while it does).
+func (wt *wedgeTracker) floorStall(source string) {
+	wt.floorStalls++
+	if wt.floorStalls >= WedgeCycles {
+		obs.ProjectorWedged.WithLabelValues(source).Set(1)
+	}
+}
+
+// advanced records a cycle that committed forward progress (or found the source
+// caught up), clearing any accumulated stall and lowering the wedge gauge.
+func (wt *wedgeTracker) advanced(source string) {
+	wt.floorStalls = 0
+	obs.ProjectorWedged.WithLabelValues(source).Set(0)
+}
+
 // runOneSource is the per-source catch-up loop. Reads from the
 // projector cursor's last_ledger forward, batches up to
 // BatchLimit rows per cycle, advances the cursor on success.
@@ -313,15 +354,22 @@ func (p *Projector) runOneSource(ctx context.Context, src Source) {
 	// Per-row consecutive-failure counts for the poison-row escape hatch,
 	// owned by this goroutine for the same reason as `window`.
 	var tracker poisonTracker
+	// Consecutive floor-stall count for the wedge gauge, owned by this
+	// goroutine for the same reason. Seed the gauge at 0 up front so the
+	// alert reads a real "healthy" zero from process start rather than
+	// "no data" (an absent wedge series is itself a silence — the exact
+	// ambiguity this signal exists to remove).
+	var wedge wedgeTracker
+	obs.ProjectorWedged.WithLabelValues(src.Name).Set(0)
 	// First cycle runs immediately so a fresh deploy starts
 	// catching up without waiting Interval.
-	p.cycleOneSource(ctx, src, &window, &tracker)
+	p.cycleOneSource(ctx, src, &window, &tracker, &wedge)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			p.cycleOneSource(ctx, src, &window, &tracker)
+			p.cycleOneSource(ctx, src, &window, &tracker, &wedge)
 		}
 	}
 }
@@ -424,7 +472,7 @@ func lowestHeldLedger(held []heldRow) (uint32, bool) {
 // invariant, so it is suppressed rather than fragmented.
 //
 //nolint:gocognit,funlen // linear cycle (cursor read → tip → scan → cursor write) with a source branch (soroban_events vs CH); splitting into helpers would scatter the cycle's success/failure metric emissions and make the control flow harder to audit.
-func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint32, tracker *poisonTracker) { //nolint:gocyclo // essential, cohesive durability classification (C2-1)
+func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint32, tracker *poisonTracker, wedge *wedgeTracker) { //nolint:gocyclo // essential, cohesive durability classification (C2-1)
 	start := time.Now()
 	cycleCtx, cancel := context.WithTimeout(ctx, PerSourceTimeout)
 	defer cancel()
@@ -466,6 +514,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		// Found by audit A04-H1.
 		obs.ProjectorRunsTotal.WithLabelValues(src.Name, "idle").Inc()
 		obs.ProjectorLagLedgers.WithLabelValues(src.Name).Set(0)
+		wedge.advanced(src.Name) // caught up to tip — definitively not wedged
 		return
 	}
 
@@ -617,6 +666,14 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 			p.logger.Warn("projector: stream failed", "source", src.Name, "err", err, "from", fromLedger, "to", toLedger)
 		}
 		obs.ProjectorRunsTotal.WithLabelValues(src.Name, "error").Inc()
+		// Wedge detection (post-shrink): a deadline that leaves the window at
+		// the floor is the terminal shrink-to-floor stall — nothing left to
+		// halve, the identical range retried forever. Non-deadline stream
+		// errors (DB reset, etc.) are a different failure mode and leave the
+		// count untouched; only a floored deadline counts toward the wedge.
+		if errors.Is(err, context.DeadlineExceeded) && *window <= MinBatchLimit {
+			wedge.floorStall(src.Name)
+		}
 		return
 	}
 
@@ -691,6 +748,16 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 			"first_held_ledger", firstHeldLedger,
 			"transient_fails", sinkTransientFails, "permanent_fails", sinkPermanentFails,
 			"quarantined", sinkQuarantined)
+		// Wedge detection, sink side: the same terminal stall reached via the
+		// sink-budget path (the 2026-08-01 aquarius-reserves incident) — the CH
+		// scan finished but the per-event writes spent PerSourceTimeout, the
+		// sink-side shrink above floored the window, and the cursor held. Gated
+		// on a spent cycle budget so a plain transient sink outage (DB briefly
+		// down, no deadline) — a different, self-announcing failure — does not
+		// masquerade as a compressed-chunk wedge.
+		if cycleCtx.Err() != nil && *window <= MinBatchLimit {
+			wedge.floorStall(src.Name)
+		}
 		return
 	}
 	if holding {
@@ -701,6 +768,11 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		obs.ProjectorRunsTotal.WithLabelValues(src.Name, "error").Inc()
 		return
 	}
+
+	// Forward progress committed (commitTo >= fromLedger > the prior cursor):
+	// whatever else happened this cycle, the source is advancing — clear any
+	// accumulated wedge stall and lower the gauge.
+	wedge.advanced(src.Name)
 
 	// Window recovery: a successful cycle doubles back toward
 	// BatchLimit so a one-off dense stretch doesn't permanently slow

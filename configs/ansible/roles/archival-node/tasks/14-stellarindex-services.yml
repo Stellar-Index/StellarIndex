@@ -510,7 +510,7 @@
     group: root
     mode: "0755"
 
-- name: Install verify-archive-tier-a / archive-completeness / supply-snapshot / galexie-archive-trim units
+- name: Install verify-archive-tier-a / verify-archive-tier-b / archive-completeness / supply-snapshot / galexie-archive-trim units
   ansible.builtin.template:
     src: "systemd/{{ item }}.j2"
     dest: "/etc/systemd/system/{{ item }}"
@@ -518,6 +518,11 @@
   loop:
     - verify-archive-tier-a.service
     - verify-archive-tier-a.timer
+    # Tier B (checkpoint anchor, task #33 / W8 recon 14a): verify_archive.go
+    # has always implemented `-tier checkpoint` but only Tier A was
+    # scheduled, so the single-source-corruption anchor check never ran.
+    - verify-archive-tier-b.service
+    - verify-archive-tier-b.timer
     - archive-completeness.service
     - archive-completeness.timer
     - supply-snapshot.service
@@ -556,6 +561,7 @@
     daemon_reload: true
   loop:
     - verify-archive-tier-a.timer
+    - verify-archive-tier-b.timer
     - archive-completeness.timer
     - supply-snapshot.timer
     - sep1-refresh.timer
