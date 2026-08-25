@@ -134,12 +134,14 @@ func TestAssetGet_IssuerDirectoryTags_Surfaced(t *testing.T) {
 	}
 }
 
-// TestAssetGet_MaliciousDirectoryTag_DoesNotSuppressPrice — the
-// DISPLAY-ONLY invariant (§3.3): a malicious-tagged asset still prices
-// normally. The label is orthogonal — price_usd is byte-identical with
-// and without the directory reader wired, and carries the real market
-// price either way.
-func TestAssetGet_MaliciousDirectoryTag_DoesNotSuppressPrice(t *testing.T) {
+// TestAssetGet_ScamDirectoryTag_WithholdsPrice — the scam-pricing gate
+// (2026-08-25 decision, deliberately overturning the old display-only
+// invariant): a scam-class-tagged issuer (malicious/unsafe/fraud/scam/
+// hack/phishing) has its published price_usd + market_cap WITHHELD, so a
+// scam token can't show a value that lends it legitimacy — even when its
+// market is liquid. The suppression is directory-driven: with no directory
+// wired, the same asset prices normally. Raw trades stay on /v1/ohlc etc.
+func TestAssetGet_ScamDirectoryTag_WithholdsPrice(t *testing.T) {
 	get := func(t *testing.T, directory v1.Options) v1.AssetDetail {
 		t.Helper()
 		srv, aud := audDetailServer(t, directory)
@@ -167,17 +169,17 @@ func TestAssetGet_MaliciousDirectoryTag_DoesNotSuppressPrice(t *testing.T) {
 	if len(withoutDir.IssuerDirectoryTags) != 0 {
 		t.Fatalf("precondition: no directory wired must omit the tags, got %v", withoutDir.IssuerDirectoryTags)
 	}
-	// Price is the market price, UNCHANGED by the malicious label.
-	if withDir.PriceUSD == nil || *withDir.PriceUSD != "0.65" {
-		t.Errorf("price_usd (malicious-tagged) = %v, want 0.65 — the label must not suppress pricing", withDir.PriceUSD)
+	// Scam-flagged: price + market cap are WITHHELD (the gate).
+	if withDir.PriceUSD != nil {
+		t.Errorf("price_usd (scam-tagged) = %q, want withheld (nil) — the scam gate must suppress it", *withDir.PriceUSD)
 	}
+	if withDir.MarketCapUSD != nil {
+		t.Errorf("market_cap_usd (scam-tagged) = %q, want withheld (nil)", *withDir.MarketCapUSD)
+	}
+	// Directory-driven: with no directory wired, the same asset prices
+	// normally — proving the suppression is the flag, not a coincidence.
 	if withoutDir.PriceUSD == nil || *withoutDir.PriceUSD != "0.65" {
-		t.Errorf("price_usd (no directory) = %v, want 0.65", withoutDir.PriceUSD)
-	}
-	if (withDir.PriceUSD == nil) != (withoutDir.PriceUSD == nil) ||
-		(withDir.PriceUSD != nil && *withDir.PriceUSD != *withoutDir.PriceUSD) {
-		t.Errorf("price_usd diverged: with-directory=%v without=%v — tag must be display-only",
-			withDir.PriceUSD, withoutDir.PriceUSD)
+		t.Errorf("price_usd (no directory) = %v, want 0.65 — suppression must be directory-driven", withoutDir.PriceUSD)
 	}
 }
 

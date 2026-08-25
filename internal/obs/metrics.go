@@ -104,6 +104,7 @@ func registerAppMetrics() {
 		AggregatorDroppedWindowsTotal,
 		AggregatorMinUSDVolumeUnvaluableTotal,
 		PriceServeSubstanceWithheldTotal,
+		PriceServeScamWithheldTotal,
 
 		SupplyCrossCheckDivergenceStroops,
 		SupplyCrossCheckTotal,
@@ -2471,6 +2472,21 @@ var PriceServeSubstanceWithheldTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_price_serve_substance_withheld_total",
 		Help: "Aggregated price serves withheld by the thin-market substance gate, labelled by serving surface.",
+	},
+	[]string{"surface"},
+)
+
+// PriceServeScamWithheldTotal — count of aggregated-price serves withheld
+// by the scam-pricing gate because the asset's issuer is flagged
+// scam-class (malicious/unsafe/fraud/scam/hack/phishing) in the curated
+// account directory. Labelled by serving surface. A non-zero rate here
+// with no matching directory change can indicate the gate mis-firing;
+// a sudden drop to zero while flagged issuers still trade can indicate
+// the gate failing open (see the paired warn log).
+var PriceServeScamWithheldTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_price_serve_scam_withheld_total",
+		Help: "Aggregated price serves withheld by the scam-pricing gate (directory-flagged issuer), labelled by serving surface.",
 	},
 	[]string{"surface"},
 )
