@@ -39,6 +39,23 @@ severity: P1
 > The distinction is the point. A plan that presents carried claims as
 > verified is the same failure mode as an API that renders absent as zero.
 
+### ⚠️ DEPLOY GAP found + patched — config changes do NOT ship with binary deploys (2026-08-25)
+
+**Class (important, pre-launch-relevant):** `gh workflow run deploy.yml -f binaries=…`
+swaps BINARIES ONLY — it does NOT re-render the ansible `stellarindex.toml.j2`
+template onto r1. So EVERY config-dependent feature this session shipped DEAD
+until caught: (1) the declared-peg feature (v0.42.0) deployed with the peg CODE
+but an EMPTY `[pricing_guard].fiat_pegged_classic_assets` map → AUDD/AUDR served
+no peg; (2) the chainlink FX `max_age_hours = 76` weekend-staleness fix (#149
+panel) never reached the live TOML either. Both were surgically applied to
+`/etc/stellarindex.toml` + api restarted 2026-08-25 (backups
+`/root/stellarindex.toml.pre-pricing-guard`, `…pre-fxmaxage`); AUDD/AUDR now
+serve `$0.71543 declared_peg`, verified live. **The durable fix is a launch item:**
+the deploy flow (or the release runbook) MUST include an ansible config apply when
+the template changed since the last apply — else a config-gated feature launches
+invisible. The ansible-drift workflow WOULD have caught it (template-ahead-of-r1);
+run it as a post-deploy gate, or fold `apply → drift-green` into deploy.yml.
+
 ### Reconciliation pass — 2026-08-25 (autonomous night run)
 
 Verified live against r1 / merged code; each line moves an item OUT of the

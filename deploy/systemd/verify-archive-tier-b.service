@@ -1,0 +1,104 @@
+# systemd unit: nightly verify-archive Tier B run (task #33 / W8 recon 14a).
+#
+# Tier B = checkpoint ANCHOR verification (ADR-0017): for each 64-ledger
+# checkpoint, cross-check our LCM's header-hash against the canonical
+# header-hash in the LOCAL history-archive mirror (/srv/history-archive,
+# the rs-stellar-archivist mirror). This catches single-source corruption
+# that is still chain-link-consistent — the failure mode Tier A (chain) is
+# BLIND to. verify_archive.go has always implemented `-tier checkpoint`,
+# but only the Tier A (chain) unit was scheduled, so the anchor check
+# never actually ran. This unit closes that gap.
+#
+# Operator wiring:
+#
+#   sudo cp deploy/systemd/verify-archive-tier-b.{service,timer} /etc/systemd/system/
+#   sudo cp /etc/default/stellarindex-ops.example /etc/default/stellarindex-ops  # if not yet present
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now verify-archive-tier-b.timer
+#
+# Configuration via /etc/default/stellarindex-ops (shared with Tier A):
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY  Read creds for the
+#                                              galexie-archive S3 bucket.
+#   VERIFY_ARCHIVE_FROM                         Default 2 (genesis fallback).
+#   VERIFY_ARCHIVE_WORKERS                      Default 12 (parallel chunks).
+#   VERIFY_ARCHIVE_MAX_RUNTIME                  Default 16h cap.
+#
+# Shares the Tier A incremental state file: verify-archive records the
+# high-water mark under a per-tier key ("chain" vs "checkpoint"), so
+# `-from-last-verified` for `-tier checkpoint` reads/advances ONLY the
+# checkpoint tier's high-water — independent of the chain tier. The two
+# units therefore coexist in one state file (the same design `-tier all`
+# already relies on). They are scheduled at different times (Tier A 03:23,
+# Tier B 04:37 UTC) and both route through the run-heavy-job.sh singleton
+# lock in the ansible-rendered variant, so they never write the file
+# concurrently.
+#
+# Run health is observable via systemd unit state — node_exporter's
+# `--collector.systemd` exports success/failure as
+# `node_systemd_unit_state{name="verify-archive-tier-b.service",state="failed"}`.
+# Alert rules are in `deploy/monitoring/rules/verify-archive.yml`.
+#
+# R1 only — the integrity leader per ADR-0016. R2/R3 trust R1.
+
+[Unit]
+Description=Stellar Index — verify-archive Tier B (nightly checkpoint anchor)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/archival-node-bringup.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Type=notify + WatchdogSec: the binary signals READY=1 at start and
+# WATCHDOG=1 every 30s (gated on walk progress). systemd SIGTERMs only on
+# real silence (hung / dead-locked), not a guessed wall-clock cap. Same
+# integration as Tier A (cmd/stellarindex-ops verify-archive).
+Type=notify
+NotifyAccess=main
+WatchdogSec=1h
+
+EnvironmentFile=-/etc/default/stellarindex-ops
+
+# Sensible defaults. Operators override via /etc/default/stellarindex-ops.
+Environment=VERIFY_ARCHIVE_FROM=2
+Environment=VERIFY_ARCHIVE_WORKERS=12
+Environment=VERIFY_ARCHIVE_MAX_RUNTIME=16h
+Environment=VERIFY_ARCHIVE_STATE_FILE=/var/lib/stellarindex/verify-archive-state.json
+Environment=VERIFY_ARCHIVE_SAFETY_OVERLAP=5000
+Environment=VERIFY_ARCHIVE_ROOT=/srv/history-archive
+
+# Incremental scheme (shared with Tier A): -from-last-verified reads the
+# prior run's checkpoint-tier high-water from the state file, then anchors
+# only the [last_verified - safety_overlap, tip] window. Past checkpoints
+# are immutable, so re-anchoring them nightly is wasted compute.
+#
+# -archive-root points at the LOCAL history-archive mirror the anchor reads
+# the canonical header-hash from. -to is omitted intentionally (resolved
+# from the manifest at start).
+ExecStart=/usr/local/bin/stellarindex-ops verify-archive \
+  -config /etc/stellarindex.toml \
+  -from ${VERIFY_ARCHIVE_FROM} \
+  -tier checkpoint \
+  -archive-root ${VERIFY_ARCHIVE_ROOT} \
+  -workers ${VERIFY_ARCHIVE_WORKERS} \
+  -max-runtime ${VERIFY_ARCHIVE_MAX_RUNTIME} \
+  -state-file ${VERIFY_ARCHIVE_STATE_FILE} \
+  -from-last-verified \
+  -safety-overlap ${VERIFY_ARCHIVE_SAFETY_OVERLAP}
+
+User=root
+
+# Hardening. Reads /etc/stellarindex.toml + the /srv/history-archive
+# mirror; writes only the state file (logs go to journald).
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# With Type=notify + WatchdogSec=1h, TimeoutStartSec only governs the time
+# the binary has to send READY=1 (fires immediately on startup). The walk
+# itself is bounded by WatchdogSec (liveness), not wall-clock.
+TimeoutStartSec=10m
+
+[Install]
+WantedBy=multi-user.target

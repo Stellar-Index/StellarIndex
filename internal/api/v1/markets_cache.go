@@ -126,40 +126,71 @@ func (c *CachedMarketsReader) FirstTradeBatch(ctx context.Context, pairs [][2]st
 	return c.upstream.FirstTradeBatch(ctx, pairs)
 }
 
-// DistinctPairsExt — cached.
+// DistinctPairsExt — cached. Plain [MarketsReader] shape; drops the
+// staleness meta DistinctPairsExtAt surfaces (prewarm + non-/v1/markets
+// callers don't need it).
 func (c *CachedMarketsReader) DistinctPairsExt(ctx context.Context, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, error) {
+	rows, next, _, _, err := c.DistinctPairsExtAt(ctx, cursor, limit, order)
+	return rows, next, err
+}
+
+// DistinctPairsExtAt is DistinctPairsExt plus the served row-set's
+// observed-at timestamp and staleness flag. /v1/markets uses it to stamp
+// an honest as_of (the served data's real observation time) and
+// flags.stale, instead of the SWR stale-serve path silently asserting
+// stale:false / as_of=now over arbitrarily-old rows when refreshes keep
+// failing (W8 reconciliation; mirrors the /v1/contracts REC-05 fix).
+//
+// observedAt is the zero time (→ caller stamps as_of=now, not stale) when
+// the cache is disabled: an uncached read comes straight from upstream and
+// is live-fresh.
+func (c *CachedMarketsReader) DistinctPairsExtAt(ctx context.Context, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, time.Time, bool, error) {
 	if c.ttl <= 0 {
-		return c.upstream.DistinctPairsExt(ctx, cursor, limit, order)
+		rows, next, err := c.upstream.DistinctPairsExt(ctx, cursor, limit, order)
+		return rows, next, time.Time{}, false, err
 	}
 	key := newCacheKey("DistinctPairsExt").str(cursor).int(limit).order(int(order)).build()
-	rows, next, err := c.fetchPairs(ctx, "distinct_pairs", key, func(ctx context.Context) ([]Market, string, error) {
+	return c.fetchPairs(ctx, "distinct_pairs", key, func(ctx context.Context) ([]Market, string, error) {
 		return c.upstream.DistinctPairsExt(ctx, cursor, limit, order)
 	})
+}
+
+// SourceMarkets — cached. See DistinctPairsExt re: dropped staleness meta.
+func (c *CachedMarketsReader) SourceMarkets(ctx context.Context, source, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, error) {
+	rows, next, _, _, err := c.SourceMarketsAt(ctx, source, cursor, limit, order)
 	return rows, next, err
 }
 
-// SourceMarkets — cached.
-func (c *CachedMarketsReader) SourceMarkets(ctx context.Context, source, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, error) {
+// SourceMarketsAt is SourceMarkets plus the observed-at + staleness meta —
+// see DistinctPairsExtAt.
+func (c *CachedMarketsReader) SourceMarketsAt(ctx context.Context, source, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, time.Time, bool, error) {
 	if c.ttl <= 0 {
-		return c.upstream.SourceMarkets(ctx, source, cursor, limit, order)
+		rows, next, err := c.upstream.SourceMarkets(ctx, source, cursor, limit, order)
+		return rows, next, time.Time{}, false, err
 	}
 	key := newCacheKey("SourceMarkets").str(source).str(cursor).int(limit).order(int(order)).build()
-	rows, next, err := c.fetchPairs(ctx, "source_markets", key, func(ctx context.Context) ([]Market, string, error) {
+	return c.fetchPairs(ctx, "source_markets", key, func(ctx context.Context) ([]Market, string, error) {
 		return c.upstream.SourceMarkets(ctx, source, cursor, limit, order)
 	})
+}
+
+// AssetMarkets — cached. See DistinctPairsExt re: dropped staleness meta.
+func (c *CachedMarketsReader) AssetMarkets(ctx context.Context, asset, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, error) {
+	rows, next, _, _, err := c.AssetMarketsAt(ctx, asset, cursor, limit, order)
 	return rows, next, err
 }
 
-// AssetMarkets — cached.
-func (c *CachedMarketsReader) AssetMarkets(ctx context.Context, asset, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, error) {
+// AssetMarketsAt is AssetMarkets plus the observed-at + staleness meta —
+// see DistinctPairsExtAt.
+func (c *CachedMarketsReader) AssetMarketsAt(ctx context.Context, asset, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, time.Time, bool, error) {
 	if c.ttl <= 0 {
-		return c.upstream.AssetMarkets(ctx, asset, cursor, limit, order)
+		rows, next, err := c.upstream.AssetMarkets(ctx, asset, cursor, limit, order)
+		return rows, next, time.Time{}, false, err
 	}
 	key := newCacheKey("AssetMarkets").str(asset).str(cursor).int(limit).order(int(order)).build()
-	rows, next, err := c.fetchPairs(ctx, "asset_markets", key, func(ctx context.Context) ([]Market, string, error) {
+	return c.fetchPairs(ctx, "asset_markets", key, func(ctx context.Context) ([]Market, string, error) {
 		return c.upstream.AssetMarkets(ctx, asset, cursor, limit, order)
 	})
-	return rows, next, err
 }
 
 // AllPools — cached. The Sources filter is a SET; [cacheKey.strSet]
@@ -200,20 +231,29 @@ const marketsRefreshBudget = 30 * time.Second
 // request path — the AllPools/DistinctPairs scan never lands on a
 // user request even though it cannot be made cheap (no per-source
 // pre-aggregate exists; #23).
+//
+// Return values: the served rows + next cursor, plus observedAt (the
+// timestamp the served rows were fetched from upstream — e.at) and stale
+// (true whenever the served bytes are past the TTL, i.e. taken from the
+// SWR branch). /v1/markets stamps these into the envelope's as_of +
+// flags.stale so a stale-serve (refresh failing) is never asserted as
+// fresh (W8 reconciliation; matches the REC-05 age>TTL bound). observedAt
+// is the zero time on a cold miss/error, where there is nothing served to
+// date.
 func (c *CachedMarketsReader) fetchPairs(
 	ctx context.Context,
 	op, key string,
 	upstream func(context.Context) ([]Market, string, error),
-) ([]Market, string, error) {
+) ([]Market, string, time.Time, bool, error) {
 	c.mu.Lock()
 	e, ok := c.entries[key]
 
 	// (A) Fresh hit.
 	if ok && e.flight == nil && time.Since(e.at) < c.ttl {
-		out, next := e.pairs, e.cursor
+		out, next, at := e.pairs, e.cursor, e.at
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("markets", op, "hit").Inc()
-		return out, next, nil
+		return out, next, at, false, nil
 	}
 
 	// (A') Stale-while-revalidate. A prior SUCCESSFUL fetch exists
@@ -221,8 +261,13 @@ func (c *CachedMarketsReader) fetchPairs(
 	// expired. Serve the stale rows immediately; kick exactly one
 	// background refresh if none is running. Concurrent callers
 	// during the refresh also get stale — nobody waits on upstream.
+	//
+	// The served rows carry their ORIGINAL e.at (never re-stamped to
+	// now): a run of failing refreshes rides out on old-but-real data,
+	// and the returned observedAt/stale=true let the handler tell the
+	// truth about it rather than claiming freshness now() can't back.
 	if ok && !e.at.IsZero() {
-		out, next := e.pairs, e.cursor
+		out, next, at := e.pairs, e.cursor, e.at
 		if e.flight == nil {
 			done := make(chan struct{})
 			e.flight = done
@@ -236,11 +281,11 @@ func (c *CachedMarketsReader) fetchPairs(
 			// stale response is written, so reusing it would abort
 			// every refresh — defeating the entire point of SWR.
 			go c.refreshPairs(op, entry, done, upstream)
-			return out, next, nil
+			return out, next, at, true, nil
 		}
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("markets", op, "stale").Inc()
-		return out, next, nil
+		return out, next, at, true, nil
 	}
 
 	// (B) Cold fetch in flight (no prior success to serve) — join it
@@ -255,12 +300,12 @@ func (c *CachedMarketsReader) fetchPairs(
 		case <-ch:
 			if entry.err != nil {
 				obs.APICacheOpsTotal.WithLabelValues("markets", op, "miss").Inc()
-				return nil, "", entry.err
+				return nil, "", time.Time{}, false, entry.err
 			}
 			obs.APICacheOpsTotal.WithLabelValues("markets", op, "hit").Inc()
-			return entry.pairs, entry.cursor, nil
+			return entry.pairs, entry.cursor, entry.at, false, nil
 		case <-ctx.Done():
-			return nil, "", ctx.Err()
+			return nil, "", time.Time{}, false, ctx.Err()
 		}
 	}
 
@@ -276,8 +321,10 @@ func (c *CachedMarketsReader) fetchPairs(
 	rows, cursor, err := upstream(ctx)
 
 	c.mu.Lock()
+	var at time.Time
 	if err == nil {
-		entry.at = time.Now()
+		at = time.Now()
+		entry.at = at
 		entry.pairs = rows
 		entry.cursor = cursor
 		entry.flight = nil
@@ -287,7 +334,7 @@ func (c *CachedMarketsReader) fetchPairs(
 	}
 	c.mu.Unlock()
 	close(done)
-	return rows, cursor, err
+	return rows, cursor, at, false, err
 }
 
 // refreshPairs runs the upstream call OFF the request path for the

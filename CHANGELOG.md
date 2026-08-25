@@ -15,6 +15,17 @@ against.
 
 ## [Unreleased]
 
+## [v0.42.0] — 2026-08-25
+
+### Added
+- Declared fiat-peg pricing (AUDD/AUDR → AUD × served fx), price_basis=declared_peg. (#154)
+- USDC + SAC quote bridges for directory pricing. (#152)
+
+### Fixed
+- FX confirm-veto: an agreeing 7d history majority refuses a pending confirm, stopping the persistent-broken-upstream (UZS) re-poison; genuine devaluations still confirm. Outlier-drop counter gains a pair label. (#157)
+- /v1/assets/{id} detail overlay is substance-gated; dust prices no longer leak onto detail. (#154)
+- Account ops pages: detached budget for the tx-outcome stitch. (#155)
+
 ### Fixed
 
 - **FX guard: history-majority confirm veto (the Massive UZS second

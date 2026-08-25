@@ -1,0 +1,29 @@
+# systemd timer: nightly verify-archive Tier B (checkpoint anchor).
+#
+# Rendered by Ansible. Per docs/operations/archival-node-bringup.md
+# §"Per-region trust + verification model" — R1 (the integrity leader per
+# ADR-0016) runs the Tier B checkpoint anchor nightly alongside Tier A. R2 +
+# R3 don't run this timer (they delegate to R1).
+#
+# Schedule: 04:37 UTC + up to 10 min of jitter. Picked to:
+#   - Sit AFTER the Tier A chain run (03:23 UTC) so the two heavy LCM walks
+#     don't contend for host I/O and never race the shared incremental
+#     state file (the run-heavy-job.sh singleton lock enforces this too).
+#   - Sit BEFORE the European morning operator window so a fresh failure is
+#     investigable on first-coffee.
+#   - Off-minute (:37) avoids cron-aligned thundering herd.
+#
+# Persistent=true: if the box was off at 04:37, fire on next boot.
+
+[Unit]
+Description=Nightly verify-archive Tier B (checkpoint anchor)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/archival-node-bringup.md
+
+[Timer]
+OnCalendar=*-*-* 04:37:00 UTC
+RandomizedDelaySec=600
+Persistent=true
+Unit=verify-archive-tier-b.service
+
+[Install]
+WantedBy=timers.target

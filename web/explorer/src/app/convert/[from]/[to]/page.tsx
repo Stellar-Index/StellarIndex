@@ -8,6 +8,7 @@ import { assetHrefFor } from '@/lib/fiat-slugs';
 import { buildConvertParams } from '@/lib/convert-params';
 import { ConvertPair } from './ConvertPair';
 import { ConvertChart } from './ConvertChart';
+import { ConvertLiveRate, ConvertSnippets } from './ConvertLive';
 import { API_BASE_URL } from '@/api/client';
 import { isCIStub } from '@/lib/buildFetch';
 
@@ -34,13 +35,6 @@ const FALLBACK_TICKERS = [
   'HKD',
   'SEK',
 ];
-
-// Common amounts to render as static "X = Y" snippets for SEO body
-// content. Picks naturally-queried ladder values across orders of
-// magnitude — Google search-volume tools show "1 X to Y", "100 X
-// to Y", "1000 X to Y" all rank as distinct queries with non-trivial
-// volume even for the same currency pair.
-const SNIPPET_AMOUNTS = [1, 10, 100, 1000, 10000];
 
 type Params = Promise<{ from: string; to: string }>;
 
@@ -230,18 +224,16 @@ export default async function ConvertPage({ params }: { params: Params }) {
             </span>
           )}
         </h1>
-        {rate != null ? (
-          <p className="text-ink font-mono text-2xl tabular-nums">
-            1 {f} = {formatRate(rate)} {t}
-          </p>
-        ) : (
-          <p className="text-ink-muted text-sm">Rate currently unavailable.</p>
-        )}
-        {inverse != null && (
-          <p className="text-ink-body font-mono text-sm tabular-nums">
-            1 {t} = {formatRate(inverse)} {f}
-          </p>
-        )}
+        {/* Header rate + inverse hydrate LIVE off the shared query
+            (W8 recon 10a): the baked rate paints first, then the client
+            swaps in the live value so the header actually tracks the
+            "current" rate the copy claims. */}
+        <ConvertLiveRate
+          from={f}
+          to={t}
+          initialRate={rate}
+          initialInverse={inverse}
+        />
       </header>
 
       <ConvertPair
@@ -253,33 +245,15 @@ export default async function ConvertPage({ params }: { params: Params }) {
 
       <ConvertChart from={f} to={t} />
 
-      {rate != null && (
-        <section className="rounded-card border-line bg-surface border p-5">
-          <h2 className="mb-4 text-lg font-semibold tracking-tight">
-            {f} to {t} at common amounts
-          </h2>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {SNIPPET_AMOUNTS.map((amt) => (
-              <div
-                key={amt}
-                className="bg-surface-muted flex items-baseline justify-between rounded-md px-3 py-2"
-              >
-                <span className="text-ink-body font-mono tabular-nums">
-                  {amt.toLocaleString('en-US')} {f}
-                </span>
-                <span className="text-ink font-mono font-medium tabular-nums">
-                  {formatRate(amt * rate)} {t}
-                </span>
-              </div>
-            ))}
-          </div>
-          <p className="text-ink-muted mt-4 text-xs">
-            All values calculated at the current mid-market rate of 1 {f} ={' '}
-            {formatRate(rate)} {t}. Rates update on each forex-source refresh
-            tick.
-          </p>
-        </section>
-      )}
+      {/* Common-amounts ladder hydrates LIVE off the same shared query
+          so its "= Y" values and "current mid-market rate" caption track
+          the same live rate as the widget (W8 recon 10a). */}
+      <ConvertSnippets
+        from={f}
+        to={t}
+        initialRate={rate}
+        initialInverse={inverse}
+      />
 
       <section className="flex flex-wrap gap-2 text-sm">
         <Link
@@ -304,15 +278,6 @@ export default async function ConvertPage({ params }: { params: Params }) {
       </section>
     </div>
   );
-}
-
-function formatRate(n: number): string {
-  if (!Number.isFinite(n)) return '—';
-  if (Math.abs(n) >= 1000)
-    return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
-  if (Math.abs(n) >= 1) return n.toFixed(4);
-  if (Math.abs(n) >= 0.01) return n.toFixed(6);
-  return n.toFixed(8);
 }
 
 function formatRateForMeta(n: number): string {
