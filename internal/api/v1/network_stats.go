@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -12,6 +13,21 @@ import (
 // reads through. timescale.Store satisfies via GetNetworkStats.
 type NetworkStatsReader interface {
 	GetNetworkStats(ctx context.Context) (timescale.NetworkStats, error)
+}
+
+// networkStatsStaleReader is the optional capability a NetworkStatsReader
+// exposes when it can report each served value's freshness — the TTL cache
+// (CachedNetworkStatsReader) implements it; the raw store does not. When a
+// reader satisfies it, handleNetworkStats stamps an honest as_of (the
+// served data's real observation time) and flags.stale, instead of the
+// cache's SWR stale-serve path silently asserting stale:false / as_of=now
+// over a value a failing refresh has let age past the TTL (REC-05).
+//
+// GetNetworkStatsAt returns the stats, observedAt (the served value's fetch
+// time; zero → as_of=now, not stale), and stale (the served value is past
+// the cache TTL). Mirrors marketsStaleReader.
+type networkStatsStaleReader interface {
+	GetNetworkStatsAt(ctx context.Context) (timescale.NetworkStats, time.Time, bool, error)
 }
 
 // NetworkStats is the wire shape for /v1/network/stats. Numeric
@@ -64,7 +80,21 @@ func (s *Server) handleNetworkStats(w http.ResponseWriter, r *http.Request) {
 			"This deployment hasn't wired the network-stats reader yet.")
 		return
 	}
-	stats, err := s.networkStats.GetNetworkStats(r.Context())
+	// Honest freshness: when the reader can report it (the TTL cache does;
+	// the raw store doesn't), stamp flags.stale + the served value's real
+	// observation time. A zero observedAt (live/uncached read) leaves
+	// as_of to default to now with stale=false — truthful and unchanged.
+	var (
+		stats      timescale.NetworkStats
+		observedAt time.Time
+		stale      bool
+		err        error
+	)
+	if sr, ok := s.networkStats.(networkStatsStaleReader); ok {
+		stats, observedAt, stale, err = sr.GetNetworkStatsAt(r.Context())
+	} else {
+		stats, err = s.networkStats.GetNetworkStats(r.Context())
+	}
 	if err != nil {
 		s.logger.Warn("network stats", "err", err)
 		writeProblem(w, r,
@@ -92,5 +122,9 @@ func (s *Server) handleNetworkStats(w http.ResponseWriter, r *http.Request) {
 		ExchangeSources: exchangeSources,
 		TotalSources:    totalSources,
 	}
-	writeJSON(w, out, Flags{})
+	env := Envelope{Data: out, Flags: Flags{Stale: stale}}
+	if !observedAt.IsZero() {
+		env.AsOf = observedAt.UTC()
+	}
+	writeEnvelope(w, env)
 }

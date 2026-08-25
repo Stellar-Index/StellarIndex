@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -135,5 +136,90 @@ func TestNetworkStats_ReaderError500(t *testing.T) {
 	body, _ := readAll(resp)
 	if !strings.Contains(body, "network-stats-error") {
 		t.Errorf("error type missing: %s", body)
+	}
+}
+
+// stubStaleNetworkStatsReader implements the (unexported) stale-aware
+// capability structurally: the handler type-asserts on the method set, so
+// a test stub carrying GetNetworkStatsAt exercises the honest-freshness
+// path without reaching for the real TTL cache.
+type stubStaleNetworkStatsReader struct {
+	stats      timescale.NetworkStats
+	observedAt time.Time
+	stale      bool
+}
+
+func (r *stubStaleNetworkStatsReader) GetNetworkStats(_ context.Context) (timescale.NetworkStats, error) {
+	return r.stats, nil
+}
+
+func (r *stubStaleNetworkStatsReader) GetNetworkStatsAt(_ context.Context) (timescale.NetworkStats, time.Time, bool, error) {
+	return r.stats, r.observedAt, r.stale, nil
+}
+
+// TestNetworkStats_HonestStaleAsOf pins REC-05 for /v1/network/stats: when
+// the reader serves an SWR-stale value, the envelope must stamp
+// flags.stale=true and an as_of equal to the served value's real
+// observation time — NOT stale:false / as_of=now, which would assert
+// freshness over data a failing refresh has let age. Mirrors the
+// /v1/markets honest-staleness contract (#160).
+func TestNetworkStats_HonestStaleAsOf(t *testing.T) {
+	observed := time.Date(2026, 8, 25, 10, 0, 0, 0, time.UTC)
+	reader := &stubStaleNetworkStatsReader{
+		stats:      timescale.NetworkStats{MarketsCount24h: 100, AssetsIndexed: 200, LatestLedger: 300},
+		observedAt: observed,
+		stale:      true,
+	}
+	srv := v1.New(v1.Options{NetworkStats: reader})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/network/stats")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Flags struct {
+			Stale bool `json:"stale"`
+		} `json:"flags"`
+		AsOf time.Time `json:"as_of"`
+	}
+	body, _ := readAll(resp)
+	if err := json.NewDecoder(strings.NewReader(body)).Decode(&env); err != nil {
+		t.Fatalf("decode: %v (body=%s)", err, body)
+	}
+	if !env.Flags.Stale {
+		t.Errorf("flags.stale = false, want true (SWR stale-serve must not assert fresh); body=%s", body)
+	}
+	if !env.AsOf.Equal(observed) {
+		t.Errorf("as_of = %s, want the served value's observed-at %s (never now over aged data)", env.AsOf, observed)
+	}
+}
+
+// TestNetworkStats_FreshServeNotStale is the other side: a fresh serve
+// stamps stale=false and an as_of at the served value's recent observed-at
+// (here still non-zero and NOT flagged stale).
+func TestNetworkStats_FreshServeNotStale(t *testing.T) {
+	observed := time.Date(2026, 8, 25, 11, 59, 0, 0, time.UTC)
+	reader := &stubStaleNetworkStatsReader{
+		stats:      timescale.NetworkStats{MarketsCount24h: 1},
+		observedAt: observed,
+		stale:      false,
+	}
+	srv := v1.New(v1.Options{NetworkStats: reader})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/network/stats")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Flags struct {
+			Stale bool `json:"stale"`
+		} `json:"flags"`
+	}
+	body, _ := readAll(resp)
+	_ = json.NewDecoder(strings.NewReader(body)).Decode(&env)
+	if env.Flags.Stale {
+		t.Errorf("flags.stale = true on a fresh serve, want false; body=%s", body)
 	}
 }
