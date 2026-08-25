@@ -206,14 +206,14 @@ func (s *Store) ListDivergenceSeries(ctx context.Context, assetID, quoteID, refe
 	}
 	bucket := DivergenceSeriesBucket(sinceDays)
 	const q = `
-		SELECT time_bucket(($4 || ' seconds')::interval, observed_at) AS bucket,
+		SELECT time_bucket(make_interval(secs => $4), observed_at) AS bucket,
 		       last(delta_pct, observed_at)::text,
 		       last(our_price, observed_at)::text,
 		       last(ref_price, observed_at)::text,
 		       bool_or(status = 'firing')
 		  FROM divergence_observations
 		 WHERE asset_id = $1 AND quote_id = $2 AND reference = $3
-		   AND observed_at > now() - ($5 || ' days')::interval
+		   AND observed_at > now() - make_interval(days => $5)
 		 GROUP BY bucket
 		 ORDER BY bucket ASC`
 	rows, err := s.db.QueryContext(ctx, q, assetID, quoteID, reference, int64(bucket.Seconds()), sinceDays)
