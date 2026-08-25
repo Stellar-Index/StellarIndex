@@ -63,7 +63,7 @@ func chCap67Movements(args []string) error {
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 
-	start, last, err := cap67Range(ctx, *chAddr, uint32(*from), uint32(*to)) //nolint:gosec // ledger sequences fit uint32
+	start, last, err := Cap67Range(ctx, *chAddr, uint32(*from), uint32(*to)) //nolint:gosec // ledger sequences fit uint32
 	if err != nil {
 		return err
 	}
@@ -101,9 +101,9 @@ func chCap67Movements(args []string) error {
 	}
 }
 
-// cap67Range resolves the derive range: from=0 resumes from the
+// Cap67Range resolves the derive range: from=0 resumes from the
 // watermark (P23 boundary on first run); to=0 targets the lake tip.
-func cap67Range(ctx context.Context, chAddr string, from, to uint32) (uint32, uint32, error) {
+func Cap67Range(ctx context.Context, chAddr string, from, to uint32) (uint32, uint32, error) {
 	start := from
 	if start == 0 {
 		wm, err := clickhouse.Cap67MovementsWatermark(ctx, chAddr)
@@ -117,9 +117,23 @@ func cap67Range(ctx context.Context, chAddr string, from, to uint32) (uint32, ui
 	}
 	last := to
 	if last == 0 {
-		tip, err := clickhouse.MaxLedger(ctx, chAddr)
+		// CONTIGUITY GATE (money-display correctness): the LiveSink drops
+		// whole ledgers under buffer pressure, so the lake can have holes
+		// near the tip. Reading to the raw max would derive PAST a hole and
+		// advance the watermark past it — and since we resume from
+		// watermark+1 with no trailing re-derive, that ledger's classic/native
+		// movements would be LOST PERMANENTLY (the raw lake self-heals via
+		// ch-live-catchup, but account_movements never revisits it). Clamp the
+		// upper bound to the contiguous watermark from `start` — the same
+		// guard the real-time projector uses (projector.resolveTip) — so the
+		// derive STALLS at a hole (delayed, not lost) until catch-up heals it.
+		// Keyed off stellar.ledgers, the per-ledger commit marker flushed LAST:
+		// present-in-ledgers ⟹ that ledger's contract_events are durable.
+		// Returns start-1 when start is itself a hole / the lake hasn't reached
+		// it, which the caller's `last < start` guard treats as "nothing to do".
+		tip, err := clickhouse.ContiguousWatermark(ctx, chAddr, start)
 		if err != nil {
-			return 0, 0, fmt.Errorf("resolve lake tip: %w", err)
+			return 0, 0, fmt.Errorf("resolve contiguous lake tip: %w", err)
 		}
 		last = tip
 	}

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/ops/chops"
 	chstore "github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
@@ -94,5 +95,67 @@ func TestContiguousWatermark_HoleAtFrom(t *testing.T) {
 	if healed < from+5 {
 		t.Fatalf("ContiguousWatermark(from=%d) after healing = %d, want >= %d "+
 			"(the contiguous run [from, from+5] should let it advance)", from, healed, from+5)
+	}
+}
+
+// TestCap67Range_StallsAtHole is the money-display correctness proof for the
+// cap67 movements derive: its upper bound MUST clamp to the contiguous
+// watermark, not the raw lake max. The LiveSink drops whole ledgers under
+// pressure, so a near-tip hole can exist; the pre-fix derive read to
+// MaxLedger and advanced its watermark PAST the hole with no trailing
+// re-derive — permanently dropping that ledger's classic/native account
+// movements. This proves Cap67Range now STALLS before an interior hole.
+//
+// Red-proof: revert the ContiguousWatermark call in Cap67Range back to
+// clickhouse.MaxLedger and this fails — `last` jumps to the global max
+// (>= from+10), i.e. the derive would step past the hole at from+6.
+func TestCap67Range_StallsAtHole(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+
+	// Isolated high range, distinct from the other watermark test.
+	const from = uint32(216_000_000)
+
+	sink, err := chstore.Open(ctx, addr, 1000)
+	if err != nil {
+		t.Fatalf("open sink: %v", err)
+	}
+	t.Cleanup(func() { _ = sink.Close(ctx) })
+
+	seed := func(seq uint32) {
+		ext := chstore.LedgerExtract{Ledger: chstore.LedgerRow{
+			LedgerSeq: seq, CloseTime: time.Date(2027, 8, 1, 0, 0, 0, 0, time.UTC),
+			LedgerHash: "aa01", PrevHash: "bb01", ProtocolVersion: 22, BucketListHash: "cc01",
+			TotalCoins: 1, FeePool: 1, BaseFee: 100, BaseReserve: 5_000_000,
+		}}
+		if err := sink.Add(ctx, ext); err != nil {
+			t.Fatalf("sink add ledger %d: %v", seq, err)
+		}
+	}
+	// Present [from+1, from+5], HOLE at from+6, present [from+7, from+10] —
+	// an interior hole ABOVE the resume point, exactly the near-tip drop shape.
+	for seq := from + 1; seq <= from+5; seq++ {
+		seed(seq)
+	}
+	for seq := from + 7; seq <= from+10; seq++ {
+		seed(seq)
+	}
+	if err := sink.Flush(ctx); err != nil {
+		t.Fatalf("flush hole seed: %v", err)
+	}
+
+	// from explicit (skip the watermark read); to=0 → resolve the contiguous tip.
+	start, last, err := chops.Cap67Range(ctx, addr, from+1, 0)
+	if err != nil {
+		t.Fatalf("Cap67Range: %v", err)
+	}
+	if start != from+1 {
+		t.Fatalf("start = %d, want %d", start, from+1)
+	}
+	if last != from+5 {
+		t.Fatalf("Cap67Range last = %d, want %d — the derive MUST stall before the "+
+			"hole at %d, not step past it (pre-fix MaxLedger would return >= %d and "+
+			"permanently drop the hole ledger's movements)", last, from+5, from+6, from+10)
 	}
 }
