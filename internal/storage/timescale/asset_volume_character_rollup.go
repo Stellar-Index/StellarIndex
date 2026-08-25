@@ -231,7 +231,28 @@ func (s *Store) rollAssetVolumeCharacter(ctx context.Context) ([]assetVolumeChar
 	query := strings.Replace(assetVolumeCharacterRollupSQLTemplate, "{{ALIAS_VALUES}}", aliasValues, 1)
 	args := append([]any{window}, aliasArgs...)
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	// This all-asset roll scans ~145M trades and shares the primary with the
+	// customer-facing API. Run it on a DEDICATED connection whose footprint is
+	// bounded so it can never starve serving (v0.44.1 regression fix):
+	//   - max_parallel_workers_per_gather=2 — leaves cores free for the API
+	//     rather than fanning the scan across every worker.
+	//   - statement_timeout=25min — a wedge guard: if it can't finish, it
+	//     aborts and the last good rollup stands (the worker retries next
+	//     cycle). Session settings, not SET LOCAL, so they cover the read
+	//     that runs outside any transaction.
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: rollAssetVolumeCharacter conn: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.ExecContext(ctx, "SET max_parallel_workers_per_gather = 2"); err != nil {
+		return nil, fmt.Errorf("timescale: rollAssetVolumeCharacter cap parallelism: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, "SET statement_timeout = '25min'"); err != nil {
+		return nil, fmt.Errorf("timescale: rollAssetVolumeCharacter set timeout: %w", err)
+	}
+
+	rows, err := conn.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: RefreshAssetVolumeCharacter roll: %w", err)
 	}
