@@ -15,6 +15,17 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- `stellarindex_priceless_coverage_check_stale` paged a perma-stale FALSE
+  positive from the **indexer** and **api** instances. The
+  `..._last_success_unix` gauge is registered in the shared obs registry, so
+  every binary exports it, but ONLY the aggregator runs the coverage sweep
+  that sets it — on the other two it sits at unix 0 forever, so `time() - 0`
+  crossed the 1800s staleness threshold on every evaluation. Scoped the alert
+  expr to `job="stellarindex-aggregator"`; a genuinely-wedged aggregator
+  (its own gauge stuck at 0) still fires, and a promtool case guards the
+  non-aggregator-instance suppression.
+
 ## [v0.44.2] — 2026-08-25
 
 Tested against Stellar protocol 22.
