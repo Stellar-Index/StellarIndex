@@ -143,7 +143,18 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: go mod download
+      - name: go mod download (retry on GOPROXY flake)
+        # proxy.golang.org / sum.golang.org return transient 5xx (e.g. the
+        # 502 that red-failed #172 and generated a run of "CI failed" emails
+        # for a non-issue). Retry with backoff so a proxy hiccup doesn't fail
+        # the build; a genuine missing/renamed module still fails after 3.
+        run: |
+          for i in 1 2 3; do
+            go mod download && exit 0
+            echo "::warning::go mod download failed (attempt $i/3) — likely a transient GOPROXY/sumdb 5xx; retrying"
+            sleep $((i * 15))
+          done
+          echo "::error::go mod download failed after 3 attempts"; exit 1
       - name: Test with race detector
         # TestI128TruncationGuard does a repo-wide go/packages walk and
         # can legitimately exceed 2m on hosted runners with the race
@@ -178,7 +189,18 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: go mod download
+      - name: go mod download (retry on GOPROXY flake)
+        # proxy.golang.org / sum.golang.org return transient 5xx (e.g. the
+        # 502 that red-failed #172 and generated a run of "CI failed" emails
+        # for a non-issue). Retry with backoff so a proxy hiccup doesn't fail
+        # the build; a genuine missing/renamed module still fails after 3.
+        run: |
+          for i in 1 2 3; do
+            go mod download && exit 0
+            echo "::warning::go mod download failed (attempt $i/3) — likely a transient GOPROXY/sumdb 5xx; retrying"
+            sleep $((i * 15))
+          done
+          echo "::error::go mod download failed after 3 attempts"; exit 1
       - name: make test-integration
         # testcontainers-go spins TimescaleDB/Redis/MinIO; ubuntu-latest ships
         # a Docker daemon. The go-test deadline lives in the Makefile target

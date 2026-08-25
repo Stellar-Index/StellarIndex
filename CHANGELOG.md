@@ -26,6 +26,14 @@ against.
   `contract_events_daily` pre-aggregation (like the daily-activity and
   event-breakdown views already are) — measured **0.5s vs 57s**, no memory
   kill. Last-seen is day-grain (sufficient for the roster column).
+- `/v1/anomalies` returned 500 on every request — `FreezeReasonCounts`
+  and `FreezeDailyReasonCounts` used the same fragile `($1 || ' days')`
+  interval concat that took down `/v1/divergence`: it types `$1` as
+  `text`, but the handler passes an `int`, and pgx v5 has no int→text
+  encode plan. Also fixed the latent same bug in `ListDivergenceSeries`
+  (`/v1/divergence/series`, `$4`/`$5`). All now use `make_interval`, and
+  a package-wide test forbids the concat form so it can't return a third
+  time.
 
 ## [v0.44.1] — 2026-08-25
 

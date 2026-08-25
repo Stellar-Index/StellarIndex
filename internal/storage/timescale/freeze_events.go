@@ -518,7 +518,7 @@ func (s *Store) FreezeReasonCounts(ctx context.Context, sinceDays int) ([]Freeze
 	const q = `
 		SELECT reason, count(*)::bigint
 		  FROM freeze_events
-		 WHERE frozen_at > now() - ($1 || ' days')::interval
+		 WHERE frozen_at > now() - make_interval(days => $1)
 		 GROUP BY reason
 		 ORDER BY count(*) DESC`
 	rows, err := s.db.QueryContext(ctx, q, sinceDays)
@@ -563,7 +563,7 @@ func (s *Store) FreezeDailyReasonCounts(ctx context.Context, sinceDays int) ([]F
 		SELECT date_trunc('day', frozen_at AT TIME ZONE 'UTC') AS day,
 		       reason, count(*)::bigint
 		  FROM freeze_events
-		 WHERE frozen_at > now() - ($1 || ' days')::interval
+		 WHERE frozen_at > now() - make_interval(days => $1)
 		 GROUP BY day, reason
 		 ORDER BY day ASC, reason ASC`
 	rows, err := s.db.QueryContext(ctx, q, sinceDays)
