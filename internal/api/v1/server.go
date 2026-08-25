@@ -1214,7 +1214,7 @@ type Options struct {
 }
 
 // New constructs a Server and mounts all v1 routes.
-func New(opts Options) *Server {
+func New(opts Options) *Server { //nolint:funlen // pure field-mapping constructor — one line per Options field; splitting the wiring into helpers would scatter it and gains nothing.
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.Default()
