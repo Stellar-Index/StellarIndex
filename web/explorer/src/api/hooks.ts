@@ -644,6 +644,32 @@ export function useFiatUsdSeries(
   });
 }
 
+/**
+ * useNativeCoin — native XLM shaped as a Coin row for the "Top assets by
+ * activity" grid. Native has NO classic_assets row, so it never appears in
+ * /v1/assets (useCoins) — which is why that grid ranked USDC #1 and XLM,
+ * definitionally the most-traded Stellar asset, was invisible. Sourced from
+ * /v1/assets/native (the special native detail path): it carries price_usd,
+ * volume_24h_usd, change_24h_pct, observation_count, and the 24h sparkline.
+ * `code` is null on that path, so backfill 'XLM'.
+ */
+export function useNativeCoin(options?: { sparkline?: boolean; enabled?: boolean }) {
+  return useQuery<Coin | null>({
+    queryKey: ['/v1/assets/native', 'coin', options?.sparkline ? 'sparkline' : ''],
+    enabled: options?.enabled ?? true,
+    retry: false,
+    staleTime: 30_000,
+    queryFn: async () => {
+      const env = await apiGet<{ data: Coin | null }>('/v1/assets/native', {
+        ...(options?.sparkline ? { sparkline: 'true' } : {}),
+      });
+      const c = env.data;
+      if (!c) return null;
+      return { ...c, code: c.code ?? 'XLM' };
+    },
+  });
+}
+
 export function useCoins(
   limit = 100,
   issuer?: string,

@@ -23,6 +23,16 @@ against.
   USD line from `/v1/chart`, and USDC — the dollar reference, which has no
   USDC/USD series of its own — shows a "≈ $1.00 reference" panel (linking
   the divergence board for depeg watching) instead of an empty grid.
+- Explorer "Top assets by activity" ranked by all-time `observation_count`
+  (a cumulative counter that floats long-lived stablecoins to the top) and
+  omitted native XLM entirely (it has no `classic_assets` row, so it never
+  appears in `/v1/assets`) — so USDC ranked #1 and XLM, the most-traded
+  asset on Stellar, was absent. Now ranks by trailing-24h volume and injects
+  native XLM (`useNativeCoin` over `/v1/assets/native`); XLM takes the #1
+  spot it earns on volume (~$43M vs USDC's ~$36M).
+- Explorer nav: restored a top-level **Ledgers** entry in the Stellar
+  section (it had been folded into the Network hub, making it undiscoverable
+  from the rail).
 - `/v1/protocols/{name}` per-contract activity ran the raw
   `contract_events FINAL` scan (merge-on-read of the 12.8B-row
   ReplacingMergeTree), which blew ClickHouse's 2 GiB per-query memory
