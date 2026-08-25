@@ -16,6 +16,10 @@ import {
   formatSubunitPrice,
 } from '@/lib/format';
 import { serializeJsonLd, datasetJsonLd, ogImageFor } from '@/lib/seo';
+import {
+  scamFlagTags,
+  stellarExpertDirectoryUrl,
+} from '@/lib/directory-tags';
 import { Badge, Breadcrumbs, Callout, Container } from '@/components/ui';
 import { AssetClientFallback } from './AssetClientFallback';
 import { AssetPathView } from './AssetPathView';
@@ -829,6 +833,12 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
     ],
     contentUrl: `https://api.stellarindex.io/v1/assets/${encodeURIComponent(coin.slug)}`,
   });
+  // §3 scam-label surfacing — curated third-party directory flags on the
+  // issuer (account_directory / stellar-expert public directory). These are
+  // DISPLAY-ONLY: they decide only whether to render a warning banner, and
+  // never gate price or verification.
+  const flaggedDirTags = scamFlagTags(coin.issuer_directory_tags);
+  const directorySourceUrl = stellarExpertDirectoryUrl(coin.issuer);
   return (
     <Container className="space-y-8 py-8 sm:py-10">
       <script
@@ -896,6 +906,33 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
               curated directory of malicious accounts — do not trust this asset,
               do not establish trustlines, and do not execute the prices below
               as if they reflected an honest market.
+            </Callout>
+          </div>
+        )}
+        {flaggedDirTags.length > 0 && (
+          <div role="alert">
+            <Callout tone="bad" title="Flagged by community directory">
+              ⚠ Flagged by the stellar-expert community directory as:{' '}
+              <strong className="font-semibold">
+                {flaggedDirTags.join(', ')}
+              </strong>
+              {coin.issuer_directory_domain && (
+                <> ({coin.issuer_directory_domain})</>
+              )}
+              . This is third-party attribution from the public directory —
+              display-only, not a StellarIndex verification signal. Review
+              carefully before trusting this asset, establishing trustlines, or
+              executing the prices below.{' '}
+              {directorySourceUrl && (
+                <a
+                  href={directorySourceUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium underline"
+                >
+                  View directory entry ↗
+                </a>
+              )}
             </Callout>
           </div>
         )}

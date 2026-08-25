@@ -285,6 +285,50 @@ type AssetDetail struct {
 	// prominent warning when present.
 	IssuerScamReason string `json:"issuer_scam_reason,omitempty"`
 
+	// IssuerDirectoryTags / IssuerDirectoryDomain / IssuerDirectoryName
+	// mirror the curated third-party label the account_directory table
+	// (migration 0136; synced from the MIT-licensed
+	// stellar-expert/public-directory) carries for this asset's issuer
+	// G-address, joined additively onto the payload. Tags follow the
+	// upstream registry (#exchange, #anchor, #issuer, #malicious,
+	// #unsafe, …); clients should surface `malicious`/`unsafe`/`fraud`/
+	// `scam`/`hack`/`phishing` as prominent warnings.
+	//
+	// DISPLAY-ONLY, third-party attribution — per the table's doc
+	// contract these fields are NEVER an input to verification,
+	// scam-suppression, or pricing: they do not alter price_usd, the
+	// verified status, or any gate. Distinct from IssuerScamReason,
+	// which is the hand-curated in-binary scamIssuers list; this is the
+	// live synced directory and covers issuers the static list misses
+	// (e.g. the wash-inflated scam AUD, audrev-stellar.com). Omitted
+	// when no directory reader is wired, the issuer isn't listed, or the
+	// lookup fails (best-effort — a directory outage never fails the
+	// asset response).
+	IssuerDirectoryTags   []string `json:"issuer_directory_tags,omitempty"`
+	IssuerDirectoryDomain string   `json:"issuer_directory_domain,omitempty"`
+	IssuerDirectoryName   string   `json:"issuer_directory_name,omitempty"`
+
+	// VolumeCharacter classifies the asset's trailing-window trade
+	// volume by account structure (wash-and-scam-signals design §2):
+	//   - "market"       — honest multi-account market activity (default).
+	//   - "operational"  — an issuer-side mint/redeem wrap corridor
+	//                      (USDC↔USDCAllow, AUDD↔AUDR); real, but not
+	//                      market activity.
+	//   - "concentrated" — >90% of volume in one account pair on a
+	//                      market-styled pair (volume-painting wash,
+	//                      third-party ping-pong, dust-bot).
+	// ANALYTICS / DISPLAY only — it does NOT re-rank anything (that is
+	// design §4, operator-policy-gated) and does not feed pricing or
+	// verification. Omitted when the volume-character reader isn't wired.
+	VolumeCharacter string `json:"volume_character,omitempty"`
+
+	// VolumeCharacterSignals are the underlying account-structure signals
+	// VolumeCharacter is derived from — and the fields §4's
+	// concentration-adjusted ranking would sort on. Present whenever the
+	// reader is wired (zeroed for an asset with no priced trades in the
+	// window).
+	VolumeCharacterSignals *AssetVolumeCharacterSignals `json:"volume_character_signals,omitempty"`
+
 	// Slug is the friendly short identifier for the asset (e.g.
 	// "USDC" for the canonical Circle USDC, or the issuer-
 	// disambiguated form like "USDC-GA5Z…" for collisions). Mirror
@@ -735,6 +779,9 @@ func (s *Server) handleAssetListFromAssets(
 	// fillDeclaredPegPricesInListing's ordering contract.
 	s.fillDeclaredPegPricesInListing(r.Context(), out)
 	s.fillImagesFromSep1(r.Context(), out)
+	// Curated third-party issuer label (account_directory) — one batch
+	// query for the page's issuer set (no N+1). DISPLAY-ONLY; additive.
+	s.fillIssuerDirectoryTags(r.Context(), out)
 	env := Envelope{Data: out, Flags: Flags{}}
 	if hasMore && len(out) > 0 {
 		last := rows[len(rows)-1]
@@ -2040,6 +2087,9 @@ func (s *Server) fetchClassicUnifiedRows(w http.ResponseWriter, r *http.Request,
 	// fillDeclaredPegPricesInListing's ordering contract.
 	s.fillDeclaredPegPricesInListing(r.Context(), out)
 	s.fillImagesFromSep1(r.Context(), out)
+	// Curated third-party issuer label (account_directory) — one batch
+	// query for the page's issuer set (no N+1). DISPLAY-ONLY; additive.
+	s.fillIssuerDirectoryTags(r.Context(), out)
 	s.attachSparkline7dIfRequested(r, out)
 	nextInner := ""
 	if hasMore && len(out) > 0 {
@@ -2242,6 +2292,21 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// for fiat:* (no asset-catalogue row); a no-op when no AssetsReader is
 	// wired or the asset has no asset-catalogue row.
 	s.applyAssetExtensionFields(r.Context(), &detail, parsed)
+
+	// Curated third-party issuer label (account_directory, migration
+	// 0136) — additive issuer_directory_{tags,domain,name}. DISPLAY-ONLY
+	// (see asset_directory_tags.go): runs AFTER every price/gate overlay
+	// and is never read by pricing/verification, so it cannot move
+	// price_usd or any gate. Best-effort; a nil reader / unlisted issuer
+	// / lookup failure just omits the fields.
+	s.applyIssuerDirectoryTags(r.Context(), &detail)
+
+	// Volume-character overlay (design §2) — trailing-window account-
+	// structure signals + derived volume_character (market / operational /
+	// concentrated). ANALYTICS-only: reads nothing from and writes nothing
+	// to the price/gate surfaces, and never re-ranks (§4). Best-effort;
+	// omitted when no reader is wired or the lookup fails.
+	s.applyVolumeCharacter(r.Context(), &detail, parsed)
 
 	// Declared-peg price fill — mirrors the listing paths' call. Runs
 	// LAST among the price producers, so it fills only when neither the
