@@ -220,9 +220,16 @@ sysctl_tunings:
   vm.swappiness: 1
   vm.dirty_ratio: 10
   vm.dirty_background_ratio: 3
-  # Transparent huge pages OFF (Postgres + BucketListDB recommendation)
-  vm.overcommit_memory: 2
-  vm.overcommit_ratio: 80
+  # Strict overcommit (2) makes malloc fail predictably instead of the
+  # OOM-killer nuking a critical process — sound on r1 (188 GB + 16 G swap →
+  # a generous commit budget). But on a small VM the budget is
+  # `overcommit_ratio% × RAM (+ swap)`, e.g. 80% × 20 GB = 16 GB, which
+  # ClickHouse + captive-core + the Go services routinely exceed → malloc/
+  # fork fail with "Cannot allocate memory" despite free RAM. Memory-
+  # constrained hosts (test-net VMs) override vm_overcommit_memory: 0
+  # (heuristic overcommit) — see the note there and the ClickHouse cap.
+  vm.overcommit_memory: "{{ vm_overcommit_memory | default(2) }}"
+  vm.overcommit_ratio: "{{ vm_overcommit_ratio | default(80) }}"
 
 # ───── Postgres ──────────────────────────────────────────────────────
 postgres_version:        "15"

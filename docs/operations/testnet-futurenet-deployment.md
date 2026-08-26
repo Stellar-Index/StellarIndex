@@ -84,6 +84,19 @@ test-net inventory — r1 is never touched. Order per VM:
    (Fresh/empty bucket only; on restart it **resumes** from the last exported
    ledger. `GALEXIE_START` is honored only on a fresh bucket — if you change it,
    wipe `galexie-live` first, or the resume wins.)
+
+   > ⚠ **Keep `galexie_start_ledger` CLOSE to the live tip** (a few hundred
+   > ledgers). captive-core replays start→tip as a *buffered* catchup only when
+   > that gap is small; a large gap (thousands of ledgers) makes it do an
+   > **online-catchup that SKIPS to live**, leaving galexie parked — it tracks
+   > consensus but never exports, cycling "Waiting for trigger ledger". This
+   > also bites when a **full role re-deploy restarts galexie repeatedly**: each
+   > restart resumes from the last exported ledger, and if the tip has run far
+   > ahead meanwhile, galexie strands. **Recovery** = stop galexie+indexer, wipe
+   > `galexie-live`, `truncate ingestion_cursors` (+ `account_observer_watermark`),
+   > set `galexie_start_ledger`/`backfill_from_ledger` a few hundred below the
+   > CURRENT tip, then re-render (`--tags galexie,stellarindex`) so it starts
+   > fresh. Binary-only deploys (deploy.yml) don't touch galexie and are safe.
 2. indexer reads `galexie-live` live-only from `stellarindex_backfill_from_ledger`
    (== `galexie_start_ledger`) → ClickHouse + PG. Start it once galexie has
    exported the first object at/after that ledger, so its SDK backend does not

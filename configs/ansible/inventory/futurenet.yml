@@ -31,11 +31,15 @@ all:
     # Coherent RECENT start: galexie's captive core catches up to this ledger
     # via the futurenet dev archive and the indexer's backfill floor matches,
     # so live-only ingest has no gap. galexie_start_ledger MUST equal
-    # backfill_from_ledger. Futurenet is SMALL (resets on protocol bumps) — the
-    # tip was ~230.6k (2026-08-26), so this is ~10k below it. UPDATE BOTH after
-    # a futurenet reset/upgrade (ledgers restart at 1) — see the reset runbook.
-    galexie_start_ledger:              220000
-    stellarindex_backfill_from_ledger: 220000
+    # backfill_from_ledger. Keep this CLOSE to the current archive tip (~a few
+    # hundred ledgers below): galexie replays start→tip as a *buffered* catchup
+    # only when the gap is small — a large gap makes captive-core do an
+    # online-catchup that SKIPS to live (leaving galexie parked, never
+    # exporting). Tip was ~230975 (2026-08-26). UPDATE BOTH before any full
+    # role re-deploy or after a reset (ledgers restart at 1) — see the reset
+    # runbook; a stale (far-behind) value strands galexie.
+    galexie_start_ledger:              230400
+    stellarindex_backfill_from_ledger: 230400
     stellarindex_live_seam_ledger:     0
 
     # Plain virtual disk — host owns storage; no in-VM ZFS.
@@ -48,6 +52,11 @@ all:
     # them from the role): ClickHouse lake + its schema, Redis (default on).
     run_clickhouse:          true
     clickhouse_apply_schema: true
+    # Memory tuning for the small (20 GB) shared VM — see testnet.yml. r1's
+    # strict overcommit + 72 GB ClickHouse cap starve the 20 GB VM (malloc/
+    # fork fail despite free RAM). Heuristic overcommit + a 4 GB CH cap.
+    vm_overcommit_memory: 0
+    clickhouse_max_server_memory_usage_bytes: 4294967296   # 4 GiB
     run_stellar_core:    false
     # From-scratch bootstrap: build + install the network-aware binaries from
     # the local checkout (the task forces GOOS=linux GOARCH=amd64).

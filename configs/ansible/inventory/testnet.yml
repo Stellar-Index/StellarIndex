@@ -45,6 +45,14 @@ all:
     # them from the role): ClickHouse lake + its schema, Redis (default on).
     run_clickhouse:          true
     clickhouse_apply_schema: true
+    # Memory tuning for the small (20 GB) shared VM. r1's strict overcommit
+    # (2, ratio 80) + no swap caps committable memory at ~16 GB here, which
+    # ClickHouse + captive-core + the Go services exceed → malloc/fork fail
+    # ("Cannot allocate memory") and the API OOM-crash-loops despite free RAM.
+    # Use heuristic overcommit and cap ClickHouse to 4 GB so it can't starve
+    # the VM (default cap is 90% of RAM = 18 GB).
+    vm_overcommit_memory: 0
+    clickhouse_max_server_memory_usage_bytes: 4294967296   # 4 GiB
     run_stellar_core:    false
     # From-scratch bootstrap: the network-aware binaries are on this branch,
     # not a GitHub release yet — so build + install them from the local

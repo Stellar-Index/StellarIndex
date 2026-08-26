@@ -51,6 +51,11 @@ all:
     # them from the role): ClickHouse lake + its schema, Redis (default on).
     run_clickhouse:          true
     clickhouse_apply_schema: true
+    # Small shared VM: r1's strict overcommit + 72 GB CH cap starve a 20 GB VM
+    # (malloc/fork fail despite free RAM → API OOM-loops). Heuristic overcommit
+    # + a 4 GB ClickHouse cap.
+    vm_overcommit_memory: 0
+    clickhouse_max_server_memory_usage_bytes: 4294967296   # 4 GiB
     run_stellar_core:    false       # galexie captive-core only
     # From-scratch bootstrap: the network-aware binaries are on the feature
     # branch, not a GitHub release yet — build + install them from the local
