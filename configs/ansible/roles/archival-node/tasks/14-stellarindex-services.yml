@@ -87,26 +87,21 @@
     group: root
     mode: "0755"
 
-- name: Sync migrations from repo to r1
-  ansible.posix.synchronize:
+- name: Sync migrations from repo to the host
+  # ansible.builtin.copy (not ansible.posix.synchronize/rsync): synchronize
+  # fails over a ProxyJump connection ("'Connection' object has no attribute
+  # '_new_stdin'") because rsync runs on the controller and can't inherit the
+  # jump. copy is connection-agnostic (works over the private-NAT jump AND
+  # r1's direct SSH), content-hash idempotent, and forces root:root ownership
+  # regardless of the controller's uid — migrations are append-only, so the
+  # lack of stale-file deletion is immaterial.
+  ansible.builtin.copy:
     src: "{{ playbook_dir }}/../../../migrations/"
     dest: /usr/local/share/stellarindex/migrations/
-    delete: true
-    # Compare by content, not mtime: every CI drift run works from a
-    # fresh clone whose files carry clone-time mtimes, so the default
-    # size+mtime quick-check reported this task changed on EVERY run.
-    checksum: true
-    times: false
-    # Do NOT sync ownership: archive mode preserves the CONTROLLER's
-    # numeric uid/gid (operator laptop = 501, CI runner = 1001), so
-    # applies from different machines fought over ownership forever —
-    # --chown=root:root did not cover the implied root dir. With -og
-    # off, rsync (running as root on the receiver) creates root-owned
-    # files and never touches ownership again.
-    owner: false
-    group: false
-    rsync_opts:
-      - "--exclude=.DS_Store"
+    owner: root
+    group: root
+    mode: "0644"
+    directory_mode: "0755"
 
 - name: Run pending migrations against the stellarindex database
   # OPT-IN since 2026-07-10: deploy.yml is the canonical migration
