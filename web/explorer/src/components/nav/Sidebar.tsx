@@ -35,7 +35,6 @@ import { API_BASE_URL } from '@/api/client';
 import { cn } from '@/lib/cn';
 import { useDialog } from '@/lib/useDialog';
 import { StellarMark } from '@/components/StellarMark';
-import { LiveLedgerBadge } from './LiveLedgerBadge';
 import { NetworkSwitcher } from './NetworkSwitcher';
 import { CURRENT_NETWORK_ID } from '@/lib/networks';
 import { SearchModal } from './SearchModal';
@@ -234,13 +233,12 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
         </Link>
       </div>
 
-      {/* Odometer — the network switcher (name + live dot + chevron listing the
-          sibling explorers) with THIS network's live ledger stacked directly
-          beneath it (bare number, pulsing while the stream is fresh, links to
-          the ledger). Left-aligned in its own block under the wordmark. */}
-      <div className="flex shrink-0 flex-col items-start gap-0.5 px-2.5 pb-1">
+      {/* Odometer — a single hoverable control: the network name + chevron over
+          THIS network's live ledger (pulsing while the stream is fresh).
+          Clicking anywhere on it opens the network switcher (sibling explorers
+          + their tips). Left-aligned in its own block under the wordmark. */}
+      <div className="flex shrink-0 px-2.5 pb-1">
         <NetworkSwitcher onNavigate={onNavigate} />
-        <LiveLedgerBadge onNavigate={onNavigate} compact />
       </div>
 
       {/* Search — directly below the logo */}

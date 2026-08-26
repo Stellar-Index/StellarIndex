@@ -110,15 +110,30 @@ export function NetworkSwitcher({ onNavigate }: { onNavigate?: () => void }) {
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-controls="network-switcher-menu"
-        aria-label={`Network: ${CURRENT_NETWORK.label}. Switch explorer`}
-        className="flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[11px] text-ink-muted hover:bg-surface-subtle"
+        aria-label={`Network: ${CURRENT_NETWORK.label}${
+          currentSeq != null ? `, ledger ${currentSeq}` : ''
+        }. Switch explorer`}
+        className="flex flex-col items-start gap-0.5 rounded-md px-1.5 py-1 text-left hover:bg-surface-subtle"
       >
-        <span className="lowercase">{CURRENT_NETWORK.tag}</span>
-        <LiveDot tone={currentLive ? 'live' : 'muted'} />
-        <ChevronDown
-          className={`h-3 w-3 text-ink-faint transition-transform ${open ? 'rotate-180' : ''}`}
-          aria-hidden
-        />
+        {/* The whole odometer IS the switcher trigger: capitalized network name
+            + chevron on top, this network's live ledger (single live dot +
+            rolling number) beneath. Not a link — clicking anywhere on it opens
+            the network dropdown. */}
+        <span className="flex items-center gap-1 text-[11px] text-ink-muted">
+          {CURRENT_NETWORK.label}
+          <ChevronDown
+            className={`h-3 w-3 text-ink-faint transition-transform ${open ? 'rotate-180' : ''}`}
+            aria-hidden
+          />
+        </span>
+        <span className="flex items-center gap-1.5 text-[11px]">
+          <LiveDot tone={currentLive ? 'live' : 'muted'} />
+          {currentSeq != null ? (
+            <RollingNumber value={currentSeq} className="font-mono text-ink" />
+          ) : (
+            <span className="font-mono text-ink-faint">—</span>
+          )}
+        </span>
       </button>
 
       {open && (

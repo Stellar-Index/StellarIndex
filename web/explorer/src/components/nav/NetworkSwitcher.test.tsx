@@ -30,7 +30,9 @@ describe('NetworkSwitcher', () => {
   it('shows the current network tag and stays closed until clicked', () => {
     useLedgerStream.mockReturnValue(freshFrame(4_350_000));
     render(<NetworkSwitcher />);
-    expect(screen.getByText('mainnet')).toBeInTheDocument();
+    // Trigger shows the capitalized network label, no dot (that lives on the
+    // ledger badge below).
+    expect(screen.getByText('Mainnet')).toBeInTheDocument();
     expect(screen.queryByText('Testnet')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /network: mainnet/i })).toHaveAttribute(
       'aria-expanded',
@@ -51,8 +53,9 @@ describe('NetworkSwitcher', () => {
     render(<NetworkSwitcher />);
     fireEvent.click(screen.getByRole('button', { name: /network: mainnet/i }));
 
-    // All three networks listed; the two live siblings link out.
-    expect(screen.getByText('Mainnet')).toBeInTheDocument();
+    // All three networks listed; "Mainnet" appears in both the trigger and its
+    // own row when open, hence getAllByText.
+    expect(screen.getAllByText('Mainnet').length).toBeGreaterThan(0);
     expect(screen.getByRole('link', { name: /testnet/i })).toHaveAttribute(
       'href',
       'https://testnet.stellarindex.io',
