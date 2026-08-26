@@ -73,8 +73,16 @@ fi
 if [[ -n "$last_exported" && "$last_exported" -gt 1 ]]; then
   start=$(( last_exported + 1 ))
   echo "galexie-append.sh: galexie-live last-exported=$last_exported → resuming at $start"
+elif [[ -n "${GALEXIE_START:-}" && "${GALEXIE_START}" -gt 1 ]]; then
+  # --- 2a. Fresh deploy, explicit start ---------------------------
+  # GALEXIE_START (set per network) pins the fresh-deploy start so galexie
+  # and the indexer's backfill_from_ledger begin at the SAME ledger — a
+  # coherent from-recent bring-up on a test net (the archive-tip fallback
+  # below is dynamic and would not match the indexer's fixed floor).
+  start=$GALEXIE_START
+  echo "galexie-append.sh: empty bucket — using configured GALEXIE_START=$start"
 else
-  # --- 2. Fresh-deploy fallback: archive tip minus margin -------
+  # --- 2b. Fresh-deploy fallback: archive tip minus margin -------
   archive_tip=""
   for i in $(seq 1 30); do
     if body=$(curl -sfm10 "$SDF_HAS_URL" 2>/dev/null); then

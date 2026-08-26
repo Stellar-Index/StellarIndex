@@ -25,7 +25,14 @@ all:
     node_is_validator:   "{{ is_validator }}"
 
     # Fresh test net: ingest from genesis, live-only (no archive stitch).
-    stellarindex_backfill_from_ledger: 2
+    # Coherent RECENT start: galexie's captive core catches up to this ledger
+    # via the testnet archive (fast) and the indexer's backfill floor matches,
+    # so live-only ingest has no gap. (Full-genesis would replay ~4.3M testnet
+    # ledgers — hours.) galexie_start_ledger MUST equal backfill_from_ledger.
+    # UPDATE BOTH after a testnet reset (ledgers restart at 1) — see the reset
+    # runbook. Value chosen ~10k below the 2026-08-26 tip (~4.349M).
+    galexie_start_ledger:              4340000
+    stellarindex_backfill_from_ledger: 4340000
     stellarindex_live_seam_ledger:     0
 
     # Plain virtual disk — host owns storage; no in-VM ZFS.
