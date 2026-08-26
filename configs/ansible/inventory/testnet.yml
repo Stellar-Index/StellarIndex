@@ -67,6 +67,9 @@ all:
     # an uncodified binary swap on r1, N/A for a from-source test-net build).
     galexie_expected_binary_sha256: ""
     galexie_expected_version_string: ""
+    # Pin the captive core to a P28-capable version (testnet upgraded to
+    # Protocol 28 on 2026-08-27) so a fresh redeploy reproduces it exactly.
+    stellar_core_version: "28.0.1-3508.947aad841.noble"
     run_minio:           true
     run_observability:   true
     # Host runs the public reverse proxy (one TLS point for all 4 subdomains);

@@ -32,8 +32,17 @@
     filename: sdf
 
 - name: Install stellar-core (galexie's captive-core binary)
+  # `state: present` with an UNVERSIONED name never upgrades an existing
+  # binary — deliberate, so a routine deploy can't silently change r1's captive
+  # core. For a PROTOCOL UPGRADE the captive core must move first (e.g. P28
+  # needs core >= 28 by 2026-09-16, else galexie's captive core refuses to sync
+  # past the upgrade ledger and ingestion halts): pin stellar_core_version to
+  # the target in inventory (e.g. "28.0.1-3508.947aad841.noble") and this
+  # installs/upgrades to exactly that. Leave it unset ("") for the fresh-host
+  # "latest available" install (test nets) or the never-upgrade behavior on an
+  # existing host. See docs/operations/protocol-upgrades.md.
   ansible.builtin.apt:
-    name: stellar-core
+    name: "stellar-core{{ ('=' + stellar_core_version) if (stellar_core_version | default('')) else '' }}"
     state: present
     update_cache: true
 

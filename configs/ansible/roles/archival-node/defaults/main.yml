@@ -442,6 +442,13 @@ stellar_history_archive_urls:
   futurenet: "http://history.stellar.org/dev/core-futurenet/core_futurenet_001"
 stellar_history_archive_url: "{{ stellar_history_archive_urls[stellar_network] | default(stellar_history_archive_urls['pubnet']) }}"
 
+# Captive stellar-core apt version. Empty = fresh-host "latest available" /
+# never-upgrade-an-existing-binary (07-galexie.yml). Pin the exact apt version
+# (e.g. "28.0.1-3508.947aad841.noble") to drive a PROTOCOL-UPGRADE core bump —
+# required before a network reaches a protocol the installed core predates
+# (P28: core >= 28 by mainnet 2026-09-16). See docs/operations/protocol-upgrades.md.
+stellar_core_version: ""
+
 # Protocol-transition era boundaries (internal/config/config.go StellarConfig).
 # Pubnet uses the real ledger numbers; a reset testnet/futurenet is entirely
 # post-Soroban AND post-P23 from ledger 1, so BOTH are genesis (1) there —

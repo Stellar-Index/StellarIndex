@@ -70,6 +70,9 @@ all:
     # stellar_history_archive_urls[futurenet] (in the role defaults).
     galexie_expected_binary_sha256: ""
     galexie_expected_version_string: ""
+    # Pin the captive core to a P28-capable version (futurenet leads protocol
+    # bumps) so a fresh redeploy reproduces it exactly.
+    stellar_core_version: "28.0.1-3508.947aad841.noble"
     run_minio:           true
     run_observability:   true
     # Host runs the public reverse proxy (one TLS point for all subdomains);
