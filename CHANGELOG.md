@@ -15,6 +15,10 @@ against.
 
 ## [Unreleased]
 
+## [v0.44.3] — 2026-08-26
+
+Tested against Stellar protocol 22.
+
 ### Added
 - **/tx now shows the Soroban authorization-invocation tree.** An
   `InvokeHostFunction` operation's decoded fields gain an `authorizations`
