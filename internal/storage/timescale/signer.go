@@ -3,6 +3,7 @@ package timescale
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // SignerTag is one (ledger, tx_hash) → transaction-source-account mapping
@@ -69,4 +70,32 @@ func (s *Store) TagTradesSigner(ctx context.Context, tags []SignerTag) (int64, e
 		return 0, fmt.Errorf("timescale: TagTradesSigner rows-affected: %w", err)
 	}
 	return n, nil
+}
+
+// UntaggedAMMSignerLedgerRange returns the inclusive ledger span of AMM trades
+// in [from, to) that still lack a signer, so the sweeper can scope its lake
+// read to exactly those ledgers instead of every recent transaction. ok=false
+// when nothing needs tagging (the sweeper then skips the lake read entirely).
+//
+// At steady state the sweep tags each window every tick, so only the last
+// minute or two of trades are ever untagged and the span (and the lake read it
+// bounds) is small; a projector lag or a restart widens it up to the lookback
+// and self-heals on the next clean sweep. Bounded by the ts window + the AMM
+// source filter — a min/max aggregate over recent trades chunks, not a scan.
+func (s *Store) UntaggedAMMSignerLedgerRange(ctx context.Context, from, to time.Time) (minLedger, maxLedger uint32, ok bool, err error) {
+	const q = `
+        SELECT min(ledger), max(ledger)
+          FROM trades
+         WHERE ts >= $1 AND ts < $2
+           AND source = ANY($3::text[])
+           AND signer IS NULL
+    `
+	var lo, hi *int64
+	if serr := s.db.QueryRowContext(ctx, q, from.UTC(), to.UTC(), ammSignerSources).Scan(&lo, &hi); serr != nil {
+		return 0, 0, false, fmt.Errorf("timescale: UntaggedAMMSignerLedgerRange: %w", serr)
+	}
+	if lo == nil || hi == nil {
+		return 0, 0, false, nil
+	}
+	return uint32(*lo), uint32(*hi), true, nil
 }

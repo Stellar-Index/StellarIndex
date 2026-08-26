@@ -255,6 +255,24 @@ func run(cfgPath string, dryRun bool) error {
 		logger.Info("routed-via attribution sweeper started")
 	}
 
+	// AMM signer attribution — back-tags trades.signer from the lake
+	// (migration 0150). Gated on an AMM source being enabled (no AMM
+	// trades otherwise → nothing to tag). See internal/pipeline/signer.go.
+	if ammSignerEnabled(cfg.Ingestion.EnabledSources) {
+		chAddr := cfg.Storage.ClickHouseAddr
+		if chAddr == "" {
+			chAddr = "127.0.0.1:9300"
+		}
+		signerStop, signerDone := startSignerTagger(rootCtx, chAddr,
+			cfg.Storage.ClickHouseServingUser, cfg.Storage.ClickHouseServingPassword,
+			store, logger.With("component", "signer-tagger"))
+		defer func() {
+			signerStop()
+			<-signerDone
+		}()
+		logger.Info("AMM signer attribution sweeper started")
+	}
+
 	// ─── Supply observers (opt-in via [supply] watched-sets) ──────
 	// L2.12a wire-up complete: accounts (Algorithm 1, XLM),
 	// trustlines / claimable / liquidity_pools / sac_balances
@@ -1107,6 +1125,45 @@ func startRoutedViaTagger(parent context.Context, store *timescale.Store, logger
 	go func() {
 		defer close(done)
 		pipeline.RunRoutedViaTagger(ctx, logger, store, 0, 0)
+	}()
+	return cancel, done
+}
+
+// ammSignerEnabled reports whether any AMM/Soroban swap source (whose taker
+// is the on-chain caller, so the tx signer is worth back-tagging) is in the
+// operator's enabled-source list — the gate for the signer attribution
+// sweeper. Source names are literals here to avoid importing the four decoder
+// packages solely for their SourceName constants (kept in lockstep with
+// timescale.ammSignerSources).
+func ammSignerEnabled(enabledSources []string) bool {
+	for _, s := range enabledSources {
+		switch s {
+		case "comet", "soroswap", "aquarius", "phoenix":
+			return true
+		}
+	}
+	return false
+}
+
+// startSignerTagger runs pipeline.RunSignerTagger in its own goroutine,
+// back-tagging trades.signer from the ClickHouse lake (migration 0150).
+// NON-FATAL: if the CH reader can't dial, the sweeper is skipped and signer
+// stays NULL — the same state as before the column existed. Follows the
+// (cancel, done) shape so main's shutdown sequence stays uniform.
+func startSignerTagger(parent context.Context, chAddr, chUser, chPass string, store *timescale.Store, logger *slog.Logger) (context.CancelFunc, <-chan struct{}) {
+	ctx, cancel := context.WithCancel(parent)
+	done := make(chan struct{})
+	lake, err := clickhouse.NewExplorerReaderAuth(ctx, chAddr, chUser, chPass)
+	if err != nil {
+		logger.Warn("signer tagger: ClickHouse reader unavailable — AMM signer attribution disabled", "err", err)
+		cancel()
+		close(done)
+		return func() {}, done
+	}
+	go func() {
+		defer close(done)
+		defer func() { _ = lake.Close() }()
+		pipeline.RunSignerTagger(ctx, logger, lake, store, 0, 0)
 	}()
 	return cancel, done
 }

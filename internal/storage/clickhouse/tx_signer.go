@@ -3,7 +3,6 @@ package clickhouse
 import (
 	"context"
 	"fmt"
-	"time"
 )
 
 // TxSigner is one (ledger, tx_hash) → transaction source account, read from
@@ -17,22 +16,28 @@ type TxSigner struct {
 	Signer string
 }
 
-// RecentTxSigners returns (ledger, tx_hash, source_account) for every
-// transaction whose ledger closed at or after `since`, with a non-empty
-// source account. The caller (the signer sweeper) bounds `since` to a short
-// trailing window and feeds the result to timescale.TagTradesSigner, which
-// filters to the AMM trades that actually need a signer — so reading all txs
-// in the window is intentional (cheap, and avoids a per-source join here).
-func (r *ExplorerReader) RecentTxSigners(ctx context.Context, since time.Time) ([]TxSigner, error) {
+// TxSignersForLedgerRange returns (ledger, tx_hash, source_account) for every
+// transaction in the INCLUSIVE ledger range [minLedger, maxLedger] with a
+// non-empty source account. The range is keyed on the stellar.transactions
+// primary key (ledger_seq), so the read is bounded + index-efficient — NOT a
+// full-table scan. The caller (the signer sweeper) derives the range from the
+// small set of AMM trades that still need a signer, so at steady state the
+// span is only a few minutes of recent ledgers; the timescale-side
+// TagTradesSigner then filters to the AMM rows that actually need tagging.
+func (r *ExplorerReader) TxSignersForLedgerRange(ctx context.Context, minLedger, maxLedger uint32) ([]TxSigner, error) {
+	if maxLedger < minLedger {
+		return nil, nil
+	}
 	const q = `
         SELECT ledger_seq, tx_hash, source_account
           FROM stellar.transactions FINAL
-         WHERE close_time >= ?
+         WHERE ledger_seq >= ?
+           AND ledger_seq <= ?
            AND source_account != ''
     `
-	rows, err := r.conn.Query(ctx, q, since.UTC())
+	rows, err := r.conn.Query(ctx, q, minLedger, maxLedger)
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse: RecentTxSigners since %s: %w", since.UTC(), err)
+		return nil, fmt.Errorf("clickhouse: TxSignersForLedgerRange [%d,%d]: %w", minLedger, maxLedger, err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -40,12 +45,12 @@ func (r *ExplorerReader) RecentTxSigners(ctx context.Context, since time.Time) (
 	for rows.Next() {
 		var t TxSigner
 		if err := rows.Scan(&t.Ledger, &t.TxHash, &t.Signer); err != nil {
-			return nil, fmt.Errorf("clickhouse: RecentTxSigners scan: %w", err)
+			return nil, fmt.Errorf("clickhouse: TxSignersForLedgerRange scan: %w", err)
 		}
 		out = append(out, t)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("clickhouse: RecentTxSigners rows: %w", err)
+		return nil, fmt.Errorf("clickhouse: TxSignersForLedgerRange rows: %w", err)
 	}
 	return out, nil
 }
