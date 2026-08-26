@@ -36,6 +36,11 @@ all:
     run_postgres:        true
     run_stellar_core:    false
     run_galexie:         true
+    # A fresh `go install` on the VM yields a different-bytes galexie than
+    # r1's codified binary — skip the drift-guard asserts (they exist to catch
+    # an uncodified binary swap on r1, N/A for a from-source test-net build).
+    galexie_expected_binary_sha256: ""
+    galexie_expected_version_string: ""
     run_minio:           true
     run_observability:   true
     # Host runs the public reverse proxy (one TLS point for all 4 subdomains);
