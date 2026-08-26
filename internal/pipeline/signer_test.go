@@ -32,7 +32,7 @@ func (f *fakeTagger) UntaggedAMMSignerLedgerRange(_ context.Context, _, _ time.T
 	return f.minL, f.maxL, f.ok, nil
 }
 
-func (f *fakeTagger) TagTradesSigner(_ context.Context, tags []timescale.SignerTag) (int64, error) {
+func (f *fakeTagger) TagTradesSigner(_ context.Context, _, _ time.Time, tags []timescale.SignerTag) (int64, error) {
 	if f.onTag != nil {
 		f.onTag(tags)
 	}

@@ -36,7 +36,13 @@ var AMMSignerSources = []string{"comet", "soroswap", "aquarius", "phoenix"}
 // Empty-string signers in the batch are ignored (WHERE s.signer <> ”), so
 // a tx whose source could not be resolved leaves the row NULL for a later
 // pass rather than pinning it to a blank.
-func (s *Store) TagTradesSigner(ctx context.Context, tags []SignerTag) (int64, error) {
+// [from, to) is the trades TIME-PARTITION (ts) bound covering the tags —
+// REQUIRED: `trades` is a ts-partitioned Timescale hypertable, so without it
+// this UPDATE scans EVERY chunk (incl. compressed historical ones) and trips
+// the per-DML tuple-decompression limit (SQLSTATE 53400). With the bound
+// TimescaleDB prunes to the window's chunks (mirrors TagTradesRoutedVia).
+// Callers pass the close-time span of the tagged txs.
+func (s *Store) TagTradesSigner(ctx context.Context, from, to time.Time, tags []SignerTag) (int64, error) {
 	if len(tags) == 0 {
 		return 0, nil
 	}
@@ -56,13 +62,15 @@ func (s *Store) TagTradesSigner(ctx context.Context, tags []SignerTag) (int64, e
                      unnest($2::text[])   AS tx_hash,
                      unnest($3::text[])   AS signer
           ) s
-         WHERE t.ledger  = s.ledger
+         WHERE t.ts     >= $5
+           AND t.ts     <  $6
+           AND t.ledger  = s.ledger
            AND t.tx_hash = s.tx_hash
            AND s.signer <> ''
            AND t.source  = ANY($4::text[])
            AND t.signer IS NULL
     `
-	res, err := s.db.ExecContext(ctx, q, ledgers, txHashes, signers, AMMSignerSources)
+	res, err := s.db.ExecContext(ctx, q, ledgers, txHashes, signers, AMMSignerSources, from.UTC(), to.UTC())
 	if err != nil {
 		return 0, fmt.Errorf("timescale: TagTradesSigner (%d tags): %w", len(tags), err)
 	}

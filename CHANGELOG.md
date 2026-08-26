@@ -15,7 +15,15 @@ against.
 
 ## [Unreleased]
 
-## [v0.44.4] — 2026-08-26
+### Fixed
+- The `trades.signer` sweeper (v0.44.4) failed every tick with `tuple
+  decompression limit exceeded (SQLSTATE 53400)` and tagged nothing: its
+  `TagTradesSigner` UPDATE joined on `(ledger, tx_hash)` with no `ts`
+  predicate, so on the ts-partitioned `trades` hypertable it scanned every
+  chunk — including compressed ones — and tripped the per-DML decompression
+  limit. Added the ts bound (the close-time span of the tagged txs, threaded
+  from the lake read) so TimescaleDB prunes to the window's chunks, mirroring
+  `TagTradesRoutedVia`. Same fix applies to the `tag-signer` backfill.
 
 Tested against Stellar protocol 22.
 
