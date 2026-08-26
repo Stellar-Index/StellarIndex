@@ -51,17 +51,19 @@ describe('NetworkSwitcher', () => {
     render(<NetworkSwitcher />);
     fireEvent.click(screen.getByRole('button', { name: /network: mainnet/i }));
 
-    // All three networks listed.
+    // All three networks listed; the two live siblings link out.
     expect(screen.getByText('Mainnet')).toBeInTheDocument();
-    const testnetLink = screen.getByRole('link', { name: /testnet/i });
-    expect(testnetLink).toHaveAttribute('href', 'https://testnet.stellarindex.io');
+    expect(screen.getByRole('link', { name: /testnet/i })).toHaveAttribute(
+      'href',
+      'https://testnet.stellarindex.io',
+    );
+    expect(screen.getByRole('link', { name: /futurenet/i })).toHaveAttribute(
+      'href',
+      'https://futurenet.stellarindex.io',
+    );
 
-    // Futurenet is Phase 2 → shown but disabled (no link, "Soon").
-    expect(screen.getByText('Soon')).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: /futurenet/i })).not.toBeInTheDocument();
-
-    // The sibling tip probe resolves into the row.
-    await waitFor(() => expect(screen.getByText('987,654')).toBeInTheDocument());
+    // The sibling tip probes resolve into their rows.
+    await waitFor(() => expect(screen.getAllByText('987,654').length).toBeGreaterThan(0));
     expect(fetch).toHaveBeenCalledWith(
       'https://api.testnet.stellarindex.io/v1/ledger/tip',
       expect.objectContaining({ headers: { Accept: 'application/json' } }),
@@ -77,6 +79,7 @@ describe('NetworkSwitcher', () => {
 
     // Still a working hop link even though the live number is unavailable.
     expect(screen.getByRole('link', { name: /testnet/i })).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText('—')).toBeInTheDocument());
+    // Both live siblings (testnet + futurenet) degrade to a dash.
+    await waitFor(() => expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(1));
   });
 });

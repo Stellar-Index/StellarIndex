@@ -25,6 +25,13 @@ export interface NetworkInfo {
    * the switcher shows it disabled instead of linking to a dead origin.
    */
   live: boolean;
+  /**
+   * Whether this network has aggregator-derived USD pricing. Mainnet only —
+   * the lean test nets run no aggregator (every asset is $0), so pricing
+   * widgets and the /v1/price/tip/stream are skipped there (an always-404
+   * stream would just retry forever).
+   */
+  pricing: boolean;
 }
 
 // Ordered mainnet → testnet → futurenet (production first, protocol-upgrade
@@ -37,6 +44,7 @@ export const NETWORKS: NetworkInfo[] = [
     explorerUrl: 'https://stellarindex.io',
     apiBaseUrl: 'https://api.stellarindex.io',
     live: true,
+    pricing: true,
   },
   {
     id: 'testnet',
@@ -45,6 +53,7 @@ export const NETWORKS: NetworkInfo[] = [
     explorerUrl: 'https://testnet.stellarindex.io',
     apiBaseUrl: 'https://api.testnet.stellarindex.io',
     live: true,
+    pricing: false,
   },
   {
     id: 'futurenet',
@@ -52,8 +61,8 @@ export const NETWORKS: NetworkInfo[] = [
     tag: 'futurenet',
     explorerUrl: 'https://futurenet.stellarindex.io',
     apiBaseUrl: 'https://api.futurenet.stellarindex.io',
-    // Phase 2 — VM not provisioned yet. Flip to true when it goes live.
-    live: false,
+    live: true,
+    pricing: false,
   },
 ];
 

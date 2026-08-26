@@ -143,6 +143,23 @@ gh workflow run explorer-deploy.yml --ref main -f network=futurenet -f environme
 The test-net API origins are already in the API's CORS `allowed_origins`, so
 the switcher's cross-origin tip probe works in every direction.
 
+**Two cross-origin gotchas** (both handled, noted so they don't recur):
+
+- **CSP `connect-src`** (`web/explorer/public/_headers`) must list *all three*
+  `api.*` origins — a test-net explorer connects to its own `api.<net>` origin,
+  and the switcher probes every network's tip. If it lists only the mainnet API,
+  every fetch + EventSource is blocked by CSP (dead odometer, dozens of console
+  warnings). It's one static file shared by all builds, so it carries all three.
+- **API `allowed_origins`** must include the explorer origins (`stellarindex.io`
+  + `testnet.` + `futurenet.`) so the browser's SSE/tip fetches pass CORS. This
+  is in the role template; re-render + restart the API if you widen it after a
+  deploy. (Mainnet r1 still needs this applied before its switcher can show the
+  test-net tips — until then those rows show a dash, which is graceful.)
+- **Pricing** is mainnet-only: the lean test nets run no aggregator, so
+  `/v1/price/tip/stream` 404s. The explorer gates the price stream on
+  `CURRENT_NETWORK.pricing` (see `src/lib/networks.ts`) so it isn't opened at all
+  on a test net; pricing widgets render their empty state.
+
 ## Security headers + CSP
 
 `web/explorer/public/_headers` ships a Cloudflare-Pages /
