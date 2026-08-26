@@ -1,0 +1,104 @@
+---
+# promtool unit tests for stellarindex_aggregator_outlier_storm
+# (2026-08-26 rescope — see the rule comment in ../rules/aggregator.yml).
+#
+#   promtool test rules deploy/monitoring/rule-tests/aggregator_test.yml
+#
+# WHY THIS FILE EXISTS: the previous rule (10m rate > 5×[1h] offset 1h,
+# for 15m) had a FATAL, promtool-provable defect — the `offset 1h` baseline
+# self-poisons: once a sustained storm runs past ~1h its own early minutes
+# enter the [T-2h,T-1h] baseline window and inflate it, flipping the 5× ratio
+# false at ~72m regardless of magnitude. So the alert could NEVER survive the
+# sustained storm it exists to catch, and any `for:` past ~72m was unreachable.
+# Case 1 below is the regression guard: a sustained storm MUST fire past the
+# 2h `for:`. Under the old rule that case is unfireable — this test would be
+# RED, which is the point.
+#
+# PROVEN-RED: delete the alert from ../rules/aggregator.yml and promtool reports
+# "no rule with alertname stellarindex_aggregator_outlier_storm" — case 1 fails.
+# The metric is a counter labelled {reason,pair}; the rule is
+# `sum by (pair) (rate(...{reason="outlier"}[10m])) > 10`, so a counter rising
+# 1200/min ⇒ rate 20/s, 300/min ⇒ 5/s, 60/min ⇒ 1/s.
+
+rule_files:
+  - ../rules/aggregator.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Case 1: a genuinely SUSTAINED storm fires past the 2h `for:` ──
+  # ETH/USD outlier-trim held at 20/s (counter +1200/min) for 200m. The
+  # expr is true from ~t=10m; at t=150m it has been true ~140m > 120m, so
+  # the alert fires carrying the pair label. At t=60m the `for:` has NOT
+  # yet elapsed, so it must still be silent. This is the case the old
+  # self-poisoning rule structurally could not fire.
+  - interval: 1m
+    name: a sustained per-pair outlier storm fires after the 2h for-gate
+    input_series:
+      - series: 'stellarindex_aggregator_dropped_trades_total{reason="outlier",pair="crypto:ETH/fiat:USD",binary="stellarindex-aggregator"}'
+        values: '0+1200x200'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_aggregator_outlier_storm
+        exp_alerts: []
+      - eval_time: 150m
+        alertname: stellarindex_aggregator_outlier_storm
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: aggregator
+              pair: crypto:ETH/fiat:USD
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+              summary: "crypto:ETH/fiat:USD outlier-trim >10/s sustained 2h — persistent price dispersion (P3)"
+              description: |
+                The robust-VWAP σ/MAD filter has trimmed >10 trades/s from
+                crypto:ETH/fiat:USD's VWAP input for 2h+. It trims toward the
+                intra-window MEDIAN, so the PUBLISHED price is protected
+                (symmetric band, no oracle circularity) — this is a
+                data-quality / source-health signal, NOT a customer-facing
+                price error. Sustained (not transient) trimming means prints
+                on this pair durably disperse: two sources at different
+                levels (a stale/thin venue, a stablecoin-leg skew), or a
+                registered connector mis-decoding amounts. More specific
+                failures have their own alerts — unregistered venues →
+                aggregator_class_drop_spike; non-7-decimals →
+                nonstandard_decimals_correction_failing. Check the pair's
+                div:<pair> Redis flag / API flags.divergence_warning for
+                actual price impact, then the per-source contribution to the
+                window. NOTE: the stellarindex_price_divergence_* alerts are
+                INERT (F-1329, no Prometheus producer) — do not wait on them.
+                Thin pairs whose total trim can't reach 10/s sit below this
+                gate by design (raise a per-pair floor if one needs coverage).
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+
+  # ── Case 2: a TRANSIENT burst that self-clears does NOT fire ──
+  # The benign real-world pattern: a single pair spikes to 20/s for ~60m
+  # (source disagreement / USDT skew) then relaxes to 1/s (counter slope
+  # drops to +60/min). The expr is true only ~[10m,66m] then goes false,
+  # so the 2h `for:` never completes — no ticket. This is the noise the
+  # rescope removes (the old rule ticketed on exactly this).
+  - interval: 1m
+    name: a transient self-clearing burst does not fire
+    input_series:
+      - series: 'stellarindex_aggregator_dropped_trades_total{reason="outlier",pair="crypto:ETH/fiat:USD",binary="stellarindex-aggregator"}'
+        values: '0+1200x60 72000+60x200'
+    alert_rule_test:
+      - eval_time: 150m
+        alertname: stellarindex_aggregator_outlier_storm
+        exp_alerts: []
+
+  # ── Case 3: a sustained rate BELOW the 10/s floor does not fire ──
+  # BTC/USD held at 5/s (counter +300/min) for 200m — persistent but under
+  # the floor, so it stays silent. Proves the absolute floor is load-bearing
+  # (a lower-volume pair's steady trim doesn't ticket).
+  - interval: 1m
+    name: sustained trim below the 10 per-second floor stays silent
+    input_series:
+      - series: 'stellarindex_aggregator_dropped_trades_total{reason="outlier",pair="crypto:BTC/fiat:USD",binary="stellarindex-aggregator"}'
+        values: '0+300x200'
+    alert_rule_test:
+      - eval_time: 150m
+        alertname: stellarindex_aggregator_outlier_storm
+        exp_alerts: []
