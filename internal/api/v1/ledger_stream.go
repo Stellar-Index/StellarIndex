@@ -19,9 +19,14 @@ const (
 	ledgerStreamProducerQueueDepth = 4
 
 	// ledgerStreamPollInterval is how often the producer re-reads the
-	// ingest cursor. The indexer commits a ledger every ~5s, so a 2s
-	// poll surfaces each new ledger within ~2s of it landing.
-	ledgerStreamPollInterval = 2 * time.Second
+	// ingest cursor. The indexer commits a ledger every ~5s; 500ms
+	// (was 2s) surfaces each new ledger within ~500ms of it landing —
+	// this poll drives the explorer's useLedgerFollow refetch (the
+	// "watch your transaction land" nudge), so it's on the real-time
+	// latency path. It's a light indexed cursor read; at real connection
+	// counts an event-driven Hub push would scale better (a documented
+	// follow-up), but 500ms captures the latency win with no new wiring.
+	ledgerStreamPollInterval = 500 * time.Millisecond
 
 	// ledgerStreamRefreshInterval forces an emit even when the ledger
 	// has NOT advanced, so lag_seconds stays current. Without it a

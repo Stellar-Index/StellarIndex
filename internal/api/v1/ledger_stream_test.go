@@ -202,7 +202,7 @@ func TestLedgerStream_TickIsBoundedByATimeout(t *testing.T) {
 	// Drain the synchronous initial event (prelude read, call #1 —
 	// deliberately not asserted on).
 	_ = readTipStreamEvent(t, br, 2*time.Second)
-	// Drain the first TICK event (ledgerStreamPollInterval = 2s) so the
+	// Drain the first TICK event (ledgerStreamPollInterval = 500ms) so the
 	// producer goroutine has actually made its second ListCursors call.
 	_ = readTipStreamEvent(t, br, 4*time.Second)
 
