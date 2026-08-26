@@ -16,6 +16,17 @@ against.
 ## [Unreleased]
 
 ### Added
+- **/tx now shows the Soroban authorization-invocation tree.** An
+  `InvokeHostFunction` operation's decoded fields gain an `authorizations`
+  tree — the nested `SorobanAuthorizedInvocation` structure from the op's auth
+  entries (contract + function + args, recursively), rendered on the explorer
+  /tx view as "Authorized invocations." This surfaces the nested contract-call
+  structure the view previously omitted (a step toward the richer /tx detail
+  stellar.expert shows). Decoded from the already-stored operation `BodyXDR`,
+  so no schema change or backfill. It is the AUTHORIZATION subtree, not the
+  full execution trace (that lives in the tx meta the lake does not store) —
+  labeled as such. The full execution tree + Soroban resource metering remain
+  a separate follow-up (they need tx-meta/resources the lake does not persist).
 - **Exploit-shaped detector for AMM self-pair swaps** (post-2026-08-25
   Blend/Comet). A self-pair swap (`token_in == token_out`) on a curated AMM
   pool moves no value between distinct assets and has no honest purpose — it
