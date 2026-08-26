@@ -17,7 +17,7 @@ Mainnet never resets — this runbook is test-net only.
 | **Plain reset** | Testnet, ~quarterly, same protocol | none |
 | **Upgrade-reset** | Futurenet, on a protocol bump | swap core / galexie / SDK **first** |
 
-Both resolve to: **detect → halt → wipe → re-ingest from genesis.**
+Both resolve to: **detect → halt → wipe → re-ingest from a chosen start ledger.**
 
 ## Detect
 
@@ -60,10 +60,12 @@ three stores; a partial wipe strands watermarks/CAGGs and re-stalls:
       supply watermark, and the ingestion cursor → back to genesis.
 
 **Nuclear option (cleanest): re-provision the VM.** Because each network is
-its own VM, `terraform/ansible destroy + recreate` (or a Proxmox
-snapshot-rollback to a bare post-install state) wipes all three stores +
-every watermark atomically. On a tiny test net this is often faster and
-less error-prone than the surgical wipe above.
+its own libvirt/KVM VM, destroying + recreating it (re-run
+`configs/libvirt/provision-vms.sh` for that domain, or `virsh snapshot-revert`
+to a bare post-install snapshot) wipes all three stores + every watermark
+atomically. On a tiny test net this is often faster and less error-prone than
+the surgical wipe above. (Re-provisioning also empties `galexie-live`, so
+galexie then honors the updated `GALEXIE_START` — see below.)
 
 ## Futurenet only — swap the stack first
 
@@ -76,22 +78,35 @@ A futurenet reset is usually a **protocol upgrade**. Before re-ingesting:
       decode failures here surface **before** the protocol reaches Mainnet.
 - [ ] Then wipe + re-ingest as above.
 
-## Re-ingest from genesis
+## Re-ingest — pick a start ledger FIRST
+
+A reset restarts the chain at ledger 1, so the committed `galexie_start_ledger`
+/ `stellarindex_backfill_from_ledger` (a recent value like 4340000) are now
+**above the new tip** and would make galexie refuse to start. Update **both,
+together** in the inventory before re-ingesting — they MUST stay equal:
+
+- **Full history of the new cycle** (recommended right after a reset, while the
+  chain is small): set both low — `galexie_start_ledger: 64` (a checkpoint
+  boundary) and `stellarindex_backfill_from_ledger: 2`.
+- **Recent start** (once the cycle has grown to millions of ledgers): set both
+  to ~10k below the current archive tip (see the deployment doc).
+
+Then re-render config (targeted ansible `--tags galexie,stellarindex`) and:
 
 ```sh
-# galexie tails from genesis; cap67 derives from genesis.
+# galexie-live was wiped above, so galexie starts fresh from GALEXIE_START.
 systemctl start galexie
-# confirm galexie-live is filling from ledger ~2, THEN:
+# confirm galexie-live is filling from your chosen start, THEN start the rest:
 systemctl start stellarindex-indexer cap67-movements.service
 ```
 
-`stellar.movements_floor_ledger` / `soroban_genesis_ledger` are already **1**
-on test nets, and `cap67-movements` runs `-floor-ledger 1`, so the derive
-starts at genesis with no further config.
+`stellar.movements_floor_ledger` / `soroban_genesis_ledger` are already **1** on
+test nets and `cap67-movements` runs `-floor-ledger 1`, so the movements derive
+never floors above the chain regardless of the start ledger.
 
 ## Verify
 
-- [ ] Ingest advancing from a low ledger (single digits → up).
+- [ ] Ingest advancing from your chosen post-reset start ledger.
 - [ ] `/v1/accounts/{g}/movements` returns rows for a fresh post-reset tx.
 - [ ] No prev_hash-break warnings after the first post-reset ledger.
 

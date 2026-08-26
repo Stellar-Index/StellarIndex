@@ -32,7 +32,8 @@ these were network-parameterized (commit `6b3859d7`, audit 2026-08-26):
 | cap67 follow daemon | `-floor-ledger` = `stellar_movements_floor_ledger` |
 | History archive | `stellar_history_archive_url` = core-testnet / core-futurenet; a pubnet (core-live) URL on a test net is **rejected** by config validation |
 | Cross-anchor archive fill | refuses to write pubnet ledgers into a test-net archive |
-| DEX/oracle + aggregator | not deployed; `stellarindex_enabled_sources: []` |
+| Sources | **SDEX only** (`stellarindex_enabled_sources: [sdex]`): the native Stellar DEX exists on every network, so the explorer shows real on-chain trades. Bespoke Soroban DEX/AMM (soroswap/aquarius/phoenix/blend/comet), oracles (reflector/redstone/band), external CEX/FX markets, and the aggregator/pricing are all **cut** (`run_aggregator: false`) — every asset is $0 off pubnet |
+| Start ledger | **coherent recent start** — `galexie_start_ledger` **==** `stellarindex_backfill_from_ledger`. galexie's captive core catches up to that ledger via the archive (fast) and the indexer's live-only floor matches it, so there is no leading gap. NOT genesis: testnet is ~4.3M ledgers (a genesis replay is hours). **Update both together after a reset** (ledgers restart at 1) |
 
 ## Deploy set
 
@@ -73,25 +74,58 @@ first run (see the futurenet inventory's flagged TODOs).
 ## Step 4 — Deploy + bring-up
 
 Run the archival-node role against the inventory (via `deploy.yml` or
-directly). Order per VM:
+directly). The role is r1-safe: ClickHouse (`run_clickhouse`, default **false**)
+and Redis installs, the ClickHouse schema apply, the galexie drift-guard
+skips, and the from-source binary build are all opt-in flags set only in the
+test-net inventory — r1 is never touched. Order per VM:
 
-1. galexie captive-core catch-up from **genesis** (fast — tiny nets) →
-   writes `galexie-live`.
-2. indexer reads `galexie-live` (live-only, seam 0) → ClickHouse + PG.
-3. `cap67-movements` follow daemon derives `account_movements` from genesis
-   (`-floor-ledger 1`).
-4. api serves `/v1/*`.
+1. galexie captive-core catches up to `galexie_start_ledger` via the network
+   archive, then exports `galexie_start_ledger` → tip → live into `galexie-live`.
+   (Fresh/empty bucket only; on restart it **resumes** from the last exported
+   ledger. `GALEXIE_START` is honored only on a fresh bucket — if you change it,
+   wipe `galexie-live` first, or the resume wins.)
+2. indexer reads `galexie-live` live-only from `stellarindex_backfill_from_ledger`
+   (== `galexie_start_ledger`) → ClickHouse + PG. Start it once galexie has
+   exported the first object at/after that ledger, so its SDK backend does not
+   error against an empty bucket.
+3. `cap67-movements` follow daemon derives `account_movements` (`-floor-ledger`
+   = `stellar_movements_floor_ledger`); the data begins at the recent start.
+4. api serves `/v1/*`, bound to `stellarindex_api_listen_addr` (0.0.0.0:3000 on
+   the VMs so the host's Caddy can reach it over the NAT).
 
-## Step 5 — Verify
+## Step 5 — Host reverse proxy + DNS/TLS
 
-- [ ] Ingest advancing from genesis: cursor climbing, no stall.
-- [ ] `curl :3000/v1/version` on each VM.
-- [ ] `/v1/accounts/{g}/movements` returns rows for an active test-net
-      account (proves `movements_floor_ledger=1` took effect — this is the
-      thing the network-abstraction fixed).
-- [ ] `/v1/assets/{id}` shows a **testnet** SAC contract address (not the
-      pubnet one).
-- [ ] No aggregator noise in logs (aggregator not deployed).
+The VMs have no public IP; the **host** runs one Caddy that fronts all
+subdomains. DNS split (deliberate):
+
+| Record | Cloudflare | Why |
+| --- | --- | --- |
+| `api.testnet.stellarindex.io` → A 95.217.126.13 | **DNS-only (grey)** | API serves SSE (live ledger/movements); proxying buffers and breaks it. Grey also lets Caddy solve ACME HTTP-01 → real LE cert here |
+| `api.futurenet.stellarindex.io` → A | DNS-only (grey) | same (Phase 2) |
+| `testnet.stellarindex.io` | **proxied (orange)** | serves the static Next.js explorer (cacheable/DDoS-protected); its live data comes from the grey `api.*` origin |
+| `futurenet.stellarindex.io` | proxied (orange) | same (Phase 2) |
+
+Install + deploy on the host:
+
+```sh
+rsync -a configs/libvirt/ root@95.217.126.13:/root/libvirt/
+ssh root@95.217.126.13 'cd /root/libvirt && ./setup-host-proxy.sh'
+```
+
+`setup-host-proxy.sh` installs Caddy from its official apt repo and deploys
+`configs/libvirt/host-Caddyfile` (LE for the grey `api.*`, `flush_interval -1`
+for SSE). The explorer (orange) origins are wired when the explorer is
+deployed, with a Cloudflare Origin-CA cert (orange domains can't win HTTP-01).
+
+## Step 6 — Verify
+
+- [ ] Ingest advancing: `/v1/ledger/tip` `latest_ledger` climbing, `stale:false`,
+      `lag_seconds` low. galexie earliest exported == `backfill_from_ledger`.
+- [ ] External: `curl https://api.testnet.stellarindex.io/v1/ledger/tip` returns
+      200 with live data (proves DNS → host Caddy → LE cert → VM API over NAT).
+- [ ] `/v1/assets/{id}` shows a **testnet** SAC contract address (not pubnet).
+- [ ] No aggregator noise in logs (aggregator not deployed); `enabled_sources`
+      is `[sdex]` only.
 
 ## Related
 
