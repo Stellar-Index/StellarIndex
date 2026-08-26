@@ -270,10 +270,8 @@ func seedBoundedLabelSeries() {
 	// (comet emitted none before the 2026-08-25 window), so without seeding an
 	// operator could not tell "armed but quiet" from "dead metric / never
 	// deployed" — the exact F-0033 ambiguity. Its `source` label is bounded to
-	// the single known producer.
-	for _, source := range []string{"comet"} {
-		AMMSelfPairSwapTotal.WithLabelValues(source)
-	}
+	// the single known producer (comet).
+	AMMSelfPairSwapTotal.WithLabelValues("comet")
 	for _, outcome := range []string{"written", "buffered", "dropped", "errored"} {
 		ChLiveSinkLedgersTotal.WithLabelValues(outcome)
 	}
