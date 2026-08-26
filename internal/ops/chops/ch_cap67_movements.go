@@ -31,15 +31,16 @@ import (
 // all of it (native SAC: 44.76M active ledgers).
 //
 // SHAPE: windowed + resumable via stellar.cap67_movements_watermark
-// (deploy/clickhouse/cap67_movements.sql). One invocation catches up from
-// the watermark (or the P23 boundary on first run) to the lake tip, then
-// exits — a 5-minute systemd timer keeps it following; systemd's
-// one-instance rule makes overlapping fires no-ops while a long catch-up
-// runs. Idempotent: account_movements is a ReplacingMergeTree keyed
-// (address, ledger, tx_hash, op_index, leg_index, direction), so
-// re-derives collapse. Scope is event_kind 'transfer' only — exact
-// parity with the Postgres tail this replaces (mint/burn are supply
-// events, served elsewhere).
+// (deploy/clickhouse/cap67_movements.sql). `-follow` runs it as the
+// continuous real-time daemon (5.3): each iteration catches up from the
+// watermark (or the P23 boundary on first run) to the CONTIGUOUS lake tip,
+// then sleeps -follow-interval and repeats — this is the movement feed a user
+// watches their transactions land on. Without -follow it is a one-shot
+// catch-up that exits at the tip (manual -from/-to backfills). Idempotent:
+// account_movements is a ReplacingMergeTree keyed
+// (address, ledger, tx_hash, op_index, leg_index, direction), so re-derives
+// collapse. Scope is event_kind 'transfer' only — exact parity with the
+// Postgres tail this replaces (mint/burn are supply events, served elsewhere).
 //
 // The API's movements handler floors its Postgres arm at this job's
 // watermark, so at ANY backfill progress the two arms are gap-free and
@@ -48,8 +49,10 @@ func chCap67Movements(args []string) error {
 	fs := flag.NewFlagSet("ch-cap67-movements", flag.ContinueOnError)
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	from := fs.Uint("from", 0, "first ledger (0 = resume from the watermark, or the P23 boundary on first run)")
-	to := fs.Uint("to", 0, "last ledger (inclusive; 0 = current lake tip)")
+	to := fs.Uint("to", 0, "last ledger (inclusive; 0 = current contiguous lake tip)")
 	window := fs.Uint("window", 50_000, "ledgers per derive window")
+	follow := fs.Bool("follow", false, "run continuously as a daemon: after each catch-up, sleep -follow-interval and derive again, following the lake tip. The movement feed's real-time mechanism (a user watches their transactions land). Always resumes from the watermark to the CONTIGUOUS tip — ignores -from/-to.")
+	followInterval := fs.Duration("follow-interval", 2*time.Second, "sleep between catch-ups in -follow mode")
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -63,41 +66,105 @@ func chCap67Movements(args []string) error {
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 
-	start, last, err := Cap67Range(ctx, *chAddr, uint32(*from), uint32(*to)) //nolint:gosec // ledger sequences fit uint32
-	if err != nil {
-		return err
-	}
-	if last < start {
-		fmt.Fprintf(os.Stderr, "ch-cap67-movements: watermark %d already at/past tip %d — nothing to do\n", start-1, last)
-		return nil
+	if *follow {
+		if *from != 0 || *to != 0 {
+			return fmt.Errorf("-follow always resumes from the watermark to the contiguous tip; do not combine with -from/-to")
+		}
+		if dryRun {
+			// A dry-run never advances the watermark, so -follow would re-stream
+			// the ENTIRE backlog on every tick, forever. The daemon must write.
+			return fmt.Errorf("-follow requires -write: a dry-run never advances the watermark and would re-derive the whole backlog each tick")
+		}
+		return runCap67Follow(ctx, *chAddr, uint32(*window), dryRun, *followInterval) //nolint:gosec // window fits uint32
 	}
 
-	fmt.Fprintf(os.Stderr, "ch-cap67-movements: deriving transfers for ledgers %d..%d (window %d, dry-run=%v) on %s\n",
-		start, last, *window, dryRun, *chAddr)
+	if _, err := runCap67CatchUp(ctx, *chAddr, uint32(*from), uint32(*to), uint32(*window), dryRun); err != nil { //nolint:gosec // ledger sequences fit uint32
+		return err
+	}
+	return nil
+}
+
+// runCap67CatchUp resolves the derive range [from|watermark, to|contiguous-tip]
+// and streams every window into account_movements, advancing the watermark
+// after each window. Returns the total movement rows derived; a no-op
+// (0 rows, nil) when already at/past the contiguous tip. Gated on the
+// contiguous watermark via Cap67Range, so it never steps past a lake hole.
+func runCap67CatchUp(ctx context.Context, chAddr string, from, to, window uint32, dryRun bool) (int64, error) {
+	start, last, err := Cap67Range(ctx, chAddr, from, to)
+	if err != nil {
+		return 0, err
+	}
+	if last < start {
+		return 0, nil // already at/past the contiguous tip — nothing to do
+	}
 
 	runStart := time.Now()
 	var totalRows int64
 	for lo := start; ; {
 		hi := last
-		if rem := last - lo; rem >= uint32(*window) { //nolint:gosec // window fits uint32
-			hi = lo + uint32(*window) - 1 //nolint:gosec // window fits uint32
+		if rem := last - lo; rem >= window {
+			hi = lo + window - 1
 		}
-		n, err := deriveCap67MovementsWindow(ctx, *chAddr, lo, hi, dryRun)
+		n, err := deriveCap67MovementsWindow(ctx, chAddr, lo, hi, dryRun)
 		if err != nil {
-			return fmt.Errorf("window [%d,%d]: %w — resume with -from %d (or no -from: the watermark holds)", lo, hi, err, lo)
+			return totalRows, fmt.Errorf("window [%d,%d]: %w — resume with -from %d (or no -from: the watermark holds)", lo, hi, err, lo)
 		}
 		totalRows += n
 		if !dryRun {
-			if err := clickhouse.SetCap67MovementsWatermark(ctx, *chAddr, hi); err != nil {
-				return fmt.Errorf("advance watermark to %d: %w", hi, err)
+			if err := clickhouse.SetCap67MovementsWatermark(ctx, chAddr, hi); err != nil {
+				return totalRows, fmt.Errorf("advance watermark to %d: %w", hi, err)
 			}
 		}
 		fmt.Fprintf(os.Stderr, "ch-cap67-movements: window [%d,%d] done — %d movement rows (total %d, elapsed %s)\n",
 			lo, hi, n, totalRows, time.Since(runStart).Round(time.Second))
 		if hi >= last {
-			return nil
+			return totalRows, nil
 		}
 		lo = hi + 1
+	}
+}
+
+// runCap67Follow is the persistent-daemon loop that makes the movement feed
+// real-time: catch up to the contiguous tip, sleep `interval`, repeat, until
+// ctx is cancelled (SIGTERM ⟹ graceful shutdown). A transient catch-up error
+// is logged and retried on the next tick — the watermark holds, so NO ledger
+// is skipped — while a ctx-cancel ends the loop cleanly. Crash-safe: on
+// restart it resumes from the persisted watermark.
+func runCap67Follow(ctx context.Context, chAddr string, window uint32, dryRun bool, interval time.Duration) error {
+	fmt.Fprintf(os.Stderr, "ch-cap67-movements: FOLLOW mode — catch-up every %s, gated on the contiguous watermark, on %s\n", interval, chAddr)
+	return followLoop(ctx, interval, func(ctx context.Context) error {
+		n, err := runCap67CatchUp(ctx, chAddr, 0, 0, window, dryRun)
+		if err == nil && n > 0 {
+			fmt.Fprintf(os.Stderr, "ch-cap67-movements: follow tick derived %d movement rows\n", n)
+		}
+		return err
+	})
+}
+
+// followLoop runs catchUp immediately and then once every `interval` until ctx
+// is cancelled. A catchUp error is logged and RETRIED on the next tick — the
+// derive advances its watermark only after a clean window, so a failed tick
+// skips NO ledger — while a ctx-cancel (mid-derive or between ticks) ends the
+// loop cleanly (SIGTERM ⟹ graceful shutdown; on restart the daemon resumes
+// from the persisted watermark). Extracted from runCap67Follow so the loop's
+// shutdown + error-resilience contract is unit-testable without a live
+// ClickHouse.
+func followLoop(ctx context.Context, interval time.Duration, catchUp func(context.Context) error) error {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if err := catchUp(ctx); err != nil {
+			if ctx.Err() != nil {
+				return nil // shutdown mid-derive — clean exit
+			}
+			fmt.Fprintf(os.Stderr, "ch-cap67-movements: catch-up error (watermark holds, retrying next tick): %v\n", err)
+		}
+		select {
+		case <-ctx.Done():
+			fmt.Fprintln(os.Stderr, "ch-cap67-movements: follow mode stopping (context cancelled)")
+			return nil
+		case <-ticker.C:
+		}
 	}
 }
 
