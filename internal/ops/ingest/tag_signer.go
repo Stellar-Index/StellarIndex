@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
@@ -118,10 +119,20 @@ func tagSigner(args []string) error { //nolint:funlen,gocognit,gocyclo // linear
 		}
 		if len(sigs) > 0 {
 			tags := make([]timescale.SignerTag, len(sigs))
+			tsFrom, tsTo := sigs[0].CloseTime, sigs[0].CloseTime
 			for i, s := range sigs {
 				tags[i] = timescale.SignerTag{Ledger: s.Ledger, TxHash: s.TxHash, Signer: s.Signer}
+				if s.CloseTime.Before(tsFrom) {
+					tsFrom = s.CloseTime
+				}
+				if s.CloseTime.After(tsTo) {
+					tsTo = s.CloseTime
+				}
 			}
-			tagged, terr := store.TagTradesSigner(ctx, tags)
+			// ts bound = the window's chunk span so the UPDATE prunes to it
+			// (and decompresses only that window's compressed segments, the
+			// same reason tag-routed-via runs windowed).
+			tagged, terr := store.TagTradesSigner(ctx, tsFrom, tsTo.Add(time.Second), tags)
 			if terr != nil {
 				return fmt.Errorf("window %d..%d tag: %w", lo, hi, terr)
 			}

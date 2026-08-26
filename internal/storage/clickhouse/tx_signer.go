@@ -3,17 +3,21 @@ package clickhouse
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // TxSigner is one (ledger, tx_hash) → transaction source account, read from
 // the lake's stellar.transactions for the signer back-tagger. The projector
 // replays trades from lake EVENTS, which carry no source account, so this is
 // the authoritative place the tx signer lives — see migration 0150 +
-// timescale.TagTradesSigner.
+// timescale.TagTradesSigner. CloseTime lets the tagger bound its UPDATE by the
+// trades hypertable's time partition (ts) so it chunk-prunes instead of
+// scanning + decompressing every chunk.
 type TxSigner struct {
-	Ledger uint32
-	TxHash string
-	Signer string
+	Ledger    uint32
+	TxHash    string
+	Signer    string
+	CloseTime time.Time
 }
 
 // TxSignersForLedgerRange returns (ledger, tx_hash, source_account) for every
@@ -29,7 +33,7 @@ func (r *ExplorerReader) TxSignersForLedgerRange(ctx context.Context, minLedger,
 		return nil, nil
 	}
 	const q = `
-        SELECT ledger_seq, tx_hash, source_account
+        SELECT ledger_seq, tx_hash, source_account, close_time
           FROM stellar.transactions FINAL
          WHERE ledger_seq >= ?
            AND ledger_seq <= ?
@@ -44,7 +48,7 @@ func (r *ExplorerReader) TxSignersForLedgerRange(ctx context.Context, minLedger,
 	out := make([]TxSigner, 0, 1024)
 	for rows.Next() {
 		var t TxSigner
-		if err := rows.Scan(&t.Ledger, &t.TxHash, &t.Signer); err != nil {
+		if err := rows.Scan(&t.Ledger, &t.TxHash, &t.Signer, &t.CloseTime); err != nil {
 			return nil, fmt.Errorf("clickhouse: TxSignersForLedgerRange scan: %w", err)
 		}
 		out = append(out, t)

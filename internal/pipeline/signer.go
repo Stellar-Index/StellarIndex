@@ -50,7 +50,7 @@ type SignerLakeReader interface {
 // *timescale.Store satisfies it.
 type SignerRangeTagger interface {
 	UntaggedAMMSignerLedgerRange(ctx context.Context, from, to time.Time) (minLedger, maxLedger uint32, ok bool, err error)
-	TagTradesSigner(ctx context.Context, tags []timescale.SignerTag) (int64, error)
+	TagTradesSigner(ctx context.Context, from, to time.Time, tags []timescale.SignerTag) (int64, error)
 }
 
 // RunSignerTagger sweeps the trailing lookback window every interval,
@@ -100,10 +100,20 @@ func RunSignerTagger(ctx context.Context, logger *slog.Logger, lake SignerLakeRe
 			return
 		}
 		tags := make([]timescale.SignerTag, len(sigs))
+		tsFrom, tsTo := sigs[0].CloseTime, sigs[0].CloseTime
 		for i, s := range sigs {
 			tags[i] = timescale.SignerTag{Ledger: s.Ledger, TxHash: s.TxHash, Signer: s.Signer}
+			if s.CloseTime.Before(tsFrom) {
+				tsFrom = s.CloseTime
+			}
+			if s.CloseTime.After(tsTo) {
+				tsTo = s.CloseTime
+			}
 		}
-		tagged, err := store.TagTradesSigner(sweepCtx, tags)
+		// Half-open [tsFrom, tsTo+1s) bounds the UPDATE to the tagged txs'
+		// chunk span (+1s makes the inclusive max representable), so the
+		// hypertable prunes instead of scanning/decompressing every chunk.
+		tagged, err := store.TagTradesSigner(sweepCtx, tsFrom, tsTo.Add(time.Second), tags)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return
