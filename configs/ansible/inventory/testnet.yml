@@ -66,12 +66,20 @@ all:
     galexie_s3_bucket:   "galexie-live"
     galexie_s3_region:   "{{ region_id }}"
 
-    # DEX/oracle off; aggregator not deployed; pubnet-only observers off.
+    # "Mostly an explorer": the Soroban DEX/AMM sources (soroswap, aquarius,
+    # phoenix, blend, comet, …) and the oracles (reflector, redstone, band)
+    # are BESPOKE CONTRACTS a test net doesn't have — cut them. SDEX (the
+    # native Stellar DEX) exists on every network, so keep it: the explorer
+    # shows real on-chain DEX trades. Aggregator/pricing still off.
     run_aggregator: false
-    stellarindex_enabled_sources: []
+    stellarindex_enabled_sources:
+      - sdex
     stellarindex_sdf_reserve_accounts: []
     stellarindex_reserve_balances_stroops: {}
     stellarindex_watched_sep41_contracts: []
+    # No verified-currency / market-cap surface on a test net (the default is a
+    # pubnet asset list). Empty → the explorer shows assets with no USD value.
+    stellarindex_watched_classic_assets: []
 
     # Single test box — no offsite backup target yet (ack, like r1).
     pgbackrest_offsite_ack: true

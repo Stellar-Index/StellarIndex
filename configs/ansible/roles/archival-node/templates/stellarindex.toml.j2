@@ -80,6 +80,9 @@ backfill_from_ledger  = {{ stellarindex_backfill_from_ledger | int }}
 enabled            = true
 persist_per_source = true
 
+{% if run_aggregator | default(true) | bool %}
+{# Oracle contracts are pubnet Soroban addresses + only consumed by the
+   aggregator/oracle sources. Omitted on a pricing-off host (test net). #}
 [oracle.reflector]
 dex_contract = "CALI2BYU2JE6WVRUFYTS6MSBNEHGJ35P4AVCZYF3B6QOE3QKOB2PLE6M"
 cex_contract = "CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN"
@@ -94,6 +97,7 @@ standard_reference_contract = "CCQXWMZVM3KRTXTUPTN53YHL272QGKF32L7XEDNZ2S6OSUFK3
 [oracle.soroswap]
 factory_contract  = "CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2"
 seed_rpc_endpoint = "https://mainnet.sorobanrpc.com"
+{% endif %}
 
 # ──────────────────────────────────────────────────────────────────
 # Aggregator + trades — added 2026-05-04 to fix the headline-product
@@ -188,9 +192,13 @@ target = "crypto:BTC/fiat:GBP"
 legs   = ["crypto:BTC/fiat:USD", "fiat:USD/fiat:GBP"]
 
 [trades]
+{% if run_aggregator | default(true) | bool %}
 usd_pegged_classic_assets = [
   "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
 ]
+{% else %}
+usd_pegged_classic_assets = []   {# pricing off (test net): no USD pegs, assets are $0 #}
+{% endif %}
 
 # ──────────────────────────────────────────────────────────────────
 # Pricing guard — declared fiat pegs (2026-08-24).
@@ -207,6 +215,7 @@ usd_pegged_classic_assets = [
 # does not fill.
 # ──────────────────────────────────────────────────────────────────
 [pricing_guard]
+{% if run_aggregator | default(true) | bool %}
 
   [pricing_guard.fiat_pegged_classic_assets]
   # AUDD — AUD Digital, declared 1:1 AUD (operator approval 2026-08-24).
@@ -215,6 +224,7 @@ usd_pegged_classic_assets = [
   # settlement corridor ($4.8M/30d at exactly 1.000000 on SDEX,
   # 2026-08-24 census) + the same operator approval.
   "AUDR-GAAVW6EQ4N4SHNTKBLTOBXKS6CEIMT2KZI7YQ5B37ECNVPFLBIGRKLIL" = "AUD"
+{% endif %}
 
 # ──────────────────────────────────────────────────────────────────
 # External — off-chain CEX/FX/aggregator connectors.
@@ -222,6 +232,9 @@ usd_pegged_classic_assets = [
 # CEX coverage. Free venues only on r1 today (no API
 # keys provisioned for the paid FX/aggregator tier).
 # ──────────────────────────────────────────────────────────────────
+{% if run_aggregator | default(true) | bool %}
+{# External CEX/FX connectors feed the aggregator's USD pricing. Omitted on a
+   pricing-off host (test net) — no external markets, assets are $0. #}
 [external]
 
   [external.binance]
@@ -250,6 +263,7 @@ usd_pegged_classic_assets = [
   # Empty feed_map falls back to internal/sources/external/chainlink/defaults.go
   # (BTC/ETH/LINK/EUR/GBP/JPY vs USD on Ethereum mainnet AggregatorV3 proxies).
   [external.chainlink.feed_map]
+{% endif %}
 
 # ──────────────────────────────────────────────────────────────────
 # API — added 2026-05-05 to trust the Caddy loopback proxy.
@@ -311,7 +325,7 @@ cookie_domain      = "{{ stellarindex_dashboard_cookie_domain | default('.stella
 # match (no_metadata basis); without it
 # stellarindex_aggregator_supply_refresh_never_initialized fires
 # permanently. Cadence default = 5m.
-aggregator_refresh_enabled = true
+aggregator_refresh_enabled = {{ 'true' if run_aggregator | default(true) | bool else 'false' }}
 aggregator_refresh_cadence = "5m"
 watched_classic_assets = [
 {% for asset in stellarindex_watched_classic_assets | default([
