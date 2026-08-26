@@ -24,9 +24,18 @@ files_per_partition  = {{ galexie_files_per_partition }}
 # ──── Stellar-core — embedded captive core for ledger replay ───────
 [stellar_core_config]
 # network=pubnet|testnet triggers galexie's built-in defaults
-# (quorum + history archives). We also set captive_core_toml_path
-# so our own 7-org tier-1 quorum is used instead of the built-in one,
-# keeping this consistent with the backfill galexie's captive core.
+# (quorum + history archives).
+#
+# On PUBNET we override with captive_core_toml_path so our own curated
+# 7-org tier-1 quorum is used instead of the built-in one (a deliberate
+# reliability choice, consistent with the backfill galexie's captive
+# core). On a TEST NET we do NOT override: we have no curated test-net
+# quorum and don't need one just to read ledgers, so galexie's built-in
+# preset quorum + SDF archives are used. (galexie_use_custom_captive_core
+# defaults to true only on pubnet; futurenet has no built-in preset — set
+# it explicitly there once its captive config is provisioned — Phase 2.)
 network                  = "{{ stellar_network }}"
+{% if galexie_use_custom_captive_core | default(stellar_network == 'pubnet') | bool %}
 captive_core_toml_path   = "/etc/stellar/captive-core-galexie.cfg"
+{% endif %}
 stellar_core_binary_path = "/usr/bin/stellar-core"

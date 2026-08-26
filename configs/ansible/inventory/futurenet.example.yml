@@ -1,0 +1,93 @@
+---
+# Inventory for FUTURENET (Hetzner Frankfurt box, VM 2 of 2).
+# Copy to futurenet.yml and fill in the Xs (futurenet.yml is gitignored).
+# Secrets live in futurenet.secrets.yml (ansible-vault).
+#
+# Same physical box as TESTNET (see testnet.example.yml for the topology);
+# this is the second Proxmox VM. Futurenet is the EARLY-WARNING network:
+# Stellar rolls out protocol/core Futurenet → Testnet → Mainnet, so this
+# VM runs AHEAD-of-Mainnet software and surfaces "new op/event type we
+# don't decode yet" months before it reaches the money network.
+#
+# ⚠ FUTURENET IS PHASE 2 — two extra things vs testnet, both flagged below:
+#   1. galexie has NO built-in "futurenet" preset (it knows pubnet/testnet
+#      only). The captive core needs an EXPLICIT passphrase + history
+#      archives. stellar_passphrase already resolves to the futurenet
+#      passphrase; the galexie captive config must be provisioned before
+#      first run — verify against the installed galexie's config schema
+#      on the VM (galexie_use_custom_captive_core + a futurenet captive
+#      cfg, OR galexie's explicit network_passphrase/history_archive_urls
+#      keys). Do this on the VM where you can test it.
+#   2. Futurenet RESET and protocol UPGRADE are usually the SAME event
+#      (protocol bump → reset to ledger 1 + a new core/galexie/SDK). See
+#      the reset runbook's futurenet section.
+#
+# Futurenet history archive (dev, HTTP): the role default resolves
+# stellar_history_archive_url to
+#   http://history.stellar.org/dev/core-futurenet/core_futurenet_001
+
+all:
+  vars:
+    region_id:           "futurenet"
+    region_name:         "FSN-futurenet"
+    home_domain:         "stellarindex.io"
+
+    # The one-line switch. Resolves the futurenet passphrase, the
+    # core-futurenet archive, and era boundaries = genesis (1).
+    stellar_network:     "futurenet"
+    catchup_mode:        "CATCHUP_RECENT"
+    is_validator:        false
+    node_is_validator:   "{{ is_validator }}"
+
+    # Plain virtual disk (host does the ZFS stripe/compression).
+    zfs_data_devices:    []
+    zfs_data_pool_type:  ""
+    zfs_data_pool_name:  ""
+
+    run_postgres:        true
+    run_stellar_core:    false
+    run_galexie:         true
+    run_minio:           true
+    run_observability:   true
+
+    minio_buckets:
+      - "galexie-live"
+      - "galexie-archive"
+      - "backups"
+
+    # ⚠ PHASE 2: galexie needs an explicit futurenet captive config (no
+    # built-in preset). Leave the custom captive core OFF until that is
+    # provisioned + tested on the VM, then flip on with a futurenet
+    # captive cfg. Until then galexie will fail to start on futurenet —
+    # this is the known Phase-2 gap, not a regression.
+    # galexie_use_custom_captive_core: true   # + provision the futurenet captive cfg
+
+    # ⚠ PHASE 2: bleeding-edge core/galexie for the unreleased protocol.
+    # Override galexie_version + galexie_expected_version_string +
+    # galexie_expected_binary_sha256 when futurenet is on protocol N+1
+    # ahead of the pinned mainnet galexie. (See VERSIONS.md.)
+
+    stellarindex_backfill_from_ledger: 2
+    stellarindex_live_seam_ledger:     0
+
+    stellarindex_enabled_sources: []
+    stellarindex_sdf_reserve_accounts: []
+    stellarindex_reserve_balances_stroops: {}
+    stellarindex_watched_sep41_contracts: []
+
+    loki_push_url: "http://localhost:3100/loki/api/v1/push"
+
+    admin_ssh_keys:
+      - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFusEIOFA2VH3xvFWIMA8q60iXb1DZvDHrD21wjnv32u gh-actions-deploy@stellarindex"
+    allowed_ssh_cidrs:
+      - "X.X.X.X/32"                          # replace — operator CIDR
+
+  children:
+    archival_nodes:
+      hosts:
+        futurenet-01:
+          ansible_host:         "X.X.X.X"     # TODO: the 2nd VM's IP
+          ansible_user:         "root"
+          ansible_port:         22
+          ansible_ssh_private_key_file: "~/.ssh/si_deploy"
+          ansible_python_interpreter: /usr/bin/python3

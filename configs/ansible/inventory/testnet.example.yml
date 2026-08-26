@@ -1,0 +1,108 @@
+---
+# Inventory for TESTNET (Hetzner Frankfurt box, VM 1 of 2).
+# Copy to testnet.yml and fill in the Xs (testnet.yml is gitignored).
+# Secrets (DB password, MinIO creds, …) live in testnet.secrets.yml
+# (ansible-vault), same pattern as r1.secrets.yml.
+#
+# TOPOLOGY (ADR-testnet-futurenet, 2026-08-26):
+#   - Testnet + Futurenet share ONE Hetzner box (Xeon E-2176G, 64 GB ECC,
+#     2×960 GB U.2 NVMe RAID0-striped ~1.9 TB), each in its own Proxmox VM.
+#     This file is the TESTNET VM. Futurenet = futurenet.yml.
+#   - Single instance — NO HA / multi-region (that is Mainnet-only, r1+).
+#   - The box (host) does the RAID0 stripe + zstd compression under ZFS;
+#     each VM gets a plain virtual disk mounted at /var/lib (no ZFS inside
+#     the VM — avoids ZFS-on-ZFS double-COW), so zfs_* is disabled below.
+#   - The VM builds its OWN lake from genesis (galexie captive-core →
+#     local MinIO → indexer → ClickHouse/PG), exactly like r1 but tiny.
+#     No dependency on any SDF public datastore.
+#
+# Test nets RESET (testnet ~quarterly). Recovery = the reset runbook
+# (docs/operations/runbooks/testnet-futurenet-reset.md) or re-provision
+# the VM. Ledgers restart at 1; the passphrase is unchanged.
+
+all:
+  vars:
+    # ───── Region identity (single instance; tags metrics only) ─────
+    region_id:           "testnet"
+    region_name:         "FSN-testnet"
+    home_domain:         "stellarindex.io"
+
+    # ───── Stellar network ─────────────────────────────────────────
+    # The ONE line that switches the whole stack. Drives: passphrase
+    # (stellar_passphrase), history archive (stellar_history_archive_url
+    # = core-testnet), era boundaries (soroban_genesis_ledger /
+    # movements_floor_ledger = 1), and galexie's built-in testnet preset
+    # quorum (galexie_use_custom_captive_core defaults false off pubnet).
+    stellar_network:     "testnet"
+    catchup_mode:        "CATCHUP_RECENT"
+    is_validator:        false
+    node_is_validator:   "{{ is_validator }}"
+
+    # ───── Storage layout — plain virtual disk, host does ZFS ───────
+    # The Proxmox host stripes the 2×NVMe and compresses under ZFS; the
+    # VM sees one virtual disk mounted at /var/lib. Empty zfs_data_devices
+    # + empty zfs_data_pool_type disables the in-VM ZFS tasks (r2 pattern).
+    zfs_data_devices:    []
+    zfs_data_pool_type:  ""
+    zfs_data_pool_name:  ""
+
+    # ───── Roles colocated on this VM ───────────────────────────────
+    run_postgres:        true
+    run_stellar_core:    false      # galexie captive-core only
+    run_galexie:         true
+    run_minio:           true       # BOTH buckets local (own lake)
+    run_observability:   true
+
+    # ───── MinIO — both buckets local (the VM's own source lake) ────
+    minio_buckets:
+      - "galexie-live"
+      - "galexie-archive"
+      - "backups"
+
+    # ───── Indexer: fresh test net = ingest from genesis, live-only ─
+    # galexie tails from genesis into galexie-live; the indexer reads
+    # galexie-live only (seam 0 = live-only, no archive stitch needed on
+    # a from-genesis tiny net). ledgerstream clamps from<2 → 2 (genesis).
+    stellarindex_backfill_from_ledger: 2
+    stellarindex_live_seam_ledger:     0
+
+    # ───── DEX / oracle sources OFF (plan §5c) ──────────────────────
+    # Soroswap/Aquarius/Blend/Reflector/… barely exist on testnet and
+    # their contract addresses are hardcoded pubnet — leave the source
+    # fleet empty so the indexer runs the classic + SEP-41 movement/
+    # supply path only (the real-time-movements deploy). The aggregator
+    # (pricing) is not deployed on test nets — no real USD markets.
+    stellarindex_enabled_sources: []
+
+    # ───── Pubnet-only observers OFF ────────────────────────────────
+    # SDF reserve accounts (XLM circulating-supply Algorithm 1) are
+    # pubnet G-accounts — empty here so that observer stays inactive
+    # (config.go SupplyConfig: empty = observer skipped, not an error).
+    stellarindex_sdf_reserve_accounts: []
+    stellarindex_reserve_balances_stroops: {}
+    # SAC-wrapper roster is a curated pubnet trust surface — empty on
+    # testnet (SEP-41 supply/transfer observers skip watched contracts;
+    # the all-asset CAP-67 movements derive still runs).
+    stellarindex_watched_sep41_contracts: []
+
+    # ───── Observability ────────────────────────────────────────────
+    loki_push_url: "http://localhost:3100/loki/api/v1/push"
+
+    # ───── SSH hardening ────────────────────────────────────────────
+    admin_ssh_keys:
+      - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFusEIOFA2VH3xvFWIMA8q60iXb1DZvDHrD21wjnv32u gh-actions-deploy@stellarindex"
+    # TODO: operator VPN / jump-host CIDR(s). SSH grants root here.
+    allowed_ssh_cidrs:
+      - "X.X.X.X/32"                          # replace — operator CIDR
+
+  children:
+    archival_nodes:
+      hosts:
+        testnet-01:
+          # TODO: the Proxmox VM's reachable IP (Hetzner additional IP or
+          # the host's IP + a port map — set at VM-build time).
+          ansible_host:         "X.X.X.X"
+          ansible_user:         "root"
+          ansible_port:         22
+          ansible_ssh_private_key_file: "~/.ssh/si_deploy"
+          ansible_python_interpreter: /usr/bin/python3
