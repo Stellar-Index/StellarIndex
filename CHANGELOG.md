@@ -15,6 +15,24 @@ against.
 
 ## [Unreleased]
 
+## [v0.44.8] — 2026-08-26
+
+Tested against Stellar protocol 22.
+
+### Changed
+- **Real-time movement latency cadence tuning (~4s → ~2s).** An adversarial
+  audit of a proposed captive-core "fast lane" found the live-movement latency
+  is a chain of hardcoded cadence constants, not a compute floor — so no new
+  component/second core is needed. Tuned the safe ones: the indexer's caught-up
+  MinIO re-check (`liveTailRetryWait`) 3s → 500ms (the single largest term — a
+  caught-up indexer sat a flat ~3s behind the tip; MinIO is local, so a
+  re-check is a cheap bucket LIST); the `/v1/ledger/stream` poll that drives the
+  explorer's "watch it land" refetch 2s → 500ms; and the cap67 movements derive
+  tick (`FOLLOW_INTERVAL`) 2s → 1s. The ClickHouse-part-sensitive LiveSink flush
+  is deliberately left at 1s (sub-second flushing multiplies small parts on the
+  capacity-bound store). An event-driven MinIO-bucket-notification ingest (still
+  a single captive-core) is the documented next step toward ~100ms.
+
 ## [v0.44.7] — 2026-08-26
 
 Tested against Stellar protocol 22.
