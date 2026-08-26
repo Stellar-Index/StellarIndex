@@ -74,6 +74,10 @@ type AccountTradeRow struct {
 	// recorded one ("" otherwise — most venues record only the taker).
 	Counterparty string
 	RoutedVia    string
+	// Signer is the transaction source account (fee-payer / initiator)
+	// behind an AMM/Soroban swap, back-tagged from the lake (migration
+	// 0150). "" for a non-AMM trade or one not yet swept.
+	Signer string
 }
 
 // AccountTradesCursor is the keyset position for ListAccountTrades —
@@ -105,13 +109,14 @@ const accountTradesInnerCols = `source, ledger, tx_hash, op_index, ts,
 	       base_asset, quote_asset,
 	       base_amount::text AS base_amount, quote_amount::text AS quote_amount,
 	       COALESCE(usd_volume::text, '') AS usd_volume,
-	       COALESCE(routed_via, '') AS routed_via`
+	       COALESCE(routed_via, '') AS routed_via,
+	       COALESCE(signer, '') AS signer`
 
 // accountTradesOuterCols re-projects the UNION's already-normalised
 // columns by name — no re-casting, no re-COALESCE.
 const accountTradesOuterCols = `source, ledger, tx_hash, op_index, ts,
 	       base_asset, quote_asset,
-	       base_amount, quote_amount, usd_volume, routed_via`
+	       base_amount, quote_amount, usd_volume, routed_via, signer`
 
 // accountTradesQuery builds the two-arm UNION described in the file
 // header. hasCursor appends the keyset tuple comparison to both arms.
@@ -213,7 +218,7 @@ func (s *Store) ListAccountTrades(ctx context.Context, address string, limit int
 		)
 		if err := rows.Scan(&r.Source, &ledger, &r.TxHash, &opIdx, &r.Ts,
 			&r.BaseAsset, &r.QuoteAsset, &r.BaseAmount, &r.QuoteAmount,
-			&r.USDVolume, &r.RoutedVia, &r.Role, &r.Counterparty); err != nil {
+			&r.USDVolume, &r.RoutedVia, &r.Signer, &r.Role, &r.Counterparty); err != nil {
 			return nil, horizon, fmt.Errorf("timescale: ListAccountTrades scan: %w", err)
 		}
 		r.Ledger = uint32(ledger) //nolint:gosec // ledger seq fits uint32

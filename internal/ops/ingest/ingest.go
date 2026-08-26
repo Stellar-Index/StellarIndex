@@ -20,7 +20,7 @@ import (
 // discovery.Run's doc comment for the calling convention shared by
 // every internal/ops/* package post-split. args[0] is the subcommand
 // verb (one of the eighteen this package owns); args[1:] are its flags.
-func Run(args []string) error {
+func Run(args []string) error { //nolint:gocyclo // flat command-dispatch switch; one arm per ops subcommand
 	switch args[0] {
 	case "backfill":
 		return backfill(args[1:])
@@ -42,6 +42,8 @@ func Run(args []string) error {
 		return censusBackfill(args[1:])
 	case "tag-routed-via":
 		return tagRoutedVia(args[1:])
+	case "tag-signer":
+		return tagSigner(args[1:])
 	case "seed-soroswap-pairs":
 		return seedSoroswapPairs(args[1:])
 	case "seed-protocol-contracts":

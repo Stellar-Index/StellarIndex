@@ -134,6 +134,7 @@ var subcommands = map[string]func(args []string) error{
 	"find-data-gaps":          ingest.Run,
 	"census-backfill":         ingest.Run,
 	"tag-routed-via":          ingest.Run,
+	"tag-signer":              ingest.Run,
 	"seed-soroswap-pairs":     ingest.Run,
 	"seed-protocol-contracts": ingest.Run,
 	"seed-entry-counts":       ingest.Run,
@@ -725,6 +726,15 @@ Subcommands:
                           tag) so re-runs are no-ops. Checkpoints into
                           ingestion_cursors for resume. The live indexer
                           keeps the trailing 30 min tagged going forward.
+  tag-signer -config PATH -from N -to N [-window N] [-ch-addr H:P] [-resume]
+                          Back-tag trades.signer (the AMM/Soroban swap tx
+                          source account) over a ledger range, reading the
+                          signer from the lake's stellar.transactions
+                          (migration 0150). The recovery half of the live
+                          pipeline.RunSignerTagger sweeper — run it when an
+                          indexer/ClickHouse outage or projector lag exceeded
+                          the sweeper's 30-min lookback. First-wins +
+                          checkpointed for resume.
   census-backfill -config PATH -from N -to N [-bucket NAME] [-resume]
                           Populate ledger_ingest_log (ADR-0033 substrate
                           record) for a historical range. Pure structural

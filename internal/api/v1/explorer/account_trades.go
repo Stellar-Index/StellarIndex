@@ -59,6 +59,11 @@ type AccountTradeEntry struct {
 	Role         string `json:"role"`
 	Counterparty string `json:"counterparty,omitempty"`
 	RoutedVia    string `json:"routed_via,omitempty"`
+	// Signer is the transaction source account (fee-payer / initiator)
+	// behind an AMM/Soroban swap — the human/EOA a router or contract
+	// call hides behind the pool `taker`. Empty for non-AMM trades or
+	// ones the signer sweeper has not yet tagged (migration 0150).
+	Signer string `json:"signer,omitempty"`
 }
 
 // AccountTradesView is the wire response for GET
@@ -249,5 +254,6 @@ func accountTradeEntryView(t timescale.AccountTradeRow) AccountTradeEntry {
 		Role:         t.Role,
 		Counterparty: t.Counterparty,
 		RoutedVia:    t.RoutedVia,
+		Signer:       t.Signer,
 	}
 }
