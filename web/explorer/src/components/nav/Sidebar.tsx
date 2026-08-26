@@ -37,6 +37,7 @@ import { useDialog } from '@/lib/useDialog';
 import { StellarMark } from '@/components/StellarMark';
 import { LiveLedgerBadge } from './LiveLedgerBadge';
 import { NetworkSwitcher } from './NetworkSwitcher';
+import { CURRENT_NETWORK_ID } from '@/lib/networks';
 import { SearchModal } from './SearchModal';
 
 type NavItem = {
@@ -90,6 +91,25 @@ const NAV: NavGroup[] = [
     ],
   },
 ];
+
+// The lean test-net explorers (SDEX-only, no aggregator/pricing) carry no
+// bespoke Soroban protocols, oracles, aggregator-derived insights, or external
+// CEX/FX markets/assets — hide those rail surfaces so the nav reflects what the
+// network actually has. The whole External group drops once it is empty.
+const TESTNET_HIDDEN_HREFS = new Set([
+  '/protocols',
+  '/oracles',
+  '/insights',
+  '/exchanges',
+  '/external/assets',
+]);
+
+function navForNetwork(groups: NavGroup[]): NavGroup[] {
+  if (CURRENT_NETWORK_ID === 'mainnet') return groups;
+  return groups
+    .map((g) => ({ ...g, items: g.items.filter((it) => !TESTNET_HIDDEN_HREFS.has(it.href)) }))
+    .filter((g) => g.items.length > 0);
+}
 
 // Shown only when signed in — the logged-in "Account" section (the former
 // standalone dashboard, now part of the site). The Admin row is appended
@@ -193,7 +213,7 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const accountGroup: NavGroup = isStaff
     ? { ...ACCOUNT_GROUP, items: [...ACCOUNT_GROUP.items, ADMIN_ITEM] }
     : ACCOUNT_GROUP;
-  const groups = signedIn ? [...NAV, accountGroup] : NAV;
+  const groups = navForNetwork(signedIn ? [...NAV, accountGroup] : NAV);
   return (
     <div className="flex h-full flex-col bg-surface-muted">
       {/* Logo — the official Stellar mark + wordmark in Inter (per
@@ -214,14 +234,13 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
         </Link>
       </div>
 
-      {/* Odometer row — the live ledger of THIS network (bare number, pulsing
-          while the stream is fresh, links to the ledger) with the network
-          switcher: the network name + live dot + a chevron listing the sibling
-          explorers. Its own row so the 8-digit odometer + network name never
-          crowd the wordmark in the w-64 rail. */}
-      <div className="flex h-7 shrink-0 items-center gap-1.5 px-4">
-        <LiveLedgerBadge onNavigate={onNavigate} compact />
+      {/* Odometer — the network switcher (name + live dot + chevron listing the
+          sibling explorers) with THIS network's live ledger stacked directly
+          beneath it (bare number, pulsing while the stream is fresh, links to
+          the ledger). Left-aligned in its own block under the wordmark. */}
+      <div className="flex shrink-0 flex-col items-start gap-0.5 px-2.5 pb-1">
         <NetworkSwitcher onNavigate={onNavigate} />
+        <LiveLedgerBadge onNavigate={onNavigate} compact />
       </div>
 
       {/* Search — directly below the logo */}
