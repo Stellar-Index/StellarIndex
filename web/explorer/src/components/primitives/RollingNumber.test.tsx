@@ -14,8 +14,13 @@ describe('RollingNumber', () => {
   function cells(container: HTMLElement) {
     return Array.from(container.querySelectorAll('.digit-cell'));
   }
+  // Rolling cells: static digits now share the .digit-window box (for exact
+  // vertical alignment), so a *rolling* cell is identified by its animating
+  // .digit-strip child (a static cell has a .digit-flat instead).
   function windows(container: HTMLElement) {
-    return Array.from(container.querySelectorAll('.digit-window'));
+    return Array.from(container.querySelectorAll('.digit-cell')).filter((c) =>
+      c.querySelector('.digit-strip'),
+    );
   }
   // The character a cell currently SHOWS: a plain cell's text, or a
   // strip's second (new) digit.

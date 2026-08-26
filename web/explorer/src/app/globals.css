@@ -270,6 +270,13 @@
   display: block;
   height: 1lh;
 }
+/* A non-rolling digit: one 1lh block filling the same window as a rolling
+   digit's visible strip cell, so static and changing digits sit at the exact
+   same height (no descender-height offset on the column that ticks). */
+.digit-flat {
+  display: block;
+  height: 1lh;
+}
 @keyframes digit-rollover {
   from {
     transform: translateY(0);

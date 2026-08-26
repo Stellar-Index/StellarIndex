@@ -60,9 +60,14 @@ export function RollingNumber({
         const prevCh = prev == null ? undefined : prev[prev.length - col];
         const rolls = prev != null && prevCh != null && prevCh !== ch;
         if (!rolls) {
+          // Same box model as the rolling window (a 1lh block inside a
+          // 1lh vertical-align:bottom window) so a static digit rests at the
+          // EXACT vertical position as a rolling one — otherwise a
+          // baseline-aligned inline-block sits a descender higher than the
+          // bottom-aligned window, and the changing digit reads a couple px low.
           return (
-            <span key={`${col}:${ch}`} aria-hidden className="digit-cell inline-block">
-              {ch}
+            <span key={`${col}:${ch}`} aria-hidden className="digit-cell digit-window">
+              <span className="digit-flat">{ch}</span>
             </span>
           );
         }
