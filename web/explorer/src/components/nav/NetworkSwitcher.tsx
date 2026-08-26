@@ -144,7 +144,7 @@ export function NetworkSwitcher({ onNavigate }: { onNavigate?: () => void }) {
           id="network-switcher-menu"
           ref={panelRef}
           tabIndex={-1}
-          className="absolute left-0 top-full z-50 mt-1 w-60 rounded-lg border border-line bg-surface p-1.5 shadow-elevated outline-hidden"
+          className="absolute right-0 top-full z-50 mt-1 w-60 rounded-lg border border-line bg-surface p-1.5 shadow-elevated outline-hidden"
         >
           <p className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-ink-faint">
             Networks

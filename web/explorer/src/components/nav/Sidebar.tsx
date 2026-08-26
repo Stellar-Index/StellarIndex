@@ -215,9 +215,11 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const groups = navForNetwork(signedIn ? [...NAV, accountGroup] : NAV);
   return (
     <div className="flex h-full flex-col bg-surface-muted">
-      {/* Logo — the official Stellar mark + wordmark in Inter (per
-          design-system.stellar.org typography). */}
-      <div className="flex h-14 shrink-0 items-center px-4">
+      {/* Logo row — the Stellar mark + wordmark on the left, and the odometer
+          (a single hoverable control: network name + chevron over THIS network's
+          live ledger; click anywhere on it to open the network switcher) floated
+          to the right, next to the wordmark. */}
+      <div className="flex h-14 shrink-0 items-center gap-2 px-4">
         <Link
           href="/"
           onClick={onNavigate}
@@ -231,14 +233,9 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
             <span className="font-light">Index</span>
           </span>
         </Link>
-      </div>
-
-      {/* Odometer — a single hoverable control: the network name + chevron over
-          THIS network's live ledger (pulsing while the stream is fresh).
-          Clicking anywhere on it opens the network switcher (sibling explorers
-          + their tips). Left-aligned in its own block under the wordmark. */}
-      <div className="flex shrink-0 px-2.5 pb-1">
-        <NetworkSwitcher onNavigate={onNavigate} />
+        <div className="ml-auto shrink-0">
+          <NetworkSwitcher onNavigate={onNavigate} />
+        </div>
       </div>
 
       {/* Search — directly below the logo */}
