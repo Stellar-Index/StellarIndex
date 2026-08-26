@@ -396,6 +396,39 @@ stellarindex_live_seam_ledger: 0
 
 # ───── Stellar network / quorum ──────────────────────────────────────
 stellar_network:         "pubnet"
+
+# The full network passphrase, derived from stellar_network. ONE source
+# of truth feeding BOTH stellar-core.cfg's NETWORK_PASSPHRASE AND (for
+# non-preset networks like futurenet) galexie's captive core — declared
+# here so the two can never drift. Fixes the pre-2026-08-26 bug where
+# stellar-core.cfg.j2's else-branch emitted the literal network NAME
+# ("futurenet") as the passphrase, so a futurenet captive-core could not
+# join the network. MUST match internal/config/config.go's passphrase map.
+stellar_passphrases:
+  pubnet:    "Public Global Stellar Network ; September 2015"
+  testnet:   "Test SDF Network ; September 2015"
+  futurenet: "Test SDF Future Network ; October 2022"
+stellar_passphrase: "{{ stellar_passphrases[stellar_network] | default(stellar_network) }}"
+
+# Per-network history archive (SDF-published). config.Validate REJECTS a
+# pubnet (core-live) URL on a non-pubnet network — the guard against a
+# test net silently ingesting pubnet checkpoints — so this MUST track
+# stellar_network. Override in inventory for a private/mirror archive.
+stellar_history_archive_urls:
+  pubnet:    "https://history.stellar.org/prd/core-live/core_live_001"
+  testnet:   "https://history.stellar.org/prd/core-testnet/core_testnet_001"
+  futurenet: "http://history.stellar.org/dev/core-futurenet/core_futurenet_001"
+stellar_history_archive_url: "{{ stellar_history_archive_urls[stellar_network] | default(stellar_history_archive_urls['pubnet']) }}"
+
+# Protocol-transition era boundaries (internal/config/config.go StellarConfig).
+# Pubnet uses the real ledger numbers; a reset testnet/futurenet is entirely
+# post-Soroban AND post-P23 from ledger 1, so BOTH are genesis (1) there —
+# otherwise the SEP-41 supply observer and the CAP-67 movements feed floor
+# ABOVE every ledger the net has and produce nothing. These also drive the
+# ch-cap67-movements -floor-ledger flag (14-stellarindex-services.yml).
+stellar_soroban_genesis_ledger: "{{ 50457424 if stellar_network == 'pubnet' else 1 }}"
+stellar_movements_floor_ledger: "{{ 58762517 if stellar_network == 'pubnet' else 1 }}"
+
 catchup_mode:            "CATCHUP_RECENT"       # RECENT | COMPLETE
 is_validator:            false
 node_is_validator:       "{{ is_validator }}"

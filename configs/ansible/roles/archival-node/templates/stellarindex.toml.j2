@@ -24,7 +24,12 @@ home_domain = "{{ home_domain }}"
 network             = "{{ stellar_network }}"
 core_http_endpoint  = "http://127.0.0.1:11626"
 rpc_endpoints       = ["http://127.0.0.1:8000"]
-history_archive_url = "https://history.stellar.org/prd/core-live/core_live_001"
+history_archive_url = "{{ stellar_history_archive_url }}"
+# Era boundaries — pubnet ledger numbers, or genesis (1) on test nets so
+# the SEP-41 supply / CAP-67 movements feeds don't floor above the whole
+# chain. Driven by stellar_network (defaults/main.yml).
+soroban_genesis_ledger = {{ stellar_soroban_genesis_ledger }}
+movements_floor_ledger = {{ stellar_movements_floor_ledger }}
 
 [storage]
 postgres_dsn       = "postgres://{{ postgres_user_stellarindex }}@127.0.0.1:5432/{{ postgres_db_stellarindex }}?sslmode=disable"

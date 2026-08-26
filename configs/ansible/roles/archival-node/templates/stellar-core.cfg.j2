@@ -51,7 +51,9 @@ PUBLIC_HTTP_PORT = false
 PEER_PORT = {{ captive_peer_port }}
 {% endif %}
 
-NETWORK_PASSPHRASE = "{% if stellar_network == 'pubnet' %}Public Global Stellar Network ; September 2015{% elif stellar_network == 'testnet' %}Test SDF Network ; September 2015{% else %}{{ stellar_network }}{% endif %}"
+{# Single source of truth (defaults/main.yml stellar_passphrase); the old
+   inline if/elif/else emitted the literal network NAME for futurenet. #}
+NETWORK_PASSPHRASE = "{{ stellar_passphrase }}"
 
 {% if cfg_mode == 'full' %}
 NODE_IS_VALIDATOR = {{ node_is_validator | lower }}
