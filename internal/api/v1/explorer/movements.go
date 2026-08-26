@@ -250,7 +250,8 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 	// landing between the two reads are excluded from CH by the ceiling
 	// and served by PG above the floor).
 	//
-	// The watermark advances every derive window (~minutes), so a
+	// The watermark advances every derive window (seconds — a continuous
+	// follow daemon), so a
 	// paginated scroll must NOT re-read the live value on each page — that
 	// would move the CH/PG split under the cursor and silently drop the
 	// native/unwatched sliver between the old and new boundary
@@ -377,8 +378,8 @@ func (h *Handler) fetchSEP41MovementsTail(ctx context.Context, address string, l
 // masquerading as complete (the GATL report, site audit 2026-08-08).
 //
 // wm > 0: all assets are covered through the watermark; only the sliver
-// above it (the derive follows the tip on a ~5-minute timer) is
-// watched-tokens-only.
+// above it (the derive follows the tip via a continuous follow daemon,
+// seconds behind) is watched-tokens-only.
 func movementsCoverageNote(wm uint32, tailNote string) string {
 	if tailNote != "" {
 		return tailNote
@@ -390,7 +391,7 @@ func movementsCoverageNote(wm uint32, tailNote string) string {
 			"for complete raw operation history"
 	}
 	return fmt.Sprintf("complete for all assets through ledger %d; more recent movements may include "+
-		"watched Soroban/SAC tokens only while the archive follows the tip (~minutes)", wm)
+		"watched Soroban/SAC tokens only while the archive follows the tip (near real-time)", wm)
 }
 
 // mapSEP41RowsToMovements converts sep41_transfers 'transfer' rows into
