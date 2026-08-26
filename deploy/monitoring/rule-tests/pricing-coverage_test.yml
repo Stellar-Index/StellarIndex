@@ -66,12 +66,14 @@ tests:
         exp_alerts: []
 
   # ── the tripwire wedged: last_success frozen, staleness climbs ────
-  # last_success stuck at 0 while wall-clock advances; time()-0 crosses
-  # 1800 at 30m and is held past the 30m for-gate by 70m → pages.
+  # A WEDGED AGGREGATOR: its own gauge is stuck at 0 while wall-clock
+  # advances; time()-0 crosses 1800 at 30m and is held past the 30m
+  # for-gate by 70m → pages. The job label must be the sweep-owning
+  # aggregator or the scoped expr would not match it.
   - interval: 1m
-    name: a frozen coverage sweep trips the staleness alert
+    name: a frozen aggregator coverage sweep trips the staleness alert
     input_series:
-      - series: 'stellarindex_priceless_coverage_check_last_success_unix'
+      - series: 'stellarindex_priceless_coverage_check_last_success_unix{job="stellarindex-aggregator"}'
         values: '0x90'
     alert_rule_test:
       - eval_time: 70m
@@ -81,6 +83,7 @@ tests:
               severity: ticket
               team: stellarindex
               component: pricing-coverage
+              job: stellarindex-aggregator
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/assets-popular-priceless.md
               summary: "Priceless-popular coverage tripwire has stopped sweeping (P3)"
@@ -92,11 +95,29 @@ tests:
                 `candidate read failed` warns (Postgres reachability), then the
                 runbook.
 
+  # ── the false-positive this scoping fixes (2026-08-26) ────────────
+  # The gauge is registered in the shared obs registry, so the indexer +
+  # api export it at unix 0 forever (they never run the sweep). Before the
+  # job matcher, time()-0 crossed 1800 on every eval and paged a perma-
+  # stale ticket from those instances. The scoped expr must NOT fire for a
+  # non-aggregator job even though its metric is a stale 0.
+  - interval: 1m
+    name: a zero gauge on a non-aggregator instance never fires
+    input_series:
+      - series: 'stellarindex_priceless_coverage_check_last_success_unix{job="stellarindex-indexer"}'
+        values: '0x90'
+      - series: 'stellarindex_priceless_coverage_check_last_success_unix{job="stellarindex-api"}'
+        values: '0x90'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: stellarindex_priceless_coverage_check_stale
+        exp_alerts: []
+
   # ── healthy: last_success tracks wall-clock, staleness stays ~0 ────
   - interval: 1m
     name: a freshly-updating coverage sweep never trips staleness
     input_series:
-      - series: 'stellarindex_priceless_coverage_check_last_success_unix'
+      - series: 'stellarindex_priceless_coverage_check_last_success_unix{job="stellarindex-aggregator"}'
         values: '0+60x90'
     alert_rule_test:
       - eval_time: 70m
