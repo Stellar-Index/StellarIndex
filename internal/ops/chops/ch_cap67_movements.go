@@ -52,7 +52,7 @@ func chCap67Movements(args []string) error {
 	to := fs.Uint("to", 0, "last ledger (inclusive; 0 = current contiguous lake tip)")
 	window := fs.Uint("window", 50_000, "ledgers per derive window")
 	follow := fs.Bool("follow", false, "run continuously as a daemon: after each catch-up, sleep -follow-interval and derive again, following the lake tip. The movement feed's real-time mechanism (a user watches their transactions land). Always resumes from the watermark to the CONTIGUOUS tip — ignores -from/-to.")
-	followInterval := fs.Duration("follow-interval", 2*time.Second, "sleep between catch-ups in -follow mode")
+	followInterval := fs.Duration("follow-interval", 1*time.Second, "sleep between catch-ups in -follow mode. Kept ≥~0.5s: each tick re-scans the derive window, and sub-second ticks add ClickHouse read + small-write pressure for a latency gain the ~5s ledger cadence + upstream ingest already dominate.")
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err

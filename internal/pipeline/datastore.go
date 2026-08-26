@@ -14,9 +14,16 @@ import (
 // default RetryWait for the live-tail stream. galexie uploads a new
 // LCM roughly every ~5s; with the 30s default a caught-up fetch
 // worker sleeps a full 30s between re-checks, making end-to-end
-// ingest lag sawtooth 0→30s. 3s keeps the worker re-checking
-// promptly without hammering MinIO. See ledgerstream.Config.LiveRetryWait.
-const liveTailRetryWait = 3 * time.Second
+// ingest lag sawtooth 0→30s.
+//
+// 500ms (was 3s): this re-check was the single largest reducible term
+// in the real-time movement latency budget — a caught-up worker sat a
+// flat 3s behind the tip (measured: ingested_at−close_time ≈ 3000ms on
+// r1). MinIO is LOCAL, so a caught-up re-check is a cheap bucket LIST
+// that mostly finds nothing until galexie's next ~5s upload; 500ms
+// re-checks promptly without meaningful load. See
+// ledgerstream.Config.LiveRetryWait.
+const liveTailRetryWait = 500 * time.Millisecond
 
 // LedgerstreamConfig builds a ledgerstream.Config pointing at one
 // galexie bucket. Pass cfg.Storage.S3BucketArchive for historical
