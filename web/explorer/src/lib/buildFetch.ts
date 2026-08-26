@@ -31,7 +31,11 @@
  *    are retried with bounded backoff; if they persist, buildFetchData
  *    THROWS and `next build` FAILS. A failed build that keeps the last
  *    good deploy live is strictly better than a "successful" build
- *    that bakes not-found/empty HTML for real entities.
+ *    that bakes not-found/empty HTML for real entities. A 502/503/504
+ *    ("temporarily unavailable" — typically the API mid-deploy) is
+ *    treated like a 429: a patient, Retry-After-aware wait that does NOT
+ *    spend a transport attempt, bounded (MAX_UNAVAILABLE_WAITS) so a
+ *    sustained outage still fails-hard rather than hanging the export.
  * 2. `null` is returned ONLY when the API answered authoritatively
  *    that the resource doesn't exist (4xx other than 429). Callers may
  *    treat that as a legitimate empty state — but for an entity that
@@ -100,6 +104,22 @@ const MAX_ATTEMPTS = 5;
 // was broken, we just asked too fast). Throttling therefore gets its OWN
 // budget and does not consume transport attempts.
 const MAX_THROTTLE_WAITS = 8;
+
+// A 502/503/504 during a build is almost always a TRANSIENT window, not a
+// baked-in server bug: the API mid-deploy (its reverse proxy returns 502/503
+// with no upstream) or a brief gateway blip. The 2026-08-26 explorer-deploy
+// died on a SINGLE /v1/assets/LUKOIL-… 503 that raced the v0.44.3 API deploy —
+// the old 5×`500*attempt` path gives up in ~5s, far short of an API restart.
+// So these "temporarily unavailable" codes get the SAME discipline as a 429:
+// wait on the server's terms (Retry-After aware, capped exponential backoff)
+// WITHOUT spending a transport attempt. 6 waits over the shared 1s→30s ramp is
+// ≈60s of patience — enough to ride a restart, while a genuinely SUSTAINED
+// outage still exhausts the budget and fails-hard (keeping the last good
+// deploy live). 500/501 are NOT here: a hard server error is more likely a real
+// bug that should fail fast than a restart to wait out.
+const MAX_UNAVAILABLE_WAITS = 6;
+const UNAVAILABLE_STATUSES = new Set([502, 503, 504]);
+export { MAX_UNAVAILABLE_WAITS };
 
 // Exponential, capped. 1s,2s,4s,8s,16s,30s,30s,30s ≈ 2min of patience —
 // comfortably longer than the anonymous tier's fixed window, so a build
@@ -209,6 +229,7 @@ async function fetchWithRetry<T>(
   const { timeoutMs, maxAttempts, softFail } = opts;
   let lastErr: unknown = null;
   let throttleWaits = 0;
+  let unavailableWaits = 0;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const res = await fetch(url, {
@@ -231,6 +252,19 @@ async function fetchWithRetry<T>(
         // Authoritative "does not exist" — the ONLY null-returning path
         // besides the CI stub. No retry.
         return { data: null };
+      }
+      if (UNAVAILABLE_STATUSES.has(res.status)) {
+        // Temporarily unavailable (API mid-deploy / gateway blip). Wait on
+        // the server's terms without spending a transport attempt — the same
+        // discipline as a 429. A sustained outage exhausts the wait budget
+        // and then fails-hard below, keeping the last good deploy live.
+        lastErr = new Error(`HTTP ${res.status}`);
+        if (unavailableWaits < MAX_UNAVAILABLE_WAITS) {
+          await sleep(throttleDelayMs(res.headers.get('retry-after'), unavailableWaits));
+          unavailableWaits++;
+          attempt--; // this round was unavailable, not a spent attempt
+        }
+        continue;
       }
       if (!res.ok) {
         lastErr = new Error(`HTTP ${res.status}`);
