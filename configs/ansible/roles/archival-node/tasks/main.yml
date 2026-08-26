@@ -15,7 +15,25 @@
 
 - name: "ZFS install + pool + datasets"
   ansible.builtin.import_tasks: 03-zfs.yml
+  when: zfs_data_pool_type | default('') != ''
   tags: [zfs]
+
+# No-ZFS hosts (r2/r3 on EBS/Object-Storage, or a libvirt VM whose host owns
+# the ZFS/RAID): 03-zfs is skipped, so the per-workload mountpoint dirs the ZFS
+# datasets would have created must be made as plain directories on the root
+# filesystem instead — the service tasks below assume they exist.
+- name: "Create data dirs as plain directories (no-ZFS hosts)"
+  ansible.builtin.file:
+    path: "{{ item.mountpoint }}"
+    state: directory
+    owner: "{{ item.dir_owner | default('root') }}"
+    group: "{{ item.dir_group | default('root') }}"
+    mode: "{{ item.dir_mode | default('0755') }}"
+  loop: "{{ zfs_datasets }}"
+  loop_control:
+    label: "{{ item.mountpoint }}"
+  when: zfs_data_pool_type | default('') == ''
+  tags: [zfs, datadirs]
 
 - name: "Service users"
   ansible.builtin.import_tasks: 04-users.yml

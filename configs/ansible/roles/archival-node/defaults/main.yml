@@ -32,6 +32,11 @@ region_id:           ""
 region_name:         "FSN1"
 home_domain:         "stellarindex.io"
 
+# Minimum RAM the preflight requires (MB). Default = the pubnet archival-node
+# spec (32 GB, ~30000 MB usable). A low-traffic testnet/futurenet VM overrides
+# this lower in inventory — two VMs share a 64 GB host, so neither can get 32 GB.
+archival_node_min_ram_mb: 30000
+
 # ───── Which subsystems to run on this host ──────────────────────────
 run_postgres:        true
 # Primary stellar-core daemon. Off by default — the archive we ship
