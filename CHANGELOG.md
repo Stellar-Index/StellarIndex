@@ -15,6 +15,27 @@ against.
 
 ## [Unreleased]
 
+## [v0.44.7] — 2026-08-26
+
+Tested against Stellar protocol 22.
+
+### Added
+- **Real-time account-movements follow daemon (5.3).** The CAP-67 movements
+  derive (`stellar.account_movements` — the money trail served on
+  `/v1/accounts/{g}/movements`) now runs as a continuous follow daemon
+  (`ch-cap67-movements -follow`) instead of a ~30s timer + oneshot: it catches
+  up to the CONTIGUOUS lake tip, sleeps a short interval (2s), and repeats —
+  cutting movement latency from ~30s to ~2s behind the chain tip so a user
+  watches their transactions land in near real time. Builds on the contiguity
+  gate (#174, `Cap67Range`) so it never derives past a near-tip lake hole; the
+  timer is retired (single writer, no watermark race); `Restart=always` +
+  `StartLimitBurst` make a crash-loop trip to `failed` (visible to
+  node-healthcheck.sh, which now covers the daemon); a transient ClickHouse
+  error holds the watermark and retries (no ledger skipped). The initial
+  P23→tip backfill runs as the daemon's first catch-up. Operator cutover: apply
+  the ansible (or manually stop+disable `cap67-movements.timer` and start the
+  `-follow` daemon) AFTER the ops binary is deployed.
+
 ## [v0.44.6] — 2026-08-26
 
 Tested against Stellar protocol 22.
