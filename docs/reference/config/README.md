@@ -37,6 +37,8 @@ the `env:` column.
 | `stellar.core_http_endpoint` | `string` | `http://127.0.0.1:11626` | — | stellar-core admin HTTP (used for liveness). |
 | `stellar.rpc_endpoints` | `[]string` | `["http://127.0.0.1:8000"]` | — | stellar-rpc endpoints for getEvents/getLedgers. Tried in order on failover. |
 | `stellar.history_archive_url` | `string` | `https://history.stellar.org/prd/core-live/core_live_001` | — | Public history archive (SDF or ours) for backfill catchup. |
+| `stellar.soroban_genesis_ledger` | `uint32` | `50457424` | — | Soroban (protocol-20) activation ledger — the pre-Soroban↔Soroban-era boundary the SEP-41 supply observer floors at. Defaults to the pubnet value; set to 1 (genesis) on testnet/futurenet. |
+| `stellar.movements_floor_ledger` | `uint32` | `58762517` | — | P23 / CAP-67 boundary — at/above it the Postgres SEP-41 movements tail serves, below it the ClickHouse pre-P23 archive serves (ADR-0048 D5). Defaults to the pubnet value; set to 1 (genesis) on testnet/futurenet. |
 
 ### `[storage]`
 

@@ -1738,11 +1738,8 @@ func Default() Config {
 			CoreHTTPEndpoint:  "http://127.0.0.1:11626",
 			RPCEndpoints:      []string{"http://127.0.0.1:8000"},
 			HistoryArchiveURL: "https://history.stellar.org/prd/core-live/core_live_001",
-			// Pubnet protocol-transition boundaries. Literal values (not the
-			// leaf consts — config is imported BY storage, not the reverse)
-			// pinned to clickhouse.SorobanGenesisLedger /
-			// timescale.SEP41MovementsFloorLedger by TestP23BoundaryConstantsAgree.
-			// Test-net TOML overrides BOTH to 1 (genesis).
+			// Pubnet protocol-transition boundaries (pinned to the leaf consts
+			// by TestP23BoundaryConstantsAgree; test nets override BOTH to 1).
 			SorobanGenesisLedger: 50457424,
 			MovementsFloorLedger: 58762517,
 		},
