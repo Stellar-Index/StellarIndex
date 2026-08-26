@@ -30,8 +30,10 @@ set -euo pipefail
 
 CONF=/etc/galexie/galexie.toml
 
-# SDF's primary archive — same source our captive-core trusts.
-SDF_HAS_URL="https://history.stellar.org/prd/core-live/core_live_001/.well-known/stellar-history.json"
+# SDF's primary archive — same source our captive-core trusts. Env-overridable
+# (pubnet default) so a test net points at its OWN archive (core-testnet /
+# core-futurenet) — the galexie env file sets SDF_HAS_URL per network.
+SDF_HAS_URL="${SDF_HAS_URL:-https://history.stellar.org/prd/core-live/core_live_001/.well-known/stellar-history.json}"
 
 # CHECKPOINT_MARGIN applies only to the fresh-deploy fallback.
 CHECKPOINT_MARGIN="${CHECKPOINT_MARGIN:-128}"

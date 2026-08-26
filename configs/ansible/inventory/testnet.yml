@@ -43,6 +43,9 @@ all:
     # not a GitHub release yet — so build + install them from the local
     # checkout (the task forces GOOS=linux GOARCH=amd64) instead of a release.
     manage_stellarindex_binaries: true
+    # Greenfield bring-up: apply migrations from the checkout (opt-in — on prod
+    # deploy.yml is the canonical applier, staged from the release tag).
+    stellarindex_apply_migrations: true
     run_galexie:         true
     # A fresh `go install` on the VM yields a different-bytes galexie than
     # r1's codified binary — skip the drift-guard asserts (they exist to catch
