@@ -533,8 +533,10 @@
     - sep1-refresh.timer
     - directory-sync.service
     - directory-sync.timer
+    # cap67-movements: a continuous FOLLOW DAEMON now (5.3), not a
+    # timer+oneshot — only the .service is rendered; the old .timer is
+    # retired below.
     - cap67-movements.service
-    - cap67-movements.timer
     - holders-rollup.service
     - holders-rollup.timer
     - census-rollup.service
@@ -566,12 +568,39 @@
     - supply-snapshot.timer
     - sep1-refresh.timer
     - directory-sync.timer
-    - cap67-movements.timer
     - holders-rollup.timer
     - census-rollup.timer
     - compute-completeness.timer
     - data-freshness.timer
     - ch-supply.timer
+
+- name: Retire the cap67-movements timer in favour of the follow daemon (5.3)
+  # The follow daemon (cap67-movements.service, Type=simple, -follow) is the
+  # SINGLE writer of stellar.account_movements. Stop + disable the old timer
+  # so it can never fire a second, racing catch-up against the daemon's
+  # watermark. Idempotent + fail-safe: no-ops on a fresh host that never had
+  # the timer.
+  ansible.builtin.systemd:
+    name: cap67-movements.timer
+    state: stopped
+    enabled: false
+  failed_when: false
+
+- name: Remove the retired cap67-movements.timer unit file
+  ansible.builtin.file:
+    path: /etc/systemd/system/cap67-movements.timer
+    state: absent
+  notify: Reload systemd
+
+- name: Enable + start the cap67-movements follow daemon (5.3, real-time movements)
+  # Long-lived daemon: catches up to the contiguous tip, then follows at
+  # FOLLOW_INTERVAL. Restart=always in the unit makes it crash-safe; it
+  # resumes from the persisted watermark.
+  ansible.builtin.systemd:
+    name: cap67-movements.service
+    state: started
+    enabled: true
+    daemon_reload: true
 
 # ──── Tier D weekly cron (multi-peer fork-detection) ──────────────────
 # Per ADR-0016 §7.4: each region runs verify-archive Tier D weekly to

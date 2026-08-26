@@ -126,10 +126,28 @@ func runCap67CatchUp(ctx context.Context, chAddr string, from, to, window uint32
 // restart it resumes from the persisted watermark.
 func runCap67Follow(ctx context.Context, chAddr string, window uint32, dryRun bool, interval time.Duration) error {
 	fmt.Fprintf(os.Stderr, "ch-cap67-movements: FOLLOW mode — catch-up every %s, gated on the contiguous watermark, on %s\n", interval, chAddr)
+	return followLoop(ctx, interval, func(ctx context.Context) error {
+		n, err := runCap67CatchUp(ctx, chAddr, 0, 0, window, dryRun)
+		if err == nil && n > 0 {
+			fmt.Fprintf(os.Stderr, "ch-cap67-movements: follow tick derived %d movement rows\n", n)
+		}
+		return err
+	})
+}
+
+// followLoop runs catchUp immediately and then once every `interval` until ctx
+// is cancelled. A catchUp error is logged and RETRIED on the next tick — the
+// derive advances its watermark only after a clean window, so a failed tick
+// skips NO ledger — while a ctx-cancel (mid-derive or between ticks) ends the
+// loop cleanly (SIGTERM ⟹ graceful shutdown; on restart the daemon resumes
+// from the persisted watermark). Extracted from runCap67Follow so the loop's
+// shutdown + error-resilience contract is unit-testable without a live
+// ClickHouse.
+func followLoop(ctx context.Context, interval time.Duration, catchUp func(context.Context) error) error {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		if _, err := runCap67CatchUp(ctx, chAddr, 0, 0, window, dryRun); err != nil {
+		if err := catchUp(ctx); err != nil {
 			if ctx.Err() != nil {
 				return nil // shutdown mid-derive — clean exit
 			}
