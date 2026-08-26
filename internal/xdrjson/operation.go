@@ -200,4 +200,61 @@ func fillInvokeHostFunction(op xdr.InvokeHostFunctionOp, f map[string]any) {
 	default:
 		f["function"] = fmt.Sprintf("host_function_%d", int(op.HostFunction.Type))
 	}
+	// The nested AUTHORIZATION tree carried in op.Auth. This is the subtree of
+	// contract calls that required authorization — NOT the full execution/call
+	// tree (that lives in the tx meta's diagnostic events, which the lake does
+	// not store). For a contract-heavy tx it still surfaces the nested call
+	// structure the /tx view otherwise omits (the piece stellar.expert shows
+	// and we did not). Empty for a simple single-call invoke with no sub-auth.
+	if tree := authInvocationTree(op.Auth); len(tree) > 0 {
+		f["authorizations"] = tree
+	}
+}
+
+// AuthInvocation is one node of a Soroban AUTHORIZATION tree — the nested
+// SorobanAuthorizedInvocation structure carried in an InvokeHostFunction op's
+// auth entries. Exported so the API view can type it; a create-contract
+// authorization has Kind "create_contract" and no function/args.
+type AuthInvocation struct {
+	Kind           string           `json:"kind"` // invoke_contract | create_contract
+	ContractID     string           `json:"contract_id,omitempty"`
+	FunctionName   string           `json:"function_name,omitempty"`
+	Args           []string         `json:"args,omitempty"`
+	SubInvocations []AuthInvocation `json:"sub_invocations,omitempty"`
+}
+
+// authInvocationTree builds the authorized-invocation forest from an op's auth
+// entries (one root per entry). Mirrors the dispatcher's walkAuthTree traversal.
+func authInvocationTree(auth []xdr.SorobanAuthorizationEntry) []AuthInvocation {
+	if len(auth) == 0 {
+		return nil
+	}
+	out := make([]AuthInvocation, 0, len(auth))
+	for i := range auth {
+		out = append(out, buildAuthInvocation(&auth[i].RootInvocation))
+	}
+	return out
+}
+
+// buildAuthInvocation renders one SorobanAuthorizedInvocation node + its
+// sub-invocations recursively, reusing the same arg display (scval.Display) and
+// contract-strkey rendering as the top-level InvokeContract decode.
+func buildAuthInvocation(node *xdr.SorobanAuthorizedInvocation) AuthInvocation {
+	n := AuthInvocation{Kind: "create_contract"}
+	if node.Function.Type == xdr.SorobanAuthorizedFunctionTypeSorobanAuthorizedFunctionTypeContractFn {
+		ic := node.Function.MustContractFn()
+		n.Kind = "invoke_contract"
+		if cid, ok := contractAddress(ic.ContractAddress); ok {
+			n.ContractID = cid
+		}
+		n.FunctionName = string(ic.FunctionName)
+		n.Args = make([]string, len(ic.Args))
+		for i, a := range ic.Args {
+			n.Args[i] = scval.Display(a)
+		}
+	}
+	for i := range node.SubInvocations {
+		n.SubInvocations = append(n.SubInvocations, buildAuthInvocation(&node.SubInvocations[i]))
+	}
+	return n
 }

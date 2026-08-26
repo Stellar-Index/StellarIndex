@@ -256,9 +256,72 @@ function OperationsPanel({
   );
 }
 
+// AuthInvocation mirrors the API's decoded Soroban authorization node
+// (internal/xdrjson.AuthInvocation): the nested tree of contract calls that
+// required authorization. NOT the full execution/call tree — that lives in the
+// tx meta the lake does not store — but the piece the /tx view previously
+// omitted.
+type AuthInvocation = {
+  kind: string;
+  contract_id?: string;
+  function_name?: string;
+  args?: string[];
+  sub_invocations?: AuthInvocation[];
+};
+
+function InvocationTree({
+  nodes,
+  depth = 0,
+}: {
+  nodes: AuthInvocation[];
+  depth?: number;
+}) {
+  return (
+    <ul
+      className={
+        depth === 0 ? 'space-y-1' : 'mt-1 space-y-1 border-l border-line pl-3'
+      }
+    >
+      {nodes.map((n, i) => (
+        <li key={i}>
+          <div className="flex flex-wrap items-baseline gap-1.5 font-mono text-xs">
+            {n.kind === 'invoke_contract' ? (
+              <>
+                {n.contract_id && (
+                  <span className="text-ink-muted" title={n.contract_id}>
+                    {n.contract_id.slice(0, 6)}…{n.contract_id.slice(-4)}
+                  </span>
+                )}
+                <span className="text-brand-700 font-medium">
+                  {n.function_name}
+                </span>
+                {n.args && n.args.length > 0 && (
+                  <span className="break-all text-ink-faint">
+                    ({n.args.join(', ')})
+                  </span>
+                )}
+              </>
+            ) : (
+              <span className="text-ink-muted">create_contract</span>
+            )}
+          </div>
+          {n.sub_invocations && n.sub_invocations.length > 0 && (
+            <InvocationTree nodes={n.sub_invocations} depth={depth + 1} />
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function OperationCard({ hash, op }: { hash: string; op: TxOperation }) {
   const fields = op.fields ?? {};
-  const fieldKeys = Object.keys(fields);
+  // `authorizations` is a nested tree, rendered separately below — keep it out
+  // of the flat scalar-field grid (which would JSON-dump it).
+  const fieldKeys = Object.keys(fields).filter((k) => k !== 'authorizations');
+  const authTree = Array.isArray(fields.authorizations)
+    ? (fields.authorizations as AuthInvocation[])
+    : null;
   return (
     <div className="rounded-lg border border-line p-3">
       <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -307,6 +370,17 @@ function OperationCard({ hash, op }: { hash: string; op: TxOperation }) {
         </dl>
       ) : (
         <p className="text-xs text-ink-faint">No decoded fields.</p>
+      )}
+      {authTree && authTree.length > 0 && (
+        <div className="mt-3">
+          <div
+            className="mb-1 text-[11px] uppercase tracking-wider text-ink-muted"
+            title="The nested contract calls this operation authorized (from the op's SorobanAuthorizationEntries). Not the full execution trace."
+          >
+            Authorized invocations
+          </div>
+          <InvocationTree nodes={authTree} />
+        </div>
       )}
       {op.raw_xdr && (
         <details className="mt-2 rounded-sm border border-line">
