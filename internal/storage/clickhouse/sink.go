@@ -50,6 +50,21 @@ type TransactionRow struct {
 	ResultCode     int32
 	MemoType       string
 	Memo           string
+
+	// Soroban resource metering (extract.go:extractSorobanMetering). All 0 for
+	// classic/non-Soroban txs. DECLARED = the submitter's resource bid (tx
+	// envelope SorobanTransactionData); ACTUAL fees = what core charged (tx
+	// meta SorobanTransactionMetaExtV1). No actual-instructions field exists in
+	// pubnet ledger meta, so only the three charged-fee values are captured.
+	SorobanInstructions   uint32 // declared CPU instruction bid
+	SorobanDiskReadBytes  uint32 // declared
+	SorobanWriteBytes     uint32 // declared
+	SorobanReadEntries    uint16 // declared len(footprint.ReadOnly)
+	SorobanWriteEntries   uint16 // declared len(footprint.ReadWrite)
+	SorobanResourceFeeBid int64  // declared total resource-fee bid
+	SorobanNonrefundFee   int64  // actual non-refundable resource fee charged
+	SorobanRefundableFee  int64  // actual refundable resource fee charged
+	SorobanRentFee        int64  // actual rent fee charged
 }
 
 // OperationRow mirrors stellar.operations.
@@ -401,12 +416,13 @@ func (s *Sink) flushLedgers(ctx context.Context) error {
 }
 
 func (s *Sink) flushTxs(ctx context.Context) error {
-	b, err := s.conn.PrepareBatch(ctx, "INSERT INTO stellar.transactions (ledger_seq, close_time, tx_hash, tx_index, source_account, fee_charged, max_fee, operation_count, successful, result_code, memo_type, memo)")
+	b, err := s.conn.PrepareBatch(ctx, "INSERT INTO stellar.transactions (ledger_seq, close_time, tx_hash, tx_index, source_account, fee_charged, max_fee, operation_count, successful, result_code, memo_type, memo, soroban_instructions, soroban_disk_read_bytes, soroban_write_bytes, soroban_read_entries, soroban_write_entries, soroban_resource_fee_bid, soroban_nonrefundable_fee, soroban_refundable_fee, soroban_rent_fee)")
 	if err != nil {
 		return fmt.Errorf("clickhouse: prepare transactions: %w", err)
 	}
 	for _, r := range s.txs {
-		if err := b.Append(r.LedgerSeq, r.CloseTime, r.TxHash, r.TxIndex, r.SourceAccount, r.FeeCharged, r.MaxFee, r.OperationCount, r.Successful, r.ResultCode, r.MemoType, r.Memo); err != nil {
+		if err := b.Append(r.LedgerSeq, r.CloseTime, r.TxHash, r.TxIndex, r.SourceAccount, r.FeeCharged, r.MaxFee, r.OperationCount, r.Successful, r.ResultCode, r.MemoType, r.Memo,
+			r.SorobanInstructions, r.SorobanDiskReadBytes, r.SorobanWriteBytes, r.SorobanReadEntries, r.SorobanWriteEntries, r.SorobanResourceFeeBid, r.SorobanNonrefundFee, r.SorobanRefundableFee, r.SorobanRentFee); err != nil {
 			return fmt.Errorf("clickhouse: append tx %s: %w", r.TxHash, err)
 		}
 	}
