@@ -17,11 +17,15 @@ import (
 const PubnetPassphrase = "Public Global Stellar Network ; September 2015"
 
 // SacContractID returns the C-strkey of the asset's Stellar Asset
-// Contract on pubnet. The SAC address is a pure function of
+// Contract on the CONFIGURED network ([NetworkPassphrase] — pubnet
+// unless a binary installed another at start-up via
+// [InstallNetworkPassphrase]). The SAC address is a pure function of
 // (asset, network passphrase) — no on-chain lookup, and it is valid
 // even for assets whose SAC has never been deployed (deployment is
 // permissionless and address-stable, so wallets treat the derived
-// address as THE address).
+// address as THE address). Deriving against the wrong network would
+// serve a contract address that resolves to nothing / a different
+// asset on the target network — see InstallNetworkPassphrase.
 //
 // Board #40 (RFP audit): both RFPs put "Contract Address" in the
 // asset-metadata table for classic assets; wallets resolve holdings
@@ -44,7 +48,7 @@ func (a Asset) SacContractID() (string, error) {
 	default:
 		return "", fmt.Errorf("canonical: SacContractID: asset type %q has no SAC (use ContractID)", a.Type)
 	}
-	raw, err := x.ContractID(PubnetPassphrase)
+	raw, err := x.ContractID(NetworkPassphrase())
 	if err != nil {
 		return "", fmt.Errorf("canonical: SacContractID: derive: %w", err)
 	}

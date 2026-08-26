@@ -82,6 +82,16 @@ type FillerOptions struct {
 	// back to [DefaultCrossAnchorSources].
 	Sources []Source
 
+	// Network is the Stellar network this archive belongs to. When it is
+	// a non-pubnet value ("testnet"/"futurenet") AND Sources is empty,
+	// NewCrossAnchorFiller REFUSES: [DefaultCrossAnchorSources] are all
+	// PUBNET archives, so filling a test-net archive from them writes
+	// pubnet checkpoints into a test-net store — silent cross-network
+	// corruption (audit 2026-08-26). Test nets self-heal archive gaps from
+	// their own galexie/captive-core; cross-anchor fill is a pubnet-only
+	// recovery tool. Empty == pubnet (back-compat with existing callers).
+	Network string
+
 	// HTTPClient is the transport for source fetches. Nil falls
 	// back to a client with a 30s per-request timeout. Operators
 	// can pass a tuned client for tighter timeouts or for
@@ -119,6 +129,13 @@ func NewCrossAnchorFiller(opts FillerOptions) (*CrossAnchorFiller, error) {
 
 	sources := opts.Sources
 	if len(sources) == 0 {
+		if opts.Network != "" && opts.Network != "pubnet" {
+			return nil, fmt.Errorf(
+				"archivecompleteness: refusing to cross-anchor-fill a %q archive from the built-in PUBNET sources — "+
+					"filling from pubnet archives would write pubnet checkpoints into a test-net store (corruption). "+
+					"Test nets self-heal archive gaps from their own galexie/captive-core; pass explicit Sources only if "+
+					"you truly have test-net cross-anchor mirrors", opts.Network)
+		}
 		sources = DefaultCrossAnchorSources()
 	}
 	httpClient := opts.HTTPClient

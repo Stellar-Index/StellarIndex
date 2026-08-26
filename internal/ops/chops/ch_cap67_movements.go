@@ -53,12 +53,16 @@ func chCap67Movements(args []string) error {
 	window := fs.Uint("window", 50_000, "ledgers per derive window")
 	follow := fs.Bool("follow", false, "run continuously as a daemon: after each catch-up, sleep -follow-interval and derive again, following the lake tip. The movement feed's real-time mechanism (a user watches their transactions land). Always resumes from the watermark to the CONTIGUOUS tip — ignores -from/-to.")
 	followInterval := fs.Duration("follow-interval", 1*time.Second, "sleep between catch-ups in -follow mode. Kept ≥~0.5s: each tick re-scans the derive window, and sub-second ticks add ClickHouse read + small-write pressure for a latency gain the ~5s ledger cadence + upstream ingest already dominate.")
+	floorLedger := fs.Uint("floor-ledger", uint(timescale.SEP41MovementsFloorLedger), "first-run watermark floor — the P23/CAP-67 boundary this derive starts from BEFORE any watermark exists. Defaults to the pubnet P23 boundary; set to 1 (genesis) on testnet/futurenet, where the whole chain is post-P23 (otherwise the derive floors ABOVE every ledger the net has and produces nothing).")
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *window == 0 {
 		return fmt.Errorf("-window must be > 0")
+	}
+	if *floorLedger == 0 {
+		return fmt.Errorf("-floor-ledger must be > 0 (the genesis ledger is 1)")
 	}
 	gate.Banner()
 	dryRun := gate.DryRun()
@@ -75,10 +79,10 @@ func chCap67Movements(args []string) error {
 			// the ENTIRE backlog on every tick, forever. The daemon must write.
 			return fmt.Errorf("-follow requires -write: a dry-run never advances the watermark and would re-derive the whole backlog each tick")
 		}
-		return runCap67Follow(ctx, *chAddr, uint32(*window), dryRun, *followInterval) //nolint:gosec // window fits uint32
+		return runCap67Follow(ctx, *chAddr, uint32(*window), dryRun, *followInterval, uint32(*floorLedger)) //nolint:gosec // window/floor fit uint32
 	}
 
-	if _, err := runCap67CatchUp(ctx, *chAddr, uint32(*from), uint32(*to), uint32(*window), dryRun); err != nil { //nolint:gosec // ledger sequences fit uint32
+	if _, err := runCap67CatchUp(ctx, *chAddr, uint32(*from), uint32(*to), uint32(*window), dryRun, uint32(*floorLedger)); err != nil { //nolint:gosec // ledger sequences fit uint32
 		return err
 	}
 	return nil
@@ -89,8 +93,8 @@ func chCap67Movements(args []string) error {
 // after each window. Returns the total movement rows derived; a no-op
 // (0 rows, nil) when already at/past the contiguous tip. Gated on the
 // contiguous watermark via Cap67Range, so it never steps past a lake hole.
-func runCap67CatchUp(ctx context.Context, chAddr string, from, to, window uint32, dryRun bool) (int64, error) {
-	start, last, err := Cap67Range(ctx, chAddr, from, to)
+func runCap67CatchUp(ctx context.Context, chAddr string, from, to, window uint32, dryRun bool, floorLedger uint32) (int64, error) {
+	start, last, err := Cap67Range(ctx, chAddr, from, to, floorLedger)
 	if err != nil {
 		return 0, err
 	}
@@ -130,10 +134,10 @@ func runCap67CatchUp(ctx context.Context, chAddr string, from, to, window uint32
 // is logged and retried on the next tick — the watermark holds, so NO ledger
 // is skipped — while a ctx-cancel ends the loop cleanly. Crash-safe: on
 // restart it resumes from the persisted watermark.
-func runCap67Follow(ctx context.Context, chAddr string, window uint32, dryRun bool, interval time.Duration) error {
+func runCap67Follow(ctx context.Context, chAddr string, window uint32, dryRun bool, interval time.Duration, floorLedger uint32) error {
 	fmt.Fprintf(os.Stderr, "ch-cap67-movements: FOLLOW mode — catch-up every %s, gated on the contiguous watermark, on %s\n", interval, chAddr)
 	return followLoop(ctx, interval, func(ctx context.Context) error {
-		n, err := runCap67CatchUp(ctx, chAddr, 0, 0, window, dryRun)
+		n, err := runCap67CatchUp(ctx, chAddr, 0, 0, window, dryRun, floorLedger)
 		if err == nil && n > 0 {
 			fmt.Fprintf(os.Stderr, "ch-cap67-movements: follow tick derived %d movement rows\n", n)
 		}
@@ -169,8 +173,9 @@ func followLoop(ctx context.Context, interval time.Duration, catchUp func(contex
 }
 
 // Cap67Range resolves the derive range: from=0 resumes from the
-// watermark (P23 boundary on first run); to=0 targets the lake tip.
-func Cap67Range(ctx context.Context, chAddr string, from, to uint32) (uint32, uint32, error) {
+// watermark (floorLedger on first run — the P23 boundary on pubnet, or
+// genesis=1 on a test net); to=0 targets the lake tip.
+func Cap67Range(ctx context.Context, chAddr string, from, to, floorLedger uint32) (uint32, uint32, error) {
 	start := from
 	if start == 0 {
 		wm, err := clickhouse.Cap67MovementsWatermark(ctx, chAddr)
@@ -178,7 +183,7 @@ func Cap67Range(ctx context.Context, chAddr string, from, to uint32) (uint32, ui
 			return 0, 0, fmt.Errorf("read watermark: %w", err)
 		}
 		if wm == 0 {
-			wm = timescale.SEP41MovementsFloorLedger - 1
+			wm = floorLedger - 1
 		}
 		start = wm + 1
 	}
