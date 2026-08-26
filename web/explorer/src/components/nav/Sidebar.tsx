@@ -36,6 +36,7 @@ import { cn } from '@/lib/cn';
 import { useDialog } from '@/lib/useDialog';
 import { StellarMark } from '@/components/StellarMark';
 import { LiveLedgerBadge } from './LiveLedgerBadge';
+import { NetworkSwitcher } from './NetworkSwitcher';
 import { SearchModal } from './SearchModal';
 
 type NavItem = {
@@ -213,7 +214,10 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
             <span className="font-light">Index</span>
           </span>
         </Link>
-        <LiveLedgerBadge onNavigate={onNavigate} compact />
+        <div className="ml-auto flex items-center gap-1">
+          <LiveLedgerBadge onNavigate={onNavigate} compact />
+          <NetworkSwitcher onNavigate={onNavigate} />
+        </div>
       </div>
 
       {/* Search — directly below the logo */}

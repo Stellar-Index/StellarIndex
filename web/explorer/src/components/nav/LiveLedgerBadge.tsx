@@ -47,7 +47,7 @@ export function LiveLedgerBadge({
       <Link
         href={`/ledgers/${seq}`}
         onClick={onNavigate}
-        className="ml-auto flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[11px] hover:bg-surface-subtle"
+        className="flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[11px] hover:bg-surface-subtle"
         aria-label={`Latest ledger ${seq}`}
       >
         <span className="relative flex h-1.5 w-1.5 shrink-0" aria-hidden>

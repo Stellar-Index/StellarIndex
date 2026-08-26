@@ -280,7 +280,10 @@ usd_pegged_classic_assets = []   {# pricing off (test net): no USD pegs, assets 
 # ──────────────────────────────────────────────────────────────────
 [api]
 listen_addr = "{{ stellarindex_api_listen_addr | default('127.0.0.1:3000') }}"
-allowed_origins = ["https://stellarindex.io", "https://api.stellarindex.io", "https://status.stellarindex.io", "https://docs.stellarindex.io", "https://dashboard.stellarindex.io", "https://www.stellarindex.io"]
+# The test-net explorer origins are included on every network so the nav
+# network-switcher can read each network's public /v1/ledger/tip cross-origin
+# (e.g. the mainnet explorer showing testnet's live ledger, and vice-versa).
+allowed_origins = ["https://stellarindex.io", "https://api.stellarindex.io", "https://status.stellarindex.io", "https://docs.stellarindex.io", "https://dashboard.stellarindex.io", "https://www.stellarindex.io", "https://testnet.stellarindex.io", "https://futurenet.stellarindex.io"]
 allow_credentials = true
 # AC7 onboarding fix (2026-06-13): verification-gated signup stays OFF
 # until a verified-sender domain is set up end-to-end.
