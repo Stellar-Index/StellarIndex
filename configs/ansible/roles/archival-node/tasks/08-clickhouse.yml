@@ -23,11 +23,11 @@
     filename: clickhouse
 
 - name: Preseed ClickHouse default-user password (empty — non-interactive install)
-  ansible.builtin.debconf:
-    name: clickhouse-server
-    question: clickhouse-server/default-password
-    vtype: password
-    value: ""
+  # debconf-set-selections (from the base `debconf` package) rather than the
+  # ansible.builtin.debconf module, which needs debconf-utils
+  # (debconf-get-selections) — not present on a fresh host.
+  ansible.builtin.shell: echo 'clickhouse-server clickhouse-server/default-password password' | debconf-set-selections
+  changed_when: false
 
 - name: Install ClickHouse server + client
   ansible.builtin.apt:

@@ -48,14 +48,11 @@
   when: run_postgres | bool
   tags: [postgres]
 
-- name: "pgBackRest backup schedule"
-  ansible.builtin.import_tasks: 18-pgbackrest-backup.yml
-  when: run_postgres | bool
-  tags: [postgres, pgbackrest, backup]
-
 # Redis + ClickHouse were hand-installed on r1 (out-of-band). Codified so a
 # fresh host gets them reproducibly. run_clickhouse defaults FALSE so r1's
 # hand-tended lake is never touched by this role (test nets set it true).
+# Ordered BEFORE pgbackrest — its ClickHouse schema-snapshot/drift tasks
+# need ClickHouse present on a fresh build.
 - name: "Redis (API cache / replay guard / rate-limit)"
   ansible.builtin.import_tasks: 08-redis.yml
   when: run_redis | default(true) | bool
@@ -65,6 +62,11 @@
   ansible.builtin.import_tasks: 08-clickhouse.yml
   when: run_clickhouse | default(false) | bool
   tags: [clickhouse, clickhouse-install]
+
+- name: "pgBackRest backup schedule"
+  ansible.builtin.import_tasks: 18-pgbackrest-backup.yml
+  when: run_postgres | bool
+  tags: [postgres, pgbackrest, backup]
 
 - name: "stellar-core"
   ansible.builtin.import_tasks: 06-stellar-core.yml
