@@ -15,6 +15,10 @@ against.
 
 ## [Unreleased]
 
+## [v0.44.5] — 2026-08-26
+
+Tested against Stellar protocol 22.
+
 ### Fixed
 - The `trades.signer` sweeper (v0.44.4) failed every tick with `tuple
   decompression limit exceeded (SQLSTATE 53400)` and tagged nothing: its
