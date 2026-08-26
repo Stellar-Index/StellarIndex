@@ -464,6 +464,26 @@ a ticker is wedged on its last accepted rate while the upstream keeps
 disagreeing; that is what `stellarindex_external_fx_rate_rejections`
 alerts on.
 
+### `stellarindex_amm_self_pair_swap_total`
+
+Counter, label `source`.
+
+AMM swap events decoded as a **self-pair swap** (`token_in == token_out`)
+and dropped to zero rows. A self-pair swap moves no value between distinct
+assets and has **no honest purpose** — it is the primitive the 2026-08-25
+Blend/Comet exploit ran ~390 times to walk a pool's spot price, defeating
+the freeze + divergence guards (which never saw it: the self-pair rows
+decode to `(nil, nil)` and never reach the served `trades` table; only the
+raw event lands in `soroban_events`). Incremented at the decoder drop point
+(comet `dispatcher_adapter`). **Detection only** — it changes no serving or
+freeze decision.
+
+When to look: historically `comet` emitted **zero** of these before the
+exploit window, so any sustained count is an exploit-shaped signal, not
+noise — it drives the `stellarindex_amm_self_pair_swap_burst` alert. Find
+the offending tx/signer in `soroban_events` (topic POOL/swap on the pool
+contract).
+
 ### `stellarindex_external_dust_dropped_total`
 
 Counter, label `source`.
