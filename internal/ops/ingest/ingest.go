@@ -42,6 +42,8 @@ func Run(args []string) error {
 		return censusBackfill(args[1:])
 	case "tag-routed-via":
 		return tagRoutedVia(args[1:])
+	case "tag-signer":
+		return tagSigner(args[1:])
 	case "seed-soroswap-pairs":
 		return seedSoroswapPairs(args[1:])
 	case "seed-protocol-contracts":

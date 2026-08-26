@@ -30,6 +30,14 @@ import (
 const (
 	signerSweepInterval = time.Minute
 	signerSweepLookback = 30 * time.Minute
+	// signerSweepMaxLedgerSpan caps how many ledgers one sweep reads from the
+	// lake + tags in a single UPDATE. At steady state the untagged span is a
+	// minute or two of ledgers, well under this; but a cold start or a
+	// multi-minute projector lag can widen it toward the full lookback, so
+	// this clamps each tick to the OLDEST slice of the span — the rest is
+	// picked up on the next tick(s) (first-wins, so the just-tagged head drops
+	// out and min-ledger advances). Bounds the per-tick CH read + UPDATE.
+	signerSweepMaxLedgerSpan = 120 // ~10 min of pubnet ledgers
 )
 
 // SignerLakeReader reads tx source accounts from the lake for a ledger range.
@@ -73,6 +81,11 @@ func RunSignerTagger(ctx context.Context, logger *slog.Logger, lake SignerLakeRe
 		}
 		if !ok {
 			return // nothing untagged in the window — skip the lake read
+		}
+		// Clamp a wide (cold-start / lag) span to the oldest slice; the rest
+		// is caught on the next tick as min-ledger advances.
+		if maxL-minL+1 > signerSweepMaxLedgerSpan {
+			maxL = minL + signerSweepMaxLedgerSpan - 1
 		}
 		sigs, err := lake.TxSignersForLedgerRange(sweepCtx, minL, maxL)
 		if err != nil {

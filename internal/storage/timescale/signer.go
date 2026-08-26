@@ -17,12 +17,13 @@ type SignerTag struct {
 	Signer string
 }
 
-// ammSignerSources are the AMM/Soroban trade sources whose `taker` is the
+// AMMSignerSources are the AMM/Soroban trade sources whose `taker` is the
 // on-chain caller (the event's to/sender/caller/user), NOT necessarily the
 // human — so the tx source account is the missing initiator worth tagging.
 // SDEX carries a real `maker`; classic trades have no contract tx to
-// attribute. Kept in lockstep with the decoders that leave `maker` empty.
-var ammSignerSources = []string{"comet", "soroswap", "aquarius", "phoenix"}
+// attribute. Exported so the indexer's sweeper gate reads the SAME list
+// (no drift) — kept in lockstep with the decoders that leave `maker` empty.
+var AMMSignerSources = []string{"comet", "soroswap", "aquarius", "phoenix"}
 
 // TagTradesSigner back-fills trades.signer for the supplied
 // (ledger, tx_hash) → source-account tags. FIRST-WINS: it only touches AMM
@@ -61,7 +62,7 @@ func (s *Store) TagTradesSigner(ctx context.Context, tags []SignerTag) (int64, e
            AND t.source  = ANY($4::text[])
            AND t.signer IS NULL
     `
-	res, err := s.db.ExecContext(ctx, q, ledgers, txHashes, signers, ammSignerSources)
+	res, err := s.db.ExecContext(ctx, q, ledgers, txHashes, signers, AMMSignerSources)
 	if err != nil {
 		return 0, fmt.Errorf("timescale: TagTradesSigner (%d tags): %w", len(tags), err)
 	}
@@ -91,7 +92,7 @@ func (s *Store) UntaggedAMMSignerLedgerRange(ctx context.Context, from, to time.
            AND signer IS NULL
     `
 	var lo, hi *int64
-	if serr := s.db.QueryRowContext(ctx, q, from.UTC(), to.UTC(), ammSignerSources).Scan(&lo, &hi); serr != nil {
+	if serr := s.db.QueryRowContext(ctx, q, from.UTC(), to.UTC(), AMMSignerSources).Scan(&lo, &hi); serr != nil {
 		return 0, 0, false, fmt.Errorf("timescale: UntaggedAMMSignerLedgerRange: %w", serr)
 	}
 	if lo == nil || hi == nil {

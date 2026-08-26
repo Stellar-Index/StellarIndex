@@ -28,7 +28,11 @@ against.
   a trailing-window sweeper (`pipeline.RunSignerTagger`) that reads the signer
   from the lake's `stellar.transactions`. The lake read is scoped to the small
   ledger span of AMM trades still needing a signer (not every recent tx), so
-  it stays cheap at pubnet volume. Exposed as `signer` on
+  it stays cheap at pubnet volume, and a per-tick ledger cap bounds a
+  cold-start / catch-up sweep. For gaps longer than the sweeper's 30-min
+  lookback (an indexer/ClickHouse outage or a projector lag), the
+  `stellarindex-ops tag-signer -from N -to N` command back-fills the range
+  through the same first-wins primitive. Exposed as `signer` on
   `GET /v1/accounts/{id}/trades`.
 
 ## [v0.44.3] — 2026-08-26

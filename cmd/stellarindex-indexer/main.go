@@ -1132,14 +1132,14 @@ func startRoutedViaTagger(parent context.Context, store *timescale.Store, logger
 // ammSignerEnabled reports whether any AMM/Soroban swap source (whose taker
 // is the on-chain caller, so the tx signer is worth back-tagging) is in the
 // operator's enabled-source list — the gate for the signer attribution
-// sweeper. Source names are literals here to avoid importing the four decoder
-// packages solely for their SourceName constants (kept in lockstep with
-// timescale.ammSignerSources).
+// sweeper. Reads the SAME timescale.AMMSignerSources the tagger filters on, so
+// the gate and the UPDATE can never drift.
 func ammSignerEnabled(enabledSources []string) bool {
 	for _, s := range enabledSources {
-		switch s {
-		case "comet", "soroswap", "aquarius", "phoenix":
-			return true
+		for _, amm := range timescale.AMMSignerSources {
+			if s == amm {
+				return true
+			}
 		}
 	}
 	return false
