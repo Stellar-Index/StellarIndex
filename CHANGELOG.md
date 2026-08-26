@@ -15,6 +15,26 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **AMM/Soroban swap actor attribution (`trades.signer`).** The AMM decoders
+  (comet/soroswap/aquarius/phoenix) set `taker` to the on-chain caller and
+  leave `maker` empty, so a router- or contract-driven swap had no
+  human/EOA attribution — the `taker` is the router contract. The tx source
+  account is that missing initiator, but it is NOT re-derivable from the lake
+  events the projector replays (they carry no source account), so it cannot
+  be set on the decode path. New nullable `trades.signer` column (migration
+  0150, mirroring `routed_via`: O(1) ADD COLUMN, deliberately kept out of the
+  trades UPSERT so a re-derive cannot clobber it) is back-tagged first-wins by
+  a trailing-window sweeper (`pipeline.RunSignerTagger`) that reads the signer
+  from the lake's `stellar.transactions`. The lake read is scoped to the small
+  ledger span of AMM trades still needing a signer (not every recent tx), so
+  it stays cheap at pubnet volume, and a per-tick ledger cap bounds a
+  cold-start / catch-up sweep. For gaps longer than the sweeper's 30-min
+  lookback (an indexer/ClickHouse outage or a projector lag), the
+  `stellarindex-ops tag-signer -from N -to N` command back-fills the range
+  through the same first-wins primitive. Exposed as `signer` on
+  `GET /v1/accounts/{id}/trades`.
+
 ## [v0.44.3] — 2026-08-26
 
 Tested against Stellar protocol 22.
