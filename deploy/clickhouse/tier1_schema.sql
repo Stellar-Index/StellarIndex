@@ -47,6 +47,22 @@ CREATE TABLE IF NOT EXISTS stellar.transactions
     result_code     Int32,
     memo_type       LowCardinality(String),
     memo            String,
+    -- Soroban resource metering (extract.go:extractSorobanMetering). All
+    -- DEFAULT 0 → additive + old-binary-safe; only Soroban txs are non-zero, so
+    -- these sparse columns compress to near-nothing. DECLARED = the submitter's
+    -- resource bid (tx envelope SorobanTransactionData); the three *_fee values
+    -- are what core CHARGED (tx meta SorobanTransactionMetaExtV1). There is no
+    -- actual-instructions-consumed value in pubnet ledger meta, so none is
+    -- stored. Populated GO-FORWARD only; historical Soroban txs read 0.
+    soroban_instructions      UInt32 DEFAULT 0,  -- declared CPU instruction bid
+    soroban_disk_read_bytes   UInt32 DEFAULT 0,  -- declared
+    soroban_write_bytes       UInt32 DEFAULT 0,  -- declared
+    soroban_read_entries      UInt16 DEFAULT 0,  -- declared len(footprint.ReadOnly)
+    soroban_write_entries     UInt16 DEFAULT 0,  -- declared len(footprint.ReadWrite)
+    soroban_resource_fee_bid  Int64  DEFAULT 0,  -- declared total resource-fee bid
+    soroban_nonrefundable_fee Int64  DEFAULT 0,  -- actual non-refundable fee charged
+    soroban_refundable_fee    Int64  DEFAULT 0,  -- actual refundable fee charged
+    soroban_rent_fee          Int64  DEFAULT 0,  -- actual rent fee charged
     ingested_at     DateTime DEFAULT now(),
     -- Bloom skip-index for hash lookups (GET /v1/tx/{hash}, ADR-0038): the
     -- sort key is (ledger_seq, tx_index), so WHERE tx_hash=? would otherwise

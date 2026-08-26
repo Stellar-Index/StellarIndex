@@ -100,6 +100,7 @@ func extractTx(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, clos
 	txSource, _ := tx.Account()
 	feeCharged, _ := tx.FeeCharged()
 
+	sm := extractSorobanMetering(tx)
 	ext.Txs = append(ext.Txs, TransactionRow{
 		LedgerSeq:      seq,
 		CloseTime:      closeTime,
@@ -113,11 +114,122 @@ func extractTx(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, clos
 		ResultCode:     int32(tx.Result.Result.Result.Code),
 		MemoType:       tx.MemoType(),
 		Memo:           tx.Memo(),
+
+		SorobanInstructions:   sm.Instructions,
+		SorobanDiskReadBytes:  sm.DiskReadBytes,
+		SorobanWriteBytes:     sm.WriteBytes,
+		SorobanReadEntries:    sm.ReadEntries,
+		SorobanWriteEntries:   sm.WriteEntries,
+		SorobanResourceFeeBid: sm.ResourceFeeBid,
+		SorobanNonrefundFee:   sm.NonRefundableFee,
+		SorobanRefundableFee:  sm.RefundableFee,
+		SorobanRentFee:        sm.RentFee,
 	})
 	ext.Ledger.TxCount++
 
 	extractOps(ext, tx, seq, closeTime, txHash, txSource, txIndex, tx.Result.Successful())
 	extractEvents(ext, tx, seq, closeTime, txHash, opArgsByIndex(tx.Envelope.Operations()), tx.Result.Successful())
+}
+
+// sorobanMetering is the per-tx Soroban resource-metering snapshot folded into
+// TransactionRow. Zero-valued for classic / pre-Soroban txs. DECLARED values
+// (the submitter's resource bid) come from the tx envelope's
+// SorobanTransactionData; ACTUAL fee values (what core charged) come from the
+// tx meta's SorobanTransactionMetaExtV1. There is deliberately NO
+// actual-instructions-consumed field: pubnet ledger meta carries none (the CPU
+// count lives only in diagnostic-event core_metrics, which pubnet core does not
+// emit into the LCM and the lake does not store — see
+// internal/xdrjson/operation.go), so only the three fee fields are captured on
+// the actual side.
+type sorobanMetering struct {
+	Instructions     uint32
+	DiskReadBytes    uint32
+	WriteBytes       uint32
+	ReadEntries      uint16
+	WriteEntries     uint16
+	ResourceFeeBid   int64 // declared SorobanTransactionData.ResourceFee
+	NonRefundableFee int64 // actual TotalNonRefundableResourceFeeCharged
+	RefundableFee    int64 // actual TotalRefundableResourceFeeCharged
+	RentFee          int64 // actual RentFeeCharged
+}
+
+// extractSorobanMetering pulls the resource bid (envelope) + charged fees
+// (meta) for a Soroban tx. Both sides are variant-aware: the envelope decode
+// unwraps a fee-bump to its inner V1 tx (a naive .V1.Tx access nil-panics on a
+// fee-bump-wrapped Soroban tx), and the meta decode reads either the V3 or the
+// p27 V4 shape. Returns the zero value for any classic / non-Soroban tx.
+func extractSorobanMetering(tx ingest.LedgerTransaction) sorobanMetering {
+	sd, ok := sorobanDataFromEnvelope(tx.Envelope)
+	if !ok {
+		return sorobanMetering{}
+	}
+	m := sorobanMetering{
+		Instructions:   uint32(sd.Resources.Instructions),
+		DiskReadBytes:  uint32(sd.Resources.DiskReadBytes),
+		WriteBytes:     uint32(sd.Resources.WriteBytes),
+		ReadEntries:    clampU16(len(sd.Resources.Footprint.ReadOnly)),
+		WriteEntries:   clampU16(len(sd.Resources.Footprint.ReadWrite)),
+		ResourceFeeBid: int64(sd.ResourceFee),
+	}
+	if ext, ok := sorobanMetaFeeExt(tx.UnsafeMeta); ok {
+		m.NonRefundableFee = int64(ext.TotalNonRefundableResourceFeeCharged)
+		m.RefundableFee = int64(ext.TotalRefundableResourceFeeCharged)
+		m.RentFee = int64(ext.RentFeeCharged)
+	}
+	return m
+}
+
+// sorobanDataFromEnvelope returns the tx's SorobanTransactionData, unwrapping a
+// fee-bump to the inner V1 tx. ok=false for V0 or any non-Soroban tx. There is
+// no SDK helper for this — the type switch mirrors TransactionEnvelope's own
+// SourceAccount()/Fee() accessors.
+func sorobanDataFromEnvelope(env xdr.TransactionEnvelope) (xdr.SorobanTransactionData, bool) {
+	switch env.Type {
+	case xdr.EnvelopeTypeEnvelopeTypeTx:
+		if env.V1 == nil {
+			return xdr.SorobanTransactionData{}, false
+		}
+		return env.V1.Tx.Ext.GetSorobanData()
+	case xdr.EnvelopeTypeEnvelopeTypeTxFeeBump:
+		if env.FeeBump == nil {
+			return xdr.SorobanTransactionData{}, false
+		}
+		if inner := env.FeeBump.Tx.InnerTx; inner.Type == xdr.EnvelopeTypeEnvelopeTypeTx && inner.V1 != nil {
+			return inner.V1.Tx.Ext.GetSorobanData()
+		}
+	}
+	return xdr.SorobanTransactionData{}, false
+}
+
+// sorobanMetaFeeExt reads the charged-fee ext (present since p21; live pubnet is
+// p27 → TransactionMetaV4) from either the V3 or V4 meta shape. ok=false when
+// the tx carries no Soroban meta (classic tx, or a Soroban tx whose meta
+// predates the ext).
+func sorobanMetaFeeExt(meta xdr.TransactionMeta) (xdr.SorobanTransactionMetaExtV1, bool) {
+	switch meta.V {
+	case 3:
+		if sm := meta.MustV3().SorobanMeta; sm != nil {
+			return sm.Ext.GetV1()
+		}
+	case 4:
+		if sm := meta.MustV4().SorobanMeta; sm != nil {
+			return sm.Ext.GetV1()
+		}
+	}
+	return xdr.SorobanTransactionMetaExtV1{}, false
+}
+
+// clampU16 saturates a footprint length into a uint16 (a Soroban footprint is
+// bounded far below 65k entries by the network resource limits, but saturate
+// defensively rather than wrap).
+func clampU16(n int) uint16 {
+	if n < 0 {
+		return 0
+	}
+	if n > 0xffff {
+		return 0xffff
+	}
+	return uint16(n)
 }
 
 // opInvokeArgs is one operation's top-level InvokeContract snapshot:
