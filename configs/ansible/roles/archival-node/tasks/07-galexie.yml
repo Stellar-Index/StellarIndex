@@ -96,7 +96,13 @@
   # SOURCE artifact against the pin and refuse to touch the live binary
   # with a mismatched one. A deliberate upgrade updates
   # galexie_expected_binary_sha256 in the same PR as the new artifact.
-  when: galexie_paths.results[1].stat.exists
+  # Same `| default('') | length > 0` escape hatch the POST-install
+  # drift-guard checks below use — blanking the pin skips the guard (the
+  # documented way to stand it down; a from-scratch build with no codified
+  # pin, e.g. a test net, has no reference sha to compare against).
+  when:
+    - galexie_paths.results[1].stat.exists
+    - galexie_expected_binary_sha256 | default('') | length > 0
   ansible.builtin.assert:
     that:
       - galexie_paths.results[1].stat.checksum == galexie_expected_binary_sha256
@@ -203,6 +209,10 @@
   # today / printed NOTHING" observation was a CHECK-MODE artifact: the
   # probe command was skipped in --check, leaving stdout empty — fixed
   # with check_mode: false on the probe above.
+  # Blank galexie_expected_version_string skips this guard (same escape
+  # hatch as the sha checks) — a from-source test-net build has no codified
+  # version stamp to pin against.
+  when: galexie_expected_version_string | default('') | length > 0
   ansible.builtin.assert:
     that:
       - galexie_reported_version | length > 0
