@@ -31,15 +31,16 @@ import (
 // all of it (native SAC: 44.76M active ledgers).
 //
 // SHAPE: windowed + resumable via stellar.cap67_movements_watermark
-// (deploy/clickhouse/cap67_movements.sql). One invocation catches up from
-// the watermark (or the P23 boundary on first run) to the lake tip, then
-// exits — a 5-minute systemd timer keeps it following; systemd's
-// one-instance rule makes overlapping fires no-ops while a long catch-up
-// runs. Idempotent: account_movements is a ReplacingMergeTree keyed
-// (address, ledger, tx_hash, op_index, leg_index, direction), so
-// re-derives collapse. Scope is event_kind 'transfer' only — exact
-// parity with the Postgres tail this replaces (mint/burn are supply
-// events, served elsewhere).
+// (deploy/clickhouse/cap67_movements.sql). `-follow` runs it as the
+// continuous real-time daemon (5.3): each iteration catches up from the
+// watermark (or the P23 boundary on first run) to the CONTIGUOUS lake tip,
+// then sleeps -follow-interval and repeats — this is the movement feed a user
+// watches their transactions land on. Without -follow it is a one-shot
+// catch-up that exits at the tip (manual -from/-to backfills). Idempotent:
+// account_movements is a ReplacingMergeTree keyed
+// (address, ledger, tx_hash, op_index, leg_index, direction), so re-derives
+// collapse. Scope is event_kind 'transfer' only — exact parity with the
+// Postgres tail this replaces (mint/burn are supply events, served elsewhere).
 //
 // The API's movements handler floors its Postgres arm at this job's
 // watermark, so at ANY backfill progress the two arms are gap-free and
@@ -68,6 +69,11 @@ func chCap67Movements(args []string) error {
 	if *follow {
 		if *from != 0 || *to != 0 {
 			return fmt.Errorf("-follow always resumes from the watermark to the contiguous tip; do not combine with -from/-to")
+		}
+		if dryRun {
+			// A dry-run never advances the watermark, so -follow would re-stream
+			// the ENTIRE backlog on every tick, forever. The daemon must write.
+			return fmt.Errorf("-follow requires -write: a dry-run never advances the watermark and would re-derive the whole backlog each tick")
 		}
 		return runCap67Follow(ctx, *chAddr, uint32(*window), dryRun, *followInterval) //nolint:gosec // window fits uint32
 	}

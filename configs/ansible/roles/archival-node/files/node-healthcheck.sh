@@ -67,6 +67,11 @@ SERVICES=(
   stellarindex-indexer
   stellarindex-aggregator
   stellarindex-api
+  # cap67-movements: the account-movements FOLLOW DAEMON (5.3). As an
+  # always-on writer of the money trail, a dead/crash-looped (StartLimit →
+  # failed) daemon must page — the timer+oneshot it replaced was self-healing
+  # on the next fire; a wedged daemon is not.
+  cap67-movements
 )
 for s in "${SERVICES[@]}"; do
   state=$(systemctl is-active "$s" 2>&1)

@@ -592,13 +592,21 @@
     state: absent
   notify: Reload systemd
 
-- name: Enable + start the cap67-movements follow daemon (5.3, real-time movements)
+- name: Enable + (re)start the cap67-movements follow daemon (5.3, real-time movements)
   # Long-lived daemon: catches up to the contiguous tip, then follows at
   # FOLLOW_INTERVAL. Restart=always in the unit makes it crash-safe; it
   # resumes from the persisted watermark.
+  #
+  # `restarted` (NOT `started`): `started` is a no-op while the unit is
+  # active/activating, which on the timer→daemon cutover leaves an in-flight
+  # OLD oneshot running and NEVER launches the new -follow ExecStart (the play
+  # goes green with no daemon), and on any later run leaves the running daemon
+  # on stale unit config. A deterministic restart is safe here — SIGTERM is
+  # graceful (the loop exits mid-derive, the watermark holds, ReplacingMergeTree
+  # dedups any re-derived window).
   ansible.builtin.systemd:
     name: cap67-movements.service
-    state: started
+    state: restarted
     enabled: true
     daemon_reload: true
 

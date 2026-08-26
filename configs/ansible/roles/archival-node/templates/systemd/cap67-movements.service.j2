@@ -26,6 +26,14 @@ Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/opera
 After=network-online.target
 Wants=network-online.target
 
+# Crash-loop → `failed` (visible to systemctl --failed + node-healthcheck.sh).
+# Without this, Restart=always restarts FOREVER against a poison window
+# (panic / CH refusing writes), resuming to the same stuck watermark and never
+# entering `failed` — an invisible stall of the money-trail feed. With
+# RestartSec=10s, 5 starts inside 300s (~50s of thrashing) trips it to failed.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
 [Service]
 Type=simple
 EnvironmentFile=-/etc/default/cap67-movements
