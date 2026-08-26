@@ -2,6 +2,7 @@ package comet
 
 import (
 	"errors"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
@@ -36,7 +37,23 @@ import (
 // pool is in scope), not the POOL namespace.
 type Decoder struct {
 	reg *contractid.Registry
+
+	// now sources wall-clock for the self-pair detection metric's recency
+	// gate ONLY (never for decoded timestamps — those come from the ledger,
+	// see EventClosedAt). Injectable so tests are deterministic; defaults to
+	// time.Now in NewDecoder.
+	now func() time.Time
 }
+
+// selfPairLiveWindow bounds how recent a self-pair swap's ledger close time
+// must be for it to bump the exploit-detection metric. The SAME Decode runs
+// during backfill re-ingest AND the completeness re-derive (which re-runs the
+// decoder over historical soroban_events to count expected rows) — both
+// re-process the 2026-08-25 exploit window, and counting there would re-fire
+// the burst alert in present wall-clock time for a non-event. Gating on
+// close-time recency keeps the metric a "happening now" signal. The window is
+// generous (live decode lags by seconds; a real >1h tip lag is its own page).
+const selfPairLiveWindow = time.Hour
 
 // NewDecoder constructs a Comet Decoder. The in-code curated set
 // (MainnetGatedSet) is always installed first; caller opts (WithSeed
@@ -45,7 +62,7 @@ type Decoder struct {
 // event to self-register from, so live fan-out never fires.
 func NewDecoder(opts ...contractid.Option) *Decoder {
 	base := []contractid.Option{contractid.WithSeed(MainnetGatedSet())}
-	return &Decoder{reg: contractid.New(append(base, opts...)...)}
+	return &Decoder{reg: contractid.New(append(base, opts...)...), now: time.Now}
 }
 
 // Name implements [dispatcher.Decoder].
@@ -117,8 +134,13 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 				// table, so this counter (+ the raw soroban_events landing) is
 				// the ONLY place the freeze/divergence-blind self-swap burst is
 				// observable. Detection only — drops to zero rows exactly as
-				// before, changing no serving or freeze decision.
-				obs.AMMSelfPairSwapTotal.WithLabelValues(SourceName).Inc()
+				// before, changing no serving or freeze decision. Gated on
+				// close-time recency so a backfill / completeness re-derive of
+				// the historical exploit window does NOT re-fire the alert (see
+				// selfPairLiveWindow).
+				if d.now().Sub(closedAt) < selfPairLiveWindow {
+					obs.AMMSelfPairSwapTotal.WithLabelValues(SourceName).Inc()
+				}
 				return nil, nil
 			}
 			if errors.Is(err, ErrNonPositiveAmounts) {

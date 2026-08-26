@@ -93,6 +93,14 @@ forensics.
   today (comet emitted zero before the exploit), which is why the
   threshold sits low; if one is discovered, model it in the decoder and
   raise/scope the threshold rather than leaving the count ambiguous.
+- **Backfill / completeness re-derive of the historical exploit window
+  does NOT trip this** by design: the counter increments only for LIVE
+  (recent ledger close time) self-pair swaps (`selfPairLiveWindow` in
+  `internal/sources/comet/dispatcher_adapter.go`). Re-ingesting or
+  re-deriving ledger ~64112340 replays the ~390 exploit self-swaps, but
+  their close time is far in the past, so the metric stays flat. If a
+  re-ingest of a RECENT window (< 1h old) double-counts, that is the one
+  residual replay case — rare and operator-initiated.
 
 ## Related
 
