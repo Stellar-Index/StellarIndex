@@ -5,13 +5,13 @@ How to stand up StellarIndex Testnet and Futurenet instances. Companion:
 
 ## Topology decision
 
-- **One Hetzner box, two Proxmox VMs** — one VM per network. Testnet +
+- **One Hetzner box, two libvirt/KVM VMs** — one VM per network. Testnet +
   Futurenet share the box; **Mainnet is the only tier with HA / multiple
   regions** (r1 + future r2/r3).
 - **Box:** Hetzner Server Auction **Xeon E-2176G** (6c/12t, 64 GB DDR4
   **ECC**, 2×960 GB **U.2 NVMe Datacenter**), Frankfurt, ~€83/mo, €0 setup
   (AuctionID 3059162-class). IP 95.217.126.13.
-- **Storage:** the two NVMe are **RAID0-striped** (ZFS stripe, ~1.9 TB) —
+- **Storage:** the two NVMe are **RAID0-striped** (mdadm RAID0 via installimage, LVM `vg0` ~1.74 TB) —
   test-net data is disposable/re-ingestable, so no mirror; a drive failure
   just means re-ingest from genesis. The **host** owns ZFS (stripe + zstd);
   each **VM** gets a plain virtual disk (no ZFS-on-ZFS).
@@ -41,26 +41,18 @@ these were network-parameterized (commit `6b3859d7`, audit 2026-08-26):
 **required** — it runs the `cap67-movements` follow daemon that writes the
 `/v1/accounts/{g}/movements` feed (not the aggregator).
 
-## Step 1 — Host (Proxmox + RAID0)
+## Steps 1–2 — Host + VMs (libvirt/KVM)
 
-1. Install the `si_deploy` pubkey on the box (`/root/.ssh/authorized_keys`):
-   `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFusEIOFA2VH3xvFWIMA8q60iXb1DZvDHrD21wjnv32u`
-2. Install Proxmox VE (no-subscription repo, free).
-3. Create the striped pool over both NVMe:
-   `zpool create -o ashift=12 -O compression=zstd -O atime=off vmdata <nvme0> <nvme1>`
-   (no `mirror`/`raidz` keyword → **stripe**; ~1.9 TB usable).
-4. Point Proxmox storage at the `vmdata` zpool (ZFS storage type).
-
-## Step 2 — Two VMs
-
-Create `testnet` and `futurenet` VMs (Debian/Ubuntu matching r1's OS):
-
-- ~3 vCPU, ~26 GB RAM each (ClickHouse queries hard-cap 8 GiB/query; each VM
-  runs captive-core + CH + PG + indexer + api + cap67-movements). ~8 GB left
-  for the host.
-- One virtual disk each (~800 GB thin) on `vmdata`, mounted at `/var/lib`.
-- Install the `si_deploy` pubkey in each VM's `root` authorized_keys.
-- Give each VM a reachable IP (Hetzner additional IP, or host IP + port map).
+Provisioned reproducibly per
+[../../configs/libvirt/README.md](../../configs/libvirt/README.md): Debian 12 via
+installimage (`configs/libvirt/installimage-host.conf` — mdadm RAID0 + mirrored
+`/boot` + LVM `vg0`), then libvirt/KVM + two Ubuntu 24.04 VMs (`si-testnet`
+192.168.122.10, `si-futurenet` 192.168.122.20) created by
+`configs/libvirt/provision-vms.sh` with cloud-init (static IPs, both SSH keys).
+Each VM: 4 vCPU, 20 GB RAM, a 600 GB LV; on libvirt's private NAT, reached via
+ProxyJump through the host (encoded in the inventory). Ubuntu 24.04 matches r1
+so the ansible role deploys unchanged. **Not Proxmox** — plain libvirt/KVM is
+lighter and keeps the host CLI/ansible-managed.
 
 ## Step 3 — Inventory
 
