@@ -176,6 +176,12 @@ func followLoop(ctx context.Context, interval time.Duration, catchUp func(contex
 // watermark (floorLedger on first run — the P23 boundary on pubnet, or
 // genesis=1 on a test net); to=0 targets the lake tip.
 func Cap67Range(ctx context.Context, chAddr string, from, to, floorLedger uint32) (uint32, uint32, error) {
+	if floorLedger == 0 {
+		// Defensive: the first-run seed below computes floorLedger-1, which
+		// would underflow to ~4.29e9 at floorLedger==0. Genesis is ledger 1.
+		// The CLI already rejects -floor-ledger 0; this guards other callers.
+		floorLedger = 1
+	}
 	start := from
 	if start == 0 {
 		wm, err := clickhouse.Cap67MovementsWatermark(ctx, chAddr)
