@@ -391,6 +391,9 @@ func TestZeroSeed_F0033(t *testing.T) {
 		// as "no data" (indistinguishable from a dead metric) rather
 		// than as a healthy zero.
 		`stellarindex_aggregator_triangulations_total{outcome="frozen_leg"} 0`,
+		// The self-pair exploit detector is by-design flat-at-zero; without
+		// this seed an operator can't distinguish "armed" from "dead metric."
+		`stellarindex_amm_self_pair_swap_total{source="comet"} 0`,
 		`stellarindex_usage_rollup_sweeps_total{outcome="ok"}`,
 		`stellarindex_usage_rollup_sweeps_total{outcome="scan_error"} 0`,
 		`stellarindex_usage_rollup_sweeps_total{outcome="sink_error"} 0`,

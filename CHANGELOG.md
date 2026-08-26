@@ -15,6 +15,23 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Exploit-shaped detector for AMM self-pair swaps** (post-2026-08-25
+  Blend/Comet). A self-pair swap (`token_in == token_out`) on a curated AMM
+  pool moves no value between distinct assets and has no honest purpose — it
+  is the primitive the exploit ran ~390 times to walk a pool's spot price,
+  and the freeze + divergence guards were blind to it because the self-pair
+  rows decode to zero rows and never reach the served `trades` table. New
+  counter `stellarindex_amm_self_pair_swap_total{source}` is incremented at
+  the comet decoder's drop point, and a `stellarindex_amm_self_pair_swap_burst`
+  alert (ticket) fires on `increase[15m] > 10` — far above the historical-zero
+  baseline. Detection only: it changes no serving or freeze decision, so it
+  cannot create a false freeze. The counter increments only for LIVE (recent
+  ledger close time) events, so a backfill or completeness re-derive of the
+  historical exploit window does not re-fire the alert. Zero-seeded (F-0033)
+  so operators can tell "armed" from "dead metric," and ships with
+  false-positive + replay-suppression guard tests plus a runbook.
+
 ### Fixed
 - `stellarindex_priceless_coverage_check_stale` paged a perma-stale FALSE
   positive from the **indexer** and **api** instances. The
