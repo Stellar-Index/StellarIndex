@@ -15,6 +15,10 @@ against.
 
 ## [Unreleased]
 
+## [v0.44.4] — 2026-08-26
+
+Tested against Stellar protocol 22.
+
 ### Added
 - **AMM/Soroban swap actor attribution (`trades.signer`).** The AMM decoders
   (comet/soroswap/aquarius/phoenix) set `taker` to the on-chain caller and
