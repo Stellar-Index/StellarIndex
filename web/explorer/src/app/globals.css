@@ -259,7 +259,13 @@
 }
 .digit-strip {
   display: block;
-  transform: translateY(-50%);
+  /* Rest on the NEW digit. Translate by an ABSOLUTE -1lh (exactly one line),
+     NOT -50% of the strip's own height: a percentage rounds off when the
+     strip's height isn't exactly 2× the line box (font-metric rounding — it
+     lands a couple px off on Windows), and that offset is what a settled /
+     reduced-motion / non-animating digit shows. -1lh always lands on the digit
+     boundary, so the resting position is pixel-correct everywhere. */
+  transform: translateY(-1lh);
   /* 0.65s (was 0.35s): at the ledger's ~5s cadence a 0.35s roll of one
      11px digit read as an instant swap — measured correct in DevTools,
      invisible to the eye (operator report 2026-08-24). The longer
@@ -282,7 +288,7 @@
     transform: translateY(0);
   }
   to {
-    transform: translateY(-50%);
+    transform: translateY(-1lh);
   }
 }
 .flash-up {
