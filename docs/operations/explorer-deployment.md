@@ -105,6 +105,44 @@ PR merge into main
 Rolling back is a single click in the CF dashboard — Pages keeps
 every previous build available as a preview URL.
 
+## Test nets (Testnet / Futurenet)
+
+Each network gets its **own explorer build** — the same code with a different
+`NEXT_PUBLIC_NETWORK` + `NEXT_PUBLIC_API_BASE_URL` baked in — published to its
+own Cloudflare Pages project and custom domain. The nav network-switcher then
+lets visitors hop between them (it reads each network's public
+`/v1/ledger/tip`).
+
+| Network | Pages project | Custom domain | API origin (grey) |
+| --- | --- | --- | --- |
+| Mainnet | `stellarindex-explorer` | stellarindex.io | api.stellarindex.io |
+| Testnet | `stellarindex-explorer-testnet` | testnet.stellarindex.io | api.testnet.stellarindex.io |
+| Futurenet | `stellarindex-explorer-futurenet` | futurenet.stellarindex.io | api.futurenet.stellarindex.io |
+
+**One-time Cloudflare setup (dashboard, per test net):**
+
+1. Create the Pages project (`stellarindex-explorer-testnet` /
+   `-futurenet`). Either connect it to this repo's `main` (git integration,
+   auto-deploy) **or** leave it CI-published (below). If git-integrated, set
+   the project's build env vars `NEXT_PUBLIC_NETWORK` +
+   `NEXT_PUBLIC_API_BASE_URL` to the row above.
+2. Add the custom domain (testnet./futurenet.stellarindex.io). The DNS record
+   is already **orange/proxied** — Cloudflare terminates its TLS, so no origin
+   cert is needed (the app is static; its live data comes from the grey api.*
+   origin, which is unaffected).
+3. Ensure `CLOUDFLARE_API_TOKEN` has Pages:Edit on the new projects.
+
+**Publishing:** the `explorer-deploy.yml` workflow takes a `network` input that
+bakes the right env and targets the right project:
+
+```sh
+gh workflow run explorer-deploy.yml --ref main -f network=testnet   -f environment=production
+gh workflow run explorer-deploy.yml --ref main -f network=futurenet -f environment=production
+```
+
+The test-net API origins are already in the API's CORS `allowed_origins`, so
+the switcher's cross-origin tip probe works in every direction.
+
 ## Security headers + CSP
 
 `web/explorer/public/_headers` ships a Cloudflare-Pages /
