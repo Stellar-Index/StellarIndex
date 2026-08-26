@@ -4,10 +4,13 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // ─── consumer.go ──────────────────────────────────────────────────
@@ -129,6 +132,68 @@ func TestDecoder_Decode_SelfPairSwap_NoEventNoError(t *testing.T) {
 	}
 	if len(out) != 0 {
 		t.Fatalf("self-pair swap must produce zero events, got %d", len(out))
+	}
+}
+
+// TestDecoder_Decode_SelfPairSwap_IncrementsDetectionMetric pins the
+// exploit-shaped detector (4.4c): a dropped self-pair swap must bump
+// obs.AMMSelfPairSwapTotal{source="comet"} so the burst is observable even
+// though the row never reaches the served trades table. Detection only — the
+// (nil, nil) drop behaviour is unchanged.
+func TestDecoder_Decode_SelfPairSwap_IncrementsDetectionMetric(t *testing.T) {
+	d := NewDecoder()
+	caller := accountStrkeyFromSeed(t, 0x10)
+	token := contractStrkeyFromSeed(t, 0x20) // SAME token in AND out
+	body := encodeSwapBody(t, caller, token, token,
+		big.NewInt(1_000_000), big.NewInt(900_000))
+	ev := events.Event{
+		Topic:          []string{TopicSymbolPool, TopicSymbolSwap},
+		Value:          body,
+		Ledger:         64_112_340,
+		TxHash:         "deadbeef",
+		OperationIndex: 0,
+		LedgerClosedAt: "2026-08-25T03:51:02Z",
+	}
+	before := testutil.ToFloat64(obs.AMMSelfPairSwapTotal.WithLabelValues(SourceName))
+	if _, err := d.Decode(ev); err != nil {
+		t.Fatalf("self-pair swap must not error: %v", err)
+	}
+	after := testutil.ToFloat64(obs.AMMSelfPairSwapTotal.WithLabelValues(SourceName))
+	if after-before != 1 {
+		t.Fatalf("AMMSelfPairSwapTotal{comet} must increment by 1 on a self-pair swap, got delta %v", after-before)
+	}
+}
+
+// TestDecoder_Decode_HappyPath_NoDetectionMetric is the false-positive guard:
+// a NORMAL distinct-pair swap must NOT bump the exploit metric. Without this,
+// the exploit alert would be noise — exactly what a self-pair-only signal must
+// avoid.
+func TestDecoder_Decode_HappyPath_NoDetectionMetric(t *testing.T) {
+	d := NewDecoder()
+	caller := accountStrkeyFromSeed(t, 0x10)
+	tokenIn := contractStrkeyFromSeed(t, 0x20)
+	tokenOut := contractStrkeyFromSeed(t, 0x30) // DISTINCT tokens
+	body := encodeSwapBody(t, caller, tokenIn, tokenOut,
+		big.NewInt(1_000_000), big.NewInt(2_500_000))
+	ev := events.Event{
+		Topic:          []string{TopicSymbolPool, TopicSymbolSwap},
+		Value:          body,
+		Ledger:         52_000_000,
+		TxHash:         "cafef00d",
+		OperationIndex: 0,
+		LedgerClosedAt: "2026-04-23T12:00:00Z",
+	}
+	before := testutil.ToFloat64(obs.AMMSelfPairSwapTotal.WithLabelValues(SourceName))
+	out, err := d.Decode(ev)
+	if err != nil {
+		t.Fatalf("happy-path swap must not error: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("happy-path swap must produce one trade, got %d", len(out))
+	}
+	after := testutil.ToFloat64(obs.AMMSelfPairSwapTotal.WithLabelValues(SourceName))
+	if after != before {
+		t.Fatalf("a normal swap must NOT bump the exploit metric; got delta %v", after-before)
 	}
 }
 

@@ -58,6 +58,7 @@ func registerAppMetrics() {
 		SourceDecodeErrorsTotal,
 		SourceUnknownSymbolsTotal,
 		SourceOrphanEventsTotal,
+		AMMSelfPairSwapTotal,
 		ExternalPollerPollsTotal,
 		ExternalPollerLastSuccessUnix,
 		ExternalFXLastQuoteUnix,
@@ -950,6 +951,25 @@ var ExternalDustDroppedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_external_dust_dropped_total",
 		Help: "Streamed CEX trades dropped at ingest as sub-$0.001 dust, by source.",
+	},
+	[]string{"source"},
+)
+
+// AMMSelfPairSwapTotal — per-source counter of AMM swap events decoded as a
+// SELF-PAIR swap (token_in == token_out) and dropped to zero rows. A self-pair
+// swap has NO honest purpose: it moves no value between distinct assets, and
+// it is the primitive the 2026-08-25 Blend/Comet exploit ran 390 times to
+// walk a pool's spot price. Historically comet emitted ZERO self-pair swaps
+// before that window, so any sustained count is an exploit-shaped signal, not
+// noise — the tripwire the freeze/divergence guards were blind to because the
+// self-pair rows never reach the served `trades` table (they decode to
+// (nil,nil); the raw event still lands in soroban_events for forensics).
+// Incremented at the decoder drop point (e.g. comet dispatcher_adapter). This
+// is a DETECTION metric only — it changes no serving or freeze decision.
+var AMMSelfPairSwapTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_amm_self_pair_swap_total",
+		Help: "AMM swaps dropped as self-pair (token_in==token_out) — an exploit primitive with no honest purpose. By source.",
 	},
 	[]string{"source"},
 )

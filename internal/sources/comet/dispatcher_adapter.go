@@ -7,6 +7,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // Decoder is the dispatcher-facing view of Comet. Single instance
@@ -109,8 +110,18 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 			// failures, which must remain blind. (Precedent for
 			// recognised-but-unserved → (nil, nil):
 			// internal/sources/classicmovements/decode.go.)
-			if errors.Is(err, canonical.ErrPairMismatch) ||
-				errors.Is(err, ErrNonPositiveAmounts) {
+			if errors.Is(err, canonical.ErrPairMismatch) {
+				// Self-pair swap (token_in == token_out) — the exploit
+				// primitive. Count it as an exploit-shaped detection signal
+				// before dropping: these rows never reach the served `trades`
+				// table, so this counter (+ the raw soroban_events landing) is
+				// the ONLY place the freeze/divergence-blind self-swap burst is
+				// observable. Detection only — drops to zero rows exactly as
+				// before, changing no serving or freeze decision.
+				obs.AMMSelfPairSwapTotal.WithLabelValues(SourceName).Inc()
+				return nil, nil
+			}
+			if errors.Is(err, ErrNonPositiveAmounts) {
 				return nil, nil
 			}
 			return nil, err

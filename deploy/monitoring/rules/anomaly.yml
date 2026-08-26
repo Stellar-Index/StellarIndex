@@ -160,3 +160,50 @@ groups:
             (component=freeze-recovery) for the specific transport
             error.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/freeze-recovery-stalled.md
+
+      # Exploit-shaped detector (4.4c, post-2026-08-25 Blend/Comet).
+      # A SELF-PAIR swap (token_in == token_out) on a curated AMM pool
+      # moves no value between distinct assets and has NO honest purpose;
+      # it is the primitive the exploit ran 390 times to walk the pool's
+      # spot price and defeat the freeze/divergence guards. Those guards
+      # were blind to it because the self-pair rows never reach the served
+      # `trades` table (they decode to zero rows; the raw event still lands
+      # in soroban_events). This alert is the tripwire: comet emitted ZERO
+      # self-pair swaps before the exploit window, so a burst is an
+      # exploit-shaped signal, not noise. increase()[15m] > 10 is far above
+      # the normal-zero baseline yet well under the exploit's ~390.
+      # Ticket not page (a NEW detector; escalate to page once it proves
+      # out) — a human triages the tx + pool via the raw soroban_events.
+      - alert: stellarindex_amm_self_pair_swap_burst
+        expr: |
+          sum by (source) (increase(stellarindex_amm_self_pair_swap_total[15m])) > 10
+        for: 2m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/amm-self-pair-swap-burst.md
+          summary: "Self-pair swap burst on {{ $labels.source }} — possible pool-price manipulation (P3)"
+          description: |
+            More than 10 SELF-PAIR swaps (token_in == token_out) were
+            decoded on AMM source {{ $labels.source }} in the last 15
+            minutes. A self-pair swap has no honest purpose — it is the
+            primitive the 2026-08-25 Blend/Comet exploit ran ~390 times
+            to manipulate a pool's spot price. Historically this source
+            emitted ZERO, so this is an exploit-shaped signal.
+
+            The self-pair rows are DROPPED before the served trades table
+            (they map to zero rows), so they do not move any published
+            price directly — but a sustained burst means someone is
+            hammering the pool's internal price, which the freeze +
+            divergence guards do not see.
+
+            Triage:
+              - The raw events are in soroban_events (topic POOL/swap on
+                the pool contract) — find the tx_hash(es) and signer.
+              - Cross-check the pool's constituent assets for a spot-price
+                walk over the burst window.
+              - If confirmed benign (a pool op we don't yet model), widen
+                or silence; if malicious, follow the incident runbook.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/amm-self-pair-swap-burst.md
