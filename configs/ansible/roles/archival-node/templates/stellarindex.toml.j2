@@ -271,15 +271,15 @@ usd_pegged_classic_assets = []   {# pricing off (test net): no USD pegs, assets 
 # with X-Forwarded-{For,Proto,Host} set. Trusting 127.0.0.1/32 makes
 # the API honour those headers (so request logs show the real client IP
 # instead of 127.0.0.1, and rate-limiting buckets per real client).
-# Listen-addr is set to 127.0.0.1:3000 (loopback only) — Caddy is the
-# public surface and proxies to localhost:3000; stellarindex-sla-probe
-# and ad-hoc operator curl reach the API over loopback on the box
-# itself, not via a public 0.0.0.0 bind (audit-2026-07-23 INF-19: this
-# comment previously said 0.0.0.0:3000, which no longer matches the
-# rendered value below).
+# listen_addr defaults to 127.0.0.1:3000 (loopback only) — on r1 Caddy is
+# the public surface and runs ON the box, so a public 0.0.0.0 bind is an
+# unnecessary surface (audit-2026-07-23 INF-19). The test-net VMs run Caddy
+# on the KVM HOST and reach the API over the private NAT, so they set
+# stellarindex_api_listen_addr=0.0.0.0:3000 (+ open 3000 to internal_cidrs);
+# the VM has no public route, so 0.0.0.0 is still host-NAT-only there.
 # ──────────────────────────────────────────────────────────────────
 [api]
-listen_addr = "127.0.0.1:3000"
+listen_addr = "{{ stellarindex_api_listen_addr | default('127.0.0.1:3000') }}"
 allowed_origins = ["https://stellarindex.io", "https://api.stellarindex.io", "https://status.stellarindex.io", "https://docs.stellarindex.io", "https://dashboard.stellarindex.io", "https://www.stellarindex.io"]
 allow_credentials = true
 # AC7 onboarding fix (2026-06-13): verification-gated signup stays OFF

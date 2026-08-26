@@ -1,33 +1,47 @@
-# Host reverse proxy (Debian KVM host, 95.217.126.13) for the test-net VMs.
-# All 4 subdomains resolve to THIS host (DNS A→95.217.126.13, AAAA→::2);
-# Caddy demuxes by Host header to the correct VM over the private NAT and
-# auto-provisions Let's Encrypt certs (api.* are DNS-only/grey on Cloudflare,
-# so HTTP-01 reaches here). flush_interval -1 disables buffering — REQUIRED
-# for the API's Server-Sent-Events streams (live ledger + movements feeds).
+# Host reverse proxy — Debian KVM host (95.217.126.13) for the test-net VMs.
+#
+# DNS / Cloudflare split (deliberate):
+#   api.testnet.stellarindex.io   → A 95.217.126.13  DNS-ONLY (grey)
+#   api.futurenet.stellarindex.io → A 95.217.126.13  DNS-ONLY (grey)
+#       The API serves Server-Sent-Events (live ledger + movements). Cloudflare
+#       proxying buffers SSE and breaks the streams, so these MUST stay grey.
+#       Grey also lets Caddy solve the ACME HTTP-01 challenge directly → real
+#       Let's Encrypt certs here.
+#   testnet.stellarindex.io       → Cloudflare-PROXIED (orange)
+#   futurenet.stellarindex.io     → Cloudflare-PROXIED (orange)
+#       These serve the static Next.js explorer (cacheable, DDoS-protected at
+#       the edge). The explorer's live data comes from the grey api.* origin,
+#       so proxying the app itself is fine. Cloudflare terminates their TLS;
+#       the origin is wired in the explorer-deploy phase (Phase 5) with a
+#       Cloudflare Origin-CA cert (or Full SSL) — NOT here, so Caddy never
+#       churns on an HTTP-01 challenge it can't win behind the orange proxy.
+#
+# flush_interval -1 disables response buffering — REQUIRED for the API's SSE
+# streams (/v1/ledger/stream, /v1/movements/stream).
 
+{
+	# ACME account contact (Let's Encrypt expiry/issue notices).
+	email ops@stellarindex.io
+}
+
+# ── Testnet API (LIVE) ────────────────────────────────────────────────────
 api.testnet.stellarindex.io {
 	reverse_proxy 192.168.122.10:3000 {
 		flush_interval -1
 	}
 }
 
+# ── Futurenet API (Phase 2 — VM 192.168.122.20 not provisioned yet) ───────
+# The cert provisions now (grey domain); requests 502 until the futurenet VM
+# is up. Kept here so the target state is codified and ready.
 api.futurenet.stellarindex.io {
 	reverse_proxy 192.168.122.20:3000 {
 		flush_interval -1
 	}
 }
 
-# Explorer subdomains (Phase 5 — the Next.js explorer, network-configured).
-# Until the per-network explorer is deployed, point them at their API so the
-# hostname resolves to something useful.
-testnet.stellarindex.io {
-	reverse_proxy 192.168.122.10:3000 {
-		flush_interval -1
-	}
-}
-
-futurenet.stellarindex.io {
-	reverse_proxy 192.168.122.20:3000 {
-		flush_interval -1
-	}
-}
+# ── Explorer app domains (Phase 5) ────────────────────────────────────────
+# testnet.stellarindex.io / futurenet.stellarindex.io are Cloudflare-proxied
+# (orange) and serve the Next.js explorer. Add their site blocks when the
+# explorer is deployed to each VM, using tls with a Cloudflare Origin-CA cert
+# (orange domains can't complete HTTP-01 here). Intentionally omitted for now.

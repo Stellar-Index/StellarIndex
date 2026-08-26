@@ -783,6 +783,14 @@ internal_cidrs:
   - "172.16.0.0/12"
   - "192.168.0.0/16"
 
+# API HTTP bind address. Default loopback-only: on r1 Caddy runs ON the box
+# and reverse-proxies to localhost:3000 (audit-2026-07-23 INF-19 — a public
+# 0.0.0.0 bind is the tighter-surface regression to avoid). The test-net VMs
+# instead run Caddy on the KVM HOST, which reaches the API over the private
+# NAT — so they override this to "0.0.0.0:3000" AND add 3000 to
+# internal_allow_ports (host source ∈ internal_cidrs).
+stellarindex_api_listen_addr: "127.0.0.1:3000"
+
 # ───── Observability ─────────────────────────────────────────────────
 node_exporter_version:   "1.8.2"
 node_exporter_port:      9100

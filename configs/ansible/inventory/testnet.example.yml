@@ -110,7 +110,12 @@ all:
     # The VM's SSH is reachable ONLY from the host bridge (the ProxyJump source).
     allowed_ssh_cidrs: ["192.168.122.0/24"]
     ssh_world_open_ack: false
-    internal_allow_ports: []
+    # The API binds 0.0.0.0:3000 (below) so the host's Caddy can reach it over
+    # the private NAT; open ONLY 3000 to internal_cidrs (Postgres/MinIO/
+    # node_exporter stay loopback-only). The VM has no public route.
+    stellarindex_api_listen_addr: "0.0.0.0:3000"
+    internal_allow_ports:
+      - { port: 3000, proto: "tcp", comment: "API — host Caddy reverse-proxies here" }
 
   children:
     archival_nodes:
