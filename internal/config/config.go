@@ -1798,22 +1798,7 @@ func Default() Config {
 			Band:      BandOracleConfig{},
 			Soroswap:  SoroswapConfig{},
 		},
-		External: ExternalConfig{
-			// All off-chain connectors disabled by default.
-			// Operator opts in per-venue once they've confirmed
-			// network egress / credentials.
-			Binance:          ExternalVenueConfig{Enabled: false},
-			Kraken:           ExternalVenueConfig{Enabled: false},
-			Bitstamp:         ExternalVenueConfig{Enabled: false},
-			Coinbase:         ExternalVenueConfig{Enabled: false},
-			ExchangeRatesApi: ExchangeRatesApiVenueConfig{Enabled: false, Base: "USD"},
-			PolygonForex:     PolygonForexVenueConfig{Enabled: false, Base: "USD"},
-			CoinGecko:        ExternalVenueConfig{Enabled: false},
-			CoinMarketCap:    CoinMarketCapVenueConfig{Enabled: false},
-			CryptoCompare:    CryptoCompareVenueConfig{Enabled: false},
-			ECB:              ExternalVenueConfig{Enabled: false},
-			Chainlink:        ChainlinkVenueConfig{Enabled: false, FeedMap: map[string]ChainlinkFeedSetting{}},
-		},
+		External: defaultExternalConfig(),
 		Aggregate: AggregateConfig{
 			VWAPWindowSeconds:            300,
 			TWAPWindowSeconds:            300,
@@ -1866,5 +1851,24 @@ func Default() Config {
 			TraceExporter: "none",
 			TraceSample:   0.1,
 		},
+	}
+}
+
+// defaultExternalConfig returns the off-chain-connector defaults. All venues
+// are disabled by default; an operator opts in per-venue once they've confirmed
+// network egress / credentials. Split out of Default() to keep it under funlen.
+func defaultExternalConfig() ExternalConfig {
+	return ExternalConfig{
+		Binance:          ExternalVenueConfig{Enabled: false},
+		Kraken:           ExternalVenueConfig{Enabled: false},
+		Bitstamp:         ExternalVenueConfig{Enabled: false},
+		Coinbase:         ExternalVenueConfig{Enabled: false},
+		ExchangeRatesApi: ExchangeRatesApiVenueConfig{Enabled: false, Base: "USD"},
+		PolygonForex:     PolygonForexVenueConfig{Enabled: false, Base: "USD"},
+		CoinGecko:        ExternalVenueConfig{Enabled: false},
+		CoinMarketCap:    CoinMarketCapVenueConfig{Enabled: false},
+		CryptoCompare:    CryptoCompareVenueConfig{Enabled: false},
+		ECB:              ExternalVenueConfig{Enabled: false},
+		Chainlink:        ChainlinkVenueConfig{Enabled: false, FeedMap: map[string]ChainlinkFeedSetting{}},
 	}
 }
