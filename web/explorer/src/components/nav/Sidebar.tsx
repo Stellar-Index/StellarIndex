@@ -197,10 +197,8 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <div className="flex h-full flex-col bg-surface-muted">
       {/* Logo — the official Stellar mark + wordmark in Inter (per
-          design-system.stellar.org typography), with the live ledger
-          number to its right: bare number, pulsing while the stream is
-          fresh, linking to the ledger. */}
-      <div className="flex h-14 shrink-0 items-center gap-2 px-4">
+          design-system.stellar.org typography). */}
+      <div className="flex h-14 shrink-0 items-center px-4">
         <Link
           href="/"
           onClick={onNavigate}
@@ -214,10 +212,16 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
             <span className="font-light">Index</span>
           </span>
         </Link>
-        <div className="ml-auto flex items-center gap-1">
-          <LiveLedgerBadge onNavigate={onNavigate} compact />
-          <NetworkSwitcher onNavigate={onNavigate} />
-        </div>
+      </div>
+
+      {/* Odometer row — the live ledger of THIS network (bare number, pulsing
+          while the stream is fresh, links to the ledger) with the network
+          switcher: the network name + live dot + a chevron listing the sibling
+          explorers. Its own row so the 8-digit odometer + network name never
+          crowd the wordmark in the w-64 rail. */}
+      <div className="flex h-7 shrink-0 items-center gap-1.5 px-4">
+        <LiveLedgerBadge onNavigate={onNavigate} compact />
+        <NetworkSwitcher onNavigate={onNavigate} />
       </div>
 
       {/* Search — directly below the logo */}
