@@ -30,6 +30,8 @@ on:
         type: choice
         options:
           - r1
+          - testnet
+          - futurenet
       version:
         description: 'Version tag to deploy (e.g. v0.2.0). Must exist as a GitHub Release.'
         required: true
@@ -44,7 +46,7 @@ on:
         # stale (or absent on a fresh host) because the timer's
         # presence on r1 came from the wave-129 ssh-side
         # operator install, not from the release/deploy flow.
-        description: 'Comma-separated binaries to deploy'
+        description: 'Comma-separated binaries to deploy. TEST NETS (testnet/futurenet) MUST override to the test-net set — stellarindex-indexer,stellarindex-api,stellarindex-ops — with NO aggregator (no USD markets off pubnet). The default below is the PUBNET set.'
         required: false
         type: string
         default: 'stellarindex-indexer,stellarindex-aggregator,stellarindex-api,stellarindex-sla-probe'
@@ -205,6 +207,10 @@ jobs:
         env:
           R1_HOST: ${{ secrets.R1_HOST }}
           R1_USER: ${{ secrets.R1_USER }}
+          TESTNET_HOST: ${{ secrets.TESTNET_HOST }}
+          TESTNET_USER: ${{ secrets.TESTNET_USER }}
+          FUTURENET_HOST: ${{ secrets.FUTURENET_HOST }}
+          FUTURENET_USER: ${{ secrets.FUTURENET_USER }}
           REGION: ${{ inputs.region }}
         run: |
           set -euo pipefail
@@ -212,6 +218,18 @@ jobs:
             r1)
               host="${R1_HOST}"
               user="${R1_USER:-root}"
+              ;;
+            testnet)
+              # Testnet VM on the shared Frankfurt box. No approval gate
+              # (low-stakes test tier); binaries = the test-net set (pass
+              # `binaries` = stellarindex-indexer,stellarindex-api,stellarindex-ops
+              # — NO aggregator).
+              host="${TESTNET_HOST}"
+              user="${TESTNET_USER:-root}"
+              ;;
+            futurenet)
+              host="${FUTURENET_HOST}"
+              user="${FUTURENET_USER:-root}"
               ;;
             *)
               echo "::error::Region '$REGION' has no inventory mapping"
