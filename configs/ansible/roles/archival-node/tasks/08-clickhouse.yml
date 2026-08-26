@@ -49,6 +49,15 @@
       </clickhouse>
   notify: Restart clickhouse-server
 
+- name: Ensure ClickHouse client config.d dir exists (for the client port drop-in)
+  # The clickhouse-client package creates /etc/clickhouse-client/ but NOT the
+  # config.d/ subdir that 15-log-discipline writes the client port drop-in into
+  # (so `clickhouse-client` defaults to the same 9300 native port). r1 had it.
+  ansible.builtin.file:
+    path: /etc/clickhouse-client/config.d
+    state: directory
+    mode: "0755"
+
 - name: Enable + start clickhouse-server
   ansible.builtin.systemd:
     name: clickhouse-server
