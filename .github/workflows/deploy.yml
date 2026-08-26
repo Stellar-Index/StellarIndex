@@ -13,6 +13,17 @@ name: deploy
 #                              quirks). Pinning known_hosts prevents
 #                              MITM during deploy.
 #
+# Test-net regions (testnet / futurenet) — the VMs are NAT-only behind the
+# shared KVM host, so they reach the VM via ProxyJump:
+#   <REGION>_HOST            — the VM's PRIVATE NAT IP (192.168.122.10/.20)
+#   <REGION>_USER            — SSH user (defaults to "root")
+#   <REGION>_SSH_JUMP        — the KVM host as user@public-ip
+#                              (e.g. root@95.217.126.13) to ProxyJump through
+#   <REGION>_SSH_KNOWN_HOSTS — base64 of ssh-keyscan for BOTH the jump host
+#                              AND the VM (the pinned file covers both hops)
+# Deploy the test-net binary set (NO aggregator):
+#   -f binaries=stellarindex-indexer,stellarindex-api,stellarindex-ops
+#
 # Triggered exclusively via workflow_dispatch. There's no auto-deploy
 # on tag push — the release workflow produces the artefacts; a human
 # decides when each region picks them up.
@@ -209,11 +220,14 @@ jobs:
           R1_USER: ${{ secrets.R1_USER }}
           TESTNET_HOST: ${{ secrets.TESTNET_HOST }}
           TESTNET_USER: ${{ secrets.TESTNET_USER }}
+          TESTNET_SSH_JUMP: ${{ secrets.TESTNET_SSH_JUMP }}
           FUTURENET_HOST: ${{ secrets.FUTURENET_HOST }}
           FUTURENET_USER: ${{ secrets.FUTURENET_USER }}
+          FUTURENET_SSH_JUMP: ${{ secrets.FUTURENET_SSH_JUMP }}
           REGION: ${{ inputs.region }}
         run: |
           set -euo pipefail
+          jump=""
           case "$REGION" in
             r1)
               host="${R1_HOST}"
@@ -223,13 +237,17 @@ jobs:
               # Testnet VM on the shared Frankfurt box. No approval gate
               # (low-stakes test tier); binaries = the test-net set (pass
               # `binaries` = stellarindex-indexer,stellarindex-api,stellarindex-ops
-              # — NO aggregator).
+              # — NO aggregator). The VM has no public IP: HOST is its private
+              # NAT address (192.168.122.10) and SSH_JUMP is the KVM host
+              # (user@public-ip) we ProxyJump through.
               host="${TESTNET_HOST}"
               user="${TESTNET_USER:-root}"
+              jump="${TESTNET_SSH_JUMP}"
               ;;
             futurenet)
               host="${FUTURENET_HOST}"
               user="${FUTURENET_USER:-root}"
+              jump="${FUTURENET_SSH_JUMP}"
               ;;
             *)
               echo "::error::Region '$REGION' has no inventory mapping"
@@ -240,9 +258,22 @@ jobs:
             echo "::error::Region $REGION host secret is unset"
             exit 1
           fi
-          echo "host=$host" >> "$GITHUB_OUTPUT"
-          echo "user=$user" >> "$GITHUB_OUTPUT"
-          echo "Target: $user@$host"
+          # The test-net VMs are NAT-only — a jump host is mandatory for them.
+          if [ "$REGION" != "r1" ] && [ -z "$jump" ]; then
+            echo "::error::${REGION^^}_SSH_JUMP is unset — the NAT-only ${REGION} VM is unreachable without a jump host (user@public-ip of the KVM host)."
+            exit 1
+          fi
+          # Validate the jump token can't inject into the ProxyCommand shell.
+          if [ -n "$jump" ] && [[ ! "$jump" =~ ^[A-Za-z0-9._@-]+$ ]]; then
+            echo "::error::SSH_JUMP '$jump' has characters outside [A-Za-z0-9._@-]"
+            exit 1
+          fi
+          {
+            echo "host=$host"
+            echo "user=$user"
+            echo "jump=$jump"
+          } >> "$GITHUB_OUTPUT"
+          echo "Target: $user@$host${jump:+ (via $jump)}"
 
       - name: Download release binaries
         # F-1298 (wave 126): inputs through `env:`.
@@ -427,10 +458,22 @@ jobs:
       - name: Set up SSH
         env:
           SSH_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
-          KNOWN_HOSTS_B64: ${{ secrets.R1_SSH_KNOWN_HOSTS }}
+          # Secret names can't be built dynamically in ${{ }}, so pass all
+          # three and select by region below. A test-net secret must pin BOTH
+          # the jump host key AND the VM key (the ProxyJump uses this one file).
+          R1_KH: ${{ secrets.R1_SSH_KNOWN_HOSTS }}
+          TESTNET_KH: ${{ secrets.TESTNET_SSH_KNOWN_HOSTS }}
+          FUTURENET_KH: ${{ secrets.FUTURENET_SSH_KNOWN_HOSTS }}
+          REGION: ${{ inputs.region }}
           HOST: ${{ steps.region.outputs.host }}
         run: |
           set -euo pipefail
+          case "$REGION" in
+            r1)        KNOWN_HOSTS_B64="${R1_KH:-}" ;;
+            testnet)   KNOWN_HOSTS_B64="${TESTNET_KH:-}" ;;
+            futurenet) KNOWN_HOSTS_B64="${FUTURENET_KH:-}" ;;
+            *) echo "::error::no known_hosts mapping for region '$REGION'"; exit 1 ;;
+          esac
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
@@ -485,16 +528,28 @@ jobs:
           ANSIBLE_FORCE_COLOR: '1'
           DEPLOY_HOST: ${{ steps.region.outputs.host }}
           DEPLOY_USER: ${{ steps.region.outputs.user }}
+          DEPLOY_JUMP: ${{ steps.region.outputs.jump }}
           VERSION: ${{ inputs.version }}
           BINARIES: ${{ inputs.binaries }}
           HEALTH_GRACE: ${{ inputs.health_grace_seconds }}
           MIGRATIONS_SKIP: ${{ inputs.migrations_skip }}
         run: |
           set -euo pipefail
+          # NAT-only test-net VMs are reached via ProxyJump through the KVM
+          # host. -o ProxyJump=<user@host> (no spaces → no shell-quoting trap
+          # that a ProxyCommand string would carry); the inner hop reuses
+          # --private-key and the pinned ~/.ssh/known_hosts, so that secret
+          # MUST contain BOTH the jump host key AND the VM host key. The jump
+          # token was allowlist-validated in the resolve step.
+          SSH_ARGS=()
+          if [ -n "${DEPLOY_JUMP:-}" ]; then
+            SSH_ARGS=(--ssh-common-args "-o ProxyJump=${DEPLOY_JUMP}")
+          fi
           ansible-playbook \
             -i "${DEPLOY_HOST}," \
             -u "${DEPLOY_USER}" \
             --private-key ~/.ssh/id_deploy \
+            "${SSH_ARGS[@]}" \
             -e "version=${VERSION}" \
             -e "binaries_csv=${BINARIES}" \
             -e "local_dist_dir=$GITHUB_WORKSPACE/dist" \
