@@ -41,6 +41,9 @@
     state: restarted
 
 - name: Restart stellarindex-aggregator
+  # No-op on test nets (run_aggregator=false) — the unit isn't installed
+  # there, so a config-change notify must not try to restart a missing unit.
+  when: run_aggregator | default(true) | bool
   ansible.builtin.systemd:
     name: stellarindex-aggregator
     state: restarted

@@ -26,10 +26,14 @@
   ansible.builtin.file:
     path: "{{ item.mountpoint }}"
     state: directory
-    owner: "{{ item.dir_owner | default('root') }}"
-    group: "{{ item.dir_group | default('root') }}"
     mode: "{{ item.dir_mode | default('0755') }}"
-  loop: "{{ zfs_datasets }}"
+  # Root-owned with the dataset's mode; the service tasks below chown their
+  # own data dirs to the service user (04-users for stellarindex/galexie/minio;
+  # the pgbackrest task for the postgres-owned backup dirs). postgres +
+  # clickhouse dirs are EXCLUDED — their package installers create and own
+  # /var/lib/postgresql and /var/lib/clickhouse; pre-creating them root-owned
+  # would break the cluster/server init.
+  loop: "{{ zfs_datasets | rejectattr('name', 'in', ['postgres', 'clickhouse']) | list }}"
   loop_control:
     label: "{{ item.mountpoint }}"
   when: zfs_data_pool_type | default('') == ''
@@ -48,6 +52,19 @@
   ansible.builtin.import_tasks: 18-pgbackrest-backup.yml
   when: run_postgres | bool
   tags: [postgres, pgbackrest, backup]
+
+# Redis + ClickHouse were hand-installed on r1 (out-of-band). Codified so a
+# fresh host gets them reproducibly. run_clickhouse defaults FALSE so r1's
+# hand-tended lake is never touched by this role (test nets set it true).
+- name: "Redis (API cache / replay guard / rate-limit)"
+  ansible.builtin.import_tasks: 08-redis.yml
+  when: run_redis | default(true) | bool
+  tags: [redis]
+
+- name: "ClickHouse (certified lake — ADR-0034)"
+  ansible.builtin.import_tasks: 08-clickhouse.yml
+  when: run_clickhouse | default(false) | bool
+  tags: [clickhouse, clickhouse-install]
 
 - name: "stellar-core"
   ansible.builtin.import_tasks: 06-stellar-core.yml

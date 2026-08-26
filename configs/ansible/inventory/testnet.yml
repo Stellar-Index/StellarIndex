@@ -34,7 +34,15 @@ all:
     zfs_data_pool_name:  ""
 
     run_postgres:        true
+    # Codified installs (r1 has these hand-installed; a fresh test net needs
+    # them from the role): ClickHouse lake + its schema, Redis (default on).
+    run_clickhouse:          true
+    clickhouse_apply_schema: true
     run_stellar_core:    false
+    # From-scratch bootstrap: the network-aware binaries are on this branch,
+    # not a GitHub release yet — so build + install them from the local
+    # checkout (the task forces GOOS=linux GOARCH=amd64) instead of a release.
+    manage_stellarindex_binaries: true
     run_galexie:         true
     # A fresh `go install` on the VM yields a different-bytes galexie than
     # r1's codified binary — skip the drift-guard asserts (they exist to catch
@@ -56,6 +64,7 @@ all:
     galexie_s3_region:   "{{ region_id }}"
 
     # DEX/oracle off; aggregator not deployed; pubnet-only observers off.
+    run_aggregator: false
     stellarindex_enabled_sources: []
     stellarindex_sdf_reserve_accounts: []
     stellarindex_reserve_balances_stroops: {}

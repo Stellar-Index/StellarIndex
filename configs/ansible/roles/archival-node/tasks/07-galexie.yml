@@ -12,6 +12,31 @@
     name: golang-go
     state: present
 
+# ── Captive-core binary for galexie ────────────────────────────────────
+# galexie embeds a CAPTIVE stellar-core (galexie.toml stellar_core_binary_path
+# = /usr/bin/stellar-core) to replay ledgers, so the binary must be present
+# EVEN WHEN run_stellar_core is false (r1/test nets don't run the core DAEMON,
+# but galexie still needs the binary). This was an out-of-band install on r1;
+# codified here so a fresh host (r2/r3/test net) gets it too. `state: present`
+# never upgrades an already-installed pin, so r1 is untouched.
+- name: Add SDF apt key (captive-core for galexie)
+  ansible.builtin.get_url:
+    url: "https://apt.stellar.org/SDF.asc"
+    dest: /etc/apt/keyrings/sdf.asc
+    mode: "0644"
+
+- name: Add SDF apt repo (captive-core for galexie)
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/sdf.asc] https://apt.stellar.org {{ ansible_facts.distribution_release }} stable"
+    state: present
+    filename: sdf
+
+- name: Install stellar-core (galexie's captive-core binary)
+  ansible.builtin.apt:
+    name: stellar-core
+    state: present
+    update_cache: true
+
 - name: Check existing galexie version
   ansible.builtin.command: /usr/local/bin/galexie version
   register: galexie_current

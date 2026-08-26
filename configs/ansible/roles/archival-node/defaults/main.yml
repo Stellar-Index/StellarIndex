@@ -59,6 +59,16 @@ run_observability:   true
 # the whole file is skipped when run_observability is false.
 run_promtail:        true
 
+# Data services hand-installed out-of-band on r1 (2026-06 lake pivot),
+# codified for fresh hosts (r2/r3/test net). run_clickhouse defaults FALSE
+# so a re-run NEVER touches r1's hand-tended lake — a fresh host sets it true
+# (together with clickhouse_apply_schema to lay down the deploy/clickhouse
+# DDL). run_redis defaults true; `state: present` never upgrades r1's redis.
+run_redis:               true
+run_clickhouse:          false
+clickhouse_apply_schema: false
+clickhouse_tcp_port:     9300   # 9000 is MinIO's
+
 # ───── ZFS ───────────────────────────────────────────────────────────
 # [Per-region:
 #   r1 = raidz2 across 4× NVMe (full local mirror, two-drive tolerance)
