@@ -185,3 +185,86 @@ func TestDecodeOperationBody_InvokeHostFunction_Args(t *testing.T) {
 		t.Errorf("args[2] = %q, want [USDC]", args[2])
 	}
 }
+
+// authNode builds a ContractFn SorobanAuthorizedInvocation with optional
+// sub-invocations — mirrors the dispatcher's auth-tree test helper.
+func authNode(seed byte, fn string, subs ...xdr.SorobanAuthorizedInvocation) xdr.SorobanAuthorizedInvocation {
+	var cid xdr.ContractId
+	for i := range cid {
+		cid[i] = seed
+	}
+	return xdr.SorobanAuthorizedInvocation{
+		Function: xdr.SorobanAuthorizedFunction{
+			Type: xdr.SorobanAuthorizedFunctionTypeSorobanAuthorizedFunctionTypeContractFn,
+			ContractFn: &xdr.InvokeContractArgs{
+				ContractAddress: xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &cid},
+				FunctionName:    xdr.ScSymbol(fn),
+			},
+		},
+		SubInvocations: subs,
+	}
+}
+
+func invokeSwapHF(t *testing.T) xdr.HostFunction {
+	t.Helper()
+	var topID xdr.ContractId
+	for i := range topID {
+		topID[i] = 0xA0
+	}
+	hf, err := xdr.NewHostFunction(
+		xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+		xdr.InvokeContractArgs{
+			ContractAddress: xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &topID},
+			FunctionName:    "swap",
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewHostFunction: %v", err)
+	}
+	return hf
+}
+
+// TestDecodeOperationBody_InvokeHostFunction_AuthTree pins the 5.1 enhancement:
+// the nested AUTHORIZATION tree (op.Auth → RootInvocation → SubInvocations) is
+// surfaced under Fields["authorizations"] so the /tx view can render the
+// contract-call structure it previously omitted.
+func TestDecodeOperationBody_InvokeHostFunction_AuthTree(t *testing.T) {
+	root := authNode(0xB0, "transfer", authNode(0xC0, "approve"))
+	b64 := mustBody(t, xdr.OperationTypeInvokeHostFunction, xdr.InvokeHostFunctionOp{
+		HostFunction: invokeSwapHF(t),
+		Auth:         []xdr.SorobanAuthorizationEntry{{RootInvocation: root}},
+	})
+
+	d, err := xdrjson.DecodeOperationBody(b64)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	tree, ok := d.Fields["authorizations"].([]xdrjson.AuthInvocation)
+	if !ok || len(tree) != 1 {
+		t.Fatalf("authorizations = %#v, want 1 root", d.Fields["authorizations"])
+	}
+	if tree[0].Kind != "invoke_contract" || tree[0].FunctionName != "transfer" {
+		t.Fatalf("root = %+v, want transfer/invoke_contract", tree[0])
+	}
+	if tree[0].ContractID == "" {
+		t.Fatalf("root ContractID should be a strkey, got empty: %+v", tree[0])
+	}
+	if len(tree[0].SubInvocations) != 1 || tree[0].SubInvocations[0].FunctionName != "approve" {
+		t.Fatalf("sub = %+v, want one approve sub-invocation", tree[0].SubInvocations)
+	}
+}
+
+// TestDecodeOperationBody_InvokeHostFunction_NoAuthNoTree guards against noise:
+// a simple invoke with no auth entries must NOT emit an authorizations field.
+func TestDecodeOperationBody_InvokeHostFunction_NoAuthNoTree(t *testing.T) {
+	b64 := mustBody(t, xdr.OperationTypeInvokeHostFunction, xdr.InvokeHostFunctionOp{
+		HostFunction: invokeSwapHF(t),
+	})
+	d, err := xdrjson.DecodeOperationBody(b64)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if v, present := d.Fields["authorizations"]; present {
+		t.Fatalf("no-auth invoke must not emit authorizations, got %#v", v)
+	}
+}
