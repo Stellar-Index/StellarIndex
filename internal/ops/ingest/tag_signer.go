@@ -24,7 +24,7 @@ import (
 // drift. Idempotent + resumable: already-tagged rows never match
 // (signer IS NULL), and progress checkpoints into ingestion_cursors as
 // (source='tag-signer', sub_source='signer') after each completed window.
-func tagSigner(args []string) error { //nolint:funlen // linear windowed pass: flags → bounds → per-window read+tag + checkpoint
+func tagSigner(args []string) error { //nolint:funlen,gocognit,gocyclo // linear windowed pass: flags → bounds → per-window read+tag + checkpoint (mirrors tagRoutedVia)
 	fs := flag.NewFlagSet("tag-signer", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	from := fs.Uint("from", 0, "First ledger (inclusive) — required (the gap start)")

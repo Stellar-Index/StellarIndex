@@ -20,7 +20,7 @@ import (
 // discovery.Run's doc comment for the calling convention shared by
 // every internal/ops/* package post-split. args[0] is the subcommand
 // verb (one of the eighteen this package owns); args[1:] are its flags.
-func Run(args []string) error {
+func Run(args []string) error { //nolint:gocyclo // flat command-dispatch switch; one arm per ops subcommand
 	switch args[0] {
 	case "backfill":
 		return backfill(args[1:])

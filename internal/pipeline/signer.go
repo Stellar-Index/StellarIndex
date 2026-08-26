@@ -58,7 +58,8 @@ type SignerRangeTagger interface {
 // stellar.transactions. Blocks until ctx cancels (run it in its own
 // goroutine); performs one final sweep on shutdown so the last partial window
 // isn't left to the next boot. interval/lookback <= 0 select the defaults.
-func RunSignerTagger(ctx context.Context, logger *slog.Logger, lake SignerLakeReader, store SignerRangeTagger, interval, lookback time.Duration) {
+func RunSignerTagger(ctx context.Context, logger *slog.Logger, lake SignerLakeReader, store SignerRangeTagger, interval, lookback time.Duration) { //nolint:gocognit // linear trailing-window sweep: range → clamp → scoped lake read → first-wins tag, each step guarded
+
 	if interval <= 0 {
 		interval = signerSweepInterval
 	}
