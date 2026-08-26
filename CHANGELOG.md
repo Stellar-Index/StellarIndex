@@ -15,6 +15,41 @@ against.
 
 ## [Unreleased]
 
+## [v0.44.6] — 2026-08-26
+
+Tested against Stellar protocol 22.
+
+### Added
+- **Soroban resource metering on `stellar.transactions`.** Nine additive
+  `DEFAULT 0` columns capture, per Soroban transaction, the DECLARED resource
+  bid (instruction count, disk-read / write bytes, read/write footprint entry
+  counts, total resource-fee bid) decoded from the tx envelope's
+  `SorobanTransactionData`, plus the ACTUAL charged fees (non-refundable,
+  refundable, rent) from the tx meta's `SorobanTransactionMetaExtV1`. Both are
+  decoded at ingest from the `LedgerCloseMeta` the indexer already holds; the
+  decoder is envelope-type-aware (unwraps a fee-bump to its inner tx — a naive
+  access nil-panics) and meta-version-aware (V3 + p27 V4). No
+  actual-instructions value is stored — pubnet ledger meta carries none (it
+  lives only in diagnostic-event core_metrics the lake does not store).
+  Populated go-forward; the sparse Soroban-only columns compress to
+  near-nothing. Requires the additive `transactions_soroban_metering.sql`
+  migration applied BEFORE the indexer binary (else the tx INSERT halts
+  ingest). Follow-up exposes the columns on `GET /v1/tx`.
+
+### Fixed
+- **`stellarindex_aggregator_outlier_storm` alert** rescoped from a
+  self-poisoning relative-spike comparator (`>5×` a `[1h] offset 1h` baseline —
+  a sustained storm's own drops entered that baseline window and flipped the
+  ratio false at ~72m, so the alert could never fire on the very storm it
+  exists to catch, and it ticketed on every benign single-pair robust-VWAP
+  trimming burst) to an absolute per-pair sustained gate
+  (`sum by (pair) rate[10m] > 10` for 2h). Silent on transient dispersion,
+  fires on a persistent dispersion / broken-connector storm.
+- **Explorer static export** now rides out a transient 502/503/504 from the
+  API (typically the API mid-deploy) with the same patient, Retry-After-aware,
+  bounded wait `buildFetch` already used for 429, instead of failing the whole
+  `next build` on one asset's momentary unavailability.
+
 ## [v0.44.5] — 2026-08-26
 
 Tested against Stellar protocol 22.
