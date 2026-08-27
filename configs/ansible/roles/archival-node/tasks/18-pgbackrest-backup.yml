@@ -31,6 +31,11 @@
       pgbackrest_offsite_ack: true to explicitly accept the gap (see
       docs/operations/off-site-backup-plan.md).
     quiet: true
+  # Only meaningful where pgBackRest backups actually run. A host with
+  # pgbackrest_backup_enabled=false takes no backups at all, so demanding
+  # it justify the offsite GAP in its backups is incoherent — and it would
+  # hard-fail the play for every such host.
+  when: pgbackrest_backup_enabled | default(true)
 
 - name: Install pgBackRest backup wrapper
   ansible.builtin.template:
@@ -333,3 +338,46 @@
     state: started
     daemon_reload: true
   when: pgbackrest_backup_enabled | default(true)
+
+# ── Converge a host that had backups enabled before ──────────────────
+# Ansible does not remove what it merely stops templating. A host whose
+# inventory flips pgbackrest_backup_enabled to false — or one provisioned
+# before it was set, which is how both test nets ended up here — keeps the
+# timer enabled and keeps firing it nightly. pgBackRest itself is not
+# installed by this role at all (there is no apt task for it anywhere), so
+# on such a host every firing exits 127 and leaves a failed unit:
+#
+#   pgbackrest-backup.service: Main process exited, code=exited, status=127
+#
+# Worse than the noise: a backup timer that exists but cannot run reads as
+# "backups are configured" to anyone glancing at the unit list. Remove it
+# so the absence of backups is honest and visible.
+- name: Remove the pgBackRest backup + restore-drill timers where backups are disabled
+  when: not (pgbackrest_backup_enabled | default(true))
+  block:
+    - name: Stop + disable pgBackRest backup and restore-drill timers
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - pgbackrest-backup.timer
+        - pgbackrest-backup.service
+        - restore-drill.timer
+      failed_when: false
+
+    - name: Remove pgBackRest backup unit files + wrapper
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/pgbackrest-backup.timer
+        - /etc/systemd/system/pgbackrest-backup.service
+        - /usr/local/bin/pgbackrest-backup.sh
+      notify: Reload systemd
+
+    - name: Clear the failed state left by earlier pgBackRest backup runs
+      ansible.builtin.command:
+        cmd: systemctl reset-failed pgbackrest-backup.service
+      changed_when: false
+      failed_when: false

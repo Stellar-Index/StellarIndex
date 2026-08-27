@@ -489,6 +489,66 @@ stellar_archivist_version: ""
 stellar_soroban_genesis_ledger: "{{ 50457424 if stellar_network == 'pubnet' else 1 }}"
 stellar_movements_floor_ledger: "{{ 58762517 if stellar_network == 'pubnet' else 1 }}"
 
+# verify-archive Tier B (checkpoint anchor, ADR-0017) compares each
+# 64-ledger checkpoint's header hash against a LOCAL rs-stellar-archivist
+# mirror — VERIFY_ARCHIVE_ROOT, /srv/history-archive. That mirror is only
+# ever populated for PUBNET. On a test net the path holds a partial PUBNET
+# stub (the same one [HISTORY.localmirror] is gated away from in
+# stellar-core.cfg.j2 because it corrupts test-net catchup), so Tier B
+# anchors TESTNET ledgers against PUBNET header hashes and fails at the
+# first checkpoint, every run, forever:
+#
+#   checkpoint anchor mismatch at ledger 63:
+#     our LCM hash        = a4f3016f…   (testnet, correct)
+#     archive-signed hash = c03f11ed…   (pubnet stub)
+#
+# A real integrity check pointed at ANOTHER NETWORK's data is worse than no
+# check: it manufactures a permanent red that trains the operator to ignore
+# the one failure mode Tier A (chain-link) is blind to. So Tier B is
+# omitted where its anchor cannot be network-correct. Tier A still runs on
+# every network — it verifies chain linkage from our own archive and needs
+# no external mirror (verified on testnet: "chain-link integrity OK ✓").
+#
+# To enable Tier B on a test net, first build a network-correct mirror with
+# stellar-archivist from stellar_history_archive_url_set, then set this true
+# in that inventory.
+verify_archive_tier_b_enabled: "{{ (stellar_network | default('pubnet')) == 'pubnet' }}"
+
+# archive-completeness verify. Its report has exactly ONE section —
+# `cross_anchor` — measured against VERIFY/ARCHIVE root /srv/history-archive,
+# the same pubnet-only local mirror Tier B anchors on. There is no
+# test-net-meaningful part of this check.
+#
+# Left ungated it did real harm on the test nets, not just noise. The
+# tool's `-network` flag (which the unit template never passed, so it took
+# its "pubnet" DEFAULT) enables a cross-anchor FILL phase that fetches
+# missing checkpoints FROM PUBNET ARCHIVES. On testnet it measured the
+# pubnet stub against testnet's ledger range [2, 4354688], declared 2,506
+# checkpoints "missing", and set about downloading pubnet checkpoints to
+# fill them — which is also why the unit blew its 30-minute
+# TimeoutStartUSec every night. audit-2026-08-26 already identified this
+# fill as pubnet-only and added the refusal; nothing was passing the flag
+# that triggers it.
+#
+# The template now passes `-network` explicitly (defence in depth — the
+# fill refuses even if the unit is enabled by hand), and the unit is
+# omitted where its anchor is not network-correct.
+archive_completeness_enabled: "{{ (stellar_network | default('pubnet')) == 'pubnet' }}"
+
+# pgBackRest scheduled backups. pgBackRest itself is NOT installed by this
+# role (there is no apt task for it anywhere) — it is provisioned
+# out-of-band on the pubnet hosts. So on a test net, "enabled" installed a
+# nightly timer whose binary is absent: exit 127 and a failed unit every
+# night since provisioning, AND a unit list that reads as though backups
+# exist. The test nets are rebuilt from
+# docs/operations/testnet-futurenet-reset-runbook.md, not restored.
+#
+# Derived from the network rather than left to each inventory so a FRESH
+# test net is correct before anyone writes an inventory line — the
+# inventories set it explicitly too, as documentation of intent. An unset
+# network defaults to pubnet, so r1/r2/r3 keep backups on.
+pgbackrest_backup_enabled: "{{ (stellar_network | default('pubnet')) == 'pubnet' }}"
+
 catchup_mode:            "CATCHUP_RECENT"       # RECENT | COMPLETE
 is_validator:            false
 node_is_validator:       "{{ is_validator }}"
