@@ -160,6 +160,7 @@ type Server struct {
 	divergence          DivergenceLooker
 	freeze              FrozenLooker
 	substance           PriceSubstanceGate
+	transitive          TransitivePricer
 	scam                PriceScamGate
 	supply              SupplyLooker
 	tokenSupply         TokenSupplyReader
@@ -692,6 +693,13 @@ type Options struct {
 	// it. Production wiring is timescale.Store directly (implements
 	// ListAssetsExt). Nil makes the affected /v1/assets fields 503.
 	AssetsReader AssetsReader
+
+	// TransitivePricer, when non-nil, supplies a one-hop USD price for
+	// assets the catalogue's two hard-coded shapes (direct_usd,
+	// asset_vs_xlm) cannot reach — notably Soroban-native contract
+	// assets, which cannot appear in `classic_assets` at all. Nil leaves
+	// pricing exactly as it is. Production wiring is timescale.Store.
+	TransitivePricer TransitivePricer
 
 	// Issuers, when non-nil, backs GET /v1/issuers/{g_strkey}.
 	// Production wiring is timescale.Store directly. Nil makes
@@ -1242,6 +1250,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		divergence:             opts.Divergence,
 		freeze:                 opts.Freeze,
 		substance:              opts.Substance,
+		transitive:             opts.TransitivePricer,
 		scam:                   opts.Scam,
 		supply:                 opts.Supply,
 		tokenSupply:            opts.TokenSupply,
