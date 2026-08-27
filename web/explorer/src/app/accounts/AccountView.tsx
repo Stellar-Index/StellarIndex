@@ -17,6 +17,7 @@ import { AccountTradesPanel } from './AccountTrades';
 import { AccountsAnalytics } from './AccountsAnalytics';
 import { useIssuers } from '@/api/hooks';
 import { apiGet, asExample } from '@/api/client';
+import { CURRENT_NETWORK } from '@/lib/networks';
 import {
   type Envelope,
   type AccountTransactionsResp,
@@ -232,13 +233,22 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
   );
 }
 
-// ── Accounts directory (ranked by USD wealth) ───────────────────────────
-// Mirrors api/v1.AccountsListView (GET /v1/accounts). Lists accounts ranked
-// by the total USD value of their holdings — native XLM plus every trustline
-// asset we hold a verified price for, summed over the current-state projection.
+// ── Accounts directory (ranked by wealth) ───────────────────────────────
+// Mirrors api/v1.AccountsListView (GET /v1/accounts). Ranks accounts by the
+// total USD value of their holdings on the priced networks; on the lean nets
+// (no aggregator, so no USD prices) the API ranks by native XLM balance and
+// sets ranked_by="native_xlm" — we read that to label the numbers correctly.
 interface AccountsListResp {
   priced_assets: number;
-  accounts: { account_id: string; usd_value: string; locked?: boolean }[];
+  ranked_by?: 'usd' | 'native_xlm';
+  accounts: {
+    account_id: string;
+    // `value` is the ranked wealth in the ranked_by unit (USD or XLM). On older
+    // servers only usd_value is present; fall back to it.
+    value?: string;
+    usd_value?: string;
+    locked?: boolean;
+  }[];
 }
 
 const DIRECTORY_SIZE = 100;
@@ -246,6 +256,10 @@ const DIRECTORY_SIZE = 100;
 const usdFmt = new Intl.NumberFormat('en-US', {
   style: 'currency',
   currency: 'USD',
+  maximumFractionDigits: 0,
+});
+
+const xlmFmt = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 0,
 });
 
@@ -262,20 +276,41 @@ function AccountsDirectory() {
     staleTime: 60_000,
   });
 
+  // Basis comes from the response (ranked_by); before it loads, fall back to
+  // the network's pricing flag so the static copy is right on the lean nets.
+  const isNative = q.data
+    ? q.data.ranked_by === 'native_xlm'
+    : !CURRENT_NETWORK.pricing;
+  const fmtWealth = (row: { value?: string; usd_value?: string }) => {
+    const n = Number(row.value ?? row.usd_value ?? '0');
+    if (!Number.isFinite(n)) return '—';
+    return isNative ? `${xlmFmt.format(n)} XLM` : usdFmt.format(n);
+  };
+
   return (
     <div className="space-y-6">
       <header className="space-y-2">
         <h1 className="text-2xl font-semibold tracking-tight">Accounts</h1>
         <p className="max-w-3xl text-sm text-ink-body">
-          The richest accounts on Stellar, ranked by the total USD value of
-          their holdings — native XLM plus every trustline asset we hold a
-          verified price for, summed straight from the certified lake&apos;s
-          current-state projection.
+          {isNative ? (
+            <>
+              The largest accounts on Stellar {CURRENT_NETWORK.label}, ranked by
+              native XLM balance, read straight from the certified lake&apos;s
+              current-state projection.
+            </>
+          ) : (
+            <>
+              The richest accounts on Stellar, ranked by the total USD value of
+              their holdings — native XLM plus every trustline asset we hold a
+              verified price for, summed straight from the certified lake&apos;s
+              current-state projection.
+            </>
+          )}
         </p>
       </header>
 
       <Panel
-        title="Ranked by USD wealth"
+        title={isNative ? 'Ranked by XLM balance' : 'Ranked by USD wealth'}
         source={asExample('/v1/accounts', { limit: DIRECTORY_SIZE })}
         bodyClassName="space-y-3"
       >
@@ -283,11 +318,13 @@ function AccountsDirectory() {
         {q.isError && (
           <p className="text-sm text-ink-muted">
             The accounts directory is unavailable right now (the current-state
-            projection is still backfilling, or pricing is offline).
+            projection is still backfilling).
           </p>
         )}
         {q.data && q.data.accounts.length === 0 && (
-          <p className="text-sm text-ink-muted">No priced accounts yet.</p>
+          <p className="text-sm text-ink-muted">
+            {isNative ? 'No accounts captured yet.' : 'No priced accounts yet.'}
+          </p>
         )}
         {q.data && q.data.accounts.length > 0 && (
           <>
@@ -296,7 +333,9 @@ function AccountsDirectory() {
                 <tr className="border-b border-line text-left text-[11px] uppercase tracking-wider text-ink-muted">
                   <th className="w-12 py-1.5 pr-4 text-right font-normal">#</th>
                   <th className="py-1.5 pr-4 font-normal">Account</th>
-                  <th className="py-1.5 text-right font-normal">USD value</th>
+                  <th className="py-1.5 text-right font-normal">
+                    {isNative ? 'XLM balance' : 'USD value'}
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -325,17 +364,27 @@ function AccountsDirectory() {
                       )}
                     </td>
                     <td className="py-1.5 text-right font-mono tabular-nums">
-                      {usdFmt.format(Number(a.usd_value))}
+                      {fmtWealth(a)}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
             <p className="text-xs text-ink-muted">
-              Summed across {q.data.priced_assets} priced asset
-              {q.data.priced_assets === 1 ? '' : 's'}. Wealth not yet captured
-              in the lake&apos;s ledger-entry window (Phase-C backfill in
-              progress) is excluded.
+              {isNative ? (
+                <>
+                  Ranked by native XLM balance over the lake&apos;s current-state
+                  projection. Accounts not yet captured in the ledger-entry
+                  window are excluded.
+                </>
+              ) : (
+                <>
+                  Summed across {q.data.priced_assets} priced asset
+                  {q.data.priced_assets === 1 ? '' : 's'}. Wealth not yet
+                  captured in the lake&apos;s ledger-entry window (Phase-C
+                  backfill in progress) is excluded.
+                </>
+              )}
             </p>
           </>
         )}

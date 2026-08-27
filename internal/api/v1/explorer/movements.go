@@ -304,7 +304,7 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 	// unknown/absent the ceiling is the static P23 boundary
 	// (SEP41MovementsFloorLedger-1): a no-op for a genuinely-absent archive
 	// (no post-P23 rows exist) and a real trim for a populated one.
-	chCeiling := timescale.SEP41MovementsFloorLedger - 1
+	chCeiling := timescale.MovementsFloor() - 1
 	if wm > 0 {
 		chCeiling = wm
 	}
@@ -316,7 +316,7 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 	}
 	chRows = trimmed
 
-	pgFloor := timescale.SEP41MovementsFloorLedger
+	pgFloor := timescale.MovementsFloor()
 	if wm+1 > pgFloor {
 		pgFloor = wm + 1
 	}

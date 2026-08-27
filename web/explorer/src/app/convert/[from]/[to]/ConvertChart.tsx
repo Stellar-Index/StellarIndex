@@ -7,6 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { Segmented } from '@/components/ui';
 import { API_BASE_URL, asExample } from '@/api/client';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 const LineChart = dynamic(
   () => import('@/components/charts/LineChart').then((m) => m.LineChart),
@@ -39,6 +40,8 @@ export function ConvertChart({ from, to }: { from: string; to: string }) {
 
   const query = useQuery<{ time: number; value: number }[], Error>({
     queryKey: ['/v1/chart', from, to, tf, spec.granularity],
+    // fiat:{from}→fiat:{to} OHLC is empty on the lean test nets (no FX) — gate.
+    enabled: CURRENT_NETWORK.pricing,
     queryFn: async ({ signal }) => {
       const url = `${API_BASE_URL}/v1/chart?asset=fiat:${encodeURIComponent(from)}&quote=fiat:${encodeURIComponent(to)}&timeframe=${tf}&granularity=${spec.granularity}`;
       const r = await fetch(url, { signal });

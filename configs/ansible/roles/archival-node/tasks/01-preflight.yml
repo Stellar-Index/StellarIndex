@@ -2,14 +2,16 @@
 # Preflight checks — fail fast if the host doesn't match expectations.
 # Every other task assumes the checks below passed.
 
-- name: Verify RAM sufficient (≥ 32 GB per archival-node-spec "minimum" tier)
+- name: Verify RAM sufficient (≥ archival_node_min_ram_mb)
   ansible.builtin.assert:
     that:
-      - ansible_facts.memtotal_mb >= 30000   # 32 GB DIMMs report ~31.3 GB usable
+      - ansible_facts.memtotal_mb >= (archival_node_min_ram_mb | int)
     fail_msg: >-
       This host has {{ (ansible_facts.memtotal_mb / 1024) | round(1) }} GB RAM;
-      the archival-node spec requires 32 GB minimum.
-      See docs/architecture/infrastructure/archival-node-spec.md §3.2.
+      this deployment requires {{ ((archival_node_min_ram_mb | int) / 1024) | round(1) }} GB
+      minimum (archival_node_min_ram_mb). The pubnet archival-node spec is 32 GB
+      (docs/architecture/infrastructure/archival-node-spec.md §3.2); a low-traffic
+      test net overrides it lower in inventory.
 
 - name: Verify x86_64 architecture (stellar-core binaries target x86_64)
   ansible.builtin.assert:
@@ -24,12 +26,12 @@
   ansible.builtin.assert:
     that:
       - region_id | default('') != ''
-      - region_id in ['r1', 'r2', 'r3']
+      - region_id in ['r1', 'r2', 'r3', 'testnet', 'futurenet']
     fail_msg: >-
-      region_id must be set in inventory to one of r1/r2/r3 (see
-      inventory/r1.example.yml) — got {{ region_id | default('(unset)') }}.
-      A new region beyond r1-r3 should extend this list deliberately,
-      not fall through to a default.
+      region_id must be set in inventory to one of r1/r2/r3 (Mainnet regions)
+      or testnet/futurenet (see the inventory examples) — got
+      {{ region_id | default('(unset)') }}. A new value should extend this
+      list deliberately, not fall through to a default.
 
 # audit-2026-07-23 SEC-network / INF-20: allowed_ssh_cidrs has no role
 # default either (see defaults/main.yml). SSH is the port that grants
@@ -64,11 +66,16 @@
       Key-only auth plus the 30/min nftables rate limit is the only
       thing in front of a root shell otherwise.
 
+# Only when ZFS is actually used (zfs_data_pool_type set). Hosts that use
+# the disk directly — r2/r3 on EBS/Object-Storage, or a libvirt VM whose
+# host owns the ZFS/RAID — set zfs_data_pool_type="" + zfs_data_devices=[]
+# and skip the ZFS layer entirely (03-zfs.yml is likewise gated).
 - name: Check that ZFS data devices are declared
   ansible.builtin.assert:
     that:
       - zfs_data_devices | length >= 2
     fail_msg: "zfs_data_devices must be set in inventory (see inventory/r1.example.yml)."
+  when: zfs_data_pool_type | default('') != ''
 
 # Two categories of ZFS devices to validate up-front:
 #   * Whole drives referenced in zfs_data_devices — must exist now.

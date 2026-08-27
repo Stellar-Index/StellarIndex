@@ -40,10 +40,29 @@ const AccountsWealthRefreshTimeout = 3 * time.Minute
 // single warm entry covers every request size.
 const accountsWealthMaxLimit = 500
 
+// Wealth-ranking bases. The ranking is by total USD value where the caller
+// supplies a USD price map; where it can't (no aggregator / empty catalogue —
+// the lean test nets), the caller ranks by native XLM balance instead, and the
+// cached entry records which so the API can label the served numbers correctly.
+const (
+	WealthBasisUSD    = "usd"
+	WealthBasisNative = "native_xlm"
+)
+
+// wealthBasis infers the ranking basis from the (asset, price) inputs: the
+// native-XLM fallback is exactly the single key "native" priced at 1.0.
+func wealthBasis(assets []string) string {
+	if len(assets) == 1 && assets[0] == "native" {
+		return WealthBasisNative
+	}
+	return WealthBasisUSD
+}
+
 // accountsWealthEntry is the single cached ranking (top
 // [accountsWealthMaxLimit]); callers slice it to their requested limit.
 type accountsWealthEntry struct {
 	rows     []AccountWealth
+	basis    string
 	cachedAt time.Time
 }
 
@@ -81,25 +100,25 @@ func newAccountsWealthCache() *accountsWealthCache {
 // when nothing was ever stored. A nil cache (a zero-value ExplorerReader,
 // as built in some tests) behaves as a permanent miss rather than
 // panicking.
-func (c *accountsWealthCache) get() ([]AccountWealth, time.Time, bool) {
+func (c *accountsWealthCache) get() ([]AccountWealth, string, time.Time, bool) {
 	if c == nil {
-		return nil, time.Time{}, false
+		return nil, "", time.Time{}, false
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.filled {
-		return nil, time.Time{}, false
+		return nil, "", time.Time{}, false
 	}
-	return c.entry.rows, c.entry.cachedAt, true
+	return c.entry.rows, c.entry.basis, c.entry.cachedAt, true
 }
 
-func (c *accountsWealthCache) put(rows []AccountWealth, now time.Time) {
+func (c *accountsWealthCache) put(rows []AccountWealth, basis string, now time.Time) {
 	if c == nil {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.entry = accountsWealthEntry{rows: rows, cachedAt: now}
+	c.entry = accountsWealthEntry{rows: rows, basis: basis, cachedAt: now}
 	c.filled = true
 }
 
@@ -153,13 +172,13 @@ func (c *accountsWealthCache) endFlight(ch chan struct{}) {
 // cold state at all.
 func (r *ExplorerReader) AccountsByWealthCached(
 	ctx context.Context, assets []string, prices []float64, limit int,
-) ([]AccountWealth, time.Time, bool) {
+) ([]AccountWealth, string, time.Time, bool) {
 	if limit <= 0 || limit > accountsWealthMaxLimit {
 		limit = 100
 	}
-	rows, asOf, ok := r.wealthCache.get()
+	rows, basis, asOf, ok := r.wealthCache.get()
 	if ok && time.Since(asOf) <= AccountsWealthCacheTTL {
-		return clampWealth(rows, limit), asOf, true
+		return clampWealth(rows, limit), basis, asOf, true
 	}
 	// Stale or cold: start a background refresh either way.
 	//
@@ -171,9 +190,9 @@ func (r *ExplorerReader) AccountsByWealthCached(
 	r.refreshAccountsWealth(assets, prices) //nolint:contextcheck // intentional detach; see above
 	if ok {
 		// Stale-but-real: serve it with its honest timestamp.
-		return clampWealth(rows, limit), asOf, true
+		return clampWealth(rows, limit), basis, asOf, true
 	}
-	return nil, time.Time{}, false
+	return nil, "", time.Time{}, false
 }
 
 // clampWealth returns the first `limit` rows of a cached ranking.
@@ -195,7 +214,7 @@ func (r *ExplorerReader) PrewarmAccountsByWealth(
 	if err != nil {
 		return err
 	}
-	r.wealthCache.put(r.withLocked(ctx, rows), time.Now())
+	r.wealthCache.put(r.withLocked(ctx, rows), wealthBasis(assets), time.Now())
 	return nil
 }
 
@@ -251,6 +270,6 @@ func (r *ExplorerReader) refreshAccountsWealth(assets []string, prices []float64
 			}
 			return // next caller retries; nothing cached, nothing corrupted
 		}
-		r.wealthCache.put(rows, time.Now())
+		r.wealthCache.put(rows, wealthBasis(assets), time.Now())
 	}()
 }

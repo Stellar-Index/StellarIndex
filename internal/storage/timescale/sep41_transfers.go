@@ -461,8 +461,8 @@ func (s *Store) ListSEP41TransfersByAddress(ctx context.Context, address string,
 	// everything at/below the watermark for ALL assets, so this tail
 	// only needs (watermark, tip]. Never below the P23 boundary: the
 	// classic_derived archive owns everything before it.
-	if floorLedger < SEP41MovementsFloorLedger {
-		floorLedger = SEP41MovementsFloorLedger
+	if fl := MovementsFloor(); floorLedger < fl {
+		floorLedger = fl
 	}
 	cursorClause := ""
 	args := []any{int64(floorLedger), address}

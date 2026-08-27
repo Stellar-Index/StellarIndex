@@ -88,3 +88,27 @@
     owner: stellar
     group: stellar
     mode: "0755"
+
+# The de-privileged Tier B checkpoint-anchor job (verify-archive-tier-b,
+# User=stellarindex per CS-118) reads the canonical header-hashes from this
+# LOCAL mirror. The `file:` task above only sets the TOP dir 0755; the subtree
+# is created by stellar-archivist / manual gap-fills, and a fill run under
+# umask 027 leaves nested dirs at 0750 root:root — world-traverse cleared —
+# which fails the anchor run with "permission denied" on a nested LCM file.
+# That is exactly the 2026-08-27 incident: the failing run was worked around
+# by flipping Tier B to User=root, which then wrote the SHARED verify-archive
+# state file root-owned and broke Tier A (which reads it as `stellarindex`),
+# so BOTH tiers alerted. Files under the mirror are already 0644 (public
+# ledger data, no secrets); only the dirs need world-traverse. This idempotent
+# sweep restores o+rx on any dir missing it — a no-op once the tree is clean.
+- name: History-archive mirror stays world-traversable (de-privileged Tier B reads it)
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      if [ -d /srv/history-archive ] \
+         && find /srv/history-archive -type d ! -perm -o+rx -print -quit | grep -q .; then
+        find /srv/history-archive -type d ! -perm -o+rx -exec chmod o+rx {} +
+        echo CHANGED
+      fi
+  register: harch_world_traverse
+  changed_when: "'CHANGED' in harch_world_traverse.stdout"

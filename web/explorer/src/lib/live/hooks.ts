@@ -9,6 +9,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 
 import { API_BASE_URL } from '@/api/client';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 import { subscribeStream } from './streams';
 
@@ -129,9 +130,13 @@ export function useTipStream(
   asset: string | null,
   quote = 'fiat:USD',
 ): StreamFrame<LiveTip> | null {
-  const url = asset
-    ? `${API_BASE_URL}/v1/price/tip/stream?asset=${encodeURIComponent(asset)}&quote=${encodeURIComponent(quote)}`
-    : null;
+  // Test nets have no aggregator/pricing — /v1/price/tip/stream always 404s
+  // there, so don't open it at all (an always-failing EventSource would just
+  // retry forever). The pricing widgets render their empty state instead.
+  const url =
+    asset && CURRENT_NETWORK.pricing
+      ? `${API_BASE_URL}/v1/price/tip/stream?asset=${encodeURIComponent(asset)}&quote=${encodeURIComponent(quote)}`
+      : null;
   return useStreamJSON<LiveTip>(url, 'tip_update');
 }
 
@@ -285,6 +290,11 @@ export function usePricePoll({
   });
 
   useEffect(() => {
+    // Test nets run no aggregator, so /v1/price always 404s (any quote) — the
+    // poll would retry-storm and each failure logs a browser console error.
+    // Skip it there; the hook keeps its initial/baked state (a native pair's
+    // last price comes from /v1/pools, not this aggregator VWAP path).
+    if (!CURRENT_NETWORK.pricing) return;
     let cancelled = false;
     const tick = async () => {
       try {

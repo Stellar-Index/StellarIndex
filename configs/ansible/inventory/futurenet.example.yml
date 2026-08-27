@@ -1,0 +1,109 @@
+---
+# ── FUTURENET inventory (EXAMPLE) ─────────────────────────────────────────
+# A lean, cut-down explorer for the Stellar FUTURE network (protocol
+# early-warning net): SDEX-only, no bespoke Soroban DEX/AMM, no oracles, no
+# external markets, no aggregator/pricing (every asset is $0). Runs as the 2nd
+# libvirt VM on a shared host; ansible reaches it via ProxyJump through the
+# host. Futurenet RESETS on protocol bumps — see the reset runbook
+# (upgrade-reset: bump core/galexie/SDK first).
+#
+# Copy to futurenet.yml, drop real secrets in futurenet.secrets.yml
+# (gitignored), and replace every value marked  # REPLACE.
+all:
+  vars:
+    ssh_permit_root_login: "prohibit-password"
+    # Supply-chain checksums (same pinned versions as r1 + node_exporter 1.8.2).
+    minio_release_sha256:               "c27873d791b56d33518de11f12c5bfae4be88ebac00e12c6dd0027b08123fd80"
+    mc_release_sha256:                  "01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891"
+    pgbackrest_exporter_release_sha256: "e73a862a900ef08d697a64b6644abb078453370e8e02db75a24d8b496ea33e6d"
+    node_exporter_release_sha256:       "6809dd0b3ec45fd6e992c19071d6b5253aed3ead7bf0686885a51d85c6643c66"
+
+    region_id:           "futurenet"
+    region_name:         "FSN-futurenet"
+    home_domain:         "stellarindex.io"
+    archival_node_min_ram_mb: 18000
+
+    # ── THE network switch ──
+    stellar_network:     "futurenet"
+    catchup_mode:        "CATCHUP_RECENT"
+    is_validator:        false
+    node_is_validator:   "{{ is_validator }}"
+
+    # Coherent RECENT start: galexie catches up to this ledger via the futurenet
+    # dev archive; the indexer's backfill floor matches → no gap. MUST stay
+    # equal. Futurenet is SMALL (resets on protocol bumps) — pick ~10k below the
+    # current archive tip. UPDATE BOTH after a reset (ledgers restart at 1).
+    galexie_start_ledger:              220000   # REPLACE with a recent tip-minus-margin
+    stellarindex_backfill_from_ledger: 220000   # REPLACE — keep == galexie_start_ledger
+    stellarindex_live_seam_ledger:     0
+
+    # Plain virtual disk — the host owns storage; no in-VM ZFS.
+    zfs_data_devices:    []
+    zfs_data_pool_type:  ""
+    zfs_data_pool_name:  ""
+
+    run_postgres:        true
+    run_clickhouse:          true
+    clickhouse_apply_schema: true
+    # Small shared VM: r1's strict overcommit + 72 GB CH cap starve a 20 GB VM
+    # (malloc/fork fail despite free RAM → API OOM-loops). Heuristic overcommit
+    # + a 4 GB ClickHouse cap.
+    vm_overcommit_memory: 0
+    clickhouse_max_server_memory_usage_bytes: 4294967296   # 4 GiB
+    run_stellar_core:    false       # galexie captive-core only
+    manage_stellarindex_binaries: true
+    stellarindex_apply_migrations: true
+    run_galexie:         true
+    # galexie has NO built-in futurenet preset — its captive core relies on the
+    # codified stellar_passphrases[futurenet] + stellar_history_archive_urls
+    # [futurenet] in the role defaults. Skip the drift-guard asserts.
+    galexie_expected_binary_sha256: ""
+    galexie_expected_version_string: ""
+    run_minio:           true
+    run_observability:   true
+    run_caddy:           false       # host runs the public reverse proxy
+
+    minio_buckets:
+      - "galexie-live"
+      - "galexie-archive"
+      - "backups"
+    galexie_s3_endpoint: "http://127.0.0.1:9000"
+    galexie_s3_bucket:   "galexie-live"
+    galexie_s3_region:   "{{ region_id }}"
+
+    # "Mostly an explorer": SDEX only; everything bespoke/pricing is cut.
+    run_aggregator: false
+    stellarindex_enabled_sources:
+      - sdex
+    stellarindex_sdf_reserve_accounts: []
+    stellarindex_reserve_balances_stroops: {}
+    stellarindex_watched_sep41_contracts: []
+    stellarindex_watched_classic_assets: []
+
+    pgbackrest_offsite_ack: true
+    ch_schema_snapshot_offsite_ack: true
+    stellarindex_clickhouse_serving_enabled: true
+
+    prometheus_scrape_allow_cidrs: ["127.0.0.1/32"]
+    loki_push_url: "http://localhost:3100/loki/api/v1/push"
+
+    admin_ssh_keys:
+      - "ssh-ed25519 AAAA... your-operator-key"          # REPLACE
+      - "ssh-ed25519 AAAA... gh-actions-deploy@yourorg"   # REPLACE (CI deploy key)
+    allowed_ssh_cidrs: ["192.168.122.0/24"]
+    ssh_world_open_ack: false
+    # API binds 0.0.0.0:3000 so the host's Caddy can reach it over the NAT;
+    # open ONLY 3000 to internal_cidrs. The VM has no public route.
+    stellarindex_api_listen_addr: "0.0.0.0:3000"
+    internal_allow_ports:
+      - { port: 3000, proto: "tcp", comment: "API — host Caddy reverse-proxies here" }
+
+  children:
+    archival_nodes:
+      hosts:
+        si-futurenet:
+          ansible_host: "192.168.122.20"          # libvirt NAT addr of the 2nd VM
+          ansible_user: "root"
+          ansible_port: 22
+          ansible_ssh_private_key_file: "~/.ssh/si_deploy"
+          ansible_ssh_common_args: '-o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o ProxyCommand="ssh -i ~/.ssh/si_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -W %h:%p root@HOST_PUBLIC_IP"'  # REPLACE HOST_PUBLIC_IP

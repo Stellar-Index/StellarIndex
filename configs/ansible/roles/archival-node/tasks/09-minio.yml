@@ -126,6 +126,16 @@
 # its own user with a bucket-restricted policy — can write to
 # galexie-live only, not backups or galexie-archive.
 
+# The policy JSONs below are copied into this dir; `copy` doesn't create
+# parents, so a fresh build (dir absent) failed here. r1 already had it.
+- name: Ensure MinIO policies directory exists
+  ansible.builtin.file:
+    path: /etc/minio/policies
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Render galexie-writer MinIO policy
   ansible.builtin.copy:
     dest: /etc/minio/policies/galexie-writer.json

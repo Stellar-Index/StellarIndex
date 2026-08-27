@@ -35,7 +35,8 @@ import { API_BASE_URL } from '@/api/client';
 import { cn } from '@/lib/cn';
 import { useDialog } from '@/lib/useDialog';
 import { StellarMark } from '@/components/StellarMark';
-import { LiveLedgerBadge } from './LiveLedgerBadge';
+import { NetworkSwitcher } from './NetworkSwitcher';
+import { CURRENT_NETWORK, CURRENT_NETWORK_ID } from '@/lib/networks';
 import { SearchModal } from './SearchModal';
 
 type NavItem = {
@@ -89,6 +90,32 @@ const NAV: NavGroup[] = [
     ],
   },
 ];
+
+// The lean test-net explorers (SDEX-only, no aggregator/pricing) carry no
+// oracles, aggregator-derived insights, or external CEX/FX markets/assets —
+// hide those rail surfaces so the nav reflects what the network actually has.
+// The whole External group drops once it is empty.
+//
+// /protocols is deliberately NOT hidden. Measured 2026-08-27 on both test nets:
+// blend has 3 contracts and 2 factories there, while soroswap / aquarius /
+// phoenix / comet / defindex / sorocredit are all 0. Those zeros come from
+// on-chain contract DISCOVERY (independent of stellarindex_enabled_sources), so
+// they are a genuine absence rather than a config artifact — but blend is real
+// data, and hiding the whole page to suppress the empty rows threw it away.
+// ProtocolsIndex filters the zero-count rows on lean nets instead.
+const TESTNET_HIDDEN_HREFS = new Set([
+  '/oracles',
+  '/insights',
+  '/exchanges',
+  '/external/assets',
+]);
+
+function navForNetwork(groups: NavGroup[]): NavGroup[] {
+  if (CURRENT_NETWORK_ID === 'mainnet') return groups;
+  return groups
+    .map((g) => ({ ...g, items: g.items.filter((it) => !TESTNET_HIDDEN_HREFS.has(it.href)) }))
+    .filter((g) => g.items.length > 0);
+}
 
 // Shown only when signed in — the logged-in "Account" section (the former
 // standalone dashboard, now part of the site). The Admin row is appended
@@ -163,8 +190,15 @@ function Row({ item, onNavigate }: { item: NavItem; onNavigate?: () => void }) {
  */
 function StatusDot() {
   const feed = useStatus().data;
-  const overall =
+  const rawOverall =
     feed && feed.error === null ? feed.status?.overall : undefined;
+  // On the lean nets the API's `overall` counts the absent aggregator as
+  // "degraded", so the dot went amber while the status page (which derives an
+  // honest verdict from the running services) says operational. Coerce that
+  // spurious degraded → ok here so the two agree; a genuine outage still
+  // reports 'down' or errors the feed.
+  const overall =
+    !CURRENT_NETWORK.pricing && rawOverall === 'degraded' ? 'ok' : rawOverall;
   const tone =
     overall === 'ok'
       ? { cls: 'bg-ok-500', label: 'all systems operational' }
@@ -192,13 +226,13 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const accountGroup: NavGroup = isStaff
     ? { ...ACCOUNT_GROUP, items: [...ACCOUNT_GROUP.items, ADMIN_ITEM] }
     : ACCOUNT_GROUP;
-  const groups = signedIn ? [...NAV, accountGroup] : NAV;
+  const groups = navForNetwork(signedIn ? [...NAV, accountGroup] : NAV);
   return (
     <div className="flex h-full flex-col bg-surface-muted">
-      {/* Logo — the official Stellar mark + wordmark in Inter (per
-          design-system.stellar.org typography), with the live ledger
-          number to its right: bare number, pulsing while the stream is
-          fresh, linking to the ledger. */}
+      {/* Logo row — the Stellar mark + wordmark on the left, and the odometer
+          (a single hoverable control: network name + chevron over THIS network's
+          live ledger; click anywhere on it to open the network switcher) floated
+          to the right, next to the wordmark. */}
       <div className="flex h-14 shrink-0 items-center gap-2 px-4">
         <Link
           href="/"
@@ -213,7 +247,9 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
             <span className="font-light">Index</span>
           </span>
         </Link>
-        <LiveLedgerBadge onNavigate={onNavigate} compact />
+        <div className="ml-auto shrink-0">
+          <NetworkSwitcher onNavigate={onNavigate} />
+        </div>
       </div>
 
       {/* Search — directly below the logo */}
@@ -260,6 +296,10 @@ function AccountCard({ onNavigate }: { onNavigate?: () => void }) {
   const me = useMe();
   const signedIn = !!(me.data && (me.data.user?.email || me.data.key_id));
   const email = me.data?.user?.email;
+
+  // No accounts backend on the lean test nets — hide the sign-in / account
+  // surface entirely rather than showing CTAs that lead to a 503.
+  if (!CURRENT_NETWORK.accounts) return null;
 
   return (
     <div className="space-y-2">

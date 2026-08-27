@@ -189,8 +189,11 @@ type ExplorerReader interface {
 	// ok=false means "never computed yet" — render a warming state, do
 	// not fall back to AccountsByWealth on the request path (site-audit S3:
 	// that scan needs 11-20s against an 8s handler deadline, so it 500'd
-	// 100% of the time).
-	AccountsByWealthCached(ctx context.Context, assets []string, prices []float64, limit int) ([]clickhouse.AccountWealth, time.Time, bool)
+	// 100% of the time). The basis return ("usd" | "native_xlm") records
+	// which unit the cached ranking is in, so the handler labels the served
+	// numbers correctly — native XLM where no USD price map was available
+	// (the lean test nets).
+	AccountsByWealthCached(ctx context.Context, assets []string, prices []float64, limit int) ([]clickhouse.AccountWealth, string, time.Time, bool)
 	SoroswapPairReserves(ctx context.Context, pairs []string) (map[string]clickhouse.SoroswapPairState, error)
 	NativeLiquidityPoolReserves(ctx context.Context, poolIDs []string) (map[string]clickhouse.NativeLiquidityPoolState, error)
 	NativeLiquidityPoolsRanked(ctx context.Context, limit int) ([]clickhouse.NativeLiquidityPoolState, error)

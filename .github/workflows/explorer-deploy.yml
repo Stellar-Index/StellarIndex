@@ -16,14 +16,22 @@
 # trigger via the Actions tab or:
 #
 #     gh workflow run explorer-deploy.yml --ref main \
-#         -f environment=production
+#         -f network=testnet -f environment=production
+#
+# The `network` input selects which explorer to build + publish; it bakes
+# NEXT_PUBLIC_NETWORK (drives the nav network-switcher) and derives the grey
+# api.* origin + the Cloudflare Pages project:
+#   mainnet   → stellarindex-explorer            (api.stellarindex.io)
+#   testnet   → stellarindex-explorer-testnet    (api.testnet.stellarindex.io)
+#   futurenet → stellarindex-explorer-futurenet  (api.futurenet.stellarindex.io)
+# The two test-net Pages projects + their custom domains (testnet./futurenet.
+# stellarindex.io) must be created ONCE in the Cloudflare dashboard — see
+# docs/operations/explorer-deployment.md §Test nets.
 #
 # Required secrets (set once in repo settings):
-#   - CLOUDFLARE_API_TOKEN  — token with Pages:Edit on the
-#                             stellarindex-explorer project (renamed
-#                             from stellarindex-showcase 2026-07-04,
-#                             task #23; the old project is retained
-#                             briefly as rollback, then deleted)
+#   - CLOUDFLARE_API_TOKEN  — token with Pages:Edit on ALL three explorer
+#                             projects (mainnet renamed from
+#                             stellarindex-showcase 2026-07-04, task #23)
 #   - CLOUDFLARE_ACCOUNT_ID — the CF account UUID
 
 name: explorer-deploy
@@ -31,6 +39,15 @@ name: explorer-deploy
 on:
   workflow_dispatch:
     inputs:
+      network:
+        description: "Which network's explorer to deploy"
+        required: true
+        default: "mainnet"
+        type: choice
+        options:
+          - mainnet
+          - testnet
+          - futurenet
       environment:
         description: "production or preview"
         required: true
@@ -40,9 +57,9 @@ on:
           - production
           - preview
       api_base_url:
-        description: "NEXT_PUBLIC_API_BASE_URL bake-in (default https://api.stellarindex.io)"
+        description: "Override NEXT_PUBLIC_API_BASE_URL (blank → derived from network: api[.<net>].stellarindex.io)"
         required: false
-        default: "https://api.stellarindex.io"
+        default: ""
 
 permissions:
   contents: read
@@ -51,7 +68,7 @@ permissions:
 # One deploy at a time. Mid-deploy cancellation is fine — the
 # new run takes over before traffic shifts.
 concurrency:
-  group: explorer-deploy-${{ github.event.inputs.environment }}
+  group: explorer-deploy-${{ github.event.inputs.network }}-${{ github.event.inputs.environment }}
   cancel-in-progress: true
 
 jobs:
@@ -105,6 +122,34 @@ jobs:
           fi
           bash scripts/ci/check-deploy-protection.sh env-protection.json "$ENV_NAME"
 
+      - name: Resolve network config
+        # Map the network choice → NEXT_PUBLIC_NETWORK, the grey api.* origin,
+        # and the per-network Cloudflare Pages project. Untrusted inputs are
+        # read via env and never interpolated into the shell; the project name
+        # is a fixed case-arm string (safe for the wrangler command).
+        id: net
+        env:
+          NETWORK: ${{ github.event.inputs.network }}
+          API_OVERRIDE: ${{ github.event.inputs.api_base_url }}
+        run: |
+          set -euo pipefail
+          case "$NETWORK" in
+            mainnet)   base="https://api.stellarindex.io";           project="stellarindex-explorer" ;;
+            testnet)   base="https://api.testnet.stellarindex.io";   project="stellarindex-explorer-testnet" ;;
+            futurenet) base="https://api.futurenet.stellarindex.io"; project="stellarindex-explorer-futurenet" ;;
+            *) echo "::error::unknown network '$NETWORK'"; exit 1 ;;
+          esac
+          api="${API_OVERRIDE:-$base}"
+          if [[ ! "$api" =~ ^https://[A-Za-z0-9.-]+$ ]]; then
+            echo "::error::api_base_url '$api' is not a bare https origin"; exit 1
+          fi
+          {
+            echo "network=$NETWORK"
+            echo "api_base=$api"
+            echo "project=$project"
+          } >> "$GITHUB_OUTPUT"
+          echo "Resolved: network=$NETWORK api=$api project=$project"
+
       - name: Set up pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86  # v6
         with:
@@ -125,7 +170,8 @@ jobs:
       - name: Build
         working-directory: web/explorer
         env:
-          NEXT_PUBLIC_API_BASE_URL: ${{ github.event.inputs.api_base_url }}
+          NEXT_PUBLIC_NETWORK: ${{ steps.net.outputs.network }}
+          NEXT_PUBLIC_API_BASE_URL: ${{ steps.net.outputs.api_base }}
         run: pnpm build
 
       - name: Verify build artefact
@@ -201,5 +247,5 @@ jobs:
           workingDirectory: web/explorer
           command: >-
             pages deploy out
-            --project-name stellarindex-explorer
+            --project-name ${{ steps.net.outputs.project }}
             --branch ${{ env.BRANCH }}

@@ -65,6 +65,7 @@
  */
 
 import { API_BASE_URL } from '@/api/client';
+import { CURRENT_NETWORK_ID } from './networks';
 import type { components } from '@/api/types';
 
 // AGT-06: the envelope's `flags`/`as_of` siblings (see EnvelopeMeta in the
@@ -306,6 +307,12 @@ async function fetchWithRetry<T>(
  */
 export function failBuild(message: string): void {
   if (isCIStub) return;
+  // Test nets legitimately have sparse/empty data (little on-chain activity,
+  // SDEX-only, no aggregator/pricing) — an empty listing is the TRUE state,
+  // not an unhealthy API, so we must NOT fail-hard the way mainnet does.
+  // Export the shell/fallback routes (the same null-safe paths the CI stub
+  // uses) and let the client fetch live from the test-net API at runtime.
+  if (CURRENT_NETWORK_ID !== 'mainnet') return;
   throw new BuildFetchError(`${message} (fail-hard: see src/lib/buildFetch.ts)`);
 }
 

@@ -210,6 +210,19 @@ textfile collector.
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_stellar_stack_lagging` | `stellarindex_stellar_stack_version_lag` per `component` | >= 1 for 2 d | P3 | [stellar-stack-version-lag](runbooks/stellar-stack-version-lag.md) |
 | `stellarindex_stellar_stack_protocol_lag` | same | >= 2 for 6 h | **P1** | [stellar-stack-version-lag](runbooks/stellar-stack-version-lag.md) |
+| `stellarindex_ledger_meta_decode_failing` | `stellarindex_ledger_meta_decode_failures_total` per `unit` | > 0 for 10 m | **P1** | [protocol-upgrades](protocol-upgrades.md) |
+| `stellarindex_ledger_meta_decode_probe_stale` | `stellarindex_ledger_meta_decode_probe_updated_seconds` | age > 1 h for 30 m | P3 | [protocol-upgrades](protocol-upgrades.md) |
+
+The two decode alerts are the REACTIVE backstop to the version-lag pair above.
+The version probe compares released upstream versions, so it cannot know the
+network has actually begun emitting new XDR — on 2026-08-27 testnet ingested 240
+Protocol-28 ledgers on a galexie that could not decode P28, with no error at
+all, because the breaking arm only appears once a ledger genuinely contains
+parallel-execution structures. `..._decode_failing` watches for the decode
+failure itself and names the cause; `..._decode_probe_stale` stops a dead probe
+reading as "no failures". The failure is fail-closed (the component errors and
+stops; no corrupt data is written), so this is an ingestion outage, not a
+correctness incident.
 
 ## Archive completeness alerts
 

@@ -52,8 +52,8 @@ func supplySeedSEP41Genesis(args []string) error {
 	fs := flag.NewFlagSet("supply seed-sep41-genesis", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
-	genesisLedger := fs.Uint("genesis-ledger", uint(clickhouse.SorobanGenesisLedger),
-		"Exclusive upper ledger bound of the pre-Soroban baseline sum (default = protocol-20 activation)")
+	genesisLedger := fs.Uint("genesis-ledger", 0,
+		"Exclusive upper ledger bound of the pre-Soroban baseline sum (0 = stellar.soroban_genesis_ledger from -config; pubnet = protocol-20 activation, test nets = 1)")
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -61,11 +61,21 @@ func supplySeedSEP41Genesis(args []string) error {
 	if *cfgPath == "" {
 		return errors.New("-config is required")
 	}
-	if err := validateGenesisLedgerBoundary(*genesisLedger); err != nil {
-		return err
-	}
 	cfg, err := config.LoadWithEnv(*cfgPath)
 	if err != nil {
+		return err
+	}
+	// Resolve the boundary: an explicit -genesis-ledger wins; otherwise the
+	// config's network-appropriate value (stellar.soroban_genesis_ledger —
+	// pubnet's protocol-20 activation, or 1 on a reset test net). A test-net
+	// seed must NOT fall back to the pubnet boundary, or it would sum the
+	// entire young test-net history as a "pre-Soroban" baseline that the
+	// SEP-41 supply observer then double-counts.
+	genesis := uint(*genesisLedger)
+	if genesis == 0 {
+		genesis = uint(cfg.Stellar.SorobanGenesisLedger)
+	}
+	if err := validateGenesisLedgerBoundary(genesis); err != nil {
 		return err
 	}
 	if err := cfg.Supply.Validate(); err != nil {
@@ -96,7 +106,7 @@ func supplySeedSEP41Genesis(args []string) error {
 		defer func() { _ = store.Close() }()
 	}
 
-	boundary := uint32(*genesisLedger)
+	boundary := uint32(genesis)
 	var seeded, nonzero int
 	for _, contractID := range watched {
 		isNonZero, err := seedOneSEP41Genesis(ctx, reader, store, contractID, boundary, dryRun)

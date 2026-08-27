@@ -3,6 +3,29 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
+import { CURRENT_NETWORK } from '@/lib/networks';
+
+// Footer routes that are pricing- or off-chain-only and have no data on the
+// lean test nets (mirrors the Sidebar's navForNetwork gating, plus the extra
+// off-chain hubs the footer surfaces). Hidden when the network has no pricing.
+// On-chain hubs with real test-net data (/assets, /issuers, /sources, /dexes,
+// /liquidity-pools, /sdex) and the network-agnostic API pages stay.
+const LEAN_HIDDEN_HREFS = new Set([
+  '/markets',
+  '/exchanges',
+  '/lending',
+  '/aggregators',
+  '/oracles',
+  '/amm',
+  '/yield',
+  '/convert/USD/EUR',
+  // Accounts/API-key SaaS — mainnet only; no accounts backend on the lean
+  // test nets (the credentialed probe 503s there).
+  '/signin',
+  '/signup',
+  '/dashboard',
+]);
+
 /**
  * Footer with the operator/researcher views the navbar doesn't
  * top-level — diagnostics, anomalies, divergences, MEV, sources,
@@ -134,13 +157,17 @@ function FooterColumn({
   title: string;
   links: { label: string; href: string; external?: boolean }[];
 }) {
+  // Drop pricing/off-chain routes on the lean test nets (build-constant flag).
+  const visible = CURRENT_NETWORK.pricing
+    ? links
+    : links.filter((l) => !LEAN_HIDDEN_HREFS.has(l.href));
   return (
     <div className="space-y-2">
       <h4 className="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
         {title}
       </h4>
       <ul className="space-y-1">
-        {links.map((l) =>
+        {visible.map((l) =>
           l.external ? (
             <li key={l.href}>
               <a

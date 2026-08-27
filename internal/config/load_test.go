@@ -224,9 +224,12 @@ func TestLoad_ExampleConfigValid(t *testing.T) {
 // internal/aggregate/orchestrator: nothing else in the build parses the
 // jinja template, so a typo'd issuer or ticker would otherwise surface
 // only as an API that refuses to boot on r1 (or, worse, a peg that
-// silently never fills). The stanza itself is pure TOML (no jinja
-// substitution). Pins the two operator-approved entries (2026-08-24):
-// AUDD → AUD and, transitively via the AUDD↔AUDR par corridor, AUDR → AUD.
+// silently never fills). The stanza's BODY is pure TOML, but it is now
+// gated behind {% if run_aggregator %} (on for r1/pubnet, off for the lean
+// test nets) — so the extractor drops jinja control lines to reconstruct the
+// r1 render (aggregator on → body present). Pins the two operator-approved
+// entries (2026-08-24): AUDD → AUD and, transitively via the AUDD↔AUDR par
+// corridor, AUDR → AUD.
 func TestAnsibleFiatPegStanza_ValidAndComplete(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -243,15 +246,37 @@ func TestAnsibleFiatPegStanza_ValidAndComplete(t *testing.T) {
 	// the decoder whole.
 	var out []string
 	inStanza := false
+	inJinjaComment := false // inside a multi-line {# ... #} block
 	for _, line := range strings.Split(string(raw), "\n") {
 		trimmed := strings.TrimSpace(line)
+		// Skip the body of a multi-line jinja comment opened below.
+		if inJinjaComment {
+			if strings.Contains(line, "#}") {
+				inJinjaComment = false
+			}
+			continue
+		}
 		if strings.HasPrefix(trimmed, "[") {
 			inStanza = trimmed == "[pricing_guard]" ||
 				strings.HasPrefix(trimmed, "[pricing_guard.")
 		}
-		if inStanza {
-			out = append(out, line)
+		if !inStanza {
+			continue
 		}
+		// Drop jinja control lines ({% if/endif %}) and jinja comments
+		// ({# ... #}, possibly spanning lines) so the r1-rendered body (the
+		// {% if run_aggregator %} branch, on for r1) parses as TOML. Safe
+		// here because the stanza has no {% else %} branch to disambiguate.
+		if strings.HasPrefix(trimmed, "{%") {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "{#") {
+			if !strings.Contains(trimmed, "#}") {
+				inJinjaComment = true // closes on a later line
+			}
+			continue
+		}
+		out = append(out, line)
 	}
 	if len(out) == 0 {
 		t.Fatalf("no [pricing_guard] stanza in %s", path)

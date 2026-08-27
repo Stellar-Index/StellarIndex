@@ -82,9 +82,17 @@ export function LiveAssetPrice({
         : 'vwap1m'
       : initialProvenance;
 
-  // Tip stream (disabled once the server says withheld — the stream's
-  // own pre-flight would keep 404ing anyway).
-  const tip = useTipStream(withheld ? null : assetID);
+  // Tip stream. Disabled once the server says withheld (its own pre-flight
+  // would keep 404ing anyway). We ALSO hold it closed at mount for assets whose
+  // baked snapshot isn't a fresh DIRECT market (vwap1m, not stale) — those are
+  // exactly the assets whose direct tip stream is withheld, so opening it before
+  // the poll confirms only produced a load-time 404 on every thin-market page.
+  // Fresh direct markets still open immediately (no delay); everything else
+  // waits one poll to learn whether the stream is servable.
+  const freshDirectMarket =
+    initialProvenance === 'vwap1m' && !initialStale && initialPrice != null;
+  const tipEnabled = withheld ? false : poll.polled ? true : freshDirectMarket;
+  const tip = useTipStream(tipEnabled ? assetID : null);
   // Slow clock so a wedged stream loses its "live" claim without
   // waiting for the next poll render (WB-04).
   const clock = useLiveClock();

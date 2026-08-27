@@ -12,10 +12,17 @@ import (
 )
 
 // AccountsListView is the wire response for GET /v1/accounts — accounts ranked
-// by total USD value of their holdings.
+// by wealth. On the priced networks that is total USD value of holdings; on the
+// lean networks that have no aggregator (testnet/futurenet), where no USD price
+// map exists, it is native XLM balance. `ranked_by` says which, so clients label
+// the numbers correctly.
 type AccountsListView struct {
-	PricedAssets int                `json:"priced_assets"`
-	Accounts     []AccountWealthRow `json:"accounts"`
+	PricedAssets int `json:"priced_assets"`
+	// RankedBy is the wealth basis: "usd" (holdings valued in USD) or
+	// "native_xlm" (ranked by native XLM balance, used where no USD pricing
+	// is available). Each row's Value is expressed in this unit.
+	RankedBy string             `json:"ranked_by"`
+	Accounts []AccountWealthRow `json:"accounts"`
 	// AsOfLedger is the lake watermark this current-state ranking is
 	// fresh to (ADR-0041 Decision 4): the highest ledger the ClickHouse
 	// lake had captured at serve time. The ranking is a one-pass read
@@ -27,7 +34,14 @@ type AccountsListView struct {
 
 type AccountWealthRow struct {
 	AccountID string `json:"account_id"`
-	USDValue  string `json:"usd_value"`
+	// Value is the account's ranked wealth in the response's RankedBy unit —
+	// USD dollars ("usd") or whole XLM ("native_xlm"). This is the canonical
+	// field; read RankedBy to format it.
+	Value string `json:"value"`
+	// USDValue is a backward-compatible alias, populated only on the "usd"
+	// basis (equal to Value there). Empty on the "native_xlm" basis — read
+	// Value instead. Retained so existing USD-network clients keep working.
+	USDValue string `json:"usd_value,omitempty"`
 	// Locked marks a provably unspendable burn address (master weight
 	// 0, all thresholds 0, no signers) — the balance is real but no
 	// key can ever move it (ACC-1: the SDF burn account).
@@ -44,11 +58,6 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 		h.unavailable(w, r)
 		return
 	}
-	if !h.PricingEnabled {
-		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/unavailable",
-			"Pricing unavailable", http.StatusServiceUnavailable, "wealth ranking needs the pricing layer")
-		return
-	}
 	limit, ok := h.ParseLimit(w, r, 100, 500)
 	if !ok {
 		return
@@ -57,13 +66,20 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	assets, prices := h.usdPriceMap(ctx)
+	// Ranking inputs. With a USD price map we rank by total USD holdings; where
+	// there is none — the lean networks run no aggregator, so usdPriceMap comes
+	// back empty — fall back to ranking by native XLM balance rather than 503ing
+	// or serving an empty list. The native fallback is exactly the single key
+	// "native" priced at 1.0, so sum(balance × price) is the XLM quantity; the
+	// cache records the basis (wealthBasis) and the handler reads it back so the
+	// served numbers are labelled correctly.
+	assets, prices := h.wealthRankingInputs(ctx)
 	// Served from a background-refreshed cache; the underlying FINAL scan
 	// over 43.6M current-state rows needs 11-20s and can never fit this
 	// handler's deadline. Before this, the scan ran inline and timed out on
 	// EVERY request — 8.1s of waiting followed by a 500, 100% of the time
 	// (site-audit S3/S30).
-	ranked, rankedAt, warm := h.Reader.AccountsByWealthCached(ctx, assets, prices, limit)
+	ranked, basis, rankedAt, warm := h.Reader.AccountsByWealthCached(ctx, assets, prices, limit)
 	if !warm {
 		// Honest degraded state instead of a 500. The previous copy blamed
 		// "the current-state projection is still backfilling, or pricing is
@@ -90,13 +106,23 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 	// FINAL scan that was the residual 6-8s of /v1/accounts latency once the
 	// ranking itself was cached (site-audit S3).
 	wmLedger, stale, _ := h.LakeWatermark(ctx)
-	out := AccountsListView{PricedAssets: len(assets), Accounts: make([]AccountWealthRow, len(ranked)), AsOfLedger: wmLedger}
+	out := AccountsListView{RankedBy: basis, Accounts: make([]AccountWealthRow, len(ranked)), AsOfLedger: wmLedger}
+	// priced_assets is a USD-basis notion; on the native-XLM basis nothing is
+	// USD-priced, so report 0 rather than the "native" fallback key count.
+	if basis != clickhouse.WealthBasisNative {
+		out.PricedAssets = len(assets)
+	}
 	for i, a := range ranked {
-		out.Accounts[i] = AccountWealthRow{
-			AccountID: a.AccountID,
-			USDValue:  strconv.FormatFloat(a.USD, 'f', 2, 64),
-			Locked:    a.Locked,
+		row := AccountWealthRow{AccountID: a.AccountID, Locked: a.Locked}
+		if basis == clickhouse.WealthBasisNative {
+			// a.USD carries the native XLM quantity (balance × 1.0); full
+			// precision so the client formats it.
+			row.Value = strconv.FormatFloat(a.USD, 'f', -1, 64)
+		} else {
+			row.Value = strconv.FormatFloat(a.USD, 'f', 2, 64)
+			row.USDValue = row.Value // back-compat alias, USD basis only
 		}
+		out.Accounts[i] = row
 	}
 	h.writeJSONAt(w, out, stale || snapshotStale, rankedAt)
 }
@@ -154,6 +180,22 @@ func (h *Handler) usdPriceMap(ctx context.Context) (assets []string, prices []fl
 		usdPriceMapMu.Unlock()
 	}
 	return assets, prices
+}
+
+// wealthRankingInputs returns the (asset, price) arrays to rank account wealth
+// by. It is the USD price map where one exists; where it doesn't — pricing
+// disabled, or the catalogue is empty because no aggregator runs (the lean
+// test nets) — it returns the native-XLM fallback (key "native" priced at 1.0)
+// so the ranking is by native XLM balance instead of coming back empty. Both
+// the request path and the prewarmer call this so the cache is populated with
+// one consistent basis (wealthBasis derives it from these inputs).
+func (h *Handler) wealthRankingInputs(ctx context.Context) (assets []string, prices []float64) {
+	if h.PricingEnabled {
+		if a, p := h.usdPriceMap(ctx); len(a) > 0 {
+			return a, p
+		}
+	}
+	return []string{"native"}, []float64{1.0}
 }
 
 func (h *Handler) usdPriceMapUncached(ctx context.Context) (assets []string, prices []float64) {
@@ -484,12 +526,13 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 // size slices from, so a single warm entry covers all traffic — the limit
 // argument is not a cache key.
 func (h *Handler) PrewarmAccountsWealth(ctx context.Context) {
-	if h.Reader == nil || !h.PricingEnabled {
+	if h.Reader == nil {
 		return
 	}
-	assets, prices := h.usdPriceMap(ctx)
-	if len(assets) == 0 {
-		return // pricing not up yet; the next tick retries
-	}
+	// Same inputs the request path uses — USD price map where available, native
+	// XLM fallback otherwise — so the cache is warmed with one consistent basis
+	// on every network, including the lean nets that would otherwise never
+	// prewarm (usdPriceMap is always empty there) and 503 the first request.
+	assets, prices := h.wealthRankingInputs(ctx)
 	h.Reader.AccountsByWealthCached(ctx, assets, prices, 0)
 }

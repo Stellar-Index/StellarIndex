@@ -90,6 +90,11 @@ async function fetchTickers(): Promise<string[]> {
 // HUB_TICKERS + the pair-builder live in @/lib/convert-params so the
 // sitemap mirrors this exact set (no drift → no 404s in the sitemap).
 export async function generateStaticParams() {
+  // NOTE: with output:export a dynamic route may NOT return an empty param set
+  // (Next errors "missing generateStaticParams"), so we can't 404 the whole
+  // /convert tree by building zero pages. The route is instead hidden from the
+  // Footer nav on the lean test nets (see Footer LEAN_HIDDEN_HREFS); its live
+  // rate/chart fetches are gated below so a direct visit doesn't 404-storm.
   return buildConvertParams(await fetchTickers());
 }
 

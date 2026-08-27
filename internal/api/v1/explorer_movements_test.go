@@ -9,6 +9,7 @@ import (
 	"time"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/classicmovements"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -28,6 +29,21 @@ func TestP23BoundaryConstantsAgree(t *testing.T) {
 	if classicmovements.P23StartLedger != timescale.SEP41MovementsFloorLedger {
 		t.Fatalf("P23 boundary constants drifted: classicmovements.P23StartLedger=%d != timescale.SEP41MovementsFloorLedger=%d",
 			classicmovements.P23StartLedger, timescale.SEP41MovementsFloorLedger)
+	}
+	// The config defaults MUST equal the leaf constants: a pubnet TOML that
+	// omits stellar.movements_floor_ledger / stellar.soroban_genesis_ledger
+	// must be byte-identical to the old hardcoded behaviour. The fields exist
+	// only so a test net can override them to genesis (=1). config is imported
+	// BY storage (not vice-versa), so config cannot reference the leaf consts —
+	// this test, which can import both, is the only place able to pin them.
+	def := config.Default()
+	if def.Stellar.MovementsFloorLedger != timescale.SEP41MovementsFloorLedger {
+		t.Errorf("config default stellar.movements_floor_ledger=%d != timescale.SEP41MovementsFloorLedger=%d",
+			def.Stellar.MovementsFloorLedger, timescale.SEP41MovementsFloorLedger)
+	}
+	if def.Stellar.SorobanGenesisLedger != clickhouse.SorobanGenesisLedger {
+		t.Errorf("config default stellar.soroban_genesis_ledger=%d != clickhouse.SorobanGenesisLedger=%d",
+			def.Stellar.SorobanGenesisLedger, clickhouse.SorobanGenesisLedger)
 	}
 }
 
