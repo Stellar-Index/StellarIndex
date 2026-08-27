@@ -122,7 +122,7 @@ fi
 # not credentials are exempted by fingerprint in .gitleaksignore.
 if command -v gitleaks >/dev/null 2>&1; then
     echo "=== Secrets (gitleaks, working tree) ===" && \
-        gitleaks detect --no-git --no-banner --redact --config .gitleaks.toml
+        gitleaks detect --no-git --no-banner --redact --config .gitleaks.worktree.toml
     echo "=== Secrets (gitleaks, history — CI parity) ===" && \
         gitleaks detect --no-banner --redact --config .gitleaks.toml
 else
