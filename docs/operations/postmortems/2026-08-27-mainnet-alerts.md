@@ -152,17 +152,51 @@ fix-verifier pass before any deploy.
   monitoring window. Tracked in `docs/operations/protocol-upgrades.md`.
 - **`stellarindex_deadmansswitch` (informational):** fires by design (proves the
   alert pipe is alive). Not a fault; excluded from the "degraded" verdict.
-- **`stellarindex_anomaly_freeze_engaged` (P3, observed 2026-08-27):** the
-  aggregator's anomaly guard correctly froze `crypto:XLM/fiat:EUR` after a
-  single CEX source reported a momentary 6σ value (`z=6.17, sources=1,
-  confidence=0.441`), protecting the served price for a 30-min hold, then
-  released — the safety mechanism working. Current per-source XLM/EUR values
-  are sane (bitstamp 0.1579 / kraken 0.1570). The alert *looked* recurring
-  because the `anomaly_freeze_engaged` gauge **flaps present↔absent within a
-  single hold window** (borderline confidence), so the alert re-fires though the
-  protection is steady. Non-disruptive improvement (Prometheus-rule tune, no
-  binary deploy): alert on the steady freeze-hold state, or widen `for:`, so a
-  borderline anomaly doesn't produce alert chatter. Not a fault.
+- **`stellarindex_anomaly_freeze_engaged` (P3) + `_active` (informational) —
+  root-caused 2026-08-27 as a recurring single-source thin-fiat pattern.** The
+  safety mechanism is working (the API serves the last-known-good VWAP with
+  `flags.frozen=true` throughout — no bad price is ever served), but it is
+  *cycling*, not blipping once. Measured on r1: **~40 freeze events / 6h on
+  class=default** — one roughly every 9 minutes — so `rate(engaged_total[5m])`
+  is essentially never zero and the ticket never clears. The `_active` gauge
+  flaps present↔absent as each 30-min hold auto-releases and the next fires.
+
+  The driver is the **thin fiat cross-rates** `crypto:XLM/fiat:GBP` and
+  `crypto:XLM/fiat:EUR`. Sample decision from the aggregator log:
+
+  ```
+  freeze engaged pair=crypto:XLM/fiat:GBP class=default
+    reason="phase2:3_signal_AND confidence=0.350 z=7.65 sources=1"
+    hold_until=+30m corroborated=true → auto-released, extensions_used=0, escalated=false
+  ```
+
+  The tell is **`sources=1`**: these pairs have a single thin venue, so a
+  momentary z-spike on that one feed has nothing to corroborate against and
+  trips a freeze at low confidence (0.35). XLM/USD (deep, many venues) never
+  does this. The pair *should* be derived as XLM/USD × the USD/GBP (USD/EUR)
+  fiat rate rather than taken from one shallow direct XLM/GBP market; a
+  single-source direct quote is what makes it fragile.
+
+  **This is genuinely-recurring and worth fixing at root cause** (unlike a
+  one-off spike). Candidate fixes, all money-serving aggregator/pricing logic —
+  **branch work with tests + a fix-verifier pass, not a hot-patch** (mainnet
+  deploys are on hold):
+  1. **Prefer the derived cross-rate** for thin fiat quotes: compute
+     XLM/{EUR,GBP} from XLM/USD × the fiat rate when the direct market is
+     single-source, so the deep USD book (not one shallow venue) sets the price.
+  2. **Require ≥2 sources for a z-score freeze** (or sharply down-weight a
+     single-source z-freeze), so a lone venue's blip can't freeze a pair — while
+     keeping the freeze for corroborated multi-source anomalies.
+  3. **Monitoring-only stopgap** (no money-path change) if 1–2 slip: have the
+     aggregator label the freeze counter with `sources`/confidence and exclude
+     single-source auto-releasing cycles from the *ticket* (keep them on the
+     `sustained`/`escalated` **page** path, which already correctly ignores
+     benign fire→auto-release cycles per the 2026-08-06 reshape). This still
+     needs an aggregator metric-label change, so it is deploy-gated too.
+
+  Not an outage, not a page — the served data is correct the whole time. But it
+  is the alert that most visibly "keeps popping up," and (1)/(2) remove the
+  cause rather than muting the symptom.
 
 ## Net effect
 
