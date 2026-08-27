@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { CURRENT_NETWORK_ID } from '@/lib/networks';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 
@@ -93,7 +94,21 @@ export function ProtocolsIndex({
   // unreachable directory is not "0 events".
   const live = !!(data && data.length > 0);
   const cards: ProtocolCard[] = useMemo(() => {
-    if (data && data.length > 0) return data;
+    // Lean test nets: show only protocols that ACTUALLY exist on the network.
+    // Measured 2026-08-27 on testnet + futurenet: blend has 3 contracts / 2
+    // factories, every other protocol has 0. Those zeros are real absences —
+    // contract_count comes from on-chain discovery, not from
+    // stellarindex_enabled_sources — so rendering seven empty rows to surface
+    // one populated one is noise. Mainnet keeps the full catalogue (a
+    // zero-count protocol there is a genuine "indexed, nothing yet" signal).
+    // The static PROTOCOLS fallback is skipped for the same reason: on a lean
+    // net it would fabricate a full list of zero rows.
+    if (data && data.length > 0) {
+      return CURRENT_NETWORK_ID === 'mainnet'
+        ? data
+        : data.filter((c) => (c.contract_count ?? 0) > 0);
+    }
+    if (CURRENT_NETWORK_ID !== 'mainnet') return [];
     return PROTOCOLS.map((p) => ({
       name: p.name,
       category: '',

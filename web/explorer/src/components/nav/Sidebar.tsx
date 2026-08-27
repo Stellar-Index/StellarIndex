@@ -92,11 +92,18 @@ const NAV: NavGroup[] = [
 ];
 
 // The lean test-net explorers (SDEX-only, no aggregator/pricing) carry no
-// bespoke Soroban protocols, oracles, aggregator-derived insights, or external
-// CEX/FX markets/assets — hide those rail surfaces so the nav reflects what the
-// network actually has. The whole External group drops once it is empty.
+// oracles, aggregator-derived insights, or external CEX/FX markets/assets —
+// hide those rail surfaces so the nav reflects what the network actually has.
+// The whole External group drops once it is empty.
+//
+// /protocols is deliberately NOT hidden. Measured 2026-08-27 on both test nets:
+// blend has 3 contracts and 2 factories there, while soroswap / aquarius /
+// phoenix / comet / defindex / sorocredit are all 0. Those zeros come from
+// on-chain contract DISCOVERY (independent of stellarindex_enabled_sources), so
+// they are a genuine absence rather than a config artifact — but blend is real
+// data, and hiding the whole page to suppress the empty rows threw it away.
+// ProtocolsIndex filters the zero-count rows on lean nets instead.
 const TESTNET_HIDDEN_HREFS = new Set([
-  '/protocols',
   '/oracles',
   '/insights',
   '/exchanges',
