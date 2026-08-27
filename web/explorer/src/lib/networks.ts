@@ -32,6 +32,14 @@ export interface NetworkInfo {
    * stream would just retry forever).
    */
   pricing: boolean;
+  /**
+   * Whether this network runs the accounts/API-key SaaS backend. Mainnet
+   * only — the lean test nets are free public explorers with no customer
+   * accounts, so /v1/account/me 503s there. When false the explorer skips
+   * the credentialed session probe and hides the sign-in / dashboard surfaces
+   * entirely (an always-503 probe would log an error on every page load).
+   */
+  accounts: boolean;
 }
 
 // Ordered mainnet → testnet → futurenet (production first, protocol-upgrade
@@ -45,6 +53,7 @@ export const NETWORKS: NetworkInfo[] = [
     apiBaseUrl: 'https://api.stellarindex.io',
     live: true,
     pricing: true,
+    accounts: true,
   },
   {
     id: 'testnet',
@@ -54,6 +63,7 @@ export const NETWORKS: NetworkInfo[] = [
     apiBaseUrl: 'https://api.testnet.stellarindex.io',
     live: true,
     pricing: false,
+    accounts: false,
   },
   {
     id: 'futurenet',
@@ -63,6 +73,7 @@ export const NETWORKS: NetworkInfo[] = [
     apiBaseUrl: 'https://api.futurenet.stellarindex.io',
     live: true,
     pricing: false,
+    accounts: false,
   },
 ];
 

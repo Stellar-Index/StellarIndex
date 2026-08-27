@@ -19,6 +19,11 @@ const LEAN_HIDDEN_HREFS = new Set([
   '/amm',
   '/yield',
   '/convert/USD/EUR',
+  // Accounts/API-key SaaS — mainnet only; no accounts backend on the lean
+  // test nets (the credentialed probe 503s there).
+  '/signin',
+  '/signup',
+  '/dashboard',
 ]);
 
 /**

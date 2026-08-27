@@ -286,6 +286,11 @@ export type MeResponse = Omit<Schemas['Account'], 'tier'> & {
 export function useMe() {
   return useQuery<MeResponse | null>({
     queryKey: ['/v1/account/me', 'credentialed'],
+    // The lean test nets run no accounts backend, so /v1/account/me 503s
+    // there — skip the probe entirely (data stays undefined → treated as
+    // signed-out) rather than erroring on every page load. Accounts UI is
+    // hidden on those networks anyway (CURRENT_NETWORK.accounts).
+    enabled: CURRENT_NETWORK.accounts,
     queryFn: async () => {
       const url = `${API_BASE_URL_FOR_ME}/v1/account/me`;
       const res = await fetch(url, {

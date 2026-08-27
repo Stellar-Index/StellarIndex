@@ -36,7 +36,7 @@ import { cn } from '@/lib/cn';
 import { useDialog } from '@/lib/useDialog';
 import { StellarMark } from '@/components/StellarMark';
 import { NetworkSwitcher } from './NetworkSwitcher';
-import { CURRENT_NETWORK_ID } from '@/lib/networks';
+import { CURRENT_NETWORK, CURRENT_NETWORK_ID } from '@/lib/networks';
 import { SearchModal } from './SearchModal';
 
 type NavItem = {
@@ -282,6 +282,10 @@ function AccountCard({ onNavigate }: { onNavigate?: () => void }) {
   const me = useMe();
   const signedIn = !!(me.data && (me.data.user?.email || me.data.key_id));
   const email = me.data?.user?.email;
+
+  // No accounts backend on the lean test nets — hide the sign-in / account
+  // surface entirely rather than showing CTAs that lead to a 503.
+  if (!CURRENT_NETWORK.accounts) return null;
 
   return (
     <div className="space-y-2">
