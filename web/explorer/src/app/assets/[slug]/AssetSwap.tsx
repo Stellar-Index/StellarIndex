@@ -40,50 +40,44 @@ export interface SwapToken {
   kind: 'crypto' | 'fiat';
 }
 
-// Fiat legs offered in the picker, priced from the forex batch. USD is the
-// implicit unit (price 1) and always present.
+// Fiat legs offered in the picker, priced from the forex batch (massive.com
+// covers ~200 world currencies). USD is the implicit unit (price 1) and always
+// present. The batch prices every ticker the feed carries; those without a live
+// rate are filtered out client-side, so listing the full ISO-4217 set just
+// means "offer every currency the feed can price" without a curated shortlist.
 const FIAT_TICKERS = [
-  'EUR',
-  'GBP',
-  'JPY',
-  'CHF',
-  'CAD',
-  'AUD',
-  'CNY',
-  'INR',
-  'BRL',
-  'MXN',
-  'KRW',
-  'HKD',
-  'SGD',
-  'SEK',
-  'NOK',
-  'ZAR',
-  'TRY',
-  'NZD',
+  'EUR', 'GBP', 'JPY', 'CHF', 'CAD', 'AUD', 'CNY', 'INR', 'BRL', 'MXN',
+  'KRW', 'HKD', 'SGD', 'SEK', 'NOK', 'DKK', 'PLN', 'ZAR', 'TRY', 'NZD',
+  'AED', 'SAR', 'THB', 'IDR', 'MYR', 'PHP', 'VND', 'CZK', 'HUF', 'RON',
+  'ILS', 'CLP', 'COP', 'ARS', 'PEN', 'EGP', 'NGN', 'KES', 'GHS', 'MAD',
+  'PKR', 'BDT', 'LKR', 'TWD', 'QAR', 'KWD', 'BHD', 'OMR', 'JOD', 'RUB',
+  'UAH', 'RSD', 'BGN', 'HRK', 'ISK', 'GEL', 'AZN', 'KZT', 'UZS', 'AMD',
+  'DZD', 'TND', 'LYD', 'ETB', 'TZS', 'UGX', 'ZMW', 'XOF', 'XAF', 'MUR',
+  'BWP', 'NAD', 'MZN', 'AOA', 'CDF', 'RWF', 'SDG', 'SYP', 'IQD', 'LBP',
+  'YER', 'AFN', 'MMK', 'KHR', 'LAK', 'NPR', 'BND', 'MOP', 'MNT', 'FJD',
+  'PGK', 'XPF', 'BOB', 'PYG', 'UYU', 'VES', 'GTQ', 'HNL', 'NIO', 'CRC',
+  'DOP', 'JMD', 'TTD', 'BBD', 'BSD', 'BZD', 'XCD', 'AWG', 'ANG', 'HTG',
+  'CUP', 'PAB', 'BYN', 'MDL', 'ALL', 'MKD', 'BAM', 'MGA', 'MWK', 'SZL',
+  'LSL', 'GMD', 'GNF', 'SLL', 'LRD', 'SCR', 'DJF', 'KMF', 'ERN', 'SOS',
+  'BIF', 'CVE', 'STN', 'MRU', 'SSP', 'TMT', 'TJS', 'KGS', 'MVR', 'BTN',
+  'WST', 'TOP', 'VUV', 'SBD', 'GYD', 'SRD', 'FKP', 'GIP', 'SHP', 'JEP',
+  'GGP', 'IMP', 'KYD', 'BMD', 'KPW', 'ZWL', 'SLE',
 ];
 
-const FIAT_NAMES: Record<string, string> = {
-  USD: 'US Dollar',
-  EUR: 'Euro',
-  GBP: 'British Pound',
-  JPY: 'Japanese Yen',
-  CHF: 'Swiss Franc',
-  CAD: 'Canadian Dollar',
-  AUD: 'Australian Dollar',
-  CNY: 'Chinese Yuan',
-  INR: 'Indian Rupee',
-  BRL: 'Brazilian Real',
-  MXN: 'Mexican Peso',
-  KRW: 'South Korean Won',
-  HKD: 'Hong Kong Dollar',
-  SGD: 'Singapore Dollar',
-  SEK: 'Swedish Krona',
-  NOK: 'Norwegian Krone',
-  ZAR: 'South African Rand',
-  TRY: 'Turkish Lira',
-  NZD: 'New Zealand Dollar',
-};
+// Currency display names come from the browser's Intl.DisplayNames so the full
+// list doesn't need a hand-maintained name map.
+const currencyDisplay =
+  typeof Intl !== 'undefined' && 'DisplayNames' in Intl
+    ? new Intl.DisplayNames(['en'], { type: 'currency' })
+    : null;
+
+function fiatName(ticker: string): string {
+  try {
+    return currencyDisplay?.of(ticker) ?? ticker;
+  } catch {
+    return ticker;
+  }
+}
 
 const USD_TOKEN: SwapToken = {
   key: 'fiat:USD',
@@ -125,17 +119,16 @@ export function AssetSwap({
   const [edited, setEdited] = useState<'from' | 'to'>('from');
   const [picker, setPicker] = useState<'from' | 'to' | null>(null);
 
-  // Keep the page asset's live price flowing into whichever leg still IS the
-  // page asset (the user may have moved it to either side, or replaced it).
-  useEffect(() => {
-    setFromToken((t) => (t.key === pageToken.key ? { ...t, usdPrice: priceUSD } : t));
-    setToToken((t) => (t.key === pageToken.key ? { ...t, usdPrice: priceUSD } : t));
-  }, [priceUSD, pageToken.key]);
-
   const fiatTokens = useFiatTokens();
 
-  const pFrom = fromToken.usdPrice;
-  const pTo = toToken.usdPrice;
+  // The leg that still IS the page asset always reflects the live prop price;
+  // any other leg uses its captured price. Deriving this at render keeps the
+  // live price flowing without an effect that syncs state (which triggers
+  // cascading renders — react-hooks/set-state-in-effect).
+  const livePrice = (t: SwapToken): number | null =>
+    t.key === pageToken.key ? priceUSD : t.usdPrice;
+  const pFrom = livePrice(fromToken);
+  const pTo = livePrice(toToken);
   const priceable = pFrom != null && pFrom > 0 && pTo != null && pTo > 0;
 
   const numeric = Number(amount.replace(/,/g, ''));
@@ -486,22 +479,36 @@ function useFiatTokens(): SwapToken[] {
     queryKey: ['/v1/price/batch', 'swapFiat'],
     enabled: CURRENT_NETWORK.pricing,
     queryFn: async () => {
-      const ids = FIAT_TICKERS.map((t) => `fiat:${t}`).join(',');
-      const env = await apiGet<{
-        data: Array<{ asset_id: string; price: string | null }>;
-      }>(`/v1/price/batch?asset_ids=${encodeURIComponent(ids)}&quote=fiat:USD`, {});
+      // GET /v1/price/batch caps at 100 asset_ids, so the full ISO set is
+      // split into ≤100-id chunks fetched in parallel and merged. GET (not
+      // POST) keeps the responses edge-cacheable.
+      const CHUNK = 100;
+      const chunks: string[][] = [];
+      for (let i = 0; i < FIAT_TICKERS.length; i += CHUNK) {
+        chunks.push(FIAT_TICKERS.slice(i, i + CHUNK));
+      }
+      const envs = await Promise.all(
+        chunks.map((chunk) => {
+          const ids = chunk.map((t) => `fiat:${t}`).join(',');
+          return apiGet<{
+            data: Array<{ asset_id: string; price: string | null }>;
+          }>(`/v1/price/batch?asset_ids=${encodeURIComponent(ids)}&quote=fiat:USD`, {});
+        }),
+      );
       const out: SwapToken[] = [];
-      for (const row of env.data ?? []) {
-        const ticker = row.asset_id.replace(/^fiat:/, '');
-        const price = row.price ? Number(row.price) : 0;
-        if (!(price > 0)) continue;
-        out.push({
-          key: `fiat:${ticker}`,
-          symbol: ticker,
-          name: FIAT_NAMES[ticker] ?? ticker,
-          usdPrice: price,
-          kind: 'fiat',
-        });
+      for (const env of envs) {
+        for (const row of env.data ?? []) {
+          const ticker = row.asset_id.replace(/^fiat:/, '');
+          const price = row.price ? Number(row.price) : 0;
+          if (!(price > 0)) continue;
+          out.push({
+            key: `fiat:${ticker}`,
+            symbol: ticker,
+            name: fiatName(ticker),
+            usdPrice: price,
+            kind: 'fiat',
+          });
+        }
       }
       return out;
     },
