@@ -33,6 +33,7 @@ func TestDefaultPairs_GoldenSet(t *testing.T) {
 	usdt := crypto("USDT")
 	golden := map[string]bq{
 		"XLMUSDT": {crypto("XLM"), usdt},
+		"XLMEUR":  {crypto("XLM"), fiat("EUR")},
 		"XLMBTC":  {crypto("XLM"), crypto("BTC")},
 		"BTCUSDT": {crypto("BTC"), usdt},
 		"BTCEUR":  {crypto("BTC"), fiat("EUR")},
