@@ -471,6 +471,15 @@ stellar_history_archive_url_set: "{{ stellar_history_archive_url_sets[stellar_ne
 # (P28: core >= 28 by mainnet 2026-09-16). See docs/operations/protocol-upgrades.md.
 stellar_core_version: ""
 
+# stellar-archivist apt version. Empty = fresh-host "latest available" /
+# never-upgrade-an-existing-binary (06-stellar-core.yml), same posture as
+# stellar_core_version above. Pin the exact apt version (e.g. "0.1.5-486") to
+# clear stellarindex_stellar_stack_lagging{component="archivist"} — the probe
+# in 10-observability.yml compares dpkg-installed against the apt candidate.
+# archivist is the archive mirror/verify CLI (verify-archive tiers), NOT in the
+# live ingest path, so a bump is low-risk and needs no service restart.
+stellar_archivist_version: ""
+
 # Protocol-transition era boundaries (internal/config/config.go StellarConfig).
 # Pubnet uses the real ledger numbers; a reset testnet/futurenet is entirely
 # post-Soroban AND post-P23 from ledger 1, so BOTH are genesis (1) there —
@@ -654,7 +663,7 @@ captive_peer_port_backfill:         11727
 #   r3: galexie-live local; galexie-archive on Vultr Object Storage
 #       (S3-compatible, region-local Singapore endpoint).
 # ]
-galexie_version:         "galexie-v27.0.0"   # pinned — update via VERSIONS.md. Tag format: galexie-vX.Y.Z (matches Stellar protocol version). 2026-07-09: bumped 26→27 with the CAP-0071 SEV fix.
+galexie_version:         "galexie-v28.0.0"   # pinned — update via VERSIONS.md. Tag format: galexie-vX.Y.Z (matches Stellar protocol version). 2026-07-09: bumped 26→27 with the CAP-0071 SEV fix. 2026-08-27: bumped 27→28 for Protocol 28 — a v27 galexie cannot DECODE P28 ledger meta (observed on futurenet: "decoding LedgerCloseMetaV2: … ParallelTxExecutionStage" halted the archive backfill at ledger 92747), and mainnet crosses the P28 upgrade ledger 2026-09-16.
 # Drift guard (docs/operations/runbooks/stellar-stack-version-lag.md,
 # 2026-07-09). Distinct from `galexie_version` above on purpose:
 # that var is the go-install TAG; this is the literal, verbatim
@@ -666,7 +675,7 @@ galexie_version:         "galexie-v27.0.0"   # pinned — update via VERSIONS.md
 # crash-loop) that never got codified here is exactly the drift
 # ansible-drift.yml exists to catch. Update BOTH this value AND
 # galexie_version in the SAME PR whenever galexie is upgraded.
-galexie_expected_version_string: "stellar-galexie v0.0.0-20260610161848-c97d6484816f"
+galexie_expected_version_string: "stellar-galexie v0.0.0-20260814232054-a94b31e18ce4"
 # Second guard: sha256 of the /usr/local/bin/galexie file itself
 # (belt-and-suspenders alongside the version-string assert above —
 # catches a same-version-string-but-different-bytes swap, e.g. a
@@ -700,7 +709,7 @@ galexie_expected_version_string: "stellar-galexie v0.0.0-20260610161848-c97d6484
 # the correct signal — do not stand it down by editing the constant to
 # match whatever the box happens to report; that would codify an
 # uncodified binary, which is the drift this guard exists to catch.
-galexie_expected_binary_sha256: "045caa5f1cfc43b2cc367f1e48155763ef67ef94cecd61f3c3aaa1a77382a270"
+galexie_expected_binary_sha256: "de8200fccdc027ffd0d022ddcea0029db8c331c4323211f0a16cb47f69304d54"
 
 galexie_s3_endpoint:     "http://127.0.0.1:9000"
 galexie_s3_bucket:       "galexie-live"

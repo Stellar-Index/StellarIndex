@@ -46,6 +46,21 @@
     state: present
     update_cache: true
 
+- name: Install stellar-archivist (archive mirror/verify CLI)
+  # Managed HERE, not only in 06-stellar-core.yml: that file is gated on
+  # `run_stellar_core`, which is FALSE on r1 (galexie carries its own captive
+  # core), so archivist was installed but UNMANAGED on the very host whose
+  # version-lag probe reports on it —
+  # stellarindex_stellar_stack_lagging{component="archivist"} could therefore
+  # never be cleared by a deploy. Any host running galexie needs the archive
+  # tooling anyway (verify-archive tiers, the local mirror), so it belongs on
+  # this path. Same pin semantics as stellar-core above: empty = never upgrade.
+  # Not in the live ingest path — no service restart.
+  ansible.builtin.apt:
+    name: "stellar-archivist{{ ('=' + stellar_archivist_version) if (stellar_archivist_version | default('')) else '' }}"
+    state: present
+    update_cache: true
+
 - name: Check existing galexie version
   ansible.builtin.command: /usr/local/bin/galexie version
   register: galexie_current

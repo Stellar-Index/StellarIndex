@@ -17,10 +17,16 @@
     filename: sdf
 
 - name: Install stellar-core + support packages
+  # UNVERSIONED names with `state: present` never upgrade an existing binary —
+  # deliberate, so a routine deploy can't silently move r1's toolchain. Bumping
+  # is an explicit inventory pin, same pattern as stellar_core_version in
+  # 07-galexie.yml. stellar_archivist_version drives the
+  # stellarindex_stellar_stack_lagging{component="archivist"} gauge: leave it
+  # empty for never-upgrade, or pin the apt version to clear a lag.
   ansible.builtin.apt:
     name:
       - stellar-core
-      - stellar-archivist
+      - "stellar-archivist{{ ('=' + stellar_archivist_version) if (stellar_archivist_version | default('')) else '' }}"
       - stellar-core-prometheus-exporter
     state: present
     update_cache: true
