@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { formatCompact, formatPriceSmall } from '@/lib/format';
 import { isSafeHomeDomain } from '@/lib/safe-domain';
-import { AssetConverter } from './AssetConverter';
+import { AssetSwap } from './AssetSwap';
 import { ChangeSummaryStrip } from './ChangeSummaryStrip';
 import { LiveAssetPrice } from './LiveAssetPrice';
 import { SidebarAssetIcon } from './SidebarAssetIcon';
@@ -238,7 +238,12 @@ export function AssetSidebar({
           lean test nets (no aggregator), where they'd be empty/inert. */}
       {CURRENT_NETWORK.pricing && (
         <>
-          <AssetConverter symbol={code} priceUSD={priceUSD} />
+          <AssetSwap
+            symbol={code}
+            assetId={coin.asset_id}
+            image={coin.image}
+            priceUSD={priceUSD}
+          />
           <PerformanceRange points={coin.price_history_24h ?? []} current={priceUSD} />
         </>
       )}
