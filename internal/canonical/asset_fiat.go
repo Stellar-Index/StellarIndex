@@ -21,13 +21,39 @@ package canonical
 // CEX feed are NOT on this list — they represent a different asset
 // class that needs its own canonical type (tracked separately,
 // outside PR 164a's scope).
+//
+// 2026-08-27: widened to the FULL set the active massive.com FX feed
+// (internal/sources/external/forex) actually publishes into fx_quotes —
+// 132 codes observed on r1. The batch price endpoint rejects the whole
+// request on the first code it can't parse, so the /assets converter
+// could only ever offer the intersection of this list and the feed;
+// aligning them lets the converter surface every currency the feed
+// carries (~109 with live daily rates; the remainder — incl. legacy
+// pre-euro/redenominated codes like CYP/EEK/LTL/LVL/MTL/ROL/SIT/SKK/TRL
+// — are inert without a fresh rate and simply never resolve to a price).
 var knownFiatCodes = map[string]struct{}{
-	"ARS": {}, "AUD": {}, "BRL": {}, "CAD": {}, "CHF": {}, "CLP": {},
-	"CNY": {}, "COP": {}, "EUR": {}, "GBP": {}, "HKD": {}, "IDR": {},
-	"ILS": {}, "INR": {}, "JPY": {}, "KRW": {}, "MXN": {}, "MYR": {},
-	"NGN": {}, "NOK": {}, "NZD": {}, "PHP": {}, "PLN": {}, "RUB": {},
-	"SEK": {}, "SGD": {}, "THB": {}, "TRY": {}, "UAH": {}, "USD": {},
-	"VND": {}, "ZAR": {},
+	"AED": {}, "ALL": {}, "ARS": {}, "AUD": {}, "AWG": {}, "BAM": {},
+	"BBD": {}, "BDT": {}, "BGN": {}, "BHD": {}, "BIF": {}, "BND": {},
+	"BOB": {}, "BRL": {}, "BSD": {}, "BWP": {}, "BZD": {}, "CAD": {},
+	"CDF": {}, "CHF": {}, "CLP": {}, "CNH": {}, "CNY": {}, "COP": {},
+	"CRC": {}, "CUP": {}, "CVE": {}, "CYP": {}, "CZK": {}, "DJF": {},
+	"DKK": {}, "DOP": {}, "DZD": {}, "EEK": {}, "EGP": {}, "ETB": {},
+	"EUR": {}, "FJD": {}, "GBP": {}, "GHS": {}, "GMD": {}, "GNF": {},
+	"GTQ": {}, "GYD": {}, "HKD": {}, "HNL": {}, "HRK": {}, "HTG": {},
+	"HUF": {}, "IDR": {}, "ILS": {}, "INR": {}, "IQD": {}, "ISK": {},
+	"JMD": {}, "JPY": {}, "KES": {}, "KHR": {}, "KMF": {}, "KRW": {},
+	"KWD": {}, "KYD": {}, "KZT": {}, "LAK": {}, "LBP": {}, "LKR": {},
+	"LRD": {}, "LSL": {}, "LTL": {}, "LVL": {}, "LYD": {}, "MAD": {},
+	"MDL": {}, "MGA": {}, "MKD": {}, "MOP": {}, "MTL": {}, "MUR": {},
+	"MVR": {}, "MWK": {}, "MXN": {}, "MYR": {}, "MZN": {}, "NAD": {},
+	"NGN": {}, "NIO": {}, "NOK": {}, "NPR": {}, "NZD": {}, "OMR": {},
+	"PAB": {}, "PEN": {}, "PGK": {}, "PHP": {}, "PKR": {}, "PLN": {},
+	"PYG": {}, "QAR": {}, "ROL": {}, "RON": {}, "RSD": {}, "RUB": {},
+	"RWF": {}, "SAR": {}, "SCR": {}, "SDG": {}, "SEK": {}, "SGD": {},
+	"SIT": {}, "SKK": {}, "SOS": {}, "SVC": {}, "SZL": {}, "THB": {},
+	"TJS": {}, "TMT": {}, "TND": {}, "TRL": {}, "TRY": {}, "TTD": {},
+	"TWD": {}, "TZS": {}, "UAH": {}, "UGX": {}, "USD": {}, "UYU": {},
+	"UZS": {}, "VND": {}, "XPF": {}, "YER": {}, "ZAR": {}, "ZMW": {},
 }
 
 // IsKnownFiat reports whether code is in the ADR-0010 allow-list.
