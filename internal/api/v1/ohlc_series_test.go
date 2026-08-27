@@ -71,7 +71,10 @@ func TestOHLCSeries_ReturnsIntervalsArray(t *testing.T) {
 func TestOHLCSeries_InvalidInterval400(t *testing.T) {
 	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
 	ts := httpTestServer(t, srv)
-	for _, raw := range []string{"foo", "2h", "10s", " 1h"} {
+	// "2h" was here as the invalid example until 2h/12h/3d/2w were
+	// added to the ladder; "7h" replaces it as a plausible-looking
+	// interval with no cagg or re-bucket route.
+	for _, raw := range []string{"foo", "7h", "10s", " 1h", "2M"} {
 		resp := mustGet(t, ts.URL+"/v1/ohlc?base=native&quote=fiat:USD&interval="+raw)
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("interval=%q: status = %d, want 400", raw, resp.StatusCode)
@@ -243,7 +246,10 @@ func TestOHLCSeries_PreservesSingleBarBackcompat(t *testing.T) {
 // reaches the storage layer with the canonical string. Pins the
 // enum allow-list against drift.
 func TestOHLCSeries_AllSupportedIntervals(t *testing.T) {
-	for _, interval := range []string{"1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"} {
+	for _, interval := range []string{
+		"1m", "5m", "15m", "30m", "1h", "2h", "4h", "12h",
+		"1d", "3d", "1w", "2w", "1mo",
+	} {
 		reader := &stubHistoryReader{ohlcBars: []v1.OHLCSeriesBar{}}
 		srv := v1.New(v1.Options{History: reader})
 		ts := httpTestServer(t, srv)

@@ -3324,8 +3324,9 @@ func (r storeHistoryReader) TWAPPointsInRange(ctx context.Context, pair canonica
 // [timescale.Store.OHLCSeriesReBucketed] to the v1.HistoryReader
 // interface. Routes the request to a native CAGG when the requested
 // interval has one (1m, 15m, 1h, 1d, 1w) and falls back to
-// re-bucketing a finer CAGG for 5m/30m (via prices_1m) and 4h
-// (via prices_1h). Unknown intervals propagate as
+// re-bucketing a finer CAGG for 5m/30m (via prices_1m), 2h/4h/12h
+// (via prices_1h), 3d (via prices_1d) and 2w (via prices_1w).
+// Unknown intervals propagate as
 // v1.ErrUnknownGranularity.
 func (r storeHistoryReader) OHLCSeries(ctx context.Context, pair canonical.Pair, interval string, from, to time.Time, limit int) ([]v1.OHLCSeriesBar, error) {
 	var (
@@ -3351,8 +3352,19 @@ func (r storeHistoryReader) OHLCSeries(ctx context.Context, pair canonical.Pair,
 		bars, err = r.s.OHLCSeriesReBucketed(ctx, pair, timescale.Granularity1m, "5 minutes", from, to, limit)
 	case "30m":
 		bars, err = r.s.OHLCSeriesReBucketed(ctx, pair, timescale.Granularity1m, "30 minutes", from, to, limit)
+	case "2h":
+		bars, err = r.s.OHLCSeriesReBucketed(ctx, pair, timescale.Granularity1h, "2 hours", from, to, limit)
 	case "4h":
 		bars, err = r.s.OHLCSeriesReBucketed(ctx, pair, timescale.Granularity1h, "4 hours", from, to, limit)
+	case "12h":
+		bars, err = r.s.OHLCSeriesReBucketed(ctx, pair, timescale.Granularity1h, "12 hours", from, to, limit)
+	case "3d":
+		// Re-bucketed from the DAILY cagg, not 1h: 3d spans 72 source
+		// rows from prices_1h but only 3 from prices_1d, and the daily
+		// cagg is already the closed-bucket authority for day boundaries.
+		bars, err = r.s.OHLCSeriesReBucketed(ctx, pair, timescale.Granularity1d, "3 days", from, to, limit)
+	case "2w":
+		bars, err = r.s.OHLCSeriesReBucketed(ctx, pair, timescale.Granularity1w, "2 weeks", from, to, limit)
 	default:
 		return nil, v1.ErrUnknownGranularity
 	}
