@@ -489,6 +489,31 @@ stellar_archivist_version: ""
 stellar_soroban_genesis_ledger: "{{ 50457424 if stellar_network == 'pubnet' else 1 }}"
 stellar_movements_floor_ledger: "{{ 58762517 if stellar_network == 'pubnet' else 1 }}"
 
+# verify-archive Tier B (checkpoint anchor, ADR-0017) compares each
+# 64-ledger checkpoint's header hash against a LOCAL rs-stellar-archivist
+# mirror — VERIFY_ARCHIVE_ROOT, /srv/history-archive. That mirror is only
+# ever populated for PUBNET. On a test net the path holds a partial PUBNET
+# stub (the same one [HISTORY.localmirror] is gated away from in
+# stellar-core.cfg.j2 because it corrupts test-net catchup), so Tier B
+# anchors TESTNET ledgers against PUBNET header hashes and fails at the
+# first checkpoint, every run, forever:
+#
+#   checkpoint anchor mismatch at ledger 63:
+#     our LCM hash        = a4f3016f…   (testnet, correct)
+#     archive-signed hash = c03f11ed…   (pubnet stub)
+#
+# A real integrity check pointed at ANOTHER NETWORK's data is worse than no
+# check: it manufactures a permanent red that trains the operator to ignore
+# the one failure mode Tier A (chain-link) is blind to. So Tier B is
+# omitted where its anchor cannot be network-correct. Tier A still runs on
+# every network — it verifies chain linkage from our own archive and needs
+# no external mirror (verified on testnet: "chain-link integrity OK ✓").
+#
+# To enable Tier B on a test net, first build a network-correct mirror with
+# stellar-archivist from stellar_history_archive_url_set, then set this true
+# in that inventory.
+verify_archive_tier_b_enabled: "{{ (stellar_network | default('pubnet')) == 'pubnet' }}"
+
 catchup_mode:            "CATCHUP_RECENT"       # RECENT | COMPLETE
 is_validator:            false
 node_is_validator:       "{{ is_validator }}"
