@@ -215,6 +215,7 @@ export function AssetSwap({
         {/* Full-width token picker, overlaying the field stack. */}
         {picker && (
           <TokenPicker
+            side={picker}
             fiat={fiatTokens}
             pageToken={pageToken}
             onClose={() => setPicker(null)}
@@ -319,11 +320,13 @@ function TokenIcon({ token, size = 22 }: { token: SwapToken; size?: number }) {
 // of tokens (icon · symbol + name · USD price). Crypto results come from the
 // live /v1/assets search; fiat legs are filtered locally.
 function TokenPicker({
+  side,
   fiat,
   pageToken,
   onClose,
   onPick,
 }: {
+  side: 'from' | 'to';
   fiat: SwapToken[];
   pageToken: SwapToken;
   onClose: () => void;
@@ -419,8 +422,19 @@ function TokenPicker({
   }, [pageMatch, cryptoTokens, fiatMatches]);
 
   return (
-    <div className="absolute left-0 right-0 top-0 z-20 flex flex-col rounded-lg border border-line-strong bg-surface shadow-elevated">
-      <div className="flex items-center gap-2 border-b border-line px-3 py-2">
+    // Anchor the overlay to the box that was clicked: the 'from' leg is the top
+    // box (top-0); the 'to' leg is the second box, one row (66px) + the stack
+    // gap (space-y-1.5 = 6px) down. The search field fills that box exactly and
+    // the results list overflows below the whole widget.
+    <div
+      className={cn(
+        'absolute left-0 right-0 z-20 flex flex-col rounded-lg border border-line-strong bg-surface shadow-elevated',
+        side === 'from' ? 'top-0' : 'top-[72px]',
+      )}
+    >
+      {/* The search field is exactly a SwapRow's height (66px) so, on open, it
+          fills the input box it replaced — same footprint, no jump. */}
+      <div className="flex h-[66px] shrink-0 items-center gap-2 border-b border-line px-3.5">
         <Search className="h-4 w-4 shrink-0 text-ink-faint" />
         <input
           ref={inputRef}
