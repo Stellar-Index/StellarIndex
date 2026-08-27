@@ -473,3 +473,78 @@ first.
   `galexie-backfill-writer` user is **deleted** once the job
   exits clean (one-shot credential, no need to leave live write
   permission hanging around on an unused account).
+
+## ⛔ BLOCKER on test nets — captive-core carries the PUBNET validator set
+
+**Discovered 2026-08-27 while attempting the first testnet/futurenet
+backfills. Both attempts were aborted; do not retry until fixed.**
+
+### Symptom
+
+- **futurenet**: `scan-and-fill --start 2` dies within seconds with
+  `Could not prepare captive core ledger backend: Error fast-forwarding
+  to 2: stellar core exited unexpectedly: exit status 3`.
+- **testnet**: `scan-and-fill --start 2` *appears* to work — it reaches
+  phase 1 and downloads checkpoints at a healthy rate — but the archives
+  it downloads from are `bootes-history.publicnode.org`,
+  `archive.v5.stellar.lobstr.co`, `stellar-full-history1.bdnodes.net`,
+  `history.stellar.org/prd/core-live/…`. **Those are all PUBNET.** The
+  run is fetching mainnet checkpoints to replay under a testnet
+  passphrase; it can only end in verification failure or garbage.
+
+### Root cause
+
+The rendered `/etc/stellar/captive-core-galexie-backfill.cfg` (and the
+live `captive-core-galexie.cfg`) carry `NETWORK_PASSPHRASE` correctly
+per network, but their `[[HOME_DOMAINS]]` / `[[VALIDATORS]]` blocks —
+and crucially the `HISTORY="curl -sf …"` archive URL on **every**
+validator — come from `stellar_home_domains` / `stellar_validators` in
+`roles/archival-node/defaults/main.yml`, which are the **pubnet**
+validator set. Neither `inventory/testnet.yml` nor
+`inventory/futurenet.yml` overrides them (verified: zero occurrences in
+both files).
+
+This is precisely the hazard the neighbouring variable already guards
+against — `stellar_history_archive_urls` is network-keyed and its own
+comment says it *"MUST track stellar_network"* as "the guard against a
+test net silently ingesting pubnet checkpoints". That guard was applied
+to the archivist/append URL but **not** to the captive-core validator
+list, so the backfill path is unguarded.
+
+Live ingestion is unaffected: `galexie-append.sh` resolves the correct
+per-network archive via `SDF_HAS_URL`, and the live captive core only
+needs recent ledgers. Only the **genesis backfill** path, which relies
+on the validators' `HISTORY` archives, is broken.
+
+### Fix required before a test-net backfill can run
+
+Override the validator/archive set per network — either add
+`stellar_home_domains` + `stellar_validators` for testnet/futurenet to
+their inventories, or make the captive-core template select the set from
+`stellar_network`. Minimum viable: point the archives at the SDF
+network archive already present in `stellar_history_archive_urls`
+(`core_testnet_001` / `core_futurenet_001`). Then re-run:
+
+```sh
+systemd-run --unit=galexie-backfill --property=User=galexie \
+  --property=WorkingDirectory=/var/lib/galexie/backfill \
+  --property=EnvironmentFile=/etc/default/galexie-backfill \
+  --property=CPUWeight=50 --property=IOWeight=50 --property=MemoryMax=5G \
+  /usr/local/bin/galexie scan-and-fill \
+    --config-file /etc/galexie/galexie-backfill.toml \
+    --start 2 --end <galexie_start_ledger − 1>
+```
+
+`scan-and-fill` is idempotent, so a corrected re-run is safe. Verify
+early that the *"Selected archive …"* log lines name the intended
+network's archives before letting the run proceed.
+
+### Also observed on the testnet VM (unrelated, still open)
+
+`galexie-archive-fill.service` fails hourly. It mirrors the **AWS public
+pubnet bucket**, which has no testnet equivalent — the unit is
+inapplicable to test nets and should not be enabled there. It is one of
+8 failed units on that box (also `pgbackrest-backup`,
+`archive-completeness`, `verify-archive-tier-a/b`, `config-assertions`,
+plus `stellar-core`/`stellarindex-aggregator` units for services the
+lean test nets deliberately do not run).
