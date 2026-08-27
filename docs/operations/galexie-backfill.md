@@ -598,12 +598,30 @@ mc alias set probe http://127.0.0.1:9000 "$K" "$S" && mc ls probe/galexie-live/
 mc admin user list local     # does $K appear as an ACCESS KEY (col 2)?
 ```
 
-**The drift is per-box, not universal** — it comes from the region's own
-`*.secrets.yml`. Verified 2026-08-27: si-**testnet**'s vault renders
-`galexie-writer` while its MinIO user was `galexie-live-writer` → drift,
-outage. si-**futurenet**'s vault renders `galexie-live-writer`, which
-matches its MinIO user → no drift, safe re-render. So check per box;
-don't assume either way.
+**The drift affects BOTH test nets** (verified 2026-08-27 the hard way —
+see the trap below). Each vault renders `galexie_s3_access_key` =
+`galexie-writer` / `galexie-archive-writer`, but both boxes had their
+MinIO users provisioned as `galexie-live-writer` /
+`galexie-archive-writer`. So `--tags galexie` strands live ingestion on
+either net until the users are reconciled.
+
+> **TRAP — the pre-check above is NOT sufficient on its own.** Reading
+> the *current* `/etc/default/galexie` only tells you the creds that are
+> live **right now**; it says nothing about what ansible is **about to
+> render over them**. On si-futurenet the current env authenticated fine
+> (`galexie-live-writer`, AUTH=OK), so the re-render looked safe — and it
+> still broke ingestion, because the vault renders a *different* key.
+> Compare the **rendered** value, not the current file:
+>
+> ```sh
+> # what ansible WILL write (run from configs/ansible/):
+> ansible -i inventory/<net>.yml archival_nodes -m debug \
+>   -a "var=galexie_s3_access_key" | tail -3
+> # …then confirm that exact string appears as an ACCESS KEY (col 2) in:
+> mc admin user list local
+> ```
+>
+> If it doesn't, reconcile FIRST (recipe above), then run `--tags galexie`.
 
 Real fix (not yet done): make the MinIO user names and the galexie env
 template read the *same* variable, align the two regions' vault values,
