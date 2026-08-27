@@ -46,15 +46,26 @@ export interface SwapToken {
 // These MUST stay within the API's canonical fiat allow-list
 // (internal/canonical/asset_fiat.go, knownFiatCodes — ADR-0010): the price
 // batch rejects the ENTIRE request with 400 on the first unrecognised code, so
-// an off-list ticker here would blank out every fiat, not just itself. This is
-// the full non-USD allow-list (31 codes). Offering more (the massive.com feed
-// carries ~200) requires extending knownFiatCodes on the API side first — a
-// currency the API can't parse can't be priced regardless of what we request.
+// an off-list ticker here would blank out every fiat, not just itself (the
+// useFiatTokens allSettled guard limits that blast radius to one chunk). This
+// is the massive.com feed's universe minus USD and the handful of legacy
+// pre-euro/redenominated codes (CYP/EEK/LTL/…) that never carry a live rate;
+// currencies without a fresh rate are filtered out client-side, so the picker
+// shows the ~108 the feed actively prices.
 const FIAT_TICKERS = [
-  'ARS', 'AUD', 'BRL', 'CAD', 'CHF', 'CLP', 'CNY', 'COP', 'EUR', 'GBP',
-  'HKD', 'IDR', 'ILS', 'INR', 'JPY', 'KRW', 'MXN', 'MYR', 'NGN', 'NOK',
-  'NZD', 'PHP', 'PLN', 'RUB', 'SEK', 'SGD', 'THB', 'TRY', 'UAH', 'VND',
-  'ZAR',
+  'AED', 'ALL', 'ARS', 'AUD', 'AWG', 'BAM', 'BBD', 'BDT', 'BGN', 'BHD',
+  'BIF', 'BND', 'BOB', 'BRL', 'BSD', 'BWP', 'BZD', 'CAD', 'CDF', 'CHF',
+  'CLP', 'CNH', 'CNY', 'COP', 'CRC', 'CUP', 'CVE', 'CZK', 'DJF', 'DKK',
+  'DOP', 'DZD', 'EGP', 'ETB', 'EUR', 'FJD', 'GBP', 'GHS', 'GMD', 'GNF',
+  'GTQ', 'GYD', 'HKD', 'HNL', 'HRK', 'HTG', 'HUF', 'IDR', 'ILS', 'INR',
+  'IQD', 'ISK', 'JMD', 'JPY', 'KES', 'KHR', 'KMF', 'KRW', 'KWD', 'KYD',
+  'KZT', 'LAK', 'LBP', 'LKR', 'LRD', 'LSL', 'LYD', 'MAD', 'MDL', 'MGA',
+  'MKD', 'MOP', 'MUR', 'MVR', 'MWK', 'MXN', 'MYR', 'MZN', 'NAD', 'NGN',
+  'NIO', 'NOK', 'NPR', 'NZD', 'OMR', 'PAB', 'PEN', 'PGK', 'PHP', 'PKR',
+  'PLN', 'PYG', 'QAR', 'RON', 'RSD', 'RUB', 'RWF', 'SAR', 'SCR', 'SDG',
+  'SEK', 'SGD', 'SOS', 'SVC', 'SZL', 'THB', 'TJS', 'TMT', 'TND', 'TRY',
+  'TTD', 'TWD', 'TZS', 'UAH', 'UGX', 'UYU', 'UZS', 'VND', 'XPF', 'YER',
+  'ZAR', 'ZMW',
 ];
 
 // Currency display names come from the browser's Intl.DisplayNames so the full
