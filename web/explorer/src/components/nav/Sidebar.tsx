@@ -183,8 +183,15 @@ function Row({ item, onNavigate }: { item: NavItem; onNavigate?: () => void }) {
  */
 function StatusDot() {
   const feed = useStatus().data;
-  const overall =
+  const rawOverall =
     feed && feed.error === null ? feed.status?.overall : undefined;
+  // On the lean nets the API's `overall` counts the absent aggregator as
+  // "degraded", so the dot went amber while the status page (which derives an
+  // honest verdict from the running services) says operational. Coerce that
+  // spurious degraded → ok here so the two agree; a genuine outage still
+  // reports 'down' or errors the feed.
+  const overall =
+    !CURRENT_NETWORK.pricing && rawOverall === 'degraded' ? 'ok' : rawOverall;
   const tone =
     overall === 'ok'
       ? { cls: 'bg-ok-500', label: 'all systems operational' }
