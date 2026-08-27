@@ -7,6 +7,7 @@ import { GithubIcon } from '@/components/GithubIcon';
 import { loadBlogPost, loadBlogPosts } from '@/lib/blog';
 import { Markdown } from '@/lib/markdown';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 type Params = Promise<{ slug: string }>;
 
@@ -18,7 +19,7 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
   const { slug } = await params;
   const post = loadBlogPost(slug);
   if (!post) return { title: 'Post not found — Blog' };
-  const canonical = `https://stellarindex.io/blog/${slug}`;
+  const canonical = `${CURRENT_NETWORK.explorerUrl}/blog/${slug}`;
   const title = `${post.title} — Blog`;
   return {
     title,

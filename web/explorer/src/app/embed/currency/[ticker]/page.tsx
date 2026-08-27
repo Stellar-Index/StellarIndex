@@ -7,6 +7,7 @@ import { formatSubunitPrice } from '@/lib/format';
 
 import { LivePrice } from '../../LivePrice';
 import { isCIStub } from '@/lib/buildFetch';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
@@ -180,7 +181,7 @@ export default async function EmbedCurrencyPage({
           </span>
         </div>
         <a
-          href={`https://stellarindex.io${assetHrefFor(upper)}`}
+          href={`${CURRENT_NETWORK.explorerUrl}${assetHrefFor(upper)}`}
           target="_blank"
           rel="noreferrer noopener"
           className="text-ink-faint hover:text-brand-600 text-[10px]"

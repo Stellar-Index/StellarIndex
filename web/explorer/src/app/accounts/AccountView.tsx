@@ -30,6 +30,7 @@ import {
   renderOpFieldValue,
   stroopsToXlm,
 } from '../explorer-shared';
+import { CrossReference } from '@/components/CrossReference';
 
 // Stellar account IDs are 56 chars: 'G' + 55 base32 alphanumerics.
 const ACCOUNT_RE = /^G[A-Z2-7]{55}$/;
@@ -133,16 +134,7 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
               G-account plus an embedded routing ID, used by exchanges and
               custodians to distinguish customers behind one shared account.
               Look up the underlying G-address to see its state and activity;
-              wallets and{' '}
-              <a
-                href={`https://stellar.expert/explorer/public/account/${id}`}
-                target="_blank"
-                rel="noreferrer noopener"
-                className="text-brand-600 hover:underline"
-              >
-                stellar.expert ↗
-              </a>{' '}
-              can decode the M-form.
+              wallets and most explorers can decode the M-form.
             </p>
           )}
         </Panel>
@@ -179,17 +171,8 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
               </Link>
             </li>
           )}
-          <li>
-            <a
-              href={`https://stellar.expert/explorer/public/account/${encodeURIComponent(id)}`}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="hover:text-brand-600 hover:underline"
-            >
-              stellar.expert ↗
-            </a>
-          </li>
         </ul>
+        <CrossReference kind="account" id={id} />
         <p className="rounded-md border border-line bg-surface-muted px-3 py-2 text-xs text-ink-muted">
           Balances + trustlines + offers below reflect the lake&apos;s captured
           ledger-entry window; the activity tables show{' '}

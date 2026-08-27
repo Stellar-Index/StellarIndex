@@ -8,6 +8,7 @@ import { formatSubunitPrice } from '@/lib/format';
 import { Badge, Breadcrumbs, Callout, Container } from '@/components/ui';
 import { type GlobalAssetView } from '../../../assets/catalogue';
 import { isCIStub } from '@/lib/buildFetch';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 /**
  * /external/assets/[slug] — detail page for a NON-Stellar reference
@@ -107,7 +108,7 @@ export async function generateMetadata({
   const res = await fetchExternalAsset(slug);
   const view = res.status === 'ok' ? res.view : null;
   const name = view?.name ?? view?.ticker ?? slug;
-  const canonical = `https://stellarindex.io/external/assets/${view?.slug ?? slug}`;
+  const canonical = `${CURRENT_NETWORK.explorerUrl}/external/assets/${view?.slug ?? slug}`;
   const description = `${name} is a non-Stellar reference asset tracked by Stellar Index for pricing (it isn't issued on Stellar). Live USD price and source authority.`;
   const title = `${name} price — external asset`;
   return {

@@ -10,6 +10,7 @@
 import { NextResponse } from 'next/server';
 
 import { loadReleases, versionSlug, type Release } from '@/lib/changelog';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 // Required for output: 'export'.
 // force-static is REQUIRED here, not a perf optimisation:
@@ -27,7 +28,7 @@ import { loadReleases, versionSlug, type Release } from '@/lib/changelog';
 // or push any commit to main.
 export const dynamic = 'force-static';
 
-const SITE_URL = 'https://stellarindex.io';
+const SITE_URL = CURRENT_NETWORK.explorerUrl;
 const FEED_TITLE = 'Stellar Index — release notes';
 const FEED_AUTHOR = 'Stellar Index';
 

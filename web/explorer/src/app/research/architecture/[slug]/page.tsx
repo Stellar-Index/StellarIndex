@@ -9,6 +9,7 @@ import {
 } from '@/lib/architecture';
 import { Markdown } from '@/lib/markdown';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 // Each curated architecture doc rendered as a static page.
 // Reuses the same loader/renderer pattern as ADRs and incident
@@ -30,7 +31,7 @@ export async function generateMetadata({
   const { slug } = await params;
   const doc = loadArchitectureDoc(slug);
   if (!doc) return { title: 'Architecture doc not found' };
-  const canonical = `https://stellarindex.io/research/architecture/${slug}`;
+  const canonical = `${CURRENT_NETWORK.explorerUrl}/research/architecture/${slug}`;
   const title = `${doc.title} — Stellar Index architecture`;
   return {
     title,

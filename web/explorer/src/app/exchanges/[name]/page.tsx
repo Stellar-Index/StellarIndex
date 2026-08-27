@@ -9,6 +9,7 @@ import { PairsTable } from './PairsTable';
 import { VenueChart } from './VenueChart';
 
 import { Container, PageHeader } from '@/components/ui';
+import { CURRENT_NETWORK } from '@/lib/networks';
 const CEX_INFO: Record<
   string,
   { name: string; type: string; homepage: string; docsUrl: string; blurb: string }
@@ -61,7 +62,7 @@ export async function generateMetadata({
   const { name } = await params;
   const info = CEX_INFO[name];
   if (!info) return { title: 'Exchange not found' };
-  const canonical = `https://stellarindex.io/exchanges/${encodeURIComponent(name)}`;
+  const canonical = `${CURRENT_NETWORK.explorerUrl}/exchanges/${encodeURIComponent(name)}`;
   const title = `${info.name} — every pair, live`;
   const description = `All ${info.name} pairs observed in the last 14 days, with per-pair 24h trade count + last trade. Source: /v1/markets?source=${name}.`;
   return {

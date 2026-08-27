@@ -11,6 +11,7 @@ import { ConvertChart } from './ConvertChart';
 import { ConvertLiveRate, ConvertSnippets } from './ConvertLive';
 import { API_BASE_URL } from '@/api/client';
 import { isCIStub } from '@/lib/buildFetch';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
@@ -181,7 +182,7 @@ export async function generateMetadata({
     title: `${f} to ${t} — live exchange rate + currency converter`,
     description: `Convert ${f} to ${t} at the live mid-market rate.${ratePart} Real-time forex rate, interactive converter, and ${f}/${t} cross-rates at common amounts (1, 10, 100, 1000, 10000).`,
     alternates: {
-      canonical: `https://stellarindex.io/convert/${f}/${t}`,
+      canonical: `${CURRENT_NETWORK.explorerUrl}/convert/${f}/${t}`,
     },
     openGraph: {
       title: `${f} to ${t} converter`,
@@ -189,7 +190,7 @@ export async function generateMetadata({
         rate != null
           ? `1 ${f} = ${formatRateForMeta(rate)} ${t} — live forex rate.`
           : `Live ${f} to ${t} forex rate + converter.`,
-      url: `https://stellarindex.io/convert/${f}/${t}`,
+      url: `${CURRENT_NETWORK.explorerUrl}/convert/${f}/${t}`,
       type: 'website',
       images: SITE_OG_IMAGES,
     },

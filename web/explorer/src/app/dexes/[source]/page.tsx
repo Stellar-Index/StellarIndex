@@ -11,6 +11,7 @@ import { PoolsTable } from './PoolsTable';
 import { SourceStatsPanel } from './SourceStatsPanel';
 import { SourceTopChart } from './SourceTopChart';
 import { SourceVolumeHistory } from './SourceVolumeHistory';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 // Curated list of DEX sources with friendly names + audit links.
 // Mirrors the 5 cards on /dexes; per-DEX detail pages are
@@ -72,7 +73,7 @@ export async function generateMetadata({
   const { source } = await params;
   const info = DEX_INFO[source];
   if (!info) return { title: 'DEX not found' };
-  const canonical = `https://stellarindex.io/dexes/${encodeURIComponent(source)}`;
+  const canonical = `${CURRENT_NETWORK.explorerUrl}/dexes/${encodeURIComponent(source)}`;
   const title = `${info.name} — every pool, live`;
   const description = `All ${info.name} pools observed in the last 14 days, with per-pool 24h trade count + last trade. Source: /v1/markets?source=${source}.`;
   return {

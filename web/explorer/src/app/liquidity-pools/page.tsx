@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { Container } from '@/components/ui';
 
 import { NativePoolsPanel } from './NativePoolsPanel';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 export const metadata: Metadata = {
   title: 'Native liquidity pools on Stellar (CAP-38)',
@@ -13,7 +14,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Native liquidity pools on Stellar',
     description: 'Protocol-native (CAP-38) AMM pools on Stellar.',
-    url: 'https://stellarindex.io/liquidity-pools',
+    url: `${CURRENT_NETWORK.explorerUrl}/liquidity-pools`,
     type: 'website',
   },
 };
