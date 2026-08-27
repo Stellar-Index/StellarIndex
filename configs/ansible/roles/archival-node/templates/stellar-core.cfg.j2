@@ -119,6 +119,7 @@ mkdir = "mkdir -p /srv/history-archive/{0}"
 get = "cp /srv/history-archive/{0} {1}"
 {% endif %}
 
+{% if (stellar_network | default('pubnet')) == 'pubnet' %}
 # ──── Home domain quality tiers ─────────────────────────────────────
 # Must appear BEFORE [[VALIDATORS]] blocks reference them. QUALITY
 # HIGH = tier-1, automatically included in the outer quorum set.
@@ -150,3 +151,31 @@ ADDRESS="{{ v.address }}"
 HISTORY="{{ v.history }}"
 {% endif %}
 {% endfor %}
+{% else %}
+# ──── Non-pubnet network: use THIS network's own history archive ────
+# `stellar_home_domains` / `stellar_validators` are the PUBNET set, and
+# every validator entry carries a pubnet HISTORY archive URL. Emitting
+# them on a test net makes captive-core download PUBNET checkpoints and
+# try to replay them under a test-net NETWORK_PASSPHRASE.
+#
+# Observed 2026-08-27: the first testnet genesis backfill silently
+# fetched checkpoints from publicnode / lobstr / bdnodes /
+# history.stellar.org/prd/core-live (all pubnet) — invalid by
+# construction; and the futurenet backfill died immediately with
+# "Error fast-forwarding to 2: stellar core exited unexpectedly".
+# This is the same hazard `stellar_history_archive_urls` is deliberately
+# network-keyed to prevent ("the guard against a test net silently
+# ingesting pubnet checkpoints"); the guard simply never covered the
+# validator list. See docs/operations/galexie-backfill.md.
+#
+# Replay needs an ARCHIVE, not a quorum: galexie runs its captive core
+# with RUN_STANDALONE / UNSAFE_QUORUM, so omitting [[VALIDATORS]] on a
+# non-pubnet network is safe and leaves only correct-network archives.
+#
+# All three SDF archives (001/002/003) are listed so a slow archive or a
+# checkpoint 404 fails over instead of stalling the replay.
+{% for archive_url in stellar_history_archive_url_set %}
+[HISTORY.sdf{{ loop.index }}]
+get = "curl -sf {{ archive_url }}/{0} -o {1}"
+{% endfor %}
+{% endif %}

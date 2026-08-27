@@ -442,6 +442,28 @@ stellar_history_archive_urls:
   futurenet: "http://history.stellar.org/dev/core-futurenet/core_futurenet_001"
 stellar_history_archive_url: "{{ stellar_history_archive_urls[stellar_network] | default(stellar_history_archive_urls['pubnet']) }}"
 
+# The FULL SDF archive set per network (001/002/003), per
+# https://developers.stellar.org/docs/networks. `stellar_history_archive_url`
+# above stays single-valued (the archivist mirror + galexie-append probe want
+# one URL); this list is what a captive core replaying history should use, so a
+# single archive being slow or 404ing a checkpoint fails over instead of
+# stalling the replay. Consumed by stellar-core.cfg.j2 on NON-pubnet networks,
+# where the pubnet [[VALIDATORS]] (and their pubnet HISTORY URLs) are omitted.
+stellar_history_archive_url_sets:
+  pubnet:
+    - "https://history.stellar.org/prd/core-live/core_live_001"
+    - "https://history.stellar.org/prd/core-live/core_live_002"
+    - "https://history.stellar.org/prd/core-live/core_live_003"
+  testnet:
+    - "https://history.stellar.org/prd/core-testnet/core_testnet_001"
+    - "https://history.stellar.org/prd/core-testnet/core_testnet_002"
+    - "https://history.stellar.org/prd/core-testnet/core_testnet_003"
+  futurenet:
+    - "http://history.stellar.org/dev/core-futurenet/core_futurenet_001"
+    - "http://history.stellar.org/dev/core-futurenet/core_futurenet_002"
+    - "http://history.stellar.org/dev/core-futurenet/core_futurenet_003"
+stellar_history_archive_url_set: "{{ stellar_history_archive_url_sets[stellar_network] | default([stellar_history_archive_url]) }}"
+
 # Captive stellar-core apt version. Empty = fresh-host "latest available" /
 # never-upgrade-an-existing-binary (07-galexie.yml). Pin the exact apt version
 # (e.g. "28.0.1-3508.947aad841.noble") to drive a PROTOCOL-UPGRADE core bump —
