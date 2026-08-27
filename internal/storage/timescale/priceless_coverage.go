@@ -93,12 +93,62 @@ top_pair AS (
     ) p
    GROUP BY base_asset
 ),
-priced AS (
+priced_direct AS (
   SELECT DISTINCT base_asset AS asset_id
     FROM prices_1m
    WHERE bucket >= now() - INTERVAL '24 hours'
      AND vwap IS NOT NULL
      AND quote_asset IN (` + coverageQuoteProxies + `)
+),
+-- ONE transitive hop, kept in lockstep with Store.TransitiveUSDPrice.
+--
+-- This CTE decides what counts as "priced" for the tripwire, and it is
+-- QUOTE-based, not served-price-based: it asks "can this asset reach a
+-- USD/XLM proxy?", not "did /v1/assets serve a number?". So when the
+-- serving side gained a one-hop derivation, this had to gain the same
+-- reach in the same commit — otherwise a newly-priced asset keeps
+-- firing the alert forever, because the tripwire alone still believes
+-- it unreachable.
+--
+-- One hop ONLY, matching the resolver. Deeper chains are deliberately
+-- not counted: each additional hop compounds the trust placed in an
+-- intermediate market, and the resolver will not serve them either.
+--
+-- The floors below are NOT decoration. Without them this arm counts an
+-- asset as priced merely for TOUCHING a priced asset, while the serving
+-- side still withholds it because the connecting market is too thin —
+-- so the asset silently leaves coverage monitoring and never gets a
+-- price. Measured before adding them: of 955 newly-reachable assets, 4
+-- clear the popularity floor and TWO of those four (USDMPOOL at $798,
+-- yHELIX at $296 over 24h) fail the volume floor. Those two would have
+-- gone quiet while remaining genuinely unpriced.
+--
+-- Grouped per (asset, hop) rather than per asset, because the resolver
+-- gates ONE chosen hop — aggregating across every priced counterparty
+-- would clear the floors on combined depth no single market has.
+one_hop AS (
+  SELECT CASE WHEN p.base_asset = d.asset_id THEN p.quote_asset ELSE p.base_asset END AS asset_id,
+         d.asset_id                                                    AS hop,
+         SUM(p.volume_usd)                                             AS vol_usd,
+         COUNT(DISTINCT p.bucket)                                      AS buckets,
+         EXTRACT(EPOCH FROM (MAX(p.bucket) - MIN(p.bucket)))           AS span_s
+    FROM prices_1m p
+    JOIN priced_direct d
+      ON (d.asset_id = p.quote_asset OR d.asset_id = p.base_asset)
+   WHERE p.bucket >= now() - INTERVAL '24 hours'
+     AND p.bucket <= now() - INTERVAL '1 minute'
+     AND p.vwap IS NOT NULL
+   GROUP BY 1, 2
+),
+priced AS (
+  SELECT asset_id FROM priced_direct
+  UNION
+  SELECT DISTINCT asset_id
+    FROM one_hop
+   WHERE asset_id <> hop
+     AND vol_usd >= 1000    -- pricingguard DefaultSubstanceMinVolumeUSD
+     AND buckets >= 20      -- pricingguard DefaultSubstanceMinBuckets
+     AND span_s >= 21600    -- pricingguard DefaultSubstanceMinSpan (6h)
 )
 SELECT
     v.asset_id,

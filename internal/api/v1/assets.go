@@ -986,6 +986,14 @@ func pricingSubstanceGated(a canonical.Asset) bool {
 // Absent PriceBasis = market-derived (the pre-existing contract).
 const priceBasisDeclaredPeg = "declared_peg"
 
+// priceBasisTransitive marks a price derived through ONE intermediate hop
+// (asset -> hop -> USD proxy) rather than observed on a market quoted in
+// a USD proxy directly. Surfaced so a consumer can tell a two-hop
+// derivation from a directly-observed price and weight it accordingly —
+// the derivation is gated on both legs clearing the substance floors, but
+// it is still one inference further from the tape.
+const priceBasisTransitive = "transitive"
+
 // declaredPegFXMaxAge bounds how old the fiat→USD rate backing a
 // declared-peg fill may be. Mirrors the trailing-7-day window
 // [Server.fiatUSDPriceFor] already enforces on its authoritative
