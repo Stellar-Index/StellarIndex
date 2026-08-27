@@ -38,7 +38,11 @@ groups:
           histogram_quantile(0.95,
             sum by (le) (rate(http_request_duration_seconds_bucket{job="stellarindex_api"}[5m]))
           ) > 0.5
-        for: 2m
+        # 10m (not 2m): the p95 is already a 5m-windowed percentile, so single
+        # tough queries are absorbed. The longer `for` also rides out transient
+        # multi-minute bursts — a deploy restarting the API with cold caches, a
+        # brief load spike — and only fires on a genuinely SUSTAINED slowdown.
+        for: 10m
         labels:
           severity: ticket
           team: stellarindex
@@ -56,7 +60,9 @@ groups:
           histogram_quantile(0.99,
             sum by (le) (rate(http_request_duration_seconds_bucket{job="stellarindex_api"}[5m]))
           ) > 2
-        for: 2m
+        # 10m (not 2m): ride out transient tail-latency bursts (deploy cold
+        # start, one-off heavy scan); fire only on a sustained p99 regression.
+        for: 10m
         labels:
           severity: ticket
           team: stellarindex
