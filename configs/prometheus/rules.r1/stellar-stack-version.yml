@@ -130,6 +130,7 @@ groups:
           team: stellarindex
           component: ingestion
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/protocol-upgrades.md
           summary: "Ledger-meta decode probe stale — decode failures would go unseen"
           description: |
             ledger-meta-decode-probe has not written its textfile metric in
