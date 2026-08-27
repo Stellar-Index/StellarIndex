@@ -9,10 +9,11 @@
 import { NextResponse } from 'next/server';
 
 import { loadBlogPosts, type BlogPost } from '@/lib/blog';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 export const dynamic = 'force-static';
 
-const SITE_URL = 'https://stellarindex.io';
+const SITE_URL = CURRENT_NETWORK.explorerUrl;
 const FEED_TITLE = 'Stellar Index — engineering notes';
 const FEED_AUTHOR = 'Stellar Index';
 

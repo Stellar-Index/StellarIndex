@@ -37,6 +37,7 @@ import {
   stroopsToXlm,
 } from '../explorer-shared';
 import { shortAssetText } from '@/lib/asset-label';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 const LineChart = dynamic(
   () => import('@/components/charts/LineChart').then((m) => m.LineChart),
@@ -479,11 +480,11 @@ function HeroStats({ stats: s, tip }: { stats?: NetworkStats; tip?: Ledger }) {
       <StatCell>
         <Stat
           label="Network"
-          value="Pubnet"
+          value={CURRENT_NETWORK.stellarName}
           sub={
             tip
               ? `${formatCompact(tip.tx_count ?? 0)} tx · ${formatCompact(tip.op_count ?? 0)} ops last ledger`
-              : 'mainnet'
+              : CURRENT_NETWORK.tag
           }
         />
       </StatCell>

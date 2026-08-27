@@ -2,6 +2,7 @@ import type { MetadataRoute } from 'next';
 
 import { API_BASE_URL } from '@/api/client';
 import { loadADRs } from '@/lib/adr';
+import { CURRENT_NETWORK } from '@/lib/networks';
 import { loadArchitectureDocs } from '@/lib/architecture';
 import { loadBlogPosts } from '@/lib/blog';
 import { loadOperationsDocs } from '@/lib/operations';
@@ -14,7 +15,12 @@ import { buildConvertParams } from '@/lib/convert-params';
 // time and emitted as a static file. Same applies to robots.ts.
 export const dynamic = 'force-static';
 
-const SITE_URL = 'https://stellarindex.io';
+// Per-network origin. This was hardcoded to stellarindex.io, so a test-net
+// build emitted a sitemap listing MAINNET urls — pointing crawlers at the
+// production site from the test-net origin, and describing pages this
+// deployment does not serve. Same hardcode class as the /network page
+// reporting "Pubnet" on testnet.
+const SITE_URL = CURRENT_NETWORK.explorerUrl;
 
 /**
  * Build a sitemap URL that matches the canonical form the explorer

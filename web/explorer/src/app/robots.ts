@@ -1,5 +1,7 @@
 import type { MetadataRoute } from 'next';
 
+import { CURRENT_NETWORK } from '@/lib/networks';
+
 export const dynamic = 'force-static';
 
 /**
@@ -21,8 +23,14 @@ export default function robots(): MetadataRoute.Robots {
         disallow: ['/dev/', '/embed/', '/auth/', '/dashboard', '/signin', '/signup'],
       },
     ],
-    sitemap: 'https://stellarindex.io/sitemap.xml',
-    host: 'https://stellarindex.io',
+    // Per-network origin. These were hardcoded to stellarindex.io, so the
+    // test-net builds published a robots.txt naming MAINNET as their host
+    // and pointing crawlers at MAINNET's sitemap — inviting the test nets'
+    // duplicate-looking content to be consolidated onto, or confused with,
+    // the production site. Same hardcode class as the /network page
+    // reporting "Pubnet" on testnet.
+    sitemap: `${CURRENT_NETWORK.explorerUrl}/sitemap.xml`,
+    host: CURRENT_NETWORK.explorerUrl,
   };
 }
 

@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { CopyableSnippet } from './CopyableSnippet';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 export const metadata: Metadata = {
   title: 'Widgets — embeddable price cards',
@@ -10,7 +11,7 @@ export const metadata: Metadata = {
   alternates: { canonical: '/widgets' },
 };
 
-const SITE_URL = 'https://stellarindex.io';
+const SITE_URL = CURRENT_NETWORK.explorerUrl;
 
 // Slug forms — what `generateStaticParams` in the embed routes
 // actually pre-renders (per the /v1/coins listing's `slug` field).

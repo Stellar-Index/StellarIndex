@@ -10,6 +10,7 @@ import { buildFetchData, failBuild, requireRows } from '@/lib/buildFetch';
 import { formatCompact, formatPairPrice } from '@/lib/format';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
 import { shortAssetText } from '@/lib/asset-label';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 // Sources that also have a dedicated DEX or CEX detail page — used to
 // offer a "view as …" cross-link from the generic source profile.
@@ -67,7 +68,7 @@ export async function generateMetadata({
   params: Params;
 }): Promise<Metadata> {
   const { name } = await params;
-  const canonical = `https://stellarindex.io/sources/${encodeURIComponent(name)}`;
+  const canonical = `${CURRENT_NETWORK.explorerUrl}/sources/${encodeURIComponent(name)}`;
   const title = `${name} — source detail`;
   const description = `Per-venue source metadata, ingest cursor, and contribution profile for ${name}.`;
   return {

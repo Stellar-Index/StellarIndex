@@ -4,6 +4,7 @@ import { Container } from '@/components/ui';
 import { ProtocolView } from '../protocols/[name]/ProtocolView';
 import { SdexOrderBookSection } from './SdexOrderBookSection';
 import { SdexVolumeSection } from './SdexVolumeSection';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 export const metadata: Metadata = {
   alternates: { canonical: '/sdex' },
@@ -14,7 +15,7 @@ export const metadata: Metadata = {
     title: 'SDEX — Stellar Decentralized Exchange',
     description:
       'Stellar’s protocol-native order book: markets, offers, and trades.',
-    url: 'https://stellarindex.io/sdex',
+    url: `${CURRENT_NETWORK.explorerUrl}/sdex`,
     type: 'website',
   },
 };

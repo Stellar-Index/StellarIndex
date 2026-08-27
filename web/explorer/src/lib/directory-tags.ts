@@ -11,6 +11,8 @@
 // SERVER-SAFE home (same rationale as asset-label.ts): the RSC asset
 // detail page and the 'use client' assets table both import from here.
 
+import { stellarExpertUrl } from '@/lib/networks';
+
 /**
  * DIRECTORY_SCAM_FLAG_TAGS — the upstream directory tags that warrant a
  * prominent scam warning on an asset page/row. Matched case-insensitively
@@ -54,11 +56,12 @@ export function hasDirectoryScamFlag(
  * an issuer G-address (the stellar.expert public directory / account
  * page). Fixed, trusted host; the issuer is path-encoded. Returns null
  * for a missing/malformed G-strkey so callers render attribution without
- * a link rather than a broken one.
+ * a link rather than a broken one — and likewise on a network
+ * stellar.expert does not host (see stellarExpertUrl).
  */
 export function stellarExpertDirectoryUrl(
   issuer: string | null | undefined,
 ): string | null {
   if (!issuer || !/^G[A-Z2-7]{55}$/.test(issuer)) return null;
-  return `https://stellar.expert/explorer/public/account/${issuer}`;
+  return stellarExpertUrl('account', issuer);
 }

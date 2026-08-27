@@ -7,6 +7,7 @@ import { loadADR, loadADRs } from '@/lib/adr';
 import { Markdown } from '@/lib/markdown';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
 import { StatusBadge } from '../../StatusBadge';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 // Each ADR rendered as its own page so every architectural
 // decision has a shareable URL with proper SEO. The body is the
@@ -28,7 +29,7 @@ export async function generateMetadata({
   const { id } = await params;
   const adr = loadADR(id);
   if (!adr) return { title: 'ADR not found' };
-  const canonical = `https://stellarindex.io/research/adr/${adr.id}`;
+  const canonical = `${CURRENT_NETWORK.explorerUrl}/research/adr/${adr.id}`;
   const title = `ADR-${adr.id}: ${adr.title} — Stellar Index research`;
   const description = `Architecture decision record ${adr.id} (${adr.status}, ${adr.date}).`;
   return {

@@ -7,10 +7,11 @@
 // site rebuilds with the explorer).
 
 import { NextResponse } from 'next/server';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 export const dynamic = 'force-static';
 
-const SITE_URL = 'https://stellarindex.io';
+const SITE_URL = CURRENT_NETWORK.explorerUrl;
 
 export function GET() {
   const now = new Date();

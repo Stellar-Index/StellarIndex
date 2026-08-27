@@ -11,6 +11,8 @@ import { buildFetchData, failBuild, requireRows } from '@/lib/buildFetch';
 import { formatCompact, formatPriceSmall, formatRelative } from '@/lib/format';
 import { isSafeHomeDomain } from '@/lib/safe-domain';
 import { ogImageFor } from '@/lib/seo';
+import { StellarExpertLink } from '@/components/StellarExpertLink';
+import { CURRENT_NETWORK, stellarChainEntityUrl } from '@/lib/networks';
 
 /**
  * /issuers/[g_strkey] — single-issuer detail page.
@@ -119,7 +121,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { g_strkey } = await params;
   const short = `${g_strkey.slice(0, 8)}…${g_strkey.slice(-4)}`;
-  const canonical = `https://stellarindex.io/issuers/${g_strkey}`;
+  const canonical = `${CURRENT_NETWORK.explorerUrl}/issuers/${g_strkey}`;
   const title = `Issuer ${short} — Stellar`;
   const description = `Identity, auth flags, and issued assets for Stellar issuer ${short}.`;
   return {
@@ -351,17 +353,9 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
             // show that honestly rather than four "unknown" dots that
             // read as a broken panel (audit 2026-06-19).
             <p className="text-ink-muted text-xs">
-              Not yet resolved. Issuer account flags populate as the
-              account-flag reader processes the issuer; meanwhile see{' '}
-              <a
-                href={`https://stellar.expert/explorer/public/account/${g_strkey}`}
-                target="_blank"
-                rel="noreferrer noopener"
-                className="text-brand-600 hover:underline"
-              >
-                stellar.expert
-              </a>
-              .
+              Not yet resolved. Auth flags are read from the issuer&apos;s
+              on-chain account entry; this one is not in the captured
+              ledger-entry window yet.
             </p>
           ) : (
             <ul className="space-y-1.5 text-xs">
@@ -381,24 +375,19 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
       >
         <ul className="space-y-2">
           <li>
-            <a
-              href={`https://stellar.expert/explorer/public/account/${g_strkey}`}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="hover:text-brand-600 inline-flex items-center gap-1.5 hover:underline"
-            >
+            <StellarExpertLink kind="account" id={g_strkey} className="hover:text-brand-600 inline-flex items-center gap-1.5 hover:underline"            >
               stellar.expert
               <span className="text-ink-faint text-[10px] tracking-wider uppercase">
                 ↗
               </span>
-            </a>
+            </StellarExpertLink>
             <span className="text-ink-faint ml-2 text-xs">
               account history, balance, signers
             </span>
           </li>
           <li>
             <a
-              href={`https://stellarchain.io/accounts/${g_strkey}`}
+              href={stellarChainEntityUrl('accounts', g_strkey)}
               target="_blank"
               rel="noreferrer noopener"
               className="hover:text-brand-600 inline-flex items-center gap-1.5 hover:underline"

@@ -153,15 +153,13 @@ export function HomeRecentTrades() {
                   <TR key={`${t.ts}-${t.source}-${i}`}>
                     <Td className="text-ink-muted tabular-nums">
                       {t.tx_hash ? (
-                        <a
-                          href={`https://stellar.expert/explorer/public/tx/${t.tx_hash}`}
-                          target="_blank"
-                          rel="noreferrer noopener"
+                        <Link
+                          href={`/transactions/${t.tx_hash}/`}
                           className="hover:text-brand-600 hover:underline"
-                          title={`View tx ${t.tx_hash} on stellar.expert`}
+                          title={`View transaction ${t.tx_hash}`}
                         >
                           {formatRelative(t.ts, { suffix: false })}
-                        </a>
+                        </Link>
                       ) : (
                         formatRelative(t.ts, { suffix: false })
                       )}

@@ -102,7 +102,7 @@ export function Footer() {
             <span>
               API:{' '}
               <a
-                href="https://api.stellarindex.io"
+                href={CURRENT_NETWORK.apiBaseUrl}
                 className="font-mono hover:text-ink-body"
               >
                 api.stellarindex.io

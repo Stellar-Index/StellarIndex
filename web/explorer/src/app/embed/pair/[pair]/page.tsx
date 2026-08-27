@@ -9,6 +9,7 @@ import { formatSubunitPrice } from '@/lib/format';
 import { LivePrice } from '../../LivePrice';
 import { isCIStub } from '@/lib/buildFetch';
 import { shortAssetText } from '@/lib/asset-label';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
@@ -154,7 +155,7 @@ export default async function EmbedPairPage({ params }: { params: Params }) {
           <span className="text-ink-muted font-mono text-[10px]">Stellar</span>
         </div>
         <a
-          href={`https://stellarindex.io/markets/${linkSlug}`}
+          href={`${CURRENT_NETWORK.explorerUrl}/markets/${linkSlug}`}
           target="_blank"
           rel="noreferrer noopener"
           className="text-ink-faint hover:text-brand-600 text-[10px]"

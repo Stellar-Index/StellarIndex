@@ -119,15 +119,13 @@ export function HistoryTabPanel({
             >
               <td className="text-ink-body py-2 pr-3 font-mono text-xs">
                 {r.tx_hash ? (
-                  <a
-                    href={`https://stellar.expert/explorer/public/tx/${r.tx_hash}`}
-                    target="_blank"
-                    rel="noreferrer noopener"
-                    className="hover:text-brand-600 hover:underline"
-                    title={`View tx ${r.tx_hash} on stellar.expert`}
-                  >
+                  <Link
+                          href={`/transactions/${r.tx_hash}/`}
+                          className="hover:text-brand-600 hover:underline"
+                          title={`View transaction ${r.tx_hash}`}
+                        >
                     {formatRelative(r.ts)}
-                  </a>
+                  </Link>
                 ) : (
                   formatRelative(r.ts)
                 )}

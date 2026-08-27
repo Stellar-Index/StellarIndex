@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
 import { ProtocolsIndex } from './ProtocolsIndex';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 export const metadata: Metadata = {
   title: 'Protocols — every Stellar DeFi protocol, verified',
@@ -12,7 +13,7 @@ export const metadata: Metadata = {
     title: 'Protocols — every Stellar DeFi protocol, verified',
     description:
       'Per-protocol on-chain analytics, contract rosters and event-type breakdowns for every major Stellar protocol.',
-    url: 'https://stellarindex.io/protocols',
+    url: `${CURRENT_NETWORK.explorerUrl}/protocols`,
     type: 'website',
     images: SITE_OG_IMAGES,
   },
