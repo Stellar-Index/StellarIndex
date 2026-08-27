@@ -140,6 +140,37 @@ deployed, with a Cloudflare Origin-CA cert (orange domains can't win HTTP-01).
 - [ ] No aggregator noise in logs (aggregator not deployed); `enabled_sources`
       is `[sdex]` only.
 
+## Step 7 — Failed units on a fresh test net (triage, 2026-08-27)
+
+A newly-provisioned test net accumulates `failed` units that are NOT all
+defects. Triage each before "fixing" it — `systemctl list-units
+--state=failed`:
+
+| Unit | Cause | Disposition |
+| ---- | ----- | ----------- |
+| `galexie-archive-fill` | **Real bug (fixed).** Mirrors from AWS Public Blockchain Data with the `.../ledgers/pubnet/` path hardcoded in 5 places. AWS publishes no testnet/futurenet dataset. | **Omit** — gated on `stellar_network == 'pubnet'`, with a removal block for nets provisioned before the gate. |
+| `config-assertions` | **Real bug (fixed).** Asserted ZFS integrity + a mainnet-shaped compression want-list on a no-ZFS lean VM → 4 FAILs forever. | **Fixed in the script** — `have_zfs()` / `is_pubnet()` gates + an explicit `_skipped` series. r1 semantics unchanged. |
+| `verify-archive-tier-a` / `-tier-b` | **Transient startup ordering.** The 03:23 / 04:37 timers fired before the `galexie-archive` bucket was populated; MinIO answers a non-admin with `AccessDenied` for a bucket that isn't there, tip resolution fails, and the job falls back to a `[2,0]` serial walk and errors. | **No fix needed** — passes once the archive exists (verified: 12 parallel chunks, tip resolution fine). The failed state simply persists until something re-runs; `systemctl start verify-archive-tier-a` clears it. |
+| `archive-completeness` | **Capacity mismatch.** `TimeoutStartUSec=30min`, and a full-archive scan on the small VM exceeds it → SIGTERM. Gets worse as the archive grows toward ~4.34M objects. | **Open** — needs a longer timeout on the lean VMs, or a windowed rather than full scan. |
+| `pgbackrest-backup` | Exit **127** — pgbackrest not installed on the test-net VMs. | **Open** — install it, or omit the unit on disposable test nets. |
+| `stellar-core` | Expected: the galexie path runs with `run_stellar_core: false`. | **Residue** — disabled, not timer-driven. `reset-failed`. |
+| `stellarindex-aggregator` | Exit **203** (exec failure) — deliberately not deployed on the lean SDEX-only nets. | **Residue** — disabled, not timer-driven. `reset-failed`. |
+
+Two traps worth internalising:
+
+- **A `disabled` unit in `failed` state is residue, not an ongoing failure.**
+  Check `systemctl list-timers --all` before treating it as live: only
+  timer-driven units recur.
+- **Never reproduce a unit by rebuilding its environment on the command
+  line.** `sudo -u stellarindex env $(grep ... | xargs) <cmd>` puts every
+  secret in the env file into argv, and sudo logs the whole line to the
+  journal (promtail then ships it to Loki). Reproduce it as the unit —
+  `systemctl start <unit>`, or
+  `sudo -u <user> bash -c 'set -a; . /etc/default/<file>; set +a; exec <cmd>'`.
+  Running it *without* the unit's identity is also how you get a false
+  diagnosis: a credential-less run returns `AccessDenied` and looks like a
+  MinIO policy gap when the policy is in fact correct.
+
 ## Related
 
 - [testnet-futurenet-reset-runbook.md](./testnet-futurenet-reset-runbook.md) — reset handling.
