@@ -77,13 +77,21 @@ interface RegionDef {
   apiBaseUrl: string;
 }
 
-const REGIONS: RegionDef[] = [
-  {
-    name: 'r1',
-    label: 'Hetzner · Frankfurt',
-    apiBaseUrl: API_BASE_URL,
-  },
-];
+// Mainnet's fleet is r1 (Hetzner Frankfurt), with r2/r3 appended as they land.
+// The lean test nets are a single VM on the Hetzner Helsinki box — labelling
+// their status page "r1 · Hetzner · Frankfurt" was just wrong, so name the
+// region for the actual network there. `apiBaseUrl` is the current network's
+// API in every case, so the panel's DATA was always correct — only the label
+// was mislabelled.
+const REGIONS: RegionDef[] = CURRENT_NETWORK.pricing
+  ? [{ name: 'r1', label: 'Hetzner · Frankfurt', apiBaseUrl: API_BASE_URL }]
+  : [
+      {
+        name: CURRENT_NETWORK.label,
+        label: 'Hetzner · Helsinki',
+        apiBaseUrl: API_BASE_URL,
+      },
+    ];
 
 // IngestionSnapshot mirrors the wire shape returned by
 // `/v1/diagnostics/ingestion`. Field-for-field with the Go
@@ -795,15 +803,20 @@ function ServiceGrid({ services }: { services: ServiceEntry[] }) {
 function ServiceCard({ service }: { service: ServiceEntry }) {
   const tone = toneFor(service.status);
   const Icon = tone.icon;
+  // A service that has never reported (the aggregator isn't run on the lean
+  // test nets; an indexer heartbeat not yet recorded) comes back with an
+  // epoch-0 last_seen, which formatRelative renders as an absurd "739854d ago".
+  // Treat a pre-2000 timestamp as "never reported" rather than a real age.
+  const seenAt = service.last_seen ? new Date(service.last_seen) : null;
+  const validSeen =
+    seenAt != null && !Number.isNaN(seenAt.getTime()) && seenAt.getFullYear() > 2000;
   return (
     <Card className="flex items-start justify-between p-4">
       <div className="min-w-0">
         <div className="text-ink font-medium capitalize">{service.name}</div>
-        {service.last_seen && (
-          <div className="text-ink-faint mt-1 text-xs">
-            Last seen {formatRelative(service.last_seen)}
-          </div>
-        )}
+        <div className="text-ink-faint mt-1 text-xs">
+          {validSeen ? `Last seen ${formatRelative(service.last_seen)}` : 'Not reporting'}
+        </div>
       </div>
       <Icon className={`h-5 w-5 shrink-0 ${tone.fg}`} />
     </Card>
@@ -811,34 +824,38 @@ function ServiceCard({ service }: { service: ServiceEntry }) {
 }
 
 function LatencyStrip({ latency }: { latency: StatusResponse['latency'] }) {
+  // The lean test nets wire no request-latency metrics, so /v1/status.latency
+  // comes back all-zero over a 0-second window. `?? null` only catches
+  // null/undefined, so a literal 0 rendered "0.0 ms" against "target 0" (red
+  // breach bars) under a "0-min window". A zero/absent window means NOT
+  // MEASURED, not a real 0ms measurement — pass null so the cells show '—'.
+  const measured = (latency?.window_secs ?? 0) > 0;
+  const cell = (v: number | null | undefined) => (measured ? (v ?? null) : null);
   return (
     <section>
       <SectionHead
-        aside={`${Math.round((latency?.window_secs ?? 0) / 60)}-min window`}
+        aside={
+          measured
+            ? `${Math.round((latency?.window_secs ?? 0) / 60)}-min window`
+            : 'not measured'
+        }
       >
         Request latency
       </SectionHead>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         {/* Targets come from the API so the bars are drawn against the
-            same thresholds the `overall` roll-up judges against. They were
-            page-local literals, which is how a green "All systems
-            operational" banner came to sit above two red SLO bars
-            (site-audit S31). Literals retained only as a fallback for a
-            response predating the field. */}
-        {/* An absent percentile is a MISSING MEASUREMENT, not a fast one:
-            `?? 0` rendered "0.0 ms" in green, comfortably inside target,
-            precisely when the latency backend was unreachable. Absent
-            renders '—' with no bar and no verdict. */}
-        <LatencyCell label="p50" value={latency?.p50_ms ?? null} target={50} />
+            same thresholds the `overall` roll-up judges against. `|| N`
+            (not `?? N`) so a test-net 0 target falls back to the literal. */}
+        <LatencyCell label="p50" value={cell(latency?.p50_ms)} target={50} />
         <LatencyCell
           label="p95"
-          value={latency?.p95_ms ?? null}
-          target={latency?.p95_target_ms ?? 200}
+          value={cell(latency?.p95_ms)}
+          target={latency?.p95_target_ms || 200}
         />
         <LatencyCell
           label="p99"
-          value={latency?.p99_ms ?? null}
-          target={latency?.p99_target_ms ?? 500}
+          value={cell(latency?.p99_ms)}
+          target={latency?.p99_target_ms || 500}
         />
       </div>
     </section>

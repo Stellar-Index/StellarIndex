@@ -198,3 +198,29 @@ network. Findings beyond the API probes above:
   trades/24h) legitimately renders sparse — that is correct, not a bug; a
   more-active testnet asset (e.g. tUSDC, ~268 holders) shows the full KEEP set.
   Only the "$0 volume (24h)" USD line needs the pricing gate.
+
+### Status page (Goal-1 "look at the status page") — 2026-08-27
+Drove the testnet `/status` page. Fixed explorer-side (deployed):
+- **"Last seen 739854d ago"** on Indexer/Aggregator — an epoch-0 `last_seen`
+  (never-reported service) rendered as an absurd ~2000-year age. Now shows
+  "Not reporting" (general robustness fix; mainnet services have valid times).
+- **Latency P50/P95/P99 = "0.0 ms" vs "target 0" with red breach bars + a
+  "0-min window"** — the lean nets wire no latency metrics, so `/v1/status`
+  returns all-zero over a 0s window; `?? null` didn't catch the literal 0. Now
+  a zero/absent window renders "not measured" (no cells, no false-red bars).
+- **Ingestion labelled "r1 · Hetzner · Frankfurt"** on the testnet page — the
+  `REGIONS` name/label were hardcoded to r1. Now network-aware (Testnet/Futurenet
+  · Hetzner Helsinki, matching the actual VM host `95.217.x`). Data was always
+  correct (`apiBaseUrl` = the current net) — only the label was wrong.
+
+Remaining (API-side, decision-ready):
+- **"Degraded performance" verdict** on the test-net status page: `/v1/status`
+  returns `overall: degraded` because the intentionally-absent aggregator + an
+  unrecorded indexer heartbeat read "unknown". Same root as the (already-
+  suppressed) global banner; needs the status `overall` computation to not count
+  an intentionally-absent service as degraded, + wiring the test-net indexer
+  heartbeat.
+- **"PRODUCTION" deployment tag** on the test-net ingestion panel comes from the
+  API's `region.deployment` field (the test-net inventory copied r1's
+  `deployment = production`); fix in the testnet/futurenet inventory region
+  config.
