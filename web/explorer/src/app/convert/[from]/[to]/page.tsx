@@ -3,7 +3,6 @@ import Link from 'next/link';
 import { ArrowLeftRight } from 'lucide-react';
 
 import { Breadcrumbs } from '@/components/ui';
-import { CURRENT_NETWORK } from '@/lib/networks';
 import { SITE_OG_IMAGES } from '@/lib/seo';
 import { assetHrefFor } from '@/lib/fiat-slugs';
 import { buildConvertParams } from '@/lib/convert-params';
@@ -91,10 +90,11 @@ async function fetchTickers(): Promise<string[]> {
 // HUB_TICKERS + the pair-builder live in @/lib/convert-params so the
 // sitemap mirrors this exact set (no drift → no 404s in the sitemap).
 export async function generateStaticParams() {
-  // The converter is pure fiat/USD (no aggregator on the lean test nets), so
-  // build ZERO convert pages there — with output:export an empty param set
-  // means every /convert/* URL 404s instead of shipping ~4,360 inert pages.
-  if (!CURRENT_NETWORK.pricing) return [];
+  // NOTE: with output:export a dynamic route may NOT return an empty param set
+  // (Next errors "missing generateStaticParams"), so we can't 404 the whole
+  // /convert tree by building zero pages. The route is instead hidden from the
+  // Footer nav on the lean test nets (see Footer LEAN_HIDDEN_HREFS); its live
+  // rate/chart fetches are gated below so a direct visit doesn't 404-storm.
   return buildConvertParams(await fetchTickers());
 }
 
