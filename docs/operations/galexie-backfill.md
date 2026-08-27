@@ -548,3 +548,59 @@ inapplicable to test nets and should not be enabled there. It is one of
 `archive-completeness`, `verify-archive-tier-a/b`, `config-assertions`,
 plus `stellar-core`/`stellarindex-aggregator` units for services the
 lean test nets deliberately do not run).
+
+## ⚠️ Second hazard — MinIO credential drift on any `--tags galexie` run
+
+**Hit 2026-08-27 on si-testnet; caused a short live-ingestion outage.**
+
+`--tags galexie` re-renders `/etc/default/galexie` and
+`/etc/default/galexie-backfill` from `galexie_s3_access_key` /
+`galexie_archive_s3_access_key` (vault). On si-testnet the MinIO users
+had been provisioned under **different names** than the role templates:
+
+| what ansible renders | what MinIO actually had |
+| --- | --- |
+| `galexie-writer` (this is also the *policy* name) | user `galexie-live-writer`, policy `galexie-writer` |
+| `galexie-archive-writer` | present, but the secret no longer matched |
+
+The drift is **latent** — it only bites when the env files are
+re-rendered. Symptom: galexie crash-loops with
+
+```
+could not connect to destination data store failed to list objects in
+bucket 'galexie-live': ... StatusCode: 403 ... InvalidAccessKeyId
+```
+
+`--tags minio` did *not* repair it (that play failed on a `no_log` task).
+The reliable repair is to reconcile MinIO to whatever ansible rendered —
+`mc admin user add` updates the secret when the user already exists:
+
+```sh
+KEY=$(grep '^AWS_ACCESS_KEY_ID='     /etc/default/galexie | cut -d= -f2-)
+SEC=$(grep '^AWS_SECRET_ACCESS_KEY=' /etc/default/galexie | cut -d= -f2-)
+mc admin user add    local "$KEY" "$SEC"
+mc admin policy attach local galexie-writer --user "$KEY"
+# verify BEFORE restarting galexie:
+mc alias set probe http://127.0.0.1:9000 "$KEY" "$SEC" && mc ls probe/galexie-live/
+systemctl restart galexie      # ONE restart, then watch
+```
+
+Repeat with `/etc/default/galexie-backfill` + policy
+`galexie-archive-writer` for the `galexie-archive` bucket.
+
+**Do this BEFORE running `--tags galexie` on a box that hasn't had it
+run recently** (futurenet still needs it), so the env re-render doesn't
+strand live ingestion. Real fix (not yet done): make the MinIO user
+names and the galexie env template read the *same* variable, and stop
+naming a user after a policy.
+
+### Why only the backfill was fetching pubnet checkpoints
+
+Worth recording, because it bounds the blast radius of the blocker
+above: the **live** `galexie.toml` has **no** `captive_core_toml_path`,
+so live ingestion uses galexie's built-in per-network preset — which
+already carries the correct `sdf_testnet_1/2/3` validators and
+`core_testnet_00{1,2,3}` archives. Only `galexie-backfill.toml` sets
+`captive_core_toml_path`, so only the backfill picked up the rendered
+pubnet validator list. Live ingestion was never fetching wrong-network
+data on any net.
