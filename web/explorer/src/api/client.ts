@@ -3,9 +3,15 @@
 // Resolves the base URL from `NEXT_PUBLIC_API_BASE_URL` (set in
 // `next.config.mjs`). Use this everywhere instead of constructing
 // URLs by hand so the `<>` reveal can introspect every request.
+//
+// The FALLBACK is this network's own API origin, not mainnet's — an
+// unset NEXT_PUBLIC_API_BASE_URL on a test-net build used to silently
+// point the whole explorer at mainnet data.
+
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellarindex.io';
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? CURRENT_NETWORK.apiBaseUrl;
 
 // [absence: timeouts] Every runtime (client-side) fetch used to have no
 // upper bound at all — a hung connection left a query (and anything

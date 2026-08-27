@@ -1,3 +1,4 @@
+import { CURRENT_NETWORK } from '@/lib/networks';
 // Shared SEO helpers — single source of truth for the social-share
 // preview image so every detail page gets the same og:image.
 //
@@ -96,7 +97,7 @@ export function breadcrumbJsonLd(
         position: i + 1,
         name: c.label,
       };
-      if (c.href) li.item = new URL(c.href, 'https://stellarindex.io').toString();
+      if (c.href) li.item = new URL(c.href, CURRENT_NETWORK.explorerUrl).toString();
       return li;
     }),
   };
@@ -126,7 +127,7 @@ export function datasetJsonLd(opts: {
     creator: {
       '@type': 'Organization',
       name: 'Stellar Index',
-      url: 'https://stellarindex.io',
+      url: CURRENT_NETWORK.explorerUrl,
     },
   };
   if (opts.keywords?.length) node.keywords = opts.keywords;

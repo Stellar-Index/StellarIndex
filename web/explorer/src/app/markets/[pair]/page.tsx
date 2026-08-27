@@ -19,6 +19,8 @@ import { PairChart } from './PairChart';
 import { PairPathView } from './PairPathView';
 import { SourceBreakdown } from './SourceBreakdown';
 import { shortAssetText } from '@/lib/asset-label';
+import { StellarExpertLink } from '@/components/StellarExpertLink';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 type Params = Promise<{ pair: string }>;
 
@@ -188,7 +190,7 @@ export async function generateMetadata({
   // crawlers its real URL was a dead page. Decode-then-encode is
   // idempotent for both encoded and raw inputs; trailing slash matches
   // the site's canonical form (trailingSlash: true).
-  const canonical = `https://stellarindex.io/markets/${encodeURIComponent(decodeURIComponent(pair))}/`;
+  const canonical = `${CURRENT_NETWORK.explorerUrl}/markets/${encodeURIComponent(decodeURIComponent(pair))}/`;
   return {
     title,
     description,
@@ -341,7 +343,7 @@ export default async function PairPage({ params }: { params: Params }) {
   const datasetLD = datasetJsonLd({
     name: `${baseLabel}/${quoteLabel} price & volume — Stellar Index`,
     description: `Aggregated volume-weighted average price (VWAP), OHLC candles, and trade volume for the ${baseLabel}/${quoteLabel} market on Stellar, computed by Stellar Index across on-chain venues (SDEX, AMMs) and tracked exchanges.`,
-    url: `https://stellarindex.io/markets/${encodeURIComponent(`${base}~${quote}`)}`,
+    url: `${CURRENT_NETWORK.explorerUrl}/markets/${encodeURIComponent(`${base}~${quote}`)}`,
     keywords: [
       baseLabel,
       quoteLabel,
@@ -510,15 +512,9 @@ export default async function PairPage({ params }: { params: Params }) {
                   >
                     <td className="text-ink-muted px-3 py-2 tabular-nums">
                       {t.tx_hash ? (
-                        <a
-                          href={`https://stellar.expert/explorer/public/tx/${t.tx_hash}`}
-                          target="_blank"
-                          rel="noreferrer noopener"
-                          className="hover:text-brand-600 hover:underline"
-                          title={`View tx ${t.tx_hash} on stellar.expert`}
-                        >
+                        <StellarExpertLink kind="tx" id={t.tx_hash} className="hover:text-brand-600 hover:underline" title={`View tx ${t.tx_hash} on stellar.expert`}                        >
                           {formatTimestamp(t.ts)}
-                        </a>
+                        </StellarExpertLink>
                       ) : (
                         formatTimestamp(t.ts)
                       )}

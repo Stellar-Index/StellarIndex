@@ -9,6 +9,7 @@ import {
 } from '@/lib/operations';
 import { Markdown } from '@/lib/markdown';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 // Each curated operations doc rendered as a static page. Same
 // shape as the ADR / architecture / discovery browsers.
@@ -28,7 +29,7 @@ export async function generateMetadata({
   const { slug } = await params;
   const doc = loadOperationsDoc(slug);
   if (!doc) return { title: 'Operations doc not found' };
-  const canonical = `https://stellarindex.io/research/operations/${slug}`;
+  const canonical = `${CURRENT_NETWORK.explorerUrl}/research/operations/${slug}`;
   const title = `${doc.title} — Stellar Index operations`;
   return {
     title,

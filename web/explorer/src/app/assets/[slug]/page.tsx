@@ -42,6 +42,7 @@ import {
   getCatalogue,
   type GlobalAssetView,
 } from '../catalogue';
+import { StellarExpertLink } from '@/components/StellarExpertLink';
 
 /**
  * /assets/[slug] — single asset detail page.
@@ -686,8 +687,8 @@ export async function generateMetadata({
   // The external page is canonical post-LC-001; point crawlers there.
   const canonical =
     globalView?.class === 'fiat'
-      ? `https://stellarindex.io/external/assets/${canonicalSlug}`
-      : `https://stellarindex.io/assets/${canonicalSlug}`;
+      ? `${CURRENT_NETWORK.explorerUrl}/external/assets/${canonicalSlug}`
+      : `${CURRENT_NETWORK.explorerUrl}/assets/${canonicalSlug}`;
 
   return {
     title,
@@ -824,7 +825,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
   const datasetLD = datasetJsonLd({
     name: `${coin.code} price & market data — Stellar Index`,
     description: `Aggregated price (VWAP), market cap, supply, and trading data for ${coin.code}${coin.issuer ? ` (issuer ${coin.issuer})` : ''} on Stellar, computed by Stellar Index.`,
-    url: `https://stellarindex.io/assets/${coin.slug}`,
+    url: `${CURRENT_NETWORK.explorerUrl}/assets/${coin.slug}`,
     keywords: [coin.code, `${coin.code} price`, 'Stellar', 'asset', 'VWAP'],
     variableMeasured: [
       'price (USD)',
@@ -1224,21 +1225,16 @@ function OverviewBody({
       >
         <ul className="space-y-2">
           <li>
-            <a
-              href={
-                coin.asset_id === 'native'
-                  ? 'https://stellar.expert/explorer/public/asset/XLM'
-                  : `https://stellar.expert/explorer/public/asset/${coin.asset_id.replace('-', '-')}`
-              }
-              target="_blank"
-              rel="noreferrer noopener"
+            <StellarExpertLink
+              kind="asset"
+              id={coin.asset_id === 'native' ? 'XLM' : coin.asset_id}
               className="hover:text-brand-600 inline-flex items-center gap-1.5 hover:underline"
             >
               stellar.expert
               <span className="text-ink-faint text-[10px] tracking-wider uppercase">
                 ↗
               </span>
-            </a>
+            </StellarExpertLink>
             <span className="text-ink-faint ml-2 text-xs">
               holders, supply, on-chain history
             </span>

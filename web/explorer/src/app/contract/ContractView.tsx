@@ -20,6 +20,7 @@ import {
   scaledUnits,
 } from '../explorer-shared';
 import type { paths } from '@/api/types';
+import { StellarExpertLink } from '@/components/StellarExpertLink';
 
 // GetJSON extracts the application/json body of a GET 200 response for
 // the per-contract sub-resources (wasm / code-history / interactions)
@@ -252,14 +253,9 @@ export function ContractView({ id: idProp }: { id?: string } = {}) {
         </div>
         <ul className="text-ink-body flex flex-wrap gap-x-6 gap-y-1 text-xs">
           <li>
-            <a
-              href={`https://stellar.expert/explorer/public/contract/${data.contract_id || id}`}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="hover:text-brand-600 hover:underline"
-            >
+            <StellarExpertLink kind="contract" id={data.contract_id || id} className="hover:text-brand-600 hover:underline"            >
               stellar.expert ↗
-            </a>
+            </StellarExpertLink>
           </li>
           <li>
             <a

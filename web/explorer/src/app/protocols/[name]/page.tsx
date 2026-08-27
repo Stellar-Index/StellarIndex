@@ -6,6 +6,7 @@ import { ogImageFor } from '@/lib/seo';
 import { ProtocolView } from './ProtocolView';
 import { PROTOCOLS, protocolMeta } from '../registry';
 import { Container } from '@/components/ui';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 // Static-export dynamic route. The protocol name set is the bounded
 // registry (../registry.ts, mirrored from internal/api/v1/
@@ -34,8 +35,8 @@ export async function generateMetadata({
   // nav revision follow-up 2026-08-24) — point its metadata there too.
   const canonical =
     name === 'sdex'
-      ? 'https://stellarindex.io/sdex'
-      : `https://stellarindex.io/protocols/${encodeURIComponent(name)}`;
+      ? `${CURRENT_NETWORK.explorerUrl}/sdex`
+      : `${CURRENT_NETWORK.explorerUrl}/protocols/${encodeURIComponent(name)}`;
   const title = meta
     ? `${meta.label} — protocol analytics`
     : `${name} — protocol analytics`;

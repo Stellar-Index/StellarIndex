@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { CategoryHub } from '@/components/CategoryHub';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 export const metadata: Metadata = {
   title: 'AMM protocols on Stellar — pools, swaps & volume',
@@ -11,7 +12,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Stellar AMM protocols',
     description: 'Soroban AMMs on Stellar: pools, swaps, and volume.',
-    url: 'https://stellarindex.io/amm',
+    url: `${CURRENT_NETWORK.explorerUrl}/amm`,
     type: 'website',
   },
 };

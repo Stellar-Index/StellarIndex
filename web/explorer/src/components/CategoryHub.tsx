@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { PROTOCOLS } from '@/app/protocols/registry';
 import { Container, PageHeader } from '@/components/ui';
 import { serializeJsonLd } from '@/lib/seo';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 /**
  * A category landing page (SEO plan D5): "Stellar {category} protocols". Lists
@@ -32,7 +33,7 @@ export function CategoryHub({
       '@type': 'ListItem',
       position: i + 1,
       name: p.label,
-      url: `https://stellarindex.io/protocols/${p.name}`,
+      url: `${CURRENT_NETWORK.explorerUrl}/protocols/${p.name}`,
     })),
   };
 

@@ -9,6 +9,8 @@ import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
 import type { paths } from '@/api/types';
 
 import { PoolReserves } from './PoolReserves';
+import { StellarExpertLink } from '@/components/StellarExpertLink';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 type Params = Promise<{ pool: string }>;
 
@@ -118,7 +120,7 @@ export async function generateMetadata({
   const { pool } = await params;
   const label =
     BLEND_POOL_LABELS[pool]?.name ?? `${pool.slice(0, 6)}…${pool.slice(-6)}`;
-  const canonical = `https://stellarindex.io/lending/${pool}`;
+  const canonical = `${CURRENT_NETWORK.explorerUrl}/lending/${pool}`;
   const title = `${label} — Blend lending pool`;
   const description = `Auction activity, user count, and contract metadata for the Blend pool at ${pool}.`;
   return {
@@ -223,15 +225,9 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
         {label?.initiator && (
           <p className="text-ink-muted font-mono text-[11px]">
             Deployed by{' '}
-            <a
-              href={`https://stellar.expert/explorer/public/account/${label.initiator}`}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="text-brand-600 hover:underline"
-              title={label.initiator}
-            >
+            <StellarExpertLink kind="account" id={label.initiator} className="text-brand-600 hover:underline" title={label.initiator}            >
               {label.initiator.slice(0, 6)}…{label.initiator.slice(-4)}
-            </a>
+            </StellarExpertLink>
           </p>
         )}
         <div className="flex flex-wrap gap-3 pt-1 text-xs">
@@ -247,15 +243,10 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
           >
             Contract events →
           </Link>
-          <a
-            href={`https://stellar.expert/explorer/public/contract/${pool}`}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="text-brand-600 inline-flex items-center gap-1 hover:underline"
-          >
+          <StellarExpertLink kind="contract" id={pool} className="text-brand-600 inline-flex items-center gap-1 hover:underline"          >
             View on stellar.expert
             <ExternalLink className="h-3 w-3" />
-          </a>
+          </StellarExpertLink>
           <a
             href="https://blend.capital"
             target="_blank"

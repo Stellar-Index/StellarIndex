@@ -30,6 +30,7 @@ import {
   renderOpFieldValue,
   stroopsToXlm,
 } from '../explorer-shared';
+import { StellarExpertLink } from '@/components/StellarExpertLink';
 
 // Stellar account IDs are 56 chars: 'G' + 55 base32 alphanumerics.
 const ACCOUNT_RE = /^G[A-Z2-7]{55}$/;
@@ -134,14 +135,9 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
               custodians to distinguish customers behind one shared account.
               Look up the underlying G-address to see its state and activity;
               wallets and{' '}
-              <a
-                href={`https://stellar.expert/explorer/public/account/${id}`}
-                target="_blank"
-                rel="noreferrer noopener"
-                className="text-brand-600 hover:underline"
-              >
+              <StellarExpertLink kind="account" id={id} className="text-brand-600 hover:underline"              >
                 stellar.expert ↗
-              </a>{' '}
+              </StellarExpertLink>{' '}
               can decode the M-form.
             </p>
           )}
@@ -180,14 +176,9 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
             </li>
           )}
           <li>
-            <a
-              href={`https://stellar.expert/explorer/public/account/${encodeURIComponent(id)}`}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="hover:text-brand-600 hover:underline"
-            >
+            <StellarExpertLink kind="account" id={encodeURIComponent(id)} className="hover:text-brand-600 hover:underline"            >
               stellar.expert ↗
-            </a>
+            </StellarExpertLink>
           </li>
         </ul>
         <p className="rounded-md border border-line bg-surface-muted px-3 py-2 text-xs text-ink-muted">

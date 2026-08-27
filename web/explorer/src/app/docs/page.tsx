@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 export const metadata: Metadata = {
   title: 'Developer docs — Stellar Index API',
@@ -10,12 +11,12 @@ export const metadata: Metadata = {
     title: 'Stellar Index API — Developer docs',
     description:
       'Base URL, auth, rate limits, pricing/asset/market endpoints, SSE streaming, errors, and conventions for the Stellar Index API.',
-    url: 'https://stellarindex.io/docs',
+    url: `${CURRENT_NETWORK.explorerUrl}/docs`,
     type: 'website',
   },
 };
 
-const BASE = 'https://api.stellarindex.io';
+const BASE = CURRENT_NETWORK.apiBaseUrl;
 
 function Code({ children }: { children: string }) {
   return (
@@ -186,7 +187,7 @@ export default function DocsPage() {
           <code className="font-mono text-sm">type</code>, not the prose.
         </p>
         <Code>{`{
-  "type": "https://api.stellarindex.io/errors/rate-limited",
+  "type": "${BASE}/errors/rate-limited",
   "title": "Rate limit exceeded",
   "status": 429,
   "detail": "quota exhausted; see Retry-After"

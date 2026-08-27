@@ -9,6 +9,7 @@ import type { Coin } from '@/api/hooks';
 import { API_BASE_URL } from '@/api/client';
 import { formatSubunitPrice } from '@/lib/format';
 import { isCIStub } from '@/lib/buildFetch';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
@@ -262,7 +263,7 @@ export default async function EmbedAssetPage({ params }: { params: Params }) {
           <span className="text-ink-muted font-mono text-[10px]">Stellar</span>
         </div>
         <a
-          href={`https://stellarindex.io/assets/${slug}`}
+          href={`${CURRENT_NETWORK.explorerUrl}/assets/${slug}`}
           target="_blank"
           rel="noreferrer noopener"
           className="text-ink-faint hover:text-brand-600 text-[10px]"
