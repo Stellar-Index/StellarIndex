@@ -587,13 +587,34 @@ export default function StatusPageClient({
     };
   }, [seedIncidents]);
 
-  const overallTone = useMemo(() => toneFor(status?.overall), [status]);
+  // On the lean nets, re-derive the service list and overall verdict from
+  // what's genuinely observable (see leanServices) instead of trusting the
+  // API's global roll-up, which counts the absent aggregator + un-heartbeated
+  // indexer as "degraded". Mainnet uses the API's verdict verbatim.
+  const displayServices = useMemo(
+    () =>
+      status
+        ? CURRENT_NETWORK.pricing
+          ? status.services
+          : leanServices(status.services, ingestionByRegion)
+        : [],
+    [status, ingestionByRegion],
+  );
+  const effectiveOverall: ServiceStatus = CURRENT_NETWORK.pricing
+    ? (status?.overall ?? 'unknown')
+    : status
+      ? worstStatus(displayServices)
+      : 'unknown';
+  const overallTone = useMemo(
+    () => toneFor(effectiveOverall),
+    [effectiveOverall],
+  );
 
   return (
     <Container className="max-w-5xl space-y-8 py-10">
       <PageHead />
       <StatusNotices />
-      <OverallBanner status={status?.overall ?? 'unknown'} tone={overallTone} />
+      <OverallBanner status={effectiveOverall} tone={overallTone} />
       {error && (
         <Card className="border-bad-300 bg-bad-50 text-bad-700 px-4 py-3 text-sm">
           Status feed unreachable: {error}.{' '}
@@ -609,9 +630,15 @@ export default function StatusPageClient({
       )}
       {status && (
         <>
-          <ServiceGrid services={status.services} />
+          <ServiceGrid services={displayServices} />
           <LatencyStrip latency={status.latency} />
-          <FreshnessRow freshness={status.freshness} />
+          {/* "Ingest freshness" is aggregator-centric (last aggregator tick +
+              exchange-source count) — both absent by design on the lean nets,
+              where the real freshness signal is the per-region ledger lag in
+              IngestionRegions below. Show it only where the aggregator runs. */}
+          {CURRENT_NETWORK.pricing && (
+            <FreshnessRow freshness={status.freshness} />
+          )}
           <IngestionRegions regions={REGIONS} snapshots={ingestionByRegion} />
           <ActiveIncidents incidents={status.incidents?.active ?? []} />
         </>
@@ -787,6 +814,54 @@ function NoticeBanner({ notice }: { notice: StatusNotice }) {
   );
 }
 
+// The lean test nets run no aggregator, and their indexer posts no status
+// heartbeat (so it comes back `unknown` with an epoch-0 last_seen even while
+// it ingests perfectly). The API's global `overall` roll-up counts both as
+// degrading, so /v1/status reports "degraded" on a completely healthy net.
+// Rebuild the service list from what's actually true there: drop the
+// by-design-absent aggregator, and derive the indexer's health from live
+// ingestion freshness — a ledger advancing at 1–3 s lag is proof the indexer
+// is healthy, heartbeat or not.
+const LEAN_INGEST_STALE_SECS = 180;
+
+function leanServices(
+  services: ServiceEntry[],
+  ingestion: Record<string, IngestionSnapshot | null>,
+): ServiceEntry[] {
+  const lags = Object.values(ingestion)
+    .map((s) => s?.ledger?.lag_seconds)
+    .filter((l): l is number => typeof l === 'number');
+  const freshestLag = lags.length ? Math.min(...lags) : null;
+  return services
+    .filter((svc) => svc.name !== 'aggregator')
+    .map((svc) => {
+      if (svc.name !== 'indexer' || freshestLag == null) return svc;
+      // Heartbeat isn't wired on the lean nets — trust live ingestion.
+      // (ServiceEntry.status is the wire union ok|down|unknown; a genuinely
+      // stalled ingest maps to `down`.)
+      return {
+        ...svc,
+        status: freshestLag <= LEAN_INGEST_STALE_SECS ? 'ok' : 'down',
+      } as ServiceEntry;
+    });
+}
+
+const STATUS_RANK: Record<ServiceStatus, number> = {
+  down: 3,
+  degraded: 2,
+  unknown: 1,
+  ok: 0,
+};
+
+function worstStatus(services: ServiceEntry[]): ServiceStatus {
+  let worst: ServiceStatus = 'ok';
+  for (const s of services) {
+    const st = (s.status ?? 'unknown') as ServiceStatus;
+    if ((STATUS_RANK[st] ?? 0) > (STATUS_RANK[worst] ?? 0)) worst = st;
+  }
+  return worst;
+}
+
 function ServiceGrid({ services }: { services: ServiceEntry[] }) {
   return (
     <section>
@@ -810,13 +885,26 @@ function ServiceCard({ service }: { service: ServiceEntry }) {
   const seenAt = service.last_seen ? new Date(service.last_seen) : null;
   const validSeen =
     seenAt != null && !Number.isNaN(seenAt.getTime()) && seenAt.getFullYear() > 2000;
+  // On the lean nets the indexer posts no heartbeat, so last_seen is epoch-0
+  // even though leanServices() has already derived its true health from live
+  // ingestion. Don't render the contradictory "Not reporting" under a green
+  // icon — describe it by the derived status instead.
+  const leanIndexerNoHeartbeat =
+    !CURRENT_NETWORK.pricing && service.name === 'indexer' && !validSeen;
+  const subtitle = validSeen
+    ? `Last seen ${formatRelative(service.last_seen)}`
+    : leanIndexerNoHeartbeat
+      ? service.status === 'ok'
+        ? 'Ingesting live'
+        : service.status === 'unknown'
+          ? 'Awaiting ingest signal'
+          : 'Ingest stalled'
+      : 'Not reporting';
   return (
     <Card className="flex items-start justify-between p-4">
       <div className="min-w-0">
         <div className="text-ink font-medium capitalize">{service.name}</div>
-        <div className="text-ink-faint mt-1 text-xs">
-          {validSeen ? `Last seen ${formatRelative(service.last_seen)}` : 'Not reporting'}
-        </div>
+        <div className="text-ink-faint mt-1 text-xs">{subtitle}</div>
       </div>
       <Icon className={`h-5 w-5 shrink-0 ${tone.fg}`} />
     </Card>
@@ -1413,14 +1501,26 @@ function RegionPanel({
       <RegionHeader region={region} snapshot={snapshot} />
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <LedgerCard ledger={snapshot.ledger} live={liveFresh} />
-        <FXBackfillCard fx={snapshot.fx_backfill} />
+        {/* FX-backfill is aggregator-derived (fiat quotes) — 0 on the lean
+            nets. Show it only where the aggregator runs. */}
+        {CURRENT_NETWORK.pricing && <FXBackfillCard fx={snapshot.fx_backfill} />}
         <SupplyCard supply={snapshot.supply} />
       </div>
-      <BackfillCoverageTable
-        rows={snapshot.backfill_coverage}
-        asOf={snapshot.backfill_coverage_as_of}
-      />
-      <SourceHealthTable rows={snapshot.sources} />
+      {/* Backfill-coverage + source-health enumerate the full oracle/DEX-adapter
+          source roster. The lean nets still carry that mainnet roster in config
+          (every adapter at 0 trades, with mainnet genesis ledgers that render as
+          negative expected-ledger counts against a 4M test-net tip), so both
+          tables are noise there. The dedicated /sources page shows the real
+          on-chain sources. Render them only where the aggregator runs. */}
+      {CURRENT_NETWORK.pricing && (
+        <>
+          <BackfillCoverageTable
+            rows={snapshot.backfill_coverage}
+            asOf={snapshot.backfill_coverage_as_of}
+          />
+          <SourceHealthTable rows={snapshot.sources} />
+        </>
+      )}
     </Card>
   );
 }
@@ -1510,9 +1610,17 @@ function LedgerCard({
         valueClass={lagColor}
         mono
       />
+      {/* USD volume needs the aggregator's pricing — unmeasurable on the lean
+          nets, where it comes back "0"; show "—" rather than a false "$0". */}
       <Row
         label="24h volume"
-        value={ledger.volume_24h_usd ? formatUSD(ledger.volume_24h_usd) : '—'}
+        value={
+          CURRENT_NETWORK.pricing &&
+          ledger.volume_24h_usd &&
+          Number(ledger.volume_24h_usd) > 0
+            ? formatUSD(ledger.volume_24h_usd)
+            : '—'
+        }
       />
       <Row
         label="Markets (24h)"
