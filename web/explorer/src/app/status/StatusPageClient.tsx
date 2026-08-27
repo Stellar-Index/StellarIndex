@@ -566,6 +566,10 @@ export default function StatusPageClient({
   // polling would be wasted work. On a fetch failure we keep the seed
   // — the panel never collapses to "no incidents" during an outage.
   useEffect(() => {
+    // Lean test-nets run no Alertmanager and hide the incident-history
+    // panel entirely, so skip the doomed /v1/incidents fetch (which would
+    // only log a console error and set the feed to "error").
+    if (!CURRENT_NETWORK.pricing) return;
     let cancelled = false;
     fetch(`${API_BASE_URL}/v1/incidents`, { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
@@ -643,13 +647,16 @@ export default function StatusPageClient({
           <ActiveIncidents incidents={status.incidents?.active ?? []} />
         </>
       )}
-      {/* EndpointMatrix and IncidentHistory render UNCONDITIONALLY —
-              they don't depend on the /v1/status feed. The matrix runs
-              its own independent probes (so red badges show during an
-              outage), and the history is seeded from the build-time
-              corpus (so past incidents survive a full API outage). WB-02 */}
+      {/* EndpointMatrix renders UNCONDITIONALLY — it doesn't depend on
+              the /v1/status feed; the matrix runs its own independent
+              probes (so red badges show during an outage). WB-02 */}
       <EndpointMatrix endpoints={VISIBLE_ENDPOINTS} health={endpointHealth} />
-      <IncidentHistory entries={incidentHistory} feed={incidentFeed} />
+      {/* Incident history is mainnet-only: the lean test-nets run no
+              Alertmanager, so there is no incident feed to show and no
+              postmortem corpus is bundled for them. */}
+      {CURRENT_NETWORK.pricing && (
+        <IncidentHistory entries={incidentHistory} feed={incidentFeed} />
+      )}
       {status && <RegionMeta asOf={asOf} region={status.region} />}
     </Container>
   );
