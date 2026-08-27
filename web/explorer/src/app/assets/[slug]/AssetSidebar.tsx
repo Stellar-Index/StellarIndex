@@ -1,5 +1,6 @@
 import Link from 'next/link';
 
+import { CURRENT_NETWORK } from '@/lib/networks';
 import { formatCompact, formatPriceSmall } from '@/lib/format';
 import { isSafeHomeDomain } from '@/lib/safe-domain';
 import { AssetConverter } from './AssetConverter';
@@ -233,11 +234,14 @@ export function AssetSidebar({
         />
       </div>
 
-      {/* Converter */}
-      <AssetConverter symbol={code} priceUSD={priceUSD} />
-
-      {/* 24h price performance range */}
-      <PerformanceRange points={coin.price_history_24h ?? []} current={priceUSD} />
+      {/* Converter + 24h USD performance range — pricing-only; hidden on the
+          lean test nets (no aggregator), where they'd be empty/inert. */}
+      {CURRENT_NETWORK.pricing && (
+        <>
+          <AssetConverter symbol={code} priceUSD={priceUSD} />
+          <PerformanceRange points={coin.price_history_24h ?? []} current={priceUSD} />
+        </>
+      )}
     </div>
   );
 }

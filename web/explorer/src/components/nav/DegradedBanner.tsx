@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { AlertTriangle, XCircle } from 'lucide-react';
 
 import { useStatus } from '@/api/hooks';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 /**
  * DegradedBanner surfaces in-product degraded / down state from
@@ -31,6 +32,15 @@ const FAILURE_THRESHOLD = 2;
 
 export function DegradedBanner() {
   const feed = useStatus().data;
+
+  // The lean test nets run no aggregator and no Prometheus/Alertmanager, so
+  // /v1/status reports overall="degraded" (indexer/aggregator services read
+  // "unknown", last_seen 0) and incidents_status="unknown". That is a false
+  // signal — the test net is serving fine — so the banner would sit permanently
+  // "Degraded performance · alert status unknown". Suppress it there entirely;
+  // the banner exists to warn about the mainnet serving plane. (Called after
+  // useStatus so the hook order is unconditional; pricing is a build constant.)
+  if (!CURRENT_NETWORK.pricing) return null;
 
   // health-check: distinct from `overall` — "we could not reach the status
   // feed at all", which used to be swallowed silently and look identical

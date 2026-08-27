@@ -13,6 +13,7 @@ import { Badge, Card, Container, type BadgeTone } from '@/components/ui';
 import { isSafeHref } from '@/lib/markdown';
 import type { components, paths } from '@/api/types';
 import { API_BASE_URL } from '@/api/client';
+import { CURRENT_NETWORK } from '@/lib/networks';
 import { useStatus } from '@/api/hooks';
 import {
   formatCompact,
@@ -357,6 +358,20 @@ const PUBLIC_ENDPOINTS: PublicEndpoint[] = [
   },
 ];
 
+// On the lean test nets there is no aggregator and no oracle contracts, so the
+// Pricing / Oracle / Historical(price-observation) probe groups ALWAYS fail —
+// they would render entire red sections that read as a major outage and spam
+// 404s into the console every poll. Drop those groups there; the chain-native
+// probe groups (Health, Ledgers, Assets, Markets, Accounts, Contracts, …) stay.
+const VISIBLE_ENDPOINTS: PublicEndpoint[] = CURRENT_NETWORK.pricing
+  ? PUBLIC_ENDPOINTS
+  : PUBLIC_ENDPOINTS.filter(
+      (e) =>
+        e.group !== 'Pricing' &&
+        e.group !== 'Oracle' &&
+        e.group !== 'Historical',
+    );
+
 // 5s probe budget — well under the 30s polling interval. Every
 // public endpoint should serve a 200 response within this budget;
 // crossing it gets the "slow" tone even on 200.
@@ -424,7 +439,7 @@ export default function StatusPageClient({
     Record<string, EndpointProbeResult>
   >(() => {
     const init: Record<string, EndpointProbeResult> = {};
-    for (const ep of PUBLIC_ENDPOINTS) {
+    for (const ep of VISIBLE_ENDPOINTS) {
       if (ep.probe.kind !== 'get') {
         init[ep.path] = { kind: 'static', label: ep.probe.kind };
       }
@@ -503,7 +518,7 @@ export default function StatusPageClient({
     let cancelled = false;
 
     function runTier(tier: ProbeTier) {
-      const tierEps = PUBLIC_ENDPOINTS.filter(
+      const tierEps = VISIBLE_ENDPOINTS.filter(
         (e) => e.probe.kind === 'get' && (e.tier ?? 'warm') === tier,
       );
       const probes = tierEps.map((e) => probeEndpoint(e));
@@ -598,7 +613,7 @@ export default function StatusPageClient({
               its own independent probes (so red badges show during an
               outage), and the history is seeded from the build-time
               corpus (so past incidents survive a full API outage). WB-02 */}
-      <EndpointMatrix endpoints={PUBLIC_ENDPOINTS} health={endpointHealth} />
+      <EndpointMatrix endpoints={VISIBLE_ENDPOINTS} health={endpointHealth} />
       <IncidentHistory entries={incidentHistory} feed={incidentFeed} />
       {status && <RegionMeta asOf={asOf} region={status.region} />}
     </Container>

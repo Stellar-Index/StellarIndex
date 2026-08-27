@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { CurrencyCombobox } from '@/components/CurrencyCombobox';
 import { apiGet, asExample } from '@/api/client';
+import { CURRENT_NETWORK } from '@/lib/networks';
 import { formatSubunitPrice } from '@/lib/format';
 
 interface CurrencyRow {
@@ -83,6 +84,10 @@ export function AssetConverter({
   // crypto-asset converter is dominated by the crypto's own volatility.
   const fx = useQuery<CurrencyRow[]>({
     queryKey: ['/v1/price/batch', 'forAssetConverter'],
+    // No aggregator/FX on the lean test nets → /v1/price/batch is empty; the
+    // converter is hidden there (see the AssetSidebar call site), but gate the
+    // query too so it never fires.
+    enabled: CURRENT_NETWORK.pricing,
     queryFn: async () => {
       const assetIds = ALL_FIAT.filter((t) => t !== 'USD')
         .map((t) => `fiat:${t}`)
