@@ -194,6 +194,20 @@ type Worker struct {
 	// mutual-agreement test and yields no veto at all).
 	// Only touched from persistSnapshot (single-goroutine, as guards).
 	historyVeto map[string]float64
+
+	// fallbacks are tried IN ORDER when the primary client cannot serve
+	// rates, so a paid-feed outage degrades coverage instead of ending
+	// it. Empty by default — a worker with no fallbacks behaves exactly
+	// as before.
+	fallbacks []RateProvider
+
+	// activeSource is the feed that produced the CURRENT snapshot. It is
+	// stamped into fx_quotes.source and used as the `source` metric
+	// label, so `stellarindex_external_fx_last_quote_unix{source=...}`
+	// shows which feed is actually live rather than always claiming the
+	// primary. Only touched from refreshOnce -> persistSnapshot
+	// (single-goroutine, as guards).
+	activeSource string
 }
 
 // NewWorker constructs the worker. interval is the refresh
@@ -222,7 +236,16 @@ func NewWorker(client *Client, cache *Cache, logger *slog.Logger, interval time.
 		interval:    interval,
 		circulation: circulation,
 		guards:      map[string]*rateGuard{},
+		// Until a refresh says otherwise, the primary is the source.
+		activeSource: fxSource,
 	}
+}
+
+// WithFallbacks registers standby rate providers, tried in order when
+// the primary client fails. See [RateProvider] for why this exists.
+func (w *Worker) WithFallbacks(providers ...RateProvider) *Worker {
+	w.fallbacks = append(w.fallbacks, providers...)
+	return w
 }
 
 // WithWriter attaches a persistent quote writer. When set, every
@@ -257,22 +280,86 @@ func (w *Worker) Run(ctx context.Context) error {
 // refreshOnce performs a single fetch+install cycle. Errors get
 // logged at warn level (not error — a stale cache is degraded
 // service, not a crash condition).
-func (w *Worker) refreshOnce(ctx context.Context) {
+// sourceLabel is the feed name stamped on persisted rows and metric
+// labels. It falls back to the primary when activeSource is unset so a
+// zero-value Worker — a struct literal, as several tests build — keeps
+// the exact pre-fallback behaviour instead of writing an empty source.
+func (w *Worker) sourceLabel() string {
+	if w.activeSource == "" {
+		return fxSource
+	}
+	return w.activeSource
+}
+
+// fetchRates returns rates from the first source that can serve them,
+// along with that source's name. The primary client is always tried
+// first; fallbacks follow in registration order.
+//
+// A context cancellation is NOT a source failure — it means we are
+// shutting down, so it short-circuits rather than burning through every
+// fallback on the way out.
+func (w *Worker) fetchRates(ctx context.Context) (map[string]float64, time.Time, string, error) {
 	rates, publishedAt, err := w.client.LatestUSDRates(ctx)
+	if err == nil {
+		return rates, publishedAt, fxSource, nil
+	}
+	if errors.Is(err, context.Canceled) {
+		return nil, time.Time{}, "", err
+	}
+	primaryErr := err
+
+	for _, fb := range w.fallbacks {
+		rates, publishedAt, err = fb.LatestUSDRates(ctx)
+		if err == nil {
+			// Loud on purpose: serving from a standby is a degraded
+			// state an operator should see, not a silent substitution.
+			w.logger.Warn("forex: primary failed — serving from fallback",
+				"primary", fxSource, "primary_err", primaryErr,
+				"fallback", fb.Name(), "currencies", len(rates))
+			return rates, publishedAt, fb.Name(), nil
+		}
+		if errors.Is(err, context.Canceled) {
+			return nil, time.Time{}, "", err
+		}
+		w.logger.Warn("forex: fallback failed", "fallback", fb.Name(), "err", err)
+	}
+	return nil, time.Time{}, "", primaryErr
+}
+
+func (w *Worker) refreshOnce(ctx context.Context) {
+	rates, publishedAt, source, err := w.fetchRates(ctx)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return
 		}
-		w.logger.Warn("forex: rates fetch failed", "err", err)
+		w.logger.Warn("forex: rates fetch failed on every source", "err", err)
 		return
 	}
+	w.activeSource = source
+
 	names, err := w.client.CurrencyNames(ctx)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return
 		}
-		w.logger.Warn("forex: names fetch failed", "err", err)
-		return
+		// Names are STATIC labels, not rates: losing them must not cost
+		// us a refresh whose rates we already have. This matters most in
+		// exactly the case the fallback exists for — when the primary is
+		// down, its names endpoint is down too. Reuse the last snapshot's
+		// names; only bail if we have none at all (first run).
+		if prev := w.cache.Latest(); prev != nil && len(prev.Currencies) > 0 {
+			names = make(map[string]string, len(prev.Currencies))
+			for _, c := range prev.Currencies {
+				if c.Name != "" {
+					names[c.Ticker] = c.Name
+				}
+			}
+			w.logger.Warn("forex: names fetch failed — reusing last known names",
+				"err", err, "names", len(names))
+		} else {
+			w.logger.Warn("forex: names fetch failed and no cached names", "err", err)
+			return
+		}
 	}
 
 	// Carry forward the prior snapshot's history while we backfill.
@@ -355,7 +442,7 @@ func (w *Worker) persistSnapshot(ctx context.Context, snap *Snapshot) {
 			Ticker:     c.Ticker,
 			RateUSD:    c.RateUSD,
 			InverseUSD: 1.0 / c.RateUSD,
-			Source:     fxSource,
+			Source:     w.sourceLabel(),
 		})
 	}
 	for ticker, points := range snap.History7d {
@@ -370,7 +457,7 @@ func (w *Worker) persistSnapshot(ctx context.Context, snap *Snapshot) {
 				Ticker:     ticker,
 				RateUSD:    p.RateUSD,
 				InverseUSD: 1.0 / p.RateUSD,
-				Source:     fxSource,
+				Source:     w.sourceLabel(),
 			})
 		}
 		batch = w.healFromHistoryMajority(ticker, rejected, batch, currentRowIx)
@@ -403,7 +490,7 @@ func (w *Worker) persistSnapshot(ctx context.Context, snap *Snapshot) {
 	// dry fiat-FX feed BEFORE the 7-day fx_snap lookback expires and
 	// fiat-quoted pairs silently break.
 	if len(batch) > 0 {
-		obs.ExternalFXLastQuoteUnix.WithLabelValues(fxSource).Set(float64(time.Now().Unix()))
+		obs.ExternalFXLastQuoteUnix.WithLabelValues(w.sourceLabel()).Set(float64(time.Now().Unix()))
 	}
 }
 
@@ -461,7 +548,7 @@ func (w *Worker) healFromHistoryMajority(
 	w.logger.Warn("forex: unconfirmed bootstrap baseline refuted by agreeing history majority; healing",
 		"ticker", ticker, "baseline", g.lastAccepted, "median", med,
 		"bars", len(rejected))
-	obs.ExternalFXBaselineHealedTotal.WithLabelValues(fxSource).Inc()
+	obs.ExternalFXBaselineHealedTotal.WithLabelValues(w.sourceLabel()).Inc()
 	g.lastAccepted = med
 	g.pending = 0
 	g.stuckCount = 0
@@ -478,7 +565,7 @@ func (w *Worker) healFromHistoryMajority(
 			Ticker:     ticker,
 			RateUSD:    p.RateUSD,
 			InverseUSD: 1.0 / p.RateUSD,
-			Source:     fxSource,
+			Source:     w.sourceLabel(),
 		})
 	}
 	return batch
@@ -593,7 +680,7 @@ func (w *Worker) vetoConfirmByHistory(ticker string, g *rateGuard, rate float64)
 		reason = "deviation_history_conflict_stuck"
 	}
 	g.pending = rate
-	obs.ExternalFXRateRejectedTotal.WithLabelValues(fxSource, reason).Inc()
+	obs.ExternalFXRateRejectedTotal.WithLabelValues(w.sourceLabel(), reason).Inc()
 	w.logger.Warn("forex: pending confirmation refuted by agreeing history majority; refusing",
 		"ticker", ticker, "candidate", rate, "median", med,
 		"previous", g.lastAccepted, "reason", reason, "band", maxRateDeviation)
@@ -680,7 +767,7 @@ func (w *Worker) acceptHistoryRate(ticker string, rate float64) bool {
 // the metric deliberately does not label) and a bump on the bounded
 // per-reason counter.
 func (w *Worker) rejectRate(ticker string, rate, previous float64, reason string) {
-	obs.ExternalFXRateRejectedTotal.WithLabelValues(fxSource, reason).Inc()
+	obs.ExternalFXRateRejectedTotal.WithLabelValues(w.sourceLabel(), reason).Inc()
 	w.logger.Warn("forex: rejected upstream rate; keeping last accepted",
 		"ticker", ticker, "rate", rate, "previous", previous,
 		"reason", reason, "band", maxRateDeviation)

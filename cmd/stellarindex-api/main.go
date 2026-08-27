@@ -742,6 +742,14 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// latest rates + 7d history to the hypertable so /v1/currencies
 	// can serve historical charts beyond the in-memory window.
 	forexWorker = forexWorker.WithWriter(&forexQuoteWriter{store: store})
+	// Standby FX source. `massive` is a PAID feed and was the ONLY series
+	// in stellarindex_external_fx_last_quote_unix (measured 2026-08-27),
+	// so a 401/429/subscription lapse silently broke every fiat-quoted
+	// pair once the 7-day forex-snap lookback expired. ECB is free,
+	// keyless and authoritative — narrower coverage (~30 currencies,
+	// working days only) but rates rather than none. Only consulted when
+	// the primary fails; the source label follows the feed that served.
+	forexWorker = forexWorker.WithFallbacks(forex.ECBProvider{})
 
 	// F-1350: dry-run exits HERE — before the first `go` statement and
 	// before the heavy background SQL (backfill-coverage refresh,
