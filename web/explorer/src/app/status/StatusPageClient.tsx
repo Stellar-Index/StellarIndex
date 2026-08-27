@@ -941,7 +941,11 @@ function FreshnessRow({
             Last aggregator tick
           </div>
           <div className="text-ink mt-1 font-mono text-sm">
-            {formatRelative(freshness?.last_aggregator_tick)}
+            {/* Epoch-0 tick on the lean nets (no aggregator) → "—", not the
+                absurd "739854d ago" formatRelative would produce. */}
+            {snapshotAgeSeconds(freshness?.last_aggregator_tick) == null
+              ? '—'
+              : formatRelative(freshness?.last_aggregator_tick)}
           </div>
         </Card>
         <Card className="p-4">
@@ -2020,5 +2024,9 @@ function noticeTone(severity: StatusNotice['severity']): {
 // component's render (same rationale as `timeSince`).
 function snapshotAgeSeconds(iso: string | null | undefined): number | null {
   if (!iso) return null;
-  return Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  const t = new Date(iso).getTime();
+  // Guard epoch-0 / invalid timestamps (a never-recorded snapshot on the lean
+  // test nets) — they'd otherwise render an absurd ~2000-year "739854d ago".
+  if (Number.isNaN(t) || new Date(iso).getUTCFullYear() < 2000) return null;
+  return Math.floor((Date.now() - t) / 1000);
 }
