@@ -514,6 +514,20 @@ stellar_movements_floor_ledger: "{{ 58762517 if stellar_network == 'pubnet' else
 # in that inventory.
 verify_archive_tier_b_enabled: "{{ (stellar_network | default('pubnet')) == 'pubnet' }}"
 
+# pgBackRest scheduled backups. pgBackRest itself is NOT installed by this
+# role (there is no apt task for it anywhere) — it is provisioned
+# out-of-band on the pubnet hosts. So on a test net, "enabled" installed a
+# nightly timer whose binary is absent: exit 127 and a failed unit every
+# night since provisioning, AND a unit list that reads as though backups
+# exist. The test nets are rebuilt from
+# docs/operations/testnet-futurenet-reset-runbook.md, not restored.
+#
+# Derived from the network rather than left to each inventory so a FRESH
+# test net is correct before anyone writes an inventory line — the
+# inventories set it explicitly too, as documentation of intent. An unset
+# network defaults to pubnet, so r1/r2/r3 keep backups on.
+pgbackrest_backup_enabled: "{{ (stellar_network | default('pubnet')) == 'pubnet' }}"
+
 catchup_mode:            "CATCHUP_RECENT"       # RECENT | COMPLETE
 is_validator:            false
 node_is_validator:       "{{ is_validator }}"

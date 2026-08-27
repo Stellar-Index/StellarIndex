@@ -79,6 +79,13 @@ all:
     stellarindex_reserve_balances_stroops: {}
     stellarindex_watched_sep41_contracts: []
     stellarindex_watched_classic_assets: []
+    # Disposable test net: pgBackRest is NOT installed by the role (there is
+    # no apt task for it anywhere), and the nets are rebuilt from the reset
+    # runbook rather than restored. Leaving backups "enabled" installed a
+    # nightly timer whose binary is absent -> exit 127 and a failed unit
+    # every night, AND a unit list that reads as though backups exist.
+    # Turning it off removes the timer and makes the absence honest.
+    pgbackrest_backup_enabled: false
 
     pgbackrest_offsite_ack: true
     ch_schema_snapshot_offsite_ack: true
