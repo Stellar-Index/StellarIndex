@@ -70,11 +70,28 @@ its signals. Pick one and reproduce:
 # Does /v1/assets/{asset_id} really serve no price_usd?
 curl -fs "https://api.stellarindex.io/v1/assets/<asset_id>" | jq '.data.price_usd'
 # What quotes does it actually trade against? (the missing-path clue)
+# BOTH stored directions — a pair is written as (A,B) AND (B,A), each
+# holding only PART of the market. Grouping on base_asset alone
+# under-reports the true bucket count by roughly half and will send you
+# chasing a thin-market theory that is not real (2026-08-27: CBIJ/XLM
+# reads 13 buckets one way, 14 the other, 27 unioned — floor is 20).
 psql "$STELLARINDEX_POSTGRES_DSN" -c \
-  "SELECT quote_asset, count(*), max(bucket) FROM prices_1m
-     WHERE base_asset = '<asset_id>' AND bucket >= now() - INTERVAL '24 hours'
-     GROUP BY quote_asset ORDER BY 2 DESC;"
+  "SELECT CASE WHEN base_asset = '<asset_id>' THEN quote_asset ELSE base_asset END AS counterparty,
+          count(*) AS buckets, sum(trade_count) AS trades, max(bucket) AS last_seen
+     FROM prices_1m
+    WHERE (base_asset = '<asset_id>' OR quote_asset = '<asset_id>')
+      AND bucket >= now() - INTERVAL '24 hours'
+    GROUP BY 1 ORDER BY 2 DESC;"
+
+# Is the asset even ELIGIBLE for a catalogue price? A Soroban-native
+# asset is NOT (see the decision tree) — this returns 0 rows for one.
+psql "$STELLARINDEX_POSTGRES_DSN" -c \
+  "SELECT count(*) FROM classic_assets WHERE asset_id = '<asset_id>';"
 ```
+
+Note the gate itself is direction-safe — `Store.PairMarketSubstance`
+already unions both directions and de-dupes with `GROUP BY bucket`. It is
+the *ad-hoc diagnosis query* that misleads, not the production measurement.
 
 ## Decision tree — `stellarindex_assets_popular_priceless`
 
@@ -84,6 +101,29 @@ psql "$STELLARINDEX_POSTGRES_DSN" -c \
 | Asset trades only against another classic asset with no USD path | No triangulation route to USD | Confirm the intermediate has a USD price; add the pair to the chain if warranted |
 | Asset is a SAC form of a classic that IS priced | Alias fold gap | Confirm `[supply].sac_wrappers` maps the SAC; the alias registry should fold it (task #28 Part A) |
 | Asset is genuinely a scam we should not price | It should be labelled/withheld, not surfaced here | Add it to the scam directory / withhold path so it stops counting |
+| Asset is **Soroban-native** (56-char `C…` contract, no classic twin) and `classic_assets` has no row for it | **Structural — it can never receive a catalogue price.** Both catalogue price queries are built on `classic_assets` (`FROM classic_assets ca` in the listing, `JOIN classic_assets ca ON ca.asset_id = chosen.asset_id` in the detail, `internal/storage/timescale/asset_catalogue.go`), and that table holds **zero** contract assets. The substance gate is NOT the blocker — it runs and *allows* the asset, which is why `price_usd` is null with **no withheld reason** | Requires extending the catalogue price path to Soroban-native assets. Do **not** paper over it by recording a synthetic withheld verdict — that converts a real coverage gap into a silent one, which is precisely what this alert exists to catch |
+
+**Soroban assets: SAC wrapper vs Soroban-native.** These behave completely
+differently and the distinction is the first thing to establish:
+
+- A **SAC wrapper** of a classic asset (AQUA, SHX, EURC, BTC, XRP, PYUSD,
+  sUSD, BLND, CETES, VELO…) is folded onto its classic form by the alias
+  registry and prices normally. Nothing to do.
+- A **Soroban-native** asset — a contract with no classic counterpart — has
+  no `classic_assets` row and so no price path at all.
+
+Measured 2026-08-27: of the 15 Soroban assets over $1k/24h, **13 were SAC
+wrappers (all correctly priced)** and exactly **2 were Soroban-native and
+unpriced** — `CBIJ…` ($19k/24h) and `CAUP7…` ($9.4k/24h). The gap is
+narrow, but it is a genuine capability gap, not a tuning problem.
+
+Note also that a Soroban-native asset may only be reachable through
+*another* Soroban-native asset: `CAUP7` trades against nothing but `CBIJ`,
+so pricing it needs a **transitive hop** (`CAUP7/CBIJ × CBIJ_usd`). The
+catalogue prices the long tail through exactly two hard-coded CTEs —
+`direct_usd` and `asset_vs_xlm` — with no transitive step, and the
+multi-hop graph router (`MaxHops=3`) only operates over `cfg.Pairs`, a
+~10-pair operator allow-list that does not serve the long tail.
 
 ## Decision tree — `stellarindex_priceless_coverage_check_stale`
 
@@ -128,3 +168,11 @@ psql "$STELLARINDEX_POSTGRES_DSN" -c \
 
 - 2026-08-25 — initial draft alongside the priceless-popular tripwire
   (task #28 Part B).
+- 2026-08-27 — added the **Soroban-native** decision-tree row after the
+  `CAUP7…` firing was misdiagnosed three times (as a routing gap, then a
+  thin-market/`MinBuckets` problem, then a pair-direction bug). None were
+  correct: `classic_assets` holds no contract assets, so the price is
+  never computed and the gate never withholds. Also corrected the quick-
+  diagnosis quote-mix query to union both stored pair directions — the
+  single-direction form under-reports buckets by ~half and is what
+  produced the false thin-market diagnosis.
