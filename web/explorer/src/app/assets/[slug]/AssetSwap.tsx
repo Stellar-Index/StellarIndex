@@ -339,9 +339,30 @@ function TokenPicker({
   const [query, setQuery] = useState('');
   const debounced = useDebounced(query.trim(), 200);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     inputRef.current?.focus();
+  }, []);
+
+  // Cap the scroll area to what fits above the viewport bottom, leaving a 10px
+  // gap, so a long list never overflows the page. Set imperatively (no state)
+  // to avoid re-renders and the set-state-in-effect rule; recomputed on
+  // resize/scroll since the trigger's viewport position moves with both.
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const fit = () => {
+      const top = el.getBoundingClientRect().top;
+      el.style.maxHeight = `${Math.max(120, window.innerHeight - top - 10)}px`;
+    };
+    fit();
+    window.addEventListener('resize', fit);
+    window.addEventListener('scroll', fit, true);
+    return () => {
+      window.removeEventListener('resize', fit);
+      window.removeEventListener('scroll', fit, true);
+    };
   }, []);
 
   // Close on Escape.
@@ -422,8 +443,26 @@ function TokenPicker({
       seen.add(t.key);
       out.push(t);
     }
-    return out;
-  }, [pageMatch, cryptoTokens, fiatMatches]);
+    if (!q) return out;
+    // With a query, rank by match quality so the thing the user typed surfaces
+    // to the top — otherwise the /v1/assets popularity fallback (which returns
+    // top coins even for a non-matching query like "DKK") buries the exact fiat
+    // match at the bottom of the list. Stable within each tier.
+    const rank = (t: SwapToken) => {
+      const sym = t.symbol.toLowerCase();
+      const name = (t.name ?? '').toLowerCase();
+      if (sym === q) return 0;
+      if (sym.startsWith(q)) return 1;
+      if (sym.includes(q)) return 2;
+      if (name.startsWith(q)) return 3;
+      if (name.includes(q)) return 4;
+      return 5;
+    };
+    return out
+      .map((t, i) => ({ t, i, r: rank(t) }))
+      .sort((a, b) => a.r - b.r || a.i - b.i)
+      .map((x) => x.t);
+  }, [pageMatch, cryptoTokens, fiatMatches, q]);
 
   return (
     // Anchor the overlay to the box that was clicked: the 'from' leg is the top
@@ -456,7 +495,7 @@ function TokenPicker({
           <X className="h-4 w-4" />
         </button>
       </div>
-      <div className="max-h-72 overflow-y-auto py-1">
+      <div ref={listRef} className="max-h-72 overflow-y-auto py-1">
         {coins.isLoading && list.length === 0 && (
           <p className="px-3 py-4 text-sm text-ink-muted">Searching…</p>
         )}
