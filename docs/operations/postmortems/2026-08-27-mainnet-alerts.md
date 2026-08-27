@@ -106,6 +106,20 @@ shouldn't compute the full set). Highest-value item for the "constantly
 popping up" complaint — but it is an API change requiring test + a deliberate
 deploy, so it is queued, not hot-patched.
 
+**Update 2026-08-27 (sharper measurement + a ruled-out workaround).** Over a 90-min
+window the slow requests are entirely `/v1/pairs` (~10s, every ~5 min) and
+`/v1/assets` (~3.6s, two concurrent, every ~10 min), all **status 200** (slow,
+not erroring), at a **regular cache-expiry cadence** — not load. Live latency is
+sub-ms when warm, so these are heavy *cold recomputes*; the per-pair
+`/v1/pairs` MarketsReader query is the worst at ~10s cold and is the top
+optimization target. An **external cache-warmer (r1-local timer curling the hot
+tuples) was considered and rejected**: the recompute is a blocking, histogram-
+counted request regardless of whether a warmer or a real user triggers it — a
+curl can't make it async — so it would not lower p99 and could add heavy DB load
+by running the 10s query more often. The only fixes that work are in-binary:
+make the SWR refresh truly async (never block a served request) and/or optimize
+the `/v1/pairs`/`/v1/assets` cold query. Both require a deliberate deploy.
+
 ## Alerts 2 & 3 — pricing coverage (genuinely-unpriceable SEP-41 tokens)
 
 Both fire on **SEP-41 tokens that trade only against other unpriced SEP-41
