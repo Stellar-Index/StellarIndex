@@ -114,6 +114,12 @@ all:
     stellarindex_clickhouse_serving_enabled: true
 
     prometheus_scrape_allow_cidrs: ["127.0.0.1/32"]
+    # This role installs promtail but NOT Loki (r1's is a hand-install per
+    # configs/loki/README.md). With no Loki on the test-net VMs, promtail
+    # shipped journald into a dead localhost:3100 endpoint — log
+    # aggregation that silently did nothing. Off until Loki is codified
+    # and actually deployed here; journalctl remains the log surface.
+    run_promtail: false
     loki_push_url: "http://localhost:3100/loki/api/v1/push"
 
     # MUST include the keys we connect with — the role REPLACES authorized_keys.

@@ -265,6 +265,33 @@
   when: run_promtail | bool
   tags: [observability, promtail]
 
+# Converge a host that ships to a Loki that is not there. This role
+# installs PROMTAIL but never Loki itself — r1's Loki is a hand-install
+# (configs/loki/README.md), so a host that gets the shipper without a
+# receiver runs it against a dead endpoint forever. Both test nets were
+# in exactly that state: promtail active, loki_push_url pointing at
+# localhost:3100, and no loki unit on the box at all (`systemctl
+# is-enabled loki` -> not-found, /var/lib/loki empty). Log aggregation
+# there silently did nothing.
+#
+# Ansible does not remove what it stops templating, so stop it explicitly
+# where promtail is disabled. Idempotent on a host that never had it.
+- name: Remove promtail where it is disabled (no Loki to ship to)
+  when: not (run_promtail | bool)
+  block:
+    - name: Stop + disable promtail
+      ansible.builtin.systemd:
+        name: promtail
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Clear any failed promtail state
+      ansible.builtin.command:
+        cmd: systemctl reset-failed promtail.service
+      changed_when: false
+      failed_when: false
+
 - name: galexie catchup-refusal probe (script + timer)
   # 'History: Skipping catchup' sat verbatim in the journal for 11h
   # (2026-07-05) with nothing watching. Every minute: count refusals
