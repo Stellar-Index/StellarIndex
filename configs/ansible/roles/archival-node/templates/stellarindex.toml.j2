@@ -119,8 +119,19 @@ min_usd_volume = 10000  # per-pair USD-volume floor for VWAP publication (anti-m
 # plus the resolved chain legs. A target reachable by ONE route (the
 # current config, one chain per target) behaves exactly like the old
 # static single-chain multiply; a target reached by ≥2 agreeing,
-# confidence-gated routes is corroborated, and that pathCount widens the
-# anomaly-freeze's source_count leg so a thin FX cross stops false-firing.
+# confidence-gated routes is corroborated, and that CORROBORATION COUNT (not
+# pathCount) widens the anomaly-freeze's source_count leg so a thin FX cross
+# stops false-firing.
+#
+# CORRECTION 2026-08-27: this comment previously said "pathCount", which is
+# wrong and misled a change into thinking two routes were sufficient.
+# router.go is explicit that pathCount is "the serving multiplicity carried on
+# the composite meta -- NOT the number the freeze trusts". The freeze reads
+# corroborationCount, which is far tighter: >=2 EDGE-DISJOINT routes whose
+# prices agree within routerCorroborationAgreePct (3%), and whose weakest-link
+# confidence each clears corroborationMinConfidence (0.5). A brand-new pair has
+# no volatility baseline, so its edge confidence is capped at ~0.27 and cannot
+# corroborate at all until a baseline matures.
 max_hops             = 3    # route length cap in LEGS (base→hub→quote = 2); accepted [2,4]
 min_route_confidence = 0.0  # weakest-link floor [0,1]; 0 keeps pre-router behaviour (dust USD pairs are already excluded from the graph by min_usd_volume). Raise to gate confident crosses on a route-quality floor.
 
