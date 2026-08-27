@@ -56,15 +56,30 @@ Evidence:
 - `curl` confirms `/sources/__next._tree.txt` 404 vs `/assets/__next._tree.txt`
   200 on the same live deployment.
 
-**Fix direction (not yet applied — being researched for correctness, then a
-careful mainnet deploy):** get the file count under 20k. Primary lever = reduce
-Next 16's per-segment prefetch `.txt` emission (a `next.config` flag if one
-exists in 16.3.1) so client nav still works but each route emits ~1–2 RSC files
-instead of ~7. Secondary lever = trim `generateStaticParams` (e.g. `/assets/[slug]`
-513 → top-N) **only if** unknown slugs still resolve client-side rather than
-404. Strategic option = the ADR-0044 Workers-SSR path, which removes the static
-file limit entirely. Not hot-patched — this is a framework-level change touching
-every page on both mainnet and the test nets.
+**Root cause (sharpened after research + reading the deploy):** the deploy
+workflow *already* prunes the per-segment files (`.github/workflows/
+explorer-deploy.yml`, "Prune Next 16 segment-cache prefetch files", site-audit
+S-024) to fit the 20k cap — but it deleted `__next._tree.txt` **too**. That tree
+file is the ONE segment file Next 16's client router PREFETCHES on every
+`<Link>` (hover/viewport). Deleting it 404'd every prefetch on routes without a
+`functions/*/[[path]].js` shell fallback — the "tons of console errors." (A
+`next.config` flag to stop the emission does **not** exist in Next 16.2/16.3 —
+verified; the files are emitted unconditionally.)
+
+**Fix (applied + verified):** keep `__next._tree.txt` in the prune
+(`! -name "__next._tree.txt"`); the bulkier `_head`/`_full`/`_index`/`__PAGE__`/
+layout payloads stay pruned (fetched only on real navigation, where the client
+falls back to `index.txt`). This is **SEO-neutral** — no `generateStaticParams`
+trim needed — and holds the mainnet build at **7,244 files**, far under the
+18,500 ceiling. Verified on testnet + futurenet: every previously-404ing tree
+file (`/`, `/sources/`, `/diagnostics/`, `/pricing/`, `/network/`) now returns
+200 (CLI with fresh cache keys). ADR-0044 (Workers SSR) remains the strategic
+end-state that removes the static file limit entirely.
+
+**Mainnet still needs this fix.** Mainnet has the identical 404s; the workflow
+change must reach `main` (branch merge or a cherry-pick of just the workflow
+step) + a mainnet explorer redeploy. It re-deploys `main`'s existing code — it
+does not touch r1.
 
 ## Still to sweep
 
