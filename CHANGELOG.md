@@ -15,6 +15,14 @@ against.
 
 ## [Unreleased]
 
+## [v0.45.0] — 2026-08-27
+
+Tested against Stellar **Protocol 28** (mainnet upgrade 2026-09-16).
+Ships the P28 readiness pins — captive-core 28.0.1, galexie v28.0.0,
+stellar-archivist 0.1.5-486 — plus the reactive ledger-meta decode
+backstop that names "we are behind a protocol upgrade" instead of
+surfacing it as generic tip-lag.
+
 ### Added
 - **Testnet / Futurenet support — a one-line `stellar.network` switch.** The
   indexer now runs correctly (without corrupting data) against Stellar
