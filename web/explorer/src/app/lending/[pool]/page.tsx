@@ -9,7 +9,6 @@ import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
 import type { paths } from '@/api/types';
 
 import { PoolReserves } from './PoolReserves';
-import { StellarExpertLink } from '@/components/StellarExpertLink';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
 type Params = Promise<{ pool: string }>;
@@ -225,9 +224,13 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
         {label?.initiator && (
           <p className="text-ink-muted font-mono text-[11px]">
             Deployed by{' '}
-            <StellarExpertLink kind="account" id={label.initiator} className="text-brand-600 hover:underline" title={label.initiator}            >
+            <Link
+              href={`/accounts/${label.initiator}/`}
+              className="text-brand-600 hover:underline"
+              title={label.initiator}
+            >
               {label.initiator.slice(0, 6)}…{label.initiator.slice(-4)}
-            </StellarExpertLink>
+            </Link>
           </p>
         )}
         <div className="flex flex-wrap gap-3 pt-1 text-xs">
@@ -243,10 +246,6 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
           >
             Contract events →
           </Link>
-          <StellarExpertLink kind="contract" id={pool} className="text-brand-600 inline-flex items-center gap-1 hover:underline"          >
-            View on stellar.expert
-            <ExternalLink className="h-3 w-3" />
-          </StellarExpertLink>
           <a
             href="https://blend.capital"
             target="_blank"

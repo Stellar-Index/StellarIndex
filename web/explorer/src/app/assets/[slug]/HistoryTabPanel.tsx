@@ -7,7 +7,6 @@ import { asExample } from '@/api/client';
 import { useHistory, type TradeRow } from '@/api/hooks';
 import { useObservationsFollow } from '@/lib/live/hooks';
 import { formatRelative } from '@/lib/format';
-import { StellarExpertLink } from '@/components/StellarExpertLink';
 
 const DEFAULT_QUOTE = 'native';
 const HISTORY_LIMIT = 100;
@@ -120,9 +119,13 @@ export function HistoryTabPanel({
             >
               <td className="text-ink-body py-2 pr-3 font-mono text-xs">
                 {r.tx_hash ? (
-                  <StellarExpertLink kind="tx" id={r.tx_hash} className="hover:text-brand-600 hover:underline" title={`View tx ${r.tx_hash} on stellar.expert`}                  >
+                  <Link
+                          href={`/transactions/${r.tx_hash}/`}
+                          className="hover:text-brand-600 hover:underline"
+                          title={`View transaction ${r.tx_hash}`}
+                        >
                     {formatRelative(r.ts)}
-                  </StellarExpertLink>
+                  </Link>
                 ) : (
                   formatRelative(r.ts)
                 )}

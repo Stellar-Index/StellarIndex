@@ -32,6 +32,13 @@ export interface NetworkInfo {
    * null => render no link at all rather than a knowingly-wrong one.
    */
   stellarExpertPath: string | null;
+  /**
+   * This network's stellarchain.io origin. Unlike stellar.expert,
+   * stellarchain.io hosts all three networks (verified 2026-08-27), so this
+   * is never null — which is why it is the one cross-reference that still
+   * works on futurenet.
+   */
+  stellarChainUrl: string;
   /** This network's explorer origin (where the switcher link points). */
   explorerUrl: string;
   /** This network's API origin (grey/DNS-only) for the live-tip probe. */
@@ -68,6 +75,7 @@ export const NETWORKS: NetworkInfo[] = [
     tag: 'mainnet',
     stellarName: 'Pubnet',
     stellarExpertPath: 'public',
+    stellarChainUrl: 'https://stellarchain.io',
     explorerUrl: 'https://stellarindex.io',
     apiBaseUrl: 'https://api.stellarindex.io',
     live: true,
@@ -80,6 +88,7 @@ export const NETWORKS: NetworkInfo[] = [
     tag: 'testnet',
     stellarName: 'Testnet',
     stellarExpertPath: 'testnet',
+    stellarChainUrl: 'https://testnet.stellarchain.io',
     explorerUrl: 'https://testnet.stellarindex.io',
     apiBaseUrl: 'https://api.testnet.stellarindex.io',
     live: true,
@@ -92,6 +101,7 @@ export const NETWORKS: NetworkInfo[] = [
     tag: 'futurenet',
     stellarName: 'Futurenet',
     stellarExpertPath: null,
+    stellarChainUrl: 'https://futurenet.stellarchain.io',
     explorerUrl: 'https://futurenet.stellarindex.io',
     apiBaseUrl: 'https://api.futurenet.stellarindex.io',
     live: true,
@@ -134,4 +144,20 @@ export function stellarExpertUrl(kind: string, id: string): string | null {
   const net = CURRENT_NETWORK.stellarExpertPath;
   if (!net) return null;
   return `https://stellar.expert/explorer/${net}/${kind}/${encodeURIComponent(id)}`;
+}
+
+/**
+ * Absolute stellarchain.io URL for an entity on THIS network.
+ *
+ * Path segments verified live 2026-08-27 by response size — the PLURAL forms
+ * (`/transactions/`, `/accounts/`, `/contracts/`) return a server-rendered
+ * page (~40 KB), while the singular forms return the same ~20 KB empty SPA
+ * shell as a nonsense path. Status code is useless here: the SPA answers 200
+ * for everything.
+ */
+export function stellarChainEntityUrl(
+  kind: 'transactions' | 'accounts' | 'contracts',
+  id: string,
+): string {
+  return `${CURRENT_NETWORK.stellarChainUrl}/${kind}/${encodeURIComponent(id)}`;
 }

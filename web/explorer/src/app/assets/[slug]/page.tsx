@@ -19,7 +19,6 @@ import { serializeJsonLd, datasetJsonLd, ogImageFor } from '@/lib/seo';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import {
   scamFlagTags,
-  stellarExpertDirectoryUrl,
 } from '@/lib/directory-tags';
 import { Badge, Breadcrumbs, Callout, Container } from '@/components/ui';
 import { AssetClientFallback } from './AssetClientFallback';
@@ -840,7 +839,6 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
   // DISPLAY-ONLY: they decide only whether to render a warning banner, and
   // never gate price or verification.
   const flaggedDirTags = scamFlagTags(coin.issuer_directory_tags);
-  const directorySourceUrl = stellarExpertDirectoryUrl(coin.issuer);
   // Warning consolidation (2026-08-25): issuer_scam_reason (the curated
   // stellar.expert scam list) and the directory scam-tags
   // (issuer_directory_tags, the SAME public directory) were rendering as
@@ -935,19 +933,6 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
                 <> ({coin.issuer_directory_domain})</>
               )}
               .
-              {directorySourceUrl && (
-                <>
-                  {' '}
-                  <a
-                    href={directorySourceUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-medium underline"
-                  >
-                    View directory entry ↗
-                  </a>
-                </>
-              )}
             </p>
             <p className="mt-1 font-medium">
               Do not trust this asset, establish trustlines, or execute the

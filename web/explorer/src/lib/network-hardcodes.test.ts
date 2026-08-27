@@ -96,7 +96,16 @@ describe('no mainnet hardcodes in explorer source', () => {
     expect(offenders(/https:\/\/stellarindex\.io/)).toEqual([]);
   });
 
+  it('never hardcodes the mainnet stellarchain.io origin', () => {
+    // stellarchain.io DOES host all three networks (testnet./futurenet.
+    // subdomains), so a bare stellarchain.io link is a mainnet link. The
+    // issuers page had exactly this and the first version of this guard
+    // missed it, because the guard only knew about stellar.expert.
+    expect(offenders(/https:\/\/stellarchain\.io/)).toEqual([]);
+  });
+
   it('never hardcodes the mainnet API origin', () => {
+
     // The API origin is per-network too (CURRENT_NETWORK.apiBaseUrl /
     // API_BASE_URL); a fixed one makes a test-net page read mainnet data.
     expect(offenders(/https:\/\/api\.stellarindex\.io/)).toEqual([]);

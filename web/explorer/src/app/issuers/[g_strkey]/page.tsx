@@ -12,7 +12,7 @@ import { formatCompact, formatPriceSmall, formatRelative } from '@/lib/format';
 import { isSafeHomeDomain } from '@/lib/safe-domain';
 import { ogImageFor } from '@/lib/seo';
 import { StellarExpertLink } from '@/components/StellarExpertLink';
-import { CURRENT_NETWORK } from '@/lib/networks';
+import { CURRENT_NETWORK, stellarChainEntityUrl } from '@/lib/networks';
 
 /**
  * /issuers/[g_strkey] — single-issuer detail page.
@@ -353,12 +353,8 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
             // show that honestly rather than four "unknown" dots that
             // read as a broken panel (audit 2026-06-19).
             <p className="text-ink-muted text-xs">
-              Not yet resolved. Issuer account flags populate as the
-              account-flag reader processes the issuer; meanwhile see{' '}
-              <StellarExpertLink kind="account" id={g_strkey} className="text-brand-600 hover:underline"              >
-                stellar.expert
-              </StellarExpertLink>
-              .
+              Not collected. StellarIndex does not currently ingest issuer
+              account flags — see the cross-reference links below.
             </p>
           ) : (
             <ul className="space-y-1.5 text-xs">
@@ -390,7 +386,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
           </li>
           <li>
             <a
-              href={`https://stellarchain.io/accounts/${g_strkey}`}
+              href={stellarChainEntityUrl('accounts', g_strkey)}
               target="_blank"
               rel="noreferrer noopener"
               className="hover:text-brand-600 inline-flex items-center gap-1.5 hover:underline"

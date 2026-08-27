@@ -19,7 +19,6 @@ import { PairChart } from './PairChart';
 import { PairPathView } from './PairPathView';
 import { SourceBreakdown } from './SourceBreakdown';
 import { shortAssetText } from '@/lib/asset-label';
-import { StellarExpertLink } from '@/components/StellarExpertLink';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
 type Params = Promise<{ pair: string }>;
@@ -512,9 +511,13 @@ export default async function PairPage({ params }: { params: Params }) {
                   >
                     <td className="text-ink-muted px-3 py-2 tabular-nums">
                       {t.tx_hash ? (
-                        <StellarExpertLink kind="tx" id={t.tx_hash} className="hover:text-brand-600 hover:underline" title={`View tx ${t.tx_hash} on stellar.expert`}                        >
+                        <Link
+                          href={`/transactions/${t.tx_hash}/`}
+                          className="hover:text-brand-600 hover:underline"
+                          title={`View transaction ${t.tx_hash}`}
+                        >
                           {formatTimestamp(t.ts)}
-                        </StellarExpertLink>
+                        </Link>
                       ) : (
                         formatTimestamp(t.ts)
                       )}

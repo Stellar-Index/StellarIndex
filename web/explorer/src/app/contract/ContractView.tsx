@@ -20,7 +20,7 @@ import {
   scaledUnits,
 } from '../explorer-shared';
 import type { paths } from '@/api/types';
-import { StellarExpertLink } from '@/components/StellarExpertLink';
+import { CrossReference } from '@/components/CrossReference';
 
 // GetJSON extracts the application/json body of a GET 200 response for
 // the per-contract sub-resources (wasm / code-history / interactions)
@@ -253,11 +253,6 @@ export function ContractView({ id: idProp }: { id?: string } = {}) {
         </div>
         <ul className="text-ink-body flex flex-wrap gap-x-6 gap-y-1 text-xs">
           <li>
-            <StellarExpertLink kind="contract" id={data.contract_id || id} className="hover:text-brand-600 hover:underline"            >
-              stellar.expert ↗
-            </StellarExpertLink>
-          </li>
-          <li>
             <a
               href={`${API_BASE_URL}/v1/contracts/${encodeURIComponent(data.contract_id || id)}/transfers`}
               target="_blank"
@@ -269,6 +264,7 @@ export function ContractView({ id: idProp }: { id?: string } = {}) {
             </a>
           </li>
         </ul>
+        <CrossReference kind="contract" id={data.contract_id || id} />
       </Panel>
 
       <WasmPanel id={data.contract_id || id} />

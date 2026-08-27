@@ -23,7 +23,6 @@ import {
 import type { TradeRow as Trade } from '@/api/hooks';
 import { formatRelative } from '@/lib/format';
 import { shortAssetText } from '@/lib/asset-label';
-import { StellarExpertLink } from '@/components/StellarExpertLink';
 
 const REFRESH_INTERVAL_MS = 30_000;
 // Minimum gap between stream-nudged refetches. Ledgers close every ~5s;
@@ -154,9 +153,13 @@ export function HomeRecentTrades() {
                   <TR key={`${t.ts}-${t.source}-${i}`}>
                     <Td className="text-ink-muted tabular-nums">
                       {t.tx_hash ? (
-                        <StellarExpertLink kind="tx" id={t.tx_hash} className="hover:text-brand-600 hover:underline" title={`View tx ${t.tx_hash} on stellar.expert`}                        >
+                        <Link
+                          href={`/transactions/${t.tx_hash}/`}
+                          className="hover:text-brand-600 hover:underline"
+                          title={`View transaction ${t.tx_hash}`}
+                        >
                           {formatRelative(t.ts, { suffix: false })}
-                        </StellarExpertLink>
+                        </Link>
                       ) : (
                         formatRelative(t.ts, { suffix: false })
                       )}
