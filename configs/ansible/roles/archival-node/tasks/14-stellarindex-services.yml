@@ -434,6 +434,7 @@
     owner: root
     group: root
     mode: "0755"
+  when: archive_completeness_enabled | bool
 
 - name: archive-completeness override drop-in (root user, no legacy env)
   # Replaces a hand-written pre-rebrand override that still loaded
@@ -450,6 +451,7 @@
       User=root
       Group=root
   notify: Reload systemd
+  when: archive_completeness_enabled | bool
 
 - name: Remove the legacy ratesengine env file
   # Pre-rebrand credentials (old DB, deleted MinIO reader) that
@@ -524,7 +526,7 @@
     group: root
     mode: "0755"
 
-- name: Install verify-archive-tier-a / archive-completeness / supply-snapshot / galexie-archive-trim units
+- name: Install verify-archive-tier-a / supply-snapshot / galexie-archive-trim units
   ansible.builtin.template:
     src: "systemd/{{ item }}.j2"
     dest: "/etc/systemd/system/{{ item }}"
@@ -535,8 +537,9 @@
     # Tier B is NOT in this loop — its checkpoint anchor needs a
     # network-correct local mirror, so it is installed conditionally
     # below (verify_archive_tier_b_enabled).
-    - archive-completeness.service
-    - archive-completeness.timer
+    # archive-completeness is NOT in this loop — its cross-anchor check is
+    # pubnet-mirror-specific; installed conditionally below
+    # (archive_completeness_enabled).
     - supply-snapshot.service
     - supply-snapshot.timer
     - galexie-archive-trim.service
@@ -577,7 +580,7 @@
     - verify-archive-tier-a.timer
     # verify-archive-tier-b.timer is enabled in its own conditional block
     # below — see verify_archive_tier_b_enabled.
-    - archive-completeness.timer
+    # archive-completeness.timer is enabled in its own conditional block.
     - supply-snapshot.timer
     - sep1-refresh.timer
     - directory-sync.timer
@@ -586,6 +589,58 @@
     - compute-completeness.timer
     - data-freshness.timer
     - ch-supply.timer
+
+# ── archive-completeness — only where its cross-anchor is correct ────
+# See archive_completeness_enabled in defaults/main.yml: the check's only
+# section is measured against the pubnet-only /srv/history-archive mirror,
+# and its fill phase pulls FROM pubnet archives.
+- name: Install + enable archive-completeness (networks with a correct cross-anchor)
+  when: archive_completeness_enabled | bool
+  block:
+    - name: Install archive-completeness unit + timer
+      ansible.builtin.template:
+        src: "systemd/{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+      loop:
+        - archive-completeness.service
+        - archive-completeness.timer
+      notify: Reload systemd
+
+    - name: Enable + start archive-completeness.timer
+      ansible.builtin.systemd:
+        name: archive-completeness.timer
+        state: started
+        enabled: true
+        daemon_reload: true
+
+- name: Remove archive-completeness where its cross-anchor is not network-correct
+  when: not (archive_completeness_enabled | bool)
+  block:
+    - name: Stop + disable archive-completeness timer and service
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - archive-completeness.timer
+        - archive-completeness.service
+      failed_when: false
+
+    - name: Remove archive-completeness unit files
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}"
+        state: absent
+      loop:
+        - archive-completeness.timer
+        - archive-completeness.service
+      notify: Reload systemd
+
+    - name: Clear the failed state left by earlier archive-completeness runs
+      ansible.builtin.command:
+        cmd: systemctl reset-failed archive-completeness.service
+      changed_when: false
+      failed_when: false
 
 # ── verify-archive Tier B — only where its anchor can be correct ─────
 # Tier B (checkpoint anchor, task #33 / W8 recon 14a): verify_archive.go

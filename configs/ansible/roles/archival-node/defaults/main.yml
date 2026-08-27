@@ -514,6 +514,27 @@ stellar_movements_floor_ledger: "{{ 58762517 if stellar_network == 'pubnet' else
 # in that inventory.
 verify_archive_tier_b_enabled: "{{ (stellar_network | default('pubnet')) == 'pubnet' }}"
 
+# archive-completeness verify. Its report has exactly ONE section —
+# `cross_anchor` — measured against VERIFY/ARCHIVE root /srv/history-archive,
+# the same pubnet-only local mirror Tier B anchors on. There is no
+# test-net-meaningful part of this check.
+#
+# Left ungated it did real harm on the test nets, not just noise. The
+# tool's `-network` flag (which the unit template never passed, so it took
+# its "pubnet" DEFAULT) enables a cross-anchor FILL phase that fetches
+# missing checkpoints FROM PUBNET ARCHIVES. On testnet it measured the
+# pubnet stub against testnet's ledger range [2, 4354688], declared 2,506
+# checkpoints "missing", and set about downloading pubnet checkpoints to
+# fill them — which is also why the unit blew its 30-minute
+# TimeoutStartUSec every night. audit-2026-08-26 already identified this
+# fill as pubnet-only and added the refusal; nothing was passing the flag
+# that triggers it.
+#
+# The template now passes `-network` explicitly (defence in depth — the
+# fill refuses even if the unit is enabled by hand), and the unit is
+# omitted where its anchor is not network-correct.
+archive_completeness_enabled: "{{ (stellar_network | default('pubnet')) == 'pubnet' }}"
+
 # pgBackRest scheduled backups. pgBackRest itself is NOT installed by this
 # role (there is no apt task for it anywhere) — it is provisioned
 # out-of-band on the pubnet hosts. So on a test net, "enabled" installed a
