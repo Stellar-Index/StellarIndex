@@ -105,7 +105,7 @@ get = "cp /srv/history-archive/{0} {1}"
 put = "cp {0} /srv/history-archive/{1}"
 mkdir = "mkdir -p /srv/history-archive/{0}"
 {% endif %}
-{% if captive_history_localmirror | default(false) %}
+{% if (captive_history_localmirror | default(false)) and (stellar_network | default('pubnet')) == 'pubnet' %}
 
 # ──── Local history-archive mirror (backfill primary source) ─────
 # /srv/history-archive is our rs-stellar-archivist mirror of the
@@ -115,6 +115,19 @@ mkdir = "mkdir -p /srv/history-archive/{0}"
 # ~5-12h. Falls back to the per-validator HISTORY URLs below if a
 # specific file is missing from the mirror. get-only: a captive
 # core must never publish (see the [HISTORY.stellarindex] note).
+#
+# PUBNET ONLY. The mirror is a mirror of the PUBLIC network archive,
+# and on the test nets it exists only as a partial, never-mirrored
+# stub (a bare `ledger/` dir with NO
+# `.well-known/stellar-history.json`). captive-core then reports
+#   "Could not download .well-known/stellar-history.json: corrupt
+#    archive localmirror"
+# and — worse — still consults it for checkpoint files, mixing that
+# stale/foreign data with the real SDF archives until catchup dies on
+#   "Checkpoint does not agree with checkpoint ahead ... hash mismatch"
+# (observed 2026-08-27: si-futurenet backfill failed at seq=230207
+# this way, AFTER a clean 100% phase-1 download). See
+# docs/operations/galexie-backfill.md.
 [HISTORY.localmirror]
 get = "cp /srv/history-archive/{0} {1}"
 {% endif %}
