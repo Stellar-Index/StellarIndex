@@ -152,6 +152,17 @@ fix-verifier pass before any deploy.
   monitoring window. Tracked in `docs/operations/protocol-upgrades.md`.
 - **`stellarindex_deadmansswitch` (informational):** fires by design (proves the
   alert pipe is alive). Not a fault; excluded from the "degraded" verdict.
+- **`stellarindex_anomaly_freeze_engaged` (P3, observed 2026-08-27):** the
+  aggregator's anomaly guard correctly froze `crypto:XLM/fiat:EUR` after a
+  single CEX source reported a momentary 6σ value (`z=6.17, sources=1,
+  confidence=0.441`), protecting the served price for a 30-min hold, then
+  released — the safety mechanism working. Current per-source XLM/EUR values
+  are sane (bitstamp 0.1579 / kraken 0.1570). The alert *looked* recurring
+  because the `anomaly_freeze_engaged` gauge **flaps present↔absent within a
+  single hold window** (borderline confidence), so the alert re-fires though the
+  protection is steady. Non-disruptive improvement (Prometheus-rule tune, no
+  binary deploy): alert on the steady freeze-hold state, or widen `for:`, so a
+  borderline anomaly doesn't produce alert chatter. Not a fault.
 
 ## Net effect
 
