@@ -86,6 +86,12 @@ else
     # the promtool-dependent monitoring-check is skipped (F-1329).
     echo "=== Metric refs ===" && ./scripts/ci/lint-metric-refs.sh
 fi
+# The metric-refs SELF-test (does the guard still detect a dead ref?)
+# needs neither promtool nor the monitoring stack, so it runs
+# unconditionally — outside the promtool branch above, which would
+# otherwise skip it on any machine that HAS promtool. CI's import-checks
+# job runs it, so verify.sh must too or check-verify-parity fails.
+echo "=== Metric refs self-test ===" && ./scripts/ci/lint-metric-refs-test.sh
 # govulncheck (F-0057). Graceful-skip when not installed locally —
 # CI installs it via `make deps`. Mirrors the promtool pattern.
 if command -v govulncheck >/dev/null 2>&1; then
