@@ -44,9 +44,25 @@ Breaking changes and how StellarIndex handles them:
 **Test nets:** ready — captive core `28.0.1` (fresh installs pulled it), now pinned
 via `stellar_core_version`; SDK `v0.7.2` on `main`.
 
-**Mainnet (r1) — ACTION REQUIRED before 2026-09-16:**
-- r1's captive core was `27.1.0` (protocol 27) and `state: present` never upgraded
-  it. **Pin `stellar_core_version: "28.0.x"` in `r1.yml` and run the core-upgrade
-  procedure above** before the upgrade ledger, or mainnet ingestion halts.
-- Confirm the r1 release binary is built from `main` (SDK `v0.7.2`) so the new
-  XDR arms decode.
+**Mainnet (r1) — DONE 2026-08-27** (was: action required before 2026-09-16):
+- r1's captive core `27.1.0` → **`28.0.1-3508.947aad841.noble`** (protocol 28),
+  pinned via `stellar_core_version` in `r1.yml` and applied with
+  `ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml --tags galexie`.
+  Dry-run first (`--check --diff`, clean: changed=6, failed=0), then applied.
+- **Verified post-apply:** `stellar-core version` → `28.0.1 … ledger protocol
+  version: 28`; `/etc/stellar/captive-core-galexie.cfg` perms → `stellar:galexie`.
+  The role **re-templates the cfg with correct group ownership**, which is why
+  the role path is safe where raw `apt install` is not — raw apt resets the cfg
+  to `stellar:stellar` and galexie (user `galexie`) loses read access (the
+  2026-08-27 raw-apt outage). Always use the `--tags galexie` role apply.
+- **Expected during the apply:** galexie restarts ~2× (systemd unit change +
+  the Restart-galexie handler), and EACH restart re-triggers the ~9-min cold
+  catchup. This is normal — do NOT manually restart during the catchup (each
+  manual restart resets the catchup from scratch; that turned the 2026-08-27
+  incident into a 22-min outage). One apply, then watch the tip recover.
+- `r1.yml` is `.gitignore`d, so the pin is not version-controlled — the
+  **running core on r1 is authoritative** (`state: present` never downgrades an
+  existing binary, so a future apply without the pin won't revert it).
+- TODO: confirm the r1 API/indexer binary (currently `v0.44.9`, built from
+  `main`) carries SDK `v0.7.2` so the new P28 XDR arms decode once mainnet
+  crosses the upgrade ledger on 2026-09-16.
