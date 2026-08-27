@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { apiGet } from '@/api/client';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 // Common amounts to render as static "X = Y" snippets for SEO body
 // content. Picks naturally-queried ladder values across orders of
@@ -48,6 +49,10 @@ export function useConvertRate({
 }): { rate: number | null; inverse: number | null; updatedAt: number } {
   const q = useQuery<number | null>({
     queryKey: ['/v1/price/batch', from, to, 'for-convert'],
+    // No aggregator/FX on the lean test nets → /v1/price/batch is empty and the
+    // 60s poll would 404-storm; the SSR-baked initialRate (also null there) is
+    // used instead. The route is nav-hidden on those nets anyway.
+    enabled: CURRENT_NETWORK.pricing,
     queryFn: async () => {
       const env = await apiGet<{
         data: Array<{ asset_id: string; price: string | null }>;

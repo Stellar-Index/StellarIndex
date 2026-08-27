@@ -16,6 +16,7 @@ import {
   formatSubunitPrice,
 } from '@/lib/format';
 import { serializeJsonLd, datasetJsonLd, ogImageFor } from '@/lib/seo';
+import { CURRENT_NETWORK } from '@/lib/networks';
 import {
   scamFlagTags,
   stellarExpertDirectoryUrl,
@@ -955,7 +956,12 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
             </p>
           </Callout>
         )}
-        {detail?.unverified_warning && (
+        {/* The verified catalogue is a MAINNET curation; on the lean test nets
+            it leaks in and stamps genuine test-net assets (e.g. testnet USDC) as
+            "ticker collision" impostors of mainnet issuers that don't exist
+            there, with a broken link to the non-existent "verified" asset.
+            Suppress the warning on no-pricing nets. (API-side gate is queued.) */}
+        {CURRENT_NETWORK.pricing && detail?.unverified_warning && (
           <div
             role="alert"
             className="border-warn-300 bg-warn-50 text-warn-700 rounded-md border p-3 text-sm"

@@ -20,6 +20,15 @@ import { cn } from '@/lib/cn';
  * (which collapses animation durations) and the settled state both rest
  * on the new value.
  *
+ * The window/strip/digit heights and the roll's translate are all `1lh`
+ * (one line box). `lh` only resolves consistently when the line-height is
+ * an EXPLICIT number: with the CSS default (`line-height: normal`) the
+ * used line-height is font-metric-dependent, and some platforms (Windows)
+ * round the layout heights and the `-1lh` transform differently, so the
+ * changing column settles a pixel or two off. `leading-[1.3]` here pins an
+ * explicit line-height that the whole odometer inherits, so every `1lh`
+ * is the same value and the digits stay flush everywhere.
+ *
  * Keying (from v2, load-bearing): columns are keyed from the RIGHT on
  * (column, char), so a value change remounts exactly the columns whose
  * character changed, a length change keeps surviving columns' keys
@@ -53,19 +62,30 @@ export function RollingNumber({
 
   const chars = formatted.split('');
   return (
-    <span className={cn('inline-flex tabular-nums', className)}>
+    // leading-[1.3]: pin an explicit line-height so every `1lh` in the odometer
+    // (window/digit heights + the roll transform) resolves to the same value
+    // and the changing column stays flush — see the note above.
+    <span className={cn('inline-flex tabular-nums leading-[1.3]', className)}>
       <span className="sr-only">{formatted}</span>
       {chars.map((ch, i) => {
         const col = chars.length - i; // column index from the right
         const prevCh = prev == null ? undefined : prev[prev.length - col];
         const rolls = prev != null && prevCh != null && prevCh !== ch;
         if (!rolls) {
+          // Same box model as the rolling window (a 1lh block inside a
+          // 1lh vertical-align:bottom window) so a static digit rests at the
+          // EXACT vertical position as a rolling one — otherwise a
+          // baseline-aligned inline-block sits a descender higher than the
+          // bottom-aligned window, and the changing digit reads a couple px low.
           return (
-            <span key={`${col}:${ch}`} aria-hidden className="digit-cell inline-block">
-              {ch}
+            <span key={`${col}:${ch}`} aria-hidden className="digit-cell digit-window">
+              <span className="digit-flat">{ch}</span>
             </span>
           );
         }
+        // A changed column: a two-digit strip [old, new] in a clipped window.
+        // `.digit-strip` rests translated up one line (new digit showing) and
+        // the `digit-rollover` animation slides it there from the old digit.
         return (
           <span key={`${col}:${ch}`} aria-hidden className="digit-cell digit-window">
             <span className="digit-strip">

@@ -1,0 +1,19 @@
+---
+# Redis — the API's cache + SEP-10 replay guard + rate-limit + VWAP key
+# store. An out-of-band install on r1 (like ClickHouse); codified here so a
+# fresh host (r2/r3/test net) gets it reproducibly. `state: present` never
+# upgrades r1's already-installed redis. The maxmemory cap lives in
+# 15-log-discipline.yml, which edits /etc/redis/redis.conf — the file this
+# task creates.
+
+- name: Install redis-server
+  ansible.builtin.apt:
+    name: redis-server
+    state: present
+    update_cache: true
+
+- name: Enable + start redis-server
+  ansible.builtin.systemd:
+    name: redis-server
+    state: started
+    enabled: true

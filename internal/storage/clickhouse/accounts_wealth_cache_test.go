@@ -21,9 +21,9 @@ func TestWealthCacheServesAnyLimitFromOneEntry(t *testing.T) {
 	for i := range ranking {
 		ranking[i] = AccountWealth{AccountID: "acct", USD: float64(accountsWealthMaxLimit - i)}
 	}
-	c.put(ranking, time.Now())
+	c.put(ranking, WealthBasisUSD, time.Now())
 
-	rows, _, ok := c.get()
+	rows, _, _, ok := c.get()
 	if !ok {
 		t.Fatal("get after put returned miss")
 	}
@@ -55,8 +55,8 @@ func TestWealthCacheStaleServing(t *testing.T) {
 	t.Parallel()
 	c := newAccountsWealthCache()
 	staleAt := time.Now().Add(-2 * AccountsWealthCacheTTL)
-	c.put([]AccountWealth{{AccountID: "a", USD: 1}}, staleAt)
-	rows, at, ok := c.get()
+	c.put([]AccountWealth{{AccountID: "a", USD: 1}}, WealthBasisUSD, staleAt)
+	rows, _, at, ok := c.get()
 	if !ok {
 		t.Fatal("expired entry withheld — stale-serving regressed to a hard miss")
 	}
@@ -73,10 +73,10 @@ func TestWealthCacheStaleServing(t *testing.T) {
 func TestWealthCacheNilSafe(t *testing.T) {
 	t.Parallel()
 	var c *accountsWealthCache
-	if _, _, ok := c.get(); ok {
+	if _, _, _, ok := c.get(); ok {
 		t.Error("nil cache reported a hit")
 	}
-	c.put([]AccountWealth{{AccountID: "a", USD: 1}}, time.Now()) // must not panic
+	c.put([]AccountWealth{{AccountID: "a", USD: 1}}, WealthBasisUSD, time.Now()) // must not panic
 	if _, owner := c.beginFlight(); owner {
 		t.Error("nil cache granted flight ownership")
 	}

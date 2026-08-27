@@ -51,7 +51,9 @@ PUBLIC_HTTP_PORT = false
 PEER_PORT = {{ captive_peer_port }}
 {% endif %}
 
-NETWORK_PASSPHRASE = "{% if stellar_network == 'pubnet' %}Public Global Stellar Network ; September 2015{% elif stellar_network == 'testnet' %}Test SDF Network ; September 2015{% else %}{{ stellar_network }}{% endif %}"
+{# Single source of truth (defaults/main.yml stellar_passphrase); the old
+   inline if/elif/else emitted the literal network NAME for futurenet. #}
+NETWORK_PASSPHRASE = "{{ stellar_passphrase }}"
 
 {% if cfg_mode == 'full' %}
 NODE_IS_VALIDATOR = {{ node_is_validator | lower }}
@@ -103,7 +105,7 @@ get = "cp /srv/history-archive/{0} {1}"
 put = "cp {0} /srv/history-archive/{1}"
 mkdir = "mkdir -p /srv/history-archive/{0}"
 {% endif %}
-{% if captive_history_localmirror | default(false) %}
+{% if (captive_history_localmirror | default(false)) and (stellar_network | default('pubnet')) == 'pubnet' %}
 
 # ──── Local history-archive mirror (backfill primary source) ─────
 # /srv/history-archive is our rs-stellar-archivist mirror of the
@@ -113,10 +115,24 @@ mkdir = "mkdir -p /srv/history-archive/{0}"
 # ~5-12h. Falls back to the per-validator HISTORY URLs below if a
 # specific file is missing from the mirror. get-only: a captive
 # core must never publish (see the [HISTORY.stellarindex] note).
+#
+# PUBNET ONLY. The mirror is a mirror of the PUBLIC network archive,
+# and on the test nets it exists only as a partial, never-mirrored
+# stub (a bare `ledger/` dir with NO
+# `.well-known/stellar-history.json`). captive-core then reports
+#   "Could not download .well-known/stellar-history.json: corrupt
+#    archive localmirror"
+# and — worse — still consults it for checkpoint files, mixing that
+# stale/foreign data with the real SDF archives until catchup dies on
+#   "Checkpoint does not agree with checkpoint ahead ... hash mismatch"
+# (observed 2026-08-27: si-futurenet backfill failed at seq=230207
+# this way, AFTER a clean 100% phase-1 download). See
+# docs/operations/galexie-backfill.md.
 [HISTORY.localmirror]
 get = "cp /srv/history-archive/{0} {1}"
 {% endif %}
 
+{% if (stellar_network | default('pubnet')) == 'pubnet' %}
 # ──── Home domain quality tiers ─────────────────────────────────────
 # Must appear BEFORE [[VALIDATORS]] blocks reference them. QUALITY
 # HIGH = tier-1, automatically included in the outer quorum set.
@@ -148,3 +164,31 @@ ADDRESS="{{ v.address }}"
 HISTORY="{{ v.history }}"
 {% endif %}
 {% endfor %}
+{% else %}
+# ──── Non-pubnet network: use THIS network's own history archive ────
+# `stellar_home_domains` / `stellar_validators` are the PUBNET set, and
+# every validator entry carries a pubnet HISTORY archive URL. Emitting
+# them on a test net makes captive-core download PUBNET checkpoints and
+# try to replay them under a test-net NETWORK_PASSPHRASE.
+#
+# Observed 2026-08-27: the first testnet genesis backfill silently
+# fetched checkpoints from publicnode / lobstr / bdnodes /
+# history.stellar.org/prd/core-live (all pubnet) — invalid by
+# construction; and the futurenet backfill died immediately with
+# "Error fast-forwarding to 2: stellar core exited unexpectedly".
+# This is the same hazard `stellar_history_archive_urls` is deliberately
+# network-keyed to prevent ("the guard against a test net silently
+# ingesting pubnet checkpoints"); the guard simply never covered the
+# validator list. See docs/operations/galexie-backfill.md.
+#
+# Replay needs an ARCHIVE, not a quorum: galexie runs its captive core
+# with RUN_STANDALONE / UNSAFE_QUORUM, so omitting [[VALIDATORS]] on a
+# non-pubnet network is safe and leaves only correct-network archives.
+#
+# All three SDF archives (001/002/003) are listed so a slow archive or a
+# checkpoint 404 fails over instead of stalling the replay.
+{% for archive_url in stellar_history_archive_url_set %}
+[HISTORY.sdf{{ loop.index }}]
+get = "curl -sf {{ archive_url }}/{0} -o {1}"
+{% endfor %}
+{% endif %}

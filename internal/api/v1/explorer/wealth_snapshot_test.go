@@ -22,13 +22,18 @@ import (
 // other read falls through to capReader's harmless zero values.
 type wealthSnapshotReader struct {
 	*capReader
-	rows []clickhouse.AccountWealth
-	asOf time.Time
-	ok   bool
+	rows  []clickhouse.AccountWealth
+	basis string
+	asOf  time.Time
+	ok    bool
 }
 
-func (r *wealthSnapshotReader) AccountsByWealthCached(context.Context, []string, []float64, int) ([]clickhouse.AccountWealth, time.Time, bool) {
-	return r.rows, r.asOf, r.ok
+func (r *wealthSnapshotReader) AccountsByWealthCached(context.Context, []string, []float64, int) ([]clickhouse.AccountWealth, string, time.Time, bool) {
+	basis := r.basis
+	if basis == "" {
+		basis = clickhouse.WealthBasisUSD
+	}
+	return r.rows, basis, r.asOf, r.ok
 }
 
 // wealthTestHandler wires the minimal seams AccountsList needs, recording
@@ -38,6 +43,7 @@ func wealthTestHandler(reader ExplorerReader) (*Handler, *struct {
 	stale  bool
 	asOf   time.Time
 	viaAt  bool
+	view   any
 },
 ) {
 	rec := &struct {
@@ -45,6 +51,7 @@ func wealthTestHandler(reader ExplorerReader) (*Handler, *struct {
 		stale  bool
 		asOf   time.Time
 		viaAt  bool
+		view   any
 	}{}
 	h := &Handler{
 		Reader:         reader,
@@ -64,8 +71,8 @@ func wealthTestHandler(reader ExplorerReader) (*Handler, *struct {
 			rec.status, rec.stale = http.StatusOK, stale
 			w.WriteHeader(http.StatusOK)
 		},
-		WriteJSONAt: func(w http.ResponseWriter, _ any, stale bool, asOf time.Time) {
-			rec.status, rec.stale, rec.asOf, rec.viaAt = http.StatusOK, stale, asOf, true
+		WriteJSONAt: func(w http.ResponseWriter, view any, stale bool, asOf time.Time) {
+			rec.status, rec.stale, rec.asOf, rec.viaAt, rec.view = http.StatusOK, stale, asOf, true, view
 			w.WriteHeader(http.StatusOK)
 		},
 	}
@@ -96,6 +103,43 @@ func TestAccountsList_FreshSnapshot_NotDegraded(t *testing.T) {
 	}
 	if !rec.viaAt || !rec.asOf.Equal(asOf) {
 		t.Errorf("as_of not stamped from the snapshot: viaAt=%v asOf=%v want %v", rec.viaAt, rec.asOf, asOf)
+	}
+}
+
+// TestAccountsList_NativeBasis — on the lean networks the cache computes a
+// native-XLM ranking (no USD price map), and the handler must label it: the
+// row carries the XLM quantity in `value` with `usd_value` empty, `ranked_by`
+// is "native_xlm", and `priced_assets` reports 0 (nothing is USD-priced).
+func TestAccountsList_NativeBasis(t *testing.T) {
+	h, rec := wealthTestHandler(&wealthSnapshotReader{
+		capReader: &capReader{probe: &deadlineProbe{}},
+		rows:      []clickhouse.AccountWealth{{AccountID: validTestAccount, USD: 4200.5}},
+		basis:     clickhouse.WealthBasisNative,
+		asOf:      time.Now().Add(-time.Minute), ok: true,
+	})
+	serveAccountsList(t, h)
+	if rec.status != http.StatusOK {
+		t.Fatalf("native-basis snapshot served %d, want 200", rec.status)
+	}
+	view, okAssert := rec.view.(AccountsListView)
+	if !okAssert {
+		t.Fatalf("payload was %T, want AccountsListView", rec.view)
+	}
+	if view.RankedBy != clickhouse.WealthBasisNative {
+		t.Errorf("ranked_by = %q, want %q", view.RankedBy, clickhouse.WealthBasisNative)
+	}
+	if view.PricedAssets != 0 {
+		t.Errorf("priced_assets = %d on native basis, want 0", view.PricedAssets)
+	}
+	if len(view.Accounts) != 1 {
+		t.Fatalf("got %d accounts, want 1", len(view.Accounts))
+	}
+	row := view.Accounts[0]
+	if row.Value != "4200.5" {
+		t.Errorf("row value = %q, want the XLM quantity %q", row.Value, "4200.5")
+	}
+	if row.USDValue != "" {
+		t.Errorf("usd_value = %q on native basis, want empty", row.USDValue)
 	}
 }
 

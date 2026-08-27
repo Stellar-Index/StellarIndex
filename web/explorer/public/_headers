@@ -68,7 +68,7 @@
   # against a local API. The Next dev server doesn't read _headers
   # at all (it serves no production headers), so production
   # leakage is the only effect. Removed.
-  Content-Security-Policy: default-src 'self'; connect-src 'self' https://api.stellarindex.io; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'
+  Content-Security-Policy: default-src 'self'; connect-src 'self' https://api.stellarindex.io https://api.testnet.stellarindex.io https://api.futurenet.stellarindex.io; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'
 
 # Fingerprinted Next.js assets — far-future cache. CF Pages already
 # does this by default but the explicit header doubles as
@@ -101,4 +101,4 @@
   # rules. (The parent's HSTS also reaches these responses; an
   # identical duplicate is harmless, unlike the CSP case above.)
   Strict-Transport-Security: max-age=31536000; includeSubDomains
-  Content-Security-Policy: default-src 'self'; connect-src 'self' https://api.stellarindex.io; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors *; form-action 'self'
+  Content-Security-Policy: default-src 'self'; connect-src 'self' https://api.stellarindex.io https://api.testnet.stellarindex.io https://api.futurenet.stellarindex.io; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors *; form-action 'self'

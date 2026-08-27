@@ -239,6 +239,19 @@ func (s StellarConfig) validate() error {
 		return fmt.Errorf("%w: stellar.history_archive_url %q must be a full URL",
 			ErrInvalidConfig, s.HistoryArchiveURL)
 	}
+	// Network/archive mismatch guard (audit 2026-08-26): the PUBNET archive
+	// (core-live) must never be paired with a test-net `network`, or a
+	// testnet/futurenet node would ingest PUBNET checkpoints into a test-net
+	// store — silent cross-network corruption, and config validation is the
+	// only gate before the archive client uses this URL. A test net's own
+	// archive carries a core-testnet / core-futurenet path segment instead.
+	if s.Network != "pubnet" {
+		lower := strings.ToLower(s.HistoryArchiveURL)
+		if strings.Contains(lower, "core-live") || strings.Contains(lower, "core_live") {
+			return fmt.Errorf("%w: stellar.network=%q but stellar.history_archive_url %q is a PUBNET archive (core-live) — point it at the %s history archive so the node does not ingest pubnet ledgers into a test-net store",
+				ErrInvalidConfig, s.Network, s.HistoryArchiveURL, s.Network)
+		}
+	}
 	return nil
 }
 

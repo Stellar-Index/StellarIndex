@@ -84,15 +84,11 @@
     state: present
   become_user: postgres
 
-# pg_stat_statements on the APPLICATION db — this is the one operators
-# actually query for slow-statement forensics (the core-db copy above
-# predates the 2026-04-23 core trim and is skipped on r1).
-- name: Enable pg_stat_statements extension (stellarindex DB)
-  community.postgresql.postgresql_ext:
-    login_db: "{{ postgres_db_stellarindex }}"
-    name: "pg_stat_statements"
-    state: present
-  become_user: postgres
+# pg_stat_statements on the APPLICATION db is enabled AFTER the db is
+# created, below ("Enable pg_stat_statements on stellarindex db"). A
+# duplicate task here (before the CREATE DATABASE) passed idempotently on
+# the already-built r1 but fails a FRESH build ("database does not exist");
+# removed 2026-08-26.
 
 # ──── stellarindex application database ─────────────────────────────
 # Used by stellarindex-indexer / aggregator / api. Owns the trades +

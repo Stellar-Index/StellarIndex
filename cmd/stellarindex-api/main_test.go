@@ -361,7 +361,7 @@ func TestResolveSEP10Validator_WiringByConfiguration(t *testing.T) {
 		t.Cleanup(func() { _ = rdb.Close() })
 
 		for _, mode := range []string{"apikey_optional", "sep10"} {
-			v, err := resolveSEP10Validator(configured, mode, rdb, discardLogger())
+			v, err := resolveSEP10Validator(configured, mode, config.Default().Stellar.Passphrase(), rdb, discardLogger())
 			if err != nil {
 				t.Fatalf("mode=%s: unexpected error: %v", mode, err)
 			}
@@ -376,7 +376,7 @@ func TestResolveSEP10Validator_WiringByConfiguration(t *testing.T) {
 
 	t.Run("configured + NO Redis + auth_mode=sep10 → fail closed", func(t *testing.T) {
 		setConfiguredEnv(t)
-		v, err := resolveSEP10Validator(configured, "sep10", nil, discardLogger())
+		v, err := resolveSEP10Validator(configured, "sep10", config.Default().Stellar.Passphrase(), nil, discardLogger())
 		if err == nil {
 			t.Fatalf("expected fail-closed error, got validator %T", v)
 		}
@@ -390,7 +390,7 @@ func TestResolveSEP10Validator_WiringByConfiguration(t *testing.T) {
 
 	t.Run("configured + NO Redis + auth_mode=apikey_optional → Noop, boots", func(t *testing.T) {
 		setConfiguredEnv(t)
-		v, err := resolveSEP10Validator(configured, "apikey_optional", nil, discardLogger())
+		v, err := resolveSEP10Validator(configured, "apikey_optional", config.Default().Stellar.Passphrase(), nil, discardLogger())
 		if err != nil {
 			t.Fatalf("must degrade to Noop (not abort boot) outside auth_mode=sep10: %v", err)
 		}
@@ -403,7 +403,7 @@ func TestResolveSEP10Validator_WiringByConfiguration(t *testing.T) {
 		v, err := resolveSEP10Validator(config.SEP10Config{
 			WebAuthDomain: "auth.stellarindex.test",
 			HomeDomain:    "stellarindex.test",
-		}, "apikey_optional", nil, discardLogger())
+		}, "apikey_optional", config.Default().Stellar.Passphrase(), nil, discardLogger())
 		if err != nil {
 			t.Fatalf("an unconfigured SEP-10 deployment must boot with the Noop, got error: %v", err)
 		}

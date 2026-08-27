@@ -250,7 +250,15 @@
    a mechanical wheel, not a fade. The strip's BASE transform is the
    end position, so reduced-motion (collapsed durations) and the
    settled state both rest on the new value. Untouched digits are
-   plain .digit-cell spans and never move. */
+   plain .digit-cell spans and never move.
+
+   Every measure here is `1lh` (window height, digit height, and the
+   roll's translate). `lh` only resolves consistently under an EXPLICIT
+   line-height: with `line-height: normal` the used value is font-metric
+   dependent and some platforms (Windows) round the layout heights and
+   the -1lh transform differently, so the rolling column settles a pixel
+   or two low. RollingNumber pins `leading-[1.3]` on its root so the whole
+   odometer inherits one explicit line-height and every `1lh` matches. */
 .digit-window {
   display: inline-block;
   overflow: hidden;
@@ -259,14 +267,23 @@
 }
 .digit-strip {
   display: block;
-  transform: translateY(-50%);
+  /* Rest on the NEW digit: translate up by an absolute -1lh (exactly one
+     line), so the settled / reduced-motion state shows the new value. */
+  transform: translateY(-1lh);
   /* 0.65s (was 0.35s): at the ledger's ~5s cadence a 0.35s roll of one
      11px digit read as an instant swap — measured correct in DevTools,
-     invisible to the eye (operator report 2026-08-24). The longer
-     travel with a pronounced settle makes the wheel legible. */
+     invisible to the eye (operator report 2026-08-24). The longer travel
+     with a pronounced settle makes the wheel legible. */
   animation: digit-rollover 0.65s cubic-bezier(0.22, 0.9, 0.28, 1) both;
 }
 .digit-strip > span {
+  display: block;
+  height: 1lh;
+}
+/* A non-rolling digit: one 1lh block filling the same window as a rolling
+   digit's visible strip cell, so static and changing digits sit at the exact
+   same height (no descender-height offset on the column that ticks). */
+.digit-flat {
   display: block;
   height: 1lh;
 }
@@ -275,7 +292,7 @@
     transform: translateY(0);
   }
   to {
-    transform: translateY(-50%);
+    transform: translateY(-1lh);
   }
 }
 .flash-up {

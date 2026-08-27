@@ -105,6 +105,61 @@ PR merge into main
 Rolling back is a single click in the CF dashboard — Pages keeps
 every previous build available as a preview URL.
 
+## Test nets (Testnet / Futurenet)
+
+Each network gets its **own explorer build** — the same code with a different
+`NEXT_PUBLIC_NETWORK` + `NEXT_PUBLIC_API_BASE_URL` baked in — published to its
+own Cloudflare Pages project and custom domain. The nav network-switcher then
+lets visitors hop between them (it reads each network's public
+`/v1/ledger/tip`).
+
+| Network | Pages project | Custom domain | API origin (grey) |
+| --- | --- | --- | --- |
+| Mainnet | `stellarindex-explorer` | stellarindex.io | api.stellarindex.io |
+| Testnet | `stellarindex-explorer-testnet` | testnet.stellarindex.io | api.testnet.stellarindex.io |
+| Futurenet | `stellarindex-explorer-futurenet` | futurenet.stellarindex.io | api.futurenet.stellarindex.io |
+
+**One-time Cloudflare setup (dashboard, per test net):**
+
+1. Create the Pages project (`stellarindex-explorer-testnet` /
+   `-futurenet`). Either connect it to this repo's `main` (git integration,
+   auto-deploy) **or** leave it CI-published (below). If git-integrated, set
+   the project's build env vars `NEXT_PUBLIC_NETWORK` +
+   `NEXT_PUBLIC_API_BASE_URL` to the row above.
+2. Add the custom domain (testnet./futurenet.stellarindex.io). The DNS record
+   is already **orange/proxied** — Cloudflare terminates its TLS, so no origin
+   cert is needed (the app is static; its live data comes from the grey api.*
+   origin, which is unaffected).
+3. Ensure `CLOUDFLARE_API_TOKEN` has Pages:Edit on the new projects.
+
+**Publishing:** the `explorer-deploy.yml` workflow takes a `network` input that
+bakes the right env and targets the right project:
+
+```sh
+gh workflow run explorer-deploy.yml --ref main -f network=testnet   -f environment=production
+gh workflow run explorer-deploy.yml --ref main -f network=futurenet -f environment=production
+```
+
+The test-net API origins are already in the API's CORS `allowed_origins`, so
+the switcher's cross-origin tip probe works in every direction.
+
+**Two cross-origin gotchas** (both handled, noted so they don't recur):
+
+- **CSP `connect-src`** (`web/explorer/public/_headers`) must list *all three*
+  `api.*` origins — a test-net explorer connects to its own `api.<net>` origin,
+  and the switcher probes every network's tip. If it lists only the mainnet API,
+  every fetch + EventSource is blocked by CSP (dead odometer, dozens of console
+  warnings). It's one static file shared by all builds, so it carries all three.
+- **API `allowed_origins`** must include the explorer origins (`stellarindex.io`
+  + `testnet.` + `futurenet.`) so the browser's SSE/tip fetches pass CORS. This
+  is in the role template; re-render + restart the API if you widen it after a
+  deploy. (Mainnet r1 still needs this applied before its switcher can show the
+  test-net tips — until then those rows show a dash, which is graceful.)
+- **Pricing** is mainnet-only: the lean test nets run no aggregator, so
+  `/v1/price/tip/stream` 404s. The explorer gates the price stream on
+  `CURRENT_NETWORK.pricing` (see `src/lib/networks.ts`) so it isn't opened at all
+  on a test net; pricing widgets render their empty state.
+
 ## Security headers + CSP
 
 `web/explorer/public/_headers` ships a Cloudflare-Pages /

@@ -32,6 +32,11 @@ region_id:           ""
 region_name:         "FSN1"
 home_domain:         "stellarindex.io"
 
+# Minimum RAM the preflight requires (MB). Default = the pubnet archival-node
+# spec (32 GB, ~30000 MB usable). A low-traffic testnet/futurenet VM overrides
+# this lower in inventory — two VMs share a 64 GB host, so neither can get 32 GB.
+archival_node_min_ram_mb: 30000
+
 # ───── Which subsystems to run on this host ──────────────────────────
 run_postgres:        true
 # Primary stellar-core daemon. Off by default — the archive we ship
@@ -53,6 +58,16 @@ run_observability:   true
 # package per configs/loki/README.md). Sub-flag of run_observability:
 # the whole file is skipped when run_observability is false.
 run_promtail:        true
+
+# Data services hand-installed out-of-band on r1 (2026-06 lake pivot),
+# codified for fresh hosts (r2/r3/test net). run_clickhouse defaults FALSE
+# so a re-run NEVER touches r1's hand-tended lake — a fresh host sets it true
+# (together with clickhouse_apply_schema to lay down the deploy/clickhouse
+# DDL). run_redis defaults true; `state: present` never upgrades r1's redis.
+run_redis:               true
+run_clickhouse:          false
+clickhouse_apply_schema: false
+clickhouse_tcp_port:     9300   # 9000 is MinIO's
 
 # ───── ZFS ───────────────────────────────────────────────────────────
 # [Per-region:
@@ -205,9 +220,16 @@ sysctl_tunings:
   vm.swappiness: 1
   vm.dirty_ratio: 10
   vm.dirty_background_ratio: 3
-  # Transparent huge pages OFF (Postgres + BucketListDB recommendation)
-  vm.overcommit_memory: 2
-  vm.overcommit_ratio: 80
+  # Strict overcommit (2) makes malloc fail predictably instead of the
+  # OOM-killer nuking a critical process — sound on r1 (188 GB + 16 G swap →
+  # a generous commit budget). But on a small VM the budget is
+  # `overcommit_ratio% × RAM (+ swap)`, e.g. 80% × 20 GB = 16 GB, which
+  # ClickHouse + captive-core + the Go services routinely exceed → malloc/
+  # fork fail with "Cannot allocate memory" despite free RAM. Memory-
+  # constrained hosts (test-net VMs) override vm_overcommit_memory: 0
+  # (heuristic overcommit) — see the note there and the ClickHouse cap.
+  vm.overcommit_memory: "{{ vm_overcommit_memory | default(2) }}"
+  vm.overcommit_ratio: "{{ vm_overcommit_ratio | default(80) }}"
 
 # ───── Postgres ──────────────────────────────────────────────────────
 postgres_version:        "15"
@@ -396,6 +418,77 @@ stellarindex_live_seam_ledger: 0
 
 # ───── Stellar network / quorum ──────────────────────────────────────
 stellar_network:         "pubnet"
+
+# The full network passphrase, derived from stellar_network. ONE source
+# of truth feeding BOTH stellar-core.cfg's NETWORK_PASSPHRASE AND (for
+# non-preset networks like futurenet) galexie's captive core — declared
+# here so the two can never drift. Fixes the pre-2026-08-26 bug where
+# stellar-core.cfg.j2's else-branch emitted the literal network NAME
+# ("futurenet") as the passphrase, so a futurenet captive-core could not
+# join the network. MUST match internal/config/config.go's passphrase map.
+stellar_passphrases:
+  pubnet:    "Public Global Stellar Network ; September 2015"
+  testnet:   "Test SDF Network ; September 2015"
+  futurenet: "Test SDF Future Network ; October 2022"
+stellar_passphrase: "{{ stellar_passphrases[stellar_network] | default(stellar_network) }}"
+
+# Per-network history archive (SDF-published). config.Validate REJECTS a
+# pubnet (core-live) URL on a non-pubnet network — the guard against a
+# test net silently ingesting pubnet checkpoints — so this MUST track
+# stellar_network. Override in inventory for a private/mirror archive.
+stellar_history_archive_urls:
+  pubnet:    "https://history.stellar.org/prd/core-live/core_live_001"
+  testnet:   "https://history.stellar.org/prd/core-testnet/core_testnet_001"
+  futurenet: "http://history.stellar.org/dev/core-futurenet/core_futurenet_001"
+stellar_history_archive_url: "{{ stellar_history_archive_urls[stellar_network] | default(stellar_history_archive_urls['pubnet']) }}"
+
+# The FULL SDF archive set per network (001/002/003), per
+# https://developers.stellar.org/docs/networks. `stellar_history_archive_url`
+# above stays single-valued (the archivist mirror + galexie-append probe want
+# one URL); this list is what a captive core replaying history should use, so a
+# single archive being slow or 404ing a checkpoint fails over instead of
+# stalling the replay. Consumed by stellar-core.cfg.j2 on NON-pubnet networks,
+# where the pubnet [[VALIDATORS]] (and their pubnet HISTORY URLs) are omitted.
+stellar_history_archive_url_sets:
+  pubnet:
+    - "https://history.stellar.org/prd/core-live/core_live_001"
+    - "https://history.stellar.org/prd/core-live/core_live_002"
+    - "https://history.stellar.org/prd/core-live/core_live_003"
+  testnet:
+    - "https://history.stellar.org/prd/core-testnet/core_testnet_001"
+    - "https://history.stellar.org/prd/core-testnet/core_testnet_002"
+    - "https://history.stellar.org/prd/core-testnet/core_testnet_003"
+  futurenet:
+    - "http://history.stellar.org/dev/core-futurenet/core_futurenet_001"
+    - "http://history.stellar.org/dev/core-futurenet/core_futurenet_002"
+    - "http://history.stellar.org/dev/core-futurenet/core_futurenet_003"
+stellar_history_archive_url_set: "{{ stellar_history_archive_url_sets[stellar_network] | default([stellar_history_archive_url]) }}"
+
+# Captive stellar-core apt version. Empty = fresh-host "latest available" /
+# never-upgrade-an-existing-binary (07-galexie.yml). Pin the exact apt version
+# (e.g. "28.0.1-3508.947aad841.noble") to drive a PROTOCOL-UPGRADE core bump —
+# required before a network reaches a protocol the installed core predates
+# (P28: core >= 28 by mainnet 2026-09-16). See docs/operations/protocol-upgrades.md.
+stellar_core_version: ""
+
+# stellar-archivist apt version. Empty = fresh-host "latest available" /
+# never-upgrade-an-existing-binary (06-stellar-core.yml), same posture as
+# stellar_core_version above. Pin the exact apt version (e.g. "0.1.5-486") to
+# clear stellarindex_stellar_stack_lagging{component="archivist"} — the probe
+# in 10-observability.yml compares dpkg-installed against the apt candidate.
+# archivist is the archive mirror/verify CLI (verify-archive tiers), NOT in the
+# live ingest path, so a bump is low-risk and needs no service restart.
+stellar_archivist_version: ""
+
+# Protocol-transition era boundaries (internal/config/config.go StellarConfig).
+# Pubnet uses the real ledger numbers; a reset testnet/futurenet is entirely
+# post-Soroban AND post-P23 from ledger 1, so BOTH are genesis (1) there —
+# otherwise the SEP-41 supply observer and the CAP-67 movements feed floor
+# ABOVE every ledger the net has and produce nothing. These also drive the
+# ch-cap67-movements -floor-ledger flag (14-stellarindex-services.yml).
+stellar_soroban_genesis_ledger: "{{ 50457424 if stellar_network == 'pubnet' else 1 }}"
+stellar_movements_floor_ledger: "{{ 58762517 if stellar_network == 'pubnet' else 1 }}"
+
 catchup_mode:            "CATCHUP_RECENT"       # RECENT | COMPLETE
 is_validator:            false
 node_is_validator:       "{{ is_validator }}"
@@ -570,7 +663,7 @@ captive_peer_port_backfill:         11727
 #   r3: galexie-live local; galexie-archive on Vultr Object Storage
 #       (S3-compatible, region-local Singapore endpoint).
 # ]
-galexie_version:         "galexie-v27.0.0"   # pinned — update via VERSIONS.md. Tag format: galexie-vX.Y.Z (matches Stellar protocol version). 2026-07-09: bumped 26→27 with the CAP-0071 SEV fix.
+galexie_version:         "galexie-v28.0.0"   # pinned — update via VERSIONS.md. Tag format: galexie-vX.Y.Z (matches Stellar protocol version). 2026-07-09: bumped 26→27 with the CAP-0071 SEV fix. 2026-08-27: bumped 27→28 for Protocol 28 — a v27 galexie cannot DECODE P28 ledger meta (observed on futurenet: "decoding LedgerCloseMetaV2: … ParallelTxExecutionStage" halted the archive backfill at ledger 92747), and mainnet crosses the P28 upgrade ledger 2026-09-16.
 # Drift guard (docs/operations/runbooks/stellar-stack-version-lag.md,
 # 2026-07-09). Distinct from `galexie_version` above on purpose:
 # that var is the go-install TAG; this is the literal, verbatim
@@ -582,7 +675,7 @@ galexie_version:         "galexie-v27.0.0"   # pinned — update via VERSIONS.md
 # crash-loop) that never got codified here is exactly the drift
 # ansible-drift.yml exists to catch. Update BOTH this value AND
 # galexie_version in the SAME PR whenever galexie is upgraded.
-galexie_expected_version_string: "stellar-galexie v0.0.0-20260610161848-c97d6484816f"
+galexie_expected_version_string: "stellar-galexie v0.0.0-20260814232054-a94b31e18ce4"
 # Second guard: sha256 of the /usr/local/bin/galexie file itself
 # (belt-and-suspenders alongside the version-string assert above —
 # catches a same-version-string-but-different-bytes swap, e.g. a
@@ -616,7 +709,7 @@ galexie_expected_version_string: "stellar-galexie v0.0.0-20260610161848-c97d6484
 # the correct signal — do not stand it down by editing the constant to
 # match whatever the box happens to report; that would codify an
 # uncodified binary, which is the drift this guard exists to catch.
-galexie_expected_binary_sha256: "045caa5f1cfc43b2cc367f1e48155763ef67ef94cecd61f3c3aaa1a77382a270"
+galexie_expected_binary_sha256: "de8200fccdc027ffd0d022ddcea0029db8c331c4323211f0a16cb47f69304d54"
 
 galexie_s3_endpoint:     "http://127.0.0.1:9000"
 galexie_s3_bucket:       "galexie-live"
@@ -734,6 +827,14 @@ internal_cidrs:
   - "10.0.0.0/8"
   - "172.16.0.0/12"
   - "192.168.0.0/16"
+
+# API HTTP bind address. Default loopback-only: on r1 Caddy runs ON the box
+# and reverse-proxies to localhost:3000 (audit-2026-07-23 INF-19 — a public
+# 0.0.0.0 bind is the tighter-surface regression to avoid). The test-net VMs
+# instead run Caddy on the KVM HOST, which reaches the API over the private
+# NAT — so they override this to "0.0.0.0:3000" AND add 3000 to
+# internal_allow_ports (host source ∈ internal_cidrs).
+stellarindex_api_listen_addr: "127.0.0.1:3000"
 
 # ───── Observability ─────────────────────────────────────────────────
 node_exporter_version:   "1.8.2"

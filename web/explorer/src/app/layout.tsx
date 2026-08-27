@@ -4,6 +4,7 @@ import './globals.css';
 import { ConsoleShell } from '@/components/nav/ConsoleShell';
 import { QueryProvider } from '@/components/QueryProvider';
 import { serializeJsonLd } from '@/lib/seo';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 // Inter (UI) + JetBrains Mono (numeric / addresses / code). next/font
 // self-hosts both at build time — no runtime Google dependency, no layout
@@ -28,14 +29,22 @@ const fraunces = Fraunces({
   variable: '--font-serif',
 });
 
-const SITE_URL = 'https://stellarindex.io';
+// Metadata is per-network: each explorer build (mainnet/testnet/futurenet) has
+// its own canonical origin, title, and description. The test nets are lean
+// (SDEX-only, no aggregator/pricing), so their copy drops the VWAP/exchange/FX
+// framing and names the network explicitly.
+const IS_MAINNET = CURRENT_NETWORK.pricing; // mainnet is the only priced net
+const SITE_URL = CURRENT_NETWORK.explorerUrl;
 const SITE_NAME = 'Stellar Index';
 // One tagline, used for <title>, og:title, twitter:title and the og:image
 // alt so the social card and the tab agree. Keep in sync with the same
 // string in src/lib/seo.ts (SITE_OG_IMAGES alt).
-const SITE_TAGLINE = `${SITE_NAME} — Stellar protocol explorer & API`;
-const SITE_DESCRIPTION =
-  'The protocol explorer and API for the Stellar network. Every contract, every event, every trade — complete, verified, per-protocol on-chain data, plus history, supply, anomaly detection, and independent VWAP prices across on-chain DEXes, classic SDEX, and major exchanges.';
+const SITE_TAGLINE = IS_MAINNET
+  ? `${SITE_NAME} — Stellar protocol explorer & API`
+  : `${SITE_NAME} — Stellar ${CURRENT_NETWORK.label} explorer & API`;
+const SITE_DESCRIPTION = IS_MAINNET
+  ? 'The protocol explorer and API for the Stellar network. Every contract, every event, every trade — complete, verified, per-protocol on-chain data, plus history, supply, anomaly detection, and independent VWAP prices across on-chain DEXes, classic SDEX, and major exchanges.'
+  : `The Stellar ${CURRENT_NETWORK.label} explorer and API. Every ledger, transaction, account, asset, and Soroban contract on Stellar ${CURRENT_NETWORK.label} — complete, verified, per-protocol on-chain data through a public REST API.`;
 
 // Mobile address-bar / PWA theme tint — the primary brand blue (brand-600).
 export const viewport: Viewport = {

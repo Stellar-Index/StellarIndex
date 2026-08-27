@@ -42,6 +42,11 @@ EnvironmentFile=-/etc/default/stellarindex
 Environment=CH_ADDR=127.0.0.1:9300
 Environment=WINDOW=50000
 Environment=FOLLOW_INTERVAL=1s
+# First-run watermark floor: the pubnet P23 boundary, or genesis (1) on a
+# test net so the derive starts from the first ledger instead of flooring
+# above the whole chain (which would leave account_movements empty).
+# Driven by stellar_movements_floor_ledger (defaults/main.yml).
+Environment=FLOOR_LEDGER={{ stellar_movements_floor_ledger }}
 Environment=EXTRA_FLAGS=
 
 ExecStart=/usr/local/bin/stellarindex-ops ch-cap67-movements \
@@ -49,6 +54,7 @@ ExecStart=/usr/local/bin/stellarindex-ops ch-cap67-movements \
   -follow-interval ${FOLLOW_INTERVAL} \
   -ch-addr ${CH_ADDR} \
   -window ${WINDOW} \
+  -floor-ledger ${FLOOR_LEDGER} \
   -write \
   ${EXTRA_FLAGS}
 

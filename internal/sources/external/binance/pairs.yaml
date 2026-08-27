@@ -28,6 +28,16 @@ pairs:
   - symbol: XLMUSDT
     base: { code: XLM, class: crypto }
     quote: { code: USDT, class: crypto }
+  # XLMEUR — verified TRADING on the Binance exchangeInfo API 2026-08-27.
+  # crypto:XLM/fiat:EUR previously had only TWO venues (kraken + bitstamp),
+  # so one venue going quiet dropped source_count to 1 — an ADR-0019 phase-2
+  # freeze signal — and a pair with deep global liquidity kept freezing.
+  # With coinbase XLM-EUR added alongside, this takes it to four venues.
+  # (Binance has no XLMGBP product; XLM/GBP stays on kraken + bitstamp plus
+  # the triangulated USD/GBP route.)
+  - symbol: XLMEUR
+    base: { code: XLM, class: crypto }
+    quote: { code: EUR, class: fiat }
   - symbol: XLMBTC
     base: { code: XLM, class: crypto }
     quote: { code: BTC, class: crypto }

@@ -20,6 +20,14 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { API_BASE_URL, apiGet, timeoutSignal } from './client';
 import type { components, paths } from './types';
+import { CURRENT_NETWORK } from '@/lib/networks';
+
+// This deployment's network has aggregator-derived USD pricing (mainnet only).
+// The lean test nets run no aggregator, so every USD/FX endpoint (`/v1/price`,
+// `/v1/price/batch`, `/v1/chart` fiat quotes, `/v1/currencies`) 404s or returns
+// empty. Pricing hooks gate their queries on this so they don't fire — and 404
+// retry-storm — on a no-pricing net; the widgets show their empty state.
+const PRICING_ENABLED = CURRENT_NETWORK.pricing;
 
 // ---------------------------------------------------------------------------
 // Wire types — derived from the generated OpenAPI contract (./types.ts,
@@ -278,6 +286,11 @@ export type MeResponse = Omit<Schemas['Account'], 'tier'> & {
 export function useMe() {
   return useQuery<MeResponse | null>({
     queryKey: ['/v1/account/me', 'credentialed'],
+    // The lean test nets run no accounts backend, so /v1/account/me 503s
+    // there — skip the probe entirely (data stays undefined → treated as
+    // signed-out) rather than erroring on every page load. Accounts UI is
+    // hidden on those networks anyway (CURRENT_NETWORK.accounts).
+    enabled: CURRENT_NETWORK.accounts,
     queryFn: async () => {
       const url = `${API_BASE_URL_FOR_ME}/v1/account/me`;
       const res = await fetch(url, {
@@ -436,6 +449,7 @@ export function useNativeUsdPrice() {
   const price = useQuery<number | null>({
     queryKey: ['/v1/price', 'native', 'fiat:USD'],
     retry: false,
+    enabled: PRICING_ENABLED, // no aggregator on test nets → /v1/price 404s
     staleTime: 30_000,
     queryFn: async () => {
       const env = await apiGet<{ data: { price?: string | null } }>('/v1/price', {
@@ -449,6 +463,7 @@ export function useNativeUsdPrice() {
   const change = useQuery<number | null>({
     queryKey: ['/v1/chart', 'native', 'fiat:USD', '24h-change'],
     retry: false,
+    enabled: PRICING_ENABLED, // no aggregator on test nets → /v1/chart fiat empty
     staleTime: 60_000,
     queryFn: async () => {
       const env = await apiGet<{ data: { points?: { p?: string | null }[] } }>(
@@ -619,7 +634,8 @@ export function useFiatUsdSeries(
 ) {
   return useQuery<{ time: number; value: number }[]>({
     queryKey: ['/v1/chart', assetID, 'fiat:USD', '1w-line'],
-    enabled: options?.enabled ?? true,
+    // fiat:USD chart has no data on test nets (no aggregator) — gate off.
+    enabled: (options?.enabled ?? true) && PRICING_ENABLED,
     retry: false,
     staleTime: 60_000,
     queryFn: async () => {

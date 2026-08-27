@@ -15,6 +15,31 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Testnet / Futurenet support — a one-line `stellar.network` switch.** The
+  indexer now runs correctly (without corrupting data) against Stellar
+  testnet and futurenet. Grounded in a cold adversarial hardcode audit +
+  an independent fix-verifier pass (2026-08-26). Pubnet behaviour is
+  byte-identical (every new default resolves to the old constant).
+  - Config: `stellar.soroban_genesis_ledger` / `stellar.movements_floor_ledger`
+    (pubnet values, or genesis=1 on test nets) so the SEP-41 supply and
+    CAP-67 real-time movements feeds don't floor above the whole chain;
+    `timescale.MovementsFloor()` + `canonical.NetworkPassphrase()` install
+    seams resolve leaf-package reads to the configured network.
+  - Corruption guards: `SacContractID` is network-aware (was serving the
+    pubnet contract address on testnet `/v1/assets`); config validation
+    rejects a pubnet (core-live) `history_archive_url` on a non-pubnet
+    network; the cross-anchor archive filler refuses to write pubnet
+    ledgers into a test-net archive; the SEP-41 supply genesis seed
+    defaults its boundary from the config's network value.
+  - Ansible: the `archival-node` role is network-aware (single-source
+    `stellar_passphrase` — fixes the futurenet core.cfg bug — per-network
+    history archive, boundary knobs, cap67 `-floor-ledger`); testnet +
+    futurenet inventory templates.
+  - CI/CD: `deploy.yml` gains `testnet` / `futurenet` targets; a fleet-model
+    design proposal (`docs/operations/cicd-fleet-model.md`).
+  - Docs: testnet/futurenet deployment guide + reset runbook.
+
 ## [v0.44.8] — 2026-08-26
 
 Tested against Stellar protocol 22.

@@ -146,7 +146,9 @@ func TestCap67Range_StallsAtHole(t *testing.T) {
 	}
 
 	// from explicit (skip the watermark read); to=0 → resolve the contiguous tip.
-	start, last, err := chops.Cap67Range(ctx, addr, from+1, 0)
+	// floorLedger is unused on this path (from!=0 skips the first-run seed) —
+	// pass any valid non-zero value.
+	start, last, err := chops.Cap67Range(ctx, addr, from+1, 0, 1)
 	if err != nil {
 		t.Fatalf("Cap67Range: %v", err)
 	}

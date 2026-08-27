@@ -1,0 +1,134 @@
+---
+# ── TESTNET inventory (EXAMPLE) ───────────────────────────────────────────
+# A lean, cut-down explorer for the Stellar TEST network: SDEX-only, no
+# bespoke Soroban DEX/AMM sources, no oracles, no external CEX/FX markets, no
+# aggregator/pricing (every asset is $0). Runs as a libvirt VM on a shared
+# host; ansible reaches it via ProxyJump through the host's public IP.
+#
+# Copy to testnet.yml, drop real secrets in testnet.secrets.yml (gitignored),
+# and replace every value marked  # REPLACE.  This file mirrors the real
+# testnet.yml so a fresh bring-up is reproducible end-to-end.
+all:
+  vars:
+    ssh_permit_root_login: "prohibit-password"
+    # Supply-chain checksums (same pinned versions as r1 + node_exporter 1.8.2).
+    minio_release_sha256:               "c27873d791b56d33518de11f12c5bfae4be88ebac00e12c6dd0027b08123fd80"
+    mc_release_sha256:                  "01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891"
+    pgbackrest_exporter_release_sha256: "e73a862a900ef08d697a64b6644abb078453370e8e02db75a24d8b496ea33e6d"
+    node_exporter_release_sha256:       "6809dd0b3ec45fd6e992c19071d6b5253aed3ead7bf0686885a51d85c6643c66"
+
+    region_id:           "testnet"
+    region_name:         "FSN-testnet"
+    home_domain:         "stellarindex.io"
+    # Low-traffic test net on a shared host — relax the pubnet 32 GB RAM floor
+    # to the VM's actual size.
+    archival_node_min_ram_mb: 18000
+
+    # ── THE network switch ──
+    stellar_network:     "testnet"
+    catchup_mode:        "CATCHUP_RECENT"
+    is_validator:        false
+    node_is_validator:   "{{ is_validator }}"
+
+    # Coherent RECENT start: galexie's captive core catches up to this ledger
+    # via the testnet archive (fast) and the indexer's backfill floor matches,
+    # so live-only ingest has no gap. (Full-genesis would replay millions of
+    # testnet ledgers — hours.) galexie_start_ledger MUST equal
+    # backfill_from_ledger. UPDATE BOTH after a testnet reset (ledgers restart
+    # at 1) — pick a value ~10k below the current archive tip. See the reset
+    # runbook.
+    galexie_start_ledger:              4340000   # REPLACE with a recent tip-minus-margin
+    stellarindex_backfill_from_ledger: 4340000   # REPLACE — keep == galexie_start_ledger
+    stellarindex_live_seam_ledger:     0
+
+    # Plain virtual disk — the host owns storage; no in-VM ZFS.
+    zfs_data_devices:    []
+    zfs_data_pool_type:  ""
+    zfs_data_pool_name:  ""
+
+    run_postgres:        true
+    # Codified installs (r1 has these hand-installed; a fresh test net needs
+    # them from the role): ClickHouse lake + its schema, Redis (default on).
+    run_clickhouse:          true
+    clickhouse_apply_schema: true
+    # Small shared VM: r1's strict overcommit + 72 GB CH cap starve a 20 GB VM
+    # (malloc/fork fail despite free RAM → API OOM-loops). Heuristic overcommit
+    # + a 4 GB ClickHouse cap.
+    vm_overcommit_memory: 0
+    clickhouse_max_server_memory_usage_bytes: 4294967296   # 4 GiB
+    run_stellar_core:    false       # galexie captive-core only
+    # From-scratch bootstrap: the network-aware binaries are on the feature
+    # branch, not a GitHub release yet — build + install them from the local
+    # checkout (the task forces GOOS=linux GOARCH=amd64). Flip to false once a
+    # release carries the network-param code.
+    manage_stellarindex_binaries: true
+    # Greenfield bring-up: apply migrations from the checkout (opt-in — on prod
+    # deploy.yml is the canonical applier, staged from the release tag).
+    stellarindex_apply_migrations: true
+    run_galexie:         true
+    # A fresh `go install` on the VM yields a different-bytes galexie than r1's
+    # codified binary — skip the drift-guard asserts (they exist to catch an
+    # uncodified binary swap on r1, N/A for a from-source test-net build).
+    galexie_expected_binary_sha256: ""
+    galexie_expected_version_string: ""
+    run_minio:           true
+    run_observability:   true
+    # The host runs the public reverse proxy (one TLS point for all subdomains);
+    # the VM has no public IP, so its own Caddy/LE would fail.
+    run_caddy:           false
+
+    minio_buckets:
+      - "galexie-live"
+      - "galexie-archive"
+      - "backups"
+    galexie_s3_endpoint: "http://127.0.0.1:9000"
+    galexie_s3_bucket:   "galexie-live"
+    galexie_s3_region:   "{{ region_id }}"
+
+    # "Mostly an explorer": the Soroban DEX/AMM sources (soroswap, aquarius,
+    # phoenix, blend, comet, …) and the oracles (reflector, redstone, band)
+    # are BESPOKE CONTRACTS a test net doesn't have — cut them. SDEX (the
+    # native Stellar DEX) exists on every network, so keep it: the explorer
+    # shows real on-chain DEX trades. Aggregator/pricing stays off.
+    run_aggregator: false
+    stellarindex_enabled_sources:
+      - sdex
+    stellarindex_sdf_reserve_accounts: []
+    stellarindex_reserve_balances_stroops: {}
+    stellarindex_watched_sep41_contracts: []
+    # No verified-currency / market-cap surface on a test net (the default is a
+    # pubnet asset list). Empty → the explorer shows assets with no USD value.
+    stellarindex_watched_classic_assets: []
+
+    # Single test box — no offsite backup target yet (ack, like r1).
+    pgbackrest_offsite_ack: true
+    ch_schema_snapshot_offsite_ack: true
+    stellarindex_clickhouse_serving_enabled: true
+
+    prometheus_scrape_allow_cidrs: ["127.0.0.1/32"]
+    loki_push_url: "http://localhost:3100/loki/api/v1/push"
+
+    # MUST include the keys we connect with — the role REPLACES authorized_keys.
+    admin_ssh_keys:
+      - "ssh-ed25519 AAAA... your-operator-key"          # REPLACE
+      - "ssh-ed25519 AAAA... gh-actions-deploy@yourorg"   # REPLACE (CI deploy key)
+    # The VM's SSH is reachable ONLY from the host bridge (the ProxyJump source).
+    allowed_ssh_cidrs: ["192.168.122.0/24"]
+    ssh_world_open_ack: false
+    # The API binds 0.0.0.0:3000 (below) so the host's Caddy can reach it over
+    # the private NAT; open ONLY 3000 to internal_cidrs (Postgres/MinIO/
+    # node_exporter stay loopback-only). The VM has no public route.
+    stellarindex_api_listen_addr: "0.0.0.0:3000"
+    internal_allow_ports:
+      - { port: 3000, proto: "tcp", comment: "API — host Caddy reverse-proxies here" }
+
+  children:
+    archival_nodes:
+      hosts:
+        si-testnet:
+          ansible_host: "192.168.122.10"          # libvirt NAT addr of the VM
+          ansible_user: "root"
+          ansible_port: 22
+          ansible_ssh_private_key_file: "~/.ssh/si_deploy"
+          # ProxyJump through the host's PUBLIC IP (the VM has no public route).
+          ansible_ssh_common_args: '-o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o ProxyCommand="ssh -i ~/.ssh/si_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -W %h:%p root@HOST_PUBLIC_IP"'  # REPLACE HOST_PUBLIC_IP

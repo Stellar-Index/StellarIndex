@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { ArrowRight, Activity } from 'lucide-react';
 
 import { ButtonLink, Container } from '@/components/ui';
+import { CURRENT_NETWORK } from '@/lib/networks';
 import { HomeBlogStrip } from './HomeBlogStrip';
 import { HomeCurrencies } from './HomeCurrencies';
 import { HomeHeroChart } from './HomeHeroChart';
@@ -15,6 +16,16 @@ import { HomeTopMovers } from './HomeTopMovers';
 import { HomeTryAPI } from './HomeTryAPI';
 
 export default function HomePage() {
+  // Pricing-derived home panels (XLM/USD hero chart, fiat-rate strip, USD
+  // "top markets"/"top movers") have no data on the lean test nets — they
+  // render empty grids / retry-storm the pricing endpoints. Hide them there;
+  // the chain-native panels below stay.
+  const pricing = CURRENT_NETWORK.pricing;
+  // Futurenet is contracts-only (0 assets, 0 SDEX trades) — its "Top assets"
+  // grid and "Recent trades" feed are genuinely empty there, so hide them.
+  // (Recent trades also seeds pairs from the empty /v1/markets on testnet, so
+  // gate it on pricing; the contracts/ledgers/accounts surfaces stay on both.)
+  const isFuturenet = CURRENT_NETWORK.id === 'futurenet';
   return (
     <Container className="space-y-12 py-10 sm:py-14">
       <header className="max-w-3xl space-y-5">
@@ -23,14 +34,27 @@ export default function HomePage() {
           Independent · open · public-tier free
         </p>
         <h1 className="text-display-sm font-semibold text-ink md:text-display">
-          The protocol explorer for the Stellar network.
+          {pricing
+            ? 'The protocol explorer for the Stellar network.'
+            : `The Stellar ${CURRENT_NETWORK.label} Explorer`}
         </h1>
         <p className="max-w-2xl text-lg leading-relaxed text-ink-muted">
-          Every contract, every event, and every trade across Stellar
-          protocols — CEXes, on-chain DEXes, and lending — served as verified
-          per-protocol data plus a single VWAP price through a public REST
-          API, alongside live world fiat rates. Every panel below shows the
-          exact API call that produced it.
+          {pricing ? (
+            <>
+              Every contract, every event, and every trade across Stellar
+              protocols — CEXes, on-chain DEXes, and lending — served as
+              verified per-protocol data plus a single VWAP price through a
+              public REST API, alongside live world fiat rates. Every panel
+              below shows the exact API call that produced it.
+            </>
+          ) : (
+            <>
+              Every ledger, transaction, account, asset, and Soroban contract
+              on Stellar {CURRENT_NETWORK.label} — complete, verified,
+              per-protocol on-chain data through a public REST API. Every panel
+              below shows the exact API call that produced it.
+            </>
+          )}
         </p>
         <div className="flex flex-wrap items-center gap-3 pt-1">
           <ButtonLink href="/assets" size="lg">
@@ -54,7 +78,7 @@ export default function HomePage() {
 
       <HomeNetworkStrip />
 
-      <HomeHeroChart />
+      {pricing && <HomeHeroChart />}
 
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <NetworkLivePanel />
@@ -83,15 +107,15 @@ export default function HomePage() {
         </Link>
       </section>
 
-      <HomeTopAssets />
+      {!isFuturenet && <HomeTopAssets />}
 
-      <HomeCurrencies />
+      {pricing && <HomeCurrencies />}
 
-      <HomeTopMarkets />
+      {pricing && <HomeTopMarkets />}
 
-      <HomeTopMovers />
+      {pricing && <HomeTopMovers />}
 
-      <HomeRecentTrades />
+      {pricing && <HomeRecentTrades />}
 
       <HomeRecentChanges />
 

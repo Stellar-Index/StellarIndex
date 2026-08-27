@@ -24,7 +24,12 @@ home_domain = "{{ home_domain }}"
 network             = "{{ stellar_network }}"
 core_http_endpoint  = "http://127.0.0.1:11626"
 rpc_endpoints       = ["http://127.0.0.1:8000"]
-history_archive_url = "https://history.stellar.org/prd/core-live/core_live_001"
+history_archive_url = "{{ stellar_history_archive_url }}"
+# Era boundaries — pubnet ledger numbers, or genesis (1) on test nets so
+# the SEP-41 supply / CAP-67 movements feeds don't floor above the whole
+# chain. Driven by stellar_network (defaults/main.yml).
+soroban_genesis_ledger = {{ stellar_soroban_genesis_ledger }}
+movements_floor_ledger = {{ stellar_movements_floor_ledger }}
 
 [storage]
 postgres_dsn       = "postgres://{{ postgres_user_stellarindex }}@127.0.0.1:5432/{{ postgres_db_stellarindex }}?sslmode=disable"
@@ -75,6 +80,9 @@ backfill_from_ledger  = {{ stellarindex_backfill_from_ledger | int }}
 enabled            = true
 persist_per_source = true
 
+{% if run_aggregator | default(true) | bool %}
+{# Oracle contracts are pubnet Soroban addresses + only consumed by the
+   aggregator/oracle sources. Omitted on a pricing-off host (test net). #}
 [oracle.reflector]
 dex_contract = "CALI2BYU2JE6WVRUFYTS6MSBNEHGJ35P4AVCZYF3B6QOE3QKOB2PLE6M"
 cex_contract = "CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN"
@@ -89,6 +97,7 @@ standard_reference_contract = "CCQXWMZVM3KRTXTUPTN53YHL272QGKF32L7XEDNZ2S6OSUFK3
 [oracle.soroswap]
 factory_contract  = "CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2"
 seed_rpc_endpoint = "https://mainnet.sorobanrpc.com"
+{% endif %}
 
 # ──────────────────────────────────────────────────────────────────
 # Aggregator + trades — added 2026-05-04 to fix the headline-product
@@ -110,8 +119,19 @@ min_usd_volume = 10000  # per-pair USD-volume floor for VWAP publication (anti-m
 # plus the resolved chain legs. A target reachable by ONE route (the
 # current config, one chain per target) behaves exactly like the old
 # static single-chain multiply; a target reached by ≥2 agreeing,
-# confidence-gated routes is corroborated, and that pathCount widens the
-# anomaly-freeze's source_count leg so a thin FX cross stops false-firing.
+# confidence-gated routes is corroborated, and that CORROBORATION COUNT (not
+# pathCount) widens the anomaly-freeze's source_count leg so a thin FX cross
+# stops false-firing.
+#
+# CORRECTION 2026-08-27: this comment previously said "pathCount", which is
+# wrong and misled a change into thinking two routes were sufficient.
+# router.go is explicit that pathCount is "the serving multiplicity carried on
+# the composite meta -- NOT the number the freeze trusts". The freeze reads
+# corroborationCount, which is far tighter: >=2 EDGE-DISJOINT routes whose
+# prices agree within routerCorroborationAgreePct (3%), and whose weakest-link
+# confidence each clears corroborationMinConfidence (0.5). A brand-new pair has
+# no volatility baseline, so its edge confidence is capped at ~0.27 and cannot
+# corroborate at all until a baseline matures.
 max_hops             = 3    # route length cap in LEGS (base→hub→quote = 2); accepted [2,4]
 min_route_confidence = 0.0  # weakest-link floor [0,1]; 0 keeps pre-router behaviour (dust USD pairs are already excluded from the graph by min_usd_volume). Raise to gate confident crosses on a route-quality floor.
 
@@ -183,9 +203,13 @@ target = "crypto:BTC/fiat:GBP"
 legs   = ["crypto:BTC/fiat:USD", "fiat:USD/fiat:GBP"]
 
 [trades]
+{% if run_aggregator | default(true) | bool %}
 usd_pegged_classic_assets = [
   "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
 ]
+{% else %}
+usd_pegged_classic_assets = []   {# pricing off (test net): no USD pegs, assets are $0 #}
+{% endif %}
 
 # ──────────────────────────────────────────────────────────────────
 # Pricing guard — declared fiat pegs (2026-08-24).
@@ -202,6 +226,7 @@ usd_pegged_classic_assets = [
 # does not fill.
 # ──────────────────────────────────────────────────────────────────
 [pricing_guard]
+{% if run_aggregator | default(true) | bool %}
 
   [pricing_guard.fiat_pegged_classic_assets]
   # AUDD — AUD Digital, declared 1:1 AUD (operator approval 2026-08-24).
@@ -210,6 +235,7 @@ usd_pegged_classic_assets = [
   # settlement corridor ($4.8M/30d at exactly 1.000000 on SDEX,
   # 2026-08-24 census) + the same operator approval.
   "AUDR-GAAVW6EQ4N4SHNTKBLTOBXKS6CEIMT2KZI7YQ5B37ECNVPFLBIGRKLIL" = "AUD"
+{% endif %}
 
 # ──────────────────────────────────────────────────────────────────
 # External — off-chain CEX/FX/aggregator connectors.
@@ -217,6 +243,9 @@ usd_pegged_classic_assets = [
 # CEX coverage. Free venues only on r1 today (no API
 # keys provisioned for the paid FX/aggregator tier).
 # ──────────────────────────────────────────────────────────────────
+{% if run_aggregator | default(true) | bool %}
+{# External CEX/FX connectors feed the aggregator's USD pricing. Omitted on a
+   pricing-off host (test net) — no external markets, assets are $0. #}
 [external]
 
   [external.binance]
@@ -245,6 +274,7 @@ usd_pegged_classic_assets = [
   # Empty feed_map falls back to internal/sources/external/chainlink/defaults.go
   # (BTC/ETH/LINK/EUR/GBP/JPY vs USD on Ethereum mainnet AggregatorV3 proxies).
   [external.chainlink.feed_map]
+{% endif %}
 
 # ──────────────────────────────────────────────────────────────────
 # API — added 2026-05-05 to trust the Caddy loopback proxy.
@@ -252,16 +282,19 @@ usd_pegged_classic_assets = [
 # with X-Forwarded-{For,Proto,Host} set. Trusting 127.0.0.1/32 makes
 # the API honour those headers (so request logs show the real client IP
 # instead of 127.0.0.1, and rate-limiting buckets per real client).
-# Listen-addr is set to 127.0.0.1:3000 (loopback only) — Caddy is the
-# public surface and proxies to localhost:3000; stellarindex-sla-probe
-# and ad-hoc operator curl reach the API over loopback on the box
-# itself, not via a public 0.0.0.0 bind (audit-2026-07-23 INF-19: this
-# comment previously said 0.0.0.0:3000, which no longer matches the
-# rendered value below).
+# listen_addr defaults to 127.0.0.1:3000 (loopback only) — on r1 Caddy is
+# the public surface and runs ON the box, so a public 0.0.0.0 bind is an
+# unnecessary surface (audit-2026-07-23 INF-19). The test-net VMs run Caddy
+# on the KVM HOST and reach the API over the private NAT, so they set
+# stellarindex_api_listen_addr=0.0.0.0:3000 (+ open 3000 to internal_cidrs);
+# the VM has no public route, so 0.0.0.0 is still host-NAT-only there.
 # ──────────────────────────────────────────────────────────────────
 [api]
-listen_addr = "127.0.0.1:3000"
-allowed_origins = ["https://stellarindex.io", "https://api.stellarindex.io", "https://status.stellarindex.io", "https://docs.stellarindex.io", "https://dashboard.stellarindex.io", "https://www.stellarindex.io"]
+listen_addr = "{{ stellarindex_api_listen_addr | default('127.0.0.1:3000') }}"
+# The test-net explorer origins are included on every network so the nav
+# network-switcher can read each network's public /v1/ledger/tip cross-origin
+# (e.g. the mainnet explorer showing testnet's live ledger, and vice-versa).
+allowed_origins = ["https://stellarindex.io", "https://api.stellarindex.io", "https://status.stellarindex.io", "https://docs.stellarindex.io", "https://dashboard.stellarindex.io", "https://www.stellarindex.io", "https://testnet.stellarindex.io", "https://futurenet.stellarindex.io"]
 allow_credentials = true
 # AC7 onboarding fix (2026-06-13): verification-gated signup stays OFF
 # until a verified-sender domain is set up end-to-end.
@@ -306,7 +339,7 @@ cookie_domain      = "{{ stellarindex_dashboard_cookie_domain | default('.stella
 # match (no_metadata basis); without it
 # stellarindex_aggregator_supply_refresh_never_initialized fires
 # permanently. Cadence default = 5m.
-aggregator_refresh_enabled = true
+aggregator_refresh_enabled = {{ 'true' if run_aggregator | default(true) | bool else 'false' }}
 aggregator_refresh_cadence = "5m"
 watched_classic_assets = [
 {% for asset in stellarindex_watched_classic_assets | default([

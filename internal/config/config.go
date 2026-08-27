@@ -784,6 +784,21 @@ type StellarConfig struct {
 	CoreHTTPEndpoint  string   `toml:"core_http_endpoint" doc:"stellar-core admin HTTP (used for liveness)." default:"http://127.0.0.1:11626"`
 	RPCEndpoints      []string `toml:"rpc_endpoints" doc:"stellar-rpc endpoints for getEvents/getLedgers. Tried in order on failover." default:"[\"http://127.0.0.1:8000\"]"`
 	HistoryArchiveURL string   `toml:"history_archive_url" doc:"Public history archive (SDF or ours) for backfill catchup." default:"https://history.stellar.org/prd/core-live/core_live_001"`
+
+	// SorobanGenesisLedger and MovementsFloorLedger are the two
+	// PUBNET-protocol-transition ledger numbers that leak into the
+	// indexer's era boundaries. They are config fields (defaulting to the
+	// pubnet values, so pubnet TOML is unchanged) precisely so a test net
+	// can override them: a reset testnet/futurenet chain is entirely
+	// post-Soroban AND post-P23 from ledger 1, so BOTH must be set to 1
+	// (genesis) there — otherwise the SEP-41 supply observer and the
+	// CAP-67 movements feed floor ABOVE every ledger that net will ever
+	// have and produce nothing. The defaults are pinned to the leaf
+	// constants (clickhouse.SorobanGenesisLedger,
+	// timescale.SEP41MovementsFloorLedger) by TestP23BoundaryConstantsAgree
+	// so they cannot silently drift.
+	SorobanGenesisLedger uint32 `toml:"soroban_genesis_ledger" doc:"Soroban (protocol-20) activation ledger — the pre-Soroban↔Soroban-era boundary the SEP-41 supply observer floors at. Defaults to the pubnet value; set to 1 (genesis) on testnet/futurenet." default:"50457424"`
+	MovementsFloorLedger uint32 `toml:"movements_floor_ledger" doc:"P23 / CAP-67 boundary — at/above it the Postgres SEP-41 movements tail serves, below it the ClickHouse pre-P23 archive serves (ADR-0048 D5). Defaults to the pubnet value; set to 1 (genesis) on testnet/futurenet." default:"58762517"`
 }
 
 // Well-known Stellar network passphrases, copied from
@@ -1723,6 +1738,10 @@ func Default() Config {
 			CoreHTTPEndpoint:  "http://127.0.0.1:11626",
 			RPCEndpoints:      []string{"http://127.0.0.1:8000"},
 			HistoryArchiveURL: "https://history.stellar.org/prd/core-live/core_live_001",
+			// Pubnet protocol-transition boundaries (pinned to the leaf consts
+			// by TestP23BoundaryConstantsAgree; test nets override BOTH to 1).
+			SorobanGenesisLedger: 50457424,
+			MovementsFloorLedger: 58762517,
 		},
 		Storage: StorageConfig{
 			PostgresDSN:                "postgres://stellarindex@127.0.0.1:5432/stellarindex?sslmode=disable",
@@ -1779,22 +1798,7 @@ func Default() Config {
 			Band:      BandOracleConfig{},
 			Soroswap:  SoroswapConfig{},
 		},
-		External: ExternalConfig{
-			// All off-chain connectors disabled by default.
-			// Operator opts in per-venue once they've confirmed
-			// network egress / credentials.
-			Binance:          ExternalVenueConfig{Enabled: false},
-			Kraken:           ExternalVenueConfig{Enabled: false},
-			Bitstamp:         ExternalVenueConfig{Enabled: false},
-			Coinbase:         ExternalVenueConfig{Enabled: false},
-			ExchangeRatesApi: ExchangeRatesApiVenueConfig{Enabled: false, Base: "USD"},
-			PolygonForex:     PolygonForexVenueConfig{Enabled: false, Base: "USD"},
-			CoinGecko:        ExternalVenueConfig{Enabled: false},
-			CoinMarketCap:    CoinMarketCapVenueConfig{Enabled: false},
-			CryptoCompare:    CryptoCompareVenueConfig{Enabled: false},
-			ECB:              ExternalVenueConfig{Enabled: false},
-			Chainlink:        ChainlinkVenueConfig{Enabled: false, FeedMap: map[string]ChainlinkFeedSetting{}},
-		},
+		External: defaultExternalConfig(),
 		Aggregate: AggregateConfig{
 			VWAPWindowSeconds:            300,
 			TWAPWindowSeconds:            300,
@@ -1847,5 +1851,24 @@ func Default() Config {
 			TraceExporter: "none",
 			TraceSample:   0.1,
 		},
+	}
+}
+
+// defaultExternalConfig returns the off-chain-connector defaults. All venues
+// are disabled by default; an operator opts in per-venue once they've confirmed
+// network egress / credentials. Split out of Default() to keep it under funlen.
+func defaultExternalConfig() ExternalConfig {
+	return ExternalConfig{
+		Binance:          ExternalVenueConfig{Enabled: false},
+		Kraken:           ExternalVenueConfig{Enabled: false},
+		Bitstamp:         ExternalVenueConfig{Enabled: false},
+		Coinbase:         ExternalVenueConfig{Enabled: false},
+		ExchangeRatesApi: ExchangeRatesApiVenueConfig{Enabled: false, Base: "USD"},
+		PolygonForex:     PolygonForexVenueConfig{Enabled: false, Base: "USD"},
+		CoinGecko:        ExternalVenueConfig{Enabled: false},
+		CoinMarketCap:    CoinMarketCapVenueConfig{Enabled: false},
+		CryptoCompare:    CryptoCompareVenueConfig{Enabled: false},
+		ECB:              ExternalVenueConfig{Enabled: false},
+		Chainlink:        ChainlinkVenueConfig{Enabled: false, FeedMap: map[string]ChainlinkFeedSetting{}},
 	}
 }

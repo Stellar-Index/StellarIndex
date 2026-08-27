@@ -11,6 +11,16 @@ User=galexie
 Group=galexie
 WorkingDirectory=/var/lib/galexie
 EnvironmentFile=-/etc/default/galexie
+# Per-network archive HAS URL for galexie-append.sh's fresh-deploy start-ledger
+# probe — pubnet's core-live, or a test net's core-testnet/core-futurenet.
+# Without this a test-net galexie probes the PUBNET archive and picks a start
+# ledger (~64M) that exceeds the test net's own tip, and refuses to start.
+Environment=SDF_HAS_URL={{ stellar_history_archive_url }}/.well-known/stellar-history.json
+{% if galexie_start_ledger | default('') %}
+# Pin galexie's fresh-deploy start ledger to match the indexer's
+# backfill_from_ledger (coherent from-recent bring-up on a test net).
+Environment=GALEXIE_START={{ galexie_start_ledger }}
+{% endif %}
 # Wrapper handles:
 #  * flag is --config-file (not --config)
 #  * `append` needs an explicit --start ledger; we discover the

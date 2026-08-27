@@ -43,55 +43,75 @@ func withBad(mut func(*config.Config)) config.Config {
 	return c
 }
 
+// TestValidate_TestnetArchiveAccepted: a test-net network paired with its
+// OWN (core-testnet / core-futurenet) history archive validates — the
+// guard only rejects the PUBNET (core-live) archive on a non-pubnet
+// network, not any test-net archive URL.
+func TestValidate_TestnetArchiveAccepted(t *testing.T) {
+	for _, tc := range []struct{ network, archive string }{
+		{"testnet", "https://history.stellar.org/prd/core-testnet/core_testnet_001"},
+		{"futurenet", "http://history.stellar.org/dev/core-futurenet/core_futurenet_001"},
+	} {
+		c := config.Default()
+		c.Stellar.Network = tc.network
+		c.Stellar.HistoryArchiveURL = tc.archive
+		if err := c.Validate(); err != nil {
+			t.Errorf("%s + %s should validate, got: %v", tc.network, tc.archive, err)
+		}
+	}
+}
+
 func TestValidate_RejectsBadFields(t *testing.T) {
 	cases := map[string]struct {
 		mut    func(*config.Config)
 		errSub string
 	}{
-		"empty region id":              {func(c *config.Config) { c.Region.ID = "" }, "region.id"},
-		"capitalized region":           {func(c *config.Config) { c.Region.ID = "R1" }, "region.id"},
-		"home domain is URL":           {func(c *config.Config) { c.Region.HomeDomain = "https://stellarindex.io" }, "home_domain"},
-		"unknown network":              {func(c *config.Config) { c.Stellar.Network = "futurenett" }, "network"},
-		"empty rpc list":               {func(c *config.Config) { c.Stellar.RPCEndpoints = nil }, "rpc_endpoints"},
-		"rpc not url":                  {func(c *config.Config) { c.Stellar.RPCEndpoints = []string{"host:8000"} }, "rpc_endpoints"},
-		"duplicate rpc":                {func(c *config.Config) { c.Stellar.RPCEndpoints = []string{"http://rpc1:8000", "http://rpc1:8000"} }, "duplicate"},
-		"duplicate rpc case":           {func(c *config.Config) { c.Stellar.RPCEndpoints = []string{"http://Rpc1:8000", "HTTP://rpc1:8000"} }, "duplicate"},
-		"duplicate rpc trailing slash": {func(c *config.Config) { c.Stellar.RPCEndpoints = []string{"http://rpc1:8000", "http://rpc1:8000/"} }, "duplicate"},
-		"missing postgres":             {func(c *config.Config) { c.Storage.PostgresDSN = "" }, "postgres_dsn"},
-		"wrong postgres scheme":        {func(c *config.Config) { c.Storage.PostgresDSN = "mysql://x" }, "postgres_dsn"},
-		"bad redis addr":               {func(c *config.Config) { c.Storage.RedisAddr = "127.0.0.1" }, "redis_addr"},
-		"bad cursor store":             {func(c *config.Config) { c.Ingestion.CursorStoreScheme = "kafka" }, "cursor_store_scheme"},
-		"zero batch":                   {func(c *config.Config) { c.Ingestion.BackfillBatchSize = 0 }, "backfill_batch_size"},
-		"duplicate source":             {func(c *config.Config) { c.Ingestion.EnabledSources = []string{"soroswap", "soroswap"} }, "duplicate"},
-		"duplicate case-fold":          {func(c *config.Config) { c.Ingestion.EnabledSources = []string{"soroswap", "Soroswap"} }, "duplicate"},
-		"empty source entry":           {func(c *config.Config) { c.Ingestion.EnabledSources = []string{"soroswap", ""} }, "empty entry"},
-		"bad reflector addr":           {func(c *config.Config) { c.Oracle.Reflector.DEXContract = "not-a-c-key" }, "dex_contract"},
-		"zero vwap window":             {func(c *config.Config) { c.Aggregate.VWAPWindowSeconds = 0 }, "vwap_window_seconds"},
-		"negative sigma":               {func(c *config.Config) { c.Aggregate.OutlierSigmaThreshold = -1 }, "outlier_sigma_threshold"},
-		"no listen":                    {func(c *config.Config) { c.API.ListenAddr = "" }, "listen_addr"},
-		"bad listen":                   {func(c *config.Config) { c.API.ListenAddr = "3000" }, "listen_addr"},
-		"unknown auth":                 {func(c *config.Config) { c.API.AuthMode = "oauth" }, "auth_mode"},
-		"neg rate limit":               {func(c *config.Config) { c.API.AnonRateLimitPerMin = -5 }, "anon_rate_limit"},
-		"bad log level":                {func(c *config.Config) { c.Obs.LogLevel = "verbose" }, "log_level"},
-		"bad log format":               {func(c *config.Config) { c.Obs.LogFormat = "xml" }, "log_format"},
-		"bad trace exporter":           {func(c *config.Config) { c.Obs.TraceExporter = "jaeger" }, "trace_exporter"},
-		"otlp not yet wired":           {func(c *config.Config) { c.Obs.TraceExporter = "otlp" }, "trace_exporter"},
-		"trace sample over 1":          {func(c *config.Config) { c.Obs.TraceSample = 1.5 }, "trace_sample"},
-		"trace sample neg":             {func(c *config.Config) { c.Obs.TraceSample = -0.1 }, "trace_sample"},
-		"core http not url":            {func(c *config.Config) { c.Stellar.CoreHTTPEndpoint = "host:11626" }, "core_http_endpoint"},
-		"s3 endpoint not url":          {func(c *config.Config) { c.Storage.S3Endpoint = "minio-host" }, "s3_endpoint"},
-		"s3 bucket archive missing":    {func(c *config.Config) { c.Storage.S3BucketArchive = "" }, "s3_bucket_archive"},
-		"s3 bucket live missing":       {func(c *config.Config) { c.Storage.S3BucketLive = "" }, "s3_bucket_live"},
-		"s3 access key env missing":    {func(c *config.Config) { c.Storage.S3AccessKeyEnv = "" }, "s3_access_key_env"},
-		"s3 secret key env missing":    {func(c *config.Config) { c.Storage.S3SecretKeyEnv = "" }, "s3_secret_key_env"},
-		"s3 bucket uppercase":          {func(c *config.Config) { c.Storage.S3BucketArchive = "MyBucket" }, "s3_bucket_archive"},
-		"s3 bucket too short":          {func(c *config.Config) { c.Storage.S3BucketArchive = "ab" }, "s3_bucket_archive"},
-		"s3 bucket underscore":         {func(c *config.Config) { c.Storage.S3BucketArchive = "my_bucket" }, "s3_bucket_archive"},
-		"usd peg empty":                {func(c *config.Config) { c.Trades.USDPeggedClassicAssets = []string{""} }, "usd_pegged_classic_assets"},
-		"usd peg unparseable":          {func(c *config.Config) { c.Trades.USDPeggedClassicAssets = []string{"not an asset"} }, "usd_pegged_classic_assets"},
-		"usd peg native not classic":   {func(c *config.Config) { c.Trades.USDPeggedClassicAssets = []string{"native"} }, "classic"},
-		"usd peg crypto not classic":   {func(c *config.Config) { c.Trades.USDPeggedClassicAssets = []string{"crypto:USDT"} }, "classic"},
-		"usd peg fiat not classic":     {func(c *config.Config) { c.Trades.USDPeggedClassicAssets = []string{"fiat:USD"} }, "classic"},
+		"empty region id":               {func(c *config.Config) { c.Region.ID = "" }, "region.id"},
+		"capitalized region":            {func(c *config.Config) { c.Region.ID = "R1" }, "region.id"},
+		"home domain is URL":            {func(c *config.Config) { c.Region.HomeDomain = "https://stellarindex.io" }, "home_domain"},
+		"unknown network":               {func(c *config.Config) { c.Stellar.Network = "futurenett" }, "network"},
+		"testnet with pubnet archive":   {func(c *config.Config) { c.Stellar.Network = "testnet" }, "history_archive_url"},
+		"futurenet with pubnet archive": {func(c *config.Config) { c.Stellar.Network = "futurenet" }, "history_archive_url"},
+		"empty rpc list":                {func(c *config.Config) { c.Stellar.RPCEndpoints = nil }, "rpc_endpoints"},
+		"rpc not url":                   {func(c *config.Config) { c.Stellar.RPCEndpoints = []string{"host:8000"} }, "rpc_endpoints"},
+		"duplicate rpc":                 {func(c *config.Config) { c.Stellar.RPCEndpoints = []string{"http://rpc1:8000", "http://rpc1:8000"} }, "duplicate"},
+		"duplicate rpc case":            {func(c *config.Config) { c.Stellar.RPCEndpoints = []string{"http://Rpc1:8000", "HTTP://rpc1:8000"} }, "duplicate"},
+		"duplicate rpc trailing slash":  {func(c *config.Config) { c.Stellar.RPCEndpoints = []string{"http://rpc1:8000", "http://rpc1:8000/"} }, "duplicate"},
+		"missing postgres":              {func(c *config.Config) { c.Storage.PostgresDSN = "" }, "postgres_dsn"},
+		"wrong postgres scheme":         {func(c *config.Config) { c.Storage.PostgresDSN = "mysql://x" }, "postgres_dsn"},
+		"bad redis addr":                {func(c *config.Config) { c.Storage.RedisAddr = "127.0.0.1" }, "redis_addr"},
+		"bad cursor store":              {func(c *config.Config) { c.Ingestion.CursorStoreScheme = "kafka" }, "cursor_store_scheme"},
+		"zero batch":                    {func(c *config.Config) { c.Ingestion.BackfillBatchSize = 0 }, "backfill_batch_size"},
+		"duplicate source":              {func(c *config.Config) { c.Ingestion.EnabledSources = []string{"soroswap", "soroswap"} }, "duplicate"},
+		"duplicate case-fold":           {func(c *config.Config) { c.Ingestion.EnabledSources = []string{"soroswap", "Soroswap"} }, "duplicate"},
+		"empty source entry":            {func(c *config.Config) { c.Ingestion.EnabledSources = []string{"soroswap", ""} }, "empty entry"},
+		"bad reflector addr":            {func(c *config.Config) { c.Oracle.Reflector.DEXContract = "not-a-c-key" }, "dex_contract"},
+		"zero vwap window":              {func(c *config.Config) { c.Aggregate.VWAPWindowSeconds = 0 }, "vwap_window_seconds"},
+		"negative sigma":                {func(c *config.Config) { c.Aggregate.OutlierSigmaThreshold = -1 }, "outlier_sigma_threshold"},
+		"no listen":                     {func(c *config.Config) { c.API.ListenAddr = "" }, "listen_addr"},
+		"bad listen":                    {func(c *config.Config) { c.API.ListenAddr = "3000" }, "listen_addr"},
+		"unknown auth":                  {func(c *config.Config) { c.API.AuthMode = "oauth" }, "auth_mode"},
+		"neg rate limit":                {func(c *config.Config) { c.API.AnonRateLimitPerMin = -5 }, "anon_rate_limit"},
+		"bad log level":                 {func(c *config.Config) { c.Obs.LogLevel = "verbose" }, "log_level"},
+		"bad log format":                {func(c *config.Config) { c.Obs.LogFormat = "xml" }, "log_format"},
+		"bad trace exporter":            {func(c *config.Config) { c.Obs.TraceExporter = "jaeger" }, "trace_exporter"},
+		"otlp not yet wired":            {func(c *config.Config) { c.Obs.TraceExporter = "otlp" }, "trace_exporter"},
+		"trace sample over 1":           {func(c *config.Config) { c.Obs.TraceSample = 1.5 }, "trace_sample"},
+		"trace sample neg":              {func(c *config.Config) { c.Obs.TraceSample = -0.1 }, "trace_sample"},
+		"core http not url":             {func(c *config.Config) { c.Stellar.CoreHTTPEndpoint = "host:11626" }, "core_http_endpoint"},
+		"s3 endpoint not url":           {func(c *config.Config) { c.Storage.S3Endpoint = "minio-host" }, "s3_endpoint"},
+		"s3 bucket archive missing":     {func(c *config.Config) { c.Storage.S3BucketArchive = "" }, "s3_bucket_archive"},
+		"s3 bucket live missing":        {func(c *config.Config) { c.Storage.S3BucketLive = "" }, "s3_bucket_live"},
+		"s3 access key env missing":     {func(c *config.Config) { c.Storage.S3AccessKeyEnv = "" }, "s3_access_key_env"},
+		"s3 secret key env missing":     {func(c *config.Config) { c.Storage.S3SecretKeyEnv = "" }, "s3_secret_key_env"},
+		"s3 bucket uppercase":           {func(c *config.Config) { c.Storage.S3BucketArchive = "MyBucket" }, "s3_bucket_archive"},
+		"s3 bucket too short":           {func(c *config.Config) { c.Storage.S3BucketArchive = "ab" }, "s3_bucket_archive"},
+		"s3 bucket underscore":          {func(c *config.Config) { c.Storage.S3BucketArchive = "my_bucket" }, "s3_bucket_archive"},
+		"usd peg empty":                 {func(c *config.Config) { c.Trades.USDPeggedClassicAssets = []string{""} }, "usd_pegged_classic_assets"},
+		"usd peg unparseable":           {func(c *config.Config) { c.Trades.USDPeggedClassicAssets = []string{"not an asset"} }, "usd_pegged_classic_assets"},
+		"usd peg native not classic":    {func(c *config.Config) { c.Trades.USDPeggedClassicAssets = []string{"native"} }, "classic"},
+		"usd peg crypto not classic":    {func(c *config.Config) { c.Trades.USDPeggedClassicAssets = []string{"crypto:USDT"} }, "classic"},
+		"usd peg fiat not classic":      {func(c *config.Config) { c.Trades.USDPeggedClassicAssets = []string{"fiat:USD"} }, "classic"},
 		"fiat peg unknown ticker": {func(c *config.Config) {
 			c.PricingGuard.FiatPeggedClassicAssets = map[string]string{
 				"AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU": "AUX",

@@ -175,6 +175,21 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	}
 	canonical.InstallAliasRegistry(aliasRegistry)
 
+	// Publish the network-derived P23/CAP-67 movements boundary process-wide
+	// so the leaf /movements read paths (timescale.MovementsFloor) resolve to
+	// the configured network's value — pubnet's default, or 1 (genesis) on a
+	// reset test net — instead of the hardcoded pubnet const. Same start-up
+	// install idiom as InstallAliasRegistry above.
+	timescale.InstallMovementsFloor(cfg.Stellar.MovementsFloorLedger)
+
+	// Publish the network passphrase so canonical SAC-address derivation
+	// (Asset.SacContractID → /v1/assets contract_address, /supply, wasm view)
+	// resolves to the CONFIGURED network's native/classic SAC instead of the
+	// hardcoded pubnet const — otherwise a test-net asset detail would serve
+	// the PUBNET contract address (a value wallets resolve holdings against and
+	// send to). Same start-up install idiom as InstallAliasRegistry.
+	canonical.InstallNetworkPassphrase(cfg.Stellar.Passphrase())
+
 	logger := mkLogger(cfg.Obs)
 	logger.Info(
 		"starting",
@@ -283,7 +298,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// configured SEP-10 deployment MUST be replay-protected. The policy
 	// (fail closed, degrade to Noop when auth_mode permits) lives in
 	// resolveSEP10Validator so it is testable end-to-end.
-	sep10Validator, err := resolveSEP10Validator(cfg.API.SEP10, cfg.API.AuthMode, rdb, logger)
+	sep10Validator, err := resolveSEP10Validator(cfg.API.SEP10, cfg.API.AuthMode, cfg.Stellar.Passphrase(), rdb, logger)
 	if err != nil {
 		return err
 	}
@@ -1352,7 +1367,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		SessionAuth:          dashboardBundle.middleware,
 		SessionPeeker:        sessionPeekerAdapter{},
 		SACWrappers:          cfg.Supply.SACWrappers,
-		NetworkPassphrase:    stellarNetworkPassphrase(),
+		NetworkPassphrase:    cfg.Stellar.Passphrase(),
 		USDPeggedClassics:    usdPegs,
 		FiatPeggedClassics:   fiatPegs,
 		VerifiedCurrencies:   verifiedCurrencies,
@@ -2194,10 +2209,11 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 func resolveSEP10Validator(
 	cfg config.SEP10Config,
 	authMode string,
+	passphrase string,
 	rdb redis.UniversalClient,
 	logger *slog.Logger,
 ) (auth.SEP10Validator, error) {
-	v, err := buildSEP10Validator(cfg, rdb)
+	v, err := buildSEP10Validator(cfg, passphrase, rdb)
 	if err != nil {
 		// auth_mode=sep10 makes this a hard failure — we MUST have a
 		// validator to bootstrap auth at all. Otherwise log + carry on
@@ -2218,7 +2234,7 @@ func resolveSEP10Validator(
 	return v, nil
 }
 
-func buildSEP10Validator(cfg config.SEP10Config, rdb redis.UniversalClient) (auth.SEP10Validator, error) {
+func buildSEP10Validator(cfg config.SEP10Config, passphrase string, rdb redis.UniversalClient) (auth.SEP10Validator, error) {
 	if cfg.SeedEnv == "" || cfg.JWTSecretEnv == "" {
 		return nil, errors.New("sep10: seed_env / jwt_secret_env not configured")
 	}
@@ -2231,7 +2247,7 @@ func buildSEP10Validator(cfg config.SEP10Config, rdb redis.UniversalClient) (aut
 		return nil, fmt.Errorf("sep10: env %s is unset or empty", cfg.JWTSecretEnv)
 	}
 
-	network := stellarNetworkPassphrase()
+	network := passphrase
 
 	// F-1224 (audit-2026-05-12): wire the Redis-backed replay
 	// guard whenever the API has Redis (i.e. always in production).
@@ -2268,13 +2284,6 @@ func buildSEP10Validator(cfg config.SEP10Config, rdb redis.UniversalClient) (aut
 		return nil, fmt.Errorf("sep10: NewValidator: %w", err)
 	}
 	return v, nil
-}
-
-// stellarNetworkPassphrase returns the SDK-canonical pubnet
-// passphrase. Wrapped in a function so future testnet support can
-// branch on cfg.Stellar.Network without rewriting buildSEP10Validator.
-func stellarNetworkPassphrase() string {
-	return "Public Global Stellar Network ; September 2015"
 }
 
 // buildDivergenceReferences turns DivergenceConfig into the

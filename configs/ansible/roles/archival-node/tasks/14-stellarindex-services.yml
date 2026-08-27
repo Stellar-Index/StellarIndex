@@ -31,6 +31,11 @@
   # role) but find no binary under it. Bootstrap is now complete
   # without an out-of-band ssh side-channel.
   delegate_to: localhost
+  # Local `go build` on the CONTROLLER — never escalate. The play sets
+  # become: true for the remote host; inheriting it here makes ansible try
+  # sudo on the controller, which fails on an operator laptop ("Premature
+  # end of stream waiting for become success").
+  become: false
   ansible.builtin.command:
     chdir: "{{ playbook_dir }}/../../.."
     argv:
@@ -87,26 +92,21 @@
     group: root
     mode: "0755"
 
-- name: Sync migrations from repo to r1
-  ansible.posix.synchronize:
+- name: Sync migrations from repo to the host
+  # ansible.builtin.copy (not ansible.posix.synchronize/rsync): synchronize
+  # fails over a ProxyJump connection ("'Connection' object has no attribute
+  # '_new_stdin'") because rsync runs on the controller and can't inherit the
+  # jump. copy is connection-agnostic (works over the private-NAT jump AND
+  # r1's direct SSH), content-hash idempotent, and forces root:root ownership
+  # regardless of the controller's uid — migrations are append-only, so the
+  # lack of stale-file deletion is immaterial.
+  ansible.builtin.copy:
     src: "{{ playbook_dir }}/../../../migrations/"
     dest: /usr/local/share/stellarindex/migrations/
-    delete: true
-    # Compare by content, not mtime: every CI drift run works from a
-    # fresh clone whose files carry clone-time mtimes, so the default
-    # size+mtime quick-check reported this task changed on EVERY run.
-    checksum: true
-    times: false
-    # Do NOT sync ownership: archive mode preserves the CONTROLLER's
-    # numeric uid/gid (operator laptop = 501, CI runner = 1001), so
-    # applies from different machines fought over ownership forever —
-    # --chown=root:root did not cover the implied root dir. With -og
-    # off, rsync (running as root on the receiver) creates root-owned
-    # files and never touches ownership again.
-    owner: false
-    group: false
-    rsync_opts:
-      - "--exclude=.DS_Store"
+    owner: root
+    group: root
+    mode: "0644"
+    directory_mode: "0755"
 
 - name: Run pending migrations against the stellarindex database
   # OPT-IN since 2026-07-10: deploy.yml is the canonical migration
@@ -194,6 +194,11 @@
 # property. See aggregation-plan.md for the pipeline.
 
 - name: Install stellarindex-aggregator systemd unit
+  # The aggregator (USD pricing / VWAP / divergence) is Mainnet-only — test
+  # nets have no real markets, so it would idle and spew ErrAssetUnsupported.
+  # run_aggregator defaults true (pubnet unchanged); test-net inventory sets
+  # it false. When off, also stop/disable any unit a prior run installed.
+  when: run_aggregator | default(true) | bool
   ansible.builtin.template:
     src: systemd/stellarindex-aggregator.service.j2
     dest: /etc/systemd/system/stellarindex-aggregator.service
@@ -203,11 +208,20 @@
     - Restart stellarindex-aggregator
 
 - name: Enable + start stellarindex-aggregator
+  when: run_aggregator | default(true) | bool
   ansible.builtin.systemd:
     name: stellarindex-aggregator
     state: started
     enabled: true
     daemon_reload: true
+
+- name: Stop + disable stellarindex-aggregator when not run (test nets)
+  when: not (run_aggregator | default(true) | bool)
+  ansible.builtin.systemd:
+    name: stellarindex-aggregator
+    state: stopped
+    enabled: false
+  failed_when: false
 
 # ──── API service ─────────────────────────────────────────────────────
 # The public REST + SSE server. Caddy terminates TLS on :80/:443 and

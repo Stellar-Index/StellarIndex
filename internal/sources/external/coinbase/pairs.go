@@ -75,6 +75,14 @@ func DefaultPairs() (map[string]canonical.Pair, error) {
 		// supports BTC-EUR + BTC-GBP + ETH-EUR + ETH-GBP natively;
 		// adding to the cross-venue set so VWAP has multi-source
 		// corroboration on the most-asked-for fiat conversions.
+		// XLM-EUR (verified online on the Coinbase products API 2026-08-27).
+		// Added because crypto:XLM/fiat:EUR had only TWO venues (kraken +
+		// bitstamp): a single venue going quiet dropped it to source_count=1,
+		// which is one of the three ADR-0019 phase-2 freeze signals, so a pair
+		// with genuinely deep global liquidity kept freezing. Coinbase takes it
+		// to three. (Coinbase has no XLM-GBP product, so XLM/GBP still relies on
+		// kraken + bitstamp + the triangulated USD/GBP route.)
+		{"XLM-EUR", xlm, eur},
 		{"BTC-USD", btc, usd},
 		{"BTC-EUR", btc, eur},
 		{"BTC-GBP", btc, gbp},

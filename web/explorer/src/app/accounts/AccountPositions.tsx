@@ -18,6 +18,7 @@ import {
   TR,
 } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
+import { CURRENT_NETWORK } from '@/lib/networks';
 import { formatCompact, formatPriceSmall } from '@/lib/format';
 import { scaledUnits } from '../explorer-shared';
 
@@ -85,7 +86,9 @@ export function AccountPositions({ id }: { id: string }) {
 
   const pricesQ = useQuery<Record<string, number>>({
     queryKey: ['/v1/price/batch', 'positions', assetIds.join(',')],
-    enabled: assetIds.length > 0,
+    // No aggregator on the lean test nets → /v1/price/batch is empty; skip the
+    // portfolio valuation there (the USD tiles/columns null-degrade to "—").
+    enabled: assetIds.length > 0 && CURRENT_NETWORK.pricing,
     retry: false,
     staleTime: 30_000,
     queryFn: async () => {

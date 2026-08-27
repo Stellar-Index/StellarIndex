@@ -606,6 +606,69 @@
     state: started
     daemon_reload: true
 
+# ── Ledger-meta decode probe (reactive protocol backstop) ─────────
+# The version-lag probe above is the PRIMARY defence, but it compares
+# released upstream versions and so cannot know the network has begun
+# emitting new XDR. Observed 2026-08-27: testnet ingested 240 P28
+# ledgers on a galexie that could NOT decode P28, because the breaking
+# arm only appears once a ledger actually contains parallel-execution
+# structures; futurenet (which exercises that path) died at ledger
+# 92747. This probe watches for the decode failure itself and names
+# the cause, so it surfaces as "component is behind a protocol"
+# instead of generic tip-lag. See docs/operations/protocol-upgrades.md.
+- name: Install ledger-meta decode probe
+  ansible.builtin.copy:
+    src: ledger-meta-decode-probe.sh
+    dest: /usr/local/bin/ledger-meta-decode-probe
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [observability, protocol-guard]
+
+- name: Install ledger-meta decode probe service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/ledger-meta-decode-probe.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Stellar Index — ledger-meta XDR decode failure probe
+      Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/protocol-upgrades.md
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/ledger-meta-decode-probe
+      Nice=10
+  notify: Reload systemd
+  tags: [observability, protocol-guard]
+
+- name: Install ledger-meta decode probe timer
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/ledger-meta-decode-probe.timer
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Run the ledger-meta decode probe every 10 minutes
+      [Timer]
+      OnBootSec=5min
+      OnUnitActiveSec=10min
+      Persistent=true
+      Unit=ledger-meta-decode-probe.service
+      [Install]
+      WantedBy=timers.target
+  notify: Reload systemd
+  tags: [observability, protocol-guard]
+
+- name: enable the ledger-meta decode probe timer
+  ansible.builtin.systemd:
+    name: ledger-meta-decode-probe.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  tags: [observability, protocol-guard]
+
 # ── TimescaleDB job/CAGG health probe ─────────────────────────────
 #
 # Producer for three metrics that deploy/monitoring/rules/storage.yml

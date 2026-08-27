@@ -2,7 +2,13 @@
 
 import Link from 'next/link';
 
-import { useNativeUsdPrice, useNetworkStats, useSources } from '@/api/hooks';
+import {
+  isOnChainSource,
+  useNativeUsdPrice,
+  useNetworkStats,
+  useSources,
+} from '@/api/hooks';
+import { CURRENT_NETWORK } from '@/lib/networks';
 import { Stat } from '@/components/ui';
 import { cn } from '@/lib/cn';
 import { formatCompact } from '@/lib/format';
@@ -52,6 +58,10 @@ export function HomeNetworkStrip() {
   const activeMarkets = stats.data?.markets_count_24h ?? null;
   const assetsIndexed = stats.data?.assets_indexed ?? null;
   const exchangeSources = stats.data?.exchange_sources ?? null;
+  // The lean test nets run no off-chain (CEX/oracle/aggregator) feeds, so
+  // exchange_sources is a leaked mainnet count ("12 exchange feeds live" on a
+  // net where zero run). Show the real on-chain source count there instead.
+  const onChainSources = (sources.data ?? []).filter(isOnChainSource).length;
   const tipLedger = stats.data?.latest_ledger ?? null;
 
   // XLM price from the canonical native VWAP — NOT the coins list
@@ -101,9 +111,15 @@ export function HomeNetworkStrip() {
       <Cell
         label="Sources online"
         value={
-          exchangeSources != null ? `${exchangeSources}` : '—'
+          CURRENT_NETWORK.pricing
+            ? exchangeSources != null
+              ? `${exchangeSources}`
+              : '—'
+            : sources.data
+              ? `${onChainSources}`
+              : '—'
         }
-        sub="exchange feeds live"
+        sub={CURRENT_NETWORK.pricing ? 'exchange feeds live' : 'on-chain sources'}
         href="/sources"
       />
       {xlmPrice != null ? (

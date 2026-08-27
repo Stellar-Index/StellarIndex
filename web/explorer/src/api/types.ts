@@ -3682,17 +3682,23 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Accounts directory — ranked by total USD wealth.
-         * @description The accounts directory, ranked by the total USD value of their
-         *     holdings: native XLM plus every trustline asset we hold a verified USD
-         *     price for (the verified-currency catalogue; stablecoins resolve through
-         *     the fiat proxy). Computed in one pass over the current-state projection
-         *     (latest `ledger_entry_changes` per key, ADR-0038 Phase C).
+         * Accounts directory — ranked by wealth (USD, or native XLM where unpriced).
+         * @description The accounts directory, ranked by wealth. `ranked_by` says which basis:
          *
-         *     `priced_assets` is the count of assets that contributed (how many of the
-         *     catalogue had a live price at request time). `usd_value` is a decimal
-         *     string (2dp). Coverage tracks the entry-change capture + Phase-C
-         *     backfill — an account ranks once its balances are captured.
+         *     - `usd` (priced networks): total USD value of holdings — native XLM plus
+         *       every trustline asset we hold a verified USD price for (the
+         *       verified-currency catalogue; stablecoins resolve through the fiat
+         *       proxy). `priced_assets` counts the assets that contributed a live
+         *       price at request time.
+         *     - `native_xlm` (unpriced networks — e.g. testnet/futurenet, which run no
+         *       aggregator): ranked by native XLM balance instead of returning an empty
+         *       list. `priced_assets` is 0 and `usd_value` is omitted.
+         *
+         *     Each row's `value` is the ranked wealth expressed in the `ranked_by`
+         *     unit — USD dollars (2dp) or whole XLM. `usd_value` is a backward-compatible
+         *     alias populated only on the `usd` basis. Computed in one pass over the
+         *     current-state projection (latest `ledger_entry_changes` per key, ADR-0038
+         *     Phase C); coverage tracks the entry-change capture + Phase-C backfill.
          *
          *     Freshness (ADR-0041): `as_of_ledger` is the lake watermark this
          *     current-state ranking is fresh to (the highest captured ledger at
@@ -15801,14 +15807,17 @@ export interface operations {
                      * @example {
                      *       "data": {
                      *         "priced_assets": 11,
+                     *         "ranked_by": "usd",
                      *         "accounts": [
                      *           {
                      *             "account_id": "GALAXYVOIDAOPZTDLHILAJQKCVVFMD4IKLXLSZV5YHO7VY74IWZILUTO",
+                     *             "value": "11319540791.76",
                      *             "usd_value": "11319540791.76",
                      *             "locked": true
                      *           },
                      *           {
                      *             "account_id": "GDUY7J7A33TQWOSOQGDO776GGLM3UQERL4J3SPT56F6YS4ID7MLDERI4",
+                     *             "value": "838665433.46",
                      *             "usd_value": "838665433.46"
                      *           }
                      *         ],
@@ -15826,11 +15835,18 @@ export interface operations {
                      */
                     "application/json": {
                         data?: {
-                            /** @description Number of assets that contributed a price. */
+                            /** @description Number of assets that contributed a USD price. 0 on the native_xlm basis. */
                             priced_assets?: number;
+                            /**
+                             * @description Wealth basis for this ranking. usd = holdings valued in USD; native_xlm = ranked by native XLM balance (unpriced networks).
+                             * @enum {string}
+                             */
+                            ranked_by?: "usd" | "native_xlm";
                             accounts?: {
                                 account_id?: string;
-                                /** @description Total holdings value in USD (decimal string). */
+                                /** @description Ranked wealth in the ranked_by unit — USD dollars (2dp) or whole XLM (decimal string). */
+                                value?: string;
+                                /** @description Backward-compatible alias, populated only on the usd basis (equals value there); omitted on native_xlm. */
                                 usd_value?: string;
                                 /** @description Provably unspendable burn address — master weight 0 */
                                 locked?: boolean;

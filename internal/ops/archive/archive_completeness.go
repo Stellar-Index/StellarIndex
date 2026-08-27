@@ -56,6 +56,8 @@ func archiveCompletenessVerify(args []string) error {
 	workers := fs.Int("workers", 8, "Parallel fetch workers.")
 	ownerUser := fs.String("owner-user", "stellar", "File owner user.")
 	ownerGroup := fs.String("owner-group", "stellar", "File owner group.")
+	network := fs.String("network", "pubnet",
+		"Stellar network this archive belongs to. Cross-anchor FILL is PUBNET-ONLY (the built-in fallback sources are pubnet archives); a non-pubnet value makes the fill phase REFUSE rather than write pubnet checkpoints into a test-net store (audit 2026-08-26). Test nets self-heal archive gaps from their own galexie/core.")
 	outputFile := fs.String("output-file", "",
 		"Path to write JSON report. Empty = stdout.")
 	textfileOutput := fs.String("textfile-output", "",
@@ -90,6 +92,7 @@ func archiveCompletenessVerify(args []string) error {
 			Workers:     *workers,
 			OwnerUser:   *ownerUser,
 			OwnerGroup:  *ownerGroup,
+			Network:     *network,
 		})
 		if err != nil {
 			return fmt.Errorf("filler: %w", err)
@@ -181,6 +184,8 @@ func archiveCompletenessFix(args []string) error {
 		"Local user that should own placed files. Empty disables chown.")
 	ownerGroup := fs.String("owner-group", "stellar",
 		"Local group that should own placed files. Empty disables chown.")
+	network := fs.String("network", "pubnet",
+		"Stellar network this archive belongs to. Cross-anchor FILL is PUBNET-ONLY (the built-in fallback sources are pubnet archives); a non-pubnet value makes the fill phase REFUSE rather than write pubnet checkpoints into a test-net store (audit 2026-08-26). Test nets self-heal archive gaps from their own galexie/core.")
 	outputFile := fs.String("output-file", "",
 		"Path to write JSON post-fix report. Default: stdout.")
 	if err := fs.Parse(args); err != nil {
@@ -227,6 +232,7 @@ func archiveCompletenessFix(args []string) error {
 		Workers:     *workers,
 		OwnerUser:   *ownerUser,
 		OwnerGroup:  *ownerGroup,
+		Network:     *network,
 	})
 	if err != nil {
 		return fmt.Errorf("filler: %w", err)

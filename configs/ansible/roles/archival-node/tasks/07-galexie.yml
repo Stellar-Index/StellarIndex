@@ -12,6 +12,55 @@
     name: golang-go
     state: present
 
+# ── Captive-core binary for galexie ────────────────────────────────────
+# galexie embeds a CAPTIVE stellar-core (galexie.toml stellar_core_binary_path
+# = /usr/bin/stellar-core) to replay ledgers, so the binary must be present
+# EVEN WHEN run_stellar_core is false (r1/test nets don't run the core DAEMON,
+# but galexie still needs the binary). This was an out-of-band install on r1;
+# codified here so a fresh host (r2/r3/test net) gets it too. `state: present`
+# never upgrades an already-installed pin, so r1 is untouched.
+- name: Add SDF apt key (captive-core for galexie)
+  ansible.builtin.get_url:
+    url: "https://apt.stellar.org/SDF.asc"
+    dest: /etc/apt/keyrings/sdf.asc
+    mode: "0644"
+
+- name: Add SDF apt repo (captive-core for galexie)
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/sdf.asc] https://apt.stellar.org {{ ansible_facts.distribution_release }} stable"
+    state: present
+    filename: sdf
+
+- name: Install stellar-core (galexie's captive-core binary)
+  # `state: present` with an UNVERSIONED name never upgrades an existing
+  # binary — deliberate, so a routine deploy can't silently change r1's captive
+  # core. For a PROTOCOL UPGRADE the captive core must move first (e.g. P28
+  # needs core >= 28 by 2026-09-16, else galexie's captive core refuses to sync
+  # past the upgrade ledger and ingestion halts): pin stellar_core_version to
+  # the target in inventory (e.g. "28.0.1-3508.947aad841.noble") and this
+  # installs/upgrades to exactly that. Leave it unset ("") for the fresh-host
+  # "latest available" install (test nets) or the never-upgrade behavior on an
+  # existing host. See docs/operations/protocol-upgrades.md.
+  ansible.builtin.apt:
+    name: "stellar-core{{ ('=' + stellar_core_version) if (stellar_core_version | default('')) else '' }}"
+    state: present
+    update_cache: true
+
+- name: Install stellar-archivist (archive mirror/verify CLI)
+  # Managed HERE, not only in 06-stellar-core.yml: that file is gated on
+  # `run_stellar_core`, which is FALSE on r1 (galexie carries its own captive
+  # core), so archivist was installed but UNMANAGED on the very host whose
+  # version-lag probe reports on it —
+  # stellarindex_stellar_stack_lagging{component="archivist"} could therefore
+  # never be cleared by a deploy. Any host running galexie needs the archive
+  # tooling anyway (verify-archive tiers, the local mirror), so it belongs on
+  # this path. Same pin semantics as stellar-core above: empty = never upgrade.
+  # Not in the live ingest path — no service restart.
+  ansible.builtin.apt:
+    name: "stellar-archivist{{ ('=' + stellar_archivist_version) if (stellar_archivist_version | default('')) else '' }}"
+    state: present
+    update_cache: true
+
 - name: Check existing galexie version
   ansible.builtin.command: /usr/local/bin/galexie version
   register: galexie_current
@@ -96,7 +145,13 @@
   # SOURCE artifact against the pin and refuse to touch the live binary
   # with a mismatched one. A deliberate upgrade updates
   # galexie_expected_binary_sha256 in the same PR as the new artifact.
-  when: galexie_paths.results[1].stat.exists
+  # Same `| default('') | length > 0` escape hatch the POST-install
+  # drift-guard checks below use — blanking the pin skips the guard (the
+  # documented way to stand it down; a from-scratch build with no codified
+  # pin, e.g. a test net, has no reference sha to compare against).
+  when:
+    - galexie_paths.results[1].stat.exists
+    - galexie_expected_binary_sha256 | default('') | length > 0
   ansible.builtin.assert:
     that:
       - galexie_paths.results[1].stat.checksum == galexie_expected_binary_sha256
@@ -203,6 +258,10 @@
   # today / printed NOTHING" observation was a CHECK-MODE artifact: the
   # probe command was skipped in --check, leaving stdout empty — fixed
   # with check_mode: false on the probe above.
+  # Blank galexie_expected_version_string skips this guard (same escape
+  # hatch as the sha checks) — a from-source test-net build has no codified
+  # version stamp to pin against.
+  when: galexie_expected_version_string | default('') | length > 0
   ansible.builtin.assert:
     that:
       - galexie_reported_version | length > 0
