@@ -1,0 +1,39 @@
+# Gitleaks config for the WORKING-TREE scan only (`gitleaks detect --no-git`).
+#
+# Extends the canonical .gitleaks.toml and adds exactly one thing: an
+# allowlist for ansible vault-var files (`*.secrets.yml` / `*.secrets.yaml`).
+#
+# WHY A SEPARATE CONFIG RATHER THAN AN ENTRY IN .gitleaks.toml
+#
+# verify.sh runs gitleaks TWICE, and the two scans want different answers
+# about this one file class:
+#
+#   --no-git   walks the working tree. It does NOT honour .gitignore, so it
+#              sees the operator's real inventory secrets — which are
+#              SUPPOSED to exist on a deploy box and hold live credentials.
+#              Every machine that can actually deploy has them, so this scan
+#              fails there 100% of the time. That blocked the v0.45.0 release
+#              cut (2026-08-27), because scripts/dev/cut-release.sh runs
+#              verify.sh at step 6.
+#
+#   (default)  scans COMMITTED HISTORY — the scan that decides whether a
+#              secret ever actually reached the repo. This one MUST keep
+#              flagging a *.secrets.yml, because the only way such a file
+#              gets committed is an explicit `git add -f` past the
+#              repo-wide .gitignore glob (F-1207) — i.e. exactly the
+#              accident worth catching.
+#
+# Putting the allowlist in .gitleaks.toml would apply it to BOTH scans (the
+# [allowlist] table is global, whatever a description says), silently
+# disarming the history scan for the highest-risk file class in the repo.
+# Hence the split: the noisy scan gets the exemption, the authoritative one
+# does not.
+
+[extend]
+path = ".gitleaks.toml"
+
+[allowlist]
+description = "Ansible vault-var files — real local secrets, gitignored repo-wide; exempt from the working-tree scan ONLY (history scan still flags them)"
+paths = [
+  '''(^|/)[^/]+\.secrets\.ya?ml$''',
+]
