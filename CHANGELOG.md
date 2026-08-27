@@ -15,6 +15,66 @@ against.
 
 ## [Unreleased]
 
+## [v0.46.0] — 2026-08-28
+
+Closes the coverage gap behind `stellarindex_assets_popular_priceless`,
+plus FX resilience and a widened OHLC ladder.
+
+### Added
+- **Soroban-native assets are priceable through one substance-gated hop.**
+  The catalogue prices the long tail through exactly two hard-coded shapes
+  (`direct_usd`, `asset_vs_xlm`), both built on `classic_assets`, which is
+  structurally classic-only (`issuer_g_strkey NOT NULL`) — so no Soroban
+  contract asset could reach either, however deep its market. `CAUP7NFA…`
+  traded $71.8k over 6,418 trades in 7 days and served no price. Now
+  `price(A) = vwap(A/hop) × price(hop)`, with **both** legs independently
+  substance-gated: a two-hop price inherits its weakest leg, and an
+  ungated intermediate could reprice everything quoted against it. Served
+  last (never overriding an observed price) and marked
+  `price_basis: "transitive"`.
+- **ECB standby for the fiat-FX feed.** `massive` is a paid feed and was
+  the only series in `stellarindex_external_fx_last_quote_unix`, so a
+  lapse or a 429 broke every fiat-quoted pair once the 7-day forex-snap
+  lookback expired. ECB is free, keyless and authoritative; rates are
+  rebased onto USD (`usdRate(X) = eurRate(X) / eurRate(USD)`).
+  `fx_quotes.source` and the metric label follow the feed that actually
+  served.
+- **OHLC `2h` / `12h` / `3d` / `2w`.** Closes the resolution gap against
+  stellar.expert. No backfill — `/v1/ohlc` already re-buckets a finer
+  continuous aggregate at query time, and all four divide cleanly into
+  existing CAGGs.
+
+### Changed
+- The priceless-coverage tripwire's `priced` CTE now recognises the same
+  one-hop path the resolver serves — **with the same substance floors**
+  ($1,000 / 20 buckets / 6h), grouped per (asset, hop). Without those
+  floors the extension was a bypass, not a fix: 955 assets became
+  "priced", of which USDMPOOL ($798/24h) and yHELIX ($296/24h) would have
+  gone silent while remaining genuinely unpriced. Gated, it adds 7.
+
+### Fixed
+- Test-net builds no longer advertise themselves as mainnet: `/network`
+  reported "Pubnet" on testnet, 13 stellar.expert links pointed at the
+  mainnet explorer, robots/sitemap/canonicals named the production
+  origin, and `API_BASE_URL` fell back to the **mainnet API** when
+  `NEXT_PUBLIC_API_BASE_URL` was unset. A CI guard now greps for these
+  literals.
+- Transaction links point at our own `/transactions/{hash}` instead of a
+  third-party explorer; outbound cross-references consolidated into one
+  line offering stellar.expert and stellarchain.io (network-aware; the
+  latter is the only one that exists for futurenet).
+- `galexie-archive-fill`, `verify-archive-tier-b`, `archive-completeness`
+  and `pgbackrest-backup` are omitted on networks where they cannot work.
+  Tier B was anchoring **testnet ledgers against pubnet hashes**, and
+  archive-completeness was **fetching pubnet checkpoints into a test-net
+  store** — both wrong-network data paths, not mere noise.
+- `config-assertions` no longer fails on layers a host doesn't have
+  (ZFS on the no-ZFS lean VMs); promtail no longer ships to a Loki that
+  isn't installed.
+- `scripts/dev/verify.sh` mirrors CI's `lint-metric-refs` self-test, and
+  its gitleaks working-tree scan no longer red-flags real ansible vault
+  files — both had made `cut-release.sh` unrunnable on an operator box.
+
 ## [v0.45.0] — 2026-08-27
 
 Tested against Stellar **Protocol 28** (mainnet upgrade 2026-09-16).
