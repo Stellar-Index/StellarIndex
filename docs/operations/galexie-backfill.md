@@ -588,11 +588,26 @@ systemctl restart galexie      # ONE restart, then watch
 Repeat with `/etc/default/galexie-backfill` + policy
 `galexie-archive-writer` for the `galexie-archive` bucket.
 
-**Do this BEFORE running `--tags galexie` on a box that hasn't had it
-run recently** (futurenet still needs it), so the env re-render doesn't
-strand live ingestion. Real fix (not yet done): make the MinIO user
-names and the galexie env template read the *same* variable, and stop
-naming a user after a policy.
+**Check this BEFORE running `--tags galexie` on any box**, so the env
+re-render doesn't strand live ingestion. The one-liner pre-check:
+
+```sh
+K=$(grep '^AWS_ACCESS_KEY_ID='     /etc/default/galexie | cut -d= -f2-)
+S=$(grep '^AWS_SECRET_ACCESS_KEY=' /etc/default/galexie | cut -d= -f2-)
+mc alias set probe http://127.0.0.1:9000 "$K" "$S" && mc ls probe/galexie-live/
+mc admin user list local     # does $K appear as an ACCESS KEY (col 2)?
+```
+
+**The drift is per-box, not universal** — it comes from the region's own
+`*.secrets.yml`. Verified 2026-08-27: si-**testnet**'s vault renders
+`galexie-writer` while its MinIO user was `galexie-live-writer` → drift,
+outage. si-**futurenet**'s vault renders `galexie-live-writer`, which
+matches its MinIO user → no drift, safe re-render. So check per box;
+don't assume either way.
+
+Real fix (not yet done): make the MinIO user names and the galexie env
+template read the *same* variable, align the two regions' vault values,
+and stop naming a user after a policy.
 
 ### Why only the backfill was fetching pubnet checkpoints
 
