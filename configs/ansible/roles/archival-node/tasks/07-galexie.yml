@@ -376,6 +376,7 @@
     content: |
       ARCHIVE_HOT_FLOOR={{ stellarindex_archive_hot_floor | default(0) }}
   tags: [galexie, archive-fill]
+  when: (stellar_network | default('pubnet')) == 'pubnet'
 
 - name: Install galexie-archive-fill recovery script
   # Per-partition mirror that handles mtime-poisoned buckets where
@@ -383,12 +384,22 @@
   # deletes any partials, then mirrors only missing/just-deleted
   # partitions in parallel. See "mc mirror gotcha" in
   # docs/operations/galexie-backfill.md.
+  #
+  # PUBNET-ONLY. The source is the AWS Public Blockchain Data set
+  # (`aws-public/aws-public-blockchain/v1.1/stellar/ledgers/pubnet/`,
+  # hardcoded in 5 places in the script) and AWS publishes NO testnet or
+  # futurenet equivalent — so on a test net every run dies instantly at
+  # Phase 1b with `mc: <ERROR> Unable to list folder ... /pubnet not
+  # found` and the unit sits failed. This is an OMIT, not a
+  # parameterize: there is no test-net dataset to point it at. The
+  # test nets build their archive from their own galexie backfill.
   ansible.builtin.copy:
     src: galexie-archive-fill.sh
     dest: /usr/local/bin/galexie-archive-fill
     owner: root
     group: root
     mode: "0755"
+  when: (stellar_network | default('pubnet')) == 'pubnet'
 
 - name: Install galexie-archive-tip-lag metric updater (#31)
   # Defense-in-depth for #26 — writes a Prometheus textfile gauge of
@@ -543,6 +554,7 @@
     - galexie-archive-fill.service
     - galexie-archive-fill.timer
   notify: Reload systemd
+  when: (stellar_network | default('pubnet')) == 'pubnet'
 
 - name: Enable + start galexie-archive-fill.timer
   ansible.builtin.systemd:
@@ -550,6 +562,42 @@
     state: started
     enabled: true
     daemon_reload: true
+  when: (stellar_network | default('pubnet')) == 'pubnet'
+
+# Converge a test net that was provisioned BEFORE the pubnet gate above
+# existed: the units are already on disk, the timer is enabled, and every
+# firing leaves a failed unit behind (which is noise the operator then has
+# to triage). Ansible does not remove what it stops templating, so remove
+# it explicitly. Idempotent on a net that never had it.
+- name: Remove the pubnet-only galexie-archive-fill from non-pubnet networks
+  when: (stellar_network | default('pubnet')) != 'pubnet'
+  block:
+    - name: Stop + disable galexie-archive-fill timer and service
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - galexie-archive-fill.timer
+        - galexie-archive-fill.service
+      failed_when: false
+
+    - name: Remove galexie-archive-fill unit files, script and env file
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/galexie-archive-fill.timer
+        - /etc/systemd/system/galexie-archive-fill.service
+        - /usr/local/bin/galexie-archive-fill
+        - /etc/default/galexie-archive-fill
+      notify: Reload systemd
+
+    - name: Clear the failed state left by earlier archive-fill runs
+      ansible.builtin.command:
+        cmd: systemctl reset-failed galexie-archive-fill.service
+      changed_when: false
+      failed_when: false
 
 # #31 defense-in-depth: tip-lag textfile metric + alert. Pages
 # within hours if the #26 hourly catch-up timer silently breaks.

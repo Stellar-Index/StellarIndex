@@ -36,6 +36,40 @@ assert_cmd() { # assert_cmd <assertion> <command...>
   if "${@:2}" >/dev/null 2>&1; then emit "$1" 1; else emit "$1" 0; fi
 }
 
+# ── host-shape applicability ─────────────────────────────────────────
+# Some assertions guard a layer a given host does not HAVE. A test-net
+# libvirt VM (and r2/r3 on EBS/Object-Storage) runs with
+# zfs_data_pool_type="" and no pool at all — asserting ZFS integrity
+# there reports FAIL forever for a layer that is absent by design, which
+# trains the operator to ignore a page that exists to catch a pool one
+# reboot from gone (2026-07-03).
+#
+# `skip` emits an EXPLICIT _skipped series rather than omitting the
+# assertion silently, so "deliberately not applicable on this host" stays
+# distinguishable from "this check vanished in a refactor". The alert is
+# `stellarindex_config_assertion_ok == 0`, so a skipped assertion cannot
+# fire it, and the staleness alert reads the file mtime, which still
+# updates.
+skip() { # skip <assertion>
+  echo "stellarindex_config_assertion_skipped{assertion=\"$1\"} 1" >> "$TMP"
+  echo "config-assertions: SKIP $1 (layer not present on this host)" >&2
+}
+
+# True only where a real ZFS data pool is live. Deliberately checks the
+# POOL, not just the binary: a host with zfsutils installed but no pool
+# is still a no-ZFS host for these assertions' purposes.
+have_zfs() { command -v zpool >/dev/null 2>&1 && zpool list data >/dev/null 2>&1; }
+
+# The Stellar network this host indexes, read from the same config the
+# binaries read. Empty if unreadable — callers must treat empty as
+# "assume pubnet" so an unreadable config can never SILENCE a check on
+# r1 (fail-closed: unknown host shape keeps the strict assertions).
+stellar_network() {
+  sed -nE 's/^[[:space:]]*network[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' \
+    /etc/stellarindex.toml 2>/dev/null | head -1
+}
+is_pubnet() { [[ "$(stellar_network)" != "testnet" && "$(stellar_network)" != "futurenet" ]]; }
+
 {
   echo "# HELP stellarindex_config_assertion_ok 1 when a load-bearing guard config is live with expected content."
   echo "# TYPE stellarindex_config_assertion_ok gauge"
@@ -55,16 +89,22 @@ assert_grep syslog_maxsize /etc/logrotate.d/rsyslog \
 
 # ── ZFS integrity (2026-07-03: an ansible apply downgrade-broke the
 # userspace and deleted the dkms module — pool one reboot from gone) ──
-assert_cmd zfs_userspace_works zpool status data
-# Requires the unit to NOT set ProtectKernelModules (see the comment in
-# deploy/systemd/config-assertions.service): that flag makes
-# /lib/modules inaccessible, and every formulation of this check — ls,
-# modinfo, dkms status — reads that tree, so the assertion reported FAIL
-# on every service run while passing by hand. Checking the module is
-# merely LOADED would not substitute: a deleted module stays resident
-# until reboot, which is exactly the 2026-07-03 trap.
-assert_cmd zfs_module_on_disk sh -c 'ls /lib/modules/$(uname -r)/updates/dkms/zfs.ko* >/dev/null'
-assert_cmd zfs_packages_held sh -c 'apt-mark showhold | grep -q zfs-dkms'
+if have_zfs; then
+  assert_cmd zfs_userspace_works zpool status data
+  # Requires the unit to NOT set ProtectKernelModules (see the comment in
+  # deploy/systemd/config-assertions.service): that flag makes
+  # /lib/modules inaccessible, and every formulation of this check — ls,
+  # modinfo, dkms status — reads that tree, so the assertion reported FAIL
+  # on every service run while passing by hand. Checking the module is
+  # merely LOADED would not substitute: a deleted module stays resident
+  # until reboot, which is exactly the 2026-07-03 trap.
+  assert_cmd zfs_module_on_disk sh -c 'ls /lib/modules/$(uname -r)/updates/dkms/zfs.ko* >/dev/null'
+  assert_cmd zfs_packages_held sh -c 'apt-mark showhold | grep -q zfs-dkms'
+else
+  skip zfs_userspace_works
+  skip zfs_module_on_disk
+  skip zfs_packages_held
+fi
 
 # ── public edge stays open (a firewall re-render must keep Caddy) ────
 assert_cmd nft_https_open sh -c 'nft list ruleset | grep -qE "dport \{? ?(80, 443|443)"'
@@ -140,7 +180,19 @@ compression_policies_applied() {
       );
     " 2>/dev/null | grep -qx 0
 }
-assert_cmd compression_policies_applied compression_policies_applied
+# The want-list above is MAINNET-shaped: it names protocol-integration
+# hypertables (blend/cctp/rozo/defindex …) that a lean SDEX-only test net
+# never creates, so on those hosts the check fails for tables that are
+# absent by design rather than for a missing compression policy. Gated on
+# pubnet rather than "only check tables that exist", because the latter
+# would ALSO weaken r1 — a hypertable silently disappearing there would
+# start passing. r1 semantics are unchanged; is_pubnet treats an
+# unreadable config as pubnet so this can never silence r1.
+if is_pubnet; then
+  assert_cmd compression_policies_applied compression_policies_applied
+else
+  skip compression_policies_applied
+fi
 
 # ── tx_hash_index parity probe (explorer 404 authority, 2026-08-01) ──
 # GET /v1/tx/{hash} treats a stellar.tx_hash_index MISS as an
