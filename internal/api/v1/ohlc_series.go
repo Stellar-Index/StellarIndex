@@ -65,9 +65,13 @@ const (
 	ohlcInterval15m ohlcInterval = "15m"
 	ohlcInterval30m ohlcInterval = "30m"
 	ohlcInterval1h  ohlcInterval = "1h"
+	ohlcInterval2h  ohlcInterval = "2h"
 	ohlcInterval4h  ohlcInterval = "4h"
+	ohlcInterval12h ohlcInterval = "12h"
 	ohlcInterval1d  ohlcInterval = "1d"
+	ohlcInterval3d  ohlcInterval = "3d"
 	ohlcInterval1w  ohlcInterval = "1w"
+	ohlcInterval2w  ohlcInterval = "2w"
 	ohlcInterval1mo ohlcInterval = "1mo"
 )
 
@@ -88,12 +92,20 @@ func (i ohlcInterval) duration() time.Duration {
 		return 30 * time.Minute
 	case ohlcInterval1h:
 		return 1 * time.Hour
+	case ohlcInterval2h:
+		return 2 * time.Hour
 	case ohlcInterval4h:
 		return 4 * time.Hour
+	case ohlcInterval12h:
+		return 12 * time.Hour
 	case ohlcInterval1d:
 		return 24 * time.Hour
+	case ohlcInterval3d:
+		return 3 * 24 * time.Hour
 	case ohlcInterval1w:
 		return 7 * 24 * time.Hour
+	case ohlcInterval2w:
+		return 14 * 24 * time.Hour
 	case ohlcInterval1mo:
 		// Calendar months vary; 30d is only used for default-window
 		// sizing (N × interval), where approximation is harmless —
@@ -120,19 +132,27 @@ func parseOHLCInterval(w http.ResponseWriter, r *http.Request, raw string) (ohlc
 		return ohlcInterval30m, true
 	case "1h":
 		return ohlcInterval1h, true
+	case "2h":
+		return ohlcInterval2h, true
 	case "4h":
 		return ohlcInterval4h, true
+	case "12h":
+		return ohlcInterval12h, true
 	case "1d":
 		return ohlcInterval1d, true
+	case "3d":
+		return ohlcInterval3d, true
 	case "1w":
 		return ohlcInterval1w, true
+	case "2w":
+		return ohlcInterval2w, true
 	case "1mo":
 		return ohlcInterval1mo, true
 	}
 	writeProblem(w, r,
 		"https://api.stellarindex.io/errors/invalid-interval",
 		"Invalid interval", http.StatusBadRequest,
-		"interval must be one of: 1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w, 1mo (got "+strconv.Quote(raw)+")")
+		"interval must be one of: 1m, 5m, 15m, 30m, 1h, 2h, 4h, 12h, 1d, 3d, 1w, 2w, 1mo (got "+strconv.Quote(raw)+")")
 	return "", false
 }
 

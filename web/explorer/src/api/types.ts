@@ -6145,7 +6145,7 @@ export interface components {
             /** @description Canonical quote asset id. */
             quote: string;
             /** @enum {string} */
-            interval: "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d" | "1w" | "1mo";
+            interval: "1m" | "5m" | "15m" | "30m" | "1h" | "2h" | "4h" | "12h" | "1d" | "3d" | "1w" | "2w" | "1mo";
             /**
              * Format: date-time
              * @description Inclusive lower bound of the series window. When the
@@ -8840,7 +8840,7 @@ export interface operations {
                  *     single-bar response over `[from, to)`. Invalid intervals
                  *     return 400 `errors/invalid-interval`.
                  */
-                interval?: "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d" | "1w" | "1mo";
+                interval?: "1m" | "5m" | "15m" | "30m" | "1h" | "2h" | "4h" | "12h" | "1d" | "3d" | "1w" | "2w" | "1mo";
                 /**
                  * @description Series-mode bar count (max 1000, default 100). Ignored in
                  *     single-bar mode. Invalid values return 400
