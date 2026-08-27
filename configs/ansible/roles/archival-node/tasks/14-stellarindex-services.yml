@@ -434,6 +434,7 @@
     owner: root
     group: root
     mode: "0755"
+  when: archive_completeness_enabled | bool
 
 - name: archive-completeness override drop-in (root user, no legacy env)
   # Replaces a hand-written pre-rebrand override that still loaded
@@ -450,6 +451,7 @@
       User=root
       Group=root
   notify: Reload systemd
+  when: archive_completeness_enabled | bool
 
 - name: Remove the legacy ratesengine env file
   # Pre-rebrand credentials (old DB, deleted MinIO reader) that
@@ -524,7 +526,7 @@
     group: root
     mode: "0755"
 
-- name: Install verify-archive-tier-a / verify-archive-tier-b / archive-completeness / supply-snapshot / galexie-archive-trim units
+- name: Install verify-archive-tier-a / supply-snapshot / galexie-archive-trim units
   ansible.builtin.template:
     src: "systemd/{{ item }}.j2"
     dest: "/etc/systemd/system/{{ item }}"
@@ -532,13 +534,12 @@
   loop:
     - verify-archive-tier-a.service
     - verify-archive-tier-a.timer
-    # Tier B (checkpoint anchor, task #33 / W8 recon 14a): verify_archive.go
-    # has always implemented `-tier checkpoint` but only Tier A was
-    # scheduled, so the single-source-corruption anchor check never ran.
-    - verify-archive-tier-b.service
-    - verify-archive-tier-b.timer
-    - archive-completeness.service
-    - archive-completeness.timer
+    # Tier B is NOT in this loop — its checkpoint anchor needs a
+    # network-correct local mirror, so it is installed conditionally
+    # below (verify_archive_tier_b_enabled).
+    # archive-completeness is NOT in this loop — its cross-anchor check is
+    # pubnet-mirror-specific; installed conditionally below
+    # (archive_completeness_enabled).
     - supply-snapshot.service
     - supply-snapshot.timer
     - galexie-archive-trim.service
@@ -577,8 +578,9 @@
     daemon_reload: true
   loop:
     - verify-archive-tier-a.timer
-    - verify-archive-tier-b.timer
-    - archive-completeness.timer
+    # verify-archive-tier-b.timer is enabled in its own conditional block
+    # below — see verify_archive_tier_b_enabled.
+    # archive-completeness.timer is enabled in its own conditional block.
     - supply-snapshot.timer
     - sep1-refresh.timer
     - directory-sync.timer
@@ -587,6 +589,118 @@
     - compute-completeness.timer
     - data-freshness.timer
     - ch-supply.timer
+
+# ── archive-completeness — only where its cross-anchor is correct ────
+# See archive_completeness_enabled in defaults/main.yml: the check's only
+# section is measured against the pubnet-only /srv/history-archive mirror,
+# and its fill phase pulls FROM pubnet archives.
+- name: Install + enable archive-completeness (networks with a correct cross-anchor)
+  when: archive_completeness_enabled | bool
+  block:
+    - name: Install archive-completeness unit + timer
+      ansible.builtin.template:
+        src: "systemd/{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+      loop:
+        - archive-completeness.service
+        - archive-completeness.timer
+      notify: Reload systemd
+
+    - name: Enable + start archive-completeness.timer
+      ansible.builtin.systemd:
+        name: archive-completeness.timer
+        state: started
+        enabled: true
+        daemon_reload: true
+
+- name: Remove archive-completeness where its cross-anchor is not network-correct
+  when: not (archive_completeness_enabled | bool)
+  block:
+    - name: Stop + disable archive-completeness timer and service
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - archive-completeness.timer
+        - archive-completeness.service
+      failed_when: false
+
+    - name: Remove archive-completeness unit files
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}"
+        state: absent
+      loop:
+        - archive-completeness.timer
+        - archive-completeness.service
+      notify: Reload systemd
+
+    - name: Clear the failed state left by earlier archive-completeness runs
+      ansible.builtin.command:
+        cmd: systemctl reset-failed archive-completeness.service
+      changed_when: false
+      failed_when: false
+
+# ── verify-archive Tier B — only where its anchor can be correct ─────
+# Tier B (checkpoint anchor, task #33 / W8 recon 14a): verify_archive.go
+# has always implemented `-tier checkpoint` but only Tier A was scheduled,
+# so the single-source-corruption anchor check never ran. It reads a LOCAL
+# rs-stellar-archivist mirror (/srv/history-archive) which is populated for
+# pubnet ONLY — see verify_archive_tier_b_enabled in defaults/main.yml for
+# the full rationale and the observed testnet mismatch.
+- name: Install + enable verify-archive-tier-b (networks with a correct anchor)
+  when: verify_archive_tier_b_enabled | bool
+  block:
+    - name: Install verify-archive-tier-b unit + timer
+      ansible.builtin.template:
+        src: "systemd/{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+      loop:
+        - verify-archive-tier-b.service
+        - verify-archive-tier-b.timer
+      notify: Reload systemd
+
+    - name: Enable + start verify-archive-tier-b.timer
+      ansible.builtin.systemd:
+        name: verify-archive-tier-b.timer
+        state: started
+        enabled: true
+        daemon_reload: true
+
+# Converge a net provisioned BEFORE the gate above existed: the units are
+# on disk and the timer is enabled, so every nightly run leaves a failed
+# unit behind for an anchor that cannot ever match. Ansible does not remove
+# what it stops templating, so remove it explicitly. Idempotent on a net
+# that never had it.
+- name: Remove verify-archive-tier-b where its anchor is not network-correct
+  when: not (verify_archive_tier_b_enabled | bool)
+  block:
+    - name: Stop + disable verify-archive-tier-b timer and service
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - verify-archive-tier-b.timer
+        - verify-archive-tier-b.service
+      failed_when: false
+
+    - name: Remove verify-archive-tier-b unit files
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}"
+        state: absent
+      loop:
+        - verify-archive-tier-b.timer
+        - verify-archive-tier-b.service
+      notify: Reload systemd
+
+    - name: Clear the failed state left by earlier tier-b runs
+      ansible.builtin.command:
+        cmd: systemctl reset-failed verify-archive-tier-b.service
+      changed_when: false
+      failed_when: false
 
 - name: Retire the cap67-movements timer in favour of the follow daemon (5.3)
   # The follow daemon (cap67-movements.service, Type=simple, -follow) is the

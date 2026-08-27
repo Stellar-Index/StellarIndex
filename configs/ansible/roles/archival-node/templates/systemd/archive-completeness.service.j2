@@ -40,6 +40,7 @@ ExecStart=/usr/local/sbin/run-heavy-job.sh archive-completeness \
   -from ${ARCHIVE_FROM} \
   -to ${ARCHIVE_TO} \
   -workers ${WORKERS} \
+  -network {{ stellar_network | default('pubnet') }} \
   -textfile-output ${TEXTFILE_OUTPUT} \
   -output-file ${REPORT_OUTPUT}
 
