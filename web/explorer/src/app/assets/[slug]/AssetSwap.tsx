@@ -40,28 +40,21 @@ export interface SwapToken {
   kind: 'crypto' | 'fiat';
 }
 
-// Fiat legs offered in the picker, priced from the forex batch (massive.com
-// covers ~200 world currencies). USD is the implicit unit (price 1) and always
-// present. The batch prices every ticker the feed carries; those without a live
-// rate are filtered out client-side, so listing the full ISO-4217 set just
-// means "offer every currency the feed can price" without a curated shortlist.
+// Fiat legs offered in the picker, priced from the forex batch. USD is the
+// implicit unit (price 1) and always present, so it is NOT listed here.
+//
+// These MUST stay within the API's canonical fiat allow-list
+// (internal/canonical/asset_fiat.go, knownFiatCodes — ADR-0010): the price
+// batch rejects the ENTIRE request with 400 on the first unrecognised code, so
+// an off-list ticker here would blank out every fiat, not just itself. This is
+// the full non-USD allow-list (31 codes). Offering more (the massive.com feed
+// carries ~200) requires extending knownFiatCodes on the API side first — a
+// currency the API can't parse can't be priced regardless of what we request.
 const FIAT_TICKERS = [
-  'EUR', 'GBP', 'JPY', 'CHF', 'CAD', 'AUD', 'CNY', 'INR', 'BRL', 'MXN',
-  'KRW', 'HKD', 'SGD', 'SEK', 'NOK', 'DKK', 'PLN', 'ZAR', 'TRY', 'NZD',
-  'AED', 'SAR', 'THB', 'IDR', 'MYR', 'PHP', 'VND', 'CZK', 'HUF', 'RON',
-  'ILS', 'CLP', 'COP', 'ARS', 'PEN', 'EGP', 'NGN', 'KES', 'GHS', 'MAD',
-  'PKR', 'BDT', 'LKR', 'TWD', 'QAR', 'KWD', 'BHD', 'OMR', 'JOD', 'RUB',
-  'UAH', 'RSD', 'BGN', 'HRK', 'ISK', 'GEL', 'AZN', 'KZT', 'UZS', 'AMD',
-  'DZD', 'TND', 'LYD', 'ETB', 'TZS', 'UGX', 'ZMW', 'XOF', 'XAF', 'MUR',
-  'BWP', 'NAD', 'MZN', 'AOA', 'CDF', 'RWF', 'SDG', 'SYP', 'IQD', 'LBP',
-  'YER', 'AFN', 'MMK', 'KHR', 'LAK', 'NPR', 'BND', 'MOP', 'MNT', 'FJD',
-  'PGK', 'XPF', 'BOB', 'PYG', 'UYU', 'VES', 'GTQ', 'HNL', 'NIO', 'CRC',
-  'DOP', 'JMD', 'TTD', 'BBD', 'BSD', 'BZD', 'XCD', 'AWG', 'ANG', 'HTG',
-  'CUP', 'PAB', 'BYN', 'MDL', 'ALL', 'MKD', 'BAM', 'MGA', 'MWK', 'SZL',
-  'LSL', 'GMD', 'GNF', 'SLL', 'LRD', 'SCR', 'DJF', 'KMF', 'ERN', 'SOS',
-  'BIF', 'CVE', 'STN', 'MRU', 'SSP', 'TMT', 'TJS', 'KGS', 'MVR', 'BTN',
-  'WST', 'TOP', 'VUV', 'SBD', 'GYD', 'SRD', 'FKP', 'GIP', 'SHP', 'JEP',
-  'GGP', 'IMP', 'KYD', 'BMD', 'KPW', 'ZWL', 'SLE',
+  'ARS', 'AUD', 'BRL', 'CAD', 'CHF', 'CLP', 'CNY', 'COP', 'EUR', 'GBP',
+  'HKD', 'IDR', 'ILS', 'INR', 'JPY', 'KRW', 'MXN', 'MYR', 'NGN', 'NOK',
+  'NZD', 'PHP', 'PLN', 'RUB', 'SEK', 'SGD', 'THB', 'TRY', 'UAH', 'VND',
+  'ZAR',
 ];
 
 // Currency display names come from the browser's Intl.DisplayNames so the full
@@ -493,15 +486,17 @@ function useFiatTokens(): SwapToken[] {
     queryKey: ['/v1/price/batch', 'swapFiat'],
     enabled: CURRENT_NETWORK.pricing,
     queryFn: async () => {
-      // GET /v1/price/batch caps at 100 asset_ids, so the full ISO set is
-      // split into ≤100-id chunks fetched in parallel and merged. GET (not
-      // POST) keeps the responses edge-cacheable.
+      // GET /v1/price/batch caps at 100 asset_ids, so the list is split into
+      // ≤100-id chunks fetched in parallel and merged. GET (not POST) keeps the
+      // responses edge-cacheable. allSettled (not all): the batch 400s the
+      // whole request on a single unrecognised code, so an off-allow-list
+      // ticker must fail only its own chunk, never blank out every fiat.
       const CHUNK = 100;
       const chunks: string[][] = [];
       for (let i = 0; i < FIAT_TICKERS.length; i += CHUNK) {
         chunks.push(FIAT_TICKERS.slice(i, i + CHUNK));
       }
-      const envs = await Promise.all(
+      const settled = await Promise.allSettled(
         chunks.map((chunk) => {
           const ids = chunk.map((t) => `fiat:${t}`).join(',');
           return apiGet<{
@@ -510,8 +505,9 @@ function useFiatTokens(): SwapToken[] {
         }),
       );
       const out: SwapToken[] = [];
-      for (const env of envs) {
-        for (const row of env.data ?? []) {
+      for (const res of settled) {
+        if (res.status !== 'fulfilled') continue;
+        for (const row of res.value.data ?? []) {
           const ticker = row.asset_id.replace(/^fiat:/, '');
           const price = row.price ? Number(row.price) : 0;
           if (!(price > 0)) continue;
