@@ -208,11 +208,11 @@ func (s *stubExplorerReader) AccountsByWealth(_ context.Context, _ []string, _ [
 // the stub isn't configured to fail, so existing expectations are
 // unchanged. An error case reports cold, which is how the real cache
 // signals "nothing ever computed" (site-audit S3).
-func (s *stubExplorerReader) AccountsByWealthCached(_ context.Context, _ []string, _ []float64, _ int) ([]clickhouse.AccountWealth, time.Time, bool) {
+func (s *stubExplorerReader) AccountsByWealthCached(_ context.Context, _ []string, _ []float64, _ int) ([]clickhouse.AccountWealth, string, time.Time, bool) {
 	if s.err != nil {
-		return nil, time.Time{}, false
+		return nil, "", time.Time{}, false
 	}
-	return s.wealth, time.Now(), true
+	return s.wealth, clickhouse.WealthBasisUSD, time.Now(), true
 }
 
 func (s *stubExplorerReader) AccountTransactions(_ context.Context, _ string, _ int, _ clickhouse.ExplorerCursor) ([]clickhouse.TxSummary, error) {
