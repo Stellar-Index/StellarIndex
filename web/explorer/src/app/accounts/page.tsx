@@ -2,13 +2,15 @@ import { Suspense } from 'react';
 import type { Metadata } from 'next';
 
 import { LegacyEntityRedirect } from '@/components/LegacyEntityRedirect';
+import { CURRENT_NETWORK } from '@/lib/networks';
 import { AccountView } from './AccountView';
 
 export const metadata: Metadata = {
   alternates: { canonical: '/accounts' },
   title: 'Accounts — Stellar accounts by wealth',
-  description:
-    'The richest Stellar accounts ranked by total USD holdings, plus per-account detail: balances, trustlines, offers, and sourced activity decoded straight from the certified raw lake.',
+  description: CURRENT_NETWORK.pricing
+    ? 'The richest Stellar accounts ranked by total USD holdings, plus per-account detail: balances, trustlines, offers, and sourced activity decoded straight from the certified raw lake.'
+    : `The largest Stellar ${CURRENT_NETWORK.label} accounts ranked by native XLM balance, plus per-account detail: balances, trustlines, offers, and sourced activity decoded straight from the certified raw lake.`,
 };
 
 /**
