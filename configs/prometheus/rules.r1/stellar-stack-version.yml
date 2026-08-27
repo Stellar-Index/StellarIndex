@@ -80,3 +80,58 @@ groups:
             activation vote. See the "Remediation" section of the
             runbook for the exact upgrade recipe per component.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+
+      # ── Reactive backstop: a component CANNOT DECODE current ledger meta ──
+      # The proactive guard above (version_lag) is the primary defence and
+      # should fire first. This catches the case it structurally cannot:
+      # the probe compares RELEASED upstream versions, so it cannot know the
+      # network has actually begun emitting the new XDR. Observed 2026-08-27:
+      # testnet ingested 240 Protocol-28 ledgers on a galexie that could not
+      # decode P28 — with zero errors — because the breaking arm only appears
+      # once a ledger genuinely CONTAINS parallel-execution structures. On
+      # futurenet, which exercises that path, the archive backfill died at
+      # ledger 92747. Mainnet would have crossed the upgrade ledger looking
+      # perfectly healthy and then stopped at an arbitrary later ledger.
+      #
+      # The failure itself is SAFE (fail-closed: the component errors and
+      # stops; no corrupt data is written) — but it is an ingestion outage
+      # for that component, and previously surfaced only as generic tip-lag.
+      # This names the cause so the responder does not have to grep journald.
+      - alert: stellarindex_ledger_meta_decode_failing
+        expr: stellarindex_ledger_meta_decode_failures_total > 0
+        for: 10m
+        labels:
+          severity: page
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/protocol-upgrades.md
+          summary: "Ledger-meta XDR decode failing — a component is behind a protocol"
+          description: |
+            A component cannot decode ledger meta the network is now
+            producing. This is almost always "we are behind a protocol
+            upgrade": the installed galexie / indexer predates an XDR change
+            (e.g. P28's ParallelTxExecutionStage) and refuses the ledger.
+
+            Data is NOT corrupted — the decode is fail-closed — but that
+            component has STOPPED ingesting and will not resume on its own.
+
+            Fix: identify the unit from the `unit` label, bump it
+            (galexie_version / stellar_core_version / the release binary's
+            go-stellar-sdk), and re-apply. See protocol-upgrades.md.
+            Check stellarindex_stellar_stack_version_lag for which component.
+
+      # A probe that stops running must not read as "no decode failures".
+      - alert: stellarindex_ledger_meta_decode_probe_stale
+        expr: time() - stellarindex_ledger_meta_decode_probe_updated_seconds > 3600
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          summary: "Ledger-meta decode probe stale — decode failures would go unseen"
+          description: |
+            ledger-meta-decode-probe has not written its textfile metric in
+            over an hour, so stellarindex_ledger_meta_decode_failing is blind.
+            Check the ledger-meta-decode-probe.timer / .service units.
