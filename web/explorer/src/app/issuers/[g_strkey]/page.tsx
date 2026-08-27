@@ -353,8 +353,9 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
             // show that honestly rather than four "unknown" dots that
             // read as a broken panel (audit 2026-06-19).
             <p className="text-ink-muted text-xs">
-              Not collected. StellarIndex does not currently ingest issuer
-              account flags — see the cross-reference links below.
+              Not yet resolved. Auth flags are read from the issuer&apos;s
+              on-chain account entry; this one is not in the captured
+              ledger-entry window yet.
             </p>
           ) : (
             <ul className="space-y-1.5 text-xs">
