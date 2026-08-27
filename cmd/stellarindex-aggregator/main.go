@@ -1673,44 +1673,6 @@ func defaultPairs() []canonical.Pair {
 			}
 		}
 	}
-
-	// Crypto-cross edges for the router. These are not customer-facing
-	// targets; they exist so the graph router has a SECOND, independent
-	// route to the fiat crosses. Without an XLM/BTC VWAP the only path to
-	// crypto:XLM/fiat:EUR is XLM/USD x USD/EUR, so pathCount is 1 and the
-	// corroboration the router was built for never engages (see the
-	// [aggregate] max_hops comment: "a target reached by >=2 agreeing,
-	// confidence-gated routes is corroborated, and that pathCount widens
-	// the anomaly-freeze's source_count leg so a thin FX cross stops
-	// false-firing").
-	//
-	// Concretely, on r1 2026-08-27 crypto:XLM/fiat:EUR was serving from a
-	// SINGLE venue and crypto:XLM/fiat:GBP from kraken alone, while
-	// BTC/EUR had 4 sources and BTC/GBP had 3 — so routing XLM->BTC->fiat
-	// reaches a far deeper market than the direct cross. We already stream
-	// XLMBTC from Binance; it simply was not being aggregated, so the edge
-	// did not exist.
-	//
-	// No extra triangulation chain is needed: routeTarget prices a target
-	// "through the window's edge graph", so once XLM/BTC is a priced pair
-	// the existing crypto:XLM/fiat:EUR chain finds BOTH XLM->USD->EUR and
-	// XLM->BTC->EUR. A duplicate-target chain would only make routeTarget
-	// run twice over the same graph for the same answer.
-	for _, cross := range [][2]string{{"XLM", "BTC"}} {
-		base, err := canonical.NewCryptoAsset(cross[0])
-		if err != nil {
-			continue
-		}
-		quote, err := canonical.NewCryptoAsset(cross[1])
-		if err != nil {
-			continue
-		}
-		p, err := canonical.NewPair(base, quote)
-		if err != nil {
-			continue
-		}
-		out = append(out, p)
-	}
 	return out
 }
 
