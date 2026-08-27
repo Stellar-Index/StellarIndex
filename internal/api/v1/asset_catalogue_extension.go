@@ -143,6 +143,20 @@ func (s *Server) applyAssetRowToDetail(ctx context.Context, detail *AssetDetail,
 	if priceAllowed && row.PriceUSD != nil && detail.PriceUSD == nil {
 		detail.PriceUSD = row.PriceUSD
 	}
+	// LAST resort, after both the canonical price path and the catalogue
+	// row have declined: a one-hop transitive price. Only reached when
+	// nothing else could price the asset, so it can never override a
+	// directly-observed price — it only fills a hole that would otherwise
+	// render as "no price" on an actively-traded asset.
+	//
+	// transitivePriceFor gates BOTH legs itself and returns false on every
+	// error path, so this call site deliberately has no policy of its own.
+	if detail.PriceUSD == nil {
+		if p, ok := s.transitivePriceFor(ctx, asset, assetID); ok {
+			detail.PriceUSD = &p
+			detail.PriceBasis = priceBasisTransitive
+		}
+	}
 	if priceAllowed && row.Change1hPct != nil {
 		detail.Change1hPct = row.Change1hPct
 	}
