@@ -190,12 +190,21 @@ jobs:
       # cache miss and falls back to the standard index.txt RSC fetch
       # (verified by browsing a pruned build). Pruning restores deploys
       # while ADR-0044 (edge SSR) replaces static export as the real fix.
-      - name: Prune Next 16 segment-cache prefetch files
+      # KEEP __next._tree.txt: it is the ONLY segment file the client router
+      # actually PREFETCHES (on <Link> hover/viewport). Pruning it 404s every
+      # prefetch on routes without a functions/*/[[path]].js shell fallback —
+      # the "tons of console errors" report (2026-08-27). The bulkier
+      # per-segment payloads (_head/_full/_index/__PAGE__/layout) are fetched
+      # only on actual navigation, where the client falls back to index.txt, so
+      # those stay pruned to hold the file budget. Keeping ~1 tree file/route
+      # adds ~2.3k files — still far under the 18,500 ceiling. ADR-0044 (edge
+      # SSR) remains the real fix.
+      - name: Prune Next 16 segment-cache prefetch files (keep _tree)
         run: |
           BEFORE=$(find web/explorer/out -type f | wc -l)
-          find web/explorer/out -type f -name "__next.*" -delete
+          find web/explorer/out -type f -name "__next.*" ! -name "__next._tree.txt" -delete
           AFTER=$(find web/explorer/out -type f | wc -l)
-          echo "pruned segment files: $BEFORE -> $AFTER"
+          echo "pruned segment files (kept _tree): $BEFORE -> $AFTER"
 
       # Fail BEFORE the CF upload if the static export approaches Cloudflare
       # Pages' 20,000-file-per-deployment cap (Spike A 2026-06-24; SEO plan R1).
