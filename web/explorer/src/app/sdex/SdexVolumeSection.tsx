@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
+import { CURRENT_NETWORK } from '@/lib/networks';
 import { formatCompact } from '@/lib/format';
 import { dropPartialTrailingDay } from '@/lib/series';
 
@@ -66,12 +67,23 @@ export function SdexVolumeSection() {
     }))
     .filter((pt) => Number.isFinite(pt.time) && Number.isFinite(pt.value));
 
-  const kpis = (q.data?.bespoke?.kpis ?? []).slice(0, 3);
+  // On the lean nets there is no aggregator, so every trade is unpriced and the
+  // USD sums are all 0. Drop the USD-denominated KPIs (they'd read a misleading
+  // "$0") and the USD-volume chart, keeping the trade/pair counts, which are
+  // real. Mainnet is unchanged.
+  const priced = CURRENT_NETWORK.pricing;
+  const kpis = (q.data?.bespoke?.kpis ?? [])
+    .filter((k) => priced || k.unit !== 'USD')
+    .slice(0, 3);
 
   return (
     <Panel
-      title="SDEX volume"
-      hint="Daily USD volume of priced SDEX trades — unpriced trades count toward trade totals but not USD sums."
+      title={priced ? 'SDEX volume' : 'SDEX activity'}
+      hint={
+        priced
+          ? 'Daily USD volume of priced SDEX trades — unpriced trades count toward trade totals but not USD sums.'
+          : 'Trade and pair counts from the SDEX order book. USD volume needs the pricing layer, which this network does not run.'
+      }
       source={asExample('/v1/protocols/sdex')}
       bodyClassName="space-y-4"
     >
@@ -89,36 +101,41 @@ export function SdexVolumeSection() {
           ))}
         </dl>
       )}
-      {q.isLoading && <div className="h-[240px]" />}
-      {/* "Unavailable" is reserved for a series the server did NOT serve —
-          a served short series is insufficient history, not unavailability. */}
-      {!q.isLoading && points.length === 0 && (
-        <p className="text-sm text-ink-muted">
-          {series
-            ? 'No complete daily volume buckets to chart yet.'
-            : 'The SDEX volume series is unavailable right now.'}
-        </p>
-      )}
-      {!q.isLoading && points.length === 1 && (
-        <p className="text-sm text-ink-muted">
-          One complete day of volume so far —{' '}
-          <span className="font-mono tabular-nums text-ink">
-            {points[0].date}: ${formatCompact(points[0].value)}
-          </span>
-          . The chart appears once a second complete day lands.
-        </p>
-      )}
-      {points.length >= 2 && (
-        <VolumeLineChart
-          data={points}
-          height={240}
-          positive
-          ariaLabel={`Daily SDEX USD volume over the last ${points.length} days`}
-          legend={{
-            valueLabel: 'USD volume',
-            formatValue: (n) => `$${formatCompact(n)}`,
-          }}
-        />
+      {/* The chart is USD-denominated — only rendered where pricing exists. */}
+      {priced && (
+        <>
+          {q.isLoading && <div className="h-[240px]" />}
+          {/* "Unavailable" is reserved for a series the server did NOT serve —
+              a served short series is insufficient history, not unavailability. */}
+          {!q.isLoading && points.length === 0 && (
+            <p className="text-sm text-ink-muted">
+              {series
+                ? 'No complete daily volume buckets to chart yet.'
+                : 'The SDEX volume series is unavailable right now.'}
+            </p>
+          )}
+          {!q.isLoading && points.length === 1 && (
+            <p className="text-sm text-ink-muted">
+              One complete day of volume so far —{' '}
+              <span className="font-mono tabular-nums text-ink">
+                {points[0].date}: ${formatCompact(points[0].value)}
+              </span>
+              . The chart appears once a second complete day lands.
+            </p>
+          )}
+          {points.length >= 2 && (
+            <VolumeLineChart
+              data={points}
+              height={240}
+              positive
+              ariaLabel={`Daily SDEX USD volume over the last ${points.length} days`}
+              legend={{
+                valueLabel: 'USD volume',
+                formatValue: (n) => `$${formatCompact(n)}`,
+              }}
+            />
+          )}
+        </>
       )}
     </Panel>
   );
