@@ -34,14 +34,27 @@ export default function HomePage() {
           Independent · open · public-tier free
         </p>
         <h1 className="text-display-sm font-semibold text-ink md:text-display">
-          The protocol explorer for the Stellar network.
+          {pricing
+            ? 'The protocol explorer for the Stellar network.'
+            : `The Stellar ${CURRENT_NETWORK.label} Explorer`}
         </h1>
         <p className="max-w-2xl text-lg leading-relaxed text-ink-muted">
-          Every contract, every event, and every trade across Stellar
-          protocols — CEXes, on-chain DEXes, and lending — served as verified
-          per-protocol data plus a single VWAP price through a public REST
-          API, alongside live world fiat rates. Every panel below shows the
-          exact API call that produced it.
+          {pricing ? (
+            <>
+              Every contract, every event, and every trade across Stellar
+              protocols — CEXes, on-chain DEXes, and lending — served as
+              verified per-protocol data plus a single VWAP price through a
+              public REST API, alongside live world fiat rates. Every panel
+              below shows the exact API call that produced it.
+            </>
+          ) : (
+            <>
+              Every ledger, transaction, account, asset, and Soroban contract
+              on Stellar {CURRENT_NETWORK.label} — complete, verified,
+              per-protocol on-chain data through a public REST API. Every panel
+              below shows the exact API call that produced it.
+            </>
+          )}
         </p>
         <div className="flex flex-wrap items-center gap-3 pt-1">
           <ButtonLink href="/assets" size="lg">
