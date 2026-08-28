@@ -95,7 +95,9 @@ suffixes. Two correctness consequences:
   decode as `canonical.AssetRWA`, deliberately NOT `crypto`, so a
   tokenized T-bill never lands in a crypto-scoped surface.
 - **A feed_id outside the registry** is skipped
-  per-entry and counted on `redstone_unknown_symbols_total` — skipped,
+  per-entry and counted on
+  `stellarindex_source_unknown_symbols_total{source="redstone"}`
+  (alert `stellarindex_ingestion_oracle_unknown_symbols`) — skipped,
   never mis-attributed.
 
 ### 2026-07-24 relayer expansion (ledger 63624934)

@@ -334,9 +334,15 @@ func sortAccountMovementRows(rows []AccountMovementRow) {
 // per-writer-file convention (participant_backfill.go, sink.go each
 // define their own).
 func openAccountMovementsWrite(ctx context.Context, addr string) (driver.Conn, error) {
+	// Ops-batch identity from the environment (2026-08-28 r1 incident;
+	// see ops_auth.go) — CH `default` user when unset.
+	auth, err := opsAuth()
+	if err != nil {
+		return nil, err
+	}
 	conn, err := clickhouse.Open(&clickhouse.Options{
 		Addr: []string{addr},
-		Auth: clickhouse.Auth{Database: "stellar"},
+		Auth: auth,
 		Settings: clickhouse.Settings{
 			"max_execution_time": 300,
 		},
