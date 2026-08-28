@@ -59,6 +59,13 @@ against.
   `docs/operations/clickhouse-ops-batch-profile.md`.
 ### Fixed
 
+- **ansible: MinIO secrets no longer on `mc` argv.** `09-minio.yml`'s
+  alias task claimed env-based auth while passing the root password on
+  argv, and the three `mc admin user add` tasks + `galexie-append.sh`'s
+  per-restart `mc alias set` put the writer secrets in
+  `/proc/<pid>/cmdline`. All five now feed the secret on stdin (`mc`
+  reads omitted keys from stdin); the persisted `local` alias the root
+  ops scripts rely on is unchanged (deploy-ansible-secrets-9).
 - **Outlier filter trimmed agreed price moves; `outlier_storm` measured
   its own artifact.** The published-VWAP filter scored every print
   against ONE band — the whole window's median ± 4 × 1.4826 × MAD — and
