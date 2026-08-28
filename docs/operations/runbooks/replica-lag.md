@@ -1,29 +1,43 @@
 ---
 title: Runbook — replica-lag
-last_verified: 2026-04-23
-status: draft
+last_verified: 2026-08-28
+status: current
 severity: P2
 ---
 
 # Runbook — `stellarindex_timescale_replica_lag`
 
+> **R1 DEPLOYMENT REALITY (re-verified 2026-08-28).** R1 runs a
+> **single, unclustered Postgres with NO replica** — no standby, no
+> streaming replication, no sync quorum. `pg_replication_lag_seconds`
+> therefore has **no series**, and this alert is **INERT on r1
+> today**: it cannot fire, and nothing it describes exists yet. The
+> planned first consumer is the **r3 async DR replica**
+> ([ADR-0016](../../adr/0016-per-region-storage-strategy.md)); the
+> "sync replica holding back primary writes" scenario belongs to the
+> undeployed HA topology (`docs/architecture/ha-plan.md`). The
+> procedures below are kept as the playbook for **when a standby
+> exists** — do not act on them against r1 as it stands.
+
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellarindex_timescale_replica_lag` |
-| Severity | P2 (ticket) |
-| Detected by | `deploy/monitoring/rules/storage.yml` |
+| Alert | `stellarindex_timescale_replica_lag` — **inert on r1, see banner** |
+| Severity | P2 (`severity: ticket`) |
+| Detected by | `configs/prometheus/rules.r1/storage.yml` (group `stellarindex.storage`, `severity: ticket`, `for: 2m`); multi-host twin in `deploy/monitoring/rules/storage.yml`. |
 | Typical MTTR | 15–60 min |
-| Impact | Depends on the replica's role. If it's the **sync** replica, writes on the primary are being held back until it catches up → indexer + aggregator insert-rate drops, cursor alerts may follow. If it's an async replica, the impact is weaker — only read-scaled queries see stale data. |
+| Impact | Depends on the replica's role. If it's a **sync** replica (undeployed HA topology — not r1), writes on the primary are held back until it catches up → indexer + aggregator insert-rate drops, cursor alerts may follow. If it's an async replica (the planned r3 DR shape), the impact is weaker — the DR copy's RPO grows; reads served from it (none planned) would see stale data. |
 
 ## Symptoms
 
-- `pg_replication_lag_seconds > 5` sustained 2 min.
+- `pg_replication_lag_seconds > 5` sustained 2 min. Note this metric
+  only exists **on a standby** — a primary with no replica (r1
+  today) exports nothing, which is absence, not health.
 - `pg_stat_replication` on the primary shows a `write_lag` /
   `replay_lag` value > 5 s.
-- If sync replica: primary has transactions in `wait_event_type =
-  SyncRep`.
+- If sync replica (future topology): primary has transactions in
+  `wait_event_type = SyncRep`.
 
 ## Quick diagnosis (≤ 5 min)
 
@@ -107,11 +121,26 @@ ssh <replica-host> 'ping -c 10 <primary>'
 
 ## Related
 
-- `timescale-primary-down.md` — replica lag is often the precursor
-  to a failover event.
+- `timescale-primary-down.md` — that runbook now states there is
+  **no automatic failover on r1**; in the future clustered topology,
+  replica lag would be the precursor signal to a failover event, but
+  today primary-down means restart-or-restore, and this alert plays
+  no part.
 - `db-disk-full.md` — no disk → no WAL → infinite lag.
-- `pg-conns-saturated.md` — if the replica pool is saturated.
+- `pg-conns-saturated.md` — if the (future) replica pool is
+  saturated.
+- [ADR-0016](../../adr/0016-per-region-storage-strategy.md) — the r3
+  async DR replica that will be this alert's first real consumer.
 
 ## Changelog
 
+- 2026-08-28 — re-verified against HEAD. Added the R1 DEPLOYMENT
+  REALITY banner: no replica exists on r1, `pg_replication_lag_seconds`
+  has no series, alert inert; planned consumer is the r3 async DR
+  replica (ADR-0016). Symptoms re-scoped (metric exists only on a
+  standby); sync-replica impact marked as the undeployed HA topology;
+  the `timescale-primary-down.md` "precursor to failover" claim
+  re-scoped to the future topology (no automatic failover on r1).
+  Procedures retained as the playbook for when a standby exists.
+  Rule citation → `rules.r1/storage.yml`.
 - 2026-04-23 — initial draft.
