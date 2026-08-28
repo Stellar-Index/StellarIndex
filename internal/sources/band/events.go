@@ -74,13 +74,12 @@ var (
 	// shifted the signature, or the envelope is broken.
 	ErrMalformedArgs = errors.New("band: malformed InvokeContract args")
 
-	// ErrEmptyRates — the symbol_rates vector was empty. Band
-	// relayers don't normally submit empty batches; surface loudly.
+	// ErrEmptyRates — the symbol_rates vector was empty (or every
+	// slot was USD / rate 0). Band relayers don't normally submit
+	// empty batches; surface loudly. Since the oracle
+	// capture-totality change (PR-2) an unmapped symbol is NOT a
+	// reason: it is recorded verbatim as a `raw:<symbol>` row
+	// (canonical.AssetOracleRaw). The former ErrUnknownSymbol
+	// per-entry skip sentinel was retired with that change.
 	ErrEmptyRates = errors.New("band: empty symbol_rates vector")
-
-	// ErrUnknownSymbol — a symbol in symbol_rates doesn't map to
-	// any canonical asset (not on the fiat allow-list, not on the
-	// crypto allow-list). Per-entry skip; other entries in the
-	// same call still land.
-	ErrUnknownSymbol = errors.New("band: symbol not in fiat or crypto allow-lists")
 )
