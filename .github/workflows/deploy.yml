@@ -57,10 +57,44 @@ on:
         # stale (or absent on a fresh host) because the timer's
         # presence on r1 came from the wave-129 ssh-side
         # operator install, not from the release/deploy flow.
+        #
+        # 2026-08-28: the SAME class recurred for stellarindex-ops,
+        # which this list also omitted. Measured on r1: ops sat at
+        # v0.44.7 while indexer/aggregator/api/sla-probe were all
+        # v0.46.1 — two releases of drift, invisible because a
+        # nominal deploy reported success without ever touching it.
+        # It is not a bystander: THIRTEEN units on r1 exec it,
+        # including the data-integrity gates (verify-archive
+        # tier-a/b, archive-completeness, ch-schema-drift,
+        # restore-drill) and the served-tier writers (census-rollup,
+        # holders-rollup, supply-snapshot, sep1-refresh,
+        # directory-sync, cap67-movements). A stale gate binary
+        # silently validates the lake with retired rules — the
+        # failure mode is a gate that PASSES when it should not.
+        # Safe to add: it is already in deploy-binary.yml's
+        # cli_binaries deny-list, so it gets a `-version` smoke test
+        # and no service restart.
+        #
+        # stellarindex-migrate joins for the same reason, found by the
+        # version-skew probe built alongside this fix: r1 had it at
+        # v0.28.1 against v0.46.1 elsewhere — ~18 releases, and it is
+        # the SCHEMA MIGRATION runner. deploy-binary.yml executes
+        # `stellarindex-migrate up` (F-1220) before any binary swap,
+        # so an un-deployed runner meant every deploy applied that
+        # release's migrations with a months-old golang-migrate
+        # wrapper.
+        #
+        # Ordering caveat, deliberate: the swap happens AFTER the
+        # migration step, so the deploy that first ships a new migrate
+        # still runs its migrations with the previous one, and the new
+        # binary takes effect from the NEXT deploy. That converges and
+        # adds no risk. Making the runner swap before it runs is a
+        # structural change to the migration path on a live money
+        # database and wants its own reviewed PR, not a rider on this.
         description: 'Comma-separated binaries to deploy. TEST NETS (testnet/futurenet) MUST override to the test-net set — stellarindex-indexer,stellarindex-api,stellarindex-ops — with NO aggregator (no USD markets off pubnet). The default below is the PUBNET set.'
         required: false
         type: string
-        default: 'stellarindex-indexer,stellarindex-aggregator,stellarindex-api,stellarindex-sla-probe'
+        default: 'stellarindex-indexer,stellarindex-aggregator,stellarindex-api,stellarindex-sla-probe,stellarindex-ops,stellarindex-migrate'
       health_grace_seconds:
         description: 'Seconds to wait between restart and /v1/healthz probe'
         required: false

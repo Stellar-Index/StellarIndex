@@ -64,6 +64,18 @@ KNOWN_INERT=(
   # see. NOT inert: the probe timer runs daily on r1 (2026-07-09,
   # P27 core-freeze + galexie CAP-0071 crash-loop incidents).
   stellarindex_stellar_stack_version_lag
+  # binary-version-skew.yml — emitted by the ansible-managed
+  # stellarindex-binary-version-probe.sh (node-exporter textfile
+  # collector), same shape as the stellar-stack entry above: the script
+  # is an inline `content:` block inside
+  # configs/ansible/roles/archival-node/tasks/10-observability.yml,
+  # which this lint's EMITTER_PATHS grep (*.go/*.sh/*.prom) cannot see.
+  # NOT inert: the probe timer runs every 30 min on r1. Built
+  # 2026-08-28 after stellarindex-ops was found two releases behind
+  # (v0.44.7 vs v0.46.1) — the F-1314 sla-probe class, recurring
+  # because that fix corrected one binary but not the blind spot.
+  stellarindex_binary_version_skew
+  stellarindex_binary_version_probe_success
   # storage.yml — TimescaleDB job-scheduler state, emitted by the
   # ansible-managed timescale-jobs-probe.sh (node-exporter textfile
   # collector), same shape as the two entries above: the script is an

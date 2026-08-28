@@ -633,6 +633,234 @@
     state: started
     daemon_reload: true
 
+# ── StellarIndex OWN-binary version-skew probe ────────────────────
+# The probe above watches THIRD-PARTY components (core, archivist,
+# galexie). Nothing watched our own binaries, and the gap bit twice.
+#
+# F-1314 (2026-05-13) found stellarindex-sla-probe drifting because
+# the deploy workflow's default binary list omitted it. The list was
+# fixed for that one binary — but not the blind spot, so on
+# 2026-08-28 the identical failure surfaced for stellarindex-ops:
+# v0.44.7 installed while indexer/aggregator/api/sla-probe were all
+# v0.46.1. Two releases of drift that no deploy ever reported,
+# because a deploy that never touches a binary still exits 0.
+#
+# stellarindex-ops is not a bystander: 13 units on r1 exec it,
+# including the data-integrity gates (verify-archive tier-a/b,
+# archive-completeness, ch-schema-drift, restore-drill). A stale
+# gate binary validates the lake with retired rules — it PASSES
+# when it should fail, which is the worst direction for a gate.
+#
+# Why a textfile probe and not a /metrics endpoint: ops and migrate
+# are CLI binaries invoked by timers. They have no long-lived
+# process to scrape, so the only way to observe their installed
+# version is to ask the file on disk.
+- name: Install StellarIndex binary version-skew probe
+  ansible.builtin.copy:
+    dest: /usr/local/sbin/stellarindex-binary-version-probe.sh
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/usr/bin/env bash
+      # stellarindex-binary-version-probe.sh — reports the installed
+      # version of every stellarindex-* binary and whether they agree.
+      # Managed by ansible (10-observability.yml); edit there.
+      set -uo pipefail
+
+      TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
+      OUT="$TEXTFILE_DIR/stellarindex_binary_version.prom"
+      BIN_DIR="${BIN_DIR:-/usr/local/bin}"
+
+      TMP="$(mktemp "${OUT}.XXXXXX")" || exit 0
+      trap 'rm -f "$TMP"' EXIT
+
+      # The RELEASE-MANAGED set: one name per cmd/ directory, i.e.
+      # exactly the binaries a release tag produces and the deploy
+      # workflow can ship. Skew is computed over THIS set only.
+      #
+      # Why an explicit list rather than the stellarindex-* glob. Live
+      # r1 (measured 2026-08-28) also carries hand-built operator
+      # one-offs — stellarindex-ops-ch (v0.21.3, Jul 29),
+      # stellarindex-ops-claimable and stellarindex-ops-sacfix (both
+      # "dev", Jul 27) — referenced by no systemd unit. They are not
+      # release artifacts, no deploy will ever update them, and folding
+      # them into the comparison would pin the alert firing forever on
+      # a condition nobody can clear. They are still REPORTED (as
+      # unmanaged) so the cruft stays visible instead of being
+      # laundered into silence.
+      #
+      # Under-reporting is the safe failure here: a new cmd/ binary
+      # missing from this list is simply not compared, which is quiet.
+      # The opposite arrangement — glob everything — is what produces
+      # a permanently-firing alert, and a permanently-firing alert is
+      # the same as no alert.
+      MANAGED="stellarindex-aggregator
+      stellarindex-api
+      stellarindex-indexer
+      stellarindex-migrate
+      stellarindex-ops
+      stellarindex-sla-probe"
+
+      # Ask a binary for its version, tolerating the three invocation
+      # forms in this repo: `-version` (aggregator/api/indexer/ops/
+      # sla-probe) and the `version` / `--version` SUBCOMMAND form
+      # (stellarindex-migrate, whose main.go switches on argv[1]).
+      #
+      # The output is shape-checked before it is believed. Without
+      # that, a binary which does not recognise the argument prints
+      # its usage banner and `head -1` would happily record "Usage:"
+      # as a version string. timeout bounds every call — this runs as
+      # root on the production box and must not hang.
+      probe_version() {
+        local path="$1" form raw tok
+        for form in -version version --version; do
+          raw="$(timeout 10s "$path" "$form" 2>/dev/null | head -1)"
+          tok="${raw%% *}"
+          case "$tok" in
+            v[0-9]*.[0-9]*|[0-9]*.[0-9]*|dev) printf '%s' "$tok"; return 0 ;;
+          esac
+        done
+        return 1
+      }
+
+      info_lines=""
+      overall_ok=1
+      versions=""
+      count=0
+      unmanaged=0
+
+      for path in "$BIN_DIR"/stellarindex-*; do
+        [ -f "$path" ] || continue
+        [ -x "$path" ] || continue
+        name="$(basename "$path")"
+        # The deploy playbook parks previous builds beside the live one
+        # as `<name>.prev-<ver>` / `<name>.rolledback-<ver>`; globbing
+        # those in would manufacture permanent fake skew.
+        case "$name" in
+          *.prev-*|*.rolledback-*|*.bak|*.tmp) continue ;;
+        esac
+
+        ver="$(probe_version "$path")" || ver=""
+
+        # Managed? Compare whole lines so a prefix like
+        # stellarindex-ops never matches stellarindex-ops-ch.
+        is_managed=0
+        while IFS= read -r m; do
+          m="${m#"${m%%[![:space:]]*}"}"   # strip the YAML block indent
+          [ "$m" = "$name" ] && { is_managed=1; break; }
+        done <<< "$MANAGED"
+
+        if [ -z "$ver" ]; then
+          # Only a MANAGED binary failing to answer is a degraded run.
+          # An unmanaged one-off with no version flag is just cruft.
+          [ "$is_managed" -eq 1 ] && overall_ok=0
+          continue
+        fi
+
+        # Prometheus label-value escaping: backslash first, then quote.
+        esc="${ver//\\/\\\\}"; esc="${esc//\"/\\\"}"
+        if [ "$is_managed" -eq 1 ]; then
+          info_lines+="stellarindex_binary_version_info{binary=\"$name\",managed=\"true\",version=\"$esc\"} 1"$'\n'
+          versions+="$ver"$'\n'
+          count=$((count + 1))
+        else
+          info_lines+="stellarindex_binary_version_info{binary=\"$name\",managed=\"false\",version=\"$esc\"} 1"$'\n'
+          unmanaged=$((unmanaged + 1))
+        fi
+      done
+
+      # Skew = distinct versions beyond the first. 0 when every managed
+      # binary agrees (and when only one is installed). Deliberately
+      # NOT a comparison against an "expected" version: this box has no
+      # authoritative notion of what the current release is, and
+      # inventing one would make the probe lie after every legitimate
+      # release until something re-templated it. Disagreement among
+      # binaries that are meant to ship together is self-evidently
+      # wrong and needs no external reference.
+      distinct=0
+      if [ "$count" -gt 0 ]; then
+        distinct="$(printf '%s' "$versions" | sort -u | grep -c .)"
+      fi
+      skew=0
+      [ "$distinct" -gt 1 ] && skew=$((distinct - 1))
+
+      {
+        echo '# HELP stellarindex_binary_version_info Info metric (gauge=1); installed version string per stellarindex-* binary. managed="true" = a release artifact the deploy workflow ships (one per cmd/ dir) and the only kind counted in skew; managed="false" = a hand-built operator one-off, reported for visibility only.'
+        echo '# TYPE stellarindex_binary_version_info gauge'
+        printf '%s' "$info_lines"
+        echo '# HELP stellarindex_binary_version_skew Number of DISTINCT installed versions across the release-MANAGED stellarindex binaries, minus one. 0 = every managed binary agrees. >0 = a deploy missed at least one (the F-1314 / 2026-08-28 stellarindex-ops class).'
+        echo '# TYPE stellarindex_binary_version_skew gauge'
+        echo "stellarindex_binary_version_skew $skew"
+        echo '# HELP stellarindex_binary_version_binaries_total Count of release-MANAGED binaries the probe could interrogate this run.'
+        echo '# TYPE stellarindex_binary_version_binaries_total gauge'
+        echo "stellarindex_binary_version_binaries_total $count"
+        echo '# HELP stellarindex_binary_version_unmanaged_total Count of stellarindex-* binaries present but NOT release-managed (hand-built operator one-offs). Not alerted on; surfaced so the cruft stays visible.'
+        echo '# TYPE stellarindex_binary_version_unmanaged_total gauge'
+        echo "stellarindex_binary_version_unmanaged_total $unmanaged"
+        echo '# HELP stellarindex_binary_version_probe_success 1 if every release-MANAGED binary reported a version this run, 0 if any did not. An up-style canary for this probe, not a statement about skew.'
+        echo '# TYPE stellarindex_binary_version_probe_success gauge'
+        echo "stellarindex_binary_version_probe_success $overall_ok"
+      } >> "$TMP"
+
+      # node_exporter runs unprivileged and mktemp defaults to 0600 —
+      # without this the collector silently skips the file (the same
+      # textfile-permissions trap the galexie catchup probe hit on
+      # 2026-07-08).
+      chmod 644 "$TMP"
+      mv "$TMP" "$OUT"
+      trap - EXIT
+  tags: [observability]
+
+- name: StellarIndex binary version-skew probe service unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/stellarindex-binary-version-probe.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Stellar Index — installed own-binary version-skew probe
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/stellarindex-binary-version-probe.sh
+      TimeoutStartSec=120
+      Nice=10
+  notify: Reload systemd
+  tags: [observability]
+
+- name: StellarIndex binary version-skew probe timer
+  # Every 30 min, and Persistent=true so it re-runs after a reboot.
+  # Much more frequent than the daily upstream probe because this one
+  # answers "did the deploy I just ran actually land everywhere?" —
+  # a question with a same-session answer. Offset :09/:39 to stay
+  # clear of the :00/:30 scrape and rollup crowd.
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/stellarindex-binary-version-probe.timer
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Run the StellarIndex binary version-skew probe every 30 minutes
+      [Timer]
+      OnCalendar=*-*-* *:09,39:00 UTC
+      RandomizedDelaySec=60
+      Persistent=true
+      Unit=stellarindex-binary-version-probe.service
+      [Install]
+      WantedBy=timers.target
+  notify: Reload systemd
+  tags: [observability]
+
+- name: enable the StellarIndex binary version-skew probe timer
+  ansible.builtin.systemd:
+    name: stellarindex-binary-version-probe.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  tags: [observability]
+
 # ── Ledger-meta decode probe (reactive protocol backstop) ─────────
 # The version-lag probe above is the PRIMARY defence, but it compares
 # released upstream versions and so cannot know the network has begun
