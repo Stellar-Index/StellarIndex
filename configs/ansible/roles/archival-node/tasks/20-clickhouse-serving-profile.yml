@@ -216,11 +216,21 @@
 #
 # Same discipline as api_serving: vault-sourced password (assert below),
 # SHA-256 digest only in the drop-in, loopback-only, pinned to `stellar`,
-# codify-only in the PR that adds it — operator applies with
+# codify-only in the PR that adds it. Gated OFF by default
+# (clickhouse_ops_batch_profile_enabled: false in defaults/main.yml):
+# the assert below fires only on an explicit enable, so the weekly
+# ansible-drift.yml --check against r1 stays green until the operator
+# flips the flag in an inventory together with that inventory's
+# vault_clickhouse_ops_batch_password. Activation, per host:
+#   ansible-vault edit inventory/r1.secrets.yml   # add the password
+#   (set clickhouse_ops_batch_profile_enabled: true in inventory/r1.yml)
 #   ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
 #     --tags clickhouse-ops-batch-profile,minio --check --diff
 # (both tags: the CH user AND the env file must move together, or the
 # next ops job authenticates with a credential CH does not know).
+# run-heavy-job.sh (14-stellarindex-services.yml) imports the pair
+# from /etc/default/stellarindex-ops itself, so the job side needs no
+# re-apply and no change to how the runbooks launch jobs.
 
 - name: Assert ClickHouse ops-batch profile password is set (2026-08-28 r1)
   ansible.builtin.assert:

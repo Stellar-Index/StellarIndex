@@ -51,12 +51,19 @@ import (
 //
 // Both unset = byte-for-byte the pre-fix behaviour: clickhouse-go
 // treats an empty Auth.Username as CH's `default` user. This is
-// deliberately the ONLY switch — the indexer / aggregator / API
-// services source /etc/default/stellarindex, which MUST NOT carry
-// these variables (a live-ingest sink or the supply refresher running
-// as ops_batch would be demoted to lowest priority, the exact inverse
-// of what this exists for). See docs/operations/
-// clickhouse-ops-batch-profile.md.
+// deliberately the ONLY switch, so the pair must reach ONLY the batch
+// jobs' environment. On the ansible-managed hosts that holds by
+// construction: the templated stellarindex-{indexer,aggregator,api}
+// units source /etc/default/stellarindex (which must never carry the
+// pair) and run-heavy-job.sh imports the pair from
+// /etc/default/stellarindex-ops into every wrapped job. On a
+// deploy/systemd self-host it does NOT hold by construction — those
+// reference units source /etc/default/stellarindex-ops as their only
+// env file — so there the pair must be exported in the job's shell,
+// never written to that file (a live-ingest sink or the supply
+// refresher running as ops_batch would be demoted to lowest
+// priority, the exact inverse of what this exists for). See
+// docs/operations/clickhouse-ops-batch-profile.md.
 const (
 	// OpsUserEnv names the env var holding the ops-batch CH username.
 	OpsUserEnv = "STELLARINDEX_CLICKHOUSE_OPS_USER"

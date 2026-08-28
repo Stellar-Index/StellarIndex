@@ -28,6 +28,30 @@ against.
   `internal/sources/*/{decode*,events,feeds,pairs}.go` unless a commit
   carries a `Replay-Plan:` trailer (`none — <reason>` allowed; a bare
   `none` is not). Fixture self-test in `lint-replay-plan-test.sh`.
+- **Low-priority `ops_batch` ClickHouse identity for heavy
+  `stellarindex-ops` jobs** (2026-08-28 r1: a runbook-prescribed
+  `ch-rebuild -sep41` dry-run running as CH's `default` user starved the
+  aggregator's supply refresher — `supply_refresh_error_dominant` for
+  all 39 watched contracts in 3 minutes; the cgroup caps could not help
+  because the contention was inside `clickhouse-server`). Every
+  ops-side ClickHouse connection builder in `internal/storage/clickhouse`
+  now takes an optional username/password from the environment —
+  **new env vars** `STELLARINDEX_CLICKHOUSE_OPS_USER` /
+  `STELLARINDEX_CLICKHOUSE_OPS_PASSWORD` (never argv; both unset =
+  unchanged `default`-user behaviour). **New ClickHouse user + settings
+  profile** `ops_batch` (`priority=100`, `os_thread_priority=5`,
+  `max_threads=2`, 8 GiB, `readonly=0`), provisioned by
+  `20-clickhouse-serving-profile.yml` behind
+  `clickhouse_ops_batch_profile_enabled` (default **false**; enabling
+  asserts `vault_clickhouse_ops_batch_password`). `run-heavy-job.sh`
+  imports the pair from `/etc/default/stellarindex-ops` into every
+  wrapped job itself and prints the identity it will use (or a
+  `WARNING ... CH 'default' user` line), and `config-assertions.sh`
+  asserts the CH user and the env pair moved together. **Operator
+  steps** (per host, one PR): add the vault password + flip the flag in
+  the inventory, then `ansible-playbook ... --tags
+  clickhouse-ops-batch-profile,minio,stellarindex --check --diff`, then
+  apply. See `docs/operations/clickhouse-ops-batch-profile.md`.
 
 ## [v0.47.2] — 2026-08-28
 

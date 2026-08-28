@@ -383,13 +383,27 @@ stellarindex_clickhouse_serving_enabled: false
 # 20-clickhouse-serving-profile.yml for the per-knob rationale and
 # docs/operations/clickhouse-ops-batch-profile.md for the operator view.
 #
+# Defaults FALSE (unlike clickhouse_serving_profile_enabled) because
+# enabling asserts a vault password, and ansible-drift.yml runs the
+# full playbook --check against r1 weekly with the real vault: a
+# default of true would turn that workflow red from the merge that
+# adds the profile until every inventory (r1, testnet, futurenet) has
+# vault_clickhouse_ops_batch_password, and block any `--tags
+# clickhouse` apply meanwhile. Flip to true PER INVENTORY in the same
+# PR that adds that inventory's vault password. Until then the CH user
+# is not provisioned, /etc/default/stellarindex-ops carries no
+# STELLARINDEX_CLICKHOUSE_OPS_* pair, and run-heavy-job.sh WARNS on
+# every launch that the job runs as CH `default` — the gap is loud,
+# not silent (14-stellarindex-services.yml).
+#
 # Two-step activation, same as api_serving: this provisions the CH-side
 # user; the ops binary only authenticates as it once
 # STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD are in
 # /etc/default/stellarindex-ops (09-minio.yml templates them, gated on
 # the same flag + a non-empty password so a partial apply can never
-# hand ops jobs a credential the CH side does not know).
-clickhouse_ops_batch_profile_enabled: true
+# hand ops jobs a credential the CH side does not know), and
+# run-heavy-job.sh imports that pair into every wrapped job itself.
+clickhouse_ops_batch_profile_enabled: false
 clickhouse_ops_batch_user: "ops_batch"
 clickhouse_ops_batch_max_threads: 2
 clickhouse_ops_batch_max_memory_usage_bytes: 8589934592   # 8 GiB (default, not ceiling — see task file)
