@@ -102,6 +102,7 @@ func registerAppMetrics() {
 		CustomerWebhookDeliveryAttemptsTotal,
 		CustomerWebhookFanoutFailuresTotal,
 		AggregatorDroppedTradesTotal,
+		AggregatorVenueVWAP, AggregatorWindowTrades,
 		AggregatorDroppedWindowsTotal,
 		AggregatorMinUSDVolumeUnvaluableTotal,
 		PriceServeSubstanceWithheldTotal,
@@ -895,17 +896,24 @@ var SourceDecodeErrorsTotal = prometheus.NewCounterVec(
 	[]string{"source"},
 )
 
-// SourceUnknownSymbolsTotal — per-source counter of asset slots
-// dropped from an otherwise-decoded event because the symbol/feed
-// id isn't in our canonical asset allow-list (ADR-0010). Distinct
-// from SourceDecodeErrorsTotal because the rest of the event still
-// decodes cleanly — the parent decode `continue`s past the slot.
+// SourceUnknownSymbolsTotal — per-source counter of asset slots in
+// an otherwise-decoded oracle event whose symbol/feed id isn't in
+// our canonical asset allow-list (ADR-0010 fiat / ADR-0014 crypto /
+// ADR-0028 RWA + RedStone feed registry). Since the oracle
+// capture-totality change (PR-2, docs/design/oracle-capture-
+// totality-design.md) such a slot is RECORDED verbatim as a
+// `raw:<symbol>` row (canonical.AssetOracleRaw) rather than dropped;
+// the counter now means "recorded as raw" — a mapping gap the
+// allow-list / feed-registry owner has to close so the row can be
+// promoted in place, not data lost. Distinct from
+// SourceDecodeErrorsTotal because the rest of the event decodes
+// cleanly.
 //
 // F-1234 (codex audit-2026-05-12): upstream oracle coverage can
 // expand while we silently omit the new asset; without this counter
-// operators have no signal that a feed is being skipped. Reflector,
-// Redstone, and Band all increment this on ErrUnknownSymbol /
-// ErrUnknownFeedID branches.
+// operators have no signal that a feed is unmapped. Reflector,
+// Redstone, and Band all increment this on their unmapped-symbol
+// (`!Asset.IsMapped()` / feed-registry miss) branches.
 //
 // Alert consumer: `stellarindex_ingestion_oracle_unknown_symbols`
 // (deploy/monitoring/rules/ingestion.yml + the R1 overlay; runbook
@@ -916,14 +924,15 @@ var SourceDecodeErrorsTotal = prometheus.NewCounterVec(
 // source_unknown_symbols_total{source="reflector"} 7794, i.e. 7,794
 // oracle asset slots silently dropped from the price surface. The
 // oracle capture-totality design (docs/design/oracle-capture-totality-
-// design.md) records those slots verbatim under `canonical.AssetOracleRaw`
-// once the decoders switch from skip to emit; this counter keeps
-// incrementing either way, because a raw row is still a mapping gap
-// the allow-list owner has to close.
+// design.md) now records those slots verbatim under
+// `canonical.AssetOracleRaw` (decoders switched from skip to emit in
+// PR-2); this counter keeps incrementing, because a raw row is still
+// a mapping gap the allow-list owner has to close. Name deliberately
+// unchanged (dashboards + the alert key off it).
 var SourceUnknownSymbolsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_source_unknown_symbols_total",
-		Help: "Asset slots skipped from a decoded event because the symbol/feed id isn't in the canonical allow-list.",
+		Help: "Asset slots in a decoded oracle event whose symbol/feed id isn't in the canonical allow-list; recorded verbatim as raw:<symbol> rows rather than dropped.",
 	},
 	[]string{"source"},
 )
@@ -2426,12 +2435,67 @@ var APICORSDecisionsTotal = prometheus.NewCounterVec(
 // seedBoundedLabelSeries; the storm/spike alerts sum() across labels,
 // so an absent pair series never gates them. Diagnose with
 // `topk(5, rate(...{reason="outlier"}[10m]))` by pair.
+//
+// Semantics caveat (2026-08-28): the orchestrator re-runs the filter
+// over the whole trailing window every tick, so a print that stays
+// outside the band is counted again on every tick it remains in the
+// window, and once per window ([5m,1h,24h]). The rate is therefore
+// "band-residents × windows / tick", not "new outliers/s". Since the
+// 2026-08-28 redesign no alert gates on this counter — the
+// outlier_storm alert reads AggregatorVenueVWAP and the trim-fraction
+// alert reads AggregatorWindowTrades; this stays a diagnostic.
 var AggregatorDroppedTradesTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_dropped_trades_total",
 		Help: "Trades removed from the VWAP input set, labelled by reason (class|outlier) and configured target pair.",
 	},
 	[]string{"reason", "pair"},
+)
+
+// AggregatorVenueVWAP — per-source VWAP of the PRE-outlier-filter
+// (post-class-filter) trade set for one (pair, window) refresh, on
+// the served price scale. Set on every refresh; a source that has
+// left the window has its series deleted so a venue that stopped
+// trading cannot pin a stale level into the disagreement ratio.
+//
+// This is the input to `stellarindex_aggregator_outlier_storm`
+// (2026-08-28 redesign): `max by (pair) / min by (pair) − 1` over the
+// 5m window measures VENUE DISAGREEMENT directly. The previous
+// counter-based rule measured how many prints the whole-window MAD
+// band trimmed — which, on the same day, fired for hours on
+// crypto:XLM/fiat:GBP while every venue agreed within 0.9%, because
+// the band trimmed a genuine +2% step (see aggregate.FilterOutliersLocal).
+//
+// Cardinality: configured pairs × windows × sources that traded in
+// the window (≤ ~12 × 3 × 5). Config-dependent, not pre-seeded.
+// A float64 gauge is fine here: this is an operator signal, never a
+// served value (ADR-0003 applies to the value path only).
+var AggregatorVenueVWAP = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_aggregator_venue_vwap",
+		Help: "Per-source VWAP of the pre-outlier-filter trade set for one (pair, window) refresh, on the served price scale. Feeds the venue-disagreement outlier_storm alert.",
+	},
+	[]string{"pair", "window", "source"},
+)
+
+// AggregatorWindowTrades — number of trades in one (pair, window)
+// refresh after each filter stage: "fetched" (what the store
+// returned, post-truncation), "class" (after the ClassExchange-only
+// filter), "outlier" (after the outlier filter — the VWAP input).
+// A gauge of the CURRENT window, not a counter: the trim fraction
+// `1 − outlier/class` is the honest "how much of this window is the
+// filter rejecting" signal, whereas the per-tick
+// AggregatorDroppedTradesTotal increments re-count the same window
+// residents on every 30 s tick, summed across windows.
+//
+// Feeds `stellarindex_aggregator_outlier_trim_fraction`. Bounded
+// cardinality: configured pairs × windows × 3 stages.
+var AggregatorWindowTrades = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_aggregator_window_trades",
+		Help: "Trades in the current (pair, window) refresh after each filter stage (fetched|class|outlier). outlier/class is the surviving fraction of the VWAP input.",
+	},
+	[]string{"pair", "window", "stage"},
 )
 
 // AggregatorDroppedWindowsTotal — count of (pair, window) refreshes

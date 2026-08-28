@@ -386,10 +386,15 @@
   changed_when: false
   failed_when: false   # mc returns non-zero if policy already attached
 
-- name: Template /etc/default/stellarindex-ops (env vars for verify-archive + indexer/api)
-  # Sourced both by interactive `stellarindex-ops` invocations and
-  # by the stellarindex-indexer.service systemd unit (07-galexie /
-  # stellarindex-indexer task wires EnvironmentFile to this file).
+- name: Template /etc/default/stellarindex-ops (env vars for stellarindex-ops batch jobs)
+  # Sourced by interactive `stellarindex-ops` invocations, by
+  # run-heavy-job.sh (which imports the CH ops-batch pair below into
+  # every wrapped job, 14-stellarindex-services.yml) and by the ops
+  # timer units (verify-archive-tier-*, ch-schema-*, restore-drill).
+  # NOT by the stellarindex-{indexer,aggregator,api} service units —
+  # those source /etc/default/stellarindex (14-stellarindex-services.yml
+  # templates) and must keep doing so: this file carries the
+  # low-priority ClickHouse identity, which would demote them.
   #
   # The AWS SDK that powers the datastore reader (verify-archive +
   # indexer ledgerstream) reads creds from AWS_ACCESS_KEY_ID /
@@ -432,4 +437,20 @@
       CHAINLINK_RPC_URL={{ vault_chainlink_rpc_url | default('') }}
       COINGECKO_DEMO_API_KEY={{ vault_coingecko_demo_api_key | default('') }}
       MASSIVE_API_KEY={{ vault_massive_api_key | default('') }}
+      # ClickHouse ops-batch identity (2026-08-28 r1: a ch-rebuild
+      # running as CH `default` starved the aggregator's supply
+      # refresher). internal/storage/clickhouse/ops_auth.go reads this
+      # pair so every stellarindex-ops CH connection — interactive,
+      # run-heavy-job.sh, the *-tier-*/ch-schema-* timers, scripts/ops
+      # wrappers — runs under the low-priority ops_batch profile
+      # (20-clickhouse-serving-profile.yml). Emitted only when the CH
+      # side is enabled AND the vault password exists, so a partial
+      # apply cannot hand jobs a credential CH does not know; absent
+      # = CH default user, the pre-fix behaviour. NEVER copy these
+      # into /etc/default/stellarindex — the services would demote
+      # themselves to lowest priority.
+      {% if clickhouse_ops_batch_profile_enabled | bool and (clickhouse_ops_batch_password | default('')) | length > 0 %}
+      STELLARINDEX_CLICKHOUSE_OPS_USER={{ clickhouse_ops_batch_user }}
+      STELLARINDEX_CLICKHOUSE_OPS_PASSWORD={{ clickhouse_ops_batch_password }}
+      {% endif %}
   no_log: true
