@@ -16,7 +16,13 @@
 #                                              galexie-archive S3 bucket.
 #   VERIFY_ARCHIVE_FROM                         Default 2 (genesis).
 #   VERIFY_ARCHIVE_WORKERS                      Default 12 (parallel chunks).
-#   VERIFY_ARCHIVE_MAX_RUNTIME                  Default 16h cap.
+#   VERIFY_ARCHIVE_MAX_RUNTIME                  Default 16h cap here.
+#     NOTE (2026-08-28): r1's ansible-rendered unit (the authority,
+#     verify-archive-tier-a.service.j2) runs UNCAPPED (=0) because it
+#     pairs Type=notify with WatchdogSec=1h silence detection. This
+#     reference copy keeps a wall-clock cap because it has no
+#     watchdog wiring — if you adopt the uncapped setting, adopt the
+#     watchdog too.
 #
 # Workers + max-runtime were 8 / 8h until 2026-05-13. The 8h cap
 # was tight for a ~62.5M-ledger pubnet — the nightly run completed

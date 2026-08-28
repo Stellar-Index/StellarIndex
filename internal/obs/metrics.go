@@ -2433,9 +2433,11 @@ var APICORSDecisionsTotal = prometheus.NewCounterVec(
 // outside the band is counted again on every tick it remains in the
 // window, and once per window ([5m,1h,24h]). The rate is therefore
 // "band-residents × windows / tick", not "new outliers/s". Since the
-// 2026-08-28 redesign no alert gates on this counter — the
-// outlier_storm alert reads AggregatorVenueVWAP and the trim-fraction
-// alert reads AggregatorWindowTrades; this stays a diagnostic.
+// 2026-08-28 redesign outlier_storm no longer gates on this counter
+// (it reads AggregatorVenueVWAP; trim-fraction reads
+// AggregatorWindowTrades) — but class_drop_spike (reason="class")
+// and outlier_trim_rate_legacy (reason="outlier", retires
+// 2026-09-04) still do.
 var AggregatorDroppedTradesTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_dropped_trades_total",
