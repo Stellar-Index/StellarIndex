@@ -67,7 +67,7 @@ Key signals:
 Capture for postmortem:
 - The full freeze_events history for the affected (asset, quote) pairs over the last 24 h, including `extensions_used` / `hold_until`.
 - Snapshot of the divergence worker's `divergence_observations` (`our_price`, `ref_price`, `delta_pct`, `status`) for the same window, or `GET /v1/divergence`.
-- Adjacent Prometheus alerts `stellarindex_aggregator_class_drop_spike` / `stellarindex_aggregator_outlier_storm` (`configs/prometheus/rules.r1/aggregator.yml`) and the aggregator journal: `journalctl -u stellarindex-aggregator | grep "phase2 freeze"`.
+- Adjacent Prometheus alerts `stellarindex_aggregator_class_drop_spike` / `stellarindex_aggregator_outlier_storm` (`configs/prometheus/rules.r1/aggregator.yml`) and the aggregator journal: `journalctl -u stellarindex-aggregator | grep -E "freeze (engaged|hold extended|escalated|released)"`.
 
 ## Known false-positive patterns
 
