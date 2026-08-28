@@ -15,6 +15,58 @@ against.
 
 ## [Unreleased]
 
+## [v0.47.1] — 2026-08-28
+
+Tested against Stellar Protocol 28.
+
+### Fixed
+
+- **`/v1/assets` returned HTTP 500 for `limit >= 150`.** A regression
+  introduced by #220 and first deployed in v0.47.0 — #220 merged after
+  v0.46.1 was cut, so v0.47.0 was its first time in production.
+
+  ```
+  scan asset: Scan error on column index 0, name "slug":
+  converting NULL to string is unsupported
+  ```
+
+  #220 taught `catalogue_assets` to UNION `classic_assets` with
+  Soroban-native contract assets. A Soroban row has `slug` **and**
+  `code` both NULL by nature — no issuer account, no SEP-1 code — and
+  the projection was `COALESCE(ca.slug, ca.code)`: two arms, both NULL
+  for exactly those rows. `slug` scans into a non-nullable Go `string`,
+  so the whole request failed.
+
+  That file's own comment asserted "every downstream JOIN keys on
+  `asset_id` only, so the NULLs cost nothing." True of the JOINs. Not
+  true of the projection.
+
+  The fix adds `ca.asset_id` as a third `COALESCE` arm — the *correct*
+  fallback rather than merely a non-null one, since it is already the
+  asset's URL segment (`/assets/CAUP7NFA…` resolves), so the slug a
+  caller receives is the slug that works. Applied to both renderings
+  that carry the projection.
+
+  **Why it hid.** The failure is order-dependent: only 60 Soroban rows
+  exist and `limit=100` never reaches one, so the endpoint looked
+  healthy at the default page size while being broken for every larger
+  caller (100 → 200, 150 → 500, 500 → 500).
+
+  **What caught it.** The explorer build fetches `limit=500` and
+  refuses to bake fallback HTML on a failed fetch, turning a silent API
+  regression into a hard, visible build failure. That guard earned its
+  keep — and it is the third time in this release cycle that checking
+  the *served* result beat trusting a green signal.
+
+  **Measured blast radius:** 14 × HTTP 500 against 7,062 × HTTP 200 in
+  the 20 minutes after deploy, and all 14 were self-inflicted (operator
+  diagnostics plus the build's own retries). No real user traffic hit
+  it: the explorer is a static site already served, and the default
+  page size was healthy throughout. The API error-rate alerts fired
+  correctly at 04:39Z once their `for:` window elapsed — there was no
+  detection gap, contrary to an initial reading taken before that
+  window had passed.
+
 ## [v0.47.0] — 2026-08-28
 
 Tested against Stellar Protocol 28.
