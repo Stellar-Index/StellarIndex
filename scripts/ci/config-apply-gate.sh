@@ -8,6 +8,13 @@
 # (the 2026-08-25 declared-peg + rules.d incidents — see
 # docs/operations/deploy-config-apply.md).
 #
+# The surfaces below are the role's WHOLE config-bearing tree, not just
+# templates/: on 2026-08-28 a new node_exporter probe + its systemd units
+# shipped as INLINE `content:` blocks inside tasks/10-observability.yml
+# (and role scripts live in files/), so a release that touched only
+# tasks/ or files/ would have passed this gate and deployed the feature
+# dead. A near-miss, caught by hand — hence the two extra entries.
+#
 # This gate diffs the deploying version against the previous release tag
 # over the config surfaces. If any changed and the operator did NOT pass
 # config_acknowledged=true, it FAILS — a loud, NON-destructive forcing
@@ -24,9 +31,12 @@ set -uo pipefail
 VERSION="${1:?deploying version tag, e.g. v0.43.0}"
 ACK="${2:-false}"
 
-# Config surfaces a binary deploy does NOT apply.
+# Config surfaces a binary deploy does NOT apply. Directory prefixes are
+# git pathspecs: the trailing slash matches everything beneath them.
 SURFACES=(
   'configs/ansible/roles/archival-node/templates/'
+  'configs/ansible/roles/archival-node/tasks/'
+  'configs/ansible/roles/archival-node/files/'
   'configs/prometheus/rules.r1/'
   'deploy/monitoring/rules/'
   'deploy/systemd/'
