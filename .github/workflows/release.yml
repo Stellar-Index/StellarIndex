@@ -126,6 +126,7 @@ jobs:
       - name: Checkout at tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
+          persist-credentials: false
           ref: ${{ needs.resolve-tag.outputs.tag }}
           fetch-depth: 0   # need tag + history for `git describe`
 
@@ -186,6 +187,7 @@ jobs:
       - name: Checkout at tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
+          persist-credentials: false
           ref: ${{ needs.resolve-tag.outputs.tag }}
           fetch-depth: 1
 
