@@ -257,6 +257,12 @@ jobs:
         # release would have passed the gate and shipped the node_exporter
         # probe dead). Runs pre-restore so the PR's own gate copy is tested.
         run: ./scripts/ci/config-apply-gate-test.sh
+      - name: lint-replay-plan self-test
+        # Same placement rationale as the baseline-growth self-test
+        # above: validates the gate AS THIS PR SHIPS IT. (lint-replay-
+        # plan.sh is not in the CID-03 restore list — that list is
+        # deliberately scoped to the money/i128/anti-bypass trio.)
+        run: ./scripts/ci/lint-replay-plan-test.sh
       - name: Restore trusted gate scripts from the base ref
         # CID-03 (audit-2026-07-23): every step below runs from the
         # PR-head checkout, including the SCRIPT FILES themselves — so
@@ -436,6 +442,18 @@ jobs:
         env:
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: ./scripts/ci/lint-baseline-growth.sh
+      - name: lint-replay-plan
+        # 2026-08-28 incident: e17288bd widened the fiat allow-list
+        # (32→132); live ingestion recorded 4 new currencies, nobody
+        # replayed history, 190,228 served rows missing for a day. A
+        # change to a decoder (internal/sources/*/decode*.go), event
+        # schema, feed registry, venue pair allow-list (pairs.go) or
+        # canonical asset allow-list must state its replay plan in a
+        # `Replay-Plan:` commit trailer (`none — <reason>` when no
+        # served history is affected) so the plan ships WITH the change.
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: ./scripts/ci/lint-replay-plan.sh
 
   actions-pinning:
     name: github-actions SHA-pinning lint

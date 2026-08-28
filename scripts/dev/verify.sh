@@ -63,6 +63,9 @@ echo "=== Config-apply gate self-test ===" && ./scripts/ci/config-apply-gate-tes
 # BASE_SHA-gated: self-skips locally (no comparison base); runs for real in CI
 # with the PR/push base. Invoked here to keep verify↔CI parity honest.
 echo "=== Baseline-growth tripwire ===" && ./scripts/ci/lint-baseline-growth.sh
+echo "=== Replay-plan tripwire self-test ===" && ./scripts/ci/lint-replay-plan-test.sh
+# BASE_SHA-gated like lint-baseline-growth.sh: self-skips locally, real in CI.
+echo "=== Replay-plan tripwire ===" && ./scripts/ci/lint-replay-plan.sh
 echo "=== OpenAPI URLs ===" && go run ./scripts/ci/lint-openapi-urls openapi/stellar-index.v1.yaml
 echo "=== PK discriminators ===" && go run ./scripts/ci/lint-pk-discriminators
 # Structural rule-file lint — pure-Python (no promtool), so it runs even
