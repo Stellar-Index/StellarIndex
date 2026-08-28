@@ -214,6 +214,42 @@ textfile collector.
 | `stellarindex_ledger_meta_decode_probe_stale` | `stellarindex_ledger_meta_decode_probe_updated_seconds` | age > 1 h for 30 m | P3 | [protocol-upgrades](protocol-upgrades.md) |
 
 The two decode alerts are the REACTIVE backstop to the version-lag pair above.
+
+## StellarIndex own-binary version-skew alerts
+
+The section above watches THIRD-PARTY components. These watch **our
+own** binaries, a gap that produced the same incident twice: F-1314
+(2026-05-13) found `stellarindex-sla-probe` drifting because the deploy
+workflow's default binary list omitted it, and on 2026-08-28 the
+identical failure surfaced for `stellarindex-ops` — v0.44.7 on r1
+against v0.46.1 everywhere else. A deploy that never touches a binary
+still exits 0, so neither was ever reported.
+
+`stellarindex-binary-version-probe.timer` runs
+`stellarindex-binary-version-probe.sh` every 30 min (installed by
+`configs/ansible/roles/archival-node/tasks/10-observability.yml`),
+writing `stellarindex_binary_version_skew` (distinct installed versions
+minus one), `stellarindex_binary_version_info{binary,version}`,
+`stellarindex_binary_version_binaries_total` and
+`stellarindex_binary_version_probe_success` to the node_exporter
+textfile collector.
+
+The alert compares binaries against **each other**, not against an
+expected version — the host has no authoritative notion of the current
+release, and hardcoding one would make the probe lie after every
+legitimate deploy. It therefore also covers binaries added in future
+without anyone maintaining a list.
+
+| Name | Metric | Condition | Severity | Runbook |
+| ---- | ------ | --------- | -------- | ------- |
+| `stellarindex_binary_version_skew` | `stellarindex_binary_version_skew` | > 0 for 45 m | P3 | [binary-version-skew](runbooks/binary-version-skew.md) |
+| `stellarindex_binary_version_probe_degraded` | `stellarindex_binary_version_probe_success` | == 0 for 2 h | P3 | [binary-version-skew](runbooks/binary-version-skew.md) |
+
+Impact is indirect but one-way: `stellarindex-ops` backs the
+data-integrity gates (`verify-archive` tier-a/b, `archive-completeness`,
+`ch-schema-drift`, `restore-drill`). A stale gate validates against
+retired rules, so it PASSES when it should fail — the one direction a
+gate must never fail in.
 The version probe compares released upstream versions, so it cannot know the
 network has actually begun emitting new XDR — on 2026-08-27 testnet ingested 240
 Protocol-28 ledgers on a galexie that could not decode P28, with no error at
