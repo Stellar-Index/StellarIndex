@@ -1044,8 +1044,8 @@ func buildSupplyRefreshers(cfg config.Config, store *timescale.Store, closeTimes
 //
 // Deliberately does NOT populate Policy.SDFReserveAccounts: that
 // field only feeds Algorithm 1 (native XLM), which buildXLMRefresher
-// wires independently via supply.NewXLMComputer(cfg.Supply.
-// SDFReserveAccounts, …) — ClassicComputer/SEP41Computer never read
+// wires independently via supply.NewXLMComputerForNetwork(
+// cfg.Stellar.Passphrase(), cfg.Supply.SDFReserveAccounts, …) — ClassicComputer/SEP41Computer never read
 // it (see internal/supply/classic.go, sep41.go), so setting it here
 // would be dead weight that misleads a future reader.
 func buildSupplyPolicy(cfg config.SupplyConfig) (supply.Policy, error) {

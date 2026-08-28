@@ -801,13 +801,17 @@ type StellarConfig struct {
 	MovementsFloorLedger uint32 `toml:"movements_floor_ledger" doc:"P23 / CAP-67 boundary — at/above it the Postgres SEP-41 movements tail serves, below it the ClickHouse pre-P23 archive serves (ADR-0048 D5). Defaults to the pubnet value; set to 1 (genesis) on testnet/futurenet." default:"58762517"`
 }
 
-// Well-known Stellar network passphrases, copied from
-// github.com/stellar/go-stellar-sdk/network. Kept local so
-// internal/config doesn't pull the SDK just for string constants.
+// Well-known Stellar network passphrases. Aliased from
+// internal/canonical (the single spelling every leaf package that
+// keys network-dependent constants off the passphrase — e.g. the
+// native-XLM total in internal/supply — compares against) so the
+// value Passphrase() hands out can never drift from the value those
+// packages switch on. internal/canonical keeps them local rather than
+// pulling the SDK just for string constants.
 const (
-	pubnetPassphrase    = "Public Global Stellar Network ; September 2015"
-	testnetPassphrase   = "Test SDF Network ; September 2015"
-	futurenetPassphrase = "Test SDF Future Network ; October 2022"
+	pubnetPassphrase    = canonical.PubnetPassphrase
+	testnetPassphrase   = canonical.TestnetPassphrase
+	futurenetPassphrase = canonical.FuturenetPassphrase
 )
 
 // Passphrase translates the TOML-friendly short network name
