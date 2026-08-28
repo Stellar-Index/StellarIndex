@@ -17,6 +17,21 @@ against.
 
 ### Added
 
+- **Ops scripts honour a ClickHouse ops user
+  (`scripts/ops/ch-ops-user-test.sh`).** `ch-live-catchup.sh`,
+  `ch-supply-flows-seed.sh`, `d2-ordinal-reproject.sh`,
+  `d3-lecur-v2-rebuild.sh` and `ch-backfill-monitor.sh` ran
+  `clickhouse-client` as the default user with no way to supply
+  credentials. They now honour `STELLARINDEX_CLICKHOUSE_OPS_USER` /
+  `STELLARINDEX_CLICKHOUSE_OPS_PASSWORD` (e.g. from
+  `/etc/default/stellarindex-ops`), handed to the client through its
+  `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` environment — never argv,
+  which `ps` and the journal would show. The monitor resolves them on
+  the HOST side of its ssh (new `OPS_ENV`, default
+  `/etc/default/stellarindex-ops`) for the same reason. Unset ⇒
+  byte-identical invocations; the new stub-backed test pins both the
+  credential hand-off and the unchanged argv per script, and runs from
+  `scripts/dev/verify.sh`.
 - **CI replay-plan tripwire (`scripts/ci/lint-replay-plan.sh`).** On
   2026-08-27 e17288bd widened `internal/canonical/asset_fiat.go` 32→132
   codes; live ingestion recorded 4 new currencies, nobody replayed

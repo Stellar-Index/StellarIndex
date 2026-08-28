@@ -26,6 +26,14 @@
 #   run-heavy-job.sh d3-reproject /usr/local/sbin/d3-lecur-v2-rebuild.sh reproject 38000000 63700000
 set -euo pipefail
 
+# Optional ops-user credentials (STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD,
+# e.g. from /etc/default/stellarindex-ops). Handed to clickhouse-client via its
+# CLICKHOUSE_USER/CLICKHOUSE_PASSWORD env — never argv, which ps and the journal
+# would show. Unset ⇒ nothing exported; the default user exactly as before.
+if [ -n "${STELLARINDEX_CLICKHOUSE_OPS_USER:-}" ]; then
+  export CLICKHOUSE_USER="$STELLARINDEX_CLICKHOUSE_OPS_USER"
+  export CLICKHOUSE_PASSWORD="${STELLARINDEX_CLICKHOUSE_OPS_PASSWORD:-}"
+fi
 CH="${CH:-clickhouse-client --port 9300}"
 STATE_DIR="${D3_STATE:-/var/lib/ch-backfill/d3}"
 CHUNK="${D3_CHUNK:-100000}"        # ledgers per INSERT window. Plain filter-

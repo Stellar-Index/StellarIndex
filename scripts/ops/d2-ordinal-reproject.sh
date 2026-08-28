@@ -21,6 +21,14 @@
 #   run-heavy-job.sh d2-reproject /usr/local/sbin/d2-ordinal-reproject.sh 45 45
 set -euo pipefail
 
+# Optional ops-user credentials (STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD,
+# e.g. from /etc/default/stellarindex-ops). Handed to clickhouse-client via its
+# CLICKHOUSE_USER/CLICKHOUSE_PASSWORD env — never argv, which ps and the journal
+# would show. Unset ⇒ nothing exported; the default user exactly as before.
+if [ -n "${STELLARINDEX_CLICKHOUSE_OPS_USER:-}" ]; then
+  export CLICKHOUSE_USER="$STELLARINDEX_CLICKHOUSE_OPS_USER"
+  export CLICKHOUSE_PASSWORD="${STELLARINDEX_CLICKHOUSE_OPS_PASSWORD:-}"
+fi
 CH="${CH:-clickhouse-client --port 9300}"
 STATE="${D2_STATE:-/var/lib/ch-backfill/d2-done-partitions.txt}"
 FIRST="${1:?first partition}"

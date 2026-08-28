@@ -14,6 +14,14 @@
 # done-windows file.
 set -uo pipefail
 set -a; . /etc/default/stellarindex-ops; set +a
+# Optional ops-user credentials (STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD,
+# e.g. from /etc/default/stellarindex-ops). Handed to clickhouse-client via its
+# CLICKHOUSE_USER/CLICKHOUSE_PASSWORD env — never argv, which ps and the journal
+# would show. Unset ⇒ nothing exported; the default user exactly as before.
+if [ -n "${STELLARINDEX_CLICKHOUSE_OPS_USER:-}" ]; then
+  export CLICKHOUSE_USER="$STELLARINDEX_CLICKHOUSE_OPS_USER"
+  export CLICKHOUSE_PASSWORD="${STELLARINDEX_CLICKHOUSE_OPS_PASSWORD:-}"
+fi
 OPS=${OPS:-/usr/local/bin/stellarindex-ops-ch}
 CFG=${CFG:-/etc/stellarindex.toml}
 CH_PORT=${CH_PORT:-9300}
