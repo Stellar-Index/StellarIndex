@@ -2,6 +2,7 @@ package redstone
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -141,18 +142,9 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 
 	out := make([]canonical.OracleUpdate, 0, len(prices))
 	for i, pd := range prices {
-		entry, ok := lookupFeed(attributed[i])
-		if !ok {
-			// Partial-event skip: land every feed in the ADR-0028
-			// registry, drop the rest. A miss means RedStone deployed
-			// a feed beyond the registered set — count it so
-			// operators get a signal (F-1234, codex audit-2026-05-12)
-			// rather than blocking the whole batch. The 2026-07-24
-			// relayer expansion (11 new feed_ids, ledger 63624934) hit
-			// exactly this path — plus ErrEmptyUpdates for all-new
-			// batches — for ~5,600 events until the registry caught up.
-			obs.SourceUnknownSymbolsTotal.WithLabelValues("redstone").Inc()
-			continue
+		entry, err := resolveFeedEntry(attributed[i])
+		if err != nil {
+			return nil, fmt.Errorf("%w: updated_feeds[%d] feed_id %q: %w", ErrMalformedPayload, i, attributed[i], err)
 		}
 		if pd.Price.Sign() <= 0 {
 			// Redstone publishes non-zero prices by construction —
@@ -194,12 +186,72 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 		out = append(out, u)
 	}
 	if len(out) == 0 {
-		// Every entry was unknown — treat like Reflector's all-skipped
-		// case. Surfaces to the dispatcher as a decode error counter
-		// bump so an all-RWA batch is visible in metrics.
+		// Only reachable when EVERY attributed entry was non-positive:
+		// since the oracle capture-totality change an unregistered
+		// feed_id is a raw row, not a skip, so an all-unknown batch
+		// no longer lands here. Surfaces to the dispatcher as a
+		// decode error counter bump.
 		return nil, ErrEmptyUpdates
 	}
 	return out, nil
+}
+
+// resolveFeedEntry returns the registry entry for feedID, or — when
+// the feed_id is outside the ADR-0028 registry — its record-layer raw
+// entry. Oracle capture-totality (PR-2): an unregistered feed_id is
+// RECORDED verbatim as a raw:<feed_id> row at its own vector position,
+// not skipped. A miss means RedStone deployed a feed beyond the
+// registered set — the 2026-07-24 relayer expansion (11 new feed_ids,
+// ledger 63624934) was exactly this, and under the old partial-event
+// skip (plus ErrEmptyUpdates for all-new batches) ~5,600 events were
+// lost until feeds.go caught up AND history was replayed. Now the row
+// lands immediately; a later registry entry re-derives the same PK
+// and promotes it in place. The miss is still counted (F-1234, codex
+// audit-2026-05-12): a raw row is a mapping gap the registry owner
+// has to close, and the alert on that counter is how they learn of it.
+func resolveFeedEntry(feedID string) (feedEntry, error) {
+	if entry, ok := lookupFeed(feedID); ok {
+		return entry, nil
+	}
+	entry, err := rawFeedEntry(feedID)
+	if err != nil {
+		return feedEntry{}, err
+	}
+	obs.SourceUnknownSymbolsTotal.WithLabelValues("redstone").Inc()
+	return entry, nil
+}
+
+// rawFeedEntry builds the record-layer entry for a feed_id that is
+// NOT in feedRegistry: the full on-wire feed_id verbatim as a
+// canonical.AssetOracleRaw base, quoted in the fiat the id's
+// `/<QUOTE>` suffix names when that fiat is on the ADR-0010
+// allow-list (RedStone's `EUROC/EUR` convention — the only signal
+// the id carries), else USD (RedStone's default denomination). The
+// suffix is NOT stripped from the raw code: the row must hold what
+// the oracle published, and the quote is a best-effort hint the
+// interpretation layer never relies on. Invert is never set — the
+// orientation of an unmapped feed is unknown, which is exactly why a
+// raw row is never compared (see canonical.Asset.IsMapped).
+//
+// The only error is a feed_id the raw validator cannot represent
+// (empty / >64 bytes / non printable ASCII); the caller refuses the
+// event as malformed rather than persisting something unrepresentable.
+func rawFeedEntry(feedID string) (feedEntry, error) {
+	base, err := canonical.NewOracleRawAsset(feedID)
+	if err != nil {
+		return feedEntry{}, err
+	}
+	quote := quoteUSD
+	if i := strings.LastIndexByte(feedID, '/'); i >= 0 {
+		if suffix := feedID[i+1:]; canonical.IsKnownFiat(suffix) {
+			q, qerr := canonical.NewFiatAsset(suffix)
+			if qerr != nil {
+				return feedEntry{}, qerr
+			}
+			quote = q
+		}
+	}
+	return feedEntry{Base: base, Quote: quote}, nil
 }
 
 // ─── SCVal decoders ─────────────────────────────────────────────

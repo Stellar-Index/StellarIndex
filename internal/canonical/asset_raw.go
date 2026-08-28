@@ -67,3 +67,29 @@ func NewOracleRawAsset(symbol string) (Asset, error) {
 func (a Asset) IsMapped() bool {
 	return a.Type != AssetOracleRaw
 }
+
+// MapOracleSymbol resolves a bare oracle-published symbol (Reflector
+// `Asset::Other(Symbol)`, Band `symbol_rates` key) to its canonical
+// asset, falling back to a verbatim [AssetOracleRaw] when the symbol
+// is on none of the allow-lists. Precedence is fiat (ADR-0010) →
+// crypto (ADR-0014) → RWA (ADR-0028) → raw; the lists are disjoint
+// today (pinned by TestMapOracleSymbol_allowListsDisjoint), so the
+// order only matters if that ever changes. The single shared order
+// replaces the pre-totality inconsistency where Reflector tried
+// fiat→crypto and Band tried crypto→fiat.
+//
+// The returned asset is raw iff !IsMapped(). The only error is a
+// symbol that fails [validateRawSymbol] (empty / >64 bytes / non
+// printable ASCII) — impossible for an ScSymbol, but the record layer
+// refuses rather than persists what it cannot represent.
+func MapOracleSymbol(sym string) (Asset, error) {
+	switch {
+	case IsKnownFiat(sym):
+		return NewFiatAsset(sym)
+	case IsKnownCrypto(sym):
+		return NewCryptoAsset(sym)
+	case IsKnownRWA(sym):
+		return NewRWAAsset(sym)
+	}
+	return NewOracleRawAsset(sym)
+}

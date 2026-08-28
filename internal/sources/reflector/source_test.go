@@ -286,32 +286,35 @@ func TestDecodeUpdate_EventIndexPreventsSameOpCollision(t *testing.T) {
 	}
 }
 
-// TestDecodeUpdate_OpIndexStableAcrossAllowlistSkip is the regression
-// test for DAT-03 (audit-2026-07-23): decodeUpdateBody used to
-// COMPACT unknown-symbol slots out of the returned vector, so
-// decodeUpdate's vector-position-derived OpIndex for entries AFTER a
-// skipped slot shifted depending on allow-list state — an allow-list
-// change plus a re-derive would orphan/duplicate the surviving rows'
-// identity. A Skip placeholder must consume its raw vector slot
-// instead of being omitted.
-func TestDecodeUpdate_OpIndexStableAcrossAllowlistSkip(t *testing.T) {
+// TestDecodeUpdate_OpIndexStableAcrossAllowlistState is the regression
+// test for DAT-03 (audit-2026-07-23) carried into the oracle
+// capture-totality change: decodeUpdate's OpIndex is derived from
+// the raw update_data vector POSITION, so the rows a mixed
+// known/unknown batch produces for its KNOWN slots must carry the
+// same OpIndex regardless of allow-list state — the unknown slot
+// used to be a `Skip` placeholder that consumed position 1 and
+// emitted nothing; it is now a raw:<symbol> row that consumes the
+// same position 1 and IS emitted. Either way the known row at
+// position 2 keeps OpIndex 2, never the compacted 1, so a later
+// allow-list extension re-derives the same PK and promotes the row
+// in place instead of orphaning/duplicating it.
+func TestDecodeUpdate_OpIndexStableAcrossAllowlistState(t *testing.T) {
 	prev, prevTS := decodeUpdateBody, decodeUpdateTimestamp
 	defer func() { decodeUpdateBody, decodeUpdateTimestamp = prev, prevTS }()
 	decodeUpdateTimestamp = func(_ string) (uint64, error) { return 0, nil }
 
 	xlm := canonical.NativeAsset()
 	usdc, _ := canonical.NewFiatAsset("USD")
+	raw, _ := canonical.NewOracleRawAsset("NOTACOIN")
 	v := func(s string) canonical.Amount {
 		n, _ := new(big.Int).SetString(s, 10)
 		return canonical.NewAmount(n)
 	}
-	// Raw update_data vector had 3 slots: [known, UNKNOWN(skip), known].
-	// The surviving entry at raw position 2 must keep an OpIndex
-	// derived from position 2, not the compacted position 1.
+	// Raw update_data vector has 3 slots: [known, UNKNOWN(raw), known].
 	decodeUpdateBody = func(_ string) ([]PriceEntry, error) {
 		return []PriceEntry{
 			{Asset: xlm, Price: v("100")},
-			{Skip: true},
+			{Asset: raw, Price: v("7")},
 			{Asset: usdc, Price: v("100")},
 		}, nil
 	}
@@ -327,12 +330,21 @@ func TestDecodeUpdate_OpIndexStableAcrossAllowlistSkip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(updates) != 2 {
-		t.Fatalf("expected 2 updates (1 skipped), got %d", len(updates))
+	if len(updates) != 3 {
+		t.Fatalf("expected 3 updates (known, raw, known), got %d", len(updates))
 	}
-	if got, want := updates[1].OpIndex, uint32(2); got != want {
-		t.Errorf("second surviving entry OpIndex = %d, want %d (raw vector position 2, not compacted position 1) — an allow-list change must not shift a surviving entry's OpIndex",
-			got, want)
+	// The known rows' identity is exactly what the pre-totality Skip
+	// decoder produced: slot 0 → OpIndex 0, slot 2 → OpIndex 2.
+	if got, want := updates[0].OpIndex, uint32(0); got != want || !updates[0].Asset.Equal(xlm) {
+		t.Errorf("updates[0] = (%s, OpIndex %d), want (%s, %d)", updates[0].Asset, got, xlm, want)
+	}
+	if got, want := updates[2].OpIndex, uint32(2); got != want || !updates[2].Asset.Equal(usdc) {
+		t.Errorf("updates[2] = (%s, OpIndex %d), want (%s, %d) — raw vector position 2, not compacted position 1",
+			updates[2].Asset, got, usdc, want)
+	}
+	// The raw row fills the slot the placeholder used to hold.
+	if got, want := updates[1].OpIndex, uint32(1); got != want || !updates[1].Asset.Equal(raw) {
+		t.Errorf("updates[1] = (%s, OpIndex %d), want (%s, %d)", updates[1].Asset, got, raw, want)
 	}
 }
 
