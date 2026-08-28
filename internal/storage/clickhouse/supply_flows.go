@@ -205,10 +205,18 @@ type SupplyReader struct {
 }
 
 // NewSupplyReader dials ClickHouse with a request-sized pool and pings it,
-// authenticating as CH's unauthenticated `default` user — the pre-ADR-0048-D4
-// behavior. Non-API callers keep using this constructor unchanged.
+// authenticating as the ops-batch user when STELLARINDEX_CLICKHOUSE_OPS_USER/
+// _PASSWORD are set (ops_auth.go) and otherwise as CH's unauthenticated
+// `default` user — the pre-ADR-0048-D4 behavior. Non-API callers keep using
+// this constructor unchanged.
 func NewSupplyReader(ctx context.Context, addr string) (*SupplyReader, error) {
-	return NewSupplyReaderAuth(ctx, addr, "", "")
+	// Ops-batch identity from the environment (2026-08-28 r1 incident;
+	// see ops_auth.go) — CH `default` user when unset.
+	auth, err := opsAuth()
+	if err != nil {
+		return nil, err
+	}
+	return NewSupplyReaderAuth(ctx, addr, auth.Username, auth.Password)
 }
 
 // NewSupplyReaderAuth is [NewSupplyReader] with an explicit CH

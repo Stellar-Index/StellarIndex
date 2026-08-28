@@ -195,3 +195,144 @@
   no_log: true   # content embeds the password's SHA-256 digest
   notify: Restart clickhouse-server
   tags: [clickhouse, clickhouse-serving-profile]
+
+# ───── ops_batch: the LOW-priority counterpart (2026-08-28 r1) ─────────
+#
+# WHY: a runbook-prescribed `stellarindex-ops ch-rebuild -sep41` dry-run
+# over 2M ledgers (run under run-heavy-job.sh: CPUWeight=50, IOWeight=50,
+# MemoryMax=20G) drove r1's load to 12.9 and starved the AGGREGATOR's
+# supply refresher — stellarindex_aggregator_supply_refresh_error_dominant
+# fired for all 39 watched contracts within 3 minutes; killing the job
+# cleared it. The cgroup caps bound the ops PROCESS; the contention was
+# INSIDE clickhouse-server, where the ops job's heavy-FINAL scans and the
+# aggregator's supply reads both ran as CH's unauthenticated `default`
+# user — the same identity, so CH's query scheduler had nothing to yield
+# with. api_serving above protects the API; nothing protected the
+# aggregator/indexer side from a batch job. This profile is that
+# protection: a dedicated user every stellarindex-ops CH connection
+# authenticates as (internal/storage/clickhouse/ops_auth.go reads
+# STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD from
+# /etc/default/stellarindex-ops, templated by 09-minio.yml).
+#
+# Same discipline as api_serving: vault-sourced password (assert below),
+# SHA-256 digest only in the drop-in, loopback-only, pinned to `stellar`,
+# codify-only in the PR that adds it — operator applies with
+#   ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
+#     --tags clickhouse-ops-batch-profile,minio --check --diff
+# (both tags: the CH user AND the env file must move together, or the
+# next ops job authenticates with a credential CH does not know).
+
+- name: Assert ClickHouse ops-batch profile password is set (2026-08-28 r1)
+  ansible.builtin.assert:
+    that:
+      - clickhouse_ops_batch_password | default('') | length > 0
+    fail_msg: >-
+      clickhouse_ops_batch_password is not set. Generate a strong
+      password, `ansible-vault edit inventory/r1.secrets.yml` and add
+      `vault_clickhouse_ops_batch_password: "<generated>"` (mirrors
+      vault_clickhouse_serving_password — see defaults/main.yml's
+      clickhouse_ops_batch_password for the wiring), then re-run with
+      --tags clickhouse-ops-batch-profile,minio. Never commit the
+      plaintext password.
+  when: clickhouse_ops_batch_profile_enabled | bool
+  tags: [clickhouse, clickhouse-ops-batch-profile]
+
+- name: Install the ops_batch ClickHouse profile + user (2026-08-28 r1)
+  ansible.builtin.copy:
+    dest: /etc/clickhouse-server/users.d/ops-batch.xml
+    owner: clickhouse
+    group: clickhouse
+    mode: "0640"       # password_sha256_hex is a secret at rest
+    content: |
+      <clickhouse>
+          <!-- Managed by ansible (archival-node /
+               20-clickhouse-serving-profile.yml). The LOW-priority
+               identity for stellarindex-ops batch jobs (ch-rebuild,
+               ch-backfill, classic-movements-backfill, verify/gate
+               reads, replays), so a heavy derivation scan can never
+               starve the aggregator's / indexer's / API's reads of
+               CPU inside clickhouse-server (2026-08-28 r1: ch-rebuild
+               -sep41 as `default` → supply_refresh_error_dominant for
+               all 39 watched contracts in 3 minutes).
+
+               Settings:
+                 priority = {{ clickhouse_ops_batch_priority }} — CH's per-query priority
+                 queue: LOWER number = HIGHER priority, 0 = not
+                 participating. api_serving is 1; every un-opted-in
+                 connection (indexer sink, aggregator readers) is 0
+                 and therefore still preferred over this profile when
+                 CPU is contended. Pinned <readonly/> in <constraints>
+                 so no per-query SETTINGS clause can promote itself.
+                 os_thread_priority = {{ clickhouse_ops_batch_os_thread_priority }} — Linux nice for the
+                 query's OWN execution threads (api_serving is -5,
+                 background merges run at 0): positive so a batch scan
+                 also yields to merges instead of letting compaction
+                 fall behind, which was the other way the 2026-08-28
+                 job hurt the serving side.
+                 max_threads / max_memory_usage /
+                 max_concurrent_queries_for_user are DEFAULTS, not
+                 ceilings (readonly=0 below): the ops openers set
+                 their own per-query class limits (gate.go's
+                 heavy-FINAL class runs max_threads 3 / 10 GiB with
+                 external sort spill; the writers set
+                 max_execution_time only) and those must keep winning
+                 — a <constraints><max> set below a real job's request
+                 turns "bounded" into "broken" mid-backfill. What the
+                 defaults DO bound is every ops read that sets nothing
+                 (the bulk of the verify/gate/census helpers).
+                 No max_execution_time: a FINAL stream over a
+                 full-history window legitimately runs for hours; the
+                 openers that want a ceiling set one themselves.
+                 readonly = 0 — ops jobs WRITE (Sink, participant /
+                 account-movements / entry-change inserts), unlike
+                 api_serving's readonly=2.
+
+               Password: SHA-256 hex digest of
+               clickhouse_ops_batch_password (ansible-vault —
+               vault_clickhouse_ops_batch_password). The plaintext is
+               templated ONLY into /etc/default/stellarindex-ops
+               (09-minio.yml, 0640 root:stellarindex) — the env file
+               the stellarindex-{indexer,aggregator,api} services do
+               NOT source, which is what keeps this demotion scoped
+               to batch jobs. -->
+          <profiles>
+              <ops_batch>
+                  <max_threads>{{ clickhouse_ops_batch_max_threads }}</max_threads>
+                  <max_memory_usage>{{ clickhouse_ops_batch_max_memory_usage_bytes }}</max_memory_usage>
+                  <max_concurrent_queries_for_user>{{ clickhouse_ops_batch_max_concurrent_queries }}</max_concurrent_queries_for_user>
+                  <priority>{{ clickhouse_ops_batch_priority }}</priority>
+                  <os_thread_priority>{{ clickhouse_ops_batch_os_thread_priority }}</os_thread_priority>
+                  <readonly>0</readonly>
+                  <constraints>
+                      <priority>
+                          <readonly/>
+                      </priority>
+                      <os_thread_priority>
+                          <readonly/>
+                      </os_thread_priority>
+                  </constraints>
+              </ops_batch>
+          </profiles>
+          <users>
+              <{{ clickhouse_ops_batch_user }}>
+                  <password_sha256_hex>{{ clickhouse_ops_batch_password | hash('sha256') }}</password_sha256_hex>
+                  <networks>
+                      <ip>127.0.0.1</ip>
+                      <ip>::1</ip>
+                  </networks>
+                  <profile>ops_batch</profile>
+                  <quota>default</quota>
+                  <access_management>0</access_management>
+                  <!-- Pinned to the `stellar` database like api_serving:
+                       the ops jobs derive/verify Tier-1 lake tables and
+                       nothing else on this host. -->
+                  <allow_databases>
+                      <database>stellar</database>
+                  </allow_databases>
+              </{{ clickhouse_ops_batch_user }}>
+          </users>
+      </clickhouse>
+  when: clickhouse_ops_batch_profile_enabled | bool
+  no_log: true   # content embeds the password's SHA-256 digest
+  notify: Restart clickhouse-server
+  tags: [clickhouse, clickhouse-ops-batch-profile]
