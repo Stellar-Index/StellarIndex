@@ -41,6 +41,7 @@ Severity maps to [sev-playbook.md §1](sev-playbook.md#1-severity-definitions).
 | `stellarindex_ingestion_cursor_stuck` | `increase(stellarindex_cursor_last_ledger[5m])` per source | == 0 while source is live | P2 | [cursor-stuck](runbooks/cursor-stuck.md) |
 | `stellarindex_ingestion_orphan_events` | `rate(stellarindex_source_orphan_events_total[10m])` | > 10/min per source | P3 | [orphan-events](runbooks/orphan-events.md) |
 | `stellarindex_ingestion_decode_error` | `rate(stellarindex_source_decode_errors_total[5m])` | > 1/s sustained 5 min | P3 | [decode-errors](runbooks/decode-errors.md) |
+| `stellarindex_ingestion_oracle_unknown_symbols` | `sum by (source) (increase(stellarindex_source_unknown_symbols_total[25h]))` | > 0 sustained 30 min (an on-chain oracle publishes a symbol / feed_id the canonical allow-list does not map) | ticket | [oracle-unknown-symbols](runbooks/oracle-unknown-symbols.md) |
 | `stellarindex_ingestion_discovery_drops` | `increase(stellarindex_discovery_dropped_hits_total[10m])` | > 0 sustained 10 min | P3 | [discovery-drops](runbooks/discovery-drops.md) |
 | `stellarindex_served_value_drift` | `stellarindex_served_value_ok == 0` | sustained 26 h (two daily runs) | P3 | [served-value-drift](runbooks/served-value-drift.md) |
 | `stellarindex_served_value_check_stale` | `time() - stellarindex_served_value_last_run_unix` | > 48 h | P3 | [served-value-drift](runbooks/served-value-drift.md) |
