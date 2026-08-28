@@ -239,19 +239,41 @@ func scanAssetRow(scanner interface {
 	var r AssetRow
 	var (
 		firstLedger, lastLedger int64
-		priceUSD                sql.NullString
-		volume24hUSD            sql.NullString
-		marketCapUSD            sql.NullString
-		circulatingSupply       sql.NullString
-		change1hPct             sql.NullString
-		change24hPct            sql.NullString
-		change7dPct             sql.NullString
-		sourceCount             sql.NullInt64
-		volumeCharacter         sql.NullString
-		sortVolume24hUSD        sql.NullString
+		// code / issuer_g_strkey are NULL for every Soroban-native row
+		// in catalogue_assets — a contract asset has no issuer account
+		// and no SEP-1 code — while AssetRow types both as a plain
+		// string. Scanning NULL into those is a hard error that fails
+		// the WHOLE request, not just the row.
+		//
+		// Fixed here rather than with another SQL COALESCE because the
+		// first attempt at this bug (v0.47.1) COALESCEd only `slug` and
+		// shipped, whereupon production moved straight on to "column
+		// index 2, code". The defect was never about one column: it is
+		// that three columns are NULL by nature and all three scan into
+		// non-nullable strings. Handling it at the scan covers the set,
+		// and any future nullable column added to the Soroban arm.
+		//
+		// Empty string, NOT the contract id: a Soroban asset genuinely
+		// has no code and no issuer, and substituting its contract id
+		// would state something false. (slug keeps its COALESCE to
+		// asset_id — that one IS true, because the contract id really
+		// is the asset's URL segment.)
+		slug              sql.NullString
+		code              sql.NullString
+		issuerGStrkey     sql.NullString
+		priceUSD          sql.NullString
+		volume24hUSD      sql.NullString
+		marketCapUSD      sql.NullString
+		circulatingSupply sql.NullString
+		change1hPct       sql.NullString
+		change24hPct      sql.NullString
+		change7dPct       sql.NullString
+		sourceCount       sql.NullInt64
+		volumeCharacter   sql.NullString
+		sortVolume24hUSD  sql.NullString
 	)
 	if err := scanner.Scan(
-		&r.Slug, &r.AssetID, &r.Code, &r.IssuerGStrkey,
+		&slug, &r.AssetID, &code, &issuerGStrkey,
 		&firstLedger, &lastLedger, &r.ObservationCount,
 		&priceUSD, &volume24hUSD, &marketCapUSD, &circulatingSupply,
 		&change1hPct, &change24hPct, &change7dPct, &sourceCount,
@@ -259,6 +281,17 @@ func scanAssetRow(scanner interface {
 	); err != nil {
 		return AssetRow{}, fmt.Errorf("timescale: scan asset: %w", err)
 	}
+	// slug carries a SQL COALESCE to asset_id, so it should never arrive
+	// NULL — this mirrors that fallback in Go so a future query edit
+	// that drops the COALESCE degrades to the contract id instead of
+	// failing the whole request. Belt and braces, deliberately: the
+	// braces are what broke in production.
+	r.Slug = slug.String
+	if r.Slug == "" {
+		r.Slug = r.AssetID
+	}
+	r.Code = code.String                    // "" when NULL (Soroban-native)
+	r.IssuerGStrkey = issuerGStrkey.String  // "" when NULL (Soroban-native)
 	r.FirstSeenLedger = uint32(firstLedger) //nolint:gosec
 	r.LastSeenLedger = uint32(lastLedger)   //nolint:gosec
 	r.PriceUSD = nullStringPtr(priceUSD)
