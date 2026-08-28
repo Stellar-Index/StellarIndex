@@ -48,6 +48,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment:
       name: docs-${{ github.event.inputs.environment }}
     steps:

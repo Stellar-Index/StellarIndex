@@ -74,6 +74,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment:
       name: explorer-${{ github.event.inputs.environment }}
     steps:
