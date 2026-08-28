@@ -26,9 +26,13 @@
 #   stellarindex_ch_schema_snapshot_last_success_unix
 #   stellarindex_ch_schema_snapshot_tables
 #   stellarindex_ch_schema_snapshot_bytes
+#   stellarindex_ch_schema_snapshot_offsite_configured (1 iff SNAPSHOT_MC_TARGET
+#     is set — emitted EVERY run so the offsite alert can tell "never
+#     pushed" from "acked local-only")
 #   stellarindex_ch_schema_snapshot_offsite_last_success_unix (push only)
 # Alerts: stellarindex_ch_schema_snapshot_stale /
-#         stellarindex_ch_schema_snapshot_offsite_stale (storage.yml, both trees).
+#         stellarindex_ch_schema_snapshot_offsite_stale /
+#         stellarindex_ch_schema_snapshot_unit_failed (storage.yml, both trees).
 #
 # Restore path: docs/operations/runbooks/ch-schema-restore.md.
 #
@@ -216,6 +220,16 @@ if [[ "$TEXTFILE_DIR" != "/dev/null" ]]; then
     echo "# HELP stellarindex_ch_schema_snapshot_bytes Size on disk of the most recent snapshot directory."
     echo "# TYPE stellarindex_ch_schema_snapshot_bytes gauge"
     echo "stellarindex_ch_schema_snapshot_bytes $bytes"
+    # Always emitted: the offsite staleness alert's absent-series branch
+    # is gated on this so a push that has NEVER succeeded fires while an
+    # acked local-only host (no target) stays silent.
+    echo "# HELP stellarindex_ch_schema_snapshot_offsite_configured 1 if an offsite target (SNAPSHOT_MC_TARGET) is configured for this host, else 0."
+    echo "# TYPE stellarindex_ch_schema_snapshot_offsite_configured gauge"
+    if [[ -n "$SNAPSHOT_MC_TARGET" ]]; then
+      echo "stellarindex_ch_schema_snapshot_offsite_configured 1"
+    else
+      echo "stellarindex_ch_schema_snapshot_offsite_configured 0"
+    fi
     if [[ -n "$SNAPSHOT_MC_TARGET" && "$offsite_ok" -eq 1 ]]; then
       echo "# HELP stellarindex_ch_schema_snapshot_offsite_last_success_unix Unix time of the most recent successful offsite push of the schema snapshot."
       echo "# TYPE stellarindex_ch_schema_snapshot_offsite_last_success_unix gauge"

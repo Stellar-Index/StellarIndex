@@ -59,6 +59,28 @@ against.
   `docs/operations/clickhouse-ops-batch-profile.md`.
 ### Fixed
 
+- **Backup alerts could not fire on the absent-series case (audit
+  2026-08-28, backup-restore-1 / backup-restore-2).** Both rule trees.
+  `stellarindex_timescale_backup_none_24h` / `_failed` are `min by
+  (stanza)(pgbackrest_backup_since_last_completion_seconds…) > N`, which
+  is an empty vector — never fires — when `pgbackrest_exporter` is up
+  but has no stanza to report (pgbackrest not installed, conf/repo
+  unreadable by the exporter user, stanza error), and the only backstop
+  checked `up` alone. New `stellarindex_pgbackrest_backup_metrics_absent`
+  (page: `up == 1 unless on (instance) <backup series>`) and
+  `stellarindex_pgbackrest_backup_unit_failed` (ticket) close it.
+  Likewise `stellarindex_ch_schema_snapshot_stale` / `_offsite_stale`
+  were `time() - last_success > N` over a stamp the script drops on any
+  partial run (and never writes on a first-run failure), so the
+  never-succeeded / every-run-failed cases were unalerted: both gain the
+  OBS-2 `absent_over_time` branch (offsite gated on the new
+  `stellarindex_ch_schema_snapshot_offsite_configured` gauge so acked
+  local-only hosts stay silent) plus `stellarindex_ch_schema_snapshot_unit_failed`.
+  Promtool tests proven red on origin/main:
+  `deploy/monitoring/rule-tests/storage-backup_test.yml`. Also corrects
+  the stale `stellarindex_pgbackrest_last_success_unix` name in
+  meta.yml / the alerts catalogue.
+
 - **Outlier filter trimmed agreed price moves; `outlier_storm` measured
   its own artifact.** The published-VWAP filter scored every print
   against ONE band — the whole window's median ± 4 × 1.4826 × MAD — and

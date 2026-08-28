@@ -5,13 +5,13 @@ status: living
 severity: P1
 ---
 
-# Runbook — `stellarindex_timescale_backup_failed` / `_backup_none_24h`
+# Runbook — `stellarindex_timescale_backup_failed` / `_backup_none_24h` / `stellarindex_pgbackrest_backup_metrics_absent` / `_backup_unit_failed`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alerts | `stellarindex_timescale_backup_none_24h` (no completed backup in > 24 h, `severity: page`, **SEV-1**) / `stellarindex_timescale_backup_failed` (> 25 h, `severity: ticket`). Both `for: 5m`. **The page fires first**; the ticket follows one hour later. |
+| Alerts | `stellarindex_timescale_backup_none_24h` (no completed backup in > 24 h, `severity: page`, **SEV-1**) / `stellarindex_timescale_backup_failed` (> 25 h, `severity: ticket`). Both `for: 5m`. **The page fires first**; the ticket follows one hour later. `stellarindex_pgbackrest_backup_metrics_absent` (`severity: page`, `for: 15m`): the exporter is up but reports NO real stanza, so the two freshness alerts are structurally blind — treat as "backup state unknown", same urgency as `_none_24h`. `stellarindex_pgbackrest_backup_unit_failed` (`severity: ticket`, `for: 5m`): `pgbackrest-backup.service` exited non-zero — the early, causal signal. |
 | Severity | P1 (`_backup_none_24h`) / ticket (`_backup_failed`) |
 | Detected by | `configs/prometheus/rules.r1/storage.yml` (the file r1 actually loads — `prometheus.r1.yml` `rule_files: /etc/prometheus/rules.r1/*.yml`; `deploy/monitoring/rules/storage.yml` is the multi-host source copy, identical at HEAD). Metric: `pgbackrest_backup_since_last_completion_seconds{stanza!~"all-stanzas.*"}` from woblerr `pgbackrest_exporter`, job `pgbackrest_exporter`, `localhost:9854`, unit `pgbackrest_exporter.service`, `--collect.interval=600` (up to 10 min metric lag). |
 | Scheduler | `pgbackrest-backup.timer` → `pgbackrest-backup.service` → `/usr/local/bin/pgbackrest-backup.sh` (`User=postgres`), daily `02:00 UTC` + ≤ 15 min jitter, `Persistent=true`; full Sunday / diff Mon–Sat. Installed by `configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml`. |
@@ -23,6 +23,15 @@ severity: P1
 
 - `_backup_none_24h`: `min by (stanza)(pgbackrest_backup_since_last_completion_seconds{stanza!~"all-stanzas.*"}) > 24 * 3600` for 5 m; pages directly.
 - `_backup_failed`: same expression `> 25 * 3600` for 5 m; ticket.
+- `_metrics_absent`: `up{job="pgbackrest_exporter"} == 1 unless on (instance)
+  pgbackrest_backup_since_last_completion_seconds{stanza!~"all-stanzas.*"}`
+  for 15 m; page. Both `min by (stanza)(...)` alerts above evaluate to an
+  EMPTY vector when that series is missing and can never fire, so an
+  exporter that is up with zero stanzas would otherwise let backups stop
+  silently for weeks (audit 2026-08-28, backup-restore-1).
+- `_unit_failed`: `node_systemd_unit_state{name="pgbackrest-backup.service",state="failed"} == 1`
+  for 5 m; ticket. Covers exit 127 (pgbackrest binary missing) and any
+  backup error, ~24 h before the freshness alerts would.
 - Cadence is **one backup per day** (02:00 UTC), so ONE failed or skipped
   nightly run pages ~24 h after the previous backup's stop time. There is
   no "missed one of many cycles" tier in practice — the two alerts are one
@@ -94,7 +103,33 @@ curl -s http://127.0.0.1:9854/metrics | grep pgbackrest_backup_since_last_comple
    (pgbackrest not installed — the testnet/futurenet shape). A missing
    timer is a documented past root cause of `_backup_none_24h`.
 
-## Mitigation
+## Mitigation — `stellarindex_pgbackrest_backup_metrics_absent`
+
+The exporter answers scrapes but `pgbackrest info` gives it nothing to
+report. Find out which of the three shapes it is, then fall through to
+the mitigation below once a backup series exists again:
+
+```sh
+curl -s http://127.0.0.1:9854/metrics | grep -E '^pgbackrest_(exporter_status|stanza_status|backup_since_last_completion_seconds)'
+journalctl -u pgbackrest_exporter.service -n 50 --no-pager
+# Exactly what the exporter sees — run AS THE EXPORTER USER, not postgres/root:
+sudo -u pgbackrest_exporter pgbackrest --stanza=stellarindex info --output=json
+stat -c '%U:%G %a' /etc/pgbackrest/pgbackrest.conf /var/lib/pgbackrest
+command -v pgbackrest || echo "pgbackrest NOT installed"
+```
+
+| Shape | Fix |
+| ----- | --- |
+| `pgbackrest` not installed (unit exits 127; testnet/futurenet shape) | Install pgbackrest and create the stanza, or set `pgbackrest_backup_enabled=false` for the host so the exporter and timer are removed together |
+| Permission denied on `pgbackrest.conf` / repo (managed conf is `postgres:postgres 0640`, repo `0750`; the exporter runs as its own `pgbackrest_exporter` user) | Make the conf group-readable by the exporter user (add it to the `postgres` group) — verify with the `sudo -u pgbackrest_exporter … info` line above |
+| Stanza error in `pgbackrest info` | Fix the stanza (`stanza-create` / repo cipher / lock files) as for `_backup_failed` below |
+
+While this alert is firing the freshness alerts say nothing; do not read
+their silence as "backups are fine". Verification: the `curl` line shows
+`pgbackrest_backup_since_last_completion_seconds{stanza="stellarindex",…}`
+and the alert resolves within ~15 min.
+
+## Mitigation — `stellarindex_timescale_backup_*`
 
 - [ ] Step 1 — immediate: run a manual backup to verify the
       system works. **NEVER run pgbackrest as root** — it leaves
@@ -145,8 +180,11 @@ curl -s http://127.0.0.1:9854/metrics | grep pgbackrest_backup_since_last_comple
 - **Exporter down** — the alerts go `no_data`-blind rather than
   false-firing; that gap is covered by
   `stellarindex_pgbackrest_exporter_down` (`rules.r1/meta.yml`,
-  `exporter-down.md`). If the exporter was down across 02:00, the
-  metric can read stale for up to 10 min after it returns.
+  `exporter-down.md`), and the exporter-UP-but-no-stanza gap by
+  `stellarindex_pgbackrest_backup_metrics_absent` (this runbook). If the
+  exporter was down across 02:00, the metric can read stale for up to
+  10 min after it returns. `_metrics_absent` deliberately does not fire
+  while `up == 0`, so the two never double-page.
 - **First backup after a repo re-create** (`pgbackrest-encryption.md`)
   legitimately resets the age series; the alerts resolve on the first
   completed backup.
@@ -174,6 +212,12 @@ curl -s http://127.0.0.1:9854/metrics | grep pgbackrest_backup_since_last_comple
 
 ## Changelog
 
+- 2026-08-28 — added `stellarindex_pgbackrest_backup_metrics_absent`
+  (page) + `stellarindex_pgbackrest_backup_unit_failed` (ticket) and their
+  mitigation section (audit finding backup-restore-1: the `min by
+  (stanza)` freshness alerts evaluate over an empty vector — never fire —
+  when the exporter is up with zero stanzas, and `exporter_down` checks
+  `up` alone). Promtool coverage: `deploy/monitoring/rule-tests/storage-backup_test.yml`.
 - 2026-08-28 — re-verified against HEAD. Alert tiering corrected (page at
   24 h fires BEFORE the ticket at 25 h; one daily cycle, not hourly);
   rule path → `rules.r1/storage.yml`; MinIO/S3 checks removed (repo1 is

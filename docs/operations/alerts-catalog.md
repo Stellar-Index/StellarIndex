@@ -97,10 +97,13 @@ signal lands.
 | `stellarindex_timescale_lock_table_pressure` | `pg_locks_count / (pg_settings_max_locks_per_transaction * pg_settings_max_connections)` | > 70 % for > 5 min | P3 | [pg-conns-saturated](runbooks/pg-conns-saturated.md) |
 | `stellarindex_timescale_cagg_stale` | `time() - stellarindex_cagg_last_refresh_unix` per CAGG | > 5× its refresh interval | P2 | [cagg-stale](runbooks/cagg-stale.md) |
 | `stellarindex_timescale_compression_lag` | `stellarindex_uncompressed_chunks_older_than_7d` | > 0 for > 24 h | P3 | [compression-lag](runbooks/compression-lag.md) |
-| `stellarindex_timescale_backup_failed` | `stellarindex_pgbackrest_last_success_unix` | > 2× expected interval | P2 | [backup-failed](runbooks/backup-failed.md) |
-| `stellarindex_timescale_backup_none_24h` | same | > 24 h | **P1** | [backup-failed](runbooks/backup-failed.md) |
-| `stellarindex_ch_schema_snapshot_stale` | `time() - stellarindex_ch_schema_snapshot_last_success_unix` | > 36 h for ≥ 30 min | P3 | [ch-schema-restore](runbooks/ch-schema-restore.md) |
-| `stellarindex_ch_schema_snapshot_offsite_stale` | `time() - stellarindex_ch_schema_snapshot_offsite_last_success_unix` | > 72 h for ≥ 30 min | P3 | [ch-schema-restore](runbooks/ch-schema-restore.md) |
+| `stellarindex_timescale_backup_failed` | `min by (stanza)(pgbackrest_backup_since_last_completion_seconds{stanza!~"all-stanzas.*"})` | > 25 h for 5 min | P2 | [backup-failed](runbooks/backup-failed.md) |
+| `stellarindex_timescale_backup_none_24h` | same | > 24 h for 5 min | **P1** | [backup-failed](runbooks/backup-failed.md) |
+| `stellarindex_pgbackrest_backup_metrics_absent` | `up{job="pgbackrest_exporter"} == 1 unless on (instance) pgbackrest_backup_since_last_completion_seconds{stanza!~"all-stanzas.*"}` | exporter up but no real-stanza backup series for 15 min — the two alerts above are structurally blind | **P1** | [backup-failed](runbooks/backup-failed.md) |
+| `stellarindex_pgbackrest_backup_unit_failed` | `node_systemd_unit_state{name="pgbackrest-backup.service",state="failed"}` | == 1 for 5 min | P3 | [backup-failed](runbooks/backup-failed.md) |
+| `stellarindex_ch_schema_snapshot_stale` | `time() - stellarindex_ch_schema_snapshot_last_success_unix` (or `absent_over_time(...[36h])` — never / every-run-failed) | > 36 h, or series absent 36 h, for ≥ 30 min | P3 | [ch-schema-restore](runbooks/ch-schema-restore.md) |
+| `stellarindex_ch_schema_snapshot_offsite_stale` | `time() - stellarindex_ch_schema_snapshot_offsite_last_success_unix` (or `absent_over_time(...[72h]) and on () stellarindex_ch_schema_snapshot_offsite_configured == 1`) | > 72 h, or never pushed since a target was configured, for ≥ 30 min | P3 | [ch-schema-restore](runbooks/ch-schema-restore.md) |
+| `stellarindex_ch_schema_snapshot_unit_failed` | `node_systemd_unit_state{name="ch-schema-snapshot.service",state="failed"}` | == 1 for 5 min | P3 | [ch-schema-restore](runbooks/ch-schema-restore.md) |
 | `stellarindex_restore_drill_stale` | `time() - stellarindex_restore_drill_last_success_unix` (or `absent_over_time(...[40d])`) | > 40 d for ≥ 30 min | P3 | [restore-drill-stale](runbooks/restore-drill-stale.md) |
 
 ## Cache / serving alerts
