@@ -1,6 +1,6 @@
 ---
 title: Runbook — stellarindex_ingest_gap_detector_silent
-last_verified: 2026-07-06
+last_verified: 2026-08-28
 status: ratified
 severity: P2
 ---
@@ -13,13 +13,14 @@ severity: P2
 | ----- | ----- |
 | Alert | `stellarindex_ingest_gap_detector_silent` |
 | Severity | P2 (ticket) |
-| Detected by | `(time() - stellarindex_ingest_gap_detector_last_success_unix) > 8h` (per source/table) OR the detector metric absent for 15 min (aggregator down) |
+| Detected by | `(time() - stellarindex_ingest_gap_detector_last_success_unix) > 8h` (per source/table) OR the detector metric absent for 15 min (aggregator down) OR `runs_total{outcome="error"}` present now and 8h ago with no last-success stamp seen in 8h (a target that has never succeeded in this process life) |
 | Typical MTTR | 15 min (restart) — 1 h (deeper Postgres issue) |
 | Impact | The data-gap detector goroutine is wedged for a target. `stellarindex_ingest_gap_max_size_ledgers` gauges read stale value; the paging `ingest_gap_detected` alert can't fire even if a real gap forms. The system has lost its data-derived ingest-health signal for that target. |
 
 ## Symptoms
 
 - `stellarindex_ingest_gap_detector_last_success_unix{source,table}` for one target is more than 8h old (or the whole detector metric is absent → aggregator down).
+- **Or the stamp does not exist at all** for the target and the alert carries `outcome="error"`: the target has never scanned successfully in this process life (no `gap-detector-scan` cursor row, so nothing re-emits a stamp on boot) and has been erroring for 8h+. Before 2026-08-28 this case fired nothing — the error counter satisfied the "runs_total present" clause and there was no stamp to age. The 2026-08-28 r1 `soroban-events/soroban_events` statement_timeout loop (PR #258) is the canonical example.
 - `stellarindex_ingest_gap_detector_runs_total{outcome="error"}` is climbing for that target (the scan is failing every cycle), and the aggregator log shows `gap-detector: scan failed` lines with a large `elapsed_s` (timeout) or a Postgres error string.
 - Operators reading the dashboard see the gap-size gauge frozen on its last-known value.
 - May coincide with `stellarindex_aggregator_silent` (aggregator binary is down) or `stellarindex_postgres_exporter_down` (Postgres is unreachable).
@@ -100,5 +101,6 @@ Reduce concurrent walk parallelism per `docs/operations/backfill-with-live-inges
 
 ## Changelog
 
+- 2026-08-28 — third clause: fire when `runs_total{outcome="error"}` is present now and 8h ago and no `last_success_unix` stamp has been seen for the target in 8h. Closes the blind spot where a target that had never once succeeded (no stamp to age; error counter satisfying `absent_over_time(runs_total)`) fired nothing. promtool unit tests in `deploy/monitoring/rule-tests/ingestion_test.yml`.
 - 2026-07-06 — re-keyed the alert off `stellarindex_ingest_gap_detector_last_success_unix` staleness (`> 8h`) instead of `rate(runs_total{outcome="ok"}[7h]) == 0`. The rate expr false-fired for >7h on the 6h-cadence heavy targets because their `ok` counter is pinned at `1` per process life and `1 → 1` across a restart defeats Prometheus counter-reset detection. A wall-clock gauge is reset-proof.
 - 2026-05-28 — initial draft alongside the gap detector worker ship.

@@ -551,11 +551,34 @@ groups:
       # even though every scan succeeded (incident 2026-07-06). A
       # wall-clock gauge is reset-proof: a healthy startup scan re-stamps
       # it to now(), clearing staleness immediately.
+      # 2026-08-28 (found verifying PR #258): the absent_over_time clause
+      # is satisfied by the ERROR outcome of runs_total just as well as
+      # the ok one, and a target that has never once succeeded in this
+      # process life (no cursor row → nothing re-emits the stamp) has NO
+      # last_success series for the staleness clause to age. Such a
+      # target — soroban_events failing every 6h cycle on
+      # statement_timeout — fired NOTHING. Third clause: the target's
+      # error counter is present now AND 8h ago (so a fresh process's
+      # first failed scan doesn't ticket; identical labels across a
+      # restart, so the previous process's errors count) and no
+      # last_success stamp has been seen for that (source, table) in 8h.
+      # Presence rather than increase(): the heavy targets retry every
+      # 6h, so the error counter is as rate()-hostile as the ok one.
       - alert: stellarindex_ingest_gap_detector_silent
         expr: |
           (time() - stellarindex_ingest_gap_detector_last_success_unix) > 28800
           OR
           absent_over_time(stellarindex_ingest_gap_detector_runs_total[15m]) == 1
+          OR
+          (
+            (
+              stellarindex_ingest_gap_detector_runs_total{outcome="error"} > 0
+              and on (source, table)
+              stellarindex_ingest_gap_detector_runs_total{outcome="error"} offset 8h > 0
+            )
+            unless on (source, table)
+            count_over_time(stellarindex_ingest_gap_detector_last_success_unix[8h])
+          )
         for: 10m
         labels:
           severity: ticket
@@ -569,6 +592,16 @@ groups:
             stuck or absent for a target. Without it the operator-facing
             `stellarindex_ingest_gap_max_size_ledgers` gauge stops
             updating — gauges read stale value until restart.
+
+            Three clauses: (1) the per-target last-success stamp is
+            older than 8h; (2) the runs_total metric is absent for 15m
+            (aggregator fully down); (3) the target has errored both now
+            and 8h ago and has had NO last-success stamp in 8h — a
+            scan that has never once succeeded in this process life
+            (no cursor row → nothing to re-emit) produces no stamp for
+            clause 1 to age, and its error counter satisfies clause 2's
+            "runs_total present", so before 2026-08-28 that target
+            never fired anything.
 
             Likely causes: aggregator binary crash-looping; Postgres
             connection-pool exhaustion causing every scan to hit the

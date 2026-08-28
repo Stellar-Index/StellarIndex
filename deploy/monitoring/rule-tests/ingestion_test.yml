@@ -1,0 +1,283 @@
+---
+# promtool unit tests for stellarindex_ingest_gap_detector_silent
+# (2026-08-28, blind spot found while verifying PR #258).
+#
+#   promtool test rules deploy/monitoring/rule-tests/ingestion_test.yml
+#
+# The alert's second clause, absent_over_time(runs_total[15m]), was meant
+# to catch "aggregator fully down". But runs_total is a (source, table,
+# OUTCOME) counter, and the ERROR outcome satisfies it just as well as
+# the ok one. A target whose scan fails on every cycle and has never
+# succeeded in this process life (no cursor row → nothing re-emits the
+# last_success stamp) therefore had NO series for clause 1 to age and
+# a live series that silenced clause 2: it never fired anything. The
+# third clause closes that: error counter present now AND 8h ago, and
+# no last_success stamp seen in 8h.
+#
+# PROVEN-RED: against the pre-fix two-clause expr the case "a target
+# that has only ever errored" FAILS (exp 1 alert, got 0). The fresh /
+# stale / aggregator-down cases pass on both — they pin the behaviour
+# the fix must NOT change (2026-07-06 reset-proof staleness clause and
+# the aggregator-absent clause).
+#
+# Time model: promtool starts the clock at t=0, so time() at eval_time
+# T is T seconds. A stamp series of `0+60x<n>` tracks time() exactly
+# (staleness 0); a constant stamp goes stale at stamp + 28800s.
+
+rule_files:
+  - ../rules/ingestion.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── (a) healthy: every scan succeeds, stamp tracks now() ──
+  # An error counter is ALSO present (one transient blip early in the
+  # window) — a fresh stamp must suppress the error clause.
+  - interval: 1m
+    name: fresh last_success stamp stays silent even with an error counter present
+    input_series:
+      - series: 'stellarindex_ingest_gap_detector_runs_total{source="sdex",table="trades",outcome="ok"}'
+        values: '1+0x700'
+      - series: 'stellarindex_ingest_gap_detector_runs_total{source="sdex",table="trades",outcome="error"}'
+        values: '1+0x700'
+      - series: 'stellarindex_ingest_gap_detector_last_success_unix{source="sdex",table="trades"}'
+        values: '0+60x700'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_ingest_gap_detector_silent
+        exp_alerts: []
+      - eval_time: 690m
+        alertname: stellarindex_ingest_gap_detector_silent
+        exp_alerts: []
+
+  # ── (b) stamp present but stale > 8h → fires (2026-07-06 clause) ──
+  # Stamped once at t=10m (600s), never again. time()-600 exceeds
+  # 28800 after t=490m; `for: 10m` → firing by t=520m. At t=8h it is
+  # still under threshold and must be silent.
+  - interval: 1m
+    name: a last_success stamp older than 8h fires per target
+    input_series:
+      - series: 'stellarindex_ingest_gap_detector_runs_total{source="sdex",table="trades",outcome="ok"}'
+        values: '1+0x700'
+      - series: 'stellarindex_ingest_gap_detector_last_success_unix{source="sdex",table="trades"}'
+        values: '600+0x700'
+    alert_rule_test:
+      - eval_time: 480m
+        alertname: stellarindex_ingest_gap_detector_silent
+        exp_alerts: []
+      - eval_time: 520m
+        alertname: stellarindex_ingest_gap_detector_silent
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+              source: sdex
+              table: trades
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+              summary: "Data-gap detector hasn't scanned sdex/trades successfully in >8h (above the 6h sdex/soroban scan cadence)"
+              description: |
+                The aggregator's data-gap detector goroutine appears
+                stuck or absent for a target. Without it the operator-facing
+                `stellarindex_ingest_gap_max_size_ledgers` gauge stops
+                updating — gauges read stale value until restart.
+
+                Three clauses: (1) the per-target last-success stamp is
+                older than 8h; (2) the runs_total metric is absent for 15m
+                (aggregator fully down); (3) the target has errored both now
+                and 8h ago and has had NO last-success stamp in 8h — a
+                scan that has never once succeeded in this process life
+                (no cursor row → nothing to re-emit) produces no stamp for
+                clause 1 to age, and its error counter satisfies clause 2's
+                "runs_total present", so before 2026-08-28 that target
+                never fired anything.
+
+                Likely causes: aggregator binary crash-looping; Postgres
+                connection-pool exhaustion causing every scan to hit the
+                per-target Go timeout / SQL statement_timeout and increment
+                outcome=error; deploy regression that removed the worker
+                wiring. Grep the aggregator log for
+                `gap-detector: scan failed` (a non-ok outcome is logged
+                loudly with elapsed_s so a timeout is unmistakable).
+
+                Cross-check: aggregator service `active`?
+                postgres_exporter targets `up`?
+                `stellarindex_ingest_gap_detector_runs_total{outcome="error"}`
+                climbing?
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+
+  # ── (c) THE BLIND SPOT: only ever errored, no stamp at all → fires ──
+  # soroban-events/soroban_events fails every 6h cycle from boot (the
+  # #258 scenario: >13-min scan hits statement_timeout, cursor row never
+  # written). runs_total{outcome="error"} climbs, last_success_unix is
+  # never emitted. A sibling target that succeeds is present so the
+  # aggregator-absent clause is provably NOT what fires. Silent for the
+  # first 8h (a fresh process must not ticket on its first failed scan);
+  # firing once the error has been present for 8h with no success.
+  - interval: 1m
+    name: a target that has only ever errored (no last_success stamp) fires after 8h
+    input_series:
+      - series: 'stellarindex_ingest_gap_detector_runs_total{source="soroban-events",table="soroban_events",outcome="error"}'
+        values: '1+1x700'
+      - series: 'stellarindex_ingest_gap_detector_runs_total{source="sdex",table="trades",outcome="ok"}'
+        values: '1+0x700'
+      - series: 'stellarindex_ingest_gap_detector_last_success_unix{source="sdex",table="trades"}'
+        values: '0+60x700'
+    alert_rule_test:
+      - eval_time: 470m
+        alertname: stellarindex_ingest_gap_detector_silent
+        exp_alerts: []
+      - eval_time: 520m
+        alertname: stellarindex_ingest_gap_detector_silent
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+              source: soroban-events
+              table: soroban_events
+              outcome: error
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+              summary: "Data-gap detector hasn't scanned soroban-events/soroban_events successfully in >8h (above the 6h sdex/soroban scan cadence)"
+              description: |
+                The aggregator's data-gap detector goroutine appears
+                stuck or absent for a target. Without it the operator-facing
+                `stellarindex_ingest_gap_max_size_ledgers` gauge stops
+                updating — gauges read stale value until restart.
+
+                Three clauses: (1) the per-target last-success stamp is
+                older than 8h; (2) the runs_total metric is absent for 15m
+                (aggregator fully down); (3) the target has errored both now
+                and 8h ago and has had NO last-success stamp in 8h — a
+                scan that has never once succeeded in this process life
+                (no cursor row → nothing to re-emit) produces no stamp for
+                clause 1 to age, and its error counter satisfies clause 2's
+                "runs_total present", so before 2026-08-28 that target
+                never fired anything.
+
+                Likely causes: aggregator binary crash-looping; Postgres
+                connection-pool exhaustion causing every scan to hit the
+                per-target Go timeout / SQL statement_timeout and increment
+                outcome=error; deploy regression that removed the worker
+                wiring. Grep the aggregator log for
+                `gap-detector: scan failed` (a non-ok outcome is logged
+                loudly with elapsed_s so a timeout is unmistakable).
+
+                Cross-check: aggregator service `active`?
+                postgres_exporter targets `up`?
+                `stellarindex_ingest_gap_detector_runs_total{outcome="error"}`
+                climbing?
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+
+  # ── (d) stamp existed within 8h, then process restarted and the
+  # target has only errored since → suppressed until 8h after the last
+  # stamp, then fires via clause 3 (the stamp series is gone, so clause
+  # 1 has nothing to age). Stamp emitted t=0..60m at value 0, then the
+  # series disappears (restart without #258's re-emit); errors from
+  # t=0. count_over_time(stamp[8h]) suppresses until t=8h+60m=540m.
+  - interval: 1m
+    name: a stamp seen within 8h suppresses the error clause until it ages out
+    input_series:
+      - series: 'stellarindex_ingest_gap_detector_last_success_unix{source="soroban-events",table="soroban_events"}'
+        values: '0+0x60 _x700'
+      - series: 'stellarindex_ingest_gap_detector_runs_total{source="soroban-events",table="soroban_events",outcome="error"}'
+        values: '1+1x760'
+    alert_rule_test:
+      - eval_time: 530m
+        alertname: stellarindex_ingest_gap_detector_silent
+        exp_alerts: []
+      - eval_time: 560m
+        alertname: stellarindex_ingest_gap_detector_silent
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+              source: soroban-events
+              table: soroban_events
+              outcome: error
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+              summary: "Data-gap detector hasn't scanned soroban-events/soroban_events successfully in >8h (above the 6h sdex/soroban scan cadence)"
+              description: |
+                The aggregator's data-gap detector goroutine appears
+                stuck or absent for a target. Without it the operator-facing
+                `stellarindex_ingest_gap_max_size_ledgers` gauge stops
+                updating — gauges read stale value until restart.
+
+                Three clauses: (1) the per-target last-success stamp is
+                older than 8h; (2) the runs_total metric is absent for 15m
+                (aggregator fully down); (3) the target has errored both now
+                and 8h ago and has had NO last-success stamp in 8h — a
+                scan that has never once succeeded in this process life
+                (no cursor row → nothing to re-emit) produces no stamp for
+                clause 1 to age, and its error counter satisfies clause 2's
+                "runs_total present", so before 2026-08-28 that target
+                never fired anything.
+
+                Likely causes: aggregator binary crash-looping; Postgres
+                connection-pool exhaustion causing every scan to hit the
+                per-target Go timeout / SQL statement_timeout and increment
+                outcome=error; deploy regression that removed the worker
+                wiring. Grep the aggregator log for
+                `gap-detector: scan failed` (a non-ok outcome is logged
+                loudly with elapsed_s so a timeout is unmistakable).
+
+                Cross-check: aggregator service `active`?
+                postgres_exporter targets `up`?
+                `stellarindex_ingest_gap_detector_runs_total{outcome="error"}`
+                climbing?
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+
+  # ── (e) aggregator fully down: no runs_total at all → fires (clause 2) ──
+  - interval: 1m
+    name: no gap-detector runs_total series at all fires the aggregator-down clause
+    input_series:
+      - series: 'stellarindex_ingest_gap_detector_last_success_unix{source="sdex",table="trades"}'
+        values: '0+60x10 _x60'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: stellarindex_ingest_gap_detector_silent
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+              summary: "Data-gap detector hasn't scanned / successfully in >8h (above the 6h sdex/soroban scan cadence)"
+              description: |
+                The aggregator's data-gap detector goroutine appears
+                stuck or absent for a target. Without it the operator-facing
+                `stellarindex_ingest_gap_max_size_ledgers` gauge stops
+                updating — gauges read stale value until restart.
+
+                Three clauses: (1) the per-target last-success stamp is
+                older than 8h; (2) the runs_total metric is absent for 15m
+                (aggregator fully down); (3) the target has errored both now
+                and 8h ago and has had NO last-success stamp in 8h — a
+                scan that has never once succeeded in this process life
+                (no cursor row → nothing to re-emit) produces no stamp for
+                clause 1 to age, and its error counter satisfies clause 2's
+                "runs_total present", so before 2026-08-28 that target
+                never fired anything.
+
+                Likely causes: aggregator binary crash-looping; Postgres
+                connection-pool exhaustion causing every scan to hit the
+                per-target Go timeout / SQL statement_timeout and increment
+                outcome=error; deploy regression that removed the worker
+                wiring. Grep the aggregator log for
+                `gap-detector: scan failed` (a non-ok outcome is logged
+                loudly with elapsed_s so a timeout is unmistakable).
+
+                Cross-check: aggregator service `active`?
+                postgres_exporter targets `up`?
+                `stellarindex_ingest_gap_detector_runs_total{outcome="error"}`
+                climbing?
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md

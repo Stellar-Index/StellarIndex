@@ -17,6 +17,18 @@ against.
 
 ### Added
 
+- **`stellarindex_ingest_gap_detector_silent` third clause (both rule
+  trees).** The alert's `absent_over_time(runs_total[15m])` clause is
+  satisfied by the `outcome="error"` counter, and a target that has never
+  once succeeded in a process life emits no `last_success_unix` stamp to
+  age — so a scan failing every cycle (the 2026-08-28 r1
+  `soroban_events` statement_timeout loop, found verifying #258) fired
+  nothing. The rule now also fires when the target's error counter is
+  present now and 8h ago with no last-success stamp seen in 8h. First
+  promtool unit tests for the alert
+  (`deploy/monitoring/rule-tests/ingestion_test.yml`): fresh stamp
+  silent, stale stamp fires, never-succeeded fires, stamp-within-8h
+  suppresses, aggregator-absent fires.
 - **CI replay-plan tripwire (`scripts/ci/lint-replay-plan.sh`).** On
   2026-08-27 e17288bd widened `internal/canonical/asset_fiat.go` 32→132
   codes; live ingestion recorded 4 new currencies, nobody replayed
