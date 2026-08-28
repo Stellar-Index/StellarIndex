@@ -274,9 +274,15 @@ func insertParticipantBatch(ctx context.Context, conn driver.Conn, rows []Operat
 // from openRead's heavy-FINAL read class. Kept separate from the streaming read
 // pool so a flush never contends with the open read cursor.
 func openParticipantWrite(ctx context.Context, addr string) (driver.Conn, error) {
+	// Ops-batch identity from the environment (2026-08-28 r1 incident;
+	// see ops_auth.go) — CH `default` user when unset.
+	auth, err := opsAuth()
+	if err != nil {
+		return nil, err
+	}
 	conn, err := clickhouse.Open(&clickhouse.Options{
 		Addr: []string{addr},
-		Auth: clickhouse.Auth{Database: "stellar"},
+		Auth: auth,
 		Settings: clickhouse.Settings{
 			// A generous-but-finite time ceiling: this is the WRITE path (cheap
 			// appends into a ReplacingMergeTree), mirroring the live Sink.
