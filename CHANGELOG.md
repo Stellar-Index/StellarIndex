@@ -75,6 +75,23 @@ against.
   `scripts/ci/lint-deploy-playbook.sh` + a CI `--syntax-check` of
   `deploy-binary.yml` pin both properties. r1's path is unchanged.
 
+- **systemd EnvironmentFiles were `.`-sourced by the deploy migrate step,
+  a root cron and twelve host scripts (deploy-ansible-secrets-5).**
+  `/etc/default/stellarindex`, `-ops` and `/etc/default/galexie` are
+  rendered unquoted (what systemd wants), but every shell consumer
+  re-parsed them with `set -a; . <file>` — so a secret carrying `$`, `;`,
+  `&`, `|`, quotes or whitespace works under systemd and is silently
+  mangled (or its tail EXECUTED as root) on the sourcing paths: migrate
+  fails 28P01, ARCHIVE_TO stays 0, freshness gauges go stale. Every
+  consumer now reads the file verbatim (the run-heavy-job.sh pattern —
+  one canonical `load_env_file` in the bash scripts, a POSIX loop in the
+  `/bin/sh` migrate task and the cron one-liner), and a preflight assert
+  refuses to render any of the sixteen env-file secrets that contains a
+  shell metacharacter (names only in the message; rotate to
+  `openssl rand -hex 32`), which also makes the documented interactive
+  `set -a; source` safe. `scripts/ci/envfile-loader-test.sh` pins all
+  consumers in lockstep and round-trips a metacharacter fixture.
+
 - **Outlier filter trimmed agreed price moves; `outlier_storm` measured
   its own artifact.** The published-VWAP filter scored every print
   against ONE band — the whole window's median ± 4 × 1.4826 × MAD — and

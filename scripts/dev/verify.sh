@@ -60,6 +60,7 @@ echo "=== Main-CI-health decision-core self-test ===" && ./scripts/ci/check-main
 echo "=== Ansible-drift decision-core self-test ===" && ./scripts/ci/check-ansible-drift-test.sh
 echo "=== run-heavy-job wrapper self-test ===" && ./scripts/ci/run-heavy-job-test.sh
 echo "=== Deploy playbook jump/backup-gate lint ===" && ./scripts/ci/lint-deploy-playbook.sh
+echo "=== EnvironmentFile verbatim-reader self-test ===" && ./scripts/ci/envfile-loader-test.sh
 echo "=== Baseline-growth tripwire self-test ===" && ./scripts/ci/lint-baseline-growth-test.sh
 echo "=== Config-apply gate self-test ===" && ./scripts/ci/config-apply-gate-test.sh
 # BASE_SHA-gated: self-skips locally (no comparison base); runs for real in CI

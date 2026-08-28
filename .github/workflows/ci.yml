@@ -445,6 +445,15 @@ jobs:
         # the per-region pgbackrest_backup_enabled flag deploy.yml passes.
         # No network, no ansible.
         run: ./scripts/ci/lint-deploy-playbook.sh
+      - name: envfile-loader self-test
+        # deploy-ansible-secrets-5: /etc/default/{stellarindex,-ops,galexie}
+        # are systemd EnvironmentFiles (unquoted values) that the deploy
+        # migrate step, a root cron and a dozen host scripts used to
+        # `set -a; .` — the SHELL parser, which expands `$` and runs `;`
+        # inside a secret as root while systemd keeps the services happy.
+        # Pins every consumer to the verbatim reader and proves it
+        # round-trips metacharacters. No network, no ansible.
+        run: ./scripts/ci/envfile-loader-test.sh
       - name: lint-lexicon
         # Maintainability audit 2026-07-01 (D2+D6): domain-lexicon +
         # idiom ratchet. Zero rules (no Fetch/Make verbs, slog is the
