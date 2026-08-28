@@ -235,6 +235,23 @@ windows = [
   # "24h",
 ]
 
+# Composite-reference corroboration of the phase-2 freeze for
+# structurally single-venue targets (2026-08-29, design doc §10.1).
+# On a single-venue bucket of a listed target the aggregator rebuilds
+# the target's [[aggregate.triangulations]] chain on the CURRENT bucket
+# (this tick's crypto/USD publish with >= min_leg_sources venues × an FX
+# snap <= fx_max_age_hours old, FX source class only) and compares it
+# with the direct print: agreement within tolerance_bps suppresses the
+# freeze (corroboration_basis=composite); disagreement or an
+# unavailable reference freezes exactly as before. Never enters VWAP,
+# never raises source_count. Each target needs a triangulation row.
+[aggregate.composite_reference]
+enabled          = true
+targets          = ["crypto:XLM/fiat:GBP", "crypto:XLM/fiat:EUR"]
+tolerance_bps    = 75    # |direct - composite| / composite, basis points
+min_leg_sources  = 2     # distinct real venues the crypto/USD leg needs on the bucket
+fx_max_age_hours = 76    # fx_quotes buckets are daily + pause over market closes (Chainlink FX precedent)
+
 # ──────────────────────────────────────────────────────────────────
 # API — public serving plane (api binary only).
 # ──────────────────────────────────────────────────────────────────

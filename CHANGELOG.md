@@ -17,6 +17,39 @@ against.
 
 ### Added
 
+- **Composite-reference corroboration of the phase-2 freeze for
+  structurally single-venue targets** (product decision, Ash
+  2026-08-29; design doc §10.1 amendment). For an allow-listed target
+  (`[aggregate.composite_reference]`, default ON for
+  `crypto:XLM/fiat:GBP` + `crypto:XLM/fiat:EUR`) whose bucket is
+  single-venue, the aggregator rebuilds the target's triangulation
+  chain on the CURRENT bucket — this tick's crypto/USD leg publish
+  (≥ `min_leg_sources` real venues, default 2) × a fresh FX snap
+  (≤ `fx_max_age_hours`, default 76, FX source class only, never an
+  oracle) — and reads it against the fresh direct VWAP: agreement
+  within `tolerance_bps` (default 75) means the move is market-wide
+  and the 3-signal-AND fire is suppressed (`corroboration_basis=
+  composite`); disagreement or an unavailable reference freezes
+  exactly as before, the reason string naming why
+  (`corroboration_basis=venue composite_unavailable: leg_sources=1
+  composite_leg_sources={…}`). The same sample feeds the confidence
+  factor (`triangulation_checked`) and the mid-hold release lens, so
+  a corroborated genuine move can also release. Hard invariants: the
+  composite never enters VWAP and never raises `source_count` /
+  `effectiveSourceCount`; targets with ≥ 2 real venues are
+  byte-identical to before. New: `composite_meta.corroboration_basis`
+  + `composite_leg_sources`, gauges
+  `stellarindex_aggregator_composite_corroboration{pair,window,verdict}`
+  / `..._composite_reference_leg_sources{pair,window,leg}`, counter
+  `..._composite_freeze_suppressed_total`. Never a prior tick's sample
+  (the rejected 95da898d mechanism). Tests:
+  `TestCompositeReference_*` (manipulation control with the mechanism
+  ON, market-wide mirror, stale-FX / thin-leg / oracle-FX fail-closed,
+  multi-venue differential, exact-Rat tolerance boundary, refresh
+  order) plus the unchanged
+  `TestRouterFreeze_TwoRoutesSuppressSingleSourceFreeze` 3-tick control
+  (#246).
+
 - **Oracle capture-totality PR-2 — decoders record unmapped symbols
   as `raw:` rows.** The Reflector (dex/cex/fx), RedStone and Band
   decoders no longer SKIP a price slot whose symbol / feed_id is

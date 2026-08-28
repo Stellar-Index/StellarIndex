@@ -150,6 +150,12 @@ func registerFreezeLifecycleMetrics() {
 		AnomalyFreezeLadderRehydratedTotal,
 		AnomalyFreezeLadderWriteFailuresTotal,
 		AnomalyFreezeRecoverySweepsTotal,
+
+		// Composite-reference corroboration of the phase-2 verdict
+		// (2026-08-29) — freeze-decision metrics, so they live here.
+		AggregatorCompositeCorroboration,
+		AggregatorCompositeReferenceLegSources,
+		AggregatorCompositeFreezeSuppressedTotal,
 	)
 }
 
@@ -2996,6 +3002,51 @@ var AggregatorTriangulationsTotal = prometheus.NewCounterVec(
 		Help: "Aggregator triangulation outcomes per tick × chain × window (graph-router priced). Outcome ∈ {ok, missing_leg, parse_error, redis_error, frozen_leg, low_confidence}. low_confidence = no route cleared min_route_confidence, so the composite was flagged but NOT published over the direct price.",
 	},
 	[]string{"outcome"},
+)
+
+// AggregatorCompositeCorroboration — per (pair, window) verdict of the
+// CURRENT-BUCKET composite-reference corroboration for structurally
+// single-venue targets (2026-08-29, orchestrator/composite_reference.go).
+// One series per verdict, exactly one of them 1 after each evaluated
+// bucket: `corroborated` (the deep-market composite agrees with the
+// direct print within tolerance — a phase-2 fire on this bucket is
+// suppressed, corroboration_basis=composite), `refuted` (composite
+// disagrees — venue-specific, freeze as before) or `unavailable` (a leg
+// was too thin / not refreshed / FX stale or not FX-class — freeze as
+// before). Cardinality: the allow-list × windows × 3.
+var AggregatorCompositeCorroboration = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_aggregator_composite_corroboration",
+		Help: "Current-bucket composite-reference verdict per (pair, window): 1 on the active verdict ∈ {corroborated, refuted, unavailable}, 0 on the others. Only structurally single-venue allow-listed targets are evaluated.",
+	},
+	[]string{"pair", "window", "verdict"},
+)
+
+// AggregatorCompositeReferenceLegSources — distinct venue / provider
+// count behind each leg of the composite reference on the last
+// evaluated bucket (label `leg` = canonical leg pair, e.g.
+// "crypto:XLM/fiat:USD"). Shows how STRONG a corroboration was: the
+// crypto/USD leg must reach composite_reference.min_leg_sources for the
+// composite to count at all, and the FX leg reads 1 (one provider).
+var AggregatorCompositeReferenceLegSources = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_aggregator_composite_reference_leg_sources",
+		Help: "Distinct sources behind each composite-reference leg on the last evaluated bucket, per (pair, window, leg).",
+	},
+	[]string{"pair", "window", "leg"},
+)
+
+// AggregatorCompositeFreezeSuppressedTotal — counter of phase-2 freeze
+// fires (the 3-signal AND held) that were NOT engaged because the
+// current-bucket composite reference corroborated the move. Every
+// increment is a bucket that would have frozen before 2026-08-29; read
+// it next to stellarindex_anomaly_freeze_engaged_total when judging
+// whether the tolerance is too loose.
+var AggregatorCompositeFreezeSuppressedTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_aggregator_composite_freeze_suppressed_total",
+		Help: "Phase-2 freeze fires suppressed because the current-bucket composite reference corroborated the move (corroboration_basis=composite).",
+	},
 )
 
 // AggregatorFXSnapFallbackTotal — counter of triangulation legs that

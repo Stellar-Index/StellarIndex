@@ -186,6 +186,17 @@ min_route_confidence = 0.0  # weakest-link floor [0,1]; 0 keeps pre-router behav
 # confidence score's composite-agreement factor. Set
 # `triangulation_enabled = false` to kill the whole pass without
 # editing this table.
+#
+# 2026-08-29 (design doc §10.1): the XLM/EUR and XLM/GBP chains are ALSO
+# the composite REFERENCE the phase-2 freeze consults on a single-venue
+# bucket of those targets ([aggregate.composite_reference], binary
+# default ON for exactly those two — no config apply needed). The
+# reference is rebuilt on the CURRENT bucket from this tick's XLM/USD
+# publish (>= 2 real venues) x a fresh massive FX snap (<= 76h, never an
+# oracle); agreement within 75 bps suppresses a freeze, anything else
+# freezes exactly as before. It never enters VWAP and never raises
+# source_count. Set `[aggregate.composite_reference] enabled = false`
+# to restore the pure freeze-and-auto-release posture.
 [[aggregate.triangulations]]
 target = "crypto:XLM/fiat:EUR"
 legs   = ["crypto:XLM/fiat:USD", "fiat:USD/fiat:EUR"]
