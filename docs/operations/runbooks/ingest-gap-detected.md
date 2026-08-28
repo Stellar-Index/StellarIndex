@@ -1,6 +1,6 @@
 ---
 title: Runbook — stellarindex_ingest_gap_detected
-last_verified: 2026-05-28
+last_verified: 2026-08-28
 status: ratified
 severity: P1
 ---
@@ -72,7 +72,7 @@ This is the F-0020 cascade pattern. Pause heavy walks (any running `stellarindex
 
 ## Known false-positive patterns
 
-- **First boot after rc.84+ deploy.** The detector runs immediately on startup so the gauge is non-empty before the first 5-min cycle; if a historic gap is preserved from before deploy the alert fires within 15 min. Resolve via the standard targeted-backfill path.
+- **First boot after rc.84+ deploy.** The detector's first cycle runs immediately on startup (light targets are scanned; the 6h-cadence `sdex`/`soroban-events` targets are scanned only if their cadence has elapsed since the persisted `gap-detector-scan` cursor, otherwise their last-known gauges are re-emitted from `source_coverage_snapshots`), so the gauge is non-empty before the first tick; if a historic gap is preserved from before deploy the alert fires within 15 min. Resolve via the standard targeted-backfill path.
 - **Genuinely-empty mainnet window.** Soroban activity dipped briefly below the `min-gap-size=1000` threshold (~1.5 h of zero contracts). Vanishingly rare on mainnet post-2024 but possible during testnet experiments — lower the threshold flag if your network is quieter.
 
 ## Related
