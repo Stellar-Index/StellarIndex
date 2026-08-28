@@ -103,6 +103,15 @@ groups:
       # genuine dispersion inside the window (spam / wash / dust prints),
       # not a regime shift. 24h window: a spam wave lasts hours and the
       # 5m share flaps as the wave breathes. Same runbook as outlier_storm.
+      # PROVEN ON THE 2026-08-14 SHAPE: internal/aggregate/
+      # outliers_spam_test.go (TestFilterOutliersLocal_TokenFarmWaveTrim
+      # ShareMatchesLegacy) runs the token-farm fixture — 720 honest
+      # prints over 24h + a 2h wave of 480 dust self-trades gapping
+      # 25–37 % print-to-print — through the ANCHORED time-local filter:
+      # 480 of 480 wave prints dropped (identical to the whole-window
+      # filter), 0 honest prints dropped, so window_trades{stage=class}
+      # = 1200 and {stage=outlier} = 720, a 40 % trim share. The promtool
+      # case below uses exactly those two values.
       - alert: stellarindex_aggregator_outlier_trim_fraction
         expr: |
           (
@@ -134,6 +143,46 @@ groups:
             is protected by the trim; the risk is a thin surviving sample
             (see min_usd_volume gating). Diagnose from the trades table
             for the pair; see the spam-wave signature in the runbook.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+
+      # OVERLAP COPY of the pre-2026-08-28 counter-based outlier_storm
+      # gate (2026-08-26 rescope: sum by (pair) rate[10m] > 10, for 2h —
+      # expr and for unchanged, only renamed). Kept for the design's
+      # one-week overlap because it is the rule that caught the
+      # 2026-08-14 token-farm wave live; outlier_trim_fraction above is
+      # proven on that shape by fixture, this is the live cross-check.
+      # With the anchored time-local filter an agreed step is no longer
+      # trimmed, so the 2026-08-28 false-fire cannot recur here; what it
+      # still re-counts every tick is genuine in-window dispersion.
+      # RETIRE ON 2026-09-04: delete this rule + its three promtool cases
+      # (rule-tests/aggregator_test.yml "legacy overlap" section) + the
+      # alerts-catalog row, in BOTH rule trees, once trim_fraction has
+      # been observed firing (or correctly silent) on live data for a
+      # week. Same runbook.
+      - alert: stellarindex_aggregator_outlier_trim_rate_legacy
+        expr: |
+          sum by (pair) (rate(stellarindex_aggregator_dropped_trades_total{reason="outlier"}[10m])) > 10
+        for: 2h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: aggregator
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+          summary: "{{ $labels.pair }} outlier-trim >10/s sustained 2h — persistent price dispersion (P3, legacy overlap gate, retire 2026-09-04)"
+          description: |
+            The time-local outlier filter has trimmed >10 trades/s from
+            {{ $labels.pair }}'s VWAP input for 2h+ (per-tick re-count of
+            window residents outside every reference band). This is the
+            pre-2026-08-28 counter gate kept for a one-week overlap with
+            stellarindex_aggregator_outlier_trim_fraction; expect the two
+            to fire together on a sustained spam / wash wave. The
+            PUBLISHED price is protected by the trim — this is a
+            data-quality / source-health signal, NOT a customer-facing
+            price error. If this fires and trim_fraction does NOT, record
+            the pair + window before retiring this rule. NOTE: the
+            stellarindex_price_divergence_* alerts are INERT (F-1329, no
+            Prometheus producer) — do not wait on them.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
 
       - alert: stellarindex_aggregator_fx_snap_fallback_dominant

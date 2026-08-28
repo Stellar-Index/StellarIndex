@@ -21,8 +21,12 @@ severity: P3
 > 1. The filter is now **time-local** (`internal/aggregate/outliers_local.go`):
 >    a print is dropped only when it disagrees with the whole window
 >    AND its own neighbourhood (own / adjacent 1-minute buckets, or the
->    nearest 5 prints each side on a thin series). Steps survive; lone
->    wild prints do not.
+>    nearest 5 prints each side on a thin series). The local references
+>    are **anchored** — trusted only when their centre sits within ~4 %
+>    of the window median or of the previous trusted reference, with the
+>    local band capped at ±4 % — so a wash burst that dominates its own
+>    bucket cannot validate itself. Steps survive; lone wild prints and
+>    self-consistent spam bursts do not.
 > 2. `outlier_storm` reads **venue disagreement** directly:
 >    `max by (pair) / min by (pair)` of
 >    `stellarindex_aggregator_venue_vwap{window="5m"}` − 1 > **1 %** across
@@ -30,14 +34,19 @@ severity: P3
 >    `outlier_trim_fraction` reads the CURRENT 24h window's trim share
 >    from `stellarindex_aggregator_window_trades` (> **20 %** trimmed,
 >    ≥ 20 trades, for **30 m**) — the single-venue spam shape that
->    disagreement cannot see. Both are covered by
->    `deploy/monitoring/rule-tests/aggregator_test.yml`.
+>    disagreement cannot see, proven fireable on the 2026-08-14
+>    token-farm fixture (40 % trim share; see the promtool case). Both
+>    are covered by `deploy/monitoring/rule-tests/aggregator_test.yml`.
+>    The old counter gate survives one more week as
+>    `stellarindex_aggregator_outlier_trim_rate_legacy` (same expr /
+>    for; **retire 2026-09-04**) as the live cross-check — expect it to
+>    fire alongside `trim_fraction` on a sustained wave.
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellarindex_aggregator_outlier_storm` (venue disagreement) / `stellarindex_aggregator_outlier_trim_fraction` (in-window trim share) |
+| Alert | `stellarindex_aggregator_outlier_storm` (venue disagreement) / `stellarindex_aggregator_outlier_trim_fraction` (in-window trim share) / `stellarindex_aggregator_outlier_trim_rate_legacy` (overlap copy of the old counter gate, retire 2026-09-04) |
 | Severity | P3 (ticket) |
 | Detected by | `deploy/monitoring/rules/aggregator.yml` |
 | Typical MTTR | 30 min – several hours |
@@ -47,6 +56,7 @@ severity: P3
 
 - `outlier_storm`: `max by (pair)(stellarindex_aggregator_venue_vwap{window="5m"}) / min by (pair)(...) − 1 > 0.01` with ≥ 2 venue series, for a **single** `pair`, sustained past 15 m.
 - `trim_fraction`: `1 − window_trades{stage="outlier"} / window_trades{stage="class"} > 0.2` on `window="24h"` with ≥ 20 class-filtered trades, sustained past 30 m.
+- `trim_rate_legacy` (until 2026-09-04): `sum by (pair) rate(dropped_trades_total{reason="outlier"}[10m]) > 10` for 2 h — the per-tick re-count; treat exactly like `trim_fraction`.
 - The published VWAP for that pair is typically still correct — cross-check the
   pair's `div:<pair>` Redis flag / API `flags.divergence_warning` for actual
   price impact before assuming the served number is wrong.
@@ -110,11 +120,17 @@ attributing this exact wave took ad-hoc SQL), then confirm the
 single-issuer pattern in `trades` for that pair. The filter is doing
 its job — the VWAP input is protected; treat it as abuse of the venue,
 not of the aggregator, and wait it out unless the surviving sample gets
-too thin (then see `min_usd_volume` gating). Note the time-local filter
-lets a run of > 5 consecutive same-level prints in a THIN series
-validate itself — a long single-source spam run at one wrong level is
-not rejected (no time-local definition can), so on an SDEX-only pair
-also read the survivor count and `min_usd_volume` gating.
+too thin (then see `min_usd_volume` gating). Residual gap of the
+anchored time-local filter — a wave still self-validates when it is
+(a) the **majority of the whole 24h window** (the window median is then
+the spam level; the whole-window filter fails identically and
+`trim_fraction` reads a low share), (b) within the ~4 % anchor
+tolerance of the honest level (indistinguishable from a step), or (c)
+random-walking in ≤ 4 % steps bucket-to-bucket (indistinguishable from
+a trend). A self-consistent burst at 2–3× — the 2026-08-14 shape — is
+none of these and is dropped in full (`outliers_spam_test.go`). On an
+SDEX-only pair also read the survivor count and `min_usd_volume`
+gating.
 
 ## Mitigation (≤ 15 min)
 
@@ -178,9 +194,11 @@ Capture for the postmortem:
   the ADR lands the σ default lives at
   `aggregate.outlier_sigma_threshold = 4.0` in TOML.
 - `internal/aggregate/outliers_local.go` — the orchestrator's
-  time-local filter; `internal/aggregate/outliers.go` — the
+  anchored time-local filter; `internal/aggregate/outliers.go` — the
   whole-window form still used by `/v1/vwap` + `/v1/ohlc`. Any
-  algorithm change must update this runbook.
+  algorithm change must update this runbook, and the token-farm
+  fixture numbers in `outliers_spam_test.go` and the promtool
+  `trim_fraction` case move in lockstep.
 
 ## Changelog
 
@@ -205,4 +223,10 @@ Capture for the postmortem:
   `stellarindex_aggregator_window_trades` (> 20 % of the 24h window,
   ≥ 20 trades, 30 m) for the single-venue spam shape. promtool cases
   rewritten: agreed step silent, one venue +3 % fires, single venue
-  never fires.
+  never fires. Same day, repair round: local references **anchored**
+  (chain continuity + ±4 % band cap) after review showed any burst
+  that is the majority of its own 1 m bucket validated itself at any
+  density (the token-farm fixture passed 480/480 wave prints);
+  spam-bucket fixtures added; `trim_fraction` promtool case now uses
+  the fixture's real filter output (1200 / 720); old counter gate kept
+  as `outlier_trim_rate_legacy` for one week (retire 2026-09-04).

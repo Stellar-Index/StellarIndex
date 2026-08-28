@@ -45,21 +45,40 @@ import (
 // A print is DROPPED only when it disagrees with every reference —
 // the window AND its neighbourhood. That is the shape of a
 // fat-finger, a wash print, or a dust-sized spam fill; an agreed
-// regime shift agrees with its neighbourhood by definition. The
-// local references reuse [robustCentreScale] with a small-sample
-// lower bound on the scale ([localScaleRelFloor]): a tight
-// neighbourhood still admits ±sigma·0.25% of honest dispersion and
-// still rejects a 2× print.
+// regime shift agrees with its neighbourhood by definition.
 //
-// Known trade-off (documented, accepted): a run of more than
-// [DefaultOutlierNeighbours] consecutive prints at the SAME wrong
-// level in a THIN series validates itself locally. Any time-local
-// definition of "outlier" must — six consecutive agreeing prints
-// with nothing else around them ARE the local market. The
-// unregistered-venue class filter still removes token-farm spam
-// from unknown sources ahead of this filter, and the alert on
-// venue disagreement (stellarindex_aggregator_outlier_storm) plus
-// the trim-fraction alert cover the registered-venue case.
+// The local references are ANCHORED, because a reference built from
+// a print's own neighbourhood is otherwise free to validate whatever
+// that neighbourhood contains: a wash burst that is the majority of
+// its own 1 m bucket (≥ MinBucket prints at 2–3×) would set the
+// bucket's median to the wash level and score itself z≈0, at ANY
+// density, and the 2026-08-14 token-farm wave validated itself 480/480
+// in the unanchored prototype. Two rules close that:
+//
+//   - the local scale is CLAMPED to [localScaleRelFloor,
+//     localScaleRelCeiling]·centre (0.25 %–1 %): a tight neighbourhood
+//     still admits honest dispersion, and a wildly dispersed one
+//     cannot widen its own band past ±sigma·1 %;
+//   - a local reference is TRUSTED only when its centre lies within
+//     the anchor tolerance — sigma·max(window scale, ceiling·centre),
+//     ±4 % at the default sigma — of the window median OR of the
+//     previous trusted reference in time order (chain continuity). An
+//     agreed step chains bucket-to-bucket; a 2.5× wash bucket is
+//     within tolerance of neither and is scored against the window
+//     band alone, where it fails. Untrusted references are simply
+//     absent from the print's reference set.
+//
+// Residual gap (documented, accepted): a burst is still self-validated
+// when it is the MAJORITY OF THE WHOLE WINDOW (the window median is
+// then the burst level — the whole-window filter fails identically,
+// and outlier_trim_fraction cannot see it either), when it sits within
+// the ~4 % anchor tolerance of the honest level (indistinguishable from
+// a step by construction), or when it random-walks in ≤ 4 % steps
+// bucket-to-bucket (indistinguishable from a trending market). The
+// unregistered-venue class filter still removes token-farm spam from
+// unknown sources ahead of this filter; outlier_trim_fraction covers a
+// registered single venue's wave; outlier_storm covers venue
+// disagreement.
 //
 // The whole value path is exact *big.Rat (ADR-0003); `Sigma` is a
 // config knob converted once to an exact rational.
@@ -162,19 +181,35 @@ type robustRef struct {
 // pairs a sub-1% print is still judged by the legacy band.
 var localScaleRelFloor = big.NewRat(1, 400)
 
+// localScaleRelCeiling is the UPPER BOUND on a local reference's
+// σ-equivalent scale, as a fraction of its centre: 1/100 = 1 %, i.e.
+// a ±4 % band at the default sigma 4. A local reference's MAD is its
+// own neighbourhood's dispersion — for a bucket of wash prints that
+// gap 25–37 % between fills it is enormous, and an uncapped scale
+// would let the bucket admit everything in it. Honest intra-minute
+// dispersion on any served pair is far below 1 %, so the cap costs
+// nothing on real data and the window reference (exact MAD, no
+// ceiling) still decides genuinely dispersed windows.
+var localScaleRelCeiling = big.NewRat(1, 100)
+
 func newRobustRef(prices []*big.Rat) *robustRef {
 	c, s := robustCentreScale(prices)
 	return &robustRef{centre: c, scale: s}
 }
 
-// newLocalRef is [newRobustRef] with the [localScaleRelFloor] lower
-// bound applied to the scale.
+// newLocalRef is [newRobustRef] with the scale clamped to
+// [localScaleRelFloor, localScaleRelCeiling]·|centre|.
 func newLocalRef(prices []*big.Rat) *robustRef {
 	r := newRobustRef(prices)
 	floor := new(big.Rat).Mul(localScaleRelFloor, r.centre)
 	floor.Abs(floor)
 	if floor.Cmp(r.scale) > 0 {
 		r.scale = floor
+	}
+	ceiling := new(big.Rat).Mul(localScaleRelCeiling, r.centre)
+	ceiling.Abs(ceiling)
+	if ceiling.Sign() > 0 && ceiling.Cmp(r.scale) < 0 {
+		r.scale = ceiling
 	}
 	return r
 }
@@ -211,8 +246,10 @@ func minScore(best *big.Rat, ref *robustRef, p *big.Rat) *big.Rat {
 type priceBucket struct {
 	// members are positions into the time-ordered `order` slice.
 	members []int
-	ref     *robustRef // lazily built; nil when the bucket doesn't qualify
-	built   bool
+	// ref is the bucket's TRUSTED local reference: nil when the bucket
+	// holds fewer than opts.MinBucket prices or its centre is not
+	// anchored (see [localIndex.anchorBuckets]).
+	ref *robustRef
 }
 
 // localIndex is the time-ordered view of a window's usable prices
@@ -227,6 +264,15 @@ type localIndex struct {
 	bucketOf []int
 	buckets  []*priceBucket
 	window   *robustRef
+	// anchorTol is the anchor tolerance: sigma · max(window scale,
+	// localScaleRelCeiling·|window centre|). A local reference is
+	// trusted only when its centre is within anchorTol of the window
+	// centre or of lastAnchored.
+	anchorTol *big.Rat
+	// lastAnchored is the centre of the most recent trusted local
+	// reference in time order (nil before the first) — the chain a
+	// step walks along and a wash burst cannot join.
+	lastAnchored *big.Rat
 }
 
 // newLocalIndex sorts the usable prices by trade time and partitions
@@ -252,33 +298,85 @@ func newLocalIndex(trades []canonical.Trade, validIdx []int, prices []*big.Rat, 
 		b.members = append(b.members, k)
 		ix.bucketOf[k] = len(ix.buckets) - 1
 	}
+	ix.anchorTol = anchorTolerance(ix.window, opts.Sigma)
+	ix.anchorBuckets()
 	return ix
 }
 
-// bucketRef returns bucket bi's local reference, building it on first
-// use; nil when bi is out of range or the bucket holds fewer than
-// opts.MinBucket prices.
+// anchorTolerance returns sigma · max(window.scale,
+// localScaleRelCeiling·|window.centre|): how far a local reference's
+// centre may sit from its anchor and still be trusted. The ceiling
+// term keeps the tolerance meaningful on a tight window (a 0.2 % MAD
+// would otherwise reject a genuine 2 % step's own bucket); the
+// window-scale term keeps it consistent with the legacy band on a
+// genuinely dispersed window.
+func anchorTolerance(window *robustRef, sigma float64) *big.Rat {
+	tol := new(big.Rat).Mul(localScaleRelCeiling, window.centre)
+	tol.Abs(tol)
+	if window.scale.Cmp(tol) > 0 {
+		tol.Set(window.scale)
+	}
+	sigmaRat := new(big.Rat).SetFloat64(sigma)
+	if sigmaRat == nil {
+		return tol
+	}
+	return tol.Mul(tol, sigmaRat)
+}
+
+// anchored reports whether centre is within ix.anchorTol of the window
+// centre or of the previous trusted reference, and on success records
+// it as the new chain head.
+func (ix *localIndex) anchored(centre *big.Rat) bool {
+	ok := withinTol(centre, ix.window.centre, ix.anchorTol) ||
+		(ix.lastAnchored != nil && withinTol(centre, ix.lastAnchored, ix.anchorTol))
+	if ok {
+		ix.lastAnchored = centre
+	}
+	return ok
+}
+
+func withinTol(a, b, tol *big.Rat) bool {
+	d := new(big.Rat).Sub(a, b)
+	d.Abs(d)
+	return d.Cmp(tol) <= 0
+}
+
+// anchorBuckets builds each qualifying bucket's reference in time
+// order and keeps only the anchored ones. The chain runs over
+// buckets alone here: a bucket after a thin stretch still chains from
+// the last dense bucket before it (or from the window).
+func (ix *localIndex) anchorBuckets() {
+	ix.lastAnchored = nil
+	for _, b := range ix.buckets {
+		if len(b.members) < ix.opts.MinBucket {
+			continue
+		}
+		ps := make([]*big.Rat, len(b.members))
+		for j, k := range b.members {
+			ps[j] = ix.prices[ix.order[k]]
+		}
+		if ref := newLocalRef(ps); ix.anchored(ref.centre) {
+			b.ref = ref
+		}
+	}
+	ix.lastAnchored = nil
+}
+
+// bucketRef returns bucket bi's trusted local reference; nil when bi
+// is out of range or the bucket does not qualify (too thin or
+// unanchored).
 func (ix *localIndex) bucketRef(bi int) *robustRef {
 	if bi < 0 || bi >= len(ix.buckets) {
 		return nil
 	}
-	b := ix.buckets[bi]
-	if !b.built {
-		b.built = true
-		if len(b.members) >= ix.opts.MinBucket {
-			ps := make([]*big.Rat, len(b.members))
-			for j, k := range b.members {
-				ps[j] = ix.prices[ix.order[k]]
-			}
-			b.ref = newLocalRef(ps)
-		}
-	}
-	return b.ref
+	return ix.buckets[bi].ref
 }
 
 // neighbourhoodRef builds the count-neighbourhood reference for
 // order-position k: the nearest opts.Neighbours prices on each side,
-// excluding k itself. nil when k has no neighbours at all.
+// excluding k itself. nil when k has no neighbours at all or the
+// neighbourhood's centre is not anchored. Must be called in time
+// order (it advances the anchor chain).
 func (ix *localIndex) neighbourhoodRef(k int) *robustRef {
 	lo, hi := k-ix.opts.Neighbours, k+ix.opts.Neighbours
 	if lo < 0 {
@@ -296,19 +394,28 @@ func (ix *localIndex) neighbourhoodRef(k int) *robustRef {
 	if len(neigh) == 0 {
 		return nil
 	}
-	return newLocalRef(neigh)
+	ref := newLocalRef(neigh)
+	if !ix.anchored(ref.centre) {
+		return nil
+	}
+	return ref
 }
 
 // score returns the SMALLEST σ-equivalent distance from the price at
-// order-position k to any of its references: the window, its own
-// bucket, the adjacent buckets, and — when its own bucket is too thin
-// to qualify — its count-neighbourhood. nil when no reference produced
-// a finite score (only possible around a zero centre).
+// order-position k to any of its trusted references: the window, its
+// own bucket, the adjacent buckets, and — when its own bucket does not
+// qualify — its count-neighbourhood. nil when no reference produced a
+// finite score (only possible around a zero centre). Must be called in
+// time order: an own-bucket reference advances the anchor chain the
+// neighbourhood references continue from.
 func (ix *localIndex) score(k int) *big.Rat {
 	p := ix.prices[ix.order[k]]
 	best := minScore(nil, ix.window, p)
 	bi := ix.bucketOf[k]
 	own := ix.bucketRef(bi)
+	if own != nil {
+		ix.lastAnchored = own.centre
+	}
 	for _, ref := range []*robustRef{own, ix.bucketRef(bi - 1), ix.bucketRef(bi + 1)} {
 		if ref != nil {
 			best = minScore(best, ref, p)

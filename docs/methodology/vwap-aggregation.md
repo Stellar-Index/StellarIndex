@@ -164,11 +164,24 @@ several robust references — the whole window's median/MAD band, its own
 buckets, and, for a bucket too thin to qualify, the nearest five prints
 on each side — and is dropped only when it sits more than
 `σ × scale` from **every** one of them, where `scale` is
-`1.4826 × MAD` of that reference (floored at 0.25 % of the centre for
-the small local references). A lone fat-finger or wash print disagrees
-with the window *and* its neighbours and is removed; an agreed regime
-shift agrees with its neighbours and survives. σ defaults to 4.0 and
-remains configurable via `outlier_sigma_threshold`.
+`1.4826 × MAD` of that reference (clamped to 0.25 %–1 % of the centre
+for the small local references). A local reference is **anchored**:
+it is trusted only when its centre lies within
+`σ × max(window scale, 1 % of centre)` — ±4 % at the default σ — of the
+window median or of the previous trusted reference in time order
+(chain continuity). A lone fat-finger or wash print disagrees with the
+window *and* its neighbours and is removed; a burst that is the
+majority of its own minute cannot become its own reference because its
+centre is anchored to nothing; an agreed regime shift agrees with its
+neighbours, chains bucket-to-bucket, and survives. σ defaults to 4.0
+and remains configurable via `outlier_sigma_threshold`.
+
+Residual gap, stated precisely: a wrong-level run still self-validates
+when it is the majority of the whole window (the whole-window filter
+fails identically), when it sits within the ~4 % anchor tolerance of
+the honest level, or when it drifts in ≤ 4 % steps bucket-to-bucket —
+all three are indistinguishable from a market by construction. A
+self-consistent 2–3× burst at any density is not, and is dropped.
 
 Why not the whole-window band alone: MAD measures the *majority*
 regime's dispersion (0.1–0.3 % on a liquid pair), so a window-wide band

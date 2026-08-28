@@ -1620,11 +1620,13 @@ Semantics caveat (2026-08-28): the orchestrator re-runs the filter over
 the whole trailing window every tick, so a print that stays outside the
 band is counted again on every tick it remains in the window, once per
 window. The rate is "band-residents × windows / tick", not "new
-outliers/s". No alert gates on the `outlier` reason any more —
-`stellarindex_aggregator_outlier_storm` reads
+outliers/s". `stellarindex_aggregator_outlier_storm` reads
 `stellarindex_aggregator_venue_vwap` and
 `stellarindex_aggregator_outlier_trim_fraction` reads
-`stellarindex_aggregator_window_trades`; this counter is diagnostic.
+`stellarindex_aggregator_window_trades`; the only alert still gating on
+this counter is the renamed overlap copy of the old gate,
+`stellarindex_aggregator_outlier_trim_rate_legacy` (retire 2026-09-04),
+after which this counter is diagnostic only.
 
 ### `stellarindex_aggregator_venue_vwap`
 
