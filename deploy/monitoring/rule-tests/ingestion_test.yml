@@ -1,0 +1,118 @@
+---
+# promtool unit tests for the oracle unknown-symbols alert.
+#
+#   promtool test rules deploy/monitoring/rule-tests/ingestion_test.yml
+#
+# `stellarindex_ingestion_oracle_unknown_symbols` is the first consumer
+# of `stellarindex_source_unknown_symbols_total` — the 2026-08-04 cold
+# audit found the counter evaluated by nothing while r1 carried 7,794
+# dropped Reflector slots. The contract pinned here:
+#   1. a flat counter stays SILENT;
+#   2. Reflector (5-minute cadence, one unmapped slot per event)
+#      TICKETS with source=reflector;
+#   3. Band publishes ONCE A DAY — a trailing window shorter than that
+#      cadence would flap daily, so the 25h window must keep the alert
+#      continuously firing across a day boundary.
+#
+# Deliberately lives OUTSIDE `deploy/monitoring/rules/` — see the header
+# of archive-completeness_test.yml. The R1 overlay copy of the rule is
+# held semantically identical by scripts/ci/lint-rule-equivalence.
+
+rule_files:
+  - ../rules/ingestion.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Flat counter ─────────────────────────────────────────────────
+  - interval: 1m
+    name: a flat counter does not ticket
+    input_series:
+      - series: 'stellarindex_source_unknown_symbols_total{job="stellarindex_indexer",instance="r1:9100",source="reflector"}'
+        values: '7794+0x1700'
+    alert_rule_test:
+      - eval_time: 1600m
+        alertname: stellarindex_ingestion_oracle_unknown_symbols
+        exp_alerts: []
+
+  # ── Reflector: one unmapped slot every 5 minutes ─────────────────
+  # The counter steps by one every 5 min from t=0. By 60m the trailing
+  # 25h increase is > 0 and has been for the 30-minute `for`.
+  - interval: 1m
+    name: a recurring unmapped reflector symbol tickets
+    input_series:
+      - series: 'stellarindex_source_unknown_symbols_total{job="stellarindex_indexer",instance="r1:9100",source="reflector"}'
+        values: '0+0x4 1+0x4 2+0x4 3+0x4 4+0x4 5+0x4 6+0x4 7+0x4 8+0x4 9+0x4 10+0x4 11+0x4 12+0x4'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_ingestion_oracle_unknown_symbols
+        exp_alerts:
+          - exp_labels:
+              source: reflector
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-unknown-symbols.md
+              summary: "Oracle reflector is publishing symbols the canonical allow-list does not map"
+              description: |
+                stellarindex_source_unknown_symbols_total{source="reflector"}
+                increased in the trailing 25 h. The oracle decoder met a symbol /
+                feed_id with no canonical asset mapping. Until the decoders
+                record such slots under `raw:` they are dropped from the price
+                surface; either way the allow-list (ADR-0010 / 0014 / 0028) or
+                the RedStone feed registry needs extending, and the affected
+                ledgers need a replay once it is. See the runbook.
+
+  # ── Band: one unmapped slot per DAILY publish ────────────────────
+  # Bumps at t=24h and t=48h only. At t=47h (23h after the first bump,
+  # 1h before the second) a 6h or 24h window would have gone quiet; the
+  # 25h window still holds the t=24h step, so the alert is still firing
+  # — no daily flap. At t=50h the second step keeps it firing.
+  - interval: 1m
+    name: a daily-cadence band symbol keeps the alert firing across the day boundary
+    input_series:
+      - series: 'stellarindex_source_unknown_symbols_total{job="stellarindex_indexer",instance="r1:9100",source="band"}'
+        values: '0+0x1440 1+0x1440 2+0x200'
+    alert_rule_test:
+      - eval_time: 1000m
+        alertname: stellarindex_ingestion_oracle_unknown_symbols
+        exp_alerts: []
+      - eval_time: 2820m
+        alertname: stellarindex_ingestion_oracle_unknown_symbols
+        exp_alerts:
+          - exp_labels:
+              source: band
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-unknown-symbols.md
+              summary: "Oracle band is publishing symbols the canonical allow-list does not map"
+              description: |
+                stellarindex_source_unknown_symbols_total{source="band"}
+                increased in the trailing 25 h. The oracle decoder met a symbol /
+                feed_id with no canonical asset mapping. Until the decoders
+                record such slots under `raw:` they are dropped from the price
+                surface; either way the allow-list (ADR-0010 / 0014 / 0028) or
+                the RedStone feed registry needs extending, and the affected
+                ledgers need a replay once it is. See the runbook.
+      - eval_time: 3000m
+        alertname: stellarindex_ingestion_oracle_unknown_symbols
+        exp_alerts:
+          - exp_labels:
+              source: band
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-unknown-symbols.md
+              summary: "Oracle band is publishing symbols the canonical allow-list does not map"
+              description: |
+                stellarindex_source_unknown_symbols_total{source="band"}
+                increased in the trailing 25 h. The oracle decoder met a symbol /
+                feed_id with no canonical asset mapping. Until the decoders
+                record such slots under `raw:` they are dropped from the price
+                surface; either way the allow-list (ADR-0010 / 0014 / 0028) or
+                the RedStone feed registry needs extending, and the affected
+                ledgers need a replay once it is. See the runbook.

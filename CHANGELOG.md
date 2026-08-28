@@ -28,6 +28,35 @@ against.
   `internal/sources/*/{decode*,events,feeds,pairs}.go` unless a commit
   carries a `Replay-Plan:` trailer (`none — <reason>` allowed; a bare
   `none` is not). Fixture self-test in `lint-replay-plan-test.sh`.
+- **Canonical `raw:` asset type — the record layer of the oracle
+  capture-totality design (PR-1 of 7).** `canonical.AssetOracleRaw`
+  (`raw:<symbol>`, 1–64 printable-ASCII bytes, no allow-list) holds an
+  oracle-published symbol verbatim when it maps to no canonical asset.
+  `ParseAsset` dispatches the prefix ahead of the classic
+  `<code>:<issuer>` split (on main `raw:BTC` parsed as classic code
+  `raw` + issuer `BTC` and failed), `Validate`/`Value`/`Scan`/JSON
+  round-trip it, and `Asset.IsMapped()` is the interpretation-layer
+  guard. `Pair.Validate` refuses a raw leg (never a VWAP input),
+  `supply.AssetKey` treats it as off-chain, and every `oracle_updates`
+  reader that re-parses the asset column (`LatestOracleUpdatesForAssets`,
+  `LatestOracleObservation`, `LatestAggregatorPricesForPair`,
+  `LatestOracleStreams`) now tolerates a raw row instead of failing the
+  request — integration-tested against real Timescale. No decoder emits
+  raw rows yet (PR-2); this PR changes no served behaviour.
+- **Alert `stellarindex_ingestion_oracle_unknown_symbols`** — the
+  2026-08-04 cold audit found `stellarindex_source_unknown_symbols_total`
+  had no consumer in either rule tree while r1 carried 7,794 silently
+  dropped Reflector slots. Fires per source on any increase over a
+  trailing 25 h (longer than Band's daily cadence, so it cannot flap),
+  ticket severity, promtool unit-tested, runbook
+  `docs/operations/runbooks/oracle-unknown-symbols.md`.
+
+### Fixed
+
+- RedStone docs (`internal/sources/redstone/README.md`,
+  `docs/protocols/redstone.md`) cited a metric that never existed
+  (`redstone_unknown_symbols_total`); the counter is
+  `stellarindex_source_unknown_symbols_total{source="redstone"}`.
 - **Low-priority `ops_batch` ClickHouse identity for heavy
   `stellarindex-ops` jobs** (2026-08-28 r1: a runbook-prescribed
   `ch-rebuild -sep41` dry-run running as CH's `default` user starved the
