@@ -1,6 +1,6 @@
 ---
 title: v1 launch plan — THE single source of truth
-last_verified: 2026-08-15
+last_verified: 2026-08-28
 status: active
 severity: P1
 ---
@@ -38,6 +38,69 @@ severity: P1
 >
 > The distinction is the point. A plan that presents carried claims as
 > verified is the same failure mode as an API that renders absent as zero.
+
+### Session refresh — 2026-08-28 (v0.45.0 → v0.47.2 + adversarial plan-audit)
+
+> **Read this before the 2026-08-25 boxes below.** Where an older box says an
+> item is open and this section says it is closed (or vice versa), this section
+> is right. [V] here means verified against live r1 / the futurenet box / HEAD
+> on 2026-08-28; [C] means carried and not re-proven in this session.
+
+**Closed this session [V]:**
+
+- **Binary-drift class CLOSED.** ops was `v0.44.7` and migrate `v0.28.1` while
+  every other unit ran `v0.46.1` — the recurring F-1314 shape: `deploy.yml`'s
+  default binary list omitted them, so each release silently left two units
+  behind. `deploy.yml` default list now includes both; a version-skew probe +
+  alerts + runbook are live (skew=0 at handoff). Fleet is `v0.47.2`.
+- **`/v1/assets` NULL-scan class fixed** at `scanAssetRow` — `limit` 100–500
+  all return 200 (previously a NULL in any nullable column 500'd the page).
+- **Transitive pricing visible end-to-end** (CAUP7 traced from source row to
+  served price).
+- **issuer-flags job + timer (05:47Z) installed**; write path proven — 21 of
+  59,191 issuers flagged on the first real run.
+- **reflector-fx: allow-list `e17288bd` stranded 190,228 served rows**
+  (CDF/CRC/KES/PEN, every row since serving began) — replayed. Plus 39,165
+  legacy May-era double-writes (`op_index` 11 & 15) deduped. Full INV-5 verify:
+  `complete=true coverage=1.0`.
+- **Futurenet 7,918-ledger hole (221512–230399)** found by plan-audit
+  arithmetic (expected-vs-actual row count), backfilled, `missing=0`.
+
+**Re-derived from HEAD / the box [V] (corrects the boxes below):**
+
+- **W8:** 1a / 6c / 9c / 10a / 14a were fixed 2026-08-25 (#160–#164). 9b
+  *detection* shipped; the stall *fix* is undecided. 12 is an open decision.
+- **W5:** `tx_hash_index` 20.9B rows (done); `soroban_events` decommissioned;
+  `operation_participants` ledger 3 → tip; SAC balances seeded;
+  `account_observations` at tip. **GENUINELY OPEN:** W5.3 pre-07-23 usd-volume
+  re-stamp; W5.4 the 13 supply-rollup resets.
+- **D1 REOPENED:** composite-route corroboration is config-dead — one route
+  per target, so `effectiveSourceCount` never widens and the corroboration
+  branch never executes in production.
+- **Testnet archive backfill STOPPED** after 3 identical S3 retry-quota deaths
+  (`ledgers_per_file=1` → 4.34M objects). Audited fix: backfill-only schema
+  vars `64/1000` — never the shared galexie vars (those are the live
+  ingestion path's; see the r1 captive-core/galexie restart cost).
+
+**NEW workstreams (added 2026-08-28):**
+
+- **Oracle capture-totality** — record unmapped oracle symbols under a `raw:`
+  namespace instead of dropping them. Oracles are reference-only, NOT VWAP
+  inputs; this is about not losing evidence, not about pricing from them.
+- **Composite ≥2 routes per thin target** (the D1 fix — makes corroboration
+  real rather than config-dead).
+- **ToS / Privacy pages** — absent. **Launch-blocking.** [D — wording is Ash's]
+- **Second public host into the launch gate** (W6).
+- **Runbooks: 79 of 149 are >90d stale**, including the DR / paging family.
+  **Rollback has never been rehearsed.** Both go into W7.
+- **Open at handoff:** `outlier_storm` P3 on XLM/USD diagnosed as level-sigma
+  trimming during a genuine −2% drift (not bad data) — an engineering item on
+  the trimmer (drift-aware sigma), NOT a bypass.
+
+**Calendar is a fork** (depends on the external-review disposition, Ash's
+call): **3.5–4.5 wk** if external review is post-launch (signed off as such);
+**5–7 wk** if pre-launch.
+
 
 ### ⚠️ DEPLOY GAP found + patched — config changes do NOT ship with binary deploys (2026-08-25)
 
