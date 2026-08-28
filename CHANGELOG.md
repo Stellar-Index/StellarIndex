@@ -29,27 +29,26 @@ against.
   carries a `Replay-Plan:` trailer (`none — <reason>` allowed; a bare
   `none` is not). Fixture self-test in `lint-replay-plan-test.sh`.
 ### Fixed
+### Changed
 
-- **Aggregator: structurally single-venue crosses (e.g. `crypto:XLM/fiat:GBP`)
-  now gain a second, edge-disjoint corroborating route through the FX
-  cross.** The graph router excludes a target's own direct market before
-  routing, and in the production graph every target has exactly ONE hub
-  route (through USD), so `corroborationCount` could never exceed 1 — the
-  freeze's `source_count` widening (`effectiveSourceCount`) was dead code
-  and phase 2 kept firing `sources=1` on prices the deep
-  `XLM/USD × USD/GBP` route reproduced exactly. `routeTarget` now enters
-  the direct print into the corroboration clique via
-  `aggregate.CombineRoutesWithDirect`: a confident hub route that agrees
-  with it within the tight 3 % band corroborates it (2); a divergent
-  composite, or a hub route below the corroboration confidence floor,
-  confirms nothing (1). The served composite, `pathCount`, and the
-  diverged / low-confidence flags are byte-identical to before — only
-  the freeze leg's independence count moves, and only upward. Oracles
-  stay reference-only (`IncludeInVWAP: false`) and are not fed into VWAP.
-  Tests: `TestRouter_DirectMarketCorroboratedBySingleHubRoute`,
-  `TestRouter_DirectMarketNotCorroboratedWhenDivergentOrThin`,
-  `TestTick_SingleVenueTargetCorroboratedByFXCross` (red on the prior
-  code: `corroborationCount = 1, want 2`).
+- **Aggregator: structurally single-venue crosses (`crypto:XLM/fiat:GBP`)
+  keep the signed freeze-and-auto-release posture; the USD-FX-derived hub
+  route is never counted as a second source.** In the production graph
+  every triangulation target has exactly one hub route (through USD), so
+  `corroborationCount` is always 1 and the freeze's `source_count`
+  widening never executes (design:
+  `docs/design/composite-route-corroboration-for-structurally-single-venue.md`
+  §1–§2). A candidate change that entered the target's own direct print
+  into the corroboration clique was rejected in review: the widening is
+  read one tick behind, so a prior-tick "agreement" pinned `sources=2`
+  for the NEXT bucket and a persistent single-venue manipulation was
+  never frozen. `TestRouterFreeze_TwoRoutesSuppressSingleSourceFreeze`
+  now pins the production shape as a control (single agreeing hub route
+  + single-venue z≈50 spike → freeze engages, hold kept on the
+  persisting print, `prevVWAPs` does not ratchet, last-known-good keeps
+  serving). The real second route (design §8.1, `crypto:XLM/crypto:BTC`
+  in `aggregate.pairs`) is an operator decision because it also exposes
+  a new, non-`min_usd_volume`-gated served pair.
 
 ## [v0.47.2] — 2026-08-28
 

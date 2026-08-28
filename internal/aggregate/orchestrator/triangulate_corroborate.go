@@ -50,27 +50,12 @@ import (
 // corroborationCount ≥ 2 DOES widen the freeze's `source_count` leg (via
 // [Orchestrator.effectiveSourceCount]) — but ONLY the freeze leg, never
 // [confidence.Inputs.SourceCount], and only as a MAX against the direct
-// trade-source count, so corroborationCount ≤ 1 can never RAISE it: the
+// trade-source count, so corroborationCount ≤ 1 (the single-chain case,
+// and the whole production config today) can never RAISE it: the
 // invariant above still holds for one path. The signal is also
 // staleness-bounded ([compositeMaxAgeTicks]): if the corroborating routes
 // dry up, the widening ages out within two ticks and the freeze falls
 // back to the direct source count, exactly like the divergence factor.
-//
-// Direct-market corroboration (D1, 2026-08-28). In the production graph
-// every target has exactly ONE hub route (through USD), so the router
-// alone could never count above 1 and the widening never executed —
-// the freeze kept firing on structurally single-venue crosses
-// (crypto:XLM/fiat:GBP: one venue) whose served price the deep
-// XLM/USD × USD/GBP route reproduced to well within the tight band. The
-// target's own direct market is therefore entered into the corroboration
-// clique as one more EDGE-DISJOINT route (it is excluded from routing, so
-// it can share no edge with any hub route): a confident hub route that
-// tightly agrees with the direct print corroborates it → 2. This does not
-// weaken the invariant above — the count is still "N independent,
-// confidence-gated, tightly-agreeing routes", the direct print merely
-// becomes one of the N — and a divergent composite (outside
-// routerCorroborationAgreePct) confirms nothing, leaving the count at 1.
-// See [aggregate.CombineRoutesWithDirect] and [Orchestrator.routeTarget].
 
 // compositeSample is the most recent composite (triangulated) price the
 // chain pass published for one target (pair, window), with the time it was
@@ -95,10 +80,9 @@ type compositeSample struct {
 	// edge-disjoint subset of the routes that agree within the tight band,
 	// 0 when diverged or when no two routes tightly agree). This is the
 	// count [Orchestrator.effectiveSourceCount] reads (one tick behind,
-	// freshness-bounded) into the freeze's source_count leg. 2 for a
-	// single-hub-route target whose confident composite tightly agrees with
-	// its own direct print (D1), ≤ 1 otherwise — so it never widens the
-	// freeze on a target the composite does not confirm.
+	// freshness-bounded) into the freeze's source_count leg. ≤ 1 for a
+	// single-route target (the whole production config today), so it never
+	// widens the freeze there.
 	corroborationCount int
 
 	// combinedConfidence / diverged are the router's quality flags for

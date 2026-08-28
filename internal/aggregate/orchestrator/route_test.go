@@ -62,15 +62,25 @@ func TestRouterFreeze_TwoRoutesSuppressSingleSourceFreeze(t *testing.T) {
 	chainUSD := TriangulationChain{Target: xlmGBP, Legs: []canonical.Pair{xlmUSD, usdGBP}}
 	chainEUR := TriangulationChain{Target: xlmGBP, Legs: []canonical.Pair{xlmEUR, eurGBP}}
 
-	// run drives two ticks and reports whether the freeze engaged on the
+	// run drives three ticks and reports whether the freeze engaged on the
 	// second (single-source, z≈50) bucket. tick 1 warms prevVWAP + records
-	// the composite corroboration; tick 2 is the one that would freeze.
-	run := func(t *testing.T, chains []TriangulationChain, legUSDGBP string) (froze bool, corroboration int) {
+	// the composite corroboration; tick 2 is the one that would freeze;
+	// tick 3 repeats the anomalous print (a PERSISTENT single-venue
+	// manipulation) so the caller can check the hold is kept and the
+	// comparator did not ratchet onto the manipulated print.
+	type runResult struct {
+		froze         bool     // freeze marker written on tick 2
+		corroboration int      // corroborationCount recorded on tick 1
+		heldOnTick3   bool     // lifecycle still Active after tick 3
+		prevAfter     *big.Rat // prevVWAPs comparator after tick 3
+		servedAfter   string   // VWAP cache key after tick 3
+	}
+	run := func(t *testing.T, chains []TriangulationChain) runResult {
 		t.Helper()
 		store := &mockStore{}
 		cache, _ := newTestRedis(t)
 		setLegVWAP(t, cache, xlmUSD, window, "0.100000000000")
-		setLegVWAP(t, cache, usdGBP, window, legUSDGBP)
+		setLegVWAP(t, cache, usdGBP, window, "0.800000000000")
 		setLegVWAP(t, cache, xlmEUR, window, "0.100000000000")
 		setLegVWAP(t, cache, eurGBP, window, "0.800000000000")
 
@@ -107,38 +117,69 @@ func TestRouterFreeze_TwoRoutesSuppressSingleSourceFreeze(t *testing.T) {
 		if err := o.Tick(context.Background()); err != nil {
 			t.Fatalf("tick 2: %v", err)
 		}
-		return len(marker.marks) > 0, sample.corroborationCount
+		froze := len(marker.marks) > 0
+
+		// Tick 3: the manipulation PERSISTS at 0.12 (same single venue).
+		store.trades = []canonical.Trade{
+			makeTradeOn(t, xlmGBP, "soroswap", 100_000_000, 12_000_000, now.Add(-5*time.Second)),
+		}
+		if err := o.Tick(context.Background()); err != nil {
+			t.Fatalf("tick 3: %v", err)
+		}
+		stateKey := xlmGBP.String() + ":" + window.String()
+		served, _ := cache.Get(context.Background(),
+			cachekeys.VWAP(xlmGBP.Base, xlmGBP.Quote, window).String()).Result()
+		return runResult{
+			froze:         froze,
+			corroboration: sample.corroborationCount,
+			heldOnTick3:   o.freezeStates[stateKey].Active(),
+			prevAfter:     o.prevVWAPs[stateKey],
+			servedAfter:   served,
+		}
 	}
 
 	// Two agreeing, edge-disjoint routes → corroborated → freeze suppressed.
-	// 3, not 2, since D1 (2026-08-28): the target's own direct print (0.08,
-	// agreeing) is entered into the clique as a third edge-disjoint opinion
-	// — see [aggregate.CombineRoutesWithDirect].
-	froze2, corr2 := run(t, []TriangulationChain{chainUSD, chainEUR}, "0.800000000000")
-	if corr2 != 3 {
-		t.Fatalf("two-route target recorded corroborationCount=%d, want 3 (the router did not "+
-			"find both independent corroborating routes plus the agreeing direct print — the "+
-			"rest of the test is meaningless)", corr2)
+	two := run(t, []TriangulationChain{chainUSD, chainEUR})
+	if two.corroboration != 2 {
+		t.Fatalf("two-route target recorded corroborationCount=%d, want 2 (the router did not "+
+			"find both independent corroborating routes — the rest of the test is meaningless)", two.corroboration)
 	}
-	if froze2 {
+	if two.froze {
 		t.Error("freeze ENGAGED on a target corroborated by 2 agreeing edge-disjoint routes — " +
 			"corroborationCount=2 must widen the freeze's source_count leg past 1 and suppress " +
 			"the single-source freeze")
 	}
 
-	// Counterfactual: a single hub route that DISAGREES with the direct print
-	// (USD/GBP 0.90 → composite 0.09 vs direct 0.08, 12.5% apart, outside the
-	// tight band) → corroborationCount 1 → still single-source → freeze fires.
-	// (Since D1 a single AGREEING hub route corroborates the direct print to 2
-	// — that case is TestTick_SingleVenueTargetCorroboratedByFXCross — so the
-	// control has to be the divergent composite.)
-	froze1, corr1 := run(t, []TriangulationChain{chainUSD}, "0.900000000000")
-	if corr1 != 1 {
-		t.Fatalf("single divergent-route target recorded corroborationCount=%d, want 1", corr1)
+	// Control: a single hub route (XLM→USD→GBP = 0.08) that AGREES with
+	// the tick-1 direct print → corroborationCount 1 → still single-source
+	// → the tick-2 single-venue spike freezes. This is the exact production
+	// shape (design doc §10: a USD-FX-derived hub route must never be
+	// claimed as a second source), so it is the control that must stay red
+	// if anyone widens the freeze leg from a single agreeing route.
+	one := run(t, []TriangulationChain{chainUSD})
+	if one.corroboration != 1 {
+		t.Fatalf("single-route target recorded corroborationCount=%d, want 1", one.corroboration)
 	}
-	if !froze1 {
-		t.Error("single divergent-route (corroborationCount=1) target did NOT freeze on a z≈50 " +
+	if !one.froze {
+		t.Fatal("single agreeing-route (corroborationCount=1) target did NOT freeze on a z≈50 " +
 			"single-source bucket — the counterfactual is broken, so the two-route pass proves nothing")
+	}
+
+	// Persistent manipulation (tick 3 still 0.12): the hold must be kept,
+	// the comparator must NOT ratchet onto the anomalous print (a prior-
+	// tick "agreement" pinning sources=2 for the next bucket would publish
+	// 0.12, advance prevVWAPs to it and collapse z to 0 on tick 3), and the
+	// served key must still be the last-known-good 0.08.
+	if !one.heldOnTick3 {
+		t.Error("tick 3 (manipulation persists): freeze lifecycle is NOT active — the hold was dropped")
+	}
+	if one.prevAfter == nil || one.prevAfter.Cmp(big.NewRat(2, 25)) != 0 {
+		t.Errorf("tick 3: prevVWAPs comparator = %v, want 2/25 (0.08) — it ratcheted onto the "+
+			"manipulated print", one.prevAfter)
+	}
+	if one.servedAfter != "0.080000000000" {
+		t.Errorf("tick 3: served VWAP = %q, want %q (last-known-good must keep serving through the hold)",
+			one.servedAfter, "0.080000000000")
 	}
 }
 
