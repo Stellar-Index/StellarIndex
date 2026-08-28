@@ -17,6 +17,24 @@ against.
 
 ### Added
 
+- **`stellarindex-ops usd-volume-restamp` (W5.3).** The corrective WRITE
+  half of `verify-usd-volume`: for every exact-tier (quote- or base-leg
+  USD-pegged) group in a bounded `-from/-to` day window it rewrites each
+  row whose stored `usd_volume` differs from `pegged_leg / 10^decimals`
+  to exactly the value the insert path writes, stamped with the run's
+  `derive_generation` (INV-3 guard: a live gen-0 replay can never claw a
+  correction back). Tier + scale come from the same
+  `ClassifyUSDVolumeTier` + peg config as the writer and the verifier —
+  no SQL reimplementation of the waterfall. Dry-run by default, `-write`
+  to apply, idempotent (correct rows are untouched, value and
+  generation), `-slice`d UPDATEs on a dedicated session with the
+  Timescale decompression cap raised, ch-backfill-style heartbeat. Replaces
+  the 2026-07-30 hand SQL for the pre-2026-07-23 USDC-base SDEX class
+  (`docs/operations/usd-volume-rederive-2026-08.md` step 5). Estimated
+  tiers stay `ch-rebuild`'s job. Unit tests pin the formula to
+  `tradeUSDVolume` byte-for-byte; the integration test proves the SQL
+  identity, the differential (a correct row is unchanged), idempotency
+  and the generation guard on real TimescaleDB.
 - **CI replay-plan tripwire (`scripts/ci/lint-replay-plan.sh`).** On
   2026-08-27 e17288bd widened `internal/canonical/asset_fiat.go` 32→132
   codes; live ingestion recorded 4 new currencies, nobody replayed
