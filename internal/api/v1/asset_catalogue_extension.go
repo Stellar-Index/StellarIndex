@@ -109,7 +109,16 @@ func (s *Server) applyAssetRowToDetail(ctx context.Context, detail *AssetDetail,
 		if !errors.Is(err, sql.ErrNoRows) {
 			s.logger.Debug("asset extension: row lookup failed",
 				"asset_id", assetID, "err", err)
+			return
 		}
+		// NO catalogue row — and that is precisely the case transitive
+		// pricing exists for. `classic_assets` requires a G-issuer
+		// (issuer_g_strkey NOT NULL), so a Soroban-native contract asset
+		// can NEVER have a row here. Returning now would make the whole
+		// feature inert for its primary case, which is exactly what
+		// happened when the fill lived below this guard: v0.46.0 shipped
+		// and CAUP7 still served price_usd:null.
+		s.fillTransitivePrice(ctx, detail, asset, assetID)
 		return
 	}
 	// #28: the catalogue row's price_usd — the same 7-day catalogue SQL
@@ -151,12 +160,7 @@ func (s *Server) applyAssetRowToDetail(ctx context.Context, detail *AssetDetail,
 	//
 	// transitivePriceFor gates BOTH legs itself and returns false on every
 	// error path, so this call site deliberately has no policy of its own.
-	if detail.PriceUSD == nil {
-		if p, ok := s.transitivePriceFor(ctx, asset, assetID); ok {
-			detail.PriceUSD = &p
-			detail.PriceBasis = priceBasisTransitive
-		}
-	}
+	s.fillTransitivePrice(ctx, detail, asset, assetID)
 	if priceAllowed && row.Change1hPct != nil {
 		detail.Change1hPct = row.Change1hPct
 	}
@@ -279,4 +283,21 @@ func assetPointsToWire(pts []timescale.AssetPricePoint) []AssetPricePoint {
 		out[i] = AssetPricePoint{T: p.T, P: p.P}
 	}
 	return out
+}
+
+// fillTransitivePrice fills a one-hop USD price when nothing else could
+// price the asset. Reached from BOTH arms of applyAssetRowToDetail —
+// with a catalogue row (which declined) and without one at all — because
+// the no-row arm is the case the feature exists for.
+//
+// No-ops unless PriceUSD is still nil, so it can never override a
+// directly-observed price. transitivePriceFor gates both legs itself.
+func (s *Server) fillTransitivePrice(ctx context.Context, detail *AssetDetail, asset canonical.Asset, assetID string) {
+	if detail == nil || detail.PriceUSD != nil {
+		return
+	}
+	if p, ok := s.transitivePriceFor(ctx, asset, assetID); ok {
+		detail.PriceUSD = &p
+		detail.PriceBasis = priceBasisTransitive
+	}
 }
