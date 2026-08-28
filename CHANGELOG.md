@@ -17,6 +17,23 @@ against.
 
 ### Added
 
+- **ClickHouse destructive-DDL size guard pinned by ansible.** New
+  `archival-node/tasks/21-clickhouse-drop-guard.yml` (tag
+  `clickhouse-drop-guard`) writes
+  `/etc/clickhouse-server/config.d/si-drop-guard.xml` pinning
+  `max_table_size_to_drop` / `max_partition_size_to_drop` to
+  ClickHouse's 50 GB default (`clickhouse_max_*_size_to_drop`, `0`
+  refused) and asserts the live `system.server_settings` value; no
+  restart (hot-reloaded). r1 was measured at 1 TiB for both — raised
+  by hand for D2's `REPLACE PARTITION` and never lowered — so
+  `account_movements` (582 GiB) was droppable in one statement.
+  Planned oversize drops now use the self-deleting
+  `force_drop_table` flag after a ZFS snapshot:
+  `docs/operations/clickhouse-destructive-ddl.md`.
+  `d2-ordinal-reproject.sh` requires `D2_FORCE_DROP=yes` and
+  `d3-lecur-v2-rebuild.sh rollback-precutover` requires
+  `D3_FORCE_DROP_V2=yes`; both arm the flag per guarded statement
+  and remove it after.
 - **Oracle capture-totality PR-2 — decoders record unmapped symbols
   as `raw:` rows.** The Reflector (dex/cex/fx), RedStone and Band
   decoders no longer SKIP a price slot whose symbol / feed_id is
