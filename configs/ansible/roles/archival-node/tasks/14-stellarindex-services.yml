@@ -562,6 +562,8 @@
     - data-freshness.timer
     - ch-supply.service
     - ch-supply.timer
+    - issuer-flags.service
+    - issuer-flags.timer
   notify: Reload systemd
 
 - name: Enable + start verify-archive / completeness / supply-snapshot timers
@@ -589,6 +591,7 @@
     - compute-completeness.timer
     - data-freshness.timer
     - ch-supply.timer
+    - issuer-flags.timer
 
 # ── archive-completeness — only where its cross-anchor is correct ────
 # See archive_completeness_enabled in defaults/main.yml: the check's only
