@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.48.0] — 2026-08-29
+
 ### Added
 
 - **Oracle capture-totality PR-2 — decoders record unmapped symbols
@@ -94,6 +96,15 @@ against.
   ticket severity, promtool unit-tested, runbook
   `docs/operations/runbooks/oracle-unknown-symbols.md`.
 
+- **Deploy served-path smoke** (#232): `deploy.yml` now curls the public
+  endpoints after restart and asserts the r1 version-skew probe reads 0 —
+  a deploy is not done until the served artifact answers.
+- **Ops-job unit tasks are taggable** (#229): `--tags ops-jobs` applies the
+  heavy-job wrapper/timers without the whole archival-node role.
+- **CI: `timeout-minutes` on every previously uncapped job** (23 jobs, 9
+  workflows, #260) and `persist-credentials: false` on all 34 checkout
+  steps (#276).
+
 ### Fixed
 
 - **`GET /v1/accounts/{g}/operations` and `/transactions` pages for a
@@ -146,7 +157,6 @@ against.
   client hello) and `scripts/ci/run-heavy-job-test.sh` (the shipped
   wrapper, extracted from the ansible task). See
   `docs/operations/clickhouse-ops-batch-profile.md`.
-### Fixed
 
 - **Outlier filter trimmed agreed price moves; `outlier_storm` measured
   its own artifact.** The published-VWAP filter scored every print
@@ -206,6 +216,23 @@ against.
   `for`, both rule trees, three promtool cases) as the live cross-check
   — **retire 2026-09-04**; after that `dropped_trades_total
   {reason="outlier"}` is diagnostic only.
+
+- **AsyncSink lost the in-flight batch on shutdown** (#240): `Stop()`
+  cancelled a steady-state write mid-INSERT and counted the whole batch as
+  LOST instead of handing it to the drain — every deploy that caught a
+  soroban_events batch in flight silently dropped it. The interrupted rows
+  are now re-queued into `drainOnStop` and retried under `DrainGrace`;
+  red-proven and stress-tested 600× under `-race`.
+- **galexie tip-lag parser** (#234) understands range object names on the
+  new archive schema (was reporting a bogus lag).
+- **`cut-release.sh --yes`** (#231): refuses non-TTY runs without
+  `--yes`/`--dry-run` instead of aborting silently on `read` EOF.
+- **Backfill-only archive schema vars** (#230): `galexie_backfill_*`
+  variables render into `galexie-backfill.toml` only, so a testnet 64/1000
+  re-export can never touch the live `galexie.toml` manifest; testnet
+  pinned to 64 ledgers/object.
+- **Bespoke-cache staleness tests are deterministic** (#264): an injectable
+  clock replaces a 10 ms real-time horizon that flaked on loaded CI runners.
 
 ## [v0.47.2] — 2026-08-28
 
