@@ -46,6 +46,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment:
       name: status-${{ github.event.inputs.environment }}
     steps:

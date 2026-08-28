@@ -99,6 +99,7 @@ jobs:
   lint:
     name: lint
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # CID-02 (audit-2026-07-23): `lint` is a required status check
     # (main-required-checks per CS-097); a job-level `if:` that a PR
     # author's own label can flip to `false` makes a "skipped" run
@@ -137,6 +138,7 @@ jobs:
   test:
     name: unit tests
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
@@ -176,6 +178,7 @@ jobs:
   integration-test:
     name: integration tests (Docker)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     # BLOCKING (CS-070). Wiring this job first surfaced accumulated rot (the
     # suite was only ever compiled, never run) — all fixed 2026-07-01: the
     # stale FXSources assertion (massive joined the registry), the markets
@@ -217,6 +220,7 @@ jobs:
   doc-checks:
     name: doc-code consistency
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: lint-docs
@@ -230,6 +234,7 @@ jobs:
   import-checks:
     name: import-boundary lint
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -468,6 +473,7 @@ jobs:
   actions-pinning:
     name: github-actions SHA-pinning lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -515,6 +521,7 @@ jobs:
   monitoring-rules:
     name: prometheus rule validation
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # Validates BOTH deploy/monitoring/rules/*.yml (multi-host) and
     # configs/prometheus/rules.r1/*.yml (R1 single-host overlay)
     # with promtool. Catches YAML syntax errors, broken PromQL, and
@@ -573,6 +580,7 @@ jobs:
   vuln:
     name: govulncheck + gitleaks
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -617,6 +625,7 @@ jobs:
   build:
     name: build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: [lint, test]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -639,6 +648,7 @@ jobs:
   openapi:
     name: openapi lint
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # N2-04: runs on push-to-main too — a direct push (the live-in-dev
     # norm) that edits openapi/ or the handlers previously skipped Spectral
     # + the generated-reference drift check, the exact bypass the push
@@ -691,6 +701,7 @@ jobs:
   web-explorer:
     name: web/explorer
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: web/explorer
@@ -781,6 +792,7 @@ jobs:
   web-status:
     name: web/status
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: web/status
@@ -867,6 +879,7 @@ jobs:
   branch-protection-status:
     name: branch protection status (informational)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # Informational means informational: a flaked curl to the GitHub
     # rules API must not take the whole push run red (it did on
     # 2026-08-24, run 32751060492 — the only failed job on an
