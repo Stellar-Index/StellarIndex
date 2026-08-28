@@ -436,6 +436,15 @@ jobs:
         # fixtures extract the shipped wrapper out of the ansible task and
         # run it. No network, no ansible, no systemd (non-root exec path).
         run: ./scripts/ci/run-heavy-job-test.sh
+      - name: lint-deploy-playbook
+        # deploy-ansible-deploy-2: deploy.yml reaches the test-net VMs only
+        # via --ssh-common-args ProxyJump, which controller-side rsync
+        # (ansible.posix.synchronize) never sees, and the fail-closed
+        # pgBackRest gate can only exit 1 on a VM with no pgbackrest. Pins
+        # deploy-binary.yml to connection-agnostic modules and the gate to
+        # the per-region pgbackrest_backup_enabled flag deploy.yml passes.
+        # No network, no ansible.
+        run: ./scripts/ci/lint-deploy-playbook.sh
       - name: lint-lexicon
         # Maintainability audit 2026-07-01 (D2+D6): domain-lexicon +
         # idiom ratchet. Zero rules (no Fetch/Make verbs, slog is the
@@ -853,6 +862,10 @@ jobs:
           printf '%s\n' '--- {}' > inventory/ci.syntax-secrets.yml
           ansible-playbook --syntax-check -i inventory/r1.example.yml playbooks/archival-node.yml -e secrets_file=../inventory/ci.syntax-secrets.yml
           ansible-playbook --syntax-check -i inventory/r1.example.yml playbooks/monitoring.yml
+          # deploy-binary.yml runs from deploy.yml against an ad-hoc `-i host,`
+          # inventory; it was never syntax-checked here (deploy-ansible-deploy-2).
+          ansible-playbook --syntax-check -i 'localhost,' playbooks/deploy-binary.yml \
+            -e version=v0.0.0-ci -e binaries_csv=stellarindex-api -e local_dist_dir=/tmp/ci-dist
       - name: ansible-lint (moderate profile — enforced; baseline grandfathered)
         working-directory: configs/ansible
         # CID-3 (audit-2026-08-14): the trailing `|| true` used to swallow the

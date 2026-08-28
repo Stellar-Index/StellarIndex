@@ -59,6 +59,22 @@ against.
   `docs/operations/clickhouse-ops-batch-profile.md`.
 ### Fixed
 
+- **`deploy.yml` could never apply schema on testnet/futurenet
+  (deploy-ansible-deploy-2).** `deploy-binary.yml` synced the migrations
+  dir with `ansible.posix.synchronize`, whose rsync runs on the
+  controller and never sees the `--ssh-common-args "-o ProxyJump=…"` the
+  NAT-only VMs are reached through, and its fail-closed pgBackRest
+  freshness gate can only exit 1 on a VM that has no pgbackrest at all —
+  so the only passing test-net deploy was `migrations_skip=true`
+  (binary on a stale schema while `/v1/healthz` is 200). The sync is now
+  `ansible.builtin.copy` (connection-agnostic, same as the role's own
+  migrations sync), the gate is conditioned on a new
+  `pgbackrest_backup_enabled` extra-var (default true — fail closed)
+  that `deploy.yml` sets per region (false only for testnet/futurenet,
+  with a loud "no verified recovery point" notice), and
+  `scripts/ci/lint-deploy-playbook.sh` + a CI `--syntax-check` of
+  `deploy-binary.yml` pin both properties. r1's path is unchanged.
+
 - **Outlier filter trimmed agreed price moves; `outlier_storm` measured
   its own artifact.** The published-VWAP filter scored every print
   against ONE band — the whole window's median ± 4 × 1.4826 × MAD — and

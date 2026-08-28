@@ -13,6 +13,11 @@
 #   local_dist_dir       — path on the controller (Action runner) holding
 #                          the binaries; each is named "<binary>-linux-amd64"
 #   health_grace_seconds — sleep before /v1/healthz probe (api only)
+#   pgbackrest_backup_enabled — "true" on hosts with a pgBackRest
+#                          stellarindex stanza (r1); "false" on the
+#                          test-net VMs, which have no pgbackrest at all
+#                          (18-pgbackrest-backup.yml). Defaults TRUE
+#                          (fail closed). deploy.yml sets it per region.
 #
 # Per-binary sequence:
 #   1. Resolve the running version (from --help output or version pkg)
@@ -70,12 +75,24 @@
     # playbook copies the migrations dir from the controller and
     # runs `stellarindex-migrate up` BEFORE touching any binary.
     # Idempotent — golang-migrate skips already-applied versions.
+    #
+    # ansible.builtin.copy, NOT ansible.posix.synchronize: rsync runs on
+    # the CONTROLLER and dials the host itself, so it never sees the
+    # `--ssh-common-args "-o ProxyJump=…"` deploy.yml uses for the NAT-only
+    # test-net VMs (synchronize forwards ssh_common_args only under
+    # `use_ssh_args: true`) — the testnet/futurenet path timed out here
+    # before it ever reached the schema (deploy-ansible-deploy-2). copy is
+    # connection-agnostic (works over the jump AND r1's direct SSH), same
+    # as 14-stellarindex-services.yml's sync. It does not delete stale
+    # files; migrations are append-only, so that is immaterial.
     - name: Sync migrations dir from controller
-      ansible.posix.synchronize:
+      ansible.builtin.copy:
         src: "{{ local_dist_dir }}/migrations/"
         dest: /usr/local/share/stellarindex/migrations/
-        delete: true
-        recursive: true
+        owner: root
+        group: root
+        mode: "0644"
+        directory_mode: "0755"
       when:
         - local_dist_dir is defined
         # `| bool` is load-bearing: deploy.yml passes this via
@@ -110,6 +127,15 @@
     # Overrides: `-e backup_freshness_max_age_hours=N` widens the window;
     # `-e backup_freshness_skip=true` bypasses entirely (emergency
     # hot-fix). Skipping is loud — the debug task below prints why.
+    #
+    # `pgbackrest_backup_enabled=false` is the HOST-SHAPE bypass: the
+    # test-net VMs never get pgbackrest (18-pgbackrest-backup.yml — no
+    # apt task, provisioned out of band on pubnet only), so on them this
+    # fail-closed gate can only ever exit 1 and the only way to deploy
+    # was migrations_skip=true — i.e. never applying schema from the
+    # workflow at all. deploy.yml passes the flag per region; the ad-hoc
+    # `-i host,` inventory means the role's inventory var of the same
+    # name is NOT loaded here, so it must arrive via -e. Defaults true.
     - name: Assert a recent restorable pgBackRest backup exists before migrating
       ansible.builtin.shell:
         # `set -o pipefail` is a bashism; ansible.builtin.shell defaults to
@@ -151,6 +177,7 @@
       when:
         - not (migrations_skip | default(false) | bool)
         - not (backup_freshness_skip | default(false) | bool)
+        - pgbackrest_backup_enabled | default(true) | bool
 
     - name: Report backup freshness verdict
       ansible.builtin.debug:
@@ -169,6 +196,18 @@
       when:
         - not (migrations_skip | default(false) | bool)
         - backup_freshness_skip | default(false) | bool
+
+    - name: Backup-freshness gate skipped — host has no pgBackRest stanza
+      ansible.builtin.debug:
+        msg: |
+          pgbackrest_backup_enabled=false — this host (test-net shape) has
+          no pgBackRest stanza, so migrations run WITHOUT a verified
+          recovery point. Expected on testnet/futurenet; NEVER pass this
+          for r1.
+      when:
+        - not (migrations_skip | default(false) | bool)
+        - not (backup_freshness_skip | default(false) | bool)
+        - not (pgbackrest_backup_enabled | default(true) | bool)
 
     - name: Apply outstanding migrations
       # Source the host's env (STELLARINDEX_POSTGRES_DSN — the real,
