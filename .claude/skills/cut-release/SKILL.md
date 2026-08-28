@@ -30,6 +30,8 @@ SemVer policy: `docs/architecture/semver-policy.md`.
    ```sh
    git checkout main && git pull --ff-only origin main
    bash scripts/dev/cut-release.sh vX.Y.Z --dry-run   # read the plan
+
+Non-interactive runs (agents, CI, `nohup`): pass `--yes` — the script refuses to run when stdin is not a TTY unless `--yes` or `--dry-run` is given (exit 2, loud message). This closed the 2026-08-28 incident where a backgrounded run hit EOF at the confirmation prompt, aborted, and `| tail` masked the exit so a "release" was announced with no tag on origin. Never gate on a piped exit code; check the tag on origin.
    bash scripts/dev/cut-release.sh vX.Y.Z
    ```
    It verifies branch, clean tree, remote sync, non-empty CHANGELOG
