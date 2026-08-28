@@ -41,6 +41,7 @@ Severity maps to [sev-playbook.md §1](sev-playbook.md#1-severity-definitions).
 | `stellarindex_ingestion_cursor_stuck` | `increase(stellarindex_cursor_last_ledger[5m])` per source | == 0 while source is live | P2 | [cursor-stuck](runbooks/cursor-stuck.md) |
 | `stellarindex_ingestion_orphan_events` | `rate(stellarindex_source_orphan_events_total[10m])` | > 10/min per source | P3 | [orphan-events](runbooks/orphan-events.md) |
 | `stellarindex_ingestion_decode_error` | `rate(stellarindex_source_decode_errors_total[5m])` | > 1/s sustained 5 min | P3 | [decode-errors](runbooks/decode-errors.md) |
+| `stellarindex_ingestion_oracle_unknown_symbols` | `sum by (source) (increase(stellarindex_source_unknown_symbols_total[25h]))` | > 0 sustained 30 min (an on-chain oracle publishes a symbol / feed_id the canonical allow-list does not map) | ticket | [oracle-unknown-symbols](runbooks/oracle-unknown-symbols.md) |
 | `stellarindex_ingestion_discovery_drops` | `increase(stellarindex_discovery_dropped_hits_total[10m])` | > 0 sustained 10 min | P3 | [discovery-drops](runbooks/discovery-drops.md) |
 | `stellarindex_served_value_drift` | `stellarindex_served_value_ok == 0` | sustained 26 h (two daily runs) | P3 | [served-value-drift](runbooks/served-value-drift.md) |
 | `stellarindex_served_value_check_stale` | `time() - stellarindex_served_value_last_run_unix` | > 48 h | P3 | [served-value-drift](runbooks/served-value-drift.md) |
@@ -413,7 +414,9 @@ auto-unfreeze at all. Rules in
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_aggregator_silent` | `rate(stellarindex_aggregator_vwap_writes_total[5m])` | == 0 for > 5 min | **P1** | [aggregator-silent](runbooks/aggregator-silent.md) |
-| `stellarindex_aggregator_outlier_storm` | `rate(stellarindex_aggregator_dropped_trades_total{reason="outlier"}[10m])` | > 5× baseline (offset 1h) for > 15 min | P3 | [aggregator-outlier-storm](runbooks/aggregator-outlier-storm.md) |
+| `stellarindex_aggregator_outlier_storm` | `max by (pair) / min by (pair)` of `stellarindex_aggregator_venue_vwap{window="5m"}` − 1, ≥ 2 venues | > 1 % for > 15 min | P3 | [aggregator-outlier-storm](runbooks/aggregator-outlier-storm.md) |
+| `stellarindex_aggregator_outlier_trim_fraction` | `1 − window_trades{stage="outlier"} / window_trades{stage="class"}` on the 24h window, ≥ 20 trades | > 0.2 for > 30 min | P3 | [aggregator-outlier-storm](runbooks/aggregator-outlier-storm.md) |
+| `stellarindex_aggregator_outlier_trim_rate_legacy` | `sum by (pair) rate(stellarindex_aggregator_dropped_trades_total{reason="outlier"}[10m])` — the pre-2026-08-28 counter gate, renamed for a one-week overlap; **retire 2026-09-04** | > 10/s for > 2 h | P3 | [aggregator-outlier-storm](runbooks/aggregator-outlier-storm.md) |
 | `stellarindex_aggregator_class_drop_spike` | `rate(stellarindex_aggregator_dropped_trades_total{reason="class"}[10m])` | > 10× baseline (offset 1h) for > 15 min | P3 | [aggregator-class-drop-spike](runbooks/aggregator-class-drop-spike.md) |
 | `stellarindex_aggregator_fx_snap_fallback_dominant` | `rate(stellarindex_aggregator_fx_snap_fallback_total[15m]) / rate(stellarindex_aggregator_triangulations_total{outcome="ok"}[15m])` | > 0.5 for > 30 min | P3 | [aggregator-fx-snap-fallback-dominant](runbooks/aggregator-fx-snap-fallback-dominant.md) |
 | `stellarindex_aggregator_triangulation_chains_dry` | `rate(stellarindex_aggregator_triangulations_total{outcome="missing_leg"}[15m])` > 0 **and** `rate(...{outcome="ok"}[15m])` == 0 | for > 30 min | P3 | [aggregator-triangulation-chains-dry](runbooks/aggregator-triangulation-chains-dry.md) |

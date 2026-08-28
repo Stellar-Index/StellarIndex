@@ -302,9 +302,10 @@ var dexSACSymbols = sync.OnceValue(func() map[string]string {
 			}
 		case canonical.AssetSoroban:
 			m[a.ContractID] = vc.Ticker
-		case canonical.AssetNative, canonical.AssetFiat, canonical.AssetCrypto, canonical.AssetRWA:
-			// native handled above; fiat/crypto/RWA ids never appear as
-			// trade-leg token contracts.
+		case canonical.AssetNative, canonical.AssetFiat, canonical.AssetCrypto,
+			canonical.AssetRWA, canonical.AssetOracleRaw:
+			// native handled above; fiat/crypto/RWA/raw-oracle ids never
+			// appear as trade-leg token contracts.
 		}
 	}
 	return m
