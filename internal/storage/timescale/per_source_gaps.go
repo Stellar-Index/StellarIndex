@@ -134,8 +134,14 @@ type GapDetectorTarget struct {
 //
 // SEMANTIC NOTE — census vs observed rows: this counts ledgers the
 // indexer RECORDED as carrying >= 1 eligible contract event (written
-// post-persist, from the LedgerCloseMeta), not ledgers with rows
-// physically present in soroban_events. The two are equal by the
+// post-ENQUEUE from the LedgerCloseMeta — after ProcessLedger returns,
+// before the sink drains; see cmd/stellarindex-indexer/main.go
+// recordLedgerIngest), not ledgers with rows physically present in
+// soroban_events. Consequences: during a sink-writer halt density
+// reads HIGH (census says >0, rows absent) while the `_gap_*` gauges
+// stay observed-row-based; and `stellarindex-ops backfill` does NOT
+// write ledger_ingest_log, so a range repaired without
+// `census-backfill` (ADR-0033 recovery §1) reads density 0 here. The two are equal by the
 // ADR-0033 Claim 3 invariant; where they diverge (a persistence
 // shortfall the census caught) the census is the HIGHER, honest
 // expectation and the divergence is surfaced by

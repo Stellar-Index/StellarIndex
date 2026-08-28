@@ -105,9 +105,15 @@ soroban_event_count > 0` over the scan window — a PK range scan).
 556 s full scan of a 257 GB hypertable per cycle and took r1's
 serving path down. The census is the indexer's LCM-derived record of
 "this ledger carried >= 1 eligible contract event", written
-post-persist, and equals the observed-row count by the ADR-0033
-Claim 3 invariant; a divergence is a persistence shortfall that
-`stellarindex-ops verify` reconciliation surfaces, not this gauge.
+post-enqueue (after `ProcessLedger` returns, before the sink drains —
+not a rows-in-Postgres marker), and equals the observed-row count by
+the ADR-0033 Claim 3 invariant; a divergence is a persistence
+shortfall that `stellarindex-ops verify` reconciliation surfaces, not
+this gauge. Two honest edges: a sink-writer halt makes this density
+read *high* (census >0, rows absent) while the `_gap_*` gauges stay
+observed-row-based; and `stellarindex-ops backfill` does not populate
+`ledger_ingest_log`, so a range repaired without `census-backfill`
+(ADR-0033 recovery §1) reads density 0 for soroban-events.
 The gap gauges for that target (`..._gap_*`) still come from a scan
 of `soroban_events` itself. Same gauge, same
 `source_coverage_snapshots` row, same `density_pct` in
