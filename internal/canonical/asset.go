@@ -42,11 +42,19 @@ const (
 	// `crypto` would mis-feed every crypto-scoped surface. Used by
 	// RedStone's RWA push feeds. Wire form: `rwa:<CODE>`. See ADR-0028.
 	AssetRWA AssetType = "rwa"
+
+	// AssetOracleRaw is an oracle-published symbol recorded VERBATIM
+	// because it maps to no canonical asset. Wire form: `raw:<symbol>`.
+	// Record-layer only: never a Pair leg, never a VWAP input, never
+	// compared by the interpretation layer (see [Asset.IsMapped]).
+	// Source scoping comes from oracle_updates.source, not the code.
+	// See docs/design/oracle-capture-totality-design.md.
+	AssetOracleRaw AssetType = "raw"
 )
 
 // Asset is a canonical identifier for any asset we price.
 //
-// The six valid shapes:
+// The seven valid shapes:
 //
 //   - Native:  {Type: AssetNative}
 //   - Classic: {Type: AssetClassic, Code: "USDC", Issuer: "G..."}
@@ -54,6 +62,7 @@ const (
 //   - Fiat:    {Type: AssetFiat,   Code: "USD"}            ADR-0010
 //   - Crypto:  {Type: AssetCrypto, Code: "BTC"}            ADR-0014
 //   - RWA:     {Type: AssetRWA,    Code: "BENJI"}          ADR-0028
+//   - Raw:     {Type: AssetOracleRaw, Code: "NOTACOIN"}    record-layer only
 //
 // A SAC-wrapped classic asset can be represented either way —
 // canonical form is the **classic** representation; the SAC contract
@@ -152,6 +161,8 @@ func (a Asset) String() string {
 		return "crypto:" + a.Code
 	case AssetRWA:
 		return "rwa:" + a.Code
+	case AssetOracleRaw:
+		return "raw:" + a.Code
 	default:
 		return "invalid-asset"
 	}
@@ -162,9 +173,9 @@ func (a Asset) IsZero() bool {
 	return a.Type == "" && a.Code == "" && a.Issuer == "" && a.ContractID == ""
 }
 
-// Validate returns nil if a is one of the six valid shapes (see the
-// [Asset] doc: native / classic / soroban / fiat / crypto / rwa); an
-// error otherwise.
+// Validate returns nil if a is one of the seven valid shapes (see the
+// [Asset] doc: native / classic / soroban / fiat / crypto / rwa / raw);
+// an error otherwise.
 func (a Asset) Validate() error { //nolint:gocognit,gocyclo // dispatch-heavy; one case per AssetType, splitting would reduce linearity
 	switch a.Type {
 	case AssetNative:
@@ -209,6 +220,11 @@ func (a Asset) Validate() error { //nolint:gocognit,gocyclo // dispatch-heavy; o
 			return fmt.Errorf("%w: unknown rwa code %q (see ADR-0028)", ErrInvalidAsset, a.Code)
 		}
 		return nil
+	case AssetOracleRaw:
+		if a.Issuer != "" || a.ContractID != "" {
+			return fmt.Errorf("%w: raw asset must not carry issuer/contract_id", ErrInvalidAsset)
+		}
+		return validateRawSymbol(a.Code)
 	default:
 		return fmt.Errorf("%w: unknown type %q", ErrInvalidAsset, a.Type)
 	}
@@ -225,9 +241,9 @@ func (a Asset) Equal(b Asset) bool {
 		a.ContractID == b.ContractID
 }
 
-// ParseAsset is the inverse of String. Accepts all six canonical
-// forms (native / classic / soroban / fiat: / crypto: / rwa:) plus
-// the `<code>:<issuer>` alias for classic assets and the case-
+// ParseAsset is the inverse of String. Accepts all seven canonical
+// forms (native / classic / soroban / fiat: / crypto: / rwa: / raw:)
+// plus the `<code>:<issuer>` alias for classic assets and the case-
 // insensitive "XLM" alias for native.
 func ParseAsset(s string) (Asset, error) {
 	if s == "" {
@@ -261,6 +277,13 @@ func ParseAsset(s string) (Asset, error) {
 	// RWA — unambiguous prefix dispatch (ADR-0028).
 	if rest, ok := strings.CutPrefix(s, "rwa:"); ok {
 		return NewRWAAsset(rest)
+	}
+
+	// Raw oracle symbol — unambiguous prefix dispatch. MUST sit before
+	// the classic `<code>:<issuer>` split below, which would otherwise
+	// read `raw:BTC` as classic code "raw" + issuer "BTC" and fail.
+	if rest, ok := strings.CutPrefix(s, "raw:"); ok {
+		return NewOracleRawAsset(rest)
 	}
 
 	// Soroban — starts with C, 56 chars
