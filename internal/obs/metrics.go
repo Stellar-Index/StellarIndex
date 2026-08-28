@@ -102,6 +102,7 @@ func registerAppMetrics() {
 		CustomerWebhookDeliveryAttemptsTotal,
 		CustomerWebhookFanoutFailuresTotal,
 		AggregatorDroppedTradesTotal,
+		AggregatorVenueVWAP, AggregatorWindowTrades,
 		AggregatorDroppedWindowsTotal,
 		AggregatorMinUSDVolumeUnvaluableTotal,
 		PriceServeSubstanceWithheldTotal,
@@ -2426,12 +2427,67 @@ var APICORSDecisionsTotal = prometheus.NewCounterVec(
 // seedBoundedLabelSeries; the storm/spike alerts sum() across labels,
 // so an absent pair series never gates them. Diagnose with
 // `topk(5, rate(...{reason="outlier"}[10m]))` by pair.
+//
+// Semantics caveat (2026-08-28): the orchestrator re-runs the filter
+// over the whole trailing window every tick, so a print that stays
+// outside the band is counted again on every tick it remains in the
+// window, and once per window ([5m,1h,24h]). The rate is therefore
+// "band-residents × windows / tick", not "new outliers/s". Since the
+// 2026-08-28 redesign no alert gates on this counter — the
+// outlier_storm alert reads AggregatorVenueVWAP and the trim-fraction
+// alert reads AggregatorWindowTrades; this stays a diagnostic.
 var AggregatorDroppedTradesTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_dropped_trades_total",
 		Help: "Trades removed from the VWAP input set, labelled by reason (class|outlier) and configured target pair.",
 	},
 	[]string{"reason", "pair"},
+)
+
+// AggregatorVenueVWAP — per-source VWAP of the PRE-outlier-filter
+// (post-class-filter) trade set for one (pair, window) refresh, on
+// the served price scale. Set on every refresh; a source that has
+// left the window has its series deleted so a venue that stopped
+// trading cannot pin a stale level into the disagreement ratio.
+//
+// This is the input to `stellarindex_aggregator_outlier_storm`
+// (2026-08-28 redesign): `max by (pair) / min by (pair) − 1` over the
+// 5m window measures VENUE DISAGREEMENT directly. The previous
+// counter-based rule measured how many prints the whole-window MAD
+// band trimmed — which, on the same day, fired for hours on
+// crypto:XLM/fiat:GBP while every venue agreed within 0.9%, because
+// the band trimmed a genuine +2% step (see aggregate.FilterOutliersLocal).
+//
+// Cardinality: configured pairs × windows × sources that traded in
+// the window (≤ ~12 × 3 × 5). Config-dependent, not pre-seeded.
+// A float64 gauge is fine here: this is an operator signal, never a
+// served value (ADR-0003 applies to the value path only).
+var AggregatorVenueVWAP = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_aggregator_venue_vwap",
+		Help: "Per-source VWAP of the pre-outlier-filter trade set for one (pair, window) refresh, on the served price scale. Feeds the venue-disagreement outlier_storm alert.",
+	},
+	[]string{"pair", "window", "source"},
+)
+
+// AggregatorWindowTrades — number of trades in one (pair, window)
+// refresh after each filter stage: "fetched" (what the store
+// returned, post-truncation), "class" (after the ClassExchange-only
+// filter), "outlier" (after the outlier filter — the VWAP input).
+// A gauge of the CURRENT window, not a counter: the trim fraction
+// `1 − outlier/class` is the honest "how much of this window is the
+// filter rejecting" signal, whereas the per-tick
+// AggregatorDroppedTradesTotal increments re-count the same window
+// residents on every 30 s tick, summed across windows.
+//
+// Feeds `stellarindex_aggregator_outlier_trim_fraction`. Bounded
+// cardinality: configured pairs × windows × 3 stages.
+var AggregatorWindowTrades = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_aggregator_window_trades",
+		Help: "Trades in the current (pair, window) refresh after each filter stage (fetched|class|outlier). outlier/class is the surviving fraction of the VWAP input.",
+	},
+	[]string{"pair", "window", "stage"},
 )
 
 // AggregatorDroppedWindowsTotal — count of (pair, window) refreshes

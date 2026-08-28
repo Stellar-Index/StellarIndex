@@ -1623,8 +1623,53 @@ refresh dropped the trade — bounded cardinality by construction (only
 production). Diagnose a storm with
 `topk(5, rate(stellarindex_aggregator_dropped_trades_total{reason="outlier"}[10m]))`.
 Config-dependent, so NOT pre-seeded (the `AggregatorFXSnapFallbackTotal`
-`leg` convention); the storm/spike alerts `sum()` across labels and are
+`leg` convention); the class-drop alert `sum()`s across labels and is
 unaffected by absent pair series.
+
+Semantics caveat (2026-08-28): the orchestrator re-runs the filter over
+the whole trailing window every tick, so a print that stays outside the
+band is counted again on every tick it remains in the window, once per
+window. The rate is "band-residents × windows / tick", not "new
+outliers/s". `stellarindex_aggregator_outlier_storm` reads
+`stellarindex_aggregator_venue_vwap` and
+`stellarindex_aggregator_outlier_trim_fraction` reads
+`stellarindex_aggregator_window_trades`; the only alert still gating on
+this counter is the renamed overlap copy of the old gate,
+`stellarindex_aggregator_outlier_trim_rate_legacy` (retire 2026-09-04),
+after which this counter is diagnostic only.
+
+### `stellarindex_aggregator_venue_vwap`
+
+Gauge, labels `pair`, `window` (`5m` / `1h` / `24h`), `source`.
+
+Per-source VWAP of the **pre-outlier-filter** (post-class-filter) trade
+set for one (pair, window) refresh, on the served price scale. Set on
+every refresh; a source that has left the window has its series
+**deleted** so a venue that stopped trading cannot pin a stale level
+into the disagreement ratio. Feeds
+`stellarindex_aggregator_outlier_storm` (2026-08-28 redesign):
+`max by (pair) / min by (pair) − 1` over `window="5m"` is venue
+disagreement measured directly, replacing the counter-based rule that
+fired for hours on agreed venues while the whole-window band trimmed a
+genuine step. Cardinality: configured pairs × windows × sources that
+traded in the window. Config-dependent, not pre-seeded. An operator
+signal, never a served value (the float64 conversion happens at the
+gauge boundary only).
+
+### `stellarindex_aggregator_window_trades`
+
+Gauge, labels `pair`, `window` (`5m` / `1h` / `24h`), `stage`
+(`fetched` / `class` / `outlier`).
+
+Number of trades in the **current** (pair, window) refresh after each
+filter stage: what the store returned (post-truncation), what survived
+the ClassExchange-only filter, and what survived the outlier filter (the
+VWAP input). `1 − outlier/class` is the current window's trim share
+without the per-tick re-counting of the drop counter. Feeds
+`stellarindex_aggregator_outlier_trim_fraction` (`> 0.2` on the 24h
+window with ≥ 20 class-filtered trades, for 30m) — the single-venue spam
+shape (2026-08-14 token farm) that venue disagreement cannot see.
+Bounded: configured pairs × windows × 3 stages.
 
 ### `stellarindex_aggregator_dropped_windows_total`
 

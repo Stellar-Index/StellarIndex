@@ -92,9 +92,15 @@ func InsertEntryChanges(ctx context.Context, addr string, rows []LedgerEntryChan
 	if len(rows) == 0 {
 		return 0, nil
 	}
+	// Ops-batch identity from the environment (2026-08-28 r1 incident;
+	// see ops_auth.go) — CH `default` user when unset.
+	auth, err := opsAuth()
+	if err != nil {
+		return 0, err
+	}
 	conn, err := clickhouse.Open(&clickhouse.Options{
 		Addr: []string{addr},
-		Auth: clickhouse.Auth{Database: "stellar"},
+		Auth: auth,
 		// A finite ceiling — this is the cheap append path, not a heavy read.
 		Settings:        clickhouse.Settings{"max_execution_time": 600},
 		DialTimeout:     10 * time.Second,

@@ -252,12 +252,21 @@ func (r *ExplorerReader) SetWealthRefreshErrorHandler(fn func(error)) {
 }
 
 // NewExplorerReader dials ClickHouse (native protocol) with a request-sized
-// pool and pings it, authenticating as CH's unauthenticated `default` user
-// (empty username/password) — the pre-ADR-0048-D4 behavior. Every non-API
-// caller (the aggregator's explorer reader, stellarindex-ops issuer-enrich /
-// supply-seed) keeps calling this constructor unchanged.
+// pool and pings it, authenticating as the ops-batch user when
+// STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD are set (ops_auth.go) and
+// otherwise as CH's unauthenticated `default` user (empty username/password)
+// — the pre-ADR-0048-D4 behavior. Every non-API caller (the aggregator's
+// explorer reader, stellarindex-ops issuer-enrich / supply-seed) keeps
+// calling this constructor unchanged.
 func NewExplorerReader(ctx context.Context, addr string) (*ExplorerReader, error) {
-	return NewExplorerReaderAuth(ctx, addr, "", "")
+	// Ops-batch identity from the environment (2026-08-28 r1 incident;
+	// see ops_auth.go) — CH `default` user when unset, so every
+	// non-API caller is byte-for-byte unchanged outside the ops env.
+	auth, err := opsAuth()
+	if err != nil {
+		return nil, err
+	}
+	return NewExplorerReaderAuth(ctx, addr, auth.Username, auth.Password)
 }
 
 // NewExplorerReaderAuth is [NewExplorerReader] with an explicit CH
