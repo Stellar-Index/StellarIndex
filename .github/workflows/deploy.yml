@@ -607,6 +607,108 @@ jobs:
         run: |
           bash scripts/ci/config-apply-gate.sh "$VERSION" "$CONFIG_ACK"
 
+      - name: Served-path smoke
+        # Runs AFTER the config-apply gate, i.e. after every deploy
+        # action is done. Everything before this point proves the
+        # binaries LANDED: deploy-binary.yml checks `-version` per
+        # binary and curls /v1/healthz on localhost. Neither proves
+        # the service SERVES. Two green deploys that were not:
+        #   - 2026-08-28: /v1/assets?limit=500 returned HTTP 500 after a
+        #     NULL-scan regression while localhost /v1/healthz stayed
+        #     200 (healthz is a shallow liveness probe by design —
+        #     F-1210). limit=500 is the exact fetch the explorer build
+        #     makes (web/explorer sitemap), so the site build broke.
+        #   - 2026-08-28 (earlier): ops v0.44.7 and migrate v0.28.1 sat
+        #     beside v0.46.1 elsewhere because the default binary list
+        #     omitted them; the deploy reported success without ever
+        #     touching them (the F-1314 class, see the `binaries` input).
+        # This step hits the PUBLIC edge (DNS + TLS + proxy + the real
+        # query path) and, on r1, re-runs the version-skew probe that
+        # found the second incident and requires skew == 0.
+        #
+        # The binaries are already live when this runs, so a miss here
+        # cannot roll anything back — a RED JOB is the loud signal that
+        # the operator must act (fix-forward or re-run the deploy with
+        # the previous tag). Same non-destructive stance as the
+        # config-apply gate above.
+        #
+        # curl: 5 attempts over ~60s so a cold cache right after the
+        # api restart does not false-fail; --fail-with-body so a 5xx
+        # shows its body in the log. F-1298: values through `env:`.
+        env:
+          REGION: ${{ inputs.region }}
+          DEPLOY_HOST: ${{ steps.region.outputs.host }}
+          DEPLOY_USER: ${{ steps.region.outputs.user }}
+        run: |
+          set -euo pipefail
+          case "$REGION" in
+            r1)        API_BASE="https://api.stellarindex.io" ;;
+            testnet)   API_BASE="https://api.testnet.stellarindex.io" ;;
+            futurenet) API_BASE="https://api.futurenet.stellarindex.io" ;;
+            *) echo "::error::no public API base for region '$REGION'"; exit 1 ;;
+          esac
+
+          # smoke <path>: GET $API_BASE<path>, require HTTP 200 within
+          # the retry budget, leave the body in ./smoke-body.json.
+          # --retry-all-errors covers 5xx as well as connection errors
+          # (plain --retry only retries transient codes); --retry-delay
+          # 12 × 5 attempts ≈ 60s. -A names us in the api access log so
+          # smoke traffic is distinguishable from user traffic.
+          smoke() {
+            local path="$1" code
+            local url="${API_BASE}${path}"
+            code="$(curl -sS -o smoke-body.json -w '%{http_code}' \
+              -A 'stellarindex-deploy-smoke' \
+              --max-time 30 --retry 4 --retry-delay 12 --retry-all-errors \
+              "$url")" || true
+            if [ "$code" != "200" ]; then
+              echo "::error::served-path smoke: GET $url returned HTTP ${code:-<none>} after 5 attempts. Binaries are LIVE — fix forward or re-deploy the previous tag."
+              head -c 2000 smoke-body.json 2>/dev/null || true
+              echo
+              exit 1
+            fi
+            echo "OK 200 GET $url"
+          }
+
+          smoke /v1/healthz
+          status="$(jq -r '.data.status // empty' smoke-body.json)"
+          if [ "$status" != "ok" ]; then
+            echo "::error::served-path smoke: ${API_BASE}/v1/healthz is 200 but .data.status='${status}' (want 'ok')"
+            cat smoke-body.json; echo
+            exit 1
+          fi
+          echo "OK healthz status=ok"
+
+          if [ "$REGION" = "r1" ]; then
+            # The two list sizes the explorer actually requests: 500 is
+            # the sitemap/build fetch that 500'd on 2026-08-28; 100 is
+            # the default page size the UI uses.
+            smoke '/v1/assets?limit=500'
+            smoke '/v1/assets?limit=100'
+
+            # Version-skew assertion over the SSH path the playbook
+            # step already materialised (~/.ssh/id_deploy + the pinned
+            # known_hosts from Set up SSH; r1 has no jump host). Runs
+            # the same oneshot the 30-min timer runs so the number
+            # below is the one Prometheus will scrape, not a
+            # re-implementation. A missing unit is ALSO a failure:
+            # it means the observability config that ships the probe
+            # has not been applied to r1 (the config-apply gate class).
+            PROM=/var/lib/node_exporter/textfile_collector/stellarindex_binary_version.prom
+            ssh -i ~/.ssh/id_deploy -o BatchMode=yes -o StrictHostKeyChecking=yes \
+              -o ConnectTimeout=20 "${DEPLOY_USER}@${DEPLOY_HOST}" \
+              "systemctl start stellarindex-binary-version-probe.service && cat $PROM" \
+              > binary-version.prom
+            grep -E '^stellarindex_binary_version_info' binary-version.prom || true
+            skew="$(awk '$1 == "stellarindex_binary_version_skew" { print $2 }' binary-version.prom)"
+            probe_ok="$(awk '$1 == "stellarindex_binary_version_probe_success" { print $2 }' binary-version.prom)"
+            if [ "$skew" != "0" ] || [ "$probe_ok" != "1" ]; then
+              echo "::error::binary version skew on r1 after deploy: stellarindex_binary_version_skew=${skew:-<missing>} probe_success=${probe_ok:-<missing>} (want 0 / 1). At least one release-managed binary is on a different version — re-run this deploy naming the stale binary. Runbook: docs/operations/runbooks/binary-version-skew.md"
+              exit 1
+            fi
+            echo "OK binary version skew=0 across managed binaries"
+          fi
+
       - name: Summary
         if: always()
         # F-1298: even the summary writer goes through `env:`, not
