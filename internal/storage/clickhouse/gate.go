@@ -43,9 +43,15 @@ type TableFootprint struct {
 
 // openRead dials ClickHouse for read-only gate queries.
 func openRead(ctx context.Context, addr string) (driver.Conn, error) {
+	// Ops-batch identity from the environment (2026-08-28 r1 incident;
+	// see ops_auth.go) — CH `default` user when unset.
+	auth, err := opsAuth()
+	if err != nil {
+		return nil, err
+	}
 	conn, err := clickhouse.Open(&clickhouse.Options{
 		Addr: []string{addr},
-		Auth: clickhouse.Auth{Database: "stellar"},
+		Auth: auth,
 		Settings: clickhouse.Settings{
 			// G12-04: this is the heavy-FINAL gate/reconcile read class. We keep
 			// `max_execution_time` UNLIMITED on purpose — a legitimate FINAL
