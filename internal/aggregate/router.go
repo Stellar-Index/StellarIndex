@@ -433,6 +433,14 @@ type scoredRoute struct {
 	legs       []RouteLeg
 	price      *big.Rat
 	confidence float64
+
+	// direct marks the target's OWN direct market entered into the
+	// corroboration clique alongside the router's hub routes (see
+	// [CombineRoutesWithDirect]). It is the price under test, not a
+	// confirming route, so it is exempt from corroborationMinConfidence —
+	// the composites that CONFIRM it are held to the floor. Never set on a
+	// router-found route.
+	direct bool
 }
 
 // CombineRoutes is the top-level cross-rate resolver. It finds the
@@ -470,7 +478,10 @@ type scoredRoute struct {
 //     set of PAIRWISE EDGE-DISJOINT routes (two routes that share ANY
 //     undirected edge {From,To} are one manipulable market, not two
 //     independent confirmations — so an all-through-one-bottleneck set
-//     counts as 1). 1 for a single route. See corroboratingRouteCount.
+//     counts as 1). 1 for a single route — unless the caller enters the
+//     target's own direct market via [CombineRoutesWithDirect], in which
+//     case a single hub route that tightly agrees with the direct print
+//     corroborates it (2). See corroboratingRouteCount.
 //   - diverged: true if any route was rejected as an outlier OR the
 //     surviving routes still spread more than routerDivergenceSpreadPct
 //     of their median. A caller should treat a diverged composite as a
@@ -490,6 +501,69 @@ type scoredRoute struct {
 // "confident").
 func CombineRoutes(
 	edges []RouteLeg, base, quote canonical.Asset, maxHops int, minConfidence float64,
+) (composite *big.Rat, combinedConfidence float64, pathCount, corroborationCount int, diverged, lowConfidence bool, err error) {
+	return combineRoutes(edges, base, quote, maxHops, minConfidence, nil)
+}
+
+// CombineRoutesWithDirect is [CombineRoutes] for a target that ALSO trades
+// on a DIRECT market this tick — the structurally single-venue case
+// (2026-08-28 D1: crypto:XLM/fiat:GBP quoted by one venue, reached by the
+// router only through XLM→USD→GBP). The caller has already removed the
+// direct edge from `edges` (the router must go through hubs), so with one
+// hub route the router alone can only ever report corroborationCount 1: a
+// composite has nothing but itself to agree with, and the direct print —
+// the SECOND, edge-disjoint opinion on the same price — was never in the
+// clique.
+//
+// This variant enters `direct` as one more route of the corroboration
+// clique: legs = the single base→quote market, price = its VWAP. The
+// served composite, combinedConfidence, pathCount, diverged and
+// lowConfidence are BYTE-IDENTICAL to [CombineRoutes] — the direct print
+// never becomes a routed price, never moves the composite, and never
+// contributes to the outlier/divergence population. Only
+// corroborationCount can change, and only upward (it is the MAX of the
+// router-only count and the count with the direct route included, so the
+// existing multi-route semantics are preserved exactly):
+//
+//   - direct within routerCorroborationAgreePct of a hub route that clears
+//     corroborationMinConfidence and is edge-disjoint from it → they
+//     corroborate each other: 2 for the single-hub-route target.
+//   - direct outside the band (the divergent-composite case), or the only
+//     hub route below the floor, or the combine diverged → the router-only
+//     count (1 / 0): the direct print is NOT confirmed and the freeze's
+//     source_count leg falls back to the raw trade-source count.
+//   - ≥2 hub routes that survive the loose band but DISAGREE beyond the
+//     tight one (router-only 0, R1) → 0 regardless of the direct print. A
+//     route set that contradicts itself is a problem signal; the direct
+//     print siding with one of them does not resolve it (fail closed).
+//
+// The direct route is exempt from corroborationMinConfidence — it is the
+// price UNDER TEST, and a single-venue market is thin by definition; the
+// independence claim rests on the CONFIRMING route(s), which are held to
+// the floor as before. A direct price that is nil or non-positive is
+// ignored (equivalent to [CombineRoutes]). A direct edge the caller forgot
+// to exclude from `edges` is harmless: the 1-hop route it produces shares
+// the direct market's undirected edge and so collapses with it to one
+// confirmation.
+func CombineRoutesWithDirect(
+	edges []RouteLeg, base, quote canonical.Asset, maxHops int, minConfidence float64, direct Quote,
+) (composite *big.Rat, combinedConfidence float64, pathCount, corroborationCount int, diverged, lowConfidence bool, err error) {
+	if direct.Price == nil || direct.Price.Sign() <= 0 {
+		return combineRoutes(edges, base, quote, maxHops, minConfidence, nil)
+	}
+	d := &scoredRoute{
+		legs:       []RouteLeg{{From: base, To: quote, Price: new(big.Rat).Set(direct.Price), Confidence: sanitizeConfidence(direct.Confidence)}},
+		price:      new(big.Rat).Set(direct.Price),
+		confidence: sanitizeConfidence(direct.Confidence),
+		direct:     true,
+	}
+	return combineRoutes(edges, base, quote, maxHops, minConfidence, d)
+}
+
+// combineRoutes is the shared body of [CombineRoutes] (direct == nil) and
+// [CombineRoutesWithDirect].
+func combineRoutes(
+	edges []RouteLeg, base, quote canonical.Asset, maxHops int, minConfidence float64, direct *scoredRoute,
 ) (composite *big.Rat, combinedConfidence float64, pathCount, corroborationCount int, diverged, lowConfidence bool, err error) {
 	routes := FindRoutes(edges, base, quote, maxHops, true)
 	if len(routes) == 0 {
@@ -529,6 +603,19 @@ func CombineRoutes(
 	rejected := len(gated) - len(survivors)
 	diverged = rejected > 0 || spreadExceeds(pricesOf(survivors), routerDivergenceSpreadPct)
 	corroborationCount = corroboratingRouteCount(survivors, diverged)
+	if direct != nil && (len(survivors) <= 1 || corroborationCount > 0) {
+		// The direct market is one more (edge-disjoint) opinion on the
+		// same price. MAX so the router-only count is never lowered: a
+		// direct print that disagrees, or a hub route too thin to confirm
+		// it, leaves the existing multi-route answer exactly as it was.
+		//
+		// NOT entered when ≥2 hub routes survived but corroborate NOTHING
+		// (router-only 0): that verdict means the routes actively disagree
+		// with each other (R1) — evidence of a problem the direct print
+		// agreeing with one side must not paper over. Fail closed: 0 stays 0.
+		withDirect := corroboratingRouteCount(append(append([]scoredRoute(nil), survivors...), *direct), diverged)
+		corroborationCount = max(corroborationCount, withDirect)
+	}
 	return composite, combinedConfidence, pathCount, corroborationCount, diverged, lowConf, nil
 }
 
@@ -708,8 +795,12 @@ func corroboratingRouteCount(survivors []scoredRoute, diverged bool) int {
 	// weakest-link confidence clears the floor may be part of a corroborating
 	// pair, so a thin route that merely agrees + is edge-disjoint counts for
 	// nothing.
+	// The target's own direct market (scoredRoute.direct, entered only by
+	// [CombineRoutesWithDirect]) is the price under test, not a confirming
+	// route, so it is exempt: the composites that confirm it are the ones
+	// held to the floor.
 	confident := func(i int) bool {
-		return survivors[i].confidence >= corroborationMinConfidence
+		return survivors[i].direct || survivors[i].confidence >= corroborationMinConfidence
 	}
 	agree := func(i, j int) bool {
 		return confident(i) && confident(j) &&

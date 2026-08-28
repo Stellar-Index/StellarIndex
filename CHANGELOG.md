@@ -28,6 +28,28 @@ against.
   `internal/sources/*/{decode*,events,feeds,pairs}.go` unless a commit
   carries a `Replay-Plan:` trailer (`none — <reason>` allowed; a bare
   `none` is not). Fixture self-test in `lint-replay-plan-test.sh`.
+### Fixed
+
+- **Aggregator: structurally single-venue crosses (e.g. `crypto:XLM/fiat:GBP`)
+  now gain a second, edge-disjoint corroborating route through the FX
+  cross.** The graph router excludes a target's own direct market before
+  routing, and in the production graph every target has exactly ONE hub
+  route (through USD), so `corroborationCount` could never exceed 1 — the
+  freeze's `source_count` widening (`effectiveSourceCount`) was dead code
+  and phase 2 kept firing `sources=1` on prices the deep
+  `XLM/USD × USD/GBP` route reproduced exactly. `routeTarget` now enters
+  the direct print into the corroboration clique via
+  `aggregate.CombineRoutesWithDirect`: a confident hub route that agrees
+  with it within the tight 3 % band corroborates it (2); a divergent
+  composite, or a hub route below the corroboration confidence floor,
+  confirms nothing (1). The served composite, `pathCount`, and the
+  diverged / low-confidence flags are byte-identical to before — only
+  the freeze leg's independence count moves, and only upward. Oracles
+  stay reference-only (`IncludeInVWAP: false`) and are not fed into VWAP.
+  Tests: `TestRouter_DirectMarketCorroboratedBySingleHubRoute`,
+  `TestRouter_DirectMarketNotCorroboratedWhenDivergentOrThin`,
+  `TestTick_SingleVenueTargetCorroboratedByFXCross` (red on the prior
+  code: `corroborationCount = 1, want 2`).
 
 ## [v0.47.2] — 2026-08-28
 

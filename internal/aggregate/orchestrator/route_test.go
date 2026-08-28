@@ -65,12 +65,12 @@ func TestRouterFreeze_TwoRoutesSuppressSingleSourceFreeze(t *testing.T) {
 	// run drives two ticks and reports whether the freeze engaged on the
 	// second (single-source, z≈50) bucket. tick 1 warms prevVWAP + records
 	// the composite corroboration; tick 2 is the one that would freeze.
-	run := func(t *testing.T, chains []TriangulationChain) (froze bool, corroboration int) {
+	run := func(t *testing.T, chains []TriangulationChain, legUSDGBP string) (froze bool, corroboration int) {
 		t.Helper()
 		store := &mockStore{}
 		cache, _ := newTestRedis(t)
 		setLegVWAP(t, cache, xlmUSD, window, "0.100000000000")
-		setLegVWAP(t, cache, usdGBP, window, "0.800000000000")
+		setLegVWAP(t, cache, usdGBP, window, legUSDGBP)
 		setLegVWAP(t, cache, xlmEUR, window, "0.100000000000")
 		setLegVWAP(t, cache, eurGBP, window, "0.800000000000")
 
@@ -111,10 +111,14 @@ func TestRouterFreeze_TwoRoutesSuppressSingleSourceFreeze(t *testing.T) {
 	}
 
 	// Two agreeing, edge-disjoint routes → corroborated → freeze suppressed.
-	froze2, corr2 := run(t, []TriangulationChain{chainUSD, chainEUR})
-	if corr2 != 2 {
-		t.Fatalf("two-route target recorded corroborationCount=%d, want 2 (the router did not "+
-			"find both independent corroborating routes — the rest of the test is meaningless)", corr2)
+	// 3, not 2, since D1 (2026-08-28): the target's own direct print (0.08,
+	// agreeing) is entered into the clique as a third edge-disjoint opinion
+	// — see [aggregate.CombineRoutesWithDirect].
+	froze2, corr2 := run(t, []TriangulationChain{chainUSD, chainEUR}, "0.800000000000")
+	if corr2 != 3 {
+		t.Fatalf("two-route target recorded corroborationCount=%d, want 3 (the router did not "+
+			"find both independent corroborating routes plus the agreeing direct print — the "+
+			"rest of the test is meaningless)", corr2)
 	}
 	if froze2 {
 		t.Error("freeze ENGAGED on a target corroborated by 2 agreeing edge-disjoint routes — " +
@@ -122,14 +126,19 @@ func TestRouterFreeze_TwoRoutesSuppressSingleSourceFreeze(t *testing.T) {
 			"the single-source freeze")
 	}
 
-	// Single route → corroborationCount 1 → still single-source → freeze fires.
-	froze1, corr1 := run(t, []TriangulationChain{chainUSD})
+	// Counterfactual: a single hub route that DISAGREES with the direct print
+	// (USD/GBP 0.90 → composite 0.09 vs direct 0.08, 12.5% apart, outside the
+	// tight band) → corroborationCount 1 → still single-source → freeze fires.
+	// (Since D1 a single AGREEING hub route corroborates the direct print to 2
+	// — that case is TestTick_SingleVenueTargetCorroboratedByFXCross — so the
+	// control has to be the divergent composite.)
+	froze1, corr1 := run(t, []TriangulationChain{chainUSD}, "0.900000000000")
 	if corr1 != 1 {
-		t.Fatalf("single-route target recorded corroborationCount=%d, want 1", corr1)
+		t.Fatalf("single divergent-route target recorded corroborationCount=%d, want 1", corr1)
 	}
 	if !froze1 {
-		t.Error("single-route (corroborationCount=1) target did NOT freeze on a z≈50 single-source " +
-			"bucket — the counterfactual is broken, so the two-route pass proves nothing")
+		t.Error("single divergent-route (corroborationCount=1) target did NOT freeze on a z≈50 " +
+			"single-source bucket — the counterfactual is broken, so the two-route pass proves nothing")
 	}
 }
 

@@ -132,6 +132,15 @@ min_usd_volume = 10000  # per-pair USD-volume floor for VWAP publication (anti-m
 # confidence each clears corroborationMinConfidence (0.5). A brand-new pair has
 # no volatility baseline, so its edge confidence is capped at ~0.27 and cannot
 # corroborate at all until a baseline matures.
+#
+# D1 2026-08-28: the target's OWN direct print is now entered into the
+# corroboration clique as an edge-disjoint route (CombineRoutesWithDirect), so
+# a structurally single-venue target with ONE agreeing, confident hub route
+# (crypto:XLM/fiat:GBP via XLM/USD x USD/GBP) reads corroborationCount=2
+# WITHOUT any extra pair or chain in this file. A divergent composite (>3%)
+# still corroborates nothing. Never add a non-USD fiat/fiat leg (EUR/GBP):
+# the FX snap derives it from the same fx_quotes USD rows as USD/GBP, so the
+# router would count one data row as two independent routes.
 max_hops             = 3    # route length cap in LEGS (base→hub→quote = 2); accepted [2,4]
 min_route_confidence = 0.0  # weakest-link floor [0,1]; 0 keeps pre-router behaviour (dust USD pairs are already excluded from the graph by min_usd_volume). Raise to gate confident crosses on a route-quality floor.
 

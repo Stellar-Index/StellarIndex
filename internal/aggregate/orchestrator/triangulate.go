@@ -283,8 +283,34 @@ func (o *Orchestrator) routeTarget(
 		return st.hardErr
 	}
 	routeEdges := excludeDirectEdge(edges, chain.Target)
-	composite, combinedConf, pathCount, corroboration, diverged, lowConf, err := aggregate.CombineRoutes(
-		routeEdges, chain.Target.Base, chain.Target.Quote, o.cfg.MaxHops, o.cfg.MinRouteConfidence)
+	// The direct market is excluded from ROUTING (a 1-hop "route" equal to
+	// the direct price would defeat triangulation) but entered into the
+	// CORROBORATION clique as the second, edge-disjoint opinion on the
+	// same price (D1, 2026-08-28): a structurally single-venue target such
+	// as crypto:XLM/fiat:GBP has exactly one hub route (XLM→USD→GBP), so
+	// without the direct print in the clique its corroborationCount could
+	// never exceed 1 and the freeze's source_count widening was dead. The
+	// direct edge is present only when the pair published CONFIDENTLY this
+	// tick ([recordEdgeQuote]) or resolved as another chain's leg; a
+	// frozen / dropped / empty target has no direct edge and gets the
+	// router-only count. Serving is unchanged: the direct print never
+	// moves the composite (see [aggregate.CombineRoutesWithDirect]).
+	var (
+		composite     *big.Rat
+		combinedConf  float64
+		pathCount     int
+		corroboration int
+		diverged      bool
+		lowConf       bool
+		err           error
+	)
+	if direct, ok := directEdgeQuote(edges, chain.Target); ok {
+		composite, combinedConf, pathCount, corroboration, diverged, lowConf, err = aggregate.CombineRoutesWithDirect(
+			routeEdges, chain.Target.Base, chain.Target.Quote, o.cfg.MaxHops, o.cfg.MinRouteConfidence, direct)
+	} else {
+		composite, combinedConf, pathCount, corroboration, diverged, lowConf, err = aggregate.CombineRoutes(
+			routeEdges, chain.Target.Base, chain.Target.Quote, o.cfg.MaxHops, o.cfg.MinRouteConfidence)
+	}
 	switch {
 	case errors.Is(err, aggregate.ErrNoRoute):
 		// Unreachable. A frozen leg of THIS chain makes it a freeze
@@ -457,6 +483,20 @@ func excludeDirectEdge(edges []aggregate.RouteLeg, target canonical.Pair) []aggr
 		out = append(out, e)
 	}
 	return out
+}
+
+// directEdgeQuote returns the target's own direct base→quote edge from
+// the window graph as a router [aggregate.Quote] (its VWAP and per-pair
+// confidence), or false when the target has no direct edge this tick.
+// [BuildEdges] emits both orientations of every market, so the forward
+// (Base→Quote) leg is always present when the market is.
+func directEdgeQuote(edges []aggregate.RouteLeg, target canonical.Pair) (aggregate.Quote, bool) {
+	for _, e := range edges {
+		if e.From.Equal(target.Base) && e.To.Equal(target.Quote) {
+			return aggregate.Quote{Pair: target, Price: e.Price, Confidence: e.Confidence}, true
+		}
+	}
+	return aggregate.Quote{}, false
 }
 
 // recordEdgeQuote captures a successfully-published (pair, window) VWAP

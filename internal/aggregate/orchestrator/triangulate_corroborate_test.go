@@ -249,3 +249,75 @@ func TestTick_CompositeCorroborationReachesTheCachedConfidence(t *testing.T) {
 			agree.Factors.SourceCount, disagree.Factors.SourceCount)
 	}
 }
+
+// TestTick_SingleVenueTargetCorroboratedByFXCross is the D1 (2026-08-28)
+// end-to-end proof: crypto:XLM/fiat:GBP trades on ONE venue, and its only
+// hub route is XLM→USD→GBP (XLM/USD cached VWAP × USD/GBP FX). Before the
+// direct print entered the corroboration clique the router reported 1 for
+// that lone route, effectiveSourceCount stayed at the raw trade-source
+// count (1), and the phase-2 freeze's `source_count<=1` lens kept firing on
+// a price the deep cross reproduced exactly. Now the agreeing composite
+// corroborates the direct print (2) and the freeze leg widens; a DIVERGENT
+// composite (outside routerCorroborationAgreePct) corroborates nothing and
+// the leg stays at 1.
+func TestTick_SingleVenueTargetCorroboratedByFXCross(t *testing.T) {
+	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
+	usdGBP := mkPair(t, "fiat", "USD", "fiat", "GBP")
+	xlmGBP := mkPair(t, "crypto", "XLM", "fiat", "GBP")
+	window := time.Minute
+	now := time.Now().UTC()
+
+	// Direct XLM/GBP from ONE venue at 0.080 GBP.
+	trades := []canonical.Trade{
+		makeTradeOn(t, xlmGBP, "kraken", 1_000_000, 80_000, now.Add(-30*time.Second)),
+		makeTradeOn(t, xlmGBP, "kraken", 2_000_000, 160_000, now.Add(-20*time.Second)),
+	}
+	run := func(t *testing.T, legUSDGBP string) (int, compositeSample) {
+		t.Helper()
+		cache, mr := newTestRedis(t)
+		mr.Set(cachekeys.VWAP(xlmUSD.Base, xlmUSD.Quote, window).String(), "0.100000000000")
+		mr.Set(cachekeys.VWAP(usdGBP.Base, usdGBP.Quote, window).String(), legUSDGBP)
+
+		o := New(&mockStore{trades: trades}, cache, Config{
+			Pairs:    []canonical.Pair{xlmGBP},
+			Windows:  []time.Duration{window},
+			Interval: time.Hour, // no sample ages out mid-test
+			Triangulations: []TriangulationChain{
+				{Target: xlmGBP, Legs: []canonical.Pair{xlmUSD, usdGBP}},
+			},
+			Baselines: stubBaselineSource{
+				multi:      baseline.MultiBaseline{Day30: &baseline.Baseline{Median: 0.0001, MAD: 0.001, N: 100_000}},
+				computedAt: now,
+			},
+		})
+		if err := o.Tick(context.Background()); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+		sample, ok := o.lastComposites[compositeKey(xlmGBP, window)]
+		if !ok {
+			t.Fatal("chain did not publish a composite for XLM/GBP")
+		}
+		return o.effectiveSourceCount(xlmGBP, window, trades), sample
+	}
+
+	// Composite 0.10 × 0.80 = 0.080 == the direct print → agreement.
+	agreeN, agree := run(t, "0.800000000000")
+	if agree.corroborationCount != 2 {
+		t.Errorf("agreeing FX cross: recorded corroborationCount = %d, want 2 — the single-venue "+
+			"direct print plus the confident, edge-disjoint XLM→USD→GBP route", agree.corroborationCount)
+	}
+	if agreeN != 2 {
+		t.Errorf("agreeing FX cross: effectiveSourceCount = %d, want 2 (freeze source_count leg widened "+
+			"past the single trade source)", agreeN)
+	}
+
+	// Composite 0.10 × 0.90 = 0.090 → 12.5%% above the direct print: a
+	// divergent composite must NOT corroborate.
+	divergeN, diverge := run(t, "0.900000000000")
+	if diverge.corroborationCount != 1 {
+		t.Errorf("divergent FX cross: recorded corroborationCount = %d, want 1", diverge.corroborationCount)
+	}
+	if divergeN != 1 {
+		t.Errorf("divergent FX cross: effectiveSourceCount = %d, want 1 (one venue, unconfirmed)", divergeN)
+	}
+}
