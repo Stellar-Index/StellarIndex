@@ -15,6 +15,100 @@ against.
 
 ## [Unreleased]
 
+## [v0.47.0] — 2026-08-28
+
+Tested against Stellar Protocol 28.
+
+### Fixed
+
+- **Deploys had been silently skipping two binaries, and nothing could
+  see it.** Measured on r1: `stellarindex-ops` at **v0.44.7** and
+  `stellarindex-migrate` at **v0.28.1** while
+  indexer/aggregator/api/sla-probe were all at **v0.46.1**. Neither was
+  ever reported, because a deploy that never touches a binary still
+  exits 0.
+
+  This is **F-1314 recurring**. That audit (2026-05-13) found
+  `stellarindex-sla-probe` drifting for exactly this reason and fixed it
+  by adding one name to the deploy workflow's default list — the
+  instance, not the blind spot. Three months later the same hole
+  swallowed two more binaries.
+
+  Neither is a bystander. **Thirteen units** on r1 exec
+  `stellarindex-ops`, including the data-integrity gates
+  (`verify-archive` tier-a/b, `archive-completeness`, `ch-schema-drift`,
+  `restore-drill`). A stale gate validates the lake against retired
+  rules, so it **PASSES when it should fail** — a silent false negative,
+  the one direction a gate must never fail in. `stellarindex-migrate` is
+  worse: `deploy-binary.yml` runs `stellarindex-migrate up` (F-1220)
+  *before* any binary swap, so every deploy was applying that release's
+  migrations with a months-old golang-migrate wrapper.
+
+- **The transitive price was invisible in the UI.** v0.46.1 made
+  two-hop pricing reachable and the API has served it correctly since —
+  measured on CAUP7: `/v1/assets` → `price_usd 7768.93`, `price_basis
+  "transitive"`. The asset page rendered a permanent `—` anyway.
+  `/v1/price` answers for DIRECT markets only, and `AssetPathView`
+  passed `initialPrice={null}` regardless, discarding a price it had
+  already fetched in the same response. The entire population the
+  feature was built for — Soroban-native assets with no direct USD or
+  XLM market — showed no price at all.
+
+  That is twice this feature shipped with nobody able to use it: once
+  inert in the API (v0.46.0), once invisible in the UI. Both times the
+  server-side check looked healthy.
+
+- **`price_basis` was missing from the OpenAPI enum.** Added to the Go
+  API in v0.46.x but never to the spec, so the generated client type
+  read `price_basis?: "declared_peg"` and TypeScript could not name the
+  transitive case at all.
+
+### Added
+
+- **Own-binary version-skew detection.** A node_exporter textfile probe
+  (every 30 min) plus two alerts, a runbook and a catalog entry, closing
+  the class rather than the instance. It compares binaries **against
+  each other**, not against an expected version: the host has no
+  authoritative notion of the current release, and hardcoding one would
+  make the probe lie after every legitimate deploy. It therefore also
+  covers binaries added later, with no list to maintain.
+
+  Scoped to the release-managed set (one per `cmd/` dir). Testing it
+  against live r1 found three hand-built operator one-offs —
+  `stellarindex-ops-ch` (v0.21.3), `-claimable` and `-sacfix` (both
+  `dev`), all from July, referenced by no systemd unit. Folding those
+  into the comparison would pin the alert firing forever on a condition
+  no deploy can clear, and a permanently-firing alert is the same as no
+  alert; they are reported as `managed="false"` instead.
+
+- **Issuer AccountEntry auth flags are now persisted.** New
+  `stellarindex-ops issuer-flags` job with a daily timer (05:47 UTC).
+
+  This is durability, not a new capability — the flags already resolve
+  at read time (`enrichIssuerFromAccountState`, 39 of the top 40 issuers
+  measured 2026-08-27). What that path cannot survive is a cold
+  account-state cache, where an issuer page renders "not yet resolved".
+  Migration 0023 created the columns for exactly this fallback and
+  nothing had ever filled them: **0 of 59,189**.
+
+  Reads by `key_xdr`, not `account_id` —
+  `stellar.ledger_entries_current` is `ORDER BY (entry_type, key_xdr)`,
+  and the measured difference on that table is **0.069s vs 5.18s**. At
+  ~59k issuers that is the difference between a job that finishes and
+  one that does not.
+
+### Changed
+
+- The deploy workflow's default binary set now includes
+  `stellarindex-ops` and `stellarindex-migrate`. Both are already in
+  `deploy-binary.yml`'s `cli_binaries` deny-list, so they get a
+  `-version` smoke test and no service restart. Ordering caveat,
+  deliberate and documented: migrate is swapped *after* the migration
+  step, so a new runner takes effect from the next deploy — it
+  converges and adds no risk, and moving the swap earlier is a
+  structural change to the migration path on a live money database that
+  wants its own reviewed change.
+
 ## [v0.46.1] — 2026-08-28
 
 ### Fixed
