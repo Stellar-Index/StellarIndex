@@ -11,7 +11,8 @@ instant` during the **L6.7 first-24h post-launch watch**. Each
 query has an expected shape so the on-call can spot anomalies
 without having to remember the metric semantics.
 
-These complement the alerts in `deploy/monitoring/rules/*.yml`:
+These complement the alerts R1 loads from `configs/prometheus/rules.r1/*.yml`
+(multi-host copies: `deploy/monitoring/rules/*.yml`):
 alerts fire on **bad**, these queries paint **what's normal**.
 
 ## Bookmark these in Grafana
