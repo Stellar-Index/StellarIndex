@@ -160,7 +160,7 @@ Route by the result:
   omit `binaries` to roll the whole managed set back); for the
   manual fallback:
   ```sh
-  # r1 is a single host (inventory: one entry in the archival-node group).
+  # r1 is a single host (inventory: one entry in the `archival_nodes` group).
   PREVIOUS=v0.47.1                         # whichever tag was healthy
   ssh root@r1 <<EOF
     set -euxo pipefail
