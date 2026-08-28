@@ -1,0 +1,104 @@
+---
+# StellarIndex OWN-binary version skew.
+#
+# The sibling rule file stellar-stack-version.yml watches THIRD-PARTY
+# components (core / galexie / archivist). Nothing watched our own
+# binaries, and that gap produced the same incident twice:
+#
+#   - 2026-05-13 (F-1314): stellarindex-sla-probe was drifting because
+#     the deploy workflow's default binary list omitted it. The SLA
+#     evidence binary was stale (or absent on a fresh host) while every
+#     deploy reported success. Fixed by adding it to the list.
+#   - 2026-08-28: the IDENTICAL failure for stellarindex-ops, which the
+#     same list also omitted. Measured on r1: ops v0.44.7 against
+#     indexer/aggregator/api/sla-probe all at v0.46.1 — two releases of
+#     drift. Thirteen units exec that binary, including the
+#     data-integrity gates (verify-archive tier-a/b,
+#     archive-completeness, ch-schema-drift, restore-drill).
+#
+# The first fix corrected one binary but not the blind spot, so the
+# class recurred three months later. This alert closes the class: it
+# needs no list of which binaries matter and no notion of the current
+# release — it just asserts that binaries shipped from one release tag
+# should all report the same version. A deploy that silently skips one
+# is then visible within 30 minutes instead of never.
+#
+# Why a stale GATE binary is worse than a stale service: verify-archive
+# and archive-completeness decide whether the lake is trustworthy. An
+# old gate validates against retired rules, so it PASSES when it should
+# fail — a silent false negative on a data-integrity check, which is
+# the one direction a gate must never fail in.
+#
+# `stellarindex-binary-version-probe.sh` (installed by the
+# archival-node role, tasks/10-observability.yml) runs every 30 min and
+# writes
+# /var/lib/node_exporter/textfile_collector/stellarindex_binary_version.prom:
+#   stellarindex_binary_version_skew                    distinct installed versions minus one; 0 = all agree.
+#   stellarindex_binary_version_info{binary,version}    info gauge=1, per binary.
+#   stellarindex_binary_version_binaries_total          how many binaries answered.
+#   stellarindex_binary_version_probe_success           0/1 — this probe's own up-style canary.
+
+groups:
+  - name: stellarindex.binary_version_skew
+    interval: 60s
+    rules:
+
+      - alert: stellarindex_binary_version_skew
+        expr: stellarindex_binary_version_skew > 0
+        # 45m spans one probe interval (30m) plus slack, so a deploy
+        # that is legitimately mid-flight — binaries swap one at a time
+        # — does not alert. Real drift persists across every subsequent
+        # run; a deploy in progress resolves within one.
+        for: 45m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: deploy
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/binary-version-skew.md
+          summary: "Installed stellarindex-* binaries disagree on version ({{ $value }} extra version(s))"
+          description: |
+            The installed stellarindex-* binaries are not all from the
+            same release. This is the F-1314 / 2026-08-28 class: the
+            deploy workflow's binary list omitted one, so a nominal
+            deploy exits 0 without ever touching it.
+
+            Identify the odd one out:
+              stellarindex_binary_version_info
+
+            On the host:
+              for b in /usr/local/bin/stellarindex-*; do
+                printf '%s ' "$b"; "$b" -version | head -1
+              done
+
+            Fix: re-run the deploy workflow with an explicit `binaries=`
+            list naming the stale binary, then confirm this metric
+            returns to 0. If the binary was missing from the workflow's
+            default set, ADD IT THERE TOO — otherwise the next release
+            reintroduces the drift, which is exactly how this recurred
+            after F-1314.
+
+      # A probe that stops running must not read as "no skew".
+      - alert: stellarindex_binary_version_probe_degraded
+        expr: stellarindex_binary_version_probe_success == 0
+        for: 2h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: deploy
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/binary-version-skew.md
+          summary: "Binary version-skew probe degraded — at least one binary would not report a version"
+          description: |
+            stellarindex-binary-version-probe.sh ran but at least one
+            stellarindex-* binary did not answer `-version` (missing,
+            not executable, wrong architecture, or timed out).
+
+            That binary is EXCLUDED from the skew calculation, so
+            stellarindex_binary_version_skew is understated while this
+            is firing — a binary that cannot run is a worse problem
+            than one at the wrong version.
+
+            Compare stellarindex_binary_version_binaries_total against
+            the number of stellarindex-* files in /usr/local/bin to see
+            how many dropped out.
