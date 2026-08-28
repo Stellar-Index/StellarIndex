@@ -143,6 +143,7 @@ var subcommands = map[string]func(args []string) error{
 	"state-snapshot":          ingest.Run,
 	"issuer-enrich":           ingest.Run,
 	"sep1-refresh":            ingest.Run,
+	"issuer-flags":            ingest.Run,
 	"directory-sync":          ingest.Run,
 
 	"verify-archive":            archive.Run,
@@ -1176,6 +1177,18 @@ Subcommands:
                           /v1/issuers). Per-issuer failures are counted, not
                           fatal; built-in per-request timeout + SSRF guard.
                           Run hourly from cron.
+  issuer-flags -config PATH [-ch-addr ADDR] [-limit N] [-batch N] [-timeout DUR] [-dry-run]
+                          Decode issuer AccountEntry auth flags from the lake
+                          and persist them to issuers.auth_* — a DURABLE
+                          fallback for the API's read-time enrichment, which
+                          already resolves 39/40 top issuers but needs the
+                          ClickHouse lake plus a warm account-state cache and
+                          degrades to "not yet resolved" on a cold page.
+                          Matches on key_xdr (the sort key: 0.069s vs 5.18s
+                          via account_id). Queue is auth_required IS NULL
+                          ordered by PK, so bounded runs resume rather than
+                          re-walk. Issuers outside the captured window are
+                          reported as absent, not an error. Run daily.
   seed-soroswap-pairs -config PATH [-rpc URL] [-timeout DUR]
                           Bootstrap the soroswap_pairs registry table
                           via stellar-rpc simulateTransaction. Walks the

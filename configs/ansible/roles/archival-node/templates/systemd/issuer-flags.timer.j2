@@ -1,0 +1,29 @@
+# systemd timer: daily issuer auth-flag persistence.
+#
+# Rendered by Ansible. Companion to issuer-flags.service.
+#
+# Time slot: 05:47 UTC + up to 5 min jitter. The daily band is dense —
+# 04:42 supply-snapshot, 05:07 stellar-stack-version-probe, 05:12
+# sep1-refresh, 05:30 compute-completeness — so this sits after the
+# last of them rather than between two. It shares this host with
+# galexie's captive core, Postgres and ClickHouse, and overlapping two
+# memory-capped jobs is how a box that is fine all day falls over at
+# 05:00.
+#
+# Persistent=true so a reboot does not skip a day. Skipping matters
+# more here than for a refresh job: the queue is drain-to-empty
+# (auth_required IS NULL), so a missed night is a night the ~59k
+# backlog does not shrink.
+
+[Unit]
+Description=Daily issuer AccountEntry auth-flag persistence
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/internal/ops/ingest/issuer_flags.go
+
+[Timer]
+OnCalendar=*-*-* 05:47:00 UTC
+RandomizedDelaySec=300
+Persistent=true
+Unit=issuer-flags.service
+
+[Install]
+WantedBy=timers.target
