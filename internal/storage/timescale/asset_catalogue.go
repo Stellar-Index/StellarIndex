@@ -333,7 +333,57 @@ const adjustedVolume24hExpr = `(COALESCE(vol.vol_usd, 0) * ` +
 // tail of classic assets today, and fabricating values would
 // defeat the "stop lying" rule.
 const listAssetsBaseSelect = `
-		WITH per_asset_24h_vol AS (
+		WITH catalogue_assets AS (
+		  -- The listing spine. Was FROM classic_assets directly, which
+		  -- silently narrowed this endpoint to CLASSIC assets only:
+		  -- classic_assets requires a G-issuer (issuer_g_strkey NOT NULL),
+		  -- so a Soroban-NATIVE contract asset can never have a row. The
+		  -- documented contract for /v1/assets is "native XLM, classic
+		  -- credits, Soroban tokens, and verified-catalogue currencies",
+		  -- so the endpoint was promising a class of asset it structurally
+		  -- could not return. Measured 2026-08-28 on r1: 0 Soroban-native
+		  -- rows in the top-200-by-volume listing, including CAUP7 at
+		  -- $71.8k/7d.
+		  --
+		  -- SAC-wrapped tokens are NOT excluded here and do not need to be:
+		  -- v1.Server.foldAliasTwins already collapses each non-canonical
+		  -- alias row onto its canonical twin, so AQUA/SHX/EURC cannot
+		  -- appear twice.
+		  SELECT asset_id, code, issuer_g_strkey, slug,
+		         first_seen_ledger, last_seen_ledger, observation_count
+		    FROM classic_assets
+		  UNION ALL
+		  -- Soroban-native contract assets. code/issuer/slug are NULL by
+		  -- nature — a contract asset has no issuer account and no
+		  -- SEP-1 code — and every downstream JOIN keys on asset_id only,
+		  -- so the NULLs cost nothing.
+		  --
+		  -- Bounded by TRADED volume, not by discovery. discovered_assets
+		  -- holds ~117k contracts because SEP-41 event discovery catches
+		  -- anything emitting token events; an asset LISTING wants the
+		  -- ones with a market. Measured on r1 2026-08-28:
+		  --
+		  --   all Soroban-native contracts   117,018
+		  --   ...with an asset_volume_24h row     60
+		  --   ...with positive volume             57
+		  --
+		  -- A recency filter (last_seen_at within 30 days) was tried first
+		  -- and admitted 68,703 — a 35% increase in the spine, carried by
+		  -- every LEFT JOIN on a latency-sensitive endpoint (see the #43
+		  -- 2026-07-06 incident referenced above). Keying on the volume
+		  -- rollup the listing ALREADY joins adds ~60 rows instead.
+		  SELECT d.contract_id AS asset_id,
+		         NULL::text    AS code,
+		         NULL::text    AS issuer_g_strkey,
+		         NULL::text    AS slug,
+		         d.first_seen_ledger,
+		         d.last_seen_ledger,
+		         d.event_count  AS observation_count
+		    FROM discovered_assets d
+		   WHERE EXISTS (SELECT 1 FROM asset_volume_24h v WHERE v.asset_id = d.contract_id)
+		     AND NOT EXISTS (SELECT 1 FROM classic_assets c WHERE c.asset_id = d.contract_id)
+		),
+		per_asset_24h_vol AS (
 		  -- #43 (2026-07-06 latency incident): read the trailing-24h
 		  -- per-asset USD volume from the asset_volume_24h rollup
 		  -- (migration 0087) instead of re-summing prices_1m per
@@ -657,7 +707,7 @@ const listAssetsBaseSelect = `
 		    END                                   AS source_count,
 		    avc.character                         AS volume_character,
 		    ` + adjustedVolume24hExpr + ` AS sort_vol_usd
-		  FROM classic_assets ca
+		  FROM catalogue_assets ca
 		  LEFT JOIN per_asset_24h_vol vol         ON vol.asset_id        = ca.asset_id
 		  LEFT JOIN direct_usd        direct      ON direct.asset_id     = ca.asset_id
 		  LEFT JOIN direct_usd_1h     direct_1h   ON direct_1h.asset_id  = ca.asset_id
@@ -708,18 +758,27 @@ func listAssetsBaseSelectSQL(pushdownPredicate string) string {
 		return s
 	}
 	chosenCTE := "\n\t\tWITH chosen_assets AS (SELECT asset_id FROM classic_assets WHERE " + pushdownPredicate + "),\n\t\t"
-	// Replace the leading `WITH per_asset_24h_vol AS (` with the
-	// chosen_assets CTE followed by per_asset_24h_vol (chosen first
-	// so its asset_id pool is materialised once and reused by every
-	// downstream CTE). The original const starts with
-	// "\n\t\tWITH per_asset_24h_vol AS (" — match on the WITH so the
-	// replacement is unambiguous.
+	// Prepend the chosen_assets CTE (chosen first so its asset_id pool is
+	// materialised once and reused by every downstream CTE).
+	//
+	// The anchor is the query's FIRST CTE, which is catalogue_assets.
+	// It used to be per_asset_24h_vol; when catalogue_assets was added in
+	// front of it this Replace silently became a NO-OP — strings.Replace
+	// does not error on a missing needle — so every filtered listing lost
+	// its pushdown and fell back to a full scan. The pushdown tests caught
+	// it. Keep this anchor in step with whatever CTE comes first.
 	s := strings.Replace(
 		listAssetsBaseSelect,
-		"\n\t\tWITH per_asset_24h_vol AS (",
-		chosenCTE+"per_asset_24h_vol AS (",
+		"\n\t\tWITH catalogue_assets AS (",
+		chosenCTE+"catalogue_assets AS (",
 		1,
 	)
+	if !strings.Contains(s, "chosen_assets AS (") {
+		// Fail loud rather than serve an un-pushed-down query: a silent
+		// miss here is a latency regression on the filtered paths, which
+		// is exactly what the anchor drift above would have caused.
+		panic("listAssetsBaseSelectSQL: pushdown anchor not found — the first CTE was renamed")
+	}
 	s = strings.ReplaceAll(s, "/*PUSHDOWN_BASE*/", "AND base_asset IN (SELECT asset_id FROM chosen_assets)")
 	s = strings.ReplaceAll(s, "/*PUSHDOWN_QUOTE*/", "AND quote_asset IN (SELECT asset_id FROM chosen_assets)")
 	return s
