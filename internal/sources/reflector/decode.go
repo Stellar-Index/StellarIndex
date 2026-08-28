@@ -1,7 +1,6 @@
 package reflector
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -88,8 +87,8 @@ func decodeUpdate(e *events.Event, variant Variant, decimals uint8, observer str
 	if err != nil {
 		// Double-%w preserves both sentinels — callers can
 		// errors.Is against ErrMalformedPayload (for the "any
-		// decode problem" gate) AND against specific errors like
-		// ErrUnknownSymbol (for targeted ops tooling).
+		// decode problem" gate) AND against the specific wrapped
+		// cause (for targeted ops tooling).
 		return nil, fmt.Errorf("%w: %w", ErrMalformedPayload, err)
 	}
 	if len(prices) == 0 {
@@ -126,13 +125,13 @@ func decodeUpdate(e *events.Event, variant Variant, decimals uint8, observer str
 	sourceName := variant.SourceName()
 	out := make([]canonical.OracleUpdate, 0, len(prices))
 	for i, entry := range prices {
-		if entry.Skip {
-			// DAT-03 (audit-2026-07-23): an unknown-symbol slot from
-			// sdkDecodeUpdateBody. It still occupies vector position
-			// `i` — see PriceEntry.Skip's godoc for why the slot must
-			// consume an index rather than being omitted.
-			continue
-		}
+		// Oracle capture-totality (PR-2): there is no unknown-symbol
+		// skip here any more. An unmapped symbol arrives from
+		// sdkDecodeUpdateBody as a raw:<symbol> PriceEntry and is
+		// emitted like any other slot, at the SAME vector position
+		// `i` the pre-totality Skip placeholder used to hold (DAT-03:
+		// no existing row's OpIndex moves — the raw row fills the
+		// gap the placeholder left).
 		if entry.Price.Sign() <= 0 {
 			// Reflector filters zero-price entries at the contract
 			// level (oracle/src/events.rs:24 — zero prices skipped
@@ -141,9 +140,10 @@ func decodeUpdate(e *events.Event, variant Variant, decimals uint8, observer str
 			// relaxes that filter.
 			//
 			// Surface the skip so a non-positive slot isn't dropped
-			// invisibly (cf. the sibling unknown-symbol skip, which
-			// increments obs.SourceUnknownSymbolsTotal). A WARN log
-			// rather than that counter: a non-positive price is a
+			// invisibly (cf. the unmapped-symbol path, which records
+			// the slot as raw: and increments
+			// obs.SourceUnknownSymbolsTotal). A WARN log rather than
+			// that counter: a non-positive price is a
 			// contract-invariant violation, NOT an allow-list/coverage
 			// gap, so it doesn't belong on the coverage-drift metric
 			// that drives that counter's alert. Loud if it ever fires,
@@ -177,6 +177,10 @@ func decodeUpdate(e *events.Event, variant Variant, decimals uint8, observer str
 		out = append(out, u)
 	}
 	if len(out) == 0 {
+		// Only reachable when EVERY slot was non-positive: since the
+		// oracle capture-totality change an unmapped symbol is a raw
+		// row, not a skip, so an all-unknown vector no longer lands
+		// here.
 		return nil, ErrEmptyPrices
 	}
 	return out, nil
@@ -236,24 +240,23 @@ func mustUSDFiat() canonical.Asset {
 }
 
 // PriceEntry is one (asset, price) pair from the update_data vector.
+//
+// sdkDecodeUpdateBody keeps the SLOT COUNT stable — exactly one
+// PriceEntry per raw update_data[] position. An unmapped symbol
+// yields a canonical.AssetOracleRaw entry (`raw:<symbol>`) rather
+// than being compacted out (DAT-03, audit-2026-07-23): decodeUpdate's
+// synthetic OpIndex is derived from vector POSITION, so dropping a
+// slot from the slice would shift every OTHER entry's OpIndex
+// whenever the allow-list changed, orphaning or duplicating rows on a
+// re-derive instead of updating them in place. Before the oracle
+// capture-totality change (PR-2) that stability came from a
+// `Skip: true` placeholder that consumed the slot and emitted
+// nothing; the raw row now consumes the same slot and IS emitted, so
+// a later allow-list extension re-derives the same PK and promotes
+// `raw:X` → `crypto:X` in place.
 type PriceEntry struct {
 	Asset canonical.Asset
 	Price canonical.Amount
-
-	// Skip marks a vector slot that failed to decode into a known
-	// asset (ErrUnknownSymbol). sdkDecodeUpdateBody keeps the SLOT
-	// COUNT stable — one PriceEntry per raw update_data[] position,
-	// even for symbols we don't recognise — as a Skip placeholder
-	// rather than omitting the slot outright (DAT-03, audit-2026-07-23):
-	// decodeUpdate's synthetic OpIndex is derived from vector
-	// POSITION, so compacting the slice on unknown-symbol skips made
-	// every OTHER entry's position — and thus OpIndex — shift
-	// whenever the fiat/crypto allow-list changed, orphaning or
-	// duplicating rows on a re-derive instead of updating them in
-	// place. Unlike Band and Redstone (which already index over the
-	// raw, uncompacted vector), Reflector's decodeUpdateBody used to
-	// filter unknown symbols out of the slice entirely.
-	Skip bool
 }
 
 // ─── Real SCVal decoders ────────────────────────────────────────
@@ -292,10 +295,12 @@ var (
 // `Val` in each pair is either:
 //   - `ScAddress` — for Asset::Stellar(address); yields a
 //     canonical.NewSorobanAsset(C-strkey).
-//   - `ScSymbol`  — for Asset::Other(symbol); yields a
-//     canonical.NewFiatAsset(symbol) when the symbol matches our
-//     ADR-0010 allow-list, else ErrUnknownSymbol wrapped so
-//     operators can decide whether to extend the allow-list.
+//   - `ScSymbol`  — for Asset::Other(symbol); resolved through
+//     canonical.MapOracleSymbol (fiat ADR-0010 → crypto ADR-0014 →
+//     RWA ADR-0028), else recorded VERBATIM as `raw:<symbol>` so the
+//     record layer stays total while operators decide whether to
+//     extend an allow-list (docs/design/oracle-capture-totality-
+//     design.md).
 //
 // Per ADR-0013 + contract-schema-evolution.md this is the ONLY
 // decoder path; tests override via the package-level var, not by
@@ -322,29 +327,22 @@ func sdkDecodeUpdateBody(valueB64 string) ([]PriceEntry, error) {
 	for i, pair := range pairs {
 		entry, err := decodeUpdateDataEntry(pair)
 		if err != nil {
-			if errors.Is(err, ErrUnknownSymbol) {
-				// Unknown symbol = gap in our canonical asset
-				// model, not a structural event problem. Land a
-				// Skip placeholder and continue — losing a single
-				// asset slot in a mixed-payload event is strictly
-				// better than dropping all prices in that event,
-				// and the placeholder keeps every OTHER entry's
-				// vector position (and thus decodeUpdate's
-				// synthetic OpIndex) stable regardless of allow-list
-				// state (DAT-03 — see PriceEntry.Skip's godoc).
-				// F-1234 (codex audit-2026-05-12): count the skip
-				// on stellarindex_source_unknown_symbols_total so
-				// operators can spot upstream coverage drift
-				// without parsing logs. The metric label uses the
-				// generic "reflector" because the decoder is
-				// shared across reflector-dex/cex/fx; the parent
-				// dispatcher attributes per-contract context if
-				// needed.
-				obs.SourceUnknownSymbolsTotal.WithLabelValues("reflector").Inc()
-				out = append(out, PriceEntry{Skip: true})
-				continue
-			}
 			return nil, fmt.Errorf("update_data[%d]: %w", i, err)
+		}
+		if !entry.Asset.IsMapped() {
+			// Unmapped symbol = gap in our canonical asset model,
+			// not a structural event problem. The slot is recorded
+			// verbatim as raw:<symbol> at its own vector position
+			// (DAT-03 — see PriceEntry's godoc). F-1234 (codex
+			// audit-2026-05-12): still count it on
+			// stellarindex_source_unknown_symbols_total — a raw row
+			// is a mapping gap the allow-list owner has to close,
+			// and the alert on this counter is how they learn of
+			// it. The metric label uses the generic "reflector"
+			// because the decoder is shared across
+			// reflector-dex/cex/fx; the parent dispatcher
+			// attributes per-contract context if needed.
+			obs.SourceUnknownSymbolsTotal.WithLabelValues("reflector").Inc()
 		}
 		out = append(out, entry)
 	}
@@ -374,25 +372,15 @@ func decodeUpdateDataEntry(pair scval.ScVal) (PriceEntry, error) {
 	case kind.Symbol != "":
 		// Reflector's Asset::Other(Symbol) covers both fiat tickers
 		// (FX oracle: "USD", "EUR", "ARS" …) and crypto tickers
-		// (CEX oracle: "BTC", "ETH", "USDT" …). Try fiat first
-		// (smaller allow-list, ISO-4217-constrained), then crypto
-		// (ADR-0014). Anything matching neither skips out via
-		// ErrUnknownSymbol — consumer continues processing
-		// the rest of the event.
-		switch {
-		case canonical.IsKnownFiat(kind.Symbol):
-			asset, err = canonical.NewFiatAsset(kind.Symbol)
-			if err != nil {
-				return PriceEntry{}, fmt.Errorf("fiat asset from %q: %w", kind.Symbol, err)
-			}
-		case canonical.IsKnownCrypto(kind.Symbol):
-			asset, err = canonical.NewCryptoAsset(kind.Symbol)
-			if err != nil {
-				return PriceEntry{}, fmt.Errorf("crypto asset from %q: %w", kind.Symbol, err)
-			}
-		default:
-			return PriceEntry{}, fmt.Errorf("%w: symbol %q matches neither fiat (ADR-0010) nor crypto (ADR-0014) allow-lists",
-				ErrUnknownSymbol, kind.Symbol)
+		// (CEX oracle: "BTC", "ETH", "USDT" …). The shared mapper
+		// tries fiat (ADR-0010), then crypto (ADR-0014), then RWA
+		// (ADR-0028); anything matching none is returned as a raw:
+		// asset so the slot is recorded rather than dropped. The
+		// only error is a symbol the raw validator cannot represent
+		// (impossible for an ScSymbol) — refused as malformed.
+		asset, err = canonical.MapOracleSymbol(kind.Symbol)
+		if err != nil {
+			return PriceEntry{}, fmt.Errorf("%w: symbol %q: %w", ErrMalformedPayload, kind.Symbol, err)
 		}
 	default:
 		return PriceEntry{}, fmt.Errorf("%w: asset slot is neither Address nor Symbol",
