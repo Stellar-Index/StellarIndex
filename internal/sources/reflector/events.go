@@ -127,23 +127,17 @@ var (
 	// timestamp lives in topic[2], not the body).
 	ErrMalformedPayload = errors.New("reflector: malformed event payload")
 
-	// ErrEmptyPrices — prices vector was empty. Reflector should
-	// never emit this (5-min cadence implies always at least one
-	// price), but guard against it defensively.
+	// ErrEmptyPrices — prices vector was empty, or every slot was
+	// non-positive. Reflector should never emit this (5-min cadence
+	// implies always at least one price), but guard against it
+	// defensively. Since the oracle capture-totality change (PR-2)
+	// an unmapped symbol is NOT a reason: it is recorded verbatim
+	// as a `raw:<symbol>` row (canonical.AssetOracleRaw), so an
+	// all-unknown vector decodes to rows, not to this error. The
+	// former ErrUnknownSymbol sentinel (per-entry skip of symbols
+	// outside the ADR-0010 / ADR-0014 allow-lists) was retired
+	// with that change — nothing skips on mapping any more.
 	ErrEmptyPrices = errors.New("reflector: empty prices vector")
-
-	// ErrUnknownSymbol — the asset slot of an update_data entry
-	// was a Symbol (Asset::Other variant) whose string matched
-	// neither the ADR-0010 fiat allow-list nor the ADR-0014 crypto
-	// allow-list. Operators extend these lists deliberately; the
-	// decoder skips unknown symbols per-entry (other prices in the
-	// same event still land) and the orchestrator's
-	// SourceDecodeErrorsTotal counter surfaces sustained rates.
-	//
-	// Renamed 2026-04-23 (was ErrUnknownFiatSymbol) — PR 164e
-	// added crypto-ticker support, so "unknown-fiat" is no longer
-	// the only reason a symbol gets skipped.
-	ErrUnknownSymbol = errors.New("reflector: asset symbol not in fiat or crypto allow-list")
 
 	// ErrPriceVectorOverflow — prices vector size exceeded the
 	// op-index fanout stride (opIndexFanoutStride = 1024). If this

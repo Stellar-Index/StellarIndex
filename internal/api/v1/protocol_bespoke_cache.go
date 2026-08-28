@@ -109,6 +109,18 @@ type bespokeCache struct {
 	flights  map[string]*bespokeFlight
 	gateOnce sync.Once
 	gate     *clickhouse.RefreshGate
+	// now stamps entries and ages them against bespokeStaleAfter. Nil
+	// means time.Now; tests inject a fake so the staleness horizon is a
+	// deterministic clock step, never a wall-clock race.
+	now func() time.Time
+}
+
+// clock returns the cache's time source (time.Now unless injected).
+func (c *bespokeCache) clock() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
 }
 
 // protocolBespokeCacheKey is the single cache-key grammar for the bespoke
@@ -132,7 +144,7 @@ func (c *bespokeCache) put(key string, blk *timescale.BespokeBlock) {
 	if c.entries == nil {
 		c.entries = make(map[string]bespokeEntry)
 	}
-	c.entries[key] = bespokeEntry{blk: blk, at: time.Now()}
+	c.entries[key] = bespokeEntry{blk: blk, at: c.clock()}
 }
 
 // begin returns the flight for key and whether the caller owns it. Owners
@@ -221,7 +233,7 @@ func (s *Server) cachedBespoke(ctx context.Context, source, category string, win
 	key := protocolBespokeCacheKey(source, category, windowDays)
 	fl := s.refreshBespoke(key, source, category, windowDays) //nolint:contextcheck // intentional detach — the battery must outlive this build (see refreshBespoke)
 	if e, has := s.protocolBespokeCache.get(key); has {
-		return e.blk, time.Since(e.at) > bespokeStaleAfter, true
+		return e.blk, s.protocolBespokeCache.clock().Sub(e.at) > bespokeStaleAfter, true
 	}
 	select {
 	case <-fl.done:
