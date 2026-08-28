@@ -10,7 +10,7 @@ import { Breadcrumbs, EmptyState, Skeleton } from '@/components/ui';
 import { useLastPathSegment } from '@/lib/useLastPathSegment';
 import type { Envelope } from '@/app/explorer-shared';
 
-import { LiveAssetPrice } from './LiveAssetPrice';
+import { LiveAssetPrice, type PriceProvenance } from './LiveAssetPrice';
 import { formatCompact } from '@/lib/format';
 
 interface AssetShellDetail {
@@ -21,8 +21,53 @@ interface AssetShellDetail {
   home_domain?: string | null;
   decimals?: number;
   volume_24h_usd?: string | null;
+  /** Fixed-precision decimal string (ADR-0003), or null when undrivable. */
+  price_usd?: string | null;
+  /** Absent = direct market. See the OpenAPI enum for the other values. */
+  price_basis?: 'declared_peg' | 'transitive';
   unverified_ticker_collision?: boolean;
   unverified_warning?: { note?: string } | null;
+}
+
+/**
+ * Parse the wire's decimal STRING into the number LiveAssetPrice takes.
+ *
+ * ADR-0003 keeps money on the wire as an exact-rational string, and the
+ * transitive path can return ~55 significant digits — far past what a
+ * double holds. That is fine HERE and only here: this value is the
+ * headline display figure, which is rounded for the reader anyway. It
+ * must never be fed back into arithmetic that settles anything.
+ *
+ * Returns null for absent/empty/unparseable/non-positive, so a bad
+ * value degrades to "no price" rather than rendering NaN or $0.
+ */
+function priceNumber(raw: string | null | undefined): number | null {
+  if (raw == null || raw === '') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/**
+ * Map the wire's `price_basis` to the caption vocabulary.
+ *
+ * Absent basis means a DIRECT market observation, which is 'vwap1m'.
+ * An unrecognised basis (a value this build predates) maps to null
+ * rather than guessing: a wrong caption states a provenance the price
+ * does not have, which is worse than no caption at all.
+ */
+function provenanceFromBasis(
+  basis: AssetShellDetail['price_basis'],
+): PriceProvenance {
+  switch (basis) {
+    case undefined:
+      return 'vwap1m';
+    case 'declared_peg':
+      return 'declared_peg';
+    case 'transitive':
+      return 'transitive';
+    default:
+      return null;
+  }
 }
 
 /**
@@ -93,10 +138,20 @@ export function AssetPathView() {
         source={asExample('/v1/assets/{id}', { id: slug })}
         bodyClassName="space-y-3"
       >
+        {/* Seed from the detail response we ALREADY hold. Passing null
+            here threw away a price the page had in hand: /v1/price
+            answers for DIRECT markets only, so every two-hop asset —
+            the exact population transitive pricing was built for —
+            rendered a permanent "—" while /v1/assets was serving a
+            real, substance-gated figure. Measured on CAUP7:
+            /v1/price → price:null, /v1/assets → 7768.93 basis
+            "transitive". usePricePoll keeps a seeded value when the
+            poll yields nothing usable, so this cannot regress the
+            assets that DO have a direct market. */}
         <LiveAssetPrice
           assetID={d.asset_id}
-          initialPrice={null}
-          initialProvenance={null}
+          initialPrice={priceNumber(d.price_usd)}
+          initialProvenance={provenanceFromBasis(d.price_basis)}
         />
         {d.unverified_warning?.note && (
           <p className="border-warn-300 bg-warn-50 text-warn-800 rounded-md border p-3 text-sm">
