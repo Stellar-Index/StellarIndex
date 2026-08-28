@@ -28,8 +28,8 @@ region                  = "{{ galexie_s3_region }}"
 endpoint_url            = "{{ galexie_s3_endpoint }}"
 
 [datastore_config.schema]
-ledgers_per_file     = {{ galexie_ledgers_per_file }}
-files_per_partition  = {{ galexie_files_per_partition }}
+ledgers_per_file     = {{ galexie_backfill_ledgers_per_file }}
+files_per_partition  = {{ galexie_backfill_files_per_partition }}
 
 # ──── Stellar-core — embedded captive core for ledger replay ───────
 [stellar_core_config]
