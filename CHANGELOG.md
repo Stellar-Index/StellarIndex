@@ -29,6 +29,33 @@ against.
   carries a `Replay-Plan:` trailer (`none — <reason>` allowed; a bare
   `none` is not). Fixture self-test in `lint-replay-plan-test.sh`.
 
+### Fixed
+
+- **Trade sink: a shutdown that raced an in-flight steady-state batch
+  write lost the batch instead of draining it.** The pipeline sibling
+  of the sorobanevents AsyncSink fix (#240). `persistWorker`'s ticker /
+  batch-full flush runs under the parent ctx, so a SIGTERM landing
+  mid-`BatchInsertTrades` cancelled the write; `context.Canceled` is
+  (correctly) not an infra fault, so the batch fell into per-row
+  isolation against the same dead ctx and every row — up to 200
+  already-accepted trades — was logged "abandoned on shutdown —
+  re-derive" while the worker's own bounded shutdown flush ran a moment
+  later with nothing to do. `flushTradeBatch` now returns the trades
+  the cancelled ctx left un-landed; the steady-state flush carries them
+  back into `tradeBuf` for `flushShutdown` to land under the shared
+  `drainTimeout`, and only the BOUNDED shutdown callers (whose deadline
+  is the drain budget) report an abandon as loss, via one
+  `reportAbandonedTrades` helper. Audited siblings NOT affected:
+  discovery `AsyncSink` (per-record Background ctx, Stop closes + drains
+  the channel), clickhouse `LiveSink` (Background-ctx flushes, failed
+  flush keeps its buffer), `externalRetryBuffer` (re-queues on ctx
+  error, `finalDrain` under a fresh ctx), `statsflush` (delta against a
+  retained snapshot, final flush under `WithoutCancel`), and the
+  customer-webhook worker (durable DB lease queue). Regression tests
+  `TestPersistWorker_ShutdownRacingInFlightTradeFlush_RowsLandNotLost`
+  + `TestFlushTradeBatch_CtxCancelledMidWrite_ReturnsWholeBatch`, red on
+  the pre-fix code (landed 0, want 3; 3 rows counted lost).
+
 ## [v0.47.2] — 2026-08-28
 
 Tested against Stellar Protocol 28.
