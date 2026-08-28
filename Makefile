@@ -386,7 +386,7 @@ docs-metrics: ## (no-op) Metrics reference is hand-edited — drift is guarded b
 	@# survives, but the help string now states explicitly that this
 	@# is a no-op.
 	@echo "docs-metrics is manual today; docs/reference/metrics/README.md is hand-edited."
-	@echo "Drift enforced by 'make lint-docs'. See TODO in metrics/README.md."
+	@echo "Drift enforced by 'make lint-docs'."
 
 .PHONY: docs-serve
 docs-serve: ## Preview docs site locally on :8080
