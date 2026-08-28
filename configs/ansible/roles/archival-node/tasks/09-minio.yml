@@ -386,10 +386,15 @@
   changed_when: false
   failed_when: false   # mc returns non-zero if policy already attached
 
-- name: Template /etc/default/stellarindex-ops (env vars for verify-archive + indexer/api)
-  # Sourced both by interactive `stellarindex-ops` invocations and
-  # by the stellarindex-indexer.service systemd unit (07-galexie /
-  # stellarindex-indexer task wires EnvironmentFile to this file).
+- name: Template /etc/default/stellarindex-ops (env vars for stellarindex-ops batch jobs)
+  # Sourced by interactive `stellarindex-ops` invocations, by
+  # run-heavy-job.sh (which imports the CH ops-batch pair below into
+  # every wrapped job, 14-stellarindex-services.yml) and by the ops
+  # timer units (verify-archive-tier-*, ch-schema-*, restore-drill).
+  # NOT by the stellarindex-{indexer,aggregator,api} service units —
+  # those source /etc/default/stellarindex (14-stellarindex-services.yml
+  # templates) and must keep doing so: this file carries the
+  # low-priority ClickHouse identity, which would demote them.
   #
   # The AWS SDK that powers the datastore reader (verify-archive +
   # indexer ledgerstream) reads creds from AWS_ACCESS_KEY_ID /

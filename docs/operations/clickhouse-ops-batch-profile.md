@@ -123,17 +123,25 @@ the real vault — a default of true would keep that workflow red until
 every inventory had the password. Enable per host, in one PR:
 
 1. `ansible-vault edit inventory/r1.secrets.yml` → add
-   `vault_clickhouse_ops_batch_password: "<generated>"`, and set
+   `vault_clickhouse_ops_batch_password: "<generated>"` (generate it
+   as hex — `openssl rand -hex 32` — so the value survives every
+   consumer: `run-heavy-job.sh` reads it verbatim, but the interactive
+   `set -a; source /etc/default/stellarindex-ops` path lets the shell
+   expand `$`, quotes and `#`), and set
    `clickhouse_ops_batch_profile_enabled: true` in `inventory/r1.yml`
    (same PR — the assert fails on enable-without-password, by design).
-2. Apply the CH user AND the env file together (a user without the
-   env is inert; an env without the user breaks the next ops job):
+2. Apply the CH user, the env file AND the heavy-job wrapper together
+   (a user without the env is inert; an env without the user breaks
+   the next ops job; a wrapper rendered before 2026-08-28 does not
+   import the pair, so `heavy-job-wrapper` re-renders
+   `/usr/local/sbin/run-heavy-job.sh` without a full `--tags
+   stellarindex` build+deploy pass):
 
    ```
    ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
-     --tags clickhouse-ops-batch-profile,minio --check --diff
+     --tags clickhouse-ops-batch-profile,minio,heavy-job-wrapper --check --diff
    ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
-     --tags clickhouse-ops-batch-profile,minio
+     --tags clickhouse-ops-batch-profile,minio,heavy-job-wrapper
    ```
 
    The handler restarts `clickhouse-server`; the archival-node role's

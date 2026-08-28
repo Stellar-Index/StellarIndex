@@ -25,7 +25,7 @@
 # Runs the wrapper's non-root exec path (no systemd-run / flock needed:
 # flock is stubbed on PATH so this runs on macOS too).
 #
-# Run: bash scripts/ops/run-heavy-job-test.sh
+# Run: bash scripts/ci/run-heavy-job-test.sh
 set -uo pipefail
 
 cd "$(dirname "$0")/../.." || exit 1
@@ -72,7 +72,7 @@ chmod +x "$PAYLOAD"
 
 # A realistic /etc/default/stellarindex-ops: comments, other secrets,
 # and a password with every character class a shell would mangle.
-PASSWORD='p=a$s"s w0rd'"'"'#x='
+PASSWORD="p=a\$s\"s w0rd'#x="
 OPS_ENV="$TMP/stellarindex-ops"
 cat > "$OPS_ENV" <<EOT
 # Rendered by Ansible. Do not edit by hand.

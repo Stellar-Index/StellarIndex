@@ -50,8 +50,13 @@ against.
   asserts the CH user and the env pair moved together. **Operator
   steps** (per host, one PR): add the vault password + flip the flag in
   the inventory, then `ansible-playbook ... --tags
-  clickhouse-ops-batch-profile,minio,stellarindex --check --diff`, then
-  apply. See `docs/operations/clickhouse-ops-batch-profile.md`.
+  clickhouse-ops-batch-profile,minio,heavy-job-wrapper --check --diff`,
+  then apply (the third tag re-renders the wrapper already on the
+  host). Pinned by `TestOpsOpenersAuthenticateFromEnv` (the identity
+  every opener puts on the ClickHouse wire, decoded from the native
+  client hello) and `scripts/ci/run-heavy-job-test.sh` (the shipped
+  wrapper, extracted from the ansible task). See
+  `docs/operations/clickhouse-ops-batch-profile.md`.
 
 ## [v0.47.2] — 2026-08-28
 

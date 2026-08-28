@@ -225,12 +225,14 @@
 #   ansible-vault edit inventory/r1.secrets.yml   # add the password
 #   (set clickhouse_ops_batch_profile_enabled: true in inventory/r1.yml)
 #   ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
-#     --tags clickhouse-ops-batch-profile,minio --check --diff
-# (both tags: the CH user AND the env file must move together, or the
-# next ops job authenticates with a credential CH does not know).
-# run-heavy-job.sh (14-stellarindex-services.yml) imports the pair
-# from /etc/default/stellarindex-ops itself, so the job side needs no
-# re-apply and no change to how the runbooks launch jobs.
+#     --tags clickhouse-ops-batch-profile,minio,heavy-job-wrapper --check --diff
+# (all three tags: the CH user AND the env file must move together, or
+# the next ops job authenticates with a credential CH does not know;
+# heavy-job-wrapper re-renders /usr/local/sbin/run-heavy-job.sh, which
+# imports the pair from /etc/default/stellarindex-ops into every wrapped
+# job itself — 14-stellarindex-services.yml — so how the runbooks launch
+# jobs does not change; a wrapper rendered before 2026-08-28 does not
+# import it, hence the tag).
 
 - name: Assert ClickHouse ops-batch profile password is set (2026-08-28 r1)
   ansible.builtin.assert:
@@ -242,7 +244,7 @@
       `vault_clickhouse_ops_batch_password: "<generated>"` (mirrors
       vault_clickhouse_serving_password — see defaults/main.yml's
       clickhouse_ops_batch_password for the wiring), then re-run with
-      --tags clickhouse-ops-batch-profile,minio. Never commit the
+      --tags clickhouse-ops-batch-profile,minio,heavy-job-wrapper. Never commit the
       plaintext password.
   when: clickhouse_ops_batch_profile_enabled | bool
   tags: [clickhouse, clickhouse-ops-batch-profile]

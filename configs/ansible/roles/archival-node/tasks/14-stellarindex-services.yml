@@ -371,7 +371,7 @@
       if [ -n "${STELLARINDEX_CLICKHOUSE_OPS_USER:-}" ]; then
         echo "run-heavy-job: ${NAME} ClickHouse identity: ${STELLARINDEX_CLICKHOUSE_OPS_USER} (ops_batch low-priority profile)" >&2
       else
-        echo "run-heavy-job: WARNING ${NAME} ClickHouse identity: CH 'default' user at SERVING priority — STELLARINDEX_CLICKHOUSE_OPS_USER is neither in the environment nor in ${OPS_ENV}. Any stellarindex-ops ClickHouse read in this job can starve the aggregator/indexer (2026-08-28 r1 supply_refresh_error_dominant class). Enable clickhouse_ops_batch_profile_enabled and apply --tags clickhouse-ops-batch-profile,minio,stellarindex." >&2
+        echo "run-heavy-job: WARNING ${NAME} ClickHouse identity: CH 'default' user at SERVING priority — STELLARINDEX_CLICKHOUSE_OPS_USER is neither in the environment nor in ${OPS_ENV}. Any stellarindex-ops ClickHouse read in this job can starve the aggregator/indexer (2026-08-28 r1 supply_refresh_error_dominant class). Enable clickhouse_ops_batch_profile_enabled and apply --tags clickhouse-ops-batch-profile,minio,heavy-job-wrapper." >&2
       fi
 
       # De-privileged units (User=stellarindex) can't create a system
@@ -460,6 +460,12 @@
         -p CPUWeight=50 -p IOWeight=50 \
         "$@" || rc=$?
       exit "$rc"
+  # Own tag (merged with the import's stellarindex/indexer tags) so the
+  # ops-batch identity import above can be re-rendered on a host alone:
+  # `--tags clickhouse-ops-batch-profile,minio,heavy-job-wrapper`
+  # (docs/operations/clickhouse-ops-batch-profile.md) instead of a full
+  # `--tags stellarindex` build+deploy pass.
+  tags: [heavy-job-wrapper]
 
 - name: archive-completeness drop-in directory
   # `copy` does not create parent dirs — without this the override.conf
