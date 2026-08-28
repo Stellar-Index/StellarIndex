@@ -50,7 +50,7 @@ while true; do
     sleep "$INTERVAL"; continue
   fi
 
-  IFS='|' read -r done alive lake free cur term <<EOF
+  IFS='|' read -r done_n alive lake free cur term <<EOF
 $out
 EOF
 
@@ -59,10 +59,10 @@ EOF
   # final one) — keeps notifications to a handful of milestones over a
   # multi-day run instead of one per window. Alerts + terminal states below
   # always emit, regardless of STEP.
-  if [ "${done:-0}" != "$last_done" ]; then
-    last_done=${done:-0}
-    if [ "$(( done % STEP ))" -eq 0 ] || [ "${done:-0}" -ge "$total_windows" ]; then
-      echo "PROGRESS windows=${done:-0}/${total_windows} at=[${cur:-?}] lake=${lake:-?} pool_free=${free_tib}TiB driver_alive=${alive:-0}"
+  if [ "${done_n:-0}" != "$last_done" ]; then
+    last_done=${done_n:-0}
+    if [ "$(( done_n % STEP ))" -eq 0 ] || [ "${done_n:-0}" -ge "$total_windows" ]; then
+      echo "PROGRESS windows=${done_n:-0}/${total_windows} at=[${cur:-?}] lake=${lake:-?} pool_free=${free_tib}TiB driver_alive=${alive:-0}"
     fi
   fi
 
