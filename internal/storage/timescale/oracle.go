@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strconv"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
@@ -367,7 +369,7 @@ func (s *Store) LatestOracleObservation(ctx context.Context, source string, base
 // Diagnostic helper, not for production hot paths.
 func (s *Store) CountOracleUpdates(ctx context.Context) (int64, error) {
 	var n int64
-	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM oracle_updates`).Scan(&n)
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM oracle_updates -- totality: includes unmapped`).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("timescale: CountOracleUpdates: %w", err)
 	}
@@ -393,7 +395,7 @@ func (s *Store) LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpda
                price, decimals,
                COALESCE(confidence, 0),
                COALESCE(observer, '')
-          FROM oracle_updates
+          FROM oracle_updates -- totality: includes unmapped
          WHERE ts > NOW() - INTERVAL '7 days'
          ORDER BY source, asset, quote, ts DESC
     `
@@ -403,6 +405,7 @@ func (s *Store) LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpda
 	}
 	defer func() { _ = rows.Close() }()
 	var out []canonical.OracleUpdate
+	dropped := 0
 	for rows.Next() {
 		var u canonical.OracleUpdate
 		var assetStr, quoteStr string
@@ -417,13 +420,26 @@ func (s *Store) LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpda
 			return nil, fmt.Errorf("timescale: LatestOracleStreams scan: %w", err)
 		}
 		u.Decimals = uint8(decimals)
+		// A stored asset/quote that no longer parses (raw: rows DO parse —
+		// canonical.AssetOracleRaw — so a miss here is a genuinely
+		// malformed legacy row) is skipped rather than failing the whole
+		// catalogue, but never silently: totality means a dropped row is
+		// an observable defect, not an invisible one.
 		a, err := canonical.ParseAsset(assetStr)
 		if err != nil {
+			dropped++
+			slog.Warn("timescale: LatestOracleStreams: dropping row with unparseable asset",
+				"source", u.Source, "ledger", u.Ledger, "tx_hash", u.TxHash, "op_index", u.OpIndex,
+				"asset", strconv.Quote(assetStr), "err", err)
 			continue
 		}
 		u.Asset = a
 		qa, err := canonical.ParseAsset(quoteStr)
 		if err != nil {
+			dropped++
+			slog.Warn("timescale: LatestOracleStreams: dropping row with unparseable quote",
+				"source", u.Source, "ledger", u.Ledger, "tx_hash", u.TxHash, "op_index", u.OpIndex,
+				"quote", strconv.Quote(quoteStr), "err", err)
 			continue
 		}
 		u.Quote = qa
@@ -431,6 +447,9 @@ func (s *Store) LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpda
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("timescale: LatestOracleStreams rows: %w", err)
+	}
+	if dropped > 0 {
+		slog.Warn("timescale: LatestOracleStreams: rows dropped for unparseable asset/quote", "dropped", dropped, "returned", len(out))
 	}
 	return out, nil
 }

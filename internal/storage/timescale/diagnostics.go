@@ -505,7 +505,7 @@ func (s *Store) SeedSourceEntryCounts(ctx context.Context) (int64, error) {
         FROM (
             SELECT source, count(*) AS c FROM trades         GROUP BY source
             UNION ALL
-            SELECT source, count(*) AS c FROM oracle_updates GROUP BY source
+            SELECT source, count(*) AS c FROM oracle_updates GROUP BY source -- totality: includes unmapped
             UNION ALL
             -- fx_quotes.source is nullable; coalesce to 'unknown-fx'
             -- so rows that landed without a source label still get

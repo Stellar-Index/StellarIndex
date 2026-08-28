@@ -116,6 +116,9 @@ func TestOracleKPIQueriesShape(t *testing.T) {
 	if !strings.Contains(w, "date_trunc('second'") {
 		t.Error("freshest-update age must be truncated to seconds for honest rendering")
 	}
+	if !strings.Contains(w, "count(DISTINCT (asset, quote)) FILTER (WHERE asset LIKE 'raw:%')") {
+		t.Error("window KPI query must count the unmapped (raw:) feeds as their own KPI — totality shows them, it does not hide them")
+	}
 	assertOracleCountsAndTimestampsOnly(t, "window KPIs", w)
 
 	a := oracleAllTimeKPIQuery()
