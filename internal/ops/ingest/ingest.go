@@ -60,6 +60,8 @@ func Run(args []string) error { //nolint:gocyclo // flat command-dispatch switch
 		return issuerEnrich(args[1:])
 	case "sep1-refresh":
 		return sep1RefreshCmd(args[1:])
+	case "issuer-flags":
+		return issuerFlagsCmd(args[1:])
 	case "directory-sync":
 		return directorySync(args[1:])
 	default:

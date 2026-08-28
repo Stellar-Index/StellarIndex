@@ -1,0 +1,92 @@
+# systemd unit: issuer AccountEntry auth-flag persistence.
+#
+# Rendered by Ansible. Reads each issuer's live AccountEntry from the
+# ClickHouse lake, decodes the auth bitmask (AUTH_REQUIRED / REVOCABLE /
+# IMMUTABLE / CLAWBACK) plus home_domain, and writes them into the
+# `issuers` table.
+#
+# WHY THIS EXISTS — it is DURABILITY, not a missing capability.
+#
+# The flags already resolve at READ time: the API's
+# Server.enrichIssuerFromAccountState decodes them from the lake per
+# request, and 39 of the top 40 issuers resolved when measured
+# 2026-08-27. What that path cannot survive is a cold account-state
+# cache — under burst the refresh gate degrades and an issuer page
+# renders "not yet resolved". The Postgres columns were created for
+# exactly this fallback in migration 0023 and had never been populated
+# (0 of 59,189). This job fills them so the read path has something
+# durable underneath it.
+#
+# Deliberately incremental: -limit bounds a run and the queue is
+# "auth_required IS NULL ORDER BY g_strkey", so repeated bounded runs
+# make forward progress instead of re-walking the same head. A run that
+# hits its timeout mid-walk is NOT an error — the queue is resumable by
+# construction.
+
+[Unit]
+Description=Stellar Index — issuer AccountEntry auth-flag persistence (daily)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/internal/ops/ingest/issuer_flags.go
+After=network-online.target postgresql.service clickhouse-server.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/issuer-flags
+EnvironmentFile=-/etc/default/stellarindex
+
+# Defaults. Operators override via /etc/default/issuer-flags.
+#
+# LIMIT 5000/day against a ~59k backlog drains it in under a fortnight
+# while keeping any single run small enough to finish inside the
+# timeout. Once drained the queue is near-empty every night, because
+# only newly-discovered issuers have auth_required IS NULL.
+Environment=CONFIG_PATH=/etc/stellarindex.toml
+Environment=CH_ADDR=127.0.0.1:9300
+Environment=LIMIT=5000
+Environment=BATCH=500
+Environment=RUN_TIMEOUT=30m
+Environment=EXTRA_FLAGS=
+
+# -write is REQUIRED: opsutil.RegisterWriteGate defaults every ops job
+# to dry-run, so without this the timer would run nightly, report what
+# it would have done, and persist nothing — the silent no-op shape.
+ExecStart=/usr/local/bin/stellarindex-ops issuer-flags \
+  -config ${CONFIG_PATH} \
+  -ch-addr ${CH_ADDR} \
+  -limit ${LIMIT} \
+  -batch ${BATCH} \
+  -timeout ${RUN_TIMEOUT} \
+  -write \
+  ${EXTRA_FLAGS}
+
+# De-privileged (CS-118, audit-2026-06-30) — the stellarindex user is
+# created by 04-users.yml (CS-119). Reads config + ClickHouse, writes
+# Postgres. Nothing else.
+User=stellarindex
+Group=stellarindex
+
+ProtectSystem=strict
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# The binary's own -timeout caps the run; give systemd a little headroom.
+TimeoutStartSec=40min
+
+# Memory ceiling. Unlike sep1-refresh this job does NOT parse
+# attacker-authored documents — the XDR it decodes is our own captured
+# lake data. The ceiling is here for a duller reason: it holds a batch
+# of AccountEntry rows plus the candidate G-strkey slice in memory at
+# once, and it shares this host with galexie's captive core, Postgres
+# and ClickHouse. 1G is far above a healthy run (500 entries per batch)
+# and far below the blast radius of the 2026-07-05 wedge, where an
+# unbounded job swapped core into `invalid local state` and froze the
+# lake for 11 hours. MemorySwapMax=0 so a runaway is killed rather than
+# swapping the box.
+MemoryMax=1G
+MemorySwapMax=0
+
+[Install]
+WantedBy=multi-user.target
