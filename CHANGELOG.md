@@ -17,6 +17,15 @@ against.
 
 ### Added
 
+- **CI ansible task lint (`scripts/ci/lint-ansible-tasks.sh`).** Two
+  structural guards over `configs/ansible/**`, wired into import-checks +
+  `verify.sh` with a fixture self-test: *pipefail-needs-bash* (a
+  `ansible.builtin.shell` body that sets `pipefail` must declare
+  `executable: /bin/bash` — dash rejects it, the third recurrence of the
+  class) and *secret-on-argv* (a vault value interpolated into a
+  command body / `mc` positional secret in a shipped script; `no_log`
+  hides it from Ansible output only). Grandfathered violations live in
+  the shrink-only `lint-ansible-tasks.baseline`.
 - **CI replay-plan tripwire (`scripts/ci/lint-replay-plan.sh`).** On
   2026-08-27 e17288bd widened `internal/canonical/asset_fiat.go` 32→132
   codes; live ingestion recorded 4 new currencies, nobody replayed
@@ -59,6 +68,12 @@ against.
   `docs/operations/clickhouse-ops-batch-profile.md`.
 ### Fixed
 
+- **ansible: `04-users.yml` history-archive sweep aborted every full
+  archival-node apply.** The 2026-08-27 task ran `set -euo pipefail` under
+  ansible's default `/bin/sh` (dash on every target) → `set: Illegal
+  option -o pipefail`, rc=2, play aborted at step 04 before
+  postgres/galexie/services. Now runs under `executable: /bin/bash`
+  (audit 2026-08-28, deploy-ansible-shell-1).
 - **ansible: MinIO secrets no longer on `mc` argv.** `09-minio.yml`'s
   alias task claimed env-based auth while passing the root password on
   argv, and the three `mc admin user add` tasks + `galexie-append.sh`'s

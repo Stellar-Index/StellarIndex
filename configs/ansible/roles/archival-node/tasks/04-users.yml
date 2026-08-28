@@ -110,5 +110,13 @@
         find /srv/history-archive -type d ! -perm -o+rx -exec chmod o+rx {} +
         echo CHANGED
       fi
+    # `set -o pipefail` is a bashism; ansible.builtin.shell defaults to
+    # /bin/sh, which is dash on every target (Ubuntu noble) and errors
+    # "set: Illegal option -o pipefail" (rc=2) BEFORE the sweep runs —
+    # aborting every full role apply at this step (2026-08-28 audit; same
+    # class as deploy-binary.yml 2026-07-18). The `find | grep -q .` pipe
+    # makes pipefail load-bearing, so run under bash. Guarded by
+    # scripts/ci/lint-ansible-tasks.sh (pipefail-needs-bash).
+    executable: /bin/bash
   register: harch_world_traverse
   changed_when: "'CHANGED' in harch_world_traverse.stdout"
