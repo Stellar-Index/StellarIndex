@@ -3,7 +3,7 @@
 **Stellar Index is a protocol explorer and API for the Stellar network** —
 complete, verified, per-protocol on-chain data: every contract, every
 event, every trade, for every major protocol (SDEX, Soroswap, Aquarius,
-Phoenix, Comet, Blend, DeFindex, CCTP, Rozo, and the Reflector / Redstone
+Phoenix, Comet, Blend, DeFindex, CCTP, Rozo, SoroCredit, and the Reflector / Redstone
 / Band oracles), captured from a certified raw ledger lake and
 attributed by contract identity (ADR-0035), with per-protocol
 verification pages at [docs/protocols/](docs/protocols/). It is evolving
@@ -71,10 +71,10 @@ See **[CLAUDE.md](CLAUDE.md)**. It's your orientation map.
       p.Data.Price, p.Data.PriceType, p.Data.ObservedAt)
   ```
 
-  Prefer raw HTTP? [`examples/curl/`](examples/curl/) has fourteen
+  Prefer raw HTTP? [`examples/curl/`](examples/curl/) has sixteen
   runnable scripts, and [`examples/postman/`](examples/postman/) a
   ready-to-import collection (see the next bullet).
-- **API examples:** [`examples/curl/`](examples/curl/) — fourteen runnable
+- **API examples:** [`examples/curl/`](examples/curl/) — sixteen runnable
   shell scripts covering signup, account info, price (current /
   point-in-time / since-inception), OHLC, history, asset detail,
   SAC wrappers, oracle latest, markets, and the SSE price stream.

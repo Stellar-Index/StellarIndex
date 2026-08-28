@@ -211,7 +211,7 @@ jobs:
 
   # ────────────────────────────────────────────────────────────────
   # Policy checks — keep the repo enterprise-grade per
-  # docs/discovery/engineering-standards.md.
+  # docs/engineering-standards.md.
   # ────────────────────────────────────────────────────────────────
 
   doc-checks:
