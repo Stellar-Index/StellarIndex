@@ -82,6 +82,14 @@ all:
       - "backups"
     galexie_s3_endpoint: "http://127.0.0.1:9000"
     galexie_s3_bucket:   "galexie-live"
+    # Archive-backfill schema override (2026-08-28): 64 ledgers per object,
+    # 1000 objects per partition — the partition span stays exactly 64,000
+    # ledgers so the directory layout is unchanged, but the object count
+    # drops 64× (4.34M → ~68k). Applies ONLY to galexie-backfill.toml (see
+    # defaults/main.yml → galexie_backfill_*); the live-tail schema is
+    # untouched. Testnet has no cold tier, so nothing pins it at 1/64000.
+    galexie_backfill_ledgers_per_file:    64
+    galexie_backfill_files_per_partition: 1000
     galexie_s3_region:   "{{ region_id }}"
 
     # "Mostly an explorer": the Soroban DEX/AMM sources (soroswap, aquarius,

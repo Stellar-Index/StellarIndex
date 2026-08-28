@@ -786,6 +786,31 @@ galexie_archive_s3_access_key: "galexie-archive-writer"
 # galexie_archive_s3_secret_key ← vault
 galexie_ledgers_per_file: 1
 galexie_files_per_partition: 64000      # ~1 checkpoint per partition
+# Archive-BACKFILL datastore schema — deliberately SEPARATE knobs from the
+# live pair above, defaulting to the live values so every existing network
+# renders a byte-identical galexie-backfill.toml.
+#
+# Why separate (2026-08-28): the testnet archive backfill died three times
+# on the same S3 retry-quota signature because ledgers_per_file=1 means
+# 4.34M objects for testnet's 4.34M ledgers — an fsync-bound MinIO on a
+# 20 GB VM cannot sustain that PUT rate (r1's bare-metal NVMe could, and
+# its mainnet replay is ~10× slower per ledger, so it never crossed the
+# threshold). The fix is a coarser schema for the BACKFILL bucket only.
+# It must never reach galexie.toml: the live-tail bucket already carries a
+# 1/64000 manifest, and the SDK refuses to start a galexie whose config
+# disagrees with the bucket's .config.json — sharing one var would have
+# restarted live testnet galexie straight into that halt (caught by the
+# 2026-08-28 adversarial audit of the change before it shipped).
+#
+# Mainnet MUST stay at the live default for its archive too: the hot
+# archive is mirrored object-for-object from the AWS Public Blockchain
+# dataset (1/64000) and the cold-tier reader derives cold keys from the
+# hot schema — three code-level constraints pin it. Override only on
+# networks with no cold tier, and only after wiping the backfill bucket
+# INCLUDING its root .config.json (a datastore's schema cannot change
+# in place).
+galexie_backfill_ledgers_per_file:    "{{ galexie_ledgers_per_file }}"
+galexie_backfill_files_per_partition: "{{ galexie_files_per_partition }}"
 galexie_admin_port:          6061          # live-tail galexie: metrics + admin HTTP, loopback only
 galexie_backfill_admin_port: 6062          # archive-backfill galexie: distinct port so both instances coexist
 
