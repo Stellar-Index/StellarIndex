@@ -3,8 +3,8 @@
 All notable changes to Stellar Index will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to dual versioning — SemVer for `pkg/*`
-and CalVer (`YYYY.MM.DD`) for binary releases. See
+and this project adheres to SemVer (`vX.Y.Z`) — for binary releases
+as well as the `pkg/*` compatibility promise. See
 [docs/architecture/semver-policy.md](docs/architecture/semver-policy.md)
 for the rationale.
 
@@ -29,6 +29,39 @@ against.
   (`deploy/monitoring/rule-tests/ingestion_test.yml`): fresh stamp
   silent, stale stamp fires, never-succeeded fires, stamp-within-8h
   suppresses, aggregator-absent fires.
+- **Oracle capture-totality PR-2 — decoders record unmapped symbols
+  as `raw:` rows.** The Reflector (dex/cex/fx), RedStone and Band
+  decoders no longer SKIP a price slot whose symbol / feed_id is
+  outside the canonical allow-lists (ADR-0010/0014/0028, RedStone
+  feed registry); the slot is recorded verbatim as a
+  `raw:<symbol>` asset (`canonical.AssetOracleRaw`, PR-1) at the
+  SAME positional `op_index` the skip placeholder consumed, so no
+  existing row's identity moves (DAT-03; pinned by
+  `TestDecodeUpdate_OpIndexStableAcrossAllowlistState` and the
+  RedStone/Band mixed known/unknown tests). All-unknown events now
+  decode to rows instead of `ErrEmptyPrices` / `ErrEmptyUpdates` /
+  `ErrEmptyRates` (those remain only for genuinely empty / all
+  non-positive vectors). Raw RedStone rows are quoted from a
+  `/<FIAT>` feed_id suffix when it is allow-listed, else USD, and
+  are never inverted (orientation unknown). Band still skips `USD`
+  and rate-0 slots. The real 2026-04-23 mainnet fixtures show the
+  gain: every reflector-fx event carries `VES` and `XAU` slots that
+  were dropped before. Shared mapper `canonical.MapOracleSymbol`
+  (fiat → crypto → RWA → raw; lists pinned disjoint) replaces the
+  two decoders' inconsistent precedence.
+  `stellarindex_source_unknown_symbols_total` keeps its name and
+  keeps incrementing; it now means "recorded as raw" (help text +
+  metrics reference updated). Consumers (`/v1/oracle/streams`,
+  bespoke page, MEV cascade) are PR-3/4 — a raw row is
+  `IsMapped()==false` and must be excluded there.
+  **Completeness-gate impact:** the expected side of the oracle
+  completeness gate is the same decoder run over the lake, so
+  reflector-*/redstone/band historical ranges read INCOMPLETE (Δ =
+  historical unmapped slots) from the moment this binary deploys
+  until history is replayed; the replay is declared in the commit's
+  `Replay-Plan:` trailer (the `scripts/ci/lint-replay-plan.sh`
+  convention) and executed as PR-7 of the design.
+
 - **CI replay-plan tripwire (`scripts/ci/lint-replay-plan.sh`).** On
   2026-08-27 e17288bd widened `internal/canonical/asset_fiat.go` 32→132
   codes; live ingestion recorded 4 new currencies, nobody replayed
@@ -40,6 +73,45 @@ against.
   `internal/sources/*/{decode*,events,feeds,pairs}.go` unless a commit
   carries a `Replay-Plan:` trailer (`none — <reason>` allowed; a bare
   `none` is not). Fixture self-test in `lint-replay-plan-test.sh`.
+- **CI amtool gate for the Alertmanager config (#275).** The routing
+  tree that decides whether any alert reaches a human was the only
+  production config surface with no CI validation — amtool ran only
+  inside `configs/alertmanager/apply.sh`, by hand, on the host, after
+  merge. `apply.sh` grows `--check-only` (render + validate, no
+  install), the monitoring-rules job installs a SHA-pinned amtool and
+  validates BOTH render branches (empty URLs → the block-stripper stub
+  path; set URLs → substitution), `verify.sh` mirrors it with
+  promtool-style graceful skip, and `configs/alertmanager/` joins
+  `config-apply-gate.sh` SURFACES.
+- **Canonical `raw:` asset type — the record layer of the oracle
+  capture-totality design (PR-1 of 7).** `canonical.AssetOracleRaw`
+  (`raw:<symbol>`, 1–64 printable-ASCII bytes, no allow-list) holds an
+  oracle-published symbol verbatim when it maps to no canonical asset.
+  `ParseAsset` dispatches the prefix ahead of the classic
+  `<code>:<issuer>` split (on main `raw:BTC` parsed as classic code
+  `raw` + issuer `BTC` and failed), `Validate`/`Value`/`Scan`/JSON
+  round-trip it, and `Asset.IsMapped()` is the interpretation-layer
+  guard. `Pair.Validate` refuses a raw leg (never a VWAP input),
+  `supply.AssetKey` treats it as off-chain, and every `oracle_updates`
+  reader that re-parses the asset column (`LatestOracleUpdatesForAssets`,
+  `LatestOracleObservation`, `LatestAggregatorPricesForPair`,
+  `LatestOracleStreams`) now tolerates a raw row instead of failing the
+  request — integration-tested against real Timescale. No decoder emits
+  raw rows yet (PR-2); this PR changes no served behaviour.
+- **Alert `stellarindex_ingestion_oracle_unknown_symbols`** — the
+  2026-08-04 cold audit found `stellarindex_source_unknown_symbols_total`
+  had no consumer in either rule tree while r1 carried 7,794 silently
+  dropped Reflector slots. Fires per source on any increase over a
+  trailing 25 h (longer than Band's daily cadence, so it cannot flap),
+  ticket severity, promtool unit-tested, runbook
+  `docs/operations/runbooks/oracle-unknown-symbols.md`.
+
+### Fixed
+
+- RedStone docs (`internal/sources/redstone/README.md`,
+  `docs/protocols/redstone.md`) cited a metric that never existed
+  (`redstone_unknown_symbols_total`); the counter is
+  `stellarindex_source_unknown_symbols_total{source="redstone"}`.
 - **Low-priority `ops_batch` ClickHouse identity for heavy
   `stellarindex-ops` jobs** (2026-08-28 r1: a runbook-prescribed
   `ch-rebuild -sep41` dry-run running as CH's `default` user starved the
