@@ -15,6 +15,28 @@ against.
 
 ## [Unreleased]
 
+## [v0.46.1] — 2026-08-28
+
+### Fixed
+- **Transitive pricing was shipped INERT in v0.46.0.** Verified on r1
+  after that deploy: all four binaries on v0.46.0, and `CAUP7NFA…` still
+  served no `price_usd`. `applyAssetRowToDetail` early-returns on
+  `sql.ErrNoRows`, and a Soroban-native contract asset has no
+  `classic_assets` row *by definition* — that table requires a G-issuer.
+  The whole premise of transitive pricing is "the catalogue cannot reach
+  this asset", so the one branch the feature had to survive was the one
+  the fill sat behind. Both arms now route through a shared
+  `fillTransitivePrice`, with a regression test proven red against the
+  shipped bug.
+
+  Worth recording *why* this was more dangerous than an ordinary bug: the
+  same release taught the coverage tripwire to see the one-hop path, and
+  that CTE is quote-based — so `stellarindex_assets_popular_priceless`
+  went to **0** on deploy while the asset remained unpriced. The alert
+  clearing and the gap closing are independent outcomes; only the first
+  had happened. Checking the alert board would have reported success on
+  what was, in effect, a bypass.
+
 ## [v0.46.0] — 2026-08-28
 
 Closes the coverage gap behind `stellarindex_assets_popular_priceless`,
