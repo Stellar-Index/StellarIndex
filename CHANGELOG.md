@@ -57,6 +57,44 @@ against.
   client hello) and `scripts/ci/run-heavy-job-test.sh` (the shipped
   wrapper, extracted from the ansible task). See
   `docs/operations/clickhouse-ops-batch-profile.md`.
+### Fixed
+
+- **Outlier filter trimmed agreed price moves; `outlier_storm` measured
+  its own artifact.** The published-VWAP filter scored every print
+  against ONE band — the whole window's median ± 4 × 1.4826 × MAD — and
+  MAD is the *majority* regime's dispersion (0.1–0.3 % on a liquid
+  pair). Any agreed move larger than ~1 % was trimmed wholesale until it
+  became the window majority, then the old regime was trimmed instead.
+  Live on r1 (2026-08-28): Kraken stepped XLM/GBP 0.1337 → 0.1364, a
+  genuine +2 % matching the XLM/USD × GBP/USD cross; the window VWAPs
+  stayed pinned at the stale level, `anomaly_freeze_engaged` fired on
+  the discontinuity when the regime flipped (`sources=1 z=11.69`), and
+  `stellarindex_aggregator_outlier_storm` fired for hours on
+  XLM/USD and XLM/GBP while every venue agreed within 0.9 % — its
+  counter re-counted the trimmed window tail every 30 s tick.
+
+  The orchestrator's filter is now **time-local**
+  (`aggregate.FilterOutliersLocal`): a print is dropped only when it
+  disagrees with the whole window AND its neighbourhood (own / adjacent
+  1-minute buckets when they hold ≥ 3 prices, else the nearest 5 prints
+  on each side — so thin single-source series are covered too). Steps
+  survive; a lone fat-finger, wash, or dust print still does not. The
+  per-request `/v1/vwap?outlier_sigma=` and `/v1/ohlc` filter keeps its
+  documented whole-window semantics. Regression tests replay the r1
+  shape (thin single-source +2 % step: 0 trimmed, z ≤ σ; lone +10 %
+  print: trimmed) at the filter and orchestrator layers.
+
+  The alert now measures what it claims: new gauges
+  `stellarindex_aggregator_venue_vwap{pair,window,source}` (per-venue
+  pre-filter VWAP, absent venues deleted) and
+  `stellarindex_aggregator_window_trades{pair,window,stage}`;
+  `outlier_storm` fires on `max/min − 1 > 1 %` across ≥ 2 venues for
+  15 m, and the new `stellarindex_aggregator_outlier_trim_fraction`
+  (`> 20 %` of the 24h window trimmed for 30 m, ≥ 20 trades) covers the
+  single-venue spam shape that disagreement cannot see. promtool tests:
+  agreed cross-venue step silent, one venue +3 % fires, single venue
+  never fires. `dropped_trades_total{reason="outlier"}` stays as a
+  diagnostic; no alert gates on it.
 
 ## [v0.47.2] — 2026-08-28
 

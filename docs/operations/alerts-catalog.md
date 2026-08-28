@@ -413,7 +413,8 @@ auto-unfreeze at all. Rules in
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_aggregator_silent` | `rate(stellarindex_aggregator_vwap_writes_total[5m])` | == 0 for > 5 min | **P1** | [aggregator-silent](runbooks/aggregator-silent.md) |
-| `stellarindex_aggregator_outlier_storm` | `rate(stellarindex_aggregator_dropped_trades_total{reason="outlier"}[10m])` | > 5× baseline (offset 1h) for > 15 min | P3 | [aggregator-outlier-storm](runbooks/aggregator-outlier-storm.md) |
+| `stellarindex_aggregator_outlier_storm` | `max by (pair) / min by (pair)` of `stellarindex_aggregator_venue_vwap{window="5m"}` − 1, ≥ 2 venues | > 1 % for > 15 min | P3 | [aggregator-outlier-storm](runbooks/aggregator-outlier-storm.md) |
+| `stellarindex_aggregator_outlier_trim_fraction` | `1 − window_trades{stage="outlier"} / window_trades{stage="class"}` on the 24h window, ≥ 20 trades | > 0.2 for > 30 min | P3 | [aggregator-outlier-storm](runbooks/aggregator-outlier-storm.md) |
 | `stellarindex_aggregator_class_drop_spike` | `rate(stellarindex_aggregator_dropped_trades_total{reason="class"}[10m])` | > 10× baseline (offset 1h) for > 15 min | P3 | [aggregator-class-drop-spike](runbooks/aggregator-class-drop-spike.md) |
 | `stellarindex_aggregator_fx_snap_fallback_dominant` | `rate(stellarindex_aggregator_fx_snap_fallback_total[15m]) / rate(stellarindex_aggregator_triangulations_total{outcome="ok"}[15m])` | > 0.5 for > 30 min | P3 | [aggregator-fx-snap-fallback-dominant](runbooks/aggregator-fx-snap-fallback-dominant.md) |
 | `stellarindex_aggregator_triangulation_chains_dry` | `rate(stellarindex_aggregator_triangulations_total{outcome="missing_leg"}[15m])` > 0 **and** `rate(...{outcome="ok"}[15m])` == 0 | for > 30 min | P3 | [aggregator-triangulation-chains-dry](runbooks/aggregator-triangulation-chains-dry.md) |

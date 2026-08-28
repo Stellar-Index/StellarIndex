@@ -1,69 +1,94 @@
 ---
 title: Runbook — aggregator-outlier-storm
-last_verified: 2026-08-26
+last_verified: 2026-08-28
 status: draft
 severity: P3
 ---
 
-# Runbook — `stellarindex_aggregator_outlier_storm`
+# Runbook — `stellarindex_aggregator_outlier_storm` / `stellarindex_aggregator_outlier_trim_fraction`
 
-> **2026-08-26 rescope.** The alert was `sum(rate[10m]) > 5×(rate[1h] offset 1h)`
-> for 15m. That comparator **self-poisoned** — a sustained storm's own early
-> minutes entered the `[T-2h,T-1h]` baseline and flipped the ratio false at
-> ~72m, so it could never survive the very storm it was meant to catch — and
-> at 15m it ticketed on every benign single-pair trimming burst. It is now an
-> **absolute per-pair sustained gate**:
-> `sum by (pair) (rate(...{reason="outlier"}[10m])) > 10` for **2h**. Read
-> "storm" below as **persistent price dispersion on one pair**, not a relative
-> spike. Covered by `deploy/monitoring/rule-tests/aggregator_test.yml`.
+> **2026-08-28 redesign.** The alert used to gate on
+> `sum by (pair) (rate(stellarindex_aggregator_dropped_trades_total{reason="outlier"}[10m])) > 10`
+> for 2h. On 2026-08-28 it fired for **hours** on `crypto:XLM/fiat:USD`
+> and `/GBP` while binance / coinbase / kraken agreed within 0.9 % and the
+> served prices were right. The counter measured how many prints the
+> **whole-window** median+MAD band trimmed — re-counted every 30 s tick
+> per window — and that band trims an *agreed* regime shift (Kraken's
+> genuine +2 % XLM/GBP step, matching the XLM/USD × GBP/USD cross) until
+> the shift becomes the window majority. It measured a filter artifact,
+> not venue disagreement. Two things changed:
+>
+> 1. The filter is now **time-local** (`internal/aggregate/outliers_local.go`):
+>    a print is dropped only when it disagrees with the whole window
+>    AND its own neighbourhood (own / adjacent 1-minute buckets, or the
+>    nearest 5 prints each side on a thin series). Steps survive; lone
+>    wild prints do not.
+> 2. `outlier_storm` reads **venue disagreement** directly:
+>    `max by (pair) / min by (pair)` of
+>    `stellarindex_aggregator_venue_vwap{window="5m"}` − 1 > **1 %** across
+>    **≥ 2 venues** for **15 m**. Its sibling
+>    `outlier_trim_fraction` reads the CURRENT 24h window's trim share
+>    from `stellarindex_aggregator_window_trades` (> **20 %** trimmed,
+>    ≥ 20 trades, for **30 m**) — the single-venue spam shape that
+>    disagreement cannot see. Both are covered by
+>    `deploy/monitoring/rule-tests/aggregator_test.yml`.
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellarindex_aggregator_outlier_storm` |
+| Alert | `stellarindex_aggregator_outlier_storm` (venue disagreement) / `stellarindex_aggregator_outlier_trim_fraction` (in-window trim share) |
 | Severity | P3 (ticket) |
 | Detected by | `deploy/monitoring/rules/aggregator.yml` |
 | Typical MTTR | 30 min – several hours |
-| Impact | One pair's robust-VWAP filter has trimmed >10 trades/s for 2h+. The filter trims toward the intra-window **median** (symmetric MAD band, no oracle reference), so the **published price is protected** — this is a data-quality / source-health signal, not a customer-facing price error. Harm is a source being wholesale-rejected (data completeness) or a durable price dispersion worth investigating. |
+| Impact | `outlier_storm`: one pair's venues have disagreed by > 1 % on their 5m VWAPs for 15 m+ — one venue is stale, thin, mis-decoding amounts, or a stablecoin leg is skewed. `trim_fraction`: the time-local filter is rejecting > 20 % of one pair's 24h window — a spam / wash / dust wave inside the window. In both cases the **published price is protected** (robust, time-locally filtered VWAP across venues); this is a data-quality / source-health signal, not a customer-facing price error. Harm is a source being wholesale-rejected (completeness) or a thin surviving sample. |
 
 ## Symptoms
 
-- `sum by (pair) (rate(stellarindex_aggregator_dropped_trades_total{reason="outlier"}[10m])) > 10` sustained past the 2h `for:`, for a **single** `pair`.
+- `outlier_storm`: `max by (pair)(stellarindex_aggregator_venue_vwap{window="5m"}) / min by (pair)(...) − 1 > 0.01` with ≥ 2 venue series, for a **single** `pair`, sustained past 15 m.
+- `trim_fraction`: `1 − window_trades{stage="outlier"} / window_trades{stage="class"} > 0.2` on `window="24h"` with ≥ 20 class-filtered trades, sustained past 30 m.
 - The published VWAP for that pair is typically still correct — cross-check the
   pair's `div:<pair>` Redis flag / API `flags.divergence_warning` for actual
   price impact before assuming the served number is wrong.
 - **Do NOT wait on `stellarindex_price_divergence_{warning,critical}`** — those
   alerts are INERT (F-1329, no Prometheus producer; divergence values live in
   Postgres + the `div:` Redis cache + the API flag, not the registry).
+- An **agreed** move across venues (the 2026-08-28 shape) does **not** fire
+  either alert any more. If you see a market-wide move alongside a ticket,
+  the ticket is about a venue that did *not* move with the others.
 
 ## Quick diagnosis (≤ 5 min)
 
 ```sh
-# 1) Confirm the spike is real, not just a baseline calibration issue.
+# 1) outlier_storm: which venue is the odd one out? One line per source.
 curl -fs http://localhost:9465/metrics \
-  | grep '^stellarindex_aggregator_dropped_trades_total{reason="outlier"}'
+  | grep '^stellarindex_aggregator_venue_vwap{' | grep 'window="5m"' | sort
+# In PromQL, per pair:
+#   stellarindex_aggregator_venue_vwap{pair="<pair>",window="5m"}
 
-# 2) Is the upstream-trade rate also elevated? (real volume → real outliers)
+# 2) trim_fraction: how much of the window is the filter rejecting, and
+#    how thin is the survivor set?
+curl -fs http://localhost:9465/metrics \
+  | grep '^stellarindex_aggregator_window_trades{' | grep 'window="24h"' | sort
+
+# 3) Is the upstream-trade rate also elevated? (real volume → real outliers)
 psql -d stellarindex -c \
-  "SELECT pair, COUNT(*) AS rows
+  "SELECT pair, source, COUNT(*) AS rows
    FROM trades
    WHERE timestamp > now() - interval '15 minutes'
-   GROUP BY pair ORDER BY 2 DESC LIMIT 10;"
+   GROUP BY pair, source ORDER BY 3 DESC LIMIT 10;"
 
-# 3) Sanity-check by pair: is the storm one pair or many? The drop
-# counter carries the configured target pair (since 2026-08-14).
-# In PromQL:
+# 4) The per-tick drop counter is still there as a diagnostic (it re-counts
+#    window residents every tick — read it as "band-residents", not "new
+#    outliers/s"):
 #   topk(5, rate(stellarindex_aggregator_dropped_trades_total{reason="outlier"}[10m]))
-curl -fs http://localhost:9465/metrics \
-  | grep '^stellarindex_aggregator_dropped_trades_total{reason="outlier"' | sort
 ```
 
 Decision tree:
 
 | Trade-rate elevated? | Multiple pairs? | Probable cause | Mitigation |
 | -------------------- | --------------- | -------------- | ---------- |
-| Yes | Many | Real market-wide event (BTC flash-move, fiat-pair news) | Wait it out; verify divergence-warning fires + clears alongside |
+| Yes | Many | One venue lagging a real market-wide move (stale feed, throttled poller) — an agreed move no longer tickets | Check that venue's poller freshness; wait it out once it catches up |
 | Yes | One pair | Pair-specific dislocation, possibly a depeg | Check the pair's primary venue; consider pausing stablecoin proxy for that quote if it was a peg break |
 | No | Many | Connector regression — every venue producing weird amounts | Check `stellarindex_source_decode_errors_total`; likely a recent decoder change |
 | No | One pair, one source | Single connector misbehaving (amount-decimal regression) | Disable that source via config; open ticket against the connector |
@@ -76,13 +101,20 @@ rather than a market event or a connector bug. Signature: the drops
 concentrate on a single configured pair, the dropped rows show wide
 price dispersion (25–37% between consecutive trades — real markets
 don't gap like that repeatedly) and **dust-sized** volumes, and all
-trace to one issuer account in the trades table. Diagnose with
-`topk` by `pair` on the drop counter (step 3 above — the `pair` label
-exists because attributing this exact wave took ad-hoc SQL), then
-confirm the single-issuer pattern in `trades` for that pair. The σ
-filter is doing its job — the VWAP input is protected; treat it as
-abuse of the venue, not of the aggregator, and wait it out unless the
-surviving sample gets too thin (then see `min_usd_volume` gating).
+trace to one issuer account in the trades table. Since 2026-08-28 this
+shape fires `outlier_trim_fraction` (a single venue cannot disagree with
+itself, so `outlier_storm` stays silent on it). Diagnose with
+`window_trades{stage=...}` for the pair (step 2 above) plus `topk` by
+`pair` on the drop counter (step 4 — the `pair` label exists because
+attributing this exact wave took ad-hoc SQL), then confirm the
+single-issuer pattern in `trades` for that pair. The filter is doing
+its job — the VWAP input is protected; treat it as abuse of the venue,
+not of the aggregator, and wait it out unless the surviving sample gets
+too thin (then see `min_usd_volume` gating). Note the time-local filter
+lets a run of > 5 consecutive same-level prints in a THIN series
+validate itself — a long single-source spam run at one wrong level is
+not rejected (no time-local definition can), so on an SDEX-only pair
+also read the survivor count and `min_usd_volume` gating.
 
 ## Mitigation (≤ 15 min)
 
@@ -95,13 +127,17 @@ surviving sample gets too thin (then see `min_usd_volume` gating).
       (`[external.<venue>] enabled = false`) and reload — the
       orchestrator picks up the change at next tick.
 - [ ] **Filter mis-calibration**: if neither of the above holds and
-      the storm is sustained > 1 h, lower
+      `trim_fraction` is sustained > 1 h, raise
       `aggregate.outlier_sigma_threshold` from 4.0 → 5.0 / 6.0 to
       let more rows through while RCA continues — a wide filter
       with weak signal beats a narrow filter dropping legitimate
-      data.
-- [ ] **Verification**: `dropped_trades_total{reason="outlier"}`
-      rate returns within 5× of baseline.
+      data. (An agreed move being trimmed is a BUG in the time-local
+      filter, not a calibration issue — capture the pair + window and
+      file it.)
+- [ ] **Verification**: the venue spread
+      (`max/min − 1` of `venue_vwap{window="5m"}`) returns under 1 %,
+      and `1 − window_trades{stage="outlier"} / {stage="class"}`
+      returns under 0.2.
 
 ## Root cause analysis
 
@@ -118,18 +154,20 @@ Capture for the postmortem:
 
 ## Known false-positive patterns
 
-- **(Historical — removed 2026-08-26)** The old `offset 1h` comparator
-  divide-by-zero in the first hour after deploy no longer applies: the
-  absolute gate has no baseline term. A cold start is silent until a
-  pair's trim rate actually exceeds 10/s for 2h.
-- **Aggregator restart**: ticks bunching up post-restart can briefly
-  inflate the per-10m rate; the 2h `for:` absorbs it — a restart blip
-  clears long before the gate elapses.
-- **First tick of a new pair**: a freshly-added pair with sparse
-  trades has σ ≈ 0 → every row drops. Mitigation: the filter's
-  fewer-than-3-prices guard should kick in (verify
-  `aggregate.FilterOutliers` returned input unchanged); if it
-  didn't, that's a real bug.
+- **(Historical — removed 2026-08-28)** The counter-based gate fired on
+  agreed regime shifts (the whole-window band trimmed the new regime)
+  and re-counted the trimmed tail every tick. Neither current alert
+  reads that counter.
+- **Venue leaves the window**: `venue_vwap` series for a source that
+  stopped trading are DELETED on the next refresh, so a stale venue
+  cannot pin the spread. If a venue's series persists after it went
+  quiet, that is a bug in `recordVenueVWAPs`.
+- **Stablecoin-leg skew**: a USDT-quoted venue vs a USD-quoted one
+  diverge by exactly the USDT/USD basis; > 1 % sustained is a real
+  depeg signal, not noise — escalate to the pricing owner.
+- **First tick of a new pair**: fewer than 3 valid prices → the filter
+  is a no-op (`aggregate.FilterOutliersLocal` returns the input
+  unchanged) and `trim_fraction` needs ≥ 20 trades; both stay silent.
 
 ## Related
 
@@ -139,7 +177,9 @@ Capture for the postmortem:
   σ-threshold turns out to be too brittle on small windows. Until
   the ADR lands the σ default lives at
   `aggregate.outlier_sigma_threshold = 4.0` in TOML.
-- `internal/aggregate/outliers.go` — filter implementation. Any
+- `internal/aggregate/outliers_local.go` — the orchestrator's
+  time-local filter; `internal/aggregate/outliers.go` — the
+  whole-window form still used by `/v1/vwap` + `/v1/ohlc`. Any
   algorithm change must update this runbook.
 
 ## Changelog
@@ -156,3 +196,13 @@ Capture for the postmortem:
   to fire on a genuinely sustained storm. Clarified the price is
   median-protected; flagged the INERT `price_divergence_*` alerts.
   Added `rule-tests/aggregator_test.yml`.
+- 2026-08-28 — **redesign**: the counter gate fired for hours on agreed
+  venues (XLM/USD, XLM/GBP) because the whole-window MAD band trimmed a
+  genuine +2 % step and the counter re-counted the tail. Filter made
+  time-local (`FilterOutliersLocal`); `outlier_storm` now reads venue
+  disagreement from `stellarindex_aggregator_venue_vwap` (> 1 %, ≥ 2
+  venues, 15 m); new `outlier_trim_fraction` on
+  `stellarindex_aggregator_window_trades` (> 20 % of the 24h window,
+  ≥ 20 trades, 30 m) for the single-venue spam shape. promtool cases
+  rewritten: agreed step silent, one venue +3 % fires, single venue
+  never fires.
