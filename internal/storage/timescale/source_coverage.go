@@ -75,17 +75,20 @@ func (s *Store) CountDistinctLedgers(ctx context.Context, target GapDetectorTarg
 	)
 
 	// SQL-level statement_timeout — see FindPerSourceLedgerGaps.
-	// CountDistinctLedgers hits the same (source, ledger) index
-	// path; on SDEX trades the scan is inherently expensive even
-	// with the index, and Go-side cancellation doesn't always
-	// propagate to PG. 5 min PG-side abort prevents accumulating
-	// in-flight scans across cycles.
+	// CountDistinctLedgers walks the same rows as the gap scan and
+	// Go-side cancellation doesn't always propagate to PG, so the
+	// PG-side abort is what actually prevents in-flight scans
+	// accumulating across cycles. It MUST be the gap detector's own
+	// [gapDetectorStatementTimeoutMS] (13 min, under the 15-min Go
+	// per-target budget) — NOT the 2h ops/verify constant this call
+	// used until 2026-08-28, which let every over-budget count outlive
+	// its Go context as a 2h orphan backend (r1 incident 2026-08-28).
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("timescale: CountDistinctLedgers begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL statement_timeout = '%d'", opsVerifyStatementTimeoutMS)); err != nil {
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL statement_timeout = '%d'", gapDetectorStatementTimeoutMS)); err != nil {
 		return 0, fmt.Errorf("timescale: CountDistinctLedgers SET: %w", err)
 	}
 	var n int64

@@ -92,9 +92,10 @@ type GapDetectorTarget struct {
 	// saturated.
 	//
 	// The scan still has the per-target Go-side timeout (15 min) +
-	// the SQL `SET LOCAL statement_timeout` (5 min) backstop so a
-	// single cycle can't run unbounded; the cadence just bounds how
-	// often it's allowed to fire at all.
+	// the SQL `SET LOCAL statement_timeout` backstop
+	// ([gapDetectorStatementTimeoutMS], 13 min, shared by the gap scan
+	// and the count-distinct) so a single cycle can't run unbounded;
+	// the cadence just bounds how often it's allowed to fire at all.
 	ScanCadence time.Duration
 }
 
@@ -432,17 +433,17 @@ func (s *Store) FindPerSourceLedgerGaps(ctx context.Context, target GapDetectorT
 	// over multiple cycles because Go cancellation didn't reach
 	// PG; the queries kept running and starved trade-insert
 	// latency. A session statement_timeout makes PG itself abort,
-	// no leak possible. 13 min stays under the gap-detector's
-	// 15-min per-target Go-side timeout while leaving room for the
-	// heaviest scans (sdex's 2.7B-row + soroban_events's 12M+ ledger
-	// LAG-over-DISTINCT both exceeded the prior 5-min cap on r1
-	// 2026-06-01).
+	// no leak possible. [gapDetectorStatementTimeoutMS] (13 min)
+	// stays under the gap-detector's 15-min per-target Go-side
+	// timeout while leaving room for the heaviest scans (sdex's
+	// 2.7B-row + soroban_events's 12M+ ledger LAG-over-DISTINCT both
+	// exceeded the prior 5-min cap on r1 2026-06-01).
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: FindPerSourceLedgerGaps begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, "SET LOCAL statement_timeout = '780000'"); err != nil {
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL statement_timeout = '%d'", gapDetectorStatementTimeoutMS)); err != nil {
 		return nil, fmt.Errorf("timescale: FindPerSourceLedgerGaps SET: %w", err)
 	}
 	rows, err := tx.QueryContext(ctx, query, from, to, minGapSize)

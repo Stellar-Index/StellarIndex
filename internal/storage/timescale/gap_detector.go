@@ -43,6 +43,26 @@ const GapDetectorMinGapSize = int64(1000)
 // isolation.
 const gapDetectorPerTargetTimeout = 15 * time.Minute
 
+// gapDetectorStatementTimeoutMS is the PG-side `SET LOCAL
+// statement_timeout` applied to BOTH per-target scan queries — the
+// LAG-over-DISTINCT gap scan in [Store.FindPerSourceLedgerGaps] and the
+// density count in [Store.CountDistinctLedgers]. It is the backstop
+// for the case where the Go-side cancel does not reach PG (the
+// database/sql cancel is best-effort; r1 2026-05-29 accumulated three
+// concurrent SDEX scans that way).
+//
+// INVARIANT: MUST be <= gapDetectorPerTargetTimeout, and the two
+// queries share ONE constant. Until 2026-08-28 CountDistinctLedgers
+// reused opsVerifyStatementTimeoutMS (2h) while the Go context was
+// 15 min: every soroban_events count that overran 15 min was
+// abandoned by Go but kept running in PG for up to 2h, and the next
+// 6h cycle (or every restart) stacked another — pg_stat_statements
+// showed 121 calls, mean 556 s, 18.7 h total, load 19.6 and 503s from
+// serving-path statement timeouts (r1 incident 2026-08-28 18:23Z).
+// 13 min leaves 2 min of the 15-min Go budget for the SET + connect.
+// Pinned by TestGapDetectorStatementTimeoutWithinGoBudget.
+const gapDetectorStatementTimeoutMS = 780_000 // 13 min, in ms
+
 // GapDetectorSafetyLookback bounds how far below tip a single steady-
 // state detector cycle re-scans. In steady state the scanned window is
 // just [previous-scan high-water, tip] — a few hundred ledgers per
