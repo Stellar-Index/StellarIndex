@@ -1,7 +1,7 @@
 ---
 title: Runbook — compression-lag
-last_verified: 2026-04-23
-status: draft
+last_verified: 2026-08-28
+status: current
 severity: P3
 ---
 
@@ -12,8 +12,8 @@ severity: P3
 | Field | Value |
 | ----- | ----- |
 | Alert | `stellarindex_timescale_compression_lag` |
-| Severity | P3 (informational) |
-| Detected by | `deploy/monitoring/rules/storage.yml` |
+| Severity | P3 (`severity: informational`) |
+| Detected by | `configs/prometheus/rules.r1/storage.yml` (group `stellarindex.storage`, `severity: informational`, `for: 24h`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/storage.yml`. **Producer:** `stellarindex_uncompressed_chunks_older_than_7d` is written by `timescale-jobs-probe.timer` (every 60 s, `configs/ansible/roles/archival-node/tasks/10-observability.yml`) into `/var/lib/node_exporter/textfile_collector/timescale_jobs.prom`. If the probe dies the series goes **absent** and the alert is blind — check `systemctl status timescale-jobs-probe.timer` before trusting silence. |
 | Typical MTTR | 1 h – 1 day |
 | Impact | Not customer-visible directly. But uncompressed chunks use 5–20× more disk than compressed, so sustained lag is a runway to `db-disk-full.md`. The alert's `for: 24h` threshold makes it a trending problem, not an incident. |
 
@@ -44,8 +44,10 @@ psql -c "SELECT * FROM timescaledb_information.job_stats
          WHERE job_id IN (SELECT job_id FROM timescaledb_information.jobs
                           WHERE proc_name = 'policy_compression');"
 
-# Manual compression — does it work?
-psql -c "SELECT compress_chunk('<chunk_name>');"
+# Manual compression — does it work? Chunks live in the
+# _timescaledb_internal schema; compress_chunk needs the
+# schema-qualified name or it errors with "relation does not exist".
+psql -c "SELECT compress_chunk('<chunk_schema>.<chunk_name>');"
 ```
 
 ## Typical root causes
@@ -94,12 +96,26 @@ psql -c "SELECT compress_chunk('<chunk_name>');"
 - **Historical backfill** adding new chunks for old data — those
   chunks are instantly > 7 days old and the compression policy
   needs a cycle or two to catch up. Expected; subsides.
+- **Per-table `compress_after` longer than 7 days.** The probe
+  counts uncompressed chunks older than 7 days on any hypertable
+  that HAS a compression policy — but the policies' `compress_after`
+  intervals vary. `fx_quotes` compresses after **90 days**
+  (`migrations/0028`), so its 8–89-day-old chunks are uncompressed
+  BY DESIGN and count as "overdue" in this metric. A small stable
+  nonzero value that tracks `fx_quotes` chunk cadence is not a
+  compression failure.
 
 ## Related
 
 - `db-disk-full.md` — where this ends up if unchecked.
-- `cagg-stale.md` — related scheduler issues.
+- `cagg-stale.md` — related scheduler issues; same
+  `timescale-jobs-probe.timer` producer.
 
 ## Changelog
 
+- 2026-08-28 — re-verified against HEAD. `compress_chunk` example now
+  schema-qualified (chunks live in `_timescaledb_internal`); rule
+  citation → `rules.r1/storage.yml` with the `timescale-jobs-probe.timer`
+  producer noted (probe dead ⇒ alert blind); added the per-table
+  `compress_after` false-positive (`fx_quotes` = 90 d, migration 0028).
 - 2026-04-23 — initial draft.

@@ -153,6 +153,7 @@ jobs:
       - name: Checkout (for Ansible playbook)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
+          persist-credentials: false
           # Full history + tags: the config-apply gate diffs the deploying
           # tag against the previous release tag over the config surfaces.
           fetch-depth: 0

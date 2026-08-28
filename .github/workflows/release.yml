@@ -61,6 +61,7 @@ jobs:
   resolve-tag:
     name: Resolve release tag
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     outputs:
       tag: ${{ steps.out.outputs.tag }}
       is_prerelease: ${{ steps.out.outputs.is_prerelease }}
@@ -105,6 +106,7 @@ jobs:
     name: Build ${{ matrix.binary }} (${{ matrix.goos }}/${{ matrix.goarch }})
     needs: resolve-tag
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -124,6 +126,7 @@ jobs:
       - name: Checkout at tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
+          persist-credentials: false
           ref: ${{ needs.resolve-tag.outputs.tag }}
           fetch-depth: 0   # need tag + history for `git describe`
 
@@ -172,6 +175,7 @@ jobs:
     name: Publish GitHub Release
     needs: [resolve-tag, build]
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: write      # gh release create + upload assets
       # Consumed ONLY by the "Sign SHA256SUMS (cosign keyless)"
@@ -183,6 +187,7 @@ jobs:
       - name: Checkout at tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
+          persist-credentials: false
           ref: ${{ needs.resolve-tag.outputs.tag }}
           fetch-depth: 1
 
