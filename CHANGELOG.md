@@ -15,6 +15,25 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Explorer test-net builds could silently serve MAINNET data.**
+  `web/explorer/next.config.mjs` inlined `NEXT_PUBLIC_API_BASE_URL ??
+  'https://api.stellarindex.io'` through its `env` block, so the
+  per-network fallback added in #212 (`API_BASE_URL ??
+  CURRENT_NETWORK.apiBaseUrl` in `src/api/client.ts`) was unreachable:
+  a testnet/futurenet Pages project with `NEXT_PUBLIC_NETWORK` set but
+  the API var forgotten baked in the mainnet origin. The key is dropped
+  from `env` (Next inlines `NEXT_PUBLIC_*` from the build environment
+  on its own), `useMe` now shares `API_BASE_URL` instead of its own
+  mainnet-literal fallback, and the JSON-LD `contentUrl` on asset /
+  market pages derives from `CURRENT_NETWORK.apiBaseUrl`. The
+  mainnet-hardcode guard now also scans `next.config.mjs` and strips
+  `//` comments before `/* */` — a `/dashboard/*` in a line comment had
+  opened a phantom block comment that hid three literals from it.
+  New `src/lib/next-config-env.test.ts` pins the env contract
+  (audit web-status-5).
+
 ### Added
 
 - **CI replay-plan tripwire (`scripts/ci/lint-replay-plan.sh`).** On
