@@ -91,6 +91,21 @@ else
     # the promtool-dependent monitoring-check is skipped (F-1329).
     echo "=== Metric refs ===" && ./scripts/ci/lint-metric-refs.sh
 fi
+# Alertmanager config — validate BOTH render branches of apply.sh
+# (all URLs empty → stub path through the block-stripper; all URLs
+# set → substitution path). Graceful-skip when amtool isn't
+# installed, same convention as promtool above; CI's
+# monitoring-rules job installs it explicitly and never skips.
+if command -v amtool >/dev/null 2>&1; then
+    echo "=== Alertmanager config ==="
+    ALERTMANAGER_SECRETS=/dev/null bash configs/alertmanager/apply.sh --check-only
+    AM_DUMMY_ENV=$(mktemp)
+    printf 'HEALTHCHECKS_DEADMANSSWITCH_URL=https://hc-ping.com/x\nDISCORD_WEBHOOK_URL_PAGES=https://discord.com/api/webhooks/1/a\nDISCORD_WEBHOOK_URL_ALERTS=https://discord.com/api/webhooks/2/b\n' > "$AM_DUMMY_ENV"
+    ALERTMANAGER_SECRETS="$AM_DUMMY_ENV" bash configs/alertmanager/apply.sh --check-only
+    rm -f "$AM_DUMMY_ENV"
+else
+    echo "=== Alertmanager config (skipped — amtool not installed; get it from the Alertmanager GH release) ==="
+fi
 # The metric-refs SELF-test (does the guard still detect a dead ref?)
 # needs neither promtool nor the monitoring stack, so it runs
 # unconditionally — outside the promtool branch above, which would
