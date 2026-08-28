@@ -18,9 +18,11 @@ import {
   KeyRound,
   Layers,
   LayoutDashboard,
+  Lock,
   LogOut,
   Radio,
   Receipt,
+  Scale,
   Settings,
   ShieldCheck,
   User,
@@ -87,6 +89,19 @@ const NAV: NavGroup[] = [
       { href: 'https://docs.stellarindex.io', label: 'API Docs', icon: BookOpen, external: true },
       { href: '/sdk', label: 'SDK', icon: Code2 },
       { href: '/status', label: 'Status', icon: Activity, statusDot: true },
+    ],
+  },
+  // Legal surface (DRAFT pending operator legal review, 2026-08-28): the
+  // account + API-key SaaS shipped without published terms or a privacy
+  // policy. nav/Footer.tsx has no importer (census-dead-ui.md), so the rail
+  // is the ONLY site-wide chrome — the pages must be linked from here to be
+  // reachable at all. Network-agnostic: deliberately outside
+  // TESTNET_HIDDEN_HREFS so the lean nets carry them too.
+  {
+    title: 'Legal',
+    items: [
+      { href: '/terms', label: 'Terms of service', icon: Scale },
+      { href: '/privacy', label: 'Privacy policy', icon: Lock },
     ],
   },
 ];

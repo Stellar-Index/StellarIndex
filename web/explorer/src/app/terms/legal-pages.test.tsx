@@ -1,7 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-import { Footer } from '@/components/nav/Footer';
+import { SidebarNav } from '@/components/nav/Sidebar';
 
 import TermsPage from './page';
 import PrivacyPage from '../privacy/page';
@@ -11,10 +12,19 @@ vi.mock('next/navigation', () => ({
   usePathname: () => '/',
 }));
 
+// Hermetic: SidebarNav's Status dot polls /v1/status on mount and useMe
+// hits /v1/me — never let a component test reach the network.
+beforeEach(() => {
+  vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+    new TypeError('no network in tests'),
+  );
+});
+
 // Legal surface (DRAFT, 2026-08-28): the pages exist so that an account
 // holder can find the terms they agreed to and a data subject can find
-// what is retained. These guards keep the two pages REACHABLE (footer +
-// signup consent line) and keep the draft honest: the visible
+// what is retained. These guards keep the two pages REACHABLE (the
+// sidebar rail — the ONLY site-wide chrome; nav/Footer.tsx is unmounted —
+// plus the signup consent line) and keep the draft honest: the visible
 // jurisdiction placeholder and the draft banner must not disappear
 // until the operator's legal review replaces them in the same commit.
 describe('legal pages', () => {
@@ -54,8 +64,15 @@ describe('legal pages', () => {
     );
   });
 
-  it('footer and signup link to both legal pages', () => {
-    render(<Footer />);
+  it('the mounted sidebar rail links to both legal pages', () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <SidebarNav />
+      </QueryClientProvider>,
+    );
     expect(
       screen.getByRole('link', { name: 'Terms of service' }),
     ).toHaveAttribute('href', '/terms');

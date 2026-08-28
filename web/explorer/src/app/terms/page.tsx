@@ -106,11 +106,22 @@ export default function TermsPage() {
           rows={[
             {
               term: 'Anonymous',
-              def: 'Every public endpoint may be read without an account or key, rate-limited per IP address (currently 60 requests per minute).',
+              // ASH-REVIEW: production enforces anon_rate_limit_per_min = 6000
+              // (configs/ansible/roles/archival-node/templates/stellarindex.toml.j2);
+              // the configs/example.toml default is 60 and /pricing still says
+              // "60 req/min per IP". Stating the figure that prod enforces.
+              def: 'Every public endpoint may be read without an account or key, rate-limited per IP address (currently 6,000 requests per minute).',
             },
             {
               term: 'Free account',
-              def: 'Creating an account (magic-link sign-in, or POST /v1/register) issues an API key with a higher per-key rate limit (currently 1,000 requests per minute) and a monthly request quota, plus usage analytics.',
+              // ASH-REVIEW: self-service keys carry an explicit per-key limit of
+              // 1,000/min (signupDefaultRateLimitPerMin, internal/api/v1/signup.go),
+              // which the rate limiter applies as an override in preference to
+              // the bucket default key_rate_limit_per_min = 6000 (prod ansible
+              // template) — the 6,000 default only applies to keys minted with
+              // no explicit limit (ratelimit.go bucketKeyAndOverrideForRequest).
+              // 1,000 is therefore the figure a self-service account gets.
+              def: 'Creating an account (magic-link sign-in, or POST /v1/register) issues an API key with its own per-key rate limit (currently 1,000 requests per minute for self-service keys) and a monthly request quota, plus usage analytics.',
             },
             {
               term: 'Partner',
