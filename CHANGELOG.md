@@ -28,6 +28,16 @@ against.
   `internal/sources/*/{decode*,events,feeds,pairs}.go` unless a commit
   carries a `Replay-Plan:` trailer (`none — <reason>` allowed; a bare
   `none` is not). Fixture self-test in `lint-replay-plan-test.sh`.
+- **CI amtool gate for the Alertmanager config (#275).** The routing
+  tree that decides whether any alert reaches a human was the only
+  production config surface with no CI validation — amtool ran only
+  inside `configs/alertmanager/apply.sh`, by hand, on the host, after
+  merge. `apply.sh` grows `--check-only` (render + validate, no
+  install), the monitoring-rules job installs a SHA-pinned amtool and
+  validates BOTH render branches (empty URLs → the block-stripper stub
+  path; set URLs → substitution), `verify.sh` mirrors it with
+  promtool-style graceful skip, and `configs/alertmanager/` joins
+  `config-apply-gate.sh` SURFACES.
 - **Canonical `raw:` asset type — the record layer of the oracle
   capture-totality design (PR-1 of 7).** `canonical.AssetOracleRaw`
   (`raw:<symbol>`, 1–64 printable-ASCII bytes, no allow-list) holds an
