@@ -15,6 +15,47 @@ against.
 
 ## [Unreleased]
 
+## [v0.47.2] — 2026-08-28
+
+Tested against Stellar Protocol 28.
+
+### Fixed
+
+- **`/v1/assets` still 500'd after v0.47.1 — the fix had addressed one
+  column, not the class.** v0.47.1 COALESCEd `slug`; production moved
+  straight on to `code`:
+
+  ```
+  before:  Scan error on column index 0, name "slug"
+  after:   Scan error on column index 2, name "code"
+  ```
+
+  `catalogue_assets`' Soroban arm supplies `slug`, `code` AND
+  `issuer_g_strkey` as NULL — a contract asset has no issuer account and
+  no SEP-1 code — and `AssetRow` typed all three as plain `string`. Any
+  one of them fails the WHOLE request, not just its row. The v0.47.1
+  test passed throughout, because it asserted on the SQL text for the
+  single column that had been noticed; a test written from a symptom can
+  only confirm that symptom.
+
+  Now fixed at the scan, where the class lives: `code` and
+  `issuer_g_strkey` scan through `sql.NullString` to `""`, and `slug`
+  does too with a fallback to `asset_id` that mirrors its SQL COALESCE.
+  Empty string rather than the contract id for code/issuer, because a
+  Soroban asset genuinely has neither and substituting an id would state
+  something false; the wire is unaffected either way (`code` is
+  `omitempty`, and `issuer` is guarded by a non-empty check before its
+  pointer is taken).
+
+  The remaining Soroban-supplied columns were checked rather than
+  assumed: `first_seen_ledger`, `last_seen_ledger` and `event_count` are
+  `NOT NULL` in `discovered_assets`, with 0 NULLs across the 60
+  qualifying rows. That is the complete set.
+
+  The new test drives `scanAssetRow` through a scanner reproducing
+  `database/sql`'s actual NULL rule, with every NULL-by-nature column
+  NULL — proven red against the pre-fix scan and green after.
+
 ## [v0.47.1] — 2026-08-28
 
 Tested against Stellar Protocol 28.
