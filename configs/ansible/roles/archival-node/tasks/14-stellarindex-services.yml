@@ -565,6 +565,16 @@
     - issuer-flags.service
     - issuer-flags.timer
   notify: Reload systemd
+  # First tag in this file (36 tasks, none tagged until now), added so
+  # the ops-job units can be applied WITHOUT running the whole
+  # archival-node role. That matters specifically here: a full role
+  # apply can restart galexie, and a galexie restart is a ~9-minute
+  # mainnet cold catchup — the 2026-08-27 sequence that cost 22 minutes
+  # of r1 ingestion. Rendering unit files should not carry that risk.
+  #
+  # Untagged behaviour is unchanged: a plain run still includes these,
+  # because ansible only filters when --tags is passed.
+  tags: [ops-jobs]
 
 - name: Enable + start verify-archive / completeness / supply-snapshot timers
   # galexie-archive-trim.timer is INTENTIONALLY OMITTED from this
@@ -592,6 +602,7 @@
     - data-freshness.timer
     - ch-supply.timer
     - issuer-flags.timer
+  tags: [ops-jobs]
 
 # ── archive-completeness — only where its cross-anchor is correct ────
 # See archive_completeness_enabled in defaults/main.yml: the check's only
