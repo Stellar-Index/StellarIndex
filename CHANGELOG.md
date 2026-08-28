@@ -15,6 +15,17 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Explorer: ledger page captions `total_coins` (2019-burn basis).**
+  `/ledgers/{seq}` printed the header's `total_coins` (~105.4B XLM on
+  mainnet) bare, while `/assets/native` serves the market's 50.0B total
+  supply — the same unlabeled 2.11× divergence the network page fixed
+  (#241). The caption ("ledger header · includes the 2019 burn" on
+  mainnet, "ledger header" on the test nets, whose genesis has no burn)
+  now comes from a shared `lib/xlm-supply.ts` helper so every surface
+  printing `total_coins` says the same thing; #241 should adopt it.
+
 ### Added
 
 - **CI replay-plan tripwire (`scripts/ci/lint-replay-plan.sh`).** On
