@@ -2,7 +2,18 @@
 # cut-release.sh — guard-rail script for cutting a SemVer binary release.
 #
 # Usage:
-#   scripts/dev/cut-release.sh vX.Y.Z [--dry-run]
+#   scripts/dev/cut-release.sh vX.Y.Z [--dry-run] [--yes]
+#
+#   --dry-run  run every gate, print what would happen, never tag/push
+#   --yes      skip the interactive "Proceed?" confirmation (automation)
+#
+# Non-TTY invocation (CI, a backgrounded shell, an agent harness) MUST
+# pass --yes or --dry-run; otherwise the script exits 2 immediately,
+# before the slow verify gate. Why: on 2026-08-28 the script was run
+# from a non-TTY shell, `read` hit EOF at the confirmation prompt and
+# aborted — but the caller piped through `| tail`, which masked the
+# non-zero exit, so a "release cut" was reported with NO tag on origin.
+# Refusing early and loudly beats guessing either way.
 #
 # What it does (in order):
 #   1. Validate the supplied tag matches SemVer (vX.Y.Z[-pre][+build])
@@ -13,7 +24,8 @@
 #      that is non-empty (release.yml's auto-notes extraction reads
 #      this; an empty section produces an empty release page)
 #   6. Run `bash scripts/dev/verify.sh` (the standard pre-push gate)
-#   7. Echo what would happen — then either bail (--dry-run) or:
+#   7. Echo what would happen — then either bail (--dry-run), confirm
+#      interactively (unless --yes), and:
 #      a. `git tag <tag>`
 #      b. `git push origin <tag>`
 #
@@ -24,10 +36,42 @@
 set -euo pipefail
 
 TAG="${1:-}"
-DRY_RUN="${2:-}"
+DRY_RUN=0
+ASSUME_YES=0
+
+usage() {
+  echo "Usage: $0 vX.Y.Z [--dry-run] [--yes]" >&2
+  echo "  --dry-run  run every gate, print the plan, never tag/push" >&2
+  echo "  --yes      skip the confirmation prompt (required for non-TTY/automation)" >&2
+}
 
 if [[ -z "$TAG" ]]; then
-  echo "Usage: $0 vX.Y.Z [--dry-run]" >&2
+  usage
+  exit 2
+fi
+
+# Flags may appear in any order after the tag.
+for arg in "${@:2}"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=1 ;;
+    --yes)     ASSUME_YES=1 ;;
+    *)
+      echo "ERR: unknown argument '$arg'" >&2
+      usage
+      exit 2
+      ;;
+  esac
+done
+
+# Fail fast, BEFORE the slow gates, when there is no terminal to answer
+# the step-7 prompt and the caller has not said what to do. Without
+# this, `read` hits EOF, the script aborts, and any `| tail`-style
+# pipeline hides the failure (2026-08-28: "release cut", no tag on
+# origin). --dry-run never prompts, so it is exempt.
+if [[ ! -t 0 && "$ASSUME_YES" -eq 0 && "$DRY_RUN" -eq 0 ]]; then
+  echo "ERR: stdin is not a TTY and neither --yes nor --dry-run was given." >&2
+  echo "     The confirmation prompt cannot be answered; refusing to guess." >&2
+  echo "     Pass --yes for automation (or --dry-run to only run the gates)." >&2
   exit 2
 fi
 
@@ -127,7 +171,7 @@ echo "  tag:           $TAG"
 echo "  CHANGELOG:     $(printf '%s' "$changelog_section" | head -3 | sed 's/^/    /')"
 echo ""
 
-if [[ "$DRY_RUN" == "--dry-run" ]]; then
+if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "[--dry-run] would run:"
   echo "  git tag $TAG"
   echo "  git push origin $TAG"
@@ -137,10 +181,14 @@ if [[ "$DRY_RUN" == "--dry-run" ]]; then
   exit 0
 fi
 
-read -r -p "Proceed with tag + push? [y/N] " ans
-if [[ "$ans" != "y" && "$ans" != "Y" ]]; then
-  echo "Aborted."
-  exit 1
+if [[ "$ASSUME_YES" -eq 1 ]]; then
+  echo "[--yes] skipping confirmation prompt."
+else
+  read -r -p "Proceed with tag + push? [y/N] " ans
+  if [[ "$ans" != "y" && "$ans" != "Y" ]]; then
+    echo "Aborted."
+    exit 1
+  fi
 fi
 
 git tag "$TAG"
