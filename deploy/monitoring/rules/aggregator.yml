@@ -37,31 +37,129 @@ groups:
             quiet within 60 s.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-silent.md
 
-      # 2026-08-26 RESCOPE (was: sum(rate[10m]) > 5*sum(rate[1h] offset 1h),
-      # for 15m). Two defects, both proven on live pubnet data + promtool:
-      #  1. FATAL self-poison: the `[1h] offset 1h` baseline measures
-      #     [T-2h,T-1h]. A sustained storm's own early minutes enter that
-      #     window once it runs past 1h, inflating the baseline until the 5×
-      #     ratio flips false at ~72m — magnitude-independent. So NO `for:`
-      #     beyond ~72m could ever fire, and the alert could not survive the
-      #     very sustained storm it exists to catch.
-      #  2. NOISE: with baseline ~0.5/s, any benign single-pair robust-VWAP
-      #     trimming burst (ETH/BTC/XLM-USD peak 130–320/s, self-clearing
-      #     within ~1h) blew past 5× and ticketed with no actionable outcome.
-      # Robust-VWAP trims toward the intra-window MEDIAN (MAD band,
-      # internal/aggregate/outliers.go+robust.go — NO oracle reference, so no
-      # circularity), which PROTECTS the published price. Heavy trimming is
-      # therefore price DISPERSION on a pair, not a wrong served price. A
-      # trending/volatile market moves the median WITH the prints and does not
-      # mass-trim; only DISPERSION (two sources at different levels, or a
-      # connector emitting off-median amounts) does — and transient dispersion
-      # self-clears within ~1h while a broken source persists. So: absolute
-      # per-pair sustained gate. No offset ⇒ cannot self-poison; `sum by
-      # (pair)` ⇒ one pair's storm isn't diluted across the fleet; floor 10/s
-      # ≈ 20× the highest per-pair 24h median (BTC/USD 0.49) and below the
-      # transient burst peaks; `for: 2h` clears the ~1h benign self-clear
-      # envelope with margin. Covered by rule-tests/aggregator_test.yml.
+      # 2026-08-28 REDESIGN (was: sum by (pair) rate(dropped_trades_total
+      # {reason="outlier"}[10m]) > 10, for 2h — itself the 2026-08-26 rescope
+      # of a self-poisoning offset comparator). Live on r1 the counter rule
+      # fired for HOURS on crypto:XLM/fiat:USD and /GBP while binance /
+      # coinbase / kraken agreed within 0.9% and the served prices were
+      # right. Root cause: the counter measures how many prints the
+      # whole-window median+MAD band trimmed, re-counted every 30 s tick
+      # per window, and that band trims an AGREED regime shift (a genuine
+      # +2% Kraken step on XLM/GBP) until the shift becomes the window
+      # majority — i.e. it measured a filter artifact, not venue
+      # disagreement. The filter is now time-local
+      # (internal/aggregate/outliers_local.go) and this alert measures what
+      # "persistent price dispersion" actually means: the spread between
+      # the highest and lowest per-VENUE VWAP of the pre-filter 5m set, from
+      # stellarindex_aggregator_venue_vwap (set every refresh; a venue that
+      # leaves the window has its series deleted). ≥2 venues required — a
+      # single venue cannot disagree with itself; SDEX-only pairs are
+      # covered by outlier_trim_fraction below. 1% ≈ 3× the observed
+      # agreed-venue spread; `for: 15m` clears a one-tick print. Covered by
+      # rule-tests/aggregator_test.yml (agreed drift silent; one venue +3%
+      # fires; single venue never fires).
       - alert: stellarindex_aggregator_outlier_storm
+        expr: |
+          (
+            max by (pair) (stellarindex_aggregator_venue_vwap{window="5m"})
+            /
+            min by (pair) (stellarindex_aggregator_venue_vwap{window="5m"})
+            - 1
+          ) > 0.01
+          and on (pair)
+          count by (pair) (stellarindex_aggregator_venue_vwap{window="5m"}) >= 2
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: aggregator
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+          summary: "{{ $labels.pair }} venues disagree >1% on the 5m VWAP for 15m — persistent price dispersion (P3)"
+          description: |
+            The highest and lowest per-venue 5m VWAP feeding
+            {{ $labels.pair }} have differed by more than 1% for 15m+
+            (stellarindex_aggregator_venue_vwap, the PRE-outlier-filter
+            set). The published price is the robust, time-locally filtered
+            VWAP across venues, so this is a data-quality / source-health
+            signal, NOT a customer-facing price error: one venue is stale,
+            thin, mis-decoding amounts, or a stablecoin leg is skewed.
+            Find it with
+            `stellarindex_aggregator_venue_vwap{pair="{{ $labels.pair }}",window="5m"}`
+            — the odd one out is the venue to investigate. Check the pair's
+            div:<pair> Redis flag / API flags.divergence_warning for actual
+            price impact. NOTE: the stellarindex_price_divergence_* alerts
+            are INERT (F-1329, no Prometheus producer) — do not wait on them.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+
+      # Successor to the counter-based storm gate for what venue
+      # disagreement cannot see: a SINGLE-venue pair (SDEX-only token,
+      # the 2026-08-14 token-farm shape) whose prints the outlier filter
+      # is rejecting wholesale. stellarindex_aggregator_window_trades is
+      # a per-refresh gauge (stage=class is the filter's input, stage=
+      # outlier its survivors), so the fraction is the CURRENT window's
+      # trim share — no per-tick re-counting. With the time-local filter
+      # an agreed move is never trimmed, so a sustained >20% trim share is
+      # genuine dispersion inside the window (spam / wash / dust prints),
+      # not a regime shift. 24h window: a spam wave lasts hours and the
+      # 5m share flaps as the wave breathes. Same runbook as outlier_storm.
+      # PROVEN ON THE 2026-08-14 SHAPE: internal/aggregate/
+      # outliers_spam_test.go (TestFilterOutliersLocal_TokenFarmWaveTrim
+      # ShareMatchesLegacy) runs the token-farm fixture — 720 honest
+      # prints over 24h + a 2h wave of 480 dust self-trades gapping
+      # 25–37 % print-to-print — through the ANCHORED time-local filter:
+      # 480 of 480 wave prints dropped (identical to the whole-window
+      # filter), 0 honest prints dropped, so window_trades{stage=class}
+      # = 1200 and {stage=outlier} = 720, a 40 % trim share. The promtool
+      # case below uses exactly those two values.
+      - alert: stellarindex_aggregator_outlier_trim_fraction
+        expr: |
+          (
+            1 -
+            stellarindex_aggregator_window_trades{window="24h",stage="outlier"}
+            / ignoring (stage)
+            stellarindex_aggregator_window_trades{window="24h",stage="class"}
+          ) > 0.2
+          and ignoring (stage)
+          stellarindex_aggregator_window_trades{window="24h",stage="class"} >= 20
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: aggregator
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+          summary: "{{ $labels.pair }} outlier filter rejecting >20% of the 24h window for 30m — in-window price dispersion (P3)"
+          description: |
+            More than 20% of {{ $labels.pair }}'s 24h VWAP input has been
+            trimmed by the time-local outlier filter for 30m+
+            (stellarindex_aggregator_window_trades, stage=outlier vs
+            stage=class, ≥20 trades). The filter drops only prints that
+            disagree with BOTH the window and their own neighbourhood, so
+            this is not a regime shift being erased — it is a large share
+            of wild prints inside the window: an SDEX spam / wash wave
+            (2026-08-14 token-farm shape), a connector mis-decoding
+            amounts, or a venue with dust-sized noise. The published price
+            is protected by the trim; the risk is a thin surviving sample
+            (see min_usd_volume gating). Diagnose from the trades table
+            for the pair; see the spam-wave signature in the runbook.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+
+      # OVERLAP COPY of the pre-2026-08-28 counter-based outlier_storm
+      # gate (2026-08-26 rescope: sum by (pair) rate[10m] > 10, for 2h —
+      # expr and for unchanged, only renamed). Kept for the design's
+      # one-week overlap because it is the rule that caught the
+      # 2026-08-14 token-farm wave live; outlier_trim_fraction above is
+      # proven on that shape by fixture, this is the live cross-check.
+      # With the anchored time-local filter an agreed step is no longer
+      # trimmed, so the 2026-08-28 false-fire cannot recur here; what it
+      # still re-counts every tick is genuine in-window dispersion.
+      # RETIRE ON 2026-09-04: delete this rule + its three promtool cases
+      # (rule-tests/aggregator_test.yml "legacy overlap" section) + the
+      # alerts-catalog row, in BOTH rule trees, once trim_fraction has
+      # been observed firing (or correctly silent) on live data for a
+      # week. Same runbook.
+      - alert: stellarindex_aggregator_outlier_trim_rate_legacy
         expr: |
           sum by (pair) (rate(stellarindex_aggregator_dropped_trades_total{reason="outlier"}[10m])) > 10
         for: 2h
@@ -71,26 +169,20 @@ groups:
           component: aggregator
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
-          summary: "{{ $labels.pair }} outlier-trim >10/s sustained 2h — persistent price dispersion (P3)"
+          summary: "{{ $labels.pair }} outlier-trim >10/s sustained 2h — persistent price dispersion (P3, legacy overlap gate, retire 2026-09-04)"
           description: |
-            The robust-VWAP σ/MAD filter has trimmed >10 trades/s from
-            {{ $labels.pair }}'s VWAP input for 2h+. It trims toward the
-            intra-window MEDIAN, so the PUBLISHED price is protected
-            (symmetric band, no oracle circularity) — this is a
+            The time-local outlier filter has trimmed >10 trades/s from
+            {{ $labels.pair }}'s VWAP input for 2h+ (per-tick re-count of
+            window residents outside every reference band). This is the
+            pre-2026-08-28 counter gate kept for a one-week overlap with
+            stellarindex_aggregator_outlier_trim_fraction; expect the two
+            to fire together on a sustained spam / wash wave. The
+            PUBLISHED price is protected by the trim — this is a
             data-quality / source-health signal, NOT a customer-facing
-            price error. Sustained (not transient) trimming means prints
-            on this pair durably disperse: two sources at different
-            levels (a stale/thin venue, a stablecoin-leg skew), or a
-            registered connector mis-decoding amounts. More specific
-            failures have their own alerts — unregistered venues →
-            aggregator_class_drop_spike; non-7-decimals →
-            nonstandard_decimals_correction_failing. Check the pair's
-            div:<pair> Redis flag / API flags.divergence_warning for
-            actual price impact, then the per-source contribution to the
-            window. NOTE: the stellarindex_price_divergence_* alerts are
-            INERT (F-1329, no Prometheus producer) — do not wait on them.
-            Thin pairs whose total trim can't reach 10/s sit below this
-            gate by design (raise a per-pair floor if one needs coverage).
+            price error. If this fires and trim_fraction does NOT, record
+            the pair + window before retiring this rule. NOTE: the
+            stellarindex_price_divergence_* alerts are INERT (F-1329, no
+            Prometheus producer) — do not wait on them.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
 
       - alert: stellarindex_aggregator_fx_snap_fallback_dominant
