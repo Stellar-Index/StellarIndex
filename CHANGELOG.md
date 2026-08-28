@@ -3,8 +3,8 @@
 All notable changes to Stellar Index will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to dual versioning — SemVer for `pkg/*`
-and CalVer (`YYYY.MM.DD`) for binary releases. See
+and this project adheres to SemVer (`vX.Y.Z`) — for binary releases
+as well as the `pkg/*` compatibility promise. See
 [docs/architecture/semver-policy.md](docs/architecture/semver-policy.md)
 for the rationale.
 
@@ -35,6 +35,39 @@ against.
   `tradeUSDVolume` byte-for-byte; the integration test proves the SQL
   identity, the differential (a correct row is unchanged), idempotency
   and the generation guard on real TimescaleDB.
+- **Oracle capture-totality PR-2 — decoders record unmapped symbols
+  as `raw:` rows.** The Reflector (dex/cex/fx), RedStone and Band
+  decoders no longer SKIP a price slot whose symbol / feed_id is
+  outside the canonical allow-lists (ADR-0010/0014/0028, RedStone
+  feed registry); the slot is recorded verbatim as a
+  `raw:<symbol>` asset (`canonical.AssetOracleRaw`, PR-1) at the
+  SAME positional `op_index` the skip placeholder consumed, so no
+  existing row's identity moves (DAT-03; pinned by
+  `TestDecodeUpdate_OpIndexStableAcrossAllowlistState` and the
+  RedStone/Band mixed known/unknown tests). All-unknown events now
+  decode to rows instead of `ErrEmptyPrices` / `ErrEmptyUpdates` /
+  `ErrEmptyRates` (those remain only for genuinely empty / all
+  non-positive vectors). Raw RedStone rows are quoted from a
+  `/<FIAT>` feed_id suffix when it is allow-listed, else USD, and
+  are never inverted (orientation unknown). Band still skips `USD`
+  and rate-0 slots. The real 2026-04-23 mainnet fixtures show the
+  gain: every reflector-fx event carries `VES` and `XAU` slots that
+  were dropped before. Shared mapper `canonical.MapOracleSymbol`
+  (fiat → crypto → RWA → raw; lists pinned disjoint) replaces the
+  two decoders' inconsistent precedence.
+  `stellarindex_source_unknown_symbols_total` keeps its name and
+  keeps incrementing; it now means "recorded as raw" (help text +
+  metrics reference updated). Consumers (`/v1/oracle/streams`,
+  bespoke page, MEV cascade) are PR-3/4 — a raw row is
+  `IsMapped()==false` and must be excluded there.
+  **Completeness-gate impact:** the expected side of the oracle
+  completeness gate is the same decoder run over the lake, so
+  reflector-*/redstone/band historical ranges read INCOMPLETE (Δ =
+  historical unmapped slots) from the moment this binary deploys
+  until history is replayed; the replay is declared in the commit's
+  `Replay-Plan:` trailer (the `scripts/ci/lint-replay-plan.sh`
+  convention) and executed as PR-7 of the design.
+
 - **CI replay-plan tripwire (`scripts/ci/lint-replay-plan.sh`).** On
   2026-08-27 e17288bd widened `internal/canonical/asset_fiat.go` 32→132
   codes; live ingestion recorded 4 new currencies, nobody replayed
@@ -46,6 +79,134 @@ against.
   `internal/sources/*/{decode*,events,feeds,pairs}.go` unless a commit
   carries a `Replay-Plan:` trailer (`none — <reason>` allowed; a bare
   `none` is not). Fixture self-test in `lint-replay-plan-test.sh`.
+- **CI amtool gate for the Alertmanager config (#275).** The routing
+  tree that decides whether any alert reaches a human was the only
+  production config surface with no CI validation — amtool ran only
+  inside `configs/alertmanager/apply.sh`, by hand, on the host, after
+  merge. `apply.sh` grows `--check-only` (render + validate, no
+  install), the monitoring-rules job installs a SHA-pinned amtool and
+  validates BOTH render branches (empty URLs → the block-stripper stub
+  path; set URLs → substitution), `verify.sh` mirrors it with
+  promtool-style graceful skip, and `configs/alertmanager/` joins
+  `config-apply-gate.sh` SURFACES.
+- **Canonical `raw:` asset type — the record layer of the oracle
+  capture-totality design (PR-1 of 7).** `canonical.AssetOracleRaw`
+  (`raw:<symbol>`, 1–64 printable-ASCII bytes, no allow-list) holds an
+  oracle-published symbol verbatim when it maps to no canonical asset.
+  `ParseAsset` dispatches the prefix ahead of the classic
+  `<code>:<issuer>` split (on main `raw:BTC` parsed as classic code
+  `raw` + issuer `BTC` and failed), `Validate`/`Value`/`Scan`/JSON
+  round-trip it, and `Asset.IsMapped()` is the interpretation-layer
+  guard. `Pair.Validate` refuses a raw leg (never a VWAP input),
+  `supply.AssetKey` treats it as off-chain, and every `oracle_updates`
+  reader that re-parses the asset column (`LatestOracleUpdatesForAssets`,
+  `LatestOracleObservation`, `LatestAggregatorPricesForPair`,
+  `LatestOracleStreams`) now tolerates a raw row instead of failing the
+  request — integration-tested against real Timescale. No decoder emits
+  raw rows yet (PR-2); this PR changes no served behaviour.
+- **Alert `stellarindex_ingestion_oracle_unknown_symbols`** — the
+  2026-08-04 cold audit found `stellarindex_source_unknown_symbols_total`
+  had no consumer in either rule tree while r1 carried 7,794 silently
+  dropped Reflector slots. Fires per source on any increase over a
+  trailing 25 h (longer than Band's daily cadence, so it cannot flap),
+  ticket severity, promtool unit-tested, runbook
+  `docs/operations/runbooks/oracle-unknown-symbols.md`.
+
+### Fixed
+
+- RedStone docs (`internal/sources/redstone/README.md`,
+  `docs/protocols/redstone.md`) cited a metric that never existed
+  (`redstone_unknown_symbols_total`); the counter is
+  `stellarindex_source_unknown_symbols_total{source="redstone"}`.
+- **Low-priority `ops_batch` ClickHouse identity for heavy
+  `stellarindex-ops` jobs** (2026-08-28 r1: a runbook-prescribed
+  `ch-rebuild -sep41` dry-run running as CH's `default` user starved the
+  aggregator's supply refresher — `supply_refresh_error_dominant` for
+  all 39 watched contracts in 3 minutes; the cgroup caps could not help
+  because the contention was inside `clickhouse-server`). Every
+  ops-side ClickHouse connection builder in `internal/storage/clickhouse`
+  now takes an optional username/password from the environment —
+  **new env vars** `STELLARINDEX_CLICKHOUSE_OPS_USER` /
+  `STELLARINDEX_CLICKHOUSE_OPS_PASSWORD` (never argv; both unset =
+  unchanged `default`-user behaviour). **New ClickHouse user + settings
+  profile** `ops_batch` (`priority=100`, `os_thread_priority=5`,
+  `max_threads=2`, 8 GiB, `readonly=0`), provisioned by
+  `20-clickhouse-serving-profile.yml` behind
+  `clickhouse_ops_batch_profile_enabled` (default **false**; enabling
+  asserts `vault_clickhouse_ops_batch_password`). `run-heavy-job.sh`
+  imports the pair from `/etc/default/stellarindex-ops` into every
+  wrapped job itself and prints the identity it will use (or a
+  `WARNING ... CH 'default' user` line), and `config-assertions.sh`
+  asserts the CH user and the env pair moved together. **Operator
+  steps** (per host, one PR): add the vault password + flip the flag in
+  the inventory, then `ansible-playbook ... --tags
+  clickhouse-ops-batch-profile,minio,heavy-job-wrapper --check --diff`,
+  then apply (the third tag re-renders the wrapper already on the
+  host). Pinned by `TestOpsOpenersAuthenticateFromEnv` (the identity
+  every opener puts on the ClickHouse wire, decoded from the native
+  client hello) and `scripts/ci/run-heavy-job-test.sh` (the shipped
+  wrapper, extracted from the ansible task). See
+  `docs/operations/clickhouse-ops-batch-profile.md`.
+### Fixed
+
+- **Outlier filter trimmed agreed price moves; `outlier_storm` measured
+  its own artifact.** The published-VWAP filter scored every print
+  against ONE band — the whole window's median ± 4 × 1.4826 × MAD — and
+  MAD is the *majority* regime's dispersion (0.1–0.3 % on a liquid
+  pair). Any agreed move larger than ~1 % was trimmed wholesale until it
+  became the window majority, then the old regime was trimmed instead.
+  Live on r1 (2026-08-28): Kraken stepped XLM/GBP 0.1337 → 0.1364, a
+  genuine +2 % matching the XLM/USD × GBP/USD cross; the window VWAPs
+  stayed pinned at the stale level, `anomaly_freeze_engaged` fired on
+  the discontinuity when the regime flipped (`sources=1 z=11.69`), and
+  `stellarindex_aggregator_outlier_storm` fired for hours on
+  XLM/USD and XLM/GBP while every venue agreed within 0.9 % — its
+  counter re-counted the trimmed window tail every 30 s tick.
+
+  The orchestrator's filter is now **time-local**
+  (`aggregate.FilterOutliersLocal`): a print is dropped only when it
+  disagrees with the whole window AND its neighbourhood (own / adjacent
+  1-minute buckets when they hold ≥ 3 prices, else the nearest 5 prints
+  on each side — so thin single-source series are covered too). The
+  local references are **anchored**: their band is clamped to
+  0.25 %–1 % of the centre and a reference is trusted only when its
+  centre sits within ±4 % (σ × max(window scale, 1 %)) of the window
+  median or of the previous trusted reference (chain continuity) —
+  without this ANY burst that was the majority of its own minute
+  (≥ 3 prints) set its own centre and validated itself at any density;
+  the 2026-08-14 token-farm fixture passed 480/480 wave prints through
+  the unanchored prototype. Steps survive; a lone fat-finger, wash, or
+  dust print and a self-consistent 2–3× burst do not. Residual gap: a
+  wave that is the majority of the whole window, sits within ~4 % of
+  the honest level, or walks in ≤ 4 % steps is indistinguishable from
+  a market and still passes. The per-request `/v1/vwap?outlier_sigma=`
+  and `/v1/ohlc` filter keeps its documented whole-window semantics.
+  Regression tests replay the r1 shape (thin single-source +2 % step:
+  0 trimmed, z ≤ σ; lone +10 % print: trimmed) at the filter and
+  orchestrator layers, plus spam-bucket fixtures (dense single-venue
+  wash burst, mixed-venue spam burst, the 2026-08-14 token-farm wave:
+  480/480 dropped, 0 honest lost) and a permanent differential test
+  (survivor set + VWAP byte-identical to the whole-window filter on
+  normal / fat-finger / zero-MAD / tight series; legacy survivors ⊆
+  local survivors on 200 random series).
+
+  The alert now measures what it claims: new gauges
+  `stellarindex_aggregator_venue_vwap{pair,window,source}` (per-venue
+  pre-filter VWAP, absent venues deleted) and
+  `stellarindex_aggregator_window_trades{pair,window,stage}`;
+  `outlier_storm` fires on `max/min − 1 > 1 %` across ≥ 2 venues for
+  15 m, and the new `stellarindex_aggregator_outlier_trim_fraction`
+  (`> 20 %` of the 24h window trimmed for 30 m, ≥ 20 trades) covers the
+  single-venue spam shape that disagreement cannot see — proven
+  fireable on the token-farm fixture: its promtool case uses the
+  filter's real output on that fixture (`window_trades{stage=class}` =
+  1200, `{stage=outlier}` = 720, a 40 % share), not hand-typed gauges.
+  promtool tests: agreed cross-venue step silent, one venue +3 % fires,
+  single venue never fires. The old counter gate is kept for one week
+  as `stellarindex_aggregator_outlier_trim_rate_legacy` (same expr /
+  `for`, both rule trees, three promtool cases) as the live cross-check
+  — **retire 2026-09-04**; after that `dropped_trades_total
+  {reason="outlier"}` is diagnostic only.
 
 ## [v0.47.2] — 2026-08-28
 

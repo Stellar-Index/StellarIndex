@@ -130,16 +130,59 @@ func TestCachedBespoke_FailedBuildKeepsLastGood(t *testing.T) {
 	}
 }
 
+// bespokeFakeClock is a stepped time source for the bespoke cache: age
+// is a deterministic clock step, never a wall-clock race.
+type bespokeFakeClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (c *bespokeFakeClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *bespokeFakeClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = c.t.Add(d)
+}
+
+// ageBespokeEntry installs a fake clock on srv's bespoke cache, caches blk
+// under key, and steps the clock one minute PAST the staleness horizon.
+// It returns the clock so a test can step it further.
+//
+// The caller's stub must be BLOCKED (stub.block non-nil) for the read
+// that follows: cachedBespoke kicks its detached refresh BEFORE it reads
+// the entry, and an instant battery can re-put a fresh-stamped block
+// between the two — on a loaded runner the aged entry was overwritten
+// and served as FRESH (CI run 33185801510; 20/48000 under local CPU
+// contention). Blocking the battery makes that interleaving impossible.
+func ageBespokeEntry(t *testing.T, srv *Server, stub *bespokeStub, key string, blk *timescale.BespokeBlock) *bespokeFakeClock {
+	t.Helper()
+	if stub.block == nil {
+		t.Fatal("ageBespokeEntry: stub.block must be set so the kicked refresh cannot overwrite the aged entry")
+	}
+	clk := &bespokeFakeClock{t: time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)}
+	srv.protocolBespokeCache.now = clk.Now
+	srv.protocolBespokeCache.put(key, blk)
+	clk.Advance(bespokeStaleAfter + time.Minute)
+	return clk
+}
+
 func TestCachedBespoke_StaleFlaggedPastHorizon(t *testing.T) {
-	stub := &bespokeStub{}
+	stub := &bespokeStub{block: make(chan struct{})}
 	srv := New(Options{ProtocolBespoke: stub})
 	key := bespokeTestKey()
-	srv.protocolBespokeCache.put(key, &timescale.BespokeBlock{Category: "bridge"})
-	srv.protocolBespokeCache.mu.Lock()
-	e := srv.protocolBespokeCache.entries[key]
-	e.at = e.at.Add(-bespokeStaleAfter - time.Minute)
-	srv.protocolBespokeCache.entries[key] = e
-	srv.protocolBespokeCache.mu.Unlock()
+	clk := ageBespokeEntry(t, srv, stub, key, &timescale.BespokeBlock{Category: "bridge"})
+
+	// Exactly AT the horizon is still fresh (the contract is strictly older).
+	clk.Advance(-time.Minute)
+	if _, stale, ok := srv.cachedBespoke(context.Background(), "cctp", "bridge", 90); !ok || stale {
+		t.Fatalf("entry exactly at the horizon: ok=%v stale=%v, want fresh", ok, stale)
+	}
+	clk.Advance(time.Nanosecond)
 
 	blk, stale, ok := srv.cachedBespoke(context.Background(), "cctp", "bridge", 90)
 	if !ok || blk == nil {
@@ -148,7 +191,16 @@ func TestCachedBespoke_StaleFlaggedPastHorizon(t *testing.T) {
 	if !stale {
 		t.Error("a block older than bespokeStaleAfter served as FRESH — staleness must be honest")
 	}
+	// Once the refresh lands, its block is stamped by the same clock and
+	// the next read is fresh again.
+	close(stub.block)
 	waitBespokeIdle(t, srv, key)
+	if got := stub.calls.Load(); got != 1 {
+		t.Errorf("two reads on one aged entry ran %d batteries, want the single in-flight refresh", got)
+	}
+	if _, stale, ok := srv.cachedBespoke(context.Background(), "cctp", "bridge", 90); !ok || stale {
+		t.Errorf("after the refresh landed: ok=%v stale=%v, want fresh", ok, stale)
+	}
 }
 
 func TestCachedBespoke_SingleFlightCollapsesColdCallers(t *testing.T) {
@@ -255,17 +307,11 @@ func TestBuildProtocolDetail_BespokeSurvivesFailingBattery(t *testing.T) {
 // says so, and such an entry counts as healthy for cache displacement —
 // it is not the blank state the guard defends against.
 func TestBuildProtocolDetail_StaleBespokeIsHonestAndStillComplete(t *testing.T) {
-	stub := &bespokeStub{}
+	stub := &bespokeStub{block: make(chan struct{})}
 	srv := New(Options{ProtocolActivity: prewarmActivityStub{}, ProtocolBespoke: stub})
 	meta, _ := protocolByName("cctp")
 	key := protocolBespokeCacheKey(meta.Name, meta.Category, protocolActivityWindowDays)
-
-	srv.protocolBespokeCache.put(key, &timescale.BespokeBlock{Category: meta.Category})
-	srv.protocolBespokeCache.mu.Lock()
-	e := srv.protocolBespokeCache.entries[key]
-	e.at = e.at.Add(-bespokeStaleAfter - time.Minute)
-	srv.protocolBespokeCache.entries[key] = e
-	srv.protocolBespokeCache.mu.Unlock()
+	ageBespokeEntry(t, srv, stub, key, &timescale.BespokeBlock{Category: meta.Category})
 
 	view := srv.buildProtocolDetail(context.Background(), meta, protocolActivityWindowDays)
 	if view.Bespoke == nil {
@@ -277,6 +323,7 @@ func TestBuildProtocolDetail_StaleBespokeIsHonestAndStillComplete(t *testing.T) 
 	if !protoDetailEntryHealthy(protoDetailEntry{view: view}) {
 		t.Error("a COMPLETE page with a stale bespoke block counted as unhealthy — it would be pinned out of the cache")
 	}
+	close(stub.block)
 	waitBespokeIdle(t, srv, key)
 }
 
@@ -286,19 +333,14 @@ func TestBuildProtocolDetail_StaleBespokeIsHonestAndStillComplete(t *testing.T) 
 // the age lives in the bespoke block, and a client must not read a
 // last-good suite as live.
 func TestHandleProtocolDetail_StaleBespokeSetsEnvelopeFlag(t *testing.T) {
-	stub := &bespokeStub{}
+	stub := &bespokeStub{block: make(chan struct{})}
 	srv := New(Options{ProtocolActivity: prewarmActivityStub{}, ProtocolBespoke: stub})
 	meta, _ := protocolByName("cctp")
 	key := protocolBespokeCacheKey(meta.Name, meta.Category, protocolActivityWindowDays)
-	srv.protocolBespokeCache.put(key, &timescale.BespokeBlock{
+	ageBespokeEntry(t, srv, stub, key, &timescale.BespokeBlock{
 		Category: meta.Category,
 		KPIs:     []timescale.BespokeKPI{{Label: "probe", Value: "1"}},
 	})
-	srv.protocolBespokeCache.mu.Lock()
-	e := srv.protocolBespokeCache.entries[key]
-	e.at = e.at.Add(-bespokeStaleAfter - time.Minute)
-	srv.protocolBespokeCache.entries[key] = e
-	srv.protocolBespokeCache.mu.Unlock()
 
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
@@ -316,6 +358,7 @@ func TestHandleProtocolDetail_StaleBespokeSetsEnvelopeFlag(t *testing.T) {
 	if !env.Flags.Stale {
 		t.Error("flags.stale = false with analytics.status=stale — the envelope must agree")
 	}
+	close(stub.block)
 	waitBespokeIdle(t, srv, key)
 }
 
