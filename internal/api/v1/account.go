@@ -463,6 +463,12 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 		// Inherit the caller's per-key budget when set; otherwise
 		// leave zero so the per-tier default applies.
 		RateLimitPerMin: subject.RateLimitPerMin,
+		// Inherit the caller's email-verification stamp. The caller
+		// already passed RequireEmailVerified on this identifier to
+		// reach this handler; a child born unverified would 403
+		// forever because nothing can verify a non-signup KeyID
+		// (api-security-2, audit 2026-08-28).
+		EmailVerifiedAt: subject.EmailVerifiedAt,
 	})
 	if err != nil {
 		if clientAborted(r, err) {

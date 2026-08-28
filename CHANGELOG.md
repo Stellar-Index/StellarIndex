@@ -59,6 +59,16 @@ against.
   `docs/operations/clickhouse-ops-batch-profile.md`.
 ### Fixed
 
+- **Rotated signup keys no longer 403 forever under email verification
+  (api-security-2, audit 2026-08-28).** With
+  `signup_require_email_verification` on (the default), a verified
+  `/v1/signup` customer who rotated via `POST /v1/account/keys` got a
+  `signup-<hash>` child with a zero `EmailVerifiedAt`, and nothing can
+  verify a non-signup KeyID after the fact — `RequireEmailVerified`
+  rejected the child permanently (and revoking the parent stranded the
+  customer). `auth.CreateAPIKeyRequest` gained `EmailVerifiedAt`; the
+  self-service mint copies the caller's stamp onto the child. Signup
+  and admin mints still leave it zero.
 - **`/v1/livez/lake` added to the unauthenticated-infra exemption and
   the anonymous rate-limit skip (api-security-3, audit 2026-08-28).**
   The ADR-0050 lake-route LB probe (#119) was added after
