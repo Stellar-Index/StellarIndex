@@ -1,7 +1,6 @@
 package band
 
 import (
-	"errors"
 	"fmt"
 	"math/big"
 	"time"
@@ -174,15 +173,17 @@ func decodeRelayArgs( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitt
 		}
 		asset, err := symbolToAsset(sym)
 		if err != nil {
-			if errors.Is(err, ErrUnknownSymbol) {
-				// Partial-event skip, same pattern as Reflector.
-				// F-1234 (codex audit-2026-05-12): count the skip
-				// so the decode-error runbook signals on upstream
-				// coverage drift.
-				obs.SourceUnknownSymbolsTotal.WithLabelValues("band").Inc()
-				continue
-			}
-			return nil, fmt.Errorf("symbol_rates[%d] %q: %w", i, sym, err)
+			return nil, fmt.Errorf("%w: symbol_rates[%d] %q: %w", ErrMalformedArgs, i, sym, err)
+		}
+		if !asset.IsMapped() {
+			// Oracle capture-totality (PR-2): a symbol outside the
+			// allow-lists is RECORDED verbatim as raw:<symbol> at
+			// this same vector slot, not skipped (same pattern as
+			// Reflector / RedStone). F-1234 (codex audit-2026-05-12):
+			// still count it so the unknown-symbols runbook signals
+			// on upstream coverage drift — a raw row is a mapping
+			// gap the allow-list owner has to close.
+			obs.SourceUnknownSymbolsTotal.WithLabelValues("band").Inc()
 		}
 		if rate == 0 {
 			continue
@@ -203,6 +204,10 @@ func decodeRelayArgs( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitt
 		out = append(out, u)
 	}
 	if len(out) == 0 {
+		// Only reachable when every slot was USD or rate 0: since the
+		// oracle capture-totality change an unmapped symbol is a raw
+		// row, not a skip, so an all-unknown vector no longer lands
+		// here.
 		return nil, ErrEmptyRates
 	}
 	return out, nil
@@ -211,18 +216,15 @@ func decodeRelayArgs( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitt
 // symbolToAsset maps a Band symbol to a canonical.Asset. Band
 // publishes a mix of crypto tickers (BTC, ETH, XLM …) and fiat
 // codes (USD is special-cased above; EUR, JPY, ...) via the same
-// symbol_rates channel. We try crypto first (smaller allow-list,
-// tighter match for oracle symbols); then fiat; then ErrUnknownSymbol
-// for anything else — operator extends the allow-list as coverage
-// grows.
+// symbol_rates channel. canonical.MapOracleSymbol tries fiat
+// (ADR-0010), then crypto (ADR-0014), then RWA (ADR-0028) — the one
+// shared precedence for every oracle decoder (Band used to try crypto
+// before fiat; the lists are disjoint so no row changes type) — and
+// returns a verbatim raw:<symbol> asset for anything else, so the
+// slot is recorded rather than dropped. The only error is a symbol
+// the raw validator cannot represent (impossible for an ScSymbol).
 func symbolToAsset(sym string) (canonical.Asset, error) {
-	switch {
-	case canonical.IsKnownCrypto(sym):
-		return canonical.NewCryptoAsset(sym)
-	case canonical.IsKnownFiat(sym):
-		return canonical.NewFiatAsset(sym)
-	}
-	return canonical.Asset{}, fmt.Errorf("%w: %q", ErrUnknownSymbol, sym)
+	return canonical.MapOracleSymbol(sym)
 }
 
 // pickObserver returns the best-effort attribution strkey for a

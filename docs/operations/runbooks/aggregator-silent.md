@@ -1,7 +1,7 @@
 ---
 title: Runbook — aggregator-silent
-last_verified: 2026-04-25
-status: draft
+last_verified: 2026-08-28
+status: current
 severity: P1
 ---
 
@@ -12,23 +12,26 @@ severity: P1
 | Field | Value |
 | ----- | ----- |
 | Alert | `stellarindex_aggregator_silent` |
-| Severity | **P1** (page) |
-| Detected by | `deploy/monitoring/rules/aggregator.yml` |
+| Severity | **P1** (`severity: page`) |
+| Detected by | `configs/prometheus/rules.r1/aggregator.yml` (group `stellarindex.aggregator`, `severity: page`, `for: 5m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/aggregator.yml`. |
 | Typical MTTR | 5–20 min |
-| Impact | Zero VWAP cache writes for 5+ min. `/v1/vwap` falls back to on-query raw aggregation (slow + ADR-0007 cache-miss path). Freshness signal API consumers depend on goes quiet within 60 s. |
+| Impact | Zero VWAP cache writes for 5+ min. **`/v1/price`** serves progressively staler cached VWAPs — the orchestrator publishes `cachekeys.VWAP` keys that `price.go` serves — so `flags.stale` flips, and rewritten/triangulated pairs start 404ing as their key TTLs lapse (the May-10 SEV-2 shape). **`/v1/vwap` is unaffected**: it ALWAYS scans raw trades on-query (`internal/api/v1/vwap.go:114-118`) — it neither degrades nor lags when the aggregator goes silent. |
 
 ## Symptoms
 
-- `sum(rate(stellarindex_aggregator_vwap_writes_total[5m])) == 0` for ≥ 5 min.
+- The full rule expr:
+  `sum(rate(stellarindex_aggregator_vwap_writes_total[5m])) == 0 or absent_over_time(stellarindex_aggregator_vwap_writes_total[10m]) == 1`,
+  held for `for: 5m`, `severity: page`.
 - `/metrics` on the aggregator binary shows the counter not advancing
   between scrapes.
-- `/v1/vwap?pair=...` responses carry an `observed_at` lagging the
-  raw trade tip by minutes (when normally it tracks within tens of
-  seconds).
+- `/v1/price` responses carry an aging `observed_at` /
+  `flags.stale=true`.
 
 ## Quick diagnosis (≤ 5 min)
 
 ```sh
+ssh root@136.243.90.96
+
 # 1) Is the binary alive at all?
 systemctl status stellarindex-aggregator
 journalctl -u stellarindex-aggregator -n 50 --no-pager
@@ -38,16 +41,19 @@ journalctl -u stellarindex-aggregator -n 50 --no-pager
 # its metrics listener from :9464 to :9465 when it would collide
 # with the indexer. R1's prometheus.r1.yml scrapes :9465 for the
 # aggregator; :9464 is the INDEXER's port. Use :9465 when probing
-# the aggregator. Override via AGGREGATOR_METRICS_PORT env if your
-# deployment pinned a different port.
-curl -fs "http://localhost:${AGGREGATOR_METRICS_PORT:-9465}/metrics" | grep -E '^stellarindex_aggregator_(ticks_total|empty_windows|dropped_trades|vwap_writes)'
+# the aggregator. The auto-shift keys off `obs.metrics_listen` being
+# left at its default (cmd/stellarindex-aggregator/main.go:1689-1694,
+# shifts to 127.0.0.1:9465); to pin a different port, set
+# `obs.metrics_listen` in the aggregator's TOML.
+curl -fs http://localhost:9465/metrics | grep -E '^stellarindex_aggregator_(ticks_total|empty_windows|dropped_trades|vwap_writes)'
 
-# 3) Is Redis reachable and accepting writes?
-redis-cli -h <redis_host> -a "$REDIS_PASSWORD" PING
-redis-cli -h <redis_host> -a "$REDIS_PASSWORD" SET _aggregator_probe "$(date -Iseconds)" EX 60
+# 3) Is Redis reachable and accepting writes? (single local
+# redis-server on localhost — no auth, no replica)
+redis-cli PING
+redis-cli SET _aggregator_probe "$(date -Iseconds)" EX 60
 
 # 4) Is Timescale serving trades for the configured pair set?
-psql -d stellarindex -c "SELECT pair, COUNT(*) FROM trades WHERE timestamp > now() - interval '5 minutes' GROUP BY pair ORDER BY 2 DESC LIMIT 10;"
+runuser -u postgres -- psql -d stellarindex -c "SELECT pair, COUNT(*) FROM trades WHERE timestamp > now() - interval '5 minutes' GROUP BY pair ORDER BY 2 DESC LIMIT 10;"
 ```
 
 Three signal-pairs to read off the metrics dump:
@@ -60,9 +66,14 @@ Three signal-pairs to read off the metrics dump:
 
 ## Mitigation (≤ 15 min)
 
-- [ ] **If Redis is the proximate cause** (PING fails / writes error): fail
-      Redis over to its standby node before touching the aggregator. The
-      aggregator retries on the next tick, no restart needed.
+- [ ] **If Redis is the proximate cause** (PING fails / writes error):
+      fix the local redis-server — there is NO standby to fail over to
+      (r1 runs a single Debian-packaged redis-server on localhost, no
+      sentinel/replica/auth). Restart the unit, or if writes fail with
+      `MISCONF` (BGSAVE blocked on a full root FS — the May-10 SEV-2
+      class) free root-FS disk per
+      [`redis-write-blocked-disk-full.md`](redis-write-blocked-disk-full.md).
+      The aggregator retries on the next tick, no restart needed.
 - [ ] **If the tick loop is wedged**: `systemctl restart stellarindex-aggregator`.
       The orchestrator's first-tick-immediate behaviour means VWAP writes
       resume within `interval_seconds` (default 30 s) of restart.
@@ -89,10 +100,11 @@ Capture for the postmortem:
 ## Known false-positive patterns
 
 - **Aggregator binary not deployed in this environment** — dev /
-  staging stacks where only the indexer + API are running. Either
-  silence the rule on those targets via AlertManager routing, or
-  set the rule's group to use `up{job="aggregator"} == 1` as a
-  required precondition.
+  staging stacks where only the indexer + API are running. The
+  rule's `absent_over_time` branch now fires in such an environment
+  (no series at all). Silencing via AlertManager routing is the
+  right fix. (There is no `up{job=...}` precondition on the rule —
+  and the r1 job name is `stellarindex-aggregator` anyway.)
 - **First 60 s after a fresh aggregator boot** — the immediate
   initial tick lands inside the alert's 5 min window, so a clean
   start should never trigger. If it does, suspect a config or
@@ -102,13 +114,29 @@ Capture for the postmortem:
 
 - ADR-0007 (cache strategy) — explains why VWAP is pre-computed
   rather than on-query.
-- `stellarindex_aggregator_outlier_storm` — often co-fires when a
-  market event simultaneously drives VWAP writes to zero (every
-  trade σ-rejected) and floods the outlier counter.
+- `stellarindex_aggregator_outlier_storm` — post-redesign
+  (2026-08-28) it measures per-venue VWAP dispersion
+  (`stellarindex_aggregator_venue_vwap`), not trim flood; the
+  time-local filter (`internal/aggregate/outliers_local.go`) no
+  longer trims agreed regime shifts, so a market event should NOT
+  drive VWAP writes to zero. The trim-flood siblings are
+  `stellarindex_aggregator_outlier_trim_fraction` +
+  `_trim_rate_legacy` (legacy retires 2026-09-04).
 - `aggregator-outlier-storm.md` — sister runbook; check its
   symptoms before assuming this is a pure orchestrator failure.
 
 ## Changelog
 
+- 2026-08-28 — re-verified against HEAD. Impact rewritten: `/v1/vwap`
+  always scans raw trades on-query (`internal/api/v1/vwap.go:114-118`)
+  and is UNAFFECTED — the aggregator's cache writes feed `/v1/price`
+  (May-10 SEV-2 staleness/404 shape). Full rule expr quoted (incl. the
+  `absent_over_time` branch). Redis failover advice removed — no
+  standby exists on r1; routed to `redis-write-blocked-disk-full.md`
+  instead. F-1301 port note corrected: the auto-shift keys off
+  `obs.metrics_listen` (the `AGGREGATOR_METRICS_PORT` env was
+  fiction). Outlier-storm bullet updated for the 2026-08-28
+  venue-dispersion redesign. Rule citation → `rules.r1/aggregator.yml`;
+  commands use r1 shapes.
 - 2026-04-25 — initial draft alongside the aggregator metrics
   PR #26 wire-up.

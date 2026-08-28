@@ -247,6 +247,29 @@ tx_hash_index_parity() {
 }
 assert_cmd tx_hash_index_parity tx_hash_index_parity
 
+# ── ClickHouse ops-batch identity, both halves live (2026-08-28 r1) ──
+# The low-priority `ops_batch` profile only protects the aggregator /
+# indexer from a heavy stellarindex-ops job when BOTH the CH-side user
+# (users.d/ops-batch.xml, --tags clickhouse-ops-batch-profile) and the
+# env pair the jobs authenticate with (/etc/default/stellarindex-ops,
+# --tags minio) are in place. Applying one tag without the other is
+# either a silent no-op (user, no env: every job still runs as
+# `default` at serving priority — the incident) or a hard break (env,
+# no user: the next job fails auth). Skipped, not failed, while the
+# profile is not provisioned on this host (the flag defaults false).
+# Third leg: the pair must NEVER reach the service env — the
+# ansible-templated stellarindex-{indexer,aggregator,api} units source
+# /etc/default/stellarindex, and the same package seam would demote the
+# live sink + supply refresher to lowest priority (the inverse fix).
+if [[ -f /etc/clickhouse-server/users.d/ops-batch.xml ]]; then
+  assert_grep ch_ops_batch_env_pair /etc/default/stellarindex-ops \
+    '^STELLARINDEX_CLICKHOUSE_OPS_USER=.+'
+else
+  skip ch_ops_batch_env_pair
+fi
+assert_cmd ch_ops_batch_not_in_service_env bash -c \
+  '! grep -qE "^STELLARINDEX_CLICKHOUSE_OPS_(USER|PASSWORD)=" /etc/default/stellarindex 2>/dev/null'
+
 mv "$TMP" "$OUT"
 chmod 644 "$OUT"
 echo "config-assertions: $fails failure(s)" >&2
