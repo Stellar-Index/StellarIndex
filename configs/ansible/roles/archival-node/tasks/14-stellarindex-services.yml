@@ -336,6 +336,44 @@
         exit 0
       fi
 
+      # ── ClickHouse ops-batch identity (2026-08-28 r1) ─────────────
+      # Import STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD from
+      # /etc/default/stellarindex-ops HERE, so every wrapped
+      # stellarindex-ops ClickHouse connection authenticates as the
+      # low-priority `ops_batch` user (20-clickhouse-serving-profile.yml,
+      # internal/storage/clickhouse/ops_auth.go) regardless of the
+      # CALLER's shell. The runbooks that prescribe the heavy jobs
+      # (sep41-mint-recovery, usd-volume-rederive, fx-history-missing,
+      # lcm-cache-tiering) source /etc/default/stellarindex — the PG /
+      # MinIO service identity — not -ops, and the 2026-08-28 `ch-rebuild
+      # -sep41` that starved the aggregator's supply refresher was
+      # launched exactly that way; relying on the caller to source the
+      # right file made the profile a silent no-op on the incident path.
+      # Only this PAIR is imported, never the whole file: sourcing -ops
+      # wholesale would override a caller's deliberate AWS_*/DSN choice
+      # (lcm-cache-tiering uses the service identity on purpose). A
+      # value already in the caller's env wins. Values are read verbatim
+      # (no eval — the password is a secret and may contain shell
+      # metacharacters). HEAVY_JOB_OPS_ENV overrides the path for tests
+      # and non-standard hosts, same pattern as HEAVY_JOB_LOCK_DIR.
+      OPS_ENV="${HEAVY_JOB_OPS_ENV:-/etc/default/stellarindex-ops}"
+      if [ -z "${STELLARINDEX_CLICKHOUSE_OPS_USER:-}" ] && [ -r "$OPS_ENV" ]; then
+        while IFS= read -r line || [ -n "$line" ]; do
+          case "$line" in
+            STELLARINDEX_CLICKHOUSE_OPS_USER=*|STELLARINDEX_CLICKHOUSE_OPS_PASSWORD=*)
+              export "${line%%=*}=${line#*=}" ;;
+          esac
+        done < "$OPS_ENV"
+      fi
+      # Loud either way (the whole 2026-08-28 class is a job that ran
+      # at serving priority with nothing saying so): name the identity
+      # the job will use, or WARN that it is the CH `default` user.
+      if [ -n "${STELLARINDEX_CLICKHOUSE_OPS_USER:-}" ]; then
+        echo "run-heavy-job: ${NAME} ClickHouse identity: ${STELLARINDEX_CLICKHOUSE_OPS_USER} (ops_batch low-priority profile)" >&2
+      else
+        echo "run-heavy-job: WARNING ${NAME} ClickHouse identity: CH 'default' user at SERVING priority — STELLARINDEX_CLICKHOUSE_OPS_USER is neither in the environment nor in ${OPS_ENV}. Any stellarindex-ops ClickHouse read in this job can starve the aggregator/indexer (2026-08-28 r1 supply_refresh_error_dominant class). Enable clickhouse_ops_batch_profile_enabled and apply --tags clickhouse-ops-batch-profile,minio,heavy-job-wrapper." >&2
+      fi
+
       # De-privileged units (User=stellarindex) can't create a system
       # transient scope (polkit denies non-root StartTransientUnit), and
       # Type=notify units must keep the payload as the unit's MAIN pid
@@ -422,6 +460,12 @@
         -p CPUWeight=50 -p IOWeight=50 \
         "$@" || rc=$?
       exit "$rc"
+  # Own tag (merged with the import's stellarindex/indexer tags) so the
+  # ops-batch identity import above can be re-rendered on a host alone:
+  # `--tags clickhouse-ops-batch-profile,minio,heavy-job-wrapper`
+  # (docs/operations/clickhouse-ops-batch-profile.md) instead of a full
+  # `--tags stellarindex` build+deploy pass.
+  tags: [heavy-job-wrapper]
 
 - name: archive-completeness drop-in directory
   # `copy` does not create parent dirs — without this the override.conf

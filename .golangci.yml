@@ -2,7 +2,7 @@
 #
 # Lives at repo root. Applied via `make lint` and in CI. Any rule
 # change requires a PR + rationale; we don't weaken lint "just to
-# unblock something." See docs/discovery/engineering-standards.md §8.
+# unblock something." See docs/engineering-standards.md §8.
 
 version: "2"
 

@@ -211,7 +211,7 @@ jobs:
 
   # ────────────────────────────────────────────────────────────────
   # Policy checks — keep the repo enterprise-grade per
-  # docs/discovery/engineering-standards.md.
+  # docs/engineering-standards.md.
   # ────────────────────────────────────────────────────────────────
 
   doc-checks:
@@ -426,6 +426,16 @@ jobs:
         # fires weekly against live r1, so these fixtures are the only
         # place the verdict is exercised on a PR. No network, no ansible.
         run: ./scripts/ci/check-ansible-drift-test.sh
+      - name: run-heavy-job wrapper self-test
+        # 2026-08-28 r1 (supply_refresh_error_dominant): the heavy-job
+        # wrapper must hand every wrapped stellarindex-ops job the
+        # low-priority ClickHouse ops-batch identity from
+        # /etc/default/stellarindex-ops ITSELF — the runbooks source
+        # /etc/default/stellarindex, so a design that relied on the
+        # caller's shell was a silent no-op on the incident path. These
+        # fixtures extract the shipped wrapper out of the ansible task and
+        # run it. No network, no ansible, no systemd (non-root exec path).
+        run: ./scripts/ci/run-heavy-job-test.sh
       - name: lint-lexicon
         # Maintainability audit 2026-07-01 (D2+D6): domain-lexicon +
         # idiom ratchet. Zero rules (no Fetch/Make verbs, slog is the
