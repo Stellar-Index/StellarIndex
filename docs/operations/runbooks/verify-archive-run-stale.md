@@ -1,6 +1,6 @@
 ---
 title: Runbook — verify-archive-run-stale
-last_verified: 2026-04-29
+last_verified: 2026-08-28
 status: ratified
 severity: P2
 ---
@@ -12,10 +12,10 @@ severity: P2
 | Field | Value |
 | ----- | ----- |
 | Alert | `stellarindex_verify_archive_run_stale` |
-| Severity | P2 (page) |
-| Detected by | Prometheus rule in `deploy/monitoring/rules/verify-archive.yml` |
+| Severity | P2 (`severity: page`) |
+| Detected by | `configs/prometheus/rules.r1/verify-archive.yml` (group `stellarindex.verify_archive`, `severity: page`, `for: 10m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/verify-archive.yml`. |
 | Typical MTTR | 1 hour (diagnose + re-enable timer or kick off fresh run) |
-| Impact | Cross-region trust degrades. R2/R3 trust R1 for chain-integrity (ADR-0016); the longer R1 goes without a clean nightly verify, the further from "byte-identical bytes everywhere" the fleet drifts. After 48h consider flipping `flags.reduced_redundancy=true` on R2/R3 API responses. |
+| Impact | Cross-region trust degrades. R2/R3 trust R1 for chain-integrity (ADR-0016); the longer R1 goes without a clean nightly verify, the further from "byte-identical bytes everywhere" the fleet drifts. After 48h consider the degradation comms call for R2/R3 (see Mitigation — no config flag exists to flip). |
 
 ## Symptoms
 
@@ -26,18 +26,25 @@ severity: P2
   on each preceding night — the ticket-level alert that should
   have caught this earlier.
 
+> **NOTE:** the expr measures the timer's last *trigger* — updated on
+> every firing regardless of how the service exits. "Every run failed
+> but the timer still fires" does NOT trip this alert — only
+> `_unit_failed` catches that.
+
 ## Quick diagnosis (≤ 5 min)
 
 ```sh
+ssh root@136.243.90.96
+
 # Is the timer enabled and active?
-ssh r1 'systemctl status verify-archive-tier-a.timer'
+systemctl status verify-archive-tier-a.timer
 
 # What's the last-trigger timestamp + the next scheduled run?
-ssh r1 'systemctl list-timers verify-archive-tier-a.timer --all'
+systemctl list-timers verify-archive-tier-a.timer --all
 
 # Has the service been failing? Look across the recent runs.
-ssh r1 'journalctl -u verify-archive-tier-a.service --since "3 days ago" \
-  | grep -E "Started|Finished|FAILED|Failed|exit-code"'
+journalctl -u verify-archive-tier-a.service --since "3 days ago" \
+  | grep -E "Started|Finished|FAILED|Failed|exit-code"
 ```
 
 Three branches:
@@ -45,25 +52,35 @@ Three branches:
 | State | Cause | Action |
 | ----- | ----- | ------ |
 | `inactive (dead)` and last-trigger > 36h ago | Timer disabled (operator forgot after a maintenance window) | Re-enable: `systemctl enable --now verify-archive-tier-a.timer` |
-| `active (waiting)` but last `Finished` is > 36h | Every recent run failed | Walk through `verify-archive-unit-failed.md` for the underlying mode |
-| `active (running)` for hours | Current run is hung | Investigate per-chunk progress; consider increasing `-max-runtime` |
+| `active (waiting)` and last-trigger fresh, yet this alert fired | Shouldn't happen — the expr keys on last TRIGGER, not last clean finish; re-check which alert fired | Failing runs are [`verify-archive-unit-failed.md`](verify-archive-unit-failed.md) territory |
+| `active (running)` for hours | Current run is hung — or is the (expected) ~13.8h full pass | Watch per-chunk progress in the journal; see the hung-run bullet below |
 
 ## Mitigation (≤ 15 min)
 
 - [ ] **If the timer is disabled**, re-enable it:
   ```sh
-  ssh r1 'systemctl enable --now verify-archive-tier-a.timer'
+  ssh root@136.243.90.96 systemctl enable --now verify-archive-tier-a.timer
   ```
   This is the entire fix for the most-common cause (a missed re-enable after maintenance). Verify the next-trigger timestamp is < 24h ahead.
 - [ ] **If runs are failing**, follow the [`verify-archive-unit-failed.md`](verify-archive-unit-failed.md) runbook to bring a single manual run back to green. The timer fires automatically nightly; one clean run is enough to clear this alert.
 - [ ] **If a run is hung**, capture per-chunk progress and decide whether to wait or kill:
   ```sh
-  ssh r1 'journalctl -u verify-archive-tier-a.service -f' &
-  # Monitor heartbeat output. If progress is steady but slow, increase
-  # max-runtime via /etc/default/stellarindex-ops; if frozen at one
-  # ledger, kill and investigate.
+  ssh root@136.243.90.96 journalctl -u verify-archive-tier-a.service -f
   ```
-- [ ] **Communicate degradation**: while this alert is firing, R2/R3 should consider setting `flags.reduced_redundancy=true` on their API responses. Per ADR-0017 §"Graceful degradation" the flag fires when R1's last successful verify is older than the documented threshold; with the L4.10 per-region trust wiring still pending the operator may need to flip a config value manually.
+  Context first: r1's ansible-managed unit runs `Type=notify` with
+  `WatchdogSec=1h` and `VERIFY_ARCHIVE_MAX_RUNTIME=0` (uncapped),
+  walking incrementally with `-from-last-verified`,
+  `-state-file /var/lib/stellarindex/verify-archive-state.json` and
+  `-safety-overlap 5000`, under `run-heavy-job.sh`. Steady-state
+  nightly runs are a short tip-window walk; only a first-ever or
+  state-lost run takes the ~13.8h full pass. So: if per-chunk
+  progress is steady, **wait** — `WatchdogSec` kills on 1h of
+  *silence*, not on duration. If output is frozen, let the watchdog
+  SIGTERM it (or stop it yourself) and investigate what it was stuck
+  on. Do NOT raise `-max-runtime` — the uncapped setting is
+  intentional (the Task #13 mid-pass-cap incident), and runtime isn't
+  the limiter.
+- [ ] **Communicate degradation**: while this alert is firing, R2/R3 trust in R1's verification anchor is degrading. Today the degradation call is a comms action (status page / on-call channel), not a config flip — no `reduced_redundancy` config value exists; `ReducedRedundancy` is a wire-envelope field with zero producers (the L4.10 per-region trust wiring is unbuilt). `TODO(ash): wire L4.10 or drop this step.`
 - [ ] **Verification**: a clean run completes within 24h; the alert clears.
 
 ## Root cause analysis
@@ -90,6 +107,9 @@ Gather:
 
 - `verify-archive-unit-failed.md` — the ticket-level alert that
   should have caught the underlying issue before this page fires.
+- `verify-archive-tier-b.md` — the Tier B siblings
+  (`verify-archive-tier-b.{service,timer}`, `_tier_b_*` alerts)
+  cover the single-source-corruption mode Tier A is blind to.
 - ADR-0016 — per-region trust model.
 - ADR-0017 — archive completeness invariants.
 - `docs/operations/archival-node-bringup.md` §"Per-region trust + verification model"
@@ -101,8 +121,10 @@ range produce multi-GB stdout that operators typically capture with
 shell redirection, e.g.:
 
 ```sh
-stellarindex-ops verify-archive --from 0 --to 0 > /tmp/va-full.log 2>&1
+stellarindex-ops verify-archive --from 2 --to 0 > /tmp/va-full.log 2>&1
 ```
+
+(The flag floor is `--from 2` — ledger 1 has no predecessor.)
 
 The captured logs survive the run. The 2026-05-26 audit found
 ~4 GB of orphaned `/tmp/va-*.log` files on r1 after a single
@@ -115,8 +137,12 @@ operator is in the best position to do.
 ```sh
 LOGFILE=$(mktemp /tmp/va-XXXXXX.log)
 trap 'gzip -9 "$LOGFILE" >/dev/null 2>&1; mv "${LOGFILE}.gz" /var/log/stellarindex/ 2>/dev/null || rm -f "$LOGFILE" "${LOGFILE}.gz"' EXIT
-stellarindex-ops verify-archive --from "$FROM" --to "$TO" > "$LOGFILE" 2>&1
+/usr/local/sbin/run-heavy-job.sh va-manual \
+  stellarindex-ops verify-archive --from "$FROM" --to "$TO" > "$LOGFILE" 2>&1
 ```
+
+(Manual long-range scans are heavy jobs — always go through
+`/usr/local/sbin/run-heavy-job.sh` per the CLAUDE.md heavy-job rule.)
 
 That way the log either lands under `/var/log/stellarindex/` (where
 the rc.83-era logrotate config picks it up — F-0009 closure) or is
@@ -129,6 +155,19 @@ its stdout goes to the systemd journal and is rotated by
 
 ## Changelog
 
+- 2026-08-28 — re-verified against HEAD. Unreachable state-table
+  branch 2 replaced — the expr keys on the timer's last TRIGGER
+  (updated every firing regardless of service exit), so
+  every-run-failing keeps this alert silent; NOTE added under
+  Symptoms. Hung-run guidance rewritten for r1's actual unit
+  (Type=notify + WatchdogSec=1h, VERIFY_ARCHIVE_MAX_RUNTIME=0
+  uncapped, incremental `-from-last-verified` state-file walk under
+  run-heavy-job.sh) — "increase -max-runtime" advice removed.
+  `reduced_redundancy` config flip replaced with the comms action +
+  TODO(ash) (L4.10 unwired). Hygiene examples: `--from 0` → `--from 2`
+  (flag floor) and wrapped in run-heavy-job.sh. Rule citation →
+  `rules.r1/verify-archive.yml`; commands use r1 shapes; Tier B
+  siblings added to Related.
 - 2026-04-29 — initial draft alongside the L4.12 systemd-timer ship.
 - 2026-05-28 — added "Operator hygiene — /tmp/va-*.log cleanup"
   section (F-0008 closure).

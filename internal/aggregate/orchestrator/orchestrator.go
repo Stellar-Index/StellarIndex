@@ -289,18 +289,22 @@ type Config struct {
 	MinUSDVolume float64
 
 	// OutlierSigmaThreshold, when > 0, drops trades whose
-	// QuoteAmount/BaseAmount price differs from the window's
-	// arithmetic-mean price by more than sigma standard deviations
-	// before VWAP computes. 0 (zero value) disables the filter —
-	// every fetched trade contributes.
+	// QuoteAmount/BaseAmount price sits more than sigma robust
+	// scales (1.4826·MAD, NOT mean/stdev) from EVERY reference it is
+	// scored against — the whole window's median and its time-local
+	// neighbourhood's — before VWAP computes
+	// (aggregate.FilterOutliersLocal). A lone wild print disagrees
+	// with both and is dropped; an agreed regime shift agrees with
+	// its neighbours and survives (the 2026-08-28 drift artifact
+	// the whole-window filter produced). 0 (zero value) disables the
+	// filter — every fetched trade contributes.
 	//
 	// Applied AFTER class filtering and stablecoin expansion: the
 	// fetched-and-rewritten trade set is already homogenised onto
-	// the target pair, so the standard-deviation arithmetic is
-	// computed over comparable price values rather than across
-	// different markets. Windows with fewer than 3 valid prices
-	// fall through unchanged (see aggregate.FilterOutliers — too
-	// few samples to estimate σ meaningfully).
+	// the target pair, so the robust statistics are computed over
+	// comparable price values rather than across different markets.
+	// Windows with fewer than 3 valid prices fall through unchanged
+	// (too few samples to form a robust centre).
 	//
 	// Default value (0) leaves the filter off so a fresh
 	// orchestrator behaves identically to its pre-filter
@@ -1025,13 +1029,25 @@ func (o *Orchestrator) refreshPairWindow( //nolint:funlen // 61>60 after the R-2
 			obs.AggregatorDroppedTradesTotal.WithLabelValues("class", pair.String()).Add(float64(dropped))
 		}
 	}
+	// Venue-level view of the set the outlier filter is handed: the
+	// outlier_storm alert reads per-venue DISAGREEMENT from this, not
+	// the trim re-count (2026-08-28).
+	recordWindowStage(pair, window, "fetched", preFilter)
+	recordWindowStage(pair, window, "class", len(trades))
+	o.recordVenueVWAPs(pair, window, trades)
 	if o.cfg.OutlierSigmaThreshold > 0 {
 		preOutlier := len(trades)
-		trades = aggregate.FilterOutliers(trades, o.cfg.OutlierSigmaThreshold)
+		// Time-local trimming: a print is dropped only when it
+		// disagrees with the whole window AND its neighbourhood, so an
+		// agreed regime shift survives while a lone wild print does not
+		// (see aggregate.FilterOutliersLocal for the 2026-08-28 drift
+		// artifact this replaces the whole-window filter for).
+		trades = aggregate.FilterOutliersLocal(trades, aggregate.LocalOutlierOptions{Sigma: o.cfg.OutlierSigmaThreshold})
 		if dropped := preOutlier - len(trades); dropped > 0 {
 			obs.AggregatorDroppedTradesTotal.WithLabelValues("outlier", pair.String()).Add(float64(dropped))
 		}
 	}
+	recordWindowStage(pair, window, "outlier", len(trades))
 	if len(trades) == 0 {
 		o.mu.Lock()
 		o.emptyWindows++
