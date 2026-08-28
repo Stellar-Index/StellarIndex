@@ -96,6 +96,23 @@ against.
 
 ### Fixed
 
+- **`GET /v1/accounts/{g}/operations` and `/transactions` pages for a
+  hot account no longer cost the account's whole history.** Each UNION
+  arm resolved its keys over `stellar.operations` /
+  `stellar.transactions` with `pk IN (SELECT pk FROM ops_by_source …)`;
+  ClickHouse prunes that to one granule PER KEY in the set before the
+  `LIMIT`, so a page for an account with 11,925 sourced + 26,064
+  participant ops read 164–238 M rows (~8 s, `AccountOperations
+  deadline exceeded` 503s on r1, 2026-08-28). The arms now page
+  `stellar.ops_by_source` / `stellar.operation_participants` directly
+  (both keyed `(account, ledger_seq, tx_index, op_index)`, so the
+  cursor, watermark bound and `LIMIT` apply on a primary-key-prefix
+  range read) and the wide table is touched once, by the hydration
+  pass, over ≤ 3×limit keys. Rows, ordering, cursor semantics and
+  source/participant dedupe are unchanged (differential integration
+  test against the previous SQL, plus a `system.query_log` read_rows
+  bound).
+
 - RedStone docs (`internal/sources/redstone/README.md`,
   `docs/protocols/redstone.md`) cited a metric that never existed
   (`redstone_unknown_symbols_total`); the counter is
