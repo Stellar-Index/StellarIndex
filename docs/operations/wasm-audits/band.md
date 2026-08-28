@@ -128,10 +128,14 @@ produces wrong attribution.
 
 ### Symbol allow-lists
 
-The decoder skips symbols not on its fiat-or-crypto allow-list with
-`ErrUnknownSymbol` (per-entry). A new symbol relayed by Band that
-we haven't allow-listed is silently dropped — list lives in the
-discovery doc + the package's symbol_resolver.
+The decoder no longer skips symbols outside the fiat / crypto / RWA
+allow-lists: since the oracle capture-totality change (PR-2,
+`docs/design/oracle-capture-totality-design.md`) an unmapped symbol
+is recorded verbatim as a `raw:<symbol>` row (`canonical.AssetOracleRaw`)
+at its own `symbol_rates[]` slot, and `stellarindex_source_unknown_symbols_total{source="band"}`
+counts it so the allow-list owner can promote it in place. Only
+`USD` (contract-rejected) and `rate == 0` are still skipped — list
+lives in the discovery doc + the package's symbol_resolver.
 
 ## Failure modes specific to Band
 

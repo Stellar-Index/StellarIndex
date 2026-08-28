@@ -17,6 +17,39 @@ against.
 
 ### Added
 
+- **Oracle capture-totality PR-2 — decoders record unmapped symbols
+  as `raw:` rows.** The Reflector (dex/cex/fx), RedStone and Band
+  decoders no longer SKIP a price slot whose symbol / feed_id is
+  outside the canonical allow-lists (ADR-0010/0014/0028, RedStone
+  feed registry); the slot is recorded verbatim as a
+  `raw:<symbol>` asset (`canonical.AssetOracleRaw`, PR-1) at the
+  SAME positional `op_index` the skip placeholder consumed, so no
+  existing row's identity moves (DAT-03; pinned by
+  `TestDecodeUpdate_OpIndexStableAcrossAllowlistState` and the
+  RedStone/Band mixed known/unknown tests). All-unknown events now
+  decode to rows instead of `ErrEmptyPrices` / `ErrEmptyUpdates` /
+  `ErrEmptyRates` (those remain only for genuinely empty / all
+  non-positive vectors). Raw RedStone rows are quoted from a
+  `/<FIAT>` feed_id suffix when it is allow-listed, else USD, and
+  are never inverted (orientation unknown). Band still skips `USD`
+  and rate-0 slots. The real 2026-04-23 mainnet fixtures show the
+  gain: every reflector-fx event carries `VES` and `XAU` slots that
+  were dropped before. Shared mapper `canonical.MapOracleSymbol`
+  (fiat → crypto → RWA → raw; lists pinned disjoint) replaces the
+  two decoders' inconsistent precedence.
+  `stellarindex_source_unknown_symbols_total` keeps its name and
+  keeps incrementing; it now means "recorded as raw" (help text +
+  metrics reference updated). Consumers (`/v1/oracle/streams`,
+  bespoke page, MEV cascade) are PR-3/4 — a raw row is
+  `IsMapped()==false` and must be excluded there.
+  **Completeness-gate impact:** the expected side of the oracle
+  completeness gate is the same decoder run over the lake, so
+  reflector-*/redstone/band historical ranges read INCOMPLETE (Δ =
+  historical unmapped slots) from the moment this binary deploys
+  until history is replayed; the replay is declared in the commit's
+  `Replay-Plan:` trailer (the `scripts/ci/lint-replay-plan.sh`
+  convention) and executed as PR-7 of the design.
+
 - **CI replay-plan tripwire (`scripts/ci/lint-replay-plan.sh`).** On
   2026-08-27 e17288bd widened `internal/canonical/asset_fiat.go` 32→132
   codes; live ingestion recorded 4 new currencies, nobody replayed

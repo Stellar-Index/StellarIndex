@@ -3,6 +3,8 @@ package band
 import (
 	"errors"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // ─── symbolToAsset ────────────────────────────────────────────
@@ -27,10 +29,20 @@ func TestSymbolToAsset_fiat(t *testing.T) {
 	}
 }
 
-func TestSymbolToAsset_unknown(t *testing.T) {
-	_, err := symbolToAsset("DOGEMOON")
-	if !errors.Is(err, ErrUnknownSymbol) {
-		t.Errorf("error = %v, want ErrUnknownSymbol chain", err)
+// Oracle capture-totality (PR-2): an unknown symbol is no longer an
+// error — it resolves to a verbatim raw:<symbol> asset so the slot is
+// recorded. Only an unrepresentable symbol (which an ScSymbol can
+// never be) is refused, as canonical.ErrInvalidAsset.
+func TestSymbolToAsset_unknownIsRaw(t *testing.T) {
+	a, err := symbolToAsset("DOGEMOON")
+	if err != nil {
+		t.Fatalf("symbolToAsset(DOGEMOON): %v", err)
+	}
+	if a.Type != canonical.AssetOracleRaw || a.Code != "DOGEMOON" || a.IsMapped() {
+		t.Errorf("symbolToAsset(DOGEMOON) = %+v, want raw:DOGEMOON with IsMapped()=false", a)
+	}
+	if _, err := symbolToAsset("has space"); !errors.Is(err, canonical.ErrInvalidAsset) {
+		t.Errorf("symbolToAsset(unrepresentable) err = %v, want canonical.ErrInvalidAsset", err)
 	}
 }
 
