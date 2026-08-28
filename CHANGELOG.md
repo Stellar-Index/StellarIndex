@@ -26,6 +26,15 @@ against.
   command body / `mc` positional secret in a shipped script; `no_log`
   hides it from Ansible output only). Grandfathered violations live in
   the shrink-only `lint-ansible-tasks.baseline`.
+- **CI galexie restart-wiring test
+  (`scripts/ci/ansible-galexie-restart-test.sh`, ansible-check job).**
+  Pins that the five galexie-input render tasks no longer notify
+  `Restart galexie` directly, that the bootstrap binary install restarts
+  every daemon it replaces, and exercises
+  `galexie-effective-checksum.yml` for real (local ansible run, stub
+  handler): comment-only edit → quiet; code/shebang edit or new file →
+  restart.
+
 - **CI replay-plan tripwire (`scripts/ci/lint-replay-plan.sh`).** On
   2026-08-27 e17288bd widened `internal/canonical/asset_fiat.go` 32→132
   codes; live ingestion recorded 4 new currencies, nobody replayed
@@ -89,6 +98,17 @@ against.
   lines stripped before and after rendering and notifies the restart
   only on a mismatch; a real change (rotated key, PEER_PORT, ExecStart)
   still restarts — no default-off ack gate (deploy-ansible-handlers-7).
+- **ansible: bootstrap binary install (`manage_stellarindex_binaries`)
+  restarts api + aggregator too, refuses a dirty tree, writes sidecars.**
+  It notified only the indexer, so the api unit kept the old binary in
+  memory; it built from whatever was in the operator's checkout with no
+  record. Now: `git status --porcelain` must be empty (override
+  `-e stellarindex_bootstrap_allow_dirty_tree=true` for a deliberate
+  unreleased-branch bring-up), and each binary's
+  `/var/lib/stellarindex/deployed-versions/` sidecar records
+  `git describe --tags --always --dirty` so the next `deploy.yml` labels
+  its rollback copy truthfully instead of `untracked-<ts>`
+  (deploy-ansible-drift-3).
 - **Outlier filter trimmed agreed price moves; `outlier_storm` measured
   its own artifact.** The published-VWAP filter scored every print
   against ONE band — the whole window's median ± 4 × 1.4826 × MAD — and

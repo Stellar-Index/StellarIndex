@@ -863,6 +863,14 @@ jobs:
           printf '%s\n' '--- {}' > inventory/ci.syntax-secrets.yml
           ansible-playbook --syntax-check -i inventory/r1.example.yml playbooks/archival-node.yml -e secrets_file=../inventory/ci.syntax-secrets.yml
           ansible-playbook --syntax-check -i inventory/r1.example.yml playbooks/monitoring.yml
+      - name: galexie restart-wiring test (structural + local ansible run)
+        # 2026-08-28 audit (deploy-ansible-handlers-7 / -drift-3): pins
+        # that galexie-input renders restart only on EFFECTIVE change
+        # (comment-only edits used to cost a ~9-min mainnet catchup) and
+        # that the bootstrap binary install restarts every daemon it
+        # replaces. Runs galexie-effective-checksum.yml for real against
+        # temp files with a stub handler — no hosts, no secrets.
+        run: ./scripts/ci/ansible-galexie-restart-test.sh
       - name: ansible-lint (moderate profile — enforced; baseline grandfathered)
         working-directory: configs/ansible
         # CID-3 (audit-2026-08-14): the trailing `|| true` used to swallow the
