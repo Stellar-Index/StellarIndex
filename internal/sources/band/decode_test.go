@@ -302,8 +302,12 @@ func TestDecodeRelay_USDSymbolSkipped(t *testing.T) {
 	}
 }
 
-func TestDecodeRelay_UnknownSymbolSkipped(t *testing.T) {
-	// Partial-event skip: BTC lands, NOTACOIN skipped.
+// Oracle capture-totality (PR-2): an unmapped symbol is RECORDED as a
+// raw:<symbol> row at its own vector slot, not skipped. Before this
+// change NOTACOIN was dropped (1 update) and BTC kept OpIndex 1; BTC
+// STILL has OpIndex 1 — the raw row fills slot 0 (DAT-03: no existing
+// row moves).
+func TestDecodeRelay_UnknownSymbolRecordedAsRaw(t *testing.T) {
 	args := []string{
 		encodeAddressArg(t, relayerG),
 		encodeSymbolRatesArg(t, []struct {
@@ -321,8 +325,70 @@ func TestDecodeRelay_UnknownSymbolSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decodeRelayArgs: %v", err)
 	}
-	if len(updates) != 1 {
-		t.Fatalf("expected 1 update, got %d", len(updates))
+	if len(updates) != 2 {
+		t.Fatalf("expected 2 updates (raw:NOTACOIN + BTC), got %d", len(updates))
+	}
+	raw, _ := canonical.NewOracleRawAsset("NOTACOIN")
+	if !updates[0].Asset.Equal(raw) || updates[0].Asset.IsMapped() {
+		t.Errorf("updates[0].Asset = %s want %s (unmapped)", updates[0].Asset, raw)
+	}
+	if updates[0].OpIndex != 0 {
+		t.Errorf("updates[0].OpIndex = %d want 0 (raw row holds slot 0)", updates[0].OpIndex)
+	}
+	if updates[0].Price.BigInt().Uint64() != 999 {
+		t.Errorf("updates[0].Price = %s want 999 (recorded verbatim)", updates[0].Price)
+	}
+	usd, _ := canonical.NewFiatAsset("USD")
+	if !updates[0].Quote.Equal(usd) {
+		t.Errorf("updates[0].Quote = %s want fiat:USD", updates[0].Quote)
+	}
+	btc, _ := canonical.NewCryptoAsset("BTC")
+	if !updates[1].Asset.Equal(btc) {
+		t.Errorf("updates[1].Asset = %s want BTC", updates[1].Asset)
+	}
+	if updates[1].OpIndex != 1 {
+		t.Errorf("updates[1].OpIndex = %d want 1 (BTC keeps its pre-totality slot)", updates[1].OpIndex)
+	}
+}
+
+// All-unknown vector: rows, not ErrEmptyRates. USD and rate-0 slots
+// are STILL skipped (contract rejects the USD write; a zero rate is
+// not a price) — totality is about symbol mapping only.
+func TestDecodeRelay_AllUnknownRecordedAsRaw_USDAndZeroStillSkipped(t *testing.T) {
+	args := []string{
+		encodeAddressArg(t, relayerG),
+		encodeSymbolRatesArg(t, []struct {
+			Symbol string
+			Rate   uint64
+		}{
+			{"USD", 1_000_000_000}, // slot 0: contract special-case, skipped
+			{"NOTACOIN", 999},      // slot 1: raw
+			{"ALSONOTACOIN", 0},    // slot 2: rate 0, skipped
+			{"DOGEMOON", 5},        // slot 3: raw
+		}),
+		encodeU64Arg(t, 1_745_000_000),
+		encodeU64Arg(t, 1),
+	}
+	updates, err := decodeRelayArgs(FnRelay, args, adapterC,
+		52_000_000, "abcd", 0, "", "", time.Now())
+	if err != nil {
+		t.Fatalf("all-unknown relay must decode to raw rows, got error: %v", err)
+	}
+	if len(updates) != 2 {
+		t.Fatalf("expected 2 raw updates, got %d", len(updates))
+	}
+	want := []struct {
+		code    string
+		opIndex uint32
+	}{{"NOTACOIN", 1}, {"DOGEMOON", 3}}
+	for i, w := range want {
+		raw, _ := canonical.NewOracleRawAsset(w.code)
+		if !updates[i].Asset.Equal(raw) {
+			t.Errorf("updates[%d].Asset = %s want %s", i, updates[i].Asset, raw)
+		}
+		if updates[i].OpIndex != w.opIndex {
+			t.Errorf("updates[%d].OpIndex = %d want %d", i, updates[i].OpIndex, w.opIndex)
+		}
 	}
 }
 

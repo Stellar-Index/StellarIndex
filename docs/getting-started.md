@@ -14,9 +14,9 @@ walks you from zero to your first authenticated request in under five
 minutes.
 
 > **Hosted endpoint:** `https://api.stellarindex.io`
-> **Interactive explorer:** [`stellarindex.io`](https://stellarindex.io) — browse coins / markets / issuers / sources / diagnostics; every panel reveals the API call that produced it
+> **Interactive explorer:** [`stellarindex.io`](https://stellarindex.io) — browse assets / markets / issuers / sources / diagnostics; every panel reveals the API call that produced it
 > **Reference docs:** [`docs.stellarindex.io`](https://docs.stellarindex.io)
-> **Status page:** [`status.stellarindex.io`](https://status.stellarindex.io)
+> **Status page:** [`stellarindex.io/status`](https://stellarindex.io/status)
 
 ## Quick start
 
