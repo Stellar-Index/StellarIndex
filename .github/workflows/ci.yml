@@ -539,6 +539,11 @@ jobs:
       # 24h+ whenever the secret was unset. The `secrets.PROM_TARBALL_SHA256`
       # override below is retained only as an optional escape hatch.
       PROM_TARBALL_SHA256_DEFAULT: "19700bdd42ec31ee162e4079ebda4cd0a44432df4daa637141bdbea4b1cd8927"
+      AM_VERSION: "0.28.1"
+      # Same C4-17b convention as PROM_TARBALL_SHA256_DEFAULT above: the
+      # checksum is committed next to the version pin (from upstream
+      # sha256sums.txt); bumping AM_VERSION obligates bumping this.
+      AM_TARBALL_SHA256_DEFAULT: "5ac7ab5e4b8ee5ce4d8fb0988f9cb275efcc3f181b4b408179fafee121693311"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: structural rule lint (no promtool)
@@ -567,6 +572,26 @@ jobs:
           sudo install -m 0755 "prometheus-${PROM_VERSION}.linux-amd64/promtool" /usr/local/bin/promtool
       - name: validate rules
         run: make monitoring-check
+      - name: install amtool
+        run: |
+          # SHA-verified install, same shape as promtool above.
+          curl -fsSL "https://github.com/prometheus/alertmanager/releases/download/v${AM_VERSION}/alertmanager-${AM_VERSION}.linux-amd64.tar.gz" -o /tmp/am.tar.gz
+          echo "${AM_TARBALL_SHA256_DEFAULT}  /tmp/am.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/am.tar.gz
+          sudo install -m 0755 "alertmanager-${AM_VERSION}.linux-amd64/amtool" /usr/local/bin/amtool
+      - name: validate alertmanager config (both render branches)
+        # configs/alertmanager/alertmanager.r1.yml was the ONLY production
+        # config surface with no CI gate: amtool ran solely inside apply.sh,
+        # by hand, on the host, after merge. The committed file with empty
+        # placeholder URLs does NOT validate as-is — apply.sh's Python
+        # walker strips the *_configs blocks first — so this validates the
+        # RENDERED config on both branches: all URLs empty (stub path,
+        # exercising the block-stripper) and all URLs set (substitution).
+        run: |
+          ALERTMANAGER_SECRETS=/dev/null bash configs/alertmanager/apply.sh --check-only
+          S=$(mktemp)
+          printf 'HEALTHCHECKS_DEADMANSSWITCH_URL=https://hc-ping.com/x\nDISCORD_WEBHOOK_URL_PAGES=https://discord.com/api/webhooks/1/a\nDISCORD_WEBHOOK_URL_ALERTS=https://discord.com/api/webhooks/2/b\n' > "$S"
+          ALERTMANAGER_SECRETS="$S" bash configs/alertmanager/apply.sh --check-only
 
   # ────────────────────────────────────────────────────────────────
   # Security — fast scans on every PR: govulncheck + gitleaks (below).
