@@ -117,6 +117,12 @@ var (
 	// are `{updated_feeds: [], updater}` no-op pushes, in every
 	// ledger band since source genesis. Those now decode to zero
 	// updates with NO error (see decodeWritePrices).
+	//
+	// Oracle capture-totality (PR-2): a feed_id outside the ADR-0028
+	// registry is no longer a reason either — it is recorded verbatim
+	// as a `raw:<feed_id>` row (canonical.AssetOracleRaw), so an
+	// all-unknown batch decodes to rows. The only remaining path is
+	// every attributed price being non-positive.
 	ErrEmptyUpdates = errors.New("redstone: empty updated_feeds vector")
 
 	// ErrMissingOpArgs — the event arrived without InvokeContract
