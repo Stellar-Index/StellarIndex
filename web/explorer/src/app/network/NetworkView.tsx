@@ -24,7 +24,7 @@ import {
   TR,
 } from '@/components/ui';
 import { usePools, useSources, isOnChainSource } from '@/api/hooks';
-import type { NetworkStats } from '@/api/hooks';
+import type { AssetDetail, NetworkStats } from '@/api/hooks';
 import type { paths } from '@/api/types';
 import { DonutChart } from '@/components/charts/DonutChart';
 import { OperationMixPanel } from '@/components/NetworkInsight';
@@ -58,6 +58,16 @@ const METRICS: { key: Metric; label: string }[] = [
   { key: 'ledgers', label: 'Ledgers' },
 ];
 const WINDOWS = [30, 90, 365];
+
+// Only mainnet has the post-2019 XLM supply story: 50 B genesis + the
+// inflation pool, frozen by the October 2019 vote, with the SDF
+// mandate/upgrade-reserve accounts excluded from circulating
+// (docs/methodology/xlm-circulating-supply.md). The API's XLM supply
+// computer is NOT network-aware — measured 2026-08-28, testnet serves the
+// mainnet 50.0B constant (`supply_basis: xlm_total_only`) even though its
+// genesis is 100 B with no burn — so the served figures are only fetched
+// and shown on mainnet; test nets show the ledger header alone.
+const IS_MAINNET = CURRENT_NETWORK.id === 'mainnet';
 
 export function NetworkView() {
   const [metric, setMetric] = useState<Metric>('ops');
@@ -356,8 +366,12 @@ function ChainEconomics({
         )}
       </Panel>
       <Panel
-        title="Total XLM"
-        hint="Total lumens in existence at each day's last ledger. Flat is the expected shape — XLM has no ongoing issuance."
+        title="Ledger total_coins"
+        hint={
+          IS_MAINNET
+            ? "The ledger header's total_coins at each day's last ledger (~105B). This on-chain field was never lowered by the October 2019 burn, so it still counts the ~55B lumens SDF destroyed — the market's 50.0B total supply is on the strip above. Flat is the expected shape — XLM has no ongoing issuance."
+            : "The ledger header's total_coins at each day's last ledger. Flat is the expected shape — XLM has no ongoing issuance."
+        }
         source={asExample('/v1/network/throughput', {
           window_days: windowDays,
         })}
@@ -380,10 +394,10 @@ function ChainEconomics({
             positive
             area={false}
             legend={{
-              valueLabel: 'Total XLM',
+              valueLabel: 'Ledger total_coins',
               formatValue: (n) => `${formatCompact(n)} XLM`,
             }}
-            ariaLabel={`Total XLM in existence over the last ${windowDays} days`}
+            ariaLabel={`Ledger-header total_coins over the last ${windowDays} days`}
           />
         )}
       </Panel>
@@ -395,6 +409,28 @@ function ChainEconomics({
 // /v1/network/stats snapshot with the chain-state fields off the
 // freshest ledger header (total XLM, fee pool, protocol version).
 function HeroStats({ stats: s, tip }: { stats?: NetworkStats; tip?: Ledger }) {
+  // XLM supply as SERVED on /v1/assets/native. Audit 2026-08-28 ("XLM
+  // supply 2.11× route divergence"): this strip showed the ledger header's
+  // total_coins (~105B, which still counts the ~55B burned in 2019) as
+  // "Total XLM" while /assets/native serves total_supply 50.0B — two
+  // unlabeled figures 2.11× apart read as a bug. Lead with the served
+  // figure, and caption the ledger-header one with what it is.
+  const nativeQ = useQuery<AssetDetail>({
+    queryKey: ['/v1/assets/native', 'network-strip'],
+    queryFn: async () =>
+      (await apiGet<Envelope<AssetDetail>>('/v1/assets/native', {})).data,
+    staleTime: 60_000,
+    enabled: IS_MAINNET,
+  });
+  const native = IS_MAINNET ? nativeQ.data : undefined;
+  const totalSupply = native?.total_supply ?? null;
+  // Circulating is only meaningful when the SDF reserve exclusion was
+  // actually applied; `xlm_total_only` is the honest misconfig signal
+  // (circulating == total) and must not be captioned as circulating.
+  const circulating =
+    native?.supply_basis === 'xlm_sdf_reserve_exclusion'
+      ? (native.circulating_supply ?? null)
+      : null;
   // Stellar ON-CHAIN 24h volume (SDEX + Soroban DEXes), summed from the
   // DEX-subclass /v1/sources. /v1/network/stats.volume_24h_usd is the
   // ALL-source total (CEX feeds dominate) — not "Stellar volume".
@@ -449,15 +485,47 @@ function HeroStats({ stats: s, tip }: { stats?: NetworkStats; tip?: Ledger }) {
         />
       </StatCell>
       <StatCell>
-        <Stat
-          label="Total XLM"
-          value={tip?.total_coins ? xlmCompact(tip.total_coins) : '—'}
-          sub={
-            tip?.fee_pool
-              ? `${xlmCompact(tip.fee_pool)} XLM in fee pool`
-              : undefined
-          }
-        />
+        {totalSupply ? (
+          <Stat
+            label="Total XLM"
+            value={xlmCompact(totalSupply)}
+            sub={
+              <>
+                <div>
+                  {circulating
+                    ? `${xlmCompact(circulating)} circulating · SDF reserves excluded`
+                    : 'post-2019 supply'}
+                </div>
+                {tip?.total_coins && (
+                  <div>
+                    ledger total_coins {xlmCompact(tip.total_coins)} · includes
+                    the 2019 burn
+                    {tip.fee_pool
+                      ? ` · ${xlmCompact(tip.fee_pool)} fee pool`
+                      : ''}
+                  </div>
+                )}
+              </>
+            }
+          />
+        ) : (
+          <Stat
+            label="Ledger total_coins"
+            value={tip?.total_coins ? xlmCompact(tip.total_coins) : '—'}
+            sub={
+              <>
+                <div>
+                  {IS_MAINNET
+                    ? 'ledger header · includes the 2019 burn'
+                    : 'ledger header'}
+                </div>
+                {tip?.fee_pool && (
+                  <div>{xlmCompact(tip.fee_pool)} XLM in fee pool</div>
+                )}
+              </>
+            }
+          />
+        )}
       </StatCell>
       <StatCell>
         <Stat

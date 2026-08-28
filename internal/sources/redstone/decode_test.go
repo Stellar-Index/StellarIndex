@@ -373,10 +373,14 @@ func TestDecode_MissingOpArgs(t *testing.T) {
 	}
 }
 
-func TestDecode_UnknownFeedSkipped_KnownLands(t *testing.T) {
+// Oracle capture-totality (PR-2): a feed_id outside the ADR-0028
+// registry is RECORDED verbatim as raw:<feed_id> at its own vector
+// position, not skipped. Before this change the middle entry was
+// dropped (2 updates) while BTC/ETH kept OpIndex 0/2; they STILL keep
+// 0/2 — the raw row fills slot 1 (DAT-03: no existing row moves).
+func TestDecode_UnknownFeedRecordedAsRaw_KnownLandsUnmoved(t *testing.T) {
 	// Three feeds: BTC (known), NOTAFEED (outside the ADR-0028
 	// registry — e.g. a 20th feed RedStone deployed), ETH (known).
-	// Middle entry must be skipped while outer two land.
 	body := encodeWritePricesBody(t, relayerG,
 		[]*big.Int{
 			big.NewInt(oneBTCAt8),
@@ -398,27 +402,45 @@ func TestDecode_UnknownFeedSkipped_KnownLands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decodeWritePrices: %v", err)
 	}
-	if len(updates) != 2 {
-		t.Fatalf("expected 2 updates (BTC+ETH), got %d", len(updates))
+	if len(updates) != 3 {
+		t.Fatalf("expected 3 updates (BTC + raw:NOTAFEED + ETH), got %d", len(updates))
 	}
 	btc, _ := canonical.NewCryptoAsset("BTC")
 	eth, _ := canonical.NewCryptoAsset("ETH")
+	raw, _ := canonical.NewOracleRawAsset("NOTAFEED")
 	if !updates[0].Asset.Equal(btc) {
 		t.Errorf("updates[0].Asset = %+v want BTC", updates[0].Asset)
 	}
-	if !updates[1].Asset.Equal(eth) {
-		t.Errorf("updates[1].Asset = %+v want ETH", updates[1].Asset)
+	if !updates[1].Asset.Equal(raw) || updates[1].Asset.IsMapped() {
+		t.Errorf("updates[1].Asset = %s want %s (unmapped)", updates[1].Asset, raw)
 	}
-	// OpIndex preserves original-slot positions: BTC=0, ETH=2.
+	if !updates[1].Quote.Equal(quoteUSD) {
+		t.Errorf("updates[1].Quote = %s want fiat:USD (no /<QUOTE> suffix → RedStone default)", updates[1].Quote)
+	}
+	if updates[1].Price.BigInt().Cmp(big.NewInt(9_000_000)) != 0 {
+		t.Errorf("updates[1].Price = %s want 9000000 (recorded verbatim, no Invert)", updates[1].Price)
+	}
+	if !updates[2].Asset.Equal(eth) {
+		t.Errorf("updates[2].Asset = %+v want ETH", updates[2].Asset)
+	}
+	// OpIndex preserves original-slot positions: BTC=0, raw=1, ETH=2
+	// — identical to what the pre-totality skip decoder produced for
+	// BTC and ETH.
 	if updates[0].OpIndex != 0 {
 		t.Errorf("BTC OpIndex = %d, want 0", updates[0].OpIndex)
 	}
-	if updates[1].OpIndex != 2 {
-		t.Errorf("ETH OpIndex = %d, want 2 (NOTAFEED slot 1 skipped)", updates[1].OpIndex)
+	if updates[1].OpIndex != 1 {
+		t.Errorf("raw:NOTAFEED OpIndex = %d, want 1 (its own vector slot)", updates[1].OpIndex)
+	}
+	if updates[2].OpIndex != 2 {
+		t.Errorf("ETH OpIndex = %d, want 2 (raw row at slot 1 must not shift it)", updates[2].OpIndex)
 	}
 }
 
-func TestDecode_AllUnknown_ErrEmptyUpdates(t *testing.T) {
+// All-unknown batch: raw rows, not ErrEmptyUpdates. This is the shape
+// of every batch during the 2026-07-24 relayer expansion (~5,600
+// events lost until feeds.go caught up and history was replayed).
+func TestDecode_AllUnknown_RecordedAsRaw(t *testing.T) {
 	body := encodeWritePricesBody(t, relayerG,
 		[]*big.Int{big.NewInt(1), big.NewInt(2)},
 		1, 2)
@@ -436,9 +458,67 @@ func TestDecode_AllUnknown_ErrEmptyUpdates(t *testing.T) {
 		OpArgs: args,
 		TxHash: "abcd",
 	}
-	_, err := decodeWritePrices(ev, time.Now())
-	if !errors.Is(err, ErrEmptyUpdates) {
-		t.Errorf("expected ErrEmptyUpdates, got %v", err)
+	updates, err := decodeWritePrices(ev, time.Now())
+	if err != nil {
+		t.Fatalf("all-unknown batch must decode to raw rows, got error: %v", err)
+	}
+	if len(updates) != 2 {
+		t.Fatalf("expected 2 raw updates, got %d", len(updates))
+	}
+	for i, code := range []string{"BENJI", "NOTAFEED"} {
+		raw, _ := canonical.NewOracleRawAsset(code)
+		if !updates[i].Asset.Equal(raw) {
+			t.Errorf("updates[%d].Asset = %s want %s", i, updates[i].Asset, raw)
+		}
+		if updates[i].OpIndex != uint32(i) {
+			t.Errorf("updates[%d].OpIndex = %d want %d", i, updates[i].OpIndex, i)
+		}
+	}
+}
+
+// An unmapped feed_id with a `/<FIAT>` suffix is quoted in that fiat
+// (RedStone's EUROC/EUR convention) but the raw code keeps the FULL
+// feed_id verbatim, and the price is never inverted — orientation of
+// an unmapped feed is unknown. A suffix that is not an allow-listed
+// fiat falls back to USD.
+func TestDecode_UnknownFeedQuoteSuffix(t *testing.T) {
+	body := encodeWritePricesBody(t, relayerG,
+		[]*big.Int{big.NewInt(1_234), big.NewInt(5_678)},
+		1, 2)
+	args := []string{
+		encodeAddressArg(t, relayerG),
+		encodeStringVecArg(t, []string{"XYZ/EUR", "SolvBTC.BBN_FUNDAMENTAL/NOTFIAT"}),
+		encodePayloadArg(t),
+	}
+	ev := &events.Event{
+		Topic:  []string{TopicSymbolRedstone},
+		Value:  body,
+		OpArgs: args,
+		TxHash: "abcd",
+	}
+	updates, err := decodeWritePrices(ev, time.Now())
+	if err != nil {
+		t.Fatalf("decodeWritePrices: %v", err)
+	}
+	if len(updates) != 2 {
+		t.Fatalf("expected 2 raw updates, got %d", len(updates))
+	}
+	rawEUR, _ := canonical.NewOracleRawAsset("XYZ/EUR")
+	if !updates[0].Asset.Equal(rawEUR) {
+		t.Errorf("updates[0].Asset = %s want %s (full feed_id, suffix NOT stripped)", updates[0].Asset, rawEUR)
+	}
+	if !updates[0].Quote.Equal(quoteEUR) {
+		t.Errorf("updates[0].Quote = %s want fiat:EUR (from /EUR suffix)", updates[0].Quote)
+	}
+	if updates[0].Price.BigInt().Cmp(big.NewInt(1_234)) != 0 {
+		t.Errorf("updates[0].Price = %s want 1234 verbatim (no Invert for an unmapped feed)", updates[0].Price)
+	}
+	rawOther, _ := canonical.NewOracleRawAsset("SolvBTC.BBN_FUNDAMENTAL/NOTFIAT")
+	if !updates[1].Asset.Equal(rawOther) {
+		t.Errorf("updates[1].Asset = %s want %s", updates[1].Asset, rawOther)
+	}
+	if !updates[1].Quote.Equal(quoteUSD) {
+		t.Errorf("updates[1].Quote = %s want fiat:USD (suffix not an allow-listed fiat)", updates[1].Quote)
 	}
 }
 

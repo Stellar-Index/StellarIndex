@@ -44,6 +44,15 @@ Type=simple
 User=stellarindex
 Group=stellarindex
 WorkingDirectory=/var/lib/stellarindex
+# NOTE (2026-08-28): this reference unit sources the SAME env file that
+# interactive stellarindex-ops runs source. Do NOT put
+# STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD (the low-priority
+# `ops_batch` ClickHouse identity, docs/operations/
+# clickhouse-ops-batch-profile.md) in it on a deploy/systemd self-host —
+# this service would demote its own ClickHouse reads/writes to the
+# batch tier. Export the pair in the batch job's shell instead. (The
+# ansible-managed hosts keep the service env in /etc/default/stellarindex
+# and reserve -ops for batch jobs, so the split is structural there.)
 EnvironmentFile=-/etc/default/stellarindex-ops
 
 ExecStart=/usr/local/bin/stellarindex-aggregator -config /etc/stellarindex.toml

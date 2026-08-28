@@ -1,6 +1,6 @@
 ---
 title: VWAP & price-aggregation methodology
-last_verified: 2026-07-10
+last_verified: 2026-08-28
 status: current
 ---
 
@@ -157,13 +157,48 @@ choice).
 
 ## Outlier filtering — honest about the current form
 
-The outlier filter drops any trade whose price deviates from the
+The published-VWAP filter is **time-local** (2026-08-28,
+`internal/aggregate/outliers_local.go`). Every print is scored against
+several robust references — the whole window's median/MAD band, its own
+1-minute bucket (when the bucket holds ≥ 3 prices), the neighbouring
+buckets, and, for a bucket too thin to qualify, the nearest five prints
+on each side — and is dropped only when it sits more than
+`σ × scale` from **every** one of them, where `scale` is
+`1.4826 × MAD` of that reference (clamped to 0.25 %–1 % of the centre
+for the small local references). A local reference is **anchored**:
+it is trusted only when its centre lies within
+`σ × max(window scale, 1 % of centre)` — ±4 % at the default σ — of the
+window median or of the previous trusted reference in time order
+(chain continuity). A lone fat-finger or wash print disagrees with the
+window *and* its neighbours and is removed; a burst that is the
+majority of its own minute cannot become its own reference because its
+centre is anchored to nothing; an agreed regime shift agrees with its
+neighbours, chains bucket-to-bucket, and survives. σ defaults to 4.0
+and remains configurable via `outlier_sigma_threshold`.
+
+Residual gap, stated precisely: a wrong-level run still self-validates
+when it is the majority of the whole window (the whole-window filter
+fails identically), when it sits within the ~4 % anchor tolerance of
+the honest level, or when it drifts in ≤ 4 % steps bucket-to-bucket —
+all three are indistinguishable from a market by construction. A
+self-consistent 2–3× burst at any density is not, and is dropped.
+
+Why not the whole-window band alone: MAD measures the *majority*
+regime's dispersion (0.1–0.3 % on a liquid pair), so a window-wide band
+of ~1 % trimmed any agreed move larger than that until the move became
+the majority of the window, then trimmed the old regime instead. On
+2026-08-28 a genuine +2 % step on XLM/GBP (matching the XLM/USD ×
+GBP/USD cross) was erased from the window VWAPs for hours. Steps are
+not outliers.
+
+The per-request filter on `/v1/vwap?outlier_sigma=` and `/v1/ohlc` is
+still the whole-window form described next — its semantics are part of
+the documented API surface; see `internal/aggregate/outliers.go`.
+Whole-window form: a trade is dropped when its price deviates from the
 window's **median** by more than `σ × 1.4826 × MAD`, where MAD is the
 median absolute deviation and 1.4826 is the standard consistency
 constant that puts MAD on the same scale as a standard deviation for
-normally-distributed data (`internal/aggregate/outliers.go`,
-`robust.go`). σ defaults to 4.0 and remains configurable via
-`outlier_sigma_threshold`.
+normally-distributed data (`robust.go`).
 
 - σ ≤ 0 disables it; with fewer than 3 valid prices it is a no-op (a
   degraded signal isn't compounded by dropping half the data).

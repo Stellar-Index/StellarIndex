@@ -28,13 +28,25 @@ func NewPair(base, quote Asset) (Pair, error) {
 	return p, nil
 }
 
-// Validate returns nil if both assets are valid and distinct.
+// Validate returns nil if both assets are valid, mapped, and distinct.
+//
+// A raw oracle symbol ([AssetOracleRaw]) is a valid Asset for the
+// record layer but never a pair leg — it names nothing the
+// interpretation layer may price, compare, or aggregate.
 func (p Pair) Validate() error {
 	if err := p.Base.Validate(); err != nil {
 		return fmt.Errorf("base: %w", err)
 	}
 	if err := p.Quote.Validate(); err != nil {
 		return fmt.Errorf("quote: %w", err)
+	}
+	if !p.Base.IsMapped() {
+		return fmt.Errorf("base: %w: raw oracle symbol %s is record-layer only, never a pair leg",
+			ErrInvalidAsset, p.Base.String())
+	}
+	if !p.Quote.IsMapped() {
+		return fmt.Errorf("quote: %w: raw oracle symbol %s is record-layer only, never a pair leg",
+			ErrInvalidAsset, p.Quote.String())
 	}
 	if p.Base.Equal(p.Quote) {
 		return fmt.Errorf("%w: base and quote are the same asset (%s)",

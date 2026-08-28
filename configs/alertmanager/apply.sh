@@ -19,6 +19,16 @@
 
 set -euo pipefail
 
+# --check-only: render + amtool-validate, then stop before the
+# install/reload. Used by CI (monitoring-rules job) to validate both
+# render branches at PR time — pre-gate, a malformed edit that broke
+# the block-stripper's indentation assumptions produced a silently
+# receiver-less Alertmanager, discovered only at the next hand apply.
+CHECK_ONLY=false
+if [ "${1:-}" = "--check-only" ]; then
+  CHECK_ONLY=true
+fi
+
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 SOURCE="${SCRIPT_DIR}/alertmanager.r1.yml"
 ENV_FILE="${ALERTMANAGER_SECRETS:-/etc/default/alertmanager-secrets}"
@@ -98,6 +108,11 @@ PY
 if ! amtool check-config "$RENDERED"; then
   echo "error: alertmanager config failed validation" >&2
   exit 1
+fi
+
+if [ "$CHECK_ONLY" = true ]; then
+  echo "alertmanager: config renders + validates OK (check-only, not applied)"
+  exit 0
 fi
 
 # CS-121: 0640 (not 0644) so the rendered config — which embeds the Discord

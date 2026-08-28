@@ -92,7 +92,8 @@ NOT `crypto`, so a tokenized T-bill never lands in a crypto-scoped
 surface. They remain `ClassOracle` / `IncludeInVWAP=false`, so a
 NAV-quoted RWA reference never feeds market VWAP. A feed_id outside
 the registry is skipped per-entry and counted
-on `redstone_unknown_symbols_total` — the 2026-07-24 relayer
+on `stellarindex_source_unknown_symbols_total{source="redstone"}`
+(alert `stellarindex_ingestion_oracle_unknown_symbols`) — the 2026-07-24 relayer
 expansion hit exactly this path (plus `ErrEmptyUpdates` for
 all-new batches) for ~5,600 events until the registry caught up.
 

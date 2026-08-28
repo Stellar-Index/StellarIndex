@@ -1,24 +1,32 @@
 ---
-# promtool unit tests for stellarindex_aggregator_outlier_storm
-# (2026-08-26 rescope — see the rule comment in ../rules/aggregator.yml).
+# promtool unit tests for stellarindex_aggregator_outlier_storm and
+# stellarindex_aggregator_outlier_trim_fraction (2026-08-28 redesign — see
+# the rule comments in ../rules/aggregator.yml).
 #
 #   promtool test rules deploy/monitoring/rule-tests/aggregator_test.yml
 #
-# WHY THIS FILE EXISTS: the previous rule (10m rate > 5×[1h] offset 1h,
-# for 15m) had a FATAL, promtool-provable defect — the `offset 1h` baseline
-# self-poisons: once a sustained storm runs past ~1h its own early minutes
-# enter the [T-2h,T-1h] baseline window and inflate it, flipping the 5× ratio
-# false at ~72m regardless of magnitude. So the alert could NEVER survive the
-# sustained storm it exists to catch, and any `for:` past ~72m was unreachable.
-# Case 1 below is the regression guard: a sustained storm MUST fire past the
-# 2h `for:`. Under the old rule that case is unfireable — this test would be
-# RED, which is the point.
+# WHY THIS FILE EXISTS: the previous rule gated on the per-tick re-count
+# of prints the whole-window MAD band trimmed
+# (rate(dropped_trades_total{reason="outlier"}[10m]) > 10 for 2h). On
+# 2026-08-28 it fired for HOURS on crypto:XLM/fiat:USD and /GBP while
+# every venue agreed within 0.9% — the band was trimming a genuine +2%
+# step, and the counter faithfully re-counted the trimmed tail every 30 s.
+# The alert now reads VENUE DISAGREEMENT (max/min per-venue 5m VWAP), so
+# the regression guards are: an AGREED move must stay silent (case 1), a
+# venue that leaves the others must fire (case 2), and a single venue can
+# never fire (case 3). The trim-fraction successor (cases 4–6) covers the
+# single-venue spam shape the disagreement rule cannot see; case 4's
+# gauge values are the actual filter's output on the 2026-08-14
+# token-farm fixture, not hand-typed. Cases L1–L3 cover the renamed
+# counter-based overlap gate (stellarindex_aggregator_outlier_trim_rate_
+# legacy) until its 2026-09-04 retirement.
 #
-# PROVEN-RED: delete the alert from ../rules/aggregator.yml and promtool reports
-# "no rule with alertname stellarindex_aggregator_outlier_storm" — case 1 fails.
-# The metric is a counter labelled {reason,pair}; the rule is
-# `sum by (pair) (rate(...{reason="outlier"}[10m])) > 10`, so a counter rising
-# 1200/min ⇒ rate 20/s, 300/min ⇒ 5/s, 60/min ⇒ 1/s.
+# PROVEN-RED: restore the pre-2026-08-28 counter-based expr — case 1's
+# venue_vwap series produce no dropped_trades_total samples, so the old
+# rule is vacuously silent there, but case 2 (venue disagreement with NO
+# counter series at all) can never fire under it — promtool reports the
+# missing exp_alerts. stellarindex_aggregator_venue_vwap is a gauge
+# labelled {pair,window,source}; window_trades is {pair,window,stage}.
 
 rule_files:
   - ../rules/aggregator.yml
@@ -26,23 +34,191 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
-  # ── Case 1: a genuinely SUSTAINED storm fires past the 2h `for:` ──
-  # ETH/USD outlier-trim held at 20/s (counter +1200/min) for 200m. The
-  # expr is true from ~t=10m; at t=150m it has been true ~140m > 120m, so
-  # the alert fires carrying the pair label. At t=60m the `for:` has NOT
-  # yet elapsed, so it must still be silent. This is the case the old
-  # self-poisoning rule structurally could not fire.
+  # ── Case 1: an AGREED regime shift across three venues stays silent ──
+  # XLM/USD steps 0.1337 → 0.1364 (+2%) on all three venues at t=20m.
+  # Between venues the spread never exceeds 0.5%, so the disagreement
+  # ratio stays under 1% throughout — no ticket, however long it lasts.
+  # This is the 2026-08-28 shape the counter-based rule ticketed on.
   - interval: 1m
-    name: a sustained per-pair outlier storm fires after the 2h for-gate
+    name: an agreed cross-venue step never fires
+    input_series:
+      - series: 'stellarindex_aggregator_venue_vwap{pair="crypto:XLM/fiat:USD",window="5m",source="binance",binary="stellarindex-aggregator"}'
+        values: '0.1337x20 0.1364x100'
+      - series: 'stellarindex_aggregator_venue_vwap{pair="crypto:XLM/fiat:USD",window="5m",source="coinbase",binary="stellarindex-aggregator"}'
+        values: '0.1340x20 0.1368x100'
+      - series: 'stellarindex_aggregator_venue_vwap{pair="crypto:XLM/fiat:USD",window="5m",source="kraken",binary="stellarindex-aggregator"}'
+        values: '0.1335x20 0.1362x100'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_aggregator_outlier_storm
+        exp_alerts: []
+      - eval_time: 119m
+        alertname: stellarindex_aggregator_outlier_storm
+        exp_alerts: []
+
+  # ── Case 2: ONE venue sits +3% above the others → fires after 15m ──
+  # binance and coinbase agree at 0.1337; kraken prints 0.1377 (+3%) from
+  # t=0. max/min − 1 ≈ 0.030 > 0.01 with 3 venues, so the expr is true
+  # from the first evaluation and the alert fires once `for: 15m` has
+  # elapsed. At t=10m it must still be pending (silent).
+  - interval: 1m
+    name: a single venue diverging by 3 percent fires after the 15m for-gate
+    input_series:
+      - series: 'stellarindex_aggregator_venue_vwap{pair="crypto:XLM/fiat:USD",window="5m",source="binance",binary="stellarindex-aggregator"}'
+        values: '0.1337x60'
+      - series: 'stellarindex_aggregator_venue_vwap{pair="crypto:XLM/fiat:USD",window="5m",source="coinbase",binary="stellarindex-aggregator"}'
+        values: '0.1337x60'
+      - series: 'stellarindex_aggregator_venue_vwap{pair="crypto:XLM/fiat:USD",window="5m",source="kraken",binary="stellarindex-aggregator"}'
+        values: '0.1377x60'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_aggregator_outlier_storm
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: stellarindex_aggregator_outlier_storm
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: aggregator
+              pair: crypto:XLM/fiat:USD
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+              summary: "crypto:XLM/fiat:USD venues disagree >1% on the 5m VWAP for 15m — persistent price dispersion (P3)"
+              description: |
+                The highest and lowest per-venue 5m VWAP feeding
+                crypto:XLM/fiat:USD have differed by more than 1% for 15m+
+                (stellarindex_aggregator_venue_vwap, the PRE-outlier-filter
+                set). The published price is the robust, time-locally filtered
+                VWAP across venues, so this is a data-quality / source-health
+                signal, NOT a customer-facing price error: one venue is stale,
+                thin, mis-decoding amounts, or a stablecoin leg is skewed.
+                Find it with
+                `stellarindex_aggregator_venue_vwap{pair="crypto:XLM/fiat:USD",window="5m"}`
+                — the odd one out is the venue to investigate. Check the pair's
+                div:<pair> Redis flag / API flags.divergence_warning for actual
+                price impact. NOTE: the stellarindex_price_divergence_* alerts
+                are INERT (F-1329, no Prometheus producer) — do not wait on them.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+
+  # ── Case 3: a SINGLE venue can never fire, whatever it prints ──
+  # crypto:XLM/fiat:GBP has only kraken (the 2026-08-28 freeze pair,
+  # sources=1). max/min − 1 is 0 for one series and the `count >= 2`
+  # guard holds regardless — no ticket even across a wild ±10% swing.
+  # Also proves the 1h-window series is ignored (only window="5m" gates).
+  - interval: 1m
+    name: a single-venue pair never fires
+    input_series:
+      - series: 'stellarindex_aggregator_venue_vwap{pair="crypto:XLM/fiat:GBP",window="5m",source="kraken",binary="stellarindex-aggregator"}'
+        values: '0.1337x20 0.1470x20 0.1200x20'
+      - series: 'stellarindex_aggregator_venue_vwap{pair="crypto:XLM/fiat:GBP",window="1h",source="kraken",binary="stellarindex-aggregator"}'
+        values: '0.1337x60'
+      - series: 'stellarindex_aggregator_venue_vwap{pair="crypto:XLM/fiat:GBP",window="1h",source="sdex",binary="stellarindex-aggregator"}'
+        values: '0.2000x60'
+    alert_rule_test:
+      - eval_time: 59m
+        alertname: stellarindex_aggregator_outlier_storm
+        exp_alerts: []
+
+  # ── Case 4: the 2026-08-14 token-farm fixture fires after 30m ──
+  # These are NOT hand-typed gauges. internal/aggregate/outliers_spam_test.go
+  # (TestFilterOutliersLocal_TokenFarmWaveTrimShareMatchesLegacy) runs the
+  # 2026-08-14 signature — a single SDEX pair, 720 honest prints over 24h
+  # (one per 2 min) + a 2h wave of 480 dust self-trades whose consecutive
+  # prices gap 25–37 % — through the ANCHORED time-local filter and pins:
+  # window_trades{stage=class} = 1200 (the filter's input) and
+  # {stage=outlier} = 720 (its survivors: 480/480 wave prints dropped, 0
+  # honest prints dropped — identical to the whole-window filter). Trim
+  # share 1 − 720/1200 = 0.40 > 0.2 with class ≥ 20: the alert is
+  # fireable on the shape it claims. Fires once `for: 30m` has elapsed;
+  # silent at 20m. Change the Go fixture and this case in lockstep.
+  - interval: 1m
+    name: the 2026-08-14 token-farm fixture fires after the 30m for-gate
+    input_series:
+      - series: 'stellarindex_aggregator_window_trades{pair="crypto:XLM/fiat:USD",window="24h",stage="class",binary="stellarindex-aggregator"}'
+        values: '1200x60'
+      - series: 'stellarindex_aggregator_window_trades{pair="crypto:XLM/fiat:USD",window="24h",stage="outlier",binary="stellarindex-aggregator"}'
+        values: '720x60'
+      - series: 'stellarindex_aggregator_window_trades{pair="crypto:XLM/fiat:USD",window="24h",stage="fetched",binary="stellarindex-aggregator"}'
+        values: '1200x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_aggregator_outlier_trim_fraction
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: stellarindex_aggregator_outlier_trim_fraction
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: aggregator
+              pair: crypto:XLM/fiat:USD
+              window: 24h
+              binary: stellarindex-aggregator
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+              summary: "crypto:XLM/fiat:USD outlier filter rejecting >20% of the 24h window for 30m — in-window price dispersion (P3)"
+              description: |
+                More than 20% of crypto:XLM/fiat:USD's 24h VWAP input has been
+                trimmed by the time-local outlier filter for 30m+
+                (stellarindex_aggregator_window_trades, stage=outlier vs
+                stage=class, ≥20 trades). The filter drops only prints that
+                disagree with BOTH the window and their own neighbourhood, so
+                this is not a regime shift being erased — it is a large share
+                of wild prints inside the window: an SDEX spam / wash wave
+                (2026-08-14 token-farm shape), a connector mis-decoding
+                amounts, or a venue with dust-sized noise. The published price
+                is protected by the trim; the risk is a thin surviving sample
+                (see min_usd_volume gating). Diagnose from the trades table
+                for the pair; see the spam-wave signature in the runbook.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+
+  # ── Case 5: a normal trim share (10%) stays silent ──
+  - interval: 1m
+    name: a 10 percent trim share stays silent
+    input_series:
+      - series: 'stellarindex_aggregator_window_trades{pair="crypto:XLM/fiat:USD",window="24h",stage="class",binary="stellarindex-aggregator"}'
+        values: '1000x60'
+      - series: 'stellarindex_aggregator_window_trades{pair="crypto:XLM/fiat:USD",window="24h",stage="outlier",binary="stellarindex-aggregator"}'
+        values: '900x60'
+    alert_rule_test:
+      - eval_time: 59m
+        alertname: stellarindex_aggregator_outlier_trim_fraction
+        exp_alerts: []
+
+  # ── Case 6: a thin window (<20 trades) stays silent even at 50% trimmed ──
+  # 10 trades with 5 surviving is a sample too small to call dispersion.
+  - interval: 1m
+    name: a window under the 20-trade floor stays silent
+    input_series:
+      - series: 'stellarindex_aggregator_window_trades{pair="crypto:XLM/fiat:GBP",window="24h",stage="class",binary="stellarindex-aggregator"}'
+        values: '10x60'
+      - series: 'stellarindex_aggregator_window_trades{pair="crypto:XLM/fiat:GBP",window="24h",stage="outlier",binary="stellarindex-aggregator"}'
+        values: '5x60'
+    alert_rule_test:
+      - eval_time: 59m
+        alertname: stellarindex_aggregator_outlier_trim_fraction
+        exp_alerts: []
+
+  # ═══ Legacy overlap gate: stellarindex_aggregator_outlier_trim_rate_legacy ═══
+  # The pre-2026-08-28 counter-based outlier_storm expr, renamed for the
+  # one-week overlap (RETIRE 2026-09-04 — delete cases L1–L3 with the
+  # rule). The metric is a counter labelled {reason,pair}; the rule is
+  # `sum by (pair) (rate(...{reason="outlier"}[10m])) > 10` for 2h, so a
+  # counter rising 1200/min ⇒ rate 20/s, 300/min ⇒ 5/s, 60/min ⇒ 1/s.
+
+  # ── Case L1: a genuinely SUSTAINED trim rate fires past the 2h `for:` ──
+  - interval: 1m
+    name: legacy overlap - a sustained per-pair trim rate fires after the 2h for-gate
     input_series:
       - series: 'stellarindex_aggregator_dropped_trades_total{reason="outlier",pair="crypto:ETH/fiat:USD",binary="stellarindex-aggregator"}'
         values: '0+1200x200'
     alert_rule_test:
       - eval_time: 60m
-        alertname: stellarindex_aggregator_outlier_storm
+        alertname: stellarindex_aggregator_outlier_trim_rate_legacy
         exp_alerts: []
       - eval_time: 150m
-        alertname: stellarindex_aggregator_outlier_storm
+        alertname: stellarindex_aggregator_outlier_trim_rate_legacy
         exp_alerts:
           - exp_labels:
               severity: ticket
@@ -51,54 +227,42 @@ tests:
               pair: crypto:ETH/fiat:USD
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
-              summary: "crypto:ETH/fiat:USD outlier-trim >10/s sustained 2h — persistent price dispersion (P3)"
+              summary: "crypto:ETH/fiat:USD outlier-trim >10/s sustained 2h — persistent price dispersion (P3, legacy overlap gate, retire 2026-09-04)"
               description: |
-                The robust-VWAP σ/MAD filter has trimmed >10 trades/s from
-                crypto:ETH/fiat:USD's VWAP input for 2h+. It trims toward the
-                intra-window MEDIAN, so the PUBLISHED price is protected
-                (symmetric band, no oracle circularity) — this is a
+                The time-local outlier filter has trimmed >10 trades/s from
+                crypto:ETH/fiat:USD's VWAP input for 2h+ (per-tick re-count of
+                window residents outside every reference band). This is the
+                pre-2026-08-28 counter gate kept for a one-week overlap with
+                stellarindex_aggregator_outlier_trim_fraction; expect the two
+                to fire together on a sustained spam / wash wave. The
+                PUBLISHED price is protected by the trim — this is a
                 data-quality / source-health signal, NOT a customer-facing
-                price error. Sustained (not transient) trimming means prints
-                on this pair durably disperse: two sources at different
-                levels (a stale/thin venue, a stablecoin-leg skew), or a
-                registered connector mis-decoding amounts. More specific
-                failures have their own alerts — unregistered venues →
-                aggregator_class_drop_spike; non-7-decimals →
-                nonstandard_decimals_correction_failing. Check the pair's
-                div:<pair> Redis flag / API flags.divergence_warning for
-                actual price impact, then the per-source contribution to the
-                window. NOTE: the stellarindex_price_divergence_* alerts are
-                INERT (F-1329, no Prometheus producer) — do not wait on them.
-                Thin pairs whose total trim can't reach 10/s sit below this
-                gate by design (raise a per-pair floor if one needs coverage).
+                price error. If this fires and trim_fraction does NOT, record
+                the pair + window before retiring this rule. NOTE: the
+                stellarindex_price_divergence_* alerts are INERT (F-1329, no
+                Prometheus producer) — do not wait on them.
                 Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
 
-  # ── Case 2: a TRANSIENT burst that self-clears does NOT fire ──
-  # The benign real-world pattern: a single pair spikes to 20/s for ~60m
-  # (source disagreement / USDT skew) then relaxes to 1/s (counter slope
-  # drops to +60/min). The expr is true only ~[10m,66m] then goes false,
-  # so the 2h `for:` never completes — no ticket. This is the noise the
-  # rescope removes (the old rule ticketed on exactly this).
+  # ── Case L2: a TRANSIENT burst that self-clears does NOT fire ──
+  # 20/s for ~60m then 1/s: the expr is true only ~[10m,66m], so the 2h
+  # `for:` never completes.
   - interval: 1m
-    name: a transient self-clearing burst does not fire
+    name: legacy overlap - a transient self-clearing burst does not fire
     input_series:
       - series: 'stellarindex_aggregator_dropped_trades_total{reason="outlier",pair="crypto:ETH/fiat:USD",binary="stellarindex-aggregator"}'
         values: '0+1200x60 72000+60x200'
     alert_rule_test:
       - eval_time: 150m
-        alertname: stellarindex_aggregator_outlier_storm
+        alertname: stellarindex_aggregator_outlier_trim_rate_legacy
         exp_alerts: []
 
-  # ── Case 3: a sustained rate BELOW the 10/s floor does not fire ──
-  # BTC/USD held at 5/s (counter +300/min) for 200m — persistent but under
-  # the floor, so it stays silent. Proves the absolute floor is load-bearing
-  # (a lower-volume pair's steady trim doesn't ticket).
+  # ── Case L3: a sustained rate BELOW the 10/s floor does not fire ──
   - interval: 1m
-    name: sustained trim below the 10 per-second floor stays silent
+    name: legacy overlap - sustained trim below the 10 per-second floor stays silent
     input_series:
       - series: 'stellarindex_aggregator_dropped_trades_total{reason="outlier",pair="crypto:BTC/fiat:USD",binary="stellarindex-aggregator"}'
         values: '0+300x200'
     alert_rule_test:
       - eval_time: 150m
-        alertname: stellarindex_aggregator_outlier_storm
+        alertname: stellarindex_aggregator_outlier_trim_rate_legacy
         exp_alerts: []
