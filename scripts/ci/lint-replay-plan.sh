@@ -65,19 +65,27 @@ if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
 fi
 
 # Watched paths — the files whose content decides what ingestion writes.
-# Git pathspecs (globs match at any depth under internal/sources/). Test
-# files are deliberately NOT watched: a *_test.go change cannot alter a
-# served row. Keep this list in step with the failure message below.
+# Git pathspecs: `*` crosses `/`, so internal/sources/*/ reaches both
+# internal/sources/<src>/ and internal/sources/external/<venue>/. Test
+# files are deliberately NOT watched (the trailing :(exclude) pathspec):
+# a *_test.go change cannot alter a served row. Keep this list in step
+# with the failure message below.
 WATCHED=(
   # canonical asset allow-lists (ADR-0010 fiat, ADR-0014 crypto,
   # ADR-0028 RWA): what asset codes the pipeline will accept at all.
   'internal/canonical/asset_fiat.go'
   'internal/canonical/asset_crypto.go'
   'internal/canonical/asset_rwa.go'
-  # per-source decoders / event schemas / feed registries.
-  'internal/sources/*/decode.go'
+  # per-source decoders (decode.go plus its siblings: aquarius
+  # decode_rewards.go / decode_admin.go, blend decode_money_market.go),
+  # event schemas, feed registries, and the external-venue pair
+  # allow-lists (external/{coinbase,bitstamp,kraken,binance}/pairs.go —
+  # the same widen-without-replay class as asset_fiat.go).
+  'internal/sources/*/decode*.go'
   'internal/sources/*/events.go'
   'internal/sources/*/feeds.go'
+  'internal/sources/*/pairs.go'
+  ':(exclude)*_test.go'
 )
 
 # changed_watched <base> <head> — the watched paths that differ between
@@ -150,6 +158,6 @@ a bare `none` does not count:
     Replay-Plan: none — refactor only; decoded output byte-identical (golden test unchanged)
 
 Watched: internal/canonical/asset_{fiat,crypto,rwa}.go and
-internal/sources/*/{decode,events,feeds}.go.
+internal/sources/*/{decode*,events,feeds,pairs}.go (not *_test.go).
 EOF2
 exit 1

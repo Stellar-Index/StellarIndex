@@ -15,6 +15,20 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **CI replay-plan tripwire (`scripts/ci/lint-replay-plan.sh`).** On
+  2026-08-27 e17288bd widened `internal/canonical/asset_fiat.go` 32→132
+  codes; live ingestion recorded 4 new currencies, nobody replayed
+  history, and 190,228 served rows were missing for a day (surfaced
+  2026-08-28 by a stale gate binary upgrade). The new gate, wired into
+  the import-checks job next to `lint-baseline-growth.sh` and mirrored
+  in `scripts/dev/verify.sh`, fails any range touching
+  `internal/canonical/asset_{fiat,crypto,rwa}.go` or
+  `internal/sources/*/{decode*,events,feeds,pairs}.go` unless a commit
+  carries a `Replay-Plan:` trailer (`none — <reason>` allowed; a bare
+  `none` is not). Fixture self-test in `lint-replay-plan-test.sh`.
+
 ## [v0.47.2] — 2026-08-28
 
 Tested against Stellar Protocol 28.

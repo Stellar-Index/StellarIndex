@@ -8,7 +8,9 @@
 # inputs and nothing else — so its behaviour is pinned here rather than
 # assumed:
 #
-#   - a watched-path change with no `Replay-Plan:` trailer fails;
+#   - a watched-path change with no `Replay-Plan:` trailer fails — for
+#     the canonical allow-list, a decode.go, a decode_<sibling>.go and a
+#     venue pairs.go allow-list alike;
 #   - a watched-path change declared with `Replay-Plan: <plan>` passes;
 #   - `Replay-Plan: none — <reason>` passes (no served history affected);
 #   - a trailer with no value, or a bare `none` with no reason, does not
@@ -52,6 +54,8 @@ mkrepo() {
     printf 'package canonical\n\nvar knownFiatCodes = map[string]struct{}{"USD": {}}\n' \
       > internal/canonical/asset_fiat.go
     printf 'package demo\n\nfunc decode() {}\n' > internal/sources/demo/decode.go
+    printf 'package demo\n\nfunc decodeRewards() {}\n' > internal/sources/demo/decode_rewards.go
+    printf 'package demo\n\nfunc DefaultPairs() {}\n' > internal/sources/demo/pairs.go
     printf 'package demo\n\nfunc TestDecode() {}\n' > internal/sources/demo/decode_test.go
     printf 'package demo\n\nfunc helper() {}\n' > internal/sources/demo/helper.go
     git add -A
@@ -127,6 +131,18 @@ mkrepo 0
 touch_commit internal/sources/demo/decode.go "fix(demo): decode the new event variant"
 runGate
 expect "decoder change without a plan fails" 1 "~ internal/sources/demo/decode.go"
+
+# --- 2b. a decoder sibling (decode_<x>.go) is watched too --------------
+mkrepo 0
+touch_commit internal/sources/demo/decode_rewards.go "fix(demo): decode reward events"
+runGate
+expect "decode_<sibling>.go change without a plan fails" 1 "~ internal/sources/demo/decode_rewards.go"
+
+# --- 2c. a venue pair allow-list is the asset_fiat class ---------------
+mkrepo 0
+touch_commit internal/sources/demo/pairs.go "feat(demo): add three more pairs"
+runGate
+expect "venue pairs.go widening without a plan fails" 1 "~ internal/sources/demo/pairs.go"
 
 # --- 3. declared plan passes ------------------------------------------
 mkrepo 0

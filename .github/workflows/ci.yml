@@ -446,10 +446,11 @@ jobs:
         # 2026-08-28 incident: e17288bd widened the fiat allow-list
         # (32→132); live ingestion recorded 4 new currencies, nobody
         # replayed history, 190,228 served rows missing for a day. A
-        # change to a decoder / event schema / feed registry / asset
-        # allow-list must state its replay plan in a `Replay-Plan:`
-        # commit trailer (`none — <reason>` when no served history is
-        # affected) so the plan ships WITH the change.
+        # change to a decoder (internal/sources/*/decode*.go), event
+        # schema, feed registry, venue pair allow-list (pairs.go) or
+        # canonical asset allow-list must state its replay plan in a
+        # `Replay-Plan:` commit trailer (`none — <reason>` when no
+        # served history is affected) so the plan ships WITH the change.
         env:
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: ./scripts/ci/lint-replay-plan.sh
