@@ -59,6 +59,14 @@ against.
   `docs/operations/clickhouse-ops-batch-profile.md`.
 ### Fixed
 
+- **`/v1/livez/lake` added to the unauthenticated-infra exemption and
+  the anonymous rate-limit skip (api-security-3, audit 2026-08-28).**
+  The ADR-0050 lake-route LB probe (#119) was added after
+  `isUnauthenticatedInfraPath` / `SkipHealthAndMetrics` were written and
+  missed both: under `apikey` / `sep10` auth mode every uncredentialed
+  probe 401'd (contradicting the OpenAPI `security: []` declaration),
+  and under `apikey_optional` it spent the anonymous per-IP bucket. The
+  exact-match lists and their pinning tests now carry the path.
 - **Outlier filter trimmed agreed price moves; `outlier_storm` measured
   its own artifact.** The published-VWAP filter scored every print
   against ONE band — the whole window's median ± 4 × 1.4826 × MAD — and
