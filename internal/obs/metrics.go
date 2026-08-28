@@ -907,15 +907,19 @@ var SourceDecodeErrorsTotal = prometheus.NewCounterVec(
 // Redstone, and Band all increment this on ErrUnknownSymbol /
 // ErrUnknownFeedID branches.
 //
-// NO ALERT CONSUMES IT (cold audit 2026-08-04). This comment used to
-// say one in `deploy/monitoring/rules/external-pollers.yml` fires on a
-// sustained per-source non-zero rate; the token appears in no `expr:`
-// in either rule tree. So the signal this counter exists to provide has
-// no consumer — and r1 already carries
+// Alert consumer: `stellarindex_ingestion_oracle_unknown_symbols`
+// (deploy/monitoring/rules/ingestion.yml + the R1 overlay; runbook
+// docs/operations/runbooks/oracle-unknown-symbols.md). The cold audit of
+// 2026-08-04 found NO rule evaluated this counter — an earlier version
+// of this comment claimed one in external-pollers.yml that never
+// existed — while r1 already carried
 // source_unknown_symbols_total{source="reflector"} 7794, i.e. 7,794
-// oracle asset slots silently dropped from the price surface with
-// nothing evaluating it. That is the pre-F-1234 state the metric was
-// added to end. Wiring the rule needs a runbook per the alert lint.
+// oracle asset slots silently dropped from the price surface. The
+// oracle capture-totality design (docs/design/oracle-capture-totality-
+// design.md) records those slots verbatim under `canonical.AssetOracleRaw`
+// once the decoders switch from skip to emit; this counter keeps
+// incrementing either way, because a raw row is still a mapping gap
+// the allow-list owner has to close.
 var SourceUnknownSymbolsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_source_unknown_symbols_total",
