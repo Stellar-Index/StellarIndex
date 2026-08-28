@@ -42,15 +42,39 @@ type SourceCoverage struct {
 	LastUpdated     time.Time
 }
 
-// CountDistinctLedgers returns COUNT(DISTINCT <ledger column>)
-// for the given target's hypertable, optionally filtered by
-// the target's WhereFilter, restricted to [from, to].
+// countDistinctLedgersQuery is the statement [Store.CountDistinctLedgers]
+// runs for a target: the target's DistinctLedgerCountSQL override when
+// set, else the generic COUNT(DISTINCT <ledger column>) over the
+// target's own table. Factored out so the per-target routing is
+// pinned by a unit test without a database
+// (TestCountDistinctLedgersQueryRoutesOnlySorobanEventsToCensus).
+func countDistinctLedgersQuery(target GapDetectorTarget) string {
+	if target.DistinctLedgerCountSQL != "" {
+		return target.DistinctLedgerCountSQL
+	}
+	filter := ""
+	if target.WhereFilter != "" {
+		filter = " AND (" + target.WhereFilter + ")"
+	}
+	//nolint:gosec // G201: identifiers from compile-time const list per ADR-0030
+	return fmt.Sprintf(
+		`SELECT COUNT(DISTINCT %[1]s) FROM %[2]s WHERE %[1]s BETWEEN $1 AND $2%[3]s`,
+		target.LedgerColumn, target.Table, filter,
+	)
+}
+
+// CountDistinctLedgers returns the number of ledgers in [from, to]
+// the target has data for: COUNT(DISTINCT <ledger column>) over the
+// target's hypertable (optionally filtered by WhereFilter), or the
+// target's [GapDetectorTarget.DistinctLedgerCountSQL] when it names a
+// cheaper source of the same number (soroban-events reads the
+// ledger_ingest_log census — see [sorobanEventsDistinctLedgerCountSQL]).
 //
-// SAFETY: target.Table, target.LedgerColumn, target.WhereFilter
-// are interpolated directly into the SQL — same identifier
-// injection concern + same construction discipline as
-// [FindPerSourceLedgerGaps] (ADR-0030: caller MUST pass a
-// compile-time const from [DefaultGapDetectorTargets]).
+// SAFETY: target.Table, target.LedgerColumn, target.WhereFilter,
+// target.DistinctLedgerCountSQL are interpolated directly into the
+// SQL — same identifier injection concern + same construction
+// discipline as [FindPerSourceLedgerGaps] (ADR-0030: caller MUST pass
+// a compile-time const from [DefaultGapDetectorTargets]).
 //
 // Returns 0 (no error) when to == 0 — the caller hasn't resolved
 // tip yet, so there's nothing meaningful to scan. Same shape as
@@ -63,16 +87,7 @@ func (s *Store) CountDistinctLedgers(ctx context.Context, target GapDetectorTarg
 	if to == 0 {
 		return 0, nil
 	}
-
-	filter := ""
-	if target.WhereFilter != "" {
-		filter = " AND (" + target.WhereFilter + ")"
-	}
-	//nolint:gosec // G201: identifiers from compile-time const list per ADR-0030
-	query := fmt.Sprintf(
-		`SELECT COUNT(DISTINCT %[1]s) FROM %[2]s WHERE %[1]s BETWEEN $1 AND $2%[3]s`,
-		target.LedgerColumn, target.Table, filter,
-	)
+	query := countDistinctLedgersQuery(target)
 
 	// SQL-level statement_timeout — see FindPerSourceLedgerGaps.
 	// CountDistinctLedgers walks the same rows as the gap scan and

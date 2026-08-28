@@ -97,7 +97,55 @@ type GapDetectorTarget struct {
 	// and the count-distinct) so a single cycle can't run unbounded;
 	// the cadence just bounds how often it's allowed to fire at all.
 	ScanCadence time.Duration
+
+	// DistinctLedgerCountSQL optionally replaces the statement
+	// [Store.CountDistinctLedgers] runs for this target. Empty (the
+	// default, every target but soroban-events) means the generic
+	//
+	//	SELECT COUNT(DISTINCT <LedgerColumn>) FROM <Table>
+	//	 WHERE <LedgerColumn> BETWEEN $1 AND $2 [AND (<WhereFilter>)]
+	//
+	// When set it MUST be a complete statement that binds $1/$2 as the
+	// inclusive [from, to] ledger range and returns exactly one bigint:
+	// the number of ledgers in that range this source has data for.
+	// The result feeds the same gauge / snapshot / density_pct path as
+	// the generic query; only the SOURCE of the number changes.
+	//
+	// Exists because the generic query is a full scan on any table
+	// with no leading-`ledger` index — on soroban_events (257 GB,
+	// partitioned + compressed by ledger_close_time, no `ledger`
+	// index) it ran 556 s mean and took r1 down on 2026-08-28. See
+	// [sorobanEventsDistinctLedgerCountSQL].
+	//
+	// SAFETY: interpolated verbatim; ADR-0030 compile-time-const
+	// discipline applies exactly as for Table / WhereFilter.
+	DistinctLedgerCountSQL string
 }
+
+// sorobanEventsDistinctLedgerCountSQL answers "how many ledgers in
+// [$1, $2] carry Soroban events" from ledger_ingest_log (migration
+// 0051) instead of from soroban_events itself. ledger_ingest_log has
+// one narrow row per fully-processed ledger keyed by ledger_seq (PK
+// btree), and its soroban_event_count is the LCM-derived census whose
+// documented invariant is `= COUNT(soroban_events WHERE ledger = N)`,
+// so this is a PK range scan (milliseconds) that returns the same
+// number the 257 GB hypertable scan did (r1 2026-08-28: 556 s mean,
+// 18.7 h of IO, load 19.6, 503s on the serving path).
+//
+// SEMANTIC NOTE — census vs observed rows: this counts ledgers the
+// indexer RECORDED as carrying >= 1 eligible contract event (written
+// post-persist, from the LedgerCloseMeta), not ledgers with rows
+// physically present in soroban_events. The two are equal by the
+// ADR-0033 Claim 3 invariant; where they diverge (a persistence
+// shortfall the census caught) the census is the HIGHER, honest
+// expectation and the divergence is surfaced by
+// `stellarindex-ops verify` reconciliation, not by this density
+// number. The gap scan for this target (FindPerSourceLedgerGaps) still
+// reads soroban_events directly, so the F-0020 writer-halt tripwire
+// stays observed-row-based. Ledgers below the ledger_ingest_log
+// backfill floor read as 0 here; the detector's trailing window (<=
+// GapDetectorFirstScanCap below tip) sits far above that floor.
+const sorobanEventsDistinctLedgerCountSQL = `SELECT COUNT(*) FROM ledger_ingest_log WHERE ledger_seq BETWEEN $1 AND $2 AND soroban_event_count > 0`
 
 // EffectiveMinGapSize returns the threshold this target should use,
 // preferring [MinGapSizeOverride] if non-zero. Single source of
@@ -317,7 +365,12 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// dense (370M+ rows past L62M of 3.36B total). 100K override
 	// (~5.8 days) silences early-era sparsity; a recent writer wedge is
 	// caught faster by the per-projected-source targets + completeness.
-	{Source: "soroban-events", Table: "soroban_events", LedgerColumn: "ledger", Genesis: 50_457_424, ScanCadence: 6 * time.Hour, MinGapSizeOverride: 100000},
+	// 2026-08-28: the density count comes from the ledger_ingest_log
+	// census (DistinctLedgerCountSQL) — soroban_events has NO index on
+	// `ledger` and the generic COUNT(DISTINCT ledger) was a 556 s full
+	// scan of a 257 GB hypertable per cycle (r1 incident). The gap scan
+	// itself is unchanged (observed rows, 13-min PG timeout).
+	{Source: "soroban-events", Table: "soroban_events", LedgerColumn: "ledger", Genesis: 50_457_424, ScanCadence: 6 * time.Hour, MinGapSizeOverride: 100000, DistinctLedgerCountSQL: sorobanEventsDistinctLedgerCountSQL},
 	// SDEX is classic-DEX and does NOT flow through soroban_events.
 	// Its rows live in the unified `trades` hypertable alongside
 	// every other trade-emitting source; the WhereFilter slices

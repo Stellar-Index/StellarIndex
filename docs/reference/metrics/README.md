@@ -96,6 +96,24 @@ approach the [genesis, tip] span; sparse-by-design sources (Blend
 auctions, CCTP) are naturally lower because the contract doesn't
 emit per ledger.
 
+**Count source per target.** For every target the numerator is
+`COUNT(DISTINCT ledger)` over the target's own hypertable, EXCEPT
+`source="soroban-events"`, which since 2026-08-28 reads the
+`ledger_ingest_log` census instead (`COUNT(*) WHERE
+soroban_event_count > 0` over the scan window — a PK range scan).
+`soroban_events` has no index on `ledger`; the generic count was a
+556 s full scan of a 257 GB hypertable per cycle and took r1's
+serving path down. The census is the indexer's LCM-derived record of
+"this ledger carried >= 1 eligible contract event", written
+post-persist, and equals the observed-row count by the ADR-0033
+Claim 3 invariant; a divergence is a persistence shortfall that
+`stellarindex-ops verify` reconciliation surfaces, not this gauge.
+The gap gauges for that target (`..._gap_*`) still come from a scan
+of `soroban_events` itself. Same gauge, same
+`source_coverage_snapshots` row, same `density_pct` in
+`/v1/diagnostics/ingestion` — only the source of the number differs
+(`GapDetectorTarget.DistinctLedgerCountSQL`).
+
 ### `stellarindex_ingest_gap_detector_tip_ledger`
 
 Gauge (no labels).
