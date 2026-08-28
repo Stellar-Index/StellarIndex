@@ -760,7 +760,10 @@ The rule:
 2. Make it build + its tests pass.
 3. Commit, push, open PR, merge. (`gh pr merge --squash` once CI is
    green; merge with failing optional checks only if the failure is
-   pre-existing CI infra, not caused by this PR.)
+   pre-existing CI infra, not caused by this PR.) Push and PR are one
+   step, never two sessions — a pushed branch with no PR is loss, not
+   work: [AGENTS.md — No orphan work](AGENTS.md#no-orphan-work--the-contract)
+   (run its prior-art check before touching an alert or finding).
 4. Pull main, branch again, return to step 1 for the NEXT unit.
 
 Never plan a pipeline of 3–4 PRs before the first one has landed.
