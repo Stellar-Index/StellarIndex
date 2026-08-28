@@ -81,6 +81,14 @@ against.
   `/proc/<pid>/cmdline`. All five now feed the secret on stdin (`mc`
   reads omitted keys from stdin); the persisted `local` alias the root
   ops scripts rely on is unchanged (deploy-ansible-secrets-9).
+- **ansible: galexie restarts only on effective config change.** The
+  wrapper script, captive cfg, `galexie.toml`, `/etc/default/galexie`
+  and the unit are each ~50% comments, and every byte change notified
+  `Restart galexie` — a ~9-minute mainnet cold catchup per fire. New
+  `galexie-effective-checksum.yml` hashes each input with comments/blank
+  lines stripped before and after rendering and notifies the restart
+  only on a mismatch; a real change (rotated key, PEER_PORT, ExecStart)
+  still restarts — no default-off ack gate (deploy-ansible-handlers-7).
 - **Outlier filter trimmed agreed price moves; `outlier_storm` measured
   its own artifact.** The published-VWAP filter scored every print
   against ONE band — the whole window's median ± 4 × 1.4826 × MAD — and

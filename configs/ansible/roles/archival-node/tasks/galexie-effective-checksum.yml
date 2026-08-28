@@ -1,0 +1,65 @@
+---
+# galexie-effective-checksum.yml — imported TWICE by 07-galexie.yml (with
+# galexie_effective_stage=before, then =after) around the copy/template
+# tasks that render galexie's inputs. On the host it computes the
+# EFFECTIVE checksum of each input: full-line `#` comments and blank lines
+# stripped (a `#!` shebang line is kept — bash-vs-sh matters), sha256 of
+# the rest. The `after` pass then notifies `Restart galexie` only for a
+# before/after mismatch (or an input that did not exist before).
+#
+# Why: every one of the five inputs is ~50% prose (galexie-append.sh 47
+# comment lines of 106, stellar-core.cfg.j2 89/194, galexie.toml.j2 20/41),
+# and ansible copy/template compare bytes — so a comment re-wrap, applied
+# with `--tags galexie` for an unrelated reason, restarted the live-tail
+# galexie + its captive core: a ~9-minute mainnet cold catchup per restart
+# (docs/operations/postmortems/2026-08-27-r1-p28-captive-core-outage.md).
+# The gate keys on the bytes galexie / captive-core / systemd actually
+# read, so any real change still restarts — deliberately NOT a default-off
+# "ack" variable, which would leave rotated S3 keys or a PEER_PORT change
+# sitting on disk unapplied (2026-08-28 audit, deploy-ansible-handlers-7).
+#
+# check_mode: false on the hash task — it is read-only, so `--check --diff`
+# still runs it; note that in check mode nothing is written, so the
+# before/after pair is identical and the restart decision cannot be
+# previewed (the rendered --diff can). Self-tested by
+# scripts/ci/ansible-galexie-restart-test.sh.
+- name: "Effective checksum of galexie inputs ({{ galexie_effective_stage }})"
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      f={{ item | quote }}
+      if [ -f "$f" ]; then
+        sed -E '/^[[:space:]]*#([^!]|$)/d; /^[[:space:]]*$/d' "$f" | sha256sum | cut -d' ' -f1
+      else
+        echo absent
+      fi
+    executable: /bin/bash
+  loop: "{{ galexie_effective_inputs }}"
+  register: galexie_effective_result
+  changed_when: false
+  check_mode: false
+
+- name: "Record effective checksums ({{ galexie_effective_stage }})"
+  ansible.builtin.set_fact:
+    galexie_effective: >-
+      {{ (galexie_effective | default({}))
+         | combine({galexie_effective_stage:
+                    dict(galexie_effective_result.results | map(attribute='item')
+                         | zip(galexie_effective_result.results | map(attribute='stdout'))) }) }}
+
+- name: Galexie inputs — restart only on effective (non-comment) change
+  # Reports changed (→ `Restart galexie`) iff some input's stripped
+  # checksum differs before/after, or the input did not exist before.
+  when: galexie_effective_stage == 'after'
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'effective change in: ' ~ (galexie_effective_changed | join(', '))
+         if galexie_effective_changed | length > 0
+         else 'no effective change in galexie inputs (comment/whitespace-only edits do not restart)' }}
+  vars:
+    galexie_effective_changed: >-
+      {{ galexie_effective.after | dict2items
+         | difference(galexie_effective.before | dict2items)
+         | map(attribute='key') | list }}
+  changed_when: galexie_effective_changed | length > 0
+  notify: Restart galexie
