@@ -146,6 +146,10 @@ func TestXLMSacAsBase_PriceableThroughEveryPath(t *testing.T) {
 	// >= 20 buckets, >= 6h span; usd_volume set below clears >= $1000).
 	for i := 0; i < 25; i++ {
 		ts := now.Add(-9 * time.Hour).Add(time.Duration(i) * 20 * time.Minute)
+		// xlm_usd anchor in every hour the CBIJ market trades, so the
+		// price-history series (which triangulate per bucket) has an
+		// XLM/USD leg wherever it has an XLM leg. Same 0.40 as above.
+		add("sdex", ts, mustPair(xlm, usdc), 1_000_000_000, 400_000_000)
 		// XLM SAC as BASE: 10 XLM → 40 CBIJ (vwap 4 → CBIJ = 0.25 XLM).
 		add("aquarius", ts, mustPair(xlmSAC, cbij), 100_000_000, 400_000_000)
 		// CBIJ/CAUP7 in BOTH stored directions, one consistent price
@@ -271,6 +275,106 @@ func TestXLMSacAsBase_PriceableThroughEveryPath(t *testing.T) {
 			}
 			wantPrice(t, "listing "+tc.id, row.PriceUSD, tc.want)
 		}
+	})
+
+	// Price-history series (the sparklines): every bucket that has an
+	// XLM leg in EITHER stored direction must carry a point. Pre-fix
+	// (#254 follow-up) the four series CTEs read the XLM leg base-side
+	// only, so CBIJ and ZINV had a headline price but an EMPTY series.
+	//
+	// ZDIR is the per-bucket byte-identity guard: the bucket holding its
+	// base-side row (-40m, 2.0 XLM) must price 0.80 even though a
+	// fresher inverted row (-10m, 1.5 XLM) exists — and when that
+	// fresher row falls in a LATER bucket of its own, that bucket is
+	// filled from the inverted arm (0.60), which is the fix working.
+	const bucketFmt = "2006-01-02T15:04:05Z"
+	checkSeries := func(t *testing.T, label string, pts []timescale.AssetPricePoint, want string) {
+		t.Helper()
+		nonNil := 0
+		for _, pt := range pts {
+			if pt.P == nil {
+				continue
+			}
+			nonNil++
+			if *pt.P != want {
+				t.Errorf("%s: series point %s at %s, want %s", label, *pt.P, pt.T, want)
+			}
+		}
+		if nonNil == 0 {
+			t.Errorf("%s: series has no non-null points, want %s — "+
+				"the XLM leg is stored SAC-as-base and the series CTE is base-side only", label, want)
+		}
+	}
+	checkZDIR := func(t *testing.T, label string, pts []timescale.AssetPricePoint, trunc time.Duration) {
+		t.Helper()
+		baseT := now.Add(-40 * time.Minute).Truncate(trunc).Format(bucketFmt)
+		invT := now.Add(-10 * time.Minute).Truncate(trunc).Format(bucketFmt)
+		byT := make(map[string]*string, len(pts))
+		for _, pt := range pts {
+			byT[pt.T] = pt.P
+		}
+		wantPrice(t, label+" bucket "+baseT+" (base-side row present)", byT[baseT], "0.8000000000")
+		if invT != baseT {
+			wantPrice(t, label+" bucket "+invT+" (inverted row only)", byT[invT], "0.6000000000")
+		}
+	}
+	seriesCases := []struct{ id, want string }{
+		{cbijID, "0.1000000000"},
+		{zinv.String(), "0.8000000000"},
+	}
+
+	t.Run("PriceHistory24h", func(t *testing.T) {
+		for _, tc := range seriesCases {
+			pts, err := store.GetAssetPriceHistory24h(ctx, tc.id)
+			if err != nil {
+				t.Fatalf("GetAssetPriceHistory24h(%s): %v", tc.id, err)
+			}
+			checkSeries(t, "24h "+tc.id, pts, tc.want)
+		}
+		pts, err := store.GetAssetPriceHistory24h(ctx, zdir.String())
+		if err != nil {
+			t.Fatalf("GetAssetPriceHistory24h(ZDIR): %v", err)
+		}
+		checkZDIR(t, "24h ZDIR", pts, time.Hour)
+	})
+
+	t.Run("PriceHistory7d", func(t *testing.T) {
+		for _, tc := range seriesCases {
+			pts, err := store.GetAssetPriceHistory7d(ctx, tc.id)
+			if err != nil {
+				t.Fatalf("GetAssetPriceHistory7d(%s): %v", tc.id, err)
+			}
+			checkSeries(t, "7d "+tc.id, pts, tc.want)
+		}
+		pts, err := store.GetAssetPriceHistory7d(ctx, zdir.String())
+		if err != nil {
+			t.Fatalf("GetAssetPriceHistory7d(ZDIR): %v", err)
+		}
+		checkZDIR(t, "7d ZDIR", pts, 24*time.Hour)
+	})
+
+	batchIDs := []string{cbijID, zinv.String(), zdir.String()}
+
+	t.Run("PriceHistory24hBatch", func(t *testing.T) {
+		got, err := store.GetAssetsPriceHistory24hBatch(ctx, batchIDs)
+		if err != nil {
+			t.Fatalf("GetAssetsPriceHistory24hBatch: %v", err)
+		}
+		for _, tc := range seriesCases {
+			checkSeries(t, "24h batch "+tc.id, got[tc.id], tc.want)
+		}
+		checkZDIR(t, "24h batch ZDIR", got[zdir.String()], time.Hour)
+	})
+
+	t.Run("PriceHistory7dBatch", func(t *testing.T) {
+		got, err := store.GetAssetsPriceHistory7dBatch(ctx, batchIDs)
+		if err != nil {
+			t.Fatalf("GetAssetsPriceHistory7dBatch: %v", err)
+		}
+		for _, tc := range seriesCases {
+			checkSeries(t, "7d batch "+tc.id, got[tc.id], tc.want)
+		}
+		checkZDIR(t, "7d batch ZDIR", got[zdir.String()], 24*time.Hour)
 	})
 
 	t.Run("GetAssetBySlug", func(t *testing.T) {

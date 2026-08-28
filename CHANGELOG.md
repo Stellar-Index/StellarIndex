@@ -72,6 +72,21 @@ against.
   the 8 inverted arms. Writer-side follow-up (aquarius writing canonical
   orientation) is separate; the read side must handle the stored data
   regardless.
+- **…and its price-history series (the sparklines) were still empty for
+  such an asset.** Follow-up to the above: the four series queries
+  (`GetAssetPriceHistory24h`/`7d` and their `*Batch` twins) each carry an
+  `asset_xlm_per_hour`/`_per_day` CTE that read the XLM leg base-side
+  only, so an asset priced through the inverted arm had a headline
+  `price_usd` but `price_history_24h`/`7d` all-null. Each now UNIONs the
+  same inverted arm (`base_asset IN (native, SAC) AND quote_asset = ANY
+  (aliases)`, `1/vwap`, `vwap > 0`), base-side preferred per bucket
+  (`inverted` ordered ahead of alias priority and `bucket DESC`), so
+  every bucket that already had a base-side point is byte-identical and
+  the inverted arm only fills buckets with none. `TestProxyQuoteLists_
+  Lockstep` now also pins the 4 series arms (the three inline queries
+  were hoisted to package constants for it) and the SAC-as-base
+  integration fixture asserts a non-empty, correctly-valued series on
+  all four paths plus the per-bucket preference.
 
 ## [v0.47.2] — 2026-08-28
 

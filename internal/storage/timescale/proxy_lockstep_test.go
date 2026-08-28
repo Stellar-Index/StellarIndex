@@ -9,7 +9,8 @@ import (
 
 // TestProxyQuoteLists_Lockstep pins the four places that decide "what is
 // a USD/XLM proxy" to ONE set, and pins the XLM leg to being read in
-// BOTH stored directions everywhere the catalogue prices it.
+// BOTH stored directions everywhere the catalogue prices it — the 8
+// headline-price CTEs AND the 4 price-history series CTEs.
 //
 // The lists live in: the coverage tripwire (coverageQuoteProxies), the
 // transitive resolver (usdProxyQuotes + xlmQuotes), and the two
@@ -67,6 +68,35 @@ func TestProxyQuoteLists_Lockstep(t *testing.T) {
 		if got := strings.Count(sql, "base_asset IN ("+xlmList+")"); got != 4 {
 			t.Errorf("%s SQL: inverted XLM arms (base_asset IN xlm) = %d, want 4 — "+
 				"a market stored as (XLM-SAC, asset) is invisible without them", name, got)
+		}
+	}
+
+	// The four price-history SERIES queries (24h/7d, single + batch)
+	// carry one XLM-leg CTE each (asset_xlm_per_hour / _per_day). Each
+	// must read both directions too: with only the base-side arm an
+	// asset whose XLM market is SAC-as-base had a headline price (the 8
+	// arms above) but an EMPTY sparkline. Same red-maker as above —
+	// pre-fix these had 1 base-side arm and 0 inverted arms each.
+	for name, sql := range map[string]string{
+		"history24h":      getAssetPriceHistory24hSQL,
+		"history7d":       getAssetPriceHistory7dSQL,
+		"history24hBatch": getAssetsPriceHistory24hBatchSQL,
+		"history7dBatch":  getAssetsPriceHistory7dBatchSQL,
+	} {
+		sql = strings.Join(strings.Fields(sql), " ")
+		if got := strings.Count(sql, "quote_asset IN ("+xlmList+")"); got != 1 {
+			t.Errorf("%s SQL: base-side XLM arms = %d, want 1 (asset_xlm_per_*)", name, got)
+		}
+		if got := strings.Count(sql, "base_asset IN ("+xlmList+") AND quote_asset = ANY($1)"); got != 1 {
+			t.Errorf("%s SQL: inverted XLM arms (base_asset IN xlm AND quote_asset = ANY($1)) = %d, want 1 — "+
+				"a market stored as (XLM-SAC, asset) yields an empty sparkline without it", name, got)
+		}
+		// Base-side preferred per bucket: the inverted flag must be the
+		// FIRST key of the per-bucket pick after any partition columns,
+		// i.e. ahead of bucket DESC — otherwise a fresher inverted row
+		// would silently replace a base-side point (byte-identity).
+		if !strings.Contains(sql, "inverted, prio, bucket DESC") && !strings.Contains(sql, "inverted, bucket DESC") {
+			t.Errorf("%s SQL: per-bucket pick does not order inverted ahead of bucket DESC", name)
 		}
 	}
 
