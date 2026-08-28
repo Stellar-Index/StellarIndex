@@ -98,3 +98,15 @@ from the clone for a single-table restore. The schema half is covered by
   the identity heavy ops jobs run as.
 - [deploy-config-apply.md](deploy-config-apply.md) — how config.d changes
   land on a host (this one via `--tags clickhouse-drop-guard`).
+
+## Before the first apply on a host: find the hand-written override
+
+A later-sorting `config.d` file (or an element in `config.xml`) that still
+carries a larger value silently wins over `si-drop-guard.xml`; the role's live
+verify task then fails loudly. Locate and remove it first:
+
+```sh
+clickhouse-client --port 9300 -q "SELECT name,value FROM system.server_settings WHERE name LIKE 'max_%size_to_drop'"
+sudo grep -rn 'size_to_drop' /etc/clickhouse-server/config.xml /etc/clickhouse-server/config.d/
+ls -la /var/lib/clickhouse/flags/   # no stale force_drop_table
+```

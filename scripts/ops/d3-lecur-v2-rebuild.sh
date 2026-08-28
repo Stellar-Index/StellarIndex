@@ -51,6 +51,8 @@ q()   { $CH --max_execution_time 3600 \
 # D3_FORCE_DROP_* acknowledgement call this — never silently.
 CH_FLAGS_DIR="${CH_FLAGS_DIR:-/var/lib/clickhouse/flags}"
 guarded_ddl() {
+  # belt-and-braces: a SIGTERM between touch and rm must not leave the flag armed
+  trap 'rm -f "$CH_FLAGS_DIR/force_drop_table"' EXIT
   touch "$CH_FLAGS_DIR/force_drop_table"; chown clickhouse:clickhouse "$CH_FLAGS_DIR/force_drop_table" 2>/dev/null || true
   log "force_drop_table armed for: $1"
   local rc=0; q "$1" || rc=$?

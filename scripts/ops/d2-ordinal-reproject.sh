@@ -76,6 +76,8 @@ if [ "${D2_FORCE_DROP:-}" != "yes" ]; then
 fi
 # guarded_ddl "<statement>" — arm the force flag for exactly this statement.
 guarded_ddl() {
+  # belt-and-braces: a SIGTERM between touch and rm must not leave the flag armed
+  trap 'rm -f "$CH_FLAGS_DIR/force_drop_table"' EXIT
   touch "$CH_FLAGS_DIR/force_drop_table"; chown clickhouse:clickhouse "$CH_FLAGS_DIR/force_drop_table" 2>/dev/null || true
   log "force_drop_table armed for: $1"
   local rc=0; q "$1" || rc=$?
