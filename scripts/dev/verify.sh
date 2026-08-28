@@ -59,6 +59,7 @@ echo "=== Deploy-protection self-test ===" && ./scripts/ci/check-deploy-protecti
 echo "=== Main-CI-health decision-core self-test ===" && ./scripts/ci/check-main-ci-health-test.sh
 echo "=== Ansible-drift decision-core self-test ===" && ./scripts/ci/check-ansible-drift-test.sh
 echo "=== Baseline-growth tripwire self-test ===" && ./scripts/ci/lint-baseline-growth-test.sh
+echo "=== Config-apply gate self-test ===" && ./scripts/ci/config-apply-gate-test.sh
 # BASE_SHA-gated: self-skips locally (no comparison base); runs for real in CI
 # with the PR/push base. Invoked here to keep verify↔CI parity honest.
 echo "=== Baseline-growth tripwire ===" && ./scripts/ci/lint-baseline-growth.sh

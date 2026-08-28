@@ -252,6 +252,11 @@ jobs:
         # SIGPIPE past the 64KB pipe buffer and failed PRs that had
         # declared correctly).
         run: ./scripts/ci/lint-baseline-growth-test.sh
+      - name: config-apply gate self-test
+        # Pins config-apply-gate.sh's SURFACES list (2026-08-28: a tasks/-only
+        # release would have passed the gate and shipped the node_exporter
+        # probe dead). Runs pre-restore so the PR's own gate copy is tested.
+        run: ./scripts/ci/config-apply-gate-test.sh
       - name: Restore trusted gate scripts from the base ref
         # CID-03 (audit-2026-07-23): every step below runs from the
         # PR-head checkout, including the SCRIPT FILES themselves — so
