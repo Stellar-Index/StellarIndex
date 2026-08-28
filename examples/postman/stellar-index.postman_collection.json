@@ -23278,7 +23278,7 @@
               "request": {
                 "name": "Create a new API key.",
                 "description": {
-                  "content": "Issues a new API key for the authenticated caller and returns\nthe plaintext exactly once.\n\n`scopes` (optional) confines the new key to route families:\n`read` (public data surfaces), `account` (`/v1/account/*`),\n`dashboard` (`/v1/dashboard/*`), `admin` (`/v1/admin/*`).\nOmitted/empty mints a full-access key — the posture every key\nminted before scopes shipped keeps. Scopes only narrow; they\nnever grant anything the key's tier wouldn't already reach.\n\nOne caller identifier may hold a bounded number of un-revoked\nkeys (25 by default, operator-tunable). A mint that would cross\nthe ceiling returns 409 — revoke a key via\n`DELETE /v1/account/keys/{keyID}` and retry.\n",
+                  "content": "Issues a new API key for the authenticated caller and returns\nthe plaintext exactly once.\n\n`scopes` (optional) confines the new key to route families:\n`read` (public data surfaces), `account` (`/v1/account/*`),\n`dashboard` (`/v1/dashboard/*`), `admin` (`/v1/admin/*`).\nOmitted/empty mints a full-access key — the posture every key\nminted before scopes shipped keeps. Scopes only narrow; they\nnever grant anything the key's tier wouldn't already reach.\n\nOne caller identifier may hold a bounded number of un-revoked\nkeys (25 by default, operator-tunable). A mint that would cross\nthe ceiling returns 409 — revoke a key via\n`DELETE /v1/account/keys/{keyID}` and retry.\n\nThe new key inherits the caller's identifier and tier. An\n**operator-tier** caller rotating its own credential here is\nheld to the admin-write contract: the `X-Reason` header is\nrequired (400 without it) and the mint is recorded as a\n`key.mint` audit row, exactly as `POST /v1/admin/keys`.\nCustomer-tier callers need no header. A `/v1/signup` key's\nemail-verification stamp carries over to the child, so rotated\nkeys keep working under `signup_require_email_verification`.\n",
                   "type": "text/plain"
                 },
                 "url": {
@@ -23767,7 +23767,7 @@
                   "request": {
                     "name": "Revoke an API key by KeyID.",
                     "description": {
-                      "content": "Revokes the API key whose KeyID matches the path parameter,\nscoped to the authenticated caller's Identifier so accounts\ncan only revoke their own keys. \"Not found\" and \"not yours\"\ncollapse to 204 to prevent cross-account enumeration probes.\n\nThe caller cannot revoke the key they're authenticated with —\nthat would orphan the connection mid-request. 409 in that\ncase so the UI can prompt for an alternate credential.\n",
+                      "content": "Revokes the API key whose KeyID matches the path parameter,\nscoped to the authenticated caller's Identifier so accounts\ncan only revoke their own keys. \"Not found\" and \"not yours\"\ncollapse to 204 to prevent cross-account enumeration probes.\n\nThe caller cannot revoke the key they're authenticated with —\nthat would orphan the connection mid-request. 409 in that\ncase so the UI can prompt for an alternate credential.\n\nAn **operator-tier** caller must send `X-Reason` (400 without\nit); the revoke is recorded as a `key.revoke` audit row, as\n`DELETE /v1/admin/keys/{keyID}` does. Customer-tier callers\nneed no header.\n",
                       "type": "text/plain"
                     },
                     "url": {

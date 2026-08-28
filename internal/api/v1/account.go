@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -172,7 +174,9 @@ type KeyCreated struct {
 // caller's Identifier (so callers can only mint keys that share
 // their owner reference) and ignores Tier — the new key inherits
 // the caller's tier verbatim. Operator callers mint for other
-// identifiers/tiers via POST /v1/admin/keys.
+// identifiers/tiers via POST /v1/admin/keys; an operator rotating
+// its OWN credential here is held to the same audit contract as
+// that path (X-Reason header + persisted key.mint row).
 //
 // Scopes is optional: for a full-access caller (empty scope list),
 // absent/empty mints a full-access key (the pre-scopes posture);
@@ -380,6 +384,14 @@ func (s *Server) readUsageLegacy(r *http.Request, key string) []UsageRow {
 //
 // Anonymous → 401. Missing/empty body → 400. Store unavailable →
 // 503 (the binary didn't wire one because Redis was missing).
+//
+// Operator-tier callers keep tier inheritance (this is the staff
+// rotation path) but pay the admin-write price for it: X-Reason is
+// required (400 without) and the mint lands a "key.mint" audit row
+// naming the actor, exactly as POST /v1/admin/keys does. Pre-fix an
+// operator credential could spawn further operator credentials here
+// with no reason and no audit trail (api-security-1, audit
+// 2026-08-28).
 func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request) {
 	subject, ok := auth.SubjectFrom(r.Context())
 	if !ok || subject.Tier == auth.TierAnonymous || subject.Tier == "" {
@@ -396,37 +408,13 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 			"this deployment has no AccountStore wired — typically because Redis is unavailable")
 		return
 	}
+	reason, ok := s.operatorReasonOK(w, r, subject)
+	if !ok {
+		return
+	}
 
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4*1024))
-	if err != nil {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/body-too-large",
-			"Request body too large", http.StatusBadRequest,
-			"/v1/account/keys body must be under 4 KiB")
-		return
-	}
-	var req createKeyRequest
-	if len(body) > 0 {
-		if err := json.Unmarshal(body, &req); err != nil {
-			writeProblem(w, r,
-				"https://api.stellarindex.io/errors/invalid-body",
-				"Malformed JSON body", http.StatusBadRequest,
-				"could not parse request body as JSON")
-			return
-		}
-	}
-	if req.Label == "" {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/missing-label",
-			"Label is required", http.StatusBadRequest,
-			"the new key needs a label so the customer can identify it later")
-		return
-	}
-	if len(req.Label) > 128 {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/label-too-long",
-			"Label too long", http.StatusBadRequest,
-			"label must be 128 characters or fewer")
+	req, ok := parseCreateKeyRequest(w, r)
+	if !ok {
 		return
 	}
 
@@ -482,6 +470,10 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if subject.Tier == auth.TierOperator {
+		s.recordAccountKeyMintAudit(r, subject, req.Label, scopes, rec.KeyID, reason)
+	}
+
 	writeEnvelopeStatus(w, http.StatusCreated, Envelope{
 		Data: KeyCreated{
 			KeyID:     rec.KeyID,
@@ -493,6 +485,162 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 		AsOf:  rec.CreatedAt,
 		Flags: Flags{},
 	})
+}
+
+// parseCreateKeyRequest reads + validates the POST /v1/account/keys
+// body. ok=false means the 400 has already been written.
+func parseCreateKeyRequest(w http.ResponseWriter, r *http.Request) (createKeyRequest, bool) {
+	var req createKeyRequest
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4*1024))
+	if err != nil {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/body-too-large",
+			"Request body too large", http.StatusBadRequest,
+			"/v1/account/keys body must be under 4 KiB")
+		return req, false
+	}
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &req); err != nil {
+			writeProblem(w, r,
+				"https://api.stellarindex.io/errors/invalid-body",
+				"Malformed JSON body", http.StatusBadRequest,
+				"could not parse request body as JSON")
+			return req, false
+		}
+	}
+	if req.Label == "" {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/missing-label",
+			"Label is required", http.StatusBadRequest,
+			"the new key needs a label so the customer can identify it later")
+		return req, false
+	}
+	if len(req.Label) > 128 {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/label-too-long",
+			"Label too long", http.StatusBadRequest,
+			"label must be 128 characters or fewer")
+		return req, false
+	}
+	return req, true
+}
+
+// operatorReasonOK enforces the admin-write X-Reason contract
+// (platform-spec §7.2) on the self-service key routes when — and only
+// when — the caller is operator-tier. Customer callers are untouched:
+// their mints/revokes are bounded to their own identifier and tier and
+// are not staff actions. Returns ok=false when it has already written
+// the 400.
+func (s *Server) operatorReasonOK(w http.ResponseWriter, r *http.Request, subject auth.Subject) (string, bool) {
+	if subject.Tier != auth.TierOperator {
+		return "", true
+	}
+	reason := r.Header.Get("X-Reason")
+	if reason == "" {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/missing-reason",
+			"X-Reason header required", http.StatusBadRequest,
+			"operator-tier callers of /v1/account/keys capture an X-Reason header into the audit log, "+
+				"same as /v1/admin/keys")
+		return "", false
+	}
+	return reason, true
+}
+
+// recordAccountKeyMintAudit logs and persists the "key.mint" audit row
+// for an operator-tier self-service mint — same shape as the admin mint
+// so one query over key.mint rows finds every operator credential ever
+// issued, whichever route minted it; "route" tells the two apart.
+// Best-effort — same contract as recordAdminKeyMintAudit: a sink
+// failure logs at WARN and never blocks the mint.
+func (s *Server) recordAccountKeyMintAudit(
+	r *http.Request, actor auth.Subject, label string, scopes []string, mintedKeyID, reason string,
+) {
+	s.logger.Info("account key mint (operator)",
+		"actor_key_id", actor.KeyID,
+		"actor_identifier", actor.Identifier,
+		"minted_key_id", mintedKeyID,
+		"tier", actor.Tier,
+		"scopes", scopes,
+		"reason", reason)
+	if s.audit == nil {
+		return
+	}
+	meta, err := json.Marshal(map[string]any{
+		"route":              "/v1/account/keys",
+		"actor_key_id":       actor.KeyID,
+		"actor_identifier":   actor.Identifier,
+		"target_identifier":  actor.Identifier,
+		"tier":               string(actor.Tier),
+		"label":              label,
+		"scopes":             scopes,
+		"rate_limit_per_min": actor.RateLimitPerMin,
+		"reason":             reason,
+	})
+	if err != nil {
+		s.logger.Warn("account key mint: audit metadata marshal failed (skipping audit row)",
+			"err", err, "minted_key_id", mintedKeyID)
+		return
+	}
+	s.appendKeyAudit(r, platform.AuditEntry{
+		ActorKind:  platform.ActorStaff,
+		Action:     "key.mint",
+		TargetKind: "api_key",
+		TargetID:   mintedKeyID,
+		Metadata:   meta,
+	}, "key_mint", "account key mint")
+}
+
+// recordAccountKeyRevokeAudit logs and persists the "key.revoke" audit
+// row for an operator-tier self-service revoke. Best-effort, same
+// contract as recordAdminKeyRevokeAudit — the revoke already happened
+// and must not be undone by an audit-sink outage.
+func (s *Server) recordAccountKeyRevokeAudit(
+	r *http.Request, actor auth.Subject, keyID, reason string,
+) {
+	s.logger.Info("account key revoke (operator)",
+		"actor_key_id", actor.KeyID,
+		"actor_identifier", actor.Identifier,
+		"key_id", keyID,
+		"reason", reason)
+	if s.audit == nil {
+		return
+	}
+	meta, err := json.Marshal(map[string]any{
+		"route":             "/v1/account/keys",
+		"actor_key_id":      actor.KeyID,
+		"actor_identifier":  actor.Identifier,
+		"target_identifier": actor.Identifier,
+		"reason":            reason,
+	})
+	if err != nil {
+		s.logger.Warn("account key revoke: audit metadata marshal failed (skipping audit row)",
+			"err", err, "key_id", keyID)
+		return
+	}
+	s.appendKeyAudit(r, platform.AuditEntry{
+		ActorKind:  platform.ActorStaff,
+		Action:     "key.revoke",
+		TargetKind: "api_key",
+		TargetID:   keyID,
+		Metadata:   meta,
+	}, "key_revoke", "account key revoke")
+}
+
+// appendKeyAudit stamps the request-derived fields (UA, IP, timestamp)
+// onto entry and appends it best-effort, counting a sink failure under
+// the given AdminAuditWriteFailuresTotal surface label (C3-067).
+func (s *Server) appendKeyAudit(r *http.Request, entry platform.AuditEntry, surface, what string) {
+	entry.UserAgent = r.UserAgent()
+	entry.Timestamp = time.Now().UTC()
+	if ip := middleware.RemoteIP(r); ip != "" {
+		entry.IP = net.ParseIP(ip)
+	}
+	if err := s.audit.Append(r.Context(), entry); err != nil {
+		obs.AdminAuditWriteFailuresTotal.WithLabelValues(surface).Inc()
+		s.logger.Warn(what+": audit append failed (best-effort)",
+			"err", err, "key_id", entry.TargetID)
+	}
 }
 
 // defaultAccountKeyQuota is the self-service active-key ceiling one
@@ -666,6 +814,10 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 			"this deployment has no AccountStore wired — typically because Redis is unavailable")
 		return
 	}
+	reason, ok := s.operatorReasonOK(w, r, subject)
+	if !ok {
+		return
+	}
 	if err := s.accounts.RevokeKeyByID(r.Context(), subject.Identifier, keyID); err != nil {
 		s.logger.Error("account keys revoke failed", "err", err,
 			"identifier", subject.Identifier, "key_id", keyID)
@@ -674,6 +826,9 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 			"Could not revoke key", http.StatusInternalServerError,
 			"see X-Request-ID in server logs")
 		return
+	}
+	if subject.Tier == auth.TierOperator {
+		s.recordAccountKeyRevokeAudit(r, subject, keyID, reason)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

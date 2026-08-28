@@ -59,6 +59,17 @@ against.
   `docs/operations/clickhouse-ops-batch-profile.md`.
 ### Fixed
 
+- **Operator self-service key mint/revoke now audited (api-security-1,
+  audit 2026-08-28).** `POST /v1/account/keys` copied an operator
+  caller's tier verbatim into the child and recorded nothing — no
+  `X-Reason`, no `key.mint` row — so a compromised staff credential
+  could spawn further operator credentials that `POST /v1/admin/keys`
+  would have refused without a reason and logged. Tier inheritance
+  (staff rotation) is kept; operator-tier callers of
+  `POST /v1/account/keys` and `DELETE /v1/account/keys/{keyID}` now
+  need `X-Reason` (400 without) and land the same `key.mint` /
+  `key.revoke` audit rows as the admin routes. Customer-tier callers
+  are untouched.
 - **Rotated signup keys no longer 403 forever under email verification
   (api-security-2, audit 2026-08-28).** With
   `signup_require_email_verification` on (the default), a verified
