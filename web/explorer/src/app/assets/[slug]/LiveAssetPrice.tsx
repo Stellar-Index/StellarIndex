@@ -15,6 +15,13 @@ export type PriceProvenance =
   | 'triangulated'
   | 'listing'
   | 'declared_peg'
+  // A two-hop DEX route priced by /v1/assets ({asset→hop}, {hop→USD}),
+  // both legs substance-gated. Deliberately NOT folded into
+  // 'triangulated': that one means the aggregator's FX cross-rate
+  // (XLM/USD × USD/EUR), a different derivation with a different
+  // trust story, and captioning one as the other would tell the
+  // reader the price came from somewhere it did not.
+  | 'transitive'
   | null;
 
 /** A tip tick is "live" while fresher than this (producer window is
@@ -70,9 +77,21 @@ export function LiveAssetPrice({
   // market claim and therefore not the "lower-trust snapshot" the rule
   // exists to purge. Keep the peg price + its honest caption instead
   // of blanking it on every poll.
-  const pegged = initialProvenance === 'declared_peg';
-  const withheld = poll.withheld && !pegged;
-  const price = poll.withheld && pegged ? initialPrice : poll.price;
+  //
+  // 'transitive' joins the exception for the same reason, one step
+  // further out: /v1/price answers for DIRECT markets only, so for a
+  // two-hop asset it returns no price at all (measured on CAUP7:
+  // /v1/price → price:null while /v1/assets → 7768.93, basis
+  // "transitive"). A withheld verdict there is a statement about the
+  // direct market the server refused to aggregate — it says nothing
+  // about the two-hop route, whose own legs were substance-gated
+  // before /v1/assets would serve it. Blanking the route price on
+  // that verdict would delete a gated price because a DIFFERENT,
+  // ungated one was correctly refused.
+  const derived =
+    initialProvenance === 'declared_peg' || initialProvenance === 'transitive';
+  const withheld = poll.withheld && !derived;
+  const price = poll.withheld && derived ? initialPrice : poll.price;
   const live = poll.polled;
   const stale = poll.polled ? poll.stale : Boolean(initialStale);
   const provenance: PriceProvenance =
@@ -152,13 +171,25 @@ export function LiveAssetPrice({
           shown != null &&
           provenance === 'declared_peg' &&
           'pegged · declared 1:1 fiat peg × fx rate · not a market price'}
+        {!withheld &&
+          !tipActive &&
+          shown != null &&
+          provenance === 'transitive' &&
+          'derived · two-hop DEX route · both legs substance-gated'}
         {!withheld && !tipActive && shown != null && stale && ' · stale'}
+        {/* 'transitive' joins listing/declared_peg here: those captions
+            describe a price that never came from the /v1/price poll, so
+            "as baked at deploy" would be a lie about its freshness. The
+            transitive figure is fetched live from /v1/assets on this
+            very render — it is the poll that has nothing to say, not
+            the price that is old. */}
         {!withheld &&
           !tipActive &&
           shown != null &&
           !live &&
           provenance !== 'listing' &&
           provenance !== 'declared_peg' &&
+          provenance !== 'transitive' &&
           ' · as baked at deploy'}
       </p>
     </>

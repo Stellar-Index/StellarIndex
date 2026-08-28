@@ -6,7 +6,9 @@ import type { LiveTip, StreamFrame } from '@/lib/live/hooks';
 import { LiveAssetPrice } from './LiveAssetPrice';
 
 const useTipStream = vi.hoisted(() =>
-  vi.fn<(asset: string | null, quote?: string) => StreamFrame<LiveTip> | null>(),
+  vi.fn<
+    (asset: string | null, quote?: string) => StreamFrame<LiveTip> | null
+  >(),
 );
 vi.mock('@/lib/live/hooks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/live/hooks')>()),
@@ -30,11 +32,17 @@ describe('LiveAssetPrice', () => {
   it('falls back to the baked price + provenance when no stream frames arrive', () => {
     useTipStream.mockReturnValue(null);
     render(
-      <LiveAssetPrice assetID="native" initialPrice={0.17} initialProvenance="vwap1m" />,
+      <LiveAssetPrice
+        assetID="native"
+        initialPrice={0.17}
+        initialProvenance="vwap1m"
+      />,
     );
     expect(screen.getByText(/\$0\.17/)).toBeInTheDocument();
     expect(screen.getByText(/1-min VWAP · USD/i)).toBeInTheDocument();
-    expect(screen.queryByRole('status', { name: 'live' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('status', { name: 'live' }),
+    ).not.toBeInTheDocument();
   });
 
   it('a fresh tip frame takes over the headline with the live caption', () => {
@@ -47,10 +55,16 @@ describe('LiveAssetPrice', () => {
       receivedAt: Date.now(),
     });
     render(
-      <LiveAssetPrice assetID="native" initialPrice={0.17} initialProvenance="vwap1m" />,
+      <LiveAssetPrice
+        assetID="native"
+        initialPrice={0.17}
+        initialProvenance="vwap1m"
+      />,
     );
     expect(screen.getByText(/\$0\.1745/)).toBeInTheDocument();
-    expect(screen.getByText(/live tip price · USD · streaming/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/live tip price · USD · streaming/i),
+    ).toBeInTheDocument();
     expect(screen.getByRole('status', { name: 'live' })).toBeInTheDocument();
   });
 
@@ -65,7 +79,9 @@ describe('LiveAssetPrice', () => {
     );
     expect(screen.getByText(/\$0\.655/)).toBeInTheDocument();
     expect(
-      screen.getByText(/pegged · declared 1:1 fiat peg × fx rate · not a market price/i),
+      screen.getByText(
+        /pegged · declared 1:1 fiat peg × fx rate · not a market price/i,
+      ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/VWAP/i)).not.toBeInTheDocument();
   });
@@ -100,7 +116,9 @@ describe('LiveAssetPrice', () => {
     });
     expect(await screen.findByText(/\$0\.655/)).toBeInTheDocument();
     expect(
-      screen.getByText(/pegged · declared 1:1 fiat peg × fx rate · not a market price/i),
+      screen.getByText(
+        /pegged · declared 1:1 fiat peg × fx rate · not a market price/i,
+      ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/price withheld/i)).not.toBeInTheDocument();
   });
@@ -118,7 +136,11 @@ describe('LiveAssetPrice', () => {
       }),
     );
     render(
-      <LiveAssetPrice assetID="native" initialPrice={0.17} initialProvenance="listing" />,
+      <LiveAssetPrice
+        assetID="native"
+        initialPrice={0.17}
+        initialProvenance="listing"
+      />,
     );
     expect(
       await screen.findByText(/price withheld · market too thin to aggregate/i),
@@ -132,9 +154,63 @@ describe('LiveAssetPrice', () => {
       receivedAt: Date.now() - 60_000,
     });
     render(
-      <LiveAssetPrice assetID="native" initialPrice={0.17} initialProvenance="vwap1m" />,
+      <LiveAssetPrice
+        assetID="native"
+        initialPrice={0.17}
+        initialProvenance="vwap1m"
+      />,
     );
     expect(screen.getByText(/\$0\.17/)).toBeInTheDocument();
     expect(screen.queryByText(/streaming/i)).not.toBeInTheDocument();
+  });
+});
+
+// REGRESSION (2026-08-28): the transitive price was invisible in the UI.
+//
+// /v1/price answers for DIRECT markets only, so a two-hop asset gets
+// price:null there while /v1/assets serves a real substance-gated
+// figure (measured on CAUP7: null vs 7768.93, basis "transitive").
+// AssetPathView passed initialPrice={null} regardless, so exactly the
+// assets transitive pricing was built for rendered a permanent "—".
+describe('LiveAssetPrice — transitive provenance', () => {
+  it('renders a transitive price with an honest caption', () => {
+    useTipStream.mockReturnValue(null);
+    render(
+      <LiveAssetPrice
+        assetID="CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J"
+        initialPrice={7768.93}
+        initialProvenance="transitive"
+      />,
+    );
+    expect(screen.getByText(/7,?768/)).toBeInTheDocument();
+    expect(screen.getByText(/two-hop DEX route/i)).toBeInTheDocument();
+  });
+
+  // A transitive price is fetched live from /v1/assets on this render —
+  // it is the POLL that has nothing to say, not the price that is old.
+  it('does not caption a transitive price "as baked at deploy"', () => {
+    useTipStream.mockReturnValue(null);
+    render(
+      <LiveAssetPrice
+        assetID="CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J"
+        initialPrice={7768.93}
+        initialProvenance="transitive"
+      />,
+    );
+    expect(screen.queryByText(/as baked at deploy/i)).not.toBeInTheDocument();
+  });
+
+  // It must NOT be captioned as the aggregator's FX cross-rate: that is
+  // a different derivation with a different trust story.
+  it('is not labelled "triangulated via XLM"', () => {
+    useTipStream.mockReturnValue(null);
+    render(
+      <LiveAssetPrice
+        assetID="CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J"
+        initialPrice={7768.93}
+        initialProvenance="transitive"
+      />,
+    );
+    expect(screen.queryByText(/triangulated via XLM/i)).not.toBeInTheDocument();
   });
 });

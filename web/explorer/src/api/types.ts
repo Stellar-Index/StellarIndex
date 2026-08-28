@@ -5406,10 +5406,10 @@ export interface components {
             /** @description Current per-asset USD price as a fixed-precision decimal string — same value `/v1/price?asset=…&quote=fiat:USD` returns. Inlined so wallet UIs don't need a second round-trip. Null when no USD price can be derived. When `price_basis` is present the value is NOT a market observation — see that field. */
             price_usd?: string | null;
             /**
-             * @description Present ONLY when price_usd is not a market observation. `declared_peg`: the price was filled from an operator-declared 1:1 fiat peg × the current fiat→USD FX rate (pricing_guard.fiat_pegged_classic_assets) because no market-derived price survived the thin-market substance gate. Absent = market-derived (the pre-existing contract, unchanged). Peg-priced rows deliberately carry no change pills, sparkline claim, or market_cap derived from the peg — the fill asserts a conversion basis, not a market.
+             * @description Present ONLY when price_usd is not a DIRECT market observation. `declared_peg`: the price was filled from an operator-declared 1:1 fiat peg × the current fiat→USD FX rate (pricing_guard.fiat_pegged_classic_assets) because no market-derived price survived the thin-market substance gate — peg-priced rows deliberately carry no change pills, sparkline claim, or market_cap derived from the peg, because the fill asserts a conversion basis, not a market. `transitive`: the price was derived through ONE intermediate hop (asset→hop, hop→USD) where the asset has no direct USD or XLM market of its own; BOTH legs are independently substance-gated before the value is served, so a thin intermediate cannot reprice everything quoted against it. Note this value is served ONLY here — `/v1/price` answers for direct markets and returns no price for a transitive asset. Absent = direct market-derived (the pre-existing contract, unchanged).
              * @enum {string}
              */
-            price_basis?: "declared_peg";
+            price_basis?: "declared_peg" | "transitive";
             /** @description Trailing-24h price change as a signed decimal percentage with two fractional digits (e.g. "+1.27", "-0.05", "0.00"). Null when the asset has no current USD price or no comparison bucket ~24h ago. */
             change_24h_pct?: string | null;
             /** @description circulating_supply × USD price / 10^decimals, two fractional digits. Null when supply or USD price is unavailable, OR when suppressed as dust-liquidity (see market_cap_low_liquidity). */
