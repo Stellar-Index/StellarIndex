@@ -59,6 +59,26 @@ against.
   `docs/operations/clickhouse-ops-batch-profile.md`.
 ### Fixed
 
+- **`pgbackrest.conf` template task printed the backup cipher passphrases
+  and repo2 S3 key pair on `--check --diff`.** The task rendering
+  `pgbackrest.conf.j2` had no `diff: false`, and the header comment
+  claimed the credentials came from env vars "never inline in this
+  file" — they are (and must be: pgbackrest reads them from the
+  postgres-owned 0640 file, including from `archive_command` inside the
+  postgres server process, which no unit-level EnvironmentFile reaches).
+  The documented review path (`--check --diff` in README, the operator
+  register, and the weekly `ansible-drift` job which `tee`s its output
+  into a GitHub Actions log — where only registered secrets are masked,
+  not vault-decrypted values) therefore printed the ONLY key that
+  decrypts the offsite survival backup. The task now sets `diff: false`
+  (changed/ok verdict stays visible; hunk body suppressed) and the
+  header tells the truth. New gate `scripts/ci/lint-ansible-secret-diff.py`
+  (ansible-check job + `verify.sh`) fails any template task whose
+  template renders a secret-shaped var without `diff: false`/`no_log`;
+  the seven pre-existing sibling tasks (redis, patroni, keepalived,
+  minio) are grandfathered by name for burn-down. Retention is
+  untouched (ADR-0043). (audit-2026-08-28 backup-restore-7)
+
 - **Outlier filter trimmed agreed price moves; `outlier_storm` measured
   its own artifact.** The published-VWAP filter scored every print
   against ONE band — the whole window's median ± 4 × 1.4826 × MAD — and

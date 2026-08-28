@@ -5,9 +5,15 @@
 # repo1 = fast local restore copy (SAME failure domain as the DB —
 # that is exactly why repo2 exists).
 # repo2 = the survival copy: offsite S3-compatible object storage
-# (CS-111). Rendered only when pgbackrest_repo2_s3_bucket is set;
-# credentials come from the vault-managed env vars referenced below —
-# never inline in this file.
+# (CS-111). Rendered only when pgbackrest_repo2_s3_bucket is set.
+#
+# SECRETS: the cipher passphrases and the repo2 S3 key pair are
+# vault-managed inventory vars rendered INTO this file — pgbackrest has
+# no env-file form that also reaches archive_command inside the postgres
+# server process, so the postgres-owned 0640 file is the upstream
+# pattern. Treat the rendered file as secret material: the templating
+# task sets `diff: false` so `--check --diff` never prints it
+# (audit-2026-08-28 backup-restore-7).
 #
 # ENCRYPTION (audit-2026-07-23 F4-F2): a pgBackRest repo's cipher is
 # fixed at `stanza-create` time and CANNOT be flipped on an existing
