@@ -2474,6 +2474,15 @@ export interface paths {
          *     keys (25 by default, operator-tunable). A mint that would cross
          *     the ceiling returns 409 — revoke a key via
          *     `DELETE /v1/account/keys/{keyID}` and retry.
+         *
+         *     The new key inherits the caller's identifier and tier. An
+         *     **operator-tier** caller rotating its own credential here is
+         *     held to the admin-write contract: the `X-Reason` header is
+         *     required (400 without it) and the mint is recorded as a
+         *     `key.mint` audit row, exactly as `POST /v1/admin/keys`.
+         *     Customer-tier callers need no header. A `/v1/signup` key's
+         *     email-verification stamp carries over to the child, so rotated
+         *     keys keep working under `signup_require_email_verification`.
          */
         post: operations["createAccountKey"];
         delete?: never;
@@ -2502,6 +2511,11 @@ export interface paths {
          *     The caller cannot revoke the key they're authenticated with —
          *     that would orphan the connection mid-request. 409 in that
          *     case so the UI can prompt for an alternate credential.
+         *
+         *     An **operator-tier** caller must send `X-Reason` (400 without
+         *     it); the revoke is recorded as a `key.revoke` audit row, as
+         *     `DELETE /v1/admin/keys/{keyID}` does. Customer-tier callers
+         *     need no header.
          */
         delete: operations["deleteAccountKey"];
         options?: never;
