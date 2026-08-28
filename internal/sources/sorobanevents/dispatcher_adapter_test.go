@@ -512,3 +512,111 @@ func TestAsyncSink_ShutdownDrainRetriesTransientFailure(t *testing.T) {
 			"so this test is not exercising the drain retry path", w.calls)
 	}
 }
+
+// stopRacedWriter models the exact shape of the 2026-08-28 CI failure
+// (run 33168844647): a steady-state batch write is IN FLIGHT when
+// Stop() fires. The first call parks until its ctx is cancelled (which
+// the sink does the instant s.stopping closes) and returns ctx.Err(),
+// exactly as a real pgx INSERT does when its context is cancelled
+// mid-statement. Every later call succeeds. Deterministic: no
+// dependence on which of two ready select cases the scheduler picks.
+type stopRacedWriter struct {
+	entered chan struct{} // closed when the first (in-flight) call starts
+	mu      sync.Mutex
+	calls   int
+	written int
+}
+
+func newStopRacedWriter() *stopRacedWriter {
+	return &stopRacedWriter{entered: make(chan struct{})}
+}
+
+func (w *stopRacedWriter) InsertSorobanEventsBatch(ctx context.Context, rows []Row) error {
+	w.mu.Lock()
+	w.calls++
+	first := w.calls == 1
+	w.mu.Unlock()
+	if first {
+		close(w.entered)
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	w.mu.Lock()
+	w.written += len(rows)
+	w.mu.Unlock()
+	return nil
+}
+
+func (w *stopRacedWriter) WrittenRows() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.written
+}
+
+func (w *stopRacedWriter) Calls() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.calls
+}
+
+// TestAsyncSink_StopRacingInFlightSteadyStateFlush_RowsLandNotLost pins
+// the shutdown data-loss class caught by main CI run 33168844647
+// (2026-08-28): TestAsyncSink_StopDrainsPendingRows_NoChannelClose
+// failed with "WrittenCount = 6, want 10" — 10 rows minus one
+// BatchSize=4 batch — on a slow -race runner.
+//
+// Mechanism: a steady-state flushBatch used s.stopping as its abort
+// signal. When Stop() closed it while a batch write was in flight, the
+// write's ctx was cancelled, the write returned an error, and the
+// abort branch ABANDONED the batch as lost — rows already accepted into
+// the sink, discarded on every indexer restart/deploy, in the
+// soroban_events raw landing zone. The interrupted batch must instead
+// be carried into the shutdown drain and retried under DrainGrace.
+//
+// Proven red on the pre-fix code: WrittenCount = 6, LostCount = 4,
+// writer received 6 rows.
+func TestAsyncSink_StopRacingInFlightSteadyStateFlush_RowsLandNotLost(t *testing.T) {
+	t.Parallel()
+
+	w := newStopRacedWriter()
+	sink := NewAsyncSink(w, AsyncSinkOptions{
+		BufferSize:    16,
+		BatchSize:     4,
+		FlushInterval: 10 * time.Second,
+		// Long enough that the in-flight write can only end via the
+		// stopping-triggered cancel, never its own deadline.
+		WriteTimeout: 10 * time.Second,
+		DrainGrace:   5 * time.Second,
+	})
+	sink.Start()
+
+	const total = 10
+	for i := 0; i < total; i++ {
+		sink.PushEvent(captureableEvent(t, uint32(4_000_000+i)))
+	}
+
+	// Wait until the first batch's write is in flight, then Stop while
+	// it is still parked — the exact race the CI runner hit.
+	select {
+	case <-w.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("first batch write never started")
+	}
+	sink.Stop()
+
+	if got := sink.LostCount(); got != 0 {
+		t.Errorf("LostCount = %d, want 0 — the in-flight batch was abandoned because Stop raced it", got)
+	}
+	if got := sink.WrittenCount(); got != total {
+		t.Errorf("WrittenCount = %d, want %d", got, total)
+	}
+	if got := w.WrittenRows(); got != total {
+		t.Errorf("writer received %d rows, want %d", got, total)
+	}
+	if got := sink.DroppedCount(); got != 0 {
+		t.Errorf("DroppedCount = %d, want 0 — no producer was blocked at Stop", got)
+	}
+	if got := w.Calls(); got < 2 {
+		t.Errorf("writer saw %d calls, want >=2 — the interrupted batch was never retried", got)
+	}
+}

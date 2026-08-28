@@ -88,12 +88,13 @@ type AsyncSinkOptions struct {
 	//
 	// This exists because "stop was requested" and "stop has waited
 	// long enough" are different events, and conflating them silently
-	// lost data. The steady-state flush aborts on s.stopping so a
-	// stuck write can't hold shutdown hostage — but the shutdown
-	// DRAIN runs entirely after s.stopping is closed, so reusing that
-	// signal made every drained batch abandon-on-arrival. Stop() still
-	// terminates promptly: the drain is bounded by this grace, not by
-	// unbounded retries.
+	// lost data. The steady-state flush is interrupted by s.stopping
+	// so a stuck write can't hold shutdown hostage — its rows are then
+	// handed to the drain, which retries them under this grace (see
+	// [AsyncSink.flushBatch]). The shutdown DRAIN runs entirely after
+	// s.stopping is closed, so reusing that signal made every drained
+	// batch abandon-on-arrival. Stop() still terminates promptly: the
+	// drain is bounded by this grace, not by unbounded retries.
 	DrainGrace time.Duration
 
 	// Logger is used for warn/error lines from the worker. nil falls
@@ -128,12 +129,16 @@ type AsyncSink struct {
 	batchSz    int
 	drainGrace time.Duration
 
-	// abortFlush is the signal that aborts an in-flight or retrying
-	// flush. Steady state it is s.stopping; drainOnStop swaps it for a
-	// bounded grace timer so the final batches can actually land.
-	// Written and read ONLY by the single worker goroutine (run ->
-	// drainOnStop -> flushBatch), never concurrently.
+	// abortFlush is the signal that interrupts an in-flight or
+	// retrying flush. Steady state it is s.stopping; drainOnStop swaps
+	// it for a bounded grace timer so the final batches can actually
+	// land. What happens to the interrupted rows depends on draining:
+	// before the drain they are RETURNED to the worker for the drain
+	// to retry; during the drain (grace expired) they are abandoned.
+	// Both fields are written and read ONLY by the single worker
+	// goroutine (run -> drainOnStop -> flushBatch), never concurrently.
 	abortFlush <-chan struct{}
+	draining   bool
 	stopOnce   sync.Once
 	stopping   chan struct{}
 	done       chan struct{}
@@ -240,13 +245,15 @@ func (s *AsyncSink) PushEvent(ev events.Event) {
 // intentionally NOT closed — that would race with concurrent
 // producers and panic on send-to-closed; instead the worker uses
 // the stopping signal to switch into drain-then-exit mode.
-// Pending rows that fit within the worker's per-batch timeout are
-// flushed; any that error are logged. Idempotent.
+// Pending rows — including a steady-state batch whose write was in
+// flight when Stop fired — are flushed within DrainGrace; any that
+// still error are logged as lost. Idempotent.
 //
 // Lifecycle contract: producers that race past the stopping check
 // are unblocked via the select and counted as dropped — the drop
 // count then reflects shutdown-race row loss only, never
-// steady-state pressure loss.
+// steady-state pressure loss. Rows already accepted into the sink
+// are never counted lost merely because Stop raced their flush.
 func (s *AsyncSink) Stop() {
 	s.stopOnce.Do(func() {
 		close(s.stopping)
@@ -328,9 +335,22 @@ func (s *AsyncSink) run() {
 		if len(batch) == 0 {
 			return
 		}
+		if !s.draining {
+			select {
+			case <-s.stopping:
+				// Stop already fired: a steady-state attempt would be
+				// cancelled on arrival, so leave the rows in batch for
+				// the stopping branch below to carry into drainOnStop.
+				return
+			default:
+			}
+		}
 		b := batch
 		batch = make([]Row, 0, s.batchSz)
-		s.flushBatch(b)
+		// A steady-state flush interrupted by Stop hands its rows back
+		// (batch is empty here because flush is synchronous), and the
+		// stopping branch below carries them into drainOnStop.
+		batch = append(batch, s.flushBatch(b)...)
 	}
 
 	for {
@@ -364,6 +384,7 @@ func (s *AsyncSink) drainOnStop(batch *[]Row, flush func()) {
 	timer := time.AfterFunc(s.drainGrace, func() { close(grace) })
 	defer timer.Stop()
 	s.abortFlush = grace
+	s.draining = true
 
 	for {
 		select {
@@ -392,12 +413,24 @@ func (s *AsyncSink) drainOnStop(batch *[]Row, flush func()) {
 // zone, the last-resort source of truth Row.Ledger the census +
 // completeness tooling reconcile against).
 //
-// The retry loop is bounded by s.stopping: an in-flight attempt is
-// cancelled the instant Stop() fires (so shutdown isn't held hostage
-// by a stuck write), and a batch that still hasn't landed at that
-// point is abandoned loudly via [AsyncSink.abandonBatch] rather than
-// retried forever.
-func (s *AsyncSink) flushBatch(rows []Row) {
+// The retry loop is bounded by s.abortFlush. Steady state that is
+// s.stopping: an in-flight attempt is cancelled the instant Stop()
+// fires (so shutdown isn't held hostage by a stuck write) and the
+// rows that have not landed are RETURNED so the worker can carry
+// them into drainOnStop, which retries them under DrainGrace. They
+// used to be abandoned right here — so a Stop() that raced a healthy
+// in-flight write (the write's own ctx is cancelled, it returns
+// context.Canceled) counted a whole batch as lost on every restart
+// or deploy; CI run 33168844647 (2026-08-28) caught it as
+// TestAsyncSink_StopDrainsPendingRows_NoChannelClose "WrittenCount =
+// 6, want 10" (10 rows minus one BatchSize=4 batch). During the
+// drain abortFlush is the grace timer, and a batch that still hasn't
+// landed when it fires is abandoned loudly via
+// [AsyncSink.abandonBatch] rather than retried forever.
+//
+// Returns the rows that were neither written nor abandoned (nil in
+// the drain, and in steady state unless Stop interrupted).
+func (s *AsyncSink) flushBatch(rows []Row) []Row {
 	abort := s.abortFlush
 	backoff := asyncSinkRetryInitialBackoff
 	for {
@@ -418,16 +451,19 @@ func (s *AsyncSink) flushBatch(rows []Row) {
 			s.mu.Lock()
 			s.written += uint64(len(rows))
 			s.mu.Unlock()
-			return
+			return nil
 		}
 		if s.isPermanentFault(err) {
 			s.abandonBatch(rows, err, "permanent data fault")
-			return
+			return nil
 		}
 		select {
 		case <-abort:
+			if !s.draining {
+				return rows // Stop raced this flush: the drain retries it.
+			}
 			s.abandonBatch(rows, err, "shutdown before the write landed")
-			return
+			return nil
 		case <-time.After(backoff):
 		}
 		s.logger.Warn("sorobanevents: batch insert failed — retrying with backpressure",
