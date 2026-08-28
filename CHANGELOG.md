@@ -92,6 +92,16 @@ against.
   `set -a; source` safe. `scripts/ci/envfile-loader-test.sh` pins all
   consumers in lockstep and round-trips a metacharacter fixture.
 
+- **`deploy.yml` `health_grace_seconds` was unvalidated and spliced into
+  `ansible-playbook -e` (deploy-ansible-input-8).** The input is
+  `type: string` (the comment claiming GitHub enforced `number` was
+  false), and ansible's k=v `-e` form splits on whitespace, so a
+  dispatch value like `15 backup_freshness_skip=true` injected a second
+  extra-var and skipped the backup-freshness gate with a nominal-looking
+  step summary. Validate now requires `^[0-9]{1,4}$`;
+  `scripts/ci/deploy-inputs-test.sh` runs the shipped Validate step
+  against the injection and the malformed cases.
+
 - **Outlier filter trimmed agreed price moves; `outlier_storm` measured
   its own artifact.** The published-VWAP filter scored every print
   against ONE band — the whole window's median ± 4 × 1.4826 × MAD — and

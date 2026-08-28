@@ -454,6 +454,13 @@ jobs:
         # Pins every consumer to the verbatim reader and proves it
         # round-trips metacharacters. No network, no ansible.
         run: ./scripts/ci/envfile-loader-test.sh
+      - name: deploy-inputs self-test
+        # deploy-ansible-input-8: runs deploy.yml's shipped Validate step
+        # against a `health_grace_seconds` carrying whitespace — ansible's
+        # k=v `-e` form splits on whitespace, so an unvalidated value
+        # injected backup_freshness_skip=true and skipped the backup gate.
+        # No network, no gh.
+        run: ./scripts/ci/deploy-inputs-test.sh
       - name: lint-lexicon
         # Maintainability audit 2026-07-01 (D2+D6): domain-lexicon +
         # idiom ratchet. Zero rules (no Fetch/Make verbs, slog is the

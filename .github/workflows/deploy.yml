@@ -215,10 +215,22 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           BINARIES: ${{ inputs.binaries }}
+          HEALTH_GRACE: ${{ inputs.health_grace_seconds }}
         run: |
           set -euo pipefail
           if ! echo "$VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?(\+[A-Za-z0-9.-]+)?$'; then
             echo "::error::Version '$VERSION' must match SemVer vX.Y.Z[-prerelease][+build]"
+            exit 1
+          fi
+          # deploy-ansible-input-8: health_grace_seconds is a `type: string`
+          # input (GitHub's `number` typing is UI/API-side and `gh workflow
+          # run -f` bypasses it), and it is spliced into
+          # `-e "health_grace_seconds=${HEALTH_GRACE}"`. ansible parses that
+          # k=v form on WHITESPACE, so a value like
+          # `15 backup_freshness_skip=true` would inject a second extra-var
+          # and silently skip the backup-freshness gate. Digits only.
+          if ! [[ "$HEALTH_GRACE" =~ ^[0-9]{1,4}$ ]]; then
+            echo "::error::health_grace_seconds '$HEALTH_GRACE' must be 1-4 digits (seconds); anything else could inject extra-vars into ansible-playbook -e"
             exit 1
           fi
           # Reject empty / whitespace-only binary list early
@@ -563,13 +575,15 @@ jobs:
       - name: Run deploy playbook
         # F-1298 (wave 126): inputs through `env:`. Note that
         # `ansible-playbook -e "key=$VAR"` STILL needs care —
-        # ansible-playbook itself parses that string. The
+        # ansible-playbook itself parses that string, splitting
+        # the k=v form on whitespace into MULTIPLE vars. The
         # validation regex on `version` (in the Validate step
-        # above) and the `[a-zA-Z0-9-]+` regex on per-binary
-        # entries (also above) guarantee these values can't
-        # carry shell metacharacters. health_grace_seconds is
-        # type=number per the workflow_dispatch schema so
-        # GitHub itself enforces the type before substitution.
+        # above), the `[a-zA-Z0-9-]+` regex on per-binary
+        # entries and the `^[0-9]{1,4}$` regex on
+        # health_grace_seconds (deploy-ansible-input-8 — it is a
+        # `type: string` input; GitHub does NOT enforce a number
+        # type for `gh workflow run -f`) guarantee none of these
+        # values can carry whitespace or shell metacharacters.
         env:
           ANSIBLE_HOST_KEY_CHECKING: 'True'
           ANSIBLE_FORCE_COLOR: '1'
