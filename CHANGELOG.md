@@ -15,6 +15,24 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Native XLM supply is now network-aware.** `internal/supply` derived
+  `total_supply` / `max_supply` from the frozen pubnet constant
+  (50,001,806,812 XLM) regardless of the configured network, so
+  `api.testnet.stellarindex.io/v1/assets/native` served the mainnet
+  figure against a testnet ledger whose `total_coins` is 100 B (measured
+  2026-08-28). The aggregator and `stellarindex-ops supply snapshot`
+  now build the computer via `supply.NewXLMComputerForNetwork(cfg.Stellar.
+  Passphrase(), …)`: testnet and futurenet get the 100 B genesis total
+  (== their ledger `total_coins`), pubnet output is byte-identical, and an
+  unrecognised passphrase fails at startup (`supply.ErrUnknownNetwork`)
+  instead of silently falling back to the pubnet number. `supply_basis`
+  is unchanged (`xlm_total_only` with no reserve accounts configured,
+  which is the honest testnet state). Existing testnet/futurenet
+  `asset_supply_history` rows written with the 50.0 B total are
+  superseded by the next refresher cycle after deploy.
+
 ### Added
 
 - **CI replay-plan tripwire (`scripts/ci/lint-replay-plan.sh`).** On
