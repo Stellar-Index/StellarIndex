@@ -78,6 +78,12 @@ export function Footer() {
               { label: 'Careers', href: '/careers' },
               { label: 'Contact', href: '/contact' },
               { label: 'API status', href: '/status' },
+              // Legal surface (DRAFT pending operator legal review,
+              // 2026-08-28): accounts + API keys existed without any
+              // published terms or privacy policy. Network-agnostic, so
+              // deliberately NOT in LEAN_HIDDEN_HREFS.
+              { label: 'Terms of service', href: '/terms' },
+              { label: 'Privacy policy', href: '/privacy' },
             ]}
           />
           <FooterColumn
