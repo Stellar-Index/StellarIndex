@@ -37,17 +37,20 @@ func TestListAssetsBaseSelectSQL_WithPushdown(t *testing.T) {
 		t.Error("PUSHDOWN markers must be replaced (not left as raw comments) when pushdown active")
 	}
 	// Since #43, per_asset_24h_vol reads the asset_volume_24h rollup and
-	// no longer carries pushdown markers. The 8 remaining base-side
-	// filters are the price CTEs: direct_usd, direct_usd_1h/24h/7d,
-	// asset_vs_xlm, asset_vs_xlm_1h/24h/7d. No CTE has a quote-side
-	// filter anymore (per_asset_24h_vol's quote branch was the only one).
+	// no longer carries pushdown markers. The 8 base-side filters are
+	// the price CTEs: direct_usd, direct_usd_1h/24h/7d, asset_vs_xlm,
+	// asset_vs_xlm_1h/24h/7d. The 4 quote-side filters are the
+	// asset_vs_xlm* CTEs' INVERTED arms (XLM as base, the asset as
+	// quote — the direction swap-direction sources write), which must
+	// be pushed down too or a filtered listing re-scans every XLM-based
+	// row for a one-asset result.
 	baseFilter := "AND base_asset IN (SELECT asset_id FROM chosen_assets)"
 	if got := strings.Count(sql, baseFilter); got != 8 {
 		t.Errorf("expected 8 base-side pushdown filters (the price CTEs), got %d", got)
 	}
 	quoteFilter := "AND quote_asset IN (SELECT asset_id FROM chosen_assets)"
-	if got := strings.Count(sql, quoteFilter); got != 0 {
-		t.Errorf("expected 0 quote-side pushdown filters after the #43 rollup change, got %d", got)
+	if got := strings.Count(sql, quoteFilter); got != 4 {
+		t.Errorf("expected 4 quote-side pushdown filters (the asset_vs_xlm* inverted arms), got %d", got)
 	}
 	// xlm_usd CTEs must NOT receive the pushdown — they look up XLM
 	// specifically, not the caller-supplied asset. There are 4 of them.
