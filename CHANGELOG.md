@@ -59,6 +59,27 @@ against.
   `docs/operations/clickhouse-ops-batch-profile.md`.
 ### Fixed
 
+- **Config-apply gate: widened surfaces, host baseline, fail-closed
+  (`scripts/ci/config-apply-gate.sh`, audit deploy-ansible-gate-4).** The
+  gate's SURFACES list omitted files the archival-node role renders or
+  copies onto the host — `roles/*/defaults/` (e.g. `galexie_ledgers_per_file`
+  → `galexie.toml.j2`), `handlers/`, `inventory/`, the sibling roles,
+  `configs/healthchecks/*` and the copied `scripts/ops/config-assertions.sh`,
+  `ch-schema-snapshot.sh`, `restore-drill.sh`, `scripts/dev/r1-smoke.sh` —
+  so a defaults-only or healthchecks-only release passed as "binary deploy
+  is complete". It also diffed against the previous tag by ancestry only
+  (a skip-ahead deploy never listed the skipped tags' config) and turned
+  any git error into "no changes" (`|| true` under no `set -e`). Now the
+  whole `configs/ansible/roles/` tree, `inventory/`, `configs/healthchecks/`
+  and the four copied scripts are surfaces; an optional 3rd argument takes
+  the host's live version as the baseline (ancestry remains the fallback,
+  and the baseline used is printed); an unresolvable version/baseline or a
+  failing `git diff` exits 1. `config-apply-gate-test.sh` pins one fixture
+  per surface plus the skip-ahead and fail-closed cases (13 red on the old
+  script). Wiring the host sidecar
+  (`/var/lib/stellarindex/deployed-versions/<binary>`) into `deploy.yml` as
+  that 3rd argument is a follow-up.
+
 - **Outlier filter trimmed agreed price moves; `outlier_storm` measured
   its own artifact.** The published-VWAP filter scored every print
   against ONE band — the whole window's median ± 4 × 1.4826 × MAD — and
