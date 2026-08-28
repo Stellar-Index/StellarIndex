@@ -3,8 +3,8 @@
 All notable changes to Stellar Index will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to dual versioning — SemVer for `pkg/*`
-and CalVer (`YYYY.MM.DD`) for binary releases. See
+and this project adheres to SemVer (`vX.Y.Z`) — for binary releases
+as well as the `pkg/*` compatibility promise. See
 [docs/architecture/semver-policy.md](docs/architecture/semver-policy.md)
 for the rationale.
 
