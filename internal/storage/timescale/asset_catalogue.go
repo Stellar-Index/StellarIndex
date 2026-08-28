@@ -604,7 +604,26 @@ const listAssetsBaseSelect = `
 		   LIMIT 1
 		)
 		SELECT
-		    COALESCE(ca.slug, ca.code)            AS slug,
+		    -- asset_id is the LAST resort here, and it is load-bearing.
+		    --
+		    -- A Soroban-native row from catalogue_assets has slug AND
+		    -- code both NULL (a contract asset has no issuer account and
+		    -- no SEP-1 code), so the two-arm COALESCE this used to be
+		    -- returned NULL — and the slug column scans into a
+		    -- non-nullable Go string. Measured in production 2026-08-28:
+		    -- GET /v1/assets with limit=500 returned HTTP 500,
+		    -- "converting NULL to string is unsupported", which also
+		    -- hard-failed the
+		    -- explorer build (it refuses to bake fallback HTML rather
+		    -- than ship a page built on a broken fetch). limit=100
+		    -- survived only because the ordering had not yet reached one
+		    -- of the 60 Soroban rows — the bug was live at limit>=150.
+		    --
+		    -- The contract id is the RIGHT fallback, not merely a
+		    -- non-null one: it is already this asset's URL segment
+		    -- (/assets/CAUP7NFA… resolves today), so the slug a caller
+		    -- gets back is the slug that actually works.
+		    COALESCE(ca.slug, ca.code, ca.asset_id) AS slug,
 		    ca.asset_id,
 		    ca.code,
 		    ca.issuer_g_strkey,
@@ -1653,7 +1672,26 @@ const getAssetBySlugSQL = `
 		   ORDER BY bucket DESC LIMIT 1
 		)
 		SELECT
-		    COALESCE(ca.slug, ca.code)            AS slug,
+		    -- asset_id is the LAST resort here, and it is load-bearing.
+		    --
+		    -- A Soroban-native row from catalogue_assets has slug AND
+		    -- code both NULL (a contract asset has no issuer account and
+		    -- no SEP-1 code), so the two-arm COALESCE this used to be
+		    -- returned NULL — and the slug column scans into a
+		    -- non-nullable Go string. Measured in production 2026-08-28:
+		    -- GET /v1/assets with limit=500 returned HTTP 500,
+		    -- "converting NULL to string is unsupported", which also
+		    -- hard-failed the
+		    -- explorer build (it refuses to bake fallback HTML rather
+		    -- than ship a page built on a broken fetch). limit=100
+		    -- survived only because the ordering had not yet reached one
+		    -- of the 60 Soroban rows — the bug was live at limit>=150.
+		    --
+		    -- The contract id is the RIGHT fallback, not merely a
+		    -- non-null one: it is already this asset's URL segment
+		    -- (/assets/CAUP7NFA… resolves today), so the slug a caller
+		    -- gets back is the slug that actually works.
+		    COALESCE(ca.slug, ca.code, ca.asset_id) AS slug,
 		    ca.asset_id, ca.code, ca.issuer_g_strkey,
 		    ca.first_seen_ledger, ca.last_seen_ledger, ca.observation_count,
 		    -- XLM (asset_id='native') has no rows in direct_usd or
