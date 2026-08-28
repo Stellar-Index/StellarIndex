@@ -120,11 +120,14 @@ key stays distinct without colliding across batches.
   InvokeContract ops to Band's adapter regardless of whether
   the ledger is live or replayed from a galexie archive.
 - **Symbol set evolution**: when the relayer adds a new symbol,
-  the decoder emits `ErrUnknownSymbol` for entries it can't map
-  to a `canonical.Asset`. Adding a new symbol is a one-line
-  amendment to the canonical crypto allow-list (ADR-0014) plus
-  optional symbol-specific handling in
-  [`decode.go`](decode.go).
+  the decoder records entries it can't map to an allow-listed
+  `canonical.Asset` verbatim as `raw:<symbol>` rows
+  (`canonical.AssetOracleRaw`, oracle capture-totality design) at
+  their own `op_index` slot and bumps
+  `stellarindex_source_unknown_symbols_total{source="band"}`.
+  Adding the symbol is a one-line amendment to the canonical crypto
+  allow-list (ADR-0014); a re-derive then promotes the raw rows in
+  place on the same PK.
 
 ## Verdict
 

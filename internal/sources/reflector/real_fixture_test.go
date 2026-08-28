@@ -103,16 +103,29 @@ func runOneFixture(t *testing.T, path string) {
 	// PR 164e verification: CEX-oracle updates must decode to
 	// AssetCrypto (Asset::Other(Symbol) → ADR-0014). FX oracle
 	// stays on AssetFiat. DEX stays on AssetSoroban.
+	//
+	// Oracle capture-totality (PR-2): a Symbol slot outside the
+	// allow-lists is no longer dropped — it lands as a raw:<symbol>
+	// row (canonical.AssetOracleRaw). The real FX captures carry two
+	// such slots per event (2026-04-23 mainnet), so the CEX/FX
+	// variants accept EITHER the mapped type or raw; a raw row must
+	// be exactly that (IsMapped()==false) and must hold its vector
+	// slot. DEX publishes Addresses only, so raw is never expected.
 	expectedAssetType := map[Variant]canonical.AssetType{
 		VariantDEX: canonical.AssetSoroban,
 		VariantCEX: canonical.AssetCrypto,
 		VariantFX:  canonical.AssetFiat,
 	}[variant]
 	for i, u := range updates {
-		if expectedAssetType != "" && u.Asset.Type != expectedAssetType {
-			t.Errorf("updates[%d].Asset.Type = %q, want %q for %s variant",
-				i, u.Asset.Type, expectedAssetType, variant.SourceName())
+		if expectedAssetType == "" || u.Asset.Type == expectedAssetType {
+			continue
 		}
+		if variant != VariantDEX && u.Asset.Type == canonical.AssetOracleRaw && !u.Asset.IsMapped() {
+			t.Logf("updates[%d] recorded verbatim as %s (unmapped %s symbol)", i, u.Asset, variant.SourceName())
+			continue
+		}
+		t.Errorf("updates[%d].Asset.Type = %q, want %q for %s variant",
+			i, u.Asset.Type, expectedAssetType, variant.SourceName())
 	}
 
 	// Timestamp must fall in a sane window around the ledger

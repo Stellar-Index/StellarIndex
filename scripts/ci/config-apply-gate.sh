@@ -65,6 +65,7 @@ SURFACES=(
   'configs/ansible/inventory/'
   'configs/healthchecks/'
   'configs/prometheus/rules.r1/'
+  'configs/alertmanager/'
   'deploy/monitoring/rules/'
   'deploy/systemd/'
   'deploy/clickhouse/'
