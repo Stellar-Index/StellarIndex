@@ -197,6 +197,26 @@ against.
 
 ### Fixed
 
+- **Agent-orientation docs re-swept against HEAD; the two claims a
+  machine can re-derive are now CI-enforced (`lint-docs.sh` §18,
+  issue #326).** CLAUDE.md's repo map still located the shipped status
+  page at `web/status/` — it lives in the explorer at
+  `web/explorer/src/app/status/` (stellarindex.io/status) and
+  `web/status/` is a redirect-only Cloudflare Pages stub 301-ing to it
+  — and AGENTS.md still carried the `make dev` ("docker-compose up the
+  full stack"; `dev.yaml` has only Timescale/Redis/MinIO) and
+  `make docs-all` ("+ obs/*.go metric Name: fields"; `docs-metrics` is
+  an explicit no-op) descriptions that #259 had already corrected in
+  CLAUDE.md. New §18a asserts AGENTS.md's quick-start block is a
+  VERBATIM subset of CLAUDE.md's — duplicated prose is what drifts, so
+  shorten by dropping a line, never by rewording one — and §18b asserts
+  that an orientation doc naming `web/status` also names where the page
+  actually lives, self-disarming if the stub redirect ever goes away.
+  Also documented, from the code: the oracle capture-totality bullet
+  (reflector/redstone/band record an unmapped symbol VERBATIM as a
+  record-layer `raw:<symbol>` row instead of dropping the slot), and a
+  note that an explicit issues-only / one-batch-PR agreement overrides
+  CLAUDE.md's default long-session commit→merge→next cadence.
 - **Gap detector pre-registers `runs_total` at 0 so a restart cannot read
   as a dead detector.** `stellarindex_ingest_gap_detector_runs_total` is a
   CounterVec that only materialises a series on first `Inc()`, and since
