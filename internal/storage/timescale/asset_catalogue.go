@@ -515,40 +515,102 @@ const listAssetsBaseSelect = `
 		  -- v1.Server.foldAliasTwins, which collapses each
 		  -- non-canonical alias row onto its canonical row via the
 		  -- same AliasRegistry (task #28 Part A).
-		  SELECT DISTINCT ON (base_asset) base_asset AS asset_id, vwap,
-		         array_length(sources, 1) AS source_count
-		    FROM prices_1m
-		   WHERE quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		     AND bucket >= now() - INTERVAL '7 days'
-		     AND vwap IS NOT NULL /*PUSHDOWN_BASE*/
-		   ORDER BY base_asset, bucket DESC
+		  --
+		  -- ...and in BOTH stored DIRECTIONS. Sources that write swap
+		  -- direction (aquarius: base = token_in, no canonical.Orient)
+		  -- store a token bought with XLM as (XLM-SAC, token) — XLM as
+		  -- BASE. Reading only quote_asset IN (XLM forms) left that
+		  -- whole market invisible: r1 2026-08-28, CBIJ… had $730k/7d
+		  -- against the XLM SAC and served price_usd null with no
+		  -- withheld verdict. The inverted arm reads (XLM, token) and
+		  -- inverts (vwap is "XLM priced in token", so 1/vwap is the
+		  -- token in XLM). The volume path already read both
+		  -- directions (soroban_volume.go) — which is exactly why the
+		  -- asset had volume and no price.
+		  --
+		  -- Base-side rows are preferred over inverted ones (ORDER BY
+		  -- inverted BEFORE bucket) so every asset that already priced
+		  -- keeps byte-identical output; the inverted arm only fills
+		  -- assets that had NO base-side row in the window.
+		  SELECT DISTINCT ON (asset_id) asset_id, vwap, source_count
+		    FROM (
+		      SELECT base_asset AS asset_id, vwap,
+		             array_length(sources, 1) AS source_count,
+		             bucket, 0 AS inverted
+		        FROM prices_1m
+		       WHERE quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		         AND bucket >= now() - INTERVAL '7 days'
+		         AND vwap IS NOT NULL /*PUSHDOWN_BASE*/
+		      UNION ALL
+		      SELECT quote_asset AS asset_id, 1::numeric / vwap,
+		             array_length(sources, 1),
+		             bucket, 1
+		        FROM prices_1m
+		       WHERE base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		         AND bucket >= now() - INTERVAL '7 days'
+		         AND vwap > 0 /*PUSHDOWN_QUOTE*/
+		    ) u
+		   ORDER BY asset_id, inverted, bucket DESC
 		),
 		asset_vs_xlm_1h AS (
-		  SELECT DISTINCT ON (base_asset) base_asset AS asset_id, vwap
-		    FROM prices_1m
-		   WHERE quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		     AND bucket BETWEEN now() - INTERVAL '90 minutes'
+		  -- Both directions, base-side preferred — see asset_vs_xlm.
+		  SELECT DISTINCT ON (asset_id) asset_id, vwap
+		    FROM (
+		      SELECT base_asset AS asset_id, vwap, bucket, 0 AS inverted
+		        FROM prices_1m
+		       WHERE quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		         AND bucket BETWEEN now() - INTERVAL '90 minutes'
 		                   AND now() - INTERVAL '55 minutes'
-		     AND vwap IS NOT NULL /*PUSHDOWN_BASE*/
-		   ORDER BY base_asset, bucket DESC
+		         AND vwap IS NOT NULL /*PUSHDOWN_BASE*/
+		      UNION ALL
+		      SELECT quote_asset AS asset_id, 1::numeric / vwap, bucket, 1
+		        FROM prices_1m
+		       WHERE base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		         AND bucket BETWEEN now() - INTERVAL '90 minutes'
+		                   AND now() - INTERVAL '55 minutes'
+		         AND vwap > 0 /*PUSHDOWN_QUOTE*/
+		    ) u
+		   ORDER BY asset_id, inverted, bucket DESC
 		),
 		asset_vs_xlm_24h AS (
-		  SELECT DISTINCT ON (base_asset) base_asset AS asset_id, vwap
-		    FROM prices_1m
-		   WHERE quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		     AND bucket BETWEEN now() - INTERVAL '26 hours'
+		  -- Both directions, base-side preferred — see asset_vs_xlm.
+		  SELECT DISTINCT ON (asset_id) asset_id, vwap
+		    FROM (
+		      SELECT base_asset AS asset_id, vwap, bucket, 0 AS inverted
+		        FROM prices_1m
+		       WHERE quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		         AND bucket BETWEEN now() - INTERVAL '26 hours'
 		                   AND now() - INTERVAL '23 hours 30 minutes'
-		     AND vwap IS NOT NULL /*PUSHDOWN_BASE*/
-		   ORDER BY base_asset, bucket DESC
+		         AND vwap IS NOT NULL /*PUSHDOWN_BASE*/
+		      UNION ALL
+		      SELECT quote_asset AS asset_id, 1::numeric / vwap, bucket, 1
+		        FROM prices_1m
+		       WHERE base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		         AND bucket BETWEEN now() - INTERVAL '26 hours'
+		                   AND now() - INTERVAL '23 hours 30 minutes'
+		         AND vwap > 0 /*PUSHDOWN_QUOTE*/
+		    ) u
+		   ORDER BY asset_id, inverted, bucket DESC
 		),
 		asset_vs_xlm_7d AS (
-		  SELECT DISTINCT ON (base_asset) base_asset AS asset_id, vwap
-		    FROM prices_1m
-		   WHERE quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		     AND bucket BETWEEN now() - INTERVAL '7 days 12 hours'
+		  -- Both directions, base-side preferred — see asset_vs_xlm.
+		  SELECT DISTINCT ON (asset_id) asset_id, vwap
+		    FROM (
+		      SELECT base_asset AS asset_id, vwap, bucket, 0 AS inverted
+		        FROM prices_1m
+		       WHERE quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		         AND bucket BETWEEN now() - INTERVAL '7 days 12 hours'
 		                   AND now() - INTERVAL '6 days 22 hours'
-		     AND vwap IS NOT NULL /*PUSHDOWN_BASE*/
-		   ORDER BY base_asset, bucket DESC
+		         AND vwap IS NOT NULL /*PUSHDOWN_BASE*/
+		      UNION ALL
+		      SELECT quote_asset AS asset_id, 1::numeric / vwap, bucket, 1
+		        FROM prices_1m
+		       WHERE base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		         AND bucket BETWEEN now() - INTERVAL '7 days 12 hours'
+		                   AND now() - INTERVAL '6 days 22 hours'
+		         AND vwap > 0 /*PUSHDOWN_QUOTE*/
+		    ) u
+		   ORDER BY asset_id, inverted, bucket DESC
 		),
 		xlm_usd AS (
 		  -- prices_1m doesn't carry (native, fiat:USD) rows — XLM's
@@ -1109,20 +1171,42 @@ const getAssetPriceHistory24hSQL = `
 		  ) z WHERE rn = 1
 		),
 		asset_xlm_per_hour AS (
-		  -- XLM leg in BOTH identity forms — 'native' AND its SAC
-		  -- (CAS3J7… = canonical.XLMSacContractID); see the
-		  -- listing query's asset_vs_xlm CTE for the rationale.
+		  -- XLM leg in BOTH identity forms ('native' + SAC) and in BOTH
+		  -- stored DIRECTIONS: the base-side arm (asset, XLM) UNION an
+		  -- inverted arm (XLM, asset) at 1/vwap, for markets the
+		  -- aquarius decoder stores with the XLM SAC as BASE — see the
+		  -- listing query's asset_vs_xlm CTE. Without the inverted arm
+		  -- such an asset had a headline price (#254) but an EMPTY
+		  -- sparkline. Per hour, base-side rows are preferred over
+		  -- inverted ones (ORDER BY inverted FIRST), then the same
+		  -- alias-priority + latest-bucket pick as before, so a hour
+		  -- that already had a base-side row keeps a byte-identical
+		  -- point; the inverted arm only fills hours with none.
 		  SELECT h, vwap FROM (
-		    SELECT date_trunc('hour', bucket) AS h, vwap::numeric AS vwap,
+		    SELECT h, vwap,
 		           row_number() OVER (
-		             PARTITION BY date_trunc('hour', bucket)
-		             ORDER BY array_position($1::text[], base_asset), bucket DESC
+		             PARTITION BY h
+		             ORDER BY inverted, prio, bucket DESC
 		           ) AS rn
-		      FROM prices_1m
-		     WHERE base_asset = ANY($1)
-		       AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		       AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
-		       AND vwap IS NOT NULL
+		      FROM (
+		        SELECT date_trunc('hour', bucket) AS h, vwap::numeric AS vwap,
+		               array_position($1::text[], base_asset) AS prio,
+		               bucket, 0 AS inverted
+		          FROM prices_1m
+		         WHERE base_asset = ANY($1)
+		           AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		           AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
+		           AND vwap IS NOT NULL
+		        UNION ALL
+		        SELECT date_trunc('hour', bucket), 1::numeric / vwap,
+		               array_position($1::text[], quote_asset),
+		               bucket, 1
+		          FROM prices_1m
+		         WHERE base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		           AND quote_asset = ANY($1)
+		           AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
+		           AND vwap > 0
+		      ) u
 		  ) z WHERE rn = 1
 		),
 		xlm_usd_per_hour AS (
@@ -1165,7 +1249,34 @@ const getAssetPriceHistory24hSQL = `
 //
 // Buckets with no underlying trades produce a null P.
 func (s *Store) GetAssetPriceHistory7d(ctx context.Context, assetID string) ([]AssetPricePoint, error) {
-	const q = `
+	rows, err := s.db.QueryContext(ctx, getAssetPriceHistory7dSQL, assetAliasArray(assetID))
+	if err != nil {
+		return nil, fmt.Errorf("timescale: GetAssetPriceHistory7d: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]AssetPricePoint, 0, 7)
+	for rows.Next() {
+		var pt AssetPricePoint
+		var p sql.NullString
+		if err := rows.Scan(&pt.T, &p); err != nil {
+			return nil, fmt.Errorf("timescale: GetAssetPriceHistory7d scan: %w", err)
+		}
+		if p.Valid && p.String != "" {
+			s := p.String
+			pt.P = &s
+		}
+		out = append(out, pt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: GetAssetPriceHistory7d rows: %w", err)
+	}
+	return out, nil
+}
+
+// getAssetPriceHistory7dSQL is GetAssetPriceHistory7d's query, hoisted
+// to a package constant so TestProxyQuoteLists_Lockstep can pin its XLM
+// arms alongside getAssetPriceHistory24hSQL.
+const getAssetPriceHistory7dSQL = `
 		WITH days AS (
 		  SELECT generate_series(
 		    date_trunc('day', now() - INTERVAL '6 days'),
@@ -1197,19 +1308,42 @@ func (s *Store) GetAssetPriceHistory7d(ctx context.Context, assetID string) ([]A
 		  ) z WHERE rn = 1
 		),
 		asset_xlm_per_day AS (
-		  -- XLM leg in BOTH identity forms ('native' + SAC); see
-		  -- the listing query's asset_vs_xlm CTE.
+		  -- XLM leg in BOTH identity forms ('native' + SAC) and in BOTH
+		  -- stored DIRECTIONS: the base-side arm (asset, XLM) UNION an
+		  -- inverted arm (XLM, asset) at 1/vwap, for markets the
+		  -- aquarius decoder stores with the XLM SAC as BASE — see the
+		  -- listing query's asset_vs_xlm CTE. Without the inverted arm
+		  -- such an asset had a headline price (#254) but an EMPTY
+		  -- sparkline. Per day, base-side rows are preferred over
+		  -- inverted ones (ORDER BY inverted FIRST), then the same
+		  -- alias-priority + latest-bucket pick as before, so a day
+		  -- that already had a base-side row keeps a byte-identical
+		  -- point; the inverted arm only fills days with none.
 		  SELECT d, vwap FROM (
-		    SELECT date_trunc('day', bucket) AS d, vwap::numeric AS vwap,
+		    SELECT d, vwap,
 		           row_number() OVER (
-		             PARTITION BY date_trunc('day', bucket)
-		             ORDER BY array_position($1::text[], base_asset), bucket DESC
+		             PARTITION BY d
+		             ORDER BY inverted, prio, bucket DESC
 		           ) AS rn
-		      FROM prices_1m
-		     WHERE base_asset = ANY($1)
-		       AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		       AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
-		       AND vwap IS NOT NULL
+		      FROM (
+		        SELECT date_trunc('day', bucket) AS d, vwap::numeric AS vwap,
+		               array_position($1::text[], base_asset) AS prio,
+		               bucket, 0 AS inverted
+		          FROM prices_1m
+		         WHERE base_asset = ANY($1)
+		           AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		           AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
+		           AND vwap IS NOT NULL
+		        UNION ALL
+		        SELECT date_trunc('day', bucket), 1::numeric / vwap,
+		               array_position($1::text[], quote_asset),
+		               bucket, 1
+		          FROM prices_1m
+		         WHERE base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		           AND quote_asset = ANY($1)
+		           AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
+		           AND vwap > 0
+		      ) u
 		  ) z WHERE rn = 1
 		),
 		xlm_usd_per_day AS (
@@ -1236,30 +1370,7 @@ func (s *Store) GetAssetPriceHistory7d(ctx context.Context, assetID string) ([]A
 		  LEFT JOIN asset_xlm_per_day   x  ON x.d  = days.bucket
 		  LEFT JOIN xlm_usd_per_day     xu ON xu.d = days.bucket
 		 ORDER BY days.bucket ASC
-	`
-	rows, err := s.db.QueryContext(ctx, q, assetAliasArray(assetID))
-	if err != nil {
-		return nil, fmt.Errorf("timescale: GetAssetPriceHistory7d: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	out := make([]AssetPricePoint, 0, 7)
-	for rows.Next() {
-		var pt AssetPricePoint
-		var p sql.NullString
-		if err := rows.Scan(&pt.T, &p); err != nil {
-			return nil, fmt.Errorf("timescale: GetAssetPriceHistory7d scan: %w", err)
-		}
-		if p.Valid && p.String != "" {
-			s := p.String
-			pt.P = &s
-		}
-		out = append(out, pt)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: GetAssetPriceHistory7d rows: %w", err)
-	}
-	return out, nil
-}
+`
 
 // AssetATH is the asset's all-time-high USD price plus the day
 // it was observed. Computed across every USD-quoted day-bucket
@@ -1508,7 +1619,9 @@ func (s *Store) GetAssetTopMarkets(ctx context.Context, assetID string, limit in
 }
 
 // GetAssetBySlug returns one row matching the given slug. Returns
-// sql.ErrNoRows when the slug doesn't match a known classic asset.
+// sql.ErrNoRows when the slug doesn't match a known classic asset or
+// a traded Soroban-native contract (the same discovered_assets arm the
+// listing spine admits).
 //
 // Mirrors ListAssets's per-row metric shape (price/volume/market cap/
 // supply) so the explorer can render an asset detail page from a
@@ -1531,10 +1644,35 @@ const getAssetBySlugSQL = `
 		  -- a curated slug column value beats every code-only match).
 		  -- Pre-2026-05-10 canonical asset_id form (CODE-ISSUER) 404'd
 		  -- because the WHERE only matched COALESCE(slug, code).
-		  SELECT asset_id
-		    FROM classic_assets
-		   WHERE COALESCE(slug, code) = $1
-		      OR asset_id = $1
+		  --
+		  -- Same spine as the listing's catalogue_assets: classic_assets
+		  -- UNION the traded Soroban-native contracts from
+		  -- discovered_assets (same asset_volume_24h bound, so an asset
+		  -- the listing shows is one the detail can find and vice
+		  -- versa). Without the UNION a Soroban contract id 404'd here
+		  -- and /v1/assets/{id} depended entirely on the transitive
+		  -- fill — its own XLM market could never price it.
+		  SELECT asset_id, code, issuer_g_strkey, slug,
+		         first_seen_ledger, last_seen_ledger, observation_count
+		    FROM (
+		      SELECT asset_id, code, issuer_g_strkey, slug,
+		             first_seen_ledger, last_seen_ledger, observation_count
+		        FROM classic_assets
+		       WHERE COALESCE(slug, code) = $1
+		          OR asset_id = $1
+		      UNION ALL
+		      SELECT d.contract_id AS asset_id,
+		             NULL::text    AS code,
+		             NULL::text    AS issuer_g_strkey,
+		             NULL::text    AS slug,
+		             d.first_seen_ledger,
+		             d.last_seen_ledger,
+		             d.event_count  AS observation_count
+		        FROM discovered_assets d
+		       WHERE d.contract_id = $1
+		         AND EXISTS (SELECT 1 FROM asset_volume_24h v WHERE v.asset_id = d.contract_id)
+		         AND NOT EXISTS (SELECT 1 FROM classic_assets c WHERE c.asset_id = d.contract_id)
+		    ) u
 		   ORDER BY (slug = $1) DESC NULLS LAST,
 		            (asset_id = $1) DESC NULLS LAST,
 		            observation_count DESC, asset_id ASC
@@ -1615,41 +1753,77 @@ const getAssetBySlugSQL = `
 		),
 		asset_vs_xlm AS (
 		  -- XLM leg in BOTH identity forms — 'native' AND its SAC
-		  -- (CAS3J7… = canonical.XLMSacContractID); see the
-		  -- listing query's asset_vs_xlm CTE for the rationale.
-		  SELECT vwap FROM prices_1m
-		   WHERE base_asset  = (SELECT asset_id FROM chosen)
-		     AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		     AND bucket >= now() - INTERVAL '7 days'
-		     AND vwap IS NOT NULL
-		   ORDER BY bucket DESC LIMIT 1
+		  -- (CAS3J7… = canonical.XLMSacContractID) — and in BOTH
+		  -- stored directions, base-side preferred; see the listing
+		  -- query's asset_vs_xlm CTE for the rationale.
+		  SELECT vwap FROM (
+		    SELECT vwap, bucket, 0 AS inverted FROM prices_1m
+		     WHERE base_asset  = (SELECT asset_id FROM chosen)
+		       AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		       AND bucket >= now() - INTERVAL '7 days'
+		       AND vwap IS NOT NULL
+		    UNION ALL
+		    SELECT 1::numeric / vwap, bucket, 1 FROM prices_1m
+		     WHERE quote_asset = (SELECT asset_id FROM chosen)
+		       AND base_asset  IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		       AND bucket >= now() - INTERVAL '7 days'
+		       AND vwap > 0
+		  ) u
+		   ORDER BY inverted, bucket DESC LIMIT 1
 		),
 		asset_vs_xlm_1h AS (
-		  SELECT vwap FROM prices_1m
-		   WHERE base_asset  = (SELECT asset_id FROM chosen)
-		     AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		     AND bucket BETWEEN now() - INTERVAL '90 minutes'
+		  SELECT vwap FROM (
+		    SELECT vwap, bucket, 0 AS inverted FROM prices_1m
+		     WHERE base_asset  = (SELECT asset_id FROM chosen)
+		       AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		       AND bucket BETWEEN now() - INTERVAL '90 minutes'
 		                   AND now() - INTERVAL '55 minutes'
-		     AND vwap IS NOT NULL
-		   ORDER BY bucket DESC LIMIT 1
+		       AND vwap IS NOT NULL
+		    UNION ALL
+		    SELECT 1::numeric / vwap, bucket, 1 FROM prices_1m
+		     WHERE quote_asset = (SELECT asset_id FROM chosen)
+		       AND base_asset  IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		       AND bucket BETWEEN now() - INTERVAL '90 minutes'
+		                   AND now() - INTERVAL '55 minutes'
+		       AND vwap > 0
+		  ) u
+		   ORDER BY inverted, bucket DESC LIMIT 1
 		),
 		asset_vs_xlm_24h AS (
-		  SELECT vwap FROM prices_1m
-		   WHERE base_asset  = (SELECT asset_id FROM chosen)
-		     AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		     AND bucket BETWEEN now() - INTERVAL '26 hours'
+		  SELECT vwap FROM (
+		    SELECT vwap, bucket, 0 AS inverted FROM prices_1m
+		     WHERE base_asset  = (SELECT asset_id FROM chosen)
+		       AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		       AND bucket BETWEEN now() - INTERVAL '26 hours'
 		                   AND now() - INTERVAL '23 hours 30 minutes'
-		     AND vwap IS NOT NULL
-		   ORDER BY bucket DESC LIMIT 1
+		       AND vwap IS NOT NULL
+		    UNION ALL
+		    SELECT 1::numeric / vwap, bucket, 1 FROM prices_1m
+		     WHERE quote_asset = (SELECT asset_id FROM chosen)
+		       AND base_asset  IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		       AND bucket BETWEEN now() - INTERVAL '26 hours'
+		                   AND now() - INTERVAL '23 hours 30 minutes'
+		       AND vwap > 0
+		  ) u
+		   ORDER BY inverted, bucket DESC LIMIT 1
 		),
 		asset_vs_xlm_7d AS (
-		  SELECT vwap FROM prices_1m
-		   WHERE base_asset  = (SELECT asset_id FROM chosen)
-		     AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		     AND bucket BETWEEN now() - INTERVAL '7 days 12 hours'
+		  SELECT vwap FROM (
+		    SELECT vwap, bucket, 0 AS inverted FROM prices_1m
+		     WHERE base_asset  = (SELECT asset_id FROM chosen)
+		       AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		       AND bucket BETWEEN now() - INTERVAL '7 days 12 hours'
 		                   AND now() - INTERVAL '6 days 22 hours'
-		     AND vwap IS NOT NULL
-		   ORDER BY bucket DESC LIMIT 1
+		       AND vwap IS NOT NULL
+		    UNION ALL
+		    SELECT 1::numeric / vwap, bucket, 1 FROM prices_1m
+		     WHERE quote_asset = (SELECT asset_id FROM chosen)
+		       AND base_asset  IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		       AND bucket BETWEEN now() - INTERVAL '7 days 12 hours'
+		                   AND now() - INTERVAL '6 days 22 hours'
+		       AND vwap > 0
+		  ) u
+		   ORDER BY inverted, bucket DESC LIMIT 1
 		),
 		xlm_usd AS (
 		  -- Same stablecoin-proxy policy as the listing query:
@@ -1826,8 +2000,7 @@ const getAssetBySlugSQL = `
 		    -- keyed AssetVolumeCharacterRollup lookup, not this projector.
 		    NULL::text                            AS volume_character,
 		    NULL::numeric                         AS sort_vol_usd
-		  FROM chosen
-		  JOIN classic_assets ca ON ca.asset_id = chosen.asset_id
+		  FROM chosen ca
 		  LEFT JOIN per_asset_24h_vol vol ON true
 `
 
@@ -2161,7 +2334,34 @@ func (s *Store) GetAssetsPriceHistory24hBatch(ctx context.Context, assetIDs []st
 	if len(assetIDs) == 0 {
 		return map[string][]AssetPricePoint{}, nil
 	}
-	const q = `
+	rows, err := s.db.QueryContext(ctx, getAssetsPriceHistory24hBatchSQL, assetIDs)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: GetAssetsPriceHistory24hBatch: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make(map[string][]AssetPricePoint, len(assetIDs))
+	for rows.Next() {
+		var assetID string
+		var pt AssetPricePoint
+		var p sql.NullString
+		if err := rows.Scan(&assetID, &pt.T, &p); err != nil {
+			return nil, fmt.Errorf("timescale: GetAssetsPriceHistory24hBatch scan: %w", err)
+		}
+		if p.Valid && p.String != "" {
+			s := p.String
+			pt.P = &s
+		}
+		out[assetID] = append(out[assetID], pt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: GetAssetsPriceHistory24hBatch rows: %w", err)
+	}
+	return out, nil
+}
+
+// getAssetsPriceHistory24hBatchSQL is GetAssetsPriceHistory24hBatch's
+// query, hoisted so TestProxyQuoteLists_Lockstep can pin its XLM arms.
+const getAssetsPriceHistory24hBatchSQL = `
 		WITH hours AS (
 		  SELECT generate_series(
 		    date_trunc('hour', now() - INTERVAL '23 hours'),
@@ -2188,17 +2388,31 @@ func (s *Store) GetAssetsPriceHistory24hBatch(ctx context.Context, assetIDs []st
 		   GROUP BY base_asset, h
 		),
 		asset_xlm_per_hour AS (
-		  -- XLM leg in BOTH identity forms ('native' + SAC); see
-		  -- the listing query's asset_vs_xlm CTE.
-		  SELECT base_asset AS asset_id,
-		         date_trunc('hour', bucket) AS h,
-		         last(vwap, bucket)::numeric AS vwap
-		    FROM prices_1m
-		   WHERE base_asset = ANY($1)
-		     AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		     AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
-		     AND vwap IS NOT NULL
-		   GROUP BY base_asset, h
+		  -- XLM leg in BOTH identity forms ('native' + SAC) and BOTH
+		  -- stored directions, base-side preferred per (asset, hour);
+		  -- see GetAssetPriceHistory24h's asset_xlm_per_hour. The
+		  -- latest-bucket pick per arm is what last(vwap, bucket) was.
+		  SELECT DISTINCT ON (asset_id, h) asset_id, h, vwap
+		    FROM (
+		      SELECT base_asset AS asset_id,
+		             date_trunc('hour', bucket) AS h,
+		             vwap::numeric AS vwap, bucket, 0 AS inverted
+		        FROM prices_1m
+		       WHERE base_asset = ANY($1)
+		         AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		         AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
+		         AND vwap IS NOT NULL
+		      UNION ALL
+		      SELECT quote_asset,
+		             date_trunc('hour', bucket),
+		             1::numeric / vwap, bucket, 1
+		        FROM prices_1m
+		       WHERE base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		         AND quote_asset = ANY($1)
+		         AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
+		         AND vwap > 0
+		    ) u
+		   ORDER BY asset_id, h, inverted, bucket DESC
 		),
 		xlm_usd_per_hour AS (
 		  SELECT date_trunc('hour', bucket) AS h, last(vwap, bucket)::numeric AS vwap
@@ -2229,31 +2443,7 @@ func (s *Store) GetAssetsPriceHistory24hBatch(ctx context.Context, assetIDs []st
 		  LEFT JOIN asset_xlm_per_hour  x  ON x.h  = hours.bucket AND x.asset_id  = w.asset_id
 		  LEFT JOIN xlm_usd_per_hour    xu ON xu.h = hours.bucket
 		 ORDER BY w.asset_id, hours.bucket ASC
-	`
-	rows, err := s.db.QueryContext(ctx, q, assetIDs)
-	if err != nil {
-		return nil, fmt.Errorf("timescale: GetAssetsPriceHistory24hBatch: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	out := make(map[string][]AssetPricePoint, len(assetIDs))
-	for rows.Next() {
-		var assetID string
-		var pt AssetPricePoint
-		var p sql.NullString
-		if err := rows.Scan(&assetID, &pt.T, &p); err != nil {
-			return nil, fmt.Errorf("timescale: GetAssetsPriceHistory24hBatch scan: %w", err)
-		}
-		if p.Valid && p.String != "" {
-			s := p.String
-			pt.P = &s
-		}
-		out[assetID] = append(out[assetID], pt)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: GetAssetsPriceHistory24hBatch rows: %w", err)
-	}
-	return out, nil
-}
+`
 
 // GetAssetsPriceHistory7dBatch returns 7d daily USD-price series for
 // many assets in one query. 7-bucket-deep daily grain, mirroring
@@ -2263,7 +2453,34 @@ func (s *Store) GetAssetsPriceHistory7dBatch(ctx context.Context, assetIDs []str
 	if len(assetIDs) == 0 {
 		return map[string][]AssetPricePoint{}, nil
 	}
-	const q = `
+	rows, err := s.db.QueryContext(ctx, getAssetsPriceHistory7dBatchSQL, assetIDs)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: GetAssetsPriceHistory7dBatch: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make(map[string][]AssetPricePoint, len(assetIDs))
+	for rows.Next() {
+		var assetID string
+		var pt AssetPricePoint
+		var p sql.NullString
+		if err := rows.Scan(&assetID, &pt.T, &p); err != nil {
+			return nil, fmt.Errorf("timescale: GetAssetsPriceHistory7dBatch scan: %w", err)
+		}
+		if p.Valid && p.String != "" {
+			s := p.String
+			pt.P = &s
+		}
+		out[assetID] = append(out[assetID], pt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: GetAssetsPriceHistory7dBatch rows: %w", err)
+	}
+	return out, nil
+}
+
+// getAssetsPriceHistory7dBatchSQL is GetAssetsPriceHistory7dBatch's
+// query, hoisted so TestProxyQuoteLists_Lockstep can pin its XLM arms.
+const getAssetsPriceHistory7dBatchSQL = `
 		WITH days AS (
 		  SELECT generate_series(
 		    date_trunc('day', now() - INTERVAL '6 days'),
@@ -2290,17 +2507,31 @@ func (s *Store) GetAssetsPriceHistory7dBatch(ctx context.Context, assetIDs []str
 		   GROUP BY base_asset, d
 		),
 		asset_xlm_per_day AS (
-		  -- XLM leg in BOTH identity forms ('native' + SAC); see
-		  -- the listing query's asset_vs_xlm CTE.
-		  SELECT base_asset AS asset_id,
-		         date_trunc('day', bucket) AS d,
-		         last(vwap, bucket)::numeric AS vwap
-		    FROM prices_1m
-		   WHERE base_asset = ANY($1)
-		     AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		     AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
-		     AND vwap IS NOT NULL
-		   GROUP BY base_asset, d
+		  -- XLM leg in BOTH identity forms ('native' + SAC) and BOTH
+		  -- stored directions, base-side preferred per (asset, day);
+		  -- see GetAssetPriceHistory24h's asset_xlm_per_hour. The
+		  -- latest-bucket pick per arm is what last(vwap, bucket) was.
+		  SELECT DISTINCT ON (asset_id, d) asset_id, d, vwap
+		    FROM (
+		      SELECT base_asset AS asset_id,
+		             date_trunc('day', bucket) AS d,
+		             vwap::numeric AS vwap, bucket, 0 AS inverted
+		        FROM prices_1m
+		       WHERE base_asset = ANY($1)
+		         AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		         AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
+		         AND vwap IS NOT NULL
+		      UNION ALL
+		      SELECT quote_asset,
+		             date_trunc('day', bucket),
+		             1::numeric / vwap, bucket, 1
+		        FROM prices_1m
+		       WHERE base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		         AND quote_asset = ANY($1)
+		         AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
+		         AND vwap > 0
+		    ) u
+		   ORDER BY asset_id, d, inverted, bucket DESC
 		),
 		xlm_usd_per_day AS (
 		  SELECT date_trunc('day', bucket) AS d, last(vwap, bucket)::numeric AS vwap
@@ -2331,28 +2562,4 @@ func (s *Store) GetAssetsPriceHistory7dBatch(ctx context.Context, assetIDs []str
 		  LEFT JOIN asset_xlm_per_day  x  ON x.d  = days.bucket AND x.asset_id  = w.asset_id
 		  LEFT JOIN xlm_usd_per_day    xu ON xu.d = days.bucket
 		 ORDER BY w.asset_id, days.bucket ASC
-	`
-	rows, err := s.db.QueryContext(ctx, q, assetIDs)
-	if err != nil {
-		return nil, fmt.Errorf("timescale: GetAssetsPriceHistory7dBatch: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	out := make(map[string][]AssetPricePoint, len(assetIDs))
-	for rows.Next() {
-		var assetID string
-		var pt AssetPricePoint
-		var p sql.NullString
-		if err := rows.Scan(&assetID, &pt.T, &p); err != nil {
-			return nil, fmt.Errorf("timescale: GetAssetsPriceHistory7dBatch scan: %w", err)
-		}
-		if p.Valid && p.String != "" {
-			s := p.String
-			pt.P = &s
-		}
-		out[assetID] = append(out[assetID], pt)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: GetAssetsPriceHistory7dBatch rows: %w", err)
-	}
-	return out, nil
-}
+`

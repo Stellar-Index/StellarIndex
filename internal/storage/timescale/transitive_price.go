@@ -56,9 +56,10 @@ const usdProxyQuotes = `'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34
 	'fiat:USD'`
 
 // xlmQuotes are XLM in both identity forms — the classic 'native' and
-// its Stellar Asset Contract. A VWAP against these is a price in XLM and
-// needs multiplying by xlm_usd.
-const xlmQuotes = `'native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA'`
+// its Stellar Asset Contract (nativeXLMSAC = canonical.XLMSacContractID).
+// A VWAP against these is a price in XLM and needs multiplying by
+// xlm_usd.
+const xlmQuotes = `'native', '` + nativeXLMSAC + `'`
 
 // TransitiveUSDPrice derives a USD price for `assetID` through its
 // deepest counterparty that itself has a USD price.
@@ -81,7 +82,21 @@ const xlmQuotes = `'native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH3
 // Closed buckets only (ADR-0015): every read excludes the in-flight
 // minute, matching every other price surface.
 func (s *Store) TransitiveUSDPrice(ctx context.Context, assetID string) (TransitivePrice, bool, error) {
-	const q = `
+	var out TransitivePrice
+	err := s.db.QueryRowContext(ctx, transitiveUSDPriceSQL, assetID).Scan(&out.PriceUSD, &out.Hop, &out.HopVolume24hUSD)
+	switch {
+	case err == sql.ErrNoRows:
+		return TransitivePrice{}, false, nil
+	case err != nil:
+		return TransitivePrice{}, false, fmt.Errorf("timescale: TransitiveUSDPrice[%s]: %w", assetID, err)
+	}
+	return out, true, nil
+}
+
+// transitiveUSDPriceSQL is TransitiveUSDPrice's query, hoisted to a
+// package constant so the function body stays under the funlen
+// threshold (same convention as getNativeAssetSQL). $1 = asset_id.
+const transitiveUSDPriceSQL = `
 WITH xlm_usd AS (
     SELECT vwap
       FROM prices_1m
@@ -104,11 +119,24 @@ hops AS (
        AND bucket >= now() - INTERVAL '24 hours'
      GROUP BY 1
 ),
--- The hop's OWN USD price: direct against a USD proxy, else via XLM.
+-- The hop's OWN USD price, in preference order:
+--   1. the hop IS XLM (either identity form) — its price is xlm_usd.
+--      XLM/USD is keyed base_asset='native', so the SAC form can never
+--      satisfy arm 2 or 3; without this arm an asset whose only market
+--      is against the XLM SAC had no route (r1 2026-08-28, CBIJ…).
+--   2. direct against a USD proxy;
+--   3. base-side against XLM, times xlm_usd;
+--   4. the INVERTED XLM market (XLM as base, hop as quote) — the shape
+--      swap-direction sources (aquarius) write for a token bought with
+--      XLM. Inverted, then times xlm_usd. Last so an asset already
+--      priced through arm 2/3 keeps exactly the value it had.
 hop_usd AS (
     SELECT h.hop,
            h.hop_vol,
            COALESCE(
+             CASE WHEN h.hop IN (` + xlmQuotes + `)
+                  THEN (SELECT vwap FROM xlm_usd)
+             END,
              (SELECT p.vwap FROM prices_1m p
                WHERE p.base_asset = h.hop
                  AND p.quote_asset IN (` + usdProxyQuotes + `)
@@ -123,6 +151,14 @@ hop_usd AS (
                  AND p.bucket >= now() - INTERVAL '24 hours'
                  AND p.vwap IS NOT NULL
                ORDER BY p.bucket DESC LIMIT 1)
+             * (SELECT vwap FROM xlm_usd),
+             1 / NULLIF((SELECT p.vwap FROM prices_1m p
+               WHERE p.base_asset IN (` + xlmQuotes + `)
+                 AND p.quote_asset = h.hop
+                 AND p.bucket <= now() - INTERVAL '1 minute'
+                 AND p.bucket >= now() - INTERVAL '24 hours'
+                 AND p.vwap IS NOT NULL
+               ORDER BY p.bucket DESC LIMIT 1), 0)
              * (SELECT vwap FROM xlm_usd)
            ) AS hop_usd
       FROM hops h
@@ -155,14 +191,3 @@ SELECT (leg_vwap * hop_usd)::text, hop, COALESCE(hop_vol, 0)::text
  WHERE leg_vwap IS NOT NULL AND leg_vwap > 0
  ORDER BY hop_vol DESC NULLS LAST
  LIMIT 1`
-
-	var out TransitivePrice
-	err := s.db.QueryRowContext(ctx, q, assetID).Scan(&out.PriceUSD, &out.Hop, &out.HopVolume24hUSD)
-	switch {
-	case err == sql.ErrNoRows:
-		return TransitivePrice{}, false, nil
-	case err != nil:
-		return TransitivePrice{}, false, fmt.Errorf("timescale: TransitiveUSDPrice[%s]: %w", assetID, err)
-	}
-	return out, true, nil
-}
