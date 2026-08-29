@@ -95,6 +95,27 @@ against.
   (`last_success_unix` carried forward across a failed run). Single-repo hosts
   keep the byte-identical legacy command. `scripts/ci/pgbackrest-backup-test.sh`
   pins all of it against a stubbed `pgbackrest`.
+- **`deploy.yml` migrations sync took > 16 minutes on r1 (v0.49.0, run
+  33244745680) — one archive transfer again, with delete semantics.**
+  #268 replaced the migrations-dir `ansible.posix.synchronize` (one
+  rsync, `delete: true`, but blind to the test-net ProxyJump) with an
+  `ansible.builtin.copy` whose `src` is a DIRECTORY: connection-agnostic,
+  but one SFTP round-trip + remote checksum per file with no
+  ControlPersist across module invocations on the GH runner — 291
+  already-identical files ran past 16 minutes where the whole deploy used
+  to take ~7, and stale files on the host were silently kept.
+  `tasks/sync-migrations.yml` now builds ONE deterministic tar.gz on the
+  controller (sorted, mtime 0, uid/gid 0, modes 0644/0755 — so
+  `unarchive`'s `tar --diff` reports changed=false on an identical
+  re-run), ships it with `ansible.builtin.unarchive` (rides the same
+  connection as every module, so the jump still works), and prunes
+  host files absent from the controller-computed manifest — fail closed
+  (empty manifest or non-nested dest aborts; only paths `find`
+  enumerated inside the dest are ever removed). `deploy-sync-test.sh`
+  (ci.yml `ansible-check`, verify.sh) pins exactly one transfer task, no
+  directory-src copy / per-file loop, and runs the task file for real:
+  extras pruned, idempotent re-run, nothing outside dest touched, empty
+  source fails closed — 3 of those red against the #268 task.
 - **`fiat:VES` and `rwa:XAU` — the two reflector-fx slots that paged
   `stellarindex_ingestion_oracle_unknown_symbols` on r1 v0.48.0
   (2026-08-29, `raw:VES` / `raw:XAU`, 7 rows each in 2 h).** The cause

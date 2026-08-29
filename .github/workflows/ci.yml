@@ -988,6 +988,16 @@ jobs:
         # replaces. Runs galexie-effective-checksum.yml for real against
         # temp files with a stub handler — no hosts, no secrets.
         run: ./scripts/ci/ansible-galexie-restart-test.sh
+      - name: deploy migrations-sync test (structural + local ansible run)
+        # 2026-08-29 incident (r1 deploy of v0.49.0, run 33244745680): the
+        # directory-src `copy` that #268 put in for the migrations dir is one
+        # SFTP round-trip per file — > 16 min for 291 unchanged files, and
+        # it dropped synchronize's `delete: true`. Pins the sync to ONE
+        # unarchive transfer and runs tasks/sync-migrations.yml for real
+        # (-c local, temp dirs): extras pruned, idempotent re-run, nothing
+        # outside dest touched, empty source fails closed. Needs GNU tar
+        # (unarchive's --diff) — this runner has it. No hosts, no secrets.
+        run: ./scripts/ci/deploy-sync-test.sh
       - name: ansible-lint (moderate profile — enforced; baseline grandfathered)
         working-directory: configs/ansible
         # CID-3 (audit-2026-08-14): the trailing `|| true` used to swallow the
