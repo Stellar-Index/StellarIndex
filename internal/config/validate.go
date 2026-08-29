@@ -514,6 +514,9 @@ func (a AggregateConfig) validate() error {
 				ErrInvalidConfig, raw, err)
 		}
 	}
+	if err := a.CompositeReference.validate(a); err != nil {
+		return err
+	}
 	for _, raw := range a.Windows {
 		if _, err := time.ParseDuration(raw); err != nil {
 			return fmt.Errorf("%w: aggregate.windows entry %q: %w",
@@ -712,6 +715,70 @@ func (a AggregateConfig) AggregatorWindows() ([]time.Duration, error) {
 			return nil, fmt.Errorf("aggregate.windows entry %q: %w", raw, err)
 		}
 		out = append(out, d)
+	}
+	return out, nil
+}
+
+// validate enforces the [CompositeReferenceConfig] bounds and requires
+// every allow-listed target to have a triangulation chain: the chain's
+// legs ARE the reference, so a listed target without one would be
+// silently dead ("composite_unavailable: no_chain" every bucket) — the
+// config-gated-feature-ships-dead class. The chain check applies only
+// when the mechanism is enabled AND a triangulation table exists: the
+// binary default (chains empty, list populated) is a valid dormant
+// state, since the reference is defined by the chains an operator
+// deploys.
+func (c CompositeReferenceConfig) validate(a AggregateConfig) error {
+	if c.ToleranceBps < 0 || c.ToleranceBps > 10_000 {
+		return fmt.Errorf("%w: aggregate.composite_reference.tolerance_bps must be in [0,10000] (0 = default), got %d",
+			ErrInvalidConfig, c.ToleranceBps)
+	}
+	if c.MinLegSources < 0 {
+		return fmt.Errorf("%w: aggregate.composite_reference.min_leg_sources must be >= 0 (0 = default), got %d",
+			ErrInvalidConfig, c.MinLegSources)
+	}
+	if c.LegDispersionBps < 0 || c.LegDispersionBps > 10_000 {
+		return fmt.Errorf("%w: aggregate.composite_reference.leg_dispersion_bps must be in [0,10000] (0 = tolerance_bps), got %d",
+			ErrInvalidConfig, c.LegDispersionBps)
+	}
+	if c.ReleaseBandPct < 0 || c.ReleaseBandPct > 100 {
+		return fmt.Errorf("%w: aggregate.composite_reference.release_band_pct must be in [0,100] (0 = default), got %v",
+			ErrInvalidConfig, c.ReleaseBandPct)
+	}
+	if c.FXMaxAgeHours < 0 {
+		return fmt.Errorf("%w: aggregate.composite_reference.fx_max_age_hours must be >= 0 (0 = default), got %d",
+			ErrInvalidConfig, c.FXMaxAgeHours)
+	}
+	chains := make(map[string]struct{}, len(a.Triangulations))
+	for _, row := range a.Triangulations {
+		chains[row.Target] = struct{}{}
+	}
+	for _, raw := range c.Targets {
+		if _, err := parsePairString(raw); err != nil {
+			return fmt.Errorf("%w: aggregate.composite_reference.targets entry %q: %w",
+				ErrInvalidConfig, raw, err)
+		}
+		if _, ok := chains[raw]; c.Enabled && len(a.Triangulations) > 0 && !ok {
+			return fmt.Errorf("%w: aggregate.composite_reference.targets entry %q has no [[aggregate.triangulations]] row — the chain's legs are the reference",
+				ErrInvalidConfig, raw)
+		}
+	}
+	return nil
+}
+
+// CompositeReferenceTargets resolves the composite-reference allow-list
+// into canonical pairs. Nil when the list is empty.
+func (a AggregateConfig) CompositeReferenceTargets() ([]canonical.Pair, error) {
+	if len(a.CompositeReference.Targets) == 0 {
+		return nil, nil
+	}
+	out := make([]canonical.Pair, 0, len(a.CompositeReference.Targets))
+	for i, raw := range a.CompositeReference.Targets {
+		p, err := parsePairString(raw)
+		if err != nil {
+			return nil, fmt.Errorf("aggregate.composite_reference.targets[%d] %q: %w", i, raw, err)
+		}
+		out = append(out, p)
 	}
 	return out, nil
 }

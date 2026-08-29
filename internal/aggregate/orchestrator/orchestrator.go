@@ -441,6 +441,12 @@ type Config struct {
 	// substitutes a mock implementing only [FXStore].
 	FXStore FXStore
 
+	// CompositeReference gates the current-bucket composite-reference
+	// corroboration of the phase-2 freeze for structurally single-venue
+	// targets (2026-08-29; see composite_reference.go). Zero value =
+	// off, which is what a Config assembled directly in a test gets.
+	CompositeReference CompositeReferenceConfig
+
 	// DivergenceRefresher, when non-nil, is called once per pair
 	// per [Tick] to refresh the `div:<base>/<quote>` Redis cache so the
 	// API's `flags.divergence_warning` flag has a producer (per
@@ -743,6 +749,33 @@ type Orchestrator struct {
 	// REQUIRES o.mu around every access here first. See prevVWAPs.
 	lastComposites map[string]compositeSample
 
+	// tickLegRefs holds, per window, the CURRENT tick's confidently-
+	// published VWAP + distinct venue count per pair, keyed by
+	// pair.String() — the priced legs the composite-reference evaluator
+	// multiplies (composite_reference.go). Rebuilt at the top of every
+	// Tick; written by refreshPairWindow at the publish point and read
+	// by a LATER pair's refresh in the same loop (refreshOrder puts the
+	// legs first). Same single-Tick-at-a-time invariant as prevVWAPs.
+	//
+	// WARNING (L4): LOCK-FREE ONLY because Tick is strictly sequential.
+	// Parallelising refresh REQUIRES o.mu around every access here first.
+	tickLegRefs map[time.Duration]map[string]legRef
+
+	// tickCompositeRefs holds this tick's composite-reference reading
+	// per `<pair>:<window>` stateKey for the pairs it was evaluated on
+	// (single-venue buckets of allow-listed targets). Written once per
+	// bucket in refreshPairWindow BEFORE the confidence + freeze steps
+	// and read by both of them (so they see the SAME sample) and by the
+	// triangulation pass (composite_meta.corroboration_basis). Rebuilt
+	// at the top of every Tick; same L4 lock-free invariant as prevVWAPs.
+	tickCompositeRefs map[string]compositeReference
+
+	// refreshOrder is cfg.Pairs re-ordered so composite-reference legs
+	// refresh before their targets (see refreshOrder in
+	// composite_reference.go); identical to cfg.Pairs when the mechanism
+	// is off. Computed once in New.
+	refreshOrder []canonical.Pair
+
 	// freezeStates holds the ADR-0019 freeze lifecycle state per
 	// `<pair>:<window>` stateKey — how long the current freeze must
 	// hold, how far up the 4-extension ladder it has climbed, whether
@@ -819,6 +852,7 @@ func New(store Store, cache Cache, cfg Config) *Orchestrator {
 		lastWriteAt:     make(map[string]time.Time, len(cfg.Pairs)),
 		lastComposites:  make(map[string]compositeSample, len(cfg.Triangulations)*max(len(cfg.Windows), 1)),
 		freezeStates:    make(map[string]freeze.State, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
+		refreshOrder:    refreshOrder(cfg),
 		clock:           time.Now,
 	}
 }
@@ -870,8 +904,13 @@ func (o *Orchestrator) Tick(ctx context.Context) error {
 	// The per-pair loop below fills it; triangulateAll reads it.
 	o.tickEdgeQuotes = make(map[time.Duration][]aggregate.Quote, len(o.cfg.Windows))
 
+	// Fresh per-tick composite-reference inputs/outputs — see
+	// [Orchestrator.tickLegRefs] / [Orchestrator.tickCompositeRefs].
+	o.tickLegRefs = make(map[time.Duration]map[string]legRef, len(o.cfg.Windows))
+	o.tickCompositeRefs = make(map[string]compositeReference)
+
 	tickHadError := false
-	for _, pair := range o.cfg.Pairs {
+	for _, pair := range o.refreshOrder {
 		for _, window := range o.cfg.Windows {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -1116,6 +1155,17 @@ func (o *Orchestrator) refreshPairWindow( //nolint:funlen // 61>60 after the R-2
 		// pre-freeze baseline — see frozenPrevVWAPs.
 		prevForConfidence = shadow
 	}
+	// Composite-reference corroboration (2026-08-29): for an allow-listed
+	// structurally single-venue target, build the chain composite on the
+	// CURRENT bucket (this tick's leg publishes + an FX snap at `now`) and
+	// read it against this fresh VWAP. Evaluated BEFORE the confidence
+	// step so the confidence factor and the freeze verdict below see the
+	// SAME sample (triangulationDivergencePct prefers it over the prior
+	// tick's chain output). Not evaluated at all for multi-venue buckets.
+	var compositeRef compositeReference
+	if o.compositeReferenceEligible(pair, trades) {
+		compositeRef = o.evaluateCompositeReference(ctx, pair, window, now, vwap)
+	}
 	conf, confOK := o.computeConfidence(ctx, pair, window, vwap, prevForConfidence, trades)
 	// The freeze's source_count leg (ADR-0019 3-signal AND) reads the
 	// INDEPENDENCE signal, not just the direct trade sources: a pair
@@ -1123,9 +1173,10 @@ func (o *Orchestrator) refreshPairWindow( //nolint:funlen // 61>60 after the R-2
 	// is no longer single-source, so a thin FX cross stops false-firing
 	// the freeze (see [Orchestrator.effectiveSourceCount]). The
 	// confidence Inputs.SourceCount stays the raw trade count — only the
-	// freeze leg widens.
+	// freeze leg widens. The composite reference never touches either
+	// count: it can only change the VERDICT (compositeRef).
 	if o.stepPhase2Freeze(ctx, pair, window, stateKey, now,
-		conf, confOK, o.effectiveSourceCount(pair, window, trades), prevForConfidence, vwap) {
+		conf, confOK, o.effectiveSourceCount(pair, window, trades), prevForConfidence, vwap, compositeRef) {
 		// Refused: advance the shadow comparator with this bucket's
 		// fresh VWAP so the NEXT frozen bucket scores a per-tick
 		// return (and a post-restart frozen pair becomes scorable
@@ -1193,6 +1244,7 @@ func (o *Orchestrator) refreshPairWindow( //nolint:funlen // 61>60 after the R-2
 	// weakest-link confidence reuses the pair's existing quality signal
 	// (see [Orchestrator.edgeConfidence]).
 	o.recordEdgeQuote(pair, window, vwap, conf, confOK, trades)
+	o.recordLegRef(pair, window, vwap, trades)
 
 	o.mu.Lock()
 	o.vwapWrites++

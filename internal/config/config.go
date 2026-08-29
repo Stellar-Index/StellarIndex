@@ -1160,6 +1160,21 @@ type AggregateConfig struct {
 	Triangulations               []TriangulationChainConfig `toml:"triangulations" doc:"Operator-configured chain pricing entries — each row defines a target pair plus an ordered chain of leg pairs. After the per-pair refresh runs, the orchestrator prices each target via the graph-based cross-rate router (internal/aggregate/router.go) over the edge set built from this tick's priced-pair VWAPs plus the resolved chain legs, and writes the implied target VWAP to its own cache key. Empty (default) skips triangulation entirely." default:"[]"`
 	MaxHops                      int                        `toml:"max_hops" doc:"Maximum LEGS in a router cross-rate route (base→hub→quote is 2 legs). Bounds the graph search and the composite chain length. 0 falls back to the library default (3); values are accepted only in [2,4] (4 covers the obscure×obscure worst case). Applies to the triangulation targets priced via the router." default:"3"`
 	MinRouteConfidence           float64                    `toml:"min_route_confidence" doc:"Confidence floor in [0,1] a router route's weakest-link edge must clear to back a composite as CONFIDENT. Routes below it are excluded so a dust/thin edge can't set a confident cross; when NO route clears it the composite is served as low-confidence (flagged, not published over the direct price). 0 (default) disables the floor — every route is treated as confident, matching pre-router behaviour. Dust USD pairs are already excluded from the edge set by min_usd_volume regardless of this knob." default:"0"`
+	CompositeReference           CompositeReferenceConfig   `toml:"composite_reference" doc:"Current-bucket composite-reference corroboration of the phase-2 freeze for structurally single-venue targets (2026-08-29 product decision; design doc §10 amendment). For an allow-listed target whose bucket is single-venue, the aggregator rebuilds the target's [[aggregate.triangulations]] chain on the CURRENT bucket (this tick's crypto/USD leg publish × a fresh FX snap) and compares it with the direct print: agreement within tolerance_bps means the move is market-wide and the phase-2 fire is suppressed (corroboration_basis=composite); disagreement or an unavailable reference freezes exactly as before (corroboration_basis=venue, reason names why). The composite NEVER enters VWAP and NEVER raises source_count."`
+}
+
+// CompositeReferenceConfig is the `[aggregate.composite_reference]`
+// block. Mirrors orchestrator.CompositeReferenceConfig; the binary
+// boundary (cmd/stellarindex-aggregator) maps it, the same way it maps
+// the triangulation table.
+type CompositeReferenceConfig struct {
+	Enabled          bool     `toml:"enabled" doc:"Master switch. Default ON for the targets allow-list below; set false to restore the pre-2026-08-29 freeze-and-auto-release posture for every pair without editing the list." default:"true"`
+	Targets          []string `toml:"targets" doc:"Allow-list of structurally single-venue target pairs (canonical wire form) the composite reference may corroborate. Each must also have an [[aggregate.triangulations]] row — its legs ARE the reference. A target with >= 2 real venues on a bucket is never evaluated regardless of this list." default:"[\"crypto:XLM/fiat:GBP\",\"crypto:XLM/fiat:EUR\"]"`
+	ToleranceBps     int      `toml:"tolerance_bps" doc:"Maximum |direct - composite| / composite, in basis points, for the composite to CORROBORATE the direct print. 0 = default (75). Must be in (0, 10000]." default:"75"`
+	MinLegSources    int      `toml:"min_leg_sources" doc:"Minimum distinct real exchange venues each priced (crypto/USD) leg must carry on the CURRENT bucket for the composite to count; a single-venue leg cannot corroborate (reason: composite_unavailable: leg_sources=N). 0 = default (2)." default:"2"`
+	LegDispersionBps int      `toml:"leg_dispersion_bps" doc:"Leg-dispersion guard: every venue's own bucket VWAP on a priced (crypto/USD) leg must be within this many basis points of the leg VWAP for the leg to corroborate; otherwise composite_unavailable: leg_dispersion=… (fail-closed). Two venues only count as two when they agree — a dominant venue plus a dust print 3% off is one opinion. 0 = tolerance_bps." default:"0"`
+	ReleaseBandPct   float64  `toml:"release_band_pct" doc:"Mid-hold auto-release agreement band (%) between the fresh candidate and the current-bucket composite for a target whose reference resolved on the bucket. Dedicated and tighter than the shared 5% cross-oracle band, which would release a held +4% venue-specific offset. 0 = default (2.0)." default:"2.0"`
+	FXMaxAgeHours    int      `toml:"fx_max_age_hours" doc:"Staleness budget for the FX leg's fx_quotes snap (bucket age at evaluation). fx_quotes buckets are DAILY and the feed pauses over market closes, so this mirrors the Chainlink FX feed budget (76h), not the 6h poll-liveness alert. The FX leg must also come from the FX source class (massive) — never an oracle. 0 = default (76)." default:"76"`
 }
 
 // TriangulationChainConfig is one row of the triangulation table.
@@ -1815,6 +1830,20 @@ func Default() Config {
 			MaxTradesPerWindow:           10_000,
 			MaxHops:                      3,
 			MinRouteConfidence:           0,
+			CompositeReference: CompositeReferenceConfig{
+				// ON by default (Ash, 2026-08-29): the mechanism is
+				// fail-closed on every leg (thin, stale, wrong class)
+				// and evaluated only on single-venue buckets of the
+				// listed targets — the pairs the design doc (§3) records
+				// as structurally single-venue with a deep USD leg.
+				Enabled:       true,
+				Targets:       []string{"crypto:XLM/fiat:GBP", "crypto:XLM/fiat:EUR"},
+				ToleranceBps:  75,
+				MinLegSources: 2,
+				FXMaxAgeHours: 76,
+				// leg_dispersion_bps 0 = tolerance_bps.
+				ReleaseBandPct: 2.0,
+			},
 		},
 		Anomaly:      defaultAnomalyConfig(),
 		API:          defaultAPIConfig(),

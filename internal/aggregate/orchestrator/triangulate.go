@@ -531,6 +531,33 @@ type compositeMeta struct {
 	// the direct price (LowConfidence is set too). Lets Step 3 / the API
 	// surface a leg-substitution instead of it being a silent change.
 	Rerouted bool `json:"rerouted,omitempty"`
+
+	// CorroborationBasis / CompositeLegSources (2026-08-29) carry the
+	// composite-reference reading the freeze decision for this target
+	// used on THIS tick: "composite" when the current-bucket reference
+	// corroborated the direct print, "venue" when it refuted it or was
+	// unavailable. Absent (omitempty) when the reference was not
+	// evaluated (multi-venue bucket, target not allow-listed, mechanism
+	// off) — so the JSON is byte-identical to before in those cases.
+	// CompositeLegSources maps each chain leg to the distinct venue /
+	// provider count behind it, so a reader can see how strong the
+	// agreement was. Never a source count for the target itself.
+	CorroborationBasis  string         `json:"corroboration_basis,omitempty"`
+	CompositeLegSources map[string]int `json:"composite_leg_sources,omitempty"`
+}
+
+// withCorroborationBasis stamps this tick's composite-reference reading
+// (if any) onto a composite_meta before it is written.
+func (o *Orchestrator) withCorroborationBasis(target canonical.Pair, window time.Duration, meta compositeMeta) compositeMeta {
+	ref, ok := o.currentCompositeReference(target, window)
+	if !ok {
+		return meta
+	}
+	meta.CorroborationBasis = ref.basis()
+	if len(ref.legSources) > 0 {
+		meta.CompositeLegSources = ref.legSources
+	}
+	return meta
 }
 
 // writeCompositeMeta persists a composite's quality flags for Step 3.
@@ -557,7 +584,7 @@ func (o *Orchestrator) writeCompositeMeta(
 func (o *Orchestrator) setCompositeMeta(
 	ctx context.Context, target canonical.Pair, window time.Duration, meta compositeMeta,
 ) error {
-	body, err := json.Marshal(meta)
+	body, err := json.Marshal(o.withCorroborationBasis(target, window, meta))
 	if err != nil {
 		return err
 	}

@@ -1961,6 +1961,66 @@ typically a single-digit number of FX legs across all chains. Sustained
 in `deploy/monitoring/rules/aggregator.yml` fires at 30m sustained
 fallback dominance.
 
+### `stellarindex_aggregator_composite_corroboration`
+
+Gauge, labels `pair`, `window`, `verdict` (`corroborated` /
+`refuted` / `unavailable`).
+
+Current-bucket composite-reference verdict for a structurally
+single-venue target (`[aggregate.composite_reference] targets`,
+2026-08-29 — design doc §10.1). Evaluated only on a single-venue
+bucket of an allow-listed target; one series per verdict, exactly one
+of them 1 after each evaluation. `corroborated` = the target's
+triangulation chain rebuilt on THIS bucket (this tick's crypto/USD
+publish × a fresh FX snap) agrees with the direct print within
+`tolerance_bps`, so a phase-2 fire on this bucket is suppressed
+(`corroboration_basis=composite`). `refuted` = it disagrees →
+venue-specific → the freeze engages as before. `unavailable` = a leg
+could not back a reference (thin, not refreshed, FX stale or not
+FX-class) → freeze as before, the reason names the cause. Cardinality:
+allow-list × windows × 3.
+
+### `stellarindex_aggregator_composite_reference_leg_sources`
+
+Gauge, labels `pair`, `window`, `leg` (canonical leg pair, e.g.
+`crypto:XLM/fiat:USD`).
+
+Distinct venues / providers behind each leg of the composite reference
+on the last evaluated bucket — how STRONG a corroboration was. The
+crypto/USD leg must reach `min_leg_sources` (default 2) for the
+composite to count at all; the FX leg reads 1 (one provider,
+`massive`). Also carried in `composite_meta.composite_leg_sources` and
+the freeze reason string.
+
+### `stellarindex_aggregator_composite_reference_leg_dispersion_bps`
+
+Gauge, labels `pair`, `window`, `leg`.
+
+Max |venue VWAP − leg VWAP| / leg VWAP in basis points across the
+venues printing a priced composite-reference leg on the last evaluated
+bucket (venue VWAPs over the same post-filter survivor slice the leg
+VWAP came from). Above `[aggregate.composite_reference]
+leg_dispersion_bps` (default = `tolerance_bps`, 75) the leg cannot
+corroborate — `composite_unavailable: leg_dispersion=…bps` — because
+two venues only count as two when they agree: a dominant venue plus a
+dust print 3 % off is one opinion and an artefact (verifier advisory A1,
+2026-08-29). A venue VWAP that cannot be computed refuses the leg too
+(`leg_dispersion=uncomputable`, fail-closed — A4); the gauge is then
+not updated for that leg. Also carried in the freeze reason as
+`composite_leg_dispersion_bps={…}`.
+
+### `stellarindex_aggregator_composite_freeze_suppressed_total`
+
+Counter, no labels.
+
+Phase-2 freeze fires (the 3-signal AND held on a single-venue bucket)
+that were NOT engaged because the current-bucket composite reference
+corroborated the move. Every increment is a bucket that would have
+frozen before 2026-08-29; read it next to
+`stellarindex_anomaly_freeze_engaged_total` when judging whether
+`tolerance_bps` is too loose. Log line: `phase2 freeze suppressed:
+composite reference corroborates the move`.
+
 ### `stellarindex_divergence_refresh_total`
 
 Counter, label `outcome` (`ok` / `no_vwap` / `parse_error` /
