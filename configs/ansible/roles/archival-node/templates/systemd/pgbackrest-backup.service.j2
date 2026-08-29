@@ -8,6 +8,12 @@ Wants=postgresql.service
 Type=oneshot
 User=postgres
 Group=postgres
+# The wrapper emits per-repo textfile metrics into the node_exporter
+# collector dir, which is stellarindex:stellarindex 0775
+# (10-observability.yml). Grant the group here rather than mutating the
+# postgres account; picked up on each (oneshot) start, no restart of
+# postgresql needed.
+SupplementaryGroups=stellarindex
 ExecStart=/usr/local/bin/pgbackrest-backup.sh
 # Keep backup I/O off the critical path of live ingest.
 Nice=10

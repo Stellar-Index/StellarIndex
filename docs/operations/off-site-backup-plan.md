@@ -1,14 +1,12 @@
 ---
 title: Off-site (S3) backup plan
 last_verified: 2026-08-29
-status: proposed (execute after Phase A/D)
+status: §2 (Postgres → pgBackRest repo2/S3) LIVE on r1 2026-08-29; §1/§3/§4 proposed
 severity: P1
 ---
 
 # Off-site (S3) backup plan
 
-> ⚠️ **Dependency status (2026-08-29, audit backup-restore-6 / ADR-0043 §2 amendment):** the raw-archive row below is **not** fully held on r1 — `[64000, 49983999]` was capacity-trimmed on 2026-07-26 and today exists for us only in the third-party `s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet/` dataset (AWS Open Data). Decision: accept + monitor, not duplicate — `.github/workflows/public-dataset-check.yml` verifies coverage/manifest weekly and opens the "AWS Public Blockchain dataset drift" issue on drift. Stream 1 below, when executed, must include a one-time pull of that middle range from the public bucket (not from r1's MinIO), and ADR-0043 records the ≈ $80 + $3–4/mo cross-region-copy option if zero third-party dependence is ever wanted.
->
 > ♻️ **Refined by ADR-0050 / [`../architecture/multi-region-ha.md`](../architecture/multi-region-ha.md) §5 (2026-08-21).** The plan adopts this doc's core (off-site is a P1 SPOF fix) and resolves its RTO argument: it keeps **two** off-site artifacts on Cloudflare R2 — the ~2.49 TiB raw archive (crown-jewel source of truth) *and* the ~11.6 TiB derived cold-lake copy (fast-RTO restore + the multi-region serving fallback). Use the plan doc's §5 as the current target; this doc's mechanism detail remains useful reference.
 
 Design for off-site backups of R1 — today the box is a **single point of failure with local-only backups** (pgBackRest on the same ZFS pool as the data it protects; a pool/box loss loses both). This plan puts a durable copy off-box. Execute **after** Phase A/D (the user's sequencing); the design is ready now.
@@ -53,7 +51,25 @@ repo2-cipher-type=aes-256-cbc          # repo encryption (passphrase in vault)
 repo2-retention-full=4
 repo2-retention-diff=14
 ```
-Then `pgbackrest backup` writes both repos. **This also lets us safely prune repo1 (local) diffs** (the deferred Phase A step) once repo2 exists — the off-site copy becomes the deep-retention tier.
+**Status (2026-08-29): LIVE on r1** — pgBackRest 2.58, repo1 local +
+repo2 = S3 (rendered by `pgbackrest.conf.j2`, lean retention
+`repo2-retention-full=1` / `repo2-retention-diff=7` per #298, stanza
+upgraded, WAL archiving to both repos, first repo2 full taken by hand).
+
+> ⚠️ **`pgbackrest backup` does NOT write both repos.** The `backup`
+> command is single-repo: with no `--repo` it backs up only the
+> highest-priority repo (the lowest key, repo1). Only `archive-push`
+> (WAL) and `expire` operate on every repo by default (pgBackRest User
+> Guide, "Multiple Repositories"; `pgbackrest help backup repo`). The
+> nightly wrapper (`pgbackrest-backup.sh.j2`) therefore runs one
+> `--repo=N --type=$TYPE backup` per `repoN-*` key it finds in
+> `pgbackrest.conf` — repo1 then repo2, diff Mon–Sat / full Sunday on
+> both, expire per repo against that repo's own retention — and emits
+> `stellarindex_pgbackrest_backup_{last_success_unix,last_rc,duration_seconds}{repo}`
+> textfile metrics. A hand-run `pgbackrest --stanza=stellarindex backup`
+> only refreshes repo1; add `--repo=2` for the off-site copy.
+
+This also lets us safely prune repo1 (local) diffs (the deferred Phase A step) now that repo2 exists — the off-site copy becomes the deep-retention tier.
 
 ### 3. Config / vault / secrets → encrypted tarball (high)
 Small, high-value, non-re-derivable. A daily job tars `/etc/stellarindex*`, `/etc/pgbackrest*`, systemd units, the ansible vault, and CH/PG DDL snapshots; `age`/`gpg`-encrypts; uploads to S3. Codify as a systemd timer in the archival-node role.
