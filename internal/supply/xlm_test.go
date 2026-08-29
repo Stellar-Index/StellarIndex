@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
@@ -392,5 +393,82 @@ func TestCompute_LegacyReader_NoFreshnessSignal(t *testing.T) {
 	}
 	if got.MinComponentLedger != 0 {
 		t.Errorf("MinComponentLedger = %d, want 0 (legacy reader → no freshness signal)", got.MinComponentLedger)
+	}
+}
+
+// TestNewXLMComputerForNetwork_TestNetworksUseLedgerTotal — the
+// 2026-08-28 api.testnet defect: /v1/assets/native served the frozen
+// pubnet 50,001,806,812 XLM constant while the testnet ledger's
+// total_coins is 100 B. The computer must key its total off the
+// network passphrase: testnet + futurenet get the 100 B genesis
+// total, pubnet stays byte-identical, and the basis stays the honest
+// xlm_total_only when nothing was excluded.
+func TestNewXLMComputerForNetwork_TestNetworksUseLedgerTotal(t *testing.T) {
+	genesis100B, _ := new(big.Int).SetString("1000000000000000000", 10) // 100_000_000_000 × 10^7
+	pubnet := supply.XLMTotalSupplyStroops()
+
+	cases := []struct {
+		name       string
+		passphrase string
+		wantTotal  *big.Int
+	}{
+		{"testnet", canonical.TestnetPassphrase, genesis100B},
+		{"futurenet", canonical.FuturenetPassphrase, genesis100B},
+		{"pubnet", canonical.PubnetPassphrase, pubnet},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := supply.NewXLMComputerForNetwork(tc.passphrase, nil, nil)
+			if err != nil {
+				t.Fatalf("constructor: %v", err)
+			}
+			got, err := c.Compute(context.Background(), 12345, time.Unix(1_777_000_000, 0).UTC())
+			if err != nil {
+				t.Fatalf("Compute: %v", err)
+			}
+			if got.TotalSupply.Cmp(tc.wantTotal) != 0 {
+				t.Errorf("TotalSupply = %s, want %s", got.TotalSupply, tc.wantTotal)
+			}
+			if got.MaxSupply.Cmp(tc.wantTotal) != 0 {
+				t.Errorf("MaxSupply = %s, want %s", got.MaxSupply, tc.wantTotal)
+			}
+			if got.CirculatingSupply.Cmp(tc.wantTotal) != 0 {
+				t.Errorf("CirculatingSupply (no reserves) = %s, want %s", got.CirculatingSupply, tc.wantTotal)
+			}
+			if got.Basis != supply.BasisXLMTotalOnly {
+				t.Errorf("Basis = %q, want %q", got.Basis, supply.BasisXLMTotalOnly)
+			}
+		})
+	}
+}
+
+// TestNewXLMComputerForNetwork_RejectsUnknownNetwork — fail closed:
+// an unrecognised passphrase must not silently get the pubnet total.
+func TestNewXLMComputerForNetwork_RejectsUnknownNetwork(t *testing.T) {
+	_, err := supply.NewXLMComputerForNetwork("Some Other Network ; 2030", nil, nil)
+	if !errors.Is(err, supply.ErrUnknownNetwork) {
+		t.Errorf("err = %v, want ErrUnknownNetwork", err)
+	}
+	if _, err := supply.XLMTotalSupplyStroopsForNetwork(""); !errors.Is(err, supply.ErrUnknownNetwork) {
+		t.Errorf("empty passphrase: err = %v, want ErrUnknownNetwork", err)
+	}
+}
+
+// TestNewXLMComputer_IsPubnet — the legacy two-arg constructor must
+// stay byte-identical to the pubnet network computer.
+func TestNewXLMComputer_IsPubnet(t *testing.T) {
+	legacy, err := supply.NewXLMComputer(nil, nil)
+	if err != nil {
+		t.Fatalf("NewXLMComputer: %v", err)
+	}
+	pub, err := supply.NewXLMComputerForNetwork(canonical.PubnetPassphrase, nil, nil)
+	if err != nil {
+		t.Fatalf("NewXLMComputerForNetwork: %v", err)
+	}
+	at := time.Unix(1_777_000_000, 0).UTC()
+	a, _ := legacy.Compute(context.Background(), 1, at)
+	b, _ := pub.Compute(context.Background(), 1, at)
+	if a.TotalSupply.Cmp(b.TotalSupply) != 0 || a.TotalSupply.Cmp(supply.XLMTotalSupplyStroops()) != 0 {
+		t.Errorf("legacy total %s != pubnet total %s", a.TotalSupply, b.TotalSupply)
 	}
 }
