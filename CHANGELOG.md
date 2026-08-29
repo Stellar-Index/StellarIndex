@@ -197,6 +197,42 @@ against.
 
 ### Fixed
 
+- **Runbook re-verification wave K: eight alert runbooks re-derived
+  against HEAD (7 broken, 1 stale), plus a lint so the worst class
+  cannot recur.** `ledgerstream-tier-both-missing.md` — a P1 page —
+  told responders to `rehydrate-galexie-archive -write --from --to
+  --source vultr` (none of those flags exist) and inverted the tool's
+  posture: it COMMITS by default and `-dry-run` is the opt-in preview,
+  so an operator who trusted the runbook's "without `-write` this only
+  lists the would-copy files" note and dropped the flag would have run
+  a real copy. It also cited two gauges that have never been
+  registered.
+  `postgres-ping-failing.md` still documented the `> 0.5/s` threshold
+  that was unreachable by 30× at the 60 s probe cadence (corrected to
+  `> 0` in both rule trees on 2026-08-04) and a
+  `trade_inserts_total{outcome="error"}` label that does not exist.
+  `source-stopped.md` described ONE 30 m × 15 m alert; the shipped
+  shape is the F-1208 three-way split (high-volume 30 m/15 m,
+  low-volume DEX 24 h/30 m, daily publisher 30 h/1 h) all sharing one
+  `runbook_url`. `external-poller-stale.md` blanket-claimed "30
+  minutes", misdescribing the 12 h ECB rule by 24×.
+  `ingestion-duplicate-flood.md` still said `ON CONFLICT DO NOTHING`
+  (INV-3 / migration 0109 made it a generation-guarded `DO UPDATE`, so
+  a corrective re-derive now reproduces the alert's exact signature)
+  and used `-sources`/`-parallel` flags `backfill` doesn't have.
+  `decode-errors.md` asserted a pre-P23 operations+effects fallback
+  that has never existed, a pre-ADR-0035/0040 comet topic-only match,
+  and a redstone length-mismatch that refuses without recovery.
+  `sev-status-page-update.md` (and CLAUDE.md's tree map) still pointed
+  at `web/status/`, now a redirect-only stub — the live page is the
+  explorer's `web/explorer/src/app/status/`. `exporter-down.md`
+  attributed r1's exporters to the redis-sentinel role, which r1 never
+  runs. Guard: `lint-docs.sh` §11's runbook metric-name check was
+  scoped to `stellarindex_source_*` only, so both phantom gauges above
+  were invisible to CI; it now covers every obs-owned namespace a
+  runbook cites (`source`/`cursor`/`indexer`/`backfill`/`trade`/`postgres_ping`)
+  and resolves histogram `_bucket`/`_sum`/`_count` children. Verified
+  red against the pre-fix runbook text.
 - **Gap detector pre-registers `runs_total` at 0 so a restart cannot read
   as a dead detector.** `stellarindex_ingest_gap_detector_runs_total` is a
   CounterVec that only materialises a series on first `Inc()`, and since

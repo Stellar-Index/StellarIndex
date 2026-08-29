@@ -347,33 +347,54 @@ if [ -d deploy/monitoring/rules ] && [ -f docs/operations/alerts-catalog.md ]; t
     done
 fi
 
-# ─── 11. Runbook body references to `stellarindex_source_*` metrics ─────────
+# ─── 11. Runbook body references to obs-owned metric namespaces ─────────────
 #
-# Narrow rule: only `stellarindex_source_*` (the namespace fully
-# owned by internal/obs/metrics.go). External-exporter metrics
-# (stellarindex_stellar_core_*, pgbackrest_*, etc.) are intentionally
-# out of scope — those live in node-side exporters we don't control.
+# Narrow rule: only the `stellarindex_*` namespaces fully owned by
+# internal/obs/metrics.go (see RUNBOOK_METRIC_PREFIXES). External-
+# exporter metrics (stellarindex_stellar_core_*, pgbackrest_*, …) and
+# namespaces the vendored SDK also writes into
+# (stellarindex_ledgerstream_* — the BufferedStorageBackend registers
+# its own buffer_* series under that prefix) are deliberately OUT of
+# scope: nothing in this repo declares their names, so enforcing them
+# would be all false positives.
 #
 # Caught `stellarindex_source_last_event_age_seconds` drift on
 # 2026-04-23 — runbook referenced a metric name that never existed.
+#
+# Widened 2026-08-29 (runbook re-verification wave K, issue #315).
+# ledgerstream-tier-both-missing.md — a P1 page — told responders to
+# read `stellarindex_indexer_ledger_lag_seconds` and
+# `stellarindex_backfill_cursor` for months. Neither has ever been
+# registered, so the documented triage for a P1 was "grep for a series
+# that cannot exist". The `_source_`-only rule could not see either.
+# A prefix here is a PROMISE that internal/obs is the only writer of
+# that namespace; add one only when that is true, never to launder a
+# name that has no producer. Each alternative needs its trailing `_`,
+# which is also what keeps the multi-host SCRAPE-JOB label
+# `job="stellarindex_indexer"` (no trailing underscore) out of scope —
+# lint-metric-refs.sh skips job matchers for the same reason.
+
+RUNBOOK_METRIC_PREFIXES='stellarindex_(source|cursor|indexer|backfill|trade|postgres_ping)_'
 
 echo "Checking runbook metric-name freshness..."
 if [ -d docs/operations/runbooks ] && [ -f internal/obs/metrics.go ]; then
   # Build the allowed set: names registered in obs.metrics.go +
-  # alert names in Prometheus rules (runbooks use either). `|| true`
-  # because under set -e + pipefail, grep returning 1 for no-match
-  # would kill the whole script — we explicitly want an empty set
-  # if no matches.
+  # alert names in Prometheus rules, BOTH trees (runbooks use either).
+  # `|| true` because under set -e + pipefail, grep returning 1 for
+  # no-match would kill the whole script — we explicitly want an empty
+  # set if no matches.
   allowed=$(mktemp)
   {
-    (grep -hE 'Name:[[:space:]]*"stellarindex_source_[a-z_]+"' internal/obs/metrics.go 2>/dev/null || true) | \
-      sed -E 's|.*"(stellarindex_source_[a-z_]+)".*|\1|'
-    (grep -rhE '^[[:space:]]*-[[:space:]]*alert:[[:space:]]*stellarindex_source_' deploy/monitoring/rules/ 2>/dev/null || true) | \
+    (grep -hE "Name:[[:space:]]*\"${RUNBOOK_METRIC_PREFIXES}[a-z0-9_]+\"" internal/obs/metrics.go 2>/dev/null || true) | \
+      sed -E 's|.*"(stellarindex_[a-z0-9_]+)".*|\1|'
+    (grep -rhE "^[[:space:]]*-[[:space:]]*alert:[[:space:]]*${RUNBOOK_METRIC_PREFIXES}" deploy/monitoring/rules/ configs/prometheus/rules.r1/ 2>/dev/null || true) | \
       sed -E 's|.*alert:[[:space:]]*||'
   } | sort -u > "$allowed"
 
-  # Extract every stellarindex_source_* token from runbook bodies.
-  (grep -rhoE 'stellarindex_source_[a-z_]+' docs/operations/runbooks/ 2>/dev/null || true) | \
+  # Extract every in-scope metric token from runbook bodies. Histogram
+  # child series (_bucket/_sum/_count) resolve to their parent.
+  (grep -rhoE "${RUNBOOK_METRIC_PREFIXES}[a-z0-9_]+" docs/operations/runbooks/ 2>/dev/null || true) | \
+    sed -E 's/_(bucket|sum|count)$//' | \
     sort -u | while IFS= read -r metric; do
       [ -z "$metric" ] && continue
       if ! grep -qxF "$metric" "$allowed"; then
