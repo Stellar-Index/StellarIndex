@@ -1,65 +1,122 @@
 ---
-# galexie-effective-checksum.yml — imported TWICE by 07-galexie.yml (with
-# galexie_effective_stage=before, then =after) around the copy/template
-# tasks that render galexie's inputs. On the host it computes the
-# EFFECTIVE checksum of each input: full-line `#` comments and blank lines
-# stripped (a `#!` shebang line is kept — bash-vs-sh matters), sha256 of
-# the rest. The `after` pass then notifies `Restart galexie` only for a
-# before/after mismatch (or an input that did not exist before).
+# galexie-effective-checksum.yml — imported ONCE by 07-galexie.yml, BEFORE
+# the template tasks that render galexie's restart-relevant inputs. It is
+# the only place in the role that may notify `Restart galexie` for a
+# config change, and it decides that from what the running process has
+# already LOADED and cannot pick up live:
 #
-# Why: every one of the five inputs is ~50% prose (galexie-append.sh 47
-# comment lines of 106, stellar-core.cfg.j2 89/194, galexie.toml.j2 20/41),
-# and ansible copy/template compare bytes — so a comment re-wrap, applied
-# with `--tags galexie` for an unrelated reason, restarted the live-tail
-# galexie + its captive core: a ~9-minute mainnet cold catchup per restart
+#   /etc/stellar/captive-core-galexie.cfg  — read by the captive core
+#                                             galexie spawns at start
+#   /etc/galexie/galexie.toml              — galexie --config-file, read
+#                                             once at start
+#   /etc/default/galexie                   — EnvironmentFile, loaded by
+#                                             systemd at service start
+#   /etc/systemd/system/galexie.service    — [Service] ExecStart/Environment
+#                                             apply on the NEXT start only
+#                                             (daemon-reload updates the
+#                                             definition, not the process)
+#
+# Deliberately NOT in the list (2026-08-29 r1 incident): the
+# galexie-append.sh wrapper is exec'd once per service start and then
+# replaced by the galexie binary; a wrapper edit takes effect at the next
+# (re)start and never requires restarting a healthy, in-sync process. The
+# galexie-archive-tip-lag / -fill / -contiguity scripts + timers are
+# oneshot units the daemon never reads. The SDF apt key/repo feed apt.
+# On 2026-08-29 06:04Z an apply with `--tags users,minio,galexie` carried
+# the #267 wrapper shebang fix (+ the tip-lag updater); the wrapper sat in
+# this list, so a healthy galexie was restarted for a file it would only
+# read at its next start — a ~9-minute mainnet captive-core cold catchup
 # (docs/operations/postmortems/2026-08-27-r1-p28-captive-core-outage.md).
-# The gate keys on the bytes galexie / captive-core / systemd actually
-# read, so any real change still restarts — deliberately NOT a default-off
-# "ack" variable, which would leave rotated S3 keys or a PEER_PORT change
-# sitting on disk unapplied (2026-08-28 audit, deploy-ansible-handlers-7).
 #
-# check_mode: false on the hash task — it is read-only, so `--check --diff`
-# still runs it; note that in check mode nothing is written, so the
-# before/after pair is identical and the restart decision cannot be
-# previewed (the rendered --diff can). Self-tested by
-# scripts/ci/ansible-galexie-restart-test.sh.
-- name: "Effective checksum of galexie inputs ({{ galexie_effective_stage }})"
+# For each input it compares the EFFECTIVE checksum of the file on disk
+# with the effective checksum of what this run WOULD render (the same
+# template, rendered on the controller): full-line `#` comments and blank
+# lines stripped (a `#!` shebang line is kept), sha256 of the rest — so a
+# comment re-wrap does not restart, a real value change does. Both hashes
+# come from one read-only shell task with `check_mode: false`, so
+# `--check --diff` reaches the same verdict as a real apply and shows
+# `RUNNING HANDLER [Restart galexie]` when one would fire. (The previous
+# before/after-render design could not: in check mode nothing is written,
+# so the pair was always identical and the restart was invisible in the
+# dry-run the operator relies on — the 2026-08-29 apply was previewed
+# with `--check --diff`, which showed NO handler.)
+#
+# Fail-closed: when galexie is ACTIVE and an effective change is pending,
+# a real apply stops here — before anything is written — unless
+# `galexie_restart_ack=true` (defaults/main.yml). Nothing is left on disk
+# unapplied: the operator re-runs with `-e galexie_restart_ack=true` in a
+# maintenance window and the render + restart land together. An inactive
+# galexie (bootstrap, or already down) needs no ack — the restart is just
+# a start. Self-tested by scripts/ci/ansible-galexie-restart-test.sh.
+
+- name: Is galexie currently running (restart-ack guard applies only then)
+  ansible.builtin.command: systemctl is-active galexie
+  register: galexie_active_probe
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Effective checksum of galexie inputs — on disk vs. would-be-rendered
+  # stdin carries the controller-rendered content (never argv — the env
+  # file holds the S3 key pair; no_log hides it from the play output).
+  # `$(...)` drops trailing newlines on both sides so a render-path
+  # difference in final-newline handling can never read as a change.
   ansible.builtin.shell:
     cmd: |
       set -o pipefail
-      f={{ item | quote }}
+      f={{ item.path | quote }}
+      strip() { sed -E '/^[[:space:]]*#([^!]|$)/d; /^[[:space:]]*$/d'; }
       if [ -f "$f" ]; then
-        sed -E '/^[[:space:]]*#([^!]|$)/d; /^[[:space:]]*$/d' "$f" | sha256sum | cut -d' ' -f1
+        cur=$(printf '%s\n' "$(strip < "$f")" | sha256sum | cut -d' ' -f1)
       else
-        echo absent
+        cur=absent
       fi
+      want=$(printf '%s\n' "$(strip)" | sha256sum | cut -d' ' -f1)
+      if [ "$cur" = "$want" ]; then echo same; else echo "changed $cur $want"; fi
+    stdin: "{{ item.content }}"
     executable: /bin/bash
   loop: "{{ galexie_effective_inputs }}"
+  loop_control:
+    label: "{{ item.path }}"
   register: galexie_effective_result
   changed_when: false
   check_mode: false
+  no_log: true
 
-- name: "Record effective checksums ({{ galexie_effective_stage }})"
+- name: Record which galexie inputs differ effectively
+  # stdout per item is `same` or `changed <on-disk|absent> <would-be-rendered>`.
   ansible.builtin.set_fact:
-    galexie_effective: >-
-      {{ (galexie_effective | default({}))
-         | combine({galexie_effective_stage:
-                    dict(galexie_effective_result.results | map(attribute='item')
-                         | zip(galexie_effective_result.results | map(attribute='stdout'))) }) }}
+    galexie_effective_changed: >-
+      {{ galexie_effective_result.results
+         | rejectattr('stdout', 'equalto', 'same')
+         | map(attribute='item.path') | list }}
 
 - name: Galexie inputs — restart only on effective (non-comment) change
   # Reports changed (→ `Restart galexie`) iff some input's stripped
-  # checksum differs before/after, or the input did not exist before.
-  when: galexie_effective_stage == 'after'
+  # checksum on disk differs from the stripped render, or the input is
+  # absent. Runs in check mode too, so the dry-run shows the handler.
   ansible.builtin.debug:
     msg: >-
       {{ 'effective change in: ' ~ (galexie_effective_changed | join(', '))
          if galexie_effective_changed | length > 0
          else 'no effective change in galexie inputs (comment/whitespace-only edits do not restart)' }}
-  vars:
-    galexie_effective_changed: >-
-      {{ galexie_effective.after | dict2items
-         | difference(galexie_effective.before | dict2items)
-         | map(attribute='key') | list }}
   changed_when: galexie_effective_changed | length > 0
   notify: Restart galexie
+
+- name: Galexie restart required but not acknowledged — refuse (fail-closed)
+  ansible.builtin.fail:
+    msg: >-
+      A real galexie restart is required by an effective config change in
+      {{ galexie_effective_changed | join(', ') }} and galexie is active
+      (systemctl is-active = {{ galexie_active_probe.stdout | default('?') }}).
+      Nothing has been written. A galexie restart costs a ~9-minute mainnet
+      captive-core cold catchup (2026-08-27 / 2026-08-29 r1 incidents), so
+      it is never applied unacknowledged: re-run in a maintenance window
+      with `-e galexie_restart_ack=true` to render the change AND restart
+      galexie together, then watch the tip for ~10 min and do not
+      re-restart mid-catchup (docs/operations/runbooks/galexie-catchup-refused.md).
+  when:
+    - not ansible_check_mode
+    - galexie_effective_changed | length > 0
+    - galexie_active_probe.stdout | default('') not in ['inactive', 'failed']
+    - not (galexie_restart_ack | bool)
