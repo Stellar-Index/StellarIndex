@@ -76,8 +76,11 @@ func TestAccountsByWealthQuery_Bounds(t *testing.T) {
 // dedup, the cursor tuple comparisons).
 func TestExplorerScanQueries_ShapePreserved(t *testing.T) {
 	txQ := accountTransactionsQuery(true)
+	// Tx-key dedupe inside the arms is `LIMIT 1 BY ledger_seq, tx_index`
+	// over the account-keyed tables (2026-08-28 — it replaced the
+	// `SELECT DISTINCT` of the old resolve-over-stellar.transactions arms;
+	// see TestAccountListings_ArmsPageAccountKeyedTables).
 	for _, s := range []string{
-		"SELECT DISTINCT",
 		"UNION ALL",
 		"(ledger_seq, tx_index) < (?, ?)",
 		"LIMIT 1 BY ledger_seq, tx_index",

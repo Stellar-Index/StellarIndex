@@ -912,17 +912,24 @@ func accountTransactionsQuery(hasCursor bool) string {
 	// dedupe of a tx whose account appears in several of its operations),
 	// and the hydration pass repeats LIMIT 1 BY as belt-and-braces
 	// against duplicate lake parts.
+	//
+	// The arms page the ACCOUNT-KEYED tables directly (same rewrite as
+	// accountOperationsQuery, 2026-08-28): resolving `(ledger_seq,
+	// tx_index) IN (SELECT … FROM ops_by_source WHERE source_account = ?)`
+	// over stellar.transactions prunes to one granule per key in the set
+	// BEFORE the LIMIT, so a hot account's page cost its whole history.
+	// `LIMIT 1 BY ledger_seq, tx_index` on the key table replaces the old
+	// DISTINCT: it collapses the several ops_by_source rows one tx
+	// contributes (tx-sentinel + per-op) to one key before the arm's LIMIT.
 	return `SELECT ` + txCols + ` FROM stellar.transactions
 		WHERE (ledger_seq, tx_index) IN (
 		  SELECT ledger_seq, tx_index FROM (
-		    (SELECT ledger_seq, tx_index FROM stellar.transactions
-		       WHERE (ledger_seq, tx_index) IN (
-		            SELECT DISTINCT ledger_seq, tx_index FROM stellar.ops_by_source WHERE source_account = ?)` + cursorClause + `
+		    (SELECT ledger_seq, tx_index FROM stellar.ops_by_source
+		       WHERE source_account = ?` + cursorClause + `
 		       ORDER BY ledger_seq DESC, tx_index DESC LIMIT 1 BY ledger_seq, tx_index LIMIT ?)
 		    UNION ALL
-		    (SELECT ledger_seq, tx_index FROM stellar.transactions
-		       WHERE (ledger_seq, tx_index) IN (
-		            SELECT DISTINCT ledger_seq, tx_index FROM stellar.operation_participants WHERE account = ?)` + cursorClause + `
+		    (SELECT ledger_seq, tx_index FROM stellar.operation_participants
+		       WHERE account = ?` + cursorClause + `
 		       ORDER BY ledger_seq DESC, tx_index DESC LIMIT 1 BY ledger_seq, tx_index LIMIT ?)
 		  ) ORDER BY ledger_seq DESC, tx_index DESC LIMIT ?)
 		ORDER BY ledger_seq DESC, tx_index DESC LIMIT 1 BY ledger_seq, tx_index LIMIT ?` + explorerScanSettings
@@ -1040,19 +1047,36 @@ func accountOperationsQuery(hasCursor, hasBound bool) string {
 	// 2TiB table. Carrying it through BOTH arms' scans and sorts paid
 	// that twice; the keyset union below is narrow and the wide read
 	// happens once over ≤limit keys.
+	//
+	// KEYSET FROM THE ACCOUNT-KEYED TABLES, NOT FROM stellar.operations
+	// (r1 503s 2026-08-28): each arm used to re-resolve its keys over
+	// stellar.operations — `WHERE pk IN (SELECT pk FROM ops_by_source
+	// WHERE source_account = ?) ORDER BY pk DESC LIMIT n`. ClickHouse's
+	// set-based index analysis DOES prune that to exact granules, but it
+	// prunes to ONE GRANULE PER KEY IN THE SET, before the LIMIT: a hot
+	// account's page cost its whole history in granules (11,925 sourced +
+	// 26,064 participant keys × 8192-row granules ≈ 164–238 M rows /
+	// ~8 s per page, live query_log) — the deadline-exceeded class, on a
+	// page of 50. Both ops_by_source and operation_participants are
+	// ORDER BY (account, ledger_seq, tx_index, op_index), so the cursor,
+	// bound and LIMIT apply DIRECTLY on a primary-key-prefix range read
+	// of the account's own rows, and stellar.operations is touched ONCE,
+	// by the hydration pass, over ≤ 3×limit keys — the page is bounded by
+	// the page size, not by the account's activity. Exactness: the
+	// per-arm `LIMIT 1 BY` collapses an un-merged RMT duplicate in the
+	// key table (both are ReplacingMergeTree) before the arm's LIMIT, and
+	// the top-N-union invariant above holds unchanged since each arm's
+	// keys are exactly the rows the old arm resolved.
 	return `SELECT ` + opCols + ` FROM stellar.operations
 		WHERE (ledger_seq, tx_index, op_index) IN (
 		  SELECT ledger_seq, tx_index, op_index FROM (
-		    (SELECT ledger_seq, tx_index, op_index FROM stellar.operations
-		       WHERE (ledger_seq, tx_index, op_index) IN (
-		            SELECT ledger_seq, tx_index, op_index FROM stellar.ops_by_source
-		            WHERE source_account = ? AND op_index != 4294967295)` + boundClause + cursorClause + `
+		    (SELECT ledger_seq, tx_index, op_index FROM stellar.ops_by_source
+		       WHERE source_account = ? AND op_index != 4294967295` + boundClause + cursorClause + `
 		       ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC
 		       LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?)
 		    UNION ALL
-		    (SELECT ledger_seq, tx_index, op_index FROM stellar.operations
-		       WHERE (ledger_seq, tx_index, op_index) IN (
-		            SELECT ledger_seq, tx_index, op_index FROM stellar.operation_participants WHERE account = ?)` + boundClause + cursorClause + `
+		    (SELECT ledger_seq, tx_index, op_index FROM stellar.operation_participants
+		       WHERE account = ?` + boundClause + cursorClause + `
 		       ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC
 		       LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?)
 		  ) ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT ?)
