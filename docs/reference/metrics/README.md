@@ -380,16 +380,6 @@ decoders record unmapped slots verbatim as `raw:<symbol>` rows
 (`canonical.AssetOracleRaw`, oracle capture-totality design) the counter
 keeps incrementing — a raw row is still a mapping gap to close.
 
-Alert: `stellarindex_ingestion_oracle_unknown_symbols` (any per-source
-increase over a trailing 25 h, sustained 30 min — the window exceeds
-Band's daily cadence so it cannot flap) → runbook
-[oracle-unknown-symbols](../../operations/runbooks/oracle-unknown-symbols.md).
-The 2026-08-04 cold audit found this counter had no consumer at all
-while r1 carried 7,794 dropped Reflector slots. Once the oracle
-decoders record unmapped slots verbatim as `raw:<symbol>` rows
-(`canonical.AssetOracleRaw`, oracle capture-totality design) the counter
-keeps incrementing — a raw row is still a mapping gap to close.
-
 ### `stellarindex_source_orphan_events_total`
 
 Counter, label `source`.
@@ -2872,6 +2862,18 @@ by `stellarindex_zfs_snapshot_pool_free_unreadable`.
   `stellarindex_zfs_snapshot_{latest_unix,count,used_bytes,guard_skipped,min_free_bytes,last_run_unix,pool_free_unreadable}`),
   emitted by `scripts/ops/zfs-snapshot.sh`.
 
+- 2026-08-29 — added the per-repo nightly pgBackRest wrapper metrics
+  (`stellarindex_pgbackrest_backup_last_success_unix{repo}`,
+  `stellarindex_pgbackrest_backup_last_rc{repo}`,
+  `stellarindex_pgbackrest_backup_duration_seconds{repo}`), emitted by
+  `pgbackrest-backup.sh` (ansible-managed,
+  `configs/ansible/roles/archival-node/templates/pgbackrest-backup.sh.j2`)
+  into the node_exporter textfile collector — NOT Go-declared, same
+  textfile-only convention as the `stellar_stack_probe` family below.
+  `last_success_unix` is carried forward across a failed run so a
+  failing repo2 shows as an ageing timestamp rather than a vanished
+  series. Added when repo2 (S3) went live on r1 and the wrapper turned
+  out to back up only repo1 (pgBackRest `backup` is single-repo).
 - 2026-08-11 — removed the Stripe metrics
   (`stellarindex_stripe_platform_sync_errors_total`,
   `stellarindex_stripe_dead_letters_open`) and the
