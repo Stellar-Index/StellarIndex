@@ -277,6 +277,40 @@ against.
   — **retire 2026-09-04**; after that `dropped_trades_total
   {reason="outlier"}` is diagnostic only.
 
+### Fixed
+
+- **Aggregator gap detector took r1's serving path down (2026-08-28
+  18:23Z: `api_error_rate_high`, 503s from statement timeouts, load
+  19.6, IO-bound).** `pg_stat_statements` pinned it on the detector's
+  density query `SELECT COUNT(DISTINCT ledger) FROM soroban_events WHERE
+  ledger BETWEEN $1 AND $2` — 121 calls, mean 556 s, 18.7 h total on a
+  257 GB hypertable that has no index on `ledger` (0041 partitions and
+  compresses by `ledger_close_time`, so a ledger-only predicate excludes
+  nothing). Three amplifiers, three commits, no DDL:
+  1. **Timeout inversion.** `CountDistinctLedgers` SET a 2 h PG
+     `statement_timeout` (the ops/verify constant) under a 15-min Go
+     context, so every over-budget count outlived its context as an
+     orphaned backend and each cycle / restart stacked another. Both
+     detector queries now share `gapDetectorStatementTimeoutMS` (13 min,
+     pinned ≤ the Go budget by `TestGapDetectorStatementTimeoutWithinGoBudget`).
+  2. **Count source.** The `soroban-events` target's density numerator
+     now comes from the `ledger_ingest_log` census (`COUNT(*) WHERE
+     soroban_event_count > 0`, a PK range scan) via the new
+     `GapDetectorTarget.DistinctLedgerCountSQL` override; every other
+     target's statement is byte-identical (differential unit test +
+     Docker-Timescale integration test). Gauge, snapshot row and
+     `/v1/diagnostics/ingestion` `density_pct` are unchanged in shape;
+     semantic note (LCM census vs observed rows) in the metrics README.
+  3. **Restart storm.** The per-target schedule was in-process and the
+     first cycle ran immediately, so every deploy re-ran the 6 h-cadence
+     heavy scans. The schedule is now seeded from the persisted
+     `gap-detector-scan` cursor; a skipped target's last-success stamp
+     and gap gauges are re-emitted from persisted state so the `_silent`
+     and `gap_detected` alerts keep working across restarts.
+  `soroban-events` stays on its 6 h cadence (the scan is now cheap; the
+  remaining 13-min-bounded LAG gap scan is unchanged). The runbook
+  `ingest-gap-detected.md` now lists every detector target whose table
+  has no leading-`ledger` index — the class this incident belongs to.
 - **AsyncSink lost the in-flight batch on shutdown** (#240): `Stop()`
   cancelled a steady-state write mid-INSERT and counted the whole batch as
   LOST instead of handing it to the drain — every deploy that caught a
