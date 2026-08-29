@@ -97,9 +97,17 @@
   until: minio_live.status == 200
 
 - name: Configure mc alias for local MinIO
-  # Env vars carry the credentials so they never land on argv (which
-  # shows up in ps + journald). no_log prevents Ansible from
-  # echoing them to stdout on failure.
+  # The credentials go in on STDIN, never on argv: with ACCESSKEY/SECRETKEY
+  # omitted, `mc alias set` reads them from stdin (one per line; it only
+  # prints the "Enter … Key:" prompts on a tty). Anything on argv is
+  # readable by every local uid in /proc/<pid>/cmdline (+ ps, + auditd
+  # execve records) for the life of the call — the comment here used to
+  # claim env-based auth while the task passed the root password on argv
+  # (2026-08-28 audit). MC_HOST_<alias> env would also avoid argv but is
+  # transient; the root-run ops scripts (node-healthcheck.sh,
+  # galexie-archive-*.sh) rely on the PERSISTED `local` alias, so stdin it
+  # is. no_log prevents Ansible from echoing the stdin/vars on failure.
+  # Guarded by scripts/ci/lint-ansible-tasks.sh (secret-on-argv).
   ansible.builtin.command:
     argv:
       - /usr/local/bin/mc
@@ -107,8 +115,7 @@
       - set
       - local
       - "http://127.0.0.1:9000"
-      - "{{ minio_root_user }}"
-      - "{{ minio_root_password }}"
+    stdin: "{{ minio_root_user }}\n{{ minio_root_password }}"
   changed_when: false
   no_log: true
 
@@ -190,6 +197,9 @@
 
 - name: Create galexie-writer MinIO user (vault-supplied creds)
   # `mc admin user add` updates the secret if the user already exists.
+  # SECRETKEY omitted from argv on purpose: `mc admin user add ALIAS
+  # ACCESSKEY` reads the secret from stdin, so it never appears in
+  # /proc/<pid>/cmdline (secret-on-argv, scripts/ci/lint-ansible-tasks.sh).
   ansible.builtin.command:
     argv:
       - /usr/local/bin/mc
@@ -198,7 +208,7 @@
       - add
       - local
       - "{{ galexie_s3_access_key }}"
-      - "{{ galexie_s3_secret_key }}"
+    stdin: "{{ galexie_s3_secret_key }}"
   changed_when: false
   no_log: true
 
@@ -285,6 +295,9 @@
 - name: Create galexie-archive-writer MinIO user (vault-supplied creds)
   # `mc admin user add` updates the secret if the user already exists —
   # which is exactly what repairs the drifted `archivewriter` alias.
+  # SECRETKEY omitted from argv on purpose: `mc admin user add ALIAS
+  # ACCESSKEY` reads the secret from stdin, so it never appears in
+  # /proc/<pid>/cmdline (secret-on-argv, scripts/ci/lint-ansible-tasks.sh).
   ansible.builtin.command:
     argv:
       - /usr/local/bin/mc
@@ -293,7 +306,7 @@
       - add
       - local
       - "{{ galexie_archive_s3_access_key }}"
-      - "{{ galexie_archive_s3_secret_key }}"
+    stdin: "{{ galexie_archive_s3_secret_key }}"
   changed_when: false
   no_log: true
 
@@ -360,6 +373,9 @@
   changed_when: false
 
 - name: Create stellarindex-reader MinIO user (vault-supplied creds)
+  # SECRETKEY omitted from argv on purpose: `mc admin user add ALIAS
+  # ACCESSKEY` reads the secret from stdin, so it never appears in
+  # /proc/<pid>/cmdline (secret-on-argv, scripts/ci/lint-ansible-tasks.sh).
   ansible.builtin.command:
     argv:
       - /usr/local/bin/mc
@@ -368,7 +384,7 @@
       - add
       - local
       - "{{ stellarindex_reader_access_key }}"
-      - "{{ stellarindex_reader_secret_key }}"
+    stdin: "{{ stellarindex_reader_secret_key }}"
   changed_when: false
   no_log: true
 
