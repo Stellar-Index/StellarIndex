@@ -145,9 +145,12 @@ groups:
             `stellarindex_timescale_backup_none_24h`
             (`deploy/monitoring/rules/storage.yml`) are silently
             blind — both depend on
-            `stellarindex_pgbackrest_last_success_unix`, which only
-            this exporter publishes. A 24h RPO breach during exporter
-            downtime would not surface until the exporter came back.
+            `pgbackrest_backup_since_last_completion_seconds`, which
+            only this exporter publishes. A 24h RPO breach during
+            exporter downtime would not surface until the exporter came
+            back. (An exporter that is UP but has no stanza to report
+            is the sibling gap, owned by
+            `stellarindex_pgbackrest_backup_metrics_absent`.)
             This is the F-0085 blindness pattern from the 2026-05-10
             SEV-2 incident. Follow the runbook to restart and verify
             the exporter.

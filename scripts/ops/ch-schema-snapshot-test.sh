@@ -72,7 +72,7 @@ run_snapshot() {
   TEXTFILE_DIR="$TMP/$name/textfile" \
   BACKFILL_STATE="$TMP/$name/nonexistent-state" \
   STELLARINDEX_POSTGRES_DSN="" \
-  SNAPSHOT_MC_TARGET="" \
+  SNAPSHOT_MC_TARGET="${MOCK_MC_TARGET:-}" \
   bash "$SCRIPT" >"$TMP/$name/stdout" 2>"$TMP/$name/stderr"
   echo "$?"
 }
@@ -135,6 +135,34 @@ if grep -q 'last_success_unix' <<<"$(prom partial)"; then
        schema that is missing a table, with no signal"
 else
   ok "a partial capture does NOT stamp last_success_unix (alert fires)"
+fi
+
+# ─── 4. offsite gauge: configured vs not, independent of push success ──
+# backup-restore-2: the offsite staleness alert's absent-series branch is
+# gated on offsite_configured, so it MUST be emitted every run (1 iff a
+# target is set) — a push that never succeeded fires; an acked
+# local-only host stays silent.
+grep -q '^stellarindex_ch_schema_snapshot_offsite_configured 0$' <<<"$(prom full)" \
+  && ok "no offsite target → offsite_configured 0 (acked local-only stays silent)" \
+  || bad "no offsite target but offsite_configured != 0: $(grep offsite <<<"$(prom full)")"
+
+export MOCK_TABLES="ledgers transactions contract_events"
+export MOCK_SHOW_CREATE_FAILS=""
+# $TMP/bin has no `mc`, so the push fails deterministically (exit 2).
+rc="$(MOCK_MC_TARGET="offsite/stellarindex-backups/ch-schema" run_snapshot offsite)"
+
+[[ "$rc" == "2" ]] \
+  && ok "configured target + failed push exits 2" \
+  || bad "configured target + failed push exited $rc, want 2"
+
+grep -q '^stellarindex_ch_schema_snapshot_offsite_configured 1$' <<<"$(prom offsite)" \
+  && ok "offsite target set → offsite_configured 1 even though the push failed" \
+  || bad "offsite_configured missing/wrong with a target set: $(grep offsite <<<"$(prom offsite)")"
+
+if grep -q 'offsite_last_success_unix [0-9]' <<<"$(prom offsite)"; then
+  bad "a failed push stamped offsite_last_success — the offsite alert would read it as delivered"
+else
+  ok "a failed push does NOT stamp offsite_last_success (absent branch fires)"
 fi
 
 echo "ch-schema-snapshot-test: $pass passed, $fail failed"
