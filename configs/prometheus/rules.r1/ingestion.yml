@@ -142,7 +142,7 @@ groups:
           summary: "All ingestion sources have stopped (SEV-1)"
           description: |
             No events from any source in the last 3 minutes. API data will go
-            stale within 60 s. This is a P1 — check shared upstream (stellar-rpc)
+            stale within 60 s. This is a P1 — check shared upstream (Galexie/MinIO lake)
             or shared storage (Timescale) before restarting the indexer.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/all-ingestion-down.md
 
@@ -161,8 +161,7 @@ groups:
           description: |
             The persisted cursor hasn't moved in 5 minutes while the source is
             enabled. Typical cause: indexer consumed events but UpsertCursor
-            failed silently, or the orchestrator's cursor-persister goroutine
-            is wedged.
+            failed silently, or the indexer's cursor-persist path is wedged.
 
       - alert: stellarindex_ingestion_orphan_events
         expr: sum by (source) (rate(stellarindex_source_orphan_events_total[10m])) > 10/60
