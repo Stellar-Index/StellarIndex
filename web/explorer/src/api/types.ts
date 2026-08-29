@@ -5320,13 +5320,13 @@ export interface components {
         /** @description One item's age judged against its SLO. */
         BackupFreshnessVerdict: {
             /**
-             * @description `ok` age ≤ SLO; `stale` age > SLO; `unknown` no data.
+             * @description `ok` age ≤ SLO; `stale` age > SLO; `unknown` no data, or a stamp from the future (see `age_seconds`).
              * @enum {string}
              */
             status: "ok" | "stale" | "unknown";
             /**
              * Format: int64
-             * @description Age at snapshot time; null when unknown.
+             * @description Age at snapshot time; null when there is no data. NEGATIVE when the stamp sits in the future of the API's clock beyond ordinary skew (a skewed host clock, or a corrupt future-dated backup label): such a stamp bounds nothing about the item's real age, so `status` is `unknown` and the raw negative value is reported for diagnosis rather than clamped into a fresh `0`.
              */
             age_seconds: number | null;
             /**

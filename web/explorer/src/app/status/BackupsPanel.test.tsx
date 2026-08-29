@@ -218,6 +218,77 @@ describe('BackupsPanel', () => {
     }
   });
 
+  it('names a future-dated stamp instead of showing it as "no data" or a fresh zero', async () => {
+    // #311: the API refuses to judge a stamp from the future (clock
+    // skew / corrupt pgBackRest label) — "unknown" carrying the RAW
+    // negative age. The panel must name that cause: a grey row reading
+    // "no data · — ago" would send an operator hunting a missing
+    // exporter instead of a skewed clock, and the age cell must not
+    // pretend the negative number is an age.
+    mockBackups({
+      data: payload({
+        postgres: {
+          last_full: {
+            ts: '2026-08-24T02:31:10Z',
+            size_bytes: 412_316_860_416,
+            repo: '1',
+          },
+          last_diff: { ts: '2026-08-29T02:04:41Z', size_bytes: null },
+          wal_archive_max_age_seconds: 74,
+          repos: [
+            {
+              repo: '1',
+              kind: 'local',
+              last_backup_ts: '2026-08-29T02:00:03Z',
+              retention: null,
+            },
+            {
+              repo: '2',
+              kind: 'offsite',
+              // 8 d 14 h AHEAD of as_of.
+              last_backup_ts: '2026-09-07T02:00:01Z',
+              retention: null,
+            },
+          ],
+        },
+        freshness: {
+          full: verdict('ok', 5 * 86_400, SLO.full_seconds),
+          diff: verdict('ok', 10 * 3_600, SLO.diff_seconds),
+          wal: verdict('ok', 74, SLO.wal_seconds),
+          offsite: verdict('unknown', -741_601, SLO.offsite_seconds),
+          drill: verdict('ok', 27 * 86_400, SLO.drill_seconds),
+          snapshot: verdict('ok', 8 * 3_600, SLO.snapshot_seconds),
+          overall: 'unknown',
+        },
+      }),
+      as_of: '2026-08-29T12:00:00Z',
+    });
+    renderPanel();
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('Off-site copy (S3, repo 2)'),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.getByText('stamp from the future')).toBeInTheDocument();
+    expect(screen.queryByText('no data')).not.toBeInTheDocument();
+    expect(screen.queryByText('— ago')).not.toBeInTheDocument();
+    // Never green, and never a fresh zero.
+    expect(screen.queryByText('all within SLO')).not.toBeInTheDocument();
+    expect(screen.getByText('partial data')).toBeInTheDocument();
+    expect(screen.queryByText(/0s ago/)).not.toBeInTheDocument();
+    // The future date itself stays visible in the detail line, so the
+    // skew is measurable from the page.
+    expect(
+      screen.getByText('newest backup 2026-09-07 02:00 UTC'),
+    ).toBeInTheDocument();
+    // The repositories caption dates each repo client-side against
+    // as_of; it must not clamp the same future stamp up into "0s ago".
+    expect(
+      screen.getByText(/repo 2 \(offsite\) dated in the future/),
+    ).toBeInTheDocument();
+  });
+
   it('marks verdicts untrustworthy when the API could not read Prometheus', async () => {
     mockBackups({
       data: payload({ source_status: 'unknown' }),

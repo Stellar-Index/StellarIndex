@@ -197,6 +197,25 @@ against.
 
 ### Fixed
 
+- **A future-dated backup stamp no longer renders a green "fresh" row on
+  the status page.** `freshnessVerdict`
+  (`internal/api/v1/diagnostics_backups.go`) clamped a negative age to
+  `age_seconds: 0` for display and then judged the SLO on the *clamped*
+  value — `*age > slo` is false for any negative — so a forward-skewed
+  host clock or a corrupt future-dated pgBackRest label painted an
+  arbitrarily stale backup `"ok"` with a 0-second age, and the panel's
+  roll-up went fully green (its own comment already said "don't reward
+  it"). A stamp past `backupClockSkewTolerance` (1 min — these ages
+  cross clocks, so ordinary NTP divergence on a genuinely fresh item
+  still floors to 0) is now `"unknown"` carrying its RAW negative age
+  for diagnosis, which also drags `freshness.overall` and `flags.stale`
+  off all-clear. The Backups panel names that state ("stamp from the
+  future") instead of an ambiguous grey "no data", and its client-side
+  repositories caption stopped clamping the same future stamp up into
+  "0s ago" (`Math.max(0, …)` — the identical bug, one layer up).
+  Regression tests: `TestBuildBackupsSnapshot_FutureDatedOffsite` (an
+  8 d 14 h future-dated repo2 label read `ok` / `0 s` / overall `ok`
+  before the fix) + `BackupsPanel.test.tsx`. (#311)
 - **Gap detector pre-registers `runs_total` at 0 so a restart cannot read
   as a dead detector.** `stellarindex_ingest_gap_detector_runs_total` is a
   CounterVec that only materialises a series on first `Inc()`, and since
