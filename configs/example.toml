@@ -20,6 +20,11 @@
 id          = "r1"
 name        = "London"
 home_domain = "stellarindex.io"
+# deployment — the tier label /v1/status echoes in its `region` block.
+# Purely a label; nothing keys behaviour off it. Set "testnet" /
+# "futurenet" on the lean test-net deployments, which otherwise report
+# themselves as PRODUCTION to the explorer status page (#328).
+deployment  = "production"        # production | testnet | futurenet | staging
 
 # ──────────────────────────────────────────────────────────────────
 # Stellar — where does my ledger data come from?
@@ -278,6 +283,14 @@ auth_mode                = "none"            # none | apikey | sep10
 anon_rate_limit_per_min  = 60
 key_rate_limit_per_min   = 1000
 cdn_enabled              = true
+# status_services — the BACKGROUND services this deployment runs, and
+# therefore the only ones /v1/status reports a heartbeat for and rolls
+# `overall` up from ("api" is always reported; it answers the request).
+# Drop one ONLY where it is genuinely not installed: the lean test nets
+# run no aggregator, and listing it there held overall at "degraded"
+# forever on a perfectly healthy deployment (#328). The flip side is
+# that a service omitted here can never be reported DOWN.
+status_services          = ["indexer", "aggregator"]
 # archive_report_path — where GET /v1/diagnostics/archive reads the
 # archive-completeness daemon's latest JSON report (ADR-0017). The
 # default matches the archive-completeness.service REPORT_OUTPUT

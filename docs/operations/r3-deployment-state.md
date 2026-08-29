@@ -56,9 +56,12 @@ tolerance) with these datasets:
 lives on **Vultr Object Storage** per ADR-0016 §"R3 — Vultr-hybrid"
 (~$25/mo for 5 TB, region-local to Singapore at sub-10ms RTT).
 
-R1's raidz2 (two-drive failure tolerance) is the integrity
-leader; R3's mirror (single-drive tolerance) is acceptable for
-an async DR replica.
+R1's `data` pool is raidz1 — the SAME single-drive failure
+tolerance as R3's 2-way mirror (it was long documented as raidz2 /
+two-drive; corrected 2026-08-29, #289). R1 is the integrity leader
+by verification coverage (all four verify-archive tiers), not by
+parity margin, and R3's mirror remains acceptable for an async DR
+replica.
 
 ## Services (systemd)
 

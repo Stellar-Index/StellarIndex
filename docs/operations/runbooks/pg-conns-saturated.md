@@ -107,8 +107,12 @@ runuser -u postgres -- psql -d stellarindex -c \
 The **other** alert that routes to this runbook:
 `stellarindex_timescale_lock_table_pressure`
 (`rules.r1/storage.yml`, `severity: ticket`, `for: 5m`) fires when
-`pg_locks_count / (pg_settings_max_locks_per_transaction ×
-pg_settings_max_connections) > 0.7`. The lock table is a fixed
+`sum by (instance)(pg_locks_count) / on (instance)
+(pg_settings_max_locks_per_transaction × pg_settings_max_connections)
+> 0.7`. The `sum` is load-bearing: postgres_exporter emits
+`pg_locks_count` once per (datname, mode), so the pre-#301
+unqualified division matched no series and this alert was silently
+dead from the day the exporter landed. The lock table is a fixed
 shared-memory arena sized `max_locks_per_transaction ×
 max_connections`; exhausting it is SQLSTATE 53200
 ("out of shared memory") and dropped INSERTs — the 2026-05-06 SEV-3
@@ -176,6 +180,11 @@ role and reapplying (`--check --diff` first) — **never** a live-only
 
 ## Changelog
 
+- 2026-08-29 — corrected the quoted `_lock_table_pressure` expr: it
+  now sums `pg_locks_count` over the exporter's per-(datname, mode)
+  series and joins `on (instance)`. The previous unqualified
+  division could never match real postgres_exporter output, so the
+  alert had been inert since F-0152 put the exporter on r1 (#301).
 - 2026-08-28 — re-verified against HEAD. Added the R1 DEPLOYMENT
   REALITY banner: PgBouncer is not deployed (future-tense comment in
   `pg_hba.conf.j2` only); all PgBouncer diagnosis/mitigation

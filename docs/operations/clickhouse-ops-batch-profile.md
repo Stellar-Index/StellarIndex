@@ -108,10 +108,27 @@ incident fix.
 **deploy/systemd self-hosts:** the reference units in
 `deploy/systemd/stellarindex-{indexer,aggregator,api}.service` source
 `/etc/default/stellarindex-ops` as their ONLY env file (there is no
-`/etc/default/stellarindex` on such a host). There the pair must NOT
-be written to that file either — export it in the batch job's shell
-(`export STELLARINDEX_CLICKHOUSE_OPS_USER=ops_batch ...`) or in a
-private env file that only `run-heavy-job.sh` reads via
+`/etc/default/stellarindex` on such a host — the indexer reads its
+MinIO creds and the API its SEP-10 seed out of it). Writing the pair
+into that file is nonetheless safe: since #292 each of those three
+units carries
+
+```
+UnsetEnvironment=STELLARINDEX_CLICKHOUSE_OPS_USER STELLARINDEX_CLICKHOUSE_OPS_PASSWORD
+```
+
+which systemd applies AFTER every `Environment=` / `EnvironmentFile=`
+(systemd.exec(5); needs systemd ≥ 235, the Ubuntu 22.04/24.04 targets
+ship 249/255), so the identity reaches the ops one-shots sharing the
+file and never the live daemons. Keep that line if you hand-roll your
+own units — without it the live sink and the supply refresher run at
+batch priority, the exact inverse of this profile's purpose. The batch
+units deliberately do NOT strip it.
+`TestOpsBatchIdentityNeverReachesLiveDaemons`
+(`internal/storage/clickhouse/ops_auth_systemd_test.go`) resolves the
+environment each unit would hand its process and pins both halves.
+Alternatively, launch heavy jobs from a shell that exports the pair, or
+from a private env file only `run-heavy-job.sh` reads via
 `HEAVY_JOB_OPS_ENV=<path>`.
 
 ## Operator apply (codify-only in the PR; run `--check --diff` first)

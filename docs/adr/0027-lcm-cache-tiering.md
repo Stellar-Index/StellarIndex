@@ -11,6 +11,15 @@ superseded_by: null
 
 ## Context
 
+> **Capacity figures below are the 2026-05-20 snapshot and are
+> superseded (noted 2026-08-29, #289).** The pool is **raidz1**, not
+> the raidz2 the "~13.85 TB usable" line assumes: ~18.3 TB usable,
+> live-verified 2026-07-17. The decision this ADR reaches is
+> unaffected — more headroom than assumed does not make cold tiering
+> wrong, it only moves the deadline. Current numbers + evidence:
+> [`docs/architecture/storage-considerations.md`](../architecture/storage-considerations.md)
+> §"r1 ZFS pool inventory".
+
 R1's ZFS pool is sized for the entire pubnet history mirrored
 locally. At 2026-05-20:
 

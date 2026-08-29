@@ -211,7 +211,7 @@ groups:
           team: stellarindex
           component: external-poller
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-poller-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-poller-error-rate-high.md
           summary: "external poller {{ $labels.source }} error rate > 50 % (15 min)"
           description: |
             More than half of recent {{ $labels.source }} polls returned

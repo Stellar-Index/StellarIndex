@@ -197,7 +197,7 @@
               "request": {
                 "name": "Lake-critical health — should this instance receive lake-route traffic?",
                 "description": {
-                  "content": "The complement to `/v1/readyz` for the ClickHouse-lake-backed\nroutes (explorer browse/search, token supply and holders, pool\nreserves and TVL, order books — the ~21 routes that 503 when the\nlake is down). `/v1/readyz` deliberately treats ClickHouse as\nNON-critical so a lake outage degrades rather than un-readies the\npricing surface — but that same 200 would keep a lake-dead\ninstance in a load balancer's pool for routes it can no longer\nserve. This probe is lake-critical: 200 iff the registered\nClickHouse checker pings; 503 when it fails OR when no lake is\nwired at all (a lake-less deployment must never receive\nlake-route traffic, so absence fails closed).\n\nPoint lake-route load-balancer monitors here and pricing\nmonitors at `/v1/readyz` (ADR-0050 §7.3 — the per-tier health\nsplit the multi-region design requires).\n",
+                  "content": "The complement to `/v1/readyz` for the ClickHouse-lake-backed\nroutes (explorer browse/search, token supply and holders, pool\nreserves and TVL, order books — the ~21 routes that 503 when the\nlake is down). `/v1/readyz` deliberately treats ClickHouse as\nNON-critical so a lake outage degrades rather than un-readies the\npricing surface — but that same 200 would keep a lake-dead\ninstance in a load balancer's pool for routes it can no longer\nserve. This probe is lake-critical: 200 iff the registered\nClickHouse checker pings; 503 when it fails OR when no lake is\nwired at all (a lake-less deployment must never receive\nlake-route traffic, so absence fails closed).\n\nPoint lake-route load-balancer monitors here and pricing\nmonitors at `/v1/readyz` (ADR-0050 §7.3 — the per-tier health\nsplit the multi-region design requires).\n\nThe route is unauthenticated (`security: []`) and exempt from\nthe anonymous rate limiter so probes always answer. Verdicts are\ntherefore single-flighted with a 1-second result cache: probing\nfaster than that (or probing concurrently) is safe but returns\nthe same shared round — `as_of` is the moment the lake was\nactually pinged, up to 1 s ago.\n",
                   "type": "text/plain"
                 },
                 "url": {
@@ -258,7 +258,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "The lake is unreachable (`data.status` = `lake-unready`,\nwith the ping error in `data.detail`) or this deployment has\nno ClickHouse wired at all (`lake-absent`). Either way, do\nnot route lake traffic here; pricing routes may still be\nhealthy — check `/v1/readyz`.",
+                  "name": "The lake is unreachable (`data.status` = `lake-unready`) or\nthis deployment has no ClickHouse wired at all\n(`lake-absent`). Either way, do not route lake traffic here;\npricing routes may still be healthy — check `/v1/readyz`.\n\n`data.detail` is a FIXED operator hint, never the underlying\ndriver error — the route is public and unmetered, so it must\nnot publish connection detail (host, port, credentials path)\nto anonymous callers while the lake is in trouble. The real\nping error is logged by the API server.",
                   "originalRequest": {
                     "url": {
                       "path": [

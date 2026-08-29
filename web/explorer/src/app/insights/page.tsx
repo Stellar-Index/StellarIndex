@@ -2,6 +2,8 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Activity, GitCompare, Zap } from 'lucide-react';
 
+import { NetworkUnavailable } from '@/components/NetworkUnavailable';
+import { availableRoutes, routeAvailable } from '@/lib/network-routes';
 import { Container } from '@/components/ui';
 export const metadata: Metadata = {
   alternates: { canonical: '/insights' },
@@ -39,6 +41,16 @@ const SURFACES = [
 ] as const;
 
 export default function InsightsPage() {
+  // #328: the whole signals layer is aggregator-derived. The rail already
+  // dropped this hub on the lean test nets; a direct URL still reached it
+  // and offered three cards to three empty pages.
+  if (!routeAvailable('/insights')) {
+    return (
+      <Container className="space-y-6 py-8">
+        <NetworkUnavailable href="/insights" />
+      </Container>
+    );
+  }
   return (
     <Container className="space-y-6 py-8">
       <header className="space-y-2">
@@ -50,7 +62,7 @@ export default function InsightsPage() {
       </header>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {SURFACES.map((s) => {
+        {availableRoutes(SURFACES).map((s) => {
           const Icon = s.icon;
           return (
             <Link
