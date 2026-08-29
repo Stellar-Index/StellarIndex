@@ -31,6 +31,16 @@ package canonical
 // carries (~109 with live daily rates; the remainder — incl. legacy
 // pre-euro/redenominated codes like CYP/EEK/LTL/LVL/MTL/ROL/SIT/SKK/TRL
 // — are inert without a fresh rate and simply never resolve to a price).
+//
+// 2026-08-29: VES (Venezuelan bolívar soberano, ISO-4217 928) added —
+// the Reflector FX oracle publishes a VES slot on every event (visible
+// in the 2026-04-23 fixtures; recorded as `raw:VES` since PR #247 and
+// paged by stellarindex_ingestion_oracle_unknown_symbols on r1 v0.48.0).
+// The massive.com FX feed does NOT carry VES, so like the legacy codes
+// above it never resolves through the /assets converter; it exists so
+// the reflector-fx row is typed fiat:VES. XAU (gold) deliberately stays
+// OFF this list — it is a commodity, not a currency, and maps to
+// rwa:XAU (ADR-0028).
 var knownFiatCodes = map[string]struct{}{
 	"AED": {}, "ALL": {}, "ARS": {}, "AUD": {}, "AWG": {}, "BAM": {},
 	"BBD": {}, "BDT": {}, "BGN": {}, "BHD": {}, "BIF": {}, "BND": {},
@@ -53,7 +63,8 @@ var knownFiatCodes = map[string]struct{}{
 	"SIT": {}, "SKK": {}, "SOS": {}, "SVC": {}, "SZL": {}, "THB": {},
 	"TJS": {}, "TMT": {}, "TND": {}, "TRL": {}, "TRY": {}, "TTD": {},
 	"TWD": {}, "TZS": {}, "UAH": {}, "UGX": {}, "USD": {}, "UYU": {},
-	"UZS": {}, "VND": {}, "XPF": {}, "YER": {}, "ZAR": {}, "ZMW": {},
+	"UZS": {}, "VES": {}, "VND": {}, "XPF": {}, "YER": {}, "ZAR": {},
+	"ZMW": {},
 }
 
 // IsKnownFiat reports whether code is in the ADR-0010 allow-list.

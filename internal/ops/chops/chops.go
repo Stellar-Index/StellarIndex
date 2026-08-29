@@ -7,8 +7,8 @@
 // `ch-backfill`, `ch-gate`, `ch-reproject`, `ch-rebuild`, `ch-supply`,
 // `ch-txindex-backfill`, `ch-participant-backfill`, `ch-recognition`,
 // `verify-recognition`, `verify-reconciliation`, `compute-completeness`,
-// `verify-served-values`, `verify-usd-volume`, `sdex-claim-audit`,
-// `classic-movements-backfill`, `projected-rebuild`,
+// `verify-served-values`, `verify-usd-volume`, `usd-volume-restamp`,
+// `sdex-claim-audit`, `classic-movements-backfill`, `projected-rebuild`,
 // `reconcile-balances`, `verify-contiguity`, `verify-hashchain`,
 // `verify-lake` — ADR-0033/ADR-0034 completeness + reconciliation checks,
 // the ADR-0034 Phase 2-4 lake backfill/gate/reproject/rebuild tools, the
@@ -58,7 +58,8 @@ func Run(args []string) error {
 
 // lakeMutatorVerb resolves the WRITING half: the ADR-0034 lake
 // backfill/gate/reproject/rebuild tools plus the projected-source and
-// classic-movement backfills.
+// classic-movement backfills, and usd-volume-restamp — the served-tier
+// corrective write for verify-usd-volume's exact-tier violations.
 func lakeMutatorVerb(verb string) (func([]string) error, bool) {
 	switch verb {
 	case "ch-backfill":
@@ -91,6 +92,8 @@ func lakeMutatorVerb(verb string) (func([]string) error, bool) {
 		return classicMovementsBackfill, true
 	case "projected-rebuild":
 		return projectedRebuild, true
+	case "usd-volume-restamp":
+		return usdVolumeRestamp, true
 	default:
 		return nil, false
 	}

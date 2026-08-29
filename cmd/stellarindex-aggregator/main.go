@@ -1044,8 +1044,8 @@ func buildSupplyRefreshers(cfg config.Config, store *timescale.Store, closeTimes
 //
 // Deliberately does NOT populate Policy.SDFReserveAccounts: that
 // field only feeds Algorithm 1 (native XLM), which buildXLMRefresher
-// wires independently via supply.NewXLMComputer(cfg.Supply.
-// SDFReserveAccounts, …) — ClassicComputer/SEP41Computer never read
+// wires independently via supply.NewXLMComputerForNetwork(
+// cfg.Stellar.Passphrase(), cfg.Supply.SDFReserveAccounts, …) — ClassicComputer/SEP41Computer never read
 // it (see internal/supply/classic.go, sep41.go), so setting it here
 // would be dead weight that misleads a future reader.
 func buildSupplyPolicy(cfg config.SupplyConfig) (supply.Policy, error) {
@@ -1168,7 +1168,10 @@ func buildXLMRefresher(cfg config.Config, store *timescale.Store, closeTimes led
 		live:   supply.NewLCMReserveBalanceReader(supplyAggregatorStoreLookup{s: store}),
 		static: staticReader,
 	}
-	computer, err := supply.NewXLMComputer(cfg.Supply.SDFReserveAccounts, chained)
+	// Network-aware: a testnet / futurenet aggregator must snapshot
+	// against ITS ledger's native total (100 B genesis), not the
+	// frozen pubnet 50.0 B constant.
+	computer, err := supply.NewXLMComputerForNetwork(cfg.Stellar.Passphrase(), cfg.Supply.SDFReserveAccounts, chained)
 	if err != nil {
 		return nil, fmt.Errorf("xlm computer: %w", err)
 	}

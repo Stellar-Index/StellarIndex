@@ -1,7 +1,7 @@
 ---
 title: Runbook — aggregator-supply-refresh-never-initialized
-last_verified: 2026-05-12
-status: draft
+last_verified: 2026-08-29
+status: current
 severity: P3
 ---
 
@@ -12,14 +12,15 @@ severity: P3
 | Field | Value |
 | ----- | ----- |
 | Alert | `stellarindex_aggregator_supply_refresh_never_initialized` |
-| Severity | P3 (ticket) |
-| Detected by | `deploy/monitoring/rules/aggregator.yml` |
+| Severity | P3 (`severity: ticket`) |
+| Detected by | `configs/prometheus/rules.r1/supply-refresh.yml` (group `stellarindex.supply_refresh`, `for: 5m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/supply-refresh.yml`. NOT `aggregator.yml` — the alert lives in the supply-refresh tree in both. |
+| Runbook routing | The alert's `runbook_url` deliberately points at [supply-snapshot-never-initialized.md](supply-snapshot-never-initialized.md) — the shared cold-deploy resolution page (both refresh paths land there). This page is the per-alert detail; the two are cross-linked. |
 | Typical MTTR | 15–60 min |
 | Impact | The aggregator's supply-refresh goroutine has never produced a successful tick since process start. F2 fields (`circulating_supply`, `total_supply`, `max_supply`, `market_cap_usd`, `fdv_usd`) on `/v1/assets/{id}` are NULL for every asset. |
 
 ## Symptoms
 
-- `stellarindex_aggregator_supply_refresh_total{outcome="ok"} == 0` since aggregator boot.
+- `stellarindex_aggregator_supply_refresh_total{outcome="ok"}` is **ABSENT** from the scrape — a never-incremented counter never exists as a series, so it is absent, not zero. The real expression (both trees): `absent_over_time(stellarindex_aggregator_supply_refresh_total{outcome="ok"}[36h]) == 1`, `for: 5m`, `severity: ticket`.
 - `/v1/assets/USDC-G…` returns the `AssetDetail` envelope with all `*_supply` and `*_cap_usd` fields null.
 - Aggregator log shows no `supply refresh complete` info lines.
 
@@ -30,7 +31,7 @@ severity: P3
 journalctl -u stellarindex-aggregator -n 200 --no-pager | grep -iE 'supply.*refresh|watched_'
 
 # Check the operator config for the watched-set knobs
-grep -E '\\[supply\\]|watched_classic|watched_sep41|sdf_reserve_accounts' /etc/stellarindex/config.toml
+grep -E '\\[supply\\]|watched_classic_assets|watched_sep41_contracts|sdf_reserve_accounts' /etc/stellarindex.toml
 
 # Sample one watched asset's supply storage
 sudo -u postgres psql -d stellarindex -c "SELECT * FROM asset_supply_history ORDER BY time DESC LIMIT 5;"
@@ -43,15 +44,15 @@ Key signals:
 
 ## Mitigation (≤ 15 min)
 
-- [ ] Step 1 — populate the watched asset list. Edit `/etc/stellarindex/config.toml`:
+- [ ] Step 1 — populate the watched asset list. Edit `/etc/stellarindex.toml` (keys are `watched_classic_assets` / `watched_sep41_contracts` — the short forms `watched_classic` / `watched_sep41` are NOT recognised and the TOML is rejected at load):
   ```toml
   [supply]
-  watched_classic = [
+  watched_classic_assets = [
       "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
       "EURC-GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2",
       # ... etc; full list per docs/operations/supply-snapshot.md
   ]
-  watched_sep41 = []
+  watched_sep41_contracts = []
   sdf_reserve_accounts = ["GA…"]
   ```
 - [ ] Step 2 — restart the aggregator: `systemctl restart stellarindex-aggregator`.
@@ -69,16 +70,30 @@ Long-term fix: auto-populate `watched_classic` from the verified-currency catalo
 
 ## Known false-positive patterns
 
-- **First 5 min after aggregator boot**: the supply-refresh goroutine waits on the first baseline window before producing a tick. The alert fires only after `for: 30m` per the rule definition, but operators eyeballing the metric within the first 5 min may misread "no data yet" as "broken".
+- **First 5 min after aggregator boot**: the supply-refresh goroutine waits on the first baseline window before producing a tick. This CANNOT false-positive the alert — the expression requires the `outcome="ok"` series to have been absent for a full 36 h window (`absent_over_time(...[36h])`, plus `for: 5m`), so a fresh boot has more than a day of grace. Operators eyeballing the metric within the first 5 min may still misread "no data yet" as "broken".
 
 ## Related
 
 - `supply-refresh-stalled.md` — when the goroutine HAS produced ticks but not recently.
 - `supply-refresh-error-dominant.md` — when most ticks are failing.
-- `supply-snapshot-never-initialized.md` — sibling for the operator-CLI snapshot path.
+- [supply-snapshot-never-initialized.md](supply-snapshot-never-initialized.md) — sibling for the operator-CLI snapshot path, AND the page this alert's `runbook_url` deliberately routes to (shared cold-deploy resolution; it links back here for per-alert detail).
 - ADR-0011 — three-domain supply algorithm.
 - F-1266 (audit-2026-05-12) — the on-r1 manifestation of this alert.
 
 ## Changelog
 
+- 2026-08-29 — re-verified against HEAD (Wave I). Detected-by
+  corrected: the alert lives in `supply-refresh.yml` in BOTH trees
+  (never `aggregator.yml`), r1 overlay cited first. Symptom
+  corrected: a never-incremented counter is ABSENT, not zero —
+  real expr `absent_over_time(...{outcome="ok"}[36h]) == 1`,
+  `for: 5m`, `severity: ticket` (the claimed `for: 30m` belonged
+  to a different alert; a fresh boot cannot false-positive against
+  a 36 h absent window). Config path fixed to
+  `/etc/stellarindex.toml` and the watched-set keys to the real
+  `watched_classic_assets` / `watched_sep41_contracts` (the
+  short-form keys made the mitigation TOML rejected at load).
+  Cross-linked with supply-snapshot-never-initialized.md, which
+  the alert's `runbook_url` deliberately targets. Status promoted
+  draft → current.
 - 2026-05-12 — initial draft (audit-2026-05-12 F-1237 closure).
