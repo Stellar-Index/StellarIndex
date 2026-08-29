@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math/big"
 	"net"
 	"net/netip"
 	"strings"
@@ -1178,6 +1179,608 @@ func TestPlatformPostgresStores(t *testing.T) {
 			t.Errorf("Resolve absent: expected ErrNotFound, got %v", err)
 		}
 	})
+
+	// Passkey persistence — webauthn_credentials (migration 0140).
+	// Auth-grade store: sign-count round-trips feed clone detection,
+	// credential-ID uniqueness is spec-required, and delete is
+	// owner-scoped (no cross-user probe oracle).
+	t.Run("WebAuthnStore/CRUD+signcount", func(t *testing.T) {
+		passkeys := postgresstore.NewWebAuthnCredentialStore(store)
+
+		acct, err := accounts.Create(ctx, platform.Account{
+			Name: "Passkey Co", Slug: "passkey-" + strings.ToLower(uuid.New().String()[:8]),
+			BillingEmail: "pk-" + uuid.New().String() + "@p.example",
+			Tier:         platform.TierFree, Status: platform.AccountActive,
+		})
+		if err != nil {
+			t.Fatalf("create account: %v", err)
+		}
+		alice, err := users.CreateUser(ctx, platform.User{
+			AccountID: acct.ID,
+			Email:     "passkey-alice-" + uuid.New().String() + "@p.example",
+			Role:      platform.RoleOwner,
+		})
+		if err != nil {
+			t.Fatalf("create user: %v", err)
+		}
+
+		// 1. Create a fully-populated credential (registration path).
+		credID := []byte("cred-" + uuid.New().String())
+		publicKey := []byte{0xA5, 0x01, 0x02, 0x03, 0x26} // COSE-ish blob; opaque to the store
+		aaguid := bytes.Repeat([]byte{0xAB}, 16)
+		created, err := passkeys.CreateWebAuthnCredential(ctx, platform.WebAuthnCredential{
+			UserID:          alice.ID,
+			Name:            "MacBook Touch ID",
+			CredentialID:    credID,
+			PublicKey:       publicKey,
+			AttestationType: "none",
+			Transports:      []string{"internal", "hybrid"},
+			SignCount:       0,
+			BackupEligible:  true,
+			BackupState:     true,
+			AAGUID:          aaguid,
+		})
+		if err != nil {
+			t.Fatalf("create credential: %v", err)
+		}
+		if created.ID == uuid.Nil {
+			t.Fatal("ID not populated")
+		}
+		if created.CreatedAt.IsZero() {
+			t.Error("CreatedAt not populated")
+		}
+		if !created.LastUsedAt.IsZero() {
+			t.Errorf("LastUsedAt should be zero (never used), got %v", created.LastUsedAt)
+		}
+		if len(created.Transports) != 2 || created.Transports[0] != "internal" || created.Transports[1] != "hybrid" {
+			t.Errorf("Transports round-trip: %v", created.Transports)
+		}
+		if !bytes.Equal(created.AAGUID, aaguid) {
+			t.Errorf("AAGUID round-trip: %x", created.AAGUID)
+		}
+		if !created.BackupEligible || !created.BackupState {
+			t.Errorf("backup flags didn't round-trip: BE=%v BS=%v", created.BackupEligible, created.BackupState)
+		}
+
+		// 2. Lookup by credential ID — the login-assertion key. The
+		// public key must come back byte-exact (it verifies signatures).
+		byCred, err := passkeys.GetWebAuthnCredentialByCredentialID(ctx, credID)
+		if err != nil {
+			t.Fatalf("get by credential id: %v", err)
+		}
+		if byCred.ID != created.ID {
+			t.Errorf("credential-id lookup got different row")
+		}
+		if !bytes.Equal(byCred.PublicKey, publicKey) {
+			t.Errorf("PublicKey round-trip: %x, want %x", byCred.PublicKey, publicKey)
+		}
+		// Absent credential ID → ErrNotFound.
+		if _, err := passkeys.GetWebAuthnCredentialByCredentialID(ctx, []byte("never-registered")); !errors.Is(err, platform.ErrNotFound) {
+			t.Errorf("expected ErrNotFound for absent credential id, got %v", err)
+		}
+
+		// 3. A second credential in the production handler's minimal
+		// shape: empty (non-nil) transports, nil AAGUID. The empty
+		// text[] must come back as a non-nil empty slice, the NULL
+		// aaguid as an empty AAGUID.
+		cred2ID := []byte("cred-" + uuid.New().String())
+		second, err := passkeys.CreateWebAuthnCredential(ctx, platform.WebAuthnCredential{
+			UserID:       alice.ID,
+			Name:         "iCloud passkey",
+			CredentialID: cred2ID,
+			PublicKey:    []byte{0x01},
+			Transports:   []string{},
+		})
+		if err != nil {
+			t.Fatalf("create minimal credential: %v", err)
+		}
+		if second.Transports == nil || len(second.Transports) != 0 {
+			t.Errorf("empty transports round-trip: %#v, want non-nil empty slice", second.Transports)
+		}
+		if len(second.AAGUID) != 0 {
+			t.Errorf("nil AAGUID round-trip: %x, want empty", second.AAGUID)
+		}
+
+		// 4. List for user: both rows, newest first.
+		list, err := passkeys.ListWebAuthnCredentialsForUser(ctx, alice.ID)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		if len(list) != 2 {
+			t.Fatalf("list len = %d, want 2", len(list))
+		}
+		for i := 1; i < len(list); i++ {
+			if list[i-1].CreatedAt.Before(list[i].CreatedAt) {
+				t.Errorf("list not newest-first at %d: %v < %v", i, list[i-1].CreatedAt, list[i].CreatedAt)
+			}
+		}
+
+		// 5. Duplicate credential ID → ErrConflict (spec-required
+		// global uniqueness; webauthn_credentials_credential_idx).
+		_, err = passkeys.CreateWebAuthnCredential(ctx, platform.WebAuthnCredential{
+			UserID:       alice.ID,
+			Name:         "same authenticator again",
+			CredentialID: credID,
+			PublicKey:    []byte{0x02},
+			Transports:   []string{},
+		})
+		if !errors.Is(err, platform.ErrConflict) {
+			t.Errorf("expected ErrConflict on duplicate credential id, got %v", err)
+		}
+
+		// 6. Post-assertion sign-count update (clone detection).
+		// uint32-max value exercises the bigint headroom.
+		lastUsed := time.Now().UTC().Truncate(time.Microsecond)
+		if err := passkeys.UpdateWebAuthnCredentialSignCount(ctx, created.ID, 4294967295, lastUsed); err != nil {
+			t.Fatalf("update sign count: %v", err)
+		}
+		byCred, err = passkeys.GetWebAuthnCredentialByCredentialID(ctx, credID)
+		if err != nil {
+			t.Fatalf("get after sign-count update: %v", err)
+		}
+		if byCred.SignCount != 4294967295 {
+			t.Errorf("SignCount = %d, want 4294967295", byCred.SignCount)
+		}
+		if !byCred.LastUsedAt.Equal(lastUsed) {
+			t.Errorf("LastUsedAt = %v, want %v", byCred.LastUsedAt, lastUsed)
+		}
+		// Absent row → ErrNotFound.
+		if err := passkeys.UpdateWebAuthnCredentialSignCount(ctx, uuid.New(), 1, lastUsed); !errors.Is(err, platform.ErrNotFound) {
+			t.Errorf("update absent: expected ErrNotFound, got %v", err)
+		}
+
+		// 7. Owner delete removes the row; the credential can no longer
+		// resolve a login assertion. Re-delete → ErrNotFound.
+		if err := passkeys.DeleteWebAuthnCredential(ctx, created.ID, alice.ID); err != nil {
+			t.Fatalf("delete: %v", err)
+		}
+		if _, err := passkeys.GetWebAuthnCredentialByCredentialID(ctx, credID); !errors.Is(err, platform.ErrNotFound) {
+			t.Errorf("deleted credential still resolves by credential id: %v", err)
+		}
+		if err := passkeys.DeleteWebAuthnCredential(ctx, created.ID, alice.ID); !errors.Is(err, platform.ErrNotFound) {
+			t.Errorf("re-delete: expected ErrNotFound, got %v", err)
+		}
+	})
+
+	t.Run("WebAuthnStore/CrossUserIsolation", func(t *testing.T) {
+		passkeys := postgresstore.NewWebAuthnCredentialStore(store)
+
+		acct, err := accounts.Create(ctx, platform.Account{
+			Name: "Iso Co", Slug: "iso-" + strings.ToLower(uuid.New().String()[:8]),
+			BillingEmail: "iso-" + uuid.New().String() + "@p.example",
+			Tier:         platform.TierFree, Status: platform.AccountActive,
+		})
+		if err != nil {
+			t.Fatalf("create account: %v", err)
+		}
+		alice, err := users.CreateUser(ctx, platform.User{
+			AccountID: acct.ID, Email: "iso-alice-" + uuid.New().String() + "@p.example", Role: platform.RoleOwner,
+		})
+		if err != nil {
+			t.Fatalf("create alice: %v", err)
+		}
+		bob, err := users.CreateUser(ctx, platform.User{
+			AccountID: acct.ID, Email: "iso-bob-" + uuid.New().String() + "@p.example", Role: platform.RoleMember,
+		})
+		if err != nil {
+			t.Fatalf("create bob: %v", err)
+		}
+
+		aliceCredID := []byte("iso-cred-" + uuid.New().String())
+		aliceCred, err := passkeys.CreateWebAuthnCredential(ctx, platform.WebAuthnCredential{
+			UserID: alice.ID, Name: "alice key", CredentialID: aliceCredID,
+			PublicKey: []byte{0x0A}, Transports: []string{},
+		})
+		if err != nil {
+			t.Fatalf("create alice cred: %v", err)
+		}
+		bobCred, err := passkeys.CreateWebAuthnCredential(ctx, platform.WebAuthnCredential{
+			UserID: bob.ID, Name: "bob key", CredentialID: []byte("iso-cred-" + uuid.New().String()),
+			PublicKey: []byte{0x0B}, Transports: []string{},
+		})
+		if err != nil {
+			t.Fatalf("create bob cred: %v", err)
+		}
+
+		// Lists are user-scoped: no cross-user leakage.
+		aliceList, err := passkeys.ListWebAuthnCredentialsForUser(ctx, alice.ID)
+		if err != nil {
+			t.Fatalf("list alice: %v", err)
+		}
+		if len(aliceList) != 1 || aliceList[0].ID != aliceCred.ID {
+			t.Errorf("alice list leaked or lost rows: %+v", aliceList)
+		}
+		bobList, err := passkeys.ListWebAuthnCredentialsForUser(ctx, bob.ID)
+		if err != nil {
+			t.Fatalf("list bob: %v", err)
+		}
+		if len(bobList) != 1 || bobList[0].ID != bobCred.ID {
+			t.Errorf("bob list leaked or lost rows: %+v", bobList)
+		}
+
+		// A user with no credentials gets an empty slice, not an error.
+		nobody, err := users.CreateUser(ctx, platform.User{
+			AccountID: acct.ID, Email: "iso-nobody-" + uuid.New().String() + "@p.example", Role: platform.RoleMember,
+		})
+		if err != nil {
+			t.Fatalf("create nobody: %v", err)
+		}
+		empty, err := passkeys.ListWebAuthnCredentialsForUser(ctx, nobody.ID)
+		if err != nil {
+			t.Fatalf("list nobody: %v", err)
+		}
+		if empty == nil || len(empty) != 0 {
+			t.Errorf("expected non-nil empty list, got %#v", empty)
+		}
+
+		// Uniqueness is GLOBAL: bob registering alice's credential ID
+		// is ErrConflict, not a second row.
+		_, err = passkeys.CreateWebAuthnCredential(ctx, platform.WebAuthnCredential{
+			UserID: bob.ID, Name: "stolen id", CredentialID: aliceCredID,
+			PublicKey: []byte{0x0C}, Transports: []string{},
+		})
+		if !errors.Is(err, platform.ErrConflict) {
+			t.Errorf("cross-user duplicate credential id: expected ErrConflict, got %v", err)
+		}
+
+		// Delete is owner-scoped: bob deleting alice's row by its real
+		// ID gets ErrNotFound (no probe oracle) and the row survives.
+		if err := passkeys.DeleteWebAuthnCredential(ctx, aliceCred.ID, bob.ID); !errors.Is(err, platform.ErrNotFound) {
+			t.Errorf("cross-user delete: expected ErrNotFound, got %v", err)
+		}
+		if _, err := passkeys.GetWebAuthnCredentialByCredentialID(ctx, aliceCredID); err != nil {
+			t.Errorf("alice's credential vanished after bob's delete attempt: %v", err)
+		}
+	})
+
+	// Customer price alerts — price_alerts (migration 0080).
+	t.Run("PriceAlertStore/CRUD+precision", func(t *testing.T) {
+		alerts := postgresstore.NewPriceAlertStore(store)
+
+		acct, err := accounts.Create(ctx, platform.Account{
+			Name: "Alert Co", Slug: "alert-" + strings.ToLower(uuid.New().String()[:8]),
+			BillingEmail: "alert-" + uuid.New().String() + "@a.example",
+			Tier:         platform.TierFree, Status: platform.AccountActive,
+		})
+		if err != nil {
+			t.Fatalf("create account: %v", err)
+		}
+
+		// ADR-0003: threshold is NUMERIC end-to-end. Integer part is
+		// 2^53+1 — a float64 round-trip would corrupt it — plus a
+		// 9-decimal fractional tail for full-precision round-trip.
+		const bigThreshold = "9007199254740993.000000001"
+		created, err := alerts.CreatePriceAlert(ctx, platform.PriceAlert{
+			AccountID:       acct.ID,
+			BaseAsset:       "native",
+			QuoteAsset:      "fiat:USD",
+			Condition:       platform.AlertAbove,
+			Threshold:       bigThreshold,
+			CooldownSeconds: 300,
+			Enabled:         true,
+		}, 25)
+		if err != nil {
+			t.Fatalf("create alert: %v", err)
+		}
+		if created.ID == uuid.Nil {
+			t.Fatal("ID not populated")
+		}
+		if created.CreatedAt.IsZero() || created.UpdatedAt.IsZero() {
+			t.Error("CreatedAt/UpdatedAt not populated")
+		}
+
+		got, err := alerts.GetPriceAlert(ctx, created.ID)
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		if got.AccountID != acct.ID || got.BaseAsset != "native" || got.QuoteAsset != "fiat:USD" {
+			t.Errorf("identity round-trip: %+v", got)
+		}
+		if got.Condition != platform.AlertAbove || got.CooldownSeconds != 300 || !got.Enabled {
+			t.Errorf("settings round-trip: %+v", got)
+		}
+		if !got.LastFiredAt.IsZero() {
+			t.Errorf("LastFiredAt should be zero for a never-fired alert (NULL→sentinel translation), got %v", got.LastFiredAt)
+		}
+		// Exact-value comparison via big.Rat: catches any float64 or
+		// scale truncation regardless of textual normalisation.
+		if mustRat(t, got.Threshold).Cmp(mustRat(t, bigThreshold)) != 0 {
+			t.Errorf("threshold precision lost: stored %q, want value-equal to %q", got.Threshold, bigThreshold)
+		}
+
+		// Input validation refuses malformed alerts before any SQL.
+		if _, err := alerts.CreatePriceAlert(ctx, platform.PriceAlert{
+			BaseAsset: "native", QuoteAsset: "fiat:USD",
+			Condition: platform.AlertAbove, Threshold: "1",
+		}, 25); err == nil {
+			t.Error("expected error for empty AccountID")
+		}
+		if _, err := alerts.CreatePriceAlert(ctx, platform.PriceAlert{
+			AccountID: acct.ID, QuoteAsset: "fiat:USD",
+			Condition: platform.AlertAbove, Threshold: "1",
+		}, 25); err == nil {
+			t.Error("expected error for empty BaseAsset")
+		}
+		if _, err := alerts.CreatePriceAlert(ctx, platform.PriceAlert{
+			AccountID: acct.ID, BaseAsset: "native", QuoteAsset: "fiat:USD",
+			Condition: "sideways", Threshold: "1",
+		}, 25); err == nil {
+			t.Error("expected error for invalid condition")
+		}
+		if _, err := alerts.CreatePriceAlert(ctx, platform.PriceAlert{
+			AccountID: acct.ID, BaseAsset: "native", QuoteAsset: "fiat:USD",
+			Condition: platform.AlertBelow,
+		}, 25); err == nil {
+			t.Error("expected error for empty threshold")
+		}
+		// None of the rejects left a row behind.
+		list, err := alerts.ListPriceAlertsForAccount(ctx, acct.ID)
+		if err != nil {
+			t.Fatalf("list after rejects: %v", err)
+		}
+		if len(list) != 1 {
+			t.Errorf("rejected creates leaked rows: list len = %d, want 1", len(list))
+		}
+
+		// Get absent → ErrNotFound.
+		if _, err := alerts.GetPriceAlert(ctx, uuid.New()); !errors.Is(err, platform.ErrNotFound) {
+			t.Errorf("get absent: expected ErrNotFound, got %v", err)
+		}
+
+		// Update flips every mutable field; a full-precision small
+		// threshold (18 decimals) must survive too.
+		const tinyThreshold = "0.000000000000000123"
+		upd := got
+		upd.Condition = platform.AlertBelow
+		upd.Threshold = tinyThreshold
+		upd.CooldownSeconds = 0
+		upd.Enabled = false
+		if err := alerts.UpdatePriceAlert(ctx, upd); err != nil {
+			t.Fatalf("update: %v", err)
+		}
+		got, err = alerts.GetPriceAlert(ctx, created.ID)
+		if err != nil {
+			t.Fatalf("get after update: %v", err)
+		}
+		if got.Condition != platform.AlertBelow || got.CooldownSeconds != 0 || got.Enabled {
+			t.Errorf("update didn't persist: %+v", got)
+		}
+		if mustRat(t, got.Threshold).Cmp(mustRat(t, tinyThreshold)) != 0 {
+			t.Errorf("tiny threshold precision lost: stored %q, want value-equal to %q", got.Threshold, tinyThreshold)
+		}
+		if got.UpdatedAt.Before(created.UpdatedAt) {
+			t.Errorf("updated_at went backwards: %v < %v", got.UpdatedAt, created.UpdatedAt)
+		}
+		// Update absent → ErrNotFound; invalid condition refused.
+		absent := upd
+		absent.ID = uuid.New()
+		if err := alerts.UpdatePriceAlert(ctx, absent); !errors.Is(err, platform.ErrNotFound) {
+			t.Errorf("update absent: expected ErrNotFound, got %v", err)
+		}
+		bad := upd
+		bad.Condition = "diagonal"
+		if err := alerts.UpdatePriceAlert(ctx, bad); err == nil {
+			t.Error("expected error for invalid condition on update")
+		}
+
+		// MarkPriceAlertFired stamps last_fired_at (cooldown clock).
+		firedAt := time.Now().UTC().Truncate(time.Microsecond)
+		if err := alerts.MarkPriceAlertFired(ctx, created.ID, firedAt); err != nil {
+			t.Fatalf("mark fired: %v", err)
+		}
+		got, err = alerts.GetPriceAlert(ctx, created.ID)
+		if err != nil {
+			t.Fatalf("get after fire: %v", err)
+		}
+		if !got.LastFiredAt.Equal(firedAt) {
+			t.Errorf("LastFiredAt = %v, want %v", got.LastFiredAt, firedAt)
+		}
+
+		// Delete, then idempotent re-delete.
+		if err := alerts.DeletePriceAlert(ctx, created.ID); err != nil {
+			t.Fatalf("delete: %v", err)
+		}
+		if _, err := alerts.GetPriceAlert(ctx, created.ID); !errors.Is(err, platform.ErrNotFound) {
+			t.Errorf("get after delete: expected ErrNotFound, got %v", err)
+		}
+		if err := alerts.DeletePriceAlert(ctx, created.ID); err != nil {
+			t.Errorf("re-delete should be idempotent, got %v", err)
+		}
+	})
+
+	t.Run("PriceAlertStore/ListScoping+EnabledSweep", func(t *testing.T) {
+		alerts := postgresstore.NewPriceAlertStore(store)
+
+		mkAccount := func(tag string) platform.Account {
+			t.Helper()
+			acct, err := accounts.Create(ctx, platform.Account{
+				Name: "Sweep " + tag, Slug: "sweep-" + tag + "-" + strings.ToLower(uuid.New().String()[:8]),
+				BillingEmail: "sweep-" + uuid.New().String() + "@a.example",
+				Tier:         platform.TierFree, Status: platform.AccountActive,
+			})
+			if err != nil {
+				t.Fatalf("create account %s: %v", tag, err)
+			}
+			return acct
+		}
+		acctA := mkAccount("a")
+		acctB := mkAccount("b")
+
+		mkAlert := func(acct uuid.UUID, enabled bool) platform.PriceAlert {
+			t.Helper()
+			a, err := alerts.CreatePriceAlert(ctx, platform.PriceAlert{
+				AccountID: acct, BaseAsset: "native", QuoteAsset: "fiat:USD",
+				Condition: platform.AlertAbove, Threshold: "0.25", Enabled: enabled,
+			}, 25)
+			if err != nil {
+				t.Fatalf("create alert: %v", err)
+			}
+			return a
+		}
+		aEnabled := mkAlert(acctA.ID, true)
+		aDisabled := mkAlert(acctA.ID, false)
+		bEnabled := mkAlert(acctB.ID, true)
+
+		// Per-account list is owner-scoped: A sees exactly its two
+		// (disabled included), none of B's.
+		listA, err := alerts.ListPriceAlertsForAccount(ctx, acctA.ID)
+		if err != nil {
+			t.Fatalf("list A: %v", err)
+		}
+		if len(listA) != 2 {
+			t.Fatalf("list A len = %d, want 2", len(listA))
+		}
+		for _, a := range listA {
+			if a.AccountID != acctA.ID {
+				t.Errorf("list A leaked foreign alert %v (account %v)", a.ID, a.AccountID)
+			}
+		}
+		listB, err := alerts.ListPriceAlertsForAccount(ctx, acctB.ID)
+		if err != nil {
+			t.Fatalf("list B: %v", err)
+		}
+		if len(listB) != 1 || listB[0].ID != bEnabled.ID {
+			t.Errorf("list B = %+v, want only B's alert", listB)
+		}
+
+		// The evaluator sweep sees every ENABLED alert across accounts
+		// and no disabled ones. Other subtests may own rows too, so
+		// assert membership, not cardinality.
+		sweep, err := alerts.ListEnabledPriceAlerts(ctx)
+		if err != nil {
+			t.Fatalf("enabled sweep: %v", err)
+		}
+		seen := map[uuid.UUID]bool{}
+		for _, a := range sweep {
+			if !a.Enabled {
+				t.Errorf("sweep returned disabled alert %v", a.ID)
+			}
+			seen[a.ID] = true
+		}
+		if !seen[aEnabled.ID] || !seen[bEnabled.ID] {
+			t.Errorf("sweep missing enabled alerts: A=%v B=%v", seen[aEnabled.ID], seen[bEnabled.ID])
+		}
+		if seen[aDisabled.ID] {
+			t.Errorf("sweep included the disabled alert %v", aDisabled.ID)
+		}
+	})
+
+	// maxPerAccount <= 0 falls back to the in-store default of 5, and
+	// the cap counts ALL rows for the account — disabled included —
+	// since COUNT(*) is unfiltered.
+	t.Run("PriceAlertStore/DefaultCap+DisabledRowsCount", func(t *testing.T) {
+		alerts := postgresstore.NewPriceAlertStore(store)
+		acct, err := accounts.Create(ctx, platform.Account{
+			Name: "Capped Co", Slug: "capped-" + strings.ToLower(uuid.New().String()[:8]),
+			BillingEmail: "capped-" + uuid.New().String() + "@a.example",
+			Tier:         platform.TierFree, Status: platform.AccountActive,
+		})
+		if err != nil {
+			t.Fatalf("create account: %v", err)
+		}
+		var last platform.PriceAlert
+		for i := 0; i < 5; i++ {
+			last, err = alerts.CreatePriceAlert(ctx, platform.PriceAlert{
+				AccountID: acct.ID, BaseAsset: "native", QuoteAsset: "fiat:USD",
+				Condition: platform.AlertBelow, Threshold: fmt.Sprintf("%d.5", i+1), Enabled: true,
+			}, 0) // 0 → default cap of 5
+			if err != nil {
+				t.Fatalf("create %d under default cap: %v", i, err)
+			}
+		}
+		// Disabling one does not free a slot.
+		last.Enabled = false
+		if err := alerts.UpdatePriceAlert(ctx, last); err != nil {
+			t.Fatalf("disable: %v", err)
+		}
+		_, err = alerts.CreatePriceAlert(ctx, platform.PriceAlert{
+			AccountID: acct.ID, BaseAsset: "native", QuoteAsset: "fiat:USD",
+			Condition: platform.AlertBelow, Threshold: "9.5", Enabled: true,
+		}, 0)
+		if !errors.Is(err, platform.ErrPriceAlertQuotaExceeded) {
+			t.Errorf("expected ErrPriceAlertQuotaExceeded at default cap, got %v", err)
+		}
+	})
+
+	// Same shape as WebhookStore/APIKeyStore Concurrent_QuotaCap_Holds:
+	// the advisory-lock + CTE-gated INSERT must hold the per-account
+	// cap under concurrent creates, with losers getting
+	// ErrPriceAlertQuotaExceeded.
+	t.Run("PriceAlertStore/Concurrent_QuotaCap_Holds", func(t *testing.T) {
+		alerts := postgresstore.NewPriceAlertStore(store)
+		acct, err := accounts.Create(ctx, platform.Account{
+			Name: "AlertRaceCo", Slug: "alertrace-" + strings.ToLower(uuid.New().String()[:8]),
+			BillingEmail: "alertrace-" + uuid.New().String() + "@a.example",
+			Tier:         platform.TierFree, Status: platform.AccountActive,
+		})
+		if err != nil {
+			t.Fatalf("create account: %v", err)
+		}
+		const (
+			cap_       = 3
+			goroutines = 10
+		)
+		var (
+			wg        sync.WaitGroup
+			ok        int64
+			quotaErrs int64
+			otherErrs int64
+			start     = make(chan struct{})
+		)
+		for i := 0; i < goroutines; i++ {
+			wg.Add(1)
+			i := i
+			go func() {
+				defer wg.Done()
+				<-start
+				_, err := alerts.CreatePriceAlert(ctx, platform.PriceAlert{
+					AccountID: acct.ID, BaseAsset: "native", QuoteAsset: "fiat:USD",
+					Condition: platform.AlertAbove, Threshold: fmt.Sprintf("%d.125", i+1),
+					Enabled: true,
+				}, cap_)
+				switch {
+				case err == nil:
+					atomic.AddInt64(&ok, 1)
+				case errors.Is(err, platform.ErrPriceAlertQuotaExceeded):
+					atomic.AddInt64(&quotaErrs, 1)
+				default:
+					atomic.AddInt64(&otherErrs, 1)
+					t.Errorf("unexpected error: %v", err)
+				}
+			}()
+		}
+		close(start)
+		wg.Wait()
+
+		if got := atomic.LoadInt64(&ok); got != cap_ {
+			t.Errorf("successful creates = %d, want exactly %d (the cap)", got, cap_)
+		}
+		if got := atomic.LoadInt64(&quotaErrs); got != goroutines-cap_ {
+			t.Errorf("quota-exceeded errors = %d, want %d (cap losers)", got, goroutines-cap_)
+		}
+		if got := atomic.LoadInt64(&otherErrs); got != 0 {
+			t.Errorf("unexpected errors = %d, want 0", got)
+		}
+		listed, err := alerts.ListPriceAlertsForAccount(ctx, acct.ID)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		if len(listed) != cap_ {
+			t.Errorf("persisted rows = %d, want %d (the cap)", len(listed), cap_)
+		}
+	})
+}
+
+// mustRat parses a decimal string into a big.Rat, failing the test on
+// garbage. Threshold comparisons go through big.Rat so the assertion is
+// about VALUE precision (ADR-0003), not textual normalisation.
+func mustRat(t *testing.T, s string) *big.Rat {
+	t.Helper()
+	r, ok := new(big.Rat).SetString(s)
+	if !ok {
+		t.Fatalf("unparseable numeric string %q", s)
+	}
+	return r
 }
 
 // containsInviteHash reports whether any invite in the list carries

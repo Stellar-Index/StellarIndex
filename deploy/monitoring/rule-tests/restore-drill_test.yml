@@ -1,5 +1,6 @@
 ---
-# promtool unit tests for stellarindex_restore_drill_stale (BDR-03, audit-2026-08-14).
+# promtool unit tests for stellarindex_restore_drill_stale (BDR-03, audit-2026-08-14)
+# and stellarindex_restore_drill_failed (audit-2026-08-28 backup-restore-4).
 #
 #   promtool test rules deploy/monitoring/rule-tests/restore-drill_test.yml
 #
@@ -109,4 +110,46 @@ tests:
     alert_rule_test:
       - eval_time: 985h
         alertname: stellarindex_restore_drill_stale
+        exp_alerts: []
+
+  # ── stellarindex_restore_drill_failed ──
+  # A run that got past the preconditions and found a problem rewrites
+  # the textfile with failures>0 (and no last_success). The ticket must
+  # fire off that value after the 30m `for`, and stay silent on 0.
+  - interval: 1h
+    name: a failed drill (failures > 0) fires the failed ticket
+    input_series:
+      - series: 'stellarindex_restore_drill_failures'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 5h
+        alertname: stellarindex_restore_drill_failed
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill-failed.md
+              summary: "the most recent pgBackRest restore-drill FAILED (1 check(s)) — the backup chain is not currently proven restorable"
+              description: |
+                The most recent restore-drill run (restore-drill.timer, first
+                Saturday 04:00 UTC, or a manual run) recorded
+                1 failed check(s): pgbackrest restore failed, the
+                scratch instance never reached consistency, or a verification
+                check (tables / WAL drain / tip lag / hash chain / row window)
+                did not pass. Until a clean run lands we have no current proof
+                the pgBackRest backup chain is restorable (ADR-0043 §3 /
+                CS-110). Read the tail of
+                `/var/lib/stellarindex/restore-drills/restore-drills.md` (which
+                names the aborted stage) and `/var/log/restore-drill.log`.
+
+  - interval: 1h
+    name: a clean drill (failures == 0) never fires the failed ticket
+    input_series:
+      - series: 'stellarindex_restore_drill_failures'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 5h
+        alertname: stellarindex_restore_drill_failed
         exp_alerts: []

@@ -61,6 +61,15 @@ type CreateAPIKeyRequest struct {
 
 	// ExpiresAt — zero means never.
 	ExpiresAt time.Time
+
+	// EmailVerifiedAt — zero means the key has not (yet) passed the
+	// /v1/signup/verify email-link flow. Set by the self-service
+	// rotation path (POST /v1/account/keys) to the caller's own
+	// stamp so a child key inherits its parent's verification:
+	// the verification is a property of the identifier's owner,
+	// not of one record, and there is no path that can verify a
+	// non-signup KeyID after the fact. Signup leaves it zero.
+	EmailVerifiedAt time.Time
 }
 
 // RedisAPIKeyStore implements [APIKeyStore] against the same
@@ -164,6 +173,7 @@ func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) 
 		RateLimitPerMin: req.RateLimitPerMin,
 		CreatedAt:       s.now().UTC(),
 		ExpiresAt:       req.ExpiresAt,
+		EmailVerifiedAt: req.EmailVerifiedAt,
 		// Operator-minted keys are full-access by default — matching the
 		// dashboard issuance default (Permissions.All=true). Without this
 		// the permission middleware's closed posture (no allow entries +

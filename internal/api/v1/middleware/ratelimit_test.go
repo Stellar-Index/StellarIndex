@@ -429,6 +429,7 @@ func TestSkipHealthAndMetrics(t *testing.T) {
 	cases := map[string]bool{
 		"/v1/healthz":      true,
 		"/v1/readyz":       true,
+		"/v1/livez/lake":   true, // lake-route LB probe must not spend the anon bucket (api-security-3)
 		"/v1/version":      true,
 		"/metrics":         true,
 		"/v1/assets":       false,

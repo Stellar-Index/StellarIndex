@@ -1,6 +1,6 @@
 ---
 title: Runbook — restore-drill-stale
-last_verified: 2026-08-14
+last_verified: 2026-08-28
 status: ratified
 severity: P3
 ---
@@ -51,16 +51,19 @@ cat /var/lib/node_exporter/textfile_collector/restore_drill.prom
    - Signal: `systemctl status restore-drill.timer` shows `inactive`.
    - Mitigation: `sudo systemctl enable --now restore-drill.timer`.
 
-2. **Every run refusing on free space** — the drill needs `MIN_FREE_GB`
-   (default 200 G) free on the drill volume and exits 2 (uncounted
+2. **Every run refusing on free space** — the drill sizes its floor from
+   the latest backup (`pgbackrest info` database size × 125 % + 50 G WAL
+   headroom, never below `MIN_FREE_GB`=200 G) and exits 2 (uncounted
    precondition) below that, so it never stamps a success.
    - Signal: `/var/log/restore-drill.log` ends with a `refusing` note.
    - Mitigation: free space on the drill dataset (Phase-A capacity
      runbook), then force a run (below).
 
 3. **Every run failing a verification check** — the drill runs but a
-   check fails, so `fail_count > 0` and last_success is deliberately not
-   stamped; the series drops from the textfile and goes absent.
+   check fails (or aborts at restore / recovery), so `fail_count > 0` and
+   last_success is deliberately not stamped; the series drops from the
+   textfile and goes absent. `stellarindex_restore_drill_failed` fires
+   within 30 min of that run — this ticket is the 40-day backstop.
    - Signal: `restore_drill.prom` has `stellarindex_restore_drill_failures > 0`
      and no `..._last_success_unix` line; `/var/log/restore-drill.log`
      names the failing check.
@@ -103,6 +106,8 @@ cat /var/lib/node_exporter/textfile_collector/restore_drill.prom
 
 ## Related
 
+- `restore-drill-failed.md` — `stellarindex_restore_drill_failed`; the
+  immediate signal when the most recent run recorded failures > 0.
 - `backup-failed.md` — when a drill's individual restore/verify checks
   fail.
 - `ch-schema-restore.md` — the ClickHouse half of a restore; the
@@ -113,3 +118,5 @@ cat /var/lib/node_exporter/textfile_collector/restore_drill.prom
 - 2026-08-14 — initial draft alongside the BDR-03 remediation (durable
   evidence + `stellarindex_restore_drill_last_success_unix` metric +
   this staleness alert).
+- 2026-08-28 — backup-derived capacity floor; companion
+  `stellarindex_restore_drill_failed` ticket (audit backup-restore-3/-4).
