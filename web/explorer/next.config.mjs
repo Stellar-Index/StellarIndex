@@ -56,9 +56,27 @@ const nextConfig = {
   // Sourcemaps in production help when debugging from issue reports.
   productionBrowserSourceMaps: true,
 
-  // All API access is client-side from the browser to api.stellarindex.io,
-  // which is already CDN-cached per cdn-setup.md. No server-side fetches
-  // needed — that's the entire point of the static-export architecture.
+  // All API access is client-side from the browser to this network's
+  // api.* origin, which is already CDN-cached per cdn-setup.md. No
+  // server-side fetches needed — that's the entire point of the
+  // static-export architecture.
+  //
+  // Env contract (per-network builds, docs/operations/explorer-deployment.md):
+  //   NEXT_PUBLIC_NETWORK       mainnet | testnet | futurenet (default mainnet)
+  //   NEXT_PUBLIC_API_BASE_URL  OPTIONAL override of the API origin. When
+  //                             unset, src/api/client.ts falls back to
+  //                             CURRENT_NETWORK.apiBaseUrl, i.e. the origin
+  //                             that belongs to NEXT_PUBLIC_NETWORK. CI sets
+  //                             it to a stub (.invalid) so builds never
+  //                             contact production.
+  // NEXT_PUBLIC_* vars are inlined by Next from the build environment on
+  // their own, so NEXT_PUBLIC_API_BASE_URL must NOT be listed here: an
+  // `env` entry with a `?? 'https://api...'` default is inlined as a string
+  // on every build that forgot the var, which makes the `??` fallback in
+  // client.ts unreachable — a testnet/futurenet build then serves MAINNET
+  // data under test-net chrome (the git-integrated CF Pages projects are
+  // hand-configured, so "forgot the var" is a real deploy state). Pinned by
+  // src/lib/next-config-env.test.ts and the mainnet-hardcode guard.
   //
   // Build identifiers (BUILD_SHA / BUILD_TIME) are surfaced in the footer
   // so an operator viewing the live site can confirm which commit it
@@ -66,8 +84,6 @@ const nextConfig = {
   // GitHub Actions manual-deploy fallback we read GITHUB_SHA. Local
   // builds get "dev".
   env: {
-    NEXT_PUBLIC_API_BASE_URL:
-      process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellarindex.io',
     NEXT_PUBLIC_BUILD_SHA:
       process.env.CF_PAGES_COMMIT_SHA ??
       process.env.GITHUB_SHA ??

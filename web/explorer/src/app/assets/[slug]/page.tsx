@@ -832,7 +832,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
       'circulating supply',
       '24h volume',
     ],
-    contentUrl: `https://api.stellarindex.io/v1/assets/${encodeURIComponent(coin.slug)}`,
+    contentUrl: `${CURRENT_NETWORK.apiBaseUrl}/v1/assets/${encodeURIComponent(coin.slug)}`,
   });
   // §3 scam-label surfacing — curated third-party directory flags on the
   // issuer (account_directory / stellar-expert public directory). These are

@@ -1,7 +1,8 @@
 ---
 title: Redis writes blocked — disk full → MISCONF stop-writes
-last_verified: 2026-05-10
+last_verified: 2026-08-29
 status: living procedure
+severity: P1
 ---
 
 # Redis writes blocked — disk full → MISCONF stop-writes
@@ -10,9 +11,9 @@ status: living procedure
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellarindex_aggregator_cache_write_errors` (P1 / page) |
+| Alert | `stellarindex_aggregator_cache_write_errors` (P1, `severity: page`) |
 | Severity | P1 |
-| Detected by | Prometheus rule `stellarindex_aggregator_cache_write_errors` (alerts on `rate(stellarindex_aggregator_vwap_cache_write_errors_total[5m]) > 0` for ≥ 2 min) in `deploy/monitoring/rules/aggregator.yml` |
+| Detected by | `configs/prometheus/rules.r1/aggregator.yml` (group `stellarindex.aggregator`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/aggregator.yml`. Real expr (note the `sum()`): `sum(rate(stellarindex_aggregator_vwap_cache_write_errors_total[5m])) > 0`, `for: 2m`, `severity: page`. |
 | Typical MTTR | 5–10 min once root cause is confirmed (free disk space → Redis re-enables writes automatically) |
 | Impact | VWAP cache writes fail → `/v1/price` on rewritten or proxy-served pairs starts 404'ing because the cache key was never written. Customer-visible. |
 
@@ -57,13 +58,13 @@ User-facing symptoms:
 
 ```sh
 # 1. Confirm Redis writes are blocked
-redis-cli SET test:probe x  # → MISCONF Redis is configured to save RDB...
+ssh root@136.243.90.96 'redis-cli SET test:probe x'  # → MISCONF Redis is configured to save RDB...
 
 # 2. Confirm root FS at 100%
-df -h /
+ssh root@136.243.90.96 'df -h /'
 
 # 3. Check Redis log for rdbSaveRio errors
-tail -20 /var/log/redis/redis-server.log
+ssh root@136.243.90.96 'tail -20 /var/log/redis/redis-server.log'
 # Expect: "Write error saving DB on disk(rdbSaveRio): No space left on device"
 ```
 
@@ -81,6 +82,8 @@ The 2026-05-10 incident on r1 found 35 GB of stale logs on a
 49 GB root filesystem. The lowest-risk reductions, in order:
 
 ```sh
+# All commands in this step run ON r1 (ssh root@136.243.90.96).
+
 # Vacuum systemd journal — keep recent 200 MB
 journalctl --vacuum-size=200M
 
@@ -108,14 +111,14 @@ Once disk has space:
 ```sh
 # Trigger a manual BGSAVE; on success it clears the
 # stop-writes-on-bgsave-error flag automatically
-redis-cli BGSAVE
+ssh root@136.243.90.96 'redis-cli BGSAVE'
 # → Background saving started
 
 # Confirm it succeeded (LASTSAVE timestamp moves to ~now)
-redis-cli LASTSAVE
+ssh root@136.243.90.96 'redis-cli LASTSAVE'
 
 # Probe write
-redis-cli SET test:probe ok && redis-cli GET test:probe && redis-cli DEL test:probe
+ssh root@136.243.90.96 'redis-cli SET test:probe ok && redis-cli GET test:probe && redis-cli DEL test:probe'
 # → OK / ok / 1
 ```
 
@@ -123,8 +126,8 @@ redis-cli SET test:probe ok && redis-cli GET test:probe && redis-cli DEL test:pr
 
 ```sh
 # Aggregator log: WARN cadence should drop to ~0 within 30s
-journalctl -u stellarindex-aggregator --since "30 seconds ago" -o cat \
-  | grep -c "refresh failed"
+ssh root@136.243.90.96 'journalctl -u stellarindex-aggregator --since "30 seconds ago" -o cat \
+  | grep -c "refresh failed"'
 # Expect: 0 (was firing 15+ per 30s pre-fix)
 
 # Probe a previously-broken price endpoint via the public API
@@ -162,16 +165,24 @@ happen the change is one `CONFIG SET` away.
 
 ## Prevention
 
-- Disk-usage alert at 85% on `/` — surfaces the runway, not the
-  outage. (Track in `deploy/monitoring/rules/`.)
-- Logrotate retention pass — the 8.6 GB syslog.1 was an
-  eight-week-old rotated archive that should have aged off.
-  Suspect `/etc/logrotate.d/rsyslog` `rotate 14` was set but
-  `compress` wasn't, doubling the on-disk footprint of every
-  weekly rotation.
-- WASM-audit one-time captures should land in `/var/log/wasm-audit/`
-  (a dedicated dir excluded from operator-default backups), not
-  the root log dir.
+- ~~Disk-usage alert at 85% on `/`~~ — **CLOSED**: root-FS alerts
+  now exist in BOTH trees (`storage.yml`):
+  `stellarindex_node_root_disk_warning` (< 20 % avail),
+  `stellarindex_node_root_disk_full` (< 10 % avail), and
+  `stellarindex_node_root_disk_filling_fast` (predict_linear) —
+  the runway signal this item asked for.
+- ~~Logrotate retention pass~~ — **CLOSED**: codified in
+  `configs/ansible/roles/archival-node/tasks/15-log-discipline.yml`
+  (lines 11–95): rsyslog logrotate drop-in caps the live syslog at
+  `maxsize 100M` with 7 gzip-compressed rotations, plus a journald
+  `SystemMaxUse=500M` cap. The 8.6 GB syslog.1 class (rotate-14,
+  no compress) can't recur on an ansible-applied host.
+- **Still open**: WASM-audit one-time captures should land in
+  `/var/log/wasm-audit/` (a dedicated dir excluded from
+  operator-default backups), not the root log dir — the
+  `/var/log/wasm-history-*.stderr` pattern in the free-disk step
+  above is still where they land today. TODO(ash): codify the
+  dedicated dir (or a cleanup timer) in the wasm-audit procedure.
 
 ## Related runbooks
 
@@ -180,3 +191,19 @@ happen the change is one `CONFIG SET` away.
   Redis process exited rather than rejecting writes.
 - [`redis-memory.md`](redis-memory.md) — memory pressure (eviction
   policies + maxmemory).
+- `internal/incidents/data/2026-05-10-redis-writes-blocked-disk-full.md`
+  — the customer-facing post-mortem for the founding incident
+  (embedded in the binary; served via `/v1/incidents`).
+
+## Changelog
+
+- 2026-08-29 — re-verified against HEAD (Wave I). Detected-by
+  made dual-tree with the r1 overlay primary and the real expr
+  quoted with its `sum()` (`for: 2m`, `severity: page`); commands
+  moved to r1 ssh shapes; Prevention updated — the logrotate item
+  is CLOSED (15-log-discipline.yml caps syslog at 100M/7 gzip
+  rotations + journald 500M) and the root-FS alert item is CLOSED
+  (`stellarindex_node_root_disk_{warning,full,filling_fast}` in
+  both storage.yml trees); wasm-audit log-dir item remains open.
+  Added `severity: P1` frontmatter and the embedded post-mortem
+  cross-link.

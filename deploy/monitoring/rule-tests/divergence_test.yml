@@ -1,0 +1,249 @@
+---
+# promtool unit tests for the price-quality alert family in
+# ../rules/divergence.yml.
+#
+#   promtool test rules deploy/monitoring/rule-tests/divergence_test.yml
+#
+# The two price-divergence alerts are INERT in production (F-1329:
+# stellarindex_our_price / stellarindex_reference_price have no
+# Prometheus producer — divergence values live in PG + Redis). That is
+# precisely why they are tested here: promtool proves the EXPR fires on
+# synthetic series, so the rules' logic is known-good the day a producer
+# lands, and any threshold edit to a dormant rule is still caught.
+#
+# Deliberately lives OUTSIDE `deploy/monitoring/rules/` — everything in
+# that directory is globbed by `promtool check rules`,
+# lint-rule-structure.py and lint-metric-refs.sh, all of which require a
+# top-level `groups:` key that a unit-test file does not have.
+
+rule_files:
+  - ../rules/divergence.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ══ stellarindex_price_divergence_warning (INERT, F-1329) ═════════
+  # ── firing: 6% off reference crosses the 5% warning line only ─────
+  - interval: 1m
+    name: a six percent divergence warns but is not critical
+    input_series:
+      - series: 'stellarindex_our_price{job="stellarindex_aggregator",instance="r1:9102",asset="XLM",reference_source="coingecko"}'
+        values: '106+0x10'
+      - series: 'stellarindex_reference_price{job="stellarindex_aggregator",instance="r1:9102",asset="XLM",reference_source="coingecko"}'
+        values: '100+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_price_divergence_warning
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_aggregator
+              instance: r1:9102
+              asset: XLM
+              reference_source: coingecko
+              severity: informational
+              team: stellarindex
+              component: divergence
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-divergence.md
+              summary: "XLM 6% off reference"
+              description: |
+                Our aggregated price for XLM differs from reference
+                (coingecko) by > 5 % sustained 2 min.
+                Normal during rapid market moves; investigate if sustained.
+      - eval_time: 5m
+        alertname: stellarindex_price_divergence_critical
+        exp_alerts: []
+
+  # ── near-threshold: 4% off stays silent ───────────────────────────
+  - interval: 1m
+    name: a four percent divergence raises nothing
+    input_series:
+      - series: 'stellarindex_our_price{job="stellarindex_aggregator",instance="r1:9102",asset="XLM",reference_source="coingecko"}'
+        values: '104+0x10'
+      - series: 'stellarindex_reference_price{job="stellarindex_aggregator",instance="r1:9102",asset="XLM",reference_source="coingecko"}'
+        values: '100+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_price_divergence_warning
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: stellarindex_price_divergence_critical
+        exp_alerts: []
+
+  # ══ stellarindex_price_divergence_critical (INERT, F-1329) ════════
+  # ── firing: 15% off trips both tiers; abs() catches the low side ──
+  # The price is BELOW reference here, so this also pins the abs()
+  # in the expr — a one-sided comparator would miss an undershoot.
+  - interval: 1m
+    name: a fifteen percent undershoot is critical
+    input_series:
+      - series: 'stellarindex_our_price{job="stellarindex_aggregator",instance="r1:9102",asset="XLM",reference_source="coingecko"}'
+        values: '85+0x10'
+      - series: 'stellarindex_reference_price{job="stellarindex_aggregator",instance="r1:9102",asset="XLM",reference_source="coingecko"}'
+        values: '100+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_price_divergence_critical
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_aggregator
+              instance: r1:9102
+              asset: XLM
+              reference_source: coingecko
+              severity: ticket
+              team: stellarindex
+              component: divergence
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-divergence.md
+              summary: "XLM 15% off reference (critical)"
+              description: |
+                Divergence > 10 % from reference sustained 2 min. This is usually
+                a bad ingest (wrong decimals, stale source contributing) rather
+                than a real market move.
+
+  # ══ stellarindex_oracle_stale ═════════════════════════════════════
+  # ── firing: no publish for >10x the oracle's 300s resolution ──────
+  - interval: 1m
+    name: an oracle silent past ten resolutions tickets
+    input_series:
+      - series: 'stellarindex_oracle_last_update_unix{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex",asset="XLM"}'
+        values: '0+0x60'
+      - series: 'stellarindex_oracle_resolution_seconds{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex",asset="XLM"}'
+        values: '300+0x60'
+    alert_rule_test:
+      - eval_time: 55m
+        alertname: stellarindex_oracle_stale
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_aggregator
+              instance: r1:9102
+              source: reflector-dex
+              asset: XLM
+              severity: ticket
+              team: stellarindex
+              component: divergence
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-stale.md
+              summary: "Oracle reflector-dex stale for XLM"
+              description: |
+                reflector-dex hasn't published a price for XLM
+                in > 10× its resolution. May be legitimate (oracle paused) or a
+                signal of oracle failure — check the oracle's own status page.
+
+  # ── near-threshold: a publishing oracle stays silent ──────────────
+  - interval: 1m
+    name: a publishing oracle raises nothing
+    input_series:
+      - series: 'stellarindex_oracle_last_update_unix{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex",asset="XLM"}'
+        values: '0+60x60'
+      - series: 'stellarindex_oracle_resolution_seconds{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex",asset="XLM"}'
+        values: '300+0x60'
+    alert_rule_test:
+      - eval_time: 55m
+        alertname: stellarindex_oracle_stale
+        exp_alerts: []
+
+  # ══ stellarindex_divergence_refresh_error_dominant ════════════════
+  # ── firing: errors at 1/s vs ok at 0.1/s for 30+ min ─────────────
+  - interval: 1m
+    name: an error-dominant divergence refresher tickets after 30m
+    input_series:
+      - series: 'stellarindex_divergence_refresh_total{job="stellarindex_aggregator",instance="r1:9102",outcome="refresh_error"}'
+        values: '0+60x50'
+      - series: 'stellarindex_divergence_refresh_total{job="stellarindex_aggregator",instance="r1:9102",outcome="ok"}'
+        values: '0+6x50'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_divergence_refresh_error_dominant
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: divergence
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence-refresh-error-dominant.md
+              summary: "Divergence-cache refresh failing more often than succeeding (P3)"
+              description: |
+                More refresh_error outcomes than ok over the last 5 min for
+                30+ min sustained. CoinGecko / Chainlink RPC reachability is
+                the usual cause; the API's `flags.divergence_warning` stops
+                updating and goes stale once the 5-min cache TTL elapses.
+                Check the upstream reference's status, then the aggregator's
+                `divergence refresher wired` startup log line for which
+                references are configured.
+
+  # ── near-threshold: a mostly-healthy refresher stays silent ───────
+  - interval: 1m
+    name: an ok-dominant divergence refresher raises nothing
+    input_series:
+      - series: 'stellarindex_divergence_refresh_total{job="stellarindex_aggregator",instance="r1:9102",outcome="refresh_error"}'
+        values: '0+6x50'
+      - series: 'stellarindex_divergence_refresh_total{job="stellarindex_aggregator",instance="r1:9102",outcome="ok"}'
+        values: '0+60x50'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_divergence_refresh_error_dominant
+        exp_alerts: []
+
+  # ── guard: the cold-start state (both rates zero) stays silent ────
+  - interval: 1m
+    name: a cold-start refresher with flat counters raises nothing
+    input_series:
+      - series: 'stellarindex_divergence_refresh_total{job="stellarindex_aggregator",instance="r1:9102",outcome="refresh_error"}'
+        values: '0+0x50'
+      - series: 'stellarindex_divergence_refresh_total{job="stellarindex_aggregator",instance="r1:9102",outcome="ok"}'
+        values: '0+0x50'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_divergence_refresh_error_dominant
+        exp_alerts: []
+
+  # ══ stellarindex_divergence_no_reference (CS-088) ═════════════════
+  # ── firing: every pair blind, zero ok outcomes ────────────────────
+  # And the CS-088 point in one fixture: no_reference is NEITHER
+  # refresh_error NOR ok, so the error-dominant sibling must stay
+  # silent while this one fires — the "silent checker" case only this
+  # alert can see.
+  - interval: 1m
+    name: a checker running blind tickets on no-reference and only there
+    input_series:
+      - series: 'stellarindex_divergence_refresh_total{job="stellarindex_aggregator",instance="r1:9102",outcome="no_reference"}'
+        values: '0+12x50'
+      - series: 'stellarindex_divergence_refresh_total{job="stellarindex_aggregator",instance="r1:9102",outcome="ok"}'
+        values: '9000+0x50'
+      - series: 'stellarindex_divergence_refresh_total{job="stellarindex_aggregator",instance="r1:9102",outcome="refresh_error"}'
+        values: '0+0x50'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_divergence_no_reference
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: divergence
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence-no-reference.md
+              summary: "Divergence checker running blind — no reference responded (P3)"
+              description: |
+                For 30+ min more pairs received zero reference responses than got a
+                healthy comparison. Every divergence reference (CoinGecko,
+                Chainlink) is unreachable for those pairs, so
+                flags.divergence_warning is frozen — a live depeg would go
+                unflagged. Check the CoinGecko Pro key / 429 state and Chainlink
+                RPC reachability; see the runbook.
+      - eval_time: 45m
+        alertname: stellarindex_divergence_refresh_error_dominant
+        exp_alerts: []
+
+  # ── near-threshold: healthy comparisons outnumber blind pairs ─────
+  - interval: 1m
+    name: minority no-reference outcomes raise nothing
+    input_series:
+      - series: 'stellarindex_divergence_refresh_total{job="stellarindex_aggregator",instance="r1:9102",outcome="no_reference"}'
+        values: '0+6x50'
+      - series: 'stellarindex_divergence_refresh_total{job="stellarindex_aggregator",instance="r1:9102",outcome="ok"}'
+        values: '0+12x50'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_divergence_no_reference
+        exp_alerts: []
