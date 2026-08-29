@@ -15,7 +15,9 @@
 #
 # Deterministic, no network, no ansible:
 #   1. every module in deploy-binary.yml + the task files it includes is
-#      connection-agnostic (no synchronize / rsync);
+#      connection-agnostic (no synchronize / rsync). The transfer must ALSO
+#      be one archive, not a directory-src copy (O(files): > 16 min for
+#      291 files on r1, run 33244745680) — deploy-sync-test.sh pins that;
 #   2. the pgBackRest gate is conditioned on `pgbackrest_backup_enabled`
 #      (default true — fail closed) and deploy.yml passes that var as -e,
 #      set false for the test-net regions and left true for r1.
@@ -80,7 +82,9 @@ for path, name, mod in modules:
     if mod in JUMP_UNSAFE:
         fails.append("%s: task %r uses %s — rsync runs on the controller and "
                      "cannot follow deploy.yml's --ssh-common-args ProxyJump "
-                     "(test-net VMs unreachable); use ansible.builtin.copy"
+                     "(test-net VMs unreachable); ship ONE archive with "
+                     "ansible.builtin.unarchive (a directory-src copy is "
+                     "O(files) — deploy-sync-test.sh)"
                      % (path, name, mod))
 
 # ─── 2. pgBackRest gate is host-shape aware, and the workflow drives it ──
