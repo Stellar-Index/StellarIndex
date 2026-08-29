@@ -1,7 +1,7 @@
 ---
 title: Runbook — core-lag
-last_verified: 2026-05-03
-status: draft
+last_verified: 2026-08-29
+status: current (alert inert on r1)
 severity: P1
 ---
 
@@ -16,9 +16,13 @@ severity: P1
 > not exposed to the prometheus exporter (the exporter scraped the
 > standalone daemon's `/info`).
 >
-> The alert remains in `deploy/monitoring/rules/stellar.yml` for
-> Phase-3 (Tier-1 validator rollout, ADR-0004); operators bringing
-> a validator online will reactivate this signal by re-enabling
+> The alert remains in BOTH rule trees
+> (`configs/prometheus/rules.r1/stellar.yml` — the file r1 loads —
+> and the multi-host twin `deploy/monitoring/rules/stellar.yml`)
+> for Phase-3 (Tier-1 validator rollout, ADR-0004); both underlying
+> metrics are allowlisted as `KNOWN_INERT` in
+> `scripts/ci/lint-metric-refs.sh`. Operators bringing a validator
+> online will reactivate this signal by re-enabling
 > `run_stellar_core` in the ansible role and exposing
 > `stellar-core-prometheus-exporter`. Until then this runbook is
 > *future-tense*: keep it discoverable rather than delete it.
@@ -29,9 +33,9 @@ severity: P1
 | ----- | ----- |
 | Alert | `stellarindex_stellar_core_ledger_age` |
 | Severity | P1 (page — SEV-1) |
-| Detected by | `deploy/monitoring/rules/stellar.yml` |
+| Detected by | `configs/prometheus/rules.r1/stellar.yml` (group `stellarindex.stellar`; `severity: page`, `for: 2m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/stellar.yml`. **Inert on r1**: `stellarindex_stellar_core_last_ledger_time_unix` has no producer (`KNOWN_INERT` in `scripts/ci/lint-metric-refs.sh`). |
 | Typical MTTR | 10 min – 2 h |
-| Impact | stellar-core hasn't applied a ledger in > 60 s. captive-core for stellar-rpc also stalls. All downstream data (source events via RPC, archive publishing) stops. Everything behind this halts. |
+| Impact | stellar-core (the Phase-3 validator) hasn't applied a ledger in > 60 s. **Ingest is unaffected** — Galexie's captive-core is an independent process and production ingest is Galexie → MinIO → `internal/ledgerstream`, not RPC. This alert concerns validator/quorum health and history-archive publishing. |
 
 ## Symptoms
 
@@ -39,18 +43,19 @@ severity: P1
   for ≥ 2 min.
 - `stellar-core-dbinfo` / `info` endpoint shows an old `current_ledger`
   timestamp.
-- `rpc-lag.md` fires downstream shortly after.
+- `rpc-lag.md` (also inert today) fires downstream shortly after.
 
 ## Quick diagnosis (≤ 5 min)
 
 ```sh
-# Core's own view
-curl -s http://stellar-core:11626/info | jq
+# Core's own view — the admin HTTP port (11626) is localhost-only,
+# so go via SSH to the validator host.
+ssh root@val-01 "curl -s http://localhost:11626/info | jq"
 #   Look at: status (Synced vs Syncing vs Catching up), current ledger,
 #   quorum info, last close time.
 
 # How many peers are we connected to?
-curl -s http://stellar-core:11626/peers | jq '.peers | length'
+ssh root@val-01 "curl -s http://localhost:11626/peers | jq '.peers | length'"
 
 # Any catastrophic log lines?
 ssh root@<val-host> "journalctl -u stellar-core -n 200 --no-pager" \
@@ -95,11 +100,12 @@ ssh root@<val-host> "journalctl -u stellar-core -n 200 --no-pager" \
 - [ ] Step 3 — if catchup stalled: check disk space + memory +
       logs. Restart as a last resort (losing a few minutes of
       progress).
-- [ ] Step 4 — if corruption: follow the `core new-db` + catchup
-      procedure (captured in `bootstrap-archival-node.md`).
+- [ ] Step 4 — if corruption: run `stellar-core new-db` + catchup
+      per the upstream stellar-core operator docs (not captured in
+      a local runbook).
 - [ ] Verification: `info` status returns to "Synced"; ledger age
-      drops below 30 s; `rpc-lag.md` (if it fired) clears on its
-      next evaluation.
+      drops below 30 s; `rpc-lag.md` (if it fired — also inert
+      today) clears on its next evaluation.
 
 ## Root cause analysis
 
@@ -123,12 +129,25 @@ ssh root@<val-host> "journalctl -u stellar-core -n 200 --no-pager" \
 ## Related
 
 - `core-peers.md` — the "we're being cut off" variant.
-- `rpc-lag.md` — downstream effect.
+- `rpc-lag.md` — downstream effect (also inert today).
 - `archive-publish.md` — can cascade.
-- `bootstrap-archival-node.md` — recovery procedure for
-  corrupted core.
 
 ## Changelog
+
+- 2026-08-29 — re-verified against HEAD. Detected-by row converted
+  to the dual-tree convention (`rules.r1/stellar.yml`, group
+  `stellarindex.stellar`, `severity: page`, `for: 2m`; both metrics
+  `KNOWN_INERT` in lint-metric-refs.sh). Impact rewritten: the old
+  "captive-core for stellar-rpc also stalls / source events via
+  RPC stop" claim described the pre-2026-04-23 architecture —
+  production ingest is Galexie → MinIO → ledgerstream and is
+  unaffected by validator core lag; this alert concerns
+  validator/quorum health + archive publishing only. Diagnosis
+  curls converted to the `ssh root@val-01` shape (admin HTTP is
+  localhost-only), matching core-peers.md. `rpc-lag.md` cross-refs
+  qualified "(also inert today)". The `core new-db` recovery
+  pointer at bootstrap-archival-node.md removed — that runbook
+  never captured it; repointed at upstream stellar-core docs.
 
 - 2026-04-23 — initial draft.
 - 2026-04-30 — top-of-file deployment-posture callout: this alert

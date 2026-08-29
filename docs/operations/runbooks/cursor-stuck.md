@@ -1,7 +1,7 @@
 ---
 title: Runbook — cursor-stuck
-last_verified: 2026-05-03
-status: draft
+last_verified: 2026-08-29
+status: current
 severity: P2
 ---
 
@@ -13,7 +13,7 @@ severity: P2
 | ----- | ----- |
 | Alert | `stellarindex_ingestion_cursor_stuck` |
 | Severity | P2 (ticket) |
-| Detected by | `deploy/monitoring/rules/ingestion.yml` |
+| Detected by | `configs/prometheus/rules.r1/ingestion.yml` (group `stellarindex.ingestion`; `severity: ticket`, `for: 5m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/ingestion.yml`. |
 | Typical MTTR | 10–30 min |
 | Impact | On indexer restart, the source re-scans from the last-persisted cursor. If the cursor froze hours ago, restart triggers a huge replay (slow + expensive). While the cursor is stuck, the source is either idle (nothing to advance) or advancing without persisting (data loss on restart). |
 
@@ -48,7 +48,7 @@ Key signals:
 - [ ] Step 1 — if upstream is unhealthy: fix that first. The
       indexer reads ledger metadata from Galexie's MinIO output
       (`galexie-live` bucket) — confirm Galexie is producing
-      fresh objects (`mc ls minio/galexie-live | tail`) and that
+      fresh objects (`ssh root@136.243.90.96 'mc ls local/galexie-live | tail'`) and that
       the indexer can reach MinIO. If MinIO/Galexie itself is the
       problem, jump to [all-ingestion-down](all-ingestion-down.md).
       The cursor will advance once ledgers start flowing again.
@@ -56,9 +56,9 @@ Key signals:
       path was removed from r1 and isn't the upstream today.)*
 - [ ] Step 2 — if events are flowing but cursor is flat: capture recent logs (`journalctl -u stellarindex-indexer -n 500 --no-pager > /tmp/indexer.log` on the indexer host) then restart the unit. The current live path updates the cursor inline after successful ledger processing, so a flat cursor usually means repeated ledger failure or DB upsert trouble.
   ```sh
-  ssh root@indexer-01 "systemctl restart stellarindex-indexer"
+  ssh root@136.243.90.96 systemctl restart stellarindex-indexer
   ```
-- [ ] Step 3 — if the cursor has regressed (persisted value < events observed): this should not happen (advance-only guard) and indicates a real bug. Capture the cursor table before restart: `psql -c "SELECT * FROM ingestion_cursors"` and attach to the postmortem.
+- [ ] Step 3 — if the cursor has regressed (persisted value < events observed): this should not happen (advance-only guard) and indicates a real bug. Capture the cursor table before restart: `runuser -u postgres -- psql -d stellarindex -c 'TABLE ingestion_cursors'` (on the r1 host) and attach to the postmortem.
 - [ ] Verification: `stellarindex_cursor_last_ledger{source=...}` starts climbing again after the indexer resumes successful ledger commits.
 
 ## Root cause analysis
@@ -91,3 +91,13 @@ For the postmortem, gather:
   pointed at a service r1 stopped running 2026-04-23. Related
   section now distinguishes the active (`all-ingestion-down`) and
   legacy (`rpc-lag`) upstream-failure paths.
+- 2026-08-29 — re-verified against HEAD. Detected-by converted to
+  the dual-tree convention (`rules.r1/ingestion.yml`, group
+  `stellarindex.ingestion`, `severity: ticket`, `for: 5m`).
+  Commands fixed to r1 shapes: `mc ls minio/galexie-live` used a
+  nonexistent alias — r1's alias is `local`
+  (`ssh root@136.243.90.96 'mc ls local/galexie-live | tail'`);
+  `ssh root@indexer-01` (fictional host) →
+  `ssh root@136.243.90.96`; bare `psql` →
+  `runuser -u postgres -- psql -d stellarindex -c
+  'TABLE ingestion_cursors'`.
