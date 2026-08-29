@@ -13,7 +13,27 @@
 # and dup-partition reads with -final=false are safe) and resumable via a
 # done-windows file.
 set -uo pipefail
-set -a; . /etc/default/stellarindex-ops; set +a
+# Read a systemd EnvironmentFile VERBATIM — never `.`/source it. Its
+# values are unquoted (that is what systemd wants), so the shell would
+# expand `$`, split on `;`/`&`/`|`/whitespace and eat quotes inside a
+# secret: the services keep working while this path gets a mangled DSN
+# (deploy-ansible-secrets-5). Same reader as run-heavy-job.sh.
+# usage: load_env_file FILE [export]
+load_env_file() {
+  local line
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      [A-Za-z_]*=*)
+        if [ "${2:-}" = export ]; then
+          export "${line?}"
+        else
+          printf -v "${line%%=*}" '%s' "${line#*=}"
+        fi
+        ;;
+    esac
+  done < "$1"
+}
+load_env_file /etc/default/stellarindex-ops export
 OPS=${OPS:-/usr/local/bin/stellarindex-ops-ch}
 CFG=${CFG:-/etc/stellarindex.toml}
 CH_PORT=${CH_PORT:-9300}

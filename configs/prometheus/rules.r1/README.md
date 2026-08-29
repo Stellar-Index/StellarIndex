@@ -26,12 +26,12 @@ adapted for the single-host scrape config in [`prometheus.r1.yml`](../prometheus
 The remaining files in `deploy/monitoring/rules/` are still
 intentionally NOT shipped here:
 
-- `cache.yml` / `storage.yml` — assume `redis_exporter` /
-  `postgres_exporter` (not deployed on R1) and reference HA labels
-  (`role="master"`, `role="primary"`, replication metrics). When
-  those exporters land in the archival-node role, copy these
-  files over and add the corresponding scrape jobs to
-  `prometheus.r1.yml`.
+<!-- 2026-08-28: the cache.yml/storage.yml bullet below was stale —
+     both files HAVE shipped here, and redis_exporter (:9121) +
+     postgres_exporter (:9187) ARE scraped on r1 (prometheus.r1.yml
+     jobs; provisioned by the archival-node role). The HA-label rules
+     inside them (role="master"/"primary", replication) evaluate over
+     empty vectors on the single-host deployment. -->
 - `stellar.yml` — references `stellar-core-prometheus-exporter`,
   which is only installed when `run_stellar_core` is true (post
   Phase-3 Tier-1 validator rollout per ADR-0004). Stays inert

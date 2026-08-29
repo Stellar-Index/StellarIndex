@@ -57,9 +57,14 @@ echo "=== Migration immutability self-test ===" && ./scripts/ci/lint-migration-i
 echo "=== Completeness-staleness calibration ===" && ./scripts/ci/lint-completeness-staleness.sh
 echo "=== Deploy-protection self-test ===" && ./scripts/ci/check-deploy-protection-test.sh
 echo "=== Main-CI-health decision-core self-test ===" && ./scripts/ci/check-main-ci-health-test.sh
+echo "=== Ansible task lint (pipefail/bash, secret-on-argv) ===" && ./scripts/ci/lint-ansible-tasks.sh
+echo "=== Ansible task lint self-test ===" && ./scripts/ci/lint-ansible-tasks-test.sh
 echo "=== Ansible-drift decision-core self-test ===" && ./scripts/ci/check-ansible-drift-test.sh
 echo "=== run-heavy-job wrapper self-test ===" && ./scripts/ci/run-heavy-job-test.sh
 echo "=== zfs-snapshot job self-test ===" && ./scripts/ci/zfs-snapshot-test.sh
+echo "=== Deploy playbook jump/backup-gate lint ===" && ./scripts/ci/lint-deploy-playbook.sh
+echo "=== EnvironmentFile verbatim-reader self-test ===" && ./scripts/ci/envfile-loader-test.sh
+echo "=== Deploy workflow input-validation self-test ===" && ./scripts/ci/deploy-inputs-test.sh
 echo "=== Baseline-growth tripwire self-test ===" && ./scripts/ci/lint-baseline-growth-test.sh
 echo "=== Config-apply gate self-test ===" && ./scripts/ci/config-apply-gate-test.sh
 # BASE_SHA-gated: self-skips locally (no comparison base); runs for real in CI
@@ -79,6 +84,10 @@ echo "=== Rule structure ===" && python3 ./scripts/ci/lint-rule-structure.py
 # not a label, on every alert — else the Alertmanager Discord templates
 # render no runbook link. Fails if a runbook_url regresses back into labels.
 echo "=== Runbook annotations ===" && python3 ./scripts/ci/lint-runbook-annotations.py
+# Secret-rendering ansible template tasks must set `diff: false` (or
+# no_log) so `--check --diff` never prints vault material into scrollback
+# or the weekly drift job's CI log (audit-2026-08-28 backup-restore-7).
+echo "=== Ansible secret-diff ===" && python3 ./scripts/ci/lint-ansible-secret-diff.py
 # Prometheus rule files. Graceful-skip when promtool isn't
 # installed locally — CI installs it explicitly. The Makefile
 # target hard-fails on missing promtool; verify.sh wraps it with

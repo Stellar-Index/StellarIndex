@@ -152,3 +152,7 @@
 - name: "ClickHouse serving-query isolation (ADR-0048 D4)"
   ansible.builtin.import_tasks: 20-clickhouse-serving-profile.yml
   tags: [clickhouse, clickhouse-serving-profile]
+
+- name: "ClickHouse destructive-DDL size guard (2026-08-29 r1 audit)"
+  ansible.builtin.import_tasks: 21-clickhouse-drop-guard.yml
+  tags: [clickhouse, clickhouse-drop-guard]

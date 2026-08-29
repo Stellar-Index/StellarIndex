@@ -1,7 +1,7 @@
 ---
 title: Runbook — scrape-failing
-last_verified: 2026-05-03
-status: draft
+last_verified: 2026-08-29
+status: current
 severity: P3
 ---
 
@@ -12,35 +12,52 @@ severity: P3
 | Field | Value |
 | ----- | ----- |
 | Alert | `stellarindex_prometheus_scrape_failing` |
-| Severity | P3 (informational) |
-| Detected by | `deploy/monitoring/rules/meta.yml` |
+| Severity | P3 (`severity: informational`) |
+| Detected by | `configs/prometheus/rules.r1/meta.yml` (group `stellarindex.meta`, `severity: informational`, `for: 2m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/meta.yml`. NOTE the deliberate job-name split (F-1222): the r1 rule's regex uses the HYPHENATED job names of `prometheus.r1.yml` (`stellarindex-api\|stellarindex-indexer\|stellarindex-aggregator\|...`), the multi-host twin the UNDERSCORED ones (`stellarindex_api\|...`). |
 | Typical MTTR | 5–30 min |
 | Impact | We've lost visibility into some subsystem. Doesn't mean the subsystem is unhealthy — often the exporter is the problem, and the service it monitors is fine. But we can't *tell* which is true until we investigate. |
 
 ## Symptoms
 
-- `up{job=<J>, instance=<I>} == 0` for ≥ 2 min.
+- `up{job=<J>, instance=<I>} == 0` for ≥ 2 min, for the jobs in
+  the rule's regex (on r1: `stellarindex-api`,
+  `stellarindex-indexer`, `stellarindex-aggregator`,
+  `node_exporter`, `prometheus`, `caddy`, `galexie`).
 - Gap in the service's metric graphs from 2 min ago to now.
 - The service's own user-visible health may be fine.
 
+**Deliberately NOT covered here (r1):** the four exporter jobs
+`redis_exporter` / `postgres_exporter` / `pgbackrest_exporter` /
+`minio` are excluded from this alert's regex on purpose — each has
+its own dedicated P1 `*_exporter_down` meta-alert (F-0085: an
+exporter outage silently blinds every alert that depends on its
+metrics, so those page rather than filing an informational). See
+[exporter-down.md](exporter-down.md).
+
 ## Quick diagnosis (≤ 5 min)
 
-Prometheus runs as `prometheus.service` on `mon-01` / `mon-02`
-(per the `prometheus` ansible role; ADR-0008 §3 monitoring tier).
+On r1 Prometheus runs ON THE ARCHIVAL HOST ITSELF as the distro's
+`prometheus.service` unit — there are no `mon-01` / `mon-02`
+monitoring hosts. Its scrape config is
+`configs/prometheus/prometheus.r1.yml` (installed to
+`/etc/prometheus/`); every target is a `localhost:<port>` on the
+same box.
 
 ```sh
 # What's Prometheus's view of the failing target?
-ssh root@mon-01 "curl -s http://localhost:9090/api/v1/targets?state=active" | \
+ssh root@136.243.90.96 "curl -s http://localhost:9090/api/v1/targets?state=active" | \
   jq '.data.activeTargets[] | select(.health != "up") |
         {job: .labels.job, instance: .labels.instance, lastError: .lastError}'
 
-# Is the /metrics endpoint on the target reachable from the prom host?
-ssh root@mon-01 "curl -s http://<target-host>:<port>/metrics | head"
+# Is the /metrics endpoint on the target reachable locally?
+ssh root@136.243.90.96 "curl -s http://localhost:<port>/metrics | head"
 
-# Is the exporter unit alive on the target host? (redis_exporter,
-# postgres_exporter, node_exporter all ship as systemd units via
-# their respective ansible roles.)
-ssh root@<target-host> "systemctl status '*_exporter' --no-pager"
+# Is the exporter unit alive? (redis_exporter, postgres_exporter,
+# node_exporter all ship as systemd units via their ansible roles.
+# List what's actually installed first, then status the one you
+# need — exporter unit names vary by package.)
+ssh root@136.243.90.96 "systemctl list-units | grep -i exporter"
+ssh root@136.243.90.96 "systemctl status <exporter-unit> --no-pager | head -15"
 ```
 
 The `lastError` field from the Prometheus API tells you exactly
@@ -70,9 +87,11 @@ path, parse error, etc.
    re-applying the prometheus role to refresh the scrape config,
    prometheus gets 401 on every attempt.
 
-5. **Firewall / iptables rule blocking Prometheus.** A new rule
-   on the target host (or the colo perimeter) doesn't allow
-   `mon-01` / `mon-02` in to the metrics port.
+5. **Firewall / nftables rule blocking Prometheus.** On r1 every
+   scrape is localhost→localhost, so this takes a host-local nft
+   change to bite; in the multi-host shape, a new rule on the
+   target host (or the colo perimeter) doesn't allow the
+   monitoring hosts in to the metrics port.
 
 ## Mitigation
 
@@ -80,12 +99,16 @@ path, parse error, etc.
       exact cause.
 - [ ] Step 2 — fix per cause:
       - Exporter crash: `systemctl restart <exporter>` on the host.
-      - Static-config drift: re-apply the `prometheus` ansible
-        role (rolls `/etc/prometheus/prometheus.yml` and SIGHUPs
-        the unit).
+      - Static-config drift: r1 — install the updated
+        `configs/prometheus/prometheus.r1.yml` to
+        `/etc/prometheus/` and SIGHUP the unit; multi-host —
+        re-apply the `prometheus` ansible role (rolls
+        `/etc/prometheus/prometheus.yml` and SIGHUPs the unit).
       - Auth: rotate vault entry, re-apply role.
-      - Firewall: open ingress from `mon-01` / `mon-02` to the
-        target metrics port.
+      - Firewall: on r1 all scrapes are localhost — a firewall
+        cause means a host-local nft change; multi-host: open
+        ingress from the monitoring hosts to the target metrics
+        port.
 - [ ] Step 3 — if it's genuinely the *target service* down, not
       the scrape, cross-reference with that service's own alerts.
 - [ ] Verification: `up` returns to 1; metrics resume flowing.
@@ -102,6 +125,9 @@ path, parse error, etc.
 
 - `alertmanager-bad-config.md` — AlertManager-specific reload
   issues.
+- `exporter-down.md` — the dedicated P1 meta-alerts for the four
+  exporter jobs deliberately excluded from this alert's regex
+  (F-0085).
 - `deadmansswitch.md` — the failover when Prometheus itself is down.
 - Per-service runbooks if the service is actually down, not just
   unscrapeable.
@@ -114,3 +140,12 @@ path, parse error, etc.
   `prometheus.service` per the `prometheus` ansible role
   (ADR-0008). Service-discovery section rewritten to talk about
   static-config drift instead of ServiceMonitor / PodMonitor.
+- 2026-08-29 — re-verified against HEAD: mon-01/mon-02 fiction
+  replaced with r1 reality (Prometheus runs on the archival host
+  as the distro unit; scrape config
+  `configs/prometheus/prometheus.r1.yml`; all-localhost targets),
+  F-1222 job-name split noted in Detected-by, the four exporter
+  jobs' deliberate exclusion documented (F-0085 →
+  exporter-down.md), per-tree re-apply instructions, exporter
+  status glob replaced with list-then-status, dual-tree
+  Detected-by. Status draft → current.
