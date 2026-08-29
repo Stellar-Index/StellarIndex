@@ -17,6 +17,32 @@ against.
 
 ### Fixed
 
+- **A galexie restart is decided only by what the running process has
+  loaded, is visible in `--check --diff`, and needs an explicit ack.**
+  On 2026-08-29 06:04Z an ansible apply (`--tags users,minio,galexie`)
+  restarted a healthy r1 galexie — a ~9-minute mainnet captive-core cold
+  catchup — for a change to the `galexie-append.sh` wrapper, which
+  systemd exec's once per service start and the running process never
+  reads; the preceding `--check --diff` had shown no handler because the
+  #267 effective-change gate compared checksums before/after a real
+  write, and check mode writes nothing. `tasks/galexie-effective-
+  checksum.yml` now compares each restart-relevant input on disk with
+  the controller-rendered would-be file (comments/blank lines stripped),
+  so the verdict — and `RUNNING HANDLER [Restart galexie]` — appears in
+  check mode too; the inputs are only `captive-core-galexie.cfg`,
+  `galexie.toml`, `/etc/default/galexie` and the unit (the wrapper,
+  the archive-fill/tip-lag/contiguity scripts + timers and the SDF apt
+  key can never notify the restart); and when galexie is active a real
+  apply that would restart it FAILS before writing anything unless
+  `-e galexie_restart_ack=true` (default `false`) — the same ack gates a
+  `galexie_version` binary rebuild. `/etc/default/galexie` moved from
+  inline `content:` to `templates/galexie.env.j2` (byte-identical
+  output) so the gate renders the same file the task writes.
+  `scripts/ci/ansible-galexie-restart-test.sh` pins the input list, the
+  ack default, the fail-closed refusal, the ack path and the check-mode
+  preview. Runbook: `docs/operations/runbooks/galexie-catchup-refused.md`
+  §"Applying galexie config with ansible".
+
 - **Native XLM supply is now network-aware.** `internal/supply` derived
   `total_supply` / `max_supply` from the frozen pubnet constant
   (50,001,806,812 XLM) regardless of the configured network, so

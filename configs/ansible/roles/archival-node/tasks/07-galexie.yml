@@ -77,6 +77,32 @@
   register: galexie_stamp
   failed_when: false
 
+# A galexie_version bump restarts the daemon (the build + install tasks
+# below notify `Restart galexie`): the same ~9-min captive-core catchup
+# as a config change, so it takes the same galexie_restart_ack when
+# galexie is active. Bootstrap / a stopped galexie needs no ack.
+- name: Is galexie currently running (binary-upgrade ack guard applies only then)
+  ansible.builtin.command: systemctl is-active galexie
+  register: galexie_active_for_upgrade
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Galexie binary upgrade required but not acknowledged — refuse (fail-closed)
+  ansible.builtin.fail:
+    msg: >-
+      galexie_version={{ galexie_version }} differs from the installed tag
+      stamp ({{ galexie_stamp.content | default('') | b64decode | trim | default('none', true) }})
+      and galexie is active: the rebuild + install would restart it (a
+      ~9-minute mainnet captive-core cold catchup). Nothing has been built.
+      Re-run in a maintenance window with `-e galexie_restart_ack=true`
+      (docs/operations/runbooks/galexie-catchup-refused.md).
+  when:
+    - not ansible_check_mode
+    - galexie_active_for_upgrade.stdout | default('') == 'active'
+    - galexie_version != (galexie_stamp.content | default('') | b64decode | trim)
+    - not (galexie_restart_ack | bool)
+
 - name: Build galexie via `go install` at pinned tag
   # The module's main package lives at the root (main.go), so we
   # install the module itself — no /cmd/... subpath. Binary filename
@@ -337,33 +363,51 @@
     name: jq
     state: present
 
-# ──── galexie inputs: restart only on EFFECTIVE change ────────────────
-# The five files below are what the running galexie (+ its captive core
-# + systemd) actually read. None of the tasks that render them notifies
-# `Restart galexie` directly any more: galexie-effective-checksum.yml
-# hashes each file with comments/blank lines stripped before and after,
-# and its `after` pass notifies the restart only for a real content
-# change. See that file for the why.
+# ──── galexie inputs: restart only on EFFECTIVE change, with an ack ───
+# The four files below are the ONLY inputs that may restart galexie:
+# what the running process (+ its captive core + systemd) has already
+# loaded and cannot pick up live. No render task notifies `Restart
+# galexie` directly; galexie-effective-checksum.yml compares the file on
+# disk with what this run would render (comments/blank lines stripped),
+# notifies the restart only for a real content change — in check mode
+# too — and refuses a real apply unless galexie_restart_ack=true.
+#
+# NOT in the list, by design (2026-08-29 r1 incident: a wrapper-only
+# change restarted a healthy galexie → ~9-min captive-core catchup):
+# galexie-append.sh (ExecStart wrapper, exec'd once per service start —
+# an edit takes effect at the next start), the archive-fill / tip-lag /
+# contiguity scripts + timers (oneshot units the daemon never reads),
+# the backfill cfg/toml/env (operator-run galexie, not the daemon), the
+# SDF apt key/repo. Adding a path here is a restart decision — see the
+# checksum file's header before doing so.
 - name: Galexie inputs whose effective content decides a restart
+  # `content` is the controller-side render of the SAME template each
+  # task below writes, so the gate sees the would-be file in check mode.
   ansible.builtin.set_fact:
     galexie_effective_inputs:
-      - /usr/local/bin/galexie-append.sh
-      - /etc/stellar/captive-core-galexie.cfg
-      - /etc/galexie/galexie.toml
-      - /etc/default/galexie
-      - /etc/systemd/system/galexie.service
+      - path: /etc/stellar/captive-core-galexie.cfg
+        content: "{{ lookup('template', 'stellar-core.cfg.j2', template_vars=dict(cfg_mode='captive', captive_peer_port=captive_peer_port_galexie)) }}"
+      - path: /etc/galexie/galexie.toml
+        content: "{{ lookup('template', 'galexie.toml.j2') }}"
+      - path: /etc/default/galexie
+        content: "{{ lookup('template', 'galexie.env.j2') }}"
+      - path: /etc/systemd/system/galexie.service
+        content: "{{ lookup('template', 'systemd/galexie.service.j2') }}"
+  no_log: true  # galexie.env.j2 carries the S3 key pair
 
-- name: Galexie inputs — effective checksums before render
+- name: Galexie inputs — effective-change verdict + restart ack guard
   ansible.builtin.import_tasks: galexie-effective-checksum.yml
-  vars:
-    galexie_effective_stage: before
 
 - name: Install galexie-append wrapper script
   # Galexie's append subcommand requires --start <ledger>. The wrapper
   # discovers the current tip from stellar-core at service-start time.
   # Also corrects the flag name: stellar-galexie uses --config-file
   # (not --config as upstream docs sometimes show).
-  # Restart is decided by the effective-checksum compare below.
+  # Never notifies `Restart galexie`: systemd exec's this script once per
+  # service start, then it exec's the galexie binary — the running process
+  # does not read it. An edit is picked up at the next (re)start; if it is
+  # needed sooner, restart galexie by hand in a maintenance window
+  # (2026-08-29 r1 incident: a wrapper-only change cost a ~9-min catchup).
   ansible.builtin.copy:
     src: galexie-append.sh
     dest: /usr/local/bin/galexie-append.sh
@@ -464,7 +508,7 @@
   vars:
     cfg_mode: captive
     captive_peer_port: "{{ captive_peer_port_galexie }}"
-  # Restart is decided by the effective-checksum compare below.
+  # Restart is decided by the effective-checksum compare above.
 
 - name: Template galexie.toml
   ansible.builtin.template:
@@ -473,7 +517,7 @@
     owner: galexie
     group: galexie
     mode: "0640"
-  # Restart is decided by the effective-checksum compare below.
+  # Restart is decided by the effective-checksum compare above.
 
 - name: Template backfill captive-core.cfg
   # The archive-backfill galexie runs a SECOND captive-core. Its
@@ -529,21 +573,17 @@
   # The systemd unit sources this file via EnvironmentFile. Galexie's
   # S3 client reads AWS_* env vars; we populate them from the vault-
   # decrypted galexie_s3_access_key / _secret_key. Mode 0640 so only
-  # galexie group can read.
-  ansible.builtin.copy:
+  # galexie group can read. A template (not inline content) so the
+  # effective-change gate above can render the identical file.
+  ansible.builtin.template:
+    src: galexie.env.j2
     dest: /etc/default/galexie
     owner: root
     group: galexie
     mode: "0640"
-    content: |
-      # Rendered by Ansible. Do not edit by hand — regenerate via
-      # `ansible-playbook ... --tags galexie`.
-      AWS_ACCESS_KEY_ID={{ galexie_s3_access_key }}
-      AWS_SECRET_ACCESS_KEY={{ galexie_s3_secret_key }}
-      AWS_REGION={{ galexie_s3_region }}
-      AWS_ENDPOINT_URL={{ galexie_s3_endpoint }}
   no_log: true
-  # Restart is decided by the effective-checksum compare below.
+  diff: false
+  # Restart is decided by the effective-checksum compare above.
 
 - name: Install galexie systemd unit
   ansible.builtin.template:
@@ -551,14 +591,9 @@
     dest: /etc/systemd/system/galexie.service
     mode: "0644"
   # A unit-file change always needs the daemon-reload; the restart is
-  # decided by the effective-checksum compare below (no ExecReload, so a
+  # decided by the effective-checksum compare above (no ExecReload, so a
   # real [Service] change — ExecStart/Environment — still restarts).
   notify: Reload systemd
-
-- name: Galexie inputs — effective checksums after render (+ restart decision)
-  ansible.builtin.import_tasks: galexie-effective-checksum.yml
-  vars:
-    galexie_effective_stage: after
 
 - name: Enable + start galexie
   ansible.builtin.systemd:
