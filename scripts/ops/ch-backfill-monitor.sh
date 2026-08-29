@@ -10,7 +10,7 @@
 #   ORCHESTRATOR-EXITED — driver process gone; check log for COMPLETE vs FAILED
 #   COMPLETE / FAILED   — terminal lines parsed from the driver log
 #
-# Env: HOST FROM TO WINDOW STATE LOG DRIVER_PAT INTERVAL MIN_FREE_TIB
+# Env: HOST FROM TO WINDOW STATE LOG DRIVER_PAT INTERVAL MIN_FREE_TIB OPS_ENV
 set -uo pipefail
 
 HOST=${HOST:-root@136.243.90.96}
@@ -23,6 +23,12 @@ DRIVER_PAT=${DRIVER_PAT:-ch-full-backfill.sh}
 INTERVAL=${INTERVAL:-300}
 MIN_FREE_TIB=${MIN_FREE_TIB:-2.0}
 STEP=${STEP:-10}   # emit a progress line every STEP completed windows (plus the last)
+# Ops env file ON THE HOST. If it sets STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD
+# the remote clickhouse-client runs as that user, credentials handed over via
+# its CLICKHOUSE_USER/CLICKHOUSE_PASSWORD env on the far side — never in this
+# ssh command string, which is local argv (ps-visible). Absent/unset ⇒ the
+# default user exactly as before.
+OPS_ENV=${OPS_ENV:-/etc/default/stellarindex-ops}
 
 total_windows=$(( (TO - FROM + WINDOW) / WINDOW ))
 last_done=-1
@@ -31,6 +37,8 @@ while true; do
   out=$(ssh -o ConnectTimeout=15 "$HOST" "
     done=\$(wc -l < '$STATE' 2>/dev/null || echo 0)
     alive=\$(pgrep -f '$DRIVER_PAT' >/dev/null 2>&1 && echo 1 || echo 0)
+    [ -r '$OPS_ENV' ] && { set -a; . '$OPS_ENV'; set +a; }
+    [ -n \"\${STELLARINDEX_CLICKHOUSE_OPS_USER:-}\" ] && export CLICKHOUSE_USER=\"\$STELLARINDEX_CLICKHOUSE_OPS_USER\" CLICKHOUSE_PASSWORD=\"\${STELLARINDEX_CLICKHOUSE_OPS_PASSWORD:-}\"
     lake=\$(clickhouse-client --port 9300 --query \"SELECT formatReadableSize(sum(bytes_on_disk)) FROM system.parts WHERE database='stellar' AND active\" 2>/dev/null)
     free=\$(zfs list -Hp -o avail data 2>/dev/null)
     cur=\$(tail -3 '$LOG' 2>/dev/null | grep -oE 'window [0-9]+-[0-9]+' | tail -1)
@@ -42,7 +50,7 @@ while true; do
     sleep "$INTERVAL"; continue
   fi
 
-  IFS='|' read -r done alive lake free cur term <<EOF
+  IFS='|' read -r done_n alive lake free cur term <<EOF
 $out
 EOF
 
@@ -51,10 +59,10 @@ EOF
   # final one) — keeps notifications to a handful of milestones over a
   # multi-day run instead of one per window. Alerts + terminal states below
   # always emit, regardless of STEP.
-  if [ "${done:-0}" != "$last_done" ]; then
-    last_done=${done:-0}
-    if [ "$(( done % STEP ))" -eq 0 ] || [ "${done:-0}" -ge "$total_windows" ]; then
-      echo "PROGRESS windows=${done:-0}/${total_windows} at=[${cur:-?}] lake=${lake:-?} pool_free=${free_tib}TiB driver_alive=${alive:-0}"
+  if [ "${done_n:-0}" != "$last_done" ]; then
+    last_done=${done_n:-0}
+    if [ "$(( done_n % STEP ))" -eq 0 ] || [ "${done_n:-0}" -ge "$total_windows" ]; then
+      echo "PROGRESS windows=${done_n:-0}/${total_windows} at=[${cur:-?}] lake=${lake:-?} pool_free=${free_tib}TiB driver_alive=${alive:-0}"
     fi
   fi
 

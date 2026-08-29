@@ -36,7 +36,8 @@
 # Run health is observable via systemd unit state — node_exporter's
 # `--collector.systemd` exports success/failure as
 # `node_systemd_unit_state{name="verify-archive-tier-b.service",state="failed"}`.
-# Alert rules are in `deploy/monitoring/rules/verify-archive.yml`.
+# Alert rules R1 loads are in `configs/prometheus/rules.r1/verify-archive.yml`
+# (multi-host copy: `deploy/monitoring/rules/verify-archive.yml`).
 #
 # R1 only — the integrity leader per ADR-0016. R2/R3 trust R1.
 

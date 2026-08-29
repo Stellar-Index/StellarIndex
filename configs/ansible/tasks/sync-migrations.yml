@@ -1,0 +1,158 @@
+---
+# Sync the release's migrations/ tree from the controller to the host as
+# ONE transfer, with explicit delete semantics. Imported by
+# playbooks/deploy-binary.yml (pre_tasks) and exercised for real, against
+# temp dirs, by scripts/ci/deploy-sync-test.sh.
+#
+# History of this step (each fix broke the previous invariant):
+#   - ansible.posix.synchronize: one rsync, `delete: true` — but rsync
+#     runs on the CONTROLLER and never sees deploy.yml's
+#     `--ssh-common-args "-o ProxyJump=…"`, so the NAT-only test-net VMs
+#     were unreachable (deploy-ansible-deploy-2, PR #268).
+#   - ansible.builtin.copy with a DIRECTORY src (#268): connection-
+#     agnostic, but O(files): one SFTP round-trip + remote checksum per
+#     file, and the GH runner gets no ControlPersist across module
+#     invocations. On the r1 deploy of v0.49.0 (run 33244745680) that
+#     single task ran > 16 minutes for 291 already-identical files; the
+#     whole deploy used to take ~7. It also silently dropped `delete`.
+#
+# Now: O(1) AND connection-agnostic.
+#   1. Controller builds a DETERMINISTIC tar.gz of {{ local_dist_dir }}/
+#      migrations/ (sorted entries, mtime 0, uid/gid 0, modes normalised
+#      to 0644/0755, gzip mtime 0) and prints the manifest. Determinism
+#      matters: unarchive decides "changed" with `tar --diff`, which
+#      compares mtime/size/content, so a stable archive → changed=false
+#      on an identical re-run (the weekly drift job reads that).
+#   2. ansible.builtin.unarchive ships the archive over the SAME
+#      connection every other module uses (jump-safe) — one transfer.
+#   3. A fail-closed prune reproduces synchronize's `delete: true`: any
+#      file under the dest that is NOT in the manifest is removed. It
+#      only ever deletes paths that `find` enumerated INSIDE the dest,
+#      refuses an empty manifest (which would wipe the dir), and refuses
+#      a dest that is not an absolute path. Migrations are append-only
+#      today, but golang-migrate walks the dir: a stale file left from a
+#      reverted/renumbered migration is exactly what you do not want it
+#      to find.
+#
+# Vars (the test overrides all three; deploy.yml sets none):
+#   migrations_dest   — defaults to /usr/local/share/stellarindex/migrations
+#   migrations_owner  — defaults to root
+#   migrations_group  — defaults to root
+
+- name: Build deterministic migrations archive on the controller
+  # `run_once` + `delegate_to: localhost`: built ONCE on the runner, and
+  # the registered result (manifest on stdout) is visible to every host.
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -euo pipefail
+      src={{ (local_dist_dir ~ '/migrations') | quote }}
+      out={{ (local_dist_dir ~ '/migrations.deploy.tar.gz') | quote }}
+      if [ ! -d "$src" ]; then
+        echo "migrations source dir not found on controller: $src" >&2
+        exit 1
+      fi
+      python3 - "$src" "$out" <<'PY'
+      import gzip, io, os, stat, sys, tarfile
+      src, out = sys.argv[1], sys.argv[2]
+      entries = []
+      for root, dirs, files in os.walk(src):
+          dirs.sort()
+          rel_root = os.path.relpath(root, src)
+          for d in dirs:
+              entries.append((os.path.normpath(os.path.join(rel_root, d)), True))
+          for f in sorted(files):
+              entries.append((os.path.normpath(os.path.join(rel_root, f)), False))
+      entries.sort()
+      files_only = [rel for rel, is_dir in entries if not is_dir]
+      if not files_only:
+          sys.exit("refusing to build an EMPTY migrations archive from %s" % src)
+      buf = io.BytesIO()
+      with gzip.GzipFile(filename="", mode="wb", fileobj=buf, mtime=0) as gz:
+          with tarfile.open(fileobj=gz, mode="w", format=tarfile.PAX_FORMAT) as tar:
+              for rel, is_dir in entries:
+                  path = os.path.join(src, rel)
+                  st = os.lstat(path)
+                  if stat.S_ISLNK(st.st_mode) or not (stat.S_ISDIR(st.st_mode) or stat.S_ISREG(st.st_mode)):
+                      sys.exit("refusing non-regular entry in migrations dir: %s" % rel)
+                  ti = tarfile.TarInfo(rel)
+                  ti.mtime = 0
+                  ti.uid = ti.gid = 0
+                  ti.uname = ti.gname = "root"
+                  if is_dir:
+                      ti.type = tarfile.DIRTYPE
+                      ti.mode = 0o755
+                      tar.addfile(ti)
+                  else:
+                      ti.type = tarfile.REGTYPE
+                      ti.mode = 0o644
+                      ti.size = st.st_size
+                      with open(path, "rb") as fh:
+                          tar.addfile(ti, fh)
+      tmp = out + ".tmp"
+      with open(tmp, "wb") as fh:
+          fh.write(buf.getvalue())
+      os.replace(tmp, out)
+      sys.stdout.write("".join(rel + "\n" for rel in files_only))
+      PY
+  register: migrations_archive
+  changed_when: false
+  delegate_to: localhost
+  run_once: true
+
+- name: Ensure migrations dir exists on host
+  ansible.builtin.file:
+    path: "{{ migrations_dest | default('/usr/local/share/stellarindex/migrations') }}"
+    state: directory
+    owner: "{{ migrations_owner | default('root') }}"
+    group: "{{ migrations_group | default('root') }}"
+    mode: "0755"
+
+- name: Sync migrations dir from controller
+  # The ONE transfer. Modes/mtimes come from the archive; owner/group are
+  # applied post-extract by the module (tar --diff ignores uid/gid lines
+  # when owner/group are given, so a re-run stays changed=false).
+  ansible.builtin.unarchive:
+    src: "{{ local_dist_dir }}/migrations.deploy.tar.gz"
+    dest: "{{ migrations_dest | default('/usr/local/share/stellarindex/migrations') }}"
+    remote_src: false
+    owner: "{{ migrations_owner | default('root') }}"
+    group: "{{ migrations_group | default('root') }}"
+
+- name: Remove migrations on host that are not in the release (delete semantics)
+  # Manifest arrives on STDIN (not argv — lint-ansible-tasks rule 2, and
+  # 291 paths would not fit a sane command line anyway).
+  ansible.builtin.shell:
+    executable: /bin/bash
+    stdin: "{{ migrations_archive.stdout }}"
+    stdin_add_newline: true
+    cmd: |
+      set -euo pipefail
+      dest={{ migrations_dest | default('/usr/local/share/stellarindex/migrations') | quote }}
+      case "$dest" in
+        /?*/*) ;;  # absolute, at least two components — never / or /usr
+        *) echo "refusing to prune: dest '$dest' is not a nested absolute path" >&2; exit 1 ;;
+      esac
+      manifest="$(grep -v '^$' | LC_ALL=C sort -u || true)"
+      if [ -z "$manifest" ]; then
+        echo "refusing to prune: empty manifest (would wipe $dest)" >&2
+        exit 1
+      fi
+      if grep -Eq '(^|/)\.\.(/|$)|^/' <<<"$manifest"; then
+        echo "refusing to prune: manifest contains an unsafe path" >&2
+        exit 1
+      fi
+      present="$(cd "$dest" && find . -mindepth 1 \( -type f -o -type l \) -print | sed 's#^\./##' | LC_ALL=C sort -u)"
+      extras="$(LC_ALL=C comm -13 <(printf '%s\n' "$manifest") <(printf '%s\n' "$present") || true)"
+      n=0
+      while IFS= read -r rel; do
+        [ -n "$rel" ] || continue
+        # $rel came from find inside $dest and is relative by construction.
+        rm -f -- "$dest/$rel"
+        echo "removed $rel"
+        n=$((n + 1))
+      done <<<"$extras"
+      find "$dest" -mindepth 1 -type d -empty -delete
+      echo "prune: removed $n extra file(s) from $dest"
+  register: migrations_prune
+  changed_when: migrations_prune.stdout_lines | select('match', '^removed ') | list | length > 0

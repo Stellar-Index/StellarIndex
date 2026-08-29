@@ -55,18 +55,35 @@ echo "=== Migration backward-compat self-test ===" && ./scripts/ci/lint-migratio
 echo "=== Migration immutability ===" && ./scripts/ci/lint-migration-immutability.sh
 echo "=== Migration immutability self-test ===" && ./scripts/ci/lint-migration-immutability-test.sh
 echo "=== Completeness-staleness calibration ===" && ./scripts/ci/lint-completeness-staleness.sh
+echo "=== Integration-shard partition self-test ===" && ./scripts/ci/integration-shard-test.sh
 echo "=== Deploy-protection self-test ===" && ./scripts/ci/check-deploy-protection-test.sh
 echo "=== Main-CI-health decision-core self-test ===" && ./scripts/ci/check-main-ci-health-test.sh
+echo "=== Public-dataset drift-verdict self-test ===" && ./scripts/ci/check-public-dataset-test.sh
 echo "=== Ansible task lint (pipefail/bash, secret-on-argv) ===" && ./scripts/ci/lint-ansible-tasks.sh
 echo "=== Ansible task lint self-test ===" && ./scripts/ci/lint-ansible-tasks-test.sh
 echo "=== Ansible-drift decision-core self-test ===" && ./scripts/ci/check-ansible-drift-test.sh
 echo "=== run-heavy-job wrapper self-test ===" && ./scripts/ci/run-heavy-job-test.sh
 echo "=== zfs-snapshot job self-test ===" && ./scripts/ci/zfs-snapshot-test.sh
 echo "=== Deploy playbook jump/backup-gate lint ===" && ./scripts/ci/lint-deploy-playbook.sh
+# Migrations-sync self-test: structural half needs only python; the
+# behavioural half runs the task file with ansible and needs GNU tar on the
+# target (unarchive --diff). macOS ships bsdtar — point it at a container
+# via DEPLOY_SYNC_CONNECTION/DEPLOY_SYNC_HOST (see the script header) or
+# let CI's ansible-check job (ubuntu) run it. Graceful-skip only when the
+# tools are missing, same convention as promtool below.
+if command -v ansible-playbook >/dev/null 2>&1 && { [ -n "${DEPLOY_SYNC_CONNECTION:-}" ] || tar --version 2>/dev/null | grep -q 'GNU tar'; }; then
+    echo "=== Deploy migrations-sync self-test ===" && ./scripts/ci/deploy-sync-test.sh
+else
+    echo "=== Deploy migrations-sync self-test (skipped — needs ansible-playbook + GNU tar on the target; CI ansible-check runs it) ==="
+fi
 echo "=== EnvironmentFile verbatim-reader self-test ===" && ./scripts/ci/envfile-loader-test.sh
 echo "=== Deploy workflow input-validation self-test ===" && ./scripts/ci/deploy-inputs-test.sh
 echo "=== Baseline-growth tripwire self-test ===" && ./scripts/ci/lint-baseline-growth-test.sh
 echo "=== Config-apply gate self-test ===" && ./scripts/ci/config-apply-gate-test.sh
+# Two import-checks gates that landed (#287, #305) without their verify.sh
+# twin — check-verify-parity was red on main for everyone until added here.
+echo "=== Public-dataset drift decision-core self-test ===" && ./scripts/ci/check-public-dataset-test.sh
+echo "=== pgBackRest backup wrapper self-test ===" && ./scripts/ci/pgbackrest-backup-test.sh
 # BASE_SHA-gated: self-skips locally (no comparison base); runs for real in CI
 # with the PR/push base. Invoked here to keep verify↔CI parity honest.
 echo "=== Baseline-growth tripwire ===" && ./scripts/ci/lint-baseline-growth.sh
@@ -123,6 +140,7 @@ fi
 # otherwise skip it on any machine that HAS promtool. CI's import-checks
 # job runs it, so verify.sh must too or check-verify-parity fails.
 echo "=== Metric refs self-test ===" && ./scripts/ci/lint-metric-refs-test.sh
+echo "=== ClickHouse ops-user contract self-test ===" && ./scripts/ops/ch-ops-user-test.sh
 # govulncheck (F-0057). Graceful-skip when not installed locally —
 # CI installs it via `make deps`. Mirrors the promtool pattern.
 if command -v govulncheck >/dev/null 2>&1; then
