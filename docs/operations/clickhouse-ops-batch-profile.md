@@ -1,6 +1,6 @@
 ---
 title: ClickHouse ops-batch profile — heavy stellarindex-ops jobs run low-priority
-last_verified: 2026-08-28
+last_verified: 2026-08-29
 status: living procedure
 ---
 
@@ -144,17 +144,26 @@ every inventory had the password. Enable per host, in one PR:
      --tags clickhouse-ops-batch-profile,minio,heavy-job-wrapper
    ```
 
-   The handler restarts `clickhouse-server`; the archival-node role's
-   existing restart discipline applies (no restart mid-backfill).
+   **Nothing restarts.** The drop-in is `users.d`, which
+   `clickhouse-server` hot-reloads; the task runs `SYSTEM RELOAD
+   CONFIG` and then asserts `system.users` / `system.settings_profiles`
+   each carry exactly one `ops_batch` (retried over the reloader's
+   poll; skipped under `--check`). Until 2026-08-29 the task carried a
+   `notify: Restart clickhouse-server` that would have bounced the
+   9.3 TB lake on the first enable — caught in the r1 `--check --diff`
+   and removed. If the play's recap shows a `Restart clickhouse-server`
+   handler for these tags, stop: that is a regression.
 3. Verify on r1 — the drop-in parses, the user logs in, and a heavy
    job shows up as `ops_batch`. **As of 2026-08-28 none of this has
    been exercised against a live ClickHouse** (the profile was
    codified without host access): the `<constraints><priority>
    <readonly/>` block and the `priority` / `os_thread_priority`
-   behaviour are unproven, and a malformed `users.d` drop-in fails
-   `clickhouse-server` on the handler restart — so do the `--check
-   --diff` first and keep the previous drop-in-free state one
-   `rm users.d/ops-batch.xml` away:
+   behaviour are unproven. A malformed `users.d` drop-in does not take
+   the server down — the reloader keeps the previous users config and
+   logs the error — and the verify task then fails the apply with
+   `0,1` / `0,0` instead of `1,1`; so do the `--check --diff` first and
+   keep the previous drop-in-free state one `rm users.d/ops-batch.xml`
+   away:
 
    ```
    clickhouse-client --port 9300 --user ops_batch --password "$(sed -n 's/^STELLARINDEX_CLICKHOUSE_OPS_PASSWORD=//p' /etc/default/stellarindex-ops)" -q "SELECT currentUser()"
