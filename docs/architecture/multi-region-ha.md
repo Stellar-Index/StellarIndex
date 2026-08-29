@@ -31,6 +31,76 @@ audit: cold adversarial 6-auditor audit, 2026-08-20/21 (see §13)
 - The agreed latency SLO (ADR-0009: **p95 ≤ 200 ms / p99 ≤ 500 ms** on
   `/v1/price` + `/v1/oracle/*`) must not regress.
 
+## 0b. Amendment — API-first (Ash, 2026-08-29)
+
+**Decision: the API is the product; the explorer can pay the ocean.** Ash, after
+seeing the measured split: *"api is the main purpose really, people can wait 200 ms
+for explorer results."*
+
+Consequences, which SIMPLIFY §3b and §4:
+
+- **R2 does not carry a hot lake set.** The "optional hot local set" in §3b/§4 is
+  dropped for v1. R2 and R3 are the same shape: full local pricing/Timescale,
+  Redis, API — and **every** lake-backed route proxies to R1's API (request-level,
+  so a deep page pays ONE extra RTT, not one per query).
+- **Disk requirement falls accordingly.** Neither R2 nor R3 needs TiB-scale NVMe:
+  the local footprint is Timescale (524 GiB on R1 today) + Redis + OS. A 2 TB
+  box is generous, which is why these are the "cheap replicas" of the decision.
+- **Determinism hardening (§7.2) becomes launch-blocking, not nice-to-have.** If
+  the API is the product and three regions answer it independently (Model B), two
+  customers hitting different regions MUST get the same number. The three known
+  non-deterministic spots — OHLC `open`/`close` via `first/last` over non-unique
+  `ts`, `account_movements` missing `FINAL`/`LIMIT 1 BY`, and wall-clock/region-local
+  watermarks in served responses — are the correctness gate for multi-region, and
+  a cross-region divergence prober (same request to R1/R2/R3, compare payloads
+  modulo documented volatile fields) is the evidence that it holds.
+- **Measured basis (2026-08-29, r1).** The pricing/ticker surface is ~99% cache-served
+  locally (`list_coins` 77,113 hit / 48 miss; `distinct_pairs` 83,672 / 38;
+  `list_issuers` 76,193 / 365; `latest_oracle_updates` 75,281 / 1,207), so it never
+  needs R1. Organic explorer traffic (~3,250 requests / 2 h: accounts, asset detail,
+  movements) is essentially all lake-backed — those are the requests that will cross
+  the ocean, and this amendment accepts that cost explicitly.
+
+
+## 0c. Status — DEFERRED to post-v1.0 (Ash, 2026-08-29)
+
+**R2/R3 are not on the v1.0 path.** Ash, after working the cost/benefit live:
+*"lets put the r2/r3 thing to bed for now, post r1, back to focusing on path to 1.0."*
+This section records WHY, so the next session does not re-litigate it from memory.
+
+**What the evidence said (all measured on r1, 2026-08-29):**
+
+1. **A CDN cannot replace regional origins for the product surface.** The hot API
+   endpoints are deliberately uncacheable — `/v1/price`, `/v1/oracle/latest` and
+   `/v1/ledgers/latest` all return `Cache-Control: no-store`, while `/v1/assets`
+   (`max-age=30, s-maxage=60`) and `/v1/markets` (`max-age=60, s-maxage=300`) are
+   edge-cacheable. So a Singapore API consumer pays the full origin RTT (~170 ms,
+   typical) on every call to the endpoints that define the product.
+2. **The explorer does not justify a box.** Ash: *"people can wait 200 ms for
+   explorer results."* Deep explorer pages are lake-backed and proxy to R1 anyway
+   (§0b); Cloudflare caching covers the immutable ones far more cheaply.
+3. **The real exposure is not latency, it is the single point of failure.** r1 is one
+   machine in one DC holding the only copy of the 9.3 TiB lake and the 2.6 TiB raw
+   archive. Postgres restores from S3 in hours (drilled monthly); the lake rebuild
+   from the public dataset is **unmeasured** because the restore drill emits only
+   `last_success_unix` and `failures`, no throughput. A second origin is bought for
+   availability, with latency as the bonus — not the other way round.
+
+**Sequence when this resumes (post-v1.0), cheapest-first:**
+
+1. Cloudflare in front (WAF + caching) — covers the explorer and the cacheable API.
+2. **Micro-cache test on the no-store hot path.** We serve CLOSED buckets (ADR-0015),
+   so a 1-5 s `s-maxage` on `/v1/price` and `/v1/oracle/latest` may be inside the
+   contract rather than a staleness risk. If it holds, much of the API becomes
+   edge-servable and R3's case weakens sharply. Test before buying hardware.
+3. **R2 (US)** — removes the SPOF and covers the likeliest customer base.
+4. **R3 (Singapore)** — only on evidence of Asian API usage, split by endpoint.
+
+**Not re-opened by this deferral:** ADR-0050's Model B (independent per-region ingest,
+determinism not replication), R1 as lake authority, and the §0b API-first amendment
+all stand as the design for when it resumes.
+
+
 ## 1. Ground truth (measured on R1, 2026-08-20/21 — not assumed)
 
 | fact | value | source |

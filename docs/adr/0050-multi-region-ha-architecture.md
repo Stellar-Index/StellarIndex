@@ -87,3 +87,22 @@ in the plan doc.
 - **Full per-region HA fleets (~$180–288 K/yr):** overkill for scale/cost; cross-region
   failover with one box per region meets the need.
 - **Keep R2 on AWS:** ~3× the cost for a role that no longer needs elastic lake storage.
+
+## Amendment — 2026-08-29 (API-first)
+
+Ash: *"api is the main purpose really, people can wait 200 ms for explorer results."*
+R2's optional hot lake set is dropped for v1 — R2 and R3 are the same shape (local
+pricing + Redis + API, all lake routes proxied to R1 at request level), which lowers
+both boxes to ~2 TB commodity bare metal. In exchange, **determinism hardening
+(plan §7.2) is promoted to a launch gate**: with the API as the product and three
+regions answering independently, cross-region answer equality is a correctness
+promise, not an optimisation. See `docs/architecture/multi-region-ha.md` §0b.
+
+## Status note — 2026-08-29: implementation DEFERRED to post-v1.0
+
+The architecture stands; the build does not start before v1.0 ships. Ash's reasoning,
+the measured cache-header evidence, and the cheapest-first resume sequence
+(Cloudflare -> micro-cache test -> R2 -> R3-on-evidence) are recorded in
+`docs/architecture/multi-region-ha.md` §0c. The v1.0-relevant residue is the
+single-point-of-failure exposure, tracked against ADR-0043's DR work rather than here.
+

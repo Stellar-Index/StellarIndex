@@ -708,6 +708,33 @@ possible from data we already serve but don't visualise.
 
 ---
 
+
+### D — Decisions RESOLVED 2026-08-29 (Ash)
+
+Recorded so nothing below is re-litigated. Where a row here disagrees with the
+older `### D — Decisions only Ash can make` table further down, **this is right**.
+
+| # | Decision | Basis |
+|---|---|---|
+| **D1** | **RATIFIED.** Anomaly-freeze: implement by shipping the composite-reference corroboration (#288), not by editing the alert. Live in v0.50.0 on r1 since 2026-08-29 ~21:00Z; verification is `increase(stellarindex_anomaly_freeze_engaged_total[24h])` **plus** `stellarindex_aggregator_composite_freeze_suppressed_total > 0` (the second proves the mechanism engaged rather than the market being calm) at ~21:00Z 2026-08-30. | Ash, explicit |
+| **D2** | **ACCEPTED-RISK + tested restore at v1.** Single box per region; multi-region ratified (ADR-0050) but deferred post-v1 with the reasoning in `docs/architecture/multi-region-ha.md` §0c. | Ash, "trust your recommendations" |
+| **D3** | **SIGNED OFF.** ClickHouse posture = ADR-0043 §2.1 schema+state snapshot + re-derive, plus the rolling ZFS snapshots that went live 2026-08-29. Do NOT resurrect full-lake copies. | Ash, explicit |
+| **D4** | **BUILD ALL THREE.** Order-book depth (#337), DEX TVL (#338), per-token oracle pages (#336). No retraction of site copy. | Ash, explicit |
+| **D5** | **ACCEPTED.** Served-tier retention/serve-window: document the current projection-scoped windows per source as the v1 contract. Verified retention today: `trades` 90 d, `prices_1m` 30 d, `prices_15m` 30 d, `oracle_updates` 90 d, `api_usage_events` 12 mo; **no retention policy on hourly-and-above aggregates → indefinite**, which matches what the architecture doc promises. | Ash, "trust your recommendations" |
+| **D6** | **ACCEPTED as documented-unfillable.** Genesis edge [2 → 287,404]; recover via op-replay if ever needed. | Ash, "trust your recommendations" |
+| **D8** | **OVERRIDDEN → FIX FOR v1** (was: post-v1). The `*_FUNDAMENTAL` RedStone feeds publish a NAV ratio in BTC but are registered `quote=fiat:USD`, so `/v1/oracle/streams` serves `crypto:SolvBTC.BBN_FUNDAMENTAL = $1.00` for a token worth ~$78,313. Contained (RedStone is `IncludeInVWAP=false`, so no published price is wrong) but publicly visible with `mapped=true`. Fix in flight. | Ash, explicit |
+| **D9** | **DROPPED.** Stripe C3-081 reconcile closed as a formal DROP citing ADR-0049 (anon/free/partner access model). | Ash, "trust your recommendations" |
+| **D10** | Privacy review reduced to a sign-off, carried by PR #237 (Ash's legal read). | unchanged |
+| **DR** | **SIGNED OFF.** Off-site posture accepted: pgBackRest repo2 in S3 (AES-256, 1 full + 7 d diffs, ~$12–17/mo) + rolling ZFS snapshots. As of 2026-08-29 the nightly job writes **every** configured repo (repo1 diff 551 s, repo2 diff 466 s, both rc=0) — previously repo1 only. | Ash, explicit |
+| **W6.1** | **CLOSED.** Paging wired and proven: Discord (pages + alerts) and a Healthchecks.io dead-man, `alertmanager_notifications_total` incrementing on both integrations with 0 failures. | Ash supplied credentials |
+
+**Still open and genuinely Ash-only:** PR #237 (legal read), external security-review booking, credential rotation for anything session-exposed (see the note on MinIO root below), and signing the accepted-risk list once drafted.
+
+**D7 is not a decision — it is work I owe:** the C4-012/13 third-alias thin-pool VWAP surface needs a deliberate review before public traffic.
+
+**Correction to the security gate row:** it names `ratesengine-admin`, a pre-rename credential. Verified on r1 2026-08-29: MinIO root is now `stellarindex-admin` (40-char secret) and MinIO was restarted 2026-07-27, i.e. after the 2026-07-25 plaintext exposure. Whether the *password* rotated at that restart or only the username is not evidenced either way, so rotation is still worth doing on its own merits.
+
+
 ### D — Decisions only Ash can make
 
 **D1 — [V] Anomaly-freeze pages on CORRECT prices.** Verified worsening:

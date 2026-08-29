@@ -233,6 +233,40 @@ against.
   `scripts/ops/archive-cross-check.sh` is flagged as design-intent in
   `multi-region-topology.md`. **Requires an ansible apply
   (`--tags ops-jobs`) on r1 — a binary-only deploy ships this dead.**
+- **RedStone SolvBTC NAV feeds are quoted in their reserve asset, not
+  `fiat:USD` (D8).** `SolvBTC_FUNDAMENTAL` and
+  `SolvBTC.BBN_FUNDAMENTAL` publish net asset value as a RATIO
+  against the asset each token is a claim on, but `feedRegistry`
+  registered both against `fiat:USD` — so
+  `/v1/oracle/streams?include_unmapped=true` served, with
+  `mapped=true`, `crypto:SolvBTC.BBN_FUNDAMENTAL quote=fiat:USD
+  price=1.00000000` and `crypto:SolvBTC_FUNDAMENTAL quote=fiat:USD
+  price=1.00295305` alongside their own `_USD` siblings at
+  `78313.02974310` (live r1, 2026-08-29): a BTC-backed token
+  published as worth $1.00. Never reached a published price
+  (RedStone is `ClassOracle` / `IncludeInVWAP=false`), but it was
+  public. Quotes are now `crypto:BTC` for `SolvBTC_FUNDAMENTAL`
+  (NAV_USD ÷ BTC_USD = 1.00295) and `crypto:SolvBTC` for
+  `SolvBTC.BBN_FUNDAMENTAL` (exactly `1.00000000` on three captures
+  — lake ledger 60104689, 2026-07-27, 2026-08-29 — with a NAV_USD
+  equal to SolvBTC's, i.e. 1:1 with SolvBTC, not BTC). Base codes,
+  prices, decimals and the `*_FUNDAMENTAL/USD` feeds are unchanged;
+  only the mislabelled denominator moved. The four `_FUNDAMENTAL`
+  feeds whose reserve really is dollars (`BENJI`, `iBENJI`, `USST`,
+  `savUSD`) keep `fiat:USD`. Class guard:
+  `TestFeedRegistry_NAVFeedsQuoteTheirReserveAsset` (a bare
+  `_FUNDAMENTAL` feed may carry a fiat quote only via an evidenced
+  attestation entry) +
+  `TestFeedRegistry_SuffixedFeedNeverSharesQuoteWithItsBareSibling`
+  (an `X/<FIAT>` feed and its bare `X` sibling can never share a
+  quote) + `TestDecode_SolvBTCFamily_NAVRatiosQuotedInReserveAsset`
+  (the live 2026-08-29 values end-to-end). ADR-0028 §2/§3 and
+  ADR-0014's amendment note are amended with the evidence.
+  **Operator note:** `oracle_updates` rows written before this
+  change carry the old `fiat:USD` label for these two feeds; the
+  observed values are correct and unchanged, only the label was
+  wrong. Any corrective relabel is a separate, operator-run data
+  change.
 - **Gap detector pre-registers `runs_total` at 0 so a restart cannot read
   as a dead detector.** `stellarindex_ingest_gap_detector_runs_total` is a
   CounterVec that only materialises a series on first `Inc()`, and since
