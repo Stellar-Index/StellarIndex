@@ -25,6 +25,14 @@
 // After this run passes, the operator generates the SLA proof
 // markdown at docs/operations/sla-proof-<YYYY-MM-DD>.md from the
 // Prometheus run window + Grafana snapshot.
+//
+// LANGUAGE LEVEL: the pinned k6 (0.50.0) transpiles scenarios with
+// babel, which parses array spread but NOT object spread. This file
+// used object spread from the day it was written (dc145698) and so had
+// NEVER compiled — the compile gate sat behind secrets that do not
+// exist, which is exactly the invisibility #316 was about. Use
+// Object.assign({}, a, {...}) for header merges; `make test-load-check`
+// now runs on every PR touching test/load/** and will catch a relapse.
 
 import http from 'k6/http';
 import { check, sleep } from 'k6';
@@ -99,8 +107,10 @@ export default function () {
         asset_ids: picks.map((p) => p.asset),
         quote: BATCH_QUOTE,
       });
+      // Object.assign, NOT `{ ...headers }` — see the note at the top of
+      // this file: the pinned k6 cannot parse object spread.
       r = http.post(`${baseUrl}/price/batch`, body, {
-        headers: { ...headers, 'Content-Type': 'application/json' },
+        headers: Object.assign({}, headers, { 'Content-Type': 'application/json' }),
         tags: { endpoint: 'batch' },
       });
       break;
@@ -141,7 +151,11 @@ export default function () {
       // instead we measure the connection-accept latency only.
       r = http.get(
         `${baseUrl}/observations/stream?asset=${enc(pair.asset)}&quote=${enc(pair.quote)}`,
-        { headers: { ...headers, 'Accept': 'text/event-stream' }, tags: { endpoint: 'stream' }, timeout: '5s' },
+        {
+          headers: Object.assign({}, headers, { 'Accept': 'text/event-stream' }),
+          tags: { endpoint: 'stream' },
+          timeout: '5s',
+        },
       );
       break;
 

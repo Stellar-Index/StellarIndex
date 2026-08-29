@@ -118,27 +118,56 @@ expect 'SLA_PROOF_MAX_AGE_DAYS=400 admits the 240-day-old proof → rc 0' 0 'OK 
 
 unset K6_TARGET STELLARINDEX_LOAD_API_KEY
 
+
 # ── Wiring: the verdict is worthless if the workflow ignores it ─────────
 # The defect lived in the YAML, not only in the decision logic, so pin the
-# four properties that make the feed honest. PyYAML is fail-closed here
-# (same convention as scripts/ci/lint-rule-structure.py) — a skipped
-# structural check is how the original green no-op survived.
-wiring_out="$(python3 - <<'PY' 2>&1
+# properties that make the feed honest. The block is FAIL-CLOSED: a
+# verifier proved on 2026-08-29 that replacing k6-weekly.yml with
+# unparseable YAML made all the assertions vanish while the suite still
+# printed "11 passed, 0 failed" and exited 0 — a gate that does not run
+# reports clean by printing nothing. run_wiring therefore captures the
+# interpreter's exit status AND counts the assertions it actually emitted,
+# and the caller treats either a non-zero rc or a short count as a failure.
+WIRING_EXPECTED=8
+
+# run_wiring <workflow-path> <makefile-path> <scenario-dir>
+# Sets WIRING_OUT / WIRING_RC / WIRING_SEEN.
+run_wiring() {
+  WIRING_OUT="$(SLA_WF="$1" SLA_MK="$2" SLA_SCENARIOS="$3" python3 - <<'PY' 2>&1
+import os
+import re
 import sys
+
 try:
     import yaml
 except ImportError:
     print("FAIL: wiring — PyYAML not available; refusing to pass vacuously "
           "(install pyyaml)")
-    sys.exit(0)
+    sys.exit(1)
 
-wf = yaml.safe_load(open(".github/workflows/k6-weekly.yml"))
+WF = os.environ["SLA_WF"]
+MK = os.environ["SLA_MK"]
+SCENARIOS = os.environ["SLA_SCENARIOS"]
+
+wf = yaml.safe_load(open(WF))
 # PyYAML parses the bare key `on:` as the boolean True.
 triggers = wf.get("on", wf.get(True)) or {}
 jobs = wf.get("jobs", {})
 
+
 def check(name, cond, detail=""):
-    print(("ok: " if cond else "FAIL: ") + name + (("" if cond else " — " + detail) if detail else ""))
+    print(("ok: " if cond else "FAIL: ") + name
+          + (("" if cond else " — " + detail) if detail else ""))
+
+
+def steps_of(job):
+    return job.get("steps", []) or []
+
+
+def needs_of(name):
+    n = jobs[name].get("needs") or []
+    return [n] if isinstance(n, str) else list(n)
+
 
 check("k6-weekly runs the compile gate on pull_request",
       "pull_request" in triggers,
@@ -147,7 +176,7 @@ check("k6-weekly runs the compile gate on pull_request",
 compile_steps = [
     (jname, job, step)
     for jname, job in jobs.items()
-    for step in job.get("steps", [])
+    for step in steps_of(job)
     if "make test-load-check" in (step.get("run") or "")
 ]
 check("the scenario compile-check is unconditional (no secrets gate)",
@@ -155,35 +184,124 @@ check("the scenario compile-check is unconditional (no secrets gate)",
       "every `make test-load-check` step/job is behind an `if:` — that is the "
       "condition that kept it from ever running")
 
-runs = [step.get("run") or "" for job in jobs.values() for step in job.get("steps", [])]
+runs = [step.get("run") or "" for job in jobs.values() for step in steps_of(job)]
 check("the run consults scripts/ci/check-sla-evidence.sh",
       any("scripts/ci/check-sla-evidence.sh" in r for r in runs),
       "nothing calls the decision core")
 
-fail_steps = [
-    step for job in jobs.values() for step in job.get("steps", [])
-    if "verdict_rc != '0'" in str(step.get("if", "")) and "exit 1" in (step.get("run") or "")
+verdict_steps = [
+    step for job in jobs.values() for step in steps_of(job)
+    if "verdict_rc != '0'" in str(step.get("if", ""))
 ]
+fail_steps = [s for s in verdict_steps if "exit 1" in (s.get("run") or "")]
 check("a non-zero verdict FAILS the run (silence != success)",
       bool(fail_steps),
       "no step fails the run on a non-zero verdict — the badge would stay green")
 
-mk = open("Makefile").read()
+mk = open(MK).read()
 check("test-load-check seeds __ENV for `k6 archive`",
       "-e K6_TARGET=" in mk and "-e STELLARINDEX_LOAD_API_KEY=" in mk,
       "`k6 archive` does not inherit system env; without -e the scenarios' "
       "init guard throws and the compile gate can never pass (run 30542038490)")
+
+# The verdict must not be reachable-only-if-the-scenarios-compile: a
+# `needs:` from the evidence job onto the compile job means a babel syntax
+# error SKIPS the verdict, the tracking issue and the ::error:: — the very
+# mechanism #316 exists to guarantee runs.
+gate_jobs = [
+    jname for jname, job in jobs.items()
+    if any("scripts/ci/check-sla-evidence.sh" in (s.get("run") or "")
+           for s in steps_of(job))
+]
+compile_jobs = sorted({jname for jname, _, _ in compile_steps})
+blocked = [(g, c) for g in gate_jobs for c in compile_jobs if c in needs_of(g)]
+check("the evidence verdict does not depend on the compile job",
+      bool(gate_jobs) and not blocked,
+      "job(s) %s `needs:` the compile job %s — a scenario syntax error would "
+      "skip the verdict and file no tracking issue"
+      % ([g for g, _ in blocked], [c for _, c in blocked]))
+
+# ...and must not be suppressed by the k6 run itself failing: without
+# always(), every step carries an implicit success(), so a red `Run
+# scenario` step silences the report this workflow exists to produce.
+missing_always = [
+    str(s.get("name", "?")) for s in verdict_steps
+    if "always()" not in str(s.get("if", ""))
+]
+check("the non-zero-verdict steps survive a failing k6 run (always())",
+      bool(verdict_steps) and not missing_always,
+      "step(s) %s carry an implicit success(): a failing `Run scenario` "
+      "would suppress the sla-evidence issue" % missing_always)
+
+# The compile gate is only worth making mandatory if it can pass. The
+# pinned k6 (0.50.0) transpiles with babel, which parses ARRAY spread but
+# not OBJECT spread; 04-batch.js and 06-mixed-realistic.js shipped object
+# spread from day one and had therefore never compiled — invisible because
+# the gate sat behind secrets that do not exist. `k6 archive` is the
+# authoritative check (the scenario-compile job runs it); this static
+# assertion keeps the fast lane honest on machines without k6.
+OBJ_SPREAD = re.compile(r"\{[^{}\n]*?\.\.\.")
+offenders = []
+scanned = 0
+for root, _dirs, files in os.walk(SCENARIOS):
+    for fname in sorted(files):
+        if not fname.endswith(".js"):
+            continue
+        path = os.path.join(root, fname)
+        scanned += 1
+        with open(path) as fh:
+            for lineno, line in enumerate(fh, 1):
+                code = line.split("//", 1)[0]
+                if OBJ_SPREAD.search(code):
+                    offenders.append("%s:%d"
+                                     % (os.path.relpath(path, SCENARIOS), lineno))
+check("no scenario uses object spread (the pinned k6's babel cannot parse it)",
+      scanned > 0 and not offenders,
+      "%s — rewrite as Object.assign({}, a, {...}); `k6 archive` dies with "
+      "\"Unexpected token\" and the weekly run cannot execute" % offenders)
 PY
 )"
-printf '%s\n' "$wiring_out"
+  WIRING_RC=$?
+  WIRING_SEEN="$(printf '%s\n' "$WIRING_OUT" | grep -c -E '^(ok|FAIL): ' || true)"
+}
+
+run_wiring ".github/workflows/k6-weekly.yml" "Makefile" "test/load/scenarios"
+printf '%s\n' "$WIRING_OUT"
 while IFS= read -r line; do
   case "$line" in
     ok:*)   pass=$((pass + 1)) ;;
     FAIL:*) fail=$((fail + 1)) ;;
   esac
 done <<EOF
-$wiring_out
+$WIRING_OUT
 EOF
+echo "wiring: ${WIRING_SEEN} of ${WIRING_EXPECTED} structural assertions reported (python3 rc=${WIRING_RC})"
+if [ "$WIRING_RC" -ne 0 ]; then
+  echo "FAIL: wiring block — python3 exited $WIRING_RC, so the structural" \
+       "assertions did not all run; a missing or unparseable workflow must" \
+       "never pass silently" >&2
+  fail=$((fail + 1))
+fi
+if [ "$WIRING_SEEN" -ne "$WIRING_EXPECTED" ]; then
+  echo "FAIL: wiring block — only $WIRING_SEEN of $WIRING_EXPECTED assertions" \
+       "reported; a gate that does not run reports clean by printing nothing" >&2
+  fail=$((fail + 1))
+fi
+
+# Fail-closed proof for the block above, on a fixture that cannot parse.
+# This is the exact vacuity a verifier demonstrated on 2026-08-29.
+printf 'on: [pull_request\njobs: : :\n  - not yaml\n' > "$TMP/unparseable.yml"
+run_wiring "$TMP/unparseable.yml" "Makefile" "test/load/scenarios"
+if [ "$WIRING_RC" -ne 0 ] || [ "$WIRING_SEEN" -ne "$WIRING_EXPECTED" ]; then
+  echo "ok: the wiring block is fail-closed on an unparseable workflow" \
+       "(rc=$WIRING_RC, ${WIRING_SEEN}/${WIRING_EXPECTED} reported)"
+  pass=$((pass + 1))
+else
+  echo "FAIL: the wiring block passed vacuously on an unparseable workflow —" \
+       "renaming or breaking k6-weekly.yml would silently delete these" \
+       "assertions" >&2
+  fail=$((fail + 1))
+fi
 
 echo
 echo "check-sla-evidence-test: ${pass} passed, ${fail} failed"

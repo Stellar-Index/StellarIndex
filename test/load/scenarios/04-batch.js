@@ -63,8 +63,13 @@ export default function () {
     quote: BATCH_QUOTE,
   });
 
+  // Object.assign, NOT `{ ...headers }`: the pinned k6 (0.50.0, see
+  // .github/workflows/k6-weekly.yml) compiles scenarios with babel, which
+  // parses array spread but NOT object spread — `k6 archive` dies with
+  // "Unexpected token". This scenario had never compiled (#316): the
+  // compile gate sat behind secrets that do not exist, so nothing ran it.
   const r = http.post(`${baseUrl}/price/batch`, body, {
-    headers: { ...headers, 'Content-Type': 'application/json' },
+    headers: Object.assign({}, headers, { 'Content-Type': 'application/json' }),
     tags: { endpoint: 'batch' },
   });
   check(r, { 'status 200': (r) => r.status === 200 });

@@ -486,9 +486,16 @@ jobs:
         # a permanently-green no-op. These fixtures pin the verdict (no
         # target = rc 1, no recent proof = rc 2, healthy = rc 0, and the
         # procedure/template files are not evidence) plus the k6-weekly
-        # wiring that consumes it. The workflow itself runs weekly against
-        # secrets that do not exist, so this is the only place it is
-        # exercised on a PR. No network, no k6, no token.
+        # wiring that consumes it: PR-triggered compile gate, no `if:` on
+        # it, no `needs:` from the evidence job onto it, `always()` on the
+        # issue/fail steps, the Makefile's `-e` __ENV seeding, and no
+        # object spread in the scenarios (the pinned k6's babel cannot
+        # parse it). The wiring block is fail-closed — it counts the
+        # assertions it emitted and fails on a short count, so an
+        # unparseable or renamed workflow cannot silence it. The workflow
+        # itself runs weekly against secrets that do not exist, so this is
+        # the only place it is exercised on a PR. No network, no k6, no
+        # token.
         run: ./scripts/ci/check-sla-evidence-test.sh
       - name: check-public-dataset self-test
         # backup-restore-6 (audit-2026-08-29): fixtures for the

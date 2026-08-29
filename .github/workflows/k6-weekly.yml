@@ -14,7 +14,7 @@ name: k6-weekly
 # `success` with `Install k6`, `Compile-check all scenarios` and `Run
 # scenario` all `skipped` (runs 30733884244, 31292354359, 31922897932,
 # 32614013429) — and no docs/operations/sla-proof-<YYYY-MM-DD>.md has
-# ever landed. Two structural changes:
+# ever landed. Three structural changes:
 #
 #   1. The scenario compile-check is its own job with NO secret and NO
 #      target dependency, and it also runs on `pull_request`. It used to
@@ -24,11 +24,24 @@ name: k6-weekly
 #      run`), so scenarios/lib/env.js threw "K6_TARGET is required" even
 #      with the secrets present. Fixed in the Makefile target, which now
 #      seeds placeholder __ENV values explicitly.
-#   2. A scheduled run that cannot produce evidence no longer reports
+#   2. The scenarios themselves had to be MADE to compile before the gate
+#      could be made mandatory. 04-batch.js and 06-mixed-realistic.js used
+#      object spread (`{ ...headers }`) from the day they were written
+#      (dc145698, 2026-05-01); the pinned k6 0.50.0 transpiles with babel,
+#      which parses array spread but not object spread, so `k6 archive`
+#      died with "Unexpected token" — and 06-mixed-realistic.js is the
+#      DEFAULT scenario this schedule runs. Both are now Object.assign
+#      merges, verified against a real k6 v0.50.0: all 9 scenarios archive
+#      clean, and the mixed scenario executes end-to-end. The version pin
+#      is deliberately unchanged: 0.50.0 is the binary that captured the
+#      historical AC2 evidence (p95 54.4 ms), so the measuring instrument
+#      stays comparable.
+#   3. A scheduled run that cannot produce evidence no longer reports
 #      success. scripts/ci/check-sla-evidence.sh is the decision core;
 #      a non-zero verdict opens/updates a tracking issue (the
 #      reconciliation-health.yml pattern) and fails the run. Silence and
-#      success are no longer the same signal.
+#      success are no longer the same signal. The two jobs are INDEPENDENT
+#      (no `needs:`) so that neither can silence the other.
 #
 # Deliberately NOT done: pointing the run at r1. r1 is the single
 # production host, test/load/scenarios/lib/env.js refuses production
@@ -108,7 +121,15 @@ jobs:
 
   sla-run:
     name: weekly SLA evidence run
-    needs: scenario-compile
+    # Deliberately NO `needs: scenario-compile`. The two jobs answer
+    # different questions and must not gate each other: `needs:` would let
+    # a scenario syntax error SKIP the evidence verdict, the sla-evidence
+    # tracking issue and the ::error:: — i.e. exactly the mechanism #316
+    # exists to guarantee would silently not run, and the operator would be
+    # pointed at a babel parse error instead of at the missing target.
+    # Both jobs run in parallel on the schedule; either one going red is a
+    # real, separately-actionable signal.
+    #
     # A PR gets the compile gate only: there is nothing to load-test from a
     # pull request, and the secrets aren't available to one anyway.
     if: github.event_name != 'pull_request'
@@ -182,7 +203,12 @@ jobs:
           retention-days: 30
 
       - name: Open or update the tracking issue (no SLA evidence)
-        if: steps.gate.outputs.verdict_rc != '0'
+        # `always() && gate succeeded && ...`, not the implicit success():
+        # a failing `Run scenario` step must not suppress the report. The
+        # gate step never fails by design, so gating on its outcome means
+        # "the verdict was actually computed" (an aborted checkout leaves
+        # verdict_rc empty, which would otherwise read as non-zero).
+        if: always() && steps.gate.outcome == 'success' && steps.gate.outputs.verdict_rc != '0'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -220,7 +246,7 @@ jobs:
           done
 
       - name: Fail the run when no SLA evidence was produced
-        if: steps.gate.outputs.verdict_rc != '0'
+        if: always() && steps.gate.outcome == 'success' && steps.gate.outputs.verdict_rc != '0'
         # The defect this replaces (#316): the scheduled run exited 0 with
         # every real step skipped, so a badge asserting "the SLA alarm ran"
         # was green for months while nothing measured anything.
