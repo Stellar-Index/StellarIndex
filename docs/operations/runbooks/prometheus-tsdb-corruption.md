@@ -1,7 +1,7 @@
 ---
 title: Runbook — prometheus-down (TSDB corruption)
-last_verified: 2026-05-10
-status: ratified
+last_verified: 2026-08-29
+status: current
 severity: P1
 ---
 
@@ -20,9 +20,9 @@ alert was deaf for 18 h.
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `prometheus_down` (deadman switch) |
+| Alert | none fires — no `prometheus_down` alert rule exists in either tree, and there is no per-unit Healthchecks heartbeat for `prometheus.service`. Detection is the `stellarindex_deadmansswitch` heartbeat going SILENT (see [deadmansswitch.md](deadmansswitch.md)). |
 | Severity | P1 |
-| Detected by | Healthchecks.io heartbeat on `prometheus.service`; alertmanager's deadmansswitch |
+| Detected by | `stellarindex_deadmansswitch` (`configs/prometheus/rules.r1/meta.yml`, group `stellarindex.meta`; multi-host twin in `deploy/monitoring/rules/`) — a `vector(1)` alert that fires constantly and routes to Alertmanager's `deadmansswitch` receiver every 60 s. When Prometheus is down, the heartbeat STOPS arriving at Healthchecks.io, which pages via its own out-of-band channel. |
 | Typical MTTR | 5 min (quick path) / 30 min (rebuild) |
 | Impact | Zero metrics collected. Every metric-based alert is silently deaf. /v1/status returns degraded. Status page tier probes blind. |
 
@@ -115,7 +115,13 @@ uses `Restart=on-failure` + `RestartSec=5s` — but that role expects
 `/usr/local/bin/prometheus` (binary install), and r1 is running the
 apt-installed binary at `/usr/bin/prometheus`.
 
-Quick fix on r1 (no Ansible run needed):
+Quick fix on r1 (no Ansible run needed). Note this drop-in is a
+SANCTIONED out-of-band exception: `configs/ansible/playbooks/monitoring.yml`
+is explicitly NOT runnable against `inventory/r1.yml` (OBS-02,
+audit-2026-07-23 — r1's Prometheus/Alertmanager are managed
+out-of-band today), so the weekly `ansible-drift.yml` gate does
+not cover this file and hand-applying it will not page Monday
+morning:
 
 ```sh
 mkdir -p /etc/systemd/system/prometheus.service.d
@@ -146,22 +152,43 @@ For a postmortem, capture:
 ## Known false-positive patterns
 
 - A normal `systemctl restart prometheus` (e.g. config reload via
-  the wrong verb) fires the deadman briefly but recovers in ~5 s.
-- Backup pruning that removes the deadman heartbeat target
-  (`/etc/healthchecks/prometheus.uuid`) — alertmanager fires but
-  prometheus is fine.
+  the wrong verb) pauses the deadman heartbeat briefly but it
+  recovers in ~5 s — well inside the Healthchecks.io grace period.
+- A broken/rotated Alertmanager `deadmansswitch` receiver URL
+  (`configs/alertmanager/alertmanager.r1.yml`) — Healthchecks.io
+  reports the heartbeat silent even though Prometheus (and the
+  `stellarindex_deadmansswitch` rule) are perfectly healthy. Check
+  Alertmanager's notification log before assuming Prometheus is
+  down. (An earlier revision pointed at
+  `/etc/healthchecks/prometheus.uuid` — that file exists nowhere;
+  the heartbeat plumbing is the Alertmanager receiver.)
 
 ## Related
 
 - `docs/operations/runbooks/redis-write-blocked-disk-full.md` —
   same disk-full SEV-2 family.
-- `docs/operations/incidents/2026-05-09-disk-full-redis-blocked.md`
-  — original incident that corrupted the TSDB.
+- `internal/incidents/data/2026-05-10-redis-writes-blocked-disk-full.md`
+  — original incident post-mortem (embedded; served via
+  `/v1/incidents`) whose disk-full corrupted the TSDB.
 - ADR-0002 (S3-compatible storage) — TSDB lives on local disk, so
   it's exposed to local-disk pressure events the rest of the
   pipeline isn't.
 
 ## Changelog
 
+- 2026-08-29 — re-verified against HEAD (Wave I). At-a-glance
+  corrected: no `prometheus_down` alert rule exists and there is
+  no per-unit Healthchecks heartbeat for `prometheus.service` —
+  real detection is the `stellarindex_deadmansswitch` heartbeat
+  (`vector(1)` → Alertmanager `deadmansswitch` receiver every
+  60 s) going silent at Healthchecks.io. The phantom
+  `/etc/healthchecks/prometheus.uuid` false-positive restated
+  against the Alertmanager receiver URL; dead incident link
+  repointed at
+  `internal/incidents/data/2026-05-10-redis-writes-blocked-disk-full.md`;
+  noted the systemd drop-in is a sanctioned out-of-band exception
+  (monitoring.yml not runnable against r1 per OBS-02 — the weekly
+  ansible-drift gate does not cover it). Status promoted
+  ratified → current.
 - 2026-05-10 — initial draft from r1's 18 h Prometheus outage
   caused by the 2026-05-09 disk-full SEV-2.
