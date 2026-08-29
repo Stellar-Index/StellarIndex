@@ -213,8 +213,35 @@ SQL
 # freshness IS the served SEP-41 supply's freshness. Live-written by the
 # indexer; if it stalls, served SEP-41 supply goes stale. (Threshold generous —
 # supply events are bursty.)
-SF_AGE=$(curl -sS --max-time 15 http://localhost:8123/ --data-binary \
-  "SELECT toUInt64(dateDiff('second', max(ingested_at), now())) FROM stellar.supply_flows" 2>/dev/null | tr -d '[:space:]')
+#
+# BEST-EFFORT, and it has to stay that way: this is the only non-Postgres
+# probe in the script, and ClickHouse is a separate daemon that can be down
+# while every Postgres-derived gauge above is perfectly computable. A bare
+# `SF_AGE=$(curl … | tr …)` assignment took curl's status under
+# `set -euo pipefail`, so a CH outage ABORTED the script here — the EXIT
+# trap removed $TMP, the atomic `mv` below never ran, and node_exporter
+# went on re-serving the PREVIOUS data_freshness.prom verbatim. Every gauge
+# then FROZE at its last value rather than going absent: stale sources kept
+# reading `stellarindex_data_freshness_stale 0`, and the watchdog's own
+# meta-alert (absent_over_time(...[45m])) could not fire either, because
+# the series were still present. One ClickHouse outage silenced the whole
+# "never get behind" layer (Wave L, #319).
+#
+# Running the probe as an `if` condition exempts it from `set -e`; `-f`
+# turns an HTTP 5xx into a failure instead of an error body that would be
+# emitted as a metric value.
+SF_AGE=""
+if ! SF_AGE=$(curl -sS -f --max-time 15 http://localhost:8123/ --data-binary \
+  "SELECT toUInt64(dateDiff('second', max(ingested_at), now())) FROM stellar.supply_flows" | tr -d '[:space:]'); then
+  echo "data-freshness: ClickHouse supply_flows probe failed — sep41_supply gauges skipped this tick" >&2
+  SF_AGE=""
+fi
+# Digits only. A partial or non-numeric body must not reach the textfile:
+# ONE unparseable sample makes node_exporter reject the WHOLE file, taking
+# every other gauge in it down with the probe.
+case "$SF_AGE" in
+  '' | *[!0-9]*) SF_AGE="" ;;
+esac
 if [ -n "$SF_AGE" ]; then
   printf 'stellarindex_data_freshness_age_seconds{domain="sep41_supply",source="supply_flows"} %s\n' "$SF_AGE" >> "$TMP"
   printf 'stellarindex_data_freshness_stale{domain="sep41_supply",source="supply_flows"} %s\n' \
