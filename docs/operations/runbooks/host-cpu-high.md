@@ -1,7 +1,7 @@
 ---
 title: Runbook — host-cpu-high
-last_verified: 2026-05-03
-status: draft
+last_verified: 2026-08-29
+status: current
 severity: P3
 ---
 
@@ -13,14 +13,15 @@ severity: P3
 | ----- | ----- |
 | Alert | `stellarindex_host_cpu_high` |
 | Severity | P3 (informational) |
-| Detected by | `deploy/monitoring/rules/infra.yml` |
+| Detected by | `configs/prometheus/rules.r1/infra.yml` (group `stellarindex.infra`; `severity: informational`, `for: 10m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/infra.yml`. |
 | Typical MTTR | 30 min – days (depends on whether it's fixable code vs scale-up) |
 | Impact | Not directly customer-visible. High CPU usually precedes latency degradation — if `api-latency.md` hasn't fired yet, you have lead time. |
 
 ## Symptoms
 
-- `100 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100 > 90`
-  sustained 10 min.
+- `100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 90`
+  sustained 10 min (the deployed expr — per-instance average across
+  all cores).
 - Load avg on the host exceeds CPU count.
 - The same host's `iowait` / `softirq` may also be elevated
   (useful for root-causing).
@@ -29,14 +30,29 @@ severity: P3
 
 ```sh
 # Which process is eating CPU?
-ssh <host> 'top -b -n1 -o %CPU | head -20'
+ssh root@136.243.90.96 'top -b -n1 -o %CPU | head -20'
 
 # Per-service breakdown (systemd cgroup view)
-ssh <host> 'systemd-cgtop --order=cpu --iterations=2 -n 20'
+ssh root@136.243.90.96 'systemd-cgtop --order=cpu --iterations=2 -n 20'
 
 # Is it user-CPU, system-CPU, iowait, or softirq?
-ssh <host> 'mpstat 1 5'
+ssh root@136.243.90.96 'mpstat 1 5'
 ```
+
+**Heavy one-shot jobs on r1 are expected consumers.** Ops
+one-shots (re-derives, backfills, bulk SQL, census walks) run
+under `/usr/local/sbin/run-heavy-job.sh`, a transient systemd
+scope with **batch-class CPU/IO weights (CPUWeight=25 /
+IOWeight=25) and MemoryMax=20G**, while galexie carries elevated
+CPU/IO weight + `MemoryLow=16G`. A `run-heavy-*.scope` dominating
+`systemd-cgtop` is a deprioritised batch job doing its work —
+expected, not a fault; the scheduler will preempt it for the
+service units. The classic real fault is the inverse: **a heavy
+binary run raw (unwrapped)**, which is how the 2026-07-05
+unwindowed re-derive ballooned and wedged galexie's captive core
+for 11 h. If the top CPU consumer is a heavy ops process NOT
+inside a `run-heavy-*.scope`, stop it and re-run under the
+wrapper.
 
 ## Typical root causes
 
@@ -62,11 +78,18 @@ ssh <host> 'mpstat 1 5'
    a specific statement with high `mean_exec_time`.
 
 4. **Compression / backup window** on a Postgres host.
-   `pg_repack`, `pgBackRest --process-max=4`, or TimescaleDB
-   compression jobs are CPU-intensive on purpose.
+   `pgBackRest --process-max=4` or TimescaleDB compression jobs
+   are CPU-intensive on purpose. (`pg_repack` is not installed
+   anywhere in our fleet — don't go hunting for it.)
 
-5. **Noisy neighbor** (colo / shared infra only) — another tenant
-   saturated the physical cores; we're getting CPU steal.
+5. **Unwrapped heavy one-shot** — see the callout in Quick
+   diagnosis: a heavy ops job run raw instead of under
+   `run-heavy-job.sh` competes with the service units at full
+   weight (the 2026-07-05 galexie wedge).
+
+6. **Noisy neighbor / CPU steal** — **not applicable on r1** (a
+   dedicated Hetzner box; `%steal` is structurally 0). Only
+   relevant for future shared/virtualised hosts.
    - Signal: `mpstat 1` shows `%steal` > 0.
 
 ## Mitigation
@@ -78,7 +101,9 @@ ssh <host> 'mpstat 1 5'
 - [ ] Step 3 — if captive-core catchup: wait. Usually resolves in
       30–120 min.
 - [ ] Step 4 — if Postgres plan regression: `ANALYZE` the affected
-      tables, or `pg_hint_plan` the offending statement.
+      tables (`runuser -u postgres -- psql -d stellarindex -c
+      'ANALYZE <table>'`); if the plan is still bad, rewrite the
+      offending query — `pg_hint_plan` is not installed anywhere.
 - [ ] Step 5 — if compression/backup: verify it completes; if it's
       running for hours, tune `--process-max` down.
 - [ ] Verification: CPU drops back under 70 % sustained; alert
@@ -114,3 +139,16 @@ ssh <host> 'mpstat 1 5'
   on-host captive on r1 since 2026-04-23) rather than the removed
   stellar-rpc / stellar-core daemons. Related section flags those
   as Phase-3-only.
+- 2026-08-29 — re-verified against HEAD. Detected-by converted to
+  the dual-tree convention (`rules.r1/infra.yml`, group
+  `stellarindex.infra`, `severity: informational`, `for: 10m`) and
+  the Symptoms expr now quotes the deployed rule verbatim
+  (including `avg by (instance)`). Commands use the r1 ssh shape.
+  Added the missing r1 heavy-job paragraph: one-shots run under
+  `/usr/local/sbin/run-heavy-job.sh` (batch-class CPU/IO weights,
+  MemoryMax=20G) with galexie at elevated weight + MemoryLow=16G —
+  a scoped heavy job dominating cgtop is expected; an UNWRAPPED
+  one is the classic fault (2026-07-05 galexie wedge). `pg_repack`
+  / `pg_hint_plan` removed (installed nowhere) in favour of plain
+  ANALYZE + query rewrite; noisy-neighbor/CPU-steal marked
+  non-applicable on the dedicated r1 box.

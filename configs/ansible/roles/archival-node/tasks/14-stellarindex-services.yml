@@ -15,6 +15,44 @@
 #     the schema is at the latest version).
 #   - The systemd unit handler restarts only on unit-file change.
 
+- name: Refuse to bootstrap binaries from a dirty working tree (localhost)
+  # The bootstrap path builds + ships whatever is in the OPERATOR'S
+  # checkout and (with stellarindex_apply_migrations) applies ITS
+  # migrations. A half-done branch with an uncommitted migration would
+  # reach the host under a version nobody can reproduce — the same
+  # incident class the migrations task below records for prod
+  # (2026-08-28 audit, deploy-ansible-drift-3). Refuse unless the tree is
+  # clean; for a deliberate unreleased-branch bring-up pass
+  # `-e stellarindex_bootstrap_allow_dirty_tree=true` (the sidecar then
+  # records `-dirty`). `bin/` is gitignored, so prior build output does
+  # not trip this.
+  when:
+    - manage_stellarindex_binaries | default(false) | bool
+    - not (stellarindex_bootstrap_allow_dirty_tree | default(false) | bool)
+  delegate_to: localhost
+  become: false
+  ansible.builtin.command:
+    chdir: "{{ playbook_dir }}/../../.."
+    argv: [git, status, --porcelain]
+  register: stellarindex_bootstrap_tree
+  changed_when: false
+  check_mode: false
+  failed_when: stellarindex_bootstrap_tree.stdout | trim | length > 0
+
+- name: Resolve the bootstrap build version (localhost)
+  # Written to the deployed-versions sidecars after install, so a later
+  # deploy.yml run labels its rollback copy with what was ACTUALLY running
+  # instead of `untracked-<timestamp>` (docs/operations/deployed-versions.md).
+  when: manage_stellarindex_binaries | default(false) | bool
+  delegate_to: localhost
+  become: false
+  ansible.builtin.command:
+    chdir: "{{ playbook_dir }}/../../.."
+    argv: [git, describe, --tags, --always, --dirty]
+  register: stellarindex_bootstrap_describe
+  changed_when: false
+  check_mode: false
+
 - name: Cross-compile stellarindex-* binaries (localhost)
   # 2026-07-03 drift audit: binary builds/installs moved to the
   # deploy.yml GitHub workflow (release-artifact + SHA256SUMS + staged
@@ -80,7 +118,45 @@
     - migrate
     - ops
     - sla-probe
-  notify: Restart stellarindex-indexer
+  # Every long-running unit whose binary this task replaces. It used to
+  # notify only the indexer, so a bootstrap apply left the api (and
+  # aggregator) units running the OLD binary from memory while
+  # /usr/local/bin held the new one — the unit tasks below use
+  # `state: started`, which never restarts a running unit (2026-08-28
+  # audit, deploy-ansible-drift-3). The aggregator handler self-gates on
+  # run_aggregator (no-op on test nets).
+  notify:
+    - Restart stellarindex-indexer
+    - Restart stellarindex-aggregator
+    - Restart stellarindex-api
+
+- name: Ensure deployed-versions directory exists (bootstrap)
+  when: manage_stellarindex_binaries | default(false) | bool
+  ansible.builtin.file:
+    path: /var/lib/stellarindex/deployed-versions
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Write deployed-versions sidecars for bootstrap-built binaries
+  # Same sidecar deploy-one-binary.yml writes (bare version string, one
+  # file per binary) — its value is the controller checkout's
+  # `git describe --tags --always --dirty`, e.g. v0.47.2-3-g1a2b3c4-dirty.
+  when: manage_stellarindex_binaries | default(false) | bool
+  ansible.builtin.copy:
+    content: "{{ stellarindex_bootstrap_describe.stdout | trim }}"
+    dest: "/var/lib/stellarindex/deployed-versions/stellarindex-{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - indexer
+    - aggregator
+    - api
+    - migrate
+    - ops
+    - sla-probe
 
 # ──── Migrations (versioned schema for trades + oracle_updates + CAGGs) ───
 
@@ -812,8 +888,11 @@
     minute: "23"
     hour: "4"
     weekday: "0"   # Sunday morning
+    # The -ops file is read VERBATIM (systemd EnvironmentFile syntax is not
+    # shell — `source` would expand `$` / split on `;` inside a secret;
+    # deploy-ansible-secrets-5). No `%` here: cron turns it into a newline.
     job: >-
-      bash -c 'set -a; source /etc/default/stellarindex-ops; set +a;
+      bash -c 'while IFS= read -r l || [ -n "$l" ]; do case "$l" in [A-Za-z_]*=*) export "$l";; esac; done < /etc/default/stellarindex-ops;
       /usr/local/bin/stellarindex-ops verify-archive
       -config /etc/stellarindex.toml
       -tier peers

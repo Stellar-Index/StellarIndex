@@ -1,6 +1,6 @@
 ---
 title: Runbook — ingestion-lag
-last_verified: 2026-05-03
+last_verified: 2026-08-29
 status: archived
 severity: P2
 ---
@@ -18,7 +18,7 @@ replacement per-source lag signal lands.
 | ----- | ----- |
 | Alert | `stellarindex_ingestion_lag_high` |
 | Severity | P2 (ticket) |
-| Detected by | `deploy/monitoring/rules/ingestion.yml` |
+| Detected by | — (retired; no rule in either tree — neither `deploy/monitoring/rules/` nor `configs/prometheus/rules.r1/` defines `stellarindex_ingestion_lag_high`) |
 | Typical MTTR | 15–60 min (backfill), longer if the bottleneck is write-side |
 | Impact | A specific source is > 1000 ledgers behind the tip. At ~5 s per ledger that's ~1.4 h of freshness debt for the assets that source quotes. `/v1/price` for those assets will serve older `observed_at`s; aggregates including that source will under-weight its recent activity until it catches up. |
 
@@ -47,6 +47,9 @@ stellarindex-ops rpc-probe http://stellar-rpc:8000
 
 # Is persistence the bottleneck (insert errors rising)?
 curl -s http://indexer:9464/metrics | grep insert_errors_total
+# (Hostnames above are historical — r1 today:
+#  curl -s localhost:9464/metrics | grep insert_errors_total
+#  on the box; the rpc-probe line targets a service r1 no longer runs.)
 ```
 
 ## Typical root causes
@@ -71,7 +74,7 @@ curl -s http://indexer:9464/metrics | grep insert_errors_total
    - Signal: insert-rate drops but decode-rate stays normal;
      backend time in `pg_stat_activity` shows `IO:DataFileRead`
      or `Lock:tuple` waits.
-   - Mitigation: `pg_conns-saturated.md` / `replica-lag.md` /
+   - Mitigation: `pg-conns-saturated.md` / `replica-lag.md` /
      `db-disk-full.md` depending on the underlying storage issue.
 
 4. **Upstream RPC is lagging.** We can process at any speed we
@@ -105,6 +108,16 @@ curl -s http://indexer:9464/metrics | grep insert_errors_total
       The two commands stack to a manual replay; an end-to-end
       "auto-detect-and-backfill" wrapper is post-launch scope —
       operators run the two-step procedure during incidents.
+
+      **ADR-0032 split:** for **projected Soroban sources** (the
+      `IsProjectedEvent` set — soroswap, blend, phoenix, comet,
+      cctp, rozo, defindex, sep41, reflector/redstone, …) catch-up
+      is `stellarindex-ops projector-replay -source <name>
+      -from <ledger>`, NOT `backfill`; and `backfill` refuses any
+      Soroban source whose `BackfillSafe` registry flag is false
+      (unaudited WASM history). On r1 either command runs under
+      the mandatory heavy-job wrapper:
+      `/usr/local/sbin/run-heavy-job.sh <name> <cmd…>`.
 - [ ] Verification: lag drops below 100 ledgers sustained 15 min.
 
 ## Root cause analysis
@@ -136,3 +149,14 @@ curl -s http://indexer:9464/metrics | grep insert_errors_total
 ## Changelog
 
 - 2026-04-23 — initial draft.
+- 2026-08-29 — re-verified (still archived). Detected-by corrected
+  to "retired; no rule in either tree" — the cited
+  `deploy/monitoring/rules/ingestion.yml` no longer defines this
+  alert, nor does `rules.r1/`. Dead link `pg_conns-saturated.md` →
+  `pg-conns-saturated.md`. Mitigation step 4 gained the ADR-0032
+  split (projected sources catch up via `projector-replay`;
+  `backfill` refuses non-`BackfillSafe` Soroban sources; both run
+  under `/usr/local/sbin/run-heavy-job.sh` on r1). Diagnosis block
+  annotated: `prometheus:9090` / `indexer:9464` / `stellar-rpc:8000`
+  hostnames are historical — on r1 use
+  `curl -s localhost:9464/metrics | grep insert_errors_total`.

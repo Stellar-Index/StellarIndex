@@ -178,6 +178,16 @@ for an addition._
   now 30 feeds; the "19-feed" figure in §2 is historical to the
   2026-05-22 capture — the live list is `redstone.feedRegistry`.
   for the live list.
+- 2026-08-29 — added `XAU` (spot gold, 1 troy oz in USD; ISO-4217
+  X-code). Source is the **Reflector FX** oracle, not RedStone — every
+  reflector-fx event carries an XAU slot (2026-04-23 fixtures),
+  recorded as `raw:XAU` since PR #247 and paged by
+  `stellarindex_ingestion_oracle_unknown_symbols` on r1 v0.48.0.
+  Decision: a commodity reference is a real-world asset, not a
+  currency (ADR-0010 keeps it off the fiat list — its tests pin that)
+  and not a cryptocurrency, so it shares the `rwa:` namespace with
+  `XAUm`; the two stay DISTINCT assets (spot vs the Matrixdock token),
+  resolved via `canonical.MapOracleSymbol` (fiat → crypto → RWA → raw).
 
 ## References
 

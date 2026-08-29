@@ -73,7 +73,7 @@ raidz expansion. Never propose a drive upgrade.
 | `tx_hash` → `FixedString(32)` | 🏗️ | ~0.6–1 TiB | Stored as 64-char hex today; unique-per-row so it barely compresses. Schema + binary migration |
 | TimescaleDB compression policies | ⬜ | ~0.2–0.4 TiB | 19 hypertables are compression-*eligible* but have no policy. Staged: `scripts/ops/add-missing-compression-policies.sql`. **Run post-D4** |
 | CH `system.*_log` TTL | ⬜ | ~40 GiB recurring | Drop-in staged; applies at next operator-coordinated CH restart via F2 |
-| `max_partition_size_to_drop` raised to 1 TiB | ✅ | — | Needed for D2's `REPLACE PARTITION`; deliberately not unlimited |
+| `max_partition_size_to_drop` raised to 1 TiB | ❌ reverted | — | Was raised by hand for D2's `REPLACE PARTITION` and never lowered; 2026-08-29 audit pinned both `max_*_size_to_drop` back to the 50 GB default via ansible. Planned big drops use the force flag: [clickhouse-destructive-ddl.md](clickhouse-destructive-ddl.md) |
 
 ## 5. Infrastructure & horizontal scale — R2 / R3 / R4
 

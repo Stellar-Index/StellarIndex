@@ -1,7 +1,7 @@
 ---
 title: Runbook — core-peers
-last_verified: 2026-05-03
-status: draft
+last_verified: 2026-08-29
+status: current (alert inert on r1)
 severity: P2
 ---
 
@@ -15,10 +15,14 @@ severity: P2
 > connects out for ledger replay but does not expose a `/peers`
 > endpoint to the prometheus exporter.
 >
-> The alert remains in `deploy/monitoring/rules/stellar.yml` for
-> Phase-3 (Tier-1 validator rollout, ADR-0004). Until a validator
-> is brought online, treat any alert that reaches you for this
-> rule as a misconfiguration rather than a real signal.
+> The alert remains in BOTH rule trees
+> (`configs/prometheus/rules.r1/stellar.yml` — the file r1 loads —
+> and the multi-host twin `deploy/monitoring/rules/stellar.yml`)
+> for Phase-3 (Tier-1 validator rollout, ADR-0004); the metric is
+> allowlisted as `KNOWN_INERT` in
+> `scripts/ci/lint-metric-refs.sh`. Until a validator is brought
+> online, treat any alert that reaches you for this rule as a
+> misconfiguration rather than a real signal.
 
 ## At a glance
 
@@ -26,7 +30,7 @@ severity: P2
 | ----- | ----- |
 | Alert | `stellarindex_stellar_core_peers_low` |
 | Severity | P2 (ticket) |
-| Detected by | `deploy/monitoring/rules/stellar.yml` |
+| Detected by | `configs/prometheus/rules.r1/stellar.yml` (group `stellarindex.stellar`; `severity: ticket`, `for: 5m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/stellar.yml`. **Inert on r1**: `stellarindex_stellar_core_peer_count` has no producer (`KNOWN_INERT` in `scripts/ci/lint-metric-refs.sh`). |
 | Typical MTTR | 15–60 min |
 | Impact | stellar-core connected to < 5 peers. It may still be tracking the ledger fine, but its view of quorum is fragile — any further partition and we lose sync. Pre-emptive ticket, not an outage. |
 
@@ -58,8 +62,11 @@ ssh root@val-01 "curl -s http://localhost:11626/peers | jq"
 ssh root@val-01 "nc -zv <a-random-quorum-peer> 11625"
 # Should report "succeeded", or refuse / timeout cleanly.
 
-# Did we recently change the preferred-peer list?
-ssh root@val-01 "grep -A20 'PREFERRED_PEERS' /etc/stellar-core/stellar-core.cfg"
+# Did we recently change the known-peer list? (The ansible role
+# renders the config to /etc/stellar/stellar-core.cfg and its
+# template defines KNOWN_PEERS — there is no PREFERRED_PEERS
+# anywhere in our config.)
+ssh root@val-01 "grep -A20 'KNOWN_PEERS' /etc/stellar/stellar-core.cfg"
 
 # Is a firewall dropping our outbound?
 ssh root@val-01 "journalctl -u stellar-core -n 200 --no-pager \
@@ -72,10 +79,10 @@ ssh root@val-01 "journalctl -u stellar-core -n 200 --no-pager \
    the validator host or the colo perimeter dropped our outbound
    11625.
 
-2. **Preferred-peer list drift**. The SDF / LOBSTR / Satoshipay
+2. **Known-peer list drift**. The SDF / LOBSTR / Satoshipay
    peers we explicitly trust changed IPs or retired them.
-   - Mitigation: update `PREFERRED_PEERS` in
-     `archival-node` role's stellar-core config template +
+   - Mitigation: update `KNOWN_PEERS` in the
+     `archival-node` role's `stellar-core.cfg.j2` template +
      re-apply.
 
 3. **Large-scale network partition.** We can reach a few peers
@@ -93,8 +100,8 @@ ssh root@val-01 "journalctl -u stellar-core -n 200 --no-pager \
 - [ ] Step 2 — if firewall: unblock. Check the host's local rules
       (`iptables -L -n`, `ufw status`) and the colo perimeter
       egress policy.
-- [ ] Step 3 — if preferred-peer list is stale: update config in
-      the `archival-node` ansible role + apply with
+- [ ] Step 3 — if the `KNOWN_PEERS` list is stale: update the
+      template in the `archival-node` ansible role + apply with
       `--limit val-XX` rolling across hosts so quorum stays up.
 - [ ] Step 4 — if we're the one getting dropped: check our own
       core logs for invalid-ledger or misbehaviour warnings, then
@@ -130,3 +137,13 @@ ssh root@val-01 "journalctl -u stellar-core -n 200 --no-pager \
   `deploy/k8s/network-policy.yaml` was a fictional file —
   iptables / ufw + the colo perimeter are the real egress
   controls.
+- 2026-08-29 — re-verified against HEAD. `PREFERRED_PEERS` →
+  `KNOWN_PEERS` throughout (the role's `stellar-core.cfg.j2`
+  template defines KNOWN_PEERS; PREFERRED_PEERS appears nowhere in
+  the repo) and the config path fixed to
+  `/etc/stellar/stellar-core.cfg` (where `tasks/06-stellar-core.yml`
+  renders it; `/etc/stellar-core/` was never the destination).
+  Banner + Detected-by converted to the dual-tree convention
+  (`rules.r1/stellar.yml`, group `stellarindex.stellar`,
+  `severity: ticket`, `for: 5m`; metric `KNOWN_INERT` in
+  lint-metric-refs.sh).
