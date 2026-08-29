@@ -131,6 +131,16 @@
     - pgbackrest_manage_conf | default(false)
     - pgbackrest_repo2_s3_bucket | default('') != ''
 
+# `diff: false` (audit-2026-08-28 backup-restore-7): the rendered file
+# carries repo1/repo2-cipher-pass and the repo2 S3 key pair verbatim —
+# pgbackrest reads them from this postgres-owned 0640 file, and there is
+# no env-file form that also reaches archive_command inside the postgres
+# server process. Without this keyword the documented `--check --diff`
+# review (README, operator register, the weekly ansible-drift job) prints
+# the full before/after content — i.e. the ONLY key that decrypts the
+# survival backup — into shell scrollback and the CI job log. The
+# changed/ok verdict stays visible; only the hunk body is suppressed.
+# scripts/ci/lint-ansible-secret-diff.py pins this.
 - name: Install pgBackRest core config (repo1 + optional offsite repo2)
   ansible.builtin.template:
     src: pgbackrest.conf.j2
@@ -138,6 +148,7 @@
     owner: postgres
     group: postgres
     mode: "0640"
+  diff: false
   when: pgbackrest_manage_conf | default(false)
 
 # ─── ClickHouse lake protection: schema + state snapshot ──────────────

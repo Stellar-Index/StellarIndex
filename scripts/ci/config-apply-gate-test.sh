@@ -17,7 +17,17 @@
 #   - a diff under roles/archival-node/tasks/ (the 2026-08-28 hole)
 #     fails un-acknowledged;
 #   - a diff under roles/archival-node/files/ fails un-acknowledged;
-#   - a diff that only touches Go source is NOT a config surface;
+#   - (audit deploy-ansible-gate-4, 2026-08-28) a diff under
+#     roles/archival-node/defaults/, handlers/, inventory/, a sibling
+#     role, configs/healthchecks/, or one of the repo scripts the role
+#     copies onto the host fails un-acknowledged — each of these renders
+#     or lands on the host and none is applied by deploy-binary.yml;
+#   - a diff that only touches Go source, or only the deploy playbook
+#     the deploy itself runs, is NOT a config surface;
+#   - a skip-ahead deploy diffs against the host-reported baseline (3rd
+#     arg) — ancestry alone misses config changed in the skipped tags;
+#   - an unresolvable version or baseline, i.e. a diff the gate cannot
+#     see, FAILS rather than passing as "no changes" (fail-closed);
 #   - a first release (no prior tag) skips rather than failing.
 #
 # Run: bash scripts/ci/config-apply-gate-test.sh
@@ -45,12 +55,22 @@ mkrepo() {
     git config user.name t
     git config commit.gpgsign false
     git config tag.gpgsign false
-    mkdir -p configs/ansible/roles/archival-node/{templates,tasks,files} \
+    mkdir -p configs/ansible/roles/archival-node/{templates,tasks,files,defaults,handlers} \
+      configs/ansible/roles/prometheus/templates configs/ansible/inventory \
+      configs/ansible/playbooks configs/healthchecks scripts/ops scripts/dev \
       configs/prometheus/rules.r1 deploy/monitoring/rules deploy/systemd \
       deploy/clickhouse internal/x
     printf 'v1\n' > configs/ansible/roles/archival-node/templates/stellarindex.toml.j2
     printf 'v1\n' > configs/ansible/roles/archival-node/tasks/10-observability.yml
     printf 'v1\n' > configs/ansible/roles/archival-node/files/node-healthcheck.sh
+    printf 'v1\n' > configs/ansible/roles/archival-node/defaults/main.yml
+    printf 'v1\n' > configs/ansible/roles/archival-node/handlers/main.yml
+    printf 'v1\n' > configs/ansible/roles/prometheus/templates/prometheus.yml.j2
+    printf 'v1\n' > configs/ansible/inventory/r1.yml
+    printf 'v1\n' > configs/ansible/playbooks/deploy-binary.yml
+    printf 'v1\n' > configs/healthchecks/smoke.sh
+    printf 'v1\n' > scripts/ops/config-assertions.sh
+    printf 'v1\n' > scripts/dev/r1-smoke.sh
     printf 'v1\n' > deploy/systemd/stellarindex-api.service
     printf 'package x\n' > internal/x/x.go
     git add -A
@@ -59,21 +79,26 @@ mkrepo() {
   )
 }
 
-# release <path> — edit <path>, commit, tag v0.2.0 (the deploying version).
-release() {
+# releaseAs <tag> <path> — edit <path>, commit, tag <tag>.
+releaseAs() {
   (
     cd "$TMP/repo" || exit 1
-    printf 'v2\n' > "$1"
+    printf '%s\n' "$1" > "$2"
     git add -A
-    git commit -qm "change $1"
-    git tag v0.2.0
+    git commit -qm "change $2"
+    git tag "$1"
   )
+}
+
+# release <path> — edit <path>, commit, tag v0.2.0 (the deploying version).
+release() {
+  releaseAs v0.2.0 "$1"
 }
 
 # runGate <version> [ack] → sets RC + OUT. GITHUB_STEP_SUMMARY is pointed
 # at a scratch file so the summary block does not pollute OUT.
 runGate() {
-  OUT="$(cd "$TMP/repo" && GITHUB_STEP_SUMMARY="$TMP/summary" bash "$GATE" "$1" "${2:-false}" 2>&1)"
+  OUT="$(cd "$TMP/repo" && GITHUB_STEP_SUMMARY="$TMP/summary" bash "$GATE" "$1" "${2:-false}" "${3:-}" 2>&1)"
   RC=$?
 }
 
@@ -132,6 +157,53 @@ expect "deploy/systemd/ change fails un-acknowledged" 1 "changed 1 config surfac
 mkrepo
 runGate v0.1.0
 expect "no previous tag skips" 0 "skipping config-drift gate"
+
+# --- 7. deploy-ansible-gate-4: surfaces the role renders/copies that the
+#        list did not name. One fixture per added entry; a defaults-only
+#        release (e.g. a galexie_ledgers_per_file bump that re-renders
+#        galexie.toml) used to pass as "binary deploy is complete".
+for p in \
+  configs/ansible/roles/archival-node/defaults/main.yml \
+  configs/ansible/roles/archival-node/handlers/main.yml \
+  configs/ansible/roles/prometheus/templates/prometheus.yml.j2 \
+  configs/ansible/inventory/r1.yml \
+  configs/healthchecks/smoke.sh \
+  scripts/ops/config-assertions.sh \
+  scripts/dev/r1-smoke.sh; do
+  mkrepo
+  release "$p"
+  runGate v0.2.0
+  expect "$p change fails un-acknowledged" 1 "changed 1 config surface(s)"
+done
+
+# --- 8. the deploy playbook is what the deploy RUNS — applied, not dead;
+#        listing it would make every deploy-mechanics change a false ack.
+mkrepo
+release configs/ansible/playbooks/deploy-binary.yml
+runGate v0.2.0
+expect "playbooks/deploy-binary.yml change is not a config surface" 0 "no config-surface changes"
+
+# --- 9. skip-ahead: host is on v0.1.0, v0.2.0 changed defaults/, we deploy
+#        v0.3.0 (Go-only). Ancestry diffs v0.2.0..v0.3.0 and sees nothing;
+#        the host-reported baseline sees the v0.2.0 config change.
+mkrepo
+releaseAs v0.2.0 configs/ansible/roles/archival-node/defaults/main.yml
+releaseAs v0.3.0 internal/x/x.go
+runGate v0.3.0 false v0.1.0
+expect "skip-ahead deploy fails against host baseline" 1 "changed 1 config surface(s)"
+expect "skip-ahead names the host baseline" 1 "baseline: v0.1.0 (host-reported live version)"
+runGate v0.3.0 true v0.1.0
+expect "skip-ahead passes with config_acknowledged=true" 0 "config-apply acknowledged"
+runGate v0.3.0
+expect "ancestry baseline is printed when no host version is given" 0 "baseline: v0.2.0 (previous release tag by ancestry"
+
+# --- 10. fail-closed: a diff the gate cannot see is an error, not a green.
+mkrepo
+release internal/x/x.go
+runGate vNOPE
+expect "unresolvable version fails closed" 1 "does not resolve to a commit"
+runGate v0.2.0 false vNOPE
+expect "unresolvable host baseline fails closed" 1 "does not resolve to a commit"
 
 echo
 echo "config-apply-gate-test: $pass passed, $fail failed"

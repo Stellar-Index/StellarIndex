@@ -43,6 +43,8 @@ BINARIES := \
 #                              ADR-0033/0016) had zero executing coverage
 #                              until this package was listed.
 INT_TEST_PKGS := ./test/integration/... ./cmd/stellarindex-ops/... ./internal/ops/archive/...
+SHARD ?= 0
+SHARDS ?= 4
 
 # Default test-cover threshold per package (staticcheck in CI enforces the per-package floor)
 COVER_THRESHOLD := 70
@@ -120,12 +122,21 @@ test-integration: ## Integration tests (requires Docker; spins its own container
 	# fails on wall-clock stops being a signal. If this needs raising a
 	# third time, split the suite by package instead (the ops/archive
 	# packages are already separate targets and finish in seconds).
+	# 2026-08-29: CI did split it — 4-way by test name across runners
+	# (scripts/ci/integration-shard.sh, `integration-test-shard` matrix
+	# in ci.yml, ~20.5 min serial -> ~5 min per shard). This target stays
+	# the single-process developer entry point; SHARD/SHARDS below runs
+	# one CI slice locally.
 	#
 	# 20m: the suite's CUMULATIVE runtime crossed 10m on 2026-07-29 (the
 	# July campaign added container-backed tests, e.g. the CS-102
 	# watermark pair) — CI died at the go-test deadline with the running
 	# test only 4s in. This is suite growth, not a hang.
 	$(GO) test -tags=integration -timeout 35m $(INT_TEST_PKGS)
+
+.PHONY: test-integration-shard
+test-integration-shard: ## One CI shard of the integration suite: make test-integration-shard SHARD=0 SHARDS=4 (same flags as test-integration; see scripts/ci/integration-shard.sh)
+	./scripts/ci/integration-shard.sh $(SHARD) $(SHARDS)
 
 .PHONY: test-integration-build
 test-integration-build: ## Compile integration tests without running them (no Docker, fast). Catches build-tag breakage from interface changes.

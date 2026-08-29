@@ -11,6 +11,8 @@ func TestNewRWAAsset_accepted(t *testing.T) {
 		"BENJI", "iBENJI", "GILTS", "CETES", "KTB", "TESOURO", "USTRY", "SPXU",
 		// 2026-07-24 RedStone relayer expansion (ADR-0028 Amendments).
 		"USDY", "USST", "XAUm", "deJAAA", "deJTRSY",
+		// 2026-08-29 Reflector FX spot-gold slot (ADR-0028 Amendments).
+		"XAU",
 	}
 	for _, code := range cases {
 		t.Run(code, func(t *testing.T) {

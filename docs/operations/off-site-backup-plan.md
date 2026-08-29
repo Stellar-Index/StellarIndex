@@ -1,7 +1,7 @@
 ---
 title: Off-site (S3) backup plan
-last_verified: 2026-07-18
-status: proposed (execute after Phase A/D)
+last_verified: 2026-08-29
+status: §2 (Postgres → pgBackRest repo2/S3) LIVE on r1 2026-08-29; §1/§3/§4 proposed
 severity: P1
 ---
 
@@ -51,7 +51,25 @@ repo2-cipher-type=aes-256-cbc          # repo encryption (passphrase in vault)
 repo2-retention-full=4
 repo2-retention-diff=14
 ```
-Then `pgbackrest backup` writes both repos. **This also lets us safely prune repo1 (local) diffs** (the deferred Phase A step) once repo2 exists — the off-site copy becomes the deep-retention tier.
+**Status (2026-08-29): LIVE on r1** — pgBackRest 2.58, repo1 local +
+repo2 = S3 (rendered by `pgbackrest.conf.j2`, lean retention
+`repo2-retention-full=1` / `repo2-retention-diff=7` per #298, stanza
+upgraded, WAL archiving to both repos, first repo2 full taken by hand).
+
+> ⚠️ **`pgbackrest backup` does NOT write both repos.** The `backup`
+> command is single-repo: with no `--repo` it backs up only the
+> highest-priority repo (the lowest key, repo1). Only `archive-push`
+> (WAL) and `expire` operate on every repo by default (pgBackRest User
+> Guide, "Multiple Repositories"; `pgbackrest help backup repo`). The
+> nightly wrapper (`pgbackrest-backup.sh.j2`) therefore runs one
+> `--repo=N --type=$TYPE backup` per `repoN-*` key it finds in
+> `pgbackrest.conf` — repo1 then repo2, diff Mon–Sat / full Sunday on
+> both, expire per repo against that repo's own retention — and emits
+> `stellarindex_pgbackrest_backup_{last_success_unix,last_rc,duration_seconds}{repo}`
+> textfile metrics. A hand-run `pgbackrest --stanza=stellarindex backup`
+> only refreshes repo1; add `--repo=2` for the off-site copy.
+
+This also lets us safely prune repo1 (local) diffs (the deferred Phase A step) now that repo2 exists — the off-site copy becomes the deep-retention tier.
 
 ### 3. Config / vault / secrets → encrypted tarball (high)
 Small, high-value, non-re-derivable. A daily job tars `/etc/stellarindex*`, `/etc/pgbackrest*`, systemd units, the ansible vault, and CH/PG DDL snapshots; `age`/`gpg`-encrypts; uploads to S3. Codify as a systemd timer in the archival-node role.
