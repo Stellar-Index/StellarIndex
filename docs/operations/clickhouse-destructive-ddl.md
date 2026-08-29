@@ -101,6 +101,10 @@ from the clone for a single-table restore. The schema half is covered by
 
 ## Before the first apply on a host: find the hand-written override
 
+On r1 the carrier was `/etc/clickhouse-server/config.d/zz-partition-drop-limit.xml`
+(2026-07-23 hand edit); the role now removes that exact file. Any *other*
+later-sorting carrier still needs the manual step below.
+
 A later-sorting `config.d` file (or an element in `config.xml`) that still
 carries a larger value silently wins over `si-drop-guard.xml`; the role's live
 verify task then fails loudly. Locate and remove it first:
