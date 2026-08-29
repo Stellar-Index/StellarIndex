@@ -1,0 +1,114 @@
+---
+# Rolling ZFS snapshots of the ClickHouse lake + Postgres datasets
+# (decision 2026-08-29). Producer: scripts/ops/zfs-snapshot.sh (installed
+# by the archival-node role, tag zfs-snapshots) writing
+# /var/lib/node_exporter/textfile_collector/zfs_snapshot.prom once a day.
+# Runbook: docs/operations/runbooks/zfs-snapshots.md.
+#
+# Two concerns, deliberately separate from infra.yml's
+# stellarindex_zfs_pool_low_space (a percentage of node_filesystem_*):
+#
+#   * POOL HEADROOM in absolute bytes, read from `zpool list` — the
+#     number the snapshot job's own min-free guard (2 TiB) acts on.
+#     2.5 TiB ticket = "the guard will start pruning within days at
+#     ~250 GB/day of pinned churn"; 1.5 TiB page = "the guard has
+#     already given up and the pool itself is at risk".
+#   * SNAPSHOT FRESHNESS — the daily snapshot is the whole protection;
+#     one missed day on the 3 d ClickHouse window is a third of it.
+
+groups:
+  - name: stellarindex.zfs_snapshots
+    interval: 60s
+    rules:
+
+      - alert: stellarindex_zfs_pool_free_low
+        expr: stellarindex_zfs_pool_free_bytes < 2748779069440
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-snapshots.md
+          summary: "ZFS pool {{ $labels.pool }} free space {{ $value | humanize1024 }}B < 2.5 TiB — snapshot guard will start pruning"
+          description: |
+            `zpool list` free space on {{ $labels.pool }} has been under
+            2.5 TiB for 15 min. The rolling-snapshot job prunes its
+            oldest auto-* snapshots below 2 TiB and stops snapshotting
+            entirely if that is not enough — at ~250 GB/day of pinned
+            ClickHouse churn per retained day, that is days away.
+            Reclaim space (retention, archive → S3, or destroy a
+            forgotten manual-* snapshot) before the page threshold.
+
+      - alert: stellarindex_zfs_pool_free_critical
+        expr: stellarindex_zfs_pool_free_bytes < 1649267441664
+        for: 5m
+        labels:
+          severity: page
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-snapshots.md
+          summary: "ZFS pool {{ $labels.pool }} free space {{ $value | humanize1024 }}B < 1.5 TiB — below the snapshot guard floor"
+          description: |
+            `zpool list` free space on {{ $labels.pool }} is under
+            1.5 TiB — already below the snapshot job's 2 TiB floor, so
+            it has pruned everything it is allowed to and is now
+            SKIPPING snapshots (stellarindex_zfs_snapshot_guard_skipped=1).
+            Every ZFS writer (ClickHouse, MinIO, Postgres) shares this
+            pool; treat as the zfs-pool-full runbook with the snapshot
+            job already out of the picture.
+
+      # The plain age branch cannot fire while the series is ABSENT
+      # (never ran / textfile deleted / node_exporter lost the collector
+      # dir) — the OBS-2 pattern restore-drill.yml documents. The
+      # absent_over_time branch covers that for the clickhouse dataset
+      # (the one with the 3 d window, where a missed day costs a third
+      # of the protection).
+      - alert: stellarindex_zfs_snapshot_stale
+        expr: |
+          (time() - stellarindex_zfs_snapshot_latest_unix) > (36 * 3600)
+          or
+          absent_over_time(stellarindex_zfs_snapshot_latest_unix{dataset="data/clickhouse"}[36h])
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-snapshots.md
+          summary: "No rolling ZFS snapshot of {{ $labels.dataset }} in >36h"
+          description: |
+            The newest auto-* snapshot of {{ $labels.dataset }} is over
+            36 h old (daily timer + 12 h slack), or the job has never
+            reported. Either zfs-snapshot.timer is not firing, the run
+            failed (`journalctl -u zfs-snapshot.service`), or the
+            min-free guard skipped it
+            (stellarindex_zfs_snapshot_guard_skipped=1 — check pool
+            free). While this is stale, a logical fault in ClickHouse
+            or Postgres is a re-derive / pgBackRest restore instead of a
+            clone-and-copy.
+
+      # The job is fail-closed: if `zpool list` fails or returns a
+      # non-number it destroys nothing, snapshots nothing, exits non-zero
+      # and writes this series to zfs_snapshot_error.prom (removed by the
+      # next good run, so healthy = absent). Ticket, because the stale
+      # alert would otherwise be the first sign, 36 h later.
+      - alert: stellarindex_zfs_snapshot_pool_free_unreadable
+        expr: stellarindex_zfs_snapshot_pool_free_unreadable == 1
+        for: 10m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-snapshots.md
+          summary: "zfs-snapshot job could not read free space on pool {{ $labels.pool }} — refused to prune or snapshot"
+          description: |
+            The last zfs-snapshot run could not read `zpool list -Hp -o
+            free {{ $labels.pool }}` (command failed or non-numeric
+            output). By design it destroyed nothing and took no snapshot;
+            the unit exited non-zero. Until a run succeeds no new
+            snapshots are being taken. Check `zpool status`,
+            `journalctl -u zfs-snapshot.service`, then
+            `systemctl start zfs-snapshot.service`.

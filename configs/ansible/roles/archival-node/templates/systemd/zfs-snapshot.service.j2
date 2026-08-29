@@ -1,0 +1,43 @@
+# systemd unit: rolling ZFS snapshots (decision 2026-08-29).
+#
+# Rendered by Ansible. Runs /usr/local/bin/zfs-snapshot.sh rotate: prune
+# expired auto-* snapshots, enforce the pool min-free floor, snapshot
+# {% for d in zfs_snapshot_datasets %}{{ zfs_data_pool_name }}/{{ d.name }}{% if not loop.last %} + {% endif %}{% endfor %}, write the textfile gauges.
+# Config in /etc/default/zfs-snapshot. Runbook:
+# docs/operations/runbooks/zfs-snapshots.md
+
+[Unit]
+Description=Stellar Index — rolling ZFS snapshots (retention + min-free guard)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-snapshots.md
+After=zfs.target
+Requires=zfs.target
+
+# Restart-storm limit — matches the sibling oneshots (systemd >=230
+# ignores StartLimit* under [Service]).
+StartLimitIntervalSec=1h
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/default/zfs-snapshot
+ExecStart=/usr/local/bin/zfs-snapshot.sh rotate
+# A guard-SKIP is exit 0 + a metric, deliberately: the unit failing on a
+# full pool would just add a second alert for the same cause. A zfs
+# command failing is exit 1 = unit failure.
+User=root
+
+# Metadata-only ZFS operations: sub-second, but a destroy of a large
+# snapshot can take a while to return. Bounded well above that.
+TimeoutStartSec=30min
+RuntimeMaxSec=30min
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/node_exporter/textfile_collector
+
+[Install]
+WantedBy=multi-user.target
