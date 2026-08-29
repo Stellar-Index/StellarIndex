@@ -450,6 +450,32 @@ against.
   minio) are grandfathered by name for burn-down. Retention is
   untouched (ADR-0043). (audit-2026-08-28 backup-restore-7)
 
+- **Restore-drill capacity floor was a 200 G constant under a ~600 G
+  restore; a partial restore was kept on the shared pool.**
+  `scripts/ops/restore-drill.sh` now sizes its free-space requirement
+  from the latest backup in the stanza/repo it is about to restore
+  (`pgbackrest info` database size × `DRILL_SIZE_MARGIN_PCT`=125 % +
+  `DRILL_WAL_HEADROOM_GB`=50 G, clamped up to `MIN_FREE_GB`); a backup
+  that cannot be sized is a precondition refusal (exit 2). A
+  `pgbackrest restore` that does not complete has its partial datadir
+  removed unconditionally (the pgbackrest output is the diagnostic);
+  post-restore failures still keep the datadir. (audit 2026-08-28
+  backup-restore-3; the ZFS quota on `data/restore-drill` is a separate
+  ansible change.)
+- **Restore-drill abort paths left the previous PASS being scraped.**
+  A failed `pgbackrest restore` or a scratch instance that never reached
+  consistency `exit`ed before the evidence phase: no drill-log entry,
+  and last month's `restore_drill.prom` (`failures 0`, fresh
+  `last_success`) kept being served until the 40-day staleness ticket.
+  Evidence + metric emission are now functions called on every path
+  past the preconditions; aborts write `ABORTED at <stage>` and
+  `failures N` with no `last_success`. New ticket alert
+  `stellarindex_restore_drill_failed` (`failures > 0` for 30 m) in both
+  rule trees + promtool rule-test + runbook. New
+  `scripts/ops/restore-drill-run-test.sh` drives the real script through
+  the capacity-refusal / restore-failure / recovery-failure paths with
+  shimmed host tools; it and `restore-drill-test.sh` are now wired into
+  CI + `verify.sh`. (audit 2026-08-28 backup-restore-4)
 - **Config-apply gate: widened surfaces, host baseline, fail-closed
   (`scripts/ci/config-apply-gate.sh`, audit deploy-ansible-gate-4).** The
   gate's SURFACES list omitted files the archival-node role renders or

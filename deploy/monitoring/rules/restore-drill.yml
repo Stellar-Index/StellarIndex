@@ -62,3 +62,32 @@ groups:
             read `/var/log/restore-drill.log` + the evidence log under
             `/var/lib/stellarindex/restore-drills/restore-drills.md`, and
             run `/usr/local/bin/restore-drill.sh` by hand.
+
+      # A run that ran and FOUND a problem. The script rewrites the
+      # textfile on every run past the preconditions (including the
+      # pg_restore / pg_start abort paths, audit-2026-08-28
+      # backup-restore-4), so `failures > 0` is the current run's verdict,
+      # not a stale one. Without this the only signal was the 40-day
+      # staleness ticket above, i.e. a corrupt repo surfaced ~40 days
+      # after the drill that detected it.
+      - alert: stellarindex_restore_drill_failed
+        expr: stellarindex_restore_drill_failures > 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill-failed.md
+          summary: "the most recent pgBackRest restore-drill FAILED ({{ $value }} check(s)) — the backup chain is not currently proven restorable"
+          description: |
+            The most recent restore-drill run (restore-drill.timer, first
+            Saturday 04:00 UTC, or a manual run) recorded
+            {{ $value }} failed check(s): pgbackrest restore failed, the
+            scratch instance never reached consistency, or a verification
+            check (tables / WAL drain / tip lag / hash chain / row window)
+            did not pass. Until a clean run lands we have no current proof
+            the pgBackRest backup chain is restorable (ADR-0043 §3 /
+            CS-110). Read the tail of
+            `/var/lib/stellarindex/restore-drills/restore-drills.md` (which
+            names the aborted stage) and `/var/log/restore-drill.log`.
