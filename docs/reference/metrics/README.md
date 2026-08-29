@@ -314,6 +314,28 @@ alert: `rate(stellarindex_api_cache_ops_total{result="miss"}[5m])
 for 10 min on any (cache, op) pair — for hot ops the prewarm
 should keep miss rate under 10%.
 
+### `stellarindex_api_sparkline7d_rows_total`
+
+Counter, label `result`.
+
+One increment per listing ROW for which `/v1/assets?include=sparkline7d`
+asked the batch reader for a 7-day price series: `served` when the
+series came back with at least one actual price, `empty` when it came
+back with nothing to draw. Only rows that publish a price are counted —
+a scam-gated, substanceless, or simply priceless row deliberately has no
+chart and is never looked up.
+
+The batch reader returns a bucket skeleton (7 days, null price) for
+every id it is asked about, so "the map had an entry" is not evidence of
+data — which is how #355 shipped a chart column of dashes for the entire
+verified top of `/assets` (the listing asked for the series under the
+catalogue slug `xlm` / `aqua` rather than the Stellar `asset_id`) with
+no error, no log, and a byte-identical response. Suggested alert:
+`rate(stellarindex_api_sparkline7d_rows_total{result="empty"}[15m]) /
+rate(stellarindex_api_sparkline7d_rows_total[15m]) > 0.5` sustained for
+30 min — half the priced rows on the directory rendering an empty chart
+is a lookup-key or pricing-pipeline regression, not a quiet market.
+
 ## Ingestion (indexer binary)
 
 ### `stellarindex_source_events_total`

@@ -231,6 +231,40 @@ against.
 
 ### Fixed
 
+- **The 7d chart column on `/assets` is back for the assets that matter
+  — and a withheld price no longer gets published as a picture of
+  itself.** Rows 1–11 of the directory (XLM, USDC, PYUSD, EURC, AQUA,
+  yXLM, SHX, VELO, BLND, PHO, yUSDC) rendered `—` in the 7D CHART column
+  while the unverified long tail below them charted fine. Those eleven
+  are exactly the catalogue-projected rows, whose wire `asset_id` is the
+  catalogue SLUG (`projectCatalogueRow` sets `AssetID = vc.Slug`), so the
+  listing asked `GetAssetsPriceHistory7dBatch` for a series under `xlm` /
+  `aqua` — ids that can never match a `prices_1m` row. The batch query
+  answered with its `want × days` skeleton: seven buckets, every price
+  null, indistinguishable on the wire from "this asset has never traded",
+  which is why it shipped unnoticed. The series now keys on the row's
+  Stellar twin `asset_id` — the SAME id its `price_usd` and
+  `change_7d_pct` already come from (`fillCatalogueStatsForPage`,
+  `fillGlobalPriceFromOnChain`) — so the chart and the price can no
+  longer disagree about whether data exists. `?include=sparkline7d` is
+  also honoured on the default `/v1/assets` listing, where it had been a
+  silent no-op (the parameter was wired only into the catalogue/classic
+  phases, so the issue's own repro returned a byte-identical response
+  with and without it). Two honesty rules go with it, in both directions:
+  a row with no published price gets no chart and is not even looked up —
+  the scam-issuer suppression and the thin-market substance gate both
+  leave `price_usd` nil before the attach runs — and on the asset DETAIL
+  payload `price_history_24h` / `price_history_7d` are dropped whenever
+  the headline price is withheld (measured on r1 2026-08-29: the flagged
+  JFKBANK2 and RIO details served `price_usd: null` beside 24 hourly and
+  7 daily *priced* points, and their listing rows drew a full sparkline
+  next to a `—` price cell; the last bucket of a price series IS the
+  number being withheld). New counter
+  `stellarindex_api_sparkline7d_rows_total{result="served"|"empty"}` plus
+  a once-per-request warn when every priced row on a page comes back
+  empty: a map hit from the batch reader is not evidence of data, and
+  nothing anywhere reported the dead column. (#355)
+
 - **r1's ZFS `data` pool is raidz1 everywhere, and a lint keeps it that
   way.** The pool is SINGLE parity — live-verified 2026-07-17 and
   corroborated by arithmetic that needs no host access (the ~16.8 TB
