@@ -1416,15 +1416,6 @@ export interface paths {
          *     in the trailing 7 days. Backs the explorer's /oracles
          *     price-streams table. Sources with no observation in the
          *     window are absent from the result.
-         *
-         *     Oracle symbols that map to no canonical asset are still
-         *     recorded verbatim as `raw:<symbol>` rows (capture totality)
-         *     but are OMITTED here by default so the public row set is
-         *     unchanged for existing consumers. Pass
-         *     `include_unmapped=true` to list them; every row then carries
-         *     `mapped` (false for `raw:` rows — reference-only,
-         *     orientation-unknown, never compared or aggregated). The
-         *     explorer's /oracles page opts in and badges them.
          */
         get: operations["listOracleStreams"];
         put?: never;
@@ -6459,8 +6450,6 @@ export interface components {
             confidence?: number;
             /** @description G-strkey of the publishing account; empty when unknown. */
             observer?: string;
-            /** @description false when `asset` is a `raw:<symbol>` row — an oracle symbol recorded verbatim because it maps to no canonical asset. Reference-only: orientation-unknown, never compared or aggregated. /v1/oracle/streams omits such rows unless include_unmapped=true; /v1/oracle/latest returns one only for an explicit `asset=raw:<symbol>` query. */
-            mapped: boolean;
         };
         OracleLatestEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["OracleReading"][];
@@ -9383,8 +9372,7 @@ export interface operations {
                      *           "price_raw": "15912000000000",
                      *           "decimals": 14,
                      *           "confidence": 0.96,
-                     *           "observer": "GRELAYER0000000000000000000000000000000000000000000000000000",
-                     *           "mapped": true
+                     *           "observer": "GRELAYER0000000000000000000000000000000000000000000000000000"
                      *         },
                      *         {
                      *           "source": "band",
@@ -9393,8 +9381,7 @@ export interface operations {
                      *           "ts": "2026-05-05T16:25:30Z",
                      *           "price": "0.15908",
                      *           "price_raw": "159080000000000000",
-                     *           "decimals": 18,
-                     *           "mapped": true
+                     *           "decimals": 18
                      *         },
                      *         {
                      *           "source": "redstone",
@@ -9403,8 +9390,7 @@ export interface operations {
                      *           "ts": "2026-05-05T16:24:00Z",
                      *           "price": "0.15920",
                      *           "price_raw": "159200000",
-                     *           "decimals": 9,
-                     *           "mapped": true
+                     *           "decimals": 9
                      *         },
                      *         {
                      *           "source": "coingecko",
@@ -9413,8 +9399,7 @@ export interface operations {
                      *           "ts": "2026-05-05T16:25:00Z",
                      *           "price": "0.15915",
                      *           "price_raw": "15915",
-                     *           "decimals": 5,
-                     *           "mapped": true
+                     *           "decimals": 5
                      *         }
                      *       ],
                      *       "as_of": "2026-05-05T16:25:42.881Z",
@@ -10268,14 +10253,7 @@ export interface operations {
     };
     listOracleStreams: {
         parameters: {
-            query?: {
-                /**
-                 * @description When `true`, include the `raw:<symbol>` rows for oracle
-                 *     symbols that map to no canonical asset (`mapped: false`).
-                 *     Any other value keeps the default (mapped rows only).
-                 */
-                include_unmapped?: boolean;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
@@ -10300,8 +10278,7 @@ export interface operations {
                      *           "price": "0.999879000",
                      *           "price_raw": "999879000",
                      *           "decimals": 9,
-                     *           "observer": "GCNTSKF3QBZJHS5JTD72TI35QP2PLMCKFMFNPXJI2YCQXYBUJLRHFCZX",
-                     *           "mapped": true
+                     *           "observer": "GCNTSKF3QBZJHS5JTD72TI35QP2PLMCKFMFNPXJI2YCQXYBUJLRHFCZX"
                      *         }
                      *       ],
                      *       "as_of": "2026-07-03T22:38:05.023074622Z",

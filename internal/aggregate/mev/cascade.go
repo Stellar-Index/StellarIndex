@@ -3,8 +3,6 @@ package mev
 import (
 	"sort"
 	"strconv"
-
-	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // KindLiquidationCascade is the mev_events.kind for clustered Blend
@@ -116,9 +114,6 @@ func buildCascadeCandidate(sorted []AuctionFill, i int, oracles []OracleRef) (Ca
 		if o.Ledger == 0 {
 			continue
 		}
-		if !oracleRefIsMapped(o) {
-			continue // raw: row — record-layer only, never cascade evidence
-		}
 		if o.Ledger+cascadeWindowLedgers >= lowLedger && o.Ledger <= f.Ledger {
 			correlated = append(correlated, cascadeOracleRef{
 				Source:     o.Source,
@@ -195,20 +190,6 @@ func assembleCascadeCandidate(f AuctionFill, priors []AuctionFill, correlated []
 			Note:          cascadeNote,
 		},
 	}
-}
-
-// oracleRefIsMapped reports whether the oracle row's asset is a MAPPED
-// canonical asset. The cascade correlator is the one oracle_updates
-// consumer with no asset keying (any row in the ledger bracket is
-// evidence), so it must exclude the `raw:` rows the oracle
-// capture-totality design records verbatim for unmapped symbols —
-// they are orientation-unknown reference data, never interpretation
-// input. OracleUpdatesForMEVScan already excludes them in SQL; this is
-// the in-process guard for any other OracleScanner. A string that is
-// not a canonical asset at all is treated as unmapped (fail closed).
-func oracleRefIsMapped(o OracleRef) bool {
-	a, err := canonical.ParseAsset(o.Asset)
-	return err == nil && a.IsMapped()
 }
 
 func fillRef(f AuctionFill) cascadeFillRef {
