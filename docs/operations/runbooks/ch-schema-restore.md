@@ -1,6 +1,6 @@
 ---
 title: Runbook — ClickHouse schema + state snapshot (ADR-0043 §2.1)
-last_verified: 2026-07-25
+last_verified: 2026-08-28
 status: draft
 severity: P3
 ---
@@ -11,7 +11,7 @@ severity: P3
 
 | Field | Value |
 | ----- | ----- |
-| Alerts | `stellarindex_ch_schema_snapshot_stale` (>36 h), `stellarindex_ch_schema_snapshot_offsite_stale` (>72 h) |
+| Alerts | `stellarindex_ch_schema_snapshot_stale` (>36 h, or `last_success_unix` absent for 36 h — never / every-run-failed), `stellarindex_ch_schema_snapshot_offsite_stale` (>72 h, or never pushed since `SNAPSHOT_MC_TARGET` was configured), `stellarindex_ch_schema_snapshot_unit_failed` (`ch-schema-snapshot.service` exited non-zero, 5 min — the causal signal) |
 | Severity | P3 (ticket) |
 | Detected by | `deploy/monitoring/rules/storage.yml` |
 | Producer | `scripts/ops/ch-schema-snapshot.sh` via `ch-schema-snapshot.timer` (daily, 03:40 UTC) |
@@ -115,8 +115,15 @@ journalctl -u ch-schema-snapshot.service -n 50 --no-pager
 
 The script **fails closed**: it refuses to write a snapshot when the
 database reports zero tables, and it does not stamp
-`last_success_unix` when any `SHOW CREATE` failed. So a stale metric
-means one of:
+`last_success_unix` when any `SHOW CREATE` failed. Because it rewrites
+the textfile on every run (and exits before writing it on a first-run
+failure), "every run failed" and "never ran" show up as an **absent**
+series rather than an old one — the alert's `absent_over_time(...[36h])`
+branch covers that shape (audit 2026-08-28, backup-restore-2; before it,
+exactly those cases could never fire). When the absent branch is the one
+firing, the alert carries no `instance` label: check every host that
+should run the timer. `stellarindex_ch_schema_snapshot_unit_failed`
+usually fires first and names the host. So a stale metric means one of:
 
 | Cause | Fix |
 | ----- | --- |
@@ -124,17 +131,21 @@ means one of:
 | A `SHOW CREATE` errored (broken view, dictionary source down) | The journal names the table; repair or drop it |
 | Timer disabled / not installed | `systemctl enable --now ch-schema-snapshot.timer` |
 | Disk full under `OUT_DIR` | Free space; the ZFS pool alerts own that |
+| Host rebuilt / textfile dir wiped, timer never fired since | Series absent — `systemctl start ch-schema-snapshot.service` and confirm `ls /var/lib/node_exporter/textfile_collector/ch_schema_snapshot.prom` |
 
 ## Mitigation — `stellarindex_ch_schema_snapshot_offsite_stale`
 
 The snapshot is being written locally but not reaching offsite storage,
 so the only copy of the lake's DDL sits on the pool it protects.
 Check the `mc` alias and credentials behind
-`ch_schema_snapshot_mc_target`, and the remote's quota. This alert
-cannot fire on a host that has no offsite target configured — that
-state is declared instead, via `ch_schema_snapshot_offsite_ack` in the
-inventory (18-pgbackrest-backup.yml refuses to proceed without one or
-the other).
+`ch_schema_snapshot_mc_target`, and the remote's quota. The offsite
+stamp is only written on a successful push, so a push that has NEVER
+succeeded is an absent series; the alert's absent branch is gated on
+`stellarindex_ch_schema_snapshot_offsite_configured == 1` (emitted every
+run, 1 iff `SNAPSHOT_MC_TARGET` is set). It therefore stays silent on a
+host that has no offsite target configured — that state is declared
+instead, via `ch_schema_snapshot_offsite_ack` in the inventory
+(18-pgbackrest-backup.yml refuses to proceed without one or the other).
 
 ### Interim off-box copy while r1 has no offsite store
 
@@ -246,6 +257,14 @@ at a time and asserts each is caught).
 
 ## Changelog
 
+- 2026-08-28 — absent-series coverage (audit finding backup-restore-2):
+  `_stale` gains `or absent_over_time(...[36h])`, `_offsite_stale` gains
+  the `offsite_configured`-gated absent branch (new gauge
+  `stellarindex_ch_schema_snapshot_offsite_configured`, emitted every
+  run), and `stellarindex_ch_schema_snapshot_unit_failed` is added.
+  Before this the never-succeeded / every-run-failed cases — the ones the
+  alerts exist for — evaluated over an empty vector and could not fire.
+  Promtool coverage: `deploy/monitoring/rule-tests/storage-backup_test.yml`.
 - 2026-07-25 — initial version, shipped with the §2.1 implementation
   (script + daily timer + staleness alerts). Before this the ClickHouse
   lake had no backup of any kind and no alert that said so.
