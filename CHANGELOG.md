@@ -221,6 +221,33 @@ against.
   (ADR-0016/0027, the superseded first-node runbook, the 2026-07-16 audit
   assessment that inferred raidz2 from docs while stating it had no live
   access) keep their text and carry inline corrections. (#289)
+- **Account transaction history no longer truncates itself: the keyset
+  merge dedupes the two arms BEFORE taking its LIMIT.**
+  `/v1/accounts/{g_strkey}/transactions` resolves its page keys from a
+  `UNION ALL` of the sourced (`stellar.ops_by_source`) and participant
+  (`stellar.operation_participants`) arms, and a tx the account SOURCED
+  that ALSO carries it as a non-source participant of one of its
+  operations is emitted by BOTH arms. The merge took its `LIMIT ?` over
+  those still-duplicated rows and only the hydration pass deduped, so
+  every overlapping tx cost a page slot: the page came back SHORT while
+  older history remained, and the handler emits `next_cursor` only on a
+  FULL page (the documented "absent on the last page" contract), so a
+  client's history walk stopped there with older transactions
+  unreached. Measured on the live-ClickHouse fixture (600 txs, page
+  size 7): the pre-fix query served 100 non-final short pages out of
+  101 — a walker stopped on page 1 having seen 6 of 600 txs — the fixed
+  query serves 86 full pages and 0 short ones. `LIMIT 1 BY ledger_seq,
+  tx_index` now runs at the merge too, making the keyset exactly
+  `min(limit, distinct keys older than the cursor)`; rows and their
+  order are unchanged (the integration walk keeps the pre-fix SQL as a
+  differential oracle over the whole history, and now requires it to
+  still produce a short page so the fullness assertion cannot go
+  vacuous). The sibling operations listing needs no such dedupe — its
+  arms are disjoint at op granularity because participants exclude
+  their op's own source — and a key cannot hydrate to nothing either,
+  since `Sink.Flush` writes transactions before operations and
+  participants. (#290)
+
 - **Gap detector pre-registers `runs_total` at 0 so a restart cannot read
   as a dead detector.** `stellarindex_ingest_gap_detector_runs_total` is a
   CounterVec that only materialises a series on first `Inc()`, and since
