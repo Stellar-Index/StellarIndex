@@ -3724,3 +3724,21 @@ Testnet:
 - Backfill OOM-killed by its own transient-unit `MemoryMax=5G` at ledger 2,254,083 and auto-restarted from `--start 2`, which re-applies every ledger in captive core (skip-existing-files ≠ skip-existing-work). Relaunched from `--start 2254080` (archive contiguous through 2,254,079) with `MemoryMax=8G` and `EnvironmentFile=/etc/default/galexie-backfill` (the live `/etc/default/galexie` creds are denied on `galexie-archive`). Follow-ups: backfill wrapper must compute a resume point on restart; monitor must alert on the progress counter going backwards; `galexie-backfill-status` has an unbound `now_epoch` (line 112).
 
 Progress: Wave A 100% · Wave B ~88% · Wave C ~80% · Wave D 0% · overall ≈ 69%.
+
+## Addendum — 2026-08-29 midday (08:30–10:45Z)
+
+Process change (Ash): the second session files issues only; findings are remediated in one monolithic batch (fixer→verifier per issue, one integration branch, one PR, CI once). Squashes may be batched where logical; main's post-batch CI validates the batch and a red is bisected + fixed forward.
+
+Shipped:
+- **v0.49.0** tagged at `1613a97f`, built (11 assets), deployed to r1 (run 33245533733, `migrations_skip=true` — zero new migrations since v0.48.0), verified served: indexer/aggregator/api v0.49.0, healthz/readyz 200, galexie untouched.
+- reflector-fx: `projector-replay -from 64161414 -write` (replay window verified); full-range verdict then showed `expected=1181064 served=1083238 Δ=97826` over [61602787, 64177164] (the VES/XAU drop spans months) → `projector-replay -from 61602787 -write` applied 10:35Z (~3.5 h; monitored). Then `compute-completeness -source reflector-fx` → expect `complete=true` → alert clears. `unknown_symbols` increments stopped after the deploy (its 25 h window self-clears).
+- Main CI: the single serial `integration tests (Docker)` job (20.5 min of a 23-min run) is now a 4-way shard matrix behind an aggregate job of the same name (#314, verified; 22.5 → 11 min critical path).
+- Deploy: #268's directory-`copy` migrations sync stalled the v0.49.0 deploy >16 min (controller-side, r1 untouched); cancelled, re-run with migrations_skip; #318 restores a single archive transfer + explicit safe prune (verified; r1 dir == repo 291/291).
+- Merged: #285 #253 #246 #252 #307 #318 #314 #320 #313 #309 + morning set. Fixed forward: main red on `af5a9d1d` (#303 rule tests vs #297 rule text + stale Postman) → #320.
+- Alerts: `gap_detector_silent` fired 09:55Z after the aggregator restart (CounterVec absent until first scan; seeded schedule defers it) — cleared itself 10:00Z; #323 pre-registers the series so it cannot recur.
+
+Open lane: #261 (mapped-flag contract now implemented on the API side), #265 + #270 (rule-test text drift, fixed/fixing), #254 #256 #295 #323 (refreshed, CI), #288 (composite §10), #237 (Ash).
+
+Testnet backfill: resumed from 2,254,080 after the 5G-cap OOM; ~56% at 10:30Z, 0 restarts.
+
+Progress: Wave A 100% · Wave B ~92% · Wave C ~85% · Wave D 0% · overall ≈ 73%.
