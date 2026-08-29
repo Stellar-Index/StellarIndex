@@ -64,6 +64,32 @@ against.
   when a venue VWAP cannot be computed (`leg_dispersion=uncomputable`,
   `TestCompositeReference_UncomputableDispersionFailsClosed`).
 
+- **Rolling ZFS snapshots of the ClickHouse lake + Postgres on r1
+  (decision 2026-08-29).** `scripts/ops/zfs-snapshot.sh` (installed by
+  the archival-node role, new tag `zfs-snapshots`, `zfs-snapshot.timer`
+  daily 01:45 UTC) takes `auto-YYYYMMDD-HHMM` snapshots of
+  `data/clickhouse` (3 d retention) and `data/postgres` (7 d) — the
+  minutes-scale answer to a logical fault (bad migration, `DROP`, bad
+  re-derive) alongside pgBackRest's hours-scale PITR. Hard min-free
+  guard (`zfs_snapshot_min_free_bytes`, default 2 TiB): below it the
+  job prunes its oldest `auto-*` snapshots (never a dataset's newest,
+  never any non-`auto-*` name) and, if still below, skips the snapshot
+  and reports `stellarindex_zfs_snapshot_guard_skipped=1`. Textfile
+  gauges (`stellarindex_zfs_pool_free_bytes`,
+  `stellarindex_zfs_snapshot_{latest_unix,count,used_bytes}`), alerts
+  in both rule trees (`zfs-snapshots.yml`: pool free < 2.5 TiB ticket
+  / < 1.5 TiB page, snapshot > 36 h stale) with promtool tests, runbook
+  `docs/operations/runbooks/zfs-snapshots.md` (honest crash-consistent
+  semantics for ClickHouse and Postgres, clone-and-copy / rollback
+  procedures, vs pgBackRest PITR), and
+  `scripts/ops/zfs-snapshot-now.sh <dataset> [--keep <label>]` for the
+  fresh-snapshot precondition of the ClickHouse destructive-DDL
+  runbook. The guard is fail-closed: unreadable `zpool` free space
+  (command failure / non-number) aborts the run before any destroy or
+  snapshot, exits non-zero and emits
+  `stellarindex_zfs_snapshot_pool_free_unreadable=1` (own ticket).
+  Invariants pinned red-first by `scripts/ci/zfs-snapshot-test.sh`
+  against a stubbed `zfs`, including the destroy choke point directly.
 - **No-orphan-work contract + daily `orphan-branches` tripwire.** On
   2026-08-27 `fix/priceless-structural-unpriceable` was pushed with no
   PR and no backlog line; on 2026-08-28 a different agent re-diagnosed

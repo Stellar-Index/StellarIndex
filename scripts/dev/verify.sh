@@ -63,6 +63,7 @@ echo "=== Ansible task lint (pipefail/bash, secret-on-argv) ===" && ./scripts/ci
 echo "=== Ansible task lint self-test ===" && ./scripts/ci/lint-ansible-tasks-test.sh
 echo "=== Ansible-drift decision-core self-test ===" && ./scripts/ci/check-ansible-drift-test.sh
 echo "=== run-heavy-job wrapper self-test ===" && ./scripts/ci/run-heavy-job-test.sh
+echo "=== zfs-snapshot job self-test ===" && ./scripts/ci/zfs-snapshot-test.sh
 echo "=== Deploy playbook jump/backup-gate lint ===" && ./scripts/ci/lint-deploy-playbook.sh
 # Migrations-sync self-test: structural half needs only python; the
 # behavioural half runs the task file with ansible and needs GNU tar on the
