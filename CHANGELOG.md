@@ -56,6 +56,25 @@ against.
 
 ### Fixed
 
+- **`fiat:VES` and `rwa:XAU` — the two reflector-fx slots that paged
+  `stellarindex_ingestion_oracle_unknown_symbols` on r1 v0.48.0
+  (2026-08-29, `raw:VES` / `raw:XAU`, 7 rows each in 2 h).** The cause
+  was the allow-lists, not the decoder: VES (Venezuelan bolívar
+  soberano, ISO-4217) joins the ADR-0010 fiat list and XAU (spot gold,
+  troy oz) joins the ADR-0028 `rwa:` list — a commodity, deliberately
+  not fiat and distinct from the tokenized `XAUm`. Via the shared
+  `canonical.MapOracleSymbol` precedence both now decode as mapped
+  rows at the same positional `op_index` (DAT-03), so the 0109
+  generation-guarded upsert rewrites the existing `raw:` rows in
+  place on replay; the counter no longer increments for them
+  (`TestRealDecoder_fxVESAndXAUMappedNotRaw`; the real 2026-04-23 FX
+  fixtures now decode with zero raw rows). The alert stays red for up
+  to 25 h after deploy (its `increase[25h]` window — runbook). The
+  reflector-fx replay from the first `raw:` ledger is declared in the
+  commit's `Replay-Plan:` trailer; pre-#247 history (slots dropped,
+  not recorded) is covered by #247's full re-derive (PR-7 of the
+  totality design), which must run on a binary carrying this change.
+
 - **Explorer test-net builds could silently serve MAINNET data.**
   `web/explorer/next.config.mjs` inlined `NEXT_PUBLIC_API_BASE_URL ??
   'https://api.stellarindex.io'` through its `env` block, so the
