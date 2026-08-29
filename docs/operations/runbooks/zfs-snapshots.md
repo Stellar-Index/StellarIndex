@@ -5,13 +5,13 @@ status: draft
 severity: P2
 ---
 
-# Runbook — `stellarindex_zfs_pool_free_low` / `stellarindex_zfs_pool_free_critical` / `stellarindex_zfs_snapshot_stale`
+# Runbook — `stellarindex_zfs_pool_free_low` / `stellarindex_zfs_pool_free_critical` / `stellarindex_zfs_snapshot_stale` / `stellarindex_zfs_snapshot_pool_free_unreadable`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellarindex_zfs_pool_free_low` (P3, ticket) · `stellarindex_zfs_pool_free_critical` (P1, page) · `stellarindex_zfs_snapshot_stale` (P3, ticket) |
+| Alert | `stellarindex_zfs_pool_free_low` (P3, ticket) · `stellarindex_zfs_pool_free_critical` (P1, page) · `stellarindex_zfs_snapshot_stale` (P3, ticket) · `stellarindex_zfs_snapshot_pool_free_unreadable` (P3, ticket) |
 | Severity | P1 (pool < 1.5 TiB) / P3 (pool < 2.5 TiB; snapshot > 36 h old) |
 | Detected by | `deploy/monitoring/rules/zfs-snapshots.yml` (+ the identical `configs/prometheus/rules.r1/zfs-snapshots.yml`) over textfile gauges written by `zfs-snapshot.sh` |
 | Typical MTTR | 10–30 min (free space / restart timer); a table restore from a snapshot is 15–90 min depending on size |
@@ -68,6 +68,9 @@ you own its deletion, and a forgotten one pins churn forever (see
 - `stellarindex_zfs_snapshot_stale`: newest auto snapshot of a dataset
   > 36 h old, or the metric has never been reported (absent branch,
   clickhouse only).
+- `stellarindex_zfs_snapshot_pool_free_unreadable`: the last run could
+  not read pool free space and refused to act (nothing pruned, nothing
+  snapshotted, unit failed).
 
 ## Quick diagnosis (≤ 5 min)
 
@@ -84,6 +87,12 @@ cat /var/lib/node_exporter/textfile_collector/zfs_snapshot.prom
 - Timer inactive / unit failed → job problem (see Mitigation).
 - No `.prom` file at all → job never ran on this host, or the textfile
   dir moved (check `--collector.textfile.directory` on node_exporter).
+- `zfs_snapshot_error.prom` present (`stellarindex_zfs_snapshot_pool_free_unreadable=1`)
+  → `zpool list -Hp -o free data` failed or returned a non-number. The
+  job is **fail-closed**: it destroyed nothing, snapshotted nothing, and
+  the unit exited non-zero. Fix `zpool` (pool imported? `zpool status`),
+  then `systemctl start zfs-snapshot.service`; a good run removes the
+  error file.
 
 ## Mitigation (≤ 15 min)
 

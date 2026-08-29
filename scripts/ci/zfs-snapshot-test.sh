@@ -287,6 +287,66 @@ res $? "refused now still emits guard_skipped=1"
 protected_intact
 res $? "protected snapshots intact through the now/--keep block" "destroyed=[$(destroyed_list)]"
 
+echo "zfs-snapshot-test: unreadable pool free space is FAIL-CLOSED"
+# Verifier finding on 69204ee: a zpool failure inside a command
+# substitution used to leave free="" (= 0 < floor) and the guard pruned
+# everything down to newest-per-dataset with rc=0. On unreadable free:
+# NO destroy, NO snapshot, non-zero exit, error textfile.
+zpool_mode() { printf '#!/usr/bin/env bash\n%s\n' "$1" > "$TMP/bin/zpool"; chmod +x "$TMP/bin/zpool"; }
+for mode in 'exit 1' 'echo -' 'echo ""'; do
+  zpool_mode "$mode"
+  reset_pool $(( 5 * TIB ))
+  # Fresh fixture with no retention candidates, so ANY destroy is the guard's.
+  grep -Ev "@auto-$(stamp_days_ago 5)|@auto-$(stamp_days_ago 4)|@auto-$(stamp_days_ago 9)"$'\t' "$FAKE_POOL/snapshots" > "$FAKE_POOL/s.new"; mv "$FAKE_POOL/s.new" "$FAKE_POOL/snapshots"
+  rm -f "$TEXTFILE_DIR/zfs_snapshot_error.prom"
+  "$SCRIPT" rotate 2>"$TMP/log8"; rc=$?
+  t "$rc" -ne 0 -a "$(n_destroyed)" -eq 0 -a "$(n_created)" -eq 0
+  res $? "rotate with zpool '$mode': non-zero exit, nothing destroyed, nothing created" "rc=$rc destroyed=[$(destroyed_list)] created=[$(created_list)]"
+  grep -q 'stellarindex_zfs_snapshot_pool_free_unreadable{pool="data"} 1' "$TEXTFILE_DIR/zfs_snapshot_error.prom" 2>/dev/null
+  res $? "rotate with zpool '$mode': error textfile written"
+  "$SCRIPT" now data/postgres --keep pre-x 2>>"$TMP/log8"; rc=$?
+  t "$rc" -ne 0 -a "$(n_destroyed)" -eq 0 -a "$(n_created)" -eq 0
+  res $? "now --keep with zpool '$mode': refused, nothing destroyed or created" "rc=$rc destroyed=[$(destroyed_list)] created=[$(created_list)]"
+  "$SCRIPT" now data/clickhouse 2>>"$TMP/log8"; rc=$?
+  t "$rc" -ne 0 -a "$(n_destroyed)" -eq 0 -a "$(n_created)" -eq 0
+  res $? "now with zpool '$mode': refused, nothing destroyed or created" "rc=$rc"
+done
+zpool_mode "cat \"\$FAKE_POOL/free\""
+reset_pool $(( 5 * TIB ))
+"$SCRIPT" rotate 2>/dev/null
+t ! -e "$TEXTFILE_DIR/zfs_snapshot_error.prom"
+res $? "a successful run removes the error textfile"
+
+echo "zfs-snapshot-test: destroy choke point, pinned directly"
+# Source the script (main() is guarded on BASH_SOURCE) and call the
+# destroy function itself, so the refusal does not depend on any caller
+# happening to filter first.
+choke() {  # <full-snapshot-name> → rc of destroy_auto_snapshot in a subshell
+  (
+    # shellcheck disable=SC1090  # the script under test, by path
+    . "$SCRIPT"
+    # shellcheck disable=SC2034  # the sourced script's global, read by is_managed
+    DATASETS=(data/clickhouse data/postgres)
+    destroy_auto_snapshot "$1" "test"
+  ) 2>/dev/null
+}
+reset_pool $(( 5 * TIB ))
+choke "data/minio@auto-$(stamp_days_ago 30)"; rc=$?
+t "$rc" -ne 0 -a "$(n_destroyed)" -eq 0
+res $? "destroy_auto_snapshot refuses an unmanaged dataset even with an auto-* name" "rc=$rc destroyed=[$(destroyed_list)]"
+choke "data/clickhouse@manual-pre-ddl"; rc=$?
+t "$rc" -ne 0 -a "$(n_destroyed)" -eq 0
+res $? "destroy_auto_snapshot refuses a manual-* name on a managed dataset" "rc=$rc destroyed=[$(destroyed_list)]"
+choke "data/clickhouse@auto-$(stamp_days_ago 20)-copy"; rc=$?
+t "$rc" -ne 0 -a "$(n_destroyed)" -eq 0
+res $? "destroy_auto_snapshot refuses an auto-* look-alike" "rc=$rc destroyed=[$(destroyed_list)]"
+choke "data/clickhouse"; rc=$?
+t "$rc" -ne 0 -a "$(n_destroyed)" -eq 0
+res $? "destroy_auto_snapshot refuses a bare dataset name" "rc=$rc"
+choke "data/clickhouse@auto-$(stamp_days_ago 5)"; rc=$?
+t "$rc" -eq 0 -a "$(n_destroyed)" -eq 1
+res $? "destroy_auto_snapshot destroys a managed auto-* snapshot (control)" "rc=$rc destroyed=[$(destroyed_list)]"
+
 echo "zfs-snapshot-test: config validation"
 ZFS_SNAPSHOT_DATASETS="data/clickhouse" "$SCRIPT" rotate 2>/dev/null; rc=$?
 t "$rc" -eq 2

@@ -106,6 +106,7 @@ signal lands.
 | `stellarindex_zfs_pool_free_low` | `stellarindex_zfs_pool_free_bytes` (zpool free, textfile from `zfs-snapshot.sh`) | < 2.5 TiB for ≥ 15 min | P3 | [zfs-snapshots](runbooks/zfs-snapshots.md) |
 | `stellarindex_zfs_pool_free_critical` | same | < 1.5 TiB for ≥ 5 min (below the snapshot job's 2 TiB guard floor) | **P1** | [zfs-snapshots](runbooks/zfs-snapshots.md) |
 | `stellarindex_zfs_snapshot_stale` | `time() - stellarindex_zfs_snapshot_latest_unix` per dataset (or `absent_over_time(...{dataset="data/clickhouse"}[36h])`) | > 36 h for ≥ 30 min | P3 | [zfs-snapshots](runbooks/zfs-snapshots.md) |
+| `stellarindex_zfs_snapshot_pool_free_unreadable` | `stellarindex_zfs_snapshot_pool_free_unreadable` (error textfile; job refused to prune/snapshot) | == 1 for ≥ 10 min | P3 | [zfs-snapshots](runbooks/zfs-snapshots.md) |
 
 ## Cache / serving alerts
 

@@ -159,3 +159,30 @@ tests:
                 free). While this is stale, a logical fault in ClickHouse
                 or Postgres is a re-derive / pgBackRest restore instead of a
                 clone-and-copy.
+
+  # ── fail-closed run: error series present → ticket after 10 m ──
+  - interval: 1m
+    name: an unreadable-free-space run fires the ticket
+    input_series:
+      - series: 'stellarindex_zfs_snapshot_pool_free_unreadable{pool="data"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_zfs_snapshot_pool_free_unreadable
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: storage
+              pool: data
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-snapshots.md
+              summary: "zfs-snapshot job could not read free space on pool data — refused to prune or snapshot"
+              description: |
+                The last zfs-snapshot run could not read `zpool list -Hp -o
+                free data` (command failed or non-numeric
+                output). By design it destroyed nothing and took no snapshot;
+                the unit exited non-zero. Until a run succeeds no new
+                snapshots are being taken. Check `zpool status`,
+                `journalctl -u zfs-snapshot.service`, then
+                `systemctl start zfs-snapshot.service`.

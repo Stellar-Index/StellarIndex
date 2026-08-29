@@ -2822,11 +2822,20 @@ pruning; `0` otherwise.
 Gauge. Unix time the job last completed in any mode (`rotate`, `now`,
 `metrics`).
 
+### `stellarindex_zfs_snapshot_pool_free_unreadable`
+
+Gauge, label `pool`. Written to a separate `zfs_snapshot_error.prom`
+(value `1`) when a run could not read `zpool list -o free` — the job
+then refuses to prune or snapshot and exits non-zero (fail-closed; a
+run must never treat "unknown free" as "zero free"). Removed by the
+next successful run, so the series is absent when healthy. Alerted on
+by `stellarindex_zfs_snapshot_pool_free_unreadable`.
+
 ## Changelog
 
 - 2026-08-29 — added the rolling ZFS snapshot textfile gauges
   (`stellarindex_zfs_pool_free_bytes`,
-  `stellarindex_zfs_snapshot_{latest_unix,count,used_bytes,guard_skipped,min_free_bytes,last_run_unix}`),
+  `stellarindex_zfs_snapshot_{latest_unix,count,used_bytes,guard_skipped,min_free_bytes,last_run_unix,pool_free_unreadable}`),
   emitted by `scripts/ops/zfs-snapshot.sh`.
 
 - 2026-08-11 — removed the Stripe metrics

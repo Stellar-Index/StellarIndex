@@ -37,8 +37,12 @@ against.
   procedures, vs pgBackRest PITR), and
   `scripts/ops/zfs-snapshot-now.sh <dataset> [--keep <label>]` for the
   fresh-snapshot precondition of the ClickHouse destructive-DDL
-  runbook. Invariants pinned red-first by
-  `scripts/ci/zfs-snapshot-test.sh` against a stubbed `zfs`.
+  runbook. The guard is fail-closed: unreadable `zpool` free space
+  (command failure / non-number) aborts the run before any destroy or
+  snapshot, exits non-zero and emits
+  `stellarindex_zfs_snapshot_pool_free_unreadable=1` (own ticket).
+  Invariants pinned red-first by `scripts/ci/zfs-snapshot-test.sh`
+  against a stubbed `zfs`, including the destroy choke point directly.
 
 ## [v0.48.0] — 2026-08-29
 

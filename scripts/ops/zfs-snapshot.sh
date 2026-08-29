@@ -132,11 +132,44 @@ retention_days() {
 }
 
 # ─── zfs wrappers (every zfs/zpool call goes through here) ──────────
-pool_free_bytes() {
+# Sets the global POOL_FREE. Deliberately NOT `free="$(...)"`: a die()
+# inside a command substitution only exits the subshell, and in condition
+# context (`if enforce_min_free`, `... || die`) set -e is inert — so an
+# unreadable pool would have left free="" (= 0 < floor) and the guard
+# would have destroyed every prunable snapshot with rc=0 (verifier
+# finding on 69204ee). Called in the parent shell, die() aborts the run:
+# no destroy, no snapshot, non-zero exit, error textfile.
+POOL_FREE=""
+read_pool_free() {
   local v
-  v="$(zpool list -Hp -o free "$ZFS_SNAPSHOT_POOL")" || die "zpool list $ZFS_SNAPSHOT_POOL failed"
-  [[ "$v" =~ ^[0-9]+$ ]] || die "zpool free for $ZFS_SNAPSHOT_POOL is not a number: '$v'"
-  printf '%s' "$v"
+  POOL_FREE=""
+  if ! v="$(zpool list -Hp -o free "$ZFS_SNAPSHOT_POOL")"; then
+    write_error_metric
+    die "zpool list $ZFS_SNAPSHOT_POOL failed — refusing to prune or snapshot on unknown free space"
+  fi
+  if [[ -z "$v" || ! "$v" =~ ^[0-9]+$ ]]; then
+    write_error_metric
+    die "zpool free for $ZFS_SNAPSHOT_POOL is not a number: '$v' — refusing to prune or snapshot"
+  fi
+  POOL_FREE="$v"
+}
+
+# Written INSTEAD of the main textfile when free space is unreadable, so
+# the last good gauges stay visible (and go stale → the stale alert) and
+# the failure has its own series. Removed again by a successful run.
+write_error_metric() {
+  [[ "$TEXTFILE_DIR" == "/dev/null" ]] && return 0
+  local out tmp
+  mkdir -p "$TEXTFILE_DIR"
+  out="$TEXTFILE_DIR/zfs_snapshot_error.prom"
+  tmp="$out.tmp.$$"
+  {
+    echo "# HELP stellarindex_zfs_snapshot_pool_free_unreadable 1 while the last snapshot run could not read zpool free space and therefore refused to prune or snapshot."
+    echo "# TYPE stellarindex_zfs_snapshot_pool_free_unreadable gauge"
+    echo "stellarindex_zfs_snapshot_pool_free_unreadable{pool=\"$ZFS_SNAPSHOT_POOL\"} 1"
+  } > "$tmp"
+  chmod 644 "$tmp"
+  mv "$tmp" "$out"
 }
 
 dataset_exists() { zfs list -H -o name "$1" >/dev/null 2>&1; }
@@ -208,7 +241,8 @@ prune_expired() {
 # Returns 0 if free >= floor (possibly after pruning), 1 if still below.
 enforce_min_free() {
   local free ds name created candidates
-  free="$(pool_free_bytes)"
+  read_pool_free; free="$POOL_FREE"
+  [[ -n "$free" && "$free" =~ ^[0-9]+$ ]] || die "internal: pool free unreadable ('$free')"
   if (( free >= ZFS_SNAPSHOT_MIN_FREE_BYTES )); then
     return 0
   fi
@@ -231,7 +265,8 @@ enforce_min_free() {
     # ZFS reclaims space asynchronously; a re-read right after destroy
     # can lag by a txg. Worst case this over-prunes by one snapshot,
     # never below the newest-per-dataset floor.
-    free="$(pool_free_bytes)"
+    read_pool_free; free="$POOL_FREE"
+    [[ -n "$free" && "$free" =~ ^[0-9]+$ ]] || die "internal: pool free unreadable ('$free')"
   done
   log "guard: pool free ${free} >= floor after pruning"
   return 0
@@ -259,7 +294,7 @@ write_metrics() {
   mkdir -p "$TEXTFILE_DIR"
   out="$TEXTFILE_DIR/zfs_snapshot.prom"
   tmp="$out.tmp.$$"
-  free="$(pool_free_bytes)"
+  read_pool_free; free="$POOL_FREE"
   {
     echo "# HELP stellarindex_zfs_pool_free_bytes Free bytes in the ZFS pool as reported by zpool list (pool-level, unlike node_filesystem_avail_bytes)."
     echo "# TYPE stellarindex_zfs_pool_free_bytes gauge"
@@ -300,6 +335,7 @@ write_metrics() {
   } > "$tmp"
   chmod 644 "$tmp"
   mv "$tmp" "$out"
+  rm -f "$TEXTFILE_DIR/zfs_snapshot_error.prom"
 }
 
 # ─── entrypoints ────────────────────────────────────────────────────
@@ -359,4 +395,8 @@ main() {
   esac
 }
 
-main "$@"
+# Sourced by scripts/ci/zfs-snapshot-test.sh to pin the destroy choke
+# point directly; executed everywhere else.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
