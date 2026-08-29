@@ -38,6 +38,14 @@ load_env_file() {
   done < "$1"
 }
 load_env_file /etc/default/stellarindex-ops export
+# Optional ops-user credentials (STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD,
+# from /etc/default/stellarindex-ops). Handed to clickhouse-client via its
+# CLICKHOUSE_USER/CLICKHOUSE_PASSWORD env — never argv, which ps and the journal
+# would show. Unset ⇒ nothing exported; the default user exactly as before.
+if [ -n "${STELLARINDEX_CLICKHOUSE_OPS_USER:-}" ]; then
+  export CLICKHOUSE_USER="$STELLARINDEX_CLICKHOUSE_OPS_USER"
+  export CLICKHOUSE_PASSWORD="${STELLARINDEX_CLICKHOUSE_OPS_PASSWORD:-}"
+fi
 OPS=${OPS:-/usr/local/bin/stellarindex-ops-ch}
 CFG=${CFG:-/etc/stellarindex.toml}
 DSN="$STELLARINDEX_POSTGRES_DSN"

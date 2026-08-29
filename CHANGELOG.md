@@ -17,6 +17,21 @@ against.
 
 ### Added
 
+- **Ops scripts honour a ClickHouse ops user
+  (`scripts/ops/ch-ops-user-test.sh`).** `ch-live-catchup.sh`,
+  `ch-supply-flows-seed.sh`, `d2-ordinal-reproject.sh`,
+  `d3-lecur-v2-rebuild.sh` and `ch-backfill-monitor.sh` ran
+  `clickhouse-client` as the default user with no way to supply
+  credentials. They now honour `STELLARINDEX_CLICKHOUSE_OPS_USER` /
+  `STELLARINDEX_CLICKHOUSE_OPS_PASSWORD` (e.g. from
+  `/etc/default/stellarindex-ops`), handed to the client through its
+  `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` environment — never argv,
+  which `ps` and the journal would show. The monitor resolves them on
+  the HOST side of its ssh (new `OPS_ENV`, default
+  `/etc/default/stellarindex-ops`) for the same reason. Unset ⇒
+  byte-identical invocations; the new stub-backed test pins both the
+  credential hand-off and the unchanged argv per script, and runs from
+  `scripts/dev/verify.sh`.
 - **AWS Public Blockchain dataset drift monitor** (audit 2026-08-29,
   backup-restore-6). r1's galexie-archive was trimmed below ledger
   49,984,000 on 2026-07-26, so the second raw-LCM archive ADR-0043
@@ -80,6 +95,32 @@ against.
 
 ### Fixed
 
+- **A galexie restart is decided only by what the running process has
+  loaded, is visible in `--check --diff`, and needs an explicit ack.**
+  On 2026-08-29 06:04Z an ansible apply (`--tags users,minio,galexie`)
+  restarted a healthy r1 galexie — a ~9-minute mainnet captive-core cold
+  catchup — for a change to the `galexie-append.sh` wrapper, which
+  systemd exec's once per service start and the running process never
+  reads; the preceding `--check --diff` had shown no handler because the
+  #267 effective-change gate compared checksums before/after a real
+  write, and check mode writes nothing. `tasks/galexie-effective-
+  checksum.yml` now compares each restart-relevant input on disk with
+  the controller-rendered would-be file (comments/blank lines stripped),
+  so the verdict — and `RUNNING HANDLER [Restart galexie]` — appears in
+  check mode too; the inputs are only `captive-core-galexie.cfg`,
+  `galexie.toml`, `/etc/default/galexie` and the unit (the wrapper,
+  the archive-fill/tip-lag/contiguity scripts + timers and the SDF apt
+  key can never notify the restart); and when galexie is active a real
+  apply that would restart it FAILS before writing anything unless
+  `-e galexie_restart_ack=true` (default `false`) — the same ack gates a
+  `galexie_version` binary rebuild. `/etc/default/galexie` moved from
+  inline `content:` to `templates/galexie.env.j2` (byte-identical
+  output) so the gate renders the same file the task writes.
+  `scripts/ci/ansible-galexie-restart-test.sh` pins the input list, the
+  ack default, the fail-closed refusal, the ack path and the check-mode
+  preview. Runbook: `docs/operations/runbooks/galexie-catchup-refused.md`
+  §"Applying galexie config with ansible".
+
 - **Nightly pgBackRest wrapper never backed up repo2.** pgBackRest's `backup`
   command is single-repo: with no `--repo` it writes only the highest-priority
   repo (repo1); only `archive-push` and `expire` fan out (User Guide, "Multiple
@@ -95,6 +136,27 @@ against.
   (`last_success_unix` carried forward across a failed run). Single-repo hosts
   keep the byte-identical legacy command. `scripts/ci/pgbackrest-backup-test.sh`
   pins all of it against a stubbed `pgbackrest`.
+- **`deploy.yml` migrations sync took > 16 minutes on r1 (v0.49.0, run
+  33244745680) — one archive transfer again, with delete semantics.**
+  #268 replaced the migrations-dir `ansible.posix.synchronize` (one
+  rsync, `delete: true`, but blind to the test-net ProxyJump) with an
+  `ansible.builtin.copy` whose `src` is a DIRECTORY: connection-agnostic,
+  but one SFTP round-trip + remote checksum per file with no
+  ControlPersist across module invocations on the GH runner — 291
+  already-identical files ran past 16 minutes where the whole deploy used
+  to take ~7, and stale files on the host were silently kept.
+  `tasks/sync-migrations.yml` now builds ONE deterministic tar.gz on the
+  controller (sorted, mtime 0, uid/gid 0, modes 0644/0755 — so
+  `unarchive`'s `tar --diff` reports changed=false on an identical
+  re-run), ships it with `ansible.builtin.unarchive` (rides the same
+  connection as every module, so the jump still works), and prunes
+  host files absent from the controller-computed manifest — fail closed
+  (empty manifest or non-nested dest aborts; only paths `find`
+  enumerated inside the dest are ever removed). `deploy-sync-test.sh`
+  (ci.yml `ansible-check`, verify.sh) pins exactly one transfer task, no
+  directory-src copy / per-file loop, and runs the task file for real:
+  extras pruned, idempotent re-run, nothing outside dest touched, empty
+  source fails closed — 3 of those red against the #268 task.
 - **`fiat:VES` and `rwa:XAU` — the two reflector-fx slots that paged
   `stellarindex_ingestion_oracle_unknown_symbols` on r1 v0.48.0
   (2026-08-29, `raw:VES` / `raw:XAU`, 7 rows each in 2 h).** The cause
@@ -299,6 +361,27 @@ against.
   `internal/sources/*/{decode*,events,feeds,pairs}.go` unless a commit
   carries a `Replay-Plan:` trailer (`none — <reason>` allowed; a bare
   `none` is not). Fixture self-test in `lint-replay-plan-test.sh`.
+### Fixed
+### Changed
+
+- **Aggregator: structurally single-venue crosses (`crypto:XLM/fiat:GBP`)
+  keep the signed freeze-and-auto-release posture; the USD-FX-derived hub
+  route is never counted as a second source.** In the production graph
+  every triangulation target has exactly one hub route (through USD), so
+  `corroborationCount` is always 1 and the freeze's `source_count`
+  widening never executes (design:
+  `docs/design/composite-route-corroboration-for-structurally-single-venue.md`
+  §1–§2). A candidate change that entered the target's own direct print
+  into the corroboration clique was rejected in review: the widening is
+  read one tick behind, so a prior-tick "agreement" pinned `sources=2`
+  for the NEXT bucket and a persistent single-venue manipulation was
+  never frozen. `TestRouterFreeze_TwoRoutesSuppressSingleSourceFreeze`
+  now pins the production shape as a control (single agreeing hub route
+  + single-venue z≈50 spike → freeze engages, hold kept on the
+  persisting print, `prevVWAPs` does not ratchet, last-known-good keeps
+  serving). The real second route (design §8.1, `crypto:XLM/crypto:BTC`
+  in `aggregate.pairs`) is an operator decision because it also exposes
+  a new, non-`min_usd_volume`-gated served pair.
 - **CI amtool gate for the Alertmanager config (#275).** The routing
   tree that decides whether any alert reaches a human was the only
   production config surface with no CI validation — amtool ran only
@@ -706,6 +789,30 @@ against.
   were hoisted to package constants for it) and the SAC-as-base
   integration fixture asserts a non-empty, correctly-valued series on
   all four paths plus the per-bucket preference.
+- **Trade sink: a shutdown that raced an in-flight steady-state batch
+  write lost the batch instead of draining it.** The pipeline sibling
+  of the sorobanevents AsyncSink fix (#240). `persistWorker`'s ticker /
+  batch-full flush runs under the parent ctx, so a SIGTERM landing
+  mid-`BatchInsertTrades` cancelled the write; `context.Canceled` is
+  (correctly) not an infra fault, so the batch fell into per-row
+  isolation against the same dead ctx and every row — up to 200
+  already-accepted trades — was logged "abandoned on shutdown —
+  re-derive" while the worker's own bounded shutdown flush ran a moment
+  later with nothing to do. `flushTradeBatch` now returns the trades
+  the cancelled ctx left un-landed; the steady-state flush carries them
+  back into `tradeBuf` for `flushShutdown` to land under the shared
+  `drainTimeout`, and only the BOUNDED shutdown callers (whose deadline
+  is the drain budget) report an abandon as loss, via one
+  `reportAbandonedTrades` helper. Audited siblings NOT affected:
+  discovery `AsyncSink` (per-record Background ctx, Stop closes + drains
+  the channel), clickhouse `LiveSink` (Background-ctx flushes, failed
+  flush keeps its buffer), `externalRetryBuffer` (re-queues on ctx
+  error, `finalDrain` under a fresh ctx), `statsflush` (delta against a
+  retained snapshot, final flush under `WithoutCancel`), and the
+  customer-webhook worker (durable DB lease queue). Regression tests
+  `TestPersistWorker_ShutdownRacingInFlightTradeFlush_RowsLandNotLost`
+  + `TestFlushTradeBatch_CtxCancelledMidWrite_ReturnsWholeBatch`, red on
+  the pre-fix code (landed 0, want 3; 3 rows counted lost).
 - **Aggregator gap detector took r1's serving path down (2026-08-28
   18:23Z: `api_error_rate_high`, 503s from statement timeouts, load
   19.6, IO-bound).** `pg_stat_statements` pinned it on the detector's

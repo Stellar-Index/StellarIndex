@@ -219,7 +219,9 @@ func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.St
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			persistWorker(ctx, logger, store, in, mode, workerID, extBuf)
+			// store doubles as the trade writer; the seam exists so the
+			// shutdown-race tests can intercept the batch path with a fake.
+			persistWorker(ctx, logger, store, store, in, mode, workerID, extBuf)
 		}(i)
 	}
 	wg.Wait()
@@ -240,26 +242,56 @@ func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.St
 // is still well under the 25-conn pool ceiling.
 const PersistWorkers = 8
 
+// tw is the trade writer for the batch path — always `store` in
+// production (PersistEvents passes it twice); a fake in the shutdown-race
+// tests, which is the only reason the seam is a separate parameter.
+//
 //nolint:gocognit,contextcheck // batched-drain loop has natural fan-out: ctx.Done, ticker, channel — splitting hurts readability of the flush invariants. The shutdown flush intentionally uses a fresh context (parent is canceled); see flushShutdown.
-func persistWorker(ctx context.Context, logger *slog.Logger, store *timescale.Store, in <-chan consumer.Event, mode SinkMode, workerID int, extBuf *externalRetryBuffer) {
+func persistWorker(ctx context.Context, logger *slog.Logger, store *timescale.Store, tw tradeWriter, in <-chan consumer.Event, mode SinkMode, workerID int, extBuf *externalRetryBuffer) {
 	tradeBuf := make([]canonical.Trade, 0, tradeBatchSize)
 	flushTicker := time.NewTicker(tradeBatchFlushInterval)
 	defer flushTicker.Stop()
 
-	// flushWith writes the buffered batch through the resilient sink.
+	// flushWith writes the buffered batch through the resilient sink and
+	// returns the trades the flush had to abandon because fctx was
+	// cancelled mid-write (see flushTradeBatch).
 	// buf routes external trades to the async retry buffer; passing nil
 	// (shutdown paths) makes external trades block-and-retry within the
 	// bounded shutdown context instead, since the buffer's background
 	// retrier is winding down (2026-07-06 outage fix).
-	flushWith := func(fctx context.Context, buf *externalRetryBuffer) {
+	flushWith := func(fctx context.Context, buf *externalRetryBuffer) []canonical.Trade {
 		if len(tradeBuf) == 0 {
-			return
+			return nil
 		}
 		batch := tradeBuf
 		tradeBuf = make([]canonical.Trade, 0, tradeBatchSize)
-		flushTradeBatch(fctx, logger, store, buf, batch, workerID)
+		return flushTradeBatch(fctx, logger, tw, buf, batch, workerID)
 	}
-	flush := func(fctx context.Context) { flushWith(fctx, extBuf) }
+	// flush is the steady-state flush. It runs under the parent ctx (via
+	// shutdownSafeCtx) so a stuck write can't hold shutdown hostage —
+	// which means a shutdown that RACES an in-flight write cancels it.
+	// The rows that write had to abandon are not lost: they go back into
+	// tradeBuf, and the `<-ctx.Done()` arm's flushShutdown retries them
+	// under the worker's bounded drain deadline — the same
+	// carry-into-the-drain shape as the sorobanevents AsyncSink (#240).
+	// Before this they fell straight into flushTradeBatch's per-row
+	// isolation against the dead ctx and were logged as "abandoned —
+	// re-derive" (up to tradeBatchSize rows) on every deploy that caught
+	// a flush mid-flight. Only the parent-ctx case is carried: when
+	// shutdownSafeCtx already handed out a fresh bounded ctx (CON-09),
+	// its deadline IS the drain budget, so an abandon there is reported
+	// as the genuine loss it is.
+	flush := func(fctx context.Context) {
+		abandoned := flushWith(fctx, extBuf)
+		if len(abandoned) == 0 {
+			return
+		}
+		if fctx == ctx {
+			tradeBuf = append(abandoned, tradeBuf...)
+			return
+		}
+		reportAbandonedTrades(logger, "steady-state flush under shutdown ctx", abandoned, fctx.Err())
+	}
 
 	// flushShutdown flushes this worker's in-memory tradeBuf on the
 	// shutdown paths (parent ctx canceled OR channel closed) using a
@@ -278,7 +310,7 @@ func persistWorker(ctx context.Context, logger *slog.Logger, store *timescale.St
 		}
 		fctx, cancel := context.WithDeadline(context.Background(), deadline)
 		defer cancel()
-		flushWith(fctx, nil)
+		reportAbandonedTrades(logger, "worker shutdown flush", flushWith(fctx, nil), fctx.Err())
 	}
 
 	for {
@@ -537,7 +569,7 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, store *t
 		// down, so every trade block-retries within the bounded drainCtx
 		// (2026-07-06 outage fix). An infra fault here abandons after the
 		// drainTimeout and logs the recoverable ledger range at ERROR.
-		flushTradeBatch(drainCtx, logger, store, nil, batch, -1)
+		reportAbandonedTrades(logger, "shutdown drain", flushTradeBatch(drainCtx, logger, store, nil, batch, -1), drainCtx.Err())
 	}
 	for {
 		select {
@@ -652,7 +684,7 @@ drainRemainder:
 	}
 	if len(finalTrades) > 0 {
 		// nil extBuf: same shutdown block-and-retry posture as flushTrades.
-		flushTradeBatch(finalCtx, logger, store, nil, finalTrades, -1)
+		reportAbandonedTrades(logger, "final pass", flushTradeBatch(finalCtx, logger, store, nil, finalTrades, -1), finalCtx.Err())
 	}
 	if total > 0 {
 		logger.Error("PersistEvents drain deadline exceeded — made a final best-effort persist pass; any residual is recoverable from the CH lake, re-derive this ledger range if the served tier is short",

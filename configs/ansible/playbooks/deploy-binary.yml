@@ -72,27 +72,24 @@
     # binary onto a database whose schema_migrations was older
     # than the binary expected, producing partial-outage shapes
     # at runtime even though /v1/healthz returned 200. Now the
-    # playbook copies the migrations dir from the controller and
+    # playbook ships the migrations dir from the controller and
     # runs `stellarindex-migrate up` BEFORE touching any binary.
     # Idempotent — golang-migrate skips already-applied versions.
     #
-    # ansible.builtin.copy, NOT ansible.posix.synchronize: rsync runs on
-    # the CONTROLLER and dials the host itself, so it never sees the
-    # `--ssh-common-args "-o ProxyJump=…"` deploy.yml uses for the NAT-only
-    # test-net VMs (synchronize forwards ssh_common_args only under
-    # `use_ssh_args: true`) — the testnet/futurenet path timed out here
-    # before it ever reached the schema (deploy-ansible-deploy-2). copy is
-    # connection-agnostic (works over the jump AND r1's direct SSH), same
-    # as 14-stellarindex-services.yml's sync. It does not delete stale
-    # files; migrations are append-only, so that is immaterial.
-    - name: Sync migrations dir from controller
-      ansible.builtin.copy:
-        src: "{{ local_dist_dir }}/migrations/"
-        dest: /usr/local/share/stellarindex/migrations/
-        owner: root
-        group: root
-        mode: "0644"
-        directory_mode: "0755"
+    # ONE archive transfer (ansible.builtin.unarchive) + explicit prune —
+    # see ../tasks/sync-migrations.yml for the full history. In short:
+    # ansible.posix.synchronize's rsync runs on the CONTROLLER and never
+    # sees the `--ssh-common-args "-o ProxyJump=…"` deploy.yml uses for
+    # the NAT-only test-net VMs (deploy-ansible-deploy-2); the
+    # directory-src ansible.builtin.copy that replaced it (#268) is
+    # connection-agnostic but O(files) — > 16 min for 291 unchanged
+    # files on the r1 v0.49.0 deploy (run 33244745680) — and dropped
+    # synchronize's `delete: true`. unarchive rides the same connection
+    # as every other module (jump-safe) and moves the tree in one go.
+    # `import_tasks` (static) so --syntax-check and lint-deploy-playbook
+    # cover the task file; the `when:` below applies to every task in it.
+    - name: Sync migrations from controller (one archive transfer + prune)
+      ansible.builtin.import_tasks: ../tasks/sync-migrations.yml
       when:
         - local_dist_dir is defined
         # `| bool` is load-bearing: deploy.yml passes this via
