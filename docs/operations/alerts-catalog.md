@@ -103,6 +103,9 @@ signal lands.
 | `stellarindex_ch_schema_snapshot_stale` | `time() - stellarindex_ch_schema_snapshot_last_success_unix` | > 36 h for ≥ 30 min | P3 | [ch-schema-restore](runbooks/ch-schema-restore.md) |
 | `stellarindex_ch_schema_snapshot_offsite_stale` | `time() - stellarindex_ch_schema_snapshot_offsite_last_success_unix` | > 72 h for ≥ 30 min | P3 | [ch-schema-restore](runbooks/ch-schema-restore.md) |
 | `stellarindex_restore_drill_stale` | `time() - stellarindex_restore_drill_last_success_unix` (or `absent_over_time(...[40d])`) | > 40 d for ≥ 30 min | P3 | [restore-drill-stale](runbooks/restore-drill-stale.md) |
+| `stellarindex_zfs_pool_free_low` | `stellarindex_zfs_pool_free_bytes` (zpool free, textfile from `zfs-snapshot.sh`) | < 2.5 TiB for ≥ 15 min | P3 | [zfs-snapshots](runbooks/zfs-snapshots.md) |
+| `stellarindex_zfs_pool_free_critical` | same | < 1.5 TiB for ≥ 5 min (below the snapshot job's 2 TiB guard floor) | **P1** | [zfs-snapshots](runbooks/zfs-snapshots.md) |
+| `stellarindex_zfs_snapshot_stale` | `time() - stellarindex_zfs_snapshot_latest_unix` per dataset (or `absent_over_time(...{dataset="data/clickhouse"}[36h])`) | > 36 h for ≥ 30 min | P3 | [zfs-snapshots](runbooks/zfs-snapshots.md) |
 
 ## Cache / serving alerts
 

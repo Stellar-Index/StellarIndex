@@ -1,0 +1,67 @@
+---
+# Rolling ZFS snapshots of the ClickHouse lake + Postgres datasets
+# (decision 2026-08-29). Tag: zfs-snapshots.
+#
+# pgBackRest (18-pgbackrest-backup.yml) is the off-host, PITR-capable
+# Postgres backup and the lake is re-derivable from the Galexie archive
+# (ADR-0043) — both are hours-to-days paths. This is the MINUTES path
+# for logical faults: a bad migration, a DROP, a re-derive that wrote
+# garbage. Semantics, recovery procedures and the pgBackRest/FREEZE
+# comparison: docs/operations/runbooks/zfs-snapshots.md.
+#
+# Nothing here restarts a service. The script + env file + units are
+# installed and the TIMER is enabled; the first snapshot happens at the
+# next OnCalendar slot (or run `systemctl start zfs-snapshot.service`).
+#
+# Only applies where the role owns a ZFS pool (zfs_data_pool_type set —
+# see main.yml); a no-ZFS host has nothing to snapshot.
+
+- name: Install zfs-snapshot script
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../../scripts/ops/zfs-snapshot.sh"
+    dest: /usr/local/bin/zfs-snapshot.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install /etc/default/zfs-snapshot (dataset list, retention, min-free floor)
+  ansible.builtin.template:
+    src: zfs-snapshot.env.j2
+    dest: /etc/default/zfs-snapshot
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Ensure node_exporter textfile-collector dir exists for the snapshot gauges
+  # Normally created by 10-observability.yml; repeated here so a
+  # `--tags zfs-snapshots` apply on its own is self-sufficient.
+  ansible.builtin.file:
+    path: /var/lib/node_exporter/textfile_collector
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install zfs-snapshot systemd units
+  ansible.builtin.template:
+    src: "systemd/{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - zfs-snapshot.service
+    - zfs-snapshot.timer
+  register: zfs_snapshot_units
+
+- name: Enable + start the zfs-snapshot timer
+  ansible.builtin.systemd:
+    name: zfs-snapshot.timer
+    enabled: true
+    state: started
+    daemon_reload: "{{ zfs_snapshot_units is changed }}"
+  when:
+    # check-mode: the unit install above was only simulated, so the unit
+    # may not exist on the host yet — enabling it would fail the dry-run
+    # (same guard as the pgBackRest timer in 18-pgbackrest-backup.yml).
+    - not (ansible_check_mode and zfs_snapshot_units is changed)

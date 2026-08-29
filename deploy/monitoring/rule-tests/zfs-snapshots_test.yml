@@ -1,0 +1,161 @@
+---
+# promtool unit tests for deploy/monitoring/rules/zfs-snapshots.yml
+# (rolling ZFS snapshots, decision 2026-08-29).
+#
+#   promtool test rules deploy/monitoring/rule-tests/zfs-snapshots_test.yml
+#
+# PROVEN-RED: (a) change `< 2748779069440` to `< 1649267441664` in the
+# low alert and the "2.0 TiB free fires the ticket, not the page" case
+# reports 0 alerts; (b) delete the `or absent_over_time(...)` branch of
+# the stale rule and the "never reported" case reports 0 alerts — the
+# textfile-absent blind spot the branch exists for.
+
+rule_files:
+  - ../rules/zfs-snapshots.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── 2.0 TiB free: under the 2.5 TiB ticket line, above the 1.5 TiB page line ──
+  - interval: 1m
+    name: 2.0 TiB free fires the ticket, not the page
+    input_series:
+      - series: 'stellarindex_zfs_pool_free_bytes{pool="data"}'
+        values: '2199023255552x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_zfs_pool_free_low
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: storage
+              pool: data
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-snapshots.md
+              summary: "ZFS pool data free space 2TiB < 2.5 TiB — snapshot guard will start pruning"
+              description: |
+                `zpool list` free space on data has been under
+                2.5 TiB for 15 min. The rolling-snapshot job prunes its
+                oldest auto-* snapshots below 2 TiB and stops snapshotting
+                entirely if that is not enough — at ~250 GB/day of pinned
+                ClickHouse churn per retained day, that is days away.
+                Reclaim space (retention, archive → S3, or destroy a
+                forgotten manual-* snapshot) before the page threshold.
+      - eval_time: 20m
+        alertname: stellarindex_zfs_pool_free_critical
+        exp_alerts: []
+
+  # ── 1.0 TiB free: both fire (page after 5 m) ──
+  - interval: 1m
+    name: 1.0 TiB free fires the page
+    input_series:
+      - series: 'stellarindex_zfs_pool_free_bytes{pool="data"}'
+        values: '1099511627776x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_zfs_pool_free_critical
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: storage
+              pool: data
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-snapshots.md
+              summary: "ZFS pool data free space 1TiB < 1.5 TiB — below the snapshot guard floor"
+              description: |
+                `zpool list` free space on data is under
+                1.5 TiB — already below the snapshot job's 2 TiB floor, so
+                it has pruned everything it is allowed to and is now
+                SKIPPING snapshots (stellarindex_zfs_snapshot_guard_skipped=1).
+                Every ZFS writer (ClickHouse, MinIO, Postgres) shares this
+                pool; treat as the zfs-pool-full runbook with the snapshot
+                job already out of the picture.
+
+  # ── 5 TiB free (today's r1): silent ──
+  - interval: 1m
+    name: 5 TiB free fires nothing
+    input_series:
+      - series: 'stellarindex_zfs_pool_free_bytes{pool="data"}'
+        values: '5497558138880x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_zfs_pool_free_low
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: stellarindex_zfs_pool_free_critical
+        exp_alerts: []
+
+  # ── snapshot age: latest fixed at t=0, evaluated at 40h (>36h + 30m for) ──
+  # Series are 1 m apart (not 1 h) so every evaluation inside the 30 m
+  # `for` window sees a sample within the 5 m lookback; hourly samples
+  # would let the pending state reset between them.
+  - interval: 1m
+    name: a 40h-old clickhouse snapshot fires the stale ticket
+    input_series:
+      - series: 'stellarindex_zfs_snapshot_latest_unix{dataset="data/clickhouse"}'
+        values: '0x2500'
+      # postgres refreshed each scrape (tracks wall clock): must stay silent.
+      - series: 'stellarindex_zfs_snapshot_latest_unix{dataset="data/postgres"}'
+        values: '0+60x2500'
+    alert_rule_test:
+      - eval_time: 40h
+        alertname: stellarindex_zfs_snapshot_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: storage
+              dataset: data/clickhouse
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-snapshots.md
+              summary: "No rolling ZFS snapshot of data/clickhouse in >36h"
+              description: |
+                The newest auto-* snapshot of data/clickhouse is over
+                36 h old (daily timer + 12 h slack), or the job has never
+                reported. Either zfs-snapshot.timer is not firing, the run
+                failed (`journalctl -u zfs-snapshot.service`), or the
+                min-free guard skipped it
+                (stellarindex_zfs_snapshot_guard_skipped=1 — check pool
+                free). While this is stale, a logical fault in ClickHouse
+                or Postgres is a re-derive / pgBackRest restore instead of a
+                clone-and-copy.
+
+  # ── a 20h-old snapshot (normal daily cadence) is silent ──
+  - interval: 1m
+    name: a 20h-old snapshot fires nothing
+    input_series:
+      - series: 'stellarindex_zfs_snapshot_latest_unix{dataset="data/clickhouse"}'
+        values: '0x1300'
+    alert_rule_test:
+      - eval_time: 20h
+        alertname: stellarindex_zfs_snapshot_stale
+        exp_alerts: []
+
+  # ── never reported (textfile missing / job never ran): absent branch ──
+  - interval: 1m
+    name: a job that never reported fires via absent_over_time
+    input_series: []
+    alert_rule_test:
+      - eval_time: 40h
+        alertname: stellarindex_zfs_snapshot_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: storage
+              dataset: data/clickhouse
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-snapshots.md
+              summary: "No rolling ZFS snapshot of data/clickhouse in >36h"
+              description: |
+                The newest auto-* snapshot of data/clickhouse is over
+                36 h old (daily timer + 12 h slack), or the job has never
+                reported. Either zfs-snapshot.timer is not firing, the run
+                failed (`journalctl -u zfs-snapshot.service`), or the
+                min-free guard skipped it
+                (stellarindex_zfs_snapshot_guard_skipped=1 — check pool
+                free). While this is stale, a logical fault in ClickHouse
+                or Postgres is a re-derive / pgBackRest restore instead of a
+                clone-and-copy.

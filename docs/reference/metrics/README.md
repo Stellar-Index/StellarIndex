@@ -2768,7 +2768,66 @@ under replay load 2026-07-31: soroswap 90d bespoke ~1.9 s, cctp
 query lost its rollup (the raw-trades-scan class) before builds start
 hitting the 90 s top bucket, which is the hard budget, not headroom.
 
+## Rolling ZFS snapshots (textfile collector, ansible-managed)
+
+Emitted by `scripts/ops/zfs-snapshot.sh` (installed by the
+archival-node role, tag `zfs-snapshots`) into
+`/var/lib/node_exporter/textfile_collector/zfs_snapshot.prom` on every
+run — daily via `zfs-snapshot.timer`, and on each
+`scripts/ops/zfs-snapshot-now.sh`. NOT Go-declared, so not covered by
+§3 of `scripts/ci/lint-docs.sh` (same textfile-only convention as the
+`stellar_stack_*` / `galexie_archive_tip_lag_*` families). Alerted on
+by `deploy/monitoring/rules/zfs-snapshots.yml`; runbook
+`docs/operations/runbooks/zfs-snapshots.md`.
+
+### `stellarindex_zfs_pool_free_bytes`
+
+Gauge, label `pool`. `zpool list -Hp -o free` — pool-level free bytes,
+the number the job's min-free guard acts on (unlike
+`node_filesystem_avail_bytes`, which is per-dataset and subject to
+quotas/reservations).
+
+### `stellarindex_zfs_snapshot_min_free_bytes`
+
+Gauge, label `pool`. The configured guard floor
+(`zfs_snapshot_min_free_bytes`, default 2 TiB), exported so dashboards
+can draw the line the job will act on.
+
+### `stellarindex_zfs_snapshot_latest_unix`
+
+Gauge, label `dataset`. Creation time of the newest `auto-*` snapshot
+of the dataset; `0` when there is none. Staleness input for
+`stellarindex_zfs_snapshot_stale`.
+
+### `stellarindex_zfs_snapshot_count`
+
+Gauge, label `dataset`. Number of `auto-*` snapshots currently held
+(manual / operator snapshots are excluded — they are outside the
+job's ownership).
+
+### `stellarindex_zfs_snapshot_used_bytes`
+
+Gauge, label `dataset`. `zfs get usedbysnapshots` — bytes held
+exclusively by *all* snapshots of the dataset, manual ones included.
+A large value with a small `_count` means a forgotten manual snapshot.
+
+### `stellarindex_zfs_snapshot_guard_skipped`
+
+Gauge, label `dataset`. `1` when the last run skipped this dataset's
+snapshot because the pool was below the min-free floor even after
+pruning; `0` otherwise.
+
+### `stellarindex_zfs_snapshot_last_run_unix`
+
+Gauge. Unix time the job last completed in any mode (`rotate`, `now`,
+`metrics`).
+
 ## Changelog
+
+- 2026-08-29 — added the rolling ZFS snapshot textfile gauges
+  (`stellarindex_zfs_pool_free_bytes`,
+  `stellarindex_zfs_snapshot_{latest_unix,count,used_bytes,guard_skipped,min_free_bytes,last_run_unix}`),
+  emitted by `scripts/ops/zfs-snapshot.sh`.
 
 - 2026-08-11 — removed the Stripe metrics
   (`stellarindex_stripe_platform_sync_errors_total`,
