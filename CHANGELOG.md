@@ -65,6 +65,23 @@ against.
 
 ### Added
 
+- **CI ansible task lint (`scripts/ci/lint-ansible-tasks.sh`).** Two
+  structural guards over `configs/ansible/**`, wired into import-checks +
+  `verify.sh` with a fixture self-test: *pipefail-needs-bash* (a
+  `ansible.builtin.shell` body that sets `pipefail` must declare
+  `executable: /bin/bash` — dash rejects it, the third recurrence of the
+  class) and *secret-on-argv* (a vault value interpolated into a
+  command body / `mc` positional secret in a shipped script; `no_log`
+  hides it from Ansible output only). Grandfathered violations live in
+  the shrink-only `lint-ansible-tasks.baseline`.
+- **CI galexie restart-wiring test
+  (`scripts/ci/ansible-galexie-restart-test.sh`, ansible-check job).**
+  Pins that the five galexie-input render tasks no longer notify
+  `Restart galexie` directly, that the bootstrap binary install restarts
+  every daemon it replaces, and exercises
+  `galexie-effective-checksum.yml` for real (local ansible run, stub
+  handler): comment-only edit → quiet; code/shebang edit or new file →
+  restart.
 - **`stellarindex-ops usd-volume-restamp` (W5.3).** The corrective WRITE
   half of `verify-usd-volume`: for every exact-tier (quote- or base-leg
   USD-pegged) group in a bounded `-from/-to` day window it rewrites each
@@ -330,6 +347,38 @@ against.
   (`/var/lib/stellarindex/deployed-versions/<binary>`) into `deploy.yml` as
   that 3rd argument is a follow-up.
 
+- **ansible: `04-users.yml` history-archive sweep aborted every full
+  archival-node apply.** The 2026-08-27 task ran `set -euo pipefail` under
+  ansible's default `/bin/sh` (dash on every target) → `set: Illegal
+  option -o pipefail`, rc=2, play aborted at step 04 before
+  postgres/galexie/services. Now runs under `executable: /bin/bash`
+  (audit 2026-08-28, deploy-ansible-shell-1).
+- **ansible: MinIO secrets no longer on `mc` argv.** `09-minio.yml`'s
+  alias task claimed env-based auth while passing the root password on
+  argv, and the three `mc admin user add` tasks + `galexie-append.sh`'s
+  per-restart `mc alias set` put the writer secrets in
+  `/proc/<pid>/cmdline`. All five now feed the secret on stdin (`mc`
+  reads omitted keys from stdin); the persisted `local` alias the root
+  ops scripts rely on is unchanged (deploy-ansible-secrets-9).
+- **ansible: galexie restarts only on effective config change.** The
+  wrapper script, captive cfg, `galexie.toml`, `/etc/default/galexie`
+  and the unit are each ~50% comments, and every byte change notified
+  `Restart galexie` — a ~9-minute mainnet cold catchup per fire. New
+  `galexie-effective-checksum.yml` hashes each input with comments/blank
+  lines stripped before and after rendering and notifies the restart
+  only on a mismatch; a real change (rotated key, PEER_PORT, ExecStart)
+  still restarts — no default-off ack gate (deploy-ansible-handlers-7).
+- **ansible: bootstrap binary install (`manage_stellarindex_binaries`)
+  restarts api + aggregator too, refuses a dirty tree, writes sidecars.**
+  It notified only the indexer, so the api unit kept the old binary in
+  memory; it built from whatever was in the operator's checkout with no
+  record. Now: `git status --porcelain` must be empty (override
+  `-e stellarindex_bootstrap_allow_dirty_tree=true` for a deliberate
+  unreleased-branch bring-up), and each binary's
+  `/var/lib/stellarindex/deployed-versions/` sidecar records
+  `git describe --tags --always --dirty` so the next `deploy.yml` labels
+  its rollback copy truthfully instead of `untracked-<ts>`
+  (deploy-ansible-drift-3).
 - **Operator self-service key mint/revoke now audited (api-security-1,
   audit 2026-08-28).** `POST /v1/account/keys` copied an operator
   caller's tier verbatim into the child and recorded nothing — no
