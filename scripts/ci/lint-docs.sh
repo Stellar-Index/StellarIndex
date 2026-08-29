@@ -711,6 +711,85 @@ else
     err "$ANSIBLE_DEFAULTS: per-region comment says '$r1_comment' but r1's live topology is '$r1_pool_type' ($R1_INVENTORY). The role DEFAULT may stay raidz2 for fresh nodes; the comment must not describe r1 wrongly"
   fi
   echo "  r1 pool topology: '$r1_pool_type' (authority $R1_INVENTORY) — checked $r1_files_checked of ${#r1_topology_files[@]} r1-scoped files"
+# ─── 19. Agent-orientation docs: the claims a machine can re-derive ────────
+#
+# CLAUDE.md/AGENTS.md are the first thing an agent reads, so a false
+# claim there is a defect with a blast radius of every subsequent
+# session. Two of them are mechanically checkable, and both had
+# actually drifted when this section was written (issue #326, the
+# 2026-08-29 re-sweep):
+#
+#   (a) AGENTS.md duplicates CLAUDE.md's make-target block. #259 fixed
+#       `make dev` ("the full stack" — dev.yaml has only Timescale/
+#       Redis/MinIO) and `make docs-all` ("+ obs/*.go metric Name:
+#       fields" — docs-metrics is an explicit no-op) in CLAUDE.md and
+#       left AGENTS.md asserting both, six months after c3b2c382 had
+#       aligned the same two files by hand. Duplicated prose drifts;
+#       principle 1 above says pick one source of truth. AGENTS.md's
+#       block must therefore be a VERBATIM subset of CLAUDE.md's —
+#       shorten by dropping a line, never by rewording one.
+#
+#   (b) The status page moved into the explorer (web/explorer/src/app/
+#       status/, stellarindex.io/status) and web/status/ became a
+#       redirect-only Cloudflare Pages stub — but CLAUDE.md's repo map
+#       still located the shipped page at web/status/, sending every
+#       agent that reads it to the stub. Scope is deliberately the
+#       three orientation docs a reader consults to learn WHERE things
+#       live: the operational docs (cf-pages-setup, status-page-setup,
+#       rollback, sev-playbook, the CF Pages bootstrap runbooks) name
+#       web/status/ legitimately, because the Pages project that serves
+#       the 301 is still real and still deployed. The check is
+#       per-DOCUMENT, not per-line, so prose can be worded freely, and
+#       it disarms itself if the page ever moves back.
+
+echo "Checking agent-orientation doc claims..."
+
+# (a) AGENTS.md quick-start ⊆ CLAUDE.md build+test commands, verbatim.
+#
+# extract_fenced_block <file> <heading> — the first ``` fence that
+# follows <heading>. Empty output means the heading or the fence moved,
+# which is a lint-drift error in itself (fail closed, never skip).
+extract_fenced_block() {
+  awk -v heading="$2" '
+    $0 == heading { seen = 1; next }
+    seen && /^```/ { fence = !fence; if (!fence) exit; next }
+    seen && fence { print }
+  ' "$1"
+}
+
+if [ -f CLAUDE.md ] && [ -f AGENTS.md ]; then
+  claude_cmds=$(extract_fenced_block CLAUDE.md "## Build + test commands")
+  agents_cmds=$(extract_fenced_block AGENTS.md "## Quick-start commands")
+  if [ -z "$claude_cmds" ]; then
+    err "could not extract the command block under '## Build + test commands' in CLAUDE.md — the heading or its \`\`\` fence moved; update lint-docs.sh §18a"
+  elif [ -z "$agents_cmds" ]; then
+    err "could not extract the command block under '## Quick-start commands' in AGENTS.md — the heading or its \`\`\` fence moved; update lint-docs.sh §18a"
+  else
+    while IFS= read -r line; do
+      [ -z "${line// /}" ] && continue
+      if ! printf '%s\n' "$claude_cmds" | grep -qxF "$line"; then
+        err "AGENTS.md quick-start line is not verbatim in CLAUDE.md's '## Build + test commands' block: '$line' — the two drift apart every time one is edited alone (#326); copy CLAUDE.md's line exactly, or drop the line from AGENTS.md"
+      fi
+    done <<< "$agents_cmds"
+  fi
+else
+  err "CLAUDE.md and/or AGENTS.md missing — the agent-orientation parity check (§18a) cannot run"
+fi
+
+# (b) While web/status/ is a redirect stub, an orientation doc that
+# names it must also say where the status page actually lives.
+STATUS_REDIRECTS="web/status/public/_redirects"
+if [ ! -f "$STATUS_REDIRECTS" ]; then
+  echo "  (skipped §18b — $STATUS_REDIRECTS is gone; web/status/ has been retired, so there is no stub to misdescribe)"
+elif grep -q "https://stellarindex.io/status" "$STATUS_REDIRECTS"; then
+  status_docs=$(grep -l "web/status" README.md CLAUDE.md AGENTS.md 2>/dev/null || true)
+  for doc in $status_docs; do
+    if ! grep -q "web/explorer/src/app/status" "$doc"; then
+      err "$doc names 'web/status' but never says where the status page actually lives — since the move it ships from web/explorer/src/app/status/ (stellarindex.io/status) and web/status/ is a redirect-only stub ($STATUS_REDIRECTS 301s to it; see web/status/README.md). Name the explorer path so an agent reading this file isn't sent to the stub."
+    fi
+  done
+else
+  echo "  (skipped §18b — $STATUS_REDIRECTS no longer 301s to stellarindex.io/status; the page appears to have moved back)"
 fi
 
 # ─── Summary ────────────────────────────────────────────────────────────────
