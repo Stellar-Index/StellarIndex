@@ -999,6 +999,16 @@ tests:
                 `stellarindex_ingest_gap_max_size_ledgers` gauge stops
                 updating — gauges read stale value until restart.
 
+                Three clauses: (1) the per-target last-success stamp is
+                older than 8h; (2) the runs_total metric is absent for 15m
+                (aggregator fully down); (3) the target has errored both now
+                and 8h ago and has had NO last-success stamp in 8h — a
+                scan that has never once succeeded in this process life
+                (no cursor row → nothing to re-emit) produces no stamp for
+                clause 1 to age, and its error counter satisfies clause 2's
+                "runs_total present", so before 2026-08-28 that target
+                never fired anything.
+
                 Likely causes: aggregator binary crash-looping; Postgres
                 connection-pool exhaustion causing every scan to hit the
                 per-target Go timeout / SQL statement_timeout and increment
@@ -1038,6 +1048,16 @@ tests:
                 stuck or absent for a target. Without it the operator-facing
                 `stellarindex_ingest_gap_max_size_ledgers` gauge stops
                 updating — gauges read stale value until restart.
+
+                Three clauses: (1) the per-target last-success stamp is
+                older than 8h; (2) the runs_total metric is absent for 15m
+                (aggregator fully down); (3) the target has errored both now
+                and 8h ago and has had NO last-success stamp in 8h — a
+                scan that has never once succeeded in this process life
+                (no cursor row → nothing to re-emit) produces no stamp for
+                clause 1 to age, and its error counter satisfies clause 2's
+                "runs_total present", so before 2026-08-28 that target
+                never fired anything.
 
                 Likely causes: aggregator binary crash-looping; Postgres
                 connection-pool exhaustion causing every scan to hit the
