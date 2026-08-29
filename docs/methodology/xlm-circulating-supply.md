@@ -38,6 +38,16 @@ October 2019. `total_coins` was never lowered on-chain by that vote, so
 the two figures legitimately differ. Total matches CoinGecko to 5
 significant figures.
 
+This frozen figure is **pubnet-only**. The XLM supply computer keys
+its total off the configured network passphrase
+(`supply.XLMTotalSupplyStroopsForNetwork`): on **testnet** and
+**futurenet** the total is the 100,000,000,000 XLM genesis allocation,
+which *is* those chains' ledger `total_coins` (a reset test network
+never ran inflation and never had the 2019 vote). An unrecognised
+passphrase is a startup error, never a silent fall-through to the
+pubnet constant — until 2026-08-28 `api.testnet` served the 50.0 B
+mainnet figure against a 100 B ledger.
+
 ### The exclusion set = the SDF non-circulating holdings
 
 `circulating` subtracts the balances of the accounts the Stellar
