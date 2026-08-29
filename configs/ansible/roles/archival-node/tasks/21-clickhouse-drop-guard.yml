@@ -1,0 +1,93 @@
+---
+# ClickHouse destructive-DDL size guard (2026-08-29 r1 audit).
+#
+# ClickHouse's max_table_size_to_drop / max_partition_size_to_drop make a
+# DROP TABLE / TRUNCATE / DROP PARTITION / REPLACE PARTITION on anything
+# bigger than the limit FAIL unless the operator first touches
+# /var/lib/clickhouse/flags/force_drop_table (consumed by exactly one
+# oversize drop, then deleted by the server). r1 was measured with both
+# at 1 TiB (1099511627776) — raised by hand for D2's REPLACE PARTITION
+# (docs/operations/d2-ordinal-reproject.md) and never lowered or
+# codified — so account_movements (582 GiB), operation_participants and
+# every other lake table could be dropped in one statement with no
+# second step. This pins both back to ClickHouse's own 50 GB default
+# on every host (clickhouse_max_*_size_to_drop in defaults/main.yml).
+#
+# Deliberately NO `notify: Restart clickhouse-server`: both settings
+# are documented as applying without a restart (the server's config.d
+# reloader picks the file up within seconds), and the verify task
+# below proves that on the host rather than assuming it. Applying this
+# tag never bounces the lake.
+#
+# Like 20-clickhouse-serving-profile.yml this is imported UNCONDITIONALLY
+# (not behind run_clickhouse, which is false on r1 by design) so r1 —
+# the host that had the hole — gets it via:
+#
+#   ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
+#     --tags clickhouse-drop-guard --check --diff
+#   ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
+#     --tags clickhouse-drop-guard
+#
+# Whatever hand-written file carries r1's 1 TiB must be REMOVED in the
+# same operator step (config.d files merge alphabetically, last wins —
+# a later-sorting leftover would silently keep winning). The verify
+# task fails the apply if the effective value is not the pinned one.
+#
+# Planned big drops: docs/operations/clickhouse-destructive-ddl.md.
+
+- name: Refuse an unlimited ClickHouse drop guard (0 = no limit)
+  when: clickhouse_drop_guard_enabled | default(true) | bool
+  ansible.builtin.assert:
+    that:
+      - (clickhouse_max_table_size_to_drop | int) > 0
+      - (clickhouse_max_partition_size_to_drop | int) > 0
+    fail_msg: >-
+      clickhouse_max_table_size_to_drop / clickhouse_max_partition_size_to_drop
+      must be a positive byte count. 0 disables the guard entirely; a
+      planned oversize drop uses the force_drop_table flag instead
+      (docs/operations/clickhouse-destructive-ddl.md), never a raised limit.
+  tags: [clickhouse, clickhouse-drop-guard]
+
+- name: Pin ClickHouse max_table_size_to_drop / max_partition_size_to_drop
+  when: clickhouse_drop_guard_enabled | default(true) | bool
+  ansible.builtin.copy:
+    dest: /etc/clickhouse-server/config.d/si-drop-guard.xml
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      <!-- Managed by ansible (archival-node/tasks/21-clickhouse-drop-guard.yml).
+           Destructive DDL above these sizes needs
+           /var/lib/clickhouse/flags/force_drop_table — see
+           docs/operations/clickhouse-destructive-ddl.md. Do NOT raise. -->
+      <clickhouse>
+          <max_table_size_to_drop>{{ clickhouse_max_table_size_to_drop | int }}</max_table_size_to_drop>
+          <max_partition_size_to_drop>{{ clickhouse_max_partition_size_to_drop | int }}</max_partition_size_to_drop>
+      </clickhouse>
+  tags: [clickhouse, clickhouse-drop-guard]
+
+- name: Verify the effective ClickHouse drop guard matches the pinned values
+  # system.server_settings is the LIVE value after the config reloader
+  # ran — this catches a later-sorting hand-written override still
+  # holding the old 1 TiB, which the copy above cannot see. Retried
+  # because the reloader polls (default 2 s). Skipped under --check
+  # (command modules do not run there, so `until` could never hold and
+  # the --check --diff preview would fail spuriously).
+  when:
+    - clickhouse_drop_guard_enabled | default(true) | bool
+    - not ansible_check_mode
+  ansible.builtin.command: >-
+    clickhouse-client --port {{ clickhouse_tcp_port | default(9300) }}
+    -q "SELECT value FROM system.server_settings
+    WHERE name IN ('max_partition_size_to_drop', 'max_table_size_to_drop')
+    ORDER BY name FORMAT TSV"
+  register: ch_drop_guard_effective
+  changed_when: false
+  retries: 10
+  delay: 2
+  # ORDER BY name → partition first, then table.
+  until: >-
+    ch_drop_guard_effective.stdout_lines ==
+    [clickhouse_max_partition_size_to_drop | int | string,
+     clickhouse_max_table_size_to_drop | int | string]
+  tags: [clickhouse, clickhouse-drop-guard]
