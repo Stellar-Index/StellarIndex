@@ -581,7 +581,7 @@ groups:
               stellarindex-ops find-data-gaps --config /etc/stellarindex.toml --source {{ $labels.source }} --output text
             for per-source diagnosis, then either
               stellarindex-ops projector-replay --source <name> --from F  (per-source projection cursor rewind; ADR-0032)
-              stellarindex-ops <source>-backfill --from F --to T     (if only one source is short)
+              stellarindex-ops backfill --source <name> --from F --to T   (if only one source is short)
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detected.md
 
