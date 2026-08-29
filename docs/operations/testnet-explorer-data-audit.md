@@ -10,7 +10,7 @@
 > | XLM supply | **DONE** (#249) |
 > | Explorer API base URL per network | **DONE** (#274) |
 > | `/markets`, `/insights`, `/anomalies`, `/divergences`, `/mev` route gating (nav + search + sitemap + hub cards + the pages themselves) | **DONE** (#328) — one shared table, `web/explorer/src/lib/network-routes.ts` |
-> | `/assets` directory + home "Top assets" USD columns | **DONE** (#328) |
+> | `/assets` directory, issuer-detail asset table, and home "Top assets" USD columns | **DONE** (#328) |
 > | Home network strip's USD tiles + their `/markets` links | **DONE** (#328) |
 > | `hasAssets` / `hasSdexActivity` capability flags (futurenet) | **DONE** (#328) — plus `hasBridges`; `lib/networks.ts` |
 > | `/v1/status` counting an intentionally-absent aggregator as degraded | **DONE** (#328) — `[api] status_services` |
