@@ -197,6 +197,30 @@ against.
 
 ### Fixed
 
+- **r1's ZFS `data` pool is raidz1 everywhere, and a lint keeps it that
+  way.** The pool is SINGLE parity — live-verified 2026-07-17 and
+  corroborated by arithmetic that needs no host access (the ~16.8 TB
+  footprint measured that day cannot fit the ~13.85 TB two parity drives
+  would leave on these four devices) — but the 2026-07-17 correction only
+  ever reached the two rule trees and two runbooks. `r1-deployment-state`,
+  `self-hosting`, `storage-considerations`, `multi-region-topology`,
+  `multi-region-cutover`, `r3-deployment-state`, `lcm-cache-tiering`,
+  ADR-0016, ADR-0027 and the ansible per-region comment all still said
+  raidz2, i.e. promised an operator a second drive of failure margin that
+  does not exist and sized capacity plans off a usable figure ~4.5 TB too
+  low. Sharpest of them: `configs/ansible/inventory/r1.example.yml` said
+  `zfs_data_pool_type: "raidz2"`, so a rebuild from the codified inventory
+  would have laid down a pool too small for r1's own data. That value is
+  now `raidz1` and is the machine-readable authority `scripts/ci/lint-docs.sh`
+  §18 lints every r1-scoped file against (paragraph-level: naming another
+  raidz level is allowed only alongside the live one, so dated history
+  survives and bare contradictions do not). The role DEFAULT stays raidz2
+  — deliberately, it is the right shape for a *fresh* archival node — and
+  now says so. The `TODO(ash)` in `zfs-degraded.md` is closed with the
+  evidence rather than another ssh request. Dated decision records
+  (ADR-0016/0027, the superseded first-node runbook, the 2026-07-16 audit
+  assessment that inferred raidz2 from docs while stating it had no live
+  access) keep their text and carry inline corrections. (#289)
 - **Gap detector pre-registers `runs_total` at 0 so a restart cannot read
   as a dead detector.** `stellarindex_ingest_gap_detector_runs_total` is a
   CounterVec that only materialises a series on first `Inc()`, and since

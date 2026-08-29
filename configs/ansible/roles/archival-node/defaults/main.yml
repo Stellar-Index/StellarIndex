@@ -79,8 +79,15 @@ clickhouse_apply_schema: false
 clickhouse_tcp_port:     9300   # 9000 is MinIO's
 
 # ───── ZFS ───────────────────────────────────────────────────────────
+# The DEFAULT is raidz2 ON PURPOSE: a fresh archival node should get
+# two-drive parity (docs/architecture/infrastructure/archival-node-spec.md
+# "Why not raidz3"). It is NOT a description of any host we run — every
+# region pins its own topology in its inventory:
 # [Per-region:
-#   r1 = raidz2 across 4× NVMe (full local mirror, two-drive tolerance)
+#   r1 = raidz1 across 4× NVMe (single-drive tolerance; live-verified
+#        2026-07-17, pinned in inventory/r1.example.yml — this default
+#        does NOT describe r1, and a raidz2 rebuild there would be too
+#        small for r1's own footprint)
 #   r2 = NOT used — EBS gp3 directly, no ZFS layer
 #   r3 = mirror across 2× NVMe (Vultr SG SKU only ships 2 drives;
 #        single-drive tolerance, acceptable for an async DR replica)
@@ -93,7 +100,7 @@ zfs_ashift:          12          # 4K NVMe sector alignment
 # Drives where installimage put OS partitions (ESP/swap/root) in slots
 # 1-3, leaving the rest of the disk unallocated. Role carves a p4 on
 # each of these spanning all remaining free space, to use as a ZFS
-# raidz2 vdev alongside the whole-drive data disks. Empty = no
+# data-pool vdev alongside the whole-drive data disks. Empty = no
 # partitioning needed (all zfs_data_devices are whole drives).
 zfs_os_drives_needing_data_partition: []
 zfs_os_drives_data_partition_number: 4

@@ -606,6 +606,113 @@ if [ -f "$AM_JS" ]; then
   done
 fi
 
+# ─── 18. r1's ZFS `data` pool topology — ONE source of truth ───────────────
+#
+# The raidz1-vs-raidz2 split (#289) is the canonical "corrected in one
+# tree, never propagated" defect in this repo. r1's `data` pool is a
+# single-parity raidz1 vdev — live-verified 2026-07-17 and corroborated
+# by arithmetic (the ~16.8 TB footprint measured that day does not fit
+# the ~13.85 TB two parity drives would leave on these four devices) —
+# yet a year of docs, an ADR and the ansible per-region comment still
+# described it as raidz2, i.e. promised an operator a second drive of
+# margin that does not exist and sized every capacity plan off the wrong
+# usable figure. The 2026-07-17 fix reached the rule trees and two
+# runbooks and stopped there.
+#
+# AUTHORITY: `zfs_data_pool_type` in configs/ansible/inventory/r1.example.yml
+# — the machine-readable value that would actually rebuild the pool, so
+# doc drift and IaC drift are the same check. Not a literal in this
+# script: that would just be a third source of truth.
+#
+# RULE: in the r1-scoped files below, a PARAGRAPH that names any raidz
+# level must also name the live one. That permits deliberate contrast
+# and dated history ("raidz2 at bringup; raidz1 since 2026-05-21") and
+# rejects what actually drifts — a bare, unqualified assertion of the
+# wrong level. Dated decision records (ADR-0016/0027, the superseded
+# first-archival-node-deployment runbook, docs/audit/**) are NOT listed:
+# they record what was decided/believed at a date and carry inline
+# corrections instead.
+
+echo "Checking r1 ZFS pool topology (single source of truth)..."
+R1_INVENTORY="configs/ansible/inventory/r1.example.yml"
+r1_pool_type=$(awk -F'"' '/^[[:space:]]*zfs_data_pool_type:[[:space:]]*"/{print $2; exit}' \
+  "$R1_INVENTORY" 2>/dev/null || true)
+if [ -z "$r1_pool_type" ]; then
+  err "could not read zfs_data_pool_type from $R1_INVENTORY — that value is the authority for r1's pool topology; restore it or update scripts/ci/lint-docs.sh §18"
+else
+  # Files that describe r1's pool AS IT RUNS TODAY.
+  r1_topology_files=(
+    "$R1_INVENTORY"
+    configs/prometheus/rules.r1/infra.yml
+    deploy/monitoring/rules/infra.yml
+    deploy/monitoring/rule-tests/infra_test.yml
+    docs/architecture/ha-plan.md
+    docs/architecture/storage-considerations.md
+    docs/architecture/infrastructure/multi-region-topology.md
+    docs/operations/r1-deployment-state.md
+    docs/operations/r3-deployment-state.md
+    docs/operations/self-hosting.md
+    docs/operations/multi-region-cutover.md
+    docs/operations/lcm-cache-tiering.md
+    docs/operations/runbooks/zfs-degraded.md
+    docs/operations/runbooks/zfs-pool-full.md
+    docs/operations/runbooks/zfs-snapshots.md
+    docs/operations/runbooks/nvme-smart.md
+    docs/operations/runbooks/db-disk-full.md
+    configs/ansible/inventory/r3.example.yml
+  )
+  # …and the subset that must SAY it, so the gate can't be satisfied by
+  # gutting every mention (or by flipping the authority alone).
+  r1_topology_must_state=(
+    configs/prometheus/rules.r1/infra.yml
+    deploy/monitoring/rules/infra.yml
+    docs/operations/runbooks/zfs-degraded.md
+    docs/operations/r1-deployment-state.md
+    docs/architecture/storage-considerations.md
+  )
+  r1_files_checked=0
+  for f in "${r1_topology_files[@]}"; do
+    if [ ! -f "$f" ]; then
+      err "r1 pool-topology check: '$f' is listed as r1-scoped but does not exist — a rename would silently drop it from the check; fix the path in scripts/ci/lint-docs.sh §18"
+      continue
+    fi
+    r1_files_checked=$((r1_files_checked + 1))
+    # Paragraph = run of non-blank lines. Report the paragraph's first line.
+    bad=$(awk -v auth="$r1_pool_type" '
+      function flush() {
+        if (para != "" && para ~ /raidz[0-9]/ && index(para, auth) == 0)
+          printf "%d\n", start
+        para = ""; start = 0
+      }
+      /^[[:space:]]*$/ { flush(); next }
+      { if (start == 0) start = FNR; para = para $0 "\n" }
+      END { flush() }
+    ' "$f")
+    if [ -n "$bad" ]; then
+      for ln in $bad; do
+        err "$f:$ln — this paragraph names a raidz level other than r1's live '$r1_pool_type' (authority: $R1_INVENTORY) without naming '$r1_pool_type' too. a doc that names the wrong parity level promises an operator a margin the box may not have. Correct it, or keep the historical mention in the same paragraph as the live one."
+      done
+    fi
+  done
+  for f in "${r1_topology_must_state[@]}"; do
+    if [ -f "$f" ] && ! grep -q "$r1_pool_type" "$f"; then
+      err "$f no longer states r1's pool topology ('$r1_pool_type') anywhere — deleting the statement is how this fact went missing for a year (#289); it must be stated, not merely not-contradicted"
+    fi
+  done
+  # The ansible role default is deliberately raidz2 (right shape for a
+  # FRESH node) — so the defaults file is not paragraph-scanned. What IS
+  # checked is its per-region comment, which is where the false "r1 =
+  # raidz2" claim lived.
+  ANSIBLE_DEFAULTS="configs/ansible/roles/archival-node/defaults/main.yml"
+  r1_comment=$(grep -E '^#[[:space:]]+r1 = ' "$ANSIBLE_DEFAULTS" 2>/dev/null || true)
+  if [ -z "$r1_comment" ]; then
+    err "$ANSIBLE_DEFAULTS: the per-region '#   r1 = <topology>' comment is gone — it is the line that told operators r1 ran raidz2 for a year (#289); keep it and keep it true"
+  elif ! echo "$r1_comment" | grep -q "$r1_pool_type"; then
+    err "$ANSIBLE_DEFAULTS: per-region comment says '$r1_comment' but r1's live topology is '$r1_pool_type' ($R1_INVENTORY). The role DEFAULT may stay raidz2 for fresh nodes; the comment must not describe r1 wrongly"
+  fi
+  echo "  r1 pool topology: '$r1_pool_type' (authority $R1_INVENTORY) — checked $r1_files_checked of ${#r1_topology_files[@]} r1-scoped files"
+fi
+
 # ─── Summary ────────────────────────────────────────────────────────────────
 
 count=$(cat "$ERROR_FILE")
