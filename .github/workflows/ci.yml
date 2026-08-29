@@ -470,6 +470,31 @@ jobs:
         # fixtures extract the shipped wrapper out of the ansible task and
         # run it. No network, no ansible, no systemd (non-root exec path).
         run: ./scripts/ci/run-heavy-job-test.sh
+      - name: lint-deploy-playbook
+        # deploy-ansible-deploy-2: deploy.yml reaches the test-net VMs only
+        # via --ssh-common-args ProxyJump, which controller-side rsync
+        # (ansible.posix.synchronize) never sees, and the fail-closed
+        # pgBackRest gate can only exit 1 on a VM with no pgbackrest. Pins
+        # deploy-binary.yml to connection-agnostic modules and the gate to
+        # the per-region pgbackrest_backup_enabled flag deploy.yml passes.
+        # No network, no ansible.
+        run: ./scripts/ci/lint-deploy-playbook.sh
+      - name: envfile-loader self-test
+        # deploy-ansible-secrets-5: /etc/default/{stellarindex,-ops,galexie}
+        # are systemd EnvironmentFiles (unquoted values) that the deploy
+        # migrate step, a root cron and a dozen host scripts used to
+        # `set -a; .` — the SHELL parser, which expands `$` and runs `;`
+        # inside a secret as root while systemd keeps the services happy.
+        # Pins every consumer to the verbatim reader and proves it
+        # round-trips metacharacters. No network, no ansible.
+        run: ./scripts/ci/envfile-loader-test.sh
+      - name: deploy-inputs self-test
+        # deploy-ansible-input-8: runs deploy.yml's shipped Validate step
+        # against a `health_grace_seconds` carrying whitespace — ansible's
+        # k=v `-e` form splits on whitespace, so an unvalidated value
+        # injected backup_freshness_skip=true and skipped the backup gate.
+        # No network, no gh.
+        run: ./scripts/ci/deploy-inputs-test.sh
       - name: lint-lexicon
         # Maintainability audit 2026-07-01 (D2+D6): domain-lexicon +
         # idiom ratchet. Zero rules (no Fetch/Make verbs, slog is the
@@ -933,6 +958,11 @@ jobs:
           printf '%s\n' '--- {}' > inventory/ci.syntax-secrets.yml
           ansible-playbook --syntax-check -i inventory/r1.example.yml playbooks/archival-node.yml -e secrets_file=../inventory/ci.syntax-secrets.yml
           ansible-playbook --syntax-check -i inventory/r1.example.yml playbooks/monitoring.yml
+          # deploy-binary.yml runs from deploy.yml against an ad-hoc `-i host,`
+          # inventory; it was never syntax-checked here (deploy-ansible-deploy-2).
+          ansible-playbook --syntax-check -i 'localhost,' playbooks/deploy-binary.yml \
+            -e version=v0.0.0-ci -e binaries_csv=stellarindex-api -e local_dist_dir=/tmp/ci-dist
+
       - name: galexie restart-wiring test (structural + local ansible run)
         # 2026-08-28 audit (deploy-ansible-handlers-7 / -drift-3): pins
         # that galexie-input renders restart only on EFFECTIVE change

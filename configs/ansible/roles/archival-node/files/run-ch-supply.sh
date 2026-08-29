@@ -12,7 +12,27 @@
 # table is NOT refreshed here — nothing reads it; serving sums supply_flows
 # directly.) Same DSN sourcing as compute-archive-to.sh.
 set -uo pipefail
-. /etc/default/stellarindex
+# Read a systemd EnvironmentFile VERBATIM — never `.`/source it. Its
+# values are unquoted (that is what systemd wants), so the shell would
+# expand `$`, split on `;`/`&`/`|`/whitespace and eat quotes inside a
+# secret: the services keep working while this path gets a mangled DSN
+# (deploy-ansible-secrets-5). Same reader as run-heavy-job.sh.
+# usage: load_env_file FILE [export]
+load_env_file() {
+  local line
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      [A-Za-z_]*=*)
+        if [ "${2:-}" = export ]; then
+          export "${line?}"
+        else
+          printf -v "${line%%=*}" '%s' "${line#*=}"
+        fi
+        ;;
+    esac
+  done < "$1"
+}
+load_env_file /etc/default/stellarindex
 
 # Debian's pg_wrapper `psql` stats the cluster data dir to pick a version and
 # aborts with "Invalid data directory for cluster 15 main" for any user that

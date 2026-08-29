@@ -141,7 +141,11 @@ assert_cmd supply_reserve_accounts_nonempty sh -c \
 assert_cmd galexie_writer_creds_valid bash -c '
   export HOME=/root
   [[ -r /etc/default/galexie ]] || exit 1
-  set -a; . /etc/default/galexie; set +a
+  # Read verbatim — systemd EnvironmentFile syntax is not shell; a secret
+  # with `$`/`;`/quotes would be mangled by `.` (deploy-ansible-secrets-5).
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    case "$line" in [A-Za-z_]*=*) export "$line" ;; esac
+  done < /etc/default/galexie
   [[ -n "${AWS_ACCESS_KEY_ID:-}" && -n "${AWS_SECRET_ACCESS_KEY:-}" && -n "${AWS_ENDPOINT_URL:-}" ]] || exit 1
   host="${AWS_ENDPOINT_URL#http://}"; host="${host#https://}"
   export MC_HOST_cfgassert="http://${AWS_ACCESS_KEY_ID}:${AWS_SECRET_ACCESS_KEY}@${host}"
