@@ -363,6 +363,20 @@ func run(cfgPath string, dryRun bool) error {
 	if err != nil {
 		return fmt.Errorf("triangulations: %w", err)
 	}
+	compositeReference, err := buildCompositeReference(cfg.Aggregate)
+	if err != nil {
+		return fmt.Errorf("composite reference: %w", err)
+	}
+	if compositeReference.Enabled {
+		logger.Info("composite reference: enabled",
+			"targets", cfg.Aggregate.CompositeReference.Targets,
+			"tolerance_bps", cfg.Aggregate.CompositeReference.ToleranceBps,
+			"min_leg_sources", cfg.Aggregate.CompositeReference.MinLegSources,
+			"fx_max_age_hours", cfg.Aggregate.CompositeReference.FXMaxAgeHours,
+			"leg_dispersion_bps", cfg.Aggregate.CompositeReference.LegDispersionBps,
+			"release_band_pct", cfg.Aggregate.CompositeReference.ReleaseBandPct,
+			"chains", len(triangulations))
+	}
 	if len(triangulations) > 0 {
 		logger.Info("triangulation chains: configured", "count", len(triangulations))
 	}
@@ -492,6 +506,7 @@ func run(cfgPath string, dryRun bool) error {
 		MaxHops:            cfg.Aggregate.MaxHops,
 		MinRouteConfidence: cfg.Aggregate.MinRouteConfidence,
 		FXStore:            store, // X2.5: snap fiat-vs-fiat legs to bucket-end FX quote
+		CompositeReference: compositeReference,
 		Baselines:          baselineLookupAdapter{store: store},
 		Phase2Thresholds: orchestrator.Phase2Thresholds{
 			ConfidenceMaxFreeze:  cfg.Anomaly.Phase2.ConfidenceMaxFreeze,
@@ -1803,6 +1818,26 @@ func buildTriangulations(cfg config.AggregateConfig) ([]orchestrator.Triangulati
 		return nil, nil
 	}
 	return out, nil
+}
+
+// buildCompositeReference maps `[aggregate.composite_reference]` onto
+// the orchestrator's config. A dormant knob is the class this campaign
+// exists to kill, so every field is carried; zero numerics fall through
+// to the orchestrator's Default* constants.
+func buildCompositeReference(cfg config.AggregateConfig) (orchestrator.CompositeReferenceConfig, error) {
+	targets, err := cfg.CompositeReferenceTargets()
+	if err != nil {
+		return orchestrator.CompositeReferenceConfig{}, err
+	}
+	return orchestrator.CompositeReferenceConfig{
+		Enabled:          cfg.CompositeReference.Enabled,
+		Targets:          targets,
+		ToleranceBps:     cfg.CompositeReference.ToleranceBps,
+		MinLegSources:    cfg.CompositeReference.MinLegSources,
+		FXMaxAge:         time.Duration(cfg.CompositeReference.FXMaxAgeHours) * time.Hour,
+		LegDispersionBps: cfg.CompositeReference.LegDispersionBps,
+		ReleaseBandPct:   cfg.CompositeReference.ReleaseBandPct,
+	}, nil
 }
 
 // buildCrossCheckRefresher composes the periodic supply-cross-check
