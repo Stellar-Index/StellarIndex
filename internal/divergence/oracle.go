@@ -170,6 +170,15 @@ func (r *OracleReference) LookupPrice(ctx context.Context, pair canonical.Pair, 
 		return 0, fmt.Errorf("%w: oracle %s has no observation for %s",
 			ErrAssetUnsupported, r.source, pair.String())
 	}
+	// Defensive: the keys above are exact canonical strings, so a
+	// `raw:` row (an unmapped oracle symbol recorded verbatim — see
+	// canonical.AssetOracleRaw) can never match a mapped pair. Should
+	// a reader ever hand one back regardless, it is reference-only,
+	// orientation-unknown data and must never become a comparison.
+	if !u.Asset.IsMapped() || !u.Quote.IsMapped() {
+		return 0, fmt.Errorf("%w: oracle %s observation for %s is an unmapped raw row (%s/%s)",
+			ErrAssetUnsupported, r.source, pair.String(), u.Asset.String(), u.Quote.String())
+	}
 
 	// Staleness gate (CS-089 analogue). observedAt is the comparison
 	// timestamp Compare passes through; zero falls back to wall time
