@@ -176,8 +176,11 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 			// deadline_ts overflow) to the ledger close time.
 			Timestamp: canonical.SafeUnixMillis(pd.PackageTimestamp, closedAt),
 			Asset:     entry.Base,
-			// Per-feed quote — USD for all but EUROC/EUR (ADR-0028).
-			// Pre-#53 this was hardcoded USD, mislabelling EUROC.
+			// Per-feed quote (ADR-0028): USD for most, EUR for
+			// EUROC/EUR, and the reserve ASSET for the bare
+			// `_FUNDAMENTAL` NAV-ratio feeds. Pre-#53 this was
+			// hardcoded USD, mislabelling EUROC; pre-D8 the SolvBTC
+			// NAV ratios were still fiat:USD.
 			Quote:    entry.Quote,
 			Price:    price,
 			Decimals: DefaultDecimals,
