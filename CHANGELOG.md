@@ -41,8 +41,61 @@ against.
   duplicated, with the one-time cross-region copy (≈ $80 + $3–4/mo)
   recorded as the not-taken option. `off-site-backup-plan.md` status
   carries the same note.
+- **Public status page shows backup freshness (Ash, 2026-08-29).** New
+  read-only `GET /v1/diagnostics/backups` (experimental) reports the
+  pgBackRest last full / diff / WAL-archive age, the per-repository
+  newest backup (repo 1 on-host, repo 2 encrypted S3 off-site), the
+  monthly restore drill's last run + pass/fail, and the ClickHouse
+  schema+state snapshot age — each with a `freshness` verdict
+  (`ok` / `stale` / `unknown`) against SLOs the API echoes in `slo`
+  (full ≤ 8 d, diff ≤ 36 h, WAL ≤ 15 m, off-site ≤ 8 d, drill ≤ 35 d,
+  snapshot ≤ 36 h). Source of truth is Prometheus — the same
+  pgbackrest_exporter / node_exporter textfile series the alert rules
+  read; the API never shells out to pgbackrest. Every timestamp is
+  nullable and an absent series is `null` + `unknown`, never a fresh
+  zero; `source_status` carries the document's trust tri-state and
+  `flags.stale` mirrors the roll-up. Cached 60 s, no secrets or paths;
+  503 where no `api.prometheus_url` is configured. The explorer
+  `/status` page mounts a **Backups** panel (`BackupsPanel.tsx`,
+  mainnet only) that renders green within SLO, red with the real age
+  past it, grey "no data" for absent sources, and a "verdicts not
+  trustworthy" marker when the API's Prometheus reads failed — ages
+  come from the API's `age_seconds`, never the browser clock. Reserved
+  nulls (documented in the spec): repo `retention`, drill
+  `restored_backup_ts` / `duration_s`, `zfs_snapshot_latest_ts`,
+  `replica_lag_s` — no producer exports them yet. Tests:
+  `internal/api/v1/diagnostics_backups_test.go`,
+  `web/explorer/src/app/status/BackupsPanel.test.tsx`.
+- **`stellarindex_backup_offsite_stale` (P3, both rule trees).** The
+  existing backup alerts read `pgbackrest_backup_since_last_completion_seconds`,
+  which the exporter computes ACROSS repos — a host whose on-host repo1
+  is fresh while every repo2 (S3) write fails stayed green and the one
+  copy that survives host loss aged out silently. The new rule fires
+  per UP exporter instance with no `pgbackrest_backup_info{repo_key="2"}`
+  series younger than 8 d (`x unless x offset 8d` — a new backup is a
+  new series), which also covers repo2 never written. promtool tests
+  in `deploy/monitoring/rule-tests/backup-offsite_test.yml` (red-proof:
+  widening `repo_key` to all repos makes the repo1-fresh/repo2-stale
+  case stop firing); runbook `runbooks/backup-offsite-stale.md`.
+
 ### Fixed
 
+- **Explorer test-net builds could silently serve MAINNET data.**
+  `web/explorer/next.config.mjs` inlined `NEXT_PUBLIC_API_BASE_URL ??
+  'https://api.stellarindex.io'` through its `env` block, so the
+  per-network fallback added in #212 (`API_BASE_URL ??
+  CURRENT_NETWORK.apiBaseUrl` in `src/api/client.ts`) was unreachable:
+  a testnet/futurenet Pages project with `NEXT_PUBLIC_NETWORK` set but
+  the API var forgotten baked in the mainnet origin. The key is dropped
+  from `env` (Next inlines `NEXT_PUBLIC_*` from the build environment
+  on its own), `useMe` now shares `API_BASE_URL` instead of its own
+  mainnet-literal fallback, and the JSON-LD `contentUrl` on asset /
+  market pages derives from `CURRENT_NETWORK.apiBaseUrl`. The
+  mainnet-hardcode guard now also scans `next.config.mjs` and strips
+  `//` comments before `/* */` — a `/dashboard/*` in a line comment had
+  opened a phantom block comment that hid three literals from it.
+  New `src/lib/next-config-env.test.ts` pins the env contract
+  (audit web-status-5).
 - **Native XLM supply is now network-aware.** `internal/supply` derived
   `total_supply` / `max_supply` from the frozen pubnet constant
   (50,001,806,812 XLM) regardless of the configured network, so
@@ -352,6 +405,26 @@ against.
   minio) are grandfathered by name for burn-down. Retention is
   untouched (ADR-0043). (audit-2026-08-28 backup-restore-7)
 
+- **Config-apply gate: widened surfaces, host baseline, fail-closed
+  (`scripts/ci/config-apply-gate.sh`, audit deploy-ansible-gate-4).** The
+  gate's SURFACES list omitted files the archival-node role renders or
+  copies onto the host — `roles/*/defaults/` (e.g. `galexie_ledgers_per_file`
+  → `galexie.toml.j2`), `handlers/`, `inventory/`, the sibling roles,
+  `configs/healthchecks/*` and the copied `scripts/ops/config-assertions.sh`,
+  `ch-schema-snapshot.sh`, `restore-drill.sh`, `scripts/dev/r1-smoke.sh` —
+  so a defaults-only or healthchecks-only release passed as "binary deploy
+  is complete". It also diffed against the previous tag by ancestry only
+  (a skip-ahead deploy never listed the skipped tags' config) and turned
+  any git error into "no changes" (`|| true` under no `set -e`). Now the
+  whole `configs/ansible/roles/` tree, `inventory/`, `configs/healthchecks/`
+  and the four copied scripts are surfaces; an optional 3rd argument takes
+  the host's live version as the baseline (ancestry remains the fallback,
+  and the baseline used is printed); an unresolvable version/baseline or a
+  failing `git diff` exits 1. `config-apply-gate-test.sh` pins one fixture
+  per surface plus the skip-ahead and fail-closed cases (13 red on the old
+  script). Wiring the host sidecar
+  (`/var/lib/stellarindex/deployed-versions/<binary>`) into `deploy.yml` as
+  that 3rd argument is a follow-up.
 - **`deploy.yml` could never apply schema on testnet/futurenet
   (deploy-ansible-deploy-2).** `deploy-binary.yml` synced the migrations
   dir with `ansible.posix.synchronize`, whose rsync runs on the

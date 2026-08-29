@@ -292,7 +292,10 @@ export function useMe() {
     // hidden on those networks anyway (CURRENT_NETWORK.accounts).
     enabled: CURRENT_NETWORK.accounts,
     queryFn: async () => {
-      const url = `${API_BASE_URL_FOR_ME}/v1/account/me`;
+      // Same per-network resolution as every other request (client.ts);
+      // only the fetch options differ — apiGet doesn't pass
+      // `credentials: 'include'`.
+      const url = `${API_BASE_URL}/v1/account/me`;
       const res = await fetch(url, {
         credentials: 'include',
         headers: { Accept: 'application/json' },
@@ -311,14 +314,6 @@ export function useMe() {
     retry: false,
   });
 }
-
-const API_BASE_URL_FOR_ME =
-  // Inline the resolved base URL so this hook doesn't require the
-  // apiGet helper (which doesn't pass `credentials: 'include'`).
-  // Mirrors src/api/client.ts's resolution.
-  typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_BASE_URL
-    ? process.env.NEXT_PUBLIC_API_BASE_URL
-    : 'https://api.stellarindex.io';
 
 export type NetworkStats = GetJSON<'/network/stats'>['data'];
 
@@ -945,6 +940,30 @@ export function useArchiveReport() {
       return env.data;
     },
     staleTime: 5 * 60_000,
+    retry: false,
+  });
+}
+
+export type BackupsDiagnostics = Schemas['BackupsDiagnostics'];
+
+/**
+ * useBackupsDiagnostics — fetches the backup + DR-evidence freshness
+ * snapshot from `/v1/diagnostics/backups` for the status page's Backups
+ * panel. Returns the envelope (not just `.data`) because the panel dates
+ * every "N ago" against the server's `as_of`, never `Date.now()` — the
+ * ages the API judged its verdicts by are the ages the panel shows.
+ * 503 (no Prometheus on this deployment) is terminal per session, so
+ * retry is off and the panel renders the honest absence state.
+ */
+export function useBackupsDiagnostics() {
+  return useQuery<{ data: BackupsDiagnostics; as_of?: string }>({
+    queryKey: ['/v1/diagnostics/backups'],
+    queryFn: () =>
+      apiGet<{ data: BackupsDiagnostics; as_of?: string }>(
+        '/v1/diagnostics/backups',
+      ),
+    staleTime: 60_000,
+    refetchInterval: 60_000,
     retry: false,
   });
 }
