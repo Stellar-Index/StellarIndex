@@ -1,0 +1,9 @@
+# lint-ansible-tasks.baseline — grandfathered violations (shrink-only).
+# Format: <rule><TAB><path>. Remove the line when the violation is fixed;
+# a stale entry fails the gate. Growing this file needs a scoped
+# `Baseline-Growth:` commit trailer (scripts/ci/lint-baseline-growth.sh).
+#
+# redis-sentinel: `redis-cli -a "{{ redis_password }}"` on argv in the
+# Sentinel primary probe. Owned by the redis-sentinel role (not the
+# archival-node fixer's surface, 2026-08-28); fix = REDISCLI_AUTH env.
+secret-on-argv	configs/ansible/roles/redis-sentinel/tasks/03-redis-configure.yml
