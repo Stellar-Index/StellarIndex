@@ -1,0 +1,126 @@
+name: orphan-branches
+
+# Orphan-branch tripwire (the 2026-08-27/28 priceless incident).
+#
+# A fix branch was pushed with no PR and no backlog line; the next day a
+# different agent re-diagnosed the same alert from scratch and fixed it
+# differently (#254), and the orphan was found only by a manual branch
+# audit. A postmortem sat on another PR-less branch for a day (#255).
+# The contract is AGENTS.md "No orphan work": every pushed branch gets
+# a PR in the same session. This workflow is the mechanical backstop:
+# once a day it lists every remote branch (other than main and the
+# old-*/archive* history patterns) that has NO open-or-merged PR and
+# whose last commit is more than 24h old, and opens/updates ONE
+# tracking issue with the branch, last-commit date and author. When
+# the list is empty the issue is closed.
+#
+# Self-contained: ${{ github.token }} via the gh CLI, no checkout, no
+# secrets. It does NOT fail the run — the issue is the surface (a red
+# scheduled run is inbox noise, see the 2026-08-24 freeze-ratchet note).
+# Branches with only a CLOSED (unmerged) PR are still listed, annotated,
+# because delete_branch_on_merge only removes merged ones.
+
+on:
+  schedule:
+    - cron: "23 5 * * *" # daily 05:23 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+
+concurrency:
+  group: orphan-branches
+  cancel-in-progress: false
+
+env:
+  ISSUE_LABEL: orphan-branches
+  ISSUE_TITLE: "Orphan branches (no PR)"
+  MAX_AGE_SECONDS: "86400"
+
+jobs:
+  orphan-branches:
+    name: branches with no PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Find orphan branches
+        id: scan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          now="$(date -u +%s)"
+          scanned=0
+          rows=""
+          while IFS=' ' read -r branch sha; do
+            [ -n "$branch" ] || continue
+            case "$branch" in
+              main|old-*|archive*) continue ;;
+            esac
+            scanned=$((scanned + 1))
+            # Open or merged PR ⇒ not an orphan. Closed-unmerged is noted.
+            prs="$(gh pr list --head "$branch" --state all --limit 20 \
+              --json number,state --jq 'map("\(.state):\(.number)") | join(" ")')"
+            case " $prs " in
+              *" OPEN:"*|*" MERGED:"*) continue ;;
+            esac
+            meta="$(gh api "repos/${GH_REPO}/commits/${sha}" \
+              --jq '"\(.commit.committer.date) \(.commit.author.name)"')"
+            when="${meta%% *}"
+            author="${meta#* }"
+            age=$(( now - $(date -u -d "$when" +%s) ))
+            [ "$age" -gt "$MAX_AGE_SECONDS" ] || continue
+            note=""
+            [ -z "$prs" ] || note=" — only closed PR(s): ${prs// /, }"
+            rows="${rows}| \`${branch}\` | ${when} | ${author} | ${sha:0:8}${note} |"$'\n'
+          done < <(gh api "repos/${GH_REPO}/branches?per_page=100" --paginate \
+            --jq '.[] | "\(.name) \(.commit.sha)"')
+          count="$(printf '%s' "$rows" | grep -c '^|' || true)"
+          echo "scanned=${scanned} branches, orphans=${count}"
+          {
+            echo "count=${count}"
+            echo "rows<<ROWS_EOF"
+            printf '%s' "$rows"
+            echo "ROWS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open or update the tracking issue
+        if: steps.scan.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ROWS: ${{ steps.scan.outputs.rows }}
+          COUNT: ${{ steps.scan.outputs.count }}
+        run: |
+          set -euo pipefail
+          gh label create "$ISSUE_LABEL" --color D93F0B \
+            --description "remote branches with no PR (AGENTS.md: No orphan work)" 2>/dev/null || true
+
+          body="$(printf '%s remote branch(es) have no open or merged PR and a last commit older than 24h. Per [AGENTS.md — No orphan work](%s/%s/blob/main/AGENTS.md#no-orphan-work--the-contract): open a (Draft) PR for it, or delete it (closing any prior PR with a comment saying why it was superseded).\n\n| Branch | Last commit | Author | SHA / note |\n| --- | --- | --- | --- |\n%s\n---\n_Auto-managed by the orphan-branches workflow (run %s). Body is rewritten on every run; closes automatically when no orphans remain._\n' \
+            "$COUNT" "${GITHUB_SERVER_URL:-https://github.com}" "$GH_REPO" "$ROWS" "${GITHUB_RUN_ID:-?}")"
+
+          existing="$(gh issue list --label "$ISSUE_LABEL" --state open \
+            --json number,title --jq "map(select(.title == \"${ISSUE_TITLE}\")) | .[0].number" || true)"
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            gh issue edit "$existing" --body "$body"
+            echo "Updated existing orphan-branches issue #$existing."
+          else
+            gh issue create --title "$ISSUE_TITLE" --label "$ISSUE_LABEL" --body "$body"
+            echo "Opened new orphan-branches issue."
+          fi
+
+      - name: Close the tracking issue (no orphans)
+        if: steps.scan.outputs.count == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for n in $(gh issue list --label "$ISSUE_LABEL" --state open \
+              --json number --jq '.[].number' || true); do
+            gh issue close "$n" --comment "No orphan branches remain — orphan-branches closing automatically."
+            echo "Closed orphan-branches issue #$n."
+          done
