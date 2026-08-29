@@ -8,6 +8,7 @@ import { Panel } from '@/components/reveal';
 import { Container, Breadcrumbs } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
+import { totalCoinsCaption } from '@/lib/xlm-supply';
 import {
   type Envelope,
   type Ledger,
@@ -145,6 +146,7 @@ export function LedgerView({ seq: seqProp }: { seq?: string } = {}) {
             label="Total coins"
             mono
             value={l.total_coins ? `${stroopsToXlm(l.total_coins)} XLM` : '—'}
+            sub={l.total_coins ? totalCoinsCaption() : undefined}
           />
           <Field
             label="Fee pool"
@@ -389,10 +391,13 @@ function Field({
   label,
   value,
   mono,
+  sub,
 }: {
   label: string;
   value: string;
   mono?: boolean;
+  /** Optional muted caption under the value (what the figure IS). */
+  sub?: string;
 }) {
   return (
     <div>
@@ -401,6 +406,11 @@ function Field({
       </dt>
       <dd className={mono ? 'mt-0.5 font-mono text-xs' : 'mt-0.5 tabular-nums'}>
         {value}
+        {sub && (
+          <div className="text-ink-muted mt-0.5 font-sans text-[11px] normal-case">
+            {sub}
+          </div>
+        )}
       </dd>
     </div>
   );
