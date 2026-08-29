@@ -1,27 +1,42 @@
 ---
 title: Runbook — redis-replication
-last_verified: 2026-05-03
-status: draft
+last_verified: 2026-08-29
+status: current (alert inert on r1)
 severity: P2
 ---
 
 # Runbook — `stellarindex_redis_replication_broken`
+
+> **INERT ON R1 (re-verified 2026-08-29).** r1 is a SINGLE-NODE
+> Redis — no Sentinel, no replicas — so there is no replication to
+> monitor. The r1 overlay (`configs/prometheus/rules.r1/cache.yml`)
+> DELIBERATELY keeps the phantom expr
+> `redis_connected_slaves < on(instance) redis_expected_slaves` —
+> `redis_expected_slaves` has no producer anywhere (F-1329), so the
+> rule can never fire on r1; it is tracked in
+> `scripts/ci/lint-metric-refs.sh`'s `KNOWN_INERT` list. The
+> multi-host tree (`deploy/monitoring/rules/cache.yml`) carries the
+> LIVE form, `redis_connected_slaves < 2`, against the ADR-0024
+> 1-primary-2-replica topology. Everything below describes that
+> future multi-host shape.
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
 | Alert | `stellarindex_redis_replication_broken` |
-| Severity | P2 (ticket) |
-| Detected by | `deploy/monitoring/rules/cache.yml` |
+| Severity | P2 (`severity: ticket`) |
+| Detected by | Deliberate expr split between the trees: `deploy/monitoring/rules/cache.yml` (group `stellarindex.cache`, `severity: ticket`, `for: 2m`) carries the live `redis_connected_slaves < 2`; the r1 overlay `configs/prometheus/rules.r1/cache.yml` keeps the never-firing `redis_expected_slaves` form so the alert stays INERT on the single-node r1 (see banner). |
 | Typical MTTR | 15–45 min |
 | Impact | No immediate customer impact — reads and writes continue on the master. But Sentinel needs at least one healthy replica to promote on failover; without that, **a master failure becomes a full cache outage** (`redis-master-down.md`). |
 
 ## Symptoms
 
-- `redis_connected_slaves < redis_expected_slaves` on the master
-  for ≥ 2 min. We expect 2 replicas per master in production
-  (HA plan §3.4).
+- `redis_connected_slaves < 2` on the master for ≥ 2 min (the
+  multi-host rule; the ADR-0024 topology expects 2 replicas per
+  master — HA plan §3.4). There is no `redis_expected_slaves`
+  metric anywhere (F-1329): the old symptom line quoting it
+  described a series that never existed.
 - `redis-cli info replication` on the master shows
   `connected_slaves:` lower than configured.
 - Sentinel logs: `+sdown slave ...`.
@@ -95,11 +110,12 @@ redis-cli -h redis-sentinel -p 26379 sentinel replicas <mastername>
 
 ## Known false-positive patterns
 
-- **Rolling StatefulSet restart**: a replica is briefly absent
-  while its pod respawns. PodDisruptionBudget keeps the quorum
-  intact, but the `for: 2m` threshold can trip during a deliberately
-  slow rollout. Silence the alert for the duration of a planned
-  maintenance.
+- **Rolling `systemctl restart redis-server` across the (future)
+  cache hosts** (one-host-at-a-time via the `redis-sentinel`
+  ansible role with `--limit`): a replica is briefly absent while
+  its instance restarts, and the `for: 2m` threshold can trip
+  during a deliberately slow rollout. Silence the alert for the
+  duration of a planned maintenance.
 - **New replica provisioning**: adding a third replica to a shard
   produces a period of `connected_slaves == expected - 1` while
   initial-sync completes. Expected.
@@ -108,8 +124,20 @@ redis-cli -h redis-sentinel -p 26379 sentinel replicas <mastername>
 
 - `redis-master-down.md` — the downstream consequence if a master
   fails while replication is broken.
+- ADR-0024 — `docs/adr/0024-redis-ha-via-sentinel.md` (the
+  1-primary-2-replica Sentinel topology this alert guards).
 - HA plan §3.4 Redis topology.
 
 ## Changelog
 
 - 2026-04-23 — initial draft.
+- 2026-08-29 — re-verified against HEAD: the symptom quoted
+  `redis_expected_slaves`, a metric with no producer anywhere
+  (F-1329 dead alert) — replaced with the multi-host tree's
+  literal `redis_connected_slaves < 2`; INERT-on-r1 banner added
+  (the r1 overlay deliberately keeps the phantom expr,
+  KNOWN_INERT-tracked); StatefulSet/PodDisruptionBudget
+  false-positive rewritten as a rolling systemctl restart via the
+  redis-sentinel role; ADR-0024 cited; dual-tree Detected-by
+  noting the deliberate expr split. Status draft → current
+  (alert inert on r1).
