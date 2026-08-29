@@ -56,14 +56,17 @@ import (
 // construction: the templated stellarindex-{indexer,aggregator,api}
 // units source /etc/default/stellarindex (which must never carry the
 // pair) and run-heavy-job.sh imports the pair from
-// /etc/default/stellarindex-ops into every wrapped job. On a
-// deploy/systemd self-host it does NOT hold by construction — those
-// reference units source /etc/default/stellarindex-ops as their only
-// env file — so there the pair must be exported in the job's shell,
-// never written to that file (a live-ingest sink or the supply
-// refresher running as ops_batch would be demoted to lowest
-// priority, the exact inverse of what this exists for). See
-// docs/operations/clickhouse-ops-batch-profile.md.
+// /etc/default/stellarindex-ops into every wrapped job. The
+// deploy/systemd self-host reference units DO share the -ops file with
+// the batch one-shots (the indexer reads its MinIO creds and the API
+// its SEP-10 seed out of it), so each of the three live-daemon units
+// strips the pair with `UnsetEnvironment=`, which systemd applies after
+// every Environment=/EnvironmentFile= — a live-ingest sink or the
+// supply refresher running as ops_batch would be demoted to lowest
+// priority, the exact inverse of what this exists for (#292).
+// TestOpsBatchIdentityNeverReachesLiveDaemons pins both halves: the
+// live daemons resolve to CH `default`, the batch units to ops_batch.
+// See docs/operations/clickhouse-ops-batch-profile.md.
 const (
 	// OpsUserEnv names the env var holding the ops-batch CH username.
 	OpsUserEnv = "STELLARINDEX_CLICKHOUSE_OPS_USER"

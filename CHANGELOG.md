@@ -248,6 +248,35 @@ against.
   since `Sink.Flush` writes transactions before operations and
   participants. (#290)
 
+- **The `ops_batch` ClickHouse identity can no longer reach a live
+  daemon on a `deploy/systemd` self-host.** The three reference units
+  (`stellarindex-{indexer,aggregator,api}.service`) source
+  `/etc/default/stellarindex-ops` — the indexer for its MinIO creds, the
+  API for its SEP-10 seed — and
+  `docs/operations/clickhouse-ops-batch-profile.md` prescribes writing
+  `STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD` into exactly that file.
+  Since #243 those two vars set the identity of every ClickHouse
+  connection `internal/storage/clickhouse` opens, so a self-hoster
+  following the doc demoted the LIVE ledger sink
+  (`NewLiveSink` → `Open`) and the aggregator's supply readers
+  (`NewExplorerReader`) to the lowest-priority batch tier — the precise
+  inverse of the 2026-08-28 r1 incident the profile exists to prevent.
+  The only guard was a unit-file comment (`config-assertions.sh`'s third
+  leg checks `/etc/default/stellarindex`, which does not exist on such a
+  host). Each live-daemon unit now carries
+  `UnsetEnvironment=STELLARINDEX_CLICKHOUSE_OPS_USER
+  STELLARINDEX_CLICKHOUSE_OPS_PASSWORD`, which systemd applies after
+  every `Environment=`/`EnvironmentFile=` (systemd ≥ 235; the Ubuntu
+  22.04/24.04 targets ship 249/255), so the guarantee holds whatever the
+  operator puts in the file. The batch one-shots that share the file
+  (`verify-archive-tier-*`, `ch-schema-*`, `restore-drill`) deliberately
+  do NOT strip it. `TestOpsBatchIdentityNeverReachesLiveDaemons` resolves
+  the environment each unit in `deploy/systemd/` and the archival-node
+  role would hand its process, feeds it to `opsAuthFrom` and pins both
+  halves — CH `default` for the live daemons, `ops_batch` for the batch
+  units — so neither direction can drift. Ansible-managed hosts were
+  never affected (their daemons read `/etc/default/stellarindex`) and
+  nothing about r1's rendered units changes. (#292)
 - **Gap detector pre-registers `runs_total` at 0 so a restart cannot read
   as a dead detector.** `stellarindex_ingest_gap_detector_runs_total` is a
   CounterVec that only materialises a series on first `Inc()`, and since
