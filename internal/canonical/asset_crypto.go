@@ -43,7 +43,10 @@ var knownCryptoCodes = map[string]struct{}{
 	// (2026-05-22, #53). SolvBTC is a BTC-backed crypto token — crypto,
 	// not RWA (ADR-0028 reserves `rwa` for tokenized tradfi assets).
 	// `_FUNDAMENTAL` feeds publish NAV; each feed_id is its own code so
-	// market and NAV observations never collide on one asset.
+	// market and NAV observations never collide on one asset. Those
+	// two NAV feeds are quoted in their RESERVE asset, not USD —
+	// crypto:BTC and crypto:SolvBTC respectively (D8, 2026-08-29); see
+	// redstone.feedRegistry for the live derivation.
 	"SolvBTC": {}, "SolvBTC_FUNDAMENTAL": {}, "SolvBTC.BBN_FUNDAMENTAL": {},
 	// 2026-07-24 RedStone relayer expansion (ledger 63624934; ADR-0014
 	// Amendments). Ethena's synthetic-dollar tokens — crypto-native
@@ -61,8 +64,9 @@ var knownCryptoCodes = map[string]struct{}{
 	// `SolvBTC_FUNDAMENTAL/USD`, `SolvBTC.BBN_FUNDAMENTAL/USD`). These
 	// publish the NAV **in USD** (~65,430 on 2026-07-27) — a DIFFERENT
 	// quantity from the unsuffixed `_FUNDAMENTAL` feeds above, which
-	// publish the NAV RATIO vs underlying BTC (~1.003; verified live
-	// 2026-07-27 against api.redstone.finance AND r1 oracle_updates).
+	// publish the NAV RATIO against their reserve asset (~1.003 vs BTC
+	// and 1.0000 vs SolvBTC; verified live 2026-07-27 against
+	// api.redstone.finance AND r1 oracle_updates).
 	// Distinct codes so the two series never collide. The feed_id's
 	// `/` is normalized to `_` here because canonical codes travel as
 	// URL path segments (`/v1/assets/{id}`) where a literal `/` would

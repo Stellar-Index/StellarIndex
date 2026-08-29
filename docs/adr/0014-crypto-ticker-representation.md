@@ -143,6 +143,17 @@ ADR for an addition._
   Stellar deployment. BTC-backed crypto tokens, so `crypto` not the
   ADR-0028 `rwa` variant. Each feed_id is its own code (market vs
   NAV observations stay distinct).
+  **Amended 2026-08-29 (D8):** the two `_FUNDAMENTAL` codes are
+  allow-listed unchanged, but they are no longer USD-quoted — a NAV
+  ratio is denominated in the token's reserve asset, so
+  `SolvBTC_FUNDAMENTAL` is quoted `crypto:BTC` and
+  `SolvBTC.BBN_FUNDAMENTAL` `crypto:SolvBTC`. This ADR governs the
+  code allow-list only; the per-feed quote lives in
+  `redstone.feedRegistry` and is amended in ADR-0028 §2/§3, which
+  carries the live evidence. Note the consequence for this
+  allow-list: `crypto:BTC` and `crypto:SolvBTC` are now used as
+  QUOTE assets as well as bases, which the bare-ticker model already
+  supports (`OracleUpdate.Quote` is an ordinary `Asset`).
 - 2026-07-27 — added `USDe`, `sUSDe` (Ethena synthetic dollars),
   `savUSD_FUNDAMENTAL` (Avant staked USD — crypto-native yield
   vault like sUSDe, not `rwa`), `SolvBTC_FUNDAMENTAL_USD`,
@@ -150,7 +161,9 @@ ADR for an addition._
   a different quantity from the unsuffixed NAV-ratio feeds, so
   distinct codes; the on-chain feed_id's `/USD` suffix is
   normalized `/`→`_` for URL-path safety). From RedStone's
-  2026-07-24 relayer expansion (ledger 63624934).
+  2026-07-24 relayer expansion (ledger 63624934). These two keep
+  `fiat:USD`: the `/USD` suffix is exactly what makes them
+  dollar-denominated (see the 2026-08-29 D8 amendment above).
 
 ## References
 
