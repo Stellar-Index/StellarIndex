@@ -1,0 +1,19 @@
+# systemd timer: daily rolling ZFS snapshots (decision 2026-08-29).
+#
+# Rendered by Ansible. Slot: {{ zfs_snapshot_on_calendar }} + up to 5 min
+# jitter — before pgbackrest-backup (02:00) and ch-schema-snapshot
+# (03:40) so the day's dataset snapshot predates the day's other ops
+# jobs. Persistent=true: a missed run (host down) fires on boot.
+
+[Unit]
+Description=Daily rolling ZFS snapshots of the ClickHouse lake + Postgres
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-snapshots.md
+
+[Timer]
+OnCalendar={{ zfs_snapshot_on_calendar }}
+RandomizedDelaySec=300
+Persistent=true
+Unit=zfs-snapshot.service
+
+[Install]
+WantedBy=timers.target

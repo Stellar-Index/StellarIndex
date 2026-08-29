@@ -68,6 +68,18 @@
   when: run_postgres | bool
   tags: [postgres, pgbackrest, backup]
 
+# Rolling ZFS snapshots of data/clickhouse + data/postgres (decision
+# 2026-08-29): the minutes-scale answer to a logical fault, alongside
+# pgBackRest's hours-scale PITR. ZFS-owning hosts only (same gate as
+# 03-zfs). Its own tag so it can be applied alone:
+#   ansible-playbook ... --tags zfs-snapshots --check --diff
+- name: "Rolling ZFS snapshots (clickhouse + postgres)"
+  ansible.builtin.import_tasks: 21-zfs-snapshots.yml
+  when:
+    - zfs_data_pool_type | default('') != ''
+    - zfs_snapshots_enabled | default(true) | bool
+  tags: [zfs-snapshots, backup]
+
 - name: "stellar-core"
   ansible.builtin.import_tasks: 06-stellar-core.yml
   when: run_stellar_core | bool
