@@ -795,6 +795,62 @@ against.
 
 ### Fixed
 
+- **An asset whose XLM market is stored with the XLM SAC as BASE was
+  invisible to every price path.** r1 2026-08-28 17:42Z:
+  `stellarindex_assets_popular_priceless=2` for `CBIJ…` ($730k/7d, 706
+  trades against the XLM SAC, source=aquarius) and `CAUP7…` (trades only
+  against CBIJ) — `price_usd` null, no withheld verdict. The aquarius
+  decoder writes SWAP direction (base = `token_in`) without
+  `canonical.Orient`, so a token bought with XLM lands in `prices_1m` as
+  `(CAS3J…, token)`. The volume path already read both directions
+  (`soroban_volume.go`) — which is exactly why the asset had volume and
+  no price — but every PRICE path read the XLM leg base-side only:
+
+  - `asset_vs_xlm*` in both catalogue queries (`base_asset = X AND
+    quote_asset IN (native, SAC)`): now UNION an inverted arm
+    (`base_asset IN (native, SAC) AND quote_asset = X`, `1/vwap`).
+    Base-side rows are preferred over inverted ones, so every asset that
+    already priced keeps byte-identical output; the inverted arm only
+    fills assets with no base-side row in the window.
+  - `TransitiveUSDPrice.hop_usd` resolved a hop only via `base_asset =
+    hop`, so the XLM SAC itself (XLM/USD is keyed `base_asset='native'`)
+    and any hop whose own XLM market is SAC-as-base priced NULL and was
+    dropped. Now: hop IS XLM (either identity) → `xlm_usd`; plus the
+    inverted XLM arm.
+  - The tripwire's `priced_direct` had the same base-only shape AND
+    never contained the proxies themselves, so `one_hop` could never
+    route through the XLM SAC. Now seeds the proxy set and reads the
+    inverted arm; `coverageQuoteProxies` is composed from the resolver's
+    own lists so the two cannot drift.
+  - `GetAssetBySlug`'s `chosen` CTE was `FROM classic_assets` only — the
+    listing spine gained a `discovered_assets` UNION in #220 but the
+    detail did not, so `/v1/assets/{id}` for a Soroban-native contract
+    depended entirely on the transitive fill. Now the same UNION (same
+    `asset_volume_24h` bound).
+
+  Integration test `TestXLMSacAsBase_PriceableThroughEveryPath` (SAC-as-
+  base fixture; CBIJ priced 0.10 direct + transitive via the SAC, CAUP7
+  0.20 one hop through CBIJ, tripwire silent for both, and a both-
+  directions classic asset proven byte-identical) fails on every path
+  pre-fix. `TestProxyQuoteLists_Lockstep` pins the four proxy lists and
+  the 8 inverted arms. Writer-side follow-up (aquarius writing canonical
+  orientation) is separate; the read side must handle the stored data
+  regardless.
+- **…and its price-history series (the sparklines) were still empty for
+  such an asset.** Follow-up to the above: the four series queries
+  (`GetAssetPriceHistory24h`/`7d` and their `*Batch` twins) each carry an
+  `asset_xlm_per_hour`/`_per_day` CTE that read the XLM leg base-side
+  only, so an asset priced through the inverted arm had a headline
+  `price_usd` but `price_history_24h`/`7d` all-null. Each now UNIONs the
+  same inverted arm (`base_asset IN (native, SAC) AND quote_asset = ANY
+  (aliases)`, `1/vwap`, `vwap > 0`), base-side preferred per bucket
+  (`inverted` ordered ahead of alias priority and `bucket DESC`), so
+  every bucket that already had a base-side point is byte-identical and
+  the inverted arm only fills buckets with none. `TestProxyQuoteLists_
+  Lockstep` now also pins the 4 series arms (the three inline queries
+  were hoisted to package constants for it) and the SAC-as-base
+  integration fixture asserts a non-empty, correctly-valued series on
+  all four paths plus the per-bucket preference.
 - **Trade sink: a shutdown that raced an in-flight steady-state batch
   write lost the batch instead of draining it.** The pipeline sibling
   of the sorobanevents AsyncSink fix (#240). `persistWorker`'s ticker /
