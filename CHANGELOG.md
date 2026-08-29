@@ -32,6 +32,14 @@ against.
   which is the honest testnet state). Existing testnet/futurenet
   `asset_supply_history` rows written with the 50.0 B total are
   superseded by the next refresher cycle after deploy.
+- **Explorer: ledger page captions `total_coins` (2019-burn basis).**
+  `/ledgers/{seq}` printed the header's `total_coins` (~105.4B XLM on
+  mainnet) bare, while `/assets/native` serves the market's 50.0B total
+  supply — the same unlabeled 2.11× divergence the network page fixed
+  (#241). The caption ("ledger header · includes the 2019 burn" on
+  mainnet, "ledger header" on the test nets, whose genesis has no burn)
+  now comes from a shared `lib/xlm-supply.ts` helper so every surface
+  printing `total_coins` says the same thing; #241 should adopt it.
 - **pgBackRest repo2 retention was hardcoded to 4 fulls** in `pgbackrest.conf.j2`, ignoring
   `pgbackrest_repo2_retention_full/diff` (lean defaults 1 / 7 d ≈ $12–17/month); the template now
   renders the variables plus `repo2-retention-archive-type=diff`. Caught by a masked diff of the
@@ -57,6 +65,24 @@ against.
 
 ### Added
 
+- **`stellarindex-ops usd-volume-restamp` (W5.3).** The corrective WRITE
+  half of `verify-usd-volume`: for every exact-tier (quote- or base-leg
+  USD-pegged) group in a bounded `-from/-to` day window it rewrites each
+  row whose stored `usd_volume` differs from `pegged_leg / 10^decimals`
+  to exactly the value the insert path writes, stamped with the run's
+  `derive_generation` (INV-3 guard: a live gen-0 replay can never claw a
+  correction back). Tier + scale come from the same
+  `ClassifyUSDVolumeTier` + peg config as the writer and the verifier —
+  no SQL reimplementation of the waterfall. Dry-run by default, `-write`
+  to apply, idempotent (correct rows are untouched, value and
+  generation), `-slice`d UPDATEs on a dedicated session with the
+  Timescale decompression cap raised, ch-backfill-style heartbeat. Replaces
+  the 2026-07-30 hand SQL for the pre-2026-07-23 USDC-base SDEX class
+  (`docs/operations/usd-volume-rederive-2026-08.md` step 5). Estimated
+  tiers stay `ch-rebuild`'s job. Unit tests pin the formula to
+  `tradeUSDVolume` byte-for-byte; the integration test proves the SQL
+  identity, the differential (a correct row is unchanged), idempotency
+  and the generation guard on real TimescaleDB.
 - **Oracle capture-totality consumers (PR-3 of 7): every `oracle_updates`
   reader is safe for `raw:` rows before the decoders emit them.**
   `/v1/oracle/streams` gains `include_unmapped` (default `false` — the
