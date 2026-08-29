@@ -5,9 +5,15 @@
 # repo1 = fast local restore copy (SAME failure domain as the DB —
 # that is exactly why repo2 exists).
 # repo2 = the survival copy: offsite S3-compatible object storage
-# (CS-111). Rendered only when pgbackrest_repo2_s3_bucket is set;
-# credentials come from the vault-managed env vars referenced below —
-# never inline in this file.
+# (CS-111). Rendered only when pgbackrest_repo2_s3_bucket is set.
+#
+# SECRETS: the cipher passphrases and the repo2 S3 key pair are
+# vault-managed inventory vars rendered INTO this file — pgbackrest has
+# no env-file form that also reaches archive_command inside the postgres
+# server process, so the postgres-owned 0640 file is the upstream
+# pattern. Treat the rendered file as secret material: the templating
+# task sets `diff: false` so `--check --diff` never prints it
+# (audit-2026-08-28 backup-restore-7).
 #
 # ENCRYPTION (audit-2026-07-23 F4-F2): a pgBackRest repo's cipher is
 # fixed at `stanza-create` time and CANNOT be flipped on an existing
@@ -47,7 +53,12 @@ repo2-s3-region={{ pgbackrest_repo2_s3_region | default('auto') }}
 repo2-s3-key={{ pgbackrest_repo2_s3_key }}
 repo2-s3-key-secret={{ pgbackrest_repo2_s3_key_secret }}
 repo2-path=/pgbackrest
-repo2-retention-full=4
+# Retention is deliberately LEAN (ADR-0043 amendment 2026-08-29, AWS Budget
+# $30/mo): one full + 7 days of diffs/WAL ≈ 460–670 GB in S3 Standard.
+# PITR window = the diff retention. Raising these scales storage ~linearly.
+repo2-retention-full={{ pgbackrest_repo2_retention_full | default(1) }}
+repo2-retention-diff={{ pgbackrest_repo2_retention_diff | default(7) }}
+repo2-retention-archive-type=diff
 repo2-bundle=y
 repo2-block=y
 # Offsite copies are encrypted at rest by US, not just the provider.
