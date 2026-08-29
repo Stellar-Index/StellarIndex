@@ -87,6 +87,7 @@ echo "=== Public-dataset drift decision-core self-test ===" && ./scripts/ci/chec
 echo "=== Jinja template parse gate ===" && ./scripts/ci/lint-jinja-templates.sh
 echo "=== Jinja template parse gate self-test ===" && ./scripts/ci/lint-jinja-templates-test.sh
 echo "=== pgBackRest backup wrapper self-test ===" && ./scripts/ci/pgbackrest-backup-test.sh
+echo "=== data-freshness watchdog self-test ===" && ./scripts/ci/data-freshness-test.sh
 # BASE_SHA-gated: self-skips locally (no comparison base); runs for real in CI
 # with the PR/push base. Invoked here to keep verify↔CI parity honest.
 echo "=== Baseline-growth tripwire ===" && ./scripts/ci/lint-baseline-growth.sh

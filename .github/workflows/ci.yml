@@ -550,6 +550,17 @@ jobs:
         # repo2, single-repo argv byte-identical, per-repo textfile
         # metrics, no secrets on argv. No network, no ansible, no systemd.
         run: ./scripts/ci/pgbackrest-backup-test.sh
+      - name: data-freshness watchdog self-test
+        # Runbook Wave L (#319): the watchdog's LAST producer is a
+        # ClickHouse HTTP probe, and under `set -euo pipefail` a bare
+        # `SF_AGE=$(curl … | tr …)` took curl's status — so a CH outage
+        # aborted the script before its atomic swap and node_exporter kept
+        # re-serving the previous textfile. Every freshness gauge FROZE
+        # instead of going absent, so neither the per-source staleness
+        # alerts nor the watchdog's own absent_over_time meta-alert could
+        # fire. These fixtures run the shipped probe region against a
+        # stubbed curl. No network, no ClickHouse, no Postgres.
+        run: ./scripts/ci/data-freshness-test.sh
       - name: lint-deploy-playbook
         # deploy-ansible-deploy-2: deploy.yml reaches the test-net VMs only
         # via --ssh-common-args ProxyJump, which controller-side rsync

@@ -1,7 +1,7 @@
 ---
 title: Runbook — price-divergence
-last_verified: 2026-06-12
-status: draft
+last_verified: 2026-08-29
+status: current (the two `stellarindex_price_divergence_*` alerts are INERT)
 severity: P2
 ---
 
@@ -11,11 +11,33 @@ severity: P2
 
 | Field | Value |
 | ----- | ----- |
-| Alerts | `_warning` (> 5 % for 2 min, informational), `_critical` (> 10 % for 2 min, ticket) |
+| Alerts | `stellarindex_price_divergence_warning` (> 5 %, `for: 2m`, informational) / `_critical` (> 10 %, `for: 2m`, ticket) — **both INERT, see below** |
 | Severity | P2 (ticket at 10 %) / P3 (informational at 5 %) |
-| Detected by | `deploy/monitoring/rules/divergence.yml` |
+| Detected by | **Not by those two rules.** They select `stellarindex_our_price` / `stellarindex_reference_price`, which nothing exports; they are kept in `deploy/monitoring/rules/divergence.yml` for intent and tracked in `scripts/ci/lint-metric-refs.sh`'s `KNOWN_INERT` list. Real detection is (a) `flags.divergence_warning` on `/v1/price` + the `divergence_observations` rows behind it, and (b) the LIVE refresh alerts `stellarindex_divergence_refresh_error_dominant` and `stellarindex_divergence_no_reference` (both ticket, `for: 30m`). |
 | Typical MTTR | 30 min – hours (depends on cause) |
-| Impact | Our aggregated price disagrees with a trusted reference (CoinGecko / CMC / Chainlink-HTTP). If we're wrong, every API consumer gets a wrong price — downstream wallets may display misleading USD values, and cross-reference sanity is one of our correctness guarantees. |
+| Impact | Our aggregated price disagrees with a trusted reference. If we're wrong, every API consumer gets a wrong price — downstream wallets may display misleading USD values, and cross-reference sanity is one of our correctness guarantees. |
+
+> **How you actually learn about a divergence.** Nothing pages on the Δ%
+> itself. You find out from `flags.divergence_warning` in an API response, from
+> the `/v1/divergence` board and `/v1/divergence/series`, or from the two
+> refresh alerts above firing because the checker went blind. Treat this page
+> as the investigation guide, not as the trigger's documentation.
+
+### The reference set, as shipped
+
+`divergence_observations.reference` is constrained by migration 0019, widened
+by 0148, and mirrored in `internal/api/v1/anomalies.go::divergenceReferences`:
+
+`chainlink`, `coingecko`, `reflector-cex`, `reflector-fx`, `reflector-dex`,
+`redstone`, `band`, `synthetic-usd-cross`.
+
+`synthetic-usd-cross` is the derived XLM/USD × USD/fiat cross added in 2026-08
+(migration 0148) so EUR/GBP-quoted pairs reach the divergence trust floor.
+**CoinMarketCap is not in that set** — there is a CMC *venue poller*
+(`internal/sources/external/coinmarketcap`, aggregator class, disabled by
+default), but no CMC divergence reference exists;
+`internal/divergence/doc.go` still calls it "a candidate future HTTP
+reference". Do not go looking for a CMC feed to pull out of rotation.
 
 ## Symptoms
 
@@ -92,12 +114,18 @@ psql -d stellarindex -c \
      Demote to informational via a label-specific silence if it's
      sustained.
 
-4. **Reference source itself is broken.** CoinGecko outages,
-   Chainlink-HTTP stale feed, CMC rate-limited us.
+4. **Reference source itself is broken.** CoinGecko outage or 429,
+   Chainlink-HTTP stale feed, a Reflector/Redstone/Band feed frozen
+   on-chain.
    - Signal: *every* asset diverges from that one reference,
-     while other references agree with us.
-   - Mitigation: pull that reference out of the divergence-feed
-     rotation until it recovers.
+     while other references agree with us. If **all** of them go dark
+     for a pair you get `stellarindex_divergence_no_reference` instead
+     (see [divergence-no-reference](divergence-no-reference.md)).
+   - Mitigation: disable that reference in `[divergence]` config and
+     restart the aggregator + API until it recovers. Note the on-chain
+     oracle references are read from our own ingested `oracle_updates`
+     rows, so a frozen feed there is an ingestion question too
+     ([oracle-stale](oracle-stale.md)).
 
 5. **Arbitrage window.** Stellar DEX briefly trades at a different
    price from CEX due to cross-chain bridging delays or native
@@ -139,16 +167,30 @@ psql -d stellarindex -c \
 
 ## Related
 
+- `divergence-refresh-error-dominant.md` / `divergence-no-reference.md` — the
+  two alerts that DO fire on this surface.
 - `oracle-stale.md` — when the reference *is* an on-chain oracle.
 - `source-stopped.md` — a stopped source is the most common
   divergence cause we'd actually do something about.
 - ADR-0003 (i128 precision) — decoder discipline that prevents
   decimal-related divergence.
 - `divergence.yml` alert rules — if you retune thresholds, update
-  this runbook too.
+  this runbook too. If a producer for `stellarindex_our_price` /
+  `stellarindex_reference_price` ever ships, drop the KNOWN_INERT entry
+  and this whole banner with it.
 
 ## Changelog
 
+- 2026-08-29 — re-verified against HEAD (runbook Wave L, #319): At-a-glance
+  presented the `stellarindex_price_divergence_warning`/`_critical` pair as
+  live detection while Symptoms already said the gauges don't exist — the two
+  rules are KNOWN_INERT (no producer) and the real signals are
+  `flags.divergence_warning` / `divergence_observations` plus the live
+  `divergence_refresh_error_dominant` + `divergence_no_reference` alerts;
+  CoinMarketCap was listed as an active reference but has no divergence
+  implementation — replaced with the shipped set (Chainlink, CoinGecko,
+  Reflector CEX/FX/DEX, Redstone, Band, and `synthetic-usd-cross` since
+  migration 0148).
 - 2026-06-12 — F-1330: rewrite diagnosis to executable form — there
   are no `stellarindex_our_price`/`_reference_price` gauges (deltas
   live in `divergence_observations`, mig 0019); API port is :3000;
