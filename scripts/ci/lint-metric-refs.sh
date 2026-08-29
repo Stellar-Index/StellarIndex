@@ -111,6 +111,7 @@ EXTERNAL_OK=(
   redis_up redis_connected_slaves redis_memory_used_bytes redis_memory_max_bytes
   redis_evicted_keys_total redis_rdb_last_bgsave_status
   pgbackrest_backup_since_last_completion_seconds
+  pgbackrest_backup_info
   node_zfs_zpool_state node_filesystem_avail_bytes node_filesystem_size_bytes
   node_cpu_seconds_total node_memory_MemTotal_bytes node_memory_MemAvailable_bytes
   node_disk_io_errors_total node_nvme_temperature_celsius node_vmstat_pswpout
