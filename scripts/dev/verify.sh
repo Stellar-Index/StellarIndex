@@ -80,6 +80,10 @@ echo "=== Rule structure ===" && python3 ./scripts/ci/lint-rule-structure.py
 # not a label, on every alert — else the Alertmanager Discord templates
 # render no runbook link. Fails if a runbook_url regresses back into labels.
 echo "=== Runbook annotations ===" && python3 ./scripts/ci/lint-runbook-annotations.py
+# Secret-rendering ansible template tasks must set `diff: false` (or
+# no_log) so `--check --diff` never prints vault material into scrollback
+# or the weekly drift job's CI log (audit-2026-08-28 backup-restore-7).
+echo "=== Ansible secret-diff ===" && python3 ./scripts/ci/lint-ansible-secret-diff.py
 # Prometheus rule files. Graceful-skip when promtool isn't
 # installed locally — CI installs it explicitly. The Makefile
 # target hard-fails on missing promtool; verify.sh wraps it with

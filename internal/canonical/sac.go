@@ -16,6 +16,17 @@ import (
 // throughout (docs/architecture/coverage-matrix.md).
 const PubnetPassphrase = "Public Global Stellar Network ; September 2015"
 
+// TestnetPassphrase and FuturenetPassphrase are the two SDF test
+// networks' passphrases (the values config.StellarConfig.Passphrase()
+// resolves "testnet" / "futurenet" to). Exported here so leaf packages
+// that key network-dependent constants off the passphrase (e.g. the
+// native-XLM total in internal/supply) can compare against one source
+// instead of re-spelling the literals.
+const (
+	TestnetPassphrase   = "Test SDF Network ; September 2015"
+	FuturenetPassphrase = "Test SDF Future Network ; October 2022"
+)
+
 // SacContractID returns the C-strkey of the asset's Stellar Asset
 // Contract on the CONFIGURED network ([NetworkPassphrase] — pubnet
 // unless a binary installed another at start-up via

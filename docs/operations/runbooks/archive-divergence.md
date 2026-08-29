@@ -1,82 +1,124 @@
 ---
 title: Runbook — archive-divergence
-last_verified: 2026-05-03
-status: draft
+last_verified: 2026-08-29
+status: current
 severity: P1
 ---
 
 # Runbook — `stellarindex_stellar_archive_divergence`
 
-> **Deployment posture (2026-04-30).** r1's `/srv/history-archive/`
-> is a static mirror filled by a one-shot `stellar-archivist mirror`
-> (completed) — there is no running publisher today
-> ([r1-deployment-state.md](../r1-deployment-state.md)). The alert
-> consumes `stellarindex_archive_divergence_total` written by
-> `scripts/ops/archive-cross-check.sh`, which compares our mirror to
-> reference archives on a schedule; the alert is **live** and can
-> fire on r1 today. But because we are *not* publishing, root causes
-> #2 (core-binary bug producing a different bucket) and the
-> "stop advertising" mitigation step do not apply on the current
-> posture — they are retained for Phase-3 (Tier-1 validator rollout
-> per ADR-0004) when stellar-core resumes producing checkpoints.
-> On r1 today, divergence almost always means **bit rot in the
-> static mirror** (root cause #1) or — much rarer — a reference
-> archive itself changed.
+> **INERT IN PRACTICE (re-verified 2026-08-29).** The alert was
+> repointed (2026-06-11, F-1329) from the never-emitted
+> `stellarindex_archive_divergence_total` to the real counter
+> `stellarindex_verify_archive_mismatches_total` — but **it still
+> cannot fire on r1 as deployed**:
+>
+> - The counter is exported only via `stellarindex-ops
+>   verify-archive`'s **opt-in `-metrics-listen` flag**, which the
+>   `verify-archive-tier-a` / `-tier-b` units do **not** pass.
+> - `configs/prometheus/prometheus.r1.yml` has **no verify-archive
+>   scrape job** even if they did.
+> - The weekly Tier D peer-sampling cron emits no metric at all.
+>
+> (The previously-cited producer,
+> `scripts/ops/archive-cross-check.sh`, does not exist.)
+>
+> In practice a mismatch **aborts the run non-zero** and surfaces
+> as `stellarindex_verify_archive_unit_failed` — severity
+> **TICKET** — so a genuine archive-correctness event currently
+> opens a P3 ticket, not this P1 page. Tracking: issue #282.
+> `TODO(ash): wire -metrics-listen into the tier-a/b units + a
+> scrape job (or a textfile emit), or repoint this page onto the
+> unit-failed signal — then delete this banner.`
+>
+> The procedures below are the playbook for when the signal is
+> wired — and for a mismatch found via `unit_failed` today.
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellarindex_stellar_archive_divergence` |
-| Severity | P1 (page — SEV-1) |
-| Detected by | `deploy/monitoring/rules/stellar.yml` |
+| Alert | `stellarindex_stellar_archive_divergence` — **inert in practice, see banner** |
+| Severity | P1 (`severity: page` — SEV-1) |
+| Detected by | `configs/prometheus/rules.r1/stellar.yml` (group `stellarindex.stellar`, `severity: page`, `for: 0s`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/stellar.yml`. |
 | Typical MTTR | hours |
-| Impact | The hash of a checkpoint bucket we published differs from at least one other reference archive (SDF / LOBSTR / Satoshipay). This is a **correctness incident** — we've either got a bug or been compromised. Either way, consumers of our archive get different data from consumers of the reference. |
+| Impact | The verify-archive walk found a mismatch. Since the F-1329 repoint this fires equally on **lake-integrity failures** — a hash-chain break or ledger-sequence gap in our own archive — and on cross-archive checkpoint divergence vs a reference (SDF / LOBSTR / Satoshipay). Either way it is a **correctness incident**: our archive's bytes are not the network's bytes, by corruption, bug, or compromise. |
 
 ## Symptoms
 
-- `stellarindex_archive_divergence_total > 0`. Fires immediately
-  (`for: 0s`) — there's no such thing as a "transient" divergence.
-- Our history-scanner job (runs per checkpoint) reports a hash
-  mismatch against the set of reference archives it cross-checks.
+- `increase(stellarindex_verify_archive_mismatches_total[1h]) > 0`.
+  Fires immediately (`for: 0s`) — there's no such thing as a
+  "transient" divergence. The counter is labelled by `chunk_idx`
+  and `reason ∈ {chain | sequence | checkpoint}` — the reason
+  label tells you which failure class you have (chain break /
+  sequence gap = our lake's internal integrity; checkpoint =
+  cross-archive comparison).
+- Today (see banner): the same event actually surfaces as a
+  non-zero verify-archive exit →
+  [`verify-archive-unit-failed.md`](verify-archive-unit-failed.md).
+
+## Who produces the signal
+
+There is no "history-scanner job". The real producers are:
+
+- **Tier A** — nightly incremental chain walk
+  (`verify-archive-tier-a.timer` → `-tier chain
+  -from-last-verified` with a state file, under
+  `run-heavy-job.sh` semantics).
+- **Tier B** — checkpoint cross-check against the local
+  archivist mirror (`verify-archive-tier-b.{service,timer}`).
+- **Tier D** — weekly multi-peer sampling: root cron, Sunday
+  04:23 (`-tier peers -peer-samples 50`, output to journald tag
+  `stellarindex-tier-d`).
 
 ## Quick diagnosis (≤ 5 min)
 
 ```sh
-# Which checkpoint, which bucket, what's the mismatch?
-# The verify-archive timer/service writes detail logs — retrieve via:
-ssh root@r1 "journalctl -u verify-archive-tier-a -n 200 --no-pager"
+ssh root@136.243.90.96
 
-# Pull the hash from our archive
-mc cat myminio/history-archive/history/*/history-<checkpoint>.json | jq .currentBuckets
+# Which checkpoint, which bucket, what's the mismatch?
+journalctl -u verify-archive-tier-a -n 200 --no-pager
+journalctl -u verify-archive-tier-b -n 200 --no-pager
+journalctl -t stellarindex-tier-d -n 200 --no-pager   # weekly peer sweep
+
+# Pull the hash from our archive. /srv/history-archive is a plain
+# ZFS path (dataset data/archive) — NOT a MinIO bucket; mc has no
+# business here. Checkpoint hex 0xAABBCCDD →
+# history/AA/BB/CC/history-aabbccdd.json:
+cat /srv/history-archive/history/<AA>/<BB>/<CC>/history-<ckpt-hex>.json | jq .currentBuckets
 
 # Pull the same checkpoint from a reference
-curl -s https://history.stellar.org/prd/core-live/core_live_001/history/.../history-<ckpt>.json | jq .currentBuckets
+curl -s https://history.stellar.org/prd/core-live/core_live_001/history/<AA>/<BB>/<CC>/history-<ckpt-hex>.json | jq .currentBuckets
 
 # Diff the bucket hashes — there'll be at least one row that
-# differs. That's the corrupted / diverged bucket.
+# differs. That's the corrupted / diverged bucket. (For
+# reason="chain"/"sequence" the journal names the exact ledger
+# range instead — that's an internal lake break, no reference
+# needed.)
 ```
 
 ## Typical root causes (in order of how much you should worry)
 
 1. **Bit rot / storage corruption.** ZFS scrubs should catch this
-   before publish, but a drive silently returning bad data between
-   scrub cycles could publish corrupt buckets.
-   - Investigation: `zpool status -v` for any scrub errors on the
-     archive storage.
+   before a reader does, but a drive silently returning bad data
+   between scrub cycles can corrupt buckets.
+   - Investigation: `zpool status -v data` for any scrub errors on
+     the archive pool.
 
 2. **Core binary bug** — stellar-core produced a different bucket
-   hash than the rest of the network. Should be near-impossible
-   (deterministic spec) but has happened historically when we ran
-   a custom patched core.
+   hash than the rest of the network. Not applicable on today's
+   posture (we don't publish — the mirror was filled by
+   `stellar-archivist mirror`); retained for Phase-3 (ADR-0004
+   validator rollout).
    - Investigation: are we running stock stellar-core from a
      tagged release?
 
 3. **Compromised archive storage**. Someone (malicious or mistaken
    operator) overwrote our archive with wrong data. Check
-   access logs + recent S3 ops.
+   access logs + recent filesystem mtimes under
+   `/srv/history-archive`.
 
-4. **Scanner bug.** The scanner itself reports divergence when
+4. **Scanner bug.** verify-archive itself reports divergence when
    the truth is our archive is correct. Rare but possible —
    cross-check one of the reference archives against another to
    confirm it's us.
@@ -84,28 +126,33 @@ curl -s https://history.stellar.org/prd/core-live/core_live_001/history/.../hist
 ## Mitigation (urgent)
 
 - [ ] Step 1 — **stop advertising the affected checkpoints** so
-      downstream consumers stop relying on our data. Temporarily
-      redirect validators.stellar.expert or whatever registry we
-      publish to, noting a known-bad window.
+      downstream consumers stop relying on our data. (Applies when
+      we serve the archive publicly / Phase-3; today the blast
+      radius is our own ingest + verification chain.)
 
 - [ ] Step 2 — determine the extent. Is it one bucket or many?
-      One checkpoint or several?
+      One checkpoint or several? For `reason="chain"/"sequence"`:
+      how wide is the broken ledger range?
 
-- [ ] Step 3 — if storage corruption: restore from a replica
-      archive (we run three per ADR-0004). Use the other validators'
-      archive as the source of truth.
+- [ ] Step 3 — if storage corruption: restore the affected range
+      from an independent copy. Today that means the AWS public
+      blockchain bucket or an external reference archive (SDF /
+      LOBSTR / Satoshipay) — we run **one** local mirror; the
+      "three geographically-separated validator archives" are the
+      ADR-0004 **aspiration**, not a present-tense resource.
 
-- [ ] Step 4 — if core-binary bug: this is a sev-1 engineering
-      incident. Contact SDF; coordinate with the broader core
-      community; potentially do an emergency binary swap.
+- [ ] Step 4 — if core-binary bug (Phase-3 posture): this is a
+      sev-1 engineering incident. Contact SDF; coordinate with the
+      broader core community; potentially do an emergency binary
+      swap.
 
 - [ ] Step 5 — if compromise: SECURITY incident. Rotate archive
       credentials, inspect access logs, engage security-ops. See
       SECURITY.md.
 
-- [ ] Verification: our archive's bucket hashes match references
-      for all recent checkpoints; scanner shows 0 divergence
-      across a full sweep.
+- [ ] Verification: a full verify-archive pass over the affected
+      range completes with zero mismatches; bucket hashes match
+      references for all recent checkpoints.
 
 ## Root cause analysis
 
@@ -113,18 +160,20 @@ curl -s https://history.stellar.org/prd/core-live/core_live_001/history/.../hist
   analysis is done).
 - Hash chain: which checkpoint was the first to diverge? Work
   back to that point.
-- Storage access logs from the archive backend.
-- Core version + host state when the checkpoint was generated.
+- Storage-layer evidence: `zpool status -v data`, scrub history,
+  SMART state of the backing drives.
+- (Phase-3) Core version + host state when the checkpoint was
+  generated.
 
 ## Known false-positive patterns
 
 Very few. The spec is deterministic; a divergence is almost
 always real. But:
 
-- **Scanner race with an in-flight publish** — if we scan the
-  archive *during* a publish (rare but possible with bad scheduling),
-  we may read a partial file. The scanner should retry; if it's
-  alerting without retry, fix the scanner.
+- **Scanner race with an in-flight write** — scanning the mirror
+  *during* a re-mirror / repair pass can read a partial file. The
+  scanner should retry; if it's alerting without retry, fix the
+  scanner.
 - **Reference archive is the one that's wrong.** Improbable
   (they're the source of truth) but if two of the three reference
   archives agree with us and only one disagrees, it might be
@@ -132,12 +181,41 @@ always real. But:
 
 ## Related
 
-- `archive-publish.md` — when we fail to publish at all.
+- `verify-archive-unit-failed.md` — where a mismatch actually
+  surfaces today (non-zero exit; severity ticket — see banner).
+- `verify-archive-run-stale.md` — the timer-staleness sibling.
+- `archive-publish.md` — when we fail to publish at all
+  (Phase-3; inert everywhere today).
 - ADR-0004 (three-validator aspiration + independent archives).
+- ADR-0016 (per-region storage + trust model).
 - SECURITY.md — if compromise suspected.
 
 ## Changelog
 
+- 2026-08-29 — re-verified against HEAD. Symptom metric corrected:
+  `stellarindex_archive_divergence_total` never existed — the rule
+  (repointed 2026-06-11, F-1329) is
+  `increase(stellarindex_verify_archive_mismatches_total[1h]) > 0`,
+  `for: 0s`, labels `chunk_idx` + `reason∈{chain|sequence|checkpoint}`.
+  Banner replaced (was triple-false: cited the nonexistent
+  `scripts/ops/archive-cross-check.sh`, the wrong metric, and
+  claimed the alert was live): the counter is only exported via
+  the CLI's opt-in `-metrics-listen` flag which the tier-a/b units
+  don't pass, prometheus.r1.yml has no verify-archive scrape job,
+  and Tier D emits no metric — so the alert is INERT IN PRACTICE
+  and a real mismatch surfaces as `verify_archive_unit_failed`
+  (ticket, not this page); tracked in #282, TODO(ash) to wire or
+  repoint. `mc cat myminio/history-archive/...` replaced —
+  /srv/history-archive is a plain ZFS path (dataset data/archive),
+  hex-sharded layout shown. "History-scanner job" replaced with
+  the real producers (nightly Tier A incremental walk, Tier B
+  mirror cross-check, weekly Tier D peer cron with journald tag
+  stellarindex-tier-d — added to diagnosis). Impact widened to
+  lake-integrity failures (chain/sequence reasons). "Restore from
+  a replica archive (we run three)" corrected: one mirror today +
+  AWS public bucket + external references; three archives are the
+  ADR-0004 aspiration. `zpool status -v data` (pool name). Rule
+  citation → `rules.r1/stellar.yml`; commands use r1 shapes.
 - 2026-04-23 — initial draft. Urgency justified: this is a
   correctness guarantee we've explicitly committed to in ADR-0004.
 - 2026-04-30 — top-of-file deployment-posture callout. r1 doesn't
@@ -145,3 +223,5 @@ always real. But:
   remains live via the cross-check script, but root causes /
   mitigation steps tied to a publishing core don't apply on the
   current posture. Retained for Phase-3 validator rollout.
+  (Superseded 2026-08-29 — the cross-check script never existed;
+  see the current banner.)
