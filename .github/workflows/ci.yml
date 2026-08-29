@@ -277,6 +277,16 @@ jobs:
         # plan.sh is not in the CID-03 restore list — that list is
         # deliberately scoped to the money/i128/anti-bypass trio.)
         run: ./scripts/ci/lint-replay-plan-test.sh
+      - name: restore-drill contract + abort-path tests
+        # restore-drill.sh needs root + pgbackrest + Postgres to run for
+        # real; these pin (a) its ch-backfill flag contract statically and
+        # (b) its capacity floor / evidence-on-every-exit behaviour by
+        # driving the real script with shimmed host tools (audit
+        # 2026-08-28 backup-restore-3/-4). Neither was wired into CI
+        # before, so the drill's own regressions shipped green.
+        run: |
+          bash scripts/ops/restore-drill-test.sh
+          bash scripts/ops/restore-drill-run-test.sh
       - name: Restore trusted gate scripts from the base ref
         # CID-03 (audit-2026-07-23): every step below runs from the
         # PR-head checkout, including the SCRIPT FILES themselves — so
