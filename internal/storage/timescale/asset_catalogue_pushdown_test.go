@@ -11,7 +11,7 @@ import (
 // the equivalence path for unfiltered LIST queries.
 func TestListAssetsBaseSelectSQL_NoPushdown(t *testing.T) {
 	t.Parallel()
-	sql := listAssetsBaseSelectSQL("")
+	sql := listAssetsBaseSelectSQL("", AssetsOrderObservationCountDesc)
 	if strings.Contains(sql, "/*PUSHDOWN_BASE*/") {
 		t.Error("PUSHDOWN_BASE markers must be stripped when no pushdown predicate")
 	}
@@ -28,7 +28,7 @@ func TestListAssetsBaseSelectSQL_NoPushdown(t *testing.T) {
 // per-asset IN-clauses, original CTE structure preserved.
 func TestListAssetsBaseSelectSQL_WithPushdown(t *testing.T) {
 	t.Parallel()
-	sql := listAssetsBaseSelectSQL("issuer_g_strkey = $1")
+	sql := listAssetsBaseSelectSQL("issuer_g_strkey = $1", AssetsOrderObservationCountDesc)
 
 	if !strings.Contains(sql, "WITH chosen_assets AS (SELECT asset_id FROM classic_assets WHERE issuer_g_strkey = $1)") {
 		t.Errorf("missing chosen_assets CTE in pushdown SQL; got:\n%s", sql[:500])

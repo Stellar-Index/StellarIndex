@@ -2,18 +2,19 @@
 
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
 
 import { useAssets, type AssetClassFilter, type Coin } from '@/api/hooks';
 import { useTableSort, SortableTh, type SortColumn } from '@/lib/useTableSort';
-import { formatCompact, formatPriceSmall } from '@/lib/format';
-import { scamFlagTags } from '@/lib/directory-tags';
+import { formatCompact, formatPriceSmall, truncateMiddle } from '@/lib/format';
+import { demoteFlaggedLast, scamFlagTags } from '@/lib/directory-tags';
 import {
   Badge,
   Button,
   Callout,
   EmptyState,
+  Mono,
   Segmented,
   TBody,
   TR,
@@ -160,6 +161,19 @@ export function AssetsTable({
     ariaSort,
   } = useTableSort<Coin, string>(assets, sortColumns, null);
 
+  // #356: a directory-flagged (malicious/unsafe/fraud/scam/hack/phishing)
+  // issuer's asset ranks BELOW every unflagged one whatever the active
+  // sort key. The server already orders the fetched page that way; this
+  // re-applies it after the client-side column sort, which would otherwise
+  // float a scam token straight back to the top of the page the moment the
+  // user clicked "Volume 24h". Stable, so the chosen column still decides
+  // the order within each group — and the row and its ⚠ Flagged badge stay
+  // on the page: we refuse to RANK a flagged asset, we never hide it.
+  const rankedAssets = useMemo(
+    () => demoteFlaggedLast(sortedAssets, (c) => c.issuer_directory_tags),
+    [sortedAssets],
+  );
+
   function setQuery(
     updates: Partial<{
       cursor: string;
@@ -304,7 +318,7 @@ export function AssetsTable({
                 </tr>
               )}
               {!isLoading &&
-                sortedAssets.map((coin, idx) => (
+                rankedAssets.map((coin, idx) => (
                   <AssetRow
                     key={coin.asset_id}
                     coin={coin}
@@ -457,6 +471,13 @@ function AssetRow({
           volume >= MARKET_CAP_VOLUME_THRESHOLD_USD
         ? marketCapRaw
         : null;
+  // The raw canonical identifier, when it says something the code above
+  // does not: `JFKBANK2-GB7KFNUR…` next to code `JFKBANK2`, but nothing
+  // extra for a catalogue row whose slug IS its ticker (XLM / "xlm").
+  const rawAssetId =
+    coin.code && coin.slug.toLowerCase() !== coin.code.toLowerCase()
+      ? coin.slug
+      : null;
   return (
     <TR>
       <Td>
@@ -468,7 +489,16 @@ function AssetRow({
           className="group flex items-baseline gap-2"
         >
           <span className="text-ink group-hover:text-brand-600 font-medium">
-            {coin.code}
+            {/* An uncatalogued Soroban asset has NO code at all — the
+                listing serves code=NULL and slug=<contract id>. Label the
+                row with the middle-truncated contract id rather than an
+                empty cell (#356 note: whether it should get a synthetic
+                placeholder name instead is a separate product call). */}
+            {coin.code || (
+              <span className="font-mono text-[13px]" title={coin.slug}>
+                {truncateMiddle(coin.slug, 6, 4)}
+              </span>
+            )}
           </span>
           {verified && (
             <span
@@ -491,10 +521,24 @@ function AssetRow({
               </svg>
             </span>
           )}
-          <span className="text-ink-muted text-[11px]">
-            {coin.name ?? coin.slug}
-          </span>
+          {coin.name && (
+            <span className="text-ink-muted text-[11px]">{coin.name}</span>
+          )}
         </Link>
+        {/* The raw identifier, middle-truncated (#356). Classic ids are
+            65+ chars (JFKBANK2-GB7KFNUR…KL5BANK) and used to render in
+            full, dominating the column. The TAIL is kept because issuer
+            strkeys differ near the end; hover reveals the whole value and
+            the copy button yields the full, un-elided id. Skipped when the
+            code already IS the label (catalogue rows: XLM / "Stellar
+            Lumens") or when the primary label above is the id itself. */}
+        {rawAssetId && (
+          <Mono
+            value={rawAssetId}
+            truncate={{ head: 8, tail: 6 }}
+            className="text-ink-muted text-[11px]"
+          />
+        )}
         <ScamBadge tags={coin.issuer_directory_tags} />
       </Td>
       <Td>
@@ -581,8 +625,10 @@ function AssetRow({
 
 // ScamBadge — compact directory-flag pill in the asset row. Renders only
 // when the issuer's curated directory tags include a scam-warning flag
-// (malicious/unsafe/fraud/scam/hack/phishing). DISPLAY-ONLY, third-party
-// attribution — never gates price, verification, or ranking.
+// (malicious/unsafe/fraud/scam/hack/phishing). Third-party attribution,
+// never a verification signal — but the same flag DOES withhold the row's
+// price/market cap (the scam gate) and sinks the row to the bottom of the
+// ranking (demoteFlaggedLast, #356). Badged, demoted, never hidden.
 function ScamBadge({ tags }: { tags?: string[] | null }) {
   const flagged = scamFlagTags(tags);
   if (flagged.length === 0) return null;

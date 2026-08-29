@@ -4,9 +4,18 @@
 // payload as `issuer_directory_tags` / `issuer_directory_domain` /
 // `issuer_directory_name`.
 //
-// DISPLAY-ONLY, third-party attribution — never a StellarIndex
-// verification signal. These helpers only decide whether to SURFACE a
-// warning; they must never gate price, verification, or ranking.
+// Third-party attribution — never a StellarIndex verification signal and
+// never an input to the verified catalogue.
+//
+// TWO deliberate exceptions to the original display-only rule, both
+// scoped to the SCAM-CLASS tags below:
+//
+//   - the server withholds price + market cap for a flagged issuer
+//     (pricingguard.ScamGate, 2026-08-25); and
+//   - a flagged asset is RANKED LAST — server-side in the listing's
+//     ORDER BY, and here by demoteFlaggedLast for whatever column the
+//     user sorts the rendered page by (#356). The row and its badge
+//     stay: we do not hide a flagged asset, we refuse to rank it.
 //
 // SERVER-SAFE home (same rationale as asset-label.ts): the RSC asset
 // detail page and the 'use client' assets table both import from here.
@@ -64,4 +73,32 @@ export function stellarExpertDirectoryUrl(
 ): string | null {
   if (!issuer || !/^G[A-Z2-7]{55}$/.test(issuer)) return null;
   return stellarExpertUrl('account', issuer);
+}
+
+/**
+ * demoteFlaggedLast — stable partition that moves every directory-flagged
+ * row below every unflagged one, preserving the incoming order within each
+ * group.
+ *
+ * The server already ranks flagged assets last (the listing's rank_tier
+ * ORDER BY key), but a table whose headers re-sort the fetched page
+ * client-side would float a flagged row straight back to the top the
+ * moment the user clicks "Volume 24h" — the demotion has to survive
+ * "whatever the active sort key" (#356). Applying it AFTER the column sort
+ * is exactly equivalent to making flagged-ness the primary sort key, and
+ * leaves the shared useTableSort hook untouched for every other table.
+ *
+ * `tagsOf` reads the row's issuer_directory_tags, so this stays generic
+ * over row shapes.
+ */
+export function demoteFlaggedLast<T>(
+  rows: readonly T[],
+  tagsOf: (row: T) => readonly string[] | null | undefined,
+): T[] {
+  const unflagged: T[] = [];
+  const flagged: T[] = [];
+  for (const row of rows) {
+    (hasDirectoryScamFlag(tagsOf(row)) ? flagged : unflagged).push(row);
+  }
+  return flagged.length === 0 ? unflagged : [...unflagged, ...flagged];
 }

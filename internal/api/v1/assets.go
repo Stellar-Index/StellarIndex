@@ -722,8 +722,9 @@ func (s *Server) handleAssetListFromAssets(
 	cursor string,
 	limit int,
 ) {
-	// AGT-06: this path's cursor is the raw `<observation_count>:<asset_id>`
-	// shape ListAssetsExt emits (see the Next: fmt.Sprintf below) — reject a
+	// AGT-06: this path's cursor is the raw
+	// `<rank_tier>:<observation_count>:<asset_id>` shape
+	// timescale.EncodeAssetsCursor emits below — reject a
 	// malformed one up front instead of letting it silently fall through to
 	// the keyset predicate's degenerate (0, "") case, which matches no rows
 	// and looks like a quiet end-of-pagination rather than the client error
@@ -792,9 +793,12 @@ func (s *Server) handleAssetListFromAssets(
 	s.attachSparkline7dIfRequested(r, out)
 	env := Envelope{Data: out, Flags: Flags{}}
 	if hasMore && len(out) > 0 {
-		last := rows[len(rows)-1]
+		// Keyset cursor from the RAW last row, encoded by the store so it
+		// carries every ORDER BY key (rank tier first — #356), not just the
+		// observation count. Encoding fewer keys than the ORDER BY ranks on
+		// skips or repeats rows across pages.
 		env.Pagination = &Pagination{
-			Next: fmt.Sprintf("%d:%s", last.ObservationCount, last.AssetID),
+			Next: timescale.EncodeAssetsCursor(rows[len(rows)-1], timescale.AssetsOrderObservationCountDesc),
 		}
 	}
 	writeEnvelope(w, env)
@@ -2057,8 +2061,9 @@ func (s *Server) serveClassicUnifiedPage(w http.ResponseWriter, r *http.Request,
 // to return just the 11-row catalogue tail regardless of limit,
 // making the curated sliver look like the asset universe).
 func (s *Server) fetchClassicUnifiedRows(w http.ResponseWriter, r *http.Request, limit int, innerCursor string) ([]AssetDetail, string, bool) {
-	// AGT-06: this phase's cursor is the `<vol_or_blank>:<asset_id>` shape
-	// this function itself emits below — reject a malformed one (e.g. a
+	// AGT-06: this phase's cursor is the
+	// `<rank_tier>:<vol_or_blank>:<asset_id>` shape this function itself
+	// emits below — reject a malformed one (e.g. a
 	// hand-edited or truncated cursor) with 400 rather than letting it
 	// silently fall through to a keyset predicate that matches no rows.
 	if err := timescale.ValidateAssetsCursor(innerCursor, timescale.AssetsOrderVolume24hUSDDesc); err != nil {
@@ -2124,17 +2129,16 @@ func (s *Server) fetchClassicUnifiedRows(w http.ResponseWriter, r *http.Request,
 	s.attachSparkline7dIfRequested(r, out)
 	nextInner := ""
 	if hasMore && len(out) > 0 {
-		last := rows[len(rows)-1]
-		// Volume24hUSDDesc cursor shape: <sort_vol_or_blank>:<asset_id>.
-		// The prefix is the §4-B concentration-adjusted SORT key
-		// (SortVolume24hUSD), NOT the raw volume — the keyset cursor must
-		// encode the same value the ORDER BY ranks on, or pagination skips
-		// or repeats rows. The raw Volume24hUSD stays the visible payload.
-		sortVolStr := ""
-		if last.SortVolume24hUSD != nil {
-			sortVolStr = *last.SortVolume24hUSD
-		}
-		nextInner = sortVolStr + ":" + last.AssetID
+		// Volume24hUSDDesc cursor shape:
+		// <rank_tier>:<sort_vol_or_blank>:<asset_id>. Every field is a key
+		// the ORDER BY ranks on — the leading rank tier (#356: flagged /
+		// unpriced rows sort below rankable ones) and then the §4-B
+		// concentration-adjusted SORT volume (SortVolume24hUSD), NOT the raw
+		// volume. The keyset cursor must encode the same values the ORDER BY
+		// ranks on, or pagination skips or repeats rows. The raw
+		// Volume24hUSD stays the visible payload. Built from the RAW last
+		// row, before the alias/twin folds trimmed `out`.
+		nextInner = timescale.EncodeAssetsCursor(rows[len(rows)-1], timescale.AssetsOrderVolume24hUSDDesc)
 	}
 	return out, nextInner, true
 }
