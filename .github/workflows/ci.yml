@@ -478,6 +478,15 @@ jobs:
         # fixtures extract the shipped wrapper out of the ansible task and
         # run it. No network, no ansible, no systemd (non-root exec path).
         run: ./scripts/ci/run-heavy-job-test.sh
+      - name: pgbackrest-backup wrapper self-test
+        # 2026-08-29 (repo2 = S3 live on r1): pgBackRest's `backup` is
+        # single-repo — with no --repo it writes ONLY repo1, so the nightly
+        # wrapper fed the off-site repo WAL but never a base backup. These
+        # fixtures run the shipped template against a stubbed pgbackrest:
+        # one backup per configured repo, repo1 failure does not skip
+        # repo2, single-repo argv byte-identical, per-repo textfile
+        # metrics, no secrets on argv. No network, no ansible, no systemd.
+        run: ./scripts/ci/pgbackrest-backup-test.sh
       - name: lint-deploy-playbook
         # deploy-ansible-deploy-2: deploy.yml reaches the test-net VMs only
         # via --ssh-common-args ProxyJump, which controller-side rsync

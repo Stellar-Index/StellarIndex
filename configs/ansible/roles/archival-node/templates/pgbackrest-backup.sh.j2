@@ -1,12 +1,107 @@
 #!/usr/bin/env bash
-# Scheduled pgBackRest backup for the stellarindex stanza.
-# Weekly full (Sunday) + differential the rest of the week. Retention
-# (repo1-retention-full=2) prunes old full chains automatically.
+# Scheduled pgBackRest backup for the stellarindex stanza — ONE backup
+# PER CONFIGURED REPO. Weekly full (Sunday) + differential the rest of
+# the week; expire runs per repo against that repo's own retention
+# (repo1-retention-full=2 local; repo2-retention-full/diff lean, S3).
 # Installed by the archival-node Ansible role; runs daily via
-# pgbackrest-backup.timer. Satisfies stellarindex_timescale_backup_none_24h
-# (24h, page) + _backup_failed (25h, ticket).
-set -euo pipefail
+# pgbackrest-backup.timer (User=postgres). Satisfies
+# stellarindex_timescale_backup_none_24h (24h, page) + _backup_failed
+# (25h, ticket); a non-zero exit fails the unit (unit_failed alert).
+#
+# WHY per-repo (2026-08-29, repo2 = S3 went live on r1): pgBackRest's
+# `backup` command is single-repo. With several repos configured and no
+# --repo, it backs up ONLY the highest-priority repo (the lowest repo
+# key, i.e. repo1) — it does NOT fan out. Only archive-push (WAL) and
+# expire operate on every repo by default. (pgBackRest User Guide,
+# "Multiple Repositories"; `pgbackrest help backup repo`.) So the
+# previous `pgbackrest --stanza=... --type=... backup` fed repo2 WAL
+# forever but never a base backup: the off-site copy would have stayed
+# at the one hand-run full, un-restorable past its retention.
+#
+# Repo discovery reads the rendered /etc/pgbackrest/pgbackrest.conf
+# (pgbackrest_manage_conf) rather than an Ansible-rendered list, so the
+# wrapper can never disagree with what pgbackrest itself will use. With
+# a single repo the command is exactly what it always was (no --repo).
+#
+# Per-repo node_exporter textfile metrics (repo label):
+#   stellarindex_pgbackrest_backup_last_success_unix   — carried forward
+#     from the previous run when this run failed, so a stale repo2 is
+#     visible as an ageing timestamp, not a vanished series;
+#   stellarindex_pgbackrest_backup_last_rc
+#   stellarindex_pgbackrest_backup_duration_seconds
+# The metric emit is best-effort: it never fails the backup.
+# No secrets touch argv or this log — the S3 key pair and cipher passes
+# live only in the 0640 pgbackrest.conf that pgbackrest reads itself.
+set -uo pipefail
 STANZA=stellarindex
-if [ "$(date +%u)" -eq 7 ]; then TYPE=full; else TYPE=diff; fi
-echo "pgbackrest-backup: starting --type=$TYPE backup of $STANZA"
-exec pgbackrest --stanza="$STANZA" --type="$TYPE" backup
+CONF="${PGBACKREST_CONF:-/etc/pgbackrest/pgbackrest.conf}"
+TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
+METRIC_OUT="$TEXTFILE_DIR/pgbackrest_backup.prom"
+
+if [ "$(date +%u)" -eq 7 ]; then TYPE=full; else TYPE="diff"; fi
+
+# Every repoN-* key in any section names a repo (repo1 may carry only
+# repo1-path; repo2 is s3 and carries repo2-type). Sorted numerically so
+# repo1 (local, fast) always runs first. Unreadable/absent conf → repo1
+# only, exactly the pre-2026-08-29 behaviour.
+REPOS=()
+while IFS= read -r n; do
+  [ -n "$n" ] && REPOS+=("$n")
+done < <(grep -Eo '^repo[0-9]+-' "$CONF" 2>/dev/null | sed -E 's/^repo([0-9]+)-$/\1/' | sort -un)
+[ "${#REPOS[@]}" -gt 0 ] || REPOS=(1)
+
+# rc of the first failing repo — pgbackrest's own exit code, so the unit
+# log still says which error class it was.
+RC=0
+METRIC_LINES=()
+for repo in "${REPOS[@]}"; do
+  if [ "${#REPOS[@]}" -eq 1 ]; then
+    CMD=(pgbackrest --stanza="$STANZA" --type="$TYPE" backup)
+  else
+    CMD=(pgbackrest --stanza="$STANZA" --repo="$repo" --type="$TYPE" backup)
+  fi
+  echo "pgbackrest-backup: starting --type=$TYPE backup of $STANZA (repo$repo)"
+  START=$(date +%s)
+  "${CMD[@]}"
+  rc=$?
+  END=$(date +%s)
+  DURATION=$((END - START))
+  if [ "$rc" -eq 0 ]; then
+    echo "pgbackrest-backup: repo$repo --type=$TYPE OK in ${DURATION}s"
+    LAST_SUCCESS=$END
+  else
+    echo "pgbackrest-backup: repo$repo --type=$TYPE FAILED rc=$rc after ${DURATION}s — continuing to the next repo" >&2
+    [ "$RC" -ne 0 ] || RC=$rc
+    # Carry the previous success forward so the series ages instead of
+    # disappearing (an absent series is what alert `absent()` guards
+    # miss; an old timestamp is what a staleness rule sees).
+    LAST_SUCCESS=$(grep -E "^stellarindex_pgbackrest_backup_last_success_unix\{repo=\"$repo\"\} " "$METRIC_OUT" 2>/dev/null | awk 'END { print $2 }')
+  fi
+  [ -z "${LAST_SUCCESS:-}" ] || METRIC_LINES+=("stellarindex_pgbackrest_backup_last_success_unix{repo=\"$repo\"} $LAST_SUCCESS")
+  METRIC_LINES+=("stellarindex_pgbackrest_backup_last_rc{repo=\"$repo\"} $rc")
+  METRIC_LINES+=("stellarindex_pgbackrest_backup_duration_seconds{repo=\"$repo\"} $DURATION")
+done
+
+# Atomic textfile write (tmp + mv), 0644 so the unprivileged
+# node_exporter can read it (it silently skips unreadable files).
+if mkdir -p "$TEXTFILE_DIR" 2>/dev/null && METRIC_TMP=$(mktemp "$METRIC_OUT.tmp.XXXXXX" 2>/dev/null); then
+  {
+    echo "# HELP stellarindex_pgbackrest_backup_last_success_unix Unix time of the last successful scheduled pgBackRest backup, per repo (carried forward across failed runs)."
+    echo "# TYPE stellarindex_pgbackrest_backup_last_success_unix gauge"
+    printf '%s\n' "${METRIC_LINES[@]}" | grep '^stellarindex_pgbackrest_backup_last_success_unix'
+    echo "# HELP stellarindex_pgbackrest_backup_last_rc Exit code of the most recent scheduled pgBackRest backup, per repo (0 = success)."
+    echo "# TYPE stellarindex_pgbackrest_backup_last_rc gauge"
+    printf '%s\n' "${METRIC_LINES[@]}" | grep '^stellarindex_pgbackrest_backup_last_rc'
+    echo "# HELP stellarindex_pgbackrest_backup_duration_seconds Wall-clock seconds of the most recent scheduled pgBackRest backup, per repo."
+    echo "# TYPE stellarindex_pgbackrest_backup_duration_seconds gauge"
+    printf '%s\n' "${METRIC_LINES[@]}" | grep '^stellarindex_pgbackrest_backup_duration_seconds'
+  } > "$METRIC_TMP" && chmod 644 "$METRIC_TMP" && mv "$METRIC_TMP" "$METRIC_OUT" \
+    || echo "pgbackrest-backup: WARN could not write $METRIC_OUT — per-repo metrics not emitted" >&2
+else
+  echo "pgbackrest-backup: WARN $TEXTFILE_DIR not writable — per-repo metrics not emitted" >&2
+fi
+
+if [ "$RC" -ne 0 ]; then
+  echo "pgbackrest-backup: FAILED — at least one repo backup failed (first rc=$RC)" >&2
+fi
+exit "$RC"
