@@ -130,7 +130,7 @@ T1="$(metric stellarindex_pgbackrest_backup_last_success_unix 1)"; T2="$(metric 
 NOW="$("$REAL_DATE" +%s)"
 if [[ -n "$T1" && -n "$T2" && $((NOW - T1)) -lt 60 && $((NOW - T2)) -lt 60 ]]; then ok "last_success_unix{repo=1,2} fresh"; else bad "last_success: T1=$T1 T2=$T2 now=$NOW"; fi
 if [[ -n "$(metric stellarindex_pgbackrest_backup_duration_seconds 2)" ]]; then ok "duration_seconds{repo=2} present"; else bad "duration missing: $(cat "$PROM")"; fi
-if [[ "$(stat -f '%Lp' "$PROM" 2>/dev/null || stat -c '%a' "$PROM")" == 644 ]]; then ok "textfile is 0644"; else bad "textfile mode"; fi
+if [[ "$(stat -c '%a' "$PROM" 2>/dev/null || stat -f '%Lp' "$PROM")" == 644 ]]; then ok "textfile is 0644"; else bad "textfile mode"; fi  # GNU stat first: 'stat -f FMT' on GNU treats FMT as a FILE and still prints fs info for the real path
 
 # ─── 2. repo1 fails → repo2 still runs, rc non-zero, carry-forward ──
 echo "pgbackrest-backup-test: repo1 fails, repo2 still runs"
