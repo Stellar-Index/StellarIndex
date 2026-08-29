@@ -8,8 +8,13 @@
 #   - restores into a throwaway data dir under $DRILL_ROOT
 #   - starts a DISPOSABLE postgres on $DRILL_PG_PORT (never 5432)
 #   - read-only against the live DB (comparison queries only)
-#   - refuses to run with <  $MIN_FREE_GB free on the drill volume
+#   - refuses to run unless the drill volume has room for the restore
+#     it is about to perform (sized from the backup itself, see the
+#     capacity precondition below) — never less than $MIN_FREE_GB
 #   - cleans up on exit (trap), even on failure
+#   - every run that gets past the preconditions leaves evidence: an
+#     entry in the drill log AND a rewritten textfile metric, whether
+#     it passed, failed a check, or aborted mid-restore
 #
 # Usage (r1, as root):
 #   bash scripts/ops/restore-drill.sh                 # pg drill, repo1
@@ -31,9 +36,16 @@ DRILL_REPO="${DRILL_REPO:-1}"
 # from inside the service (226/NAMESPACE at unit start — see BDR-04).
 DRILL_ROOT="${DRILL_ROOT:-/srv/restore-drill}"
 DRILL_PG_PORT="${DRILL_PG_PORT:-5499}"
+# ABSOLUTE floor only. The real capacity requirement is derived per run
+# from the size of the backup being restored (below); this constant is
+# the minimum that requirement is clamped up to, not the safety property.
 MIN_FREE_GB="${MIN_FREE_GB:-200}"
+# Margin over the backup's database size (percent) + fixed headroom for
+# the WAL that archive-get pulls into pg_wal during recovery.
+DRILL_SIZE_MARGIN_PCT="${DRILL_SIZE_MARGIN_PCT:-125}"
+DRILL_WAL_HEADROOM_GB="${DRILL_WAL_HEADROOM_GB:-50}"
 PG_VERSION="${PG_VERSION:-15}"
-PG_BIN="/usr/lib/postgresql/${PG_VERSION}/bin"
+PG_BIN="${PG_BIN:-/usr/lib/postgresql/${PG_VERSION}/bin}"
 LIVE_DSN="${STELLARINDEX_POSTGRES_DSN:-}"
 DRILL_LOG_NOTE="${DRILL_LOG_NOTE:-}"
 OPS_BIN="${OPS_BIN:-/usr/local/bin/stellarindex-ops}"
@@ -113,19 +125,52 @@ if [[ -n "${DRILL_CH_WINDOW:-}" ]]; then
   fi
 fi
 
-mkdir -p "$DRILL_ROOT"
-free_gb=$(df -BG --output=avail "$DRILL_ROOT" | tail -1 | tr -dc '0-9')
-if (( free_gb < MIN_FREE_GB )); then
-  note "only ${free_gb}G free under $DRILL_ROOT (< ${MIN_FREE_GB}G) — refusing"
+# Capacity precondition — DERIVED from the backup, not a constant. The
+# drill writes a full copy of the database onto the SAME single pool the
+# live Postgres and ClickHouse run on, and the restore-drill dataset
+# carries no quota. A fixed 200 G floor sat below the ~600 G database it
+# restores, so a pool that had drifted to (say) 500 G free would pass the
+# check, fill the pool mid-restore, and stall live WAL + CH merges. Size
+# the requirement from the latest backup in the stanza/repo being
+# restored: database size × margin + WAL headroom, clamped to
+# MIN_FREE_GB. A backup that cannot be sized is a precondition refusal
+# (exit 2), not a guess — a floor that cannot be derived is not a floor.
+command -v jq >/dev/null || { note "jq not installed (needed to size the restore from 'pgbackrest info')"; exit 2; }
+backup_bytes=$(sudo -u postgres pgbackrest --stanza="$STANZA" --repo="$DRILL_REPO" --output=json info 2>/dev/null \
+  | jq -r --arg s "$STANZA" '[.[] | select(.name == $s) | .backup[-1].info.size // empty][0] // empty') || backup_bytes=""
+if [[ ! "$backup_bytes" =~ ^[0-9]+$ ]] || (( backup_bytes == 0 )); then
+  note "could not size the latest backup in stanza=$STANZA repo=$DRILL_REPO from 'pgbackrest info' — refusing"
   exit 2
 fi
+backup_gb=$(( (backup_bytes + 1073741823) / 1073741824 ))   # GiB, matching df -BG
+need_gb=$(( backup_gb * DRILL_SIZE_MARGIN_PCT / 100 + DRILL_WAL_HEADROOM_GB ))
+(( need_gb < MIN_FREE_GB )) && need_gb=$MIN_FREE_GB
+
+mkdir -p "$DRILL_ROOT"
+free_gb=$(df -BG --output=avail "$DRILL_ROOT" | tail -1 | tr -dc '0-9')
+if (( free_gb < need_gb )); then
+  note "only ${free_gb}G free under $DRILL_ROOT, need ${need_gb}G (latest backup ${backup_gb}G × ${DRILL_SIZE_MARGIN_PCT}% + ${DRILL_WAL_HEADROOM_GB}G WAL headroom; floor ${MIN_FREE_GB}G) — refusing"
+  exit 2
+fi
+note "capacity: ${free_gb}G free under $DRILL_ROOT ≥ ${need_gb}G needed for a ${backup_gb}G backup"
 
 DATA_DIR="$DRILL_ROOT/pgdata-$(date +%Y%m%d-%H%M%S)"
+# 1 while `pgbackrest restore` is writing DATA_DIR. A restore that dies
+# part-way (ENOSPC, repo corruption, killed) leaves a multi-hundred-GB
+# partial copy with NO diagnostic value — the pgbackrest output in the
+# unit log is the diagnosis — and on the shared pool it is the very thing
+# that must not linger. Post-restore failures (recovery, verification)
+# are different: there the datadir IS the evidence, and is kept.
+restore_in_progress=0
+# shellcheck disable=SC2329  # invoked indirectly via the EXIT trap below
 cleanup() {
   if [[ -f "$DATA_DIR/postmaster.pid" ]]; then
     sudo -u postgres "$PG_BIN/pg_ctl" -D "$DATA_DIR" stop -m immediate || true
   fi
-  if [[ "$fail_count" -eq 0 ]]; then
+  if [[ "$restore_in_progress" -eq 1 ]]; then
+    echo "restore-drill: removing PARTIAL restore $DATA_DIR (pgbackrest restore did not complete; its output above is the diagnostic)" >&2
+    rm -rf "$DATA_DIR"
+  elif [[ "$fail_count" -eq 0 ]]; then
     rm -rf "$DATA_DIR"
   else
     echo "restore-drill: KEEPING $DATA_DIR for diagnosis (failures=$fail_count); delete it manually" >&2
@@ -133,17 +178,98 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# ─── evidence + metric (phases 5/6, callable from every exit path) ──
+# The evidence IS the deliverable (ADR-0043 §3 / CS-110: "a backup that
+# has never been restored is a hope"). A drill that ran but recorded
+# nothing is a FAILED drill, so an unwritable evidence log fails LOUDLY
+# and is counted — it does not get silently skipped as it did while
+# LOG_DIR was $0-relative (BDR-03).
+#
+# These are FUNCTIONS, not a tail-of-script phase, because the two most
+# likely failure modes — `pgbackrest restore` failing and the scratch
+# instance never reaching consistency — used to `exit` before the
+# evidence phase. The drill log got no entry and the previous run's
+# textfile (failures=0, a fresh last_success) kept being scraped as if
+# the backup had just been proven restorable; nothing fired until the
+# 40-day staleness window. Every run that gets past the preconditions
+# now records what it found, on every path. Precondition refusals
+# (exit 2, above) deliberately still write nothing: "could not honestly
+# run" and "ran and found a problem" must not share a signal.
+drill_aborted_at=""
+record_evidence() {
+  local evidence_file="$LOG_DIR/restore-drills.md"
+  if mkdir -p "$LOG_DIR" 2>/dev/null && {
+        echo "## $(date -u +%F) restore drill (repo${DRILL_REPO})"
+        if [[ -n "$drill_aborted_at" ]]; then
+          echo "- ABORTED at $drill_aborted_at — no verification ran (restore: ${restore_secs:-n/a}s)"
+        else
+          echo "- restore: ${restore_secs:-n/a}s; tip lag ${lag:-n/a} ledgers; hash-chain breaks: ${breaks:-n/a}; trades window match: ${restored_rows:-n/a}=${live_rows:-n/a}"
+        fi
+        [[ -n "${ch_secs:-}" ]] && echo "- CH re-derive (dry-run, fetch+decode only): ${DRILL_CH_WINDOW} ledgers in ${ch_secs}s from ${DRILL_CH_BUCKET}; lake rows in window: ${ch_rows:-n/a}"
+        [[ -n "$DRILL_LOG_NOTE" ]] && echo "- note: $DRILL_LOG_NOTE"
+        echo "- failures: $fail_count"
+        echo
+      } >> "$evidence_file"; then
+    note "evidence appended to $evidence_file"
+  else
+    note "FATAL: could not write drill evidence to $evidence_file — the evidence is the drill's only deliverable; recording this run as a FAILURE"
+    fail_count=$((fail_count + 1))
+  fi
+}
+
+# Mirrors ch-schema-snapshot.sh §6: stamp last_success ONLY on a fully
+# clean run (fail_count==0, evidence written) so
+# stellarindex_restore_drill_stale fires when the monthly drill stops
+# producing evidence, and stellarindex_restore_drill_failed fires the
+# moment a run records failures > 0. Written atomically (.tmp then mv)
+# under /var, which ProtectSystem=full leaves writable.
+emit_metric() {
+  [[ "$TEXTFILE_DIR" != "/dev/null" ]] || return 0
+  if mkdir -p "$TEXTFILE_DIR" 2>/dev/null; then
+    local metric_out="$TEXTFILE_DIR/restore_drill.prom"
+    local metric_tmp="$metric_out.tmp.$$"
+    {
+      echo "# HELP stellarindex_restore_drill_last_success_unix Unix time of the most recent fully-successful pgBackRest restore-drill (ADR-0043 §3 / CS-110)."
+      echo "# TYPE stellarindex_restore_drill_last_success_unix gauge"
+      if [[ "$fail_count" -eq 0 ]]; then
+        echo "stellarindex_restore_drill_last_success_unix $(date +%s)"
+      fi
+      echo "# HELP stellarindex_restore_drill_failures Number of failed verification checks in the most recent restore-drill run."
+      echo "# TYPE stellarindex_restore_drill_failures gauge"
+      echo "stellarindex_restore_drill_failures $fail_count"
+    } > "$metric_tmp"
+    chmod 644 "$metric_tmp"
+    mv "$metric_tmp" "$metric_out"
+  else
+    note "WARN: could not write $TEXTFILE_DIR — restore-drill metric not emitted (staleness alert will fire on the absent series)"
+  fi
+}
+
+# abort_drill <stage>: a stage the rest of the drill cannot proceed
+# without has failed. Record it (evidence + metric) and exit with the
+# failure count — never a bare `exit` from mid-drill.
+abort_drill() {
+  drill_aborted_at="$1"
+  note "aborting at $drill_aborted_at — recording the run before exit"
+  record_evidence
+  emit_metric
+  exit "$fail_count"
+}
+
 # ─── phase 1: restore ───────────────────────────────────────────────
 note "restoring stanza=$STANZA repo=$DRILL_REPO into $DATA_DIR …"
 mkdir -p "$DATA_DIR" && chown postgres:postgres "$DATA_DIR" && chmod 700 "$DATA_DIR"
 restore_started=$(date +%s)
+restore_in_progress=1
 if sudo -u postgres pgbackrest --stanza="$STANZA" --repo="$DRILL_REPO" \
      --pg1-path="$DATA_DIR" --type=default restore; then
+  restore_in_progress=0
   restore_secs=$(( $(date +%s) - restore_started ))
   check "pg_restore" 1 "completed in ${restore_secs}s from repo${DRILL_REPO}"
 else
+  restore_secs=$(( $(date +%s) - restore_started ))
   check "pg_restore" 0 "pgbackrest restore failed — see output above"
-  exit "$fail_count"
+  abort_drill "pg_restore"
 fi
 
 # ─── phase 2: start scratch instance + recover ──────────────────────
@@ -204,7 +330,7 @@ if sudo -u postgres "$PG_BIN/pg_ctl" -D "$DATA_DIR" -w -t "$PG_START_TIMEOUT" st
   check "pg_start" 1 "scratch instance up on :$DRILL_PG_PORT (recovery complete)"
 else
   check "pg_start" 0 "scratch instance failed to reach consistency"
-  exit "$fail_count"
+  abort_drill "pg_start"
 fi
 
 q() { sudo -u postgres psql -h 127.0.0.1 -p "$DRILL_PG_PORT" -d stellarindex -tA -c "$1"; }
@@ -340,53 +466,10 @@ if [[ -n "${DRILL_CH_WINDOW:-}" ]]; then
   fi
 fi
 
-# ─── phase 5: evidence log ─────────────────────────────────────────
-# The evidence IS the deliverable (ADR-0043 §3 / CS-110: "a backup that
-# has never been restored is a hope"). A drill that ran but recorded
-# nothing is a FAILED drill, so an unwritable evidence log fails LOUDLY
-# and is counted — it does not get silently skipped as it did while
-# LOG_DIR was $0-relative (BDR-03).
-evidence_file="$LOG_DIR/restore-drills.md"
-if mkdir -p "$LOG_DIR" 2>/dev/null && {
-      echo "## $(date -u +%F) restore drill (repo${DRILL_REPO})"
-      echo "- restore: ${restore_secs}s; tip lag ${lag} ledgers; hash-chain breaks: ${breaks}; trades window match: ${restored_rows}=${live_rows}"
-      [[ -n "${ch_secs:-}" ]] && echo "- CH re-derive (dry-run, fetch+decode only): ${DRILL_CH_WINDOW} ledgers in ${ch_secs}s from ${DRILL_CH_BUCKET}; lake rows in window: ${ch_rows:-n/a}"
-      [[ -n "$DRILL_LOG_NOTE" ]] && echo "- note: $DRILL_LOG_NOTE"
-      echo "- failures: $fail_count"
-      echo
-    } >> "$evidence_file"; then
-  note "evidence appended to $evidence_file"
-else
-  note "FATAL: could not write drill evidence to $evidence_file — the evidence is the drill's only deliverable; recording this run as a FAILURE"
-  fail_count=$((fail_count + 1))
-fi
-
-# ─── phase 6: node_exporter textfile metric ────────────────────────
-# Mirrors ch-schema-snapshot.sh §6: stamp last_success ONLY on a fully
-# clean run (fail_count==0, evidence written) so
-# stellarindex_restore_drill_stale fires when the monthly drill stops
-# producing evidence. Written atomically (.tmp then mv) under /var,
-# which ProtectSystem=full leaves writable.
-if [[ "$TEXTFILE_DIR" != "/dev/null" ]]; then
-  if mkdir -p "$TEXTFILE_DIR" 2>/dev/null; then
-    metric_out="$TEXTFILE_DIR/restore_drill.prom"
-    metric_tmp="$metric_out.tmp.$$"
-    {
-      echo "# HELP stellarindex_restore_drill_last_success_unix Unix time of the most recent fully-successful pgBackRest restore-drill (ADR-0043 §3 / CS-110)."
-      echo "# TYPE stellarindex_restore_drill_last_success_unix gauge"
-      if [[ "$fail_count" -eq 0 ]]; then
-        echo "stellarindex_restore_drill_last_success_unix $(date +%s)"
-      fi
-      echo "# HELP stellarindex_restore_drill_failures Number of failed verification checks in the most recent restore-drill run."
-      echo "# TYPE stellarindex_restore_drill_failures gauge"
-      echo "stellarindex_restore_drill_failures $fail_count"
-    } > "$metric_tmp"
-    chmod 644 "$metric_tmp"
-    mv "$metric_tmp" "$metric_out"
-  else
-    note "WARN: could not write $TEXTFILE_DIR — restore-drill metric not emitted (staleness alert will fire on the absent series)"
-  fi
-fi
+# ─── phase 5/6: evidence log + node_exporter textfile metric ────────
+# (defined above so the abort paths share them)
+record_evidence
+emit_metric
 
 note "done: $fail_count failure(s)"
 exit "$fail_count"

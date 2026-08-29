@@ -15,8 +15,129 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **AWS Public Blockchain dataset drift monitor** (audit 2026-08-29,
+  backup-restore-6). r1's galexie-archive was trimmed below ledger
+  49,984,000 on 2026-07-26, so the second raw-LCM archive ADR-0043
+  relies on is the third-party `aws-public-blockchain` pubnet dataset
+  — and nothing watched it. `.github/workflows/public-dataset-check.yml`
+  (weekly + dispatch, no credentials, `--no-sign-request`, first-party
+  actions only) now asserts contiguous 64,000-ledger coverage from
+  genesis to ≥ tip − 2 partitions, the `HEX--start-end` naming, an
+  unchanged `.config.json` manifest and the trimmed range
+  `[64000, 49983999]` fully present; drift opens/updates ONE "AWS
+  Public Blockchain dataset drift" issue (auto-closed when intact) and
+  never fails the scheduled run red. Decision core
+  `scripts/ci/check-public-dataset.sh`, fixture-tested in `ci`
+  (`check-public-dataset-test.sh`: gap inside/above the trimmed range,
+  misnamed partition, manifest change, stalled publication all RED).
+
+### Changed
+
+- **ADR-0043 §2 amended (2026-08-29):** "two independent raw-LCM
+  archives" now explicitly = our recent range + the AWS Public
+  Blockchain dataset; dependency accepted and monitored rather than
+  duplicated, with the one-time cross-region copy (≈ $80 + $3–4/mo)
+  recorded as the not-taken option. `off-site-backup-plan.md` status
+  carries the same note.
+- **Public status page shows backup freshness (Ash, 2026-08-29).** New
+  read-only `GET /v1/diagnostics/backups` (experimental) reports the
+  pgBackRest last full / diff / WAL-archive age, the per-repository
+  newest backup (repo 1 on-host, repo 2 encrypted S3 off-site), the
+  monthly restore drill's last run + pass/fail, and the ClickHouse
+  schema+state snapshot age — each with a `freshness` verdict
+  (`ok` / `stale` / `unknown`) against SLOs the API echoes in `slo`
+  (full ≤ 8 d, diff ≤ 36 h, WAL ≤ 15 m, off-site ≤ 8 d, drill ≤ 35 d,
+  snapshot ≤ 36 h). Source of truth is Prometheus — the same
+  pgbackrest_exporter / node_exporter textfile series the alert rules
+  read; the API never shells out to pgbackrest. Every timestamp is
+  nullable and an absent series is `null` + `unknown`, never a fresh
+  zero; `source_status` carries the document's trust tri-state and
+  `flags.stale` mirrors the roll-up. Cached 60 s, no secrets or paths;
+  503 where no `api.prometheus_url` is configured. The explorer
+  `/status` page mounts a **Backups** panel (`BackupsPanel.tsx`,
+  mainnet only) that renders green within SLO, red with the real age
+  past it, grey "no data" for absent sources, and a "verdicts not
+  trustworthy" marker when the API's Prometheus reads failed — ages
+  come from the API's `age_seconds`, never the browser clock. Reserved
+  nulls (documented in the spec): repo `retention`, drill
+  `restored_backup_ts` / `duration_s`, `zfs_snapshot_latest_ts`,
+  `replica_lag_s` — no producer exports them yet. Tests:
+  `internal/api/v1/diagnostics_backups_test.go`,
+  `web/explorer/src/app/status/BackupsPanel.test.tsx`.
+- **`stellarindex_backup_offsite_stale` (P3, both rule trees).** The
+  existing backup alerts read `pgbackrest_backup_since_last_completion_seconds`,
+  which the exporter computes ACROSS repos — a host whose on-host repo1
+  is fresh while every repo2 (S3) write fails stayed green and the one
+  copy that survives host loss aged out silently. The new rule fires
+  per UP exporter instance with no `pgbackrest_backup_info{repo_key="2"}`
+  series younger than 8 d (`x unless x offset 8d` — a new backup is a
+  new series), which also covers repo2 never written. promtool tests
+  in `deploy/monitoring/rule-tests/backup-offsite_test.yml` (red-proof:
+  widening `repo_key` to all repos makes the repo1-fresh/repo2-stale
+  case stop firing); runbook `runbooks/backup-offsite-stale.md`.
+
 ### Fixed
 
+- **`fiat:VES` and `rwa:XAU` — the two reflector-fx slots that paged
+  `stellarindex_ingestion_oracle_unknown_symbols` on r1 v0.48.0
+  (2026-08-29, `raw:VES` / `raw:XAU`, 7 rows each in 2 h).** The cause
+  was the allow-lists, not the decoder: VES (Venezuelan bolívar
+  soberano, ISO-4217) joins the ADR-0010 fiat list and XAU (spot gold,
+  troy oz) joins the ADR-0028 `rwa:` list — a commodity, deliberately
+  not fiat and distinct from the tokenized `XAUm`. Via the shared
+  `canonical.MapOracleSymbol` precedence both now decode as mapped
+  rows at the same positional `op_index` (DAT-03), so the 0109
+  generation-guarded upsert rewrites the existing `raw:` rows in
+  place on replay; the counter no longer increments for them
+  (`TestRealDecoder_fxVESAndXAUMappedNotRaw`; the real 2026-04-23 FX
+  fixtures now decode with zero raw rows). The alert stays red for up
+  to 25 h after deploy (its `increase[25h]` window — runbook). The
+  reflector-fx replay from the first `raw:` ledger is declared in the
+  commit's `Replay-Plan:` trailer; pre-#247 history (slots dropped,
+  not recorded) is covered by #247's full re-derive (PR-7 of the
+  totality design), which must run on a binary carrying this change.
+
+- **Explorer test-net builds could silently serve MAINNET data.**
+  `web/explorer/next.config.mjs` inlined `NEXT_PUBLIC_API_BASE_URL ??
+  'https://api.stellarindex.io'` through its `env` block, so the
+  per-network fallback added in #212 (`API_BASE_URL ??
+  CURRENT_NETWORK.apiBaseUrl` in `src/api/client.ts`) was unreachable:
+  a testnet/futurenet Pages project with `NEXT_PUBLIC_NETWORK` set but
+  the API var forgotten baked in the mainnet origin. The key is dropped
+  from `env` (Next inlines `NEXT_PUBLIC_*` from the build environment
+  on its own), `useMe` now shares `API_BASE_URL` instead of its own
+  mainnet-literal fallback, and the JSON-LD `contentUrl` on asset /
+  market pages derives from `CURRENT_NETWORK.apiBaseUrl`. The
+  mainnet-hardcode guard now also scans `next.config.mjs` and strips
+  `//` comments before `/* */` — a `/dashboard/*` in a line comment had
+  opened a phantom block comment that hid three literals from it.
+  New `src/lib/next-config-env.test.ts` pins the env contract
+  (audit web-status-5).
+- **Native XLM supply is now network-aware.** `internal/supply` derived
+  `total_supply` / `max_supply` from the frozen pubnet constant
+  (50,001,806,812 XLM) regardless of the configured network, so
+  `api.testnet.stellarindex.io/v1/assets/native` served the mainnet
+  figure against a testnet ledger whose `total_coins` is 100 B (measured
+  2026-08-28). The aggregator and `stellarindex-ops supply snapshot`
+  now build the computer via `supply.NewXLMComputerForNetwork(cfg.Stellar.
+  Passphrase(), …)`: testnet and futurenet get the 100 B genesis total
+  (== their ledger `total_coins`), pubnet output is byte-identical, and an
+  unrecognised passphrase fails at startup (`supply.ErrUnknownNetwork`)
+  instead of silently falling back to the pubnet number. `supply_basis`
+  is unchanged (`xlm_total_only` with no reserve accounts configured,
+  which is the honest testnet state). Existing testnet/futurenet
+  `asset_supply_history` rows written with the 50.0 B total are
+  superseded by the next refresher cycle after deploy.
+- **Explorer: ledger page captions `total_coins` (2019-burn basis).**
+  `/ledgers/{seq}` printed the header's `total_coins` (~105.4B XLM on
+  mainnet) bare, while `/assets/native` serves the market's 50.0B total
+  supply — the same unlabeled 2.11× divergence the network page fixed
+  (#241). The caption ("ledger header · includes the 2019 burn" on
+  mainnet, "ledger header" on the test nets, whose genesis has no burn)
+  now comes from a shared `lib/xlm-supply.ts` helper so every surface
+  printing `total_coins` says the same thing; #241 should adopt it.
 - **pgBackRest repo2 retention was hardcoded to 4 fulls** in `pgbackrest.conf.j2`, ignoring
   `pgbackrest_repo2_retention_full/diff` (lean defaults 1 / 7 d ≈ $12–17/month); the template now
   renders the variables plus `repo2-retention-archive-type=diff`. Caught by a masked diff of the
@@ -54,6 +175,41 @@ against.
   static-export 404 under `/assets/raw…`). The oracle source bespoke
   page needs no explorer change: its counts/tables are text-only and
   already totality-inclusive server-side with the "Unmapped feeds" KPI.
+- **CI ansible task lint (`scripts/ci/lint-ansible-tasks.sh`).** Two
+  structural guards over `configs/ansible/**`, wired into import-checks +
+  `verify.sh` with a fixture self-test: *pipefail-needs-bash* (a
+  `ansible.builtin.shell` body that sets `pipefail` must declare
+  `executable: /bin/bash` — dash rejects it, the third recurrence of the
+  class) and *secret-on-argv* (a vault value interpolated into a
+  command body / `mc` positional secret in a shipped script; `no_log`
+  hides it from Ansible output only). Grandfathered violations live in
+  the shrink-only `lint-ansible-tasks.baseline`.
+- **CI galexie restart-wiring test
+  (`scripts/ci/ansible-galexie-restart-test.sh`, ansible-check job).**
+  Pins that the five galexie-input render tasks no longer notify
+  `Restart galexie` directly, that the bootstrap binary install restarts
+  every daemon it replaces, and exercises
+  `galexie-effective-checksum.yml` for real (local ansible run, stub
+  handler): comment-only edit → quiet; code/shebang edit or new file →
+  restart.
+- **`stellarindex-ops usd-volume-restamp` (W5.3).** The corrective WRITE
+  half of `verify-usd-volume`: for every exact-tier (quote- or base-leg
+  USD-pegged) group in a bounded `-from/-to` day window it rewrites each
+  row whose stored `usd_volume` differs from `pegged_leg / 10^decimals`
+  to exactly the value the insert path writes, stamped with the run's
+  `derive_generation` (INV-3 guard: a live gen-0 replay can never claw a
+  correction back). Tier + scale come from the same
+  `ClassifyUSDVolumeTier` + peg config as the writer and the verifier —
+  no SQL reimplementation of the waterfall. Dry-run by default, `-write`
+  to apply, idempotent (correct rows are untouched, value and
+  generation), `-slice`d UPDATEs on a dedicated session with the
+  Timescale decompression cap raised, ch-backfill-style heartbeat. Replaces
+  the 2026-07-30 hand SQL for the pre-2026-07-23 USDC-base SDEX class
+  (`docs/operations/usd-volume-rederive-2026-08.md` step 5). Estimated
+  tiers stay `ch-rebuild`'s job. Unit tests pin the formula to
+  `tradeUSDVolume` byte-for-byte; the integration test proves the SQL
+  identity, the differential (a correct row is unchanged), idempotency
+  and the generation guard on real TimescaleDB.
 - **Oracle capture-totality consumers (PR-3 of 7): every `oracle_updates`
   reader is safe for `raw:` rows before the decoders emit them.**
   `/v1/oracle/streams` gains `include_unmapped` (default `false` — the
@@ -237,6 +393,31 @@ against.
   wrapper, extracted from the ansible task). See
   `docs/operations/clickhouse-ops-batch-profile.md`.
 
+- **Status page rendered stale / unreachable state as fresh green
+  (web-status-1/2/4/6, audit 2026-08-28).** `/status` (a) dropped the
+  `/v1/diagnostics/ingestion` envelope's `flags.stale`, so a failed
+  cursors/network-stats read (zero-valued fields) painted "Lag from tip
+  0s" in green and "Latest ledger 0" — and on the lean nets fed a 0 s
+  lag into the indexer roll-up; (b) kept "All systems operational" and
+  a pulsing green "Live" for as long as a tab stayed open during a total
+  API outage, because the headline was derived from the retained
+  last-known snapshot with no regard for the poll error; (c) labelled
+  the coverage table with `backfill_coverage_as_of` (the API's
+  per-request assembly time, "4s ago" forever) while the completeness
+  verdicts it shows are dated by a daily timer, and claimed the detector
+  runs "every 5 min" (it is 30 min); (d) blanked operator notices the
+  moment the notices endpoint failed — the exact window a notice
+  announces. Now: stale snapshots carry a "stale · server degraded"
+  badge, unmeasured zeros render "—" and never vote in the lean-net
+  roll-up; after two failed polls (the DegradedBanner threshold) the
+  headline is "Status unknown", the pulse goes grey and reads "last
+  successful poll <age>", and the unreachable card sits above the
+  headline; each coverage row shows its real data age (30 min axis for
+  the gap detector, daily axis for compute-completeness) and an aged
+  verdict loses the green verified tone; notices are retained through
+  a failed poll with a "notices feed unreachable" marker and cleared
+  only by a successful response. Red-proof tests in
+  `web/explorer/src/app/status/StatusPageClient.test.tsx`.
 - **`pgbackrest.conf` template task printed the backup cipher passphrases
   and repo2 S3 key pair on `--check --diff`.** The task rendering
   `pgbackrest.conf.j2` had no `diff: false`, and the header comment
@@ -257,6 +438,156 @@ against.
   minio) are grandfathered by name for burn-down. Retention is
   untouched (ADR-0043). (audit-2026-08-28 backup-restore-7)
 
+- **Restore-drill capacity floor was a 200 G constant under a ~600 G
+  restore; a partial restore was kept on the shared pool.**
+  `scripts/ops/restore-drill.sh` now sizes its free-space requirement
+  from the latest backup in the stanza/repo it is about to restore
+  (`pgbackrest info` database size × `DRILL_SIZE_MARGIN_PCT`=125 % +
+  `DRILL_WAL_HEADROOM_GB`=50 G, clamped up to `MIN_FREE_GB`); a backup
+  that cannot be sized is a precondition refusal (exit 2). A
+  `pgbackrest restore` that does not complete has its partial datadir
+  removed unconditionally (the pgbackrest output is the diagnostic);
+  post-restore failures still keep the datadir. (audit 2026-08-28
+  backup-restore-3; the ZFS quota on `data/restore-drill` is a separate
+  ansible change.)
+- **Restore-drill abort paths left the previous PASS being scraped.**
+  A failed `pgbackrest restore` or a scratch instance that never reached
+  consistency `exit`ed before the evidence phase: no drill-log entry,
+  and last month's `restore_drill.prom` (`failures 0`, fresh
+  `last_success`) kept being served until the 40-day staleness ticket.
+  Evidence + metric emission are now functions called on every path
+  past the preconditions; aborts write `ABORTED at <stage>` and
+  `failures N` with no `last_success`. New ticket alert
+  `stellarindex_restore_drill_failed` (`failures > 0` for 30 m) in both
+  rule trees + promtool rule-test + runbook. New
+  `scripts/ops/restore-drill-run-test.sh` drives the real script through
+  the capacity-refusal / restore-failure / recovery-failure paths with
+  shimmed host tools; it and `restore-drill-test.sh` are now wired into
+  CI + `verify.sh`. (audit 2026-08-28 backup-restore-4)
+- **Config-apply gate: widened surfaces, host baseline, fail-closed
+  (`scripts/ci/config-apply-gate.sh`, audit deploy-ansible-gate-4).** The
+  gate's SURFACES list omitted files the archival-node role renders or
+  copies onto the host — `roles/*/defaults/` (e.g. `galexie_ledgers_per_file`
+  → `galexie.toml.j2`), `handlers/`, `inventory/`, the sibling roles,
+  `configs/healthchecks/*` and the copied `scripts/ops/config-assertions.sh`,
+  `ch-schema-snapshot.sh`, `restore-drill.sh`, `scripts/dev/r1-smoke.sh` —
+  so a defaults-only or healthchecks-only release passed as "binary deploy
+  is complete". It also diffed against the previous tag by ancestry only
+  (a skip-ahead deploy never listed the skipped tags' config) and turned
+  any git error into "no changes" (`|| true` under no `set -e`). Now the
+  whole `configs/ansible/roles/` tree, `inventory/`, `configs/healthchecks/`
+  and the four copied scripts are surfaces; an optional 3rd argument takes
+  the host's live version as the baseline (ancestry remains the fallback,
+  and the baseline used is printed); an unresolvable version/baseline or a
+  failing `git diff` exits 1. `config-apply-gate-test.sh` pins one fixture
+  per surface plus the skip-ahead and fail-closed cases (13 red on the old
+  script). Wiring the host sidecar
+  (`/var/lib/stellarindex/deployed-versions/<binary>`) into `deploy.yml` as
+  that 3rd argument is a follow-up.
+- **`deploy.yml` could never apply schema on testnet/futurenet
+  (deploy-ansible-deploy-2).** `deploy-binary.yml` synced the migrations
+  dir with `ansible.posix.synchronize`, whose rsync runs on the
+  controller and never sees the `--ssh-common-args "-o ProxyJump=…"` the
+  NAT-only VMs are reached through, and its fail-closed pgBackRest
+  freshness gate can only exit 1 on a VM that has no pgbackrest at all —
+  so the only passing test-net deploy was `migrations_skip=true`
+  (binary on a stale schema while `/v1/healthz` is 200). The sync is now
+  `ansible.builtin.copy` (connection-agnostic, same as the role's own
+  migrations sync), the gate is conditioned on a new
+  `pgbackrest_backup_enabled` extra-var (default true — fail closed)
+  that `deploy.yml` sets per region (false only for testnet/futurenet,
+  with a loud "no verified recovery point" notice), and
+  `scripts/ci/lint-deploy-playbook.sh` + a CI `--syntax-check` of
+  `deploy-binary.yml` pin both properties. r1's path is unchanged.
+
+- **systemd EnvironmentFiles were `.`-sourced by the deploy migrate step,
+  a root cron and twelve host scripts (deploy-ansible-secrets-5).**
+  `/etc/default/stellarindex`, `-ops` and `/etc/default/galexie` are
+  rendered unquoted (what systemd wants), but every shell consumer
+  re-parsed them with `set -a; . <file>` — so a secret carrying `$`, `;`,
+  `&`, `|`, quotes or whitespace works under systemd and is silently
+  mangled (or its tail EXECUTED as root) on the sourcing paths: migrate
+  fails 28P01, ARCHIVE_TO stays 0, freshness gauges go stale. Every
+  consumer now reads the file verbatim (the run-heavy-job.sh pattern —
+  one canonical `load_env_file` in the bash scripts, a POSIX loop in the
+  `/bin/sh` migrate task and the cron one-liner), and a preflight assert
+  refuses to render any of the sixteen env-file secrets that contains a
+  shell metacharacter (names only in the message; rotate to
+  `openssl rand -hex 32`), which also makes the documented interactive
+  `set -a; source` safe. `scripts/ci/envfile-loader-test.sh` pins all
+  consumers in lockstep and round-trips a metacharacter fixture.
+
+- **`deploy.yml` `health_grace_seconds` was unvalidated and spliced into
+  `ansible-playbook -e` (deploy-ansible-input-8).** The input is
+  `type: string` (the comment claiming GitHub enforced `number` was
+  false), and ansible's k=v `-e` form splits on whitespace, so a
+  dispatch value like `15 backup_freshness_skip=true` injected a second
+  extra-var and skipped the backup-freshness gate with a nominal-looking
+  step summary. Validate now requires `^[0-9]{1,4}$`;
+  `scripts/ci/deploy-inputs-test.sh` runs the shipped Validate step
+  against the injection and the malformed cases.
+
+- **ansible: `04-users.yml` history-archive sweep aborted every full
+  archival-node apply.** The 2026-08-27 task ran `set -euo pipefail` under
+  ansible's default `/bin/sh` (dash on every target) → `set: Illegal
+  option -o pipefail`, rc=2, play aborted at step 04 before
+  postgres/galexie/services. Now runs under `executable: /bin/bash`
+  (audit 2026-08-28, deploy-ansible-shell-1).
+- **ansible: MinIO secrets no longer on `mc` argv.** `09-minio.yml`'s
+  alias task claimed env-based auth while passing the root password on
+  argv, and the three `mc admin user add` tasks + `galexie-append.sh`'s
+  per-restart `mc alias set` put the writer secrets in
+  `/proc/<pid>/cmdline`. All five now feed the secret on stdin (`mc`
+  reads omitted keys from stdin); the persisted `local` alias the root
+  ops scripts rely on is unchanged (deploy-ansible-secrets-9).
+- **ansible: galexie restarts only on effective config change.** The
+  wrapper script, captive cfg, `galexie.toml`, `/etc/default/galexie`
+  and the unit are each ~50% comments, and every byte change notified
+  `Restart galexie` — a ~9-minute mainnet cold catchup per fire. New
+  `galexie-effective-checksum.yml` hashes each input with comments/blank
+  lines stripped before and after rendering and notifies the restart
+  only on a mismatch; a real change (rotated key, PEER_PORT, ExecStart)
+  still restarts — no default-off ack gate (deploy-ansible-handlers-7).
+- **ansible: bootstrap binary install (`manage_stellarindex_binaries`)
+  restarts api + aggregator too, refuses a dirty tree, writes sidecars.**
+  It notified only the indexer, so the api unit kept the old binary in
+  memory; it built from whatever was in the operator's checkout with no
+  record. Now: `git status --porcelain` must be empty (override
+  `-e stellarindex_bootstrap_allow_dirty_tree=true` for a deliberate
+  unreleased-branch bring-up), and each binary's
+  `/var/lib/stellarindex/deployed-versions/` sidecar records
+  `git describe --tags --always --dirty` so the next `deploy.yml` labels
+  its rollback copy truthfully instead of `untracked-<ts>`
+  (deploy-ansible-drift-3).
+- **Operator self-service key mint/revoke now audited (api-security-1,
+  audit 2026-08-28).** `POST /v1/account/keys` copied an operator
+  caller's tier verbatim into the child and recorded nothing — no
+  `X-Reason`, no `key.mint` row — so a compromised staff credential
+  could spawn further operator credentials that `POST /v1/admin/keys`
+  would have refused without a reason and logged. Tier inheritance
+  (staff rotation) is kept; operator-tier callers of
+  `POST /v1/account/keys` and `DELETE /v1/account/keys/{keyID}` now
+  need `X-Reason` (400 without) and land the same `key.mint` /
+  `key.revoke` audit rows as the admin routes. Customer-tier callers
+  are untouched.
+- **Rotated signup keys no longer 403 forever under email verification
+  (api-security-2, audit 2026-08-28).** With
+  `signup_require_email_verification` on (the default), a verified
+  `/v1/signup` customer who rotated via `POST /v1/account/keys` got a
+  `signup-<hash>` child with a zero `EmailVerifiedAt`, and nothing can
+  verify a non-signup KeyID after the fact — `RequireEmailVerified`
+  rejected the child permanently (and revoking the parent stranded the
+  customer). `auth.CreateAPIKeyRequest` gained `EmailVerifiedAt`; the
+  self-service mint copies the caller's stamp onto the child. Signup
+  and admin mints still leave it zero.
+- **`/v1/livez/lake` added to the unauthenticated-infra exemption and
+  the anonymous rate-limit skip (api-security-3, audit 2026-08-28).**
+  The ADR-0050 lake-route LB probe (#119) was added after
+  `isUnauthenticatedInfraPath` / `SkipHealthAndMetrics` were written and
+  missed both: under `apikey` / `sep10` auth mode every uncredentialed
+  probe 401'd (contradicting the OpenAPI `security: []` declaration),
+  and under `apikey_optional` it spent the anonymous per-IP bucket. The
+  exact-match lists and their pinning tests now carry the path.
 - **Outlier filter trimmed agreed price moves; `outlier_storm` measured
   its own artifact.** The published-VWAP filter scored every print
   against ONE band — the whole window's median ± 4 × 1.4826 × MAD — and

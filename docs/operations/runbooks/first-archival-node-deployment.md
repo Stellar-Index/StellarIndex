@@ -1,6 +1,6 @@
 ---
 title: First archival-node deployment — plan from zero to replay-ready
-last_verified: 2026-05-03
+last_verified: 2026-08-29
 status: SUPERSEDED 2026-04-23 (late) — retained for historical context
 superseded_by:
   - docs/operations/r1-deployment-state.md
@@ -16,6 +16,9 @@ superseded_by:
 > on 2026-04-23.
 >
 > **For current state:** [r1-deployment-state.md](../r1-deployment-state.md).
+> The current bring-up recipe is
+> [archival-node-bringup.md](../archival-node-bringup.md)
+> (re-verified 2026-08-29).
 >
 > The sections below are preserved because the hardware sizing,
 > ZFS layout, burn-test approach, and archive-mirror sequencing
@@ -213,7 +216,10 @@ Follow [bootstrap-archival-node.md](bootstrap-archival-node.md)
 - Ansible dry-run (§3)
 - Ansible apply (§4)
 - Post-apply verification (§5)
-- MinIO bucket creation (§6)
+- MinIO bucket + IAM verification (§6 — since the 2026-08-29
+  re-scope the ansible role creates the buckets and users itself;
+  the manual creation step this plan originally pointed at no
+  longer exists)
 
 Expected state at end of §3: box has stellar-core, stellar-rpc,
 galexie, minio, pg15 all installed + systemd-managed. stellar-core

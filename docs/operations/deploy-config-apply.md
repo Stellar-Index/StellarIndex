@@ -24,7 +24,24 @@ despite "deploy OK"), and the v0.43.0 Prometheus rules (copied to the unused
 The **config-apply gate** (`scripts/ci/config-apply-gate.sh`, run by
 `deploy.yml`) fails the deploy job when a release changed a config surface
 and the operator did not pass `-f config_acknowledged=true` — a forcing
-function so the apply below is never forgotten.
+function so the apply below is never forgotten. Its surfaces are the whole
+`configs/ansible/roles/` tree (templates, tasks, files, **defaults**,
+handlers — a `defaults/main.yml` change re-renders every template that reads
+it), `configs/ansible/inventory/`, `configs/healthchecks/`, the Prometheus
+rules, `deploy/systemd/`, `deploy/clickhouse/`, and the repo scripts the role
+copies onto the host verbatim (`scripts/ops/config-assertions.sh`,
+`ch-schema-snapshot.sh`, `restore-drill.sh`, `scripts/dev/r1-smoke.sh`).
+
+The gate diffs the deploying tag against the **previous release tag by
+ancestry** unless it is given the host's live version as a 3rd argument —
+so on a **skip-ahead** deploy (host on v0.45.0, deploying v0.47.2) or a
+**rollback**, the ancestry diff is the wrong interval. Run it by hand
+against the host's real baseline before acknowledging:
+
+```
+ssh r1 'cat /var/lib/stellarindex/deployed-versions/stellarindex-api'   # → live version
+bash scripts/ci/config-apply-gate.sh v0.47.2 false v0.45.0
+```
 
 ## The apply procedure (per surface)
 
