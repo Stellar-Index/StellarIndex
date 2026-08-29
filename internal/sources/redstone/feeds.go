@@ -30,15 +30,31 @@ type feedEntry struct {
 	Invert bool
 }
 
-// quoteUSD / quoteEUR are the two quote currencies the registry
-// uses. RedStone publishes USD-denominated prices unless the feed_id
-// carries an explicit `/<QUOTE>` suffix — EUROC/EUR is the only
-// non-USD suffix; the 2026-07-24 feeds carry explicit `/USD`
-// suffixes that simply restate the default.
+// quoteUSD / quoteEUR are the two quote CURRENCIES the registry
+// uses. RedStone publishes USD-denominated MARKET prices unless the
+// feed_id carries an explicit `/<QUOTE>` suffix — EUROC/EUR is the
+// only non-USD suffix; the 2026-07-24 feeds carry explicit `/USD`
+// suffixes that simply restate the default. NAV feeds are the
+// exception to the default — see quoteBTC / quoteSolvBTC below.
 // See ADR-0028 §The RedStone 19-feed registry.
 var (
 	quoteUSD = mustFiat("USD")
 	quoteEUR = mustFiat("EUR")
+)
+
+// quoteBTC / quoteSolvBTC are the non-currency denominators. A bare
+// `_FUNDAMENTAL` feed publishes net asset value in the token's
+// RESERVE asset, which is only a currency when the reserve is cash or
+// T-bills (BENJI, USST, savUSD — see the attestation list in
+// feeds_test.go). For the SolvBTC family the reserve is crypto, so
+// the published number is a RATIO and the quote must name the asset
+// the ratio is denominated in. Registering those two feeds as
+// `fiat:USD` was D8: it served "a BTC-backed token is worth $1.00"
+// on /v1/oracle/streams with mapped=true, for a token its own
+// `_FUNDAMENTAL/USD` sibling priced at $78,313.
+var (
+	quoteBTC     = mustCrypto("BTC")
+	quoteSolvBTC = mustCrypto("SolvBTC")
 )
 
 // feedRegistry maps each EXACT on-chain feed_id() string to the
@@ -77,9 +93,30 @@ var feedRegistry = map[string]feedEntry{
 	"MXNe": {Base: mustCrypto("MXNe"), Quote: quoteUSD, Invert: true},
 
 	// Tokenized-BTC feeds — BTC-backed crypto tokens (crypto, not rwa).
+	// `SolvBTC` is the market price in dollars; the two bare
+	// `_FUNDAMENTAL` feeds are NAV RATIOS, denominated in the reserve
+	// each token is a claim on — NOT in USD (D8, fixed 2026-08-29;
+	// the `/USD` siblings further down carry the dollar figures).
+	//
+	// Denominators derived from the live r1 rows
+	// (/v1/oracle/streams?include_unmapped=true, 2026-08-29), where the
+	// two `_FUNDAMENTAL/USD` legs are byte-identical — 78313.02974310
+	// each, as they were on 2026-07-27 (6543063913439 each):
+	//
+	//   SolvBTC_FUNDAMENTAL     1.00295305 = NAV_USD / BTC_USD
+	//     (78313.03 / 78082.5) ⇒ denominated in BTC.
+	//   SolvBTC.BBN_FUNDAMENTAL 1.00000000 exactly, on three
+	//     independent captures (lake ledger 60104689, 2026-07-27,
+	//     2026-08-29), while its NAV_USD equals SolvBTC's NAV_USD
+	//     ⇒ SolvBTC.BBN is 1:1 with SolvBTC and the ratio is
+	//     denominated in SolvBTC. Quoting it BTC would contradict our
+	//     own SolvBTC.BBN_FUNDAMENTAL_USD row by the SolvBTC premium.
+	//
+	// The base codes are unchanged (each feed_id keeps its own code
+	// per ADR-0028 §3) — only the mislabelled denominator moves.
 	"SolvBTC":                 {Base: mustCrypto("SolvBTC"), Quote: quoteUSD},
-	"SolvBTC_FUNDAMENTAL":     {Base: mustCrypto("SolvBTC_FUNDAMENTAL"), Quote: quoteUSD},
-	"SolvBTC.BBN_FUNDAMENTAL": {Base: mustCrypto("SolvBTC.BBN_FUNDAMENTAL"), Quote: quoteUSD},
+	"SolvBTC_FUNDAMENTAL":     {Base: mustCrypto("SolvBTC_FUNDAMENTAL"), Quote: quoteBTC},
+	"SolvBTC.BBN_FUNDAMENTAL": {Base: mustCrypto("SolvBTC.BBN_FUNDAMENTAL"), Quote: quoteSolvBTC},
 
 	// Tokenized real-world assets — ADR-0028 `rwa` AssetType.
 	"BENJI_ETHEREUM_FUNDAMENTAL":  {Base: mustRWA("BENJI"), Quote: quoteUSD},
@@ -117,9 +154,12 @@ var feedRegistry = map[string]feedEntry{
 	// USD-quoted SolvBTC NAV feeds. These publish NAV **in USD**
 	// (live 65,430 vs RedStone BTC 65,234) — a DIFFERENT quantity
 	// from the unsuffixed `_FUNDAMENTAL` feeds above, which publish
-	// the NAV RATIO vs BTC (live 1.0029; r1 oracle_updates agrees).
-	// Hence distinct base codes, with `/` normalized to `_` (see
-	// canonical.knownCryptoCodes for the URL-path rationale).
+	// the NAV RATIO against their reserve asset (crypto:BTC /
+	// crypto:SolvBTC; live 1.0029 and 1.0000, r1 oracle_updates
+	// agrees). Hence distinct base codes, with `/` normalized to `_`
+	// (see canonical.knownCryptoCodes for the URL-path rationale) AND
+	// distinct quotes — the `/USD` suffix is what makes these two,
+	// and only these two, dollar-denominated.
 	"SolvBTC_FUNDAMENTAL/USD":     {Base: mustCrypto("SolvBTC_FUNDAMENTAL_USD"), Quote: quoteUSD},
 	"SolvBTC.BBN_FUNDAMENTAL/USD": {Base: mustCrypto("SolvBTC.BBN_FUNDAMENTAL_USD"), Quote: quoteUSD},
 
