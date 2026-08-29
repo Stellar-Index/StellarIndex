@@ -83,6 +83,8 @@ echo "=== Config-apply gate self-test ===" && ./scripts/ci/config-apply-gate-tes
 # Two import-checks gates that landed (#287, #305) without their verify.sh
 # twin — check-verify-parity was red on main for everyone until added here.
 echo "=== Public-dataset drift decision-core self-test ===" && ./scripts/ci/check-public-dataset-test.sh
+echo "=== Jinja template parse gate ===" && ./scripts/ci/lint-jinja-templates.sh
+echo "=== Jinja template parse gate self-test ===" && ./scripts/ci/lint-jinja-templates-test.sh
 echo "=== pgBackRest backup wrapper self-test ===" && ./scripts/ci/pgbackrest-backup-test.sh
 # BASE_SHA-gated: self-skips locally (no comparison base); runs for real in CI
 # with the PR/push base. Invoked here to keep verify↔CI parity honest.
