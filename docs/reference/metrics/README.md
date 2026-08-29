@@ -231,6 +231,35 @@ the alert reads a real zero rather than "no data". Drives the
 `stellarindex_projector_wedged` alert (ticket; manual remediation — raise
 the per-cycle budget or decompress the range). See ADR-0032.
 
+### `stellarindex_projector_replay_window_active`
+
+Gauge, labels `source`.
+
+`1` while the source's projector cursor is still INSIDE an
+operator-recorded `projector-replay` rewind window (the
+`projection_dirty_windows` row migration 0125 added, written by the
+replay tool before it rewinds); `0` otherwise. Published by ONE projector
+goroutine (not per source) every `ReplayWindowRefreshInterval` (30s) from
+a single query; its first pass runs at startup, which is also what seeds
+`0` for every registered source so the alert reads a real zero rather
+than "no data".
+
+The discriminator between an INTENDED lag and a real one (issue #325):
+`stellarindex_projector_lag_high` carries `unless
+stellarindex_projector_replay_window_active == 1`, so the ~4h ticket a
+2.5M-ledger rewind used to raise — which told the operator nothing and
+masked any genuine lag on the same source — is excused, while
+`stellarindex_projector_replay_stalled` fires if the replay stops
+advancing inside that window.
+
+Two deliberate bounds keep the excuse narrow: it is keyed on the CURSOR
+(it clears the moment the cursor regains its pre-rewind position, not
+when the dirty-window row is finally cleared by compute-completeness up
+to a day later), and it fails OPEN — a dirty-window read error publishes
+`0` for every source, so a monitoring-side failure can never silence a
+real lag ticket. A `projected-rebuild` dirty window never raises it: that
+tool's range stays below the live cursor and it never rewinds it.
+
 ### `http_request_success_duration_seconds`
 
 Histogram, labels `method`, `route`.

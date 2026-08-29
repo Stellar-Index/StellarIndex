@@ -197,6 +197,30 @@ against.
 
 ### Fixed
 
+- **An operator-initiated projector replay is no longer a multi-hour lag
+  ticket that also masks a real lag (#325).**
+  `stellarindex_projector_lag_high` fired on r1 at 10:24Z on 2026-08-29
+  for the whole ~4h of the reflector-fx replay that rewound the cursor
+  2,574,496 ledgers ON PURPOSE (the VES/XAU served-row deficit, Δ=97,826)
+  — it told the operator nothing they had not just done, and any genuine
+  lag on that source was indistinguishable from it for the duration. The
+  replay tool already records the rewind (`projection_dirty_windows`,
+  migration 0125), so the projector now publishes
+  `stellarindex_projector_replay_window_active{source}` (1 while the
+  cursor is inside a recorded window and still below its pre-rewind
+  position, refreshed every 30s from ONE query for all sources) and the
+  lag rule carries `unless … == 1`. Not a silence: the new
+  `stellarindex_projector_replay_stalled` tickets when a replay STOPS
+  advancing (lag not falling for 15 min inside the window, for 5 min),
+  the excuse expires with the catch-up rather than with the day-long
+  dirty-window row, a dirty-window read error publishes 0 for every
+  source (fail open toward alerting), and an indexer that publishes no
+  flag leaves the lag rule exactly as it was. `projected-rebuild`
+  windows never raise the flag — that tool stays below the live cursor
+  and never rewinds it. Go tests
+  (`internal/projector/replay_window_test.go`, 5 cases incl. the bound
+  and the fail-open) + promtool cases (normal lag fires / climbing replay
+  silent / stalled replay fires / flag absent still fires).
 - **Gap detector pre-registers `runs_total` at 0 so a restart cannot read
   as a dead detector.** `stellarindex_ingest_gap_detector_runs_total` is a
   CounterVec that only materialises a series on first `Inc()`, and since

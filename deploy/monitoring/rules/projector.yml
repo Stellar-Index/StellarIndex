@@ -16,9 +16,27 @@ groups:
       # ledgerstream tip every Interval. Sustained > 256 ledgers
       # (≈21 minutes of bucket time) is the first sign that a
       # decode is hot-looping or that postgres writes are slow.
+      #
+      # The `unless` arm (issue #325, 2026-08-29) excuses the ONE lag
+      # that is intended: an operator-initiated `stellarindex-ops
+      # projector-replay` rewind. The reflector-fx replay of 2026-08-29
+      # rewound the cursor 2,574,496 ledgers ON PURPOSE and this rule
+      # ticketed for the whole ~4h catch-up — no information the
+      # operator did not already have, and it MASKED a genuine lag on
+      # the same source for the duration. stellarindex_projector_
+      # replay_window_active is 1 only while the cursor is still inside
+      # the window the replay tool RECORDED (migration 0125) and still
+      # below its pre-rewind position, so the excuse expires with the
+      # catch-up rather than with the (day-long) dirty-window row. This
+      # is NOT a silence: the paired stellarindex_projector_replay_
+      # stalled rule below fires if the replay stops advancing, and an
+      # indexer that never publishes the gauge (or fails to read the
+      # windows) leaves this rule exactly as it was.
       - alert: stellarindex_projector_lag_high
         expr: |
           max by (source) (stellarindex_projector_lag_ledgers) > 256
+          unless
+          max by (source) (stellarindex_projector_replay_window_active) == 1
         for: 10m
         labels:
           severity: ticket
@@ -35,6 +53,51 @@ groups:
             increasingly diverge from the raw store.
 
             Runbook: docs/operations/runbooks/projector-lag.md
+
+      # The other half of the #325 replay pair: the lag rule above stops
+      # ticketing while a replay is climbing, so THIS rule is what keeps a
+      # replay covered. A stuck replay is the failure that actually matters
+      # during the window — the cursor sits still, the served-row deficit the
+      # replay was supposed to repair stays open, and (pre-#325) it was
+      # indistinguishable from the expected lag ticket.
+      #
+      # "Not climbing" is read off the lag gauge rather than a cursor gauge:
+      # while a replay catches up, lag falls every cycle (the cursor advances
+      # ~1000 ledgers per 5s tick against a tip that advances ~1), so
+      # max_over_time(lag[15m]) is strictly ABOVE the current sample. A cursor
+      # that has stopped (or is being outrun by the tip) makes the current
+      # sample the window's own maximum — the `<=` below. The rewind instant
+      # itself also satisfies that (lag jumps), which is why the rule carries
+      # `for: 5m`: the very next projector cycle (≤ 5s) breaks the equality on
+      # a healthy replay, so only a genuinely non-advancing replay survives.
+      - alert: stellarindex_projector_replay_stalled
+        expr: |
+          (max by (source) (stellarindex_projector_replay_window_active) == 1)
+          and
+          (max by (source) (max_over_time(stellarindex_projector_lag_ledgers[15m]))
+            <= max by (source) (stellarindex_projector_lag_ledgers))
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: projector
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-replay.md
+          summary: "Projector replay for {{ $labels.source }} has STOPPED advancing"
+          description: |
+            An operator-initiated projector-replay is in progress for
+            {{ $labels.source }} (the cursor is still inside the recorded
+            rewind window) but its lag has not fallen for 15+ minutes — the
+            cursor is stalled or the live tip is outrunning it, so the replay
+            will never finish on its own. The served-row deficit the replay
+            was started to repair is still open.
+
+            Check `stellarindex_projector_wedged` and the
+            `runs_total{outcome="error"|"sink_retry"}` rates for this source
+            first — a floored window or a held sink is the usual cause — and
+            follow the replay runbook's decompress-first pre-flight.
+
+            Runbook: docs/operations/runbooks/projector-replay.md
 
       # Cycle failures bumping `outcome="error"`. Single hiccups
       # (postgres restart, MinIO blip) are harmless — the projector

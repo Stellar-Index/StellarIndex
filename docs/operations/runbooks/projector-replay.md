@@ -11,7 +11,7 @@ severity: P3
 
 | Field | Value |
 | ----- | ----- |
-| Trigger | Per-source projection is stale or missing rows for a known ledger range (e.g. post-decoder-fix re-walk). |
+| Trigger | Per-source projection is stale or missing rows for a known ledger range (e.g. post-decoder-fix re-walk). Also the runbook for `stellarindex_projector_replay_stalled` — a replay STARTED here that has stopped advancing. |
 | Tool | `stellarindex-ops projector-replay -source <name> -from <ledger> -write` (fail-closed: no `-write` = dry run) |
 | Typical wall time | ≤ 5 s SQL + projector catch-up (≈ 1 min per 100k ledgers per source) |
 | Impact | None — the projector tails `soroban_events` (ADR-0029); replay just rewinds a cursor. `ON CONFLICT DO NOTHING` makes re-writes idempotent. |
@@ -107,6 +107,34 @@ ssh root@136.243.90.96 'journalctl -u stellarindex-indexer -n 100 -f | grep proj
 `projector_lag_ledgers{source="<name>"}` falls to 0 once the
 replay is caught up to the live tip.
 
+### What the alerts do while a replay runs (issue #325)
+
+The rewind is recorded (`projection_dirty_windows`, migration 0125)
+BEFORE the cursor moves, and the projector republishes
+`stellarindex_projector_replay_window_active{source}` = 1 every 30s for
+as long as the cursor is inside that recorded window. Consequences you
+should EXPECT to see:
+
+- **`stellarindex_projector_lag_high` does NOT ticket for this source**
+  while the replay is climbing — it carries an `unless
+  replay_window_active == 1` arm. Before 2026-08-29 the 2,574,496-ledger
+  reflector-fx replay held that ticket open for ~4h; it told the operator
+  nothing they had not just done, and it masked any genuine lag on the
+  same source for the whole window.
+- **`stellarindex_projector_replay_stalled` DOES ticket** (after ~20 min)
+  if the replay stops advancing — lag flat or rising for 15 min inside
+  the window. That is the failure that matters here: the deficit the
+  replay was started to repair is still open. Triage it with the
+  decompress-first pre-flight below, `stellarindex_projector_wedged`, and
+  the `runs_total{outcome="error"|"sink_retry"}` rates.
+- **The excuse expires with the catch-up, not with the row.** The flag
+  clears the moment the cursor regains its pre-rewind position, even
+  though the dirty-window row itself survives until
+  `compute-completeness` re-verifies the range. Any lag after that point
+  is ordinary lag and tickets normally.
+- **A `projected-rebuild` never raises the flag** (its range stays below
+  the live cursor), so lag alerting is unchanged for that tool.
+
 ## Known false-positive patterns
 
 - Asking the projector to replay a range earlier than the source's
@@ -161,6 +189,10 @@ sink-side adaptive shrink converges the window automatically.
 
 ## Changelog
 
+- 2026-08-29 — issue #325: a replay is now an alerting state, not a
+  4-hour lag ticket. `stellarindex_projector_lag_high` is excused while
+  the recorded rewind window is still climbing;
+  `stellarindex_projector_replay_stalled` covers the window instead.
 - 2026-07-10 — ADR-0048 D3: added `projected-rebuild` as the
   catch-up path for rewinds beyond ~1M ledgers; this runbook now
   covers only the small-rewind case.

@@ -43,11 +43,6 @@ func registerAppMetrics() {
 		IngestGapDetectorRunsTotal,
 		IngestGapDetectorDurationSeconds,
 		IngestGapDetectorLastSuccessUnix,
-		ProjectorLagLedgers,
-		ProjectorRunsTotal,
-		ProjectorEventsDecoded,
-		ProjectorCycleDurationSeconds,
-		ProjectorWedged,
 		APICacheOpsTotal,
 
 		SourceEventsTotal,
@@ -129,8 +124,26 @@ func registerAppMetrics() {
 
 		MarketsSkippedRowsTotal,
 	)
+	registerProjectorMetrics()
 	registerFreezeLifecycleMetrics()
 	registerAppMetricsTail()
+}
+
+// registerProjectorMetrics registers the ADR-0032 projector family — lag,
+// cycle outcomes, decoded events, cycle latency, and the two operator-facing
+// flags (wedge + replay window). Peeled off [registerAppMetrics] for the same
+// reason [registerFreezeLifecycleMetrics] was: the set only grows, and the
+// funlen ceiling is what forces the split rather than a silently ever-longer
+// function.
+func registerProjectorMetrics() {
+	Registry.MustRegister(
+		ProjectorLagLedgers,
+		ProjectorRunsTotal,
+		ProjectorEventsDecoded,
+		ProjectorCycleDurationSeconds,
+		ProjectorWedged,
+		ProjectorReplayWindowActive,
+	)
 }
 
 // registerFreezeLifecycleMetrics registers the ADR-0019 freeze-lifecycle
@@ -746,6 +759,42 @@ var ProjectorWedged = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_projector_wedged",
 		Help: "Per-source projector wedge flag: 1 = the adaptive window is floored at MinBatchLimit and the source has failed to advance for WedgeCycles consecutive cycles (a stuck cursor that retries the identical range forever); 0 = healthy. Manual remediation — see the projector-wedged runbook.",
+	},
+	[]string{"source"},
+)
+
+// ProjectorReplayWindowActive flags that a source's projector cursor is
+// still INSIDE an operator-recorded projection dirty window — i.e. a
+// `stellarindex-ops projector-replay` deliberately rewound the cursor and
+// it has not yet climbed back to where it was. 1 = inside the recorded
+// rewind, 0 = outside it (the normal state).
+//
+// Why it exists (2026-08-29, reflector-fx): a replay is an INTENDED lag.
+// The 2,574,496-ledger rewind that repaired the VES/XAU served-row deficit
+// put `stellarindex_projector_lag_high` into a ~4h ticket that carried no
+// information the operator did not already have — and, worse, MASKED a
+// genuine lag on that same source for the whole window. This gauge is the
+// discriminator the lag rule joins against (`unless … == 1`), so the
+// expected lag is silent while the replay is climbing and the paired
+// `stellarindex_projector_replay_stalled` rule tickets if it STOPS
+// climbing (the failure that actually matters during a replay).
+//
+// Deliberately NOT "a dirty window row exists": the row survives until
+// compute-completeness re-verifies the range (up to a day later), so
+// keying on existence alone would suppress the lag alert long after the
+// replay finished. The bound is the cursor — once it passes the window's
+// `to_ledger` (the pre-rewind position) the remaining catch-up is ordinary
+// lag and stays fully alertable. `projected-rebuild` also records dirty
+// windows but never rewinds the live cursor (its one-writer guard keeps
+// `to` below it), so its windows never raise this flag.
+//
+// Fails OPEN toward alerting: if the dirty-window read errors the gauge is
+// forced to 0 for every source, so a monitoring-side failure can never
+// silence a real lag ticket.
+var ProjectorReplayWindowActive = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_projector_replay_window_active",
+		Help: "1 while a source's projector cursor is inside an operator-recorded projector-replay rewind window (intended lag); 0 otherwise. Suppresses stellarindex_projector_lag_high and arms stellarindex_projector_replay_stalled.",
 	},
 	[]string{"source"},
 )

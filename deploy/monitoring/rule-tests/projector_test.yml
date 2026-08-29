@@ -1,0 +1,176 @@
+---
+# promtool unit tests for the projector alert family in
+# ../rules/projector.yml.
+#
+#   promtool test rules deploy/monitoring/rule-tests/projector_test.yml
+#
+# Written for issue #325 (2026-08-29): stellarindex_projector_lag_high now
+# carries an `unless` arm that excuses an OPERATOR-INITIATED replay, and the
+# new stellarindex_projector_replay_stalled covers the window the excuse
+# opens. A suppression is only ever as good as the proof that it stays
+# narrow, so every case below is one of the four states that arm can be in:
+#
+#   1. real lag, no replay on record          → lag ticket fires (unchanged)
+#   2. real lag, replay climbing              → lag ticket SILENT
+#   3. real lag, replay stopped climbing      → replay_stalled fires
+#   4. real lag, indexer publishes no flag    → lag ticket fires (rollout)
+#
+# LABEL SHAPES ARE POST-SCRAPE (see ops-job_test.yml's header): projector
+# series are emitted by the indexer, so they carry
+# job="stellarindex_indexer".
+#
+# Deliberately lives OUTSIDE `deploy/monitoring/rules/` — everything in that
+# directory is globbed by `promtool check rules`, lint-rule-structure.py and
+# lint-metric-refs.sh, all of which require a top-level `groups:` key that a
+# unit-test file does not have.
+
+rule_files:
+  - ../rules/projector.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ══ 1. ordinary lag still tickets ═════════════════════════════════
+  # No replay on record (the flag is a real, published zero), so the
+  # `unless` arm must not touch this: the pre-#325 behaviour exactly.
+  - interval: 1m
+    name: sustained lag with no replay on record tickets as before
+    input_series:
+      - series: 'stellarindex_projector_lag_ledgers{job="stellarindex_indexer",instance="r1:9100",source="reflector-fx"}'
+        values: '5000+0x30'
+      - series: 'stellarindex_projector_replay_window_active{job="stellarindex_indexer",instance="r1:9100",source="reflector-fx"}'
+        values: '0+0x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_projector_lag_high
+        exp_alerts:
+          - exp_labels:
+              source: reflector-fx
+              severity: ticket
+              team: stellarindex
+              component: projector
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-lag.md
+              summary: "Projector source reflector-fx lagging > 256 ledgers"
+              description: |
+                The ADR-0032 projector's per-source cursor for reflector-fx
+                is 5000 ledgers behind the ledgerstream tip. Sustained lag
+                means the projector cannot keep up with raw soroban_events writes,
+                so per-source projections (trades, blend_*, phoenix_*, ...) will
+                increasingly diverge from the raw store.
+
+                Runbook: docs/operations/runbooks/projector-lag.md
+      # ...and the stalled-replay rule stays silent: there is no replay.
+      - eval_time: 20m
+        alertname: stellarindex_projector_replay_stalled
+        exp_alerts: []
+
+  # ══ near-threshold: lag under the bound raises nothing ═════════════
+  - interval: 1m
+    name: lag below 256 raises nothing
+    input_series:
+      - series: 'stellarindex_projector_lag_ledgers{job="stellarindex_indexer",instance="r1:9100",source="reflector-fx"}'
+        values: '250+0x30'
+      - series: 'stellarindex_projector_replay_window_active{job="stellarindex_indexer",instance="r1:9100",source="reflector-fx"}'
+        values: '0+0x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_projector_lag_high
+        exp_alerts: []
+
+  # ══ 2. a CLIMBING operator replay is silent ════════════════════════
+  # The 2026-08-29 reflector-fx shape: the cursor was rewound 2.57M
+  # ledgers on purpose, so lag is enormous but falling every cycle. The
+  # ticket carried no information the operator did not already have.
+  - interval: 1m
+    name: a climbing operator replay suppresses the lag ticket
+    input_series:
+      - series: 'stellarindex_projector_lag_ledgers{job="stellarindex_indexer",instance="r1:9100",source="reflector-fx"}'
+        values: '2574496-60000x40'
+      - series: 'stellarindex_projector_replay_window_active{job="stellarindex_indexer",instance="r1:9100",source="reflector-fx"}'
+        values: '1+0x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_projector_lag_high
+        exp_alerts: []
+      # ...and nothing else fires either: the replay is healthy.
+      - eval_time: 30m
+        alertname: stellarindex_projector_replay_stalled
+        exp_alerts: []
+
+  # ══ 3. a STALLED replay tickets ════════════════════════════════════
+  # Cursor frozen inside the recorded window while the tip keeps closing
+  # ledgers (~12/min), so lag RISES and the current sample is its own
+  # 15m maximum. This is the failure that matters during a replay: the
+  # served-row deficit the replay was started to repair stays open.
+  - interval: 1m
+    name: a replay that stops advancing tickets
+    input_series:
+      - series: 'stellarindex_projector_lag_ledgers{job="stellarindex_indexer",instance="r1:9100",source="reflector-fx"}'
+        values: '2574496+12x40'
+      - series: 'stellarindex_projector_replay_window_active{job="stellarindex_indexer",instance="r1:9100",source="reflector-fx"}'
+        values: '1+0x40'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: stellarindex_projector_replay_stalled
+        exp_alerts:
+          - exp_labels:
+              source: reflector-fx
+              severity: ticket
+              team: stellarindex
+              component: projector
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-replay.md
+              summary: "Projector replay for reflector-fx has STOPPED advancing"
+              description: |
+                An operator-initiated projector-replay is in progress for
+                reflector-fx (the cursor is still inside the recorded
+                rewind window) but its lag has not fallen for 15+ minutes — the
+                cursor is stalled or the live tip is outrunning it, so the replay
+                will never finish on its own. The served-row deficit the replay
+                was started to repair is still open.
+
+                Check `stellarindex_projector_wedged` and the
+                `runs_total{outcome="error"|"sink_retry"}` rates for this source
+                first — a floored window or a held sink is the usual cause — and
+                follow the replay runbook's decompress-first pre-flight.
+
+                Runbook: docs/operations/runbooks/projector-replay.md
+      # The lag ticket stays excused while the replay window is open —
+      # replay_stalled is the signal that covers this state.
+      - eval_time: 25m
+        alertname: stellarindex_projector_lag_high
+        exp_alerts: []
+
+  # ══ 4. rollout safety: no flag published ═══════════════════════════
+  # An indexer that predates the gauge (or one whose dirty-window read is
+  # failing, which forces the gauge to 0) must leave the lag rule exactly
+  # as it was. `unless` over an empty right-hand side suppresses nothing.
+  - interval: 1m
+    name: lag tickets when the replay-window flag is absent entirely
+    input_series:
+      - series: 'stellarindex_projector_lag_ledgers{job="stellarindex_indexer",instance="r1:9100",source="aquarius"}'
+        values: '5000+0x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_projector_lag_high
+        exp_alerts:
+          - exp_labels:
+              source: aquarius
+              severity: ticket
+              team: stellarindex
+              component: projector
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-lag.md
+              summary: "Projector source aquarius lagging > 256 ledgers"
+              description: |
+                The ADR-0032 projector's per-source cursor for aquarius
+                is 5000 ledgers behind the ledgerstream tip. Sustained lag
+                means the projector cannot keep up with raw soroban_events writes,
+                so per-source projections (trades, blend_*, phoenix_*, ...) will
+                increasingly diverge from the raw store.
+
+                Runbook: docs/operations/runbooks/projector-lag.md
+      - eval_time: 20m
+        alertname: stellarindex_projector_replay_stalled
+        exp_alerts: []
