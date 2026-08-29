@@ -17,6 +17,21 @@ against.
 
 ### Fixed
 
+- **Nightly pgBackRest wrapper never backed up repo2.** pgBackRest's `backup`
+  command is single-repo: with no `--repo` it writes only the highest-priority
+  repo (repo1); only `archive-push` and `expire` fan out (User Guide, "Multiple
+  Repositories"). `pgbackrest-backup.sh` ran `pgbackrest --stanza --type backup`
+  with no `--repo`, so once repo2 (S3) went live on r1 (2026-08-29) it would have
+  received WAL forever but never a full/diff — the off-site copy would have aged
+  out at its 7-day retention. The wrapper now discovers every `repoN-*` key in
+  `/etc/pgbackrest/pgbackrest.conf` and runs one `--repo=N` backup per repo
+  (repo1 first, repo2 next; a failure does not skip the next repo; exit is the
+  first non-zero rc, so `pgbackrest-backup.service` still fails loudly), with
+  per-repo node_exporter textfile metrics
+  `stellarindex_pgbackrest_backup_{last_success_unix,last_rc,duration_seconds}{repo}`
+  (`last_success_unix` carried forward across a failed run). Single-repo hosts
+  keep the byte-identical legacy command. `scripts/ci/pgbackrest-backup-test.sh`
+  pins all of it against a stubbed `pgbackrest`.
 - **pgBackRest repo2 retention was hardcoded to 4 fulls** in `pgbackrest.conf.j2`, ignoring
   `pgbackrest_repo2_retention_full/diff` (lean defaults 1 / 7 d ≈ $12–17/month); the template now
   renders the variables plus `repo2-retention-archive-type=diff`. Caught by a masked diff of the
@@ -42,31 +57,6 @@ against.
 
 ### Added
 
-- **Oracle capture-totality consumers (PR-3 of 7): every `oracle_updates`
-  reader is safe for `raw:` rows before the decoders emit them.**
-  `/v1/oracle/streams` gains `include_unmapped` (default `false` — the
-  public row set is unchanged; the explorer's /oracles page is the
-  intended opt-in) and `OracleReading` gains a required `mapped` flag
-  (`false` for `raw:<symbol>` rows; `/v1/oracle/latest?asset=raw:…`
-  returns one by its exact key). The MEV liquidation-cascade
-  correlator — the one unkeyed reader, for which any oracle row in the
-  ledger bracket is evidence — excludes raw rows both in
-  `OracleUpdatesForMEVScan` SQL (`asset NOT LIKE 'raw:%'`) and in
-  `DetectLiquidationCascades`; the divergence `OracleReference`
-  (and, through its cache, the confidence cross-oracle factor and the
-  Phase-2 freeze lens) refuses a raw row as `ErrAssetUnsupported` on
-  top of its exact-string keying. The oracle source bespoke page keeps
-  raw feeds in every count and table (totality) and adds an
-  "Unmapped feeds" KPI + note. `LatestOracleStreams` no longer drops a
-  row with an unparseable asset/quote silently (it logs the row's
-  identity — a `raw:` row parses, so a miss is a malformed legacy row).
-  A repo guard (`TestOracleUpdatesQueriesDeclareRawRowPolicy`) now
-  requires every `FROM oracle_updates` literal under `internal/` to be
-  asset-keyed, carry `asset NOT LIKE 'raw:%'`, or a
-  `-- totality: includes unmapped` marker, so the cascade class of
-  unkeyed reader cannot recur unlabelled. Each surface carries a test
-  red-proven with a fixture raw row; storage behaviour pinned on real
-  Timescale in `test/integration/oracle_raw_consumers_test.go`.
 - **ClickHouse destructive-DDL size guard pinned by ansible.** New
   `archival-node/tasks/21-clickhouse-drop-guard.yml` (tag
   `clickhouse-drop-guard`) writes

@@ -92,7 +92,7 @@ const countRecentEventsQuery = `
 	SELECT 'soroswap-router', count(*) FROM soroswap_router_swaps
 	 WHERE ledger_close_time >= now() - interval '24 hours'
 	UNION ALL
-	SELECT source, count(*) FROM oracle_updates -- totality: includes unmapped
+	SELECT source, count(*) FROM oracle_updates
 	 WHERE ts >= now() - interval '24 hours'
 	 GROUP BY source
 `

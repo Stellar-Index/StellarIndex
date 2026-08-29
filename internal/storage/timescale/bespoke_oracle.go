@@ -50,22 +50,16 @@ const oracleSeriesNameUpdates = "Updates"
 const oracleBreakdownTopN = 10
 
 // oracleWindowKPIQuery returns the windowed headline counts: updates,
-// distinct feeds, mean updates/day, the freshest-update age (now minus
-// the newest publication ts in the window, truncated to seconds), and the
-// number of those feeds that are UNMAPPED (`raw:<symbol>` rows — oracle
-// symbols recorded verbatim because they map to no canonical asset; see
-// canonical.AssetOracleRaw). Totality is what this page counts, so the
-// unmapped feeds stay inside every count and table and are surfaced as
-// their own KPI rather than filtered.
+// distinct feeds, mean updates/day, and the freshest-update age (now minus
+// the newest publication ts in the window, truncated to seconds).
 // $1 = source, $2 = windowDays, $3 = interval.
 func oracleWindowKPIQuery() string {
 	return `
 		SELECT count(*)::text,
 		       count(DISTINCT (asset, quote))::text,
 		       CASE WHEN $2 > 0 THEN round(count(*)::numeric / $2, 1)::text ELSE '0' END,
-		       COALESCE(date_trunc('second', now() - max(ts))::text, '—'),
-		       count(DISTINCT (asset, quote)) FILTER (WHERE asset LIKE 'raw:%')::text
-		FROM oracle_updates -- totality: includes unmapped
+		       COALESCE(date_trunc('second', now() - max(ts))::text, '—')
+		FROM oracle_updates
 		WHERE source = $1 AND ts > now() - $3::interval`
 }
 
@@ -77,7 +71,7 @@ func oracleWindowKPIQuery() string {
 func oracleMedianIntervalQuery() string {
 	return `
 		WITH p AS (
-		  SELECT DISTINCT ts FROM oracle_updates -- totality: includes unmapped
+		  SELECT DISTINCT ts FROM oracle_updates
 		   WHERE source = $1 AND ts > now() - $2::interval
 		), d AS (SELECT ts - lag(ts) OVER (ORDER BY ts) AS gap FROM p)
 		SELECT COALESCE(date_trunc('second', percentile_cont(0.5) WITHIN GROUP (ORDER BY gap))::text, '—')
@@ -92,7 +86,7 @@ func oracleMedianIntervalQuery() string {
 func oracleAllTimeKPIQuery() string {
 	return `
 		SELECT count(*)::text, COALESCE(min(ts)::date::text, '—')
-		FROM oracle_updates WHERE source = $1 -- totality: includes unmapped`
+		FROM oracle_updates WHERE source = $1`
 }
 
 // oracleUpdatesSeriesQuery builds the total update-count series at the
@@ -101,7 +95,6 @@ func oracleUpdatesSeriesQuery(windowDays int) string {
 	trunc, format := bridgeSeriesGrain(windowDays)
 	return `
 		SELECT to_char(date_trunc('` + trunc + `', ts), '` + format + `'), count(*)::text
-		-- totality: includes unmapped
 		FROM oracle_updates WHERE source = $1 AND ts > now() - $2::interval` +
 		completeDaysOnly(windowDays, "ts") + `
 		GROUP BY 1 ORDER BY 1 ASC`
@@ -115,14 +108,14 @@ func oraclePerFeedSeriesQuery(windowDays int) string {
 	trunc, format := bridgeSeriesGrain(windowDays)
 	return `
 		WITH top AS (
-		  SELECT asset, quote, count(*) AS n FROM oracle_updates -- totality: includes unmapped
+		  SELECT asset, quote, count(*) AS n FROM oracle_updates
 		   WHERE source = $1 AND ts > now() - $2::interval
 		   GROUP BY 1, 2 ORDER BY n DESC, asset, quote LIMIT 5
 		)
 		SELECT u.asset || ' / ' || u.quote,
 		       to_char(date_trunc('` + trunc + `', u.ts), '` + format + `'),
 		       count(*)::text
-		FROM oracle_updates u JOIN top t ON t.asset = u.asset AND t.quote = u.quote -- totality: includes unmapped
+		FROM oracle_updates u JOIN top t ON t.asset = u.asset AND t.quote = u.quote
 		WHERE u.source = $1 AND u.ts > now() - $2::interval` +
 		completeDaysOnly(windowDays, "u.ts") + `
 		GROUP BY 1, 2, t.n
@@ -135,7 +128,7 @@ func oraclePerFeedSeriesQuery(windowDays int) string {
 func oracleFeedBreakdownQuery() string {
 	return `
 		SELECT asset || ' / ' || quote, count(*)::text, count(*)
-		FROM oracle_updates WHERE source = $1 AND ts > now() - $2::interval -- totality: includes unmapped
+		FROM oracle_updates WHERE source = $1 AND ts > now() - $2::interval
 		GROUP BY asset, quote ORDER BY count(*) DESC, 1 ASC`
 }
 
@@ -144,7 +137,7 @@ func oracleFeedBreakdownQuery() string {
 func oracleFeedsTableQuery() string {
 	return `
 		SELECT asset, quote, count(*)::text, to_char(max(ts), 'YYYY-MM-DD HH24:MI')
-		FROM oracle_updates WHERE source = $1 AND ts > now() - $2::interval -- totality: includes unmapped
+		FROM oracle_updates WHERE source = $1 AND ts > now() - $2::interval
 		GROUP BY asset, quote ORDER BY count(*) DESC, asset, quote LIMIT 15`
 }
 
@@ -161,7 +154,7 @@ func oracleLatestPricesQuery() string {
 		        to_char(ts, 'YYYY-MM-DD HH24:MI')
 		   FROM (
 		     SELECT DISTINCT ON (asset, quote) asset, quote, price, decimals, ts
-		       FROM oracle_updates -- totality: includes unmapped
+		       FROM oracle_updates
 		      WHERE source = $1 AND ts > now() - $2::interval
 		      ORDER BY asset, quote, ts DESC
 		   ) latest
@@ -181,7 +174,6 @@ func (s *Store) bespokeOracle(ctx context.Context, source string, windowDays int
 			"Scoped to oracle_updates.source = the protocol's feed contract. Everything on this page is update COUNTS + TIMESTAMPS — no price averaging or aggregation happens here (aggregated pricing is the aggregator's domain, and oracle observations never feed VWAP). The latest-prices table shows the raw on-chain integer at the row's `decimals` scale, verbatim.",
 			"Batch sources (redstone: one event per batch push containing every updated feed) land one row PER FEED per publication, so update counts weight feeds, not transactions; the median publish interval is measured between DISTINCT publication timestamps for the same reason.",
 			"All-time figures cover every retained observation in the served tier — oracle_updates carries no retention (migration 0040) and history begins at this source's first ingested observation, not protocol genesis.",
-			"Feeds shown as `raw:<symbol>` are unmapped: the oracle published a symbol that maps to no canonical asset, so the row is recorded verbatim (capture totality) and counted here, but it is reference-only — never compared, aggregated, or linked to an asset page. The \"Unmapped feeds\" KPI counts them.",
 		},
 	}
 
@@ -204,9 +196,9 @@ func (s *Store) bespokeOracle(ctx context.Context, source string, windowDays int
 // oracleKPIs fills the headline cards; reports empty=true when the source
 // had no update in the window (the caller omits the whole block).
 func (s *Store) oracleKPIs(ctx context.Context, blk *BespokeBlock, source, since string, windowDays int) (bool, error) {
-	var updates, feeds, perDay, freshAge, unmappedFeeds string
+	var updates, feeds, perDay, freshAge string
 	err := s.db.QueryRowContext(ctx, oracleWindowKPIQuery(), source, windowDays, since).
-		Scan(&updates, &feeds, &perDay, &freshAge, &unmappedFeeds)
+		Scan(&updates, &feeds, &perDay, &freshAge)
 	if err != nil {
 		return false, fmt.Errorf("timescale: bespokeOracle KPIs: %w", err)
 	}
@@ -225,8 +217,7 @@ func (s *Store) oracleKPIs(ctx context.Context, blk *BespokeBlock, source, since
 
 	blk.KPIs = append(blk.KPIs,
 		BespokeKPI{Label: fmt.Sprintf("Updates (%dd)", windowDays), Value: updates},
-		BespokeKPI{Label: "Distinct feeds", Value: feeds, Hint: "distinct asset/quote pairs seen in the window, including unmapped raw: feeds"},
-		BespokeKPI{Label: "Unmapped feeds", Value: unmappedFeeds, Hint: "of the distinct feeds, those recorded verbatim as raw:<symbol> because the oracle's symbol maps to no canonical asset — reference-only, never compared or aggregated"},
+		BespokeKPI{Label: "Distinct feeds", Value: feeds, Hint: "distinct asset/quote pairs seen in the window"},
 		BespokeKPI{Label: "Updates / day", Value: perDay, Hint: "mean update cadence over the window"},
 		BespokeKPI{Label: "Freshest update age", Value: freshAge, Hint: "now minus the most recent publication timestamp in the window (HH:MM:SS)"},
 		BespokeKPI{Label: fmt.Sprintf("Median publish interval (%dd)", windowDays), Value: median, Hint: "median gap between successive DISTINCT publication timestamps in the window — batch pushes updating many feeds at once count as one publication"},
