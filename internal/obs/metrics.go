@@ -57,7 +57,6 @@ func registerAppMetrics() {
 		SourceMatchedEventsTotal,
 		SourceDecodeErrorsTotal,
 		SourceUnknownSymbolsTotal,
-		SourceUnrepresentableSymbolsTotal,
 		SourceOrphanEventsTotal,
 		AMMSelfPairSwapTotal,
 		ExternalPollerPollsTotal,
@@ -167,6 +166,16 @@ func registerFreezeLifecycleMetrics() {
 // registerAppMetrics).
 func registerAppMetricsTail() {
 	Registry.MustRegister(
+		// Source-family counter (#291). It belongs beside
+		// SourceUnknownSymbolsTotal in [registerAppMetrics] and is
+		// registered here only because that function already sat exactly
+		// on the funlen ceiling, so one more line made it lint-red —
+		// the "or registerAppMetricsTail(), whichever keeps funlen happy"
+		// branch of docs/contributing/add-metric.md. Registration, not
+		// placement, is what puts it on /metrics: see
+		// TestHandler_ExposesMetrics, which scrapes for this name.
+		SourceUnrepresentableSymbolsTotal,
+
 		MEVDetectRunsTotal,
 		MEVEventsInsertedTotal,
 		MEVDetectDurationSeconds,
