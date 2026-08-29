@@ -254,6 +254,18 @@ against.
 
 ### Added
 
+- **Explorer /oracles opts into oracle capture-totality (PR-5 of 7).**
+  The page now requests `/v1/oracle/streams?include_unmapped=true` and
+  renders the `raw:<symbol>` rows — oracle-published symbols that map
+  to no canonical asset — in a separate "Unmapped feeds" section under
+  the raw on-wire symbol (monospace, unlinked), never mixed into the
+  mapped price-stream table or its per-oracle counts. A `raw:` id now
+  has a first-class rendering everywhere an asset is shown
+  (`shortAssetText` → the symbol, `AssetLabel` → monospace symbol,
+  `assetSlug` → no link; previously it would have linked to a
+  static-export 404 under `/assets/raw…`). The oracle source bespoke
+  page needs no explorer change: its counts/tables are text-only and
+  already totality-inclusive server-side with the "Unmapped feeds" KPI.
 - **CI ansible task lint (`scripts/ci/lint-ansible-tasks.sh`).** Two
   structural guards over `configs/ansible/**`, wired into import-checks +
   `verify.sh` with a fixture self-test: *pipefail-needs-bash* (a
@@ -428,6 +440,8 @@ against.
   trailing 25 h (longer than Band's daily cadence, so it cannot flap),
   ticket severity, promtool unit-tested, runbook
   `docs/operations/runbooks/oracle-unknown-symbols.md`.
+
+### Fixed
 
 - **Deploy served-path smoke** (#232): `deploy.yml` now curls the public
   endpoints after restart and asserts the r1 version-skew probe reads 0 —
