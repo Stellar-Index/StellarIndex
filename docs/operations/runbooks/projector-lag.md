@@ -86,8 +86,11 @@ an outage — let it run unless lag exceeds a few hours.
   the projector publishes
   `stellarindex_projector_replay_window_active{source}=1` while the
   cursor is climbing back through it, and the rule carries `unless … ==
-  1`. So if this alert IS firing, no recorded replay explains it — treat
-  the lag as real. The mirror-image signal for a replay that has stopped
+  1`. So if this alert IS firing, no recorded `projector-replay` rewind
+  explains it — treat the lag as real. (A pending `projected-rebuild`
+  window does NOT excuse lag: the flag is gated on the recorded window's
+  `reason`, precisely so a source held at a rebuild's range stays
+  alertable.) The mirror-image signal for a replay that has stopped
   climbing is `stellarindex_projector_replay_stalled`
   ([projector-replay](projector-replay.md)).
 

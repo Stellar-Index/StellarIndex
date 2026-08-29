@@ -779,14 +779,38 @@ var ProjectorWedged = prometheus.NewGaugeVec(
 // `stellarindex_projector_replay_stalled` rule tickets if it STOPS
 // climbing (the failure that actually matters during a replay).
 //
-// Deliberately NOT "a dirty window row exists": the row survives until
-// compute-completeness re-verifies the range (up to a day later), so
-// keying on existence alone would suppress the lag alert long after the
-// replay finished. The bound is the cursor — once it passes the window's
-// `to_ledger` (the pre-rewind position) the remaining catch-up is ordinary
-// lag and stays fully alertable. `projected-rebuild` also records dirty
-// windows but never rewinds the live cursor (its one-writer guard keeps
-// `to` below it), so its windows never raise this flag.
+// THREE bounds keep the excuse narrow — a suppression is only ever as
+// good as the proof it stays narrow (projector.replayWindowCovers holds
+// them):
+//
+//  1. PROVENANCE. Only a window written by `projector-replay` counts. The
+//     table's other writer, `projected-rebuild -write`, does NOT keep its
+//     range below the live cursor: `-to` defaults to the live cursor, its
+//     one-writer guard admits `liveLastLedger >= to` (equality), and
+//     `-allow-live-overlap` bypasses the guard entirely (used on r1
+//     2026-07-27). A rebuild window therefore routinely covers the
+//     cursor's own position, and keying on the cursor alone would hold
+//     this flag at 1 while a source is HELD there — the exact state the
+//     lag ticket exists to catch, with no operator rewind on record to
+//     explain the silence.
+//  2. UPPER BOUND, EXCLUSIVE. Deliberately NOT "a dirty window row
+//     exists": the row survives until compute-completeness re-verifies the
+//     range (up to a day later). The flag clears the moment the cursor
+//     REGAINS the window's `to_ledger` (its pre-rewind position); a
+//     projector wedged exactly at that ledger has finished replaying and
+//     stays fully alertable.
+//  3. LOWER BOUND. `projector-replay` parks the cursor at
+//     `from_ledger`-1, so a cursor below that was not put there by this
+//     recorded rewind.
+//
+// Known residual (accepted, bounded): the table holds ONE row per source
+// and the upsert WIDENS it (LEAST/GREATEST) while keeping the newest
+// reason, so a replay recorded while a rebuild window is still pending
+// yields a replay-reasoned row whose `to_ledger` may be the rebuild's.
+// The flag then expires at that higher ledger instead of the replay's own
+// pre-rewind position. It is still provenance-gated, still cursor-bounded
+// and still expires; it needs both tools pending on the SAME source at
+// once.
 //
 // Fails OPEN toward alerting: if the dirty-window read errors the gauge is
 // forced to 0 for every source, so a monitoring-side failure can never

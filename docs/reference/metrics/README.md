@@ -252,13 +252,33 @@ masked any genuine lag on the same source — is excused, while
 `stellarindex_projector_replay_stalled` fires if the replay stops
 advancing inside that window.
 
-Two deliberate bounds keep the excuse narrow: it is keyed on the CURSOR
-(it clears the moment the cursor regains its pre-rewind position, not
-when the dirty-window row is finally cleared by compute-completeness up
-to a day later), and it fails OPEN — a dirty-window read error publishes
-`0` for every source, so a monitoring-side failure can never silence a
-real lag ticket. A `projected-rebuild` dirty window never raises it: that
-tool's range stays below the live cursor and it never rewinds it.
+Three bounds keep the excuse narrow:
+
+1. **Provenance.** Only a window written by `projector-replay` counts
+   (the `reason` column). `projected-rebuild -write` records into the
+   same table but never rewinds the live cursor, and its range is **not**
+   kept below that cursor: `-to` defaults to the live cursor, its
+   one-writer guard admits `liveLastLedger >= to` (equality), and
+   `-allow-live-overlap` bypasses the guard entirely (used on r1
+   2026-07-27). Without the provenance gate, a source HELD at such a
+   window's ledger — a sink-retry hold, a poison hold, a wedge — would
+   have its lag ticket suppressed with no operator rewind on record.
+2. **Cursor, exclusive at the top.** The flag clears the moment the
+   cursor regains its pre-rewind position, not when the dirty-window row
+   is finally cleared by `compute-completeness` (up to a day later); a
+   projector wedged exactly AT that ledger stays alertable. The lower
+   bound is `from_ledger - 1`, where the replay parks the cursor.
+3. **Fail open.** A dirty-window read error publishes `0` for every
+   source, so a monitoring-side failure can never silence a real lag
+   ticket.
+
+Known residual: the table holds one row per source and the upsert widens
+it (`LEAST`/`GREATEST`) while keeping the newest `reason`, so a replay
+recorded while a `projected-rebuild` window is still pending inherits the
+higher `to_ledger` and the flag expires there rather than at the replay's
+own pre-rewind position. Still provenance-gated, still cursor-bounded,
+still expiring — and it needs both tools pending on the same source at
+once.
 
 ### `http_request_success_duration_seconds`
 

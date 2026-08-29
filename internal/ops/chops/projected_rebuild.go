@@ -227,7 +227,7 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 			Source: *sourceName,
 			From:   fromLedger,
 			To:     toLedger,
-			Reason: fmt.Sprintf("projected-rebuild -write [%d,%d]", fromLedger, toLedger),
+			Reason: timescale.ProjectedRebuildReason(fromLedger, toLedger),
 		}); derr != nil {
 			return fmt.Errorf("record dirty window (refusing to write without it — the completeness verifier would carry a stale claim over the rewritten range): %w", derr)
 		}

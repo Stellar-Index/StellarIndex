@@ -70,9 +70,22 @@ groups:
       # itself also satisfies that (lag jumps), which is why the rule carries
       # `for: 5m`: the very next projector cycle (≤ 5s) breaks the equality on
       # a healthy replay, so only a genuinely non-advancing replay survives.
+      #
+      # The `> 256` arm is a LAG FLOOR, and it is load-bearing: without it
+      # `max_over_time(lag[15m]) <= lag` is trivially TRUE at lag 0, so a
+      # fully caught-up, perfectly healthy source would ticket as a stalled
+      # replay for as long as its window flag stayed 1. The floor is the
+      # SAME bound stellarindex_projector_lag_high uses, so the pair
+      # partitions the space exactly: below 256 ledgers neither rule fires,
+      # above it exactly one does (lag_high outside a replay, this rule
+      # inside one). Pinned by the "a caught-up source inside a replay
+      # window is not a stalled replay" case in
+      # ../rule-tests/projector_test.yml.
       - alert: stellarindex_projector_replay_stalled
         expr: |
           (max by (source) (stellarindex_projector_replay_window_active) == 1)
+          and
+          (max by (source) (stellarindex_projector_lag_ledgers) > 256)
           and
           (max by (source) (max_over_time(stellarindex_projector_lag_ledgers[15m]))
             <= max by (source) (stellarindex_projector_lag_ledgers))
@@ -87,10 +100,11 @@ groups:
           description: |
             An operator-initiated projector-replay is in progress for
             {{ $labels.source }} (the cursor is still inside the recorded
-            rewind window) but its lag has not fallen for 15+ minutes — the
-            cursor is stalled or the live tip is outrunning it, so the replay
-            will never finish on its own. The served-row deficit the replay
-            was started to repair is still open.
+            rewind window) and its lag is still over the 256-ledger
+            lag_high bound but has not fallen for 15+ minutes — the cursor
+            is stalled or the live tip is outrunning it, so the replay will
+            never finish on its own. The served-row deficit the replay was
+            started to repair is still open.
 
             Check `stellarindex_projector_wedged` and the
             `runs_total{outcome="error"|"sink_retry"}` rates for this source

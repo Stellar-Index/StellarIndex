@@ -122,18 +122,34 @@ should EXPECT to see:
   nothing they had not just done, and it masked any genuine lag on the
   same source for the whole window.
 - **`stellarindex_projector_replay_stalled` DOES ticket** (after ~20 min)
-  if the replay stops advancing — lag flat or rising for 15 min inside
-  the window. That is the failure that matters here: the deficit the
-  replay was started to repair is still open. Triage it with the
-  decompress-first pre-flight below, `stellarindex_projector_wedged`, and
-  the `runs_total{outcome="error"|"sink_retry"}` rates.
+  if the replay stops advancing — lag still over 256 ledgers and flat or
+  rising for 15 min inside the window. That is the failure that matters
+  here: the deficit the replay was started to repair is still open.
+  Triage it with the decompress-first pre-flight below,
+  `stellarindex_projector_wedged`, and the
+  `runs_total{outcome="error"|"sink_retry"}` rates. It carries the same
+  256-ledger floor as `lag_high`, so the two rules partition the space:
+  under 256 ledgers neither speaks, above it exactly one does.
 - **The excuse expires with the catch-up, not with the row.** The flag
   clears the moment the cursor regains its pre-rewind position, even
   though the dirty-window row itself survives until
   `compute-completeness` re-verifies the range. Any lag after that point
-  is ordinary lag and tickets normally.
-- **A `projected-rebuild` never raises the flag** (its range stays below
-  the live cursor), so lag alerting is unchanged for that tool.
+  is ordinary lag and tickets normally — including a projector wedged
+  exactly AT that ledger.
+- **A `projected-rebuild` window never raises the flag — because of its
+  `reason`, not its range.** `projected-rebuild -write` records into the
+  same `projection_dirty_windows` table, and its range is NOT bounded
+  below the live cursor: `-to` defaults to the live cursor, the
+  one-writer guard admits `liveLastLedger >= to`, and
+  `-allow-live-overlap` skips the guard altogether (as on r1 2026-07-27,
+  `-source sep41_supply -from 63419138 -to 63671020 -write
+  -allow-live-overlap`). The flag is gated on the window's `reason`
+  recording a `projector-replay` rewind, so lag alerting is unchanged
+  while a rebuild is pending — including for a source held at the
+  rebuild's own top ledger. If a replay is recorded while a rebuild
+  window is still pending, the single per-source row widens and the flag
+  expires at the higher `to_ledger`; clear the pending window with a
+  `compute-completeness` run first if you want the tighter bound.
 
 ## Known false-positive patterns
 

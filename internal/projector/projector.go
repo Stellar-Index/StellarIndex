@@ -320,13 +320,15 @@ func (p *Projector) watchReplayWindows(ctx context.Context) {
 }
 
 // refreshReplayWindows sets obs.ProjectorReplayWindowActive for every
-// registered source: 1 while that source's cursor is still inside an
-// operator-recorded rewind window, 0 otherwise.
+// registered source: 1 while that source's cursor is inside an
+// operator-recorded projector-replay rewind ([replayWindowCovers] holds
+// the exact bound), 0 otherwise.
 //
 // FAIL OPEN toward alerting (the deliberate asymmetry): a read error, an
-// un-observed cursor, or a window whose to_ledger the cursor has already
-// regained all publish 0 — never 1. The gauge's ONLY job is to suppress a
-// lag ticket, so every uncertainty must resolve to "do not suppress".
+// un-observed cursor, a window written by any tool other than
+// projector-replay, or a cursor outside the recorded rewind all publish
+// 0 — never 1. The gauge's ONLY job is to suppress a lag ticket, so every
+// uncertainty must resolve to "do not suppress".
 func (p *Projector) refreshReplayWindows(ctx context.Context) {
 	windows, err := p.store.ProjectionDirtyWindows(ctx)
 	if err != nil {
@@ -340,12 +342,49 @@ func (p *Projector) refreshReplayWindows(ctx context.Context) {
 	for _, src := range p.registry.Sources {
 		active := 0.0
 		if w, ok := windows[src.Name]; ok {
-			if cursor, seen := p.observedCursor(src.Name); seen && cursor <= w.To {
+			if cursor, seen := p.observedCursor(src.Name); seen && replayWindowCovers(w, cursor) {
 				active = 1
 			}
 		}
 		obs.ProjectorReplayWindowActive.WithLabelValues(src.Name).Set(active)
 	}
+}
+
+// replayWindowCovers reports whether an OPERATOR REWIND ON RECORD explains
+// this source's cursor position — the only state in which a replay's
+// intended lag may excuse stellarindex_projector_lag_high.
+//
+// Three bounds, each closing a way the excuse could outlive its cause. A
+// suppression is only ever as good as the proof it stays narrow:
+//
+//  1. PROVENANCE. Only a `projector-replay` window counts
+//     ([timescale.ProjectionDirtyWindow.IsProjectorReplay]). The table's
+//     other writer, `projected-rebuild -write`, never rewinds the live
+//     cursor and its recorded range routinely COVERS that cursor's own
+//     position: `-to` defaults to the live cursor (equal), and
+//     `-allow-live-overlap` bypasses the one-writer guard so the range can
+//     sit wholly above it (exercised on r1 2026-07-27). Either shape would
+//     otherwise pin the flag at 1 while the source's projector is HELD — a
+//     sink-retry hold, a poison hold, a wedge — which is precisely the
+//     state the lag ticket exists to catch, and there would be no operator
+//     rewind on record to explain the silence.
+//  2. UPPER BOUND, EXCLUSIVE. The flag clears the instant the cursor
+//     regains the pre-rewind position (`to_ledger`); the remaining
+//     catch-up from there is ordinary forward lag. Exclusive rather than
+//     inclusive because the dirty row survives until compute-completeness
+//     re-verifies the range (up to a day later), so a projector wedged
+//     exactly AT to_ledger — replay finished, cursor stuck — must stay
+//     alertable.
+//  3. LOWER BOUND. `projector-replay` parks the cursor at from_ledger-1
+//     (internal/ops/ingest/projector.go: rewindTo = target-1), so a cursor
+//     below that was not put there by this recorded rewind and has no
+//     recorded excuse.
+func replayWindowCovers(w timescale.ProjectionDirtyWindow, cursor uint32) bool {
+	if !w.IsProjectorReplay() {
+		return false
+	}
+	// uint64 so a from_ledger of 0 cannot underflow the -1.
+	return uint64(cursor)+1 >= uint64(w.From) && cursor < w.To
 }
 
 // recordCursor publishes a source's cursor position for the replay-window

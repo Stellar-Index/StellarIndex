@@ -78,7 +78,7 @@ func TestReplayWindow_CursorInsideOperatorRewindFlagsActive(t *testing.T) {
 	// Shape of the live incident: rewound to 61,602,787, pre-rewind cursor
 	// (the window's to_ledger) 64,177,283.
 	p, _, src := newReplayHarness(t, source, 61_602_786, map[string]timescale.ProjectionDirtyWindow{
-		source: {Source: source, From: 61_602_787, To: 64_177_283, Reason: "projector-replay rewind 64177283 -> 61602787"},
+		source: {Source: source, From: 61_602_787, To: 64_177_283, Reason: timescale.ProjectorReplayReason(64_177_283, 61_602_787)},
 	})
 
 	runCycleThenRefresh(p, src)
@@ -109,11 +109,13 @@ func TestReplayWindow_NoRecordedWindowLeavesLagAlertable(t *testing.T) {
 // the flag on the row's existence alone would blind the lag alert long after
 // the replay finished. The flag is bounded by the CURSOR: once it regains
 // the window's to_ledger (its pre-rewind position) the remaining catch-up is
-// ordinary lag and is alertable again.
+// ordinary lag and is alertable again. See
+// TestReplayWindow_CursorAtPreRewindPositionClearsFlag for the boundary
+// itself.
 func TestReplayWindow_CursorPastWindowEndClearsFlag(t *testing.T) {
 	const source = "replay-window-past-end"
 	win := map[string]timescale.ProjectionDirtyWindow{
-		source: {Source: source, From: 61_602_787, To: 64_177_283, Reason: "projector-replay rewind 64177283 -> 61602787"},
+		source: {Source: source, From: 61_602_787, To: 64_177_283, Reason: timescale.ProjectorReplayReason(64_177_283, 61_602_787)},
 	}
 	// Cursor has climbed one ledger PAST the pre-rewind position; the row is
 	// still pending (compute-completeness has not run yet).
@@ -126,21 +128,132 @@ func TestReplayWindow_CursorPastWindowEndClearsFlag(t *testing.T) {
 	}
 }
 
-// TestReplayWindow_RebuildStyleWindowDoesNotSuppress covers the OTHER writer
-// of the same primitive: `stellarindex-ops projected-rebuild` also calls
-// RecordProjectionDirtyWindow, but its one-writer guard keeps its range
-// BELOW the live projector cursor and it never rewinds that cursor. Such a
-// window is not an intended lag, so it must not raise the flag.
-func TestReplayWindow_RebuildStyleWindowDoesNotSuppress(t *testing.T) {
-	const source = "replay-window-rebuild"
+// ---------------------------------------------------------------------------
+// THE OTHER WRITER. `stellarindex-ops projected-rebuild -write` calls the
+// same RecordProjectionDirtyWindow, and its range is NOT bounded below the
+// live cursor the way an early reading of ADR-0048 D3 suggests:
+// checkLiveCursorGuard admits liveLastLedger >= to (EQUALITY — and `-to`
+// DEFAULTS to the live cursor), and `-allow-live-overlap` bypasses the
+// guard entirely (exercised on r1 2026-07-27,
+// `projected-rebuild -source sep41_supply -from 63419138 -to 63671020
+// -write -allow-live-overlap`). So a rebuild window routinely covers the
+// live cursor's own position, and under the override sits wholly above it.
+//
+// None of those shapes is an operator REWIND, so none may excuse lag: if
+// they did, a source whose projector is HELD at that position (sink-retry
+// hold, poison hold, wedge) would have its lag ticket suppressed
+// indefinitely with no rewind on record — the exact failure
+// stellarindex_projector_lag_high exists to catch. The bound is
+// PROVENANCE (timescale.ProjectionDirtyWindow.IsProjectorReplay), not the
+// cursor arithmetic alone.
+// ---------------------------------------------------------------------------
+
+// TestReplayWindow_RebuildWindowBelowCursorDoesNotSuppress is the benign
+// shape: a finished rebuild strictly behind a healthy cursor.
+func TestReplayWindow_RebuildWindowBelowCursorDoesNotSuppress(t *testing.T) {
+	const source = "replay-window-rebuild-below"
 	p, _, src := newReplayHarness(t, source, 64_500_000, map[string]timescale.ProjectionDirtyWindow{
-		source: {Source: source, From: 60_000_000, To: 62_000_000, Reason: "projected-rebuild -write [60000000,62000000]"},
+		source: {Source: source, From: 60_000_000, To: 62_000_000, Reason: timescale.ProjectedRebuildReason(60_000_000, 62_000_000)},
 	})
 
 	runCycleThenRefresh(p, src)
 
 	if got := replayWindowGauge(t, source); got != 0 {
-		t.Fatalf("replay_window_active = %v, want 0 (a projected-rebuild window is below the live cursor and never rewinds it)", got)
+		t.Fatalf("replay_window_active = %v, want 0 (a projected-rebuild window is not an operator rewind)", got)
+	}
+}
+
+// TestReplayWindow_RebuildWindowAtLiveCursorDoesNotSuppress is the DEFAULT
+// projected-rebuild shape: `-to` omitted, so the recorded to_ledger IS the
+// live cursor. If that raised the flag, a projector HELD at that ledger
+// (the state the lag ticket exists to catch) would be silenced for as long
+// as the dirty row lives — up to a day, until compute-completeness clears
+// it — with no operator rewind on record.
+func TestReplayWindow_RebuildWindowAtLiveCursorDoesNotSuppress(t *testing.T) {
+	const source = "replay-window-rebuild-at-cursor"
+	const liveCursor = 63_419_138
+	p, _, src := newReplayHarness(t, source, liveCursor, map[string]timescale.ProjectionDirtyWindow{
+		source: {Source: source, From: 63_000_000, To: liveCursor, Reason: timescale.ProjectedRebuildReason(63_000_000, liveCursor)},
+	})
+
+	runCycleThenRefresh(p, src)
+
+	if got := replayWindowGauge(t, source); got != 0 {
+		t.Fatalf("replay_window_active = %v, want 0 (a projected-rebuild -to defaults to the live cursor; a held projector there must stay alertable)", got)
+	}
+}
+
+// TestReplayWindow_RebuildWindowAboveLiveCursorDoesNotSuppress is the
+// `-allow-live-overlap` shape, taken from the run this repo actually did on
+// r1 on 2026-07-27: the recorded window sits ABOVE the live cursor. Under
+// a cursor-only bound the flag would read 1 for the whole climb from the
+// cursor to -to (hours), suppressing lag_high for a source with no rewind
+// on record — and a genuinely slow-but-still-advancing lag would then raise
+// nothing at all, because the stalled-replay rule only covers a cursor that
+// has stopped.
+func TestReplayWindow_RebuildWindowAboveLiveCursorDoesNotSuppress(t *testing.T) {
+	const source = "replay-window-rebuild-above-cursor"
+	p, _, src := newReplayHarness(t, source, 63_419_138, map[string]timescale.ProjectionDirtyWindow{
+		source: {Source: source, From: 63_419_138, To: 63_671_020, Reason: timescale.ProjectedRebuildReason(63_419_138, 63_671_020)},
+	})
+
+	runCycleThenRefresh(p, src)
+
+	if got := replayWindowGauge(t, source); got != 0 {
+		t.Fatalf("replay_window_active = %v, want 0 (a -allow-live-overlap rebuild window is not an operator rewind — lag must stay alertable)", got)
+	}
+}
+
+// TestReplayWindow_CursorAtPreRewindPositionClearsFlag pins the UPPER bound
+// as EXCLUSIVE. A projector wedged exactly AT the window's to_ledger has
+// finished its replay: the rewind no longer explains anything, and the
+// dirty row outlives the replay by up to a day, so an inclusive bound would
+// suppress that wedge's lag ticket indefinitely.
+func TestReplayWindow_CursorAtPreRewindPositionClearsFlag(t *testing.T) {
+	const source = "replay-window-at-end"
+	p, _, src := newReplayHarness(t, source, 64_177_283, map[string]timescale.ProjectionDirtyWindow{
+		source: {Source: source, From: 61_602_787, To: 64_177_283, Reason: timescale.ProjectorReplayReason(64_177_283, 61_602_787)},
+	})
+
+	runCycleThenRefresh(p, src)
+
+	if got := replayWindowGauge(t, source); got != 0 {
+		t.Fatalf("replay_window_active = %v, want 0 (cursor has regained its pre-rewind position — a wedge there must stay alertable)", got)
+	}
+}
+
+// TestReplayWindow_CursorAtRewindTargetFlagsActive guards the LOWER bound's
+// off-by-one from the other side: projector-replay parks the cursor at
+// from_ledger-1 (rewindTo = target-1), so that exact position is the FIRST
+// legitimate one inside the rewind and must still suppress. A lower bound
+// written as `cursor >= From` would disarm the fix at the instant it is
+// most needed.
+func TestReplayWindow_CursorAtRewindTargetFlagsActive(t *testing.T) {
+	const source = "replay-window-at-target"
+	p, _, src := newReplayHarness(t, source, 61_602_786, map[string]timescale.ProjectionDirtyWindow{
+		source: {Source: source, From: 61_602_787, To: 64_177_283, Reason: timescale.ProjectorReplayReason(64_177_283, 61_602_787)},
+	})
+
+	runCycleThenRefresh(p, src)
+
+	if got := replayWindowGauge(t, source); got != 1 {
+		t.Fatalf("replay_window_active = %v, want 1 (rewindTo = target-1 is where the replay parks the cursor)", got)
+	}
+}
+
+// TestReplayWindow_CursorFarBelowRewindTargetDoesNotSuppress: a cursor well
+// below where the recorded rewind parked it was not put there by that
+// rewind, so the window does not explain its lag.
+func TestReplayWindow_CursorFarBelowRewindTargetDoesNotSuppress(t *testing.T) {
+	const source = "replay-window-below-target"
+	p, _, src := newReplayHarness(t, source, 50_000_000, map[string]timescale.ProjectionDirtyWindow{
+		source: {Source: source, From: 61_602_787, To: 64_177_283, Reason: timescale.ProjectorReplayReason(64_177_283, 61_602_787)},
+	})
+
+	runCycleThenRefresh(p, src)
+
+	if got := replayWindowGauge(t, source); got != 0 {
+		t.Fatalf("replay_window_active = %v, want 0 (cursor is below the recorded rewind target — this window does not explain it)", got)
 	}
 }
 
@@ -153,7 +266,7 @@ func TestReplayWindow_RebuildStyleWindowDoesNotSuppress(t *testing.T) {
 func TestReplayWindow_RunStartsTheWatcher(t *testing.T) {
 	const source = "replay-window-run-wiring"
 	p, _, src := newReplayHarness(t, source, 61_602_786, map[string]timescale.ProjectionDirtyWindow{
-		source: {Source: source, From: 61_602_787, To: 64_177_283},
+		source: {Source: source, From: 61_602_787, To: 64_177_283, Reason: timescale.ProjectorReplayReason(64_177_283, 61_602_787)},
 	})
 	// One cycle so the watcher has a cursor to compare against, exactly as
 	// the source goroutine's own immediate first cycle does in production.
@@ -194,7 +307,7 @@ func TestReplayWindow_RunStartsTheWatcher(t *testing.T) {
 func TestReplayWindow_ReadErrorFailsOpen(t *testing.T) {
 	const source = "replay-window-read-error"
 	win := map[string]timescale.ProjectionDirtyWindow{
-		source: {Source: source, From: 61_602_787, To: 64_177_283},
+		source: {Source: source, From: 61_602_787, To: 64_177_283, Reason: timescale.ProjectorReplayReason(64_177_283, 61_602_787)},
 	}
 	p, store, src := newReplayHarness(t, source, 61_602_786, win)
 

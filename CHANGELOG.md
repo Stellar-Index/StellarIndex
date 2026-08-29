@@ -211,16 +211,28 @@ against.
   position, refreshed every 30s from ONE query for all sources) and the
   lag rule carries `unless … == 1`. Not a silence: the new
   `stellarindex_projector_replay_stalled` tickets when a replay STOPS
-  advancing (lag not falling for 15 min inside the window, for 5 min),
-  the excuse expires with the catch-up rather than with the day-long
-  dirty-window row, a dirty-window read error publishes 0 for every
-  source (fail open toward alerting), and an indexer that publishes no
-  flag leaves the lag rule exactly as it was. `projected-rebuild`
-  windows never raise the flag — that tool stays below the live cursor
-  and never rewinds it. Go tests
-  (`internal/projector/replay_window_test.go`, 5 cases incl. the bound
-  and the fail-open) + promtool cases (normal lag fires / climbing replay
-  silent / stalled replay fires / flag absent still fires).
+  advancing (lag still over the same 256-ledger bound `lag_high` uses and
+  not falling for 15 min inside the window, for 5 min), the excuse
+  expires with the catch-up rather than with the day-long dirty-window
+  row, a dirty-window read error publishes 0 for every source (fail open
+  toward alerting), and an indexer that publishes no flag leaves the lag
+  rule exactly as it was. The flag is gated on the recorded window's
+  PROVENANCE (`timescale.ProjectionDirtyWindow.IsProjectorReplay`, one
+  shared definition of the `reason` format for both writers): the same
+  table is also written by `projected-rebuild -write`, whose range is NOT
+  bounded below the live cursor (`-to` defaults to it, the one-writer
+  guard admits `liveLastLedger >= to`, and `-allow-live-overlap` bypasses
+  the guard — used on r1 2026-07-27), so a cursor-only bound would have
+  suppressed the lag ticket for a source HELD at such a window with no
+  operator rewind on record. The cursor bound is exclusive at the top, so
+  a projector wedged exactly at its pre-rewind ledger stays alertable. Go
+  tests (`internal/projector/replay_window_test.go`, 11 cases incl. both
+  rebuild-window probe shapes, both cursor boundaries and the fail-open;
+  `internal/storage/timescale/projection_dirty_window_reason_test.go`
+  pins the `reason` format byte-for-byte so rows already in the table
+  classify correctly) + promtool cases (normal lag fires / climbing
+  replay silent / stalled replay fires / caught-up source inside a window
+  raises nothing / flag absent still fires).
 - **Gap detector pre-registers `runs_total` at 0 so a restart cannot read
   as a dead detector.** `stellarindex_ingest_gap_detector_runs_total` is a
   CounterVec that only materialises a series on first `Inc()`, and since

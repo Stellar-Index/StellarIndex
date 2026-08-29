@@ -14,6 +14,7 @@
 #   2. real lag, replay climbing              → lag ticket SILENT
 #   3. real lag, replay stopped climbing      → replay_stalled fires
 #   4. real lag, indexer publishes no flag    → lag ticket fires (rollout)
+#   5. NO real lag, replay window open        → neither rule fires
 #
 # LABEL SHAPES ARE POST-SCRAPE (see ops-job_test.yml's header): projector
 # series are emitted by the indexer, so they carry
@@ -125,10 +126,11 @@ tests:
               description: |
                 An operator-initiated projector-replay is in progress for
                 reflector-fx (the cursor is still inside the recorded
-                rewind window) but its lag has not fallen for 15+ minutes — the
-                cursor is stalled or the live tip is outrunning it, so the replay
-                will never finish on its own. The served-row deficit the replay
-                was started to repair is still open.
+                rewind window) and its lag is still over the 256-ledger
+                lag_high bound but has not fallen for 15+ minutes — the cursor
+                is stalled or the live tip is outrunning it, so the replay will
+                never finish on its own. The served-row deficit the replay was
+                started to repair is still open.
 
                 Check `stellarindex_projector_wedged` and the
                 `runs_total{outcome="error"|"sink_retry"}` rates for this source
@@ -139,6 +141,35 @@ tests:
       # The lag ticket stays excused while the replay window is open —
       # replay_stalled is the signal that covers this state.
       - eval_time: 25m
+        alertname: stellarindex_projector_lag_high
+        exp_alerts: []
+
+  # ══ 5. an open window on a HEALTHY source raises nothing ══════════
+  # The stalled-replay rule's "not climbing" test is
+  # `max_over_time(lag[15m]) <= lag`, which is trivially TRUE whenever lag
+  # is flat — including flat at ZERO. Without the `> 256` lag floor, any
+  # source carrying the window flag while caught up (or lagging by less
+  # than lag_high's own bound) tickets as a STOPPED replay, which is a
+  # page-worthy claim about a source that is perfectly healthy. Both
+  # sources below have a flag pinned at 1 for the whole window:
+  # sep41_supply is fully caught up (lag 0), reflector-fx is lagging 100
+  # ledgers — under the lag_high bound, so no rule may speak for it.
+  - interval: 1m
+    name: a caught-up source inside a replay window is not a stalled replay
+    input_series:
+      - series: 'stellarindex_projector_lag_ledgers{job="stellarindex_indexer",instance="r1:9100",source="sep41_supply"}'
+        values: '0+0x40'
+      - series: 'stellarindex_projector_replay_window_active{job="stellarindex_indexer",instance="r1:9100",source="sep41_supply"}'
+        values: '1+0x40'
+      - series: 'stellarindex_projector_lag_ledgers{job="stellarindex_indexer",instance="r1:9100",source="reflector-fx"}'
+        values: '100+0x40'
+      - series: 'stellarindex_projector_replay_window_active{job="stellarindex_indexer",instance="r1:9100",source="reflector-fx"}'
+        values: '1+0x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_projector_replay_stalled
+        exp_alerts: []
+      - eval_time: 30m
         alertname: stellarindex_projector_lag_high
         exp_alerts: []
 
