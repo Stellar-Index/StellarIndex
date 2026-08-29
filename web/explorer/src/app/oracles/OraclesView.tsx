@@ -7,6 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { AssetLink } from '@/components/AssetLink';
 import { apiGet, asExample } from '@/api/client';
+import { isRawOracleAsset, rawOracleSymbol } from '@/lib/asset-label';
 import { formatRelative , formatSubunitPrice } from '@/lib/format';
 import { sourceToneClass } from '@/lib/pillTone';
 
@@ -18,6 +19,20 @@ import type { components } from '@/api/types';
 
 import { Container } from '@/components/ui';
 type OracleStream = components['schemas']['OracleReading'];
+
+// Oracle capture-totality: /v1/oracle/streams omits `raw:<symbol>` rows
+// (symbols the oracle publishes that map to no canonical asset) unless the
+// caller opts in. This page is the intended opt-in — totality is the point
+// of the explorer — but unmapped rows are reference-only, so they render
+// in their own "Unmapped feeds" section and never join the mapped list.
+const STREAMS_PARAMS = { include_unmapped: 'true' } as const;
+
+// The `mapped` flag is the contract; the `raw:` wire prefix is the same
+// fact read off the asset id, kept as a belt-and-braces guard so a row
+// can never land in the mapped table by a missing flag alone.
+function isUnmappedStream(s: OracleStream): boolean {
+  return s.mapped === false || isRawOracleAsset(s.asset);
+}
 
 export function OraclesView() {
   const sources = useQuery<SourceRow[]>({
@@ -31,9 +46,9 @@ export function OraclesView() {
   });
 
   const streams = useQuery<OracleStream[]>({
-    queryKey: ['/v1/oracle/streams'],
+    queryKey: ['/v1/oracle/streams', STREAMS_PARAMS],
     queryFn: async () => {
-      const env = await apiGet<{ data: OracleStream[] }>('/v1/oracle/streams', {});
+      const env = await apiGet<{ data: OracleStream[] }>('/v1/oracle/streams', STREAMS_PARAMS);
       return env.data ?? [];
     },
     refetchInterval: 60_000,
@@ -50,7 +65,17 @@ export function OraclesView() {
   // this, `streamRows` is a fresh `[]` literal on every render when
   // streams.data is undefined, making the downstream useMemo recompute
   // every tick. F-1258 (audit-2026-05-12).
-  const streamRows = useMemo(() => streams.data ?? [], [streams.data]);
+  const allStreamRows = useMemo(() => streams.data ?? [], [streams.data]);
+  // Mapped rows drive the "Price streams" table and the per-oracle
+  // activity counts; unmapped rows are listed separately, below.
+  const streamRows = useMemo(
+    () => allStreamRows.filter((s) => !isUnmappedStream(s)),
+    [allStreamRows],
+  );
+  const unmappedRows = useMemo(
+    () => allStreamRows.filter(isUnmappedStream),
+    [allStreamRows],
+  );
 
   const perSourceCounts = useMemo(() => {
     const map: Record<string, { streams: number; latestTs: string }> = {};
@@ -164,7 +189,7 @@ export function OraclesView() {
       <Panel
         title={`Price streams${streamRows.length > 0 ? ` (${streamRows.length} active)` : ''}`}
         hint="Latest observation per (oracle, asset, quote) — 7d window"
-        source={asExample('/v1/oracle/streams', {})}
+        source={asExample('/v1/oracle/streams', STREAMS_PARAMS)}
         bodyClassName="-mx-4"
       >
         <div className="overflow-x-auto">
@@ -235,6 +260,85 @@ export function OraclesView() {
           </table>
         </div>
       </Panel>
+
+      {streamsAvailable && (
+        <Panel
+          title={`Unmapped feeds${unmappedRows.length > 0 ? ` (${unmappedRows.length})` : ''}`}
+          hint="Symbols published under no canonical asset — recorded verbatim, reference-only"
+          source={asExample('/v1/oracle/streams', STREAMS_PARAMS)}
+          bodyClassName="-mx-4"
+        >
+          <p className="px-4 pb-3 text-xs text-ink-muted">
+            An oracle sometimes publishes a symbol we cannot map to a canonical
+            asset. Capture totality means the observation is still recorded —
+            under its raw on-wire symbol — but it is never compared, aggregated,
+            or attributed to an asset page. These rows are listed here and kept
+            out of the price-stream table above.
+          </p>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-line text-sm">
+              <thead>
+                <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
+                  <Th>Oracle</Th>
+                  <Th>Raw symbol</Th>
+                  <Th>Quote</Th>
+                  <Th align="right">Latest price</Th>
+                  <Th align="right">Updated</Th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line-subtle">
+                {unmappedRows.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-6 text-center text-sm text-ink-muted">
+                      No unmapped feeds in the last 7 days — every published
+                      symbol maps to a canonical asset.
+                    </td>
+                  </tr>
+                )}
+                {unmappedRows.map((s, i) => {
+                  const tone = sourceToneClass(s.source);
+                  return (
+                    <tr
+                      key={`${s.source}|${s.asset}|${s.quote}|${i}`}
+                      className="hover:bg-surface-muted"
+                    >
+                      <Td>
+                        <Link
+                          href={`/sources/${s.source}`}
+                          className={`inline-block rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider hover:underline ${tone}`}
+                        >
+                          {s.source}
+                        </Link>
+                      </Td>
+                      <Td>
+                        <span
+                          className="font-mono text-xs text-ink-body"
+                          title={`${s.asset} — unmapped oracle symbol`}
+                        >
+                          {isRawOracleAsset(s.asset) ? rawOracleSymbol(s.asset) : s.asset}
+                        </span>
+                      </Td>
+                      <Td>
+                        <AssetLink canonical={s.quote} />
+                      </Td>
+                      <Td align="right">
+                        <span className="font-mono tabular-nums text-ink-body">
+                          {formatPrice(s.price)}
+                        </span>
+                      </Td>
+                      <Td align="right">
+                        <span className="font-mono text-xs text-ink-muted">
+                          {formatRelative(s.ts)}
+                        </span>
+                      </Td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+      )}
 
       <Panel
         title="SEP-40 compatibility"
