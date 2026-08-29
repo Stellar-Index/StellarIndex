@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+  demoteFlaggedLast,
   scamFlagTags,
   hasDirectoryScamFlag,
   stellarExpertDirectoryUrl,
@@ -52,5 +53,29 @@ describe('stellarExpertDirectoryUrl', () => {
     expect(stellarExpertDirectoryUrl('not-a-strkey')).toBeNull();
     // No path traversal / injection through the issuer segment.
     expect(stellarExpertDirectoryUrl('G../../evil')).toBeNull();
+  });
+});
+
+describe('demoteFlaggedLast', () => {
+  const flagged = { id: 'JFKBANK2', tags: ['malicious', 'unsafe'] };
+  const benign = { id: 'XRP', tags: ['issuer', 'anchor'] };
+  const plain = { id: 'USDV', tags: undefined };
+
+  it('moves flagged rows below every unflagged one, keeping order within each group', () => {
+    const out = demoteFlaggedLast([flagged, benign, plain], (r) => r.tags);
+    expect(out.map((r) => r.id)).toEqual(['XRP', 'USDV', 'JFKBANK2']);
+  });
+
+  it('never drops a row — we refuse to rank a flagged asset, we do not hide it', () => {
+    const rows = [flagged, benign, plain];
+    const out = demoteFlaggedLast(rows, (r) => r.tags);
+    expect(out).toHaveLength(rows.length);
+    for (const r of rows) expect(out).toContain(r);
+  });
+
+  it('returns the incoming order untouched when nothing is flagged', () => {
+    expect(
+      demoteFlaggedLast([benign, plain], (r) => r.tags).map((r) => r.id),
+    ).toEqual(['XRP', 'USDV']);
   });
 });
