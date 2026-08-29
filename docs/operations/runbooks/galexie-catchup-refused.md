@@ -1,6 +1,6 @@
 ---
 title: galexie-catchup-refused
-last_verified: 2026-07-05
+last_verified: 2026-08-29
 status: current
 ---
 
@@ -64,6 +64,59 @@ MinIO are append-only and the replay is deterministic.
 - `ch-rebuild` refuses unwindowed buffering ranges >2M ledgers.
 - The lake-tip freshness rule (data-freshness family) catches the
   symptom independently of this signature.
+
+## Applying galexie config with ansible — the restart ack
+
+A galexie restart is never casual on r1: the captive core cold-catches-up
+for ~9 minutes on mainnet, and every re-restart starts that clock again
+(the 2026-08-27 postmortem). On 2026-08-29 06:04Z an apply with
+`--tags users,minio,galexie` restarted a healthy galexie for a change to
+the `galexie-append.sh` wrapper — a file systemd exec's once per service
+start and the running process never reads — and the preceding
+`--check --diff` had shown no handler, because the old effective-change
+gate only compared before/after a real write. The archival-node role now
+behaves as follows (`tasks/galexie-effective-checksum.yml`):
+
+- **Only inputs the running process has loaded at start can restart it:**
+  `/etc/stellar/captive-core-galexie.cfg`, `/etc/galexie/galexie.toml`,
+  `/etc/default/galexie` (systemd `EnvironmentFile`), and
+  `/etc/systemd/system/galexie.service`. A galexie binary rebuild
+  (`galexie_version` bump) restarts too. Nothing else does — not the
+  `galexie-append.sh` wrapper, not the archive-fill / tip-lag /
+  contiguity scripts and timers, not the SDF apt key. A wrapper edit is
+  picked up at the next (re)start; if it is needed sooner, restart by
+  hand in a maintenance window.
+- **Only an effective change restarts:** the on-disk file is compared with
+  what the run would render, comments and blank lines stripped. A comment
+  re-wrap applies silently; a value change is a restart.
+- **The dry-run tells you first:** `ansible-playbook --check --diff` reaches
+  the same verdict and prints `RUNNING HANDLER [archival-node : Restart
+  galexie]` when a real apply would restart. (The weekly ansible-drift job
+  runs `--check --diff` too, so a pending restart-class change shows up
+  there as drift — apply it, with the ack, in a window.)
+- **Fail-closed without an ack:** when galexie is active and a restart is
+  required, a real apply FAILS before writing anything:
+
+  ```text
+  A real galexie restart is required by an effective config change in
+  /etc/galexie/galexie.toml and galexie is active … re-run in a
+  maintenance window with `-e galexie_restart_ack=true`
+  ```
+
+  Nothing is left on disk unapplied (a rotated S3 key pair is either
+  fully applied — rendered and loaded — or not at all). Re-run in a
+  maintenance window:
+
+  ```bash
+  ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
+    --tags galexie -e galexie_restart_ack=true
+  ```
+
+  then watch the tip for ~10 minutes (§Remedy) and do not re-restart
+  mid-catchup. `galexie_restart_ack` defaults to `false` in
+  `roles/archival-node/defaults/main.yml`; never set it in inventory.
+  A stopped galexie (bootstrap, or already down) needs no ack — the
+  "restart" is just a start.
 
 ## Related
 
