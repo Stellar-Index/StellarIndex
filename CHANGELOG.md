@@ -43,6 +43,18 @@ against.
   `stellarindex_zfs_snapshot_pool_free_unreadable=1` (own ticket).
   Invariants pinned red-first by `scripts/ci/zfs-snapshot-test.sh`
   against a stubbed `zfs`, including the destroy choke point directly.
+- **`stellarindex_ingest_gap_detector_silent` third clause (both rule
+  trees).** The alert's `absent_over_time(runs_total[15m])` clause is
+  satisfied by the `outcome="error"` counter, and a target that has never
+  once succeeded in a process life emits no `last_success_unix` stamp to
+  age — so a scan failing every cycle (the 2026-08-28 r1
+  `soroban_events` statement_timeout loop, found verifying #258) fired
+  nothing. The rule now also fires when the target's error counter is
+  present now and 8h ago with no last-success stamp seen in 8h. First
+  promtool unit tests for the alert
+  (`deploy/monitoring/rule-tests/ingestion_test.yml`): fresh stamp
+  silent, stale stamp fires, never-succeeded fires, stamp-within-8h
+  suppresses, aggregator-absent fires.
 - **Ops scripts honour a ClickHouse ops user
   (`scripts/ops/ch-ops-user-test.sh`).** `ch-live-catchup.sh`,
   `ch-supply-flows-seed.sh`, `d2-ordinal-reproject.sh`,
@@ -120,6 +132,46 @@ against.
   case stop firing); runbook `runbooks/backup-offsite-stale.md`.
 
 ### Fixed
+
+- **Gap detector pre-registers `runs_total` at 0 so a restart cannot read
+  as a dead detector.** `stellarindex_ingest_gap_detector_runs_total` is a
+  CounterVec that only materialises a series on first `Inc()`, and since
+  the schedule is seeded from the persisted scan cursor (v0.49.0) a
+  restart legitimately runs NO scan for hours. The whole family was
+  absent for that window, so `stellarindex_ingest_gap_detector_silent`'s
+  `absent_over_time(runs_total[15m])` clause fired at 09:55Z on r1 on
+  2026-08-29, 26 min after the v0.49.0 deploy restarted the aggregator —
+  `sum by (outcome)(runs_total)` returned no series at all. `RunGapDetector`
+  now seeds `{outcome="ok"}` and `{outcome="error"}` for every configured
+  target at start (same F-0033 contract as `obs.seedBoundedLabelSeries`),
+  so the absent clause is reserved for the process-dead case. Unit test
+  (`TestGapDetectorPreregistersRunsTotalSeries`) + promtool scenario
+  "restart, series at 0 for 30m, fresh stamp → silent".
+- **A galexie restart is decided only by what the running process has
+  loaded, is visible in `--check --diff`, and needs an explicit ack.**
+  On 2026-08-29 06:04Z an ansible apply (`--tags users,minio,galexie`)
+  restarted a healthy r1 galexie — a ~9-minute mainnet captive-core cold
+  catchup — for a change to the `galexie-append.sh` wrapper, which
+  systemd exec's once per service start and the running process never
+  reads; the preceding `--check --diff` had shown no handler because the
+  #267 effective-change gate compared checksums before/after a real
+  write, and check mode writes nothing. `tasks/galexie-effective-
+  checksum.yml` now compares each restart-relevant input on disk with
+  the controller-rendered would-be file (comments/blank lines stripped),
+  so the verdict — and `RUNNING HANDLER [Restart galexie]` — appears in
+  check mode too; the inputs are only `captive-core-galexie.cfg`,
+  `galexie.toml`, `/etc/default/galexie` and the unit (the wrapper,
+  the archive-fill/tip-lag/contiguity scripts + timers and the SDF apt
+  key can never notify the restart); and when galexie is active a real
+  apply that would restart it FAILS before writing anything unless
+  `-e galexie_restart_ack=true` (default `false`) — the same ack gates a
+  `galexie_version` binary rebuild. `/etc/default/galexie` moved from
+  inline `content:` to `templates/galexie.env.j2` (byte-identical
+  output) so the gate renders the same file the task writes.
+  `scripts/ci/ansible-galexie-restart-test.sh` pins the input list, the
+  ack default, the fail-closed refusal, the ack path and the check-mode
+  preview. Runbook: `docs/operations/runbooks/galexie-catchup-refused.md`
+  §"Applying galexie config with ansible".
 
 - **Nightly pgBackRest wrapper never backed up repo2.** pgBackRest's `backup`
   command is single-repo: with no `--repo` it writes only the highest-priority
@@ -240,6 +292,18 @@ against.
 
 ### Added
 
+- **Explorer /oracles opts into oracle capture-totality (PR-5 of 7).**
+  The page now requests `/v1/oracle/streams?include_unmapped=true` and
+  renders the `raw:<symbol>` rows — oracle-published symbols that map
+  to no canonical asset — in a separate "Unmapped feeds" section under
+  the raw on-wire symbol (monospace, unlinked), never mixed into the
+  mapped price-stream table or its per-oracle counts. A `raw:` id now
+  has a first-class rendering everywhere an asset is shown
+  (`shortAssetText` → the symbol, `AssetLabel` → monospace symbol,
+  `assetSlug` → no link; previously it would have linked to a
+  static-export 404 under `/assets/raw…`). The oracle source bespoke
+  page needs no explorer change: its counts/tables are text-only and
+  already totality-inclusive server-side with the "Unmapped feeds" KPI.
 - **CI ansible task lint (`scripts/ci/lint-ansible-tasks.sh`).** Two
   structural guards over `configs/ansible/**`, wired into import-checks +
   `verify.sh` with a fixture self-test: *pipefail-needs-bash* (a
@@ -415,6 +479,8 @@ against.
   ticket severity, promtool unit-tested, runbook
   `docs/operations/runbooks/oracle-unknown-symbols.md`.
 
+### Fixed
+
 - **Deploy served-path smoke** (#232): `deploy.yml` now curls the public
   endpoints after restart and asserts the r1 version-skew probe reads 0 —
   a deploy is not done until the served artifact answers.
@@ -476,6 +542,28 @@ against.
   client hello) and `scripts/ci/run-heavy-job-test.sh` (the shipped
   wrapper, extracted from the ansible task). See
   `docs/operations/clickhouse-ops-batch-profile.md`.
+
+- **Backup alerts could not fire on the absent-series case (audit
+  2026-08-28, backup-restore-1 / backup-restore-2).** Both rule trees.
+  `stellarindex_timescale_backup_none_24h` / `_failed` are `min by
+  (stanza)(pgbackrest_backup_since_last_completion_seconds…) > N`, which
+  is an empty vector — never fires — when `pgbackrest_exporter` is up
+  but has no stanza to report (pgbackrest not installed, conf/repo
+  unreadable by the exporter user, stanza error), and the only backstop
+  checked `up` alone. New `stellarindex_pgbackrest_backup_metrics_absent`
+  (page: `up == 1 unless on (instance) <backup series>`) and
+  `stellarindex_pgbackrest_backup_unit_failed` (ticket) close it.
+  Likewise `stellarindex_ch_schema_snapshot_stale` / `_offsite_stale`
+  were `time() - last_success > N` over a stamp the script drops on any
+  partial run (and never writes on a first-run failure), so the
+  never-succeeded / every-run-failed cases were unalerted: both gain the
+  OBS-2 `absent_over_time` branch (offsite gated on the new
+  `stellarindex_ch_schema_snapshot_offsite_configured` gauge so acked
+  local-only hosts stay silent) plus `stellarindex_ch_schema_snapshot_unit_failed`.
+  Promtool tests proven red on origin/main:
+  `deploy/monitoring/rule-tests/storage-backup_test.yml`. Also corrects
+  the stale `stellarindex_pgbackrest_last_success_unix` name in
+  meta.yml / the alerts catalogue.
 
 - **Status page rendered stale / unreachable state as fresh green
   (web-status-1/2/4/6, audit 2026-08-28).** `/status` (a) dropped the
@@ -733,6 +821,86 @@ against.
 
 ### Fixed
 
+- **An asset whose XLM market is stored with the XLM SAC as BASE was
+  invisible to every price path.** r1 2026-08-28 17:42Z:
+  `stellarindex_assets_popular_priceless=2` for `CBIJ…` ($730k/7d, 706
+  trades against the XLM SAC, source=aquarius) and `CAUP7…` (trades only
+  against CBIJ) — `price_usd` null, no withheld verdict. The aquarius
+  decoder writes SWAP direction (base = `token_in`) without
+  `canonical.Orient`, so a token bought with XLM lands in `prices_1m` as
+  `(CAS3J…, token)`. The volume path already read both directions
+  (`soroban_volume.go`) — which is exactly why the asset had volume and
+  no price — but every PRICE path read the XLM leg base-side only:
+
+  - `asset_vs_xlm*` in both catalogue queries (`base_asset = X AND
+    quote_asset IN (native, SAC)`): now UNION an inverted arm
+    (`base_asset IN (native, SAC) AND quote_asset = X`, `1/vwap`).
+    Base-side rows are preferred over inverted ones, so every asset that
+    already priced keeps byte-identical output; the inverted arm only
+    fills assets with no base-side row in the window.
+  - `TransitiveUSDPrice.hop_usd` resolved a hop only via `base_asset =
+    hop`, so the XLM SAC itself (XLM/USD is keyed `base_asset='native'`)
+    and any hop whose own XLM market is SAC-as-base priced NULL and was
+    dropped. Now: hop IS XLM (either identity) → `xlm_usd`; plus the
+    inverted XLM arm.
+  - The tripwire's `priced_direct` had the same base-only shape AND
+    never contained the proxies themselves, so `one_hop` could never
+    route through the XLM SAC. Now seeds the proxy set and reads the
+    inverted arm; `coverageQuoteProxies` is composed from the resolver's
+    own lists so the two cannot drift.
+  - `GetAssetBySlug`'s `chosen` CTE was `FROM classic_assets` only — the
+    listing spine gained a `discovered_assets` UNION in #220 but the
+    detail did not, so `/v1/assets/{id}` for a Soroban-native contract
+    depended entirely on the transitive fill. Now the same UNION (same
+    `asset_volume_24h` bound).
+
+  Integration test `TestXLMSacAsBase_PriceableThroughEveryPath` (SAC-as-
+  base fixture; CBIJ priced 0.10 direct + transitive via the SAC, CAUP7
+  0.20 one hop through CBIJ, tripwire silent for both, and a both-
+  directions classic asset proven byte-identical) fails on every path
+  pre-fix. `TestProxyQuoteLists_Lockstep` pins the four proxy lists and
+  the 8 inverted arms. Writer-side follow-up (aquarius writing canonical
+  orientation) is separate; the read side must handle the stored data
+  regardless.
+- **…and its price-history series (the sparklines) were still empty for
+  such an asset.** Follow-up to the above: the four series queries
+  (`GetAssetPriceHistory24h`/`7d` and their `*Batch` twins) each carry an
+  `asset_xlm_per_hour`/`_per_day` CTE that read the XLM leg base-side
+  only, so an asset priced through the inverted arm had a headline
+  `price_usd` but `price_history_24h`/`7d` all-null. Each now UNIONs the
+  same inverted arm (`base_asset IN (native, SAC) AND quote_asset = ANY
+  (aliases)`, `1/vwap`, `vwap > 0`), base-side preferred per bucket
+  (`inverted` ordered ahead of alias priority and `bucket DESC`), so
+  every bucket that already had a base-side point is byte-identical and
+  the inverted arm only fills buckets with none. `TestProxyQuoteLists_
+  Lockstep` now also pins the 4 series arms (the three inline queries
+  were hoisted to package constants for it) and the SAC-as-base
+  integration fixture asserts a non-empty, correctly-valued series on
+  all four paths plus the per-bucket preference.
+- **Trade sink: a shutdown that raced an in-flight steady-state batch
+  write lost the batch instead of draining it.** The pipeline sibling
+  of the sorobanevents AsyncSink fix (#240). `persistWorker`'s ticker /
+  batch-full flush runs under the parent ctx, so a SIGTERM landing
+  mid-`BatchInsertTrades` cancelled the write; `context.Canceled` is
+  (correctly) not an infra fault, so the batch fell into per-row
+  isolation against the same dead ctx and every row — up to 200
+  already-accepted trades — was logged "abandoned on shutdown —
+  re-derive" while the worker's own bounded shutdown flush ran a moment
+  later with nothing to do. `flushTradeBatch` now returns the trades
+  the cancelled ctx left un-landed; the steady-state flush carries them
+  back into `tradeBuf` for `flushShutdown` to land under the shared
+  `drainTimeout`, and only the BOUNDED shutdown callers (whose deadline
+  is the drain budget) report an abandon as loss, via one
+  `reportAbandonedTrades` helper. Audited siblings NOT affected:
+  discovery `AsyncSink` (per-record Background ctx, Stop closes + drains
+  the channel), clickhouse `LiveSink` (Background-ctx flushes, failed
+  flush keeps its buffer), `externalRetryBuffer` (re-queues on ctx
+  error, `finalDrain` under a fresh ctx), `statsflush` (delta against a
+  retained snapshot, final flush under `WithoutCancel`), and the
+  customer-webhook worker (durable DB lease queue). Regression tests
+  `TestPersistWorker_ShutdownRacingInFlightTradeFlush_RowsLandNotLost`
+  + `TestFlushTradeBatch_CtxCancelledMidWrite_ReturnsWholeBatch`, red on
+  the pre-fix code (landed 0, want 3; 3 rows counted lost).
 - **Aggregator gap detector took r1's serving path down (2026-08-28
   18:23Z: `api_error_rate_high`, 503s from statement timeouts, load
   19.6, IO-bound).** `pg_stat_statements` pinned it on the detector's

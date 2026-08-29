@@ -1,0 +1,440 @@
+---
+# promtool unit tests for the backup-freshness alerts in storage.yml
+# (audit 2026-08-28, backup-restore-1 / backup-restore-2).
+#
+#   promtool test rules deploy/monitoring/rule-tests/storage-backup_test.yml
+#
+# Both findings are the same OBS-2 / F-0085 class the repo already fixed
+# for restore-drill.yml: a `time() - x > N` or `min(x) > N` alert
+# evaluates over an EMPTY vector when the series is absent, so the
+# never-succeeded / every-run-failed / exporter-up-but-no-stanza cases —
+# the worst cases — were the ones that could never page.
+#
+#   backup-restore-1: pgbackrest_exporter is up (up==1) but emits no
+#     pgbackrest_backup_since_last_completion_seconds (pgbackrest not
+#     installed, config unreadable by the exporter user, stanza error).
+#     stellarindex_timescale_backup_none_24h / _failed are `min by
+#     (stanza)(...) > N` — empty, never fire — and the only backstop
+#     (meta.yml stellarindex_pgbackrest_exporter_down) checks `up` alone.
+#   backup-restore-2: ch-schema-snapshot.sh stamps last_success ONLY on
+#     a clean run and rewrites the textfile each run (or exits before
+#     writing it on a first-run failure), so every-run-failed / never-ran
+#     makes the series ABSENT, not old. `time() - last_success > 36h`
+#     could never fire there. Same for the offsite stamp.
+#
+# PROVEN-RED on origin/main (008d5b66): the four cases marked (RED)
+# report `got:[]` — 0 firing alerts — against the un-fixed rules. The
+# healthy / silent cases pass either way and exist to pin the alerts'
+# non-firing side (no false page on a fresh backup, on an acked
+# local-only host, or while the exporter is down and another alert owns
+# it).
+#
+# LABEL SHAPES ARE POST-SCRAPE (see ops-job_test.yml): textfile gauges
+# carry job="node_exporter" + the node_exporter instance; the pgbackrest
+# exporter is scraped directly (job="pgbackrest_exporter").
+#
+# Deliberately lives OUTSIDE `deploy/monitoring/rules/` — see the header
+# of archive-completeness_test.yml.
+
+rule_files:
+  - ../rules/storage.yml
+
+evaluation_interval: 1h
+
+tests:
+  # ═══════════════════════════════════════════════════════════════════
+  # backup-restore-1 — pgBackRest
+  # ═══════════════════════════════════════════════════════════════════
+
+  # (RED) exporter up, zero stanzas: nothing selects the backup series,
+  # so the 24h page is structurally silent. The new alert must page.
+  - interval: 1h
+    name: pgbackrest exporter up but no backup series — metrics_absent pages
+    input_series:
+      - series: 'up{job="pgbackrest_exporter", instance="localhost:9854"}'
+        values: '1x200'
+    alert_rule_test:
+      - eval_time: 100h
+        alertname: stellarindex_timescale_backup_none_24h
+        exp_alerts: []   # documents the hole: this alert CANNOT fire here
+      - eval_time: 100h
+        alertname: stellarindex_pgbackrest_backup_metrics_absent
+        exp_alerts:
+          - exp_labels:
+              job: pgbackrest_exporter
+              instance: localhost:9854
+              severity: page
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
+              summary: "pgbackrest_exporter on localhost:9854 is up but reports no stanza — backup alerts are blind"
+              description: |
+                The exporter answers scrapes (up == 1) but has emitted no
+                pgbackrest_backup_since_last_completion_seconds for a
+                real stanza for 15+ min. `stellarindex_timescale_backup_failed`
+                and `_backup_none_24h` are `min by (stanza)(...) > N`
+                over that series: with it absent they evaluate to an
+                empty vector and CANNOT fire, so a backup that stopped
+                would never page. Usual causes: pgbackrest not installed
+                on this host (the unit exits 127), the exporter user
+                cannot read /etc/pgbackrest/pgbackrest.conf or the repo,
+                or `pgbackrest info` errors on the stanza. Run
+                `sudo -u pgbackrest_exporter pgbackrest --stanza=stellarindex info`
+                and `curl -s localhost:9854/metrics | grep pgbackrest_backup_since`.
+
+  # Only the exporter's aggregate pseudo-stanza is present: the real
+  # alerts exclude `all-stanzas*` on purpose (a per-stanza failure must
+  # not be masked), so the absent guard must not be satisfied by it.
+  - interval: 1h
+    name: only the all-stanzas pseudo-stanza is present — still absent
+    input_series:
+      - series: 'up{job="pgbackrest_exporter", instance="localhost:9854"}'
+        values: '1x200'
+      - series: 'pgbackrest_backup_since_last_completion_seconds{job="pgbackrest_exporter", instance="localhost:9854", stanza="all-stanzas", backup_type="full"}'
+        values: '3600x200'
+    alert_rule_test:
+      - eval_time: 100h
+        alertname: stellarindex_pgbackrest_backup_metrics_absent
+        exp_alerts:
+          - exp_labels:
+              job: pgbackrest_exporter
+              instance: localhost:9854
+              severity: page
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
+              summary: "pgbackrest_exporter on localhost:9854 is up but reports no stanza — backup alerts are blind"
+              description: |
+                The exporter answers scrapes (up == 1) but has emitted no
+                pgbackrest_backup_since_last_completion_seconds for a
+                real stanza for 15+ min. `stellarindex_timescale_backup_failed`
+                and `_backup_none_24h` are `min by (stanza)(...) > N`
+                over that series: with it absent they evaluate to an
+                empty vector and CANNOT fire, so a backup that stopped
+                would never page. Usual causes: pgbackrest not installed
+                on this host (the unit exits 127), the exporter user
+                cannot read /etc/pgbackrest/pgbackrest.conf or the repo,
+                or `pgbackrest info` errors on the stanza. Run
+                `sudo -u pgbackrest_exporter pgbackrest --stanza=stellarindex info`
+                and `curl -s localhost:9854/metrics | grep pgbackrest_backup_since`.
+
+  # Healthy: fresh backup an hour old on the real stanza — everything silent.
+  - interval: 1h
+    name: fresh backup — all three pgbackrest alerts silent
+    input_series:
+      - series: 'up{job="pgbackrest_exporter", instance="localhost:9854"}'
+        values: '1x200'
+      - series: 'pgbackrest_backup_since_last_completion_seconds{job="pgbackrest_exporter", instance="localhost:9854", stanza="stellarindex", backup_type="diff"}'
+        values: '3600x200'
+      - series: 'pgbackrest_backup_since_last_completion_seconds{job="pgbackrest_exporter", instance="localhost:9854", stanza="all-stanzas", backup_type="diff"}'
+        values: '3600x200'
+    alert_rule_test:
+      - eval_time: 100h
+        alertname: stellarindex_pgbackrest_backup_metrics_absent
+        exp_alerts: []
+      - eval_time: 100h
+        alertname: stellarindex_timescale_backup_none_24h
+        exp_alerts: []
+      - eval_time: 100h
+        alertname: stellarindex_timescale_backup_failed
+        exp_alerts: []
+
+  # Exporter DOWN: stellarindex_pgbackrest_exporter_down (meta.yml) owns
+  # that page; the absent guard must not double-page.
+  - interval: 1h
+    name: exporter down — metrics_absent stays silent (exporter_down owns it)
+    input_series:
+      - series: 'up{job="pgbackrest_exporter", instance="localhost:9854"}'
+        values: '0x200'
+    alert_rule_test:
+      - eval_time: 100h
+        alertname: stellarindex_pgbackrest_backup_metrics_absent
+        exp_alerts: []
+
+  # Present-but-stale pins the pre-existing alerts (they had no test):
+  # 100000 s ≈ 27.8 h > both the 24 h page and the 25 h ticket.
+  - interval: 1h
+    name: backup series present and 27h old — the 24h page and 25h ticket fire
+    input_series:
+      - series: 'up{job="pgbackrest_exporter", instance="localhost:9854"}'
+        values: '1x200'
+      - series: 'pgbackrest_backup_since_last_completion_seconds{job="pgbackrest_exporter", instance="localhost:9854", stanza="stellarindex", backup_type="full"}'
+        values: '100000x200'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: stellarindex_timescale_backup_none_24h
+        exp_alerts:
+          - exp_labels:
+              stanza: stellarindex
+              severity: page
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
+              summary: "No successful Postgres backup in > 24 h (SEV-1)"
+              description: |
+                RPO breach. At 24h+ without a backup we exceed the documented
+                5-min RPO target by 288×. Escalate immediately.
+      - eval_time: 2h
+        alertname: stellarindex_timescale_backup_failed
+        exp_alerts:
+          - exp_labels:
+              stanza: stellarindex
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
+              summary: "pgBackRest stanza stellarindex last backup 1d 3h 46m 40s ago"
+              description: |
+                Backup has missed at least one expected daily cycle (no completed
+                full/diff/incr in > 25 h). Check pgBackRest logs + MinIO connectivity.
+      - eval_time: 2h
+        alertname: stellarindex_pgbackrest_backup_metrics_absent
+        exp_alerts: []
+
+  # (RED) pgbackrest-backup.service failed (e.g. exit 127, pgbackrest not
+  # installed) — the systemd collector sees it; nothing alerted on it.
+  # (promtool steps the whole file by the top-level evaluation_interval,
+  # 1h, so `for: 5m` is observed at the 1h/2h steps, not at 10m.)
+  - interval: 1m
+    name: pgbackrest-backup.service failed — unit_failed ticket
+    input_series:
+      - series: 'node_systemd_unit_state{job="node_exporter", instance="r1:9100", name="pgbackrest-backup.service", state="failed"}'
+        values: '1x150'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: stellarindex_pgbackrest_backup_unit_failed
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              name: pgbackrest-backup.service
+              state: failed
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
+              summary: "pgbackrest-backup.service failed on r1:9100"
+              description: |
+                The nightly pgBackRest unit exited non-zero. The freshness
+                alerts catch this ~24 h later (or never, if the exporter has
+                no stanza to report); this is the early, causal signal.
+                `journalctl -u pgbackrest-backup.service -n 100`.
+
+  # ═══════════════════════════════════════════════════════════════════
+  # backup-restore-2 — ClickHouse schema snapshot
+  # ═══════════════════════════════════════════════════════════════════
+
+  # (RED) never succeeded: the script exits before writing the textfile on
+  # a first-run failure, or writes it without the stamp on a partial
+  # capture. Only the companion gauges (or nothing) exist. 36 h + 30 m.
+  - interval: 1h
+    name: schema snapshot never succeeded — last_success absent — stale ticket fires
+    input_series:
+      - series: 'stellarindex_ch_schema_snapshot_tables{job="node_exporter", instance="r1:9100"}'
+        values: '40x200'
+    alert_rule_test:
+      - eval_time: 100h
+        alertname: stellarindex_ch_schema_snapshot_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-schema-restore.md
+              summary: "ClickHouse schema snapshot has recorded no full capture in > 36 h (daily timer)"
+              description: |
+                ch-schema-snapshot.timer (daily, 03:40 UTC) has not
+                completed a full capture in over 36 h — one missed cycle
+                plus slack — or has never completed one. The ClickHouse
+                lake's ONLY backup is this metadata copy (ADR-0043 §2.1);
+                while it is stale, every DDL change since the last good
+                snapshot is unprotected and a re-derive would rebuild
+                against a schema that no longer matches production.
+                The script stamps last_success ONLY on a clean run and
+                rewrites the textfile each run, so every-run-failed /
+                never-ran shows up as an ABSENT series, not an old one —
+                both shapes fire this alert.
+                Check `systemctl status ch-schema-snapshot.service` and
+                run `/usr/local/bin/ch-schema-snapshot.sh` by hand — it
+                refuses to write an empty or partial snapshot, so a
+                failure here usually means ClickHouse was unreachable or a
+                SHOW CREATE errored.
+
+  # (RED) succeeded once, then every run failed: the stamp is dropped from
+  # the textfile at t=6h and the series goes absent. Silent inside the
+  # 36 h window, firing after it.
+  - interval: 1h
+    name: schema snapshot every-run-failed after one success — fires after 36h
+    input_series:
+      - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+3600x5 _x200'
+    alert_rule_test:
+      - eval_time: 20h
+        alertname: stellarindex_ch_schema_snapshot_stale
+        exp_alerts: []
+      - eval_time: 45h
+        alertname: stellarindex_ch_schema_snapshot_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-schema-restore.md
+              summary: "ClickHouse schema snapshot has recorded no full capture in > 36 h (daily timer)"
+              description: |
+                ch-schema-snapshot.timer (daily, 03:40 UTC) has not
+                completed a full capture in over 36 h — one missed cycle
+                plus slack — or has never completed one. The ClickHouse
+                lake's ONLY backup is this metadata copy (ADR-0043 §2.1);
+                while it is stale, every DDL change since the last good
+                snapshot is unprotected and a re-derive would rebuild
+                against a schema that no longer matches production.
+                The script stamps last_success ONLY on a clean run and
+                rewrites the textfile each run, so every-run-failed /
+                never-ran shows up as an ABSENT series, not an old one —
+                both shapes fire this alert.
+                Check `systemctl status ch-schema-snapshot.service` and
+                run `/usr/local/bin/ch-schema-snapshot.sh` by hand — it
+                refuses to write an empty or partial snapshot, so a
+                failure here usually means ClickHouse was unreachable or a
+                SHOW CREATE errored.
+
+  # Healthy: a fresh stamp every hour — silent.
+  - interval: 1h
+    name: schema snapshot fresh — silent
+    input_series:
+      - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+3600x200'
+    alert_rule_test:
+      - eval_time: 100h
+        alertname: stellarindex_ch_schema_snapshot_stale
+        exp_alerts: []
+
+  # Timer dead: the stamp stays in the textfile but ages (the pre-existing
+  # branch). Pins that the present-but-old shape still fires and carries
+  # the series' own labels.
+  - interval: 1h
+    name: schema snapshot timer dead — stamp present but 100h old — fires
+    input_series:
+      - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0x200'
+    alert_rule_test:
+      - eval_time: 100h
+        alertname: stellarindex_ch_schema_snapshot_stale
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-schema-restore.md
+              summary: "ClickHouse schema snapshot has recorded no full capture in > 36 h (daily timer)"
+              description: |
+                ch-schema-snapshot.timer (daily, 03:40 UTC) has not
+                completed a full capture in over 36 h — one missed cycle
+                plus slack — or has never completed one. The ClickHouse
+                lake's ONLY backup is this metadata copy (ADR-0043 §2.1);
+                while it is stale, every DDL change since the last good
+                snapshot is unprotected and a re-derive would rebuild
+                against a schema that no longer matches production.
+                The script stamps last_success ONLY on a clean run and
+                rewrites the textfile each run, so every-run-failed /
+                never-ran shows up as an ABSENT series, not an old one —
+                both shapes fire this alert.
+                Check `systemctl status ch-schema-snapshot.service` and
+                run `/usr/local/bin/ch-schema-snapshot.sh` by hand — it
+                refuses to write an empty or partial snapshot, so a
+                failure here usually means ClickHouse was unreachable or a
+                SHOW CREATE errored.
+
+  # (RED) offsite target configured but the push has NEVER succeeded, so
+  # the offsite stamp was never emitted. Must fire after 72 h.
+  - interval: 1h
+    name: offsite configured, push never succeeded — offsite_stale fires
+    input_series:
+      - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+3600x200'
+      - series: 'stellarindex_ch_schema_snapshot_offsite_configured{job="node_exporter", instance="r1:9100"}'
+        values: '1x200'
+    alert_rule_test:
+      - eval_time: 100h
+        alertname: stellarindex_ch_schema_snapshot_offsite_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-schema-restore.md
+              summary: "ClickHouse schema snapshot has not reached offsite storage in > 72 h"
+              description: |
+                The daily schema snapshot is being written locally but its
+                offsite push has been failing for 3+ days — or has never
+                succeeded since the target was configured — so the only
+                copy of the lake's DDL now lives on the same pool as the
+                lake (CS-111's failure shape, one layer down). Check the
+                `mc` alias/credentials for ch_schema_snapshot_mc_target
+                and the remote's quota.
+
+  # Acked local-only host (no target): the configured gauge reads 0 and
+  # the offsite stamp is legitimately absent — must stay silent.
+  - interval: 1h
+    name: offsite not configured (acked local-only) — offsite_stale silent
+    input_series:
+      - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+3600x200'
+      - series: 'stellarindex_ch_schema_snapshot_offsite_configured{job="node_exporter", instance="r1:9100"}'
+        values: '0x200'
+    alert_rule_test:
+      - eval_time: 100h
+        alertname: stellarindex_ch_schema_snapshot_offsite_stale
+        exp_alerts: []
+
+  # Pre-gauge script version (no configured series at all): silent, so a
+  # rules deploy that outruns the script deploy does not page every host.
+  - interval: 1h
+    name: offsite configured gauge absent entirely — offsite_stale silent
+    input_series:
+      - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+3600x200'
+    alert_rule_test:
+      - eval_time: 100h
+        alertname: stellarindex_ch_schema_snapshot_offsite_stale
+        exp_alerts: []
+
+  # (RED) ch-schema-snapshot.service failed — early causal signal.
+  - interval: 1m
+    name: ch-schema-snapshot.service failed — unit_failed ticket
+    input_series:
+      - series: 'node_systemd_unit_state{job="node_exporter", instance="r1:9100", name="ch-schema-snapshot.service", state="failed"}'
+        values: '1x150'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: stellarindex_ch_schema_snapshot_unit_failed
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              name: ch-schema-snapshot.service
+              state: failed
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-schema-restore.md
+              summary: "ch-schema-snapshot.service failed on r1:9100"
+              description: |
+                The daily ClickHouse schema-snapshot unit exited non-zero
+                (exit 1 = nothing usable written, exit 2 = written but the
+                offsite push failed). The staleness alerts catch the
+                consequence 36 h / 72 h later; this is the causal signal.
+                `journalctl -u ch-schema-snapshot.service -n 50`.

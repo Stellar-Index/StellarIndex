@@ -45,6 +45,15 @@ run_postgres:        true
 # when we're ready to become a validator (ADR-0004).
 run_stellar_core:    false
 run_galexie:         true
+# Restarting galexie is never casual: its captive core cold-catches-up
+# for ~9 minutes on mainnet (2026-08-27 + 2026-08-29 r1 incidents). When
+# the role finds an EFFECTIVE change in a galexie input it has to restart
+# for (galexie.toml, captive-core cfg, /etc/default/galexie, the unit) or
+# a galexie_version bump, and galexie is active, it FAILS before writing
+# anything unless this is true. Pass `-e galexie_restart_ack=true` in a
+# maintenance window; never set it in inventory. `--check --diff` shows
+# the pending restart (RUNNING HANDLER [Restart galexie]) without it.
+galexie_restart_ack: false
 # stellar-rpc is NOT part of this role. Our indexer reads galexie's
 # MinIO output directly via ingest.ApplyLedgerMetadata, so
 # stellar-rpc's JSON-RPC surface isn't on the Stellar Index data

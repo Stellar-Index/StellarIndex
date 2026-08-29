@@ -15,6 +15,7 @@
 - name: Bootstrap archival node
   hosts: archival_nodes
   become: true
+  force_handlers: true  # #307: a failure after an acked galexie render must still flush Restart galexie (else a permanent 'false same')
   gather_facts: true
 
   pre_tasks:

@@ -999,6 +999,16 @@ tests:
                 `stellarindex_ingest_gap_max_size_ledgers` gauge stops
                 updating — gauges read stale value until restart.
 
+                Three clauses: (1) the per-target last-success stamp is
+                older than 8h; (2) the runs_total metric is absent for 15m
+                (aggregator fully down); (3) the target has errored both now
+                and 8h ago and has had NO last-success stamp in 8h — a
+                scan that has never once succeeded in this process life
+                (no cursor row → nothing to re-emit) produces no stamp for
+                clause 1 to age, and its error counter satisfies clause 2's
+                "runs_total present", so before 2026-08-28 that target
+                never fired anything.
+
                 Likely causes: aggregator binary crash-looping; Postgres
                 connection-pool exhaustion causing every scan to hit the
                 per-target Go timeout / SQL statement_timeout and increment
@@ -1039,6 +1049,16 @@ tests:
                 `stellarindex_ingest_gap_max_size_ledgers` gauge stops
                 updating — gauges read stale value until restart.
 
+                Three clauses: (1) the per-target last-success stamp is
+                older than 8h; (2) the runs_total metric is absent for 15m
+                (aggregator fully down); (3) the target has errored both now
+                and 8h ago and has had NO last-success stamp in 8h — a
+                scan that has never once succeeded in this process life
+                (no cursor row → nothing to re-emit) produces no stamp for
+                clause 1 to age, and its error counter satisfies clause 2's
+                "runs_total present", so before 2026-08-28 that target
+                never fired anything.
+
                 Likely causes: aggregator binary crash-looping; Postgres
                 connection-pool exhaustion causing every scan to hit the
                 per-target Go timeout / SQL statement_timeout and increment
@@ -1053,6 +1073,27 @@ tests:
                 climbing?
 
                 Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+
+  # ── guard: restart with no scan due (2026-08-29 09:55Z r1 false-fire)
+  # The seeded schedule (persisted scan cursor) defers every scan for
+  # hours after a deploy restart, so no Inc() runs; until the process
+  # pre-registered the runs_total series at 0 the whole family was
+  # absent and the absent_over_time[15m] clause read "no scan due yet"
+  # as "detector dead". Series present at 0 for 30m + a fresh
+  # last_success stamp (re-emitted from the cursor) must stay silent.
+  - interval: 1m
+    name: a restarted detector with runs_total pre-registered at 0 and no scan due raises nothing
+    input_series:
+      - series: 'stellarindex_ingest_gap_detector_last_success_unix{job="stellarindex_aggregator",instance="r1:9102",source="sdex",table="trades"}'
+        values: '0+0x40'
+      - series: 'stellarindex_ingest_gap_detector_runs_total{job="stellarindex_aggregator",instance="r1:9102",source="sdex",table="trades",outcome="ok"}'
+        values: '0+0x40'
+      - series: 'stellarindex_ingest_gap_detector_runs_total{job="stellarindex_aggregator",instance="r1:9102",source="sdex",table="trades",outcome="error"}'
+        values: '0+0x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_ingest_gap_detector_silent
+        exp_alerts: []
 
   # ── guard: a healthy detector (fresh stamp + live counter) ────────
   - interval: 1m

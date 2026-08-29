@@ -1,6 +1,6 @@
 ---
 title: Runbook — assets-popular-priceless
-last_verified: 2026-08-25
+last_verified: 2026-08-28
 status: living
 severity: P3
 ---
@@ -83,10 +83,22 @@ psql "$STELLARINDEX_POSTGRES_DSN" -c \
       AND bucket >= now() - INTERVAL '24 hours'
     GROUP BY 1 ORDER BY 2 DESC;"
 
-# Is the asset even ELIGIBLE for a catalogue price? A Soroban-native
-# asset is NOT (see the decision tree) — this returns 0 rows for one.
+# Is the asset in a catalogue spine? Classic assets via classic_assets;
+# Soroban-native contracts via discovered_assets + an asset_volume_24h
+# row (the listing AND detail spines share that bound since 2026-08-28).
 psql "$STELLARINDEX_POSTGRES_DSN" -c \
-  "SELECT count(*) FROM classic_assets WHERE asset_id = '<asset_id>';"
+  "SELECT (SELECT count(*) FROM classic_assets   WHERE asset_id = '<asset_id>') AS classic,
+          (SELECT count(*) FROM discovered_assets WHERE contract_id = '<asset_id>') AS discovered,
+          (SELECT count(*) FROM asset_volume_24h  WHERE asset_id = '<asset_id>') AS vol_rollup;"
+
+# Which DIRECTION is the XLM leg stored in? Only (CAS3J…/native, <id>)
+# rows == the SAC-as-base class (see the decision tree).
+psql "$STELLARINDEX_POSTGRES_DSN" -c \
+  "SELECT base_asset, quote_asset, count(*) AS buckets, max(bucket) AS last_seen
+     FROM prices_1m
+    WHERE (base_asset = '<asset_id>' OR quote_asset = '<asset_id>')
+      AND bucket >= now() - INTERVAL '24 hours'
+    GROUP BY 1, 2 ORDER BY 3 DESC;"
 ```
 
 Note the gate itself is direction-safe — `Store.PairMarketSubstance`
@@ -101,7 +113,8 @@ the *ad-hoc diagnosis query* that misleads, not the production measurement.
 | Asset trades only against another classic asset with no USD path | No triangulation route to USD | Confirm the intermediate has a USD price; add the pair to the chain if warranted |
 | Asset is a SAC form of a classic that IS priced | Alias fold gap | Confirm `[supply].sac_wrappers` maps the SAC; the alias registry should fold it (task #28 Part A) |
 | Asset is genuinely a scam we should not price | It should be labelled/withheld, not surfaced here | Add it to the scam directory / withhold path so it stops counting |
-| Asset is **Soroban-native** (56-char `C…` contract, no classic twin) and `classic_assets` has no row for it | **Structural — it can never receive a catalogue price.** Both catalogue price queries are built on `classic_assets` (`FROM classic_assets ca` in the listing, `JOIN classic_assets ca ON ca.asset_id = chosen.asset_id` in the detail, `internal/storage/timescale/asset_catalogue.go`), and that table holds **zero** contract assets. The substance gate is NOT the blocker — it runs and *allows* the asset, which is why `price_usd` is null with **no withheld reason** | Requires extending the catalogue price path to Soroban-native assets. Do **not** paper over it by recording a synthetic withheld verdict — that converts a real coverage gap into a silent one, which is precisely what this alert exists to catch |
+| Asset is **Soroban-native** (56-char `C…` contract, no classic twin) and `classic_assets` has no row for it | Both catalogue spines now UNION `discovered_assets` (bounded by `asset_volume_24h`), so a TRADED contract asset has a catalogue row. If it still has none, it has no 24h volume rollup row — check `asset_volume_24h` and the `assetvolrollup` worker. The substance gate is NOT the blocker — it runs and *allows* the asset, which is why `price_usd` is null with **no withheld reason** | Confirm the rollup row exists; then work the direction row below. Do **not** paper over it by recording a synthetic withheld verdict — that converts a real coverage gap into a silent one, which is precisely what this alert exists to catch |
+| Asset's XLM market is stored with **XLM (native or the SAC `CAS3J…`) as BASE** — `SELECT base_asset, quote_asset, count(*) FROM prices_1m WHERE (base_asset = '<id>' OR quote_asset = '<id>') AND bucket >= now() - INTERVAL '24 hours' GROUP BY 1,2` shows only `(CAS3J…, <id>)` rows | **Direction gap (fixed 2026-08-28).** Sources that write SWAP direction (aquarius: base = `token_in`, no `canonical.Orient`) store a token bought with XLM as `(XLM-SAC, token)`. Until 2026-08-28 every price path read the XLM leg base-side only (`base_asset = X AND quote_asset IN (native, SAC)`), so that market was invisible to the catalogue `asset_vs_xlm*` CTEs, to `TransitiveUSDPrice.hop_usd`, and to the tripwire's `priced_direct` — while the volume path read both directions, which is why the asset had $730k/7d and no price (r1, `CBIJ…`/`CAUP7…`) | Every read path now has an inverted arm (base-side preferred). If this fires again on a SAC-as-base asset, one of the four lists/arms has drifted — `TestProxyQuoteLists_Lockstep` and `TestXLMSacAsBase_PriceableThroughEveryPath` are the guards; run them first |
 
 **Soroban assets: SAC wrapper vs Soroban-native.** These behave completely
 differently and the distinction is the first thing to establish:
@@ -119,11 +132,21 @@ narrow, but it is a genuine capability gap, not a tuning problem.
 
 Note also that a Soroban-native asset may only be reachable through
 *another* Soroban-native asset: `CAUP7` trades against nothing but `CBIJ`,
-so pricing it needs a **transitive hop** (`CAUP7/CBIJ × CBIJ_usd`). The
-catalogue prices the long tail through exactly two hard-coded CTEs —
-`direct_usd` and `asset_vs_xlm` — with no transitive step, and the
-multi-hop graph router (`MaxHops=3`) only operates over `cfg.Pairs`, a
-~10-pair operator allow-list that does not serve the long tail.
+so pricing it needs a **transitive hop** (`CAUP7/CBIJ × CBIJ_usd`), which
+`Store.TransitiveUSDPrice` provides (one hop, both legs substance-gated
+by the API). The hop's own USD price is resolved: hop IS XLM (either
+identity) → `xlm_usd`; else direct USD proxy; else base-side XLM; else
+the INVERTED XLM market. The multi-hop graph router (`MaxHops=3`) only
+operates over `cfg.Pairs`, a ~10-pair operator allow-list that does not
+serve the long tail.
+
+**Keep the proxy lists AND the direction arms in lockstep.** Four places
+decide "what is a proxy": `coverageQuoteProxies` (tripwire — composed
+from the resolver's `usdProxyQuotes` + `xlmQuotes`), and the literal
+IN-lists in `listAssetsBaseSelect` + `getAssetBySlugSQL`. Each XLM-leg
+CTE has a base-side arm and an inverted arm. `TestProxyQuoteLists_Lockstep`
+(`internal/storage/timescale/proxy_lockstep_test.go`) fails if any of
+them drift.
 
 ## Decision tree — `stellarindex_priceless_coverage_check_stale`
 
@@ -168,6 +191,13 @@ multi-hop graph router (`MaxHops=3`) only operates over `cfg.Pairs`, a
 
 - 2026-08-25 — initial draft alongside the priceless-popular tripwire
   (task #28 Part B).
+- 2026-08-28 — root cause of the `CBIJ…`/`CAUP7…` firing found and fixed:
+  the XLM leg was stored with the **XLM SAC as BASE** (aquarius writes
+  swap direction) and every price path read it base-side only, while
+  the volume path read both directions. Added the direction row, the
+  direction query, and the lockstep note; the Soroban-native row now
+  describes the shared `discovered_assets` spine rather than a
+  structural impossibility.
 - 2026-08-27 — added the **Soroban-native** decision-tree row after the
   `CAUP7…` firing was misdiagnosed three times (as a routing gap, then a
   thin-market/`MinBuckets` problem, then a pair-direction bug). None were

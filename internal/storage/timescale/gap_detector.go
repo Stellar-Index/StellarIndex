@@ -206,6 +206,7 @@ func RunGapDetector(ctx context.Context, store *Store, logger *slog.Logger) erro
 	// so every deploy / crash-loop iteration re-ran the 6h-cadence
 	// soroban_events + sdex scans immediately — each a >10-min IO
 	// storm on r1 — regardless of when they last ran.
+	preregisterGapDetectorSeries(DefaultGapDetectorTargets)
 	snapshots, err := store.ListSourceCoverage(ctx)
 	if err != nil {
 		logger.Warn("gap-detector: read source_coverage_snapshots for boot seed failed; gauges stay empty until first scan", "err", err)
@@ -227,6 +228,35 @@ func RunGapDetector(ctx context.Context, store *Store, logger *slog.Logger) erro
 			return ctx.Err()
 		case <-ticker.C:
 			runOneGapDetectorCycleScheduled(ctx, store, logger, DefaultGapDetectorTargets, lastScan)
+		}
+	}
+}
+
+// gapDetectorRunOutcomes is every value the gap detector emits on the
+// `outcome` label of stellarindex_ingest_gap_detector_runs_total.
+var gapDetectorRunOutcomes = []string{"ok", "error"}
+
+// preregisterGapDetectorSeries materialises the runs_total counter at 0
+// for every (source, table, outcome) the detector can emit, so a live
+// process ALWAYS exposes the series. Same F-0033 contract as
+// obs.seedBoundedLabelSeries, applied here because the (source, table)
+// label set is owned by DefaultGapDetectorTargets, not the obs package.
+//
+// Why it matters: a CounterVec only creates a series on first Inc(),
+// and since the schedule is seeded from the persisted scan cursor
+// (see [seedGapDetectorState]) a restart can legitimately run NO scan
+// for hours. Without pre-registration the whole family was absent for
+// that window and the `stellarindex_ingest_gap_detector_silent` alert's
+// `absent_over_time(runs_total[15m])` clause read "no scan due yet" as
+// "detector dead" — the 2026-08-29 09:55Z r1 false-fire, 26 min after
+// the v0.49.0 deploy restarted the aggregator. With the series present
+// at 0 that clause is reserved for the process-dead case it was written
+// for; the staleness clause on last_success_unix still covers a wedged
+// target.
+func preregisterGapDetectorSeries(targets []GapDetectorTarget) {
+	for _, t := range targets {
+		for _, outcome := range gapDetectorRunOutcomes {
+			obs.IngestGapDetectorRunsTotal.WithLabelValues(t.Source, t.Table, outcome).Add(0)
 		}
 	}
 }
