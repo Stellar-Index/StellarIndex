@@ -3058,8 +3058,10 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
    cannot fix the affected accounts). Use the ALREADY-PROVEN D2
    script, not a bespoke ch-backfill:**
    ```
-   run-heavy-job.sh d2-p63 /usr/local/sbin/d2-ordinal-reproject.sh 63 63
-   run-heavy-job.sh d2-p38 /usr/local/sbin/d2-ordinal-reproject.sh 38 38
+   # ZFS snapshot of data/clickhouse first, then the explicit ack
+   # (docs/operations/clickhouse-destructive-ddl.md)
+   D2_FORCE_DROP=yes run-heavy-job.sh d2-p63 /usr/local/sbin/d2-ordinal-reproject.sh 63 63
+   D2_FORCE_DROP=yes run-heavy-job.sh d2-p38 /usr/local/sbin/d2-ordinal-reproject.sh 38 38
    ```
    Recomputing an already-ordinaled range is idempotent (the D2 doc
    proves the formula reproduces live-written ordinals EXACTLY above
