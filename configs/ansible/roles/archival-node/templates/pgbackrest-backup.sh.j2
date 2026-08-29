@@ -44,18 +44,32 @@ if [ "$(date +%u)" -eq 7 ]; then TYPE=full; else TYPE="diff"; fi
 # repo1-path; repo2 is s3 and carries repo2-type). Sorted numerically so
 # repo1 (local, fast) always runs first. Unreadable/absent conf → repo1
 # only, exactly the pre-2026-08-29 behaviour.
+# REPO_COUNT is counted by hand rather than with bash's array-length
+# idiom (dollar, brace, hash): ansible renders this file through Jinja,
+# where brace-hash OPENS A COMMENT — everything after it is swallowed and
+# the template task dies with "Missing end of comment tag". That is not
+# theoretical: on r1 (2026-08-29) it meant the #305 wrapper could never be
+# applied, so the nightly job kept running the pre-repo2 command and the
+# off-site repo never got a base backup from it.
 REPOS=()
+REPO_COUNT=0
 while IFS= read -r n; do
-  [ -n "$n" ] && REPOS+=("$n")
+  if [ -n "$n" ]; then
+    REPOS+=("$n")
+    REPO_COUNT=$((REPO_COUNT + 1))
+  fi
 done < <(grep -Eo '^repo[0-9]+-' "$CONF" 2>/dev/null | sed -E 's/^repo([0-9]+)-$/\1/' | sort -un)
-[ "${#REPOS[@]}" -gt 0 ] || REPOS=(1)
+if [ "$REPO_COUNT" -eq 0 ]; then
+  REPOS=(1)
+  REPO_COUNT=1
+fi
 
 # rc of the first failing repo — pgbackrest's own exit code, so the unit
 # log still says which error class it was.
 RC=0
 METRIC_LINES=()
 for repo in "${REPOS[@]}"; do
-  if [ "${#REPOS[@]}" -eq 1 ]; then
+  if [ "$REPO_COUNT" -eq 1 ]; then
     CMD=(pgbackrest --stanza="$STANZA" --type="$TYPE" backup)
   else
     CMD=(pgbackrest --stanza="$STANZA" --repo="$repo" --type="$TYPE" backup)
