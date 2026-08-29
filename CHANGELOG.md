@@ -277,6 +277,23 @@ against.
   units — so neither direction can drift. Ansible-managed hosts were
   never affected (their daemons read `/etc/default/stellarindex`) and
   nothing about r1's rendered units changes. (#292)
+- **`stellarindex_ingestion_duplicate_flood` can fire in its own target
+  scenario.** The rule joined `rate(...{outcome="duplicate"}[10m]) > 0.5`
+  with `and on (source) rate(...{outcome="new"}[10m]) == 0`, and an
+  `and` join needs the right-hand series to EXIST.
+  `stellarindex_trade_insert_outcome_total` is call-site-seeded
+  (`WithLabelValues` on the trade-insert path) and its `source` label is
+  config-dependent, so internal/obs does not pre-seed it — a source
+  whose every insert since process start hit the conflict path never
+  creates the `outcome="new"` child, the join matched nothing, and the
+  alert stayed silent in exactly the post-restart cursor-replay flood it
+  exists for. Now `unless on (source) rate(...{outcome="new"}[10m]) > 0`,
+  which reads an absent child and a zero rate identically (the
+  absent-series idiom already used by the `insert_stale` sibling). Both
+  rule trees. The promtool case that pinned the gap as a KNOWN GAP now
+  asserts the alert fires, with a companion guard proving a
+  below-threshold duplicate rate with the same absent child stays silent
+  (red on the pre-fix rule: `got:[]`). (#302)
 - **Gap detector pre-registers `runs_total` at 0 so a restart cannot read
   as a dead detector.** `stellarindex_ingest_gap_detector_runs_total` is a
   CounterVec that only materialises a series on first `Inc()`, and since

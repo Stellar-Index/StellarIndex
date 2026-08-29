@@ -20,7 +20,11 @@ severity: P2
 ## Symptoms
 
 - `stellarindex_trade_insert_outcome_total{source=...,outcome="duplicate"}` > 0.5/sec for ≥10 min
-- `stellarindex_trade_insert_outcome_total{source=...,outcome="new"}` == 0 over the same window
+- `stellarindex_trade_insert_outcome_total{source=...,outcome="new"}` == 0 over the same window,
+  **or absent entirely** — the counter is call-site-seeded, so a source that has landed no new
+  row since process start has no `outcome="new"` child at all. The rule uses
+  `unless on (source) rate(new[10m]) > 0` (#302) precisely so absent and zero read the same;
+  don't read a missing line in the curl below as "the alert must be wrong".
 - `stellarindex_source_events_total{source=...}` still climbing — events ARE being decoded
 - `stellarindex_cursor_last_ledger{source="ledgerstream"}` still advancing
 - `psql trades` shows `max(ts) WHERE source = <X>` frozen for hours
