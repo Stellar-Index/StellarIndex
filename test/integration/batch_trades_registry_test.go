@@ -46,7 +46,7 @@ func TestBatchInsertTrades_PopulatesClassicAssetRegistry(t *testing.T) {
 		t.Fatalf("NewPair: %v", err)
 	}
 
-	timescale.ResetAssetRegistryDedupeForTest()
+	store.ResetAssetRegistryDedupeForTest()
 	ts := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
 
 	mkTrade := func(ledger uint32, txTail rune) c.Trade {
@@ -93,7 +93,7 @@ func TestBatchInsertTrades_PopulatesClassicAssetRegistry(t *testing.T) {
 	// A replay of the SAME batch (cold dedupe cache = simulated restart) must
 	// NOT inflate observation_count: the hook only fires for genuinely-landed
 	// (xmax=0) rows, matching the single-row path's F-1243 guard.
-	timescale.ResetAssetRegistryDedupeForTest()
+	store.ResetAssetRegistryDedupeForTest()
 	if err := store.BatchInsertTrades(ctx, batch); err != nil {
 		t.Fatalf("BatchInsertTrades (replay): %v", err)
 	}
