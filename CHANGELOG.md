@@ -64,6 +64,23 @@ against.
   when a venue VWAP cannot be computed (`leg_dispersion=uncomputable`,
   `TestCompositeReference_UncomputableDispersionFailsClosed`).
 
+- **No-orphan-work contract + daily `orphan-branches` tripwire.** On
+  2026-08-27 `fix/priceless-structural-unpriceable` was pushed with no
+  PR and no backlog line; on 2026-08-28 a different agent re-diagnosed
+  `stellarindex_assets_popular_priceless` from scratch and fixed it
+  differently (#254), and the orphan (plus a postmortem branch, now
+  #255) surfaced only via a manual branch audit. The contract is stated
+  once in AGENTS.md (push ⇒ PR same session; prior-art check via
+  `gh pr list --state all --search`, `git branch -r`, backlog + runbook
+  grep; PR names the alert and root cause vs symptom; supersede by
+  closing with a comment) and cross-referenced from CONTRIBUTING.md and
+  CLAUDE.md. The PR template gains **Alert / finding** and **Prior
+  art** fields. `.github/workflows/orphan-branches.yml` (daily +
+  `workflow_dispatch`, `contents:read` / `pull-requests:read` /
+  `issues:write`) lists every remote branch other than `main` /
+  `old-*` / `archive*` with no open-or-merged PR and a last commit
+  >24h old, and opens/updates a single "Orphan branches (no PR)" issue
+  (closes it when the list is empty).
 - **`stellarindex_ingest_gap_detector_silent` third clause (both rule
   trees).** The alert's `absent_over_time(runs_total[15m])` clause is
   satisfied by the `outcome="error"` counter, and a target that has never

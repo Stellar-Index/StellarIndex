@@ -24,6 +24,23 @@ The full policy lives in docs/engineering-standards.md.
 - Closes #
 - Related to #
 
+## Alert / finding
+
+<!-- Name the alert, audit finding or symptom this addresses, and
+     state root cause vs symptom (see AGENTS.md "No orphan work"). -->
+
+- **Alert/finding:**
+- **Root cause (not symptom):**
+
+## Prior art
+
+<!-- Result of `gh pr list --state all --search "<keywords>"`,
+     `git branch -r | grep -i <keyword>`, backlog + runbook grep.
+     Write `none`, or `#NNN (superseded because …)` — and close the
+     superseded PR with a comment saying why. -->
+
+- **Prior art:**
+
 ## Definition of Done checklist
 
 ### Mechanical (CI enforces; tick when green locally)
