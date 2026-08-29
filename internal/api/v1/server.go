@@ -298,6 +298,8 @@ type Server struct {
 	triangulated         TriangulatedPriceLooker
 	cdnEnabled           bool
 	statusBackend        StatusBackend
+	backupMetrics        backupMetricsSource
+	backups              backupsCache
 	archiveReportPath    string
 	regionName           string
 	regionDeployment     string
@@ -1056,6 +1058,13 @@ type Options struct {
 	// doesn't exist yet → 404 (fresh host, daemon hasn't run).
 	ArchiveReportPath string
 
+	// BackupMetrics, when non-nil, backs GET /v1/diagnostics/backups
+	// (the public status page's Backups panel). Nil derives it from
+	// StatusBackend when that is a *PrometheusStatusBackend — the
+	// production case needs no extra wiring; a deployment with no
+	// Prometheus gets a 503 from the endpoint. Tests supply a fake.
+	BackupMetrics BackupMetricsSource
+
 	// RegionName + RegionDeployment label /v1/status responses.
 	// Default to "unknown" / "production" when unset.
 	RegionName       string
@@ -1298,6 +1307,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		triangulated:           opts.Triangulated,
 		cdnEnabled:             opts.CDNEnabled,
 		statusBackend:          opts.StatusBackend,
+		backupMetrics:          backupMetricsFor(opts),
 		archiveReportPath:      opts.ArchiveReportPath,
 		regionName:             valueOr(opts.RegionName, "unknown"),
 		regionDeployment:       valueOr(opts.RegionDeployment, "production"),
@@ -1648,6 +1658,11 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// the JSON file the daily verify timer writes. Backs the explorer
 	// /diagnostics archive panel. 503 when unconfigured, 404 pre-first-run.
 	s.mux.HandleFunc("GET /v1/diagnostics/archive", s.handleDiagnosticsArchive)
+	// Backup + DR-evidence freshness vs. SLO (pgBackRest full/diff/WAL,
+	// offsite repo, restore drill, ClickHouse schema snapshot), read
+	// from Prometheus. Backs the public status page's Backups panel.
+	// 503 when no metrics backend is wired.
+	s.mux.HandleFunc("GET /v1/diagnostics/backups", s.handleDiagnosticsBackups)
 	s.mux.HandleFunc("GET /v1/coverage", s.handleCoverageVerdicts)
 
 	// Protocols pillar (explorer-ux-plan §5): directory + per-protocol
@@ -2364,4 +2379,19 @@ Sitemap: https://stellarindex.io/sitemap.xml
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	_, _ = w.Write([]byte(body))
+}
+
+// backupMetricsFor resolves the /v1/diagnostics/backups metrics seam:
+// an explicit Options.BackupMetrics wins; otherwise the status
+// backend is reused when it can answer raw PromQL (the production
+// *PrometheusStatusBackend). Any other StatusBackend (test fakes,
+// nil) leaves the endpoint unconfigured → 503.
+func backupMetricsFor(opts Options) backupMetricsSource {
+	if opts.BackupMetrics != nil {
+		return opts.BackupMetrics
+	}
+	if src, ok := opts.StatusBackend.(backupMetricsSource); ok && src != nil {
+		return src
+	}
+	return nil
 }
