@@ -48,7 +48,6 @@ func registerAppMetrics() {
 		ProjectorEventsDecoded,
 		ProjectorCycleDurationSeconds,
 		ProjectorWedged,
-		APICacheOpsTotal,
 
 		SourceEventsTotal,
 		SourceLastEventUnix,
@@ -97,8 +96,6 @@ func registerAppMetrics() {
 		AggregatorWindowTruncatedTotal,
 		AggregatorStreamPublishTotal,
 		AnomalyWarnTotal,
-		APIStreamSubscribeTotal,
-		APICORSDecisionsTotal,
 		CustomerWebhookDeliveryAttemptsTotal,
 		CustomerWebhookFanoutFailuresTotal,
 		AggregatorDroppedTradesTotal,
@@ -129,8 +126,24 @@ func registerAppMetrics() {
 
 		MarketsSkippedRowsTotal,
 	)
+	registerAPIServingMetrics()
 	registerFreezeLifecycleMetrics()
 	registerAppMetricsTail()
+}
+
+// registerAPIServingMetrics registers the API serving-path family — the
+// read-path caches, the per-row sparkline result counter, the stream
+// subscription counter, and the CORS decision counter. Peeled off
+// [registerAppMetrics] for the same reason as the freeze-lifecycle group:
+// the set only grows, and the funlen ceiling is what forces the split
+// rather than a silently ever-longer function.
+func registerAPIServingMetrics() {
+	Registry.MustRegister(
+		APICacheOpsTotal,
+		APISparkline7dRowsTotal,
+		APIStreamSubscribeTotal,
+		APICORSDecisionsTotal,
+	)
 }
 
 // registerFreezeLifecycleMetrics registers the ADR-0019 freeze-lifecycle
@@ -806,6 +819,33 @@ var APICacheOpsTotal = prometheus.NewCounterVec(
 		Help: "Cache reads through API in-memory cache wrappers, labelled by cache name + op + result (hit|miss).",
 	},
 	[]string{"cache", "op", "result"},
+)
+
+// APISparkline7dRowsTotal — per listing ROW, whether the requested
+// 7-day price series came back with at least one actual price
+// (`served`) or with nothing to draw (`empty`). Only rows that publish
+// a price are counted: a scam-gated / substanceless / priceless row
+// deliberately has no chart and is never looked up.
+//
+// WHY: the batch reader returns a bucket skeleton (7 days, null price)
+// for EVERY id it is asked about, so "the map had an entry" is not
+// evidence of data. #355 shipped a chart column of dashes for the whole
+// verified top of /assets — the listing asked for the series under the
+// catalogue SLUG ("xlm", "aqua") instead of the Stellar asset_id — and
+// nothing anywhere reported it: no error, no log, a byte-identical
+// response. A ratio on this counter is the detector.
+//
+// Alert idea: `rate(stellarindex_api_sparkline7d_rows_total{result=
+// "empty"}[15m]) / rate(stellarindex_api_sparkline7d_rows_total[15m])
+// > 0.5` sustained 30 min means half the priced rows on the directory
+// render an empty chart — a lookup-key or pricing-pipeline regression,
+// not a quiet market.
+var APISparkline7dRowsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_api_sparkline7d_rows_total",
+		Help: "Priced listing rows for which a 7d sparkline was requested, by result (served|empty).",
+	},
+	[]string{"result"},
 )
 
 // ─── Ingestion-layer metrics ─────────────────────────────────────
