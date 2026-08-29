@@ -17,6 +17,10 @@ against.
 
 ### Fixed
 
+- **pgBackRest repo2 retention was hardcoded to 4 fulls** in `pgbackrest.conf.j2`, ignoring
+  `pgbackrest_repo2_retention_full/diff` (lean defaults 1 / 7 d ≈ $12–17/month); the template now
+  renders the variables plus `repo2-retention-archive-type=diff`. Caught by a masked diff of the
+  rendered file against r1's live config before the first off-site apply (2026-08-29).
 - **`ops_batch` / `api_serving` ClickHouse drop-ins no longer restart
   `clickhouse-server`.** Both tasks in
   `archival-node/tasks/20-clickhouse-serving-profile.yml` carried
