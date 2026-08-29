@@ -30,7 +30,7 @@ import (
 // [Store.InsertTrade] is what protects post-restart replay. This
 // test isolates the post-restart shape by clearing the dedupe
 // cache between the original insert and the replay via
-// [timescale.ResetAssetRegistryDedupeForTest].
+// [timescale.Store.ResetAssetRegistryDedupeForTest].
 //
 // Three subtests pin the contract:
 //
@@ -76,7 +76,7 @@ func TestAssetRegistry_DuplicateReplayDoesNotMutateCounters(t *testing.T) {
 
 	// Reset the dedupe cache between scenarios so each subtest
 	// starts from the post-restart shape (the audit's risk shape).
-	timescale.ResetAssetRegistryDedupeForTest()
+	store.ResetAssetRegistryDedupeForTest()
 
 	baseTS := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
 
@@ -112,7 +112,7 @@ func TestAssetRegistry_DuplicateReplayDoesNotMutateCounters(t *testing.T) {
 	// hits InsertTrade again. Without the wave-51 RowsAffected
 	// guard the registry hook would fire and observation_count
 	// would advance to 2.
-	timescale.ResetAssetRegistryDedupeForTest()
+	store.ResetAssetRegistryDedupeForTest()
 	if err := store.InsertTrade(ctx, original); err != nil {
 		t.Fatalf("InsertTrade (replay): %v", err)
 	}
@@ -127,7 +127,7 @@ func TestAssetRegistry_DuplicateReplayDoesNotMutateCounters(t *testing.T) {
 	// Scenario 2 — a NEW trade on the same asset DOES advance the
 	// counter once the dedupe cache is cleared (proves the guard
 	// is keyed on RowsAffected, not on asset identity).
-	timescale.ResetAssetRegistryDedupeForTest()
+	store.ResetAssetRegistryDedupeForTest()
 	newer := mkTrade(52_000_001, 'b', baseTS.Add(time.Second))
 	if err := store.InsertTrade(ctx, newer); err != nil {
 		t.Fatalf("InsertTrade (newer trade, same asset): %v", err)
@@ -144,7 +144,7 @@ func TestAssetRegistry_DuplicateReplayDoesNotMutateCounters(t *testing.T) {
 	// cache) again must NOT advance to 3. This pins the post-
 	// restart-stable contract: the registry only ever advances
 	// when a new physical trade row is stored.
-	timescale.ResetAssetRegistryDedupeForTest()
+	store.ResetAssetRegistryDedupeForTest()
 	if err := store.InsertTrade(ctx, newer); err != nil {
 		t.Fatalf("InsertTrade (replay of newer): %v", err)
 	}

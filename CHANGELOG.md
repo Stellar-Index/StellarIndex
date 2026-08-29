@@ -264,6 +264,31 @@ against.
   wrapper, extracted from the ansible task). See
   `docs/operations/clickhouse-ops-batch-profile.md`.
 
+- **Status page rendered stale / unreachable state as fresh green
+  (web-status-1/2/4/6, audit 2026-08-28).** `/status` (a) dropped the
+  `/v1/diagnostics/ingestion` envelope's `flags.stale`, so a failed
+  cursors/network-stats read (zero-valued fields) painted "Lag from tip
+  0s" in green and "Latest ledger 0" — and on the lean nets fed a 0 s
+  lag into the indexer roll-up; (b) kept "All systems operational" and
+  a pulsing green "Live" for as long as a tab stayed open during a total
+  API outage, because the headline was derived from the retained
+  last-known snapshot with no regard for the poll error; (c) labelled
+  the coverage table with `backfill_coverage_as_of` (the API's
+  per-request assembly time, "4s ago" forever) while the completeness
+  verdicts it shows are dated by a daily timer, and claimed the detector
+  runs "every 5 min" (it is 30 min); (d) blanked operator notices the
+  moment the notices endpoint failed — the exact window a notice
+  announces. Now: stale snapshots carry a "stale · server degraded"
+  badge, unmeasured zeros render "—" and never vote in the lean-net
+  roll-up; after two failed polls (the DegradedBanner threshold) the
+  headline is "Status unknown", the pulse goes grey and reads "last
+  successful poll <age>", and the unreachable card sits above the
+  headline; each coverage row shows its real data age (30 min axis for
+  the gap detector, daily axis for compute-completeness) and an aged
+  verdict loses the green verified tone; notices are retained through
+  a failed poll with a "notices feed unreachable" marker and cleared
+  only by a successful response. Red-proof tests in
+  `web/explorer/src/app/status/StatusPageClient.test.tsx`.
 - **`pgbackrest.conf` template task printed the backup cipher passphrases
   and repo2 S3 key pair on `--check --diff`.** The task rendering
   `pgbackrest.conf.j2` had no `diff: false`, and the header comment
@@ -327,6 +352,35 @@ against.
   `scripts/ci/deploy-inputs-test.sh` runs the shipped Validate step
   against the injection and the malformed cases.
 
+- **Operator self-service key mint/revoke now audited (api-security-1,
+  audit 2026-08-28).** `POST /v1/account/keys` copied an operator
+  caller's tier verbatim into the child and recorded nothing — no
+  `X-Reason`, no `key.mint` row — so a compromised staff credential
+  could spawn further operator credentials that `POST /v1/admin/keys`
+  would have refused without a reason and logged. Tier inheritance
+  (staff rotation) is kept; operator-tier callers of
+  `POST /v1/account/keys` and `DELETE /v1/account/keys/{keyID}` now
+  need `X-Reason` (400 without) and land the same `key.mint` /
+  `key.revoke` audit rows as the admin routes. Customer-tier callers
+  are untouched.
+- **Rotated signup keys no longer 403 forever under email verification
+  (api-security-2, audit 2026-08-28).** With
+  `signup_require_email_verification` on (the default), a verified
+  `/v1/signup` customer who rotated via `POST /v1/account/keys` got a
+  `signup-<hash>` child with a zero `EmailVerifiedAt`, and nothing can
+  verify a non-signup KeyID after the fact — `RequireEmailVerified`
+  rejected the child permanently (and revoking the parent stranded the
+  customer). `auth.CreateAPIKeyRequest` gained `EmailVerifiedAt`; the
+  self-service mint copies the caller's stamp onto the child. Signup
+  and admin mints still leave it zero.
+- **`/v1/livez/lake` added to the unauthenticated-infra exemption and
+  the anonymous rate-limit skip (api-security-3, audit 2026-08-28).**
+  The ADR-0050 lake-route LB probe (#119) was added after
+  `isUnauthenticatedInfraPath` / `SkipHealthAndMetrics` were written and
+  missed both: under `apikey` / `sep10` auth mode every uncredentialed
+  probe 401'd (contradicting the OpenAPI `security: []` declaration),
+  and under `apikey_optional` it spent the anonymous per-IP bucket. The
+  exact-match lists and their pinning tests now carry the path.
 - **Outlier filter trimmed agreed price moves; `outlier_storm` measured
   its own artifact.** The published-VWAP filter scored every print
   against ONE band — the whole window's median ± 4 × 1.4826 × MAD — and
