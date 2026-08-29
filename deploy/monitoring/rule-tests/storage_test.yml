@@ -701,15 +701,19 @@ tests:
               component: storage
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-schema-restore.md
-              summary: "ClickHouse schema snapshot is 1d 12h 40m 0s old (daily timer)"
+              summary: "ClickHouse schema snapshot has recorded no full capture in > 36 h (daily timer)"
               description: |
                 ch-schema-snapshot.timer (daily, 03:40 UTC) has not
                 completed a full capture in over 36 h — one missed cycle
-                plus slack. The ClickHouse lake's ONLY backup is this
-                metadata copy (ADR-0043 §2.1); while it is stale, every
-                DDL change since the last good snapshot is unprotected and
-                a re-derive would rebuild against a schema that no longer
-                matches production.
+                plus slack — or has never completed one. The ClickHouse
+                lake's ONLY backup is this metadata copy (ADR-0043 §2.1);
+                while it is stale, every DDL change since the last good
+                snapshot is unprotected and a re-derive would rebuild
+                against a schema that no longer matches production.
+                The script stamps last_success ONLY on a clean run and
+                rewrites the textfile each run, so every-run-failed /
+                never-ran shows up as an ABSENT series, not an old one —
+                both shapes fire this alert.
                 Check `systemctl status ch-schema-snapshot.service` and
                 run `/usr/local/bin/ch-schema-snapshot.sh` by hand — it
                 refuses to write an empty or partial snapshot, so a
@@ -744,10 +748,11 @@ tests:
               component: storage
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-schema-restore.md
-              summary: "ClickHouse schema snapshot has not reached offsite storage in 3d 0h 40m 0s"
+              summary: "ClickHouse schema snapshot has not reached offsite storage in > 72 h"
               description: |
                 The daily schema snapshot is being written locally but its
-                offsite push has been failing for 3+ days, so the only
+                offsite push has been failing for 3+ days — or has never
+                succeeded since the target was configured — so the only
                 copy of the lake's DDL now lives on the same pool as the
                 lake (CS-111's failure shape, one layer down). Check the
                 `mc` alias/credentials for ch_schema_snapshot_mc_target
