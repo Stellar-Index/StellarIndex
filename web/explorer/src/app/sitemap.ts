@@ -2,6 +2,7 @@ import type { MetadataRoute } from 'next';
 
 import { API_BASE_URL } from '@/api/client';
 import { loadADRs } from '@/lib/adr';
+import { routeAvailable } from '@/lib/network-routes';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { loadArchitectureDocs } from '@/lib/architecture';
 import { loadBlogPosts } from '@/lib/blog';
@@ -86,12 +87,20 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     // NOT listed — they're robots:noindex (no SEO value / private), and a
     // noindex URL in the sitemap is a Search Console error
     // ("Submitted URL marked 'noindex'").
-  ].map((path) => ({
-    url: siteURL(path),
-    lastModified: now,
-    changeFrequency: path === '' ? 'daily' : 'weekly',
-    priority: path === '' ? 1 : 0.7,
-  }));
+    //
+    // #328: filtered through the per-network route table before emission.
+    // A test net's sitemap used to submit /markets, /anomalies,
+    // /divergences, /mev and the rest of the pricing surface to Search
+    // Console under the TEST NET's own canonical origin — pages that are
+    // structurally empty there, i.e. thin content, indexed on purpose.
+  ]
+    .filter((path) => routeAvailable(path === '' ? '/' : path))
+    .map((path) => ({
+      url: siteURL(path),
+      lastModified: now,
+      changeFrequency: path === '' ? 'daily' : ('weekly' as const),
+      priority: path === '' ? 1 : 0.7,
+    }));
 
   // Research pages: ADRs + curated architecture narratives. Both
   // surfaces are static-export pre-rendered and stable enough to

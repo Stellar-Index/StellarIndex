@@ -64,6 +64,30 @@ export interface NetworkInfo {
    * entirely (an always-503 probe would log an error on every page load).
    */
   accounts: boolean;
+  /**
+   * Whether this network has issued assets worth a browse surface.
+   * False on futurenet, which is a contracts-only protocol-preview
+   * chain: measured 2026-08-27 it carries 0 issued assets, so /assets,
+   * /issuers and the home "Top assets" grid are structurally empty
+   * there. Before #328 futurenet was special-cased by id on the
+   * homepage ONLY, so the nav still offered the empty pages.
+   */
+  hasAssets: boolean;
+  /**
+   * Whether this network has SDEX (classic order-book) trading worth a
+   * surface. False on futurenet for the same reason as [hasAssets] —
+   * 0 SDEX trades — which makes /sdex and /liquidity-pools empty
+   * rather than merely unpriced.
+   */
+  hasSdexActivity: boolean;
+  /**
+   * Whether this network has cross-chain bridge deployments (Circle
+   * CCTP, Rozo) worth a /bridges surface. Mainnet only — both are
+   * pubnet-only contract deployments, so /bridges renders an empty
+   * roster on the test nets. (This was already the SearchModal's
+   * shipped assertion before #328 moved it into the shared table.)
+   */
+  hasBridges: boolean;
 }
 
 // Ordered mainnet → testnet → futurenet (production first, protocol-upgrade
@@ -81,6 +105,9 @@ export const NETWORKS: NetworkInfo[] = [
     live: true,
     pricing: true,
     accounts: true,
+    hasAssets: true,
+    hasSdexActivity: true,
+    hasBridges: true,
   },
   {
     id: 'testnet',
@@ -94,6 +121,9 @@ export const NETWORKS: NetworkInfo[] = [
     live: true,
     pricing: false,
     accounts: false,
+    hasAssets: true,
+    hasSdexActivity: true,
+    hasBridges: false,
   },
   {
     id: 'futurenet',
@@ -107,6 +137,11 @@ export const NETWORKS: NetworkInfo[] = [
     live: true,
     pricing: false,
     accounts: false,
+    // Contracts-only preview chain — 0 issued assets, 0 SDEX trades
+    // (measured 2026-08-27). See the flags' docs on NetworkInfo.
+    hasAssets: false,
+    hasSdexActivity: false,
+    hasBridges: false,
   },
 ];
 

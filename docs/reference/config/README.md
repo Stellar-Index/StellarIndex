@@ -28,6 +28,7 @@ the `env:` column.
 | `region.id` | `string` | `r1` | — | Short region identifier, lowercase (r1/r2/r3). |
 | `region.name` | `string` | `London` | — | Human-readable region name (London, Ashburn, …). |
 | `region.home_domain` | `string` | `stellarindex.io` | — | DNS home domain for this org (used in stellar.toml + SCP quorum sub-quorum). |
+| `region.deployment` | `string` | `production` | — | Deployment tier this node reports in /v1/status's region block (production / testnet / futurenet / staging). Purely a label — nothing keys behaviour off it. |
 
 ### `[stellar]`
 
@@ -207,6 +208,7 @@ the `env:` column.
 | `api.streaming.max_streams_per_ip` | `int` | `20` | — | Maximum concurrently-held SSE stream connections per client IP across all stream endpoints (/v1/price/stream, /v1/price/tip/stream, /v1/observations/stream, /v1/ledger/stream). Guards against a single client exhausting file descriptors / goroutines by holding many stalled streams (C3-8 / CS-013). Over the cap a new stream is rejected with 503. 0 disables the per-IP cap; a separate global cap still bounds total concurrent streams. |
 | `api.streaming.max_concurrent_streams` | `int64` | `8192` | — | Global cap on simultaneous SSE connections across all stream endpoints, independent of the per-IP cap (guards against a flood of DISTINCT client IPs). Over the cap, a new connection is rejected with 503. <= 0 disables the global cap. |
 | `api.prometheus_url` | `string` | _(required)_ | — | Prometheus HTTP API root (e.g. http://localhost:9090) backing /v1/status. Empty leaves /v1/status serving an in-process surface (uptime + region only). |
+| `api.status_services` | `[]string` | `["indexer","aggregator"]` | — | Background services whose heartbeats /v1/status reports and rolls up (subset of: indexer, aggregator). Drop one only on a deployment that genuinely does not run it — a service omitted here can never be reported down. |
 | `api.archive_report_path` | `string` | `/var/lib/galexie/last-completeness-report.json` | — | Filesystem path of the archive-completeness daemon's latest JSON report (the -output-file of 'stellarindex-ops archive-completeness verify'; the systemd unit writes /var/lib/galexie/last-completeness-report.json). Backs GET /v1/diagnostics/archive. The endpoint 404s while the file doesn't exist yet and 503s when this is empty. |
 | `api.dashboard.base_url` | `string` | _(required)_ | — | Absolute URL of the explorer hosting the in-site dashboard (e.g. https://stellarindex.io). The magic-link callback URL embedded in emails is {base_url}/auth/callback?token=<plaintext>, and the post-login redirect lands on {base_url}/account. |
 | `api.dashboard.email_from` | `string` | `Stellar Index <hello@stellarindex.io>` | — | From: address for transactional emails (e.g. 'Stellar Index <hello@stellarindex.io>'). Must match a domain Resend has verified for the configured API key. |

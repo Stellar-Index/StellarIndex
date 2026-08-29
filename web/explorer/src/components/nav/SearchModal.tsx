@@ -9,21 +9,8 @@ import { createPortal } from 'react-dom';
 import { apiGet } from '@/api/client';
 import { useCoins, useVerifiedSlugs, type Coin } from '@/api/hooks';
 import { assetHrefFor } from '@/lib/fiat-slugs';
+import { availableRoutes } from '@/lib/network-routes';
 import { CURRENT_NETWORK } from '@/lib/networks';
-
-// Seed pages that are pricing/off-chain-only — dropped from search on the lean
-// test nets (all PROTOCOLS rows are dropped there too; see the search filter).
-const SEARCH_LEAN_HIDDEN = new Set([
-  '/exchanges',
-  '/markets',
-  '/lending',
-  '/aggregators',
-  '/oracles',
-  '/bridges',
-  '/anomalies',
-  '/divergences',
-  '/mev',
-]);
 import { truncateMiddle } from '@/lib/format';
 import { useDebouncedValue } from '@/lib/useDebouncedValue';
 import { useDialog } from '@/lib/useDialog';
@@ -731,9 +718,12 @@ export function search(
     .map(currencyResult);
   // On the lean test nets, drop the pricing/off-chain seed rows (they lead to
   // empty/inert pages there) and all bespoke-protocol rows (not indexed).
+  // Per-route availability comes from the shared table (#328) — search
+  // kept its own copy of the hidden set, which is how a page could be
+  // gated here and still carded on the /network hub.
   const seeds = CURRENT_NETWORK.pricing
     ? [...PROTOCOLS, ...STATIC_PAGES]
-    : STATIC_PAGES.filter((r) => !SEARCH_LEAN_HIDDEN.has(r.href));
+    : availableRoutes(STATIC_PAGES);
   const matchedOther = seeds.filter((r) => match(norm, r));
   return [
     ...direct,

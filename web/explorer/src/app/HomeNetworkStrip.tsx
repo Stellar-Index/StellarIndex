@@ -80,26 +80,42 @@ export function HomeNetworkStrip() {
   const xlmPrice = tipActive ? tipNumber : native.price;
   const xlmChange = native.change24hPct;
 
+  // #328: on a net with no aggregator both USD tiles are structurally "—"
+  // AND both link to /markets, which is empty there — so the strip sent
+  // the reader from a dash to a blank table. Drop them and narrow the
+  // grid rather than render two dead tiles pointing at a dead page; the
+  // chain-native tiles (assets, on-chain sources, ledger tip) carry the
+  // strip on those networks.
+  const pricing = CURRENT_NETWORK.pricing;
   return (
-    <section className="grid grid-cols-2 gap-3 md:grid-cols-5">
-      <Cell
-        label="24h volume"
-        value={
-          volume != null && Number.isFinite(volume) && volume > 0
-            ? `$${formatCompact(volume)}`
-            : '—'
-        }
-        sub="Stellar on-chain (SDEX + DEXes)"
-        href="/markets"
-      />
-      <Cell
-        label="Active markets"
-        value={
-          activeMarkets != null ? activeMarkets.toLocaleString('en-US') : '—'
-        }
-        sub="trading in last 24h"
-        href="/markets"
-      />
+    <section
+      className={cn(
+        'grid grid-cols-2 gap-3',
+        pricing ? 'md:grid-cols-5' : 'md:grid-cols-3',
+      )}
+    >
+      {pricing && (
+        <Cell
+          label="24h volume"
+          value={
+            volume != null && Number.isFinite(volume) && volume > 0
+              ? `$${formatCompact(volume)}`
+              : '—'
+          }
+          sub="Stellar on-chain (SDEX + DEXes)"
+          href="/markets"
+        />
+      )}
+      {pricing && (
+        <Cell
+          label="Active markets"
+          value={
+            activeMarkets != null ? activeMarkets.toLocaleString('en-US') : '—'
+          }
+          sub="trading in last 24h"
+          href="/markets"
+        />
+      )}
       <Cell
         label="Assets indexed"
         value={
@@ -122,7 +138,7 @@ export function HomeNetworkStrip() {
         sub={CURRENT_NETWORK.pricing ? 'exchange feeds live' : 'on-chain sources'}
         href="/sources"
       />
-      {xlmPrice != null ? (
+      {pricing && xlmPrice != null ? (
         <Cell
           label="XLM"
           value={`$${xlmPrice.toFixed(xlmPrice >= 1 ? 4 : 6)}`}

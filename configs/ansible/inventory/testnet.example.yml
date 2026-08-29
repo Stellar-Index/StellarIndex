@@ -20,6 +20,8 @@ all:
     region_id:           "testnet"
     region_name:         "FSN-testnet"
     home_domain:         "stellarindex.io"
+    # /v1/status region.deployment — this is NOT production (#328).
+    region_deployment:   "testnet"
     # Low-traffic test net on a shared host — relax the pubnet 32 GB RAM floor
     # to the VM's actual size.
     archival_node_min_ram_mb: 18000
