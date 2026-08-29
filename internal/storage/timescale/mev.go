@@ -111,34 +111,24 @@ func (s *Store) TradesForArbScan(ctx context.Context, since time.Time, limit int
 	return trades, usd, nil
 }
 
-// oracleUpdatesForMEVScanQuery is the OracleUpdatesForMEVScan SQL.
-// `asset NOT LIKE 'raw:%'` excludes the unmapped rows the oracle
-// capture-totality design records verbatim (canonical.AssetOracleRaw):
-// the liquidation_cascade correlator has no asset keying (any row in
-// the ledger bracket is evidence), so without this predicate a raw
-// row would manufacture a cascade candidate; the sandwich detector is
-// keyed by exact asset string and could never match one anyway.
-const oracleUpdatesForMEVScanQuery = `
+// OracleUpdatesForMEVScan returns recent ON-CHAIN oracle updates
+// (ledger > 0) published after `since`, ascending by ledger, capped
+// at `limit`. Satisfies mev.OracleScanner — the input for the
+// oracle_sandwich + liquidation_cascade detectors.
+func (s *Store) OracleUpdatesForMEVScan(ctx context.Context, since time.Time, limit int) ([]domain.MEVOracleRef, error) {
+	if limit <= 0 {
+		limit = 50_000
+	}
+	const q = `
         SELECT source, COALESCE(contract_id, ''), ledger, tx_hash, op_index,
                asset, quote, ts
           FROM oracle_updates
          WHERE ts > $1
            AND ledger > 0
-           AND asset NOT LIKE 'raw:%'
          ORDER BY ledger ASC, tx_hash ASC, op_index ASC
          LIMIT $2
     `
-
-// OracleUpdatesForMEVScan returns recent ON-CHAIN oracle updates
-// (ledger > 0, mapped assets only — see oracleUpdatesForMEVScanQuery)
-// published after `since`, ascending by ledger, capped at `limit`.
-// Satisfies mev.OracleScanner — the input for the oracle_sandwich +
-// liquidation_cascade detectors.
-func (s *Store) OracleUpdatesForMEVScan(ctx context.Context, since time.Time, limit int) ([]domain.MEVOracleRef, error) {
-	if limit <= 0 {
-		limit = 50_000
-	}
-	rows, err := s.db.QueryContext(ctx, oracleUpdatesForMEVScanQuery, since.UTC(), limit)
+	rows, err := s.db.QueryContext(ctx, q, since.UTC(), limit)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: OracleUpdatesForMEVScan: %w", err)
 	}

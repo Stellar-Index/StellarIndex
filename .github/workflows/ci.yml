@@ -179,10 +179,23 @@ jobs:
           name: coverage
           path: coverage.txt
 
-  integration-test:
-    name: integration tests (Docker)
+  integration-test-shard:
+    name: integration tests (Docker) shard ${{ matrix.shard }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
+    # 4-way shard (2026-08-29): main CI's wall-clock was ~23 min and this
+    # job alone was ~1230 s (20.5 min) — the suite has ~158 tests, zero
+    # t.Parallel(), one testcontainers set per test, so it ran strictly
+    # serially while every other job finished in <= 6 min. Each shard
+    # derives the same sorted `go test -list` and takes lines i mod 4
+    # (scripts/ci/integration-shard.sh; the partition property is pinned
+    # by scripts/ci/integration-shard-test.sh in import-checks). The
+    # `integration tests (Docker)` aggregate job below is the branch-
+    # protection required check; keep that name stable.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     # BLOCKING (CS-070). Wiring this job first surfaced accumulated rot (the
     # suite was only ever compiled, never run) — all fixed 2026-07-01: the
     # stale FXSources assertion (massive joined the registry), the markets
@@ -210,13 +223,38 @@ jobs:
             sleep $((i * 15))
           done
           echo "::error::go mod download failed after 3 attempts"; exit 1
-      - name: make test-integration
+      - name: integration shard ${{ matrix.shard }} of 4
         # testcontainers-go spins TimescaleDB/Redis/MinIO; ubuntu-latest ships
-        # a Docker daemon. The go-test deadline lives in the Makefile target
-        # (35m as of 2026-08-12 — CI runners run the suite ~1.5x slower than
-        # a developer box, and it kept dying on the clock); no job-level
-        # timeout-minutes here, so that single number is the ceiling.
-        run: make test-integration
+        # a Docker daemon. Same go test flags as `make test-integration`
+        # (which stays the developer entry point), narrowed to this shard's
+        # tests; the per-slice go-test deadline (15m) lives in the script
+        # and the job timeout above is its ceiling. Shard 0 also runs the
+        # non-sharded INT_TEST_PKGS packages (seconds).
+        run: ./scripts/ci/integration-shard.sh "${{ matrix.shard }}" 4
+
+  integration-test:
+    # Aggregate of the shard matrix. This is the job whose NAME branch
+    # protection requires ("integration tests (Docker)") — a matrix job's
+    # per-shard names would each need listing and would silently drift when
+    # the shard count changes. `if: always()` so it runs (and FAILS) when a
+    # shard fails, is cancelled, or is skipped; a plain `needs:` would skip
+    # it and a skipped required check never turns green either, but the
+    # failure reason would be invisible.
+    name: integration tests (Docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [integration-test-shard]
+    if: always()
+    steps:
+      - name: every shard succeeded
+        env:
+          SHARDS_RESULT: ${{ needs.integration-test-shard.result }}
+        run: |
+          echo "integration-test-shard matrix result: ${SHARDS_RESULT}"
+          if [ "${SHARDS_RESULT}" != "success" ]; then
+            echo "::error::integration shards did not all succeed (result=${SHARDS_RESULT})"
+            exit 1
+          fi
 
   # ────────────────────────────────────────────────────────────────
   # Policy checks — keep the repo enterprise-grade per
@@ -423,6 +461,12 @@ jobs:
         # baseline trips it, and a new migration added with its checksum
         # passes. A frozen-migration gate that stops tripping is worse than none.
         run: ./scripts/ci/lint-migration-immutability-test.sh
+      - name: integration-shard self-test
+        # 4-way integration-suite shard (2026-08-29): pins that the shards
+        # PARTITION `go test -list` exactly (every test in exactly one
+        # shard, none empty, deterministic) and that empty/bad-arg paths
+        # fail loudly. Stub listing, no Docker, no go build.
+        run: ./scripts/ci/integration-shard-test.sh
       - name: check-deploy-protection self-test
         # deploy-approval-gate (audit-2026-07-23): fixtures for the
         # fail-closed environment-approval assertion deploy.yml runs
@@ -478,6 +522,15 @@ jobs:
         # fixtures extract the shipped wrapper out of the ansible task and
         # run it. No network, no ansible, no systemd (non-root exec path).
         run: ./scripts/ci/run-heavy-job-test.sh
+      - name: pgbackrest-backup wrapper self-test
+        # 2026-08-29 (repo2 = S3 live on r1): pgBackRest's `backup` is
+        # single-repo — with no --repo it writes ONLY repo1, so the nightly
+        # wrapper fed the off-site repo WAL but never a base backup. These
+        # fixtures run the shipped template against a stubbed pgbackrest:
+        # one backup per configured repo, repo1 failure does not skip
+        # repo2, single-repo argv byte-identical, per-repo textfile
+        # metrics, no secrets on argv. No network, no ansible, no systemd.
+        run: ./scripts/ci/pgbackrest-backup-test.sh
       - name: lint-deploy-playbook
         # deploy-ansible-deploy-2: deploy.yml reaches the test-net VMs only
         # via --ssh-common-args ProxyJump, which controller-side rsync
