@@ -2102,6 +2102,7 @@ paths:
                     decimals: 14
                     confidence: 0.96
                     observer: GRELAYER0000000000000000000000000000000000000000000000000000
+                    mapped: true
                   - source: band
                     asset: crypto:XLM
                     quote: fiat:USD
@@ -2109,6 +2110,7 @@ paths:
                     price: "0.15908"
                     price_raw: "159080000000000000"
                     decimals: 18
+                    mapped: true
                   - source: redstone
                     asset: crypto:XLM
                     quote: fiat:USD
@@ -2116,6 +2118,7 @@ paths:
                     price: "0.15920"
                     price_raw: "159200000"
                     decimals: 9
+                    mapped: true
                   - source: coingecko
                     asset: crypto:XLM
                     quote: fiat:USD
@@ -2123,6 +2126,7 @@ paths:
                     price: "0.15915"
                     price_raw: "15915"
                     decimals: 5
+                    mapped: true
                 as_of: "2026-05-05T16:25:42.881Z"
                 flags: { stale: false, reduced_redundancy: false, triangulated: false, divergence_warning: false }
         "400": { $ref: "#/components/responses/BadRequest" }
@@ -2979,6 +2983,24 @@ paths:
         in the trailing 7 days. Backs the explorer's /oracles
         price-streams table. Sources with no observation in the
         window are absent from the result.
+
+        Oracle symbols that map to no canonical asset are still
+        recorded verbatim as `raw:<symbol>` rows (capture totality)
+        but are OMITTED here by default so the public row set is
+        unchanged for existing consumers. Pass
+        `include_unmapped=true` to list them; every row then carries
+        `mapped` (false for `raw:` rows — reference-only,
+        orientation-unknown, never compared or aggregated). The
+        explorer's /oracles page opts in and badges them.
+      parameters:
+        - name: include_unmapped
+          in: query
+          required: false
+          description: |
+            When `true`, include the `raw:<symbol>` rows for oracle
+            symbols that map to no canonical asset (`mapped: false`).
+            Any other value keeps the default (mapped rows only).
+          schema: { type: boolean, default: false }
       responses:
         "200":
           description: Array of OracleReading.
@@ -2995,6 +3017,7 @@ paths:
                   price_raw: '999879000'
                   decimals: 9
                   observer: GCNTSKF3QBZJHS5JTD72TI35QP2PLMCKFMFNPXJI2YCQXYBUJLRHFCZX
+                  mapped: true
                 as_of: '2026-07-03T22:38:05.023074622Z'
                 flags:
                   stale: false
@@ -12456,7 +12479,8 @@ components:
         decimals:    { type: integer, minimum: 0, maximum: 38 }
         confidence:  { type: number, minimum: 0, maximum: 1, description: "0 means unreported, not zero-confidence." }
         observer:    { type: string, description: "G-strkey of the publishing account; empty when unknown." }
-      required: [source, asset, quote, ts, price, price_raw, decimals]
+        mapped:      { type: boolean, description: "false when `asset` is a `raw:<symbol>` row — an oracle symbol recorded verbatim because it maps to no canonical asset. Reference-only: orientation-unknown, never compared or aggregated. /v1/oracle/streams omits such rows unless include_unmapped=true; /v1/oracle/latest returns one only for an explicit `asset=raw:<symbol>` query." }
+      required: [source, asset, quote, ts, price, price_raw, decimals, mapped]
 
     OracleLatestEnvelope:
       allOf:
