@@ -729,9 +729,17 @@ written.
 On a healthy live indexer `outcome=new` tracks 1:1 with attempts;
 a cursor-replay loop or stuck-tip pattern produces a fast-growing
 `outcome=duplicate` rate with zero `outcome=new`. Alert on
-`rate({outcome="new"}[5m]) == 0 AND rate({outcome="duplicate"}[5m]) > 0`
+`rate({outcome="duplicate"}[10m]) > 0.5 unless on (source) rate({outcome="new"}[10m]) > 0`
 to catch the live r1-2026-05-28 signature (157 SDEX insert
 attempts/min while the hypertable's `max(ts)` was 11 h old).
+
+Use `unless`, never `and on (source) rate({outcome="new"}[10m]) == 0`:
+both children are call-site-seeded, so a source that has landed no new
+row since process start has **no** `outcome="new"` series at all and an
+`and` join matches nothing — the alert would go silent in precisely the
+post-restart replay flood it exists for (#302). `source` is
+config-dependent and therefore deliberately not pre-seeded in
+`obs.seedBoundedLabelSeries`.
 
 ### `stellarindex_dex_trade_unit_ratio_total`
 
