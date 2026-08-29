@@ -15,6 +15,25 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`ops_batch` / `api_serving` ClickHouse drop-ins no longer restart
+  `clickhouse-server`.** Both tasks in
+  `archival-node/tasks/20-clickhouse-serving-profile.yml` carried
+  `notify: Restart clickhouse-server` for a `users.d` drop-in that
+  ClickHouse hot-reloads — on r1 the first `ops_batch` enable
+  (`--tags clickhouse-ops-batch-profile,minio,heavy-job-wrapper`)
+  would have bounced the 9.3 TB lake (minutes of explorer/lake
+  downtime + cold caches) for nothing; caught in the `--check --diff`
+  (2026-08-29). The notify is replaced by `SYSTEM RELOAD CONFIG` plus a
+  retried assert that `system.users` / `system.settings_profiles` each
+  hold exactly one of the profile's entities (skipped under `--check`,
+  `21-clickhouse-drop-guard.yml`'s pattern), so a rejected drop-in
+  fails the apply instead of silently keeping the old users config.
+  The only CH change in the role that still restarts is
+  `08-clickhouse.yml`'s `config.d/si-override.xml` (`tcp_port` /
+  `listen_host`), which genuinely needs it.
+
 ## [v0.48.0] — 2026-08-29
 
 ### Added
