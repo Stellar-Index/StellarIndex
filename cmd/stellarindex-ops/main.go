@@ -32,7 +32,7 @@
 //     `ch-txindex-backfill`, `ch-participant-backfill`,
 //     `ch-recognition`, `verify-recognition`, `verify-reconciliation`,
 //     `compute-completeness`, `verify-served-values`, `verify-usd-volume`,
-//     `sdex-claim-audit`, `classic-movements-backfill`,
+//     `usd-volume-restamp`, `sdex-claim-audit`, `classic-movements-backfill`,
 //     `projected-rebuild`, `reconcile-balances`, `verify-contiguity`,
 //     `verify-hashchain`, `verify-lake`.
 //   - Doc generation: `docs-config` (regenerates the config
@@ -178,6 +178,7 @@ var subcommands = map[string]func(args []string) error{
 	"compute-completeness":         chops.Run,
 	"verify-served-values":         chops.Run,
 	"verify-usd-volume":            chops.Run,
+	"usd-volume-restamp":           chops.Run,
 	"sdex-claim-audit":             chops.Run,
 
 	"classic-movements-backfill": chops.Run,
@@ -1158,6 +1159,37 @@ Subcommands:
                           Example:
                             stellarindex-ops verify-usd-volume \
                               -config /etc/stellarindex.toml -days 30
+  usd-volume-restamp -config PATH -from YYYY-MM-DD -to YYYY-MM-DD [-slice DUR] [-sources a,b] [-fill-null] [-heartbeat PATH] [-write]
+                          The corrective WRITE half of verify-usd-volume
+                          (W5.3). For every EXACT-tier (source, base, quote)
+                          group in the window — quote leg or base leg
+                          USD-pegged — rewrites each row whose stored
+                          usd_volume differs from the identity
+                          usd_volume == pegged_leg / 10^decimals to exactly
+                          the value the insert path writes today, stamped
+                          with this run's derive_generation (INV-3: guarded
+                          by derive_generation <= gen, so a live gen-0
+                          replay can never claw a correction back).
+                          Repairs the pre-2026-07-23 class (USDC-base SDEX
+                          rows valued by the resolver's VWAP instead of the
+                          $1 peg). Estimated tiers (FX / XLM anchor) are
+                          NEVER read — that is ch-rebuild's job.
+                          Fail-closed DRY RUN by default (prints per-day
+                          candidate counts); -write applies. Walks -from..-to
+                          (inclusive UTC days, never today) oldest → newest
+                          in -slice windows (default 1h) on a dedicated
+                          session with the Timescale decompression cap
+                          raised. Idempotent: rows already satisfying the
+                          identity are untouched (value AND generation), so
+                          a re-run reports 0. -fill-null also stamps NULL
+                          exact-tier rows (a coverage change; opt-in).
+                          Heartbeat like ch-backfill (-heartbeat); run under
+                          run-heavy-job.sh with a UNIQUE job name.
+                          Acceptance: verify-usd-volume over the span at
+                          0 violations. Example:
+                            stellarindex-ops usd-volume-restamp \
+                              -config /etc/stellarindex.toml \
+                              -from 2026-05-12 -to 2026-07-22 -write
   state-snapshot -config PATH [-archive URL] [-checkpoint N] [-write] [-scope contracts|all|storage] [-ch ADDR] [-dry-run]
                           Read a history-archive checkpoint's ledger-entry
                           state and tally it per entry type. -write fills

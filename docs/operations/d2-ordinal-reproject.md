@@ -155,6 +155,11 @@ to a few tens of millions of rows.
      `GROUP BY ledger_seq HAVING max(intra_ledger_seq)+1 != count() OR uniqExact(intra_ledger_seq) != count()` returns 0 rows
    - census row count in stage == census row count in source
 4. `ALTER TABLE stellar.ledger_entry_changes REPLACE PARTITION <P> FROM stellar.lec_stage_<P>`
+   — guarded by `max_partition_size_to_drop` (50 GB): the script arms
+   `/var/lib/clickhouse/flags/force_drop_table` for this one statement and
+   requires `D2_FORCE_DROP=yes` up front (ZFS snapshot first —
+   [clickhouse-destructive-ddl.md](clickhouse-destructive-ddl.md)). Do not
+   raise the limit instead.
 5. `DROP TABLE stellar.lec_stage_<P>`; record P done (resumable state file).
 6. Disk-guard between partitions; run under `run-heavy-job.sh` so the data-pool
    watchdog can stop it if the pool runs low.

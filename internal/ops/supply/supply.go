@@ -214,7 +214,7 @@ func supplySnapshot(args []string) error {
 		live:   supply.NewLCMReserveBalanceReader(supplyStoreLookup{s: store}),
 		static: staticReader,
 	}
-	computer, err := supply.NewXLMComputer(cfg.Supply.SDFReserveAccounts, reader)
+	computer, err := supply.NewXLMComputerForNetwork(cfg.Stellar.Passphrase(), cfg.Supply.SDFReserveAccounts, reader)
 	if err != nil {
 		return supplySnapshotMaybeEmitFailure(*textfileOut, *assetRaw, startedAt, fmt.Errorf("xlm computer: %w", err))
 	}
