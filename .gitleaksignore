@@ -35,3 +35,7 @@
 # the repo is public — force-pushing to scrub a docs sample is not worth
 # rewriting published history over.
 01bcb6c32636b51edb8e895e5c9825d4afd4bcf2:docs/agent-onboarding.md:generic-api-key:25
+# 2026-08-29: scripts/ci/pgbackrest-backup-test.sh fixture values (AKIA-STUB-…, cipher-pass-STUB-…) —
+# not credentials; the file also carries inline gitleaks:allow from c9d68ea7 onward.
+49f42af8dfcd6c62206e6d0e3685a40d89a159d9:scripts/ci/pgbackrest-backup-test.sh:generic-api-key:81
+49f42af8dfcd6c62206e6d0e3685a40d89a159d9:scripts/ci/pgbackrest-backup-test.sh:generic-api-key:82
