@@ -402,11 +402,24 @@ groups:
       # nonzero duplicate rate AND zero new rate for 10 min. Ticket
       # severity (not page) because the symptom is degraded
       # freshness, not outage.
+      # 2026-08-29 (#302): the second clause was
+      # `and on (source) rate(new[10m]) == 0`, which needs the
+      # outcome="new" CHILD SERIES to exist — and
+      # trade_insert_outcome_total is call-site-seeded
+      # (WithLabelValues on the insert path) with a config-dependent
+      # `source` label that internal/obs deliberately does not
+      # pre-seed. A source whose every insert since process start hit
+      # the conflict path therefore never creates that child, the join
+      # matches nothing, and the alert stayed SILENT in exactly the
+      # post-restart replay-flood it exists for. `unless on (source)
+      # rate(new[10m]) > 0` treats an absent child and a zero rate
+      # alike — the same absent-series idiom the insert_stale sibling
+      # below uses.
       - alert: stellarindex_ingestion_duplicate_flood
         expr: |
           sum by (source) (rate(stellarindex_trade_insert_outcome_total{outcome="duplicate"}[10m])) > 0.5
-          and on (source)
-          sum by (source) (rate(stellarindex_trade_insert_outcome_total{outcome="new"}[10m])) == 0
+          unless on (source)
+          sum by (source) (rate(stellarindex_trade_insert_outcome_total{outcome="new"}[10m])) > 0
         for: 10m
         labels:
           severity: ticket

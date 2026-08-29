@@ -37,6 +37,14 @@ func d(dur time.Duration) *time.Duration { return &dur }
 // TestFreshnessVerdict pins the SLO judgement: an age past the SLO is
 // "stale", within it "ok", and no data is "unknown" — never a fresh
 // zero (the web-status-1 class).
+//
+// The future-dated rows are the #311 regression: a stamp past
+// backupClockSkewTolerance must read "unknown" carrying its RAW
+// negative age, NOT "ok" with a clamped 0 — a forward-skewed host
+// clock or a corrupt future-dated backup label would otherwise paint
+// an arbitrarily stale backup green on the public status page.
+// Ordinary sub-tolerance skew still floors to 0 and keeps its verdict:
+// a stamp a few seconds ahead bounds the true age at a few seconds.
 func TestFreshnessVerdict(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -51,7 +59,14 @@ func TestFreshnessVerdict(t *testing.T) {
 		{"past SLO is stale", d(backupSLODiff + time.Second), backupSLODiff, freshnessStale, i64(36*3600 + 1)},
 		{"9d full is stale", d(9 * 24 * time.Hour), backupSLOFull, freshnessStale, i64(9 * 24 * 3600)},
 		{"16m WAL is stale", d(16 * time.Minute), backupSLOWAL, freshnessStale, i64(16 * 60)},
-		{"future stamp clamps to 0 and is ok", d(-time.Hour), backupSLOWAL, freshnessOK, i64(0)},
+		{"skew inside tolerance floors to 0 and stays ok", d(-30 * time.Second), backupSLOWAL, freshnessOK, i64(0)},
+		// The two rows either side of backupClockSkewTolerance are
+		// spelled as literals on purpose: they pin the tolerance's VALUE
+		// (1 min), not merely its relationship to itself.
+		{"exactly the skew tolerance is still ok", d(-60 * time.Second), backupSLOWAL, freshnessOK, i64(0)},
+		{"one second past the tolerance is unknown, raw age", d(-61 * time.Second), backupSLOWAL, freshnessUnknown, i64(-61)},
+		{"an hour in the future is unknown, raw age", d(-time.Hour), backupSLOWAL, freshnessUnknown, i64(-3600)},
+		{"9d in the future never reads fresh", d(-9 * 24 * time.Hour), backupSLOOffsite, freshnessUnknown, i64(-9 * 24 * 3600)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -277,6 +292,56 @@ func TestBuildBackupsSnapshot_AbsentAndFailed(t *testing.T) {
 	}
 	if got := buildBackupsSnapshot(context.Background(), all, now); got.SourceStatus != "unknown" || got.Freshness.Overall != freshnessUnknown {
 		t.Errorf("all-failed → source_status %q / overall %q, want unknown/unknown", got.SourceStatus, got.Freshness.Overall)
+	}
+}
+
+// TestBuildBackupsSnapshot_FutureDatedOffsite is the #311 regression at
+// document level: every source is fresh EXCEPT the off-site repo,
+// whose pgBackRest label is stamped 8d 14h in the future (forward host
+// clock, or a corrupt label). Before the fix that row rendered
+// "ok · 0s ago" and the whole panel went green — an arbitrarily stale
+// off-site copy behind an all-clear. It must now read "unknown"
+// carrying the raw negative age, and drag the roll-up off "ok" (which
+// is also what sets flags.stale on the wire).
+func TestBuildBackupsSnapshot_FutureDatedOffsite(t *testing.T) {
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	stanza := "stellarindex"
+	src := &fakeBackupMetrics{samples: map[string][]promSample{
+		promBackupSinceLast: {
+			sample(map[string]any{"stanza": stanza, "backup_type": "full"}, 5*24*3600),
+			sample(map[string]any{"stanza": stanza, "backup_type": "diff"}, 10*3600),
+		},
+		promBackupInfo: {
+			sample(map[string]any{"stanza": stanza, "repo_key": "1", "backup_type": "full", "backup_name": "20260824-020001F"}, 1),
+			// repo2's newest label is 2026-09-07T02:00:01Z — 8d 14h 0m 1s
+			// AHEAD of `now`.
+			sample(map[string]any{"stanza": stanza, "repo_key": "2", "backup_type": "full", "backup_name": "20260907-020001F"}, 1),
+		},
+		promWALArchiveAge: {sample(nil, 120)},
+		promDrillSuccess:  {sample(nil, float64(now.Add(-20*24*time.Hour).Unix()))},
+		promDrillFailures: {sample(nil, 0)},
+		promSnapshotLast:  {sample(nil, float64(now.Add(-6*time.Hour).Unix()))},
+	}}
+
+	got := buildBackupsSnapshot(context.Background(), src, now)
+
+	f := got.Freshness
+	if f.Offsite.Status != freshnessUnknown {
+		t.Errorf("offsite verdict = %q, want unknown — a future-dated label bounds nothing about the real backup age and must never read fresh", f.Offsite.Status)
+	}
+	const wantAge = -(8*24*3600 + 14*3600 + 1) // -741601 s
+	if f.Offsite.AgeSeconds == nil || *f.Offsite.AgeSeconds != wantAge {
+		t.Errorf("offsite age_seconds = %v, want %d (the RAW negative age, so an operator can see the skew — not a clamped 0)", f.Offsite.AgeSeconds, wantAge)
+	}
+	if f.Overall != freshnessUnknown {
+		t.Errorf("overall = %q, want unknown — the panel (and flags.stale) must not read all-clear while a backup stamp is from the future", f.Overall)
+	}
+	// The other rows are genuinely fresh and must stay green: the guard
+	// judges the skewed item, not the document.
+	for name, v := range map[string]FreshnessVerdict{"full": f.Full, "diff": f.Diff, "wal": f.WAL, "drill": f.Drill, "snapshot": f.Snapshot} {
+		if v.Status != freshnessOK {
+			t.Errorf("%s verdict = %q, want ok (%+v)", name, v.Status, v)
+		}
 	}
 }
 

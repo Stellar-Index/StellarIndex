@@ -19,6 +19,9 @@
 id   = "{{ region_id }}"
 name = "{{ region_name }}"
 home_domain = "{{ home_domain }}"
+# Tier label echoed by /v1/status region.deployment (#328). Purely a
+# label — nothing keys behaviour off it.
+deployment = "{{ region_deployment | default('production') }}"
 
 [stellar]
 network             = "{{ stellar_network }}"
@@ -327,6 +330,13 @@ signup_require_email_verification = false
 auth_mode = "apikey_optional"
 trusted_proxy_cidrs = ["127.0.0.1/32"]
 prometheus_url = "http://localhost:9090"
+# Background services whose heartbeats /v1/status reports and rolls
+# `overall` up from. The lean test nets run no aggregator
+# (run_aggregator=false), so listing it there would hold overall at
+# "degraded" forever on a healthy deployment (#328). Omitting a service
+# here means it can never be reported DOWN — only drop one that is
+# genuinely not installed.
+status_services = [{{ '"indexer", "aggregator"' if run_aggregator | default(true) | bool else '"indexer"' }}]
 anon_rate_limit_per_min = 6000
 key_rate_limit_per_min = 6000
 

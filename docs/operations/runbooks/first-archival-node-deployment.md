@@ -92,6 +92,15 @@ Verify before ordering:
 Decision: **raidz2 across all 4 NVMe drives** + separate OS disk
 if available, else carve a small root partition off one drive.
 
+> **As-built note (2026-08-29, #289):** this was the bringup
+> decision and it is still the right default for a *fresh* archival
+> node (it is the ansible role default). r1 itself no longer matches
+> it — its live pool has been **raidz1** since ~2026-05-21
+> (live-verified 2026-07-17). Read r1's real topology from
+> `configs/ansible/inventory/r1.example.yml` /
+> `docs/architecture/storage-considerations.md`, not from this
+> superseded runbook.
+
 - Raidz2 = 2 parity drives → 15.36 TB usable, survives any 2-drive
   failure (which happens; DC NVMe isn't immune to firmware
   bricks).

@@ -1,6 +1,6 @@
 ---
 title: Storage considerations — r1 knowledge base
-last_verified: 2026-05-20
+last_verified: 2026-08-29
 status: living document
 ---
 
@@ -43,20 +43,73 @@ across sessions came from operating on partial datastore knowledge.
 
 ---
 
-## r1 ZFS pool inventory (snapshot 2026-05-20)
+## r1 ZFS pool inventory
+
+### Topology (live-verified 2026-07-17) — SINGLE parity
 
 ```
 zpool: data
-  topology:  raidz2 across 4 × 7.68 TB Samsung MZQL27T6HBLA-00A07
+  topology:  raidz1, one 4-wide vdev across 4 × 7.68 TB Samsung MZQL27T6HBLA-00A07
   raw:       27.7 TB
-  usable:    13.85 TB
+  usable:    ~18.3 TB (~16.8 TiB)   # measured, not derived — see the evidence below
+  parity:    ONE drive. At DEGRADED there is ZERO remaining redundancy.
+```
+
+> **This is the fact that keeps drifting — read the evidence before
+> you "correct" it back.** Three docs still said raidz2 as late as
+> 2026-08-28 (#289). The settled answer is raidz1, on three
+> independent grounds:
+>
+> 1. **Live inspection.** The 2026-07-17 live r1 review:
+>    "ZFS **raidz1** (single parity, NOT raidz2), 4×7.68TB, pool ~90 %
+>    (~1.6 T usable free). Usable ≈ 66 % of raw (parity + 4K padding)."
+>    — `docs/audit/audit-2026-07-16/go-live-master-plan.md` §5, whose
+>    heading is literally "corrected from the earlier snapshot-based
+>    assessment". Commit `ca2f4748` landed the same correction into
+>    both rule trees' `stellarindex_zfs_pool_degraded` description.
+> 2. **Arithmetic, which needs no host access.** The dataset footprint
+>    measured that day — ClickHouse 7.5 T + MinIO 5.56 T + pgBackRest
+>    2.49 T + Postgres 1.21 T ≈ **16.8 T** — cannot fit the ~13.85 TB
+>    ceiling that two parity drives leave on these four devices. A
+>    raidz2 pool holding 16.8 T of data is not a thing.
+> 3. **Alert calibration.** `configs/prometheus/rules.r1/infra.yml`
+>    reconstructs pool capacity from the per-dataset
+>    `node_filesystem_*` series and records ~16.8 TiB — again above
+>    the two-parity ceiling.
+> 4. **An unrelated, more recent measurement.** The ZFS-snapshot
+>    runbook shipped 2026-08-29 (#295) records "the pool had 5.0 TB
+>    free of **18.3 TB** when this landed" — a total that two parity
+>    drives on four 7.68 TB devices simply cannot produce.
+>
+> Not settled: **why** it changed. The 2026-05-20 snapshot below
+> (used 12.5 TB + free 813 GB = 13.3 TB total) is internally
+> consistent with two parity drives, and the same live review notes
+> "Pool expansion **DID complete** (2026-05-21)". No in-repo record
+> says what was run. `zpool history data` on the box is the audit
+> trail; it does not change today's topology or capacity.
+>
+> Machine-readable authority: `zfs_data_pool_type` in
+> `configs/ansible/inventory/r1.example.yml`. `scripts/ci/lint-docs.sh`
+> §18 lints every r1-scoped file against it, so this correction cannot
+> silently un-propagate again.
+
+### Superseded snapshot (2026-05-20) — kept for the trace
+
+```
+zpool: data
+  topology:  raidz2 across 4 × 7.68 TB Samsung MZQL27T6HBLA-00A07   # SUPERSEDED — raidz1 since ~2026-05-21
+  raw:       27.7 TB
+  usable:    13.85 TB                                                # SUPERSEDED — ~18.3 TB
   used:      12.5 TB (93%)
   free:      813 GB
 ```
 
-OpenZFS version: 2.2.2 (Ubuntu 24.04 default). raidz expansion
-(grow-vdev) requires 2.3+ — not currently available without a
-manual PPA + reboot.
+OpenZFS version at that snapshot: 2.2.2 (Ubuntu 24.04 default);
+r1 has run locally-built **2.3.4** (`apt-mark hold`) since
+2026-05-21. raidz expansion (grow-vdev) requires 2.3+ — available
+now, but irrelevant: the box has four bays and all four are in the
+pool (R1 is not hardware-upgradeable, see
+`docs/operations/production-readiness-remaining.md` §4).
 
 ### Per-dataset breakdown
 
@@ -185,15 +238,26 @@ ADR-0017 contracts 3+4 currently SATISFIED. Daemon is keeping `ledger/` current.
 
 **Decision status:** REJECTED for now — ADR-0017's hard contracts.
 
-### Move C: raidz2 → raidz1 conversion
+### Move C: raidz2 → raidz1 conversion — OBSOLETE, already the case
 
-**Reclaim:** ~7 TB (drop one drive's worth of parity from 4-drive vdev).
+**Status: NOT A LEVER (2026-08-29, #289).** This move was written
+against the belief that the pool ran two parity drives. It does not:
+the pool is raidz1 already (see §Topology above), so the ~7 TB this
+move promised to reclaim has already been reclaimed — it is inside
+today's ~18.3 TB usable, not on top of it. Do not plan against it,
+and do not re-derive a raidz2→raidz1 reclaim from any doc that still
+quotes 13.85 TB usable.
 
-**Touchpoints affected:** Pool destroy + recreate required (ZFS topology is immutable). Multi-day operator rebuild.
+The corollary is the part that still matters: **there is no parity
+left to trade for space.** Going below raidz1 means a stripe with
+zero redundancy on the canonical archive — rejected. Capacity relief
+is software-only (Moves A/D/E, ADR-0027 cold tiering, ZSTD
+recompression) plus a second server.
 
-**Blocker:** OpenZFS 2.2.2 (current) doesn't support raidz expansion. Would need 2.3+ upgrade first. Even with that, the 12.5 TB data doesn't fit on a single drive (7.68 TB) for the 1-drive-transit pattern → requires 2-drive transit (zero-parity window during migration).
-
-**Decision status:** DEFERRED. Move A is cleaner if it gets done.
+**Historical blocker (kept for the trace):** OpenZFS 2.2.2 did not
+support raidz expansion; r1 has run 2.3.4 since 2026-05-21. Even
+then, a destroy-and-recreate needed a 2-drive transit with a
+zero-parity window.
 
 ### Move D: ADR-0027 §3 + §4 (cold-tier enable + bulk LCM trim)
 

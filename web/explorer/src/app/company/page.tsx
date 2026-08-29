@@ -144,12 +144,12 @@ export default function CompanyPage() {
           We&apos;re still pre-v1 and shipping continuously rather than
           against a fixed date. The roadmap that gets us to v1 lives in{' '}
           <a
-            href="https://github.com/Stellar-Index/StellarIndex/blob/main/docs/architecture/launch-readiness-backlog.md"
+            href="https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/v1-launch-plan.md"
             target="_blank"
             rel="noreferrer noopener"
             className="text-brand-600 hover:underline"
           >
-            launch-readiness-backlog.md
+            v1-launch-plan.md
           </a>
           ; per-release notes accumulate in{' '}
           <Link href="/changelog" className="text-brand-600 hover:underline">
@@ -158,7 +158,7 @@ export default function CompanyPage() {
           . Post-v1 priorities — CEX order-book depth ingest,
           reserve-derived TVL for the remaining DEXes, and deeper
           per-protocol coverage across every major Stellar protocol —
-          are public in the same backlog. Stellar Index is
+          are public in the same plan. Stellar Index is
           deliberately a Stellar-only explorer: depth on one network
           over breadth across many.
         </p>

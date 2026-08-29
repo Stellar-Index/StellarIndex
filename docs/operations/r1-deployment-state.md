@@ -14,7 +14,9 @@ status: historical snapshot
 > (the operator moved it to `apikey_optional`, recorded later in this same
 > doc), so the public surface is not unauthenticated; and "15 migrations
 > applied" reflects the bringup only — the repo's migrations head is far
-> higher now (`ls migrations/ | tail`). For current r1 state, query the
+> higher now (`ls migrations/ | tail`); and the `data` pool is **raidz1**,
+> not the raidz2 this snapshot recorded (settled 2026-07-17, see §Disk
+> layout). For current r1 state, query the
 > host / operator directly rather than trusting this file. For the current
 > **deployed versions** of each binary (deployed-vs-tagged), see
 > [deployed-versions.md](deployed-versions.md) and the on-host sidecars it
@@ -43,16 +45,33 @@ nvme0n1 / nvme1n1 : OS mirror (mdadm RAID1)
                      p1  /boot/efi  512M  (per-drive vfat, not RAID)
                      p2  swap       4G    (md0, raid1)
                      p3  /          50G   (md1, raid1)
-                     p4  ~7.63T     (ZFS raidz2 vdev)
-nvme2n1 / nvme3n1 : untouched, full 7.68T (ZFS raidz2 vdevs)
+                     p4  ~7.63T     (ZFS data-pool member)
+nvme2n1 / nvme3n1 : untouched, full 7.68T (ZFS data-pool members)
 ```
 
-ZFS pool `data` (raidz2, ~13.3 TB usable) with 5 datasets currently:
+ZFS pool `data` — a single **raidz1** vdev (SINGLE parity: tolerates
+exactly ONE drive failure), ~18.3 TB / ~16.8 TiB usable — with 5
+datasets currently:
 - `data/os` → `/var/lib/stellarindex`
 - `data/postgres` → `/var/lib/postgresql` (recordsize=8K, logbias=throughput)
 - `data/galexie` → `/var/lib/galexie`
 - `data/minio` → `/var/lib/minio`
 - `data/archive` → `/srv/history-archive`
+
+> **Topology corrected 2026-08-29 (#289).** This snapshot originally
+> said raidz2 / ~13.3 TB usable. The live 2026-07-17 r1 review settled
+> it as raidz1 — `docs/audit/audit-2026-07-16/go-live-master-plan.md`
+> §5 ("ZFS **raidz1** (single parity, NOT raidz2)") and commit
+> ca2f4748, which is why both rule trees' `zfs_pool_degraded`
+> description says raidz1. The arithmetic is decisive by itself: the
+> footprint measured that day (ClickHouse 7.5 T + MinIO 5.56 T +
+> pgBackRest 2.49 T + Postgres 1.21 T ≈ 16.8 T) does not fit inside
+> the ~13.85 TB ceiling two-parity would leave on these four drives.
+> The authority is `zfs_data_pool_type` in
+> `configs/ansible/inventory/r1.example.yml`; `scripts/ci/lint-docs.sh`
+> §18 lints every r1-scoped file against it. See
+> [storage-considerations.md](../architecture/storage-considerations.md)
+> for the full evidence and the capacity consequences.
 
 The `data/core` and `data/rpc` datasets are gated behind
 `run_stellar_core` / `run_stellar_rpc` in the ansible role

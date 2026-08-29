@@ -110,8 +110,14 @@ suffix).
 | `iBENJI_ETHEREUM_FUNDAMENTAL` | `rwa:iBENJI` | USD |
 | `GILTS` `CETES` `KTB` `TESOURO` `USTRY` `SPXU` | `rwa:<id>` | USD |
 | `SolvBTC` | `crypto:SolvBTC` | USD |
-| `SolvBTC_FUNDAMENTAL` | `crypto:SolvBTC_FUNDAMENTAL` | USD |
-| `SolvBTC.BBN_FUNDAMENTAL` | `crypto:SolvBTC.BBN_FUNDAMENTAL` | USD |
+| `SolvBTC_FUNDAMENTAL` | `crypto:SolvBTC_FUNDAMENTAL` | **`crypto:BTC`** |
+| `SolvBTC.BBN_FUNDAMENTAL` | `crypto:SolvBTC.BBN_FUNDAMENTAL` | **`crypto:SolvBTC`** |
+
+> The two bare `_FUNDAMENTAL` rows read `USD` until 2026-08-29 (D8).
+> They publish a NAV **ratio**, not a dollar price — see the amendment
+> at the foot of this ADR. The quote rule above ("all others are USD")
+> is therefore the rule for *market* feeds only; a NAV feed is quoted
+> in the reserve asset its ratio is denominated in.
 
 ### 3. SolvBTC family stays `crypto`
 
@@ -128,6 +134,40 @@ Collapsing market+NAV into one asset would need a price-basis
 discriminator the canonical model does not have. **Open for review:**
 if the operator prefers a basis dimension on `OracleUpdate` instead,
 that is a larger change and a separate ADR.
+
+**Amended 2026-08-29 (D8).** The base codes above stand, but the
+*quote* did not: a NAV is denominated in the token's **reserve
+asset**, and the SolvBTC family's reserve is crypto, not dollars. The
+`OracleUpdate.Quote` is where that basis is carried — no new
+dimension was needed after all, only the correct denominator:
+
+| feed_id | published value | quote |
+| --- | --- | --- |
+| `SolvBTC_FUNDAMENTAL` | 1.00295305 — BTC per SolvBTC | `crypto:BTC` |
+| `SolvBTC.BBN_FUNDAMENTAL` | 1.00000000 — SolvBTC per SolvBTC.BBN | `crypto:SolvBTC` |
+| `SolvBTC_FUNDAMENTAL/USD` | 78313.02974310 — NAV in dollars | `fiat:USD` |
+| `SolvBTC.BBN_FUNDAMENTAL/USD` | 78313.02974310 — NAV in dollars | `fiat:USD` |
+
+Values as served live on r1,
+`/v1/oracle/streams?include_unmapped=true`, 2026-08-29. The two
+`/USD` legs are byte-identical (as they were on 2026-07-27:
+`6543063913439` each), which is what fixes each denominator:
+`SolvBTC_FUNDAMENTAL` = NAV_USD ÷ BTC_USD, so it is BTC-denominated;
+`SolvBTC.BBN_FUNDAMENTAL` is exactly `1.00000000` on three
+independent captures (lake ledger 60104689, 2026-07-27, 2026-08-29)
+*and* its NAV_USD equals SolvBTC's NAV_USD, so SolvBTC.BBN is 1:1
+with SolvBTC and the ratio is SolvBTC-denominated. Quoting it
+`crypto:BTC` would contradict our own `SolvBTC.BBN_FUNDAMENTAL_USD`
+row by the SolvBTC premium.
+
+The general rule, pinned by
+`TestFeedRegistry_NAVFeedsQuoteTheirReserveAsset` and
+`TestFeedRegistry_SuffixedFeedNeverSharesQuoteWithItsBareSibling` in
+`internal/sources/redstone/feeds_test.go`: **a bare `_FUNDAMENTAL`
+feed may carry a fiat quote only when the token's reserve really is
+that fiat** (BENJI, iBENJI, USST, savUSD — cash / T-bill / stablecoin
+reserves, each with its evidence recorded in the test's attestation
+list). Everything else names its reserve asset.
 
 ## Consequences
 
@@ -178,6 +218,18 @@ for an addition._
   now 30 feeds; the "19-feed" figure in §2 is historical to the
   2026-05-22 capture — the live list is `redstone.feedRegistry`.
   for the live list.
+- 2026-08-29 (D8) — **quote correction, not an allow-list addition.**
+  `SolvBTC_FUNDAMENTAL` → `crypto:BTC`, `SolvBTC.BBN_FUNDAMENTAL` →
+  `crypto:SolvBTC` (was `fiat:USD` for both). The §2 table and §3 are
+  amended above with the live evidence. RedStone's bare
+  `_FUNDAMENTAL` feeds publish NAV in the reserve asset; labelling a
+  ~1.00 BTC ratio `fiat:USD` made `/v1/oracle/streams` say a
+  BTC-backed token was worth $1.00 while its own `/USD` sibling said
+  $78,313. Contained from published prices throughout (RedStone is
+  `ClassOracle` / `IncludeInVWAP=false`), but served publicly with
+  `mapped=true`. The four ADR-0028 RWA `_FUNDAMENTAL` feeds
+  (`BENJI`, `iBENJI`, `USST`, plus crypto `savUSD`) are NOT affected —
+  their reserves are dollars, so their NAV genuinely is a USD figure.
 - 2026-08-29 — added `XAU` (spot gold, 1 troy oz in USD; ISO-4217
   X-code). Source is the **Reflector FX** oracle, not RedStone — every
   reflector-fx event carries an XAU slot (2026-04-23 fixtures),

@@ -68,7 +68,8 @@ all:
     #     role carves a p4 on each spanning all free space.
     #   * nvme2n1 + nvme3n1: completely untouched, used as whole-drive
     #     ZFS vdevs.
-    # Result: ZFS raidz2 across 4 vdevs of roughly equal size.
+    # Result: a single ZFS raidz1 vdev across 4 devices of roughly
+    # equal size.
     #
     # Replace serial numbers with the actual values from
     # `ls /dev/disk/by-id/ | grep nvme-SAMSUNG` on the target box.
@@ -82,7 +83,17 @@ all:
       # Whole drives — pristine, untouched by installimage
       - /dev/disk/by-id/nvme-SAMSUNG_MZQL27T6HBLA-00A07_SERIAL2
       - /dev/disk/by-id/nvme-SAMSUNG_MZQL27T6HBLA-00A07_SERIAL3
-    zfs_data_pool_type:  "raidz2"             # raidz2 | mirror | stripe
+    # r1's LIVE topology, and the AUTHORITY every r1-scoped doc is
+    # linted against (scripts/ci/lint-docs.sh §18). It deliberately
+    # differs from the role default (raidz2 — the right shape for a
+    # FRESH archival node): the live pool has been raidz1 since
+    # ~2026-05-21, confirmed by the 2026-07-17 live r1 review
+    # (docs/audit/audit-2026-07-16/go-live-master-plan.md §5, commit
+    # ca2f4748) and by arithmetic — the footprint measured that day
+    # (~16.8 TB across ClickHouse/MinIO/pgBackRest/Postgres) does not
+    # fit raidz2's ~13.85 TB ceiling on these four drives. Rebuilding
+    # r1 as raidz2 would hand back a pool too small for its own data.
+    zfs_data_pool_type:  "raidz1"             # raidz1 | raidz2 | mirror | stripe
     zfs_data_pool_name:  "data"
 
     # ───── Roles colocated on this host ────────────────────────────

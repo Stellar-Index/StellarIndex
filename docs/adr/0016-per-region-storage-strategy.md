@@ -17,6 +17,19 @@ superseded_by: [0050]
 > (each region a different storage shape serving byte-identical closed-bucket output),
 > carried into ADR-0050 §4. **Do not implement a region from this ADR.**
 
+> ⚠️ **As-built divergence (recorded 2026-08-29, #289).** This ADR
+> decided **raidz2** for R1 and the box was built that way; the live
+> `data` pool has been **raidz1** (single parity, ~18.3 TB usable)
+> since ~2026-05-21 — live-verified 2026-07-17
+> (`docs/audit/audit-2026-07-16/go-live-master-plan.md` §5, commit
+> `ca2f4748`) and pinned in `configs/ansible/inventory/r1.example.yml`,
+> which is the authority `scripts/ci/lint-docs.sh` §18 lints against.
+> The decision text below is left as the record of what was decided;
+> every "raidz2" in it describes R1 as designed in 2026-04, not R1 as
+> it runs. For the current picture and the evidence, read
+> [`docs/architecture/storage-considerations.md`](../architecture/storage-considerations.md)
+> §"r1 ZFS pool inventory".
+
 ## Context
 
 Each region of the Stellar Index fleet (R1 Frankfurt, R2 US-East,
