@@ -294,6 +294,28 @@ against.
   asserts the alert fires, with a companion guard proving a
   below-threshold duplicate rate with the same absent child stays silent
   (red on the pre-fix rule: `got:[]`). (#302)
+- **`/v1/livez/lake` single-flighted, and its 503 no longer publishes the
+  ClickHouse endpoint (#310, audit 2026-08-29).** #266 gave the ADR-0050
+  lake-route LB probe readyz's infra exemptions — no auth, no anonymous
+  rate limit — but readyz's safety under those exemptions comes from its
+  single-flight cache, which this route never had: every anonymous
+  request ran a fresh `LakeTipLedger` query against ClickHouse under a 5s
+  timeout, so unmetered concurrent probes amplified straight onto the
+  lake, worst exactly when the lake was already struggling. Concurrent
+  callers now share ONE ping round per second (`livezLakeTTL`, the same
+  budget as readyz; `as_of` reports when the lake was actually pinged),
+  and the round runs on a detached context so one prober's disconnect
+  can't cancel it for everyone. The 503 body's `data.detail` is now a
+  fixed operator hint instead of `err.Error()` — which on the real
+  checker is a dial error naming the ClickHouse host:port, served
+  unauthenticated during an outage; the underlying error goes to the
+  server log (once per round). OpenAPI 503 contract + the generated
+  Postman/TS mirrors updated to match. Tests:
+  `TestLivezLake_SingleFlightSharesOnePingPerRound` (25 probes → 1 ping;
+  pre-fix 25), `TestLivezLake_UnreadyBodyDoesNotEchoPingError` (body
+  scrubbed, log still carries it), `TestLivezLake_RoundRefreshesAfterTTL`
+  (a recovered lake is not pinned 503), `TestLivezLake_AbsentLakeFailsClosed`.
+
 - **Gap detector pre-registers `runs_total` at 0 so a restart cannot read
   as a dead detector.** `stellarindex_ingest_gap_detector_runs_total` is a
   CounterVec that only materialises a series on first `Inc()`, and since

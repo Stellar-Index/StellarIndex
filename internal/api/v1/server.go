@@ -270,10 +270,16 @@ type Server struct {
 	volumeCharacter VolumeCharacterReader
 
 	// readyz single-flight cache (inventory #26) — see handleReadyz.
-	readyzMu             sync.Mutex
-	readyzAt             time.Time
-	readyzCode           int
-	readyzBody           []byte
+	readyzMu   sync.Mutex
+	readyzAt   time.Time
+	readyzCode int
+	readyzBody []byte
+
+	// livez/lake single-flight cache (#310) — see handleLivezLake.
+	livezLakeMu          sync.Mutex
+	livezLakeAt          time.Time
+	livezLakeCode        int
+	livezLakeBody        []byte
 	fxHistory            FXHistoryReader
 	sessionPeeker        SessionPeeker
 	incidents            []incidents.Incident
@@ -2174,6 +2180,25 @@ func (s *Server) computeReadyz() (int, []byte) {
 	return render(http.StatusOK, Flags{})
 }
 
+// livezLakeTTL bounds how long one lake-ping round is reused. Same
+// budget as readyz's single-flight cache: at LB probe cadence (~10s)
+// every probe still gets a fresh round, while a burst of anonymous
+// probes costs at most one ClickHouse query per second.
+const livezLakeTTL = time.Second
+
+// livezLakeUnreadyDetail is the FIXED hint served when the lake ping
+// fails. Never the driver error: /v1/livez/lake is unauthenticated and
+// exempt from the anonymous rate limiter, so whatever it echoes is
+// public — and err.Error() carries the ClickHouse endpoint. The real
+// error goes to the server log (once per cache round).
+const livezLakeUnreadyDetail = "clickhouse ping failed — see the API server log for the underlying error"
+
+// lakeHealth is the /v1/livez/lake payload (data member of the envelope).
+type lakeHealth struct {
+	Status string `json:"status"`
+	Detail string `json:"detail,omitempty"`
+}
+
 // handleLivezLake is the LAKE-critical health probe (multi-region plan
 // §7.3 / ADR-0050). /v1/readyz deliberately treats ClickHouse as
 // NON-critical so a lake outage degrades rather than un-readies the
@@ -2184,39 +2209,71 @@ func (s *Server) computeReadyz() (int, []byte) {
 // checker pings; 503 when it fails OR when no lake is wired at all — a
 // lake-less deployment must never receive lake-route traffic, so absent
 // fails closed. Point lake-route LB monitors here; leave pricing
-// monitors on /v1/readyz. Unlike readyz there is no single-flight cache:
-// one cheap CH ping per probe at LB cadence (~10s) is negligible.
-func (s *Server) handleLivezLake(w http.ResponseWriter, r *http.Request) {
-	type lakeHealth struct {
-		Status string `json:"status"`
-		Detail string `json:"detail,omitempty"`
+// monitors on /v1/readyz.
+//
+// Single-flight + 1s result cache (#310, audit 2026-08-29). #266 gave
+// this route readyz's infra exemptions — no auth, no anonymous rate
+// limit, correct for LB probes — but readyz's safety under those
+// exemptions comes from its single-flight cache, which this route
+// lacked: EVERY anonymous request ran a fresh `LakeTipLedger` query
+// against ClickHouse under a 5s timeout, so unmetered concurrent probes
+// were an amplifier pointed at the lake, worst exactly when the lake was
+// already struggling. Concurrent callers now share ONE ping round per
+// second, exactly like handleReadyz; a liveness answer up to 1s old is
+// at least as truthful as a point-in-time probe.
+func (s *Server) handleLivezLake(w http.ResponseWriter, _ *http.Request) {
+	s.livezLakeMu.Lock()
+	if time.Since(s.livezLakeAt) < livezLakeTTL && s.livezLakeBody != nil {
+		code, body := s.livezLakeCode, s.livezLakeBody
+		s.livezLakeMu.Unlock()
+		writeLivezLake(w, code, body)
+		return
 	}
-	render := func(status int, body lakeHealth) {
+	code, body := s.computeLivezLake() //nolint:contextcheck // deliberately detached: the ping round is SHARED by every queued caller (single-flight), so one caller's cancellation must not abort it — see computeLivezLake's doc.
+	s.livezLakeCode, s.livezLakeBody, s.livezLakeAt = code, body, time.Now()
+	s.livezLakeMu.Unlock()
+	writeLivezLake(w, code, body)
+}
+
+// writeLivezLake emits an already-rendered probe result. no-store keeps
+// intermediaries from serving a cached liveness verdict — the 1s reuse
+// window is ours to control, not a CDN's.
+func writeLivezLake(w http.ResponseWriter, code int, body []byte) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(code)
+	_, _ = w.Write(body)
+}
+
+// computeLivezLake runs one lake-ping round and renders the response.
+// Detached from any caller's request context — one impatient prober's
+// disconnect must not cancel the round every queued caller shares (same
+// rationale as computeReadyz).
+func (s *Server) computeLivezLake() (int, []byte) {
+	render := func(status int, body lakeHealth) (int, []byte) {
 		env := Envelope{Data: body, AsOf: time.Now().UTC()}
 		b, err := json.Marshal(env)
 		if err != nil {
-			http.Error(w, `{"error":"livez render"}`, http.StatusInternalServerError)
-			return
+			return http.StatusInternalServerError, []byte(`{"error":"livez render"}`)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Cache-Control", "no-store")
-		w.WriteHeader(status)
-		_, _ = w.Write(b)
+		return status, b
 	}
 	for _, c := range s.checks {
 		if c.Name() != "clickhouse" {
 			continue
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := c.Ping(ctx); err != nil {
-			render(http.StatusServiceUnavailable, lakeHealth{Status: "lake-unready", Detail: err.Error()})
-			return
+			s.logger.Warn("livez/lake: clickhouse ping failed — serving 503 lake-unready", "err", err)
+			return render(http.StatusServiceUnavailable, lakeHealth{
+				Status: "lake-unready",
+				Detail: livezLakeUnreadyDetail,
+			})
 		}
-		render(http.StatusOK, lakeHealth{Status: "ok"})
-		return
+		return render(http.StatusOK, lakeHealth{Status: "ok"})
 	}
-	render(http.StatusServiceUnavailable, lakeHealth{
+	return render(http.StatusServiceUnavailable, lakeHealth{
 		Status: "lake-absent",
 		Detail: "no clickhouse checker registered — this deployment serves no lake routes and must not receive lake traffic",
 	})
