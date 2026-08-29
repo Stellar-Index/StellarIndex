@@ -23,7 +23,9 @@ endurance figure and can sit above 80% for a long time without trouble;
 remap, which is a much later and more serious signal. Wear high + spare full
 is a planning problem. Spare low is an incident.
 
-This matters more here than the raidz2 tolerance suggests: r1's NVMe is not
+This matters more than the parity margin suggests — the `data` pool
+is raidz1 (single parity; see `zfs-degraded.md`), so one failing
+drive already puts the pool at zero remaining redundancy. r1's NVMe is not
 replaceable on demand, so the value of these alerts is lead time. Treat
 `wear_high` as the moment to start a procurement conversation, not the moment
 to watch it.
@@ -44,7 +46,7 @@ to watch it.
 | Severity | P2 (ticket — schedule replacement, don't panic) |
 | Detected by | `deploy/monitoring/rules/infra.yml` |
 | Typical MTTR | hours – days (replacement lead time) |
-| Impact | Not immediately customer-visible. An IO error is the drive saying "I'm starting to fail." ZFS + raidz2 can tolerate two full failures; this is a single IO error, which is fine — until it isn't. |
+| Impact | Not immediately customer-visible. An IO error is the drive saying "I'm starting to fail." The raidz1 `data` pool tolerates exactly ONE full drive failure; a single IO error is fine — until it isn't, and there is no second margin. |
 
 ## Symptoms
 
