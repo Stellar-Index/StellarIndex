@@ -1,6 +1,6 @@
 ---
 title: Operator runbook — 2026-08 usd_volume re-derive + CAGG rebuild (tier-3b poisoning)
-last_verified: 2026-08-04
+last_verified: 2026-08-28
 status: ready-to-execute
 ---
 
@@ -214,6 +214,80 @@ chunks stay uncompressed >1 day.
 5. **Determinism spot-check** (2026-07-29 precedent): re-run one
    already-corrected window; row md5s must be byte-identical.
 
+## Step 5 — W5.3: re-stamp the pre-07-23 EXACT-tier rows (`usd-volume-restamp`)
+
+A different class from steps 1–4 and a different tool. Steps 1–4 re-derive
+ESTIMATED-tier rows (the tier-3b bridge) through the resolver-backed
+waterfall; that needs `ch-rebuild`. This step repairs EXACT-tier rows —
+quote leg or base leg USD-pegged — that were stamped before the peg
+identity was the insert path: the 2026-07-30 sweep measured
+**[2026-05-12, 2026-07-22], 66 dirty days, every violation a
+`[base_pegged] sdex` USDC-base row** valued by the resolver's VWAP
+(~+0.7%) instead of `base_amount / 10^7` (evidence:
+`evidence/2026-07-30-verify-usd-volume-30d.md`). That night's fix was a
+hand SQL UPDATE; `usd-volume-restamp` is that UPDATE as a tool, with the
+discipline built in — use it for any exact-tier violation
+`verify-usd-volume` reports from now on.
+
+What it does (per `internal/ops/chops/usd_volume_restamp.go`):
+
+- classifies every (source, base, quote) group of each UTC day with the
+  SAME `ClassifyUSDVolumeTier` + peg inputs (`trades.usd_pegged_classic_assets`
+  + `supply.sac_wrappers`) as the insert path and the verifier — the tool
+  never decides "which leg / which scale" itself;
+- rewrites only rows whose stored `usd_volume` differs from
+  `pegged_leg / 10^decimals` (`IS DISTINCT FROM`), to exactly the value the
+  insert path writes (`round(leg / 10^d, 8)` == `big.Rat.FloatString(8)`);
+- stamps every rewritten row with the run's `derive_generation`
+  (`now.Unix()`, like `ch-rebuild`) guarded by `derive_generation <= gen`
+  — INV-3: a live gen-0 replay can never claw the correction back;
+- leaves correct rows untouched (value AND generation), so a re-run
+  reports 0 — idempotent;
+- leaves NULL rows alone unless `-fill-null` (a coverage change, opt-in);
+- walks `-from..-to` (inclusive UTC days, never today) oldest → newest in
+  `-slice` windows (default 1h) on a dedicated session with
+  `timescaledb.max_tuples_decompressed_per_dml_transaction = 0` — the
+  2026-07-30 lesson, no manual GUC step;
+- dry-run by default; `-write` applies; ch-backfill-style heartbeat
+  (`ops_job="usd-volume-restamp"`, the standing stall alerts apply).
+
+Mechanics:
+
+```sh
+# 0. size it (read-only; run anywhere with the config):
+stellarindex-ops verify-usd-volume -config /etc/stellarindex.toml \
+  -day 2026-07-22 -days 72
+# 1. dry run — per-day candidate counts, Σ|Δ| before, no writes:
+stellarindex-ops usd-volume-restamp -config /etc/stellarindex.toml \
+  -from 2026-05-12 -to 2026-07-22
+# 2. apply, under the heavy wrapper, UNIQUE job name per attempt
+#    (stale-lock trap), env file sourced (28P01 trap), one window at a time:
+set -a; . /etc/default/stellarindex; set +a
+/usr/local/sbin/run-heavy-job.sh usd-restamp-w1-try1 \
+  /usr/local/bin/stellarindex-ops usd-volume-restamp \
+    -config /etc/stellarindex.toml -from 2026-05-12 -to 2026-05-31 -write
+# 3. acceptance — the tool prints this line for the window it ran:
+stellarindex-ops verify-usd-volume -config /etc/stellarindex.toml \
+  -day 2026-07-22 -days 72        # → 0 violations
+```
+
+- Windows: any size is safe (the tool slices internally), but keep a
+  heavy job to ~2–3 weeks so a failed attempt is cheap to re-run — and
+  re-running IS cheap: repaired rows are skipped, only the remainder is
+  written.
+- DECOMPRESS FIRST still applies for throughput (not correctness): the
+  tool raises the decompression cap itself, but DML into a compressed
+  chunk is ~10× slower than into a decompressed one. Pause the trades
+  compression policy, `decompress_chunk` the span, re-enable after.
+- CAGG rebuild (step 3 above) over the restamped span afterwards — the
+  tool refreshes nothing; `prices_1m`'s `volume_usd` and everything above
+  it inherit the corrected column only on refresh.
+- Do NOT pass `-fill-null` on the first pass. Unpriced exact-tier rows are
+  the coverage alerts' population; fill them as a deliberate second pass
+  once the value repair has been accepted.
+- Estimated-tier violations (the XLM-base bound) are NOT this tool's job —
+  steps 0–4 (`ch-rebuild`).
+
 ## Explicitly OUT of scope here (queued, do not silently absorb)
 
 - **`classic_assets.slug` backfill** (194,057 rows, all NULL → CODE is
@@ -226,8 +300,10 @@ chunks stay uncompressed >1 day.
   XLM-triangulation, outside the substance gate. The explorer now
   LABELS it; gating it server-side (same substance predicate, SQL-side
   or post-query) is the remaining ungated aggregated-price surface.
-- **`usd-volume-restamp` ops tool** (launch-plan §"queued buildable")
-  for the pre-07-23 pegged-row era — unrelated class, still open.
+- ~~**`usd-volume-restamp` ops tool** (launch-plan §"queued buildable")
+  for the pre-07-23 pegged-row era — unrelated class, still open.~~
+  BUILT — see Step 5 below. Still a separate class from the tier-3b
+  re-derive above; run it as its own heavy job.
 - Pre-deploy dirty tail: any rows written between this doc's authoring
   and the step-0 deploy join the span automatically (the range is
   pinned at execution time by L_HI).
