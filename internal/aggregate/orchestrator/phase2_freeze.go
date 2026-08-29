@@ -146,13 +146,21 @@ const releaseAgreementMaxPct = 5.0
 // reading THIS bucket that agrees with the bucket's own fresh price:
 //   - the triangulation composite (computed against the fresh VWAP by
 //     construction — triangulationDivergencePct takes it as input).
-//     NOTE: in the current wiring this leg cannot fire mid-freeze —
+//     NOTE: the PRIOR-TICK chain sample cannot fire mid-freeze —
 //     routeTarget records no composite for a target frozen this tick
-//     and samples go stale in ~2 ticks, far shorter than any hold —
-//     so the cross-oracle median below is the operative release lens.
-//     The leg is kept because it is correct BY CONSTRUCTION (fresh-
-//     candidate-relative) if composite freshness rules ever change;
-//     do not repurpose it without re-checking that property.
+//     and samples go stale in ~2 ticks, far shorter than any hold — so
+//     for every pair WITHOUT a resolved current-bucket reference the
+//     cross-oracle median below is the operative release lens.
+//   - the CURRENT-BUCKET composite reference (composite_reference.go,
+//     2026-08-29), for allow-listed single-venue targets whose reference
+//     RESOLVED this bucket. It replaces the triangulation lens above
+//     (it is the same sample) but is read against its OWN, tighter band
+//     ([CompositeReferenceConfig.ReleaseBandPct], default 2 %): the
+//     shared 5 % band would release a held +4 % venue-specific offset
+//     that the 75-bps fire band had correctly refused to corroborate.
+//     A reference that resolved and disagrees beyond the band holds the
+//     streak at zero; the cross-oracle lens may still release on its
+//     own reading, exactly as for every other pair.
 //   - the cross-oracle reference median, compared against the fresh
 //     candidate HERE — deliberately not the cached DivergencePct, which
 //     mid-freeze was computed against the pinned served price and
@@ -161,8 +169,13 @@ const releaseAgreementMaxPct = 5.0
 // No lens reading ⇒ false ⇒ the streak holds at zero and the ladder
 // escalates to an operator, matching the pre-shadow-comparator posture
 // for uncorroboratable pairs.
-func releaseCorroborated(c confidenceComputation, candidate *big.Rat) bool {
-	if c.TriangulationChecked && math.Abs(c.TriangulationDivergencePct) <= releaseAgreementMaxPct {
+func releaseCorroborated(c confidenceComputation, candidate *big.Rat, ref compositeReference, compositeBandPct float64) bool {
+	switch {
+	case ref.resolved():
+		if ref.divergencePct <= compositeBandPct {
+			return true
+		}
+	case c.TriangulationChecked && math.Abs(c.TriangulationDivergencePct) <= releaseAgreementMaxPct:
 		return true
 	}
 	if crossOracleMedian := c.CrossOracleMedian; crossOracleMedian > 0 && candidate != nil {
@@ -220,6 +233,7 @@ func (o *Orchestrator) stepPhase2Freeze(
 	sourceCount int,
 	prevVWAP *big.Rat,
 	vwap *big.Rat,
+	compositeRef compositeReference,
 ) bool {
 	sig := freeze.Signal{Now: now}
 	decision := anomaly.Decision{
@@ -241,9 +255,29 @@ func (o *Orchestrator) stepPhase2Freeze(
 		sig.ZScore = input.ZScore
 		sig.Fires = phase2FreezeFires(input, o.cfg.Phase2Thresholds)
 		sig.Corroborated = corroborated(conf.Score.Factors)
-		sig.ReleaseCorroborated = releaseCorroborated(conf, vwap)
+		sig.ReleaseCorroborated = releaseCorroborated(conf, vwap, compositeRef,
+			o.cfg.CompositeReference.withDefaults().ReleaseBandPct)
+		// `sources=` stays the REAL count whatever the composite says —
+		// the reference changes the verdict, never the independence
+		// claim (composite_reference.go invariants).
 		decision.Reason = fmt.Sprintf("phase2:3_signal_AND confidence=%.3f z=%.2f sources=%d",
 			input.Confidence, input.ZScore, input.SourceCount)
+		if compositeRef.verdict != "" {
+			decision.Reason += compositeRef.reasonSuffix()
+			if sig.Fires && compositeRef.verdict == compositeVerdictCorroborated {
+				// The deep-market composite moved WITH the venue on this
+				// very bucket: the move is market-wide, not venue-specific,
+				// so the single-source AND does not engage (or, mid-hold,
+				// does not reset the release streak). Refuted/unavailable
+				// leave Fires exactly as computed.
+				sig.Fires = false
+				obs.AggregatorCompositeFreezeSuppressedTotal.Inc()
+				o.logger.Info("phase2 freeze suppressed: composite reference corroborates the move",
+					"pair", pair.String(),
+					"window", window.String(),
+					"reason", decision.Reason)
+			}
+		}
 	}
 	return o.stepFreezeLifecycle(ctx, pair, window, stateKey, sig, decision, prevVWAP)
 }

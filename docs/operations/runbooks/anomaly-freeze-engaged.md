@@ -1,6 +1,6 @@
 ---
 title: Runbook — anomaly-freeze-engaged
-last_verified: 2026-07-05
+last_verified: 2026-08-29
 status: ratified
 severity: P3
 ---
@@ -34,6 +34,29 @@ either can emit `ActionFreeze`:
    `z_score_min_freeze` / `source_count_max_freeze`). Log line:
    `phase2 freeze engaged` (INFO), with per-pair confidence, z-score
    and source count.
+
+   Since 2026-08-29 the reason string for an allow-listed structurally
+   single-venue target (`[aggregate.composite_reference] targets`,
+   default XLM/GBP + XLM/EUR) carries a suffix naming the CURRENT-
+   BUCKET composite-reference verdict, e.g.
+   `… sources=1 corroboration_basis=venue composite_refuted
+   divergence_pct=48.9 composite_leg_sources={crypto:XLM/fiat:USD:3,fiat:USD/fiat:GBP:1}`
+   or `… corroboration_basis=venue composite_unavailable: leg_sources=1 …`.
+   `composite_refuted` = the deep XLM/USD × USD/GBP composite did NOT
+   move with the venue → lean "venue-specific" (manipulation or a venue
+   artifact). `composite_unavailable: <cause>` = the reference could
+   not be built (thin XLM/USD leg, leg venues disagreeing —
+   `leg_dispersion=…bps`, FX snap stale / not FX-class, leg not
+   refreshed) → the freeze fired on the venue's own print exactly as
+   before; check `stellarindex_aggregator_composite_corroboration`,
+   `..._composite_reference_leg_sources` and
+   `..._composite_reference_leg_dispersion_bps`. Mid-hold, a resolved
+   reference releases only within `release_band_pct` (2 %) of the
+   composite — a venue parked at +4 % stays frozen and walks the ladder. A bucket the composite
+   CORROBORATED never reaches this runbook — it is not frozen; it
+   increments `stellarindex_aggregator_composite_freeze_suppressed_total`
+   and logs `phase2 freeze suppressed`. `sources=` is always the real
+   venue count; the composite never widens it.
 
 This is the extreme corner: anomalous movement on a single source
 with no multi-source consensus. It catches USTRY-shape oracle
@@ -285,6 +308,9 @@ escalated ones that had already paged a human.
 
 ## Changelog
 
+- 2026-08-29 — phase-2 reason string gains the composite-reference
+  suffix (`corroboration_basis=…`, `composite_leg_sources={…}`);
+  corroborated buckets no longer freeze (see design doc §10.1).
 - 2026-07-05 — full rewrite against the shipped implementation:
   real metric names (counter, not gauges), both freeze phases, the
   5-min marker TTL + recovery-worker lifecycle, config-driven

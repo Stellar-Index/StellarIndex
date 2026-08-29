@@ -228,12 +228,26 @@ func compositeKey(pair canonical.Pair, window time.Duration) string {
 // out into "unchecked" within two ticks. A frozen leg's last-known-good
 // value therefore cannot reach the confidence score any more than it
 // can reach the published price.
+//
+// Current-bucket precedence (2026-08-29): when the composite-reference
+// evaluator produced a RESOLVED reading for this bucket
+// (composite_reference.go — allow-listed single-venue targets only),
+// that reading is returned instead of the prior tick's chain sample, so
+// the confidence factor, the freeze verdict and the release lens all
+// read ONE sample built from this tick's legs. An UNAVAILABLE reading
+// falls through to the prior-tick path exactly as before.
 func (o *Orchestrator) triangulationDivergencePct(
 	pair canonical.Pair,
 	window time.Duration,
 	direct *big.Rat,
 ) (float64, bool) {
-	if len(o.lastComposites) == 0 || direct == nil || direct.Sign() <= 0 {
+	if direct == nil || direct.Sign() <= 0 {
+		return 0, false
+	}
+	if ref, ok := o.currentCompositeReference(pair, window); ok && ref.verdict != compositeVerdictUnavailable {
+		return ref.divergencePct, true
+	}
+	if len(o.lastComposites) == 0 {
 		return 0, false
 	}
 	sample, ok := o.lastComposites[compositeKey(pair, window)]

@@ -509,3 +509,97 @@ func TestValidate_SDFReserveAccountMalformedRejected(t *testing.T) {
 		t.Errorf("err = %v; want substring %q", err, "sdf_reserve_accounts")
 	}
 }
+
+// TestValidate_CompositeReferenceBounds (A3, 2026-08-29) pins the
+// `[aggregate.composite_reference]` validation: the shipped defaults
+// pass, each out-of-band knob is rejected as ErrInvalidConfig naming the
+// key, and an enabled allow-list entry without a triangulation row is
+// rejected once a chain table exists.
+func TestValidate_CompositeReferenceBounds(t *testing.T) {
+	base := config.Default()
+	if err := base.Validate(); err != nil {
+		t.Fatalf("defaults must validate: %v", err)
+	}
+	if cr := base.Aggregate.CompositeReference; !cr.Enabled || cr.ToleranceBps != 75 ||
+		cr.MinLegSources != 2 || cr.FXMaxAgeHours != 76 || cr.ReleaseBandPct != 2.0 || cr.LegDispersionBps != 0 ||
+		len(cr.Targets) != 2 {
+		t.Fatalf("shipped composite_reference defaults drifted: %+v", cr)
+	}
+
+	cases := []struct {
+		name   string
+		mutate func(c *config.Config)
+		want   string
+	}{
+		{
+			"leg_dispersion_bps_above_10000", func(c *config.Config) { c.Aggregate.CompositeReference.LegDispersionBps = 10_001 },
+			"aggregate.composite_reference.leg_dispersion_bps",
+		},
+		{
+			"leg_dispersion_bps_negative", func(c *config.Config) { c.Aggregate.CompositeReference.LegDispersionBps = -1 },
+			"aggregate.composite_reference.leg_dispersion_bps",
+		},
+		{
+			"release_band_pct_above_100", func(c *config.Config) { c.Aggregate.CompositeReference.ReleaseBandPct = 100.5 },
+			"aggregate.composite_reference.release_band_pct",
+		},
+		{
+			"release_band_pct_negative", func(c *config.Config) { c.Aggregate.CompositeReference.ReleaseBandPct = -0.1 },
+			"aggregate.composite_reference.release_band_pct",
+		},
+		{
+			"tolerance_bps_above_10000", func(c *config.Config) { c.Aggregate.CompositeReference.ToleranceBps = 10_001 },
+			"aggregate.composite_reference.tolerance_bps",
+		},
+		{
+			"min_leg_sources_negative", func(c *config.Config) { c.Aggregate.CompositeReference.MinLegSources = -1 },
+			"aggregate.composite_reference.min_leg_sources",
+		},
+		{
+			"fx_max_age_hours_negative", func(c *config.Config) { c.Aggregate.CompositeReference.FXMaxAgeHours = -1 },
+			"aggregate.composite_reference.fx_max_age_hours",
+		},
+		{
+			"target_unparseable", func(c *config.Config) { c.Aggregate.CompositeReference.Targets = []string{"not-a-pair"} },
+			"aggregate.composite_reference.targets",
+		},
+		{"target_without_chain_when_chains_exist", func(c *config.Config) {
+			c.Aggregate.Triangulations = []config.TriangulationChainConfig{
+				{Target: "crypto:XLM/fiat:EUR", Legs: []string{"crypto:XLM/fiat:USD", "fiat:USD/fiat:EUR"}},
+			}
+			c.Aggregate.CompositeReference.Targets = []string{"crypto:XLM/fiat:GBP"}
+		}, "no [[aggregate.triangulations]] row"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := config.Default()
+			tc.mutate(&c)
+			err := c.Validate()
+			if err == nil {
+				t.Fatal("Validate accepted an out-of-band composite_reference value")
+			}
+			if !errors.Is(err, config.ErrInvalidConfig) {
+				t.Errorf("err = %v, want ErrInvalidConfig", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %q, want it to name %q", err, tc.want)
+			}
+		})
+	}
+
+	// Accepted: the boundary values, zero sentinels, and a listed target
+	// that HAS its chain.
+	ok := config.Default()
+	ok.Aggregate.CompositeReference.LegDispersionBps = 10_000
+	ok.Aggregate.CompositeReference.ReleaseBandPct = 100
+	ok.Aggregate.CompositeReference.ToleranceBps = 0
+	ok.Aggregate.CompositeReference.MinLegSources = 0
+	ok.Aggregate.CompositeReference.FXMaxAgeHours = 0
+	ok.Aggregate.Triangulations = []config.TriangulationChainConfig{
+		{Target: "crypto:XLM/fiat:GBP", Legs: []string{"crypto:XLM/fiat:USD", "fiat:USD/fiat:GBP"}},
+		{Target: "crypto:XLM/fiat:EUR", Legs: []string{"crypto:XLM/fiat:USD", "fiat:USD/fiat:EUR"}},
+	}
+	if err := ok.Validate(); err != nil {
+		t.Errorf("boundary / sentinel values rejected: %v", err)
+	}
+}
