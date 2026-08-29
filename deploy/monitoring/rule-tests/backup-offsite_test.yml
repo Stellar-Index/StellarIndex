@@ -1,0 +1,132 @@
+---
+# promtool unit tests for stellarindex_backup_offsite_stale (2026-08-29).
+#
+#   promtool test rules deploy/monitoring/rule-tests/backup-offsite_test.yml
+#
+# The alert reads per-backup `pgbackrest_backup_info` series: a new
+# backup is a NEW series, so "a repo2 backup younger than 8d exists" is
+# `x unless x offset 8d`. Four cases:
+#   1. repo2's newest series is 10d old, repo1 has a fresh one → FIRES
+#      (the repo1-fresh / repo2-stale blind spot the alert exists for).
+#   2. repo2 never written (no repo2 series at all), exporter up → FIRES.
+#   3. a repo2 backup landed 2d ago → silent.
+#   4. exporter DOWN with stale repo2 → silent (exporter_down owns it).
+#
+# PROVEN-RED (2026-08-29): change `repo_key="2"` to `repo_key=~".*"` in
+# backup-offsite.yml and re-run — cases 1 and 2 report 0 firing alerts
+# (FAIL) because repo1's fresh series then satisfies the "young backup"
+# branch; that is the exact cross-repo blindness of storage.yml's
+# since_last_completion alerts. Cases 3–4 pass either way, so 1 and 2
+# are the non-vacuous ones.
+
+rule_files:
+  - ../rules/backup-offsite.yml
+
+evaluation_interval: 1h
+
+tests:
+  # ── 1. repo1 fresh, repo2's newest backup is 10 d old ──
+  # Every series is a constant 1 from its first sample. repo2's only
+  # series has existed since t=0; at eval 250h it also existed at
+  # 250h-192h=58h, so it is not "young". repo1 gets a NEW series at
+  # 240h (young) — irrelevant to repo2. Fires after the 1h `for`.
+  - interval: 1h
+    name: repo1 fresh but repo2 newest backup is 10d old fires
+    input_series:
+      - series: 'up{job="pgbackrest_exporter",instance="r1:9854"}'
+        values: '1x300'
+      - series: 'pgbackrest_backup_info{stanza="stellarindex",repo_key="2",backup_type="full",backup_name="20260819-020001F",instance="r1:9854",job="pgbackrest_exporter"}'
+        values: '1x300'
+      - series: 'pgbackrest_backup_info{stanza="stellarindex",repo_key="1",backup_type="full",backup_name="20260819-020001F",instance="r1:9854",job="pgbackrest_exporter"}'
+        values: '1x300'
+      - series: 'pgbackrest_backup_info{stanza="stellarindex",repo_key="1",backup_type="diff",backup_name="20260819-020001F_20260829-020003D",instance="r1:9854",job="pgbackrest_exporter"}'
+        values: '_x240 1x60'
+    alert_rule_test:
+      - eval_time: 250h
+        alertname: stellarindex_backup_offsite_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: storage
+              job: pgbackrest_exporter
+              instance: r1:9854
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-offsite-stale.md
+              summary: "No pgBackRest backup has reached the off-site repo (repo2) in > 8 d on r1:9854"
+              description: |
+                The exporter on this host is up, but no pgBackRest backup
+                younger than 8 days exists in repo2 — the encrypted S3
+                off-site copy — or repo2 has never received one. The
+                on-host repo1 may be perfectly fresh (storage.yml's
+                backup_failed / none_24h look across repos and stay green);
+                the copy that survives host or pool loss is the one that is
+                stale. Check `sudo -u postgres pgbackrest --stanza=stellarindex
+                info --repo=2`, the repo2 S3 credentials / endpoint in
+                /etc/pgbackrest/pgbackrest.conf (vault-sourced, PR #272),
+                and `journalctl -u pgbackrest-backup.service -n 100` for
+                repo2 write errors. The public status page's Backups panel
+                shows the same signal ("Off-site copy").
+
+  # ── 2. repo2 never written: exporter up, only repo1 series ──
+  - interval: 1h
+    name: repo2 absent entirely (never configured / never written) fires
+    input_series:
+      - series: 'up{job="pgbackrest_exporter",instance="r1:9854"}'
+        values: '1x300'
+      - series: 'pgbackrest_backup_info{stanza="stellarindex",repo_key="1",backup_type="full",backup_name="20260826-020001F",instance="r1:9854",job="pgbackrest_exporter"}'
+        values: '_x240 1x60'
+    alert_rule_test:
+      - eval_time: 250h
+        alertname: stellarindex_backup_offsite_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: storage
+              job: pgbackrest_exporter
+              instance: r1:9854
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-offsite-stale.md
+              summary: "No pgBackRest backup has reached the off-site repo (repo2) in > 8 d on r1:9854"
+              description: |
+                The exporter on this host is up, but no pgBackRest backup
+                younger than 8 days exists in repo2 — the encrypted S3
+                off-site copy — or repo2 has never received one. The
+                on-host repo1 may be perfectly fresh (storage.yml's
+                backup_failed / none_24h look across repos and stay green);
+                the copy that survives host or pool loss is the one that is
+                stale. Check `sudo -u postgres pgbackrest --stanza=stellarindex
+                info --repo=2`, the repo2 S3 credentials / endpoint in
+                /etc/pgbackrest/pgbackrest.conf (vault-sourced, PR #272),
+                and `journalctl -u pgbackrest-backup.service -n 100` for
+                repo2 write errors. The public status page's Backups panel
+                shows the same signal ("Off-site copy").
+
+  # ── 3. healthy: a repo2 backup landed 2 d ago (new series at 202h) ──
+  - interval: 1h
+    name: a repo2 backup younger than 8d keeps the alert silent
+    input_series:
+      - series: 'up{job="pgbackrest_exporter",instance="r1:9854"}'
+        values: '1x300'
+      - series: 'pgbackrest_backup_info{stanza="stellarindex",repo_key="2",backup_type="full",backup_name="20260819-020001F",instance="r1:9854",job="pgbackrest_exporter"}'
+        values: '1x300'
+      - series: 'pgbackrest_backup_info{stanza="stellarindex",repo_key="2",backup_type="diff",backup_name="20260819-020001F_20260827-020003D",instance="r1:9854",job="pgbackrest_exporter"}'
+        values: '_x202 1x98'
+    alert_rule_test:
+      - eval_time: 250h
+        alertname: stellarindex_backup_offsite_stale
+        exp_alerts: []
+
+  # ── 4. exporter down: stale repo2 but up==0 — exporter_down owns it ──
+  - interval: 1h
+    name: a down exporter is not double-paged here
+    input_series:
+      - series: 'up{job="pgbackrest_exporter",instance="r1:9854"}'
+        values: '0x300'
+      - series: 'pgbackrest_backup_info{stanza="stellarindex",repo_key="2",backup_type="full",backup_name="20260819-020001F",instance="r1:9854",job="pgbackrest_exporter"}'
+        values: '1x300'
+    alert_rule_test:
+      - eval_time: 250h
+        alertname: stellarindex_backup_offsite_stale
+        exp_alerts: []

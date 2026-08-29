@@ -888,8 +888,11 @@
     minute: "23"
     hour: "4"
     weekday: "0"   # Sunday morning
+    # The -ops file is read VERBATIM (systemd EnvironmentFile syntax is not
+    # shell — `source` would expand `$` / split on `;` inside a secret;
+    # deploy-ansible-secrets-5). No `%` here: cron turns it into a newline.
     job: >-
-      bash -c 'set -a; source /etc/default/stellarindex-ops; set +a;
+      bash -c 'while IFS= read -r l || [ -n "$l" ]; do case "$l" in [A-Za-z_]*=*) export "$l";; esac; done < /etc/default/stellarindex-ops;
       /usr/local/bin/stellarindex-ops verify-archive
       -config /etc/stellarindex.toml
       -tier peers

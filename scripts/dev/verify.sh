@@ -61,12 +61,16 @@ echo "=== Ansible task lint (pipefail/bash, secret-on-argv) ===" && ./scripts/ci
 echo "=== Ansible task lint self-test ===" && ./scripts/ci/lint-ansible-tasks-test.sh
 echo "=== Ansible-drift decision-core self-test ===" && ./scripts/ci/check-ansible-drift-test.sh
 echo "=== run-heavy-job wrapper self-test ===" && ./scripts/ci/run-heavy-job-test.sh
+echo "=== Deploy playbook jump/backup-gate lint ===" && ./scripts/ci/lint-deploy-playbook.sh
+echo "=== EnvironmentFile verbatim-reader self-test ===" && ./scripts/ci/envfile-loader-test.sh
+echo "=== Deploy workflow input-validation self-test ===" && ./scripts/ci/deploy-inputs-test.sh
 echo "=== Baseline-growth tripwire self-test ===" && ./scripts/ci/lint-baseline-growth-test.sh
 echo "=== Config-apply gate self-test ===" && ./scripts/ci/config-apply-gate-test.sh
 # BASE_SHA-gated: self-skips locally (no comparison base); runs for real in CI
 # with the PR/push base. Invoked here to keep verify↔CI parity honest.
 echo "=== Baseline-growth tripwire ===" && ./scripts/ci/lint-baseline-growth.sh
 echo "=== Replay-plan tripwire self-test ===" && ./scripts/ci/lint-replay-plan-test.sh
+echo "=== Restore-drill contract + abort-path tests ===" && bash scripts/ops/restore-drill-test.sh && bash scripts/ops/restore-drill-run-test.sh
 # BASE_SHA-gated like lint-baseline-growth.sh: self-skips locally, real in CI.
 echo "=== Replay-plan tripwire ===" && ./scripts/ci/lint-replay-plan.sh
 echo "=== OpenAPI URLs ===" && go run ./scripts/ci/lint-openapi-urls openapi/stellar-index.v1.yaml
