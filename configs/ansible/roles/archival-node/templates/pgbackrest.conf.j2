@@ -53,7 +53,12 @@ repo2-s3-region={{ pgbackrest_repo2_s3_region | default('auto') }}
 repo2-s3-key={{ pgbackrest_repo2_s3_key }}
 repo2-s3-key-secret={{ pgbackrest_repo2_s3_key_secret }}
 repo2-path=/pgbackrest
-repo2-retention-full=4
+# Retention is deliberately LEAN (ADR-0043 amendment 2026-08-29, AWS Budget
+# $30/mo): one full + 7 days of diffs/WAL ≈ 460–670 GB in S3 Standard.
+# PITR window = the diff retention. Raising these scales storage ~linearly.
+repo2-retention-full={{ pgbackrest_repo2_retention_full | default(1) }}
+repo2-retention-diff={{ pgbackrest_repo2_retention_diff | default(7) }}
+repo2-retention-archive-type=diff
 repo2-bundle=y
 repo2-block=y
 # Offsite copies are encrypted at rest by US, not just the provider.
