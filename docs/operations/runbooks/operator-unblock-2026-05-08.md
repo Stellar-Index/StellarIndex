@@ -1,4 +1,12 @@
+---
+title: Operator unblock — 2026-05-08 (completed)
+last_verified: 2026-08-29
+status: archived — all four actions completed May 2026; §1 (GH Actions spending-cap unblock) retained as the procedure sev-playbook.md links to. /v1/coins references are dead (route removed in the R-018 finish).
+---
+
 # Operator unblock — 2026-05-08
+
+> **Do not execute — historical record.**
 
 **Context.** Three queued ships need operator action. Each is independent.
 
