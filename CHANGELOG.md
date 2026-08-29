@@ -80,6 +80,20 @@ against.
 
 ### Fixed
 
+- **Gap detector pre-registers `runs_total` at 0 so a restart cannot read
+  as a dead detector.** `stellarindex_ingest_gap_detector_runs_total` is a
+  CounterVec that only materialises a series on first `Inc()`, and since
+  the schedule is seeded from the persisted scan cursor (v0.49.0) a
+  restart legitimately runs NO scan for hours. The whole family was
+  absent for that window, so `stellarindex_ingest_gap_detector_silent`'s
+  `absent_over_time(runs_total[15m])` clause fired at 09:55Z on r1 on
+  2026-08-29, 26 min after the v0.49.0 deploy restarted the aggregator —
+  `sum by (outcome)(runs_total)` returned no series at all. `RunGapDetector`
+  now seeds `{outcome="ok"}` and `{outcome="error"}` for every configured
+  target at start (same F-0033 contract as `obs.seedBoundedLabelSeries`),
+  so the absent clause is reserved for the process-dead case. Unit test
+  (`TestGapDetectorPreregistersRunsTotalSeries`) + promtool scenario
+  "restart, series at 0 for 30m, fresh stamp → silent".
 - **Nightly pgBackRest wrapper never backed up repo2.** pgBackRest's `backup`
   command is single-repo: with no `--repo` it writes only the highest-priority
   repo (repo1); only `archive-push` and `expire` fan out (User Guide, "Multiple
