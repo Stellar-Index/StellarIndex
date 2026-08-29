@@ -6,7 +6,7 @@ import { useSACWrappers } from '@/api/hooks';
 import { cn } from '@/lib/cn';
 import { AssetLabel } from './AssetLabel';
 
-import { normalizeColonForm, shortAssetText } from '@/lib/asset-label';
+import { isRawOracleAsset, normalizeColonForm, shortAssetText } from '@/lib/asset-label';
 
 // Re-export for existing client-side importers; server code imports
 // from '@/lib/asset-label' directly (see that module's header).
@@ -29,6 +29,10 @@ export function assetSlug(canonical: string | undefined | null): string | null {
   if (canonical === 'native' || /^\d+$/.test(canonical)) return 'native';
   if (canonical.startsWith('fiat:')) return canonical.slice(5) || null;
   if (canonical.startsWith('crypto:')) return canonical.slice(7) || null;
+  // Unmapped oracle symbol (`raw:<symbol>`) — no asset page exists for
+  // it by definition; without this branch the classic split below would
+  // link to /assets/raw%3A<symbol> (static-export 404).
+  if (isRawOracleAsset(canonical)) return null;
   // Raw SAC contract id — only linkable once resolved to a classic
   // asset (handled in AssetLink via the wrapper map); not here.
   if (/^C[A-Za-z0-9]{55}$/.test(canonical)) return null;
