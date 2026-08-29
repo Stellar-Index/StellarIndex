@@ -292,9 +292,13 @@ func authenticatedRateLimitKey(subject auth.Subject) string {
 
 // SkipHealthAndMetrics is a convenience Skip predicate for operators
 // who don't want liveness probes or prometheus scrapes counted.
+//
+// Keep in lockstep with isUnauthenticatedInfraPath (auth.go): a probe the
+// LB may send unauthenticated must not spend the anonymous per-IP bucket
+// either, or a monitor behind a shared NAT flaps the region on 429.
 func SkipHealthAndMetrics(r *http.Request) bool {
 	switch r.URL.Path {
-	case "/v1/healthz", "/v1/readyz", "/v1/version", "/metrics":
+	case "/v1/healthz", "/v1/readyz", "/v1/livez/lake", "/v1/version", "/metrics":
 		return true
 	}
 	return false

@@ -284,6 +284,35 @@ against.
   minio) are grandfathered by name for burn-down. Retention is
   untouched (ADR-0043). (audit-2026-08-28 backup-restore-7)
 
+- **Operator self-service key mint/revoke now audited (api-security-1,
+  audit 2026-08-28).** `POST /v1/account/keys` copied an operator
+  caller's tier verbatim into the child and recorded nothing — no
+  `X-Reason`, no `key.mint` row — so a compromised staff credential
+  could spawn further operator credentials that `POST /v1/admin/keys`
+  would have refused without a reason and logged. Tier inheritance
+  (staff rotation) is kept; operator-tier callers of
+  `POST /v1/account/keys` and `DELETE /v1/account/keys/{keyID}` now
+  need `X-Reason` (400 without) and land the same `key.mint` /
+  `key.revoke` audit rows as the admin routes. Customer-tier callers
+  are untouched.
+- **Rotated signup keys no longer 403 forever under email verification
+  (api-security-2, audit 2026-08-28).** With
+  `signup_require_email_verification` on (the default), a verified
+  `/v1/signup` customer who rotated via `POST /v1/account/keys` got a
+  `signup-<hash>` child with a zero `EmailVerifiedAt`, and nothing can
+  verify a non-signup KeyID after the fact — `RequireEmailVerified`
+  rejected the child permanently (and revoking the parent stranded the
+  customer). `auth.CreateAPIKeyRequest` gained `EmailVerifiedAt`; the
+  self-service mint copies the caller's stamp onto the child. Signup
+  and admin mints still leave it zero.
+- **`/v1/livez/lake` added to the unauthenticated-infra exemption and
+  the anonymous rate-limit skip (api-security-3, audit 2026-08-28).**
+  The ADR-0050 lake-route LB probe (#119) was added after
+  `isUnauthenticatedInfraPath` / `SkipHealthAndMetrics` were written and
+  missed both: under `apikey` / `sep10` auth mode every uncredentialed
+  probe 401'd (contradicting the OpenAPI `security: []` declaration),
+  and under `apikey_optional` it spent the anonymous per-IP bucket. The
+  exact-match lists and their pinning tests now carry the path.
 - **Outlier filter trimmed agreed price moves; `outlier_storm` measured
   its own artifact.** The published-VWAP filter scored every print
   against ONE band — the whole window's median ± 4 × 1.4826 × MAD — and
