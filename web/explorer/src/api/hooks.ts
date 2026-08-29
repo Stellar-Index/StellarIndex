@@ -949,6 +949,30 @@ export function useArchiveReport() {
   });
 }
 
+export type BackupsDiagnostics = Schemas['BackupsDiagnostics'];
+
+/**
+ * useBackupsDiagnostics — fetches the backup + DR-evidence freshness
+ * snapshot from `/v1/diagnostics/backups` for the status page's Backups
+ * panel. Returns the envelope (not just `.data`) because the panel dates
+ * every "N ago" against the server's `as_of`, never `Date.now()` — the
+ * ages the API judged its verdicts by are the ages the panel shows.
+ * 503 (no Prometheus on this deployment) is terminal per session, so
+ * retry is off and the panel renders the honest absence state.
+ */
+export function useBackupsDiagnostics() {
+  return useQuery<{ data: BackupsDiagnostics; as_of?: string }>({
+    queryKey: ['/v1/diagnostics/backups'],
+    queryFn: () =>
+      apiGet<{ data: BackupsDiagnostics; as_of?: string }>(
+        '/v1/diagnostics/backups',
+      ),
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+    retry: false,
+  });
+}
+
 export type SourceHealth = NonNullable<GetJSON<'/sources/{name}/health'>['data']>;
 
 /**

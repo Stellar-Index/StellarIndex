@@ -1,0 +1,72 @@
+---
+# Off-site (repo2) pgBackRest backup staleness (Ash, 2026-08-29 — the
+# public status page's Backups panel judges the same signal at the same
+# 8-day SLO; this is the paging half of it).
+#
+# Why a separate alert from storage.yml's backup_failed / none_24h: those
+# read `pgbackrest_backup_since_last_completion_seconds`, which the
+# exporter computes per stanza + backup_type ACROSS repos. A host whose
+# repo1 (on-host) backups are perfectly fresh while every repo2 (S3)
+# write has been failing — expired credentials, bucket quota, endpoint
+# DNS — keeps those alerts green, and the one copy that survives host
+# loss quietly ages out. repo1 shares the database's failure domain
+# (REL-DR, 18-pgbackrest-backup.yml); repo2 is the DR copy.
+#
+# Signal: the exporter emits one `pgbackrest_backup_info` series PER
+# BACKUP (label backup_name = pgBackRest's YYYYMMDD-HHMMSS[F|D|I]
+# label) per repo_key. A new backup is a NEW series, so "repo2 has a
+# backup younger than 8d" is exactly "a repo2 backup_info series exists
+# now that did not exist 8d ago": `x unless x offset 8d`. The alert
+# fires on every UP exporter instance that has no such young series —
+# which also covers repo2 never configured / never written (the ask:
+# "> 8d OR absent"), and stays quiet on a DOWN exporter (owned by
+# meta.yml's exporter_down) or one with no stanza at all (owned by
+# storage.yml's pgbackrest_backup_metrics_absent, PR #270).
+#
+# Threshold: 8d = the weekly full's cadence (Sunday 02:00) + one day of
+# slack; diffs land in repo2 daily too, so a healthy host always has a
+# series younger than 24h and the alert has a week of margin.
+#
+# Known blind spot: `offset 8d` reads the sample at exactly now-8d; a
+# scrape gap wider than the 5-min lookback sitting on that instant
+# makes an OLD series look young for as long as the gap lines up. The
+# `for: 1h` absorbs short gaps; a multi-hour Prometheus outage 8 days
+# ago delays the page by its own length, it does not suppress it.
+# Prometheus retention is 30d on every host this role provisions
+# (prometheus role, prometheus_retention_days), so the offset resolves.
+
+groups:
+  - name: stellarindex.backup_offsite
+    interval: 60s
+    rules:
+
+      - alert: stellarindex_backup_offsite_stale
+        expr: |
+          up{job="pgbackrest_exporter"} == 1
+          unless on (instance)
+          (
+            pgbackrest_backup_info{stanza!~"all-stanzas.*",repo_key="2"}
+            unless
+            pgbackrest_backup_info{stanza!~"all-stanzas.*",repo_key="2"} offset 8d
+          )
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-offsite-stale.md
+          summary: "No pgBackRest backup has reached the off-site repo (repo2) in > 8 d on {{ $labels.instance }}"
+          description: |
+            The exporter on this host is up, but no pgBackRest backup
+            younger than 8 days exists in repo2 — the encrypted S3
+            off-site copy — or repo2 has never received one. The
+            on-host repo1 may be perfectly fresh (storage.yml's
+            backup_failed / none_24h look across repos and stay green);
+            the copy that survives host or pool loss is the one that is
+            stale. Check `sudo -u postgres pgbackrest --stanza=stellarindex
+            info --repo=2`, the repo2 S3 credentials / endpoint in
+            /etc/pgbackrest/pgbackrest.conf (vault-sourced, PR #272),
+            and `journalctl -u pgbackrest-backup.service -n 100` for
+            repo2 write errors. The public status page's Backups panel
+            shows the same signal ("Off-site copy").

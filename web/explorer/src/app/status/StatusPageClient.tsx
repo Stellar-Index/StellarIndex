@@ -15,6 +15,7 @@ import type { components, paths } from '@/api/types';
 import { API_BASE_URL } from '@/api/client';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { useStatus } from '@/api/hooks';
+import BackupsPanel from './BackupsPanel';
 import {
   formatCompact,
   formatDurationShort,
@@ -647,6 +648,11 @@ export default function StatusPageClient({
           <ActiveIncidents incidents={status.incidents?.active ?? []} />
         </>
       )}
+      {/* Backups panel is mainnet-only: the lean test-nets run with
+              pgbackrest_backup_enabled=false (no backups, no drill), so
+              there is nothing honest to show there. It fetches its own
+              feed (/v1/diagnostics/backups) independently of /v1/status. */}
+      {CURRENT_NETWORK.pricing && <BackupsPanel />}
       {/* EndpointMatrix renders UNCONDITIONALLY — it doesn't depend on
               the /v1/status feed; the matrix runs its own independent
               probes (so red badges show during an outage). WB-02 */}
