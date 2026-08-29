@@ -84,7 +84,9 @@ If `make dev` fails out of the box, that's a bug — file an issue.
    locally surfaces failures one at a time before push. Don't
    substitute `make lint && make test` — it skips the doc /
    import / openapi / monitoring lints that CI enforces.
-4. **Open a PR**; fill in the template.
+4. **Open a PR**; fill in the template. Same session as the push —
+   see the [no-orphan-work contract](AGENTS.md#no-orphan-work--the-contract)
+   (prior-art check, alert/finding named, supersede by closing).
 5. **CI must be green.** No merging with red CI.
 6. **A CODEOWNER must review.** See [CODEOWNERS](CODEOWNERS).
 7. **Author merges after approval** (not the reviewer). Rebase +
