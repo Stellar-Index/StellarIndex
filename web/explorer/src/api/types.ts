@@ -1725,6 +1725,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/diagnostics/backups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Backup + DR-evidence freshness vs. SLO (public status page).
+         * @description One snapshot of the region's backup posture, judged against the
+         *     SLO thresholds echoed in `slo`: pgBackRest last full / diff and
+         *     WAL-archive age, the per-repository newest backup (repo `1` is
+         *     the on-host copy, repo `2` the encrypted S3 offsite copy), the
+         *     monthly restore-drill result, and the ClickHouse schema+state
+         *     snapshot (the lake's only backup by design, ADR-0043 §2.1).
+         *
+         *     Source of truth is Prometheus — the same pgbackrest_exporter /
+         *     node_exporter textfile series the alert rules read. The API
+         *     never shells out to pgbackrest. Every timestamp and age is
+         *     nullable: `null` means the series is absent (or its query
+         *     failed) and the matching `freshness.*.status` is `unknown`;
+         *     the status page renders that grey, never as a fresh zero.
+         *     `freshness.overall` is the worst item (`stale` > `unknown` >
+         *     `ok`) and `flags.stale` mirrors it.
+         *
+         *     `source_status` is the document's trust tri-state: `ok` (every
+         *     query succeeded), `degraded` (some failed — their items are
+         *     `unknown`), `unknown` (Prometheus unreachable — nothing below
+         *     is trustworthy).
+         *
+         *     Reserved-null fields (no producer today, documented so the
+         *     panel's columns exist): `postgres.repos[].retention`,
+         *     `restore_drill.restored_backup_ts`, `restore_drill.duration_s`,
+         *     `clickhouse.zfs_snapshot_latest_ts`, `clickhouse.replica_lag_s`.
+         *
+         *     Cached 60 s in-process and `Cache-Control: public, max-age=60`.
+         *     No secrets, paths or hostnames. 503 when the deployment has no
+         *     `api.prometheus_url` configured.
+         */
+        get: operations["getDiagnosticBackups"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/incidents": {
         parameters: {
             query?: never;
@@ -2474,6 +2522,15 @@ export interface paths {
          *     keys (25 by default, operator-tunable). A mint that would cross
          *     the ceiling returns 409 — revoke a key via
          *     `DELETE /v1/account/keys/{keyID}` and retry.
+         *
+         *     The new key inherits the caller's identifier and tier. An
+         *     **operator-tier** caller rotating its own credential here is
+         *     held to the admin-write contract: the `X-Reason` header is
+         *     required (400 without it) and the mint is recorded as a
+         *     `key.mint` audit row, exactly as `POST /v1/admin/keys`.
+         *     Customer-tier callers need no header. A `/v1/signup` key's
+         *     email-verification stamp carries over to the child, so rotated
+         *     keys keep working under `signup_require_email_verification`.
          */
         post: operations["createAccountKey"];
         delete?: never;
@@ -2502,6 +2559,11 @@ export interface paths {
          *     The caller cannot revoke the key they're authenticated with —
          *     that would orphan the connection mid-request. 409 in that
          *     case so the UI can prompt for an alternate credential.
+         *
+         *     An **operator-tier** caller must send `X-Reason` (400 without
+         *     it); the revoke is recorded as a `key.revoke` audit row, as
+         *     `DELETE /v1/admin/keys/{keyID}` does. Customer-tier callers
+         *     need no header.
          */
         delete: operations["deleteAccountKey"];
         options?: never;
@@ -5245,6 +5307,162 @@ export interface components {
         };
         StatusEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["StatusResponse"];
+        };
+        /** @description One item's age judged against its SLO. */
+        BackupFreshnessVerdict: {
+            /**
+             * @description `ok` age ≤ SLO; `stale` age > SLO; `unknown` no data.
+             * @enum {string}
+             */
+            status: "ok" | "stale" | "unknown";
+            /**
+             * Format: int64
+             * @description Age at snapshot time; null when unknown.
+             */
+            age_seconds: number | null;
+            /**
+             * Format: int64
+             * @description The threshold the status was judged against.
+             */
+            slo_seconds: number;
+        };
+        /** @description One completed pgBackRest backup. */
+        BackupRun: {
+            /**
+             * Format: date-time
+             * @description Completion time (UTC).
+             */
+            ts: string;
+            /**
+             * Format: int64
+             * @description Database size the backup captured; null when the exporter has no per-backup row.
+             */
+            size_bytes: number | null;
+            /** @description Repository key the backup landed in ("1", "2"); omitted when unknown. */
+            repo?: string;
+        };
+        /** @description One pgBackRest repository's freshness row. */
+        BackupRepo: {
+            /** @example 2 */
+            repo: string;
+            /**
+             * @description repo1 is the on-host copy, repo2 the encrypted S3 offsite copy (the role's convention).
+             * @enum {string}
+             */
+            kind: "local" | "offsite" | "unknown";
+            /**
+             * Format: date-time
+             * @description Start time of the newest backup of any type in this repo (from the pgBackRest backup label); null when the repo has no backups.
+             */
+            last_backup_ts: string | null;
+            /** @description Reserved — pgBackRest retention is not exported today; always null. */
+            retention: string | null;
+        };
+        /** @description Backup + DR-evidence freshness snapshot (see GET /diagnostics/backups). */
+        BackupsDiagnostics: {
+            /**
+             * @description Trust tri-state for the whole document.
+             * @enum {string}
+             */
+            source_status: "ok" | "degraded" | "unknown";
+            postgres: {
+                last_full: components["schemas"]["BackupRun"] | null;
+                last_diff: components["schemas"]["BackupRun"] | null;
+                /** @description Age of the newest archived WAL segment (`pg_stat_archiver_last_archive_age`); null when the collector isn't enabled. */
+                wal_archive_max_age_seconds: number | null;
+                repos: components["schemas"]["BackupRepo"][];
+            };
+            restore_drill: {
+                /**
+                 * Format: date-time
+                 * @description When the drill last wrote its textfile at all (node_exporter mtime); null = never ran.
+                 */
+                last_run_ts: string | null;
+                /**
+                 * Format: date-time
+                 * @description Last fully-clean run (`stellarindex_restore_drill_last_success_unix`).
+                 */
+                last_success_ts: string | null;
+                /**
+                 * @description Most recent run — pass (zero failed checks), fail (one or more), unknown (no run recorded).
+                 * @enum {string}
+                 */
+                result: "pass" | "fail" | "unknown";
+                /** Format: int64 */
+                failed_checks: number | null;
+                /**
+                 * Format: date-time
+                 * @description Reserved — not exported by the drill yet; always null.
+                 */
+                restored_backup_ts: string | null;
+                /** @description Reserved — not exported by the drill yet; always null. */
+                duration_s: number | null;
+            };
+            clickhouse: {
+                /**
+                 * Format: date-time
+                 * @description Last clean schema+state capture (`stellarindex_ch_schema_snapshot_last_success_unix`).
+                 */
+                schema_snapshot_last_ts: string | null;
+                /**
+                 * Format: date-time
+                 * @description Last successful offsite push of the snapshot; null on a host that acknowledged local-only.
+                 */
+                schema_snapshot_offsite_last_ts: string | null;
+                /**
+                 * Format: date-time
+                 * @description Reserved — no ZFS snapshot schedule exists for the lake pool (ADR-0043 §2); always null.
+                 */
+                zfs_snapshot_latest_ts: string | null;
+                /** @description Reserved — the lake is single-node; always null. */
+                replica_lag_s: number | null;
+            };
+            freshness: {
+                full: components["schemas"]["BackupFreshnessVerdict"];
+                diff: components["schemas"]["BackupFreshnessVerdict"];
+                wal: components["schemas"]["BackupFreshnessVerdict"];
+                offsite: components["schemas"]["BackupFreshnessVerdict"];
+                drill: components["schemas"]["BackupFreshnessVerdict"];
+                snapshot: components["schemas"]["BackupFreshnessVerdict"];
+                /**
+                 * @description Worst item (`stale` > `unknown` > `ok`); mirrored by `flags.stale`.
+                 * @enum {string}
+                 */
+                overall: "ok" | "stale" | "unknown";
+            };
+            /** @description The thresholds the verdicts were judged against, in seconds. */
+            slo: {
+                /**
+                 * Format: int64
+                 * @example 691200
+                 */
+                full_seconds: number;
+                /**
+                 * Format: int64
+                 * @example 129600
+                 */
+                diff_seconds: number;
+                /**
+                 * Format: int64
+                 * @example 900
+                 */
+                wal_seconds: number;
+                /**
+                 * Format: int64
+                 * @example 691200
+                 */
+                offsite_seconds: number;
+                /**
+                 * Format: int64
+                 * @example 3024000
+                 */
+                drill_seconds: number;
+                /**
+                 * Format: int64
+                 * @example 129600
+                 */
+                snapshot_seconds: number;
+            };
         };
         StatusResponse: {
             /**
@@ -11199,6 +11417,135 @@ export interface operations {
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
             /** @description No archive_report_path configured on this deployment. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getDiagnosticBackups: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The current backup-freshness snapshot. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "source_status": "ok",
+                     *         "postgres": {
+                     *           "last_full": {
+                     *             "ts": "2026-08-24T02:31:10Z",
+                     *             "size_bytes": 412316860416,
+                     *             "repo": "1"
+                     *           },
+                     *           "last_diff": {
+                     *             "ts": "2026-08-29T02:04:41Z",
+                     *             "size_bytes": null
+                     *           },
+                     *           "wal_archive_max_age_seconds": 74,
+                     *           "repos": [
+                     *             {
+                     *               "repo": "1",
+                     *               "kind": "local",
+                     *               "last_backup_ts": "2026-08-29T02:00:03Z",
+                     *               "retention": null
+                     *             },
+                     *             {
+                     *               "repo": "2",
+                     *               "kind": "offsite",
+                     *               "last_backup_ts": "2026-08-24T02:00:01Z",
+                     *               "retention": null
+                     *             }
+                     *           ]
+                     *         },
+                     *         "restore_drill": {
+                     *           "last_run_ts": "2026-08-02T04:00:12Z",
+                     *           "last_success_ts": "2026-08-02T04:00:12Z",
+                     *           "result": "pass",
+                     *           "failed_checks": 0,
+                     *           "restored_backup_ts": null,
+                     *           "duration_s": null
+                     *         },
+                     *         "clickhouse": {
+                     *           "schema_snapshot_last_ts": "2026-08-29T03:40:05Z",
+                     *           "schema_snapshot_offsite_last_ts": null,
+                     *           "zfs_snapshot_latest_ts": null,
+                     *           "replica_lag_s": null
+                     *         },
+                     *         "freshness": {
+                     *           "full": {
+                     *             "status": "ok",
+                     *             "age_seconds": 466730,
+                     *             "slo_seconds": 691200
+                     *           },
+                     *           "diff": {
+                     *             "status": "ok",
+                     *             "age_seconds": 35719,
+                     *             "slo_seconds": 129600
+                     *           },
+                     *           "wal": {
+                     *             "status": "ok",
+                     *             "age_seconds": 74,
+                     *             "slo_seconds": 900
+                     *           },
+                     *           "offsite": {
+                     *             "status": "ok",
+                     *             "age_seconds": 468000,
+                     *             "slo_seconds": 691200
+                     *           },
+                     *           "drill": {
+                     *             "status": "ok",
+                     *             "age_seconds": 2332788,
+                     *             "slo_seconds": 3024000
+                     *           },
+                     *           "snapshot": {
+                     *             "status": "ok",
+                     *             "age_seconds": 30000,
+                     *             "slo_seconds": 129600
+                     *           },
+                     *           "overall": "ok"
+                     *         },
+                     *         "slo": {
+                     *           "full_seconds": 691200,
+                     *           "diff_seconds": 129600,
+                     *           "wal_seconds": 900,
+                     *           "offsite_seconds": 691200,
+                     *           "drill_seconds": 3024000,
+                     *           "snapshot_seconds": 129600
+                     *         }
+                     *       },
+                     *       "as_of": "2026-08-29T12:00:00Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: components["schemas"]["BackupsDiagnostics"];
+                    };
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            /** @description No api.prometheus_url configured on this deployment. */
             503: {
                 headers: {
                     [name: string]: unknown;

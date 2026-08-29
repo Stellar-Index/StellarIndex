@@ -15,7 +15,7 @@ func TestIsKnownFiat_AllowList(t *testing.T) {
 	t.Run("known codes pass", func(t *testing.T) {
 		// Sample of the codes we explicitly committed to up front
 		// + a couple added post-Reflector-FX (ARS, CLP, …).
-		known := []string{"USD", "EUR", "GBP", "JPY", "CNY", "ARS", "MXN", "BRL"}
+		known := []string{"USD", "EUR", "GBP", "JPY", "CNY", "ARS", "MXN", "BRL", "VES"}
 		for _, code := range known {
 			if !c.IsKnownFiat(code) {
 				t.Errorf("IsKnownFiat(%q) = false, want true", code)
@@ -25,7 +25,8 @@ func TestIsKnownFiat_AllowList(t *testing.T) {
 
 	t.Run("unknown codes fail", func(t *testing.T) {
 		// Common foot-guns: lowercase, alias-style (USDT vs USD), and
-		// codes we deliberately don't ship (SDR, XAU).
+		// codes we deliberately don't ship as FIAT (SDR; XAU is a
+		// commodity and lives on the ADR-0028 rwa: list instead).
 		unknown := []string{"usd", "Usd", "USDT", "SDR", "XAU", "XYZ", ""}
 		for _, code := range unknown {
 			if c.IsKnownFiat(code) {

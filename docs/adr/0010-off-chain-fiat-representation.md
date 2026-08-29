@@ -234,6 +234,18 @@ ADR for an addition._
   Crypto tickers (BTC, ETH, USDT…) emitted by Reflector's CEX
   oracle remain **out** of the fiat allow-list — they need a
   separate canonical asset type tracked as PR 164e.
+- 2026-08-27 — widened to the full 132-code set the massive.com FX
+  feed publishes into `fx_quotes` (e17288bd; the list in the Decision
+  section above is the historical 32). The live list is
+  `canonical.knownFiatCodes` in `internal/canonical/asset_fiat.go`.
+- 2026-08-29 — added VES (Venezuelan bolívar soberano, ISO-4217 928).
+  The Reflector FX oracle publishes a VES slot on every event
+  (present in the 2026-04-23 fixtures; recorded as `raw:VES` since
+  PR #247 and paged by `stellarindex_ingestion_oracle_unknown_symbols`
+  on r1 v0.48.0). The massive.com feed does not carry VES, so it is
+  inert on the `/assets` converter like the legacy codes. XAU (gold),
+  the other raw FX slot, is a commodity — not a currency — and goes to
+  ADR-0028's `rwa:` list, deliberately not here. Total: 133 codes.
 
 ## References
 
