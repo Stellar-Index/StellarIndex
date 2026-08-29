@@ -111,24 +111,34 @@ func (s *Store) TradesForArbScan(ctx context.Context, since time.Time, limit int
 	return trades, usd, nil
 }
 
-// OracleUpdatesForMEVScan returns recent ON-CHAIN oracle updates
-// (ledger > 0) published after `since`, ascending by ledger, capped
-// at `limit`. Satisfies mev.OracleScanner — the input for the
-// oracle_sandwich + liquidation_cascade detectors.
-func (s *Store) OracleUpdatesForMEVScan(ctx context.Context, since time.Time, limit int) ([]domain.MEVOracleRef, error) {
-	if limit <= 0 {
-		limit = 50_000
-	}
-	const q = `
+// oracleUpdatesForMEVScanQuery is the OracleUpdatesForMEVScan SQL.
+// `asset NOT LIKE 'raw:%'` excludes the unmapped rows the oracle
+// capture-totality design records verbatim (canonical.AssetOracleRaw):
+// the liquidation_cascade correlator has no asset keying (any row in
+// the ledger bracket is evidence), so without this predicate a raw
+// row would manufacture a cascade candidate; the sandwich detector is
+// keyed by exact asset string and could never match one anyway.
+const oracleUpdatesForMEVScanQuery = `
         SELECT source, COALESCE(contract_id, ''), ledger, tx_hash, op_index,
                asset, quote, ts
           FROM oracle_updates
          WHERE ts > $1
            AND ledger > 0
+           AND asset NOT LIKE 'raw:%'
          ORDER BY ledger ASC, tx_hash ASC, op_index ASC
          LIMIT $2
     `
-	rows, err := s.db.QueryContext(ctx, q, since.UTC(), limit)
+
+// OracleUpdatesForMEVScan returns recent ON-CHAIN oracle updates
+// (ledger > 0, mapped assets only — see oracleUpdatesForMEVScanQuery)
+// published after `since`, ascending by ledger, capped at `limit`.
+// Satisfies mev.OracleScanner — the input for the oracle_sandwich +
+// liquidation_cascade detectors.
+func (s *Store) OracleUpdatesForMEVScan(ctx context.Context, since time.Time, limit int) ([]domain.MEVOracleRef, error) {
+	if limit <= 0 {
+		limit = 50_000
+	}
+	rows, err := s.db.QueryContext(ctx, oracleUpdatesForMEVScanQuery, since.UTC(), limit)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: OracleUpdatesForMEVScan: %w", err)
 	}
@@ -256,7 +266,12 @@ type MEVEventRow struct {
 
 // ListMEVEvents returns the most-recent MEV events, newest first.
 // kind "" returns all kinds; a non-empty kind filters to it (uses the
-// per-kind index). limit is capped at 500.
+// per-kind index). limit must be in [1, 500]; anything outside that
+// range falls back to the 50-row default rather than being clamped to
+// the ceiling — the same normalisation as ListIssuers /
+// ListFreezeEvents / ListDivergenceLatest. /v1/mev already rejects an
+// out-of-range ?limit= with 400 (parseExplorerLimit), so this is the
+// defensive bound for direct callers.
 func (s *Store) ListMEVEvents(ctx context.Context, kind string, limit int) ([]MEVEventRow, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 50
