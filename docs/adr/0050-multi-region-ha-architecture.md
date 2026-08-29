@@ -97,3 +97,12 @@ both boxes to ~2 TB commodity bare metal. In exchange, **determinism hardening
 (plan §7.2) is promoted to a launch gate**: with the API as the product and three
 regions answering independently, cross-region answer equality is a correctness
 promise, not an optimisation. See `docs/architecture/multi-region-ha.md` §0b.
+
+## Status note — 2026-08-29: implementation DEFERRED to post-v1.0
+
+The architecture stands; the build does not start before v1.0 ships. Ash's reasoning,
+the measured cache-header evidence, and the cheapest-first resume sequence
+(Cloudflare -> micro-cache test -> R2 -> R3-on-evidence) are recorded in
+`docs/architecture/multi-region-ha.md` §0c. The v1.0-relevant residue is the
+single-point-of-failure exposure, tracked against ADR-0043's DR work rather than here.
+
