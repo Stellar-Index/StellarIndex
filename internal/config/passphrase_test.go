@@ -46,3 +46,21 @@ func TestStellarConfig_Passphrase_emptyNetwork(t *testing.T) {
 		t.Errorf("Passphrase(zero-value) = %q, want empty string", got)
 	}
 }
+
+// TestStellarConfig_Passphrase_LiteralPin asserts the exact
+// github.com/stellar/go-stellar-sdk/network strings. The package
+// constants alias internal/canonical, so the table test above only
+// proves Passphrase() returns whatever canonical says — this test
+// proves canonical says the right thing.
+func TestStellarConfig_Passphrase_LiteralPin(t *testing.T) {
+	cases := map[string]string{
+		"pubnet":    "Public Global Stellar Network ; September 2015",
+		"testnet":   "Test SDF Network ; September 2015",
+		"futurenet": "Test SDF Future Network ; October 2022",
+	}
+	for network, want := range cases {
+		if got := (StellarConfig{Network: network}).Passphrase(); got != want {
+			t.Errorf("Passphrase(%q) = %q, want %q", network, got, want)
+		}
+	}
+}

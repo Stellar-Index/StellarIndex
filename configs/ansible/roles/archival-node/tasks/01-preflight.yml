@@ -127,3 +127,54 @@
   ansible.builtin.setup:
     gather_subset:
       - network
+
+# deploy-ansible-secrets-5: /etc/default/stellarindex and
+# /etc/default/stellarindex-ops are systemd EnvironmentFiles — values are
+# rendered UNQUOTED (systemd takes the line literally) — yet operators are
+# told to `set -a; source` them interactively, and until 2026-08-28 the
+# deploy migrate step, a root cron and eleven host scripts did the same.
+# A secret containing a shell metacharacter (`$`, `;`, quotes, space, …)
+# then works under systemd and is silently mangled — or partly EXECUTED
+# as root — under the shell. The programmatic readers now read the file
+# verbatim; this assert closes the interactive path by refusing to render
+# such a value at all (rotate it: `openssl rand -hex 32`, per
+# credential-rotation.md). Names only in the failure — never values.
+- name: Collect env-file secrets that carry shell metacharacters
+  ansible.builtin.set_fact:
+    env_file_unsafe_secrets: >-
+      {{ env_file_secrets | dict2items
+         | selectattr('value', 'search', env_file_unsafe_re)
+         | map(attribute='key') | list }}
+  vars:
+    env_file_unsafe_re: '[\s$`;&|''"\\<>(){}*?\[\]!~]'
+    env_file_secrets:
+      postgres_user_stellarindex: "{{ postgres_user_stellarindex | default('') }}"
+      postgres_pass_stellarindex: "{{ postgres_pass_stellarindex | default('') }}"
+      postgres_db_stellarindex: "{{ postgres_db_stellarindex | default('') }}"
+      stellarindex_reader_access_key: "{{ stellarindex_reader_access_key | default('') }}"
+      vault_stellarindex_reader_secret_key: "{{ vault_stellarindex_reader_secret_key | default('') }}"
+      vault_massive_api_key: "{{ vault_massive_api_key | default('') }}"
+      vault_coingecko_demo_api_key: "{{ vault_coingecko_demo_api_key | default('') }}"
+      vault_chainlink_rpc_url: "{{ vault_chainlink_rpc_url | default('') }}"
+      vault_resend_api_key: "{{ vault_resend_api_key | default('') }}"
+      vault_dashboard_code_secret: "{{ vault_dashboard_code_secret | default('') }}"
+      clickhouse_serving_password: "{{ clickhouse_serving_password | default('') }}"
+      clickhouse_ops_batch_user: "{{ clickhouse_ops_batch_user | default('') }}"
+      clickhouse_ops_batch_password: "{{ clickhouse_ops_batch_password | default('') }}"
+      # /etc/default/galexie (07-galexie.yml) — sourced by config-assertions.sh
+      galexie_s3_access_key: "{{ galexie_s3_access_key | default('') }}"
+      galexie_s3_secret_key: "{{ galexie_s3_secret_key | default('') }}"
+  no_log: true
+
+- name: Verify env-file secrets are free of shell metacharacters
+  ansible.builtin.assert:
+    that:
+      - env_file_unsafe_secrets | length == 0
+    fail_msg: >-
+      These vault values would be rendered unquoted into
+      /etc/default/{stellarindex,stellarindex-ops,galexie} but contain a shell metacharacter
+      (whitespace $ ` ; & | quotes \ < > ( ) { } * ? [ ] ! ~), so systemd
+      and any shell that sources the file would disagree on the value —
+      refusing to render. Rotate to `openssl rand -hex 32`
+      (docs/operations/runbooks/credential-rotation.md):
+      {{ env_file_unsafe_secrets | join(', ') }}
