@@ -204,23 +204,34 @@ func (s *Store) CountUSDVolumeRestampCandidates(ctx context.Context, p USDVolume
 // the window and returns the number of rows rewritten. Rows that already
 // satisfy the identity are not touched (value or derive_generation).
 //
-// Runs on a DEDICATED connection with
-// `timescaledb.max_tuples_decompressed_per_dml_transaction = 0`: the
+// Runs in ONE explicit transaction that first lifts the decompression cap
+// (`timescaledb.max_tuples_decompressed_per_dml_transaction = 0`): the
 // historical span lives in COMPRESSED chunks, and the default 100k-tuple
 // cap aborts a single day's DML (measured 2026-07-30: one day needed
-// 265k). Session-scoped on purpose — the GUC must not leak into the
-// pool's serving connections.
+// 265k). The window is caller-sliced (see [USDVolumeRestampParams.From]),
+// so the transaction stays one bounded UPDATE.
+//
+// `SET LOCAL`, and POSTGRES scopes it — not the driver. A plain session
+// `SET` on a borrowed [database/sql.Conn] OUTLIVES the call: `Conn.Close`
+// returns the connection to the pool, and pgx v5's stdlib adapter resets
+// nothing on reuse (its default `ResetSession` only pings and discards a
+// conn left mid-transaction — pgx v5 stdlib/sql.go). The lifted cap would
+// then ride that pooled connection for the process lifetime and silently
+// uncap every later DML that landed on it. `SET LOCAL` is unwound by the
+// COMMIT/ROLLBACK itself, so it cannot escape even on the error path —
+// the same tx-scoped GUC discipline as [Store.FindPerSourceLedgerGaps]
+// and [Store.SEP41SupplyEventKindResum].
 func (s *Store) RestampExactTierUSDVolume(ctx context.Context, p USDVolumeRestampParams) (int64, error) {
 	groupRel, where, identity, args, err := exactTierRestampScope(p)
 	if err != nil {
 		return 0, err
 	}
-	conn, err := s.db.Conn(ctx)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, fmt.Errorf("timescale: usd-volume restamp conn: %w", err)
+		return 0, fmt.Errorf("timescale: usd-volume restamp begin: %w", err)
 	}
-	defer func() { _ = conn.Close() }()
-	if _, err := conn.ExecContext(ctx, "SET timescaledb.max_tuples_decompressed_per_dml_transaction = 0"); err != nil {
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, "SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0"); err != nil {
 		return 0, fmt.Errorf("timescale: usd-volume restamp: raise decompression cap: %w", err)
 	}
 	// Every fragment is code-built by exactTierRestampScope; all values
@@ -228,7 +239,7 @@ func (s *Store) RestampExactTierUSDVolume(ctx context.Context, p USDVolumeRestam
 	// positional placeholders — gosec G202 is a false positive here.
 	//nolint:gosec // no caller-supplied text reaches the statement
 	q := "UPDATE trades t SET usd_volume = " + identity + ", derive_generation = $3 FROM " + groupRel + where
-	res, err := conn.ExecContext(ctx, q, args...)
+	res, err := tx.ExecContext(ctx, q, args...)
 	if err != nil {
 		return 0, fmt.Errorf("timescale: usd-volume restamp [%s, %s): %w",
 			p.From.Format(time.RFC3339), p.To.Format(time.RFC3339), err)
@@ -236,6 +247,10 @@ func (s *Store) RestampExactTierUSDVolume(ctx context.Context, p USDVolumeRestam
 	n, err := res.RowsAffected()
 	if err != nil {
 		return 0, fmt.Errorf("timescale: usd-volume restamp rows affected: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("timescale: usd-volume restamp commit [%s, %s): %w",
+			p.From.Format(time.RFC3339), p.To.Format(time.RFC3339), err)
 	}
 	return n, nil
 }
