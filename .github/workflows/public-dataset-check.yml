@@ -1,0 +1,137 @@
+name: public-dataset-check
+
+# AWS Public Blockchain dataset drift tripwire (backup-restore-6,
+# audit 2026-08-29; ADR-0043 amendment 2026-08-29).
+#
+# r1's own galexie-archive was capacity-trimmed below ledger 49,984,000
+# on 2026-07-26 (ADR-0027 hot floor), so the "second independent
+# raw-LCM archive" ADR-0043's re-derive story rests on is
+# s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet/ — published by
+# the AWS Open Data Sponsorship program, which we do not control and
+# which nothing watched. This weekly job lists the bucket anonymously
+# (--no-sign-request; no AWS credentials exist or are needed) and asserts
+# it still has the shape every consumer in this repo assumes: contiguous
+# 64,000-ledger partitions from genesis to within 2 partitions of tip,
+# the HEX--start-end naming scheme, an unchanged .config.json manifest,
+# and — above all — our trimmed range [64000, 49983999] fully present.
+#
+# On drift it opens/updates ONE tracking issue (idempotent, same shape as
+# ci-health.yml) and closes it again when the dataset is intact. It NEVER
+# fails the scheduled run red: a third-party outage should page through
+# the issue, not turn the Actions tab red for a condition no PR can fix.
+#
+# Decision core: scripts/ci/check-public-dataset.sh (fixture-tested
+# offline by scripts/ci/check-public-dataset-test.sh in ci.yml). The
+# only network calls are the public bucket listing and Horizon's root
+# document for the ledger tip; an unreachable tip source is a warning,
+# not drift.
+
+on:
+  schedule:
+    # Thursdays 06:40 UTC — weekly; the dataset publishes a new 64k
+    # partition roughly every ~4 days, so 2 partitions of slack covers a
+    # missed week.
+    - cron: '40 6 * * 4'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: public-dataset-check
+  cancel-in-progress: false
+
+env:
+  ISSUE_LABEL: public-dataset-drift
+  ISSUE_TITLE: "AWS Public Blockchain dataset drift"
+
+jobs:
+  check-public-dataset:
+    name: aws-public-blockchain pubnet coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Scan the public dataset
+        id: scan
+        # aws cli + jq ship on ubuntu-latest. No credentials: the bucket
+        # is public and the script passes --no-sign-request throughout.
+        run: |
+          set -euo pipefail
+          set +e
+          report="$(./scripts/ci/check-public-dataset.sh)"
+          rc=$?
+          set -e
+          echo "$report"
+          {
+            echo "verdict_rc=${rc}"
+            echo "report<<REPORT_EOF"
+            echo "$report"
+            echo "REPORT_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run summary
+        env:
+          VERDICT_RC: ${{ steps.scan.outputs.verdict_rc }}
+          PARTITION_COUNT: ${{ steps.scan.outputs.partition_count }}
+          LAST_PARTITION: ${{ steps.scan.outputs.last_partition }}
+          CONTIGUOUS_TO: ${{ steps.scan.outputs.contiguous_to }}
+          TIP: ${{ steps.scan.outputs.tip }}
+          REPORT: ${{ steps.scan.outputs.report }}
+        run: |
+          set -euo pipefail
+          if [ "$VERDICT_RC" = "0" ]; then verdict="INTACT"; else verdict="DRIFT"; fi
+          {
+            echo "## aws-public-blockchain pubnet — ${verdict}"
+            echo
+            echo "| partitions | last partition | contiguous to | tip |"
+            echo "|---|---|---|---|"
+            echo "| ${PARTITION_COUNT:-?} | \`${LAST_PARTITION:-?}\` | ${CONTIGUOUS_TO:-?} | ${TIP:-?} |"
+            echo
+            echo '```'
+            echo "$REPORT"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update the tracking issue (dataset drifted)
+        if: steps.scan.outputs.verdict_rc != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REPORT: ${{ steps.scan.outputs.report }}
+        run: |
+          set -euo pipefail
+          # Ensure the label exists (idempotent).
+          gh label create "$ISSUE_LABEL" --color B60205 \
+            --description "aws-public-blockchain pubnet dataset no longer matches ADR-0043's assumptions" 2>/dev/null || true
+
+          body="$(printf '%s\n\n---\n_Auto-managed by the public-dataset-check workflow (run %s). This dataset is the only copy of ledgers [64000, 49983999] we can reach (ADR-0043 amendment 2026-08-29; r1 trimmed them 2026-07-26). Closes automatically when the dataset is intact again. If the drift is permanent, execute the one-time cross-region copy option in ADR-0043._\n' \
+            "$REPORT" "${GITHUB_RUN_ID:-?}")"
+
+          existing="$(gh issue list --label "$ISSUE_LABEL" --state open \
+            --json number --jq '.[0].number' || true)"
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            gh issue comment "$existing" --body "$body"
+            echo "Updated existing public-dataset-drift issue #$existing."
+          else
+            gh issue create --title "$ISSUE_TITLE" --label "$ISSUE_LABEL" --body "$body"
+            echo "Opened new public-dataset-drift issue."
+          fi
+          echo "::warning::aws-public-blockchain pubnet dataset drift detected — see the tracking issue. (Scheduled run deliberately not failed.)"
+
+      - name: Close the tracking issue (dataset intact)
+        if: steps.scan.outputs.verdict_rc == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for n in $(gh issue list --label "$ISSUE_LABEL" --state open \
+              --json number --jq '.[].number' || true); do
+            gh issue close "$n" --comment "aws-public-blockchain pubnet dataset is intact again — public-dataset-check closing automatically."
+            echo "Closed public-dataset-drift issue #$n."
+          done

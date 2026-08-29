@@ -104,6 +104,7 @@ signal lands.
 | `stellarindex_ch_schema_snapshot_offsite_stale` | `time() - stellarindex_ch_schema_snapshot_offsite_last_success_unix` | > 72 h for ≥ 30 min | P3 | [ch-schema-restore](runbooks/ch-schema-restore.md) |
 | `stellarindex_restore_drill_stale` | `time() - stellarindex_restore_drill_last_success_unix` (or `absent_over_time(...[40d])`) | > 40 d for ≥ 30 min | P3 | [restore-drill-stale](runbooks/restore-drill-stale.md) |
 | `stellarindex_restore_drill_failed` | `stellarindex_restore_drill_failures` | > 0 for ≥ 30 min (most recent run failed/aborted) | P3 | [restore-drill-failed](runbooks/restore-drill-failed.md) |
+| `stellarindex_backup_offsite_stale` | `up{job="pgbackrest_exporter"} == 1 unless on (instance) (pgbackrest_backup_info{repo_key="2"} unless … offset 8d)` — no repo2 (S3 off-site) backup series younger than 8 d, or repo2 never written; repo1-fresh/repo2-stale is invisible to the two alerts above | for ≥ 1 h | P3 | [backup-offsite-stale](runbooks/backup-offsite-stale.md) |
 
 ## Cache / serving alerts
 

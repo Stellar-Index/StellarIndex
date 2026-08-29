@@ -15,8 +15,106 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **AWS Public Blockchain dataset drift monitor** (audit 2026-08-29,
+  backup-restore-6). r1's galexie-archive was trimmed below ledger
+  49,984,000 on 2026-07-26, so the second raw-LCM archive ADR-0043
+  relies on is the third-party `aws-public-blockchain` pubnet dataset
+  — and nothing watched it. `.github/workflows/public-dataset-check.yml`
+  (weekly + dispatch, no credentials, `--no-sign-request`, first-party
+  actions only) now asserts contiguous 64,000-ledger coverage from
+  genesis to ≥ tip − 2 partitions, the `HEX--start-end` naming, an
+  unchanged `.config.json` manifest and the trimmed range
+  `[64000, 49983999]` fully present; drift opens/updates ONE "AWS
+  Public Blockchain dataset drift" issue (auto-closed when intact) and
+  never fails the scheduled run red. Decision core
+  `scripts/ci/check-public-dataset.sh`, fixture-tested in `ci`
+  (`check-public-dataset-test.sh`: gap inside/above the trimmed range,
+  misnamed partition, manifest change, stalled publication all RED).
+
+### Changed
+
+- **ADR-0043 §2 amended (2026-08-29):** "two independent raw-LCM
+  archives" now explicitly = our recent range + the AWS Public
+  Blockchain dataset; dependency accepted and monitored rather than
+  duplicated, with the one-time cross-region copy (≈ $80 + $3–4/mo)
+  recorded as the not-taken option. `off-site-backup-plan.md` status
+  carries the same note.
+- **Public status page shows backup freshness (Ash, 2026-08-29).** New
+  read-only `GET /v1/diagnostics/backups` (experimental) reports the
+  pgBackRest last full / diff / WAL-archive age, the per-repository
+  newest backup (repo 1 on-host, repo 2 encrypted S3 off-site), the
+  monthly restore drill's last run + pass/fail, and the ClickHouse
+  schema+state snapshot age — each with a `freshness` verdict
+  (`ok` / `stale` / `unknown`) against SLOs the API echoes in `slo`
+  (full ≤ 8 d, diff ≤ 36 h, WAL ≤ 15 m, off-site ≤ 8 d, drill ≤ 35 d,
+  snapshot ≤ 36 h). Source of truth is Prometheus — the same
+  pgbackrest_exporter / node_exporter textfile series the alert rules
+  read; the API never shells out to pgbackrest. Every timestamp is
+  nullable and an absent series is `null` + `unknown`, never a fresh
+  zero; `source_status` carries the document's trust tri-state and
+  `flags.stale` mirrors the roll-up. Cached 60 s, no secrets or paths;
+  503 where no `api.prometheus_url` is configured. The explorer
+  `/status` page mounts a **Backups** panel (`BackupsPanel.tsx`,
+  mainnet only) that renders green within SLO, red with the real age
+  past it, grey "no data" for absent sources, and a "verdicts not
+  trustworthy" marker when the API's Prometheus reads failed — ages
+  come from the API's `age_seconds`, never the browser clock. Reserved
+  nulls (documented in the spec): repo `retention`, drill
+  `restored_backup_ts` / `duration_s`, `zfs_snapshot_latest_ts`,
+  `replica_lag_s` — no producer exports them yet. Tests:
+  `internal/api/v1/diagnostics_backups_test.go`,
+  `web/explorer/src/app/status/BackupsPanel.test.tsx`.
+- **`stellarindex_backup_offsite_stale` (P3, both rule trees).** The
+  existing backup alerts read `pgbackrest_backup_since_last_completion_seconds`,
+  which the exporter computes ACROSS repos — a host whose on-host repo1
+  is fresh while every repo2 (S3) write fails stayed green and the one
+  copy that survives host loss aged out silently. The new rule fires
+  per UP exporter instance with no `pgbackrest_backup_info{repo_key="2"}`
+  series younger than 8 d (`x unless x offset 8d` — a new backup is a
+  new series), which also covers repo2 never written. promtool tests
+  in `deploy/monitoring/rule-tests/backup-offsite_test.yml` (red-proof:
+  widening `repo_key` to all repos makes the repo1-fresh/repo2-stale
+  case stop firing); runbook `runbooks/backup-offsite-stale.md`.
+
 ### Fixed
 
+- **`fiat:VES` and `rwa:XAU` — the two reflector-fx slots that paged
+  `stellarindex_ingestion_oracle_unknown_symbols` on r1 v0.48.0
+  (2026-08-29, `raw:VES` / `raw:XAU`, 7 rows each in 2 h).** The cause
+  was the allow-lists, not the decoder: VES (Venezuelan bolívar
+  soberano, ISO-4217) joins the ADR-0010 fiat list and XAU (spot gold,
+  troy oz) joins the ADR-0028 `rwa:` list — a commodity, deliberately
+  not fiat and distinct from the tokenized `XAUm`. Via the shared
+  `canonical.MapOracleSymbol` precedence both now decode as mapped
+  rows at the same positional `op_index` (DAT-03), so the 0109
+  generation-guarded upsert rewrites the existing `raw:` rows in
+  place on replay; the counter no longer increments for them
+  (`TestRealDecoder_fxVESAndXAUMappedNotRaw`; the real 2026-04-23 FX
+  fixtures now decode with zero raw rows). The alert stays red for up
+  to 25 h after deploy (its `increase[25h]` window — runbook). The
+  reflector-fx replay from the first `raw:` ledger is declared in the
+  commit's `Replay-Plan:` trailer; pre-#247 history (slots dropped,
+  not recorded) is covered by #247's full re-derive (PR-7 of the
+  totality design), which must run on a binary carrying this change.
+
+- **Explorer test-net builds could silently serve MAINNET data.**
+  `web/explorer/next.config.mjs` inlined `NEXT_PUBLIC_API_BASE_URL ??
+  'https://api.stellarindex.io'` through its `env` block, so the
+  per-network fallback added in #212 (`API_BASE_URL ??
+  CURRENT_NETWORK.apiBaseUrl` in `src/api/client.ts`) was unreachable:
+  a testnet/futurenet Pages project with `NEXT_PUBLIC_NETWORK` set but
+  the API var forgotten baked in the mainnet origin. The key is dropped
+  from `env` (Next inlines `NEXT_PUBLIC_*` from the build environment
+  on its own), `useMe` now shares `API_BASE_URL` instead of its own
+  mainnet-literal fallback, and the JSON-LD `contentUrl` on asset /
+  market pages derives from `CURRENT_NETWORK.apiBaseUrl`. The
+  mainnet-hardcode guard now also scans `next.config.mjs` and strips
+  `//` comments before `/* */` — a `/dashboard/*` in a line comment had
+  opened a phantom block comment that hid three literals from it.
+  New `src/lib/next-config-env.test.ts` pins the env contract
+  (audit web-status-5).
 - **Native XLM supply is now network-aware.** `internal/supply` derived
   `total_supply` / `max_supply` from the frozen pubnet constant
   (50,001,806,812 XLM) regardless of the configured network, so

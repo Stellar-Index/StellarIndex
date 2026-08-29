@@ -434,6 +434,14 @@ jobs:
         # ci-health.yml (watches `ci.yml`) and reconciliation-health.yml
         # (watches `ansible-drift.yml`) call. No network, no token.
         run: ./scripts/ci/check-main-ci-health-test.sh
+      - name: check-public-dataset self-test
+        # backup-restore-6 (audit-2026-08-29): fixtures for the
+        # aws-public-blockchain drift verdict public-dataset-check.yml
+        # calls weekly. Pins every drift class RED (gap inside/above the
+        # trimmed range, misnamed partition, manifest change, stalled
+        # publication) and the live 1003-partition shape GREEN. No
+        # network, no aws cli.
+        run: ./scripts/ci/check-public-dataset-test.sh
       - name: lint-metric-refs self-test
         # W8.15: the F-1329 dead-alert guard used a plain grep over
         # emitter files, so a metric named only in a `//` (Go) or `#`
