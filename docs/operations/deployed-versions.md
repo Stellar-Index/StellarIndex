@@ -18,7 +18,12 @@ source and carries a periodically-refreshed snapshot.
 Every `ansible` binary deploy writes the version it just installed to a sidecar
 on r1 (`configs/ansible/tasks/deploy-one-binary.yml` — the pre-deploy step reads
 the previous value from it for the rollback path, the post-deploy step
-overwrites it). So the **live source of record** is:
+overwrites it). (The from-scratch bootstrap path — `manage_stellarindex_binaries: true`
+in the test-net inventories, `14-stellarindex-services.yml` — writes the
+same sidecars with the controller checkout's `git describe --tags
+--always --dirty`, e.g. `v0.47.2-3-g1a2b3c4-dirty`, so a later `deploy.yml`
+run labels its rollback copy truthfully instead of `untracked-<ts>`.)
+So the **live source of record** is:
 
 ```
 /var/lib/stellarindex/deployed-versions/<binary>

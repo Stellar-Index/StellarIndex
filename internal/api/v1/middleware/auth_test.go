@@ -492,8 +492,9 @@ func TestAuth_InfraPathsBypassCredentials(t *testing.T) {
 
 	infra := []string{
 		"/v1/healthz", "/v1/readyz", "/v1/version",
-		"/metrics",    // loopbackOnly() is the real gate; Auth 401'd before it ran
-		"/robots.txt", //nolint:misspell // filename
+		"/v1/livez/lake", // ADR-0050 lake-route LB probe; openapi declares security: [] (api-security-3)
+		"/metrics",       // loopbackOnly() is the real gate; Auth 401'd before it ran
+		"/robots.txt",    //nolint:misspell // filename
 		"/",
 		"/errors/not-found", // RFC 9457 type URIs point here from every error body
 		"/errors/",

@@ -96,6 +96,30 @@ approach the [genesis, tip] span; sparse-by-design sources (Blend
 auctions, CCTP) are naturally lower because the contract doesn't
 emit per ledger.
 
+**Count source per target.** For every target the numerator is
+`COUNT(DISTINCT ledger)` over the target's own hypertable, EXCEPT
+`source="soroban-events"`, which since 2026-08-28 reads the
+`ledger_ingest_log` census instead (`COUNT(*) WHERE
+soroban_event_count > 0` over the scan window — a PK range scan).
+`soroban_events` has no index on `ledger`; the generic count was a
+556 s full scan of a 257 GB hypertable per cycle and took r1's
+serving path down. The census is the indexer's LCM-derived record of
+"this ledger carried >= 1 eligible contract event", written
+post-enqueue (after `ProcessLedger` returns, before the sink drains —
+not a rows-in-Postgres marker), and equals the observed-row count by
+the ADR-0033 Claim 3 invariant; a divergence is a persistence
+shortfall that `stellarindex-ops verify` reconciliation surfaces, not
+this gauge. Two honest edges: a sink-writer halt makes this density
+read *high* (census >0, rows absent) while the `_gap_*` gauges stay
+observed-row-based; and `stellarindex-ops backfill` does not populate
+`ledger_ingest_log`, so a range repaired without `census-backfill`
+(ADR-0033 recovery §1) reads density 0 for soroban-events.
+The gap gauges for that target (`..._gap_*`) still come from a scan
+of `soroban_events` itself. Same gauge, same
+`source_coverage_snapshots` row, same `density_pct` in
+`/v1/diagnostics/ingestion` — only the source of the number differs
+(`GapDetectorTarget.DistinctLedgerCountSQL`).
+
 ### `stellarindex_ingest_gap_detector_tip_ledger`
 
 Gauge (no labels).
@@ -321,15 +345,40 @@ deltas after each processed ledger. Denominator is
 
 Counter, label `source`.
 
-Asset slots skipped from an otherwise-decoded oracle event because
-the symbol or feed-id isn't in our canonical asset allow-list
-(ADR-0010). Distinct from `decode_errors`: the rest of the event
-still decoded cleanly — the parent decoder `continue`d past the
-unknown slot rather than failing the whole event. Reflector, Band,
-and Redstone are the live emitters; CEX streamers don't fan out
-into mixed-asset batches the same way. A sustained non-zero rate
-means an upstream oracle expanded its feed set and our allow-list
-needs an amendment. F-1234 (codex audit-2026-05-12).
+Asset slots in an otherwise-decoded oracle event whose symbol or
+feed-id isn't in our canonical asset allow-list (ADR-0010 fiat,
+ADR-0014 crypto, ADR-0028 RWA / RedStone feed registry). Since the
+oracle capture-totality change the slot is **recorded verbatim as a
+`raw:<symbol>` row** (`canonical.AssetOracleRaw`) rather than
+dropped, so the counter means "recorded as raw", not "lost".
+Distinct from `decode_errors`: the rest of the event still decoded
+cleanly. Reflector, Band, and Redstone are the live emitters; CEX
+streamers don't fan out into mixed-asset batches the same way. A
+sustained non-zero rate means an upstream oracle expanded its feed
+set and our allow-list / feed registry needs an amendment — once it
+lands, a re-derive promotes the raw rows in place on the same PK.
+F-1234 (codex audit-2026-05-12).
+
+Alert: `stellarindex_ingestion_oracle_unknown_symbols` (any per-source
+increase over a trailing 25 h, sustained 30 min — the window exceeds
+Band's daily cadence so it cannot flap) → runbook
+[oracle-unknown-symbols](../../operations/runbooks/oracle-unknown-symbols.md).
+The 2026-08-04 cold audit found this counter had no consumer at all
+while r1 carried 7,794 dropped Reflector slots. The oracle decoders
+now record unmapped slots verbatim as `raw:<symbol>` rows
+(`canonical.AssetOracleRaw`, oracle capture-totality design PR-2) and
+the counter keeps incrementing — a raw row is still a mapping gap to
+close.
+
+Alert: `stellarindex_ingestion_oracle_unknown_symbols` (any per-source
+increase over a trailing 25 h, sustained 30 min — the window exceeds
+Band's daily cadence so it cannot flap) → runbook
+[oracle-unknown-symbols](../../operations/runbooks/oracle-unknown-symbols.md).
+The 2026-08-04 cold audit found this counter had no consumer at all
+while r1 carried 7,794 dropped Reflector slots. Once the oracle
+decoders record unmapped slots verbatim as `raw:<symbol>` rows
+(`canonical.AssetOracleRaw`, oracle capture-totality design) the counter
+keeps incrementing — a raw row is still a mapping gap to close.
 
 Alert: `stellarindex_ingestion_oracle_unknown_symbols` (any per-source
 increase over a trailing 25 h, sustained 30 min — the window exceeds

@@ -194,10 +194,11 @@ func TestRealDecoder_stellarAndSymbolAssetsMix(t *testing.T) {
 	}
 }
 
-func TestRealDecoder_unknownSymbolSkippedEmptyEventSurfaced(t *testing.T) {
-	// An event whose ONLY entry is an unknown symbol decodes to
-	// zero valid prices → surfaces as ErrEmptyPrices. (Partial
-	// events with some valid + some unknown are covered below.)
+// Oracle capture-totality (PR-2): an unmapped symbol is RECORDED as a
+// raw:<symbol> row, not skipped. Before this change an event whose
+// ONLY entry was unknown surfaced as ErrEmptyPrices and the slot was
+// lost until a code change plus a lake replay.
+func TestRealDecoder_unknownSymbolAllUnknownRecordedAsRaw(t *testing.T) {
 	madeUp := xdr.ScSymbol("NOTACURRENCY")
 	symSv := xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &madeUp}
 	bodyB64 := encodeUpdateBody(t, []xdr.ScVal{symSv}, []*big.Int{big.NewInt(1)})
@@ -206,19 +207,40 @@ func TestRealDecoder_unknownSymbolSkippedEmptyEventSurfaced(t *testing.T) {
 		Topic:      []string{TopicSymbolReflector, TopicSymbolUpdate, encodeTimestampTopic(t, 1)},
 		Value:      bodyB64,
 		ContractID: "CBKGPWGKSKZF52CFHMTRR23TBWTPMRDIYZ4O2P5VS65BMHYH4DXMCJZC",
+		Ledger:     1,
+		TxHash:     reflectorTxHash,
 	}
-	_, err := decodeUpdate(e, VariantFX, DefaultDecimals, "", time.Now())
-	if !errors.Is(err, ErrEmptyPrices) {
-		t.Errorf("expected ErrEmptyPrices, got %v", err)
+	updates, err := decodeUpdate(e, VariantFX, DefaultDecimals, "", time.Now())
+	if err != nil {
+		t.Fatalf("all-unknown event must decode to raw rows, got error: %v", err)
+	}
+	if len(updates) != 1 {
+		t.Fatalf("expected 1 raw update, got %d", len(updates))
+	}
+	raw, _ := canonical.NewOracleRawAsset("NOTACURRENCY")
+	if !updates[0].Asset.Equal(raw) {
+		t.Errorf("updates[0].Asset = %s want %s", updates[0].Asset, raw)
+	}
+	if updates[0].Asset.IsMapped() {
+		t.Errorf("raw row must report IsMapped()=false")
+	}
+	if !updates[0].Quote.Equal(usdFiat) {
+		t.Errorf("updates[0].Quote = %s want %s (variant-implied)", updates[0].Quote, usdFiat)
+	}
+	if updates[0].OpIndex != 0 {
+		t.Errorf("updates[0].OpIndex = %d want 0 (vector slot 0)", updates[0].OpIndex)
+	}
+	if err := updates[0].Validate(); err != nil {
+		t.Errorf("raw OracleUpdate must validate for insert: %v", err)
 	}
 }
 
-func TestRealDecoder_unknownSymbolSkippedPartialEventDecodes(t *testing.T) {
-	// Mixed payload — one valid fiat symbol + one unknown. The
-	// valid entry must come through; the unknown is skipped. This
-	// is what protects us against losing real prices when a new
-	// symbol shows up on the feed ahead of the canonical fiat list
-	// catching up.
+func TestRealDecoder_unknownSymbolPartialEventRecordsRawInPlace(t *testing.T) {
+	// Mixed payload — one valid fiat symbol + one unknown. The valid
+	// entry comes through exactly as before; the unknown one is now
+	// recorded verbatim as raw:NOTACURRENCY at ITS OWN vector slot
+	// (DAT-03: the raw row takes the position the pre-totality Skip
+	// placeholder consumed, so the USD row's OpIndex does not move).
 	usd := xdr.ScSymbol("USD")
 	usdSv := xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &usd}
 	madeUp := xdr.ScSymbol("NOTACURRENCY")
@@ -237,12 +259,25 @@ func TestRealDecoder_unknownSymbolSkippedPartialEventDecodes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(updates) != 1 {
-		t.Fatalf("expected 1 update (USD), got %d", len(updates))
+	if len(updates) != 2 {
+		t.Fatalf("expected 2 updates (USD + raw:NOTACURRENCY), got %d", len(updates))
 	}
 	usdAsset, _ := canonical.NewFiatAsset("USD")
 	if !updates[0].Asset.Equal(usdAsset) {
 		t.Errorf("updates[0].Asset = %+v want %+v", updates[0].Asset, usdAsset)
+	}
+	if updates[0].OpIndex != 0 {
+		t.Errorf("updates[0].OpIndex = %d want 0", updates[0].OpIndex)
+	}
+	raw, _ := canonical.NewOracleRawAsset("NOTACURRENCY")
+	if !updates[1].Asset.Equal(raw) {
+		t.Errorf("updates[1].Asset = %s want %s", updates[1].Asset, raw)
+	}
+	if updates[1].OpIndex != 1 {
+		t.Errorf("updates[1].OpIndex = %d want 1 (raw row holds vector slot 1)", updates[1].OpIndex)
+	}
+	if updates[1].Price.BigInt().Cmp(big.NewInt(42)) != 0 {
+		t.Errorf("updates[1].Price = %s want 42 (recorded verbatim)", updates[1].Price)
 	}
 }
 
