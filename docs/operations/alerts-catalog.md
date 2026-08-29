@@ -107,6 +107,7 @@ signal lands.
 | `stellarindex_zfs_pool_free_critical` | same | < 1.5 TiB for ≥ 5 min (below the snapshot job's 2 TiB guard floor) | **P1** | [zfs-snapshots](runbooks/zfs-snapshots.md) |
 | `stellarindex_zfs_snapshot_stale` | `time() - stellarindex_zfs_snapshot_latest_unix` per dataset (or `absent_over_time(...{dataset="data/clickhouse"}[36h])`) | > 36 h for ≥ 30 min | P3 | [zfs-snapshots](runbooks/zfs-snapshots.md) |
 | `stellarindex_zfs_snapshot_pool_free_unreadable` | `stellarindex_zfs_snapshot_pool_free_unreadable` (error textfile; job refused to prune/snapshot) | == 1 for ≥ 10 min | P3 | [zfs-snapshots](runbooks/zfs-snapshots.md) |
+| `stellarindex_backup_offsite_stale` | `up{job="pgbackrest_exporter"} == 1 unless on (instance) (pgbackrest_backup_info{repo_key="2"} unless … offset 8d)` — no repo2 (S3 off-site) backup series younger than 8 d, or repo2 never written; repo1-fresh/repo2-stale is invisible to the two alerts above | for ≥ 1 h | P3 | [backup-offsite-stale](runbooks/backup-offsite-stale.md) |
 
 ## Cache / serving alerts
 

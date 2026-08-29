@@ -21,9 +21,13 @@ every route (including the top-100 coin slugs from
 `generateStaticParams` at build time), all assets fingerprinted,
 no runtime dependency on Node.
 
-The API is contacted **client-side** from the browser to
-`https://api.stellarindex.io` — set via the
-`NEXT_PUBLIC_API_BASE_URL` env var at build time. Same-origin
+The API is contacted **client-side** from the browser to this network's
+`api.*` origin — `NEXT_PUBLIC_API_BASE_URL` at build time if set, otherwise
+derived from `NEXT_PUBLIC_NETWORK` (`src/lib/networks.ts`:
+`api.stellarindex.io` / `api.testnet.` / `api.futurenet.`). `next.config.mjs`
+deliberately inlines **no** default for it: a mainnet default there used to
+shadow that per-network fallback, so a test-net build that forgot the var
+served mainnet data under test-net chrome. Same-origin
 hosting is not required and not desirable: keeping the showcase
 domain separate from `api.stellarindex.io` means the API can
 serve when the showcase is down, and vice versa.
@@ -124,8 +128,10 @@ lets visitors hop between them (it reads each network's public
 1. Create the Pages project (`stellarindex-explorer-testnet` /
    `-futurenet`). Either connect it to this repo's `main` (git integration,
    auto-deploy) **or** leave it CI-published (below). If git-integrated, set
-   the project's build env vars `NEXT_PUBLIC_NETWORK` +
-   `NEXT_PUBLIC_API_BASE_URL` to the row above.
+   the project's build env var `NEXT_PUBLIC_NETWORK` to the row above.
+   `NEXT_PUBLIC_API_BASE_URL` is optional (it derives from the network);
+   if you do set it, it must be that network's own `api.*` origin — never
+   copy the mainnet row.
 2. Add the custom domain (testnet./futurenet.stellarindex.io). The DNS record
    is already **orange/proxied** — Cloudflare terminates its TLS, so no origin
    cert is needed (the app is static; its live data comes from the grey api.*

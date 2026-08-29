@@ -3710,3 +3710,17 @@ are obsolete — repo has been public since 2026-07-03):
 
 _Update this file in the same commit as any change that lands or
 invalidates an item. One plan; no forks._
+
+## Addendum — 2026-08-29 morning (06:00–08:30Z)
+
+Lane state (serial, main-green after every squash): merged #304 #280 #268 #269 #274 #293 #300; open and green, in order: #271 → #295 → #287 → #303 → #307 → #305 → #261 → #252 → #253 → #254 → #262 → #246 → #297 → #256 → #285; #237 (legal) is Ash-only.
+
+Production (r1):
+- `--tags stellarindex` applied: era keys (`soroban_genesis_ledger`, `movements_floor_ledger`) + unit/timer drift; indexer/aggregator/api restarted, healthz/readyz 200. Tag-limited runs need `-e ansible_python_interpreter=/usr/bin/python3`.
+- 06:04Z galexie restart incident (config apply via `--tags users,minio,galexie` fired the restart handler that `--check` did not show): ~11 min export delay, no data loss (contiguous). Fix #307 (restart only on effective input change + fail-closed probe + `force_handlers`), verifier PASS.
+- Alerts firing: `deadmansswitch` (informational), `oracle_unknown_symbols` and `completeness_incomplete{source=reflector-fx}` — same root cause (VES/XAU rejected by the canonical allow-list → 362 of 5,760 oracle_updates dropped over [64161414, 64174128]). Fix #300 merged; still needed: cut release, deploy, replay reflector-fx from 64161414 under `run-heavy-job.sh`, re-run `compute-completeness`, verify `complete=true`. No silencing.
+
+Testnet:
+- Backfill OOM-killed by its own transient-unit `MemoryMax=5G` at ledger 2,254,083 and auto-restarted from `--start 2`, which re-applies every ledger in captive core (skip-existing-files ≠ skip-existing-work). Relaunched from `--start 2254080` (archive contiguous through 2,254,079) with `MemoryMax=8G` and `EnvironmentFile=/etc/default/galexie-backfill` (the live `/etc/default/galexie` creds are denied on `galexie-archive`). Follow-ups: backfill wrapper must compute a resume point on restart; monitor must alert on the progress counter going backwards; `galexie-backfill-status` has an unbound `now_epoch` (line 112).
+
+Progress: Wave A 100% · Wave B ~88% · Wave C ~80% · Wave D 0% · overall ≈ 69%.
