@@ -7,38 +7,58 @@ severity: P1
 
 # Runbook — `stellarindex_stellar_archive_divergence`
 
-> **INERT IN PRACTICE (re-verified 2026-08-29).** The alert was
-> repointed (2026-06-11, F-1329) from the never-emitted
-> `stellarindex_archive_divergence_total` to the real counter
-> `stellarindex_verify_archive_mismatches_total` — but **it still
-> cannot fire on r1 as deployed**:
+> **LIVE (wired 2026-08-29, issue #282).** Two separate defects
+> kept this page from ever firing; both are fixed:
 >
-> - The counter is exported only via `stellarindex-ops
->   verify-archive`'s **opt-in `-metrics-listen` flag**, which the
->   `verify-archive-tier-a` / `-tier-b` units do **not** pass.
-> - `configs/prometheus/prometheus.r1.yml` has **no verify-archive
->   scrape job** even if they did.
-> - The weekly Tier D peer-sampling cron emits no metric at all.
+> - **No producer.** The counter
+>   `stellarindex_verify_archive_mismatches_total` only left the
+>   verify-archive process through the opt-in `-metrics-listen`
+>   HTTP endpoint, which the `verify-archive-tier-a` / `-tier-b`
+>   units never passed and `configs/prometheus/prometheus.r1.yml`
+>   has no scrape job for (and a one-shot job is gone between
+>   scrapes anyway). Both units now pass `-textfile-output`, so the
+>   counter reaches Prometheus through node_exporter's textfile
+>   collector — cumulative across runs, zero-seeded on all three
+>   reasons, labelled `tier` (`chain` for tier-a,
+>   `checkpoint` for tier-b). Emitter:
+>   `internal/ops/archive/verify_archive_textfile.go`.
+> - **A 1h lookback on a nightly producer.** `increase(…[1h])`
+>   made the step visible for one hour in every twenty-four, so the
+>   page self-resolved before an operator saw it. The window is now
+>   **26h** (24h timer cadence + jitter + cushion).
 >
-> (The previously-cited producer,
-> `scripts/ops/archive-cross-check.sh`, does not exist.)
+> Pinned by `deploy/monitoring/rule-tests/stellar_test.yml` and
+> `internal/ops/archive/verify_archive_unit_wiring_test.go`.
 >
-> In practice a mismatch **aborts the run non-zero** and surfaces
-> as `stellarindex_verify_archive_unit_failed` — severity
-> **TICKET** — so a genuine archive-correctness event currently
-> opens a P3 ticket, not this P1 page. Tracking: issue #282.
-> `TODO(ash): wire -metrics-listen into the tier-a/b units + a
-> scrape job (or a textfile emit), or repoint this page onto the
-> unit-failed signal — then delete this banner.`
+> **Takes effect on r1 only after the ansible role is applied** —
+> the templates under `configs/ansible/…/templates/systemd/` are
+> the authority for the running units, so a binary-only deploy
+> ships this dead. Until then a mismatch still surfaces only as
+> `stellarindex_verify_archive_unit_failed` (severity ticket).
+> The unit render is behind the low-risk `ops-jobs` tag (it does
+> not touch galexie):
 >
-> The procedures below are the playbook for when the signal is
-> wired — and for a mismatch found via `unit_failed` today.
+> ```sh
+> ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
+>   --tags ops-jobs --check --diff
+> ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
+>   --tags ops-jobs
+> ```
+>
+> Confirm afterwards:
+> `curl -s localhost:9100/metrics | grep verify_archive_mismatches`
+> should show `tier="chain"` (and `tier="checkpoint"` once tier-b
+> has run) at 0 — the zero-seed IS the proof the producer is alive.
+>
+> The weekly Tier D peer-sampling cron still emits no metric of any
+> kind; a Tier D divergence surfaces in journald (`-t
+> stellarindex-tier-d`) only.
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellarindex_stellar_archive_divergence` — **inert in practice, see banner** |
+| Alert | `stellarindex_stellar_archive_divergence` |
 | Severity | P1 (`severity: page` — SEV-1) |
 | Detected by | `configs/prometheus/rules.r1/stellar.yml` (group `stellarindex.stellar`, `severity: page`, `for: 0s`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/stellar.yml`. |
 | Typical MTTR | hours |
@@ -46,16 +66,20 @@ severity: P1
 
 ## Symptoms
 
-- `increase(stellarindex_verify_archive_mismatches_total[1h]) > 0`.
+- `increase(stellarindex_verify_archive_mismatches_total[26h]) > 0`.
   Fires immediately (`for: 0s`) — there's no such thing as a
-  "transient" divergence. The counter is labelled by `chunk_idx`
-  and `reason ∈ {chain | sequence | checkpoint}` — the reason
-  label tells you which failure class you have (chain break /
-  sequence gap = our lake's internal integrity; checkpoint =
-  cross-archive comparison).
-- Today (see banner): the same event actually surfaces as a
-  non-zero verify-archive exit →
-  [`verify-archive-unit-failed.md`](verify-archive-unit-failed.md).
+  "transient" divergence. The textfile-exported series is labelled
+  by `tier` (which unit found it) and `reason ∈ {chain | sequence |
+  checkpoint}` — the reason label tells you which failure class you
+  have (chain break / sequence gap = our lake's internal integrity;
+  checkpoint = cross-archive comparison). The in-process
+  `-metrics-listen` view of the same counter additionally carries
+  `chunk_idx`; the textfile aggregates that away because a chunk
+  index is a per-run worker slot with no cross-run meaning.
+- The same event ALSO trips
+  [`verify-archive-unit-failed.md`](verify-archive-unit-failed.md)
+  (severity ticket) — a mismatch aborts the run non-zero. Expect
+  both; this page is the one to work.
 
 ## Who produces the signal
 
@@ -69,7 +93,25 @@ There is no "history-scanner job". The real producers are:
   archivist mirror (`verify-archive-tier-b.{service,timer}`).
 - **Tier D** — weekly multi-peer sampling: root cron, Sunday
   04:23 (`-tier peers -peer-samples 50`, output to journald tag
-  `stellarindex-tier-d`).
+  `stellarindex-tier-d`). **Still metric-less** — Tier D runs
+  outside the systemd units that carry `-textfile-output`, so a
+  Tier D divergence pages nobody. Read the journal.
+
+Tier A and Tier B publish through node_exporter's textfile
+collector:
+
+| Unit | `-tier` | `.prom` file | series |
+| ---- | ------- | ------------ | ------ |
+| `verify-archive-tier-a.service` | `chain` | `/var/lib/node_exporter/textfile_collector/verify_archive_tier_a.prom` | `…mismatches_total{tier="chain",reason=…}` |
+| `verify-archive-tier-b.service` | `checkpoint` | `/var/lib/node_exporter/textfile_collector/verify_archive_tier_b.prom` | `…mismatches_total{tier="checkpoint",reason=…}` |
+
+The files are written on EVERY exit, success or failure (a mismatch
+aborts the walk, and that is exactly the run whose counter matters).
+Totals are cumulative across runs — a clean run re-emits the
+previous total rather than resetting it, which is what makes
+`increase()` meaningful. If a `.prom` file is missing or its mtime
+is older than the last timer trigger, the page is blind: check
+`journalctl -u verify-archive-tier-a | grep textfile`.
 
 ## Quick diagnosis (≤ 5 min)
 
@@ -181,8 +223,8 @@ always real. But:
 
 ## Related
 
-- `verify-archive-unit-failed.md` — where a mismatch actually
-  surfaces today (non-zero exit; severity ticket — see banner).
+- `verify-archive-unit-failed.md` — the ticket-severity sibling a
+  mismatch also trips (the run exits non-zero).
 - `verify-archive-run-stale.md` — the timer-staleness sibling.
 - `archive-publish.md` — when we fail to publish at all
   (Phase-3; inert everywhere today).
@@ -192,9 +234,23 @@ always real. But:
 
 ## Changelog
 
+- 2026-08-29 (later, #282) — **the page is no longer inert.** The
+  tier-a/tier-b units now pass `-textfile-output`, so
+  `stellarindex_verify_archive_mismatches_total` reaches Prometheus
+  via node_exporter's textfile collector instead of dying with the
+  process (new emitter:
+  `internal/ops/archive/verify_archive_textfile.go`; cumulative,
+  zero-seeded, `tier`-labelled). The rule's lookback widened
+  `1h → 26h` because the producer is a nightly timer — a 1h window
+  showed the step for one hour in twenty-four and the SEV-1 page
+  self-resolved before morning. Banner rewritten; symptoms updated
+  (`chunk_idx` is not on the exported series). Pinned by
+  `deploy/monitoring/rule-tests/stellar_test.yml` +
+  `internal/ops/archive/verify_archive_unit_wiring_test.go`.
+  Requires an ansible apply on r1 to take effect.
 - 2026-08-29 — re-verified against HEAD. Symptom metric corrected:
   `stellarindex_archive_divergence_total` never existed — the rule
-  (repointed 2026-06-11, F-1329) is
+  (repointed 2026-06-11, F-1329) was
   `increase(stellarindex_verify_archive_mismatches_total[1h]) > 0`,
   `for: 0s`, labels `chunk_idx` + `reason∈{chain|sequence|checkpoint}`.
   Banner replaced (was triple-false: cited the nonexistent
@@ -204,8 +260,8 @@ always real. But:
   don't pass, prometheus.r1.yml has no verify-archive scrape job,
   and Tier D emits no metric — so the alert is INERT IN PRACTICE
   and a real mismatch surfaces as `verify_archive_unit_failed`
-  (ticket, not this page); tracked in #282, TODO(ash) to wire or
-  repoint. `mc cat myminio/history-archive/...` replaced —
+  (ticket, not this page); tracked in #282, with a TODO to wire or
+  repoint — closed out by the entry above, later the same day. `mc cat myminio/history-archive/...` replaced —
   /srv/history-archive is a plain ZFS path (dataset data/archive),
   hex-sharded layout shown. "History-scanner job" replaced with
   the real producers (nightly Tier A incremental walk, Tier B

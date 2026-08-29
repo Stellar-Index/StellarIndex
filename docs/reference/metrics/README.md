@@ -2331,6 +2331,14 @@ All vectors labelled by `chunk_idx` (decimal string) so a parallel
 run with `-workers 8` produces per-chunk series. Cardinality bound
 by the `-workers` cap (currently `[1, 16]`).
 
+`-metrics-listen` is a LIVE-RUN view only: the HTTP server dies with
+the process, so nothing scrapes it on a systemd-timer deployment.
+The durable export is `-textfile-output PATH`, which writes the
+mismatch counter (only) into node_exporter's textfile-collector
+directory — see
+[`stellarindex_verify_archive_mismatches_total`](#stellarindex_verify_archive_mismatches_total)
+below.
+
 ### `stellarindex_verify_archive_ledgers_verified_total`
 
 Counter, label `chunk_idx`.
@@ -2358,14 +2366,40 @@ hash-equal proof.
 
 ### `stellarindex_verify_archive_mismatches_total`
 
-Counter, labels `chunk_idx` + `reason` (`chain` / `sequence` /
-`checkpoint`).
+Counter. Two export paths with deliberately different label sets:
+
+| Export | Labels | Lifetime |
+| ------ | ------ | -------- |
+| `-metrics-listen` (in-process `/metrics`) | `chunk_idx` + `reason` | the run |
+| `-textfile-output` (node_exporter textfile collector) | `tier` + `reason` | cumulative on the host |
+
+`reason` ∈ `chain` / `sequence` / `checkpoint` on both.
 
 Chain breaks, sequence gaps, and checkpoint hash mismatches.
 **Any non-zero reading is a hard failure** — the counter exists so
 dashboards can distinguish "mismatch fired and the run aborted at
 second X" from "chunk aborted for an unrelated reason (canceled
 context)".
+
+The textfile export (issue #282) is what makes the P1
+`stellarindex_stellar_archive_divergence` page fireable on r1; the
+`-metrics-listen` server dies with the one-shot process, so it has
+no scrape window on a timer deployment. Three properties of that
+file are load-bearing and are pinned by tests
+(`internal/ops/archive/verify_archive_textfile_test.go`):
+
+- **cumulative** — each run folds its increments into the previous
+  file's totals, so a clean run does not reset the counter and
+  `increase()` stays meaningful;
+- **zero-seeded** — all three `reason` values are written on every
+  run even at 0, because a counter series that first *appears* at 1
+  and then stays flat yields `increase() == 0` and would never page
+  (the F-0033 / C4-038 "absence reads as health" trap);
+- **`tier`-labelled, `chunk_idx`-free** — `tier` (`chain` for
+  verify-archive-tier-a, `checkpoint` for tier-b) keeps the two
+  units' `.prom` files from exposing an identical series through the
+  one node_exporter target; `chunk_idx` is a per-run worker slot
+  with no cross-run meaning, so it is summed away.
 
 ### `stellarindex_anomaly_freeze_recovery_sweep_duration_seconds`
 

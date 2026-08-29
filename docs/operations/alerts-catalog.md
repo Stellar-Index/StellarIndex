@@ -189,10 +189,15 @@ for incident-time clarity.
 > so these alerts have no producer and cannot fire on the current
 > deployment posture. They remain in the rule file for Phase-3
 > (Tier-1 validator rollout, ADR-0004); each runbook's *Deployment
-> posture* callout explains the revival path. `archive-divergence`
-> is **not** affected — it consumes the cross-region hash-check
-> metric written by `scripts/ops/archive-cross-check.sh` and remains
-> live.
+> posture* callout explains the revival path.
+>
+> `archive-divergence` is **not** affected by that posture, but had
+> its own producer gap until 2026-08-29 (issue #282): it consumes
+> `stellarindex_verify_archive_mismatches_total`, which the
+> verify-archive tier-a/tier-b timers now publish through
+> node_exporter's textfile collector (`-textfile-output`). The
+> previously-cited producer `scripts/ops/archive-cross-check.sh`
+> never existed.
 
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
@@ -200,7 +205,7 @@ for incident-time clarity.
 | `stellarindex_stellar_core_peers_low` | `stellarindex_stellar_core_peer_count` | < 5 for > 5 min | P2 | [core-peers](runbooks/core-peers.md) |
 | `stellarindex_stellar_rpc_lag` | `stellarindex_stellar_rpc_latest_ledger_age_seconds` | > 300 s for > 5 min | P2 | [rpc-lag](runbooks/rpc-lag.md) |
 | `stellarindex_stellar_archive_publish_fail` | `increase(stellarindex_stellar_archive_publish_errors_total[1h])` | > 0 | P3 | [archive-publish](runbooks/archive-publish.md) |
-| `stellarindex_stellar_archive_divergence` | `stellarindex_archive_divergence_total` (cross-region hash check) | > 0 ever | **P1** | [archive-divergence](runbooks/archive-divergence.md) |
+| `stellarindex_stellar_archive_divergence` | `increase(stellarindex_verify_archive_mismatches_total[26h])` (verify-archive tier-a/tier-b, via node_exporter textfile) | > 0 | **P1** | [archive-divergence](runbooks/archive-divergence.md) |
 
 ## Stellar-stack version-lag alerts
 

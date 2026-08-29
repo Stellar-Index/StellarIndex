@@ -197,6 +197,42 @@ against.
 
 ### Fixed
 
+- **The P1 archive-divergence page can actually fire: verify-archive now
+  exports its mismatch counter through node_exporter** (#282).
+  `stellarindex_stellar_archive_divergence` (severity `page`) selects
+  `stellarindex_verify_archive_mismatches_total`, which the chain /
+  checkpoint walk increments — but the counter's only export path was the
+  opt-in `-metrics-listen` HTTP endpoint, which neither
+  `verify-archive-tier-a` nor `-tier-b` passed and
+  `configs/prometheus/prometheus.r1.yml` has no scrape job for (a one-shot
+  job is gone between scrapes anyway). The metric had no producer in the
+  deployed topology, so a genuine archive-correctness event opened a P3
+  ticket (`stellarindex_verify_archive_unit_failed`) and paged nobody; the
+  2026-06-11 F-1329 repoint had fixed the metric NAME but not the export
+  path. New `-textfile-output PATH` flag writes the counter into
+  node_exporter's textfile_collector dir, wired into both units (ansible
+  templates + the `deploy/systemd` reference copies) with per-unit `.prom`
+  files. Three properties make it usable by `increase()`: totals are
+  CUMULATIVE across runs (a clean run re-emits, never resets), all three
+  `reason` values are ZERO-SEEDED on every run (a series that first appears
+  at 1 and stays flat yields `increase() == 0` — the same F-0033 /
+  C4-038 "absence reads as health" trap as the gap-detector fix below),
+  and the series is labelled by `tier` rather than `chunk_idx` (a per-run
+  worker slot with no cross-run meaning, and two units exposing an
+  identical label set through one node_exporter target is a duplicate-
+  metric scrape error). The rule's lookback also widened `1h → 26h`:
+  against a NIGHTLY producer a 1h window showed the step for one hour in
+  twenty-four, so a SEV-1 correctness page self-resolved before the
+  morning. Pinned by `deploy/monitoring/rule-tests/stellar_test.yml`
+  (fires immediately AND is still firing 24h later — the assertion the 1h
+  window fails), `verify_archive_textfile_test.go` (seeding, accumulation,
+  tier isolation, atomic rename) and `verify_archive_unit_wiring_test.go`
+  (the deployed units must wire an export path — the Go↔systemd seam
+  `lint-metric-refs.sh` cannot see). Runbook, alerts-catalog and metrics
+  reference corrected; the never-existent producer
+  `scripts/ops/archive-cross-check.sh` is flagged as design-intent in
+  `multi-region-topology.md`. **Requires an ansible apply
+  (`--tags ops-jobs`) on r1 — a binary-only deploy ships this dead.**
 - **Gap detector pre-registers `runs_total` at 0 so a restart cannot read
   as a dead detector.** `stellarindex_ingest_gap_detector_runs_total` is a
   CounterVec that only materialises a series on first `Inc()`, and since
