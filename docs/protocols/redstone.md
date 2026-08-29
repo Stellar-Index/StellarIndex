@@ -85,11 +85,15 @@ the display name — `EUROC` is `EUROC/EUR`, `BENJI` is
 `BENJI_ETHEREUM_FUNDAMENTAL`, SolvBTC variants carry `_FUNDAMENTAL`
 suffixes. Two correctness consequences:
 
-- **Quote asset is per-feed.** RedStone publishes USD-denominated prices
-  unless the feed_id carries an explicit `/<QUOTE>` suffix; only
-  `EUROC/EUR` is non-USD-quoted today (the 2026-07-24 `/USD` suffixes
-  restate the default). The registry carries the quote per feed.
-  (Pre-registry the decoder hardcoded USD, mislabelling EUROC.)
+- **Quote asset is per-feed.** RedStone publishes USD-denominated
+  *market* prices unless the feed_id carries an explicit `/<QUOTE>`
+  suffix (`EUROC/EUR`; the 2026-07-24 `/USD` suffixes restate the
+  default). A bare `_FUNDAMENTAL` feed is the exception: it publishes
+  NAV in the token's **reserve asset**, so `SolvBTC_FUNDAMENTAL` is
+  quoted `crypto:BTC` and `SolvBTC.BBN_FUNDAMENTAL` `crypto:SolvBTC`.
+  The registry carries the quote per feed. (Pre-registry the decoder
+  hardcoded USD, mislabelling EUROC; until 2026-08-29 the two SolvBTC
+  NAV ratios were still `fiat:USD` — D8, see below.)
 - **RWA feeds** (BENJI, GILTS, TESOURO, CETES, KTB, USTRY, SPXU, iBENJI,
   USDY, USST, XAUm, deJAAA, deJTRSY)
   decode as `canonical.AssetRWA`, deliberately NOT `crypto`, so a
@@ -118,7 +122,7 @@ magnitude cross-checks:
 | `sUSDe` | `crypto:sUSDe` | USD | 1.2407 (CG ethena-staked-usde 1.24) — staked, value-accruing |
 | `savUSD_FUNDAMENTAL` | `crypto:savUSD_FUNDAMENTAL` | USD | 1.1877 — Avant staked USD, crypto-native yield vault (same class as sUSDe, NOT rwa) |
 | `SolvBTC_FUNDAMENTAL/USD` | `crypto:SolvBTC_FUNDAMENTAL_USD` | USD | 65,430 — NAV **in USD**; the unsuffixed feed publishes the NAV **ratio** vs BTC (1.0029, confirmed in our stored rows), so the two get distinct codes. Feed_id `/` normalized to `_` (URL-path safety) |
-| `SolvBTC.BBN_FUNDAMENTAL/USD` | `crypto:SolvBTC.BBN_FUNDAMENTAL_USD` | USD | 65,430 — same reasoning |
+| `SolvBTC.BBN_FUNDAMENTAL/USD` | `crypto:SolvBTC.BBN_FUNDAMENTAL_USD` | USD | 65,430 — byte-identical to the SolvBTC leg on every capture, which is what identifies SolvBTC (not BTC) as SolvBTC.BBN's reserve |
 | `USDY_FUNDAMENTAL/USD` | `rwa:USDY` | USD | 1.1408 (CG ondo-us-dollar-yield 1.14) — Ondo tokenized-treasury note |
 | `USST_FUNDAMENTAL` | `rwa:USST` | USD | 1.0096 — STBL treasury-backed stablecoin |
 | `XAUm_FUNDAMENTAL/USD` | `rwa:XAUm` | USD | 4,115.67/oz (CG pax-gold 4,088) — Matrixdock tokenized gold |
@@ -131,6 +135,39 @@ the feed-id suffix per the BENJI precedent; crypto codes keep the
 full feed_id so market vs NAV series never collide. A registry
 invariant test pins that no two feed_ids share a `(base, quote)`
 pair — same-batch feeds can never double-write one series.
+
+### NAV feeds are quoted in their reserve asset (D8, 2026-08-29)
+
+A bare `_FUNDAMENTAL` feed publishes **net asset value in the asset
+the token is a claim on**, which is USD only when the reserve is
+dollars. Two feeds were registered `fiat:USD` anyway:
+
+| feed_id | published (r1, 2026-08-29) | was | now |
+| --- | --- | --- | --- |
+| `SolvBTC_FUNDAMENTAL` | `1.00295305` — BTC per SolvBTC | `fiat:USD` | `crypto:BTC` |
+| `SolvBTC.BBN_FUNDAMENTAL` | `1.00000000` — SolvBTC per SolvBTC.BBN | `fiat:USD` | `crypto:SolvBTC` |
+| `SolvBTC_FUNDAMENTAL/USD` | `78313.02974310` | `fiat:USD` | `fiat:USD` (unchanged) |
+| `SolvBTC.BBN_FUNDAMENTAL/USD` | `78313.02974310` | `fiat:USD` | `fiat:USD` (unchanged) |
+
+So `/v1/oracle/streams?include_unmapped=true` served, with
+`mapped=true`, a BTC-backed token at "$1.00" next to its own
+`$78,313.03` row. Never entered a published price — RedStone is
+`ClassOracle` / `IncludeInVWAP=false` — but it was public.
+
+Denominators derived from the rows themselves: the two `/USD` legs are
+byte-identical (also on 2026-07-27: `6543063913439` each), so
+`SolvBTC_FUNDAMENTAL` = NAV_USD ÷ BTC_USD ⇒ BTC-denominated, while
+`SolvBTC.BBN_FUNDAMENTAL` is exactly `1.00000000` on three independent
+captures (lake ledger 60104689, 2026-07-27, 2026-08-29) with a NAV_USD
+equal to SolvBTC's ⇒ SolvBTC.BBN is 1:1 with SolvBTC and its ratio is
+SolvBTC-denominated.
+
+The four RWA/crypto `_FUNDAMENTAL` feeds whose reserve genuinely is
+dollars — `BENJI`, `iBENJI`, `USST`, `savUSD` — keep `fiat:USD`, each
+with its evidence recorded in `feeds_test.go`'s attestation list.
+`TestFeedRegistry_NAVFeedsQuoteTheirReserveAsset` fails CI for any
+future bare `_FUNDAMENTAL` feed registered against a fiat quote
+without that evidence.
 
 ## Aggregator treatment — reported, not counted
 

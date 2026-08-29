@@ -112,14 +112,28 @@ with a WARN naming the slot — and every sibling feed in the same
 
 ### Q4 — Quote asset is per-feed (ADR-0028)
 
-RedStone publishes USD-denominated prices **unless** the feed_id
-carries an explicit `/<QUOTE>` suffix. Only `EUROC/EUR` is
-non-USD-quoted today (the 2026-07-24 `/USD` suffixes restate the
-default). The `feedRegistry` carries the quote per feed;
-the decoder stamps `OracleUpdate.Quote` from it. Pre-#53 the
-decoder hardcoded USD for every feed, mislabelling EUROC. Note the
-bare `EUROC` feed (2026-07-24) IS USD-quoted (~1.14 ≈ EUR/USD) —
-a separate series from `EUROC/EUR` (~1.00).
+RedStone publishes USD-denominated **market** prices unless the
+feed_id carries an explicit `/<QUOTE>` suffix (`EUROC/EUR`; the
+2026-07-24 `/USD` suffixes restate the default). The `feedRegistry`
+carries the quote per feed; the decoder stamps `OracleUpdate.Quote`
+from it. Pre-#53 the decoder hardcoded USD for every feed,
+mislabelling EUROC. Note the bare `EUROC` feed (2026-07-24) IS
+USD-quoted (~1.14 ≈ EUR/USD) — a separate series from `EUROC/EUR`
+(~1.00).
+
+A bare `_FUNDAMENTAL` feed is the other exception: it publishes NAV
+in the token's **reserve asset**, so `SolvBTC_FUNDAMENTAL` is quoted
+`crypto:BTC` (1.00295305 BTC per SolvBTC) and
+`SolvBTC.BBN_FUNDAMENTAL` `crypto:SolvBTC` (1.00000000). Both read
+`fiat:USD` until 2026-08-29 — D8, which put "$1.00" on the public
+`/v1/oracle/streams` row for a token its own
+`SolvBTC_FUNDAMENTAL/USD` sibling priced at `$78,313.02974310`. The
+`_FUNDAMENTAL` feeds whose reserve genuinely is dollars (`BENJI`,
+`iBENJI`, `USST`, `savUSD`) keep `fiat:USD`, each attested with
+evidence in `feeds_test.go`;
+`TestFeedRegistry_NAVFeedsQuoteTheirReserveAsset` fails CI for any
+new bare `_FUNDAMENTAL` feed given a fiat quote without it. See
+`docs/protocols/redstone.md` §NAV feeds and ADR-0028 §2/§3.
 
 ### Q5 — Update cadence: 0.2% deviation OR 24h heartbeat
 
