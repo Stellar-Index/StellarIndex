@@ -368,6 +368,79 @@ clickhouse_serving_password: "{{ vault_clickhouse_serving_password | default('')
 # sequencing rationale.
 stellarindex_clickhouse_serving_enabled: false
 
+# ───── ClickHouse ops-batch isolation (2026-08-28 r1 incident) ────────
+# The LOW-priority counterpart of the api_serving profile above: a
+# settings profile + user that stellarindex-ops batch jobs (ch-rebuild,
+# ch-backfill, classic-movements-backfill, verify/gate reads, replays)
+# authenticate as, so CH's query scheduler yields their CPU to the
+# serving side. WHY: a runbook-prescribed `ch-rebuild -sep41` dry-run
+# over 2M ledgers drove r1's load to 12.9 and starved the AGGREGATOR's
+# supply refresher — stellarindex_aggregator_supply_refresh_error_dominant
+# fired for all 39 watched contracts within 3 minutes; killing the job
+# cleared it. run-heavy-job.sh's cgroup caps could not help because the
+# contention was INSIDE clickhouse-server, where every ops query ran as
+# the same unauthenticated `default` user as the aggregator's. See
+# 20-clickhouse-serving-profile.yml for the per-knob rationale and
+# docs/operations/clickhouse-ops-batch-profile.md for the operator view.
+#
+# Defaults FALSE (unlike clickhouse_serving_profile_enabled) because
+# enabling asserts a vault password, and ansible-drift.yml runs the
+# full playbook --check against r1 weekly with the real vault: a
+# default of true would turn that workflow red from the merge that
+# adds the profile until every inventory (r1, testnet, futurenet) has
+# vault_clickhouse_ops_batch_password, and block any `--tags
+# clickhouse` apply meanwhile. Flip to true PER INVENTORY in the same
+# PR that adds that inventory's vault password. Until then the CH user
+# is not provisioned, /etc/default/stellarindex-ops carries no
+# STELLARINDEX_CLICKHOUSE_OPS_* pair, and run-heavy-job.sh WARNS on
+# every launch that the job runs as CH `default` — the gap is loud,
+# not silent (14-stellarindex-services.yml).
+#
+# Two-step activation, same as api_serving: this provisions the CH-side
+# user; the ops binary only authenticates as it once
+# STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD are in
+# /etc/default/stellarindex-ops (09-minio.yml templates them, gated on
+# the same flag + a non-empty password so a partial apply can never
+# hand ops jobs a credential the CH side does not know), and
+# run-heavy-job.sh imports that pair into every wrapped job itself.
+clickhouse_ops_batch_profile_enabled: false
+clickhouse_ops_batch_user: "ops_batch"
+clickhouse_ops_batch_max_threads: 2
+clickhouse_ops_batch_max_memory_usage_bytes: 8589934592   # 8 GiB (default, not ceiling — see task file)
+clickhouse_ops_batch_max_concurrent_queries: 8
+# CH `priority`: lower number = higher priority; api_serving is 1, an
+# un-opted-in query is 0. 100 leaves room for intermediate tiers.
+clickhouse_ops_batch_priority: 100
+# Linux nice value for the ops queries' own CH execution threads
+# (api_serving is -5; background merges run at 0). Positive so a batch
+# scan also yields to merges — falling behind on compaction was the
+# other way the 2026-08-28 job hurt the serving side.
+clickhouse_ops_batch_os_thread_priority: 5
+# clickhouse_ops_batch_password ← ansible-vault, vault_clickhouse_ops_batch_password
+# (same discipline as vault_clickhouse_serving_password: SHA-256-hashed
+# into the users.d drop-in at render time, plaintext only ever lands in
+# /etc/default/stellarindex-ops, mode 0640 root:stellarindex).
+clickhouse_ops_batch_password: "{{ vault_clickhouse_ops_batch_password | default('') }}"
+
+# ───── ClickHouse destructive-DDL size guard (2026-08-29 r1 audit) ─────
+# ClickHouse refuses DROP TABLE / TRUNCATE / DROP|REPLACE PARTITION on
+# anything larger than max_table_size_to_drop / max_partition_size_to_drop
+# unless the operator first touches /var/lib/clickhouse/flags/force_drop_table
+# — the one line between a typo'd `DROP TABLE` and losing a 582 GiB
+# account_movements. ClickHouse's own default is 50 GB (53687091200 bytes);
+# r1 was measured at 1 TiB for BOTH, set by hand for D2's REPLACE PARTITION
+# (2026-07) and never codified or lowered, so every big lake table was
+# droppable with no second step. This drop-in pins the guard back to
+# ClickHouse's default on every host. Raising it is NOT the way to do a
+# planned big drop — the force flag is (one drop per touch, self-deleting);
+# see docs/operations/clickhouse-destructive-ddl.md for the procedure
+# (ZFS snapshot first, then the flag, then the statement). 0 = unlimited
+# and is refused by the task file.
+# Hot-reloaded by clickhouse-server (config.d reloader) — no restart.
+clickhouse_drop_guard_enabled: true
+clickhouse_max_table_size_to_drop: 53687091200       # 50 GiB — ClickHouse default
+clickhouse_max_partition_size_to_drop: 53687091200   # 50 GiB — ClickHouse default
+
 # ───── stellarindex-indexer / aggregator / api services ───────────────
 run_stellarindex: true
 
@@ -1082,3 +1155,10 @@ stellarindex_watched_sep41_contracts:
   - CBZ7M5B3Y4WWBZ5XK5UZCAFOEZ23KSSZXYECYX3IXM6E2JOLQC52DK32
   - CDIKURWHYS4FFTR5KOQK6MBFZA2K3E26WGBQI6PXBYWZ4XIOPJHDFJKP
   - CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV
+
+# pgBackRest repo2 (off-site S3) retention — deliberately LEAN (ADR-0043
+# amendment 2026-08-29): one full + 7 days of diffs/WAL ≈ 460–670 GB in
+# S3 Standard ≈ $12–17/month. Raising these multiplies storage cost
+# roughly linearly; PITR window = the diff/WAL retention.
+pgbackrest_repo2_retention_full: 1
+pgbackrest_repo2_retention_diff: 7

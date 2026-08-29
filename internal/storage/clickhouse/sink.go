@@ -275,9 +275,15 @@ func Open(ctx context.Context, addr string, flushEvery int) (*Sink, error) {
 	if flushEvery <= 0 {
 		flushEvery = 2000
 	}
+	// Ops-batch identity from the environment (2026-08-28 r1 incident;
+	// see ops_auth.go) — CH `default` user when unset.
+	auth, err := opsAuth()
+	if err != nil {
+		return nil, err
+	}
 	conn, err := clickhouse.Open(&clickhouse.Options{
 		Addr: []string{addr},
-		Auth: clickhouse.Auth{Database: "stellar"},
+		Auth: auth,
 		Settings: clickhouse.Settings{
 			// G12-04: `max_execution_time` is a TIME limit (seconds), not a
 			// memory bound — the prior "keep memory modest" comment was wrong,

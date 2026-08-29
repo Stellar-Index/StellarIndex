@@ -58,6 +58,7 @@ echo "=== Completeness-staleness calibration ===" && ./scripts/ci/lint-completen
 echo "=== Deploy-protection self-test ===" && ./scripts/ci/check-deploy-protection-test.sh
 echo "=== Main-CI-health decision-core self-test ===" && ./scripts/ci/check-main-ci-health-test.sh
 echo "=== Ansible-drift decision-core self-test ===" && ./scripts/ci/check-ansible-drift-test.sh
+echo "=== run-heavy-job wrapper self-test ===" && ./scripts/ci/run-heavy-job-test.sh
 echo "=== Baseline-growth tripwire self-test ===" && ./scripts/ci/lint-baseline-growth-test.sh
 echo "=== Config-apply gate self-test ===" && ./scripts/ci/config-apply-gate-test.sh
 # BASE_SHA-gated: self-skips locally (no comparison base); runs for real in CI
@@ -77,6 +78,10 @@ echo "=== Rule structure ===" && python3 ./scripts/ci/lint-rule-structure.py
 # not a label, on every alert — else the Alertmanager Discord templates
 # render no runbook link. Fails if a runbook_url regresses back into labels.
 echo "=== Runbook annotations ===" && python3 ./scripts/ci/lint-runbook-annotations.py
+# Secret-rendering ansible template tasks must set `diff: false` (or
+# no_log) so `--check --diff` never prints vault material into scrollback
+# or the weekly drift job's CI log (audit-2026-08-28 backup-restore-7).
+echo "=== Ansible secret-diff ===" && python3 ./scripts/ci/lint-ansible-secret-diff.py
 # Prometheus rule files. Graceful-skip when promtool isn't
 # installed locally — CI installs it explicitly. The Makefile
 # target hard-fails on missing promtool; verify.sh wraps it with
@@ -89,6 +94,21 @@ else
     # The dead-metric-ref guard needs no promtool, so run it even when
     # the promtool-dependent monitoring-check is skipped (F-1329).
     echo "=== Metric refs ===" && ./scripts/ci/lint-metric-refs.sh
+fi
+# Alertmanager config — validate BOTH render branches of apply.sh
+# (all URLs empty → stub path through the block-stripper; all URLs
+# set → substitution path). Graceful-skip when amtool isn't
+# installed, same convention as promtool above; CI's
+# monitoring-rules job installs it explicitly and never skips.
+if command -v amtool >/dev/null 2>&1; then
+    echo "=== Alertmanager config ==="
+    ALERTMANAGER_SECRETS=/dev/null bash configs/alertmanager/apply.sh --check-only
+    AM_DUMMY_ENV=$(mktemp)
+    printf 'HEALTHCHECKS_DEADMANSSWITCH_URL=https://hc-ping.com/x\nDISCORD_WEBHOOK_URL_PAGES=https://discord.com/api/webhooks/1/a\nDISCORD_WEBHOOK_URL_ALERTS=https://discord.com/api/webhooks/2/b\n' > "$AM_DUMMY_ENV"
+    ALERTMANAGER_SECRETS="$AM_DUMMY_ENV" bash configs/alertmanager/apply.sh --check-only
+    rm -f "$AM_DUMMY_ENV"
+else
+    echo "=== Alertmanager config (skipped — amtool not installed; get it from the Alertmanager GH release) ==="
 fi
 # The metric-refs SELF-test (does the guard still detect a dead ref?)
 # needs neither promtool nor the monitoring stack, so it runs

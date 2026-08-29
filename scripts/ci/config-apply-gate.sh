@@ -38,6 +38,7 @@ SURFACES=(
   'configs/ansible/roles/archival-node/tasks/'
   'configs/ansible/roles/archival-node/files/'
   'configs/prometheus/rules.r1/'
+  'configs/alertmanager/'
   'deploy/monitoring/rules/'
   'deploy/systemd/'
   'deploy/clickhouse/'

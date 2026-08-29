@@ -1,7 +1,7 @@
 ---
 title: Runbook — backup-failed
-last_verified: 2026-05-03
-status: draft
+last_verified: 2026-08-28
+status: living
 severity: P1
 ---
 
@@ -11,105 +11,174 @@ severity: P1
 
 | Field | Value |
 | ----- | ----- |
-| Alerts | `_backup_failed` (missed one expected cycle, ticket) / `_backup_none_24h` (no backup in 24h, **SEV-1**) |
-| Severity | P2 (missed cycle) / P1 (24h gap) |
-| Detected by | `deploy/monitoring/rules/storage.yml` |
+| Alerts | `stellarindex_timescale_backup_none_24h` (no completed backup in > 24 h, `severity: page`, **SEV-1**) / `stellarindex_timescale_backup_failed` (> 25 h, `severity: ticket`). Both `for: 5m`. **The page fires first**; the ticket follows one hour later. |
+| Severity | P1 (`_backup_none_24h`) / ticket (`_backup_failed`) |
+| Detected by | `configs/prometheus/rules.r1/storage.yml` (the file r1 actually loads — `prometheus.r1.yml` `rule_files: /etc/prometheus/rules.r1/*.yml`; `deploy/monitoring/rules/storage.yml` is the multi-host source copy, identical at HEAD). Metric: `pgbackrest_backup_since_last_completion_seconds{stanza!~"all-stanzas.*"}` from woblerr `pgbackrest_exporter`, job `pgbackrest_exporter`, `localhost:9854`, unit `pgbackrest_exporter.service`, `--collect.interval=600` (up to 10 min metric lag). |
+| Scheduler | `pgbackrest-backup.timer` → `pgbackrest-backup.service` → `/usr/local/bin/pgbackrest-backup.sh` (`User=postgres`), daily `02:00 UTC` + ≤ 15 min jitter, `Persistent=true`; full Sunday / diff Mon–Sat. Installed by `configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml`. |
+| Repos | `repo1` = `/var/lib/pgbackrest` — local ZFS dataset `data/pgbackrest`, **same pool as the DB**, postgres-owned 0750, `repo1-retention-full=2`. `repo2` (offsite S3) is **NOT provisioned** on r1 (`pgbackrest_offsite_ack: true`; see `docs/operations/off-site-backup-plan.md`). pgBackRest does not use MinIO. |
 | Typical MTTR | 30 min – 4 h |
-| Impact | Increasing RPO. Our declared RPO is 5 min; at 24 h without a backup we are 288× over. If the primary dies in this window, we lose everything after the last good backup. |
+| Impact | Increasing RPO. Our declared RPO is 5 min (held by continuous WAL archiving to repo1); at 24 h without a backup we are 288× over. If the primary dies in this window, we lose everything after the last good backup — and repo1 shares the primary's pool, so a pool loss loses both. |
 
 ## Symptoms
 
-- `_backup_failed`: last successful backup > 2× the expected
-  interval (typically we back up every 1 h → alert at > 2 h).
-- `_backup_none_24h`: nothing successful in 24 h; pages directly.
-- pgBackRest log: `ERROR: ...` — specific cause varies.
+- `_backup_none_24h`: `min by (stanza)(pgbackrest_backup_since_last_completion_seconds{stanza!~"all-stanzas.*"}) > 24 * 3600` for 5 m; pages directly.
+- `_backup_failed`: same expression `> 25 * 3600` for 5 m; ticket.
+- Cadence is **one backup per day** (02:00 UTC), so ONE failed or skipped
+  nightly run pages ~24 h after the previous backup's stop time. There is
+  no "missed one of many cycles" tier in practice — the two alerts are one
+  hour apart.
+- `journalctl -u pgbackrest-backup.service`: `ERROR: ...` — specific cause varies.
 
 ## Quick diagnosis (≤ 5 min)
 
 ```sh
-# Most recent backup status
-pgbackrest --stanza=stellarindex info
-#   Look at: backup timeline, last backup status, repository size.
-
-# Why did the last run fail?
 # Single-host r1 today: run directly on r1 (Patroni is not deployed;
 # when multi-region lands, run on the Patroni leader).
-ssh root@136.243.90.96 "journalctl -u pgbackrest-backup.service \
-  --since '2 hours ago' --no-pager"
+ssh root@136.243.90.96
 
-# Is the backup target (MinIO/S3) reachable?
-mc ls myminio/pgbackrest/
-mc admin info myminio
+# Most recent backup status — ALWAYS as postgres, never as root (see Mitigation).
+sudo -u postgres pgbackrest --stanza=stellarindex info
+#   Look at: backup timeline, last backup stop time, repository size.
+
+# Did the scheduler fire, and how did the last run end?
+systemctl list-timers pgbackrest-backup.timer --all
+systemctl status pgbackrest-backup.service --no-pager
+journalctl -u pgbackrest-backup.service --since '48 hours ago' --no-pager | tail -50
+
+# Is repo1 (local disk, same pool as the DB) healthy / not full?
+ls -ld /var/lib/pgbackrest
+zfs list data/pgbackrest data/postgres
+df -h /var/lib/pgbackrest
+
+# Is continuous WAL archiving still working? (This is what holds the 5-min RPO.)
+sudo -u postgres psql -Atc "SELECT archived_count, failed_count, last_archived_time, last_failed_time FROM pg_stat_archiver;"
 
 # Is primary Postgres healthy? (Backup requires primary access.)
-psql -c "SELECT now(), pg_is_in_recovery();"
+sudo -u postgres psql -Atc "SELECT now(), pg_is_in_recovery();"
+
+# Is the exporter emitting the metric the alert reads? (If not, see exporter-down.md.)
+curl -s http://127.0.0.1:9854/metrics | grep pgbackrest_backup_since_last_completion_seconds
 ```
 
 ## Typical root causes
 
-1. **Backup target auth / space issue.** Credential rotation
-   missed pgBackRest; bucket full; bucket policy changed.
-   - Mitigation: fix credentials; ensure bucket has space.
+1. **repo1 dataset / pool full, or permissions on `/var/lib/pgbackrest`.**
+   repo1 is postgres-owned 0750 on the `data` pool. Root-owned files left
+   behind by a manual `pgbackrest backup` run as root break the next
+   timer-driven run as postgres. Check
+   `find /var/lib/pgbackrest /var/log/pgbackrest /var/spool/pgbackrest -not -user postgres`.
+   - Mitigation: free space (see `zfs-pool-full.md` / `db-disk-full.md`);
+     `chown -R postgres:postgres` the stray files.
+   - Forward note: S3 credential / bucket-policy failures only apply to
+     `repo2`, which is not provisioned on r1 yet.
 
 2. **Primary resource pressure** — backup can't get a backup
    slot / buffer. Rare but has happened during heavy write
    bursts.
 
 3. **WAL archive fallen behind** and pgBackRest's
-   `archive-async` queue filled up.
-   - Signal: `pg_stat_archiver` shows high `failed_count`.
+   `archive-async` spool (`/var/spool/pgbackrest`) filled up.
+   - Signal: `pg_stat_archiver` shows rising `failed_count`.
    - Mitigation: find why archive-push is failing — usually the
-     same MinIO/S3 issue as above.
+     same repo1 space/permission issue as above.
 
 4. **pgBackRest version mismatch** between the pgBackRest binary
-   and the repository format after a major upgrade.
+   and the repository format after a major upgrade. A repo cipher
+   mismatch after a repo re-create (`docs/operations/pgbackrest-encryption.md`)
+   presents identically.
 
-5. **Scheduler didn't run.** CronJob failure, systemd timer
-   disabled, k8s node unavailable at scheduled time.
+5. **Scheduler didn't run.** `pgbackrest-backup.timer` disabled or absent
+   (`18-pgbackrest-backup.yml` removes it on hosts with
+   `pgbackrest_backup_enabled=false`); host down at 02:00 UTC
+   (`Persistent=true` catches up on boot); or the unit exited 127
+   (pgbackrest not installed — the testnet/futurenet shape). A missing
+   timer is a documented past root cause of `_backup_none_24h`.
 
 ## Mitigation
 
 - [ ] Step 1 — immediate: run a manual backup to verify the
-      system works:
+      system works. **NEVER run pgbackrest as root** — it leaves
+      root-owned lock/log/manifest files in the postgres-owned repo and
+      breaks subsequent timer runs:
       ```sh
-      pgbackrest --stanza=stellarindex backup --type=diff
+      sudo -u postgres pgbackrest --stanza=stellarindex --type=diff backup
       ```
 - [ ] Step 2 — if manual works: investigate scheduler.
+      ```sh
+      systemctl list-timers pgbackrest-backup.timer --all
+      systemctl enable --now pgbackrest-backup.timer
+      journalctl -u pgbackrest-backup.service -n 100 --no-pager
+      ```
 - [ ] Step 3 — if manual fails: fix the specific error
-      (credentials, network, space, version).
+      (space, permissions, version/cipher, primary access).
 - [ ] Step 4 — for `_backup_none_24h`: **declare SEV-1**. This is
-      an RPO breach. Additionally, immediately check that
-      replication is healthy — replication is our *other* data
-      safety net; if both are broken, we're on a tightrope.
-- [ ] Step 5 — once healthy, schedule a full backup (not
-      differential) to establish a known-good restore point.
-- [ ] Verification: `pgbackrest info` shows a fresh successful
-      backup within the expected interval.
+      an RPO breach. r1 has **no replica**; the only other safety net is
+      continuous WAL archiving into the same repo1. Confirm
+      `pg_stat_archiver.failed_count` is not rising and
+      `last_archived_time` is recent, and confirm the pool is not near
+      full (`zfs-pool-full.md`). An RPO breach here has no offsite
+      fallback (`off-site-backup-plan.md`, status proposed).
+- [ ] Step 5 — once healthy, take a full backup (not differential)
+      to establish a known-good restore point (the timer's next full is
+      Sunday):
+      ```sh
+      sudo -u postgres pgbackrest --stanza=stellarindex --type=full backup
+      ```
+      Note `repo1-retention-full=2`: an extra full expires the oldest
+      chain. Make sure the restore drill (`restore-drill-stale.md`) has
+      validated the newest chain before relying on it.
+- [ ] Verification: `sudo -u postgres pgbackrest --stanza=stellarindex info`
+      shows a backup with stop time < 24 h AND
+      `pgbackrest_backup_since_last_completion_seconds` has dropped in
+      Prometheus (allow ≤ 10 min exporter lag) AND both alerts resolve in
+      Alertmanager.
 
 ## Root cause analysis
 
 - Backup log from the last successful through the first failure.
-- Storage backend logs (MinIO / S3) for the window.
+- ZFS / kernel logs for the `data` pool in the window.
 - Any secret / config / binary upgrade around the failure time?
 - RPO math: what data would have been lost if primary failed?
 
 ## Known false-positive patterns
 
-- **Backup target under maintenance** — MinIO rolling restart,
-  S3 region outage. Backup fails; resumes when storage recovers.
-  The `_backup_failed` alert is reasonable; `_backup_none_24h`
-  should not trigger unless the outage really is sustained.
+- **Exporter down** — the alerts go `no_data`-blind rather than
+  false-firing; that gap is covered by
+  `stellarindex_pgbackrest_exporter_down` (`rules.r1/meta.yml`,
+  `exporter-down.md`). If the exporter was down across 02:00, the
+  metric can read stale for up to 10 min after it returns.
+- **First backup after a repo re-create** (`pgbackrest-encryption.md`)
+  legitimately resets the age series; the alerts resolve on the first
+  completed backup.
 
 ## Related
 
-- `db-disk-full.md` — if disk is full, WAL archive stops first,
-  then backups fail.
-- `timescale-primary-down.md` — primary must be reachable to
-  take backups.
-- HA plan §RPO-RTO: `docs/architecture/ha-plan.md`.
+- `restore-drill-stale.md` — `stellarindex_restore_drill_stale`; monthly
+  first-Saturday 04:00 UTC drill proves repo1 restores.
+- `exporter-down.md` — `pgbackrest_exporter` down makes these alerts blind.
+- `zfs-pool-full.md` / `db-disk-full.md` — repo1 shares the DB's pool; if
+  the pool fills, WAL archive stops first, then backups fail.
+- `timescale-primary-down.md` — Patroni failover procedure for a topology
+  NOT deployed on single-host r1; primary must be reachable to take backups.
+- `docs/operations/pgbackrest-encryption.md` — repo cipher / re-create procedure.
+- `docs/operations/off-site-backup-plan.md` — repo2 (offsite) plan, status proposed.
+- `docs/adr/0043-backup-and-restore-strategy.md`.
+- HA plan §3.3 "Backup" reality check + §8: `docs/architecture/ha-plan.md`.
+
+> TODO(ash): the archival-node role templates no `archive_mode` /
+> `archive_command` (WAL archiving is configured out-of-band on r1 per
+> `18-pgbackrest-backup.yml`); the live `pgbackrest.conf` is hand-managed
+> (`pgbackrest_manage_conf` defaults false). Confirm on r1 that
+> `SHOW archive_command` is `pgbackrest ... archive-push %p` and that
+> repo1 is still `/var/lib/pgbackrest`, then delete this note.
 
 ## Changelog
 
+- 2026-08-28 — re-verified against HEAD. Alert tiering corrected (page at
+  24 h fires BEFORE the ticket at 25 h; one daily cycle, not hourly);
+  rule path → `rules.r1/storage.yml`; MinIO/S3 checks removed (repo1 is
+  local ZFS); all pgbackrest/psql commands run as postgres; k8s/CronJob
+  and "check replication" references removed (no replica on r1).
 - 2026-04-23 — initial draft. Emphasises the RPO math —
   "missed one backup" and "no backup 24h" are different severity
   levels because the cost curve is non-linear.

@@ -7,8 +7,8 @@ import (
 )
 
 // opsVerifyStatementTimeoutMS bounds the per-query statement_timeout for the
-// full-history ops/verify counts (CountRowsByLedger, MinLedger, and the
-// source-coverage scan). These are TRUSTED ops jobs — never the request path,
+// full-history ops/verify counts (CountRowsByLedger, MinLedger). These are
+// TRUSTED ops jobs — never the request path,
 // whose DoS backstop is OpenServing's separate SESSION statement_timeout — and
 // they scan full-history hypertables that legitimately take tens of minutes as
 // the chain grows (e.g. sep41_supply_events: ~9.3M rows / 130 chunks over the
@@ -17,7 +17,10 @@ import (
 // statement due to statement timeout"). 2h is generous headroom yet still
 // catches a genuinely stuck query; the caller's context is the real outer
 // bound. (per_source_gaps and sep41_supply_events already carry their own
-// longer / caller-supplied timeouts.)
+// longer / caller-supplied timeouts. The aggregator's gap detector — gap
+// scan AND source-coverage count — MUST NOT use this constant: its Go
+// context is 15 min, and a 2h PG timeout there orphans backends; see
+// gapDetectorStatementTimeoutMS.)
 const opsVerifyStatementTimeoutMS = 7200000 // 2 hours, in ms
 
 // MinLedger returns the smallest ledger present in a per-source table over

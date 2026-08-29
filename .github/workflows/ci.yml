@@ -99,6 +99,7 @@ jobs:
   lint:
     name: lint
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # CID-02 (audit-2026-07-23): `lint` is a required status check
     # (main-required-checks per CS-097); a job-level `if:` that a PR
     # author's own label can flip to `false` makes a "skipped" run
@@ -111,6 +112,8 @@ jobs:
     # against.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version-file: go.mod
@@ -137,8 +140,11 @@ jobs:
   test:
     name: unit tests
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version-file: go.mod
@@ -176,6 +182,7 @@ jobs:
   integration-test:
     name: integration tests (Docker)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     # BLOCKING (CS-070). Wiring this job first surfaced accumulated rot (the
     # suite was only ever compiled, never run) — all fixed 2026-07-01: the
     # stale FXSources assertion (massive joined the registry), the markets
@@ -185,6 +192,8 @@ jobs:
     # required gate.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version-file: go.mod
@@ -211,14 +220,17 @@ jobs:
 
   # ────────────────────────────────────────────────────────────────
   # Policy checks — keep the repo enterprise-grade per
-  # docs/discovery/engineering-standards.md.
+  # docs/engineering-standards.md.
   # ────────────────────────────────────────────────────────────────
 
   doc-checks:
     name: doc-code consistency
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
       - name: lint-docs
         # Single script covers: doc freshness (90-day warn, 180-day
         # fail on frontmatter-dated docs), config/API/metrics
@@ -230,9 +242,11 @@ jobs:
   import-checks:
     name: import-boundary lint
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
+          persist-credentials: false
           # lint-baseline-growth diffs against the PR base / push
           # `before` sha, so it needs more than a depth-1 checkout.
           fetch-depth: 0
@@ -426,6 +440,16 @@ jobs:
         # fires weekly against live r1, so these fixtures are the only
         # place the verdict is exercised on a PR. No network, no ansible.
         run: ./scripts/ci/check-ansible-drift-test.sh
+      - name: run-heavy-job wrapper self-test
+        # 2026-08-28 r1 (supply_refresh_error_dominant): the heavy-job
+        # wrapper must hand every wrapped stellarindex-ops job the
+        # low-priority ClickHouse ops-batch identity from
+        # /etc/default/stellarindex-ops ITSELF — the runbooks source
+        # /etc/default/stellarindex, so a design that relied on the
+        # caller's shell was a silent no-op on the incident path. These
+        # fixtures extract the shipped wrapper out of the ansible task and
+        # run it. No network, no ansible, no systemd (non-root exec path).
+        run: ./scripts/ci/run-heavy-job-test.sh
       - name: lint-lexicon
         # Maintainability audit 2026-07-01 (D2+D6): domain-lexicon +
         # idiom ratchet. Zero rules (no Fetch/Make verbs, slog is the
@@ -458,9 +482,11 @@ jobs:
   actions-pinning:
     name: github-actions SHA-pinning lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
       - name: Restore trusted lint-actions-pinning.sh from the base ref
         # CID-03 (audit-2026-07-23): same class as import-checks'
@@ -505,6 +531,7 @@ jobs:
   monitoring-rules:
     name: prometheus rule validation
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # Validates BOTH deploy/monitoring/rules/*.yml (multi-host) and
     # configs/prometheus/rules.r1/*.yml (R1 single-host overlay)
     # with promtool. Catches YAML syntax errors, broken PromQL, and
@@ -522,8 +549,15 @@ jobs:
       # 24h+ whenever the secret was unset. The `secrets.PROM_TARBALL_SHA256`
       # override below is retained only as an optional escape hatch.
       PROM_TARBALL_SHA256_DEFAULT: "19700bdd42ec31ee162e4079ebda4cd0a44432df4daa637141bdbea4b1cd8927"
+      AM_VERSION: "0.28.1"
+      # Same C4-17b convention as PROM_TARBALL_SHA256_DEFAULT above: the
+      # checksum is committed next to the version pin (from upstream
+      # sha256sums.txt); bumping AM_VERSION obligates bumping this.
+      AM_TARBALL_SHA256_DEFAULT: "5ac7ab5e4b8ee5ce4d8fb0988f9cb275efcc3f181b4b408179fafee121693311"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
       - name: structural rule lint (no promtool)
         # Pure-Python guard that runs even if the promtool install below fails —
         # catches the mis-indented-rule class (2026-07-06 galexie-archive: alerts
@@ -550,6 +584,26 @@ jobs:
           sudo install -m 0755 "prometheus-${PROM_VERSION}.linux-amd64/promtool" /usr/local/bin/promtool
       - name: validate rules
         run: make monitoring-check
+      - name: install amtool
+        run: |
+          # SHA-verified install, same shape as promtool above.
+          curl -fsSL "https://github.com/prometheus/alertmanager/releases/download/v${AM_VERSION}/alertmanager-${AM_VERSION}.linux-amd64.tar.gz" -o /tmp/am.tar.gz
+          echo "${AM_TARBALL_SHA256_DEFAULT}  /tmp/am.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/am.tar.gz
+          sudo install -m 0755 "alertmanager-${AM_VERSION}.linux-amd64/amtool" /usr/local/bin/amtool
+      - name: validate alertmanager config (both render branches)
+        # configs/alertmanager/alertmanager.r1.yml was the ONLY production
+        # config surface with no CI gate: amtool ran solely inside apply.sh,
+        # by hand, on the host, after merge. The committed file with empty
+        # placeholder URLs does NOT validate as-is — apply.sh's Python
+        # walker strips the *_configs blocks first — so this validates the
+        # RENDERED config on both branches: all URLs empty (stub path,
+        # exercising the block-stripper) and all URLs set (substitution).
+        run: |
+          ALERTMANAGER_SECRETS=/dev/null bash configs/alertmanager/apply.sh --check-only
+          S=$(mktemp)
+          printf 'HEALTHCHECKS_DEADMANSSWITCH_URL=https://hc-ping.com/x\nDISCORD_WEBHOOK_URL_PAGES=https://discord.com/api/webhooks/1/a\nDISCORD_WEBHOOK_URL_ALERTS=https://discord.com/api/webhooks/2/b\n' > "$S"
+          ALERTMANAGER_SECRETS="$S" bash configs/alertmanager/apply.sh --check-only
 
   # ────────────────────────────────────────────────────────────────
   # Security — fast scans on every PR: govulncheck + gitleaks (below).
@@ -563,9 +617,11 @@ jobs:
   vuln:
     name: govulncheck + gitleaks
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
@@ -607,9 +663,12 @@ jobs:
   build:
     name: build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: [lint, test]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version-file: go.mod
@@ -629,12 +688,15 @@ jobs:
   openapi:
     name: openapi lint
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # N2-04: runs on push-to-main too — a direct push (the live-in-dev
     # norm) that edits openapi/ or the handlers previously skipped Spectral
     # + the generated-reference drift check, the exact bypass the push
     # trigger above exists to close. The job is cheap.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
       - name: Spectral lint
         uses: stoplightio/spectral-action@6416fd018ae38e60136775066eb3e98172143141  # v0.8.13
         with:
@@ -681,11 +743,14 @@ jobs:
   web-explorer:
     name: web/explorer
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: web/explorer
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86  # v6
         with:
           version: "10"
@@ -771,11 +836,14 @@ jobs:
   web-status:
     name: web/status
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: web/status
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86  # v6
         with:
           version: "10"
@@ -816,6 +884,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install ansible + lint
         # DEP-01 (audit-2026-07-23): exact pins, same reasoning as
         # ansible-drift.yml — this job carries no secrets, but an
@@ -853,10 +923,17 @@ jobs:
         # in configs/ansible/.ansible-lint (auto-discovered from this dir);
         # burn that list down to re-enable each rule as an enforced gate.
         run: ansible-lint --profile moderate roles/ playbooks/
+      - name: secret-rendering template tasks suppress --diff
+        # backup-restore-7 (audit-2026-08-28): a template task that inlines
+        # vault secrets (pgbackrest cipher-pass, S3 key pair) without
+        # `diff: false` prints them into the weekly ansible-drift job log
+        # via `--check --diff`. Pure-Python (PyYAML); also in verify.sh.
+        run: python3 ./scripts/ci/lint-ansible-secret-diff.py
 
   branch-protection-status:
     name: branch protection status (informational)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # Informational means informational: a flaked curl to the GitHub
     # rules API must not take the whole push run red (it did on
     # 2026-08-24, run 32751060492 — the only failed job on an

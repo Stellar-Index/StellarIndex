@@ -111,6 +111,24 @@ call): **3.5–4.5 wk** if external review is post-launch (signed off as such);
 - [V] **New defect found via main CI:** `TestAsyncSink_StopDrainsPendingRows_NoChannelClose` flaked on the ansible-only #230 merge; reading the sink shows an in-flight steady-state flush is aborted (rows counted lost) when `Stop()` races it — shutdown data-loss in the raw `soroban_events` landing zone on every indexer restart. Fix in flight with a stress-proven test.
 - Wave A landed: #230, #231, #236 merged; #232–#235 queued behind main-green; #237 (ToS/Privacy) is a DRAFT for Ash's legal review.
 
+
+#### Evening addendum — 2026-08-28 (Waves A–C landed; Wave B implementation in review)
+- [V] **Wave A**: #231 #232 #233 #234 #235 #236 #238 merged (7/8); #237 ToS/Privacy remains a DRAFT for Ash. Wave A nits → #253.
+- [V] **Wave C — all 12 must-verify runbooks were BROKEN** against HEAD (rule paths, Patroni/replica procedures on a single-node host, `db-primary.internal`, `pgrep` without `-f`, thresholds, severities). Corrected one-fixer-per-runbook + adversarial verify → #239 merged; operator live checks on r1 (patronictl/etcdctl absent, `pg_up == 0` loaded, pgbackrest root+postgres) PASS. **[DECIDE]** single-node r1 has no "promote a replica" path — pgBackRest restore is the only unrecoverable-primary option; accept, or prioritise the Patroni playbook.
+- [V] **Wave B designs** → #242 merged (`docs/design/`). Implementation PRs, each fixer→adversarial-verifier, all merge cleanly onto main (train-tested, 0 conflicts): #244 time-local outlier filter (root cause of `outlier_storm` and the 5× XLM/GBP freezes — every one a genuine move mis-scored by whole-window MAD), #245/#247/#248 oracle capture-totality PR1–3 (raw AssetType → decoders emit → consumers safe; no migration), #246 composite-route corroboration **DECLINED per design §10** (verifier proved a USD-FX hub route suppresses a real manipulation freeze) — **[DECIDE]** add `crypto:XLM/crypto:BTC` as a served pair for a real second route, or accept freeze-and-release.
+- [V] **New defects found and fixed (root cause, not symptom)**: #240 AsyncSink Stop() lost the in-flight batch on every deploy (merged; siblings → #252); #243 ops CH jobs ran as `default` at serving priority → `ops_batch` identity (merged, off by default; per-host enable is operator work); #249 testnet `/v1/assets/native` served the mainnet 50B constant; #254 `assets_popular_priceless` — XLM SAC accepted as a quote proxy but never priceable as base/hop while Aquarius writes swap direction; gap-detector `COUNT(DISTINCT ledger)` on the 257 GB `soroban_events` (no ledger index, no chunk exclusion, 2h inherited statement_timeout) drove load 19 and 503s → fix in progress (answer from `ledger_ingest_log`).
+- [V] **W5.3 tool built** (#251 `usd-volume-restamp`, dry-run default, heartbeat, derive_generation bump); production run after merge+deploy. **W5.4** retry still gated on `ops_batch` enable on r1.
+- [V] **Process**: orphan branch (`fix/priceless-structural-unpriceable`, 08-27, no PR) was superseded by #254 — waste. Codified: #256 no-orphan-work contract + PR template fields + daily orphan-branches tripwire; `delete_branch_on_merge` on; 30 merged branches pruned. Postmortem recovered from an orphan branch → #255.
+- Testnet 64/1000 backfill: ledger ~860k, 0 restarts (~45%). r1 v0.47.2; **cut v0.48.0 after the chain lands, then verify served**: `outlier_storm` silent, freeze count 0 on genuine moves, `assets_popular_priceless` 0, testnet native 100B.
+- Progress: Wave A 88% · B ~70% · C 100% · D 0% · overall ~47%.
+#### Night addendum — 2026-08-29 00:00–02:00Z (v0.48.0 deployed; backups provisioned)
+- [V] **v0.48.0 cut and deployed to r1** (tag 11d41201 = code ffc04a7e; deploy run 33223475389): api/aggregator/indexer/ops all v0.48.0, skew 0, healthz/readyz 200; hot-account `/v1/accounts/{id}/operations` 8 s → 0.2–0.6 s (#281), 0×5xx since; time-local outlier filter live (`venue_vwap` gauges present). **All 34 repo `rules.r1` files applied** (r1 had lagged the repo: 8 stale, 2 missing), promtool ok, reload ok. **Alerts firing: deadman only.**
+- [V] **Backups (Ash go)**: S3 bucket `stellarindex-pgbackrest-r1` (eu-central-1, SSE-S3, public blocked, lifecycle abort-mpu 1d + expire 28d), least-privilege IAM user, AWS Budgets $30 tag-scoped + $50 account-wide (alerts to Ash). Secrets in the r1 vault; local inventory wired (repo2 retention 1 full / 7 d ≈ $12–17/mo). **Not yet applied on r1** — waits for #272 (template) + #294 (no ClickHouse restart on users.d apply) to merge. ZFS rolling snapshots (3 d CH / 7 d PG, 2 TiB min-free guard, fail-closed) → #295. Status-page backup panel + `/v1/diagnostics/backups` + `backup_offsite_stale` alert → #293. **Correction**: the AWS Public Blockchain dataset is complete (1,003 partitions, 0..64.19M); no Deep-Archive duplicate needed — ADR-0043 wording amendment + weekly completeness monitor → #287.
+- [V] **Design §10 amended (Ash)**: composite XLM/USD × USD/GBP corroborates/refutes single-venue freezes on the current bucket, never VWAP/source_count; leg-breadth + leg-dispersion guards; 2 % release band → #288 (verified, protected class).
+- [V] ClickHouse drop-size guard: r1's 1 TiB was a hand edit never in ansible → #286 merged (pin 50 GiB + live verify; apply pending: remove the hand file first).
+- Open lane (all verified): #248 #249 #250 #251 #252 #253 #254 #258 #256 #246 #263 #265 #266–#274 #280 #287 #288 #293 #294 #295. r1 applies pending after merges: ops_batch enable, pgBackRest repo2, ZFS snapshots, drop-guard.
+- Progress: Wave A 88% · B ~80% · C 100% · D early ~70% · overall ~58%.
+
 ### ⚠️ DEPLOY GAP found + patched — config changes do NOT ship with binary deploys (2026-08-25)
 
 **Class (important, pre-launch-relevant):** `gh workflow run deploy.yml -f binaries=…`
@@ -3048,8 +3066,10 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
    cannot fix the affected accounts). Use the ALREADY-PROVEN D2
    script, not a bespoke ch-backfill:**
    ```
-   run-heavy-job.sh d2-p63 /usr/local/sbin/d2-ordinal-reproject.sh 63 63
-   run-heavy-job.sh d2-p38 /usr/local/sbin/d2-ordinal-reproject.sh 38 38
+   # ZFS snapshot of data/clickhouse first, then the explicit ack
+   # (docs/operations/clickhouse-destructive-ddl.md)
+   D2_FORCE_DROP=yes run-heavy-job.sh d2-p63 /usr/local/sbin/d2-ordinal-reproject.sh 63 63
+   D2_FORCE_DROP=yes run-heavy-job.sh d2-p38 /usr/local/sbin/d2-ordinal-reproject.sh 38 38
    ```
    Recomputing an already-ordinaled range is idempotent (the D2 doc
    proves the formula reproduces live-written ordinals EXACTLY above
