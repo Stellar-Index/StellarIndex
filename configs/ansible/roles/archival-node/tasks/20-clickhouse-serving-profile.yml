@@ -193,7 +193,52 @@
       </clickhouse>
   when: clickhouse_serving_profile_enabled | bool
   no_log: true   # content embeds the password's SHA-256 digest
-  notify: Restart clickhouse-server
+  # Deliberately NO `notify: Restart clickhouse-server` (2026-08-29): a
+  # users.d drop-in (profiles / users / quotas) is HOT-RELOADED by
+  # clickhouse-server's users-config reloader, so a restart is never
+  # what applies it — it would only bounce the lake (minutes of
+  # explorer/lake downtime + cold caches on r1's 9.3 TB) for nothing.
+  # The reload + verify tasks below apply it and PROVE it on the host
+  # instead (21-clickhouse-drop-guard.yml's pattern). The one CH change
+  # in this role that genuinely needs the restart — tcp_port /
+  # listen_host in 08-clickhouse.yml's config.d/si-override.xml — keeps
+  # its own notify.
+  tags: [clickhouse, clickhouse-serving-profile]
+
+- name: Reload ClickHouse config so the api_serving drop-in is live (no restart)
+  # `SYSTEM RELOAD CONFIG` is idempotent and makes the users.d pick-up
+  # immediate rather than waiting on the reloader's poll. Skipped under
+  # --check (command modules do not run there).
+  when:
+    - clickhouse_serving_profile_enabled | bool
+    - not ansible_check_mode
+  ansible.builtin.command: >-
+    clickhouse-client --port {{ clickhouse_tcp_port | default(9300) }}
+    -q "SYSTEM RELOAD CONFIG"
+  changed_when: false
+  tags: [clickhouse, clickhouse-serving-profile]
+
+- name: Verify the api_serving profile + user are live in ClickHouse
+  # system.users / system.settings_profiles are the LIVE access
+  # entities after the reload — a drop-in the server rejected (malformed
+  # XML keeps the PREVIOUS users config, it does not crash the server)
+  # shows up here as 0. Retried because the reloader polls (default
+  # 2 s). Skipped under --check for the same reason as above.
+  when:
+    - clickhouse_serving_profile_enabled | bool
+    - not ansible_check_mode
+  ansible.builtin.command: >-
+    clickhouse-client --port {{ clickhouse_tcp_port | default(9300) }}
+    -q "SELECT
+    (SELECT count() FROM system.users WHERE name = '{{ clickhouse_serving_user }}'),
+    (SELECT count() FROM system.settings_profiles WHERE name = 'api_serving')
+    FORMAT CSV"
+  register: ch_serving_profile_live
+  changed_when: false
+  retries: 10
+  delay: 2
+  # users,profiles — exactly one of each.
+  until: ch_serving_profile_live.stdout == '1,1'
   tags: [clickhouse, clickhouse-serving-profile]
 
 # ───── ops_batch: the LOW-priority counterpart (2026-08-28 r1) ─────────
@@ -346,5 +391,44 @@
       </clickhouse>
   when: clickhouse_ops_batch_profile_enabled | bool
   no_log: true   # content embeds the password's SHA-256 digest
-  notify: Restart clickhouse-server
+  # Deliberately NO `notify: Restart clickhouse-server` (2026-08-29,
+  # caught in the r1 --check --diff for the FIRST enable): this is a
+  # users.d drop-in, hot-reloaded by clickhouse-server — the notify
+  # would have restarted the 9.3 TB lake (minutes of explorer/lake
+  # downtime + cold caches) for a change a config reload applies. The
+  # first enable must not bounce the lake; the reload + verify tasks
+  # below apply and prove it instead (same pattern as api_serving above
+  # and 21-clickhouse-drop-guard.yml).
+  tags: [clickhouse, clickhouse-ops-batch-profile]
+
+- name: Reload ClickHouse config so the ops_batch drop-in is live (no restart)
+  # Idempotent; skipped under --check (command modules do not run there).
+  when:
+    - clickhouse_ops_batch_profile_enabled | bool
+    - not ansible_check_mode
+  ansible.builtin.command: >-
+    clickhouse-client --port {{ clickhouse_tcp_port | default(9300) }}
+    -q "SYSTEM RELOAD CONFIG"
+  changed_when: false
+  tags: [clickhouse, clickhouse-ops-batch-profile]
+
+- name: Verify the ops_batch profile + user are live in ClickHouse
+  # LIVE access entities after the reload; a rejected drop-in (the
+  # server keeps the previous users config) reads as 0 here and fails
+  # the apply. Retried because the reloader polls (default 2 s).
+  when:
+    - clickhouse_ops_batch_profile_enabled | bool
+    - not ansible_check_mode
+  ansible.builtin.command: >-
+    clickhouse-client --port {{ clickhouse_tcp_port | default(9300) }}
+    -q "SELECT
+    (SELECT count() FROM system.users WHERE name = '{{ clickhouse_ops_batch_user }}'),
+    (SELECT count() FROM system.settings_profiles WHERE name = 'ops_batch')
+    FORMAT CSV"
+  register: ch_ops_batch_profile_live
+  changed_when: false
+  retries: 10
+  delay: 2
+  # users,profiles — exactly one of each.
+  until: ch_ops_batch_profile_live.stdout == '1,1'
   tags: [clickhouse, clickhouse-ops-batch-profile]

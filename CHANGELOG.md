@@ -15,6 +15,27 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`ops_batch` / `api_serving` ClickHouse drop-ins no longer restart
+  `clickhouse-server`.** Both tasks in
+  `archival-node/tasks/20-clickhouse-serving-profile.yml` carried
+  `notify: Restart clickhouse-server` for a `users.d` drop-in that
+  ClickHouse hot-reloads — on r1 the first `ops_batch` enable
+  (`--tags clickhouse-ops-batch-profile,minio,heavy-job-wrapper`)
+  would have bounced the 9.3 TB lake (minutes of explorer/lake
+  downtime + cold caches) for nothing; caught in the `--check --diff`
+  (2026-08-29). The notify is replaced by `SYSTEM RELOAD CONFIG` plus a
+  retried assert that `system.users` / `system.settings_profiles` each
+  hold exactly one of the profile's entities (skipped under `--check`,
+  `21-clickhouse-drop-guard.yml`'s pattern), so a rejected drop-in
+  fails the apply instead of silently keeping the old users config.
+  The only CH change in the role that still restarts is
+  `08-clickhouse.yml`'s `config.d/si-override.xml` (`tcp_port` /
+  `listen_host`), which genuinely needs it.
+
+## [v0.48.0] — 2026-08-29
+
 ### Added
 
 - **Oracle capture-totality consumers (PR-3 of 7): every `oracle_updates`
@@ -42,6 +63,23 @@ against.
   unkeyed reader cannot recur unlabelled. Each surface carries a test
   red-proven with a fixture raw row; storage behaviour pinned on real
   Timescale in `test/integration/oracle_raw_consumers_test.go`.
+- **ClickHouse destructive-DDL size guard pinned by ansible.** New
+  `archival-node/tasks/21-clickhouse-drop-guard.yml` (tag
+  `clickhouse-drop-guard`) writes
+  `/etc/clickhouse-server/config.d/si-drop-guard.xml` pinning
+  `max_table_size_to_drop` / `max_partition_size_to_drop` to
+  ClickHouse's 50 GB default (`clickhouse_max_*_size_to_drop`, `0`
+  refused) and asserts the live `system.server_settings` value; no
+  restart (hot-reloaded). r1 was measured at 1 TiB for both — raised
+  by hand for D2's `REPLACE PARTITION` and never lowered — so
+  `account_movements` (582 GiB) was droppable in one statement.
+  Planned oversize drops now use the self-deleting
+  `force_drop_table` flag after a ZFS snapshot:
+  `docs/operations/clickhouse-destructive-ddl.md`.
+  `d2-ordinal-reproject.sh` requires `D2_FORCE_DROP=yes` and
+  `d3-lecur-v2-rebuild.sh rollback-precutover` requires
+  `D3_FORCE_DROP_V2=yes`; both arm the flag per guarded statement
+  and remove it after.
 - **Oracle capture-totality PR-2 — decoders record unmapped symbols
   as `raw:` rows.** The Reflector (dex/cex/fx), RedStone and Band
   decoders no longer SKIP a price slot whose symbol / feed_id is
@@ -119,7 +157,33 @@ against.
   ticket severity, promtool unit-tested, runbook
   `docs/operations/runbooks/oracle-unknown-symbols.md`.
 
+- **Deploy served-path smoke** (#232): `deploy.yml` now curls the public
+  endpoints after restart and asserts the r1 version-skew probe reads 0 —
+  a deploy is not done until the served artifact answers.
+- **Ops-job unit tasks are taggable** (#229): `--tags ops-jobs` applies the
+  heavy-job wrapper/timers without the whole archival-node role.
+- **CI: `timeout-minutes` on every previously uncapped job** (23 jobs, 9
+  workflows, #260) and `persist-credentials: false` on all 34 checkout
+  steps (#276).
+
 ### Fixed
+
+- **`GET /v1/accounts/{g}/operations` and `/transactions` pages for a
+  hot account no longer cost the account's whole history.** Each UNION
+  arm resolved its keys over `stellar.operations` /
+  `stellar.transactions` with `pk IN (SELECT pk FROM ops_by_source …)`;
+  ClickHouse prunes that to one granule PER KEY in the set before the
+  `LIMIT`, so a page for an account with 11,925 sourced + 26,064
+  participant ops read 164–238 M rows (~8 s, `AccountOperations
+  deadline exceeded` 503s on r1, 2026-08-28). The arms now page
+  `stellar.ops_by_source` / `stellar.operation_participants` directly
+  (both keyed `(account, ledger_seq, tx_index, op_index)`, so the
+  cursor, watermark bound and `LIMIT` apply on a primary-key-prefix
+  range read) and the wide table is touched once, by the hydration
+  pass, over ≤ 3×limit keys. Rows, ordering, cursor semantics and
+  source/participant dedupe are unchanged (differential integration
+  test against the previous SQL, plus a `system.query_log` read_rows
+  bound).
 
 - RedStone docs (`internal/sources/redstone/README.md`,
   `docs/protocols/redstone.md`) cited a metric that never existed
@@ -154,7 +218,26 @@ against.
   client hello) and `scripts/ci/run-heavy-job-test.sh` (the shipped
   wrapper, extracted from the ansible task). See
   `docs/operations/clickhouse-ops-batch-profile.md`.
-### Fixed
+
+- **`pgbackrest.conf` template task printed the backup cipher passphrases
+  and repo2 S3 key pair on `--check --diff`.** The task rendering
+  `pgbackrest.conf.j2` had no `diff: false`, and the header comment
+  claimed the credentials came from env vars "never inline in this
+  file" — they are (and must be: pgbackrest reads them from the
+  postgres-owned 0640 file, including from `archive_command` inside the
+  postgres server process, which no unit-level EnvironmentFile reaches).
+  The documented review path (`--check --diff` in README, the operator
+  register, and the weekly `ansible-drift` job which `tee`s its output
+  into a GitHub Actions log — where only registered secrets are masked,
+  not vault-decrypted values) therefore printed the ONLY key that
+  decrypts the offsite survival backup. The task now sets `diff: false`
+  (changed/ok verdict stays visible; hunk body suppressed) and the
+  header tells the truth. New gate `scripts/ci/lint-ansible-secret-diff.py`
+  (ansible-check job + `verify.sh`) fails any template task whose
+  template renders a secret-shaped var without `diff: false`/`no_log`;
+  the seven pre-existing sibling tasks (redis, patroni, keepalived,
+  minio) are grandfathered by name for burn-down. Retention is
+  untouched (ADR-0043). (audit-2026-08-28 backup-restore-7)
 
 - **Outlier filter trimmed agreed price moves; `outlier_storm` measured
   its own artifact.** The published-VWAP filter scored every print
@@ -214,6 +297,23 @@ against.
   `for`, both rule trees, three promtool cases) as the live cross-check
   — **retire 2026-09-04**; after that `dropped_trades_total
   {reason="outlier"}` is diagnostic only.
+
+- **AsyncSink lost the in-flight batch on shutdown** (#240): `Stop()`
+  cancelled a steady-state write mid-INSERT and counted the whole batch as
+  LOST instead of handing it to the drain — every deploy that caught a
+  soroban_events batch in flight silently dropped it. The interrupted rows
+  are now re-queued into `drainOnStop` and retried under `DrainGrace`;
+  red-proven and stress-tested 600× under `-race`.
+- **galexie tip-lag parser** (#234) understands range object names on the
+  new archive schema (was reporting a bogus lag).
+- **`cut-release.sh --yes`** (#231): refuses non-TTY runs without
+  `--yes`/`--dry-run` instead of aborting silently on `read` EOF.
+- **Backfill-only archive schema vars** (#230): `galexie_backfill_*`
+  variables render into `galexie-backfill.toml` only, so a testnet 64/1000
+  re-export can never touch the live `galexie.toml` manifest; testnet
+  pinned to 64 ledgers/object.
+- **Bespoke-cache staleness tests are deterministic** (#264): an injectable
+  clock replaces a 10 ms real-time horizon that flaked on loaded CI runners.
 
 ## [v0.47.2] — 2026-08-28
 
