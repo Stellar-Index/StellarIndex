@@ -106,11 +106,18 @@ func runOneFixture(t *testing.T, path string) {
 	//
 	// Oracle capture-totality (PR-2): a Symbol slot outside the
 	// allow-lists is no longer dropped — it lands as a raw:<symbol>
-	// row (canonical.AssetOracleRaw). The real FX captures carry two
-	// such slots per event (2026-04-23 mainnet), so the CEX/FX
-	// variants accept EITHER the mapped type or raw; a raw row must
-	// be exactly that (IsMapped()==false) and must hold its vector
-	// slot. DEX publishes Addresses only, so raw is never expected.
+	// row (canonical.AssetOracleRaw). The CEX variant accepts EITHER
+	// the mapped type or raw; a raw row must be exactly that
+	// (IsMapped()==false) and must hold its vector slot. DEX
+	// publishes Addresses only, so raw is never expected.
+	//
+	// 2026-08-29: the two raw slots every real FX event carried
+	// (2026-04-23 mainnet) were VES and XAU — the pair that paged
+	// stellarindex_ingestion_oracle_unknown_symbols on r1 v0.48.0.
+	// Both are allow-listed now (fiat:VES per ADR-0010; XAU is the
+	// spot-gold commodity and lands as rwa:XAU per ADR-0028), so the
+	// FX variant tolerates NO raw row on these fixtures, and its only
+	// non-fiat mapped slot is exactly rwa:XAU.
 	expectedAssetType := map[Variant]canonical.AssetType{
 		VariantDEX: canonical.AssetSoroban,
 		VariantCEX: canonical.AssetCrypto,
@@ -120,7 +127,10 @@ func runOneFixture(t *testing.T, path string) {
 		if expectedAssetType == "" || u.Asset.Type == expectedAssetType {
 			continue
 		}
-		if variant != VariantDEX && u.Asset.Type == canonical.AssetOracleRaw && !u.Asset.IsMapped() {
+		if variant == VariantFX && u.Asset.String() == "rwa:XAU" {
+			continue
+		}
+		if variant == VariantCEX && u.Asset.Type == canonical.AssetOracleRaw && !u.Asset.IsMapped() {
 			t.Logf("updates[%d] recorded verbatim as %s (unmapped %s symbol)", i, u.Asset, variant.SourceName())
 			continue
 		}

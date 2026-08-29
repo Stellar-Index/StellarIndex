@@ -39,6 +39,12 @@ var knownRWACodes = map[string]struct{}{
 	"XAUm":    {}, // Matrixdock tokenized gold (1 token ≈ 1 troy oz)
 	"deJAAA":  {}, // Securitize deRWA token of the Janus Henderson AAA CLO ETF (JAAA)
 	"deJTRSY": {}, // Securitize deRWA token of the Janus Henderson treasury fund (JTRSY)
+	// 2026-08-29: the Reflector FX oracle's spot-gold slot (ISO-4217
+	// X-code, 1 troy oz in USD). A commodity reference, not a currency —
+	// kept OFF the fiat list (ADR-0010) and OFF crypto; it shares the
+	// rwa: namespace with XAUm but is a DISTINCT asset (spot vs the
+	// Matrixdock token). See the ADR-0028 Amendments section.
+	"XAU": {}, // spot gold, troy ounce (Reflector FX slot)
 }
 
 // IsKnownRWA reports whether code is in the ADR-0028 allow-list.
