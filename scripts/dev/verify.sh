@@ -55,8 +55,10 @@ echo "=== Migration backward-compat self-test ===" && ./scripts/ci/lint-migratio
 echo "=== Migration immutability ===" && ./scripts/ci/lint-migration-immutability.sh
 echo "=== Migration immutability self-test ===" && ./scripts/ci/lint-migration-immutability-test.sh
 echo "=== Completeness-staleness calibration ===" && ./scripts/ci/lint-completeness-staleness.sh
+echo "=== Integration-shard partition self-test ===" && ./scripts/ci/integration-shard-test.sh
 echo "=== Deploy-protection self-test ===" && ./scripts/ci/check-deploy-protection-test.sh
 echo "=== Main-CI-health decision-core self-test ===" && ./scripts/ci/check-main-ci-health-test.sh
+echo "=== Public-dataset drift-verdict self-test ===" && ./scripts/ci/check-public-dataset-test.sh
 echo "=== Ansible task lint (pipefail/bash, secret-on-argv) ===" && ./scripts/ci/lint-ansible-tasks.sh
 echo "=== Ansible task lint self-test ===" && ./scripts/ci/lint-ansible-tasks-test.sh
 echo "=== Ansible-drift decision-core self-test ===" && ./scripts/ci/check-ansible-drift-test.sh
