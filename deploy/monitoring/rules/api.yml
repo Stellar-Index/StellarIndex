@@ -167,7 +167,10 @@ groups:
             {{ $labels.cache }}/{{ $labels.op }}. The prewarm goroutine
             should keep hot ops > 90 % hit. Likely cause: the prewarm
             is calling the cached reader with a slightly-different
-            argument tuple than the handler does. Cache key is a
+            argument tuple than the handler does (see
+            cmd/stellarindex-api/main.go prewarmCaches + the cached
+            wrappers at internal/api/v1/markets_cache.go and
+            asset_catalogue_cache.go). Cache key is a
             stringified tuple of all args; one drifted dimension
             (Order, Sources, Limit, …) means a phantom warmed slot.
             Follow the cache-miss-rate-high runbook.

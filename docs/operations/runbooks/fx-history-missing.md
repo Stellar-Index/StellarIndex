@@ -1,6 +1,6 @@
 ---
 title: FX history empty / fx_quotes table missing — apply migration 0028 + backfill
-last_verified: 2026-05-10
+last_verified: 2026-08-29
 status: living procedure
 ---
 
@@ -46,7 +46,11 @@ applies unchanged.)
 - `psql -tA -c "SELECT to_regclass('public.fx_quotes')"` returns
   empty.
 - `psql -tA -c "SELECT version FROM schema_migrations
-  ORDER BY version DESC LIMIT 1"` returns 27 (or older).
+  ORDER BY version DESC LIMIT 1"` returns a version below 28 —
+  the general signal. ("Returns 27" was the specific 2026-05-10
+  state on r1; HEAD's migrations run far past it — 0150 at the
+  2026-08-29 re-verification — so any `version < 28` means 0028
+  was never applied.)
 
 ## Why this happens
 
@@ -70,8 +74,11 @@ steps make it live on a deployment:
 
 Once the table exists, the forex worker (running inside
 `stellarindex-api`) starts persisting on its next refresh tick,
-so live data backfills forward as it arrives. Historical depth
-needs the one-shot `fx-history-backfill` script — see step 3.
+so live data backfills forward as it arrives. The live worker
+polls Massive (paid feed, `MASSIVE_API_KEY`) with a keyless ECB
+daily-reference-rates fallback; Frankfurter is used by the
+backfill script only. Historical depth needs the one-shot
+`fx-history-backfill` script — see step 3.
 
 ## Triage (1 min)
 
@@ -84,8 +91,11 @@ sudo -u postgres psql -d stellarindex -tA -c "SELECT to_regclass('public.fx_quot
 sudo -u postgres psql -d stellarindex -tA -c "SELECT version, dirty FROM schema_migrations ORDER BY version DESC LIMIT 1"
 # → 27|f means migration 0028 hasn't been applied yet
 
-# 3. Confirm the API log shows the symptom (every ~5 min)
-journalctl -u stellarindex-api --since "10 minutes ago" -o cat | grep "fx_quotes persist failed" | tail -1
+# 3. Confirm the API log shows the symptom. The forex worker's
+#    refresh cadence is HOURLY (`time.Hour`, wired in
+#    cmd/stellarindex-api/main.go), so expect ONE WARN per hourly
+#    tick — grep a window wide enough to catch at least one:
+journalctl -u stellarindex-api --since "2 hours ago" -o cat | grep "fx_quotes persist failed" | tail -1
 ```
 
 ## Recovery (5 min)
@@ -124,17 +134,21 @@ re-runs (the `create_hypertable` call uses `if_not_exists =>
 TRUE`; the table itself doesn't but won't be re-attempted because
 `schema_migrations.version` advances). Safe to apply on a live
 deployment — no service restart needed; the forex worker picks
-up the new table on its next refresh tick.
+up the new table on its next refresh tick (hourly cadence — up
+to 1 h away).
 
 ### 3. Confirm the worker started persisting
 
 ```sh
-journalctl -u stellarindex-api --since "5 minutes ago" -o cat \
+# The refresh cadence is hourly, so post-fix confirmation can take
+# up to 1 h — a zero count here only proves absence-of-failure once
+# a tick has actually fired since the migration:
+journalctl -u stellarindex-api --since "2 hours ago" -o cat \
   | grep -c "fx_quotes persist failed"
-# → 0 once the next refresh tick fires (≈5 min cadence)
+# → 0 once the next refresh tick fires (hourly cadence)
 
 sudo -u postgres psql -d stellarindex -tA -c "SELECT count(*) FROM fx_quotes"
-# → > 0 within ~5 min
+# → > 0 within ~1 h
 ```
 
 ### 4. Backfill historical depth (slow path — separate step)
@@ -167,24 +181,26 @@ writes a final summary (total chunks, total rows, elapsed).
 The 2026-05-10 finding exposed a process gap: a release that
 adds a migration ships the binary changes via the deploy
 workflow, but the migration files + `stellarindex-migrate up`
-are operator-side actions not automated by the same workflow.
-Two paths forward (pick one):
+were operator-side actions not automated by the same workflow.
 
-1. **Wire migrations into the deploy workflow** — add a
-   `migrate-up` step to `.github/workflows/deploy.yml` that runs
-   before the binary swap. Adds a per-deployment cost (one
-   pg-connection round trip + the actual migration time) but
-   eliminates the manual step entirely.
-2. **Add a startup gate** — `stellarindex-api`'s ready check
-   compares the binary's expected schema version (computed at
-   build time from the embedded migrations) against
-   `schema_migrations.version`; readyz returns 503 with a
-   diagnostic if they diverge. Doesn't auto-apply but prevents
-   the silent runtime failure.
+**Path 1 is DONE (F-1220):** the deploy workflow now syncs the
+migrations directory and runs `stellarindex-migrate up` before
+any binary swap, unless the operator passes the
+`migrations_skip` input (`.github/workflows/deploy.yml` +
+`configs/ansible/playbooks/deploy-binary.yml`). A normal
+`gh workflow run deploy.yml` deploy cannot reproduce this
+incident class anymore; the manual steps above remain only as
+the out-of-band fallback.
 
-Either would surface this class of gap immediately at deploy
-time rather than letting it silently fail at runtime. Tracking
-as follow-up to this runbook.
+**Still open — the startup-gate idea:** `stellarindex-api`'s
+ready check could compare the binary's expected schema version
+(computed at build time from the embedded migrations) against
+`schema_migrations.version`; readyz returns 503 with a
+diagnostic if they diverge. Doesn't auto-apply but would catch
+any remaining out-of-band drift (e.g. a hand-copied binary)
+instead of letting it silently fail at runtime.
+TODO(ash): decide whether the startup gate is still worth it
+post-F-1220, or close it as superseded.
 
 ## Related runbooks
 
@@ -192,3 +208,17 @@ as follow-up to this runbook.
   postgres-side disk-pressure surface.
 - [`redis-write-blocked-disk-full.md`](redis-write-blocked-disk-full.md) —
   another silent-runtime-failure shape (Redis writes blocked).
+
+## Changelog
+
+- 2026-08-29 — re-verified against HEAD (Wave I). The forex
+  worker's refresh cadence corrected from "~5 min" to HOURLY
+  (`time.Hour`) in the triage grep, the persist-pickup note, and
+  the post-fix confirmation windows; migration-version signal
+  generalised to `version < 28` (27 was the 2026-05-10 snapshot;
+  HEAD runs to 0150); Prevention path 1 marked DONE via F-1220
+  (deploy workflow syncs migrations + runs `stellarindex-migrate
+  up` pre-swap unless `migrations_skip`), leaving only the
+  startup-gate idea open; noted the live worker polls Massive
+  (`MASSIVE_API_KEY`) with keyless ECB fallback — Frankfurter is
+  backfill-only.
