@@ -115,24 +115,48 @@ that already has data is harmless.
 sudo -u postgres psql stellarindex -t -c "SELECT max(ledger) FROM trades WHERE source = 'sdex';"
 # vs cursor_last_ledger metric.
 
-# Run the targeted backfill. Flags are -source (singular, comma-
-# separated); there is no -sources and no -parallel on this
-# subcommand. Heavy one-shots on r1 ALWAYS go through the wrapper
-# (CLAUDE.md "Heavy one-shot jobs on r1"), one at a time.
+# Print the plan first — `-dry-run` validates config + sources +
+# range and prints the chunk split, then exits without writing.
+stellarindex-ops backfill -config /etc/stellarindex.toml \
+  -from <max_ledger+1> -to <current_cursor> \
+  -source sdex,aquarius,soroswap,phoenix,comet -parallel 4 -dry-run
+
+# Run the targeted backfill. The flag is -source (SINGULAR, comma-
+# separated) — `-sources` does not parse. `-parallel N` splits the
+# range into N contiguous non-overlapping chunks, each with its own
+# dispatcher + sink + chunk-specific cursor row (so -resume picks up
+# per chunk); the flag's own guidance is 4-16 on a 16-core box, above
+# which postgres max_connections or galexie S3 list throughput is the
+# bottleneck. Heavy one-shots on r1 ALWAYS go through the wrapper
+# (CLAUDE.md "Heavy one-shot jobs on r1"), one at a time. The
+# wrapper's flock is per job NAME and its MemoryMax=20G scope cap
+# (MemorySwapMax=0 — kill, not swap) applies to the whole wrapped
+# process, chunks included: raise -parallel and you divide that
+# budget, you don't multiply it.
 sudo /usr/local/sbin/run-heavy-job.sh dupflood-backfill \
   /usr/local/bin/stellarindex-ops backfill \
     -config /etc/stellarindex.toml \
     -from <max_ledger+1> -to <current_cursor> \
-    -source sdex,aquarius,soroswap,phoenix,comet
+    -source sdex,aquarius,soroswap,phoenix,comet \
+    -parallel 4
 ```
 
 `backfill` **refuses** any source that isn't `BackfillSafe` in
 `internal/sources/external/registry.go` — for on-chain Soroban
-sources that gate is the per-WASM-hash audit. Add `-dry-run` first if
-you want the plan without the write. For a *projected* (Soroban-derived)
-source the ADR-0032 catch-up path is
-`stellarindex-ops projector-replay -source <name> -from <ledger>`
-(or `projected-rebuild` beyond ~1M ledgers), not `backfill`.
+sources that gate is the per-WASM-hash audit. For a *projected*
+(Soroban-derived) source the ADR-0032 catch-up path is
+`projector-replay`, not `backfill` — and note it carries the shared
+write gate, so **dry run is the default and you must pass `-write`**
+to actually rewind:
+
+```sh
+sudo /usr/local/sbin/run-heavy-job.sh dupflood-replay \
+  /usr/local/bin/stellarindex-ops projector-replay \
+    -config /etc/stellarindex.toml -source <name> -from <ledger> -write
+```
+
+Beyond roughly 1M ledgers use `projected-rebuild` instead (same
+`-write` gate, plus `-workers` / `-window`).
 
 For cause 2: restart the indexer to clear any goroutine leak.
 
@@ -183,7 +207,9 @@ The alert will clear after `for: 10m` elapses with healthy
   so `outcome="duplicate"` conflates duplicate / corrective-update /
   guard-skipped and an in-flight corrective re-derive reproduces this
   alert's signature exactly — that check is now step 0 of triage. The
-  remediation command used `-sources` and `-parallel`, neither of
-  which exists on `backfill`; rewritten as `-source` under
-  `run-heavy-job.sh` with the BackfillSafe refusal and the
-  projector-replay alternative called out.
+  remediation command used `-sources`, which does not parse (the flag
+  is `-source`, singular, comma-separated); rewritten under
+  `run-heavy-job.sh` — keeping `-parallel 4`, which is real and
+  load-bearing for a 30-90 min MTTR — with a `-dry-run` plan step,
+  the BackfillSafe refusal, and the projector-replay alternative
+  (whose `-write` gate is now spelled out).

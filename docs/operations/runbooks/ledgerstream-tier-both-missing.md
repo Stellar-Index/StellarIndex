@@ -107,22 +107,39 @@ either down or r1 has lost outbound HTTPS.
   fine, and pre-warming hot before a planned backfill.
   ```sh
   # ⚠ READ THE FLAGS. The real signature is:
-  #     rehydrate-galexie-archive -config PATH -from N -to N [-dry-run]
-  # There is no -write, no --source and no peer selector: the tool
-  # always reads the CONFIGURED cold tier (storage.s3_cold_*, which on
-  # r1 is aws-public-blockchain) and writes into the local hot tier.
-  # It COMMITS by default — `-dry-run` is the opt-in preview, so the
-  # posture is fail-OPEN, the inverse of what this runbook used to say.
-  # It refuses outright if the cold tier isn't configured, and it is
-  # idempotent (PutFileIfNotExists skips files already hot).
+  #     rehydrate-galexie-archive -config PATH -from N -to N [-write] [-dry-run]
+  # `-write` is real and it is the ONLY way this command copies a byte:
+  # the shared opsutil write gate makes DRY RUN the default
+  # (`DryRun() { return !*write }`, internal/ops/opsutil/opsutil.go), so
+  # the posture is fail-CLOSED and `-dry-run` is a no-op alias kept for
+  # callers that already pass it. What never existed is `--source` /
+  # any peer selector: the tool always reads the CONFIGURED cold tier
+  # (storage.s3_cold_*, which on r1 is aws-public-blockchain) and writes
+  # into the local hot tier. It refuses outright if the cold tier isn't
+  # configured, and it is idempotent (PutFileIfNotExists skips files
+  # already hot). Every run announces its mode on stderr:
+  #     ═══ DRY RUN — no writes; pass -write to apply ═══
+  #     ═══ WRITING — applying changes ═══
   #
-  # Preview first:
+  # 1. Preview (this is also what you get if you forget -write):
   stellarindex-ops rehydrate-galexie-archive \
-    -config /etc/stellarindex.toml -from <SEQ> -to <SEQ_END> -dry-run
-  # Then commit, under the heavy-job wrapper (CLAUDE.md r1 rule):
+    -config /etc/stellarindex.toml -from <SEQ> -to <SEQ_END>
+  #
+  # ⚠ A dry run's `copied=N` is NOT a rehydration count and NOT a
+  # cold-tier confirmation. In dry-run mode each not-in-hot path short-
+  # circuits to the `copied` bucket without ever asking cold whether it
+  # holds the object (rehydrateOneFile, rehydrate_galexie_archive.go),
+  # so a preview over a range cold has LOST still logs
+  #   "rehydrate complete" … copied=N missing_in_cold=0 errors=0
+  # and exits 0. Read `copied` here as "files absent from hot". Only a
+  # -write run's missing_in_cold / errors counts mean anything.
+  #
+  # 2. Commit — note the -write; without it you just re-run step 1 and
+  #    get a success-shaped report having rehydrated nothing. Heavy
+  #    one-shots on r1 go through the wrapper (CLAUDE.md r1 rule):
   sudo /usr/local/sbin/run-heavy-job.sh rehydrate \
     /usr/local/bin/stellarindex-ops rehydrate-galexie-archive \
-      -config /etc/stellarindex.toml -from <SEQ> -to <SEQ_END>
+      -config /etc/stellarindex.toml -from <SEQ> -to <SEQ_END> -write
   ```
 
   If the configured cold tier itself must change (a different
@@ -207,12 +224,17 @@ stellarindex-ops list-cursors -config /etc/stellarindex.toml
 - 2026-05-22 — initial draft alongside the page-grade
   `stellarindex_ledgerstream_tier_both_missing` alert.
 - 2026-08-29 — re-verified against HEAD (runbook re-verification
-  wave K). The rehydrate command named four flags that have never
-  existed (`-write`, `--from`, `--to`, `--source`) and inverted the
-  tool's posture (it commits by default; `-dry-run` is the opt-in
-  preview) — corrected, with the heavy-job wrapper. Two cited gauges
-  (an indexer ledger-lag and a backfill cursor) have no producer and
-  never had one; replaced with `stellarindex_cursor_last_ledger` /
+  wave K). The rehydrate command invented a peer selector
+  (`--source vultr`, "pull the missing range from R2 or R3's mirror")
+  that has never existed — the tool only ever reads the configured
+  cold tier — and the surrounding prose framed rehydration as an
+  AWS-outage workaround, which it cannot be. The `-write` fail-closed
+  note was correct and is kept, now with the dry-run's misleading
+  `copied=N` count spelled out and `-write` restored to the commit
+  command (lint-docs §11b now fails CI on a heavy-job command that
+  omits it). Two cited gauges (an indexer ledger-lag and a backfill
+  cursor) have no producer and never had one; replaced with
+  `stellarindex_cursor_last_ledger` /
   `stellarindex_source_last_event_unix` / `list-cursors`, and
   lint-docs §11 widened so a future phantom in these namespaces fails
   CI. The hot-tier `mc ls` prefix arithmetic was wrong

@@ -103,8 +103,12 @@ This alert is P3 because there's no emergency runtime response — we can't un-d
 - [ ] Step 2 — if the cause is transient (option 4): wait. Rate should decline on its own.
 - [ ] Step 3 — if the cause is a contract upgrade (option 1 or 2): update the decoder in `internal/sources/<source>/decode.go`. Typical iteration is one PR plus a golden-file fixture reproduction. Then re-derive the affected range — which path depends on the source (ADR-0032):
       - **Projected (Soroban-derived) sources** — rewind the projector, never a bespoke backfill:
-        `stellarindex-ops projector-replay -config /etc/stellarindex.toml -source <name> -from <ledger>`
-        (use `projected-rebuild` for rewinds beyond roughly 1M ledgers).
+        `stellarindex-ops projector-replay -config /etc/stellarindex.toml -source <name> -from <ledger> -write`.
+        `-write` is not optional: `projector-replay` carries the shared
+        `opsutil` write gate, so **dry run is the default** and the command
+        without it reports what it would do and rewinds nothing (watch for the
+        `═══ DRY RUN — no writes; pass -write to apply ═══` banner on stderr).
+        Use `projected-rebuild` (same gate) for rewinds beyond roughly 1M ledgers.
       - **Non-projected sources** (`sdex`, external CEX/FX, `band`, `soroswap-router`) —
         `stellarindex-ops backfill -config /etc/stellarindex.toml -from N -to N -source <name>`,
         which **refuses** any source that is not `BackfillSafe` in
