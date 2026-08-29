@@ -80,6 +80,21 @@ against.
 
 ### Fixed
 
+- **Nightly pgBackRest wrapper never backed up repo2.** pgBackRest's `backup`
+  command is single-repo: with no `--repo` it writes only the highest-priority
+  repo (repo1); only `archive-push` and `expire` fan out (User Guide, "Multiple
+  Repositories"). `pgbackrest-backup.sh` ran `pgbackrest --stanza --type backup`
+  with no `--repo`, so once repo2 (S3) went live on r1 (2026-08-29) it would have
+  received WAL forever but never a full/diff — the off-site copy would have aged
+  out at its 7-day retention. The wrapper now discovers every `repoN-*` key in
+  `/etc/pgbackrest/pgbackrest.conf` and runs one `--repo=N` backup per repo
+  (repo1 first, repo2 next; a failure does not skip the next repo; exit is the
+  first non-zero rc, so `pgbackrest-backup.service` still fails loudly), with
+  per-repo node_exporter textfile metrics
+  `stellarindex_pgbackrest_backup_{last_success_unix,last_rc,duration_seconds}{repo}`
+  (`last_success_unix` carried forward across a failed run). Single-repo hosts
+  keep the byte-identical legacy command. `scripts/ci/pgbackrest-backup-test.sh`
+  pins all of it against a stubbed `pgbackrest`.
 - **`fiat:VES` and `rwa:XAU` — the two reflector-fx slots that paged
   `stellarindex_ingestion_oracle_unknown_symbols` on r1 v0.48.0
   (2026-08-29, `raw:VES` / `raw:XAU`, 7 rows each in 2 h).** The cause
