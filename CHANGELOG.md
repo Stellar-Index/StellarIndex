@@ -326,6 +326,49 @@ against.
   minio) are grandfathered by name for burn-down. Retention is
   untouched (ADR-0043). (audit-2026-08-28 backup-restore-7)
 
+- **`deploy.yml` could never apply schema on testnet/futurenet
+  (deploy-ansible-deploy-2).** `deploy-binary.yml` synced the migrations
+  dir with `ansible.posix.synchronize`, whose rsync runs on the
+  controller and never sees the `--ssh-common-args "-o ProxyJump=…"` the
+  NAT-only VMs are reached through, and its fail-closed pgBackRest
+  freshness gate can only exit 1 on a VM that has no pgbackrest at all —
+  so the only passing test-net deploy was `migrations_skip=true`
+  (binary on a stale schema while `/v1/healthz` is 200). The sync is now
+  `ansible.builtin.copy` (connection-agnostic, same as the role's own
+  migrations sync), the gate is conditioned on a new
+  `pgbackrest_backup_enabled` extra-var (default true — fail closed)
+  that `deploy.yml` sets per region (false only for testnet/futurenet,
+  with a loud "no verified recovery point" notice), and
+  `scripts/ci/lint-deploy-playbook.sh` + a CI `--syntax-check` of
+  `deploy-binary.yml` pin both properties. r1's path is unchanged.
+
+- **systemd EnvironmentFiles were `.`-sourced by the deploy migrate step,
+  a root cron and twelve host scripts (deploy-ansible-secrets-5).**
+  `/etc/default/stellarindex`, `-ops` and `/etc/default/galexie` are
+  rendered unquoted (what systemd wants), but every shell consumer
+  re-parsed them with `set -a; . <file>` — so a secret carrying `$`, `;`,
+  `&`, `|`, quotes or whitespace works under systemd and is silently
+  mangled (or its tail EXECUTED as root) on the sourcing paths: migrate
+  fails 28P01, ARCHIVE_TO stays 0, freshness gauges go stale. Every
+  consumer now reads the file verbatim (the run-heavy-job.sh pattern —
+  one canonical `load_env_file` in the bash scripts, a POSIX loop in the
+  `/bin/sh` migrate task and the cron one-liner), and a preflight assert
+  refuses to render any of the sixteen env-file secrets that contains a
+  shell metacharacter (names only in the message; rotate to
+  `openssl rand -hex 32`), which also makes the documented interactive
+  `set -a; source` safe. `scripts/ci/envfile-loader-test.sh` pins all
+  consumers in lockstep and round-trips a metacharacter fixture.
+
+- **`deploy.yml` `health_grace_seconds` was unvalidated and spliced into
+  `ansible-playbook -e` (deploy-ansible-input-8).** The input is
+  `type: string` (the comment claiming GitHub enforced `number` was
+  false), and ansible's k=v `-e` form splits on whitespace, so a
+  dispatch value like `15 backup_freshness_skip=true` injected a second
+  extra-var and skipped the backup-freshness gate with a nominal-looking
+  step summary. Validate now requires `^[0-9]{1,4}$`;
+  `scripts/ci/deploy-inputs-test.sh` runs the shipped Validate step
+  against the injection and the malformed cases.
+
 - **ansible: `04-users.yml` history-archive sweep aborted every full
   archival-node apply.** The 2026-08-27 task ran `set -euo pipefail` under
   ansible's default `/bin/sh` (dash on every target) → `set: Illegal
