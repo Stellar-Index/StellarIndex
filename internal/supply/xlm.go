@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math/big"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // xlmAssetKey is the single canonical key for native XLM in
@@ -34,6 +36,45 @@ var xlmTotalSupplyStroops = new(big.Int).Mul(
 	big.NewInt(50_001_806_812),
 	big.NewInt(10_000_000), // 10^7 stroops per XLM
 )
+
+// xlmTestNetworkTotalSupplyStroops is the native XLM total on the SDF
+// test networks (testnet + futurenet): the 100 B genesis lumens
+// (stellar-core's default genesis `totalCoins`), which is exactly the
+// ledger-header `total_coins` those chains report — a reset test
+// network never ran inflation and never had the 2019 pubnet vote, so
+// the frozen pubnet figure is simply the wrong number there
+// (api.testnet served 50.0 B against a 100 B ledger, measured
+// 2026-08-28).
+var xlmTestNetworkTotalSupplyStroops = new(big.Int).Mul(
+	big.NewInt(100_000_000_000),
+	big.NewInt(10_000_000), // 10^7 stroops per XLM
+)
+
+// ErrUnknownNetwork is returned by [XLMTotalSupplyStroopsForNetwork]
+// (and so [NewXLMComputerForNetwork]) for a passphrase that is not
+// pubnet / testnet / futurenet. Fail-closed on purpose: silently
+// serving the pubnet constant for an unrecognised network is exactly
+// the defect this guards against.
+var ErrUnknownNetwork = errors.New("supply: no native XLM total known for network passphrase")
+
+// XLMTotalSupplyStroopsForNetwork returns the native XLM total supply
+// in stroops for the network identified by passphrase:
+//
+//   - pubnet    → the frozen-2019 figure ([XLMTotalSupplyStroops]).
+//   - testnet   → 100 B genesis lumens (== ledger total_coins).
+//   - futurenet → 100 B genesis lumens (== ledger total_coins).
+//
+// Any other passphrase returns [ErrUnknownNetwork]. Always hands back
+// a fresh copy, like [XLMTotalSupplyStroops].
+func XLMTotalSupplyStroopsForNetwork(passphrase string) (*big.Int, error) {
+	switch passphrase {
+	case canonical.PubnetPassphrase:
+		return XLMTotalSupplyStroops(), nil
+	case canonical.TestnetPassphrase, canonical.FuturenetPassphrase:
+		return new(big.Int).Set(xlmTestNetworkTotalSupplyStroops), nil
+	}
+	return nil, fmt.Errorf("%w: %q", ErrUnknownNetwork, passphrase)
+}
 
 // ReserveBalanceReader is the read-side interface the [XLMComputer]
 // needs: given a list of G-strkey account addresses, return their
@@ -99,14 +140,37 @@ type ReserveBalanceFreshnessReader interface {
 type XLMComputer struct {
 	reserveAccounts []string
 	reader          ReserveBalanceReader
+	// total is the network's native XLM total supply in stroops
+	// (see [XLMTotalSupplyStroopsForNetwork]); never mutated after
+	// construction, copied on every Compute.
+	total *big.Int
 }
 
-// NewXLMComputer constructs an Algorithm 1 computer.
+// NewXLMComputer constructs an Algorithm 1 computer for PUBNET —
+// the frozen-2019 total. Production wiring should prefer
+// [NewXLMComputerForNetwork] with cfg.Stellar.Passphrase() so a
+// testnet / futurenet deployment computes against its own ledger
+// total instead of the mainnet constant.
 //
 // reader MAY be nil when reserveAccounts is empty — Compute() then
 // short-circuits the lookup. A nil reader with a non-empty
 // reserveAccounts list is a configuration error and returns ErrNilReader.
 func NewXLMComputer(reserveAccounts []string, reader ReserveBalanceReader) (*XLMComputer, error) {
+	return NewXLMComputerForNetwork(canonical.PubnetPassphrase, reserveAccounts, reader)
+}
+
+// NewXLMComputerForNetwork constructs an Algorithm 1 computer whose
+// total_supply / max_supply are the native XLM total of the network
+// identified by passphrase (see [XLMTotalSupplyStroopsForNetwork]).
+// An unrecognised passphrase returns [ErrUnknownNetwork] rather than
+// falling back to the pubnet figure.
+//
+// Same reader / reserveAccounts contract as [NewXLMComputer].
+func NewXLMComputerForNetwork(passphrase string, reserveAccounts []string, reader ReserveBalanceReader) (*XLMComputer, error) {
+	total, err := XLMTotalSupplyStroopsForNetwork(passphrase)
+	if err != nil {
+		return nil, err
+	}
 	if len(reserveAccounts) > 0 && reader == nil {
 		return nil, ErrNilReader
 	}
@@ -116,6 +180,7 @@ func NewXLMComputer(reserveAccounts []string, reader ReserveBalanceReader) (*XLM
 	return &XLMComputer{
 		reserveAccounts: reserved,
 		reader:          reader,
+		total:           total,
 	}, nil
 }
 
@@ -128,7 +193,8 @@ var ErrNilReader = errors.New("supply: reserve-balance reader is nil but reserve
 // Compute returns the [Supply] for native XLM at the supplied
 // ledger. Per Algorithm 1:
 //
-//   - total_supply = XLMTotalSupplyStroops (constant).
+//   - total_supply = the configured network's native total (constant
+//     per network — [XLMTotalSupplyStroopsForNetwork]).
 //   - max_supply = total_supply (XLM is hard-capped).
 //   - circulating_supply = total_supply − Σ(SDF reserve balances).
 //
@@ -143,7 +209,7 @@ var ErrNilReader = errors.New("supply: reserve-balance reader is nil but reserve
 // so we surface the error and let the caller decide whether to skip
 // this snapshot or retry.
 func (c *XLMComputer) Compute(ctx context.Context, ledger uint32, observedAt time.Time) (Supply, error) {
-	total := XLMTotalSupplyStroops()
+	total := new(big.Int).Set(c.total)
 
 	reserved := big.NewInt(0)
 	if len(c.reserveAccounts) > 0 {

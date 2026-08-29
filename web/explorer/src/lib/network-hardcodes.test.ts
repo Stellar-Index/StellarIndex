@@ -19,11 +19,21 @@
 // literal genuinely must stay (a doc comment, the networks table itself),
 // add it to ALLOWED with the reason.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
 const SRC = join(__dirname, '..');
+
+/**
+ * Build-time config outside src/ that can ALSO bake a mainnet literal into
+ * every bundle. next.config.mjs's `env` block is inlined by Next exactly like
+ * a source literal — a default there (`?? 'https://api.stellarindex.io'`)
+ * shadowed client.ts's per-network fallback on every build that forgot the
+ * var, which the first version of this guard could not see because it only
+ * walked src/.
+ */
+const EXTRA_FILES = [join(SRC, '..', 'next.config.mjs')];
 
 /** Files permitted to contain the literals, with the reason. */
 const ALLOWED = new Map<string, string>([
@@ -67,13 +77,17 @@ function walk(dir: string, out: string[] = []): string[] {
  * guard — the point is to catch literals the CODE emits.
  */
 function stripComments(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  // Line comments FIRST. A `/*` inside a `//` line (hooks.ts once had
+  // `every /dashboard/*` in prose) otherwise opens a phantom block comment
+  // that swallows real code up to the next `*/` — which is how a mainnet
+  // literal in src/api/hooks.ts hid from this guard for a day.
+  return src.replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
 }
 
 function offenders(pattern: RegExp): string[] {
   const bad: string[] = [];
-  for (const file of walk(SRC)) {
-    const rel = file.slice(SRC.length + 1).split('\\').join('/');
+  for (const file of [...walk(SRC), ...EXTRA_FILES]) {
+    const rel = relative(SRC, file).split('\\').join('/');
     if (ALLOWED.has(rel) || isTest(rel)) continue;
     const code = stripComments(readFileSync(file, 'utf8'));
     if (pattern.test(code)) bad.push(rel);
@@ -86,7 +100,9 @@ describe('no mainnet hardcodes in explorer source', () => {
     // Must go through stellarExpertUrl()/StellarExpertLink, which resolve the
     // segment per network and render nothing where stellar.expert has no
     // explorer for this network (futurenet).
-    expect(offenders(/stellar\.expert\/explorer\/(public|testnet)\b/)).toEqual([]);
+    expect(offenders(/stellar\.expert\/explorer\/(public|testnet)\b/)).toEqual(
+      [],
+    );
   });
 
   it('never hardcodes the mainnet explorer origin', () => {
@@ -105,7 +121,6 @@ describe('no mainnet hardcodes in explorer source', () => {
   });
 
   it('never hardcodes the mainnet API origin', () => {
-
     // The API origin is per-network too (CURRENT_NETWORK.apiBaseUrl /
     // API_BASE_URL); a fixed one makes a test-net page read mainnet data.
     expect(offenders(/https:\/\/api\.stellarindex\.io/)).toEqual([]);

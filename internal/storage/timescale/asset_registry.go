@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -27,24 +26,16 @@ import (
 // activity within the last minute.
 const assetRegistryDedupeTTL = 60 * time.Second
 
-// assetRegistryDedupe is a process-lifetime cache of (asset_id →
-// last successful upsert time). The next trade for the same
-// asset within `assetRegistryDedupeTTL` skips the DB round-trip;
-// trades outside the window upsert again so `last_seen_*` +
-// `observation_count` advance. F-1243 (codex audit-2026-05-12).
-//
-// Process-lifetime is intentional: the indexer restarts often
-// enough that we'll re-touch the row periodically. A persistent
-// cross-process cache (Redis) would be over-engineering — the
-// upsert is idempotent and the TTL bounds the worst-case load.
-var assetRegistryDedupe sync.Map // key: asset_id (string) → time.Time (last upsert)
-
-// issuerRegistryDedupe stays as a process-lifetime sentinel
-// cache — the issuers table has no `last_seen` columns so
-// there's nothing to advance after the first INSERT. The
-// per-row DDL difference from classic_assets is documented in
-// migrations 0023 (classic_assets) vs 0022 (issuers).
-var issuerRegistryDedupe sync.Map
+// assetRegistryDedupe / issuerRegistryDedupe live on [Store] (not at
+// package scope) so the cache is scoped to ONE database. A
+// package-level map is keyed by asset_id alone, which is only unique
+// within a database: two Stores over different DBs in one process
+// (every integration-test container; a future multi-network binary)
+// shared one cache, so the second DB's first trade for an asset was
+// "deduped" and its classic_assets row never written — the
+// TestAssetsReader `HasAsset(USDC) = false` flake (2026-08-28). The
+// zero value is ready to use, so the `&Store{db: db}` constructors
+// need no wiring. See the field docs on [Store].
 
 // registerClassicAssetSeen ensures a `classic_assets` row exists
 // for the supplied classic asset, with last_seen_* bumped to the
@@ -77,7 +68,7 @@ func (s *Store) registerClassicAssetSeen(
 	// successful one was within `assetRegistryDedupeTTL`. Out-of-
 	// window trades fire the upsert again so `last_seen_*` and
 	// `observation_count` advance.
-	if shouldSkipAssetRegistryUpsert(assetID, time.Now()) {
+	if s.shouldSkipAssetRegistryUpsert(assetID, time.Now()) {
 		return nil
 	}
 
@@ -128,11 +119,11 @@ func (s *Store) registerClassicAssetSeen(
 	); err != nil {
 		return fmt.Errorf("timescale: registerClassicAssetSeen %s: %w", assetID, err)
 	}
-	assetRegistryDedupe.Store(assetID, time.Now())
+	s.assetRegistryDedupe.Store(assetID, time.Now())
 	return nil
 }
 
-// ResetAssetRegistryDedupeForTest clears the process-lifetime
+// ResetAssetRegistryDedupeForTest clears this Store's
 // dedupe cache used by [Store.registerClassicAssetSeen]. Used by
 // the F-1243 (codex audit-2026-05-13) duplicate-replay integration
 // proof to simulate a process restart between an original trade
@@ -144,25 +135,25 @@ func (s *Store) registerClassicAssetSeen(
 // Production code never calls this; it only exists so the
 // integration test can isolate the RowsAffected guard from the
 // in-process TTL cache that would otherwise mask a regression.
-func ResetAssetRegistryDedupeForTest() {
-	assetRegistryDedupe.Range(func(k, _ any) bool {
-		assetRegistryDedupe.Delete(k)
+func (s *Store) ResetAssetRegistryDedupeForTest() {
+	s.assetRegistryDedupe.Range(func(k, _ any) bool {
+		s.assetRegistryDedupe.Delete(k)
 		return true
 	})
-	issuerRegistryDedupe.Range(func(k, _ any) bool {
-		issuerRegistryDedupe.Delete(k)
+	s.issuerRegistryDedupe.Range(func(k, _ any) bool {
+		s.issuerRegistryDedupe.Delete(k)
 		return true
 	})
 }
 
 // shouldSkipAssetRegistryUpsert returns true when `now` falls
 // within `assetRegistryDedupeTTL` of the last recorded upsert
-// for `assetID`. Returns false on no-cache (first time) and on
-// expired-cache (TTL elapsed). Extracted as a pure function so
-// the F-1243 TTL-gate semantics can be unit-tested without
-// standing up a Postgres container.
-func shouldSkipAssetRegistryUpsert(assetID string, now time.Time) bool {
-	cached, ok := assetRegistryDedupe.Load(assetID)
+// for `assetID` on THIS store. Returns false on no-cache (first
+// time) and on expired-cache (TTL elapsed). Touches nothing but
+// the in-memory cache so the F-1243 TTL-gate semantics can be
+// unit-tested without standing up a Postgres container.
+func (s *Store) shouldSkipAssetRegistryUpsert(assetID string, now time.Time) bool {
+	cached, ok := s.assetRegistryDedupe.Load(assetID)
 	if !ok {
 		return false
 	}
@@ -187,7 +178,7 @@ func (s *Store) registerIssuerSeen(ctx context.Context, gStrkey string) error {
 	if gStrkey == "" {
 		return nil
 	}
-	if _, seen := issuerRegistryDedupe.Load(gStrkey); seen {
+	if _, seen := s.issuerRegistryDedupe.Load(gStrkey); seen {
 		return nil
 	}
 	const q = `
@@ -198,7 +189,7 @@ func (s *Store) registerIssuerSeen(ctx context.Context, gStrkey string) error {
 	if _, err := s.db.ExecContext(ctx, q, gStrkey); err != nil {
 		return fmt.Errorf("timescale: registerIssuerSeen %s: %w", gStrkey, err)
 	}
-	issuerRegistryDedupe.Store(gStrkey, struct{}{})
+	s.issuerRegistryDedupe.Store(gStrkey, struct{}{})
 	return nil
 }
 

@@ -1,10 +1,18 @@
 ---
 title: Bootstrap — Archival node from bare Ubuntu
-last_verified: 2026-05-03
-status: draft — ratified after first live run
+last_verified: 2026-08-29
+status: current — re-scoped 2026-08-29
 ---
 
 # Runbook — Bootstrap an Archival Node
+
+> **Canonical bring-up recipe:
+> [archival-node-bringup.md](../archival-node-bringup.md)**
+> (CLAUDE.md-designated). This runbook remains for the
+> hardware-inventory + vault-bootstrap detail; sections below were
+> re-scoped 2026-08-29 to match what the `archival-node` ansible
+> role actually deploys today (no stellar-core / stellar-rpc units
+> on a default apply, role-managed MinIO buckets + IAM).
 
 **Purpose:** take a fresh Hetzner box from `root@<ip>:~#` to a fully
 configured Stellar Index archival node syncing pubnet. ~15 min of
@@ -15,7 +23,10 @@ Ansible + ~2–5 h background catchup.
 
 **Applies to:** EX63 / auction-i9-13900 / future AX Ryzen — the role
 is hardware-agnostic. Different hardware means different
-`zfs_data_devices` in inventory, nothing else.
+`zfs_data_devices`, `zfs_os_drives_needing_data_partition`, and
+`zfs_data_pool_type` in inventory, plus the per-box pinned
+`minio_release_sha256` / `mc_release_sha256` values (required by
+`tasks/09-minio.yml`; there is no default on purpose).
 
 ---
 
@@ -45,6 +56,9 @@ Record:
 - Their stable `/dev/disk/by-id/nvme-*` paths (those are idempotent
   across reboots; `/dev/nvme0n1` can change).
 - Confirm `ROTA` column is `0` (SSD) for all four.
+- Which drives carry installimage OS partitions (ESP / swap / root) —
+  those go in `zfs_os_drives_needing_data_partition` so the role
+  carves a data partition instead of consuming the whole disk.
 
 If any drive is `ROTA=1` (rotational): stop. Wrong box.
 
@@ -61,8 +75,14 @@ $EDITOR inventory/r1.yml
 Fill in:
 - `ansible_host`: the public IP.
 - `ansible_ssh_private_key_file`: typically `~/.ssh/id_ed25519`.
-- `zfs_data_devices`: the four `/dev/disk/by-id/nvme-*` paths.
+- `zfs_data_devices`: the four `/dev/disk/by-id/nvme-*` paths
+  (+ `zfs_os_drives_needing_data_partition` / `zfs_data_pool_type`
+  per §1).
 - `admin_ssh_keys`: contents of `~/.ssh/id_ed25519.pub`.
+- `minio_release_sha256` + `mc_version` / `mc_release_sha256`:
+  pinned SHAs for the MinIO server + client downloads —
+  `tasks/09-minio.yml` asserts these are set and refuses to run
+  without them.
 
 Then create the vault-encrypted secrets:
 
@@ -70,15 +90,30 @@ Then create the vault-encrypted secrets:
 ansible-vault create inventory/r1.secrets.yml
 ```
 
-Put in:
+The authoritative list of required secrets lives in
+[archival-node-bringup.md § Prerequisites](../archival-node-bringup.md#prerequisites) —
+use that table, not a copy here. In summary the vault must carry:
 
-```yaml
-postgres_pass_core: "<strong random password>"
-minio_root_user:    "<admin username>"
-minio_root_password: "<strong random password>"
-galexie_s3_access_key: "{{ minio_root_user }}"
-galexie_s3_secret_key: "{{ minio_root_password }}"
-```
+- `postgres_pass_stellarindex` — the `stellarindex` DB role
+  (`tasks/05-postgres.yml`).
+- `postgres_pass_core` — **only when `run_stellar_core: true`**
+  (Phase-3 validator); on a default apply the core DB role isn't
+  created and this key can be omitted.
+- `minio_root_user` / `minio_root_password` — MinIO admin identity.
+- `galexie_s3_access_key` / `galexie_s3_secret_key` — the
+  **bucket-scoped `galexie-writer` IAM user** the role creates in
+  `tasks/09-minio.yml`. This is deliberately NOT the MinIO root
+  identity (least-privilege; the pre-2026 draft aliased it to
+  `minio_root_user`, which defeated the point).
+- `galexie_archive_s3_access_key` / `galexie_archive_s3_secret_key` —
+  the `galexie-archive-writer` user (write-only to
+  `galexie-archive`).
+- `vault_stellarindex_reader_secret_key` — the read-only
+  `stellarindex-reader` user the indexer/ops binaries use.
+- `vault_clickhouse_serving_password` — the ClickHouse serving-tier
+  password (`tasks/20-clickhouse-serving-profile.yml`).
+- `healthcheck_ping_url` (+ the per-unit Healthchecks.io ping URLs
+  used by `tasks/13-healthcheck.yml` / `17-stellarindex-healthchecks.yml`).
 
 Generate strong passwords with `openssl rand -base64 32`.
 
@@ -113,6 +148,13 @@ Runtime: ~10–20 min. Output:
 
 ## 5. Post-apply verification
 
+On a **default apply** (`run_stellar_core: false`, the shipped
+default) there is **no `stellar-core.service` and no
+`stellar-rpc.service`** — stellar-core exists only as galexie's
+embedded captive-core subprocess, and the stellar-rpc task +
+templates were deleted from the role on 2026-05-22. Do not look for
+those units; their absence is correct.
+
 Smoke tests against the running box:
 
 ```sh
@@ -122,25 +164,19 @@ ssh root@<ip>
 zpool status data
 zfs list -t all
 
-# Postgres
-systemctl status postgresql@15-main
-sudo -u postgres psql -c "\l" | grep stellar_core
+# The services a default apply actually manages
+systemctl is-active galexie minio postgresql@15-main redis-server clickhouse-server
+# All five should print: active
 
-# stellar-core — will be in CATCHUP_RECENT for the next few hours
-systemctl status stellar-core
-journalctl -u stellar-core -n 50 --no-pager
-curl -s http://127.0.0.1:11626/info | jq '.info | {ledger, state, network}'
-
-# Galexie
-systemctl status galexie
+# Galexie's embedded captive-core (the only stellar-core on the box)
+pgrep -af "galexie append"
 journalctl -u galexie -n 30 --no-pager
 
-# stellar-rpc
-systemctl status stellar-rpc
-curl -s http://127.0.0.1:8000/ | jq
+# Postgres — the stellarindex DB (stellar_core DB exists only when
+# run_stellar_core=true)
+runuser -u postgres -- psql -c '\l' | grep stellarindex
 
 # MinIO
-systemctl status minio
 curl -sI http://127.0.0.1:9000/minio/health/live
 
 # Firewall
@@ -148,34 +184,38 @@ nft list ruleset | head -40
 ```
 
 Expected state immediately after bootstrap:
-- **stellar-core** → `state: Catching up`, `ledger` ticking toward
-  network tip.
-- **galexie** → may be idle until stellar-core is caught up; that's
-  fine.
-- **stellar-rpc** → `Catching up` with own captive-core.
-- **MinIO** → healthy, zero buckets yet.
-- **Firewall** → SCP (11625) + SSH (22) open; other ports
-  LAN-gated.
+- **galexie** → running; the embedded captive-core catches up, then
+  fresh objects start landing in `galexie-live`.
+- **MinIO** → healthy, three buckets already created by the role
+  (§6).
+- **Postgres / Redis / ClickHouse** → active; `stellarindex` DB
+  present with migrations applied.
+- **Firewall** → public base is 22 (SSH) + 80/443 (Caddy TLS
+  front); 11625 (SCP peer) is appended **only when
+  `run_stellar_core: true`**. Internal service ports are
+  LAN/loopback-gated.
 
 ---
 
-## 6. Create MinIO buckets
+## 6. Verify MinIO buckets + IAM (role-managed)
 
-MinIO is up but has no buckets. Do this from the box once:
+The role creates everything itself in `tasks/09-minio.yml` — the
+three buckets AND the three least-privilege IAM users. There is
+nothing to create by hand (the pre-2026 draft's manual
+`apt install -y mc` step was doubly wrong: Debian's `mc` package is
+**Midnight Commander**, not the MinIO client — the role installs the
+pinned real `mc` at `/usr/local/bin/mc`). Just verify:
 
 ```sh
-# On the box:
-apt install -y mc
-mc alias set local http://127.0.0.1:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD
-mc mb local/galexie-live
-mc mb local/galexie-archive
-mc mb local/backups
+mc ls local/
+# Three buckets: galexie-live, galexie-archive, backups
+
+mc admin user list local
+# Three users: galexie-writer, galexie-archive-writer, stellarindex-reader
 ```
 
-(Credentials: from `/etc/default/minio` on the box.)
-
 Galexie will start writing ledger meta to `galexie-live` within a
-few seconds.
+few seconds of its captive-core reaching the live tail.
 
 ---
 
@@ -183,18 +223,11 @@ few seconds.
 
 | Milestone | Time on EX63 / i9-auction | Monitor via |
 | --------- | ------------------------- | ----------- |
-| stellar-core DB initialised | ~30 s | `journalctl -u stellar-core -g "new-db"` |
-| CATCHUP_RECENT starts | ~10 s after start | `curl :11626/info` → `state: Catching up` |
-| Catchup complete (near tip) | 10–30 min (NVMe) / 2–4 h (SATA) | `state: Synced!` |
-| Galexie exporting current ledgers | ~1 min after sync | `journalctl -u galexie -f` |
-| stellar-rpc serving queries | ~10 min after sync | `curl :8000 -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}'` |
-
-If catchup has not reached the network tip after the upper bound
-above: check for peer connectivity issues (`curl :11626/peers`),
-disk I/O (`iostat -xm 5`), or resource pressure (`htop`).
+| Galexie captive-core catchup → live tail | 10–30 min (NVMe) | `journalctl -u galexie -f` |
+| Galexie exporting current ledgers | ~1 min after catchup | `mc ls local/galexie-live/` growing |
 
 **Genesis-to-tip galexie backfill is a separate, much longer
-phase** — the table above is just stellar-core catchup. Plan
+phase** — the table above is just live-tail catchup. Plan
 for an additional **8–14 h** for serial galexie scan-and-fill,
 or **~1.5 days** with 8-worker parallel scan-and-fill (recipe
 in
@@ -208,25 +241,14 @@ for the per-tier breakdown.
 
 ## 8. First failures to expect (and what they mean)
 
-### stellar-core keeps restarting
-
-Almost always **Postgres connection refused** on first boot.
-Remedy: confirm `postgres_pass_core` in the vault matches what's in
-the `DATABASE` line of `/etc/stellar/stellar-core.cfg`. Re-run the
-`postgres,stellar-core` tags.
-
 ### Galexie fails with "access denied" to MinIO
 
-Buckets don't exist yet → see §6. Or access keys wrong in
-`/etc/default/galexie` → re-render via
-`ansible-playbook ... --tags galexie`.
-
-### stellar-rpc SQLite locked
-
-Two captive-cores writing the same location. Check
-`CAPTIVE_CORE_STORAGE_PATH` in `stellar-rpc.cfg` — it should be
-`/var/lib/stellar-rpc/captive`, distinct from stellar-core's
-`/var/lib/stellar-core/buckets`.
+Access keys wrong in `/etc/default/galexie` (vault
+`galexie_s3_access_key`/`_secret_key` out of sync with the
+`galexie-writer` IAM user) → re-render + re-create via
+`ansible-playbook ... --tags galexie,minio`. Buckets themselves are
+role-created (§6), so "bucket doesn't exist" means the `minio` tag
+never ran, not a missing manual step.
 
 ### Firewall locked us out
 
@@ -238,18 +260,15 @@ access: reboot the box via Hetzner Robot's KVM, set
 
 ## 9. What happens next
 
-The node is now producing ledger meta. The next work is:
-
-1. **Galexie export observability.** Confirm the hourly checkpoint
-   files land in MinIO (`mc ls local/galexie-live/`).
-2. **Backup schedule.** Configure `pgBackRest` to ship WAL to
-   MinIO `backups/`. Separate runbook (Week 3).
-3. **Week-2 ingestion code.** `internal/sources/sdex` reads from
-   Galexie's output + populates `trades`. Separate PR (in flight).
-4. **Full history archive mirror + stellar-rpc genesis replay.**
-   See [first-archival-node-deployment.md](first-archival-node-deployment.md)
-   §4–§5 for the end-to-end sequence, including the mandatory
-   burn-test checkpoint before committing to days of replay.
+The node is now producing ledger meta and all supporting services
+are up. The remaining work — historical galexie mirror, archive
+sweep/heal, integrity verification, setting the live seam, and
+starting the indexer — is
+[archival-node-bringup.md](../archival-node-bringup.md) **steps
+4–6**. Follow that document; it is the canonical sequence (the
+"Week-2 ingestion" and "pgBackRest (Week 3)" items the pre-2026
+draft listed here landed long ago — pgBackRest scheduling is part
+of the role, `tasks/18-pgbackrest-backup.yml`).
 
 ---
 
@@ -259,10 +278,12 @@ If something goes catastrophically wrong and you want a clean slate:
 
 ```sh
 # On the box, as root
-systemctl stop stellar-core stellar-rpc galexie minio postgresql@15-main
+systemctl stop 'stellarindex-*' galexie minio postgresql@15-main clickhouse-server redis-server
 zpool destroy data
-zpool destroy rpool || true
 ```
+
+(There is no `rpool` — the OS root lives on plain nvme partitions
+laid down by installimage, not on ZFS. `data` is the only pool.)
 
 Then re-run the Ansible playbook. The role is idempotent; a clean
 ZFS destroy + re-apply takes ~10 min.
@@ -271,8 +292,44 @@ ZFS destroy + re-apply takes ~10 min.
 
 ## 11. References
 
+- [archival-node-bringup.md](../archival-node-bringup.md) — the
+  canonical end-to-end bring-up + disaster-recovery recipe.
 - [archival-node-spec.md](../../architecture/infrastructure/archival-node-spec.md)
 - [multi-region-topology.md](../../architecture/infrastructure/multi-region-topology.md)
 - [validator-rollout.md](../../architecture/infrastructure/validator-rollout.md)
 - [hosting-options.md](../../architecture/infrastructure/hosting-options.md)
 - `configs/ansible/README.md`
+
+---
+
+## Changelog
+
+- 2026-08-29 — re-scoped against the role at HEAD. Front banner
+  points at archival-node-bringup.md as the canonical recipe. §5
+  dropped the `stellar-core` / `stellar-rpc` unit checks (neither
+  unit exists on a default apply: `run_stellar_core` defaults to
+  false and the stellar-rpc task + templates were deleted from the
+  role 2026-05-22) in favour of
+  `systemctl is-active galexie minio postgresql@15-main
+  redis-server clickhouse-server` + `pgrep -af "galexie append"`;
+  psql check now targets the `stellarindex` DB via
+  `runuser -u postgres`. §6 manual bucket creation replaced with
+  verification — the role creates the three buckets + three IAM
+  users itself (`tasks/09-minio.yml`), and the old `apt install -y
+  mc` instruction installed Midnight Commander, not the MinIO
+  client. §2 vault list fixed (`galexie_s3_access_key` is the
+  bucket-scoped writer, NOT the MinIO root identity;
+  `postgres_pass_core` gated on `run_stellar_core`; added the
+  missing stellarindex/reader/ClickHouse/healthcheck secrets +
+  pinned minio/mc SHAs) and defers to bringup § Prerequisites as
+  authoritative. §7 timeline trimmed to galexie + genesis-backfill.
+  §8/§10 core/rpc failure modes + teardown rows removed; teardown
+  destroys only pool `data` (`rpool` never existed). §1/§ intro:
+  hardware differences also mean
+  `zfs_os_drives_needing_data_partition`, `zfs_data_pool_type`,
+  and per-box minio/mc SHAs. §9 "Week-2 ingestion (in flight)" /
+  "pgBackRest (Week 3)" replaced with a pointer to bringup steps
+  4–6.
+- 2026-05-03 — initial draft (pre-dates the r1 core/rpc trim being
+  reflected in the role; superseded content described a five-unit
+  stack with manual MinIO bootstrap).

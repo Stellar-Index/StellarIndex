@@ -23,7 +23,27 @@
 #     first real ledger; ledger 1 is empty by Stellar design).
 set -euo pipefail
 
-. /etc/default/stellarindex
+# Read a systemd EnvironmentFile VERBATIM — never `.`/source it. Its
+# values are unquoted (that is what systemd wants), so the shell would
+# expand `$`, split on `;`/`&`/`|`/whitespace and eat quotes inside a
+# secret: the services keep working while this path gets a mangled DSN
+# (deploy-ansible-secrets-5). Same reader as run-heavy-job.sh.
+# usage: load_env_file FILE [export]
+load_env_file() {
+  local line
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      [A-Za-z_]*=*)
+        if [ "${2:-}" = export ]; then
+          export "${line?}"
+        else
+          printf -v "${line%%=*}" '%s' "${line#*=}"
+        fi
+        ;;
+    esac
+  done < "$1"
+}
+load_env_file /etc/default/stellarindex
 
 # 90 days @ 5s ledger close = 17280 ledgers/day × 90 = 1,555,200.
 HOT_WINDOW_LEDGERS=1555200
