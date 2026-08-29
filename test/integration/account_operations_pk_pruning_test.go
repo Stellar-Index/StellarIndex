@@ -98,20 +98,30 @@ func legacyAccountTransactionsSQL(hasCursor bool) string {
 //     "DISTINCT dedups the rare tx that is both sourced and participated"),
 //     while on the OPERATIONS side it is participant-only, honouring the
 //     op-level XOR invariant accountOperationsQuery relies on (participants
-//     exclude the op's own source; both the old and new shapes serve a
-//     SHORT page if that invariant is violated — not a property of this
-//     rewrite, see the "arms never overlap" note there).
+//     exclude the op's own source; that listing's merge would serve a
+//     SHORT page if the invariant were violated — see the "no cross-arm
+//     dedupe needed" note there). On the TRANSACTIONS side this overlap
+//     is what #290 was: the key was emitted by both arms and ate two of
+//     the merge's LIMIT slots.
 //
 // A re-ingested duplicate part covers the ReplacingMergeTree dedupe on
 // both listings. The test then:
 //
 //  1. DIFFERENTIAL: walks the ENTIRE history of BOTH listings (page size
 //     7, ~58 / ~86 pages) through the reader and through the frozen
-//     pre-fix SQL with the same args, asserting every page identical —
-//     rows, order, cursor continuation, dedupe — plus a cursor set
-//     MID-page. Also pins the absolute expectations (600 distinct ops /
-//     600 distinct txs, strictly descending, no key served twice, no
-//     non-final short operations page).
+//     pre-fix SQL with the same args, plus a cursor set MID-page. The
+//     OPERATIONS walk asserts every page identical — rows, order, cursor
+//     continuation, dedupe. The TRANSACTIONS walk asserts the same
+//     SEQUENCE of rows in the same order, but not the same page
+//     boundaries: since #290 the reader dedupes the two overlapping arms
+//     at the keyset merge, so its pages are full where the frozen
+//     pre-fix shape still hands back a SHORT one (the walk requires the
+//     legacy side to still produce one, else the reader-side fullness
+//     assertion would be vacuous). Also pins the absolute expectations
+//     (600 distinct ops / 600 distinct txs, strictly descending, no key
+//     served twice, and no non-final short page on EITHER listing from
+//     the reader — the handler withholds next_cursor on a short page, so
+//     one truncates the client's history walk).
 //  2. READ-ROWS: one page of 50 via each path, `system.query_log`
 //     read_rows. The pre-fix shape reads ≥ one granule per key (≥ 200
 //     granules ≈ 1.6 M rows here; 38 k granules live); the new shape reads
@@ -266,10 +276,11 @@ func TestClickHouseAccountOperationsPageBoundedByPageSize(t *testing.T) {
 	}
 	// walk pages `name` through reader vs legacy until the reader serves
 	// an empty page, asserting page-for-page equality; returns the
-	// distinct keys served. Pages are `pageSize` long except where the
-	// legacy shape itself serves a short one (tx overlap keys occupy two
-	// keyset slots in both shapes).
-	walk := func(name string, fullPages bool, page func(cur chstore.ExplorerCursor) (got, want []key)) map[key]bool {
+	// distinct keys served. Every page is `pageSize` long but the last:
+	// a non-final short page is exactly what makes a client stop early
+	// (the handler withholds next_cursor on it — see the transactions
+	// walk below and #290).
+	walk := func(name string, page func(cur chstore.ExplorerCursor) (got, want []key)) map[key]bool {
 		t.Helper()
 		var (
 			cur   chstore.ExplorerCursor
@@ -280,7 +291,7 @@ func TestClickHouseAccountOperationsPageBoundedByPageSize(t *testing.T) {
 		)
 		for {
 			got, want := page(cur)
-			if fullPages && len(got) > 0 {
+			if len(got) > 0 {
 				if short > 0 {
 					t.Fatalf("%s page %d (cursor %+v) follows a SHORT page — a non-final short page means a client stopping on it truncates history", name, pages, cur)
 				}
@@ -321,14 +332,7 @@ func TestClickHouseAccountOperationsPageBoundedByPageSize(t *testing.T) {
 		}
 		return out
 	}
-	txKeys := func(rows []chstore.TxSummary) []key {
-		out := make([]key, len(rows))
-		for i, r := range rows {
-			out[i] = key{r.Seq, r.TxIndex, 0}
-		}
-		return out
-	}
-	opsSeen := walk("operations", true, func(cur chstore.ExplorerCursor) ([]key, []key) {
+	opsSeen := walk("operations", func(cur chstore.ExplorerCursor) ([]key, []key) {
 		got, err := er.AccountOperations(ctx, hot, pageSize, cur)
 		if err != nil {
 			t.Fatalf("AccountOperations (cursor %+v): %v", cur, err)
@@ -347,26 +351,81 @@ func TestClickHouseAccountOperationsPageBoundedByPageSize(t *testing.T) {
 		t.Fatalf("operations: %d distinct ops, want %d (sourced %d + participant %d + participant-on-hot-sourced-tx %d)",
 			len(opsSeen), want, n/stride, n/stride, n/stride)
 	}
-	// The tx listing's two arms legitimately overlap (the txOff txs), and
-	// BOTH shapes then serve a short page when an overlap key occupies two
-	// keyset slots — pre-existing, not this rewrite's (see report); the
-	// walk only asserts reader ≡ legacy there.
-	txSeen := walk("transactions", false, func(cur chstore.ExplorerCursor) ([]key, []key) {
+	// The tx listing's two arms legitimately overlap (the txOff txs, sourced
+	// by hot AND carrying it as a non-source participant). Until #290 an
+	// overlap key occupied TWO of the keyset merge's LIMIT slots — the merge
+	// took its LIMIT before anything deduped — so the page came back SHORT
+	// while older history remained, and the handler emits next_cursor only on
+	// a FULL page (internal/api/v1/explorer/accounts.go): a client walking
+	// the history stopped there, silently truncated. The reader now dedupes
+	// at the merge; the frozen legacy shape still serves those short pages,
+	// so the differential here is over the WHOLE walk (same rows, same order,
+	// none gained, lost, reordered or repeated) rather than page-for-page,
+	// and the reader's pages must additionally be full except the last.
+	txWalk := func(name string, page func(cur chstore.ExplorerCursor) []chstore.TxSummary) (rows []chstore.TxSummary, nonFinalShort int) {
+		t.Helper()
+		var (
+			cur       chstore.ExplorerCursor
+			seen      = map[key]bool{}
+			pages     int
+			last      key
+			prevShort bool
+		)
+		for {
+			got := page(cur)
+			if len(got) > 0 && prevShort {
+				nonFinalShort++
+			}
+			if len(got) == 0 {
+				break
+			}
+			prevShort = len(got) < pageSize
+			for i, r := range got {
+				k := key{r.Seq, r.TxIndex, 0}
+				if seen[k] {
+					t.Fatalf("%s page %d row %d: tx %v served twice (dedupe / cursor regression)", name, pages, i, k)
+				}
+				if (pages > 0 || i > 0) && !older(k, last) {
+					t.Fatalf("%s page %d row %d: tx %v not strictly older than previous %v", name, pages, i, k, last)
+				}
+				seen[k] = true
+				last = k
+				rows = append(rows, r)
+			}
+			pages++
+			cur = chstore.ExplorerCursor{Ledger: last[0], A: last[1]}
+		}
+		t.Logf("%s: %d txs over %d pages (%d non-final short pages)", name, len(rows), pages, nonFinalShort)
+		return rows, nonFinalShort
+	}
+
+	readerTxs, readerShort := txWalk("transactions (reader)", func(cur chstore.ExplorerCursor) []chstore.TxSummary {
 		got, err := er.AccountTransactions(ctx, hot, pageSize, cur)
 		if err != nil {
 			t.Fatalf("AccountTransactions (cursor %+v): %v", cur, err)
 		}
-		want := legacyTxPage(ctx, pageSize, cur)
-		for i := range got {
-			if i < len(want) && got[i] != want[i] {
-				t.Fatalf("transactions row differs (cursor %+v):\n reader %+v\n legacy %+v", cur, got[i], want[i])
-			}
-		}
-		return txKeys(got), txKeys(want)
+		return got
 	})
-	if want := 3 * (n / stride); len(txSeen) != want {
+	legacyTxs, legacyShort := txWalk("transactions (legacy)", func(cur chstore.ExplorerCursor) []chstore.TxSummary {
+		return legacyTxPage(ctx, pageSize, cur)
+	})
+	if readerShort != 0 {
+		t.Fatalf("transactions: %d non-final SHORT pages from the reader — the handler withholds next_cursor on a short page, so a client stops there with older history unreached (#290)", readerShort)
+	}
+	if legacyShort == 0 {
+		t.Fatal("fixture no longer reproduces #290: the pre-fix query text served no non-final short page, so the fullness assertion above is vacuous — the arms must still overlap (the txOff txs)")
+	}
+	if len(readerTxs) != len(legacyTxs) {
+		t.Fatalf("transactions: reader walked %d txs, legacy %d — the merge dedupe must change page BOUNDARIES, never the rows served", len(readerTxs), len(legacyTxs))
+	}
+	for i := range readerTxs {
+		if readerTxs[i] != legacyTxs[i] {
+			t.Fatalf("transactions row %d differs:\n reader %+v\n legacy %+v", i, readerTxs[i], legacyTxs[i])
+		}
+	}
+	if want := 3 * (n / stride); len(readerTxs) != want {
 		t.Fatalf("transactions: %d distinct txs, want %d (sourced-with-op %d + participant-only %d + sourced-tx-and-participant %d)",
-			len(txSeen), want, n/stride, n/stride, n/stride)
+			len(readerTxs), want, n/stride, n/stride, n/stride)
 	}
 
 	// A cursor set MID-page (not at a page boundary): the next page must

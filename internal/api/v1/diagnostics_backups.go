@@ -178,9 +178,11 @@ type BackupFreshness struct {
 // FreshnessVerdict judges one item's age against its SLO.
 type FreshnessVerdict struct {
 	// Status is "ok" (age ≤ SLO), "stale" (age > SLO) or "unknown"
-	// (no data).
+	// (no data, or a stamp from the future — see freshnessVerdict).
 	Status string `json:"status"`
-	// AgeSeconds is the item's age at snapshot time; nil when unknown.
+	// AgeSeconds is the item's age at snapshot time; nil when there is
+	// no data. Negative on a future-dated stamp: the raw skew is
+	// reported (with Status "unknown"), never clamped into a fresh 0.
 	AgeSeconds *int64 `json:"age_seconds"`
 	// SLOSeconds is the threshold the status was judged against.
 	SLOSeconds int64 `json:"slo_seconds"`
@@ -218,6 +220,27 @@ const (
 	backupSLOSnapshot = 36 * time.Hour
 )
 
+// backupClockSkewTolerance bounds how far a stamp may sit in the
+// FUTURE of the API's own clock and still be judged on its face.
+//
+// The ages here cross clocks: `now` is the API host's wall clock while
+// the stamps come from the backup host's exporters / textfiles, so a
+// sub-minute negative age is ordinary NTP divergence on an item that
+// IS fresh (a stamp at most a minute ahead bounds the true age at a
+// minute) — it floors to 0 and keeps its verdict. A minute is two
+// orders of magnitude past anything a disciplined host shows and still
+// 15× inside the tightest SLO (WAL, 15 min), so it cannot mask a
+// breach.
+//
+// Beyond the tolerance the reading is self-inconsistent and bounds
+// NOTHING: a forward-skewed host clock or a corrupt future-dated
+// backup label says nothing about when the backup actually ran, so the
+// verdict is "unknown" (grey, and it degrades the roll-up) rather than
+// a green zero. Same shape as canonical.SafeUnixFutureWindow,
+// tightened from 24 h because these are our own NTP-disciplined hosts,
+// not a third-party relayer.
+const backupClockSkewTolerance = time.Minute
+
 // backupsCacheTTL bounds how often the handler re-queries Prometheus.
 // The freshest signal here moves on a 5-min WAL cadence; 60 s keeps
 // a status page polling every 30 s from doubling the query load.
@@ -237,16 +260,27 @@ type backupMetricsSource interface {
 type BackupMetricsSource = backupMetricsSource
 
 // freshnessVerdict judges an age against an SLO. A nil age is "no
-// data" → "unknown"; it never collapses to a fresh zero.
+// data" → "unknown"; it never collapses to a fresh zero. Neither does
+// an age from the future: past backupClockSkewTolerance the stamp is
+// an artefact that bounds nothing, so it reads "unknown" and carries
+// its RAW (negative) age so an operator can see the skew that caused
+// it — the one case where an "unknown" verdict has a non-nil age.
 func freshnessVerdict(age *time.Duration, slo time.Duration) FreshnessVerdict {
 	out := FreshnessVerdict{Status: freshnessUnknown, SLOSeconds: int64(slo / time.Second)}
 	if age == nil {
 		return out
 	}
 	secs := int64(*age / time.Second)
+	if *age < -backupClockSkewTolerance {
+		// Future-dated beyond ordinary skew: the item's real age is
+		// unknowable from this stamp, so it must NOT be rewarded with
+		// "ok". Surface the raw negative age; leave Status "unknown".
+		out.AgeSeconds = &secs
+		return out
+	}
 	if secs < 0 {
-		// A stamp from the future is a clock-skew artefact, not a
-		// fresh backup. Report the raw age but don't reward it.
+		// Ordinary skew on a genuinely fresh item: floor the reported
+		// age at 0 rather than publishing "-3s ago".
 		secs = 0
 	}
 	out.AgeSeconds = &secs

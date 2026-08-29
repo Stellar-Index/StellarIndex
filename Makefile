@@ -233,12 +233,20 @@ lint-imports: ## Import-boundary lint (production ingest doesn't import stellar-
 lint-lexicon: ## Domain-lexicon + idiom ratchet (asset-not-coin, Options-struct ctors, slog-only; docs/architecture/lexicon.md)
 	@./scripts/ci/lint-lexicon.sh
 
+.PHONY: lint-golangci-config
+lint-golangci-config: ## Offline JSON-Schema check of .golangci.yml (#317 — no golangci-lint.run fetch at PR time)
+	@$(GO) run ./scripts/ci/lint-golangci-config
+
 .PHONY: lint-openapi-urls
 lint-openapi-urls: ## ADR-0018 URL-discipline check on the OpenAPI spec
 	@$(GO) run ./scripts/ci/lint-openapi-urls openapi/stellar-index.v1.yaml
 
+# The default backlog (docs/architecture/launch-readiness-backlog.md) was
+# RETIRED 2026-08-29 (#321) — these targets now exit non-zero with a pointer
+# to docs/operations/v1-launch-plan.md rather than certifying frozen rows.
+# Pass -path to run the checker against a live L-numbered readiness doc.
 .PHONY: verify-launch-ready
-verify-launch-ready: ## Single-pane status check on the launch-readiness backlog
+verify-launch-ready: ## Single-pane status check on an L-numbered readiness backlog (default doc is retired — see #321)
 	@$(GO) run ./scripts/ci/verify-launch-ready
 
 .PHONY: verify-launch-ready-all

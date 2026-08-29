@@ -429,11 +429,17 @@ groups:
       # Mirror of the rule in deploy/monitoring/rules/ingestion.yml;
       # the per-host wave-96 lint requires both copies to stay in
       # sync.
+      # 2026-08-29 (#302): `unless on (source) rate(new[10m]) > 0`, not
+      # `and on (source) rate(new[10m]) == 0` — the join form needs the
+      # outcome="new" child series to EXIST, and a source that has
+      # produced only duplicates since process start never creates it
+      # (call-site-seeded counter, config-dependent `source` label), so
+      # the alert was silent in exactly its target scenario.
       - alert: stellarindex_ingestion_duplicate_flood
         expr: |
           sum by (source) (rate(stellarindex_trade_insert_outcome_total{outcome="duplicate"}[10m])) > 0.5
-          and on (source)
-          sum by (source) (rate(stellarindex_trade_insert_outcome_total{outcome="new"}[10m])) == 0
+          unless on (source)
+          sum by (source) (rate(stellarindex_trade_insert_outcome_total{outcome="new"}[10m])) > 0
         for: 10m
         labels:
           severity: ticket

@@ -7,7 +7,9 @@ on r1 (the design + code primitives are already live in `main`).
 ## Concept refresher
 
 - **Hot tier** = local galexie-archive MinIO bucket on r1. Fast
-  reads, but consumes ~4.5 TB of the 13.85 TB usable pool.
+  reads, but consumes ~4.5 TB of the ~18.3 TB usable pool (r1 is
+  raidz1; the 13.85 TB this line used to quote was two-parity math —
+  see `docs/architecture/storage-considerations.md`).
 - **Cold tier** = `aws-public-blockchain` S3 (the AWS Open Data
   Sponsorship bucket — `v1.1/stellar/ledgers/pubnet/`). Read-only,
   authoritative, ~80 ms per-GET amortised over 64-ledger

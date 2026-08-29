@@ -15,4 +15,26 @@ describe('CompanyPage', () => {
     // still communicates honest pre-v1 status without a fabricated date
     expect(screen.getByText(/still pre-v1/i)).toBeInTheDocument();
   });
+
+  // #321: the page told the public that "the roadmap that gets us to v1"
+  // lives in launch-readiness-backlog.md — a doc frozen since 2026-05-13
+  // that contains none of the actual v1 gate, and is now formally retired.
+  // The public roadmap link must point at the maintained plan.
+  it('points the public roadmap link at the maintained launch plan, not the retired backlog', () => {
+    render(<CompanyPage />);
+
+    const roadmap = screen.getByRole('link', { name: /v1-launch-plan\.md/i });
+    expect(roadmap).toHaveAttribute(
+      'href',
+      'https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/v1-launch-plan.md',
+    );
+
+    // The retired backlog must not be linked anywhere on the page.
+    const links = screen.getAllByRole('link');
+    for (const link of links) {
+      expect(link.getAttribute('href') ?? '').not.toContain(
+        'launch-readiness-backlog',
+      );
+    }
+  });
 });

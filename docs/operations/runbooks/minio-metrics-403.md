@@ -1,7 +1,7 @@
 ---
 title: Runbook — MinIO Prometheus scrape returns 403
-last_verified: 2026-05-28
-status: ratified
+last_verified: 2026-08-29
+status: current
 severity: P2
 ---
 
@@ -11,9 +11,9 @@ severity: P2
 
 | Field | Value |
 | ----- | ----- |
-| Symptom | Prometheus targets API shows `minio` job `down` with `lastError: server returned HTTP status 403 Forbidden`. |
+| Symptom | Prometheus targets API shows `minio` job `down` with `lastError: server returned HTTP status 401 Unauthorized` or `403 Forbidden`. MinIO answers 401 for a missing/empty bearer file and 403 for a token whose service account lacks `admin:Prometheus`; both land here. |
 | Severity | P2 (ticket) |
-| Detected by | Operator inspection or `up{job="minio"} == 0` alert |
+| Detected by | `stellarindex_minio_exporter_down` (`deploy/monitoring/rules/meta.yml` + the r1 overlay: `up{job="minio"} == 0 OR absent_over_time(up{job="minio"}[5m]) == 1`, `for: 2m`, **`severity: page`**). Its `runbook_url` points at [exporter-down.md](exporter-down.md) — that is the alert's first-response page; come here for the token-provisioning procedure. |
 | Typical MTTR | 10 minutes (provision token + restart Prometheus) |
 | Impact | MinIO observability gap: no bucket-usage, replication, or write-latency metrics scraped. Operator can't alert on disk exhaustion of the MinIO data partition until the token is wired. |
 
@@ -24,8 +24,16 @@ token by default. `configs/prometheus/prometheus.r1.yml` already
 points Prometheus at the right URL with
 `bearer_token_file: /etc/prometheus/minio.token`, but the token
 file isn't created automatically — it's an operator-mint step. If
-no token has ever been provisioned, every scrape returns 403 and
+no token has ever been provisioned, every scrape is rejected
+(401 with no/empty token, 403 with an under-privileged one) and
 the job stays `down`.
+
+Because MinIO is where galexie writes ledger metadata and the
+indexer reads it back (ADR-0002), a `down` MinIO target also makes
+every alert that depends on MinIO cluster metrics silently blind —
+which is why the detecting alert is a page, not a ticket. See
+`stellarindex_minio_exporter_down`'s own description in
+`deploy/monitoring/rules/meta.yml`.
 
 This is finding F-0045 / task #38 of audit-2026-05-26.
 
@@ -141,12 +149,19 @@ against the upstream MinIO docs.
 
 ## Long-term: Ansible
 
-This procedure is currently manual because we don't ship a
-single-host Ansible role that owns
-`/etc/prometheus/minio.token` (the
-`prometheus_pair`-shape role targets HA-pair multi-host per
-F-0140). When that gap closes, the token-mint step lives in the
-role and the manual procedure here becomes a fall-back.
+This procedure is currently manual: **no Ansible task owns
+`/etc/prometheus/minio.token`.** Verified 2026-08-29 —
+`configs/ansible/roles/archival-node/tasks/09-minio.yml` never
+mentions the token, and nothing else in `configs/ansible/`
+templates it. (The scrape stanza in `prometheus.r1.yml` used to
+claim otherwise; that comment was corrected in the same pass.) The
+same gap is recorded in
+[credential-rotation.md](../credential-rotation.md#prometheus-bearer-token-regen-minio-root-rotation-only),
+which notes the 2026-07-03 incident where rotating the MinIO root
+password invalidated the bearer token by hand.
+
+When the gap closes, the token-mint step lives in `09-minio.yml`
+and the manual procedure here becomes a fall-back.
 
 Until then, `make verify-r1-sync` will surface any drift between
 the `prometheus.r1.yml` scrape config and the running daemon's
@@ -158,11 +173,25 @@ operator step every time the MinIO svcacct rotates.
 - ADR-0002 — self-hosted storage is S3-compatible (MinIO is the
   default).
 - F-0045 (audit-2026-05-26) — original finding.
-- `configs/prometheus/prometheus.r1.yml:148-159` — scrape stanza.
+- `configs/prometheus/prometheus.r1.yml` — the `job_name: minio` scrape stanza.
 - F-0152 closure — sibling exporters (redis / postgres /
   pgbackrest) now installed; MinIO is the last one waiting on
   this manual token step.
+- [exporter-down.md](exporter-down.md) — where
+  `stellarindex_minio_exporter_down` routes; its per-exporter notes
+  carry the day-to-day `Authorization: Bearer $(cat
+  /etc/prometheus/minio.token)` probe.
+- [credential-rotation.md](../credential-rotation.md) — regenerating the
+  bearer token after a MinIO **root** rotation.
 
 ## Changelog
 
+- 2026-08-29 — re-verified against HEAD (runbook Wave L, #319): "Detected by"
+  named operator inspection / a bare `up{job="minio"} == 0` — the real detector
+  is the P1 `stellarindex_minio_exporter_down` (page, `for: 2m`, with an
+  `absent_over_time` arm), whose `runbook_url` routes to `exporter-down.md`;
+  the symptom is 401 **or** 403 depending on whether the token is missing or
+  under-privileged; the Ansible-gap section re-confirmed (no task owns
+  `/etc/prometheus/minio.token`) and the stale "rendered by ansible" comment in
+  `configs/prometheus/prometheus.r1.yml` corrected in the same pass.
 - 2026-05-28 — initial draft (F-0045 procedure documentation).

@@ -1997,8 +1997,16 @@ var TradeInsertsTotal = prometheus.NewCounterVec(
 // cursor or replay loop (live evidence on r1, 2026-05-28: 157
 // SDEX insert-attempts/min while the trades hypertable's max(ts)
 // is 11 h old) produces a fast-growing `duplicate` rate with zero
-// `new`. Pairing the two lets operators alert on
-// `rate(new[5m]) == 0 AND rate(duplicate[5m]) > 0` — the
+// `new`. Pairing the two lets operators alert on a nonzero duplicate
+// rate with no new rows — but write that second clause as
+// `unless on (source) rate(new[10m]) > 0`, NEVER as
+// `and on (source) rate(new[10m]) == 0`: this vector is call-site-
+// seeded and `source` is config-dependent (not pre-seeded in
+// seedBoundedLabelSeries, per the AggregatorFXSnapFallbackTotal `leg`
+// convention), so a source that has landed no new row since process
+// start has NO `outcome="new"` child for an `and` join to match and
+// the alert goes silent in exactly the post-restart replay flood it
+// exists for (#302, 2026-08-29). A duplicate-only stream is the
 // signature of a duplicate-flood, BUT see the conflation note above:
 // a running corrective re-derive produces the same shape, so correlate
 // with whether a re-derive is in flight before treating it as a stuck

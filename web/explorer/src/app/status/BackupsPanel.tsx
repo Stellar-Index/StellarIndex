@@ -35,22 +35,38 @@ function verdictTone(status: Verdict['status']): BadgeTone {
   }
 }
 
-function verdictLabel(status: Verdict['status']): string {
-  switch (status) {
+function verdictLabel(v: Verdict): string {
+  switch (v.status) {
     case 'ok':
       return 'within SLO';
     case 'stale':
       return 'beyond SLO';
     default:
-      return 'no data';
+      // The API pairs an "unknown" verdict with a non-null age in
+      // exactly one case: a stamp from the FUTURE of its clock (skew,
+      // or a corrupt backup label — issue #311). Name that cause; it
+      // is a different problem from an absent series, and the reader
+      // must not read the grey row as "nothing is exported here".
+      return isFutureDated(v) ? 'stamp from the future' : 'no data';
   }
 }
 
+// isFutureDated: the API's negative-age signal. A future-dated stamp
+// bounds nothing about the item's real age, so the API refuses to
+// judge it — see freshnessVerdict in internal/api/v1.
+function isFutureDated(v: Verdict): boolean {
+  return (
+    v.age_seconds !== null && v.age_seconds !== undefined && v.age_seconds < 0
+  );
+}
+
 // ageText renders a verdict's age as "5d ago" from the API's
-// age_seconds; absent → the em-dash the rest of the page uses for
-// unmeasured values.
+// age_seconds; absent — or future-dated, where the number is a skew
+// measurement and not an age at all — → the em-dash the rest of the
+// page uses for unmeasured values.
 function ageText(v: Verdict): string {
   if (v.age_seconds === null || v.age_seconds === undefined) return '—';
+  if (isFutureDated(v)) return '—';
   return `${formatDurationShort(v.age_seconds)} ago`;
 }
 
@@ -66,11 +82,18 @@ function dateText(iso: string | null | undefined): string {
 
 // sinceAsOf dates an ISO stamp against the server's as_of (not
 // Date.now()): the age the API judged is the age the panel shows.
+//
+// A stamp AHEAD of as_of is the same future-dated artefact the API
+// refuses to judge (#311) — clock skew or a corrupt pgBackRest label.
+// It is NOT a zero-second-old copy, so it is named rather than clamped
+// up into "0s ago", which is how this row previously painted an
+// arbitrarily stale repository as the freshest thing on the page.
 function sinceAsOf(iso: string | null | undefined, asOf?: string): string {
   if (!iso || !asOf) return '—';
   const ms = new Date(asOf).getTime() - new Date(iso).getTime();
   if (!Number.isFinite(ms)) return '—';
-  return `${formatDurationShort(Math.max(0, ms / 1000))} ago`;
+  if (ms < 0) return 'dated in the future';
+  return `${formatDurationShort(ms / 1000)} ago`;
 }
 
 function sloText(seconds: number): string {
@@ -340,7 +363,7 @@ function VerdictRow({
             </Badge>
           )}
           <Badge tone={tone} className="text-[10px]" dot>
-            {verdictLabel(verdict.status)}
+            {verdictLabel(verdict)}
           </Badge>
           <span className={`tnum text-sm ${ageClass}`}>{ageText(verdict)}</span>
         </dd>

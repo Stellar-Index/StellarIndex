@@ -1,31 +1,62 @@
 ---
-title: Launch readiness backlog
-last_verified: 2026-05-13
-status: living document
+title: Launch readiness backlog (retired)
+last_verified: 2026-08-29
+status: superseded — see docs/operations/v1-launch-plan.md
 ---
 
 # Launch readiness backlog
 
-> **⚠️ Staleness banner (2026-07-24, audit-2026-07-23 wave5 DOC-06/DOC-07).**
-> This doc's own frontmatter dates its last substantive review to
-> 2026-05-13 — 10+ weeks unreviewed, well past the "living document"
-> self-declared weekly cadence this doc implies. Several per-row
-> statuses below have NOT been re-verified against current code in
-> that window (e.g. L2.9's "shipped" status for the ADR-0019 bootstrap
-> policy — see the ADR-0019 amendment dated 2026-07-24). The current,
-> actively-maintained source of truth for production-readiness status
-> is **`docs/operations/production-readiness-master-plan-2026-07-18.md`**
-> and **`docs/operations/production-remediation-ledger-2026-07-23.md`**
-> (a local, gitignored working file — ask the operator if you need a
-> copy). This page is also linked from the public marketing site
-> (`web/explorer/src/app/company/page.tsx`) as the "canonical" launch
-> roadmap; that link should point at the master plan instead, or this
-> page should be re-verified before the link is trusted again. `make
-> verify-launch-ready-single-region` exists (`scripts/ci/verify-launch-ready`)
-> but is not wired into any CI workflow, so a stale/never-run gate
-> cannot currently fail a build.
+> **⛔ RETIRED — SUPERSEDED 2026-08-29 by
+> [`docs/operations/v1-launch-plan.md`](../operations/v1-launch-plan.md)**, the
+> actively-maintained launch source of truth. **Do not plan from this file, and
+> do not read any row below as current status.** Kept for history and for the
+> per-row rationale only.
+>
+> **Why (issue #321).** This file has gained **zero rows since 2026-05-13**.
+> The real v1 gate is W-numbered and lives in the launch plan — W6.1 paging,
+> W6.3 credential rotations, W4 backups/restore-drill, the W8 correctness
+> backlog, ToS/Privacy (#237) — and **none of it appears here**. Meanwhile
+> every L1–L5 row still carries its last-written ✅, so
+> `make verify-launch-ready-single-region` printed *"✓ Engineering surface
+> ready"* — a green that grew more confident the staler this file got, and
+> that a weekly CI workflow republished. Two changes close that loop in the
+> same commit as this banner: the `launch-readiness.yml` workflow is deleted,
+> and `scripts/ci/verify-launch-ready` now refuses to emit any verdict for a
+> document whose frontmatter says `status: superseded` (new exit code 3).
+>
+> **The previous (2026-07-24) staleness banner was itself wrong twice over**,
+> which is why it did not stop any of this:
+>
+> - it said `make verify-launch-ready-single-region` "is not wired into any CI
+>   workflow, so a stale/never-run gate cannot currently fail a build" — it
+>   *was* wired in the very next day (`068ec709`, 2026-07-25,
+>   `.github/workflows/launch-readiness.yml`, Wednesday cron + push trigger).
+>   The gate ran weekly and passed, weekly, on frozen rows;
+> - it named `production-readiness-master-plan-2026-07-18.md` as the "current,
+>   actively-maintained source of truth" — that document was itself superseded
+>   on 2026-07-27 by `v1-launch-plan.md` and now carries its own SUPERSEDED
+>   banner.
+>
+> **Where the still-open rows went.** This mapping is the only current part of
+> the file:
+>
+> | Row(s) here | Carried to (in `v1-launch-plan.md`) |
+> |---|---|
+> | L4.14 / L4.15 (R2 + R3 provisioning), L4.16 (cross-region DNS), L4.17 (cross-region Patroni), L5.8 (region-failover chaos) | **W9 — Post-v1**, "R2 + R3 regions and ClickHouse HA"; gated on decision **D2** (HA at v1 vs fast-follow) |
+> | L5.6 (external security review) | **W6.2** — `[OP]`, longest lead time of anything remaining |
+> | L6.4 (production cutover) | **§2.8 Launch execution** (and the launch-day checklist it references) |
+> | L6.6 (API walkthrough demo), L6.7 (first 24-h watch) | **W6.7** — announcement copy + staffed watch |
+>
+> **Do not re-trust the ✅ rows either.** They were not re-verified by this
+> supersession, and at least one is known-wrong: ADR-0019's 2026-07-24
+> amendment records that L2.9's "✅ shipped" status is inaccurate for the
+> zero-baseline case. Treat every status below as *history*.
+>
+> The public "roadmap that gets us to v1" link on the company page
+> (`web/explorer/src/app/company/page.tsx`) now points at `v1-launch-plan.md`.
 
-The canonical list of outstanding implementation work between
+_(Historical framing, frozen 2026-05-13 — read the retirement banner above
+first.)_ The canonical list of outstanding implementation work between
 today and launch. Sourced from:
 
 - [`coverage-matrix.md`](coverage-matrix.md) — requirement × ADR × code
