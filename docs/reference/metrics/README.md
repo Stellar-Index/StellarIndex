@@ -380,6 +380,16 @@ decoders record unmapped slots verbatim as `raw:<symbol>` rows
 (`canonical.AssetOracleRaw`, oracle capture-totality design) the counter
 keeps incrementing — a raw row is still a mapping gap to close.
 
+Alert: `stellarindex_ingestion_oracle_unknown_symbols` (any per-source
+increase over a trailing 25 h, sustained 30 min — the window exceeds
+Band's daily cadence so it cannot flap) → runbook
+[oracle-unknown-symbols](../../operations/runbooks/oracle-unknown-symbols.md).
+The 2026-08-04 cold audit found this counter had no consumer at all
+while r1 carried 7,794 dropped Reflector slots. Once the oracle
+decoders record unmapped slots verbatim as `raw:<symbol>` rows
+(`canonical.AssetOracleRaw`, oracle capture-totality design) the counter
+keeps incrementing — a raw row is still a mapping gap to close.
+
 ### `stellarindex_source_orphan_events_total`
 
 Counter, label `source`.
