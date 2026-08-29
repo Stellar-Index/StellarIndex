@@ -1031,6 +1031,15 @@ jobs:
           ansible-playbook --syntax-check -i 'localhost,' playbooks/deploy-binary.yml \
             -e version=v0.0.0-ci -e binaries_csv=stellarindex-api -e local_dist_dir=/tmp/ci-dist
 
+      - name: jinja template parse gate
+        # r1 2026-08-29: pgbackrest-backup.sh.j2 carried bash's array-length
+        # idiom, which Jinja reads as a COMMENT — the template could not
+        # render, so #305's per-repo nightly backup never reached the host
+        # while every gate here stayed green (`--syntax-check` parses
+        # playbooks, never template bodies). Parses all *.j2 as ansible will.
+        run: ./scripts/ci/lint-jinja-templates.sh
+      - name: jinja template parse gate self-test
+        run: ./scripts/ci/lint-jinja-templates-test.sh
       - name: galexie restart-wiring test (structural + local ansible run)
         # 2026-08-28 audit (deploy-ansible-handlers-7 / -drift-3): pins
         # that galexie-input renders restart only on EFFECTIVE change
