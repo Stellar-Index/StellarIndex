@@ -1,12 +1,14 @@
 ---
 title: Off-site (S3) backup plan
-last_verified: 2026-07-18
+last_verified: 2026-08-29
 status: proposed (execute after Phase A/D)
 severity: P1
 ---
 
 # Off-site (S3) backup plan
 
+> ⚠️ **Dependency status (2026-08-29, audit backup-restore-6 / ADR-0043 §2 amendment):** the raw-archive row below is **not** fully held on r1 — `[64000, 49983999]` was capacity-trimmed on 2026-07-26 and today exists for us only in the third-party `s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet/` dataset (AWS Open Data). Decision: accept + monitor, not duplicate — `.github/workflows/public-dataset-check.yml` verifies coverage/manifest weekly and opens the "AWS Public Blockchain dataset drift" issue on drift. Stream 1 below, when executed, must include a one-time pull of that middle range from the public bucket (not from r1's MinIO), and ADR-0043 records the ≈ $80 + $3–4/mo cross-region-copy option if zero third-party dependence is ever wanted.
+>
 > ♻️ **Refined by ADR-0050 / [`../architecture/multi-region-ha.md`](../architecture/multi-region-ha.md) §5 (2026-08-21).** The plan adopts this doc's core (off-site is a P1 SPOF fix) and resolves its RTO argument: it keeps **two** off-site artifacts on Cloudflare R2 — the ~2.49 TiB raw archive (crown-jewel source of truth) *and* the ~11.6 TiB derived cold-lake copy (fast-RTO restore + the multi-region serving fallback). Use the plan doc's §5 as the current target; this doc's mechanism detail remains useful reference.
 
 Design for off-site backups of R1 — today the box is a **single point of failure with local-only backups** (pgBackRest on the same ZFS pool as the data it protects; a pool/box loss loses both). This plan puts a durable copy off-box. Execute **after** Phase A/D (the user's sequencing); the design is ready now.
