@@ -45,11 +45,13 @@ type AssetCoverageSignals struct {
 // asset_vs_xlm CTEs (USDC classic + its SAC, fiat:USD, native + the XLM
 // SAC). Kept in lockstep with listAssetsBaseSelect: an asset priced only
 // through one of these quotes is "priced" for the coverage check.
-const coverageQuoteProxies = `'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-	'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
-	'fiat:USD',
-	'native',
-	'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA'`
+//
+// Composed from the resolver's own lists (transitive_price.go) rather
+// than restated, so the tripwire and Store.TransitiveUSDPrice cannot
+// disagree about what a proxy is; TestProxyQuoteLists_Lockstep pins the
+// catalogue's literal IN-lists to the same set.
+const coverageQuoteProxies = usdProxyQuotes + `,
+	` + xlmQuotes
 
 // popularPricelessCandidatesSQL extracts, per trades base_asset that has
 // ANY priced volume in the trailing 7 days, the signal set the tripwire
@@ -93,12 +95,34 @@ top_pair AS (
     ) p
    GROUP BY base_asset
 ),
+-- "Priced directly" = the catalogue's direct_usd / asset_vs_xlm reach,
+-- in BOTH stored directions of the XLM leg, PLUS the proxies themselves.
+--
+-- The XLM leg must be read both ways because sources that write SWAP
+-- direction (aquarius: base = token_in, no canonical.Orient) store an
+-- asset bought with XLM as (XLM-SAC, asset) — the SAC as BASE. Reading
+-- only base_asset = X left that whole market invisible: r1 2026-08-28,
+-- CBIJ… had $730k/7d against the XLM SAC and fired this tripwire with
+-- no withheld verdict, because nothing could price it.
+--
+-- The proxies are seeded explicitly because they never appear as a
+-- BASE against another proxy — XLM/USD is keyed base_asset='native',
+-- so the XLM SAC (and fiat:USD, and USDC's two forms) could never enter
+-- priced_direct and one_hop could therefore never route THROUGH them.
 priced_direct AS (
   SELECT DISTINCT base_asset AS asset_id
     FROM prices_1m
    WHERE bucket >= now() - INTERVAL '24 hours'
      AND vwap IS NOT NULL
      AND quote_asset IN (` + coverageQuoteProxies + `)
+  UNION
+  SELECT DISTINCT quote_asset AS asset_id
+    FROM prices_1m
+   WHERE bucket >= now() - INTERVAL '24 hours'
+     AND vwap > 0
+     AND base_asset IN (` + xlmQuotes + `)
+  UNION
+  SELECT unnest(ARRAY[` + coverageQuoteProxies + `])
 ),
 -- ONE transitive hop, kept in lockstep with Store.TransitiveUSDPrice.
 --

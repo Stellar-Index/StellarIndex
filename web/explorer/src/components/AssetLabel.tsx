@@ -1,6 +1,7 @@
 'use client';
 
 import { useIssuerLookup, useSACWrappers } from '@/api/hooks';
+import { isRawOracleAsset, rawOracleSymbol } from '@/lib/asset-label';
 
 /**
  * AssetLabel — single shared component for rendering a canonical
@@ -11,6 +12,8 @@ import { useIssuerLookup, useSACWrappers } from '@/api/hooks';
  *   - numeric ("0", "1")    → "XLM-native" (legacy markets-table form)
  *   - `fiat:USD`            → "USD"
  *   - `crypto:XLM`          → "XLM"
+ *   - `raw:<symbol>`        → the on-wire oracle symbol verbatim, in
+ *                             monospace (unmapped — no canonical asset)
  *   - `C…` (55-char SAC)    → resolved via /v1/sac-wrappers when the
  *                             operator has populated the map; falls
  *                             back to truncated C-strkey when the map
@@ -48,6 +51,15 @@ export function AssetLabel({
   }
   if (canonical.startsWith('crypto:')) {
     return <span className="font-medium">{canonical.replace('crypto:', '')}</span>;
+  }
+  // Unmapped oracle symbol — render the on-wire symbol verbatim. The
+  // `raw:` prefix stays in the tooltip so the namespace is discoverable.
+  if (isRawOracleAsset(canonical)) {
+    return (
+      <span className="font-mono text-xs" title={`${canonical} — unmapped oracle symbol`}>
+        {rawOracleSymbol(canonical)}
+      </span>
+    );
   }
   // Numeric form ("0", "1", …) is the legacy markets-table native render.
   if (/^\d+$/.test(canonical)) {
