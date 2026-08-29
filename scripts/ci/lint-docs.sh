@@ -711,6 +711,8 @@ else
     err "$ANSIBLE_DEFAULTS: per-region comment says '$r1_comment' but r1's live topology is '$r1_pool_type' ($R1_INVENTORY). The role DEFAULT may stay raidz2 for fresh nodes; the comment must not describe r1 wrongly"
   fi
   echo "  r1 pool topology: '$r1_pool_type' (authority $R1_INVENTORY) — checked $r1_files_checked of ${#r1_topology_files[@]} r1-scoped files"
+fi
+
 # ─── 19. Agent-orientation docs: the claims a machine can re-derive ────────
 #
 # CLAUDE.md/AGENTS.md are the first thing an agent reads, so a false
