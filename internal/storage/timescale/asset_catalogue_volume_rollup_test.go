@@ -27,7 +27,7 @@ func TestListAssets_readsAssetVolumeRollup(t *testing.T) {
 // pushdown path must still prepend the chosen_assets CTE (used by the
 // price CTEs).
 func TestListAssetsBaseSelectSQL_pushdownStillRenders(t *testing.T) {
-	plain := listAssetsBaseSelectSQL("")
+	plain := listAssetsBaseSelectSQL("", AssetsOrderVolume24hUSDDesc)
 	if !strings.Contains(plain, "FROM asset_volume_24h") {
 		t.Errorf("unfiltered render lost the rollup read")
 	}
@@ -35,7 +35,7 @@ func TestListAssetsBaseSelectSQL_pushdownStillRenders(t *testing.T) {
 		t.Errorf("unfiltered render should have stripped PUSHDOWN markers")
 	}
 
-	pushed := listAssetsBaseSelectSQL("issuer_g_strkey = $1")
+	pushed := listAssetsBaseSelectSQL("issuer_g_strkey = $1", AssetsOrderVolume24hUSDDesc)
 	if !strings.Contains(pushed, "WITH chosen_assets AS") {
 		t.Errorf("pushdown render must prepend chosen_assets CTE")
 	}

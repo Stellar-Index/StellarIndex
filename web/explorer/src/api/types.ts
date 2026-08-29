@@ -231,6 +231,15 @@ export interface paths {
          *     class-filtered view of the Stellar catalogue; `all` returns the
          *     unified Stellar listing; omitting it returns the legacy
          *     classic-assets page.
+         *
+         *     **Ranking.** An asset whose issuer carries a scam-class label in
+         *     the curated account directory (`malicious`, `unsafe`, `fraud`,
+         *     `scam`, `hack`, `phishing` — surfaced on the row as
+         *     `issuer_directory_tags`) is ranked BELOW every unflagged asset,
+         *     whatever the listing order. The row is still served in full —
+         *     we withhold its price and its rank, never the asset. On the
+         *     volume-ordered (`asset_class=all`) listing an asset with no USD
+         *     price likewise ranks below every priced one.
          */
         get: operations["listAssets"];
         put?: never;

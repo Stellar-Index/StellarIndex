@@ -41,21 +41,24 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// scamFlagTagSet is the set of curated-directory tags that withhold an
-// issuer's price. It MUST mirror the frontend warning set in
-// web/explorer/src/lib/directory-tags.ts (DIRECTORY_SCAM_FLAG_TAGS) so
-// every asset that shows a scam BANNER also has its price withheld — a
-// gate/warning split is exactly the drift this set exists to prevent.
-// Matched case-insensitively. Keep the two lists identical; the paired
-// tests (scam_test.go here, directory-tags.test.ts there) pin each.
-var scamFlagTagSet = map[string]struct{}{
-	"malicious": {},
-	"unsafe":    {},
-	"fraud":     {},
-	"scam":      {},
-	"hack":      {},
-	"phishing":  {},
-}
+// scamFlagTagSet is the lookup form of the curated-directory tag
+// vocabulary that withholds an issuer's price. The LIST itself lives in
+// timescale.DirectoryScamFlagTags — next to the account_directory table
+// it reads — because the /v1/assets listing SQL ranks on the same set
+// and a storage package cannot import this one. It MUST also mirror the
+// frontend warning set in web/explorer/src/lib/directory-tags.ts
+// (DIRECTORY_SCAM_FLAG_TAGS) so every asset that shows a scam BANNER
+// also has its price withheld and is demoted in the ranking — a
+// gate/warning/ranking split is exactly the drift this one set exists to
+// prevent. Matched case-insensitively; the paired tests (scam_test.go
+// here, directory-tags.test.ts there) pin each.
+var scamFlagTagSet = func() map[string]struct{} {
+	m := make(map[string]struct{}, len(timescale.DirectoryScamFlagTags))
+	for _, t := range timescale.DirectoryScamFlagTags {
+		m[t] = struct{}{}
+	}
+	return m
+}()
 
 // IsDirectoryScamFlagged reports whether any tag is a scam-class flag
 // (case-insensitive). Exported for the API layer's payload suppression

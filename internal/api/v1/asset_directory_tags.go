@@ -14,15 +14,25 @@ import (
 // stellar-expert/public-directory) and stamps the additive
 // issuer_directory_{tags,domain,name} fields onto AssetDetail.
 //
-// DISPLAY-ONLY invariant — with ONE deliberate exception (2026-08-25).
-// The tags remain third-party attribution that never affects the verified
-// status or the substance/decimals gates. The exception: a SCAM-CLASS tag
-// (malicious/unsafe/fraud/scam/hack/phishing) now WITHHOLDS the published
-// price + market cap, via suppressScamIssuerPricing below and the
-// reader-seam pricingguard.ScamGate — a scam token must not publish a
-// price/market-cap that lends it legitimacy, even when its market clears
-// the substance floor (RIO-GBNLJIYH… did). Raw trade surfaces stay
-// visible. Best-effort: a nil reader, an unlisted issuer (the common
+// DISPLAY-ONLY invariant — with TWO deliberate exceptions, both scoped to
+// the SCAM-CLASS tags (malicious/unsafe/fraud/scam/hack/phishing). The
+// tags remain third-party attribution that never affects the verified
+// status or the substance/decimals gates.
+//
+//  1. 2026-08-25 — a scam-class tag WITHHOLDS the published price +
+//     market cap, via suppressScamIssuerPricing below and the reader-seam
+//     pricingguard.ScamGate: a scam token must not publish a
+//     price/market-cap that lends it legitimacy, even when its market
+//     clears the substance floor (RIO-GBNLJIYH… did).
+//  2. 2026-08-29 (#356) — a scam-class tag DEMOTES the asset in the
+//     /v1/assets listing: timescale's listingRankTierExpr ranks a flagged
+//     issuer's assets below every unflagged one whatever the sort key.
+//     Withholding the numbers while still ranking the token on raw volume
+//     put a `malicious`/`unsafe` asset at #12 on the flagship /assets
+//     page. The row and its warning fields stay — we refuse to rank a
+//     flagged asset, we never hide it.
+//
+// Raw trade surfaces stay visible. Best-effort: a nil reader, an unlisted issuer (the common
 // case), or a lookup failure just leaves the fields omitted and never
 // fails the asset response — a directory outage must not take the asset
 // surface down with it (the suppression fails OPEN too).

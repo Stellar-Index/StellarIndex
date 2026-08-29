@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -95,6 +96,13 @@ type AssetRow struct {
 	// number: Volume24hUSD stays the raw, visible chain fact. Nil outside
 	// the listing query (the single-asset reads don't sort).
 	SortVolume24hUSD *string
+	// RankTier is the listing's PRIMARY (ascending) sort key — see
+	// [listingRankTierExpr]: 0 rankable, 1 unpriced, 2 directory-flagged.
+	// Like SortVolume24hUSD it is a SORT KEY only, never a displayed value,
+	// and the keyset cursor encodes it so pagination stays consistent with
+	// the ORDER BY. Nil outside the listing query (the single-asset reads
+	// don't rank).
+	RankTier *int
 }
 
 // AssetsOrder controls the sort + cursor scheme used by ListAssets.
@@ -271,13 +279,14 @@ func scanAssetRow(scanner interface {
 		sourceCount       sql.NullInt64
 		volumeCharacter   sql.NullString
 		sortVolume24hUSD  sql.NullString
+		rankTier          sql.NullInt64
 	)
 	if err := scanner.Scan(
 		&slug, &r.AssetID, &code, &issuerGStrkey,
 		&firstLedger, &lastLedger, &r.ObservationCount,
 		&priceUSD, &volume24hUSD, &marketCapUSD, &circulatingSupply,
 		&change1hPct, &change24hPct, &change7dPct, &sourceCount,
-		&volumeCharacter, &sortVolume24hUSD,
+		&volumeCharacter, &sortVolume24hUSD, &rankTier,
 	); err != nil {
 		return AssetRow{}, fmt.Errorf("timescale: scan asset: %w", err)
 	}
@@ -307,6 +316,10 @@ func scanAssetRow(scanner interface {
 	}
 	r.VolumeCharacter = nullStringPtr(volumeCharacter)
 	r.SortVolume24hUSD = nullStringPtr(sortVolume24hUSD)
+	if rankTier.Valid {
+		v := int(rankTier.Int64)
+		r.RankTier = &v
+	}
 	return r, nil
 }
 
@@ -340,6 +353,106 @@ const adjustedVolume24hExpr = `(COALESCE(vol.vol_usd, 0) * ` +
 	`CASE WHEN avc.character IN ('concentrated', 'operational') ` +
 	`THEN GREATEST(0::numeric, 1::numeric - avc.top_account_pair_vol_share::numeric) ` +
 	`ELSE 1::numeric END)`
+
+// listingPriceUSDExpr is the USD price the listing serves, BEFORE the
+// wire rounding — extracted from the price_usd column so the rank-tier
+// expression can ask "does this row have a price at all?" without a
+// second, drifting copy of the direct-or-XLM-triangulated chain.
+const listingPriceUSDExpr = `COALESCE(
+		      CASE WHEN ca.asset_id = 'native'
+		           THEN (SELECT vwap FROM xlm_usd)
+		           ELSE NULL
+		      END,
+		      direct.vwap,
+		      vs_xlm.vwap * (SELECT vwap FROM xlm_usd)
+		    )`
+
+// scamFlagTagsSQLArray inlines [DirectoryScamFlagTags] as a SQL array
+// LITERAL rather than a bind parameter. Deliberate: the predicate below
+// is spliced into the SELECT list, the ORDER BY and the keyset WHERE —
+// three places composed at three different positional-argument offsets —
+// so it has to be one parameter-free string (the same reason
+// adjustedVolume24hExpr is a const). The values are a compile-time
+// vocabulary, never caller input, and mustSQLTextArrayLiteral panics at
+// package init on anything outside [a-z], matching
+// listAssetsBaseSelectSQL's fail-loud posture on its pushdown anchor.
+var scamFlagTagsSQLArray = mustSQLTextArrayLiteral(DirectoryScamFlagTags)
+
+// mustSQLTextArrayLiteral renders a lowercase-ASCII word list as a
+// `ARRAY['a', 'b']::text[]` literal, panicking on any other character so
+// a future tag can never smuggle a quote into composed SQL.
+func mustSQLTextArrayLiteral(vals []string) string {
+	if len(vals) == 0 {
+		panic("timescale: refusing to build an empty SQL text-array literal")
+	}
+	quoted := make([]string, len(vals))
+	for i, v := range vals {
+		if v == "" {
+			panic("timescale: SQL text-array literal: empty element")
+		}
+		for _, r := range v {
+			if r < 'a' || r > 'z' {
+				panic("timescale: SQL text-array literal accepts lowercase a-z only, got " + v)
+			}
+		}
+		quoted[i] = "'" + v + "'"
+	}
+	return "ARRAY[" + strings.Join(quoted, ", ") + "]::text[]"
+}
+
+// directoryScamFlaggedExpr is TRUE when the row's ISSUER carries a
+// scam-class curated-directory tag — the SQL twin of
+// pricingguard.IsDirectoryScamFlagged over the SAME
+// [DirectoryScamFlagTags] list, lowercased on both sides so the two
+// predicates agree tag for tag (an asset that shows the explorer's
+// "⚠ Flagged" pill is exactly an asset this demotes).
+//
+// dir.tags is NULL for the overwhelming majority of rows (issuer absent
+// from the ~18.5k-row curated directory) and for every Soroban-native row
+// (a contract asset has no issuer account); unnest(NULL) yields zero rows
+// so EXISTS is false and the row ranks normally — fail-OPEN, matching the
+// directory overlay and the scam pricing gate.
+var directoryScamFlaggedExpr = `EXISTS (SELECT 1 FROM unnest(dir.tags) t ` +
+	`WHERE lower(t) = ANY(` + scamFlagTagsSQLArray + `))`
+
+// rankTierMarker is replaced with [listingRankTierExpr] for the active
+// order when [listAssetsBaseSelectSQL] renders the base SELECT. The
+// SELECT is one const shared by both orders but the tier is not, so the
+// substitution happens at render time — same marker idiom as the
+// /*PUSHDOWN_…*/ comments.
+const rankTierMarker = "/*RANK_TIER*/"
+
+// listingRankTierExpr is the PRIMARY, ASCENDING sort key of the
+// /v1/assets listing (#356): a small integer tier that is compared
+// BEFORE the volume / observation-count key, so it dominates whatever
+// the active sort is.
+//
+//	0 — rankable.
+//	1 — unpriced: no USD price at all. Volume order only — that listing
+//	    IS a price/market-cap table, so a row with no price must not
+//	    outrank one that has a price. The observation-count order is an
+//	    ACTIVITY ranking whose contract says nothing about price, so it
+//	    keeps tiers {0, 2} only.
+//	2 — directory-flagged: the issuer carries a scam-class tag. Applies
+//	    to EVERY order. The row and its "⚠ Flagged" pill stay — we do not
+//	    hide a flagged asset, we refuse to RANK it. Withholding its price
+//	    (pricingguard.ScamGate + the API payload suppression) while still
+//	    ranking it above real assets on 24h volume was the half-measure
+//	    #356 reported: a wash-traded scam token sat at #12 on the
+//	    flagship /assets page with no price, no market cap and a red pill.
+//
+// It is emitted as the rank_tier column so the keyset cursor can encode
+// the same value the ORDER BY ranks on — a cursor that omits the LEADING
+// sort key skips or repeats rows across pages — and is repeated verbatim
+// in assetsOrderBy + assetsCursorPredicate. Same three-call-site contract
+// as adjustedVolume24hExpr; keep the three in step.
+func listingRankTierExpr(order AssetsOrder) string {
+	if order == AssetsOrderVolume24hUSDDesc {
+		return `(CASE WHEN ` + directoryScamFlaggedExpr + ` THEN 2 ` +
+			`WHEN ` + listingPriceUSDExpr + ` IS NULL THEN 1 ELSE 0 END)`
+	}
+	return `(CASE WHEN ` + directoryScamFlaggedExpr + ` THEN 2 ELSE 0 END)`
+}
 
 // listAssetsBaseSelect is the CTE-laden SELECT shared by every
 // permutation of WHERE-clause buildAssetsQuery composes. Pulled
@@ -738,14 +851,7 @@ const listAssetsBaseSelect = `
 		    -- (XLM/USDC, 7d window); it only surfaces when the 24h
 		    -- xlm_usd is empty — the same 7d staleness tolerance
 		    -- every other asset gets.
-		    ROUND(COALESCE(
-		      CASE WHEN ca.asset_id = 'native'
-		           THEN (SELECT vwap FROM xlm_usd)
-		           ELSE NULL
-		      END,
-		      direct.vwap,
-		      vs_xlm.vwap * (SELECT vwap FROM xlm_usd)
-		    ), 10)::text                          AS price_usd,
+		    ROUND(` + listingPriceUSDExpr + `, 10)::text  AS price_usd,
 		    vol.vol_usd                           AS volume_24h_usd,
 		    NULL::numeric                         AS market_cap_usd,
 		    NULL::numeric                         AS circulating_supply,
@@ -820,7 +926,12 @@ const listAssetsBaseSelect = `
 		         ELSE COALESCE(direct.source_count, vs_xlm.source_count)
 		    END                                   AS source_count,
 		    avc.character                         AS volume_character,
-		    ` + adjustedVolume24hExpr + ` AS sort_vol_usd
+		    ` + adjustedVolume24hExpr + ` AS sort_vol_usd,
+		    -- Leading (ascending) sort key — see listingRankTierExpr. The
+		    -- marker is substituted per-order at render time; it is emitted
+		    -- as a column so the keyset cursor can encode the same value
+		    -- the ORDER BY ranks on.
+		    ` + rankTierMarker + ` AS rank_tier
 		  FROM catalogue_assets ca
 		  LEFT JOIN per_asset_24h_vol vol         ON vol.asset_id        = ca.asset_id
 		  LEFT JOIN direct_usd        direct      ON direct.asset_id     = ca.asset_id
@@ -832,6 +943,17 @@ const listAssetsBaseSelect = `
 		  LEFT JOIN asset_vs_xlm_24h  vs_xlm_24h  ON vs_xlm_24h.asset_id = ca.asset_id
 		  LEFT JOIN asset_vs_xlm_7d   vs_xlm_7d   ON vs_xlm_7d.asset_id  = ca.asset_id
 		  LEFT JOIN asset_volume_character avc    ON avc.asset_id        = ca.asset_id
+		  -- Curated third-party issuer labels (account_directory, migration
+		  -- 0136). Read ONLY by listingRankTierExpr's scam-flag demotion —
+		  -- the payload's issuer_directory_* fields are still stamped by the
+		  -- API layer's batch lookup, so this join changes ranking, never
+		  -- served data. Keyed on the issuer G-address exactly like
+		  -- v1.Server.fillIssuerDirectoryTags, so "demoted" and "shows the
+		  -- ⚠ Flagged pill" are the same set of rows. account_directory.address
+		  -- is the PRIMARY KEY, so this join can never fan a listing row out
+		  -- into duplicates; a NULL issuer (every Soroban-native row) simply
+		  -- misses and ranks normally.
+		  LEFT JOIN account_directory      dir    ON dir.address         = ca.issuer_g_strkey
 `
 
 // listAssetsBaseSelectSQL renders [listAssetsBaseSelect] with optional
@@ -862,12 +984,20 @@ const listAssetsBaseSelect = `
 // args slice. buildAssetsQuery owns the arg-numbering contract
 // (issuer is $1 when set, so the predicate is the literal
 // string "issuer_g_strkey = $1").
-func listAssetsBaseSelectSQL(pushdownPredicate string) string {
+func listAssetsBaseSelectSQL(pushdownPredicate string, order AssetsOrder) string {
+	// The rank-tier marker is substituted FIRST and unconditionally: the
+	// SELECT is one const shared by both orders but the tier is not, and
+	// leaving the marker in place would ship `/*RANK_TIER*/ AS rank_tier`
+	// — a syntax error, not a harmless comment. Exactly one occurrence.
+	base := strings.Replace(listAssetsBaseSelect, rankTierMarker, listingRankTierExpr(order), 1)
+	if strings.Contains(base, rankTierMarker) {
+		panic("listAssetsBaseSelectSQL: more than one " + rankTierMarker + " marker in the base SELECT")
+	}
 	if pushdownPredicate == "" {
 		// No pushdown — strip the marker comments. Leaving them
 		// in is harmless (they're valid SQL comments) but stripping
 		// keeps EXPLAIN output and pg_stat_statements normalised.
-		s := strings.ReplaceAll(listAssetsBaseSelect, "/*PUSHDOWN_BASE*/", "")
+		s := strings.ReplaceAll(base, "/*PUSHDOWN_BASE*/", "")
 		s = strings.ReplaceAll(s, "/*PUSHDOWN_QUOTE*/", "")
 		return s
 	}
@@ -882,7 +1012,7 @@ func listAssetsBaseSelectSQL(pushdownPredicate string) string {
 	// its pushdown and fell back to a full scan. The pushdown tests caught
 	// it. Keep this anchor in step with whatever CTE comes first.
 	s := strings.Replace(
-		listAssetsBaseSelect,
+		base,
 		"\n\t\tWITH catalogue_assets AS (",
 		chosenCTE+"catalogue_assets AS (",
 		1,
@@ -1026,68 +1156,123 @@ func buildAssetsQuery(limit int, issuer, code, cursor, q string, order AssetsOrd
 	if len(conds) > 0 {
 		where = " WHERE " + strings.Join(conds, " AND ")
 	}
-	return listAssetsBaseSelectSQL(pushdownPredicate) + where + assetsOrderBy(order) + " LIMIT " + limitPlaceholder, args
+	return listAssetsBaseSelectSQL(pushdownPredicate, order) + where + assetsOrderBy(order) + " LIMIT " + limitPlaceholder, args
 }
 
 // assetsCursorArgs returns the positional args appended for the
-// active cursor format. Empty cursor → no args.
+// active cursor format: (rank_tier, sort_key, asset_id) — the full
+// ORDER BY tuple, leading key first. Empty cursor → no args.
 func assetsCursorArgs(cursor string, order AssetsOrder) []any {
 	if cursor == "" {
 		return nil
 	}
 	if order == AssetsOrderVolume24hUSDDesc {
-		vol, assetID := parseVolumeCursor(cursor)
-		return []any{vol, assetID}
+		tier, vol, assetID := parseVolumeCursor(cursor)
+		return []any{tier, vol, assetID}
 	}
-	obsCount, assetID := parseAssetCursor(cursor)
-	return []any{obsCount, assetID}
+	tier, obsCount, assetID := parseAssetCursor(cursor)
+	return []any{tier, obsCount, assetID}
 }
 
 // assetsCursorPredicate returns the WHERE clause that resumes
 // pagination strictly past the supplied cursor under the active
-// ordering. `argEnd` is the index of the last cursor placeholder.
+// ordering. `argEnd` is the index of the last cursor placeholder
+// (asset_id); the sort key is at argEnd-1 and the rank tier at argEnd-2.
+//
+// The tuple is (rank_tier ASC, sort_key, asset_id ASC) and the predicate
+// mirrors it LEADING KEY FIRST — `t > ct OR (t = ct AND <rest>)`. Losing
+// the leading key here is what makes a keyset cursor drop rows: with the
+// tier in the ORDER BY but not the WHERE, page 2 would resume from the
+// cursor's volume inside tier 0 and silently skip every tier-1/2 row
+// whose volume was higher.
 func assetsCursorPredicate(order AssetsOrder, argEnd int) string {
+	tier := listingRankTierExpr(order)
 	if order == AssetsOrderVolume24hUSDDesc {
-		// Mixed-direction tuple compare: adjusted-volume DESC, asset_id ASC.
-		// Encode as `(v < cv) OR (v = cv AND asset_id > cid)`. The sort key
-		// is the §4-B concentration-adjusted volume (adjustedVolume24hExpr),
-		// so the keyset cursor encodes the SAME value the ORDER BY ranks on
-		// (the listing emits it as sort_vol_usd). The expression is
+		// Mixed-direction tuple compare: rank_tier ASC, adjusted-volume
+		// DESC, asset_id ASC. The volume sort key is the §4-B
+		// concentration-adjusted volume (adjustedVolume24hExpr), so the
+		// keyset cursor encodes the SAME value the ORDER BY ranks on (the
+		// listing emits it as sort_vol_usd). The expression is
 		// COALESCE-to-zero on the raw volume, so a NULL-volume asset sorts
 		// last as 0 exactly as before.
 		return fmt.Sprintf(
-			"(%s < $%d::numeric "+
-				"OR (%s = $%d::numeric AND ca.asset_id > $%d))",
+			"(%s > $%d::int OR (%s = $%d::int AND "+
+				"(%s < $%d::numeric OR (%s = $%d::numeric AND ca.asset_id > $%d))))",
+			tier, argEnd-2, tier, argEnd-2,
 			adjustedVolume24hExpr, argEnd-1, adjustedVolume24hExpr, argEnd-1, argEnd)
 	}
 	return fmt.Sprintf(
-		"(ca.observation_count, ca.asset_id) < ($%d, $%d)",
-		argEnd-1, argEnd)
+		"(%s > $%d::int OR (%s = $%d::int AND "+
+			"(ca.observation_count, ca.asset_id) < ($%d, $%d)))",
+		tier, argEnd-2, tier, argEnd-2, argEnd-1, argEnd)
 }
 
 func assetsOrderBy(order AssetsOrder) string {
+	// rank_tier leads every order (#356): a directory-flagged issuer's
+	// asset sorts below every unflagged one whatever the active sort key.
+	orderBy := " ORDER BY " + listingRankTierExpr(order) + " ASC, "
 	if order == AssetsOrderVolume24hUSDDesc {
-		// §4-B "annotate + demote": rank by the concentration-adjusted
-		// volume, not raw, so wash/operational assets don't sit atop the
-		// directory. The raw volume_24h_usd stays the visible payload value.
-		return " ORDER BY " + adjustedVolume24hExpr + " DESC, ca.asset_id ASC"
+		// §4-B "annotate + demote": within a tier, rank by the
+		// concentration-adjusted volume, not raw, so wash/operational assets
+		// don't sit atop the directory. The raw volume_24h_usd stays the
+		// visible payload value.
+		return orderBy + adjustedVolume24hExpr + " DESC, ca.asset_id ASC"
 	}
-	return " ORDER BY ca.observation_count DESC, ca.asset_id ASC"
+	return orderBy + "ca.observation_count DESC, ca.asset_id ASC"
 }
 
-// parseVolumeCursor decodes a `<vol_or_blank>:<asset_id>` cursor.
-// Empty volume sorts as 0 (joins the null-volume tail).
-func parseVolumeCursor(cursor string) (vol, assetID string) {
-	for i := 0; i < len(cursor); i++ {
-		if cursor[i] == ':' {
-			v := cursor[:i]
-			if v == "" {
-				v = "0"
-			}
-			return v, cursor[i+1:]
-		}
+// splitAssetsCursor splits a listing cursor into its rank tier, sort-key
+// prefix and asset_id. Two shapes are accepted:
+//
+//	"<tier>:<sort_key>:<asset_id>" — current (#356): the tier is the
+//	                                 LEADING ORDER BY key, so it leads
+//	                                 the cursor too.
+//	"<sort_key>:<asset_id>"        — legacy, pre-#356. Read as tier 0.
+//	                                 Every row a legacy cursor could have
+//	                                 been cut from is in tier 0 or later,
+//	                                 so an in-flight cursor resumes (it may
+//	                                 re-serve a demoted row the client
+//	                                 already saw, once) instead of 400ing.
+//
+// asset_id carries no ':' on this listing — classic ids are CODE-Gxxxx,
+// Soroban ids are bare C-strkeys, native is "native" — so counting
+// separators is unambiguous. ok=false means "no ':' at all".
+func splitAssetsCursor(cursor string) (tier, sortKey, assetID string, ok bool) {
+	first := strings.IndexByte(cursor, ':')
+	if first < 0 {
+		return "", "", "", false
 	}
-	return "0", ""
+	rest := cursor[first+1:]
+	second := strings.IndexByte(rest, ':')
+	if second < 0 {
+		return "0", cursor[:first], rest, true
+	}
+	return cursor[:first], rest[:second], rest[second+1:], true
+}
+
+// parseVolumeCursor decodes a `<tier>:<vol_or_blank>:<asset_id>` cursor.
+// Empty volume sorts as 0 (joins the null-volume tail); an unparseable
+// tier falls back to 0. Malformed cursors are the handler's job to
+// reject via [ValidateAssetsCursor] before this is reached.
+func parseVolumeCursor(cursor string) (tier int, vol, assetID string) {
+	tierStr, vol, assetID, ok := splitAssetsCursor(cursor)
+	if !ok {
+		return 0, "0", ""
+	}
+	if vol == "" {
+		vol = "0"
+	}
+	return atoiOrZero(tierStr), vol, assetID
+}
+
+// atoiOrZero parses a non-negative decimal string, returning 0 for
+// anything else (empty, signed, overflowing, non-digit).
+func atoiOrZero(s string) int {
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 // AssetPricePoint is one hourly USD-price sample in a price-history
@@ -1995,11 +2180,13 @@ const getAssetBySlugSQL = `
 		    -- which are never dust — leave source_count unmeasured so the
 		    -- valuation guard never suppresses here (shared scanAssetRow shape).
 		    NULL::int                             AS source_count,
-		    -- volume_character / sort_vol_usd are listing-only (single-asset
-		    -- reads don't rank); the detail stamps volume_character via the
-		    -- keyed AssetVolumeCharacterRollup lookup, not this projector.
+		    -- volume_character / sort_vol_usd / rank_tier are listing-only
+		    -- (single-asset reads don't rank); the detail stamps
+		    -- volume_character via the keyed AssetVolumeCharacterRollup
+		    -- lookup, not this projector.
 		    NULL::text                            AS volume_character,
-		    NULL::numeric                         AS sort_vol_usd
+		    NULL::numeric                         AS sort_vol_usd,
+		    NULL::int                             AS rank_tier
 		  FROM chosen ca
 		  LEFT JOIN per_asset_24h_vol vol ON true
 `
@@ -2190,7 +2377,8 @@ const getNativeAssetSQL = `
 		    -- unmeasured (shared scanAssetRow shape); the guard never fires.
 		    NULL::int                              AS source_count,
 		    NULL::text                             AS volume_character,
-		    NULL::numeric                          AS sort_vol_usd
+		    NULL::numeric                          AS sort_vol_usd,
+		    NULL::int                              AS rank_tier
 		  FROM ledger_bounds lb
 		  LEFT JOIN per_asset_24h_vol vol ON true
 `
@@ -2244,13 +2432,18 @@ func ValidateAssetsCursor(cursor string, order AssetsOrder) error {
 	if cursor == "" {
 		return nil
 	}
-	idx := strings.IndexByte(cursor, ':')
-	if idx < 0 {
+	tier, prefix, suffix, ok := splitAssetsCursor(cursor)
+	if !ok {
 		return fmt.Errorf("missing ':' separator")
 	}
-	prefix, suffix := cursor[:idx], cursor[idx+1:]
 	if suffix == "" {
 		return fmt.Errorf("missing asset_id suffix")
+	}
+	// Rank tier — the leading ORDER BY key (#356). Synthesised as "0" for
+	// a legacy two-field cursor, so this only rejects a genuinely
+	// malformed three-field one.
+	if !isDigitString(tier) {
+		return fmt.Errorf("non-numeric rank-tier prefix")
 	}
 	if order == AssetsOrderVolume24hUSDDesc {
 		// Volume prefix may be empty (last row had a null vol_usd)
@@ -2263,12 +2456,23 @@ func ValidateAssetsCursor(cursor string, order AssetsOrder) error {
 	if prefix == "" {
 		return fmt.Errorf("missing observation_count prefix")
 	}
-	for j := 0; j < len(prefix); j++ {
-		if prefix[j] < '0' || prefix[j] > '9' {
-			return fmt.Errorf("non-numeric observation_count prefix")
-		}
+	if !isDigitString(prefix) {
+		return fmt.Errorf("non-numeric observation_count prefix")
 	}
 	return nil
+}
+
+// isDigitString reports whether s is a non-empty run of ASCII digits.
+func isDigitString(s string) bool {
+	if s == "" {
+		return false
+	}
+	for j := 0; j < len(s); j++ {
+		if s[j] < '0' || s[j] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // isNumericPrefix returns true for a non-empty digit string with
@@ -2289,36 +2493,52 @@ func isNumericPrefix(s string) bool {
 	return true
 }
 
-// parseAssetCursor decodes a `<obs_count>:<asset_id>` cursor.
-// Empty cursor → (0, "") which means "no cursor". Malformed
+// parseAssetCursor decodes a `<tier>:<obs_count>:<asset_id>` cursor.
+// Empty cursor → (0, 0, "") which means "no cursor". Malformed
 // cursors fall through to the same; the handler is responsible
 // for rejecting them via ValidateAssetsCursor before this is
 // reached.
-func parseAssetCursor(cursor string) (obsCount int64, assetID string) {
+func parseAssetCursor(cursor string) (tier int, obsCount int64, assetID string) {
 	if cursor == "" {
-		return 0, ""
+		return 0, 0, ""
 	}
-	for i := 0; i < len(cursor); i++ {
-		if cursor[i] == ':' {
-			n := int64(0)
-			for j := 0; j < i; j++ {
-				c := cursor[j]
-				if c < '0' || c > '9' {
-					return 0, ""
-				}
-				n = n*10 + int64(c-'0')
-			}
-			return n, cursor[i+1:]
-		}
+	tierStr, obsStr, assetID, ok := splitAssetsCursor(cursor)
+	if !ok || !isDigitString(obsStr) {
+		return 0, 0, ""
 	}
-	return 0, ""
+	n, err := strconv.ParseInt(obsStr, 10, 64)
+	if err != nil {
+		return 0, 0, ""
+	}
+	return atoiOrZero(tierStr), n, assetID
 }
 
-// EncodeAssetCursor pairs with parseAssetCursor — the API handler
-// emits the encoded form as the next-page cursor in pagination
-// meta. Exported so v1/asset_catalogue.go can call it without duplicating.
-func EncodeAssetCursor(obsCount int64, assetID string) string {
-	return fmt.Sprintf("%d:%s", obsCount, assetID)
+// EncodeAssetsCursor renders the keyset cursor for the LAST row of a
+// page under `order`: `<rank_tier>:<sort_key>:<asset_id>` — the full
+// ORDER BY tuple, leading key first, exactly the values the query ranked
+// this row on. Pairs with [parseAssetCursor] / [parseVolumeCursor].
+//
+// It lives here rather than in each handler's fmt.Sprintf so the encode
+// side cannot drift from assetsOrderBy + assetsCursorPredicate; the two
+// /v1/assets paths (the observation-count listing and the unified
+// listing's classic phase) both call it.
+//
+// RankTier nil (a row that did not come from the listing query) encodes
+// as tier 0 — the same tier a legacy cursor resumes in.
+func EncodeAssetsCursor(row AssetRow, order AssetsOrder) string {
+	tier := 0
+	if row.RankTier != nil {
+		tier = *row.RankTier
+	}
+	sortKey := ""
+	if order == AssetsOrderVolume24hUSDDesc {
+		if row.SortVolume24hUSD != nil {
+			sortKey = *row.SortVolume24hUSD
+		}
+	} else {
+		sortKey = strconv.FormatInt(row.ObservationCount, 10)
+	}
+	return fmt.Sprintf("%d:%s:%s", tier, sortKey, row.AssetID)
 }
 
 // GetAssetsPriceHistory24hBatch returns 24h hourly USD-price series
