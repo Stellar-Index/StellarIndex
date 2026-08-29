@@ -380,6 +380,37 @@ decoders record unmapped slots verbatim as `raw:<symbol>` rows
 (`canonical.AssetOracleRaw`, oracle capture-totality design) the counter
 keeps incrementing — a raw row is still a mapping gap to close.
 
+### `stellarindex_source_unrepresentable_symbols_total`
+
+Counter, label `source`.
+
+Oracle asset slots **dropped** because the published symbol / feed-id
+cannot be held even by the record layer's verbatim `raw:` namespace:
+empty, longer than 64 bytes, or carrying a byte outside printable
+ASCII `0x21-0x7E` (`canonical.NewOracleRawAsset`).
+
+Deliberately separate from `stellarindex_source_unknown_symbols_total`.
+That counter means "recorded as `raw:<symbol>`" — the row exists and a
+later allow-list / feed-registry entry promotes it in place. This one
+is a **hole**: nothing was written, so closing it needs the registry
+entry *and* a replay of the affected ledgers. One shared series would
+send operators hunting for raw rows that do not exist.
+
+Only an ScString-keyed oracle can reach it in practice: RedStone
+feed_ids are `ScString` (arbitrary bytes, unbounded length) while
+Reflector / Band symbols are `ScSymbol`. The refusal is per-SLOT, not
+per-event (#291) — `write_prices` batches every updated feed into one
+event, so an event-level refusal would take all ~19 RedStone feeds
+dark until a code change, the inverse of oracle capture-totality. The
+dropped slot's identity is in the accompanying WARN log line
+(`redstone: dropping slot with unrepresentable feed_id`).
+
+Alert: `stellarindex_ingestion_oracle_unrepresentable_symbols` (any
+per-source increase over a trailing 25 h, sustained 30 min — same
+window as its unknown-symbols sibling so a daily-cadence oracle cannot
+flap) → runbook
+[oracle-unknown-symbols](../../operations/runbooks/oracle-unknown-symbols.md).
+
 ### `stellarindex_source_orphan_events_total`
 
 Counter, label `source`.

@@ -1,6 +1,6 @@
 ---
 title: Runbook — oracle-unknown-symbols
-last_verified: 2026-08-28
+last_verified: 2026-08-29
 status: draft
 severity: P3
 ---
@@ -11,7 +11,7 @@ severity: P3
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellarindex_ingestion_oracle_unknown_symbols` |
+| Alert | `stellarindex_ingestion_oracle_unknown_symbols`, `stellarindex_ingestion_oracle_unrepresentable_symbols` |
 | Severity | P3 (ticket) |
 | Detected by | Prometheus rule in `deploy/monitoring/rules/ingestion.yml` (and `configs/prometheus/rules.r1/ingestion.yml` R1 overlay) |
 | Typical MTTR | Hours — the fix is an allow-list / feed-registry amendment plus a replay, not a restart |
@@ -95,6 +95,45 @@ There is no runtime mitigation — the fix is a code change:
       and, post-replay, the `SELECT … WHERE asset LIKE 'raw:%'` count
       for that symbol is 0.
 
+## Sibling alert — `stellarindex_ingestion_oracle_unrepresentable_symbols`
+
+Same runbook, one rung worse. `stellarindex_source_unknown_symbols_total`
+means the slot **was written** as `raw:<symbol>`; a later registry entry
+promotes it in place. `stellarindex_source_unrepresentable_symbols_total`
+means the slot was **dropped with no row at all** — the published
+symbol / feed_id fails even the permissive `raw:` validator
+(`canonical.NewOracleRawAsset`: empty, > 64 bytes, or a byte outside
+printable ASCII `0x21-0x7E`).
+
+Only an ScString-keyed oracle can realistically reach it: RedStone
+feed_ids are `ScString` (arbitrary bytes, unbounded length) while
+Reflector / Band symbols are `ScSymbol`. The refusal is per-SLOT, not
+per-event (#291) — `write_prices` batches every updated feed into one
+event, so refusing the event would take all ~19 RedStone feeds dark.
+
+Diagnose from the WARN line, which carries the slot and the offending
+bytes (slog escapes them; they are unvalidated relayer input):
+
+```sh
+curl -s http://localhost:9100/metrics | grep source_unrepresentable_symbols_total
+journalctl -u stellarindex-indexer --since -1d | grep 'unrepresentable feed_id' | tail
+```
+
+Mitigation is the Mitigation checklist above with two differences:
+
+- The `raw:%` query in step 3 of Quick diagnosis will find **nothing**
+  for this feed — there is no row to size the hole with. Size it from
+  the WARN-line ledger range instead.
+- The replay is mandatory, not an optimisation: no row exists to
+  promote, so only a re-derive of the affected ledgers can land the
+  missing prices.
+
+If the feed_id is genuinely un-mappable (relayer garbage rather than a
+real feed), the correct outcome is that the counter keeps rising and
+the slot stays absent — record that decision on the ticket rather than
+widening `canonical.validateRawSymbol`, which bounds what a buggy or
+malicious relayer can make us persist.
+
 ## Root cause analysis
 
 - The offending symbol(s) from the indexer log and the first ledger
@@ -121,6 +160,9 @@ There is no runtime mitigation — the fix is a code change:
 - Metric: `internal/obs/metrics.go` `SourceUnknownSymbolsTotal`;
   emitters `internal/sources/reflector/decode.go`,
   `internal/sources/redstone/decode.go`, `internal/sources/band/decode.go`.
+- Metric: `internal/obs/metrics.go` `SourceUnrepresentableSymbolsTotal`;
+  sole emitter `internal/sources/redstone/decode.go`
+  (`noteUnrepresentableFeed`).
 - Design: `docs/design/oracle-capture-totality-design.md`; the
   `canonical.AssetOracleRaw` variant in `internal/canonical/asset_raw.go`.
 - Companion runbook (whole-event decode failures, the all-unknown
@@ -132,3 +174,7 @@ There is no runtime mitigation — the fix is a code change:
 
 - 2026-08-28 — initial draft (oracle capture-totality PR-1; the counter
   had no alert consumer since F-1234).
+- 2026-08-29 — cover the sibling
+  `stellarindex_ingestion_oracle_unrepresentable_symbols` alert (#291):
+  a RedStone `ScString` feed_id the raw validator refuses now drops
+  ONE slot instead of blacking out the whole write_prices batch.
