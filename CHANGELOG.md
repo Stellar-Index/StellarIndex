@@ -417,6 +417,42 @@ against.
   vendored schema (a bump without a re-vendor fails rather than
   validating against a stale copy). Fails loudly if the action step
   disappears, so it can never pass vacuously. (#317)
+- **The MEV liquidation-cascade path stops treating unmapped `raw:`
+  oracle rows as evidence — a squash merge had silently reverted the
+  guard.** `af5a9d1d` (#305, a pgBackRest ansible change whose base
+  predated `2ce680f3`) landed a tree that removed PR #248's oracle
+  capture-totality consumer guards and DELETED their tests. From that
+  merge until now, `OracleUpdatesForMEVScan` no longer carried
+  `AND asset NOT LIKE 'raw:%'` and `buildCascadeCandidate` no longer
+  called `oracleRefIsMapped`, so the one `oracle_updates` consumer with
+  NO asset keying — for the cascade correlator, any oracle row inside a
+  fill's ledger bracket is evidence — was again fed the
+  orientation-unknown `raw:<symbol>` rows the totality design records
+  verbatim. Both guards are restored verbatim, together with the two
+  deleted regression tests (`mev_shape_test.go`, `cascade_raw_test.go`)
+  and a behavioural assertion on the statement the store actually issues
+  (`TestOracleUpdatesForMEVScan_ExcludesRawRowsFromTheIssuedSQL`), which
+  survives a refactor away from the query const. Red-proven against
+  `origin/main`'s own files at `0f13aa14`: twelve `raw:NOTACOIN` rows
+  and no mapped row at all minted a complete `liquidation_cascade`
+  event naming four real accounts on the public `/v1/mev` feed.
+  **Still reverted by the same merge and deliberately NOT restored
+  here** — each needs its own change, and the v0.48.0 entry describing
+  them is ahead of the code until then: `internal/divergence/oracle.go`'s
+  unmapped-row refusal (+ its `oracle_raw_test.go`); the
+  `-- totality: includes unmapped` markers and the "Unmapped feeds" KPI
+  in `internal/storage/timescale/{oracle,bespoke_oracle,diagnostics,
+  protocol_stats}.go` (+ the `bespoke_oracle_shape_test.go` assertion);
+  the repo guard `TestOracleUpdatesQueriesDeclareRawRowPolicy`
+  (`oracle_updates_query_guard_test.go`); and
+  `test/integration/oracle_raw_consumers_test.go`.
+- **`ListMEVEvents`' doc comment claimed a cap it does not apply.** It
+  said "limit is capped at 500"; an out-of-range limit actually falls
+  back to the 50-row default, which is the package's convention
+  (`ListIssuers`, `ListFreezeEvents`, `ListDivergenceLatest`) and is
+  unreachable from `/v1/mev` anyway (`parseExplorerLimit` 400s an
+  out-of-range `?limit=`). Comment corrected to the real contract and
+  pinned by `TestListMEVEvents_LimitNormalisation`; behaviour unchanged.
 - **Gap detector pre-registers `runs_total` at 0 so a restart cannot read
   as a dead detector.** `stellarindex_ingest_gap_detector_runs_total` is a
   CounterVec that only materialises a series on first `Inc()`, and since
