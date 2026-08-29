@@ -422,6 +422,25 @@ clickhouse_ops_batch_os_thread_priority: 5
 # /etc/default/stellarindex-ops, mode 0640 root:stellarindex).
 clickhouse_ops_batch_password: "{{ vault_clickhouse_ops_batch_password | default('') }}"
 
+# ───── ClickHouse destructive-DDL size guard (2026-08-29 r1 audit) ─────
+# ClickHouse refuses DROP TABLE / TRUNCATE / DROP|REPLACE PARTITION on
+# anything larger than max_table_size_to_drop / max_partition_size_to_drop
+# unless the operator first touches /var/lib/clickhouse/flags/force_drop_table
+# — the one line between a typo'd `DROP TABLE` and losing a 582 GiB
+# account_movements. ClickHouse's own default is 50 GB (53687091200 bytes);
+# r1 was measured at 1 TiB for BOTH, set by hand for D2's REPLACE PARTITION
+# (2026-07) and never codified or lowered, so every big lake table was
+# droppable with no second step. This drop-in pins the guard back to
+# ClickHouse's default on every host. Raising it is NOT the way to do a
+# planned big drop — the force flag is (one drop per touch, self-deleting);
+# see docs/operations/clickhouse-destructive-ddl.md for the procedure
+# (ZFS snapshot first, then the flag, then the statement). 0 = unlimited
+# and is refused by the task file.
+# Hot-reloaded by clickhouse-server (config.d reloader) — no restart.
+clickhouse_drop_guard_enabled: true
+clickhouse_max_table_size_to_drop: 53687091200       # 50 GiB — ClickHouse default
+clickhouse_max_partition_size_to_drop: 53687091200   # 50 GiB — ClickHouse default
+
 # ───── stellarindex-indexer / aggregator / api services ───────────────
 run_stellarindex: true
 
