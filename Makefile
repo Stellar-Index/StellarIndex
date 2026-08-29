@@ -233,6 +233,10 @@ lint-imports: ## Import-boundary lint (production ingest doesn't import stellar-
 lint-lexicon: ## Domain-lexicon + idiom ratchet (asset-not-coin, Options-struct ctors, slog-only; docs/architecture/lexicon.md)
 	@./scripts/ci/lint-lexicon.sh
 
+.PHONY: lint-golangci-config
+lint-golangci-config: ## Offline JSON-Schema check of .golangci.yml (#317 — no golangci-lint.run fetch at PR time)
+	@$(GO) run ./scripts/ci/lint-golangci-config
+
 .PHONY: lint-openapi-urls
 lint-openapi-urls: ## ADR-0018 URL-discipline check on the OpenAPI spec
 	@$(GO) run ./scripts/ci/lint-openapi-urls openapi/stellar-index.v1.yaml
