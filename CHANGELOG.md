@@ -17,6 +17,30 @@ against.
 
 ### Added
 
+- **AWS Public Blockchain dataset drift monitor** (audit 2026-08-29,
+  backup-restore-6). r1's galexie-archive was trimmed below ledger
+  49,984,000 on 2026-07-26, so the second raw-LCM archive ADR-0043
+  relies on is the third-party `aws-public-blockchain` pubnet dataset
+  — and nothing watched it. `.github/workflows/public-dataset-check.yml`
+  (weekly + dispatch, no credentials, `--no-sign-request`, first-party
+  actions only) now asserts contiguous 64,000-ledger coverage from
+  genesis to ≥ tip − 2 partitions, the `HEX--start-end` naming, an
+  unchanged `.config.json` manifest and the trimmed range
+  `[64000, 49983999]` fully present; drift opens/updates ONE "AWS
+  Public Blockchain dataset drift" issue (auto-closed when intact) and
+  never fails the scheduled run red. Decision core
+  `scripts/ci/check-public-dataset.sh`, fixture-tested in `ci`
+  (`check-public-dataset-test.sh`: gap inside/above the trimmed range,
+  misnamed partition, manifest change, stalled publication all RED).
+
+### Changed
+
+- **ADR-0043 §2 amended (2026-08-29):** "two independent raw-LCM
+  archives" now explicitly = our recent range + the AWS Public
+  Blockchain dataset; dependency accepted and monitored rather than
+  duplicated, with the one-time cross-region copy (≈ $80 + $3–4/mo)
+  recorded as the not-taken option. `off-site-backup-plan.md` status
+  carries the same note.
 - **Public status page shows backup freshness (Ash, 2026-08-29).** New
   read-only `GET /v1/diagnostics/backups` (experimental) reports the
   pgBackRest last full / diff / WAL-archive age, the per-repository

@@ -55,6 +55,48 @@ strategy: the lake's ground truth (raw LCM) already exists in two
 independent archives, and paying object-storage for a third copy of
 derived data is poor spend. Instead, three cheaper guarantees:
 
+> **§2 amended 2026-08-29 (audit backup-restore-6).** "Two independent
+> archives" is no longer two archives *we hold*. r1's `galexie-archive`
+> was capacity-trimmed below ledger 49,984,000 on 2026-07-26 (ADR-0027
+> hot floor; `galexie-archive-trim` deletes an object only after the
+> matching AWS object HEADs OK), so what we hold is the genesis chunk
+> `[0, 63999]` plus `[49984000, tip]`. The second archive — and the
+> **only** copy of `[64000, 49983999]` (~50M ledgers, ~2.3 TiB) we can
+> reach — is the **AWS Public Blockchain dataset**
+> (`s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet/`, AWS Open
+> Data Sponsorship, anonymous read). Verified 2026-08-29: 1,003
+> contiguous 64,000-ledger partitions covering `0..64,191,999` (to
+> tip), manifest `{ledgersPerBatch: 1, batchesPerPartition: 64000,
+> compression: zstd}`, pubnet passphrase.
+>
+> **Decision: accept the dependency; do not duplicate the public data
+> into our own storage.** The dataset is the same raw LCM SDF's
+> `history.stellar.org` archives can regenerate, so its loss is a
+> *time* exposure (re-export from a captive core replaying public
+> history), not a *data* exposure. A ~2.3 TiB Deep Archive copy of a
+> public dataset buys RTO on a program-shutdown scenario that has never
+> happened, and would itself need a fill/verify pipeline.
+>
+> **Consequences.** (a) Deep-history re-derive (§2.2, the restore
+> drill's CH half, `galexie-archive-fill`, ADR-0027 cold reads) depends
+> on a third party we do not control and that carries no SLA. (b) That
+> dependency is therefore **monitored, not assumed**:
+> `.github/workflows/public-dataset-check.yml` lists the bucket weekly
+> (no credentials, `--no-sign-request`) and asserts contiguous coverage
+> `0..≥ tip − 2 partitions`, the `HEX--start-end` naming, an unchanged
+> manifest, and the trimmed range `[64000, 49983999]` fully present;
+> drift opens/updates a single "AWS Public Blockchain dataset drift"
+> issue (decision core `scripts/ci/check-public-dataset.sh`,
+> fixture-tested in CI). (c) `docs/architecture/multi-region-ha.md` §5
+> still lists a full off-site raw archive incl. a one-time pull of the
+> middle range as the target that closes this exposure; until that is
+> funded, this monitor is the control. (d) **Explicit option, not
+> taken:** if zero third-party dependence is ever wanted, a one-time
+> cross-region S3 copy of the middle range into an account we own is
+> ≈ $80 one-off (2.3 TiB × cross-region transfer) + ≈ $3–4/mo (S3 Deep
+> Archive) — trigger it from the drift issue if the dataset ever stops
+> matching the assertions above.
+
 1. **Schema + state backup (tiny, daily):** `SHOW CREATE` DDL for
    every table + the ch-live-catchup/backfill cursor state, pushed to
    repo2 alongside pgBackRest. Losing DDL/config is what turns a
