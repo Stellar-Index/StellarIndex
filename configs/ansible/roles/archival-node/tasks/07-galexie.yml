@@ -99,7 +99,7 @@
       (docs/operations/runbooks/galexie-catchup-refused.md).
   when:
     - not ansible_check_mode
-    - galexie_active_for_upgrade.stdout | default('') == 'active'
+    - galexie_active_for_upgrade.stdout | default('') not in ['inactive', 'failed']
     - galexie_version != (galexie_stamp.content | default('') | b64decode | trim)
     - not (galexie_restart_ack | bool)
 

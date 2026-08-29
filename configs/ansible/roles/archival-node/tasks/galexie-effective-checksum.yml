@@ -118,5 +118,5 @@
   when:
     - not ansible_check_mode
     - galexie_effective_changed | length > 0
-    - galexie_active_probe.stdout | default('') == 'active'
+    - galexie_active_probe.stdout | default('') not in ['inactive', 'failed']
     - not (galexie_restart_ack | bool)
