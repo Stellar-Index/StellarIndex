@@ -1,7 +1,7 @@
 ---
 title: Runbook — rpc-lag
-last_verified: 2026-05-03
-status: draft
+last_verified: 2026-08-29
+status: current (alert inert on r1)
 severity: P2
 ---
 
@@ -17,21 +17,25 @@ severity: P2
 > `go-stellar-sdk/ingest.ApplyLedgerMetadata`
 > ([architecture/ingest-pipeline.md](../../architecture/ingest-pipeline.md));
 > stellar-rpc is preserved only for the `rpc-probe` operator
-> diagnostic and for fixture capture in `scripts/dev/`. The alert
-> remains in `deploy/monitoring/rules/stellar.yml` for revival when
-> a customer-facing RPC façade is on the roadmap (none today). If
-> this alert reaches you on r1 it indicates a Prometheus
-> misconfiguration, not an upstream lag.
+> diagnostic and for fixture capture in `scripts/dev/`. The rule
+> remains in BOTH trees (`deploy/monitoring/rules/stellar.yml` and
+> the r1 overlay `configs/prometheus/rules.r1/stellar.yml`) for
+> revival when a customer-facing RPC façade is on the roadmap
+> (none today); the metric is allowlisted in
+> `scripts/ci/lint-metric-refs.sh`'s `KNOWN_INERT` list, so the
+> lint won't flag the producerless reference. If this alert
+> reaches you on r1 it indicates a Prometheus misconfiguration,
+> not an upstream lag.
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellarindex_stellar_rpc_lag` |
-| Severity | P2 (ticket) |
-| Detected by | `deploy/monitoring/rules/stellar.yml` |
+| Alert | `stellarindex_stellar_rpc_lag` — **inert on r1, see banner** |
+| Severity | P2 (`severity: ticket`) |
+| Detected by | `configs/prometheus/rules.r1/stellar.yml` (group `stellarindex.stellar`, `severity: ticket`, `for: 5m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/stellar.yml`. Inert in both today (no metric producer). |
 | Typical MTTR | 5–30 min |
-| Impact | Every indexing source reads from stellar-rpc. When the RPC's `latestLedger` lags wall-clock, our entire ingestion pipeline falls behind — affects the freshness of every API-served price. |
+| Impact | Historical/future-tense: in an RPC-façade deployment, consumers of that façade would lag as its `latestLedger` fell behind wall-clock. Production ingest (Galexie → MinIO → `internal/ledgerstream`) does not read from stellar-rpc at all and is unaffected. |
 
 ## Symptoms
 
@@ -83,8 +87,8 @@ Key signals:
 ## Related
 
 - `source-stopped.md` — downstream effect when the RPC is completely unavailable vs just lagging.
-- `core-lag.md` — captive-core-side version of the same issue.
-- `all-ingestion-down.md` — P1 when the RPC failure takes ALL sources down simultaneously.
+- `core-lag.md` — captive-core-side version of the same issue (also inert today: no standalone stellar-core on r1).
+- `all-ingestion-down.md` — its "RPC failure takes ALL sources down" branch is historical; production ingest no longer flows through stellar-rpc.
 - stellar-rpc docs — `https://developers.stellar.org/docs/data/rpc/` for operator-side recovery guidance.
 
 ## Changelog
@@ -93,3 +97,10 @@ Key signals:
 - 2026-04-30 — top-of-file deployment-posture callout: this alert
   is inert on r1 (stellar-rpc removed 2026-04-23) and is retained
   for any future RPC-façade deployment.
+- 2026-08-29 — re-verified against HEAD: banner extended with the
+  dual-tree + KNOWN_INERT facts (both rule trees carry the rule;
+  metric allowlisted in lint-metric-refs.sh), Impact rewritten to
+  past/future-tense (production ingest is Galexie → MinIO →
+  ledgerstream, unaffected), core-lag noted as also inert,
+  all-ingestion-down's RPC line marked historical, dual-tree
+  Detected-by. Status draft → current (alert inert on r1).
