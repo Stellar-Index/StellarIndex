@@ -952,6 +952,12 @@ jobs:
         # in configs/ansible/.ansible-lint (auto-discovered from this dir);
         # burn that list down to re-enable each rule as an enforced gate.
         run: ansible-lint --profile moderate roles/ playbooks/
+      - name: secret-rendering template tasks suppress --diff
+        # backup-restore-7 (audit-2026-08-28): a template task that inlines
+        # vault secrets (pgbackrest cipher-pass, S3 key pair) without
+        # `diff: false` prints them into the weekly ansible-drift job log
+        # via `--check --diff`. Pure-Python (PyYAML); also in verify.sh.
+        run: python3 ./scripts/ci/lint-ansible-secret-diff.py
 
   branch-protection-status:
     name: branch protection status (informational)
