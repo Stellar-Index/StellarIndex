@@ -248,13 +248,35 @@ func retryInfra(ctx context.Context, logger *slog.Logger, op string, do func(con
 // extBuf may be nil (shutdown drain / projector / backfill paths that
 // carry no external trades) — then every trade block-and-retries within
 // the caller's bounded context.
-func flushTradeBatch(ctx context.Context, logger *slog.Logger, w tradeWriter, extBuf *externalRetryBuffer, batch []canonical.Trade, workerID int) {
+//
+// Returns the trades that were NEITHER written NOR permanently dropped
+// because ctx was cancelled mid-flush (nil otherwise). The caller owns
+// what happens to them: [persistWorker]'s steady-state flush runs under
+// the parent ctx, so a shutdown that races an in-flight write cancels
+// it — those rows must be carried into the worker's bounded shutdown
+// drain (flushShutdown) and retried there, exactly as the
+// sorobanevents AsyncSink does (#240). They used to be abandoned right
+// here: the cancelled batch fell into the per-row isolation pass, every
+// row's InsertTrade failed instantly against the same dead ctx, and up
+// to [tradeBatchSize] already-accepted trades were logged as
+// "abandoned — re-derive" on every deploy that caught a flush in
+// flight — while flushShutdown's [drainTimeout] budget sat unused. The
+// bounded shutdown callers report whatever comes back via
+// [reportAbandonedTrades]: for them the ctx deadline IS the drain
+// budget, so an abandon there is a genuine loss.
+func flushTradeBatch(ctx context.Context, logger *slog.Logger, w tradeWriter, extBuf *externalRetryBuffer, batch []canonical.Trade, workerID int) []canonical.Trade {
 	if len(batch) == 0 {
-		return
+		return nil
 	}
 	err := w.BatchInsertTrades(ctx, batch)
 	if err == nil {
-		return
+		return nil
+	}
+	if isCtxErr(err) {
+		// ctx died under the write. Not a fault of the data or the
+		// database, and a per-row pass against a dead ctx can only fail
+		// every row instantly — hand the whole batch back to the caller.
+		return batch
 	}
 
 	if !timescale.IsInfraError(err) {
@@ -269,10 +291,13 @@ func flushTradeBatch(ctx context.Context, logger *slog.Logger, w tradeWriter, ex
 		// once an unclassified fault started retrying instead of dropping).
 		logger.Warn("batch trade insert failed (non-infra); isolating per-row",
 			"worker", workerID, "batch_size", len(batch), "err", err)
+		var abandoned []canonical.Trade
 		for _, t := range batch {
-			persistTradeRouted(ctx, logger, w, extBuf, t)
+			if e := persistTradeRouted(ctx, logger, w, extBuf, t); e != nil && isCtxErr(e) {
+				abandoned = append(abandoned, t)
+			}
 		}
-		return
+		return abandoned
 	}
 
 	// Infrastructure fault: Postgres is unreachable / restarting. Route
@@ -288,8 +313,31 @@ func flushTradeBatch(ctx context.Context, logger *slog.Logger, w tradeWriter, ex
 		onchain = append(onchain, t)
 	}
 	if len(onchain) > 0 {
-		retryOnChainBatchBlocking(ctx, logger, w, onchain)
+		return retryOnChainBatchBlocking(ctx, logger, w, onchain)
 	}
+	return nil
+}
+
+// reportAbandonedTrades surfaces trades a BOUNDED shutdown flush could
+// not land before its deadline — the rows [flushTradeBatch] returns to a
+// caller whose ctx deadline is the drain budget itself. Logged at ERROR
+// with the ledger range because that is the single artifact telling an
+// operator what to re-derive: the raw ops are durable in the CH lake
+// (ADR-0034), so the range is recoverable via `stellarindex-ops
+// ch-rebuild -sdex-gaps` and the completeness timer. No-op on an empty
+// slice so callers can pass flushTradeBatch's result straight through.
+//
+// NOT called for a steady-state flush the parent ctx interrupted —
+// persistWorker carries those rows into its shutdown drain instead,
+// and an ERROR here would send an operator re-deriving a range that
+// lands a moment later.
+func reportAbandonedTrades(logger *slog.Logger, phase string, abandoned []canonical.Trade, err error) {
+	if len(abandoned) == 0 {
+		return
+	}
+	lo, hi := ledgerRange(abandoned)
+	logger.Error("trade batch abandoned on shutdown — recoverable from the CH lake (ADR-0034); re-derive this ledger range",
+		"phase", phase, "batch_size", len(abandoned), "ledger_from", lo, "ledger_to", hi, "err", err)
 }
 
 // persistTradeRouted persists ONE trade with the ADR-0041 policy while
@@ -308,52 +356,58 @@ func flushTradeBatch(ctx context.Context, logger *slog.Logger, w tradeWriter, ex
 // fault returned immediately. Now that such a fault blocks-and-retries,
 // routing external rows here is what keeps "external never blocks the
 // pipeline" (ADR-0041 acceptance caveat) true.
-func persistTradeRouted(ctx context.Context, logger *slog.Logger, w tradeWriter, extBuf *externalRetryBuffer, t canonical.Trade) {
+//
+// Returns persistTrade's abandon error (ctx cancelled mid-retry) for a
+// trade that block-retried, so [flushTradeBatch] can hand the un-landed
+// row back to its caller; nil when the trade landed, was permanently
+// dropped, or was handed to the external retry buffer (not lost).
+func persistTradeRouted(ctx context.Context, logger *slog.Logger, w tradeWriter, extBuf *externalRetryBuffer, t canonical.Trade) error {
 	if extBuf == nil || external.IsOnChain(t.Source) {
-		// Batch path runs under an indefinite ctx and owns its own shutdown
-		// drain, so persistTrade's abandon error (returned only on ctx-cancel)
-		// is intentionally ignored here.
-		_ = persistTrade(ctx, logger, w, t)
-		return
+		return persistTrade(ctx, logger, w, t)
 	}
 	err := w.InsertTrade(ctx, t)
 	if err == nil {
-		return
+		return nil
 	}
 	if classifyFault(err) == faultData {
 		obs.SourceInsertErrorsTotal.WithLabelValues(t.Source, "trade").Inc()
 		logger.Error("insert external trade failed (permanent data fault) — row skipped",
 			"source", t.Source, "ledger", t.Ledger, "tx_hash", t.TxHash,
 			"op_index", t.OpIndex, "err", err)
-		return
+		return nil
 	}
 	extBuf.enqueue(t) // bounded async retry, drop-oldest on overflow
+	return nil
 }
 
 // retryOnChainBatchBlocking block-retries an on-chain trade batch until
-// it lands (cursor gating) or the context is cancelled. On shutdown the
-// abandoned ledger range is logged at ERROR — the raw ops are durable in
-// the CH lake (ADR-0034), so the range is re-derivable.
-func retryOnChainBatchBlocking(ctx context.Context, logger *slog.Logger, w tradeWriter, batch []canonical.Trade) {
+// it lands (cursor gating) or the context is cancelled. Returns the
+// trades still un-landed when ctx was cancelled (the whole batch, or
+// the rows a per-row isolation pass had not yet landed) so the caller
+// decides between carrying them into the shutdown drain and reporting
+// them via [reportAbandonedTrades]; nil once everything has landed or
+// been permanently dropped.
+func retryOnChainBatchBlocking(ctx context.Context, logger *slog.Logger, w tradeWriter, batch []canonical.Trade) []canonical.Trade {
 	err := retryInfra(ctx, logger, "onchain_batch", func(c context.Context) error {
 		return w.BatchInsertTrades(c, batch)
 	})
 	switch {
 	case err == nil:
-		return
+		return nil
 	case isCtxErr(err):
-		lo, hi := ledgerRange(batch)
-		logger.Error("on-chain trade batch abandoned on shutdown — recoverable from the CH lake (ADR-0034); re-derive this ledger range",
-			"batch_size", len(batch), "ledger_from", lo, "ledger_to", hi, "err", err)
+		return batch
 	default:
 		// A non-infra fault surfaced from a retry attempt (a bad row that
 		// only errors once the DB is reachable) → isolate per-row.
 		logger.Warn("on-chain trade batch hit a non-infra fault after retry; isolating per-row",
 			"batch_size", len(batch), "err", err)
+		var abandoned []canonical.Trade
 		for _, t := range batch {
-			// Indefinite-ctx batch path; abandon error handled by the drain.
-			_ = persistTrade(ctx, logger, w, t)
+			if e := persistTrade(ctx, logger, w, t); e != nil && isCtxErr(e) {
+				abandoned = append(abandoned, t)
+			}
 		}
+		return abandoned
 	}
 }
 
