@@ -197,6 +197,29 @@ against.
 
 ### Fixed
 
+- **`usd-volume-restamp`'s lifted decompression cap can no longer ride the
+  pooled connection out of the call.** `RestampExactTierUSDVolume` raised
+  `timescaledb.max_tuples_decompressed_per_dml_transaction = 0` with a
+  session-level `SET` on a borrowed `*sql.Conn`, and its comment claimed
+  that was "session-scoped … must not leak into the pool's serving
+  connections". Mechanically it was the opposite: `Conn.Close` returns the
+  connection TO the pool and pgx v5 stdlib's default `ResetSession` is a
+  no-op (it pings and discards a conn left mid-transaction; it issues no
+  `DISCARD ALL`/`RESET ALL`), so the lifted cap persisted on that pooled
+  connection for the process lifetime and any later DML landing on it
+  would have run uncapped — harmless only because `stellarindex-ops` is a
+  one-shot whose pool never serves the API. The restamp now runs its
+  window in ONE explicit transaction with `SET LOCAL`, the same tx-scoped
+  GUC discipline as `FindPerSourceLedgerGaps` /
+  `SEP41SupplyEventKindResum`: Postgres unwinds it at COMMIT/ROLLBACK, so
+  it cannot escape even on the error path. Behaviour of the write itself
+  is unchanged (same predicate, same identity, same INV-3 generation
+  guard). Unit test
+  (`TestRestampExactTierUSDVolume_DecompressionCapNeverEscapesTheTransaction`,
+  a GUC-scoping driver fake that also models pgx's no-op session reset)
+  + the DB-backed integration test now asserts the pooled conn's cap is
+  untouched after a restamp and that TimescaleDB honours the `SET LOCAL`
+  form inside the transaction. (#312)
 - **Gap detector pre-registers `runs_total` at 0 so a restart cannot read
   as a dead detector.** `stellarindex_ingest_gap_detector_runs_total` is a
   CounterVec that only materialises a series on first `Inc()`, and since
