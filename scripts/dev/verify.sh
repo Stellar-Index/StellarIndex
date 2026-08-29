@@ -139,6 +139,7 @@ fi
 # otherwise skip it on any machine that HAS promtool. CI's import-checks
 # job runs it, so verify.sh must too or check-verify-parity fails.
 echo "=== Metric refs self-test ===" && ./scripts/ci/lint-metric-refs-test.sh
+echo "=== ClickHouse ops-user contract self-test ===" && ./scripts/ops/ch-ops-user-test.sh
 # govulncheck (F-0057). Graceful-skip when not installed locally —
 # CI installs it via `make deps`. Mirrors the promtool pattern.
 if command -v govulncheck >/dev/null 2>&1; then
