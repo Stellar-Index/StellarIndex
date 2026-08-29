@@ -83,6 +83,12 @@ func checkResumeFromHash(expectedHex string, firstPrevHash sdkxdr.Hash, firstSeq
 	var expected sdkxdr.Hash
 	copy(expected[:], expectedBytes)
 	if expected != firstPrevHash {
+		// A cross-RUN boundary break is the same correctness class as
+		// an in-chunk one: our archive's bytes do not chain onto what
+		// the previous run certified. The two returns above are
+		// operator input errors (bad hex), NOT divergence — they must
+		// not touch the counter.
+		obs.VerifyArchiveMismatchesTotal.WithLabelValues("0", "chain").Inc()
 		return fmt.Errorf("resume-from-hash boundary mismatch at ledger %d:\n"+
 			"  -resume-from-hash         = %s\n"+
 			"  observed FirstPrevHash    = %s",
@@ -130,6 +136,20 @@ type chunkResult struct {
 // mid-range hole if the check were skipped outright — still surfaces
 // as a seq/hash mismatch between those surrounding chunks. An empty
 // chunk cannot silently absorb an interior gap.
+//
+// A boundary failure increments obs.VerifyArchiveMismatchesTotal
+// under the same reason taxonomy verifyChunk uses (a gap is
+// "sequence", a hash break is "chain"), labelled with the LEFT
+// chunk's index — the boundary belongs to the chunk whose last
+// ledger it hangs off. That increment is what makes the failure
+// PAGEABLE: the P1 stellarindex_stellar_archive_divergence rule
+// selects that counter, so a break landing on one of the ~11
+// worker-chunk boundaries (rather than inside a chunk) used to abort
+// the run without touching it, surfacing only as the severity-ticket
+// stellarindex_verify_archive_unit_failed. Same divergence class,
+// same page (#282). The counter reaches Prometheus via
+// verify_archive_textfile.go, which reads the live collector on the
+// way out and so picks these up automatically.
 func stitchChunks(results []chunkResult) error {
 	nonEmpty := make([]chunkResult, 0, len(results))
 	for _, r := range results {
@@ -144,10 +164,12 @@ func stitchChunks(results []chunkResult) error {
 		left := nonEmpty[i]
 		right := nonEmpty[i+1]
 		if left.LastSeq+1 != right.FirstSeq {
+			obs.VerifyArchiveMismatchesTotal.WithLabelValues(strconv.Itoa(left.Idx), "sequence").Inc()
 			return fmt.Errorf("chunk[%d→%d] boundary gap: chunk[%d].LastSeq=%d, chunk[%d].FirstSeq=%d",
 				left.Idx, right.Idx, left.Idx, left.LastSeq, right.Idx, right.FirstSeq)
 		}
 		if left.LastHash != right.FirstPrevHash {
+			obs.VerifyArchiveMismatchesTotal.WithLabelValues(strconv.Itoa(left.Idx), "chain").Inc()
 			return fmt.Errorf("chunk[%d→%d] boundary chain break at ledger %d:\n"+
 				"  chunk[%d].LastHash         = %s\n"+
 				"  chunk[%d].FirstPrevHash    = %s",

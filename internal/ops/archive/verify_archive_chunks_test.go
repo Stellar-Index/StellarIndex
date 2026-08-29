@@ -1,11 +1,13 @@
 package archive
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
@@ -236,5 +238,112 @@ func TestStitchChunks_TrailingEmptyChunkPasses(t *testing.T) {
 	}
 	if err := stitchChunks(results); err != nil {
 		t.Errorf("trailing empty chunk should not stitch-error; got %v", err)
+	}
+}
+
+// ─── #282 (repair): a boundary divergence must be PAGEABLE ─────────
+
+// TestStitchChunks_BoundaryBreakIsPageable pins the half of #282 the
+// first cut missed. A divergence landing on a worker-chunk BOUNDARY
+// (rather than inside a chunk) aborted the run without ever touching
+// obs.VerifyArchiveMismatchesTotal — so the P1
+// stellarindex_stellar_archive_divergence page, which selects that
+// counter, could not fire for it. It surfaced only as the
+// severity-TICKET stellarindex_verify_archive_unit_failed, which is
+// exactly the "a genuine archive-correctness event pages nobody"
+// defect #282 exists to remove. With the r1 units' 12 workers there
+// are ~11 such boundaries in every nightly run.
+//
+// Asserts the whole loop the page depends on rather than the
+// increment alone: the count must survive
+// collectVerifyArchiveMismatches' fold over chunk_idx and land in
+// the exported .prom file at the corrected value, under the `reason`
+// the runbook documents.
+//
+// Not t.Parallel: obs.VerifyArchiveMismatchesTotal is process-global.
+func TestStitchChunks_BoundaryBreakIsPageable(t *testing.T) {
+	tests := []struct {
+		name       string
+		results    []chunkResult
+		wantReason string
+	}{
+		{
+			name: "boundary chain break",
+			results: []chunkResult{
+				{Idx: 0, FirstSeq: 100, LastSeq: 199, LastHash: hashFrom(0xAA), Verified: 100},
+				{Idx: 1, FirstSeq: 200, FirstPrevHash: hashFrom(0xDD), LastSeq: 299, LastHash: hashFrom(0xBB), Verified: 100},
+			},
+			wantReason: "chain",
+		},
+		{
+			name: "boundary sequence gap",
+			results: []chunkResult{
+				{Idx: 0, FirstSeq: 100, LastSeq: 199, LastHash: hashFrom(0xAA), Verified: 100},
+				{Idx: 1, FirstSeq: 250, FirstPrevHash: hashFrom(0xAA), LastSeq: 299, LastHash: hashFrom(0xBB), Verified: 50},
+			},
+			wantReason: "sequence",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			obs.VerifyArchiveMismatchesTotal.Reset()
+			t.Cleanup(obs.VerifyArchiveMismatchesTotal.Reset)
+
+			if err := stitchChunks(tc.results); err == nil {
+				t.Fatal("expected a boundary error; got nil")
+			}
+
+			totals := collectVerifyArchiveMismatches()
+			if totals[tc.wantReason] != 1 {
+				t.Fatalf("collected totals = %v, want %q=1 — the boundary break never reached "+
+					"stellarindex_verify_archive_mismatches_total, so the P1 "+
+					"stellarindex_stellar_archive_divergence page cannot fire for it (#282)",
+					totals, tc.wantReason)
+			}
+
+			// …and out through the export path the units use.
+			path := filepath.Join(t.TempDir(), "verify_archive_tier_a.prom")
+			if err := writeVerifyArchiveTextfile(path, "chain", totals); err != nil {
+				t.Fatalf("write textfile: %v", err)
+			}
+			for _, reason := range verifyArchiveMismatchReasons {
+				want := "0"
+				if reason == tc.wantReason {
+					want = "1"
+				}
+				assertSample(t, path,
+					`stellarindex_verify_archive_mismatches_total{tier="chain",reason="`+reason+`"}`, want)
+			}
+		})
+	}
+}
+
+// TestCheckResumeFromHash_MismatchIsPageable — the cross-RUN seam is
+// the same correctness class as the cross-chunk one (our bytes do not
+// chain onto what the previous run certified), so it feeds the same
+// counter. The second half is the load-bearing half: an operator
+// typo in -resume-from-hash is an INPUT error, not a divergence, and
+// must not move a severity-page counter.
+//
+// Not t.Parallel: obs.VerifyArchiveMismatchesTotal is process-global.
+func TestCheckResumeFromHash_MismatchIsPageable(t *testing.T) {
+	obs.VerifyArchiveMismatchesTotal.Reset()
+	t.Cleanup(obs.VerifyArchiveMismatchesTotal.Reset)
+
+	if err := checkResumeFromHash("bb"+strings.Repeat("00", 31), hashFrom(0xAA), 100); err == nil {
+		t.Fatal("expected mismatch error")
+	}
+	if got := collectVerifyArchiveMismatches(); got["chain"] != 1 {
+		t.Fatalf("collected totals = %v, want chain=1 — a cross-run boundary mismatch never "+
+			"reached the P1 counter (#282)", got)
+	}
+
+	obs.VerifyArchiveMismatchesTotal.Reset()
+	if err := checkResumeFromHash("zzznotahex", hashFrom(0xAA), 100); err == nil {
+		t.Fatal("expected a parse error for a malformed -resume-from-hash")
+	}
+	if got := collectVerifyArchiveMismatches(); len(got) != 0 {
+		t.Fatalf("a malformed -resume-from-hash incremented the P1 counter (%v) — "+
+			"operator input errors must not page", got)
 	}
 }

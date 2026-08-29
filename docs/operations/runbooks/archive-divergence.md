@@ -27,8 +27,12 @@ severity: P1
 >   page self-resolved before an operator saw it. The window is now
 >   **26h** (24h timer cadence + jitter + cushion).
 >
-> Pinned by `deploy/monitoring/rule-tests/stellar_test.yml` and
-> `internal/ops/archive/verify_archive_unit_wiring_test.go`.
+> Pinned by `deploy/monitoring/rule-tests/stellar_test.yml`,
+> `internal/ops/archive/verify_archive_unit_wiring_test.go` (the units
+> wire an export path, and the tier-b ansible block is reachable under
+> the `ops-jobs` tag the apply below uses) and
+> `internal/ops/archive/verify_archive_chunks_test.go` (a boundary
+> divergence reaches the counter).
 >
 > **Takes effect on r1 only after the ansible role is applied** —
 > the templates under `configs/ansible/…/templates/systemd/` are
@@ -39,20 +43,46 @@ severity: P1
 > not touch galexie):
 >
 > ```sh
+> # 1. Render BOTH units. tier-b lives in its own
+> #    `verify_archive_tier_b_enabled` block; it carries the
+> #    ops-jobs tag too, pinned by
+> #    TestVerifyArchiveUnits_ReachableUnderOpsJobsTag. Sanity-check
+> #    the selection first if you want:
+> #      ansible-playbook --list-tasks -i inventory/r1.yml \
+> #        playbooks/archival-node.yml --tags ops-jobs
 > ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
 >   --tags ops-jobs --check --diff
 > ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
 >   --tags ops-jobs
+>
+> # 2. Prime BOTH producers once, one at a time — they share
+> #    run-heavy-job.sh's "verify-archive" singleton lock, so a
+> #    concurrent start just fails on the lock. This is also what
+> #    puts the zero baseline on disk BEFORE the first nightly run
+> #    (blind spot 2 below), so do not skip it. A non-zero exit here
+> #    is itself a finding: read the journal.
+> systemctl start verify-archive-tier-a.service
+> systemctl start verify-archive-tier-b.service
+>
+> # 3. FAIL-CLOSED CONFIRM — run it, do not eyeball it. Both tiers
+> #    must be exporting; a missing tier means the apply is
+> #    HALF-DONE and this page is still dead for that tier.
+> for t in chain checkpoint; do
+>   curl -sf localhost:9100/metrics \
+>     | grep -q "stellarindex_verify_archive_mismatches_total{tier=\"$t\"" \
+>     || { echo "MISSING tier=$t — apply is HALF-DONE; archive-divergence cannot fire for that tier"; exit 1; }
+> done; echo "both tiers exporting"
 > ```
 >
-> Confirm afterwards:
-> `curl -s localhost:9100/metrics | grep verify_archive_mismatches`
-> should show `tier="chain"` (and `tier="checkpoint"` once tier-b
-> has run) at 0 — the zero-seed IS the proof the producer is alive.
+> On a healthy host all six samples (2 tiers × 3 reasons) read 0 —
+> the zero-seed IS the proof the producer is alive. If step 3 prints
+> `MISSING tier=checkpoint`, start the tier-b unit by hand
+> (`systemctl start verify-archive-tier-b.service`) and re-run it;
+> do not treat a green `tier="chain"` as an applied fix.
 >
-> The weekly Tier D peer-sampling cron still emits no metric of any
-> kind; a Tier D divergence surfaces in journald (`-t
-> stellarindex-tier-d`) only.
+> Blind spots this page still has are listed under
+> [Known blind spots](#known-blind-spots) — read them before you
+> trust a silent dashboard.
 
 ## At a glance
 
@@ -112,6 +142,41 @@ previous total rather than resetting it, which is what makes
 `increase()` meaningful. If a `.prom` file is missing or its mtime
 is older than the last timer trigger, the page is blind: check
 `journalctl -u verify-archive-tier-a | grep textfile`.
+
+### Known blind spots
+
+Every divergence the Tier A / Tier B walk can detect now increments
+`stellarindex_verify_archive_mismatches_total`, including the two
+seams that are checked OUTSIDE the per-chunk walk and used to abort
+the run without touching the counter (so they surfaced only as the
+severity-ticket `verify-archive-unit-failed`, never as this page):
+cross-chunk boundaries (`stitchChunks`, ~11 of them in every
+12-worker nightly run) and the cross-run resume seam
+(`checkResumeFromHash`, which only runs under `-safety-overlap 0`;
+the r1 units pass 5000, so on r1 the overlap re-walk covers that seam
+instead). Both are counted as of 2026-08-29 and pinned by
+`TestStitchChunks_BoundaryBreakIsPageable` /
+`TestCheckResumeFromHash_MismatchIsPageable`.
+
+What this page still cannot see:
+
+1. **Tier D and Tier E.** Tier D (weekly multi-peer sampling, root
+   cron) and Tier E (`rs-stellar-archivist` scan, operator-run) run
+   outside the two systemd units that carry `-textfile-output` and
+   emit no metric of any kind. A Tier D divergence surfaces in
+   journald (`journalctl -t stellarindex-tier-d`) only — nothing
+   pages. Wiring them is not part of #282.
+2. **The first run on a host that has no `.prom` file yet.** The
+   file is written when the run exits, so the very first run
+   publishes a series that APPEARS at its final value. If that
+   first-ever run is also the one that finds a break, the series
+   appears at 1 and stays flat, and `increase()` has no earlier
+   sample to subtract — it reads 0, so this page waits for the NEXT
+   run's increment (the following night). Priming both units by hand
+   during the apply (step 2 of the banner) is what closes this
+   window: it puts the zero baseline on disk before any nightly run,
+   narrowing the exposure to that single manual run. Read the
+   priming run's exit status rather than trusting the page for it.
 
 ## Quick diagnosis (≤ 5 min)
 

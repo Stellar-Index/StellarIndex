@@ -267,6 +267,34 @@ against.
   `scripts/ops/archive-cross-check.sh` is flagged as design-intent in
   `multi-region-topology.md`. **Requires an ansible apply
   (`--tags ops-jobs`) on r1 — a binary-only deploy ships this dead.**
+  Adversarial verification then found the apply procedure delivered only
+  HALF the fix and its confirm step read green anyway, so three further
+  corrections land with it: (1) the tier-b install/remove blocks in
+  `14-stellarindex-services.yml` were the only verify-archive tasks
+  without `tags: [ops-jobs]` (they sit in their own
+  `verify_archive_tier_b_enabled` conditional, added after the tag was
+  introduced), so the documented apply rendered tier-a's unit and
+  silently skipped tier-b's — leaving the CHECKPOINT tier, the
+  cross-archive anchor the page's own summary describes, permanently
+  unwired; they are tagged now and pinned by
+  `TestVerifyArchiveUnits_ReachableUnderOpsJobsTag`. (2) The runbook's
+  confirm is fail-CLOSED on a half-apply: it loops over both tiers and
+  exits non-zero naming the missing one, instead of showing `tier="chain"`
+  at 0 and deferring the other with "once tier-b has run". (3) The two
+  divergence checks that run OUTSIDE the per-chunk walk — cross-chunk
+  boundaries (`stitchChunks`, ~11 per 12-worker run) and the cross-run
+  resume seam (`checkResumeFromHash`) — returned their errors without
+  incrementing the counter, so a break landing on a chunk boundary still
+  paged nobody; both now increment under the same `reason` taxonomy
+  (`TestStitchChunks_BoundaryBreakIsPageable`,
+  `TestCheckResumeFromHash_MismatchIsPageable`, which also pins that a
+  malformed `-resume-from-hash` — operator input, not divergence — must
+  NOT move a severity-page counter). The runbook gained a **Known blind
+  spots** section for what is still uncovered: Tier D / Tier E emit no
+  metric at all, and the first run on a host with no `.prom` file yet
+  publishes a series that appears at its final value, so a break found by
+  that very first run reads `increase() == 0` until the next run — which
+  is why the apply procedure now primes both units by hand.
 - **r1's ZFS `data` pool is raidz1 everywhere, and a lint keeps it that
   way.** The pool is SINGLE parity — live-verified 2026-07-17 and
   corroborated by arithmetic that needs no host access (the ~16.8 TB

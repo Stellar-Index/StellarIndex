@@ -3,8 +3,11 @@ package archive
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // ─── #282: the deployed unit must EXPORT the P1 counter ────────────
@@ -124,4 +127,111 @@ func readRepoFile(t *testing.T, rel string) string {
 		t.Fatalf("read %s: %v", rel, err)
 	}
 	return string(b)
+}
+
+// ─── #282 (repair): the DOCUMENTED APPLY must render both units ────
+//
+// Wiring `-textfile-output` into the unit templates only closes the
+// P1's export path if the templates actually reach r1. The runbook
+// prescribes `--tags ops-jobs` (deliberately: a full archival-node
+// run can restart galexie, and a galexie restart is a ~9-minute
+// mainnet cold catchup — the 2026-08-27 incident), and the tier-a
+// install/enable tasks carry that tag. The tier-b block did not: it
+// is a separate `when: verify_archive_tier_b_enabled` block added
+// later, and it was never tagged. So the documented apply rendered
+// tier-a's unit, skipped tier-b's, and the confirm step still read
+// green off tier-a alone — a half-applied fix that reads healthy,
+// with the CHECKPOINT tier (the cross-archive anchor the P1's own
+// summary describes) left permanently unwired.
+//
+// Neither `go vet`, `promtool`, nor the jinja/ansible linters can
+// see a missing tag; `ansible-playbook --list-tasks --tags ops-jobs`
+// can, but ansible is not a build dependency of this repo. So the
+// tag is pinned here, next to the ExecStart assertion it exists to
+// deliver.
+
+// opsJobsTaskFile is the role task file that installs and enables
+// the verify-archive units.
+const opsJobsTaskFile = "configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml"
+
+// opsJobsTag is the tag docs/operations/runbooks/archive-divergence.md
+// tells the operator to apply with.
+const opsJobsTag = "ops-jobs"
+
+func TestVerifyArchiveUnits_ReachableUnderOpsJobsTag(t *testing.T) {
+	t.Parallel()
+
+	var tasks []map[string]any
+	if err := yaml.Unmarshal([]byte(readRepoFile(t, opsJobsTaskFile)), &tasks); err != nil {
+		t.Fatalf("parse %s: %v", opsJobsTaskFile, err)
+	}
+	if len(tasks) == 0 {
+		t.Fatalf("%s parsed to zero tasks", opsJobsTaskFile)
+	}
+
+	// Every top-level task or block that installs, enables or removes
+	// a verify-archive tier-a/tier-b unit must be selected by
+	// `--tags ops-jobs`. The trailing dot keeps the weekly Tier D
+	// cron (`stellarindex-verify-archive-tier-d`, a root cron with no
+	// unit file and no textfile export) out of scope.
+	needles := []string{"verify-archive-tier-a.", "verify-archive-tier-b."}
+
+	seen := 0
+	for _, task := range tasks {
+		body, err := yaml.Marshal(task)
+		if err != nil {
+			t.Fatalf("re-marshal task: %v", err)
+		}
+		touches := false
+		for _, needle := range needles {
+			if strings.Contains(string(body), needle) {
+				touches = true
+			}
+		}
+		if !touches {
+			continue
+		}
+		seen++
+		name, _ := task["name"].(string)
+		if !slices.Contains(taskTags(t, task), opsJobsTag) {
+			t.Errorf("task %q in %s has tags %v — it must carry %q, or the runbook's "+
+				"documented `--tags ops-jobs` apply skips it and the P1 "+
+				"stellarindex_stellar_archive_divergence stays dead for that tier (#282)",
+				name, opsJobsTaskFile, taskTags(t, task), opsJobsTag)
+		}
+	}
+
+	// Self-accounting: a needle that matches nothing would make every
+	// assertion above vacuous.
+	if seen < 3 {
+		t.Fatalf("only %d verify-archive task(s)/block(s) matched in %s — expected the tier-a "+
+			"install, the timer enable, and the tier-b install block at minimum; the match "+
+			"is stale, so this test proves nothing", seen, opsJobsTaskFile)
+	}
+	t.Logf("checked %d verify-archive task(s)/block(s) in %s for the %q tag", seen, opsJobsTaskFile, opsJobsTag)
+}
+
+// taskTags normalises Ansible's two accepted `tags` spellings (a
+// single string, or a list) into a slice.
+func taskTags(t *testing.T, task map[string]any) []string {
+	t.Helper()
+	switch v := task["tags"].(type) {
+	case nil:
+		return nil
+	case string:
+		return []string{v}
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			s, ok := item.(string)
+			if !ok {
+				t.Fatalf("non-string tag %v in task %v", item, task["name"])
+			}
+			out = append(out, s)
+		}
+		return out
+	default:
+		t.Fatalf("unexpected tags type %T in task %v", v, task["name"])
+		return nil
+	}
 }
