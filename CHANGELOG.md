@@ -54,11 +54,116 @@ against.
   widening `repo_key` to all repos makes the repo1-fresh/repo2-stale
   case stop firing); runbook `runbooks/backup-offsite-stale.md`.
 
+### Fixed
+
+- **Native XLM supply is now network-aware.** `internal/supply` derived
+  `total_supply` / `max_supply` from the frozen pubnet constant
+  (50,001,806,812 XLM) regardless of the configured network, so
+  `api.testnet.stellarindex.io/v1/assets/native` served the mainnet
+  figure against a testnet ledger whose `total_coins` is 100 B (measured
+  2026-08-28). The aggregator and `stellarindex-ops supply snapshot`
+  now build the computer via `supply.NewXLMComputerForNetwork(cfg.Stellar.
+  Passphrase(), …)`: testnet and futurenet get the 100 B genesis total
+  (== their ledger `total_coins`), pubnet output is byte-identical, and an
+  unrecognised passphrase fails at startup (`supply.ErrUnknownNetwork`)
+  instead of silently falling back to the pubnet number. `supply_basis`
+  is unchanged (`xlm_total_only` with no reserve accounts configured,
+  which is the honest testnet state). Existing testnet/futurenet
+  `asset_supply_history` rows written with the 50.0 B total are
+  superseded by the next refresher cycle after deploy.
+- **Explorer: ledger page captions `total_coins` (2019-burn basis).**
+  `/ledgers/{seq}` printed the header's `total_coins` (~105.4B XLM on
+  mainnet) bare, while `/assets/native` serves the market's 50.0B total
+  supply — the same unlabeled 2.11× divergence the network page fixed
+  (#241). The caption ("ledger header · includes the 2019 burn" on
+  mainnet, "ledger header" on the test nets, whose genesis has no burn)
+  now comes from a shared `lib/xlm-supply.ts` helper so every surface
+  printing `total_coins` says the same thing; #241 should adopt it.
+- **pgBackRest repo2 retention was hardcoded to 4 fulls** in `pgbackrest.conf.j2`, ignoring
+  `pgbackrest_repo2_retention_full/diff` (lean defaults 1 / 7 d ≈ $12–17/month); the template now
+  renders the variables plus `repo2-retention-archive-type=diff`. Caught by a masked diff of the
+  rendered file against r1's live config before the first off-site apply (2026-08-29).
+- **`ops_batch` / `api_serving` ClickHouse drop-ins no longer restart
+  `clickhouse-server`.** Both tasks in
+  `archival-node/tasks/20-clickhouse-serving-profile.yml` carried
+  `notify: Restart clickhouse-server` for a `users.d` drop-in that
+  ClickHouse hot-reloads — on r1 the first `ops_batch` enable
+  (`--tags clickhouse-ops-batch-profile,minio,heavy-job-wrapper`)
+  would have bounced the 9.3 TB lake (minutes of explorer/lake
+  downtime + cold caches) for nothing; caught in the `--check --diff`
+  (2026-08-29). The notify is replaced by `SYSTEM RELOAD CONFIG` plus a
+  retried assert that `system.users` / `system.settings_profiles` each
+  hold exactly one of the profile's entities (skipped under `--check`,
+  `21-clickhouse-drop-guard.yml`'s pattern), so a rejected drop-in
+  fails the apply instead of silently keeping the old users config.
+  The only CH change in the role that still restarts is
+  `08-clickhouse.yml`'s `config.d/si-override.xml` (`tcp_port` /
+  `listen_host`), which genuinely needs it.
 
 ## [v0.48.0] — 2026-08-29
 
 ### Added
 
+- **`stellarindex-ops usd-volume-restamp` (W5.3).** The corrective WRITE
+  half of `verify-usd-volume`: for every exact-tier (quote- or base-leg
+  USD-pegged) group in a bounded `-from/-to` day window it rewrites each
+  row whose stored `usd_volume` differs from `pegged_leg / 10^decimals`
+  to exactly the value the insert path writes, stamped with the run's
+  `derive_generation` (INV-3 guard: a live gen-0 replay can never claw a
+  correction back). Tier + scale come from the same
+  `ClassifyUSDVolumeTier` + peg config as the writer and the verifier —
+  no SQL reimplementation of the waterfall. Dry-run by default, `-write`
+  to apply, idempotent (correct rows are untouched, value and
+  generation), `-slice`d UPDATEs on a dedicated session with the
+  Timescale decompression cap raised, ch-backfill-style heartbeat. Replaces
+  the 2026-07-30 hand SQL for the pre-2026-07-23 USDC-base SDEX class
+  (`docs/operations/usd-volume-rederive-2026-08.md` step 5). Estimated
+  tiers stay `ch-rebuild`'s job. Unit tests pin the formula to
+  `tradeUSDVolume` byte-for-byte; the integration test proves the SQL
+  identity, the differential (a correct row is unchanged), idempotency
+  and the generation guard on real TimescaleDB.
+- **Oracle capture-totality consumers (PR-3 of 7): every `oracle_updates`
+  reader is safe for `raw:` rows before the decoders emit them.**
+  `/v1/oracle/streams` gains `include_unmapped` (default `false` — the
+  public row set is unchanged; the explorer's /oracles page is the
+  intended opt-in) and `OracleReading` gains a required `mapped` flag
+  (`false` for `raw:<symbol>` rows; `/v1/oracle/latest?asset=raw:…`
+  returns one by its exact key). The MEV liquidation-cascade
+  correlator — the one unkeyed reader, for which any oracle row in the
+  ledger bracket is evidence — excludes raw rows both in
+  `OracleUpdatesForMEVScan` SQL (`asset NOT LIKE 'raw:%'`) and in
+  `DetectLiquidationCascades`; the divergence `OracleReference`
+  (and, through its cache, the confidence cross-oracle factor and the
+  Phase-2 freeze lens) refuses a raw row as `ErrAssetUnsupported` on
+  top of its exact-string keying. The oracle source bespoke page keeps
+  raw feeds in every count and table (totality) and adds an
+  "Unmapped feeds" KPI + note. `LatestOracleStreams` no longer drops a
+  row with an unparseable asset/quote silently (it logs the row's
+  identity — a `raw:` row parses, so a miss is a malformed legacy row).
+  A repo guard (`TestOracleUpdatesQueriesDeclareRawRowPolicy`) now
+  requires every `FROM oracle_updates` literal under `internal/` to be
+  asset-keyed, carry `asset NOT LIKE 'raw:%'`, or a
+  `-- totality: includes unmapped` marker, so the cascade class of
+  unkeyed reader cannot recur unlabelled. Each surface carries a test
+  red-proven with a fixture raw row; storage behaviour pinned on real
+  Timescale in `test/integration/oracle_raw_consumers_test.go`.
+- **ClickHouse destructive-DDL size guard pinned by ansible.** New
+  `archival-node/tasks/21-clickhouse-drop-guard.yml` (tag
+  `clickhouse-drop-guard`) writes
+  `/etc/clickhouse-server/config.d/si-drop-guard.xml` pinning
+  `max_table_size_to_drop` / `max_partition_size_to_drop` to
+  ClickHouse's 50 GB default (`clickhouse_max_*_size_to_drop`, `0`
+  refused) and asserts the live `system.server_settings` value; no
+  restart (hot-reloaded). r1 was measured at 1 TiB for both — raised
+  by hand for D2's `REPLACE PARTITION` and never lowered — so
+  `account_movements` (582 GiB) was droppable in one statement.
+  Planned oversize drops now use the self-deleting
+  `force_drop_table` flag after a ZFS snapshot:
+  `docs/operations/clickhouse-destructive-ddl.md`.
+  `d2-ordinal-reproject.sh` requires `D2_FORCE_DROP=yes` and
+  `d3-lecur-v2-rebuild.sh rollback-precutover` requires
+  `D3_FORCE_DROP_V2=yes`; both arm the flag per guarded statement
+  and remove it after.
 - **Oracle capture-totality PR-2 — decoders record unmapped symbols
   as `raw:` rows.** The Reflector (dex/cex/fx), RedStone and Band
   decoders no longer SKIP a price slot whose symbol / feed_id is
@@ -198,6 +303,80 @@ against.
   wrapper, extracted from the ansible task). See
   `docs/operations/clickhouse-ops-batch-profile.md`.
 
+- **Status page rendered stale / unreachable state as fresh green
+  (web-status-1/2/4/6, audit 2026-08-28).** `/status` (a) dropped the
+  `/v1/diagnostics/ingestion` envelope's `flags.stale`, so a failed
+  cursors/network-stats read (zero-valued fields) painted "Lag from tip
+  0s" in green and "Latest ledger 0" — and on the lean nets fed a 0 s
+  lag into the indexer roll-up; (b) kept "All systems operational" and
+  a pulsing green "Live" for as long as a tab stayed open during a total
+  API outage, because the headline was derived from the retained
+  last-known snapshot with no regard for the poll error; (c) labelled
+  the coverage table with `backfill_coverage_as_of` (the API's
+  per-request assembly time, "4s ago" forever) while the completeness
+  verdicts it shows are dated by a daily timer, and claimed the detector
+  runs "every 5 min" (it is 30 min); (d) blanked operator notices the
+  moment the notices endpoint failed — the exact window a notice
+  announces. Now: stale snapshots carry a "stale · server degraded"
+  badge, unmeasured zeros render "—" and never vote in the lean-net
+  roll-up; after two failed polls (the DegradedBanner threshold) the
+  headline is "Status unknown", the pulse goes grey and reads "last
+  successful poll <age>", and the unreachable card sits above the
+  headline; each coverage row shows its real data age (30 min axis for
+  the gap detector, daily axis for compute-completeness) and an aged
+  verdict loses the green verified tone; notices are retained through
+  a failed poll with a "notices feed unreachable" marker and cleared
+  only by a successful response. Red-proof tests in
+  `web/explorer/src/app/status/StatusPageClient.test.tsx`.
+- **`pgbackrest.conf` template task printed the backup cipher passphrases
+  and repo2 S3 key pair on `--check --diff`.** The task rendering
+  `pgbackrest.conf.j2` had no `diff: false`, and the header comment
+  claimed the credentials came from env vars "never inline in this
+  file" — they are (and must be: pgbackrest reads them from the
+  postgres-owned 0640 file, including from `archive_command` inside the
+  postgres server process, which no unit-level EnvironmentFile reaches).
+  The documented review path (`--check --diff` in README, the operator
+  register, and the weekly `ansible-drift` job which `tee`s its output
+  into a GitHub Actions log — where only registered secrets are masked,
+  not vault-decrypted values) therefore printed the ONLY key that
+  decrypts the offsite survival backup. The task now sets `diff: false`
+  (changed/ok verdict stays visible; hunk body suppressed) and the
+  header tells the truth. New gate `scripts/ci/lint-ansible-secret-diff.py`
+  (ansible-check job + `verify.sh`) fails any template task whose
+  template renders a secret-shaped var without `diff: false`/`no_log`;
+  the seven pre-existing sibling tasks (redis, patroni, keepalived,
+  minio) are grandfathered by name for burn-down. Retention is
+  untouched (ADR-0043). (audit-2026-08-28 backup-restore-7)
+
+- **Operator self-service key mint/revoke now audited (api-security-1,
+  audit 2026-08-28).** `POST /v1/account/keys` copied an operator
+  caller's tier verbatim into the child and recorded nothing — no
+  `X-Reason`, no `key.mint` row — so a compromised staff credential
+  could spawn further operator credentials that `POST /v1/admin/keys`
+  would have refused without a reason and logged. Tier inheritance
+  (staff rotation) is kept; operator-tier callers of
+  `POST /v1/account/keys` and `DELETE /v1/account/keys/{keyID}` now
+  need `X-Reason` (400 without) and land the same `key.mint` /
+  `key.revoke` audit rows as the admin routes. Customer-tier callers
+  are untouched.
+- **Rotated signup keys no longer 403 forever under email verification
+  (api-security-2, audit 2026-08-28).** With
+  `signup_require_email_verification` on (the default), a verified
+  `/v1/signup` customer who rotated via `POST /v1/account/keys` got a
+  `signup-<hash>` child with a zero `EmailVerifiedAt`, and nothing can
+  verify a non-signup KeyID after the fact — `RequireEmailVerified`
+  rejected the child permanently (and revoking the parent stranded the
+  customer). `auth.CreateAPIKeyRequest` gained `EmailVerifiedAt`; the
+  self-service mint copies the caller's stamp onto the child. Signup
+  and admin mints still leave it zero.
+- **`/v1/livez/lake` added to the unauthenticated-infra exemption and
+  the anonymous rate-limit skip (api-security-3, audit 2026-08-28).**
+  The ADR-0050 lake-route LB probe (#119) was added after
+  `isUnauthenticatedInfraPath` / `SkipHealthAndMetrics` were written and
+  missed both: under `apikey` / `sep10` auth mode every uncredentialed
+  probe 401'd (contradicting the OpenAPI `security: []` declaration),
+  and under `apikey_optional` it spent the anonymous per-IP bucket. The
+  exact-match lists and their pinning tests now carry the path.
 - **Outlier filter trimmed agreed price moves; `outlier_storm` measured
   its own artifact.** The published-VWAP filter scored every print
   against ONE band — the whole window's median ± 4 × 1.4826 × MAD — and
@@ -257,6 +436,40 @@ against.
   — **retire 2026-09-04**; after that `dropped_trades_total
   {reason="outlier"}` is diagnostic only.
 
+### Fixed
+
+- **Aggregator gap detector took r1's serving path down (2026-08-28
+  18:23Z: `api_error_rate_high`, 503s from statement timeouts, load
+  19.6, IO-bound).** `pg_stat_statements` pinned it on the detector's
+  density query `SELECT COUNT(DISTINCT ledger) FROM soroban_events WHERE
+  ledger BETWEEN $1 AND $2` — 121 calls, mean 556 s, 18.7 h total on a
+  257 GB hypertable that has no index on `ledger` (0041 partitions and
+  compresses by `ledger_close_time`, so a ledger-only predicate excludes
+  nothing). Three amplifiers, three commits, no DDL:
+  1. **Timeout inversion.** `CountDistinctLedgers` SET a 2 h PG
+     `statement_timeout` (the ops/verify constant) under a 15-min Go
+     context, so every over-budget count outlived its context as an
+     orphaned backend and each cycle / restart stacked another. Both
+     detector queries now share `gapDetectorStatementTimeoutMS` (13 min,
+     pinned ≤ the Go budget by `TestGapDetectorStatementTimeoutWithinGoBudget`).
+  2. **Count source.** The `soroban-events` target's density numerator
+     now comes from the `ledger_ingest_log` census (`COUNT(*) WHERE
+     soroban_event_count > 0`, a PK range scan) via the new
+     `GapDetectorTarget.DistinctLedgerCountSQL` override; every other
+     target's statement is byte-identical (differential unit test +
+     Docker-Timescale integration test). Gauge, snapshot row and
+     `/v1/diagnostics/ingestion` `density_pct` are unchanged in shape;
+     semantic note (LCM census vs observed rows) in the metrics README.
+  3. **Restart storm.** The per-target schedule was in-process and the
+     first cycle ran immediately, so every deploy re-ran the 6 h-cadence
+     heavy scans. The schedule is now seeded from the persisted
+     `gap-detector-scan` cursor; a skipped target's last-success stamp
+     and gap gauges are re-emitted from persisted state so the `_silent`
+     and `gap_detected` alerts keep working across restarts.
+  `soroban-events` stays on its 6 h cadence (the scan is now cheap; the
+  remaining 13-min-bounded LAG gap scan is unchanged). The runbook
+  `ingest-gap-detected.md` now lists every detector target whose table
+  has no leading-`ledger` index — the class this incident belongs to.
 - **AsyncSink lost the in-flight batch on shutdown** (#240): `Stop()`
   cancelled a steady-state write mid-INSERT and counted the whole batch as
   LOST instead of handing it to the drain — every deploy that caught a

@@ -1416,6 +1416,15 @@ export interface paths {
          *     in the trailing 7 days. Backs the explorer's /oracles
          *     price-streams table. Sources with no observation in the
          *     window are absent from the result.
+         *
+         *     Oracle symbols that map to no canonical asset are still
+         *     recorded verbatim as `raw:<symbol>` rows (capture totality)
+         *     but are OMITTED here by default so the public row set is
+         *     unchanged for existing consumers. Pass
+         *     `include_unmapped=true` to list them; every row then carries
+         *     `mapped` (false for `raw:` rows — reference-only,
+         *     orientation-unknown, never compared or aggregated). The
+         *     explorer's /oracles page opts in and badges them.
          */
         get: operations["listOracleStreams"];
         put?: never;
@@ -2522,6 +2531,15 @@ export interface paths {
          *     keys (25 by default, operator-tunable). A mint that would cross
          *     the ceiling returns 409 — revoke a key via
          *     `DELETE /v1/account/keys/{keyID}` and retry.
+         *
+         *     The new key inherits the caller's identifier and tier. An
+         *     **operator-tier** caller rotating its own credential here is
+         *     held to the admin-write contract: the `X-Reason` header is
+         *     required (400 without it) and the mint is recorded as a
+         *     `key.mint` audit row, exactly as `POST /v1/admin/keys`.
+         *     Customer-tier callers need no header. A `/v1/signup` key's
+         *     email-verification stamp carries over to the child, so rotated
+         *     keys keep working under `signup_require_email_verification`.
          */
         post: operations["createAccountKey"];
         delete?: never;
@@ -2550,6 +2568,11 @@ export interface paths {
          *     The caller cannot revoke the key they're authenticated with —
          *     that would orphan the connection mid-request. 409 in that
          *     case so the UI can prompt for an alternate credential.
+         *
+         *     An **operator-tier** caller must send `X-Reason` (400 without
+         *     it); the revoke is recorded as a `key.revoke` audit row, as
+         *     `DELETE /v1/admin/keys/{keyID}` does. Customer-tier callers
+         *     need no header.
          */
         delete: operations["deleteAccountKey"];
         options?: never;
@@ -6436,6 +6459,8 @@ export interface components {
             confidence?: number;
             /** @description G-strkey of the publishing account; empty when unknown. */
             observer?: string;
+            /** @description false when `asset` is a `raw:<symbol>` row — an oracle symbol recorded verbatim because it maps to no canonical asset. Reference-only: orientation-unknown, never compared or aggregated. /v1/oracle/streams omits such rows unless include_unmapped=true; /v1/oracle/latest returns one only for an explicit `asset=raw:<symbol>` query. */
+            mapped: boolean;
         };
         OracleLatestEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["OracleReading"][];
@@ -9358,7 +9383,8 @@ export interface operations {
                      *           "price_raw": "15912000000000",
                      *           "decimals": 14,
                      *           "confidence": 0.96,
-                     *           "observer": "GRELAYER0000000000000000000000000000000000000000000000000000"
+                     *           "observer": "GRELAYER0000000000000000000000000000000000000000000000000000",
+                     *           "mapped": true
                      *         },
                      *         {
                      *           "source": "band",
@@ -9367,7 +9393,8 @@ export interface operations {
                      *           "ts": "2026-05-05T16:25:30Z",
                      *           "price": "0.15908",
                      *           "price_raw": "159080000000000000",
-                     *           "decimals": 18
+                     *           "decimals": 18,
+                     *           "mapped": true
                      *         },
                      *         {
                      *           "source": "redstone",
@@ -9376,7 +9403,8 @@ export interface operations {
                      *           "ts": "2026-05-05T16:24:00Z",
                      *           "price": "0.15920",
                      *           "price_raw": "159200000",
-                     *           "decimals": 9
+                     *           "decimals": 9,
+                     *           "mapped": true
                      *         },
                      *         {
                      *           "source": "coingecko",
@@ -9385,7 +9413,8 @@ export interface operations {
                      *           "ts": "2026-05-05T16:25:00Z",
                      *           "price": "0.15915",
                      *           "price_raw": "15915",
-                     *           "decimals": 5
+                     *           "decimals": 5,
+                     *           "mapped": true
                      *         }
                      *       ],
                      *       "as_of": "2026-05-05T16:25:42.881Z",
@@ -10239,7 +10268,14 @@ export interface operations {
     };
     listOracleStreams: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description When `true`, include the `raw:<symbol>` rows for oracle
+                 *     symbols that map to no canonical asset (`mapped: false`).
+                 *     Any other value keeps the default (mapped rows only).
+                 */
+                include_unmapped?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -10264,7 +10300,8 @@ export interface operations {
                      *           "price": "0.999879000",
                      *           "price_raw": "999879000",
                      *           "decimals": 9,
-                     *           "observer": "GCNTSKF3QBZJHS5JTD72TI35QP2PLMCKFMFNPXJI2YCQXYBUJLRHFCZX"
+                     *           "observer": "GCNTSKF3QBZJHS5JTD72TI35QP2PLMCKFMFNPXJI2YCQXYBUJLRHFCZX",
+                     *           "mapped": true
                      *         }
                      *       ],
                      *       "as_of": "2026-07-03T22:38:05.023074622Z",
