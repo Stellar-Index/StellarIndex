@@ -15,6 +15,45 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **Public status page shows backup freshness (Ash, 2026-08-29).** New
+  read-only `GET /v1/diagnostics/backups` (experimental) reports the
+  pgBackRest last full / diff / WAL-archive age, the per-repository
+  newest backup (repo 1 on-host, repo 2 encrypted S3 off-site), the
+  monthly restore drill's last run + pass/fail, and the ClickHouse
+  schema+state snapshot age — each with a `freshness` verdict
+  (`ok` / `stale` / `unknown`) against SLOs the API echoes in `slo`
+  (full ≤ 8 d, diff ≤ 36 h, WAL ≤ 15 m, off-site ≤ 8 d, drill ≤ 35 d,
+  snapshot ≤ 36 h). Source of truth is Prometheus — the same
+  pgbackrest_exporter / node_exporter textfile series the alert rules
+  read; the API never shells out to pgbackrest. Every timestamp is
+  nullable and an absent series is `null` + `unknown`, never a fresh
+  zero; `source_status` carries the document's trust tri-state and
+  `flags.stale` mirrors the roll-up. Cached 60 s, no secrets or paths;
+  503 where no `api.prometheus_url` is configured. The explorer
+  `/status` page mounts a **Backups** panel (`BackupsPanel.tsx`,
+  mainnet only) that renders green within SLO, red with the real age
+  past it, grey "no data" for absent sources, and a "verdicts not
+  trustworthy" marker when the API's Prometheus reads failed — ages
+  come from the API's `age_seconds`, never the browser clock. Reserved
+  nulls (documented in the spec): repo `retention`, drill
+  `restored_backup_ts` / `duration_s`, `zfs_snapshot_latest_ts`,
+  `replica_lag_s` — no producer exports them yet. Tests:
+  `internal/api/v1/diagnostics_backups_test.go`,
+  `web/explorer/src/app/status/BackupsPanel.test.tsx`.
+- **`stellarindex_backup_offsite_stale` (P3, both rule trees).** The
+  existing backup alerts read `pgbackrest_backup_since_last_completion_seconds`,
+  which the exporter computes ACROSS repos — a host whose on-host repo1
+  is fresh while every repo2 (S3) write fails stayed green and the one
+  copy that survives host loss aged out silently. The new rule fires
+  per UP exporter instance with no `pgbackrest_backup_info{repo_key="2"}`
+  series younger than 8 d (`x unless x offset 8d` — a new backup is a
+  new series), which also covers repo2 never written. promtool tests
+  in `deploy/monitoring/rule-tests/backup-offsite_test.yml` (red-proof:
+  widening `repo_key` to all repos makes the repo1-fresh/repo2-stale
+  case stop firing); runbook `runbooks/backup-offsite-stale.md`.
+
 ### Fixed
 
 - **Explorer test-net builds could silently serve MAINNET data.**
