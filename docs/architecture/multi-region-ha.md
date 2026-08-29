@@ -31,6 +31,37 @@ audit: cold adversarial 6-auditor audit, 2026-08-20/21 (see §13)
 - The agreed latency SLO (ADR-0009: **p95 ≤ 200 ms / p99 ≤ 500 ms** on
   `/v1/price` + `/v1/oracle/*`) must not regress.
 
+## 0b. Amendment — API-first (Ash, 2026-08-29)
+
+**Decision: the API is the product; the explorer can pay the ocean.** Ash, after
+seeing the measured split: *"api is the main purpose really, people can wait 200 ms
+for explorer results."*
+
+Consequences, which SIMPLIFY §3b and §4:
+
+- **R2 does not carry a hot lake set.** The "optional hot local set" in §3b/§4 is
+  dropped for v1. R2 and R3 are the same shape: full local pricing/Timescale,
+  Redis, API — and **every** lake-backed route proxies to R1's API (request-level,
+  so a deep page pays ONE extra RTT, not one per query).
+- **Disk requirement falls accordingly.** Neither R2 nor R3 needs TiB-scale NVMe:
+  the local footprint is Timescale (524 GiB on R1 today) + Redis + OS. A 2 TB
+  box is generous, which is why these are the "cheap replicas" of the decision.
+- **Determinism hardening (§7.2) becomes launch-blocking, not nice-to-have.** If
+  the API is the product and three regions answer it independently (Model B), two
+  customers hitting different regions MUST get the same number. The three known
+  non-deterministic spots — OHLC `open`/`close` via `first/last` over non-unique
+  `ts`, `account_movements` missing `FINAL`/`LIMIT 1 BY`, and wall-clock/region-local
+  watermarks in served responses — are the correctness gate for multi-region, and
+  a cross-region divergence prober (same request to R1/R2/R3, compare payloads
+  modulo documented volatile fields) is the evidence that it holds.
+- **Measured basis (2026-08-29, r1).** The pricing/ticker surface is ~99% cache-served
+  locally (`list_coins` 77,113 hit / 48 miss; `distinct_pairs` 83,672 / 38;
+  `list_issuers` 76,193 / 365; `latest_oracle_updates` 75,281 / 1,207), so it never
+  needs R1. Organic explorer traffic (~3,250 requests / 2 h: accounts, asset detail,
+  movements) is essentially all lake-backed — those are the requests that will cross
+  the ocean, and this amendment accepts that cost explicitly.
+
+
 ## 1. Ground truth (measured on R1, 2026-08-20/21 — not assumed)
 
 | fact | value | source |
