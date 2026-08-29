@@ -59,7 +59,10 @@ against.
   cross-oracle band — a held +4 % venue-specific offset no longer
   auto-releases (`TestCompositeReference_ReleaseBandHoldsVenueOffset`,
   `…_LegDispersionCannotCorroborate`, `…_LegDispersionBoundary`,
-  `TestLegDispersion_MeasuresWorstVenue`).
+  `TestLegDispersion_MeasuresWorstVenue`). A3/A4: config-bound tests
+  (`TestValidate_CompositeReferenceBounds`) and the guard fails CLOSED
+  when a venue VWAP cannot be computed (`leg_dispersion=uncomputable`,
+  `TestCompositeReference_UncomputableDispersionFailsClosed`).
 
 - **Oracle capture-totality PR-2 — decoders record unmapped symbols
   as `raw:` rows.** The Reflector (dex/cex/fx), RedStone and Band

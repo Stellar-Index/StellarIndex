@@ -1980,7 +1980,9 @@ leg_dispersion_bps` (default = `tolerance_bps`, 75) the leg cannot
 corroborate — `composite_unavailable: leg_dispersion=…bps` — because
 two venues only count as two when they agree: a dominant venue plus a
 dust print 3 % off is one opinion and an artefact (verifier advisory A1,
-2026-08-29). Also carried in the freeze reason as
+2026-08-29). A venue VWAP that cannot be computed refuses the leg too
+(`leg_dispersion=uncomputable`, fail-closed — A4); the gauge is then
+not updated for that leg. Also carried in the freeze reason as
 `composite_leg_dispersion_bps={…}`.
 
 ### `stellarindex_aggregator_composite_freeze_suppressed_total`

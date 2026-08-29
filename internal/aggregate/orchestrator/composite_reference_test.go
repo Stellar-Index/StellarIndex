@@ -565,12 +565,50 @@ func TestLegDispersion_MeasuresWorstVenue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := ratBps(o.legDispersion(xlmUSD, trades, vwap))
-	if got < 147.7 || got > 147.9 {
-		t.Errorf("dispersion = %.3f bps, want ≈147.8", got)
+	disp, uncomputable := o.legDispersion(xlmUSD, trades, vwap)
+	if got := ratBps(disp); got < 147.7 || got > 147.9 || uncomputable {
+		t.Errorf("dispersion = %.3f bps (uncomputable=%v), want ≈147.8", got, uncomputable)
 	}
-	if o.legDispersion(xlmUSD, trades[:1], vwap) != nil {
-		t.Error("single-venue slice must report no dispersion (nil)")
+	if d, u := o.legDispersion(xlmUSD, trades[:1], vwap); d != nil || u {
+		t.Error("single-venue slice must report no dispersion (nil, computable)")
+	}
+}
+
+// TestCompositeReference_UncomputableDispersionFailsClosed (A4) — a
+// venue whose own VWAP cannot be computed (every print zero-base,
+// bypassing canonical.Trade.Validate the way aggregate.VWAP's doc says
+// callers occasionally do) must not SKIP the guard: the leg is refused
+// with `leg_dispersion=uncomputable`, end to end through recordLegRef →
+// referenceLeg, and the target's spike still freezes.
+func TestCompositeReference_UncomputableDispersionFailsClosed(t *testing.T) {
+	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
+	usdGBP := mkPair(t, "fiat", "USD", "fiat", "GBP")
+	xlmGBP := mkPair(t, "crypto", "XLM", "fiat", "GBP")
+	window := time.Minute
+	now := time.Now().UTC()
+	fx := &fakeFXStore{quote: big.NewRat(80, 100), observedAt: now.Add(-time.Hour), source: "massive"}
+	o := New(nil, nil, Config{
+		Windows:            []time.Duration{window},
+		Triangulations:     []TriangulationChain{{Target: xlmGBP, Legs: []canonical.Pair{xlmUSD, usdGBP}}},
+		FXStore:            fx,
+		CompositeReference: CompositeReferenceConfig{Enabled: true, Targets: []canonical.Pair{xlmGBP}},
+	})
+	trades := []canonical.Trade{
+		makeTradeOn(t, xlmUSD, "kraken", 100_000_000, 10_000_000, now),
+		makeTradeOn(t, xlmUSD, "coinbase", 0, 10_000_000, now), // zero-base: venue VWAP uncomputable
+	}
+	if d, u := o.legDispersion(xlmUSD, trades, big.NewRat(10, 100)); d != nil || !u {
+		t.Fatalf("legDispersion = (%v, uncomputable=%v), want (nil, true)", d, u)
+	}
+	o.tickLegRefs = make(map[time.Duration]map[string]legRef)
+	o.recordLegRef(xlmUSD, window, big.NewRat(10, 100), trades)
+	ref := o.resolveCompositeReference(context.Background(), xlmGBP, window, now, big.NewRat(8, 100))
+	if ref.verdict != compositeVerdictUnavailable || ref.unavailable != "leg_dispersion=uncomputable" {
+		t.Fatalf("verdict %q unavailable=%q, want unavailable / leg_dispersion=uncomputable (the guard must "+
+			"fail CLOSED when it cannot run, even though the composite 0.08 agrees exactly)", ref.verdict, ref.unavailable)
+	}
+	if ref.price != nil {
+		t.Error("an unavailable reference must carry no composite price")
 	}
 }
 

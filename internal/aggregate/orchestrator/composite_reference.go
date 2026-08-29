@@ -200,30 +200,37 @@ type legRef struct {
 	// distinct venues in the survivor slice (exact Rat; nil when fewer
 	// than two venues). The leg-dispersion guard reads it.
 	dispersion *big.Rat
+
+	// dispersionUncomputable is set when a venue's own VWAP could not be
+	// computed (A4): the guard cannot vouch for the leg, so the leg is
+	// refused (`leg_dispersion=uncomputable`) rather than skipped.
+	dispersionUncomputable bool
 }
 
 // legDispersion computes the leg-dispersion statistic for one
 // published bucket: each venue's own VWAP over the post-filter
 // survivor trades (the same slice and the same normalisation the leg
-// VWAP came from), measured against the leg VWAP. nil when the bucket
-// has fewer than two venues (nothing to disperse) or a venue VWAP
-// cannot be computed.
-func (o *Orchestrator) legDispersion(pair canonical.Pair, trades []canonical.Trade, vwap *big.Rat) *big.Rat {
+// VWAP came from), measured against the leg VWAP. (nil, false) when the
+// bucket has fewer than two venues (nothing to disperse — the guard
+// does not apply). (nil, true) when a venue VWAP cannot be computed:
+// the guard could not run, which is NOT the same as passing it, so the
+// caller fails closed (A4).
+func (o *Orchestrator) legDispersion(pair canonical.Pair, trades []canonical.Trade, vwap *big.Rat) (dispersion *big.Rat, uncomputable bool) {
 	if vwap == nil || vwap.Sign() <= 0 {
-		return nil
+		return nil, true
 	}
 	byVenue := make(map[string][]canonical.Trade)
 	for _, tr := range trades {
 		byVenue[tr.Source] = append(byVenue[tr.Source], tr)
 	}
 	if len(byVenue) < 2 {
-		return nil
+		return nil, false
 	}
 	worst := new(big.Rat)
 	for _, venueTrades := range byVenue {
 		venueVWAP, err := o.computeNormalizedVWAP(venueTrades, pair)
 		if err != nil || venueVWAP == nil || venueVWAP.Sign() <= 0 {
-			return nil
+			return nil, true
 		}
 		dev := new(big.Rat).Sub(venueVWAP, vwap)
 		dev.Abs(dev).Quo(dev, vwap)
@@ -231,7 +238,7 @@ func (o *Orchestrator) legDispersion(pair canonical.Pair, trades []canonical.Tra
 			worst = dev
 		}
 	}
-	return worst
+	return worst, false
 }
 
 // ratBps renders a ratio as basis points (float, for reporting only).
@@ -384,10 +391,12 @@ func (o *Orchestrator) recordLegRef(pair canonical.Pair, window time.Duration, v
 	if o.tickLegRefs[window] == nil {
 		o.tickLegRefs[window] = make(map[string]legRef, len(o.cfg.Pairs))
 	}
+	dispersion, uncomputable := o.legDispersion(pair, trades, vwap)
 	o.tickLegRefs[window][pair.String()] = legRef{
-		price:      new(big.Rat).Set(vwap), // defensive copy, as recordEdgeQuote
-		sources:    distinctSourceCount(trades),
-		dispersion: o.legDispersion(pair, trades, vwap),
+		price:                  new(big.Rat).Set(vwap), // defensive copy, as recordEdgeQuote
+		sources:                distinctSourceCount(trades),
+		dispersion:             dispersion,
+		dispersionUncomputable: uncomputable,
 	}
 }
 
@@ -506,6 +515,10 @@ func (o *Orchestrator) referenceLeg(
 		// Leg-dispersion guard (A1): two venues only count as two when
 		// they AGREE. A dominant venue plus a dust print 3 % off is one
 		// opinion and an artefact, and the artefact can be the attacker's.
+		// A guard that could not run has not been passed (A4).
+		if lr.dispersionUncomputable {
+			return nil, lr.sources, "leg_dispersion=uncomputable"
+		}
 		if lr.dispersion != nil && lr.dispersion.Cmp(big.NewRat(int64(cfg.LegDispersionBps), 10_000)) > 0 {
 			return nil, lr.sources, fmt.Sprintf("leg_dispersion=%.1fbps", ratBps(lr.dispersion))
 		}
