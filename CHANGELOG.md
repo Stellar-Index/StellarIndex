@@ -335,6 +335,27 @@ against.
   `internal/sources/*/{decode*,events,feeds,pairs}.go` unless a commit
   carries a `Replay-Plan:` trailer (`none — <reason>` allowed; a bare
   `none` is not). Fixture self-test in `lint-replay-plan-test.sh`.
+### Fixed
+### Changed
+
+- **Aggregator: structurally single-venue crosses (`crypto:XLM/fiat:GBP`)
+  keep the signed freeze-and-auto-release posture; the USD-FX-derived hub
+  route is never counted as a second source.** In the production graph
+  every triangulation target has exactly one hub route (through USD), so
+  `corroborationCount` is always 1 and the freeze's `source_count`
+  widening never executes (design:
+  `docs/design/composite-route-corroboration-for-structurally-single-venue.md`
+  §1–§2). A candidate change that entered the target's own direct print
+  into the corroboration clique was rejected in review: the widening is
+  read one tick behind, so a prior-tick "agreement" pinned `sources=2`
+  for the NEXT bucket and a persistent single-venue manipulation was
+  never frozen. `TestRouterFreeze_TwoRoutesSuppressSingleSourceFreeze`
+  now pins the production shape as a control (single agreeing hub route
+  + single-venue z≈50 spike → freeze engages, hold kept on the
+  persisting print, `prevVWAPs` does not ratchet, last-known-good keeps
+  serving). The real second route (design §8.1, `crypto:XLM/crypto:BTC`
+  in `aggregate.pairs`) is an operator decision because it also exposes
+  a new, non-`min_usd_volume`-gated served pair.
 - **CI amtool gate for the Alertmanager config (#275).** The routing
   tree that decides whether any alert reaches a human was the only
   production config surface with no CI validation — amtool ran only
