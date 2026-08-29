@@ -197,6 +197,25 @@ against.
 
 ### Fixed
 
+- **One unrepresentable RedStone `feed_id` no longer discards the entire
+  `write_prices` batch.** Since the oracle capture-totality change an
+  unregistered feed_id becomes a `raw:<feed_id>` row, and the raw
+  validator's refusal (empty / > 64 bytes / a byte outside printable
+  ASCII `0x21-0x7E`) escalated to `ErrMalformedPayload` for the WHOLE
+  event. The "impossible for an `ScSymbol`" justification was copied
+  from the Reflector/Band paths, but RedStone feed_ids arrive as
+  `ScString` — arbitrary bytes, unbounded length — and `write_prices`
+  batches every updated feed into one event, so a single bad feed_id
+  took all ~19 feeds dark until a code change: strictly worse than the
+  pre-totality per-entry skip and the inverse of the totality goal.
+  The decoder now drops that ONE slot (surviving feeds keep their
+  original `op_index`) and records it on the new
+  `stellarindex_source_unrepresentable_symbols_total{source}` counter
+  plus a WARN naming the slot — deliberately NOT the unknown-symbols
+  counter, whose contract is "recorded as `raw:`" and which would send
+  operators hunting for rows that do not exist. New alert
+  `stellarindex_ingestion_oracle_unrepresentable_symbols` (both rule
+  trees, promtool scenarios) and a runbook section. (#291)
 - **Gap detector pre-registers `runs_total` at 0 so a restart cannot read
   as a dead detector.** `stellarindex_ingest_gap_detector_runs_total` is a
   CounterVec that only materialises a series on first `Inc()`, and since

@@ -57,6 +57,7 @@ func registerAppMetrics() {
 		SourceMatchedEventsTotal,
 		SourceDecodeErrorsTotal,
 		SourceUnknownSymbolsTotal,
+		SourceUnrepresentableSymbolsTotal,
 		SourceOrphanEventsTotal,
 		AMMSelfPairSwapTotal,
 		ExternalPollerPollsTotal,
@@ -1116,6 +1117,37 @@ var ExternalFXBaselineHealedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_external_fx_baseline_healed_total",
 		Help: "FX sanity-band baselines re-pointed at an agreeing history majority that refuted them, per source. Each increment is one poisoned/stale baseline self-corrected.",
+	},
+	[]string{"source"},
+)
+
+// SourceUnrepresentableSymbolsTotal — per-source counter of oracle
+// asset slots DROPPED because the published symbol / feed id cannot be
+// held even by the record layer's verbatim `raw:` namespace: empty,
+// longer than 64 bytes, or carrying a byte outside printable ASCII
+// 0x21–0x7E (canonical.NewOracleRawAsset / validateRawSymbol).
+//
+// Deliberately NOT folded into SourceUnknownSymbolsTotal. That counter
+// means "recorded as raw:<symbol>" — the row exists and a later
+// allow-list / feed-registry entry promotes it in place. A slot on THIS
+// counter is a HOLE: nothing was written, so closing it needs the
+// registry entry AND a replay of the affected ledgers. Sharing one
+// series would send operators hunting for raw rows that do not exist.
+//
+// Only an ScString-keyed oracle can reach it in practice: RedStone
+// feed_ids are `ScString` (arbitrary bytes, unbounded length), while
+// Reflector/Band symbols are `ScSymbol`. Refusal is per-SLOT, not
+// per-event (#291): write_prices batches every updated feed into one
+// event, so refusing the event would take all ~19 feeds dark — the
+// inverse of the oracle capture-totality goal.
+//
+// Alert consumer: `stellarindex_ingestion_oracle_unrepresentable_symbols`
+// (deploy/monitoring/rules/ingestion.yml + the R1 overlay; runbook
+// docs/operations/runbooks/oracle-unknown-symbols.md).
+var SourceUnrepresentableSymbolsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_source_unrepresentable_symbols_total",
+		Help: "Oracle asset slots dropped because the published symbol/feed id cannot be represented even as a raw: asset; each increment is a row the record layer could not write.",
 	},
 	[]string{"source"},
 )

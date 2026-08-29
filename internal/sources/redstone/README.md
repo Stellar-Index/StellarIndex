@@ -91,11 +91,24 @@ decode as the `canonical.AssetRWA` variant (ADR-0028) — deliberately
 NOT `crypto`, so a tokenized T-bill never lands in a crypto-scoped
 surface. They remain `ClassOracle` / `IncludeInVWAP=false`, so a
 NAV-quoted RWA reference never feeds market VWAP. A feed_id outside
-the registry is skipped per-entry and counted
+the registry is RECORDED verbatim as a `raw:<feed_id>` row at its own
+vector slot (oracle capture-totality, PR-2) and counted
 on `stellarindex_source_unknown_symbols_total{source="redstone"}`
 (alert `stellarindex_ingestion_oracle_unknown_symbols`) — the 2026-07-24 relayer
-expansion hit exactly this path (plus `ErrEmptyUpdates` for
-all-new batches) for ~5,600 events until the registry caught up.
+expansion hit exactly this path (then a per-entry SKIP, plus
+`ErrEmptyUpdates` for all-new batches) for ~5,600 events until the
+registry caught up.
+
+The one feed_id that still cannot be recorded is one the `raw:`
+validator itself refuses — empty, > 64 bytes, or a byte outside
+printable ASCII `0x21-0x7E`. RedStone feed_ids are `ScString`
+(arbitrary bytes, unbounded length), unlike the `ScSymbol` symbols
+Reflector/Band publish, so that is reachable here. Such a slot is
+dropped ALONE — counted on
+`stellarindex_source_unrepresentable_symbols_total{source="redstone"}`
+with a WARN naming the slot — and every sibling feed in the same
+`write_prices` batch still lands. Refusing the whole event instead
+(the pre-#291 behaviour) took all ~19 feeds dark on one bad feed_id.
 
 ### Q4 — Quote asset is per-feed (ADR-0028)
 
