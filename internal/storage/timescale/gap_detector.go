@@ -43,6 +43,26 @@ const GapDetectorMinGapSize = int64(1000)
 // isolation.
 const gapDetectorPerTargetTimeout = 15 * time.Minute
 
+// gapDetectorStatementTimeoutMS is the PG-side `SET LOCAL
+// statement_timeout` applied to BOTH per-target scan queries — the
+// LAG-over-DISTINCT gap scan in [Store.FindPerSourceLedgerGaps] and the
+// density count in [Store.CountDistinctLedgers]. It is the backstop
+// for the case where the Go-side cancel does not reach PG (the
+// database/sql cancel is best-effort; r1 2026-05-29 accumulated three
+// concurrent SDEX scans that way).
+//
+// INVARIANT: MUST be <= gapDetectorPerTargetTimeout, and the two
+// queries share ONE constant. Until 2026-08-28 CountDistinctLedgers
+// reused opsVerifyStatementTimeoutMS (2h) while the Go context was
+// 15 min: every soroban_events count that overran 15 min was
+// abandoned by Go but kept running in PG for up to 2h, and the next
+// 6h cycle (or every restart) stacked another — pg_stat_statements
+// showed 121 calls, mean 556 s, 18.7 h total, load 19.6 and 503s from
+// serving-path statement timeouts (r1 incident 2026-08-28 18:23Z).
+// 13 min leaves 2 min of the 15-min Go budget for the SET + connect.
+// Pinned by TestGapDetectorStatementTimeoutWithinGoBudget.
+const gapDetectorStatementTimeoutMS = 780_000 // 13 min, in ms
+
 // GapDetectorSafetyLookback bounds how far below tip a single steady-
 // state detector cycle re-scans. In steady state the scanned window is
 // just [previous-scan high-water, tip] — a few hundred ledgers per
@@ -158,10 +178,13 @@ func gapScanHighWater(ctx context.Context, store *Store, logger *slog.Logger, ta
 // `stellarindex_ingest_gap_detector_runs_total{outcome=error}`
 // counter to detect a sustained per-target detector outage.
 //
-// First scan runs immediately on goroutine start so the gauges
+// The first cycle runs immediately on goroutine start so the gauges
 // are populated before the first interval tick — a process that's
-// just come up has a non-empty signal within ~7 min rather than
-// ~37 min (= interval + first scan duration).
+// just come up has a non-empty signal within seconds rather than
+// ~37 min (= interval + first scan duration). Targets whose cadence
+// has NOT elapsed since their last persisted scan are skipped by that
+// first cycle (see [seedGapDetectorState]); their gauges are re-emitted
+// from persisted state instead.
 func RunGapDetector(ctx context.Context, store *Store, logger *slog.Logger) error {
 	if store == nil {
 		return nil
@@ -177,7 +200,19 @@ func RunGapDetector(ctx context.Context, store *Store, logger *slog.Logger) erro
 	// or all targets stretch to the longest cadence. Per-target
 	// tracking lets us run light targets every 30 min while
 	// throttling huge-table targets (SDEX, soroban-events) to 6h.
-	lastScan := make(map[string]time.Time, len(DefaultGapDetectorTargets))
+	//
+	// Seeded from the persisted scan high-water cursors so a RESTART
+	// honours the cadence: until 2026-08-28 this map started empty,
+	// so every deploy / crash-loop iteration re-ran the 6h-cadence
+	// soroban_events + sdex scans immediately — each a >10-min IO
+	// storm on r1 — regardless of when they last ran.
+	preregisterGapDetectorSeries(DefaultGapDetectorTargets)
+	snapshots, err := store.ListSourceCoverage(ctx)
+	if err != nil {
+		logger.Warn("gap-detector: read source_coverage_snapshots for boot seed failed; gauges stay empty until first scan", "err", err)
+		snapshots = nil
+	}
+	lastScan := seedGapDetectorState(ctx, DefaultGapDetectorTargets, store.GetCursor, snapshots, logger, time.Now())
 
 	runOneGapDetectorCycleScheduled(ctx, store, logger, DefaultGapDetectorTargets, lastScan)
 
@@ -197,6 +232,35 @@ func RunGapDetector(ctx context.Context, store *Store, logger *slog.Logger) erro
 	}
 }
 
+// gapDetectorRunOutcomes is every value the gap detector emits on the
+// `outcome` label of stellarindex_ingest_gap_detector_runs_total.
+var gapDetectorRunOutcomes = []string{"ok", "error"}
+
+// preregisterGapDetectorSeries materialises the runs_total counter at 0
+// for every (source, table, outcome) the detector can emit, so a live
+// process ALWAYS exposes the series. Same F-0033 contract as
+// obs.seedBoundedLabelSeries, applied here because the (source, table)
+// label set is owned by DefaultGapDetectorTargets, not the obs package.
+//
+// Why it matters: a CounterVec only creates a series on first Inc(),
+// and since the schedule is seeded from the persisted scan cursor
+// (see [seedGapDetectorState]) a restart can legitimately run NO scan
+// for hours. Without pre-registration the whole family was absent for
+// that window and the `stellarindex_ingest_gap_detector_silent` alert's
+// `absent_over_time(runs_total[15m])` clause read "no scan due yet" as
+// "detector dead" — the 2026-08-29 09:55Z r1 false-fire, 26 min after
+// the v0.49.0 deploy restarted the aggregator. With the series present
+// at 0 that clause is reserved for the process-dead case it was written
+// for; the staleness clause on last_success_unix still covers a wedged
+// target.
+func preregisterGapDetectorSeries(targets []GapDetectorTarget) {
+	for _, t := range targets {
+		for _, outcome := range gapDetectorRunOutcomes {
+			obs.IngestGapDetectorRunsTotal.WithLabelValues(t.Source, t.Table, outcome).Add(0)
+		}
+	}
+}
+
 // targetKey is the dedupe identity for per-target last-scan
 // tracking. (source, table) matches the metric labels so the
 // bookkeeping aligns with the wire shape.
@@ -212,22 +276,94 @@ func targetKey(t GapDetectorTarget) string {
 // allowed cycle, but the postgres-load incident class doesn't
 // recur.
 func runOneGapDetectorCycleScheduled(ctx context.Context, store *Store, logger *slog.Logger, targets []GapDetectorTarget, lastScan map[string]time.Time) {
-	now := time.Now()
-	due := make([]GapDetectorTarget, 0, len(targets))
-	for _, t := range targets {
-		key := targetKey(t)
-		cadence := t.EffectiveScanCadence()
-		if last, seen := lastScan[key]; seen && now.Sub(last) < cadence {
-			continue
-		}
-		due = append(due, t)
-		lastScan[key] = now
-	}
+	due := dueGapDetectorTargets(targets, lastScan, time.Now())
 	if len(due) == 0 {
 		logger.Debug("gap-detector: no targets due this cycle")
 		return
 	}
 	runOneGapDetectorCycle(ctx, store, logger, due)
+}
+
+// dueGapDetectorTargets returns the targets whose EffectiveScanCadence
+// has elapsed since lastScan[key] (or that have no entry at all), and
+// stamps each returned target's lastScan to `now`. The stamp is taken
+// at dispatch, not on success, so a failing heavy scan is retried on
+// its cadence rather than every 30-min tick.
+func dueGapDetectorTargets(targets []GapDetectorTarget, lastScan map[string]time.Time, now time.Time) []GapDetectorTarget {
+	due := make([]GapDetectorTarget, 0, len(targets))
+	for _, t := range targets {
+		key := targetKey(t)
+		if last, seen := lastScan[key]; seen && now.Sub(last) < t.EffectiveScanCadence() {
+			continue
+		}
+		due = append(due, t)
+		lastScan[key] = now
+	}
+	return due
+}
+
+// gapDetectorCursorReader is the one Store method the boot-time seed
+// needs, as a func so [seedGapDetectorState] is unit-testable without
+// a database. Satisfied by (*Store).GetCursor.
+type gapDetectorCursorReader func(ctx context.Context, source, sub string) (Cursor, error)
+
+// seedGapDetectorState builds the initial per-target lastScan map from
+// persisted state so a process restart continues the schedule the
+// previous process left instead of restarting it:
+//
+//   - The "gap-detector-scan" high-water cursor a target wrote after its
+//     last SUCCESSFUL gap scan carries last_updated; that becomes the
+//     target's lastScan, so the first cycle skips it while
+//     now - last_updated < EffectiveScanCadence. (Clamped to `now` so a
+//     future-dated row from clock skew cannot suppress a scan past one
+//     cadence.)
+//   - The same stamp re-emits stellarindex_ingest_gap_detector_last_
+//     success_unix, so the `_silent` alert's staleness clock keeps
+//     running across the restart. Without this a skipped target has NO
+//     series until its next scan succeeds — a persistently failing scan
+//     after a restart would never fire the alert.
+//   - The target's source_coverage_snapshots row (written in the same
+//     scan) re-emits the last-known gap max/count + distinct gauges, so
+//     `stellarindex_ingest_gap_detected` is not blind for up to a full
+//     cadence after every deploy. Same last-known-good contract as the
+//     error path (gauges are never cleared on failure).
+//
+// A target with no cursor (never scanned, or ErrNotFound) gets no entry
+// → first cycle scans it, as before. A cursor read error is logged and
+// treated the same way (scan now), never as "skip".
+func seedGapDetectorState(ctx context.Context, targets []GapDetectorTarget, getCursor gapDetectorCursorReader, snapshots []SourceCoverage, logger *slog.Logger, now time.Time) map[string]time.Time {
+	byKey := make(map[string]SourceCoverage, len(snapshots))
+	for _, cov := range snapshots {
+		byKey[cov.Source+"/"+cov.Table] = cov
+	}
+	lastScan := make(map[string]time.Time, len(targets))
+	for _, t := range targets {
+		key := targetKey(t)
+		c, err := getCursor(ctx, gapDetectorHighWaterSource, key)
+		switch {
+		case errors.Is(err, ErrNotFound):
+			continue
+		case err != nil:
+			logger.Warn("gap-detector: read scan cursor for boot seed failed; scanning target on first cycle",
+				"source", t.Source, "table", t.Table, "err", err)
+			continue
+		}
+		last := c.UpdatedAt
+		if last.After(now) {
+			last = now
+		}
+		lastScan[key] = last
+		obs.IngestGapDetectorLastSuccessUnix.WithLabelValues(t.Source, t.Table).Set(float64(last.Unix()))
+		if cov, ok := byKey[key]; ok {
+			obs.IngestGapMaxSize.WithLabelValues(t.Source, t.Table).Set(float64(cov.MaxGapLedgers))
+			obs.IngestGapCount.WithLabelValues(t.Source, t.Table).Set(float64(cov.GapCount))
+			obs.IngestSourceDistinctLedgers.WithLabelValues(t.Source, t.Table).Set(float64(cov.DistinctLedgers))
+		}
+		logger.Info("gap-detector: seeded target schedule from persisted scan cursor",
+			"source", t.Source, "table", t.Table, "last_scan", last.UTC().Format(time.RFC3339),
+			"cadence", t.EffectiveScanCadence().String(), "next_due", last.Add(t.EffectiveScanCadence()).UTC().Format(time.RFC3339))
+	}
+	return lastScan
 }
 
 // runOneGapDetectorCycle is one full pass over every target.

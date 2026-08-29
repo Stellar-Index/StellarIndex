@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -72,6 +73,29 @@ type Store struct {
 	// entry point stamps a generation but forgets to enter USD-volume-resolution
 	// mode (A-CRIT-1). Set only by InstallUSDVolumeResolution.
 	usdVolumeResolutionInstalled bool
+
+	// assetRegistryDedupe is this Store's cache of (asset_id →
+	// last successful classic_assets upsert time). The next trade
+	// for the same asset within `assetRegistryDedupeTTL` skips the
+	// DB round-trip; trades outside the window upsert again so
+	// `last_seen_*` + `observation_count` advance. F-1243 (codex
+	// audit-2026-05-12).
+	//
+	// Per-Store (one DB), not per-process: asset_id is only unique
+	// within a database, and a process-wide map let a second Store
+	// over a different DB inherit "already upserted" for rows that
+	// DB never received (2026-08-28 TestAssetsReader flake). Store-
+	// lifetime is otherwise intentional: the indexer restarts often
+	// enough to re-touch rows, the upsert is idempotent, and the TTL
+	// bounds the worst-case load — a cross-process cache would be
+	// over-engineering.
+	assetRegistryDedupe sync.Map // key: asset_id (string) → time.Time (last upsert)
+
+	// issuerRegistryDedupe is this Store's sentinel cache of issuer
+	// G-strkeys already INSERTed into `issuers`. No TTL: the issuers
+	// table has no `last_seen` columns so there's nothing to advance
+	// after the first INSERT (migration 0022 vs 0023).
+	issuerRegistryDedupe sync.Map // key: g_strkey (string) → struct{}
 
 	// classicWatermark memoizes the classic-supply observer watermark
 	// read by [Store.MinClassicComponentLedger] (CS-102). The watermark

@@ -15,43 +15,94 @@
 # tasks/ or files/ would have passed this gate and deployed the feature
 # dead. A near-miss, caught by hand — hence the two extra entries.
 #
-# This gate diffs the deploying version against the previous release tag
-# over the config surfaces. If any changed and the operator did NOT pass
+# 2026-08-28 (audit deploy-ansible-gate-4): the list was still narrower
+# than what the role actually renders. roles/…/defaults/main.yml feeds
+# every template (galexie_ledgers_per_file → galexie.toml.j2), inventory
+# host_vars do the same, handlers/ decide what restarts, and the role
+# COPIES files from outside configs/ansible entirely: configs/healthchecks/*
+# (17-stellarindex-healthchecks.yml), scripts/ops/config-assertions.sh
+# (15-log-discipline.yml), scripts/ops/{ch-schema-snapshot,restore-drill}.sh
+# and scripts/dev/r1-smoke.sh. A defaults-only or healthchecks-only
+# release passed this gate. Deliberately NOT listed: playbooks/ and
+# tasks/deploy-one-binary.yml (the deploy itself runs them — a change
+# there is applied, not dead), migrations/ (deploy-binary.yml migrates)
+# and bin/.
+#
+# This gate diffs the deploying version against a baseline over the config
+# surfaces. The baseline is the version live on the host when the caller
+# knows it (3rd arg — e.g. read from the host's
+# /var/lib/stellarindex/deployed-versions/<binary> sidecar), else the
+# previous release tag by ancestry. Ancestry is WRONG for a skip-ahead
+# deploy (host on v0.45.0, deploying v0.47.2 diffs only v0.47.1..v0.47.2)
+# and for a rollback, so the baseline actually used is always printed.
+# If any surface changed and the operator did NOT pass
 # config_acknowledged=true, it FAILS — a loud, NON-destructive forcing
 # function (the binaries are already deployed by an earlier step; a red
 # gate just says "config still needs applying", which is accurate and
 # actionable). Acknowledging asserts the operator will apply / has applied
 # the config per the runbook.
 #
-# Usage: config-apply-gate.sh <version-tag> [acknowledged]
-#   <version-tag>  the deploying tag, e.g. v0.43.0
-#   [acknowledged] "true" if the operator passed config_acknowledged=true
+# Fail-closed: an unresolvable version/baseline or a failing `git diff`
+# is an ERROR, not "no changes" — a gate that cannot see the diff has no
+# basis for a green.
+#
+# Usage: config-apply-gate.sh <version-tag> [acknowledged] [baseline-tag]
+#   <version-tag>   the deploying tag, e.g. v0.43.0
+#   [acknowledged]  "true" if the operator passed config_acknowledged=true
+#   [baseline-tag]  the version live on the host, if known; defaults to
+#                   the previous release tag by ancestry
 set -uo pipefail
 
 VERSION="${1:?deploying version tag, e.g. v0.43.0}"
 ACK="${2:-false}"
+BASELINE="${3:-}"
 
 # Config surfaces a binary deploy does NOT apply. Directory prefixes are
 # git pathspecs: the trailing slash matches everything beneath them.
+# Keep in lockstep with config-apply-gate-test.sh (one fixture per entry).
 SURFACES=(
-  'configs/ansible/roles/archival-node/templates/'
-  'configs/ansible/roles/archival-node/tasks/'
-  'configs/ansible/roles/archival-node/files/'
+  'configs/ansible/roles/'
+  'configs/ansible/inventory/'
+  'configs/healthchecks/'
   'configs/prometheus/rules.r1/'
   'configs/alertmanager/'
   'deploy/monitoring/rules/'
   'deploy/systemd/'
   'deploy/clickhouse/'
+  # Repo scripts the archival-node role copies onto the host verbatim.
+  'scripts/ops/config-assertions.sh'
+  'scripts/ops/ch-schema-snapshot.sh'
+  'scripts/ops/restore-drill.sh'
+  'scripts/dev/r1-smoke.sh'
 )
 
-# The previous release tag = the config baseline currently live on the host.
-PREV="$(git describe --tags --abbrev=0 "${VERSION}^" 2>/dev/null || true)"
-if [ -z "$PREV" ]; then
-  echo "note: no release tag before ${VERSION}; skipping config-drift gate (first release / shallow clone)."
-  exit 0
+if ! git rev-parse -q --verify "${VERSION}^{commit}" >/dev/null; then
+  echo "::error::config-apply gate: deploying version '${VERSION}' does not resolve to a commit in this checkout — cannot diff config surfaces; refusing to pass (fail-closed). Fetch tags (fetch-depth: 0) or check the tag name."
+  exit 1
 fi
 
-CHANGED="$(git diff --name-only "$PREV" "$VERSION" -- "${SURFACES[@]}" 2>/dev/null || true)"
+if [ -n "$BASELINE" ]; then
+  if ! git rev-parse -q --verify "${BASELINE}^{commit}" >/dev/null; then
+    echo "::error::config-apply gate: host baseline '${BASELINE}' does not resolve to a commit in this checkout — cannot diff config surfaces; refusing to pass (fail-closed)."
+    exit 1
+  fi
+  PREV="$BASELINE"
+  echo "baseline: ${PREV} (host-reported live version)"
+else
+  # Ancestry fallback: the previous release tag = the config baseline
+  # ASSUMED live on the host.
+  PREV="$(git describe --tags --abbrev=0 "${VERSION}^" 2>/dev/null || true)"
+  if [ -z "$PREV" ]; then
+    echo "note: no release tag before ${VERSION}; skipping config-drift gate (first release / shallow clone)."
+    exit 0
+  fi
+  echo "baseline: ${PREV} (previous release tag by ancestry; for a skip-ahead or rollback deploy pass the host's live version as the 3rd argument)"
+fi
+
+if ! CHANGED="$(git diff --name-only "$PREV" "$VERSION" -- "${SURFACES[@]}")"; then
+  echo "::error::config-apply gate: git diff ${PREV}..${VERSION} failed — cannot determine which config surfaces changed; refusing to pass (fail-closed)."
+  exit 1
+fi
 
 SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 

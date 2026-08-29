@@ -121,6 +121,14 @@ call): **3.5–4.5 wk** if external review is post-launch (signed off as such);
 - [V] **Process**: orphan branch (`fix/priceless-structural-unpriceable`, 08-27, no PR) was superseded by #254 — waste. Codified: #256 no-orphan-work contract + PR template fields + daily orphan-branches tripwire; `delete_branch_on_merge` on; 30 merged branches pruned. Postmortem recovered from an orphan branch → #255.
 - Testnet 64/1000 backfill: ledger ~860k, 0 restarts (~45%). r1 v0.47.2; **cut v0.48.0 after the chain lands, then verify served**: `outlier_storm` silent, freeze count 0 on genuine moves, `assets_popular_priceless` 0, testnet native 100B.
 - Progress: Wave A 88% · B ~70% · C 100% · D 0% · overall ~47%.
+#### Night addendum — 2026-08-29 00:00–02:00Z (v0.48.0 deployed; backups provisioned)
+- [V] **v0.48.0 cut and deployed to r1** (tag 11d41201 = code ffc04a7e; deploy run 33223475389): api/aggregator/indexer/ops all v0.48.0, skew 0, healthz/readyz 200; hot-account `/v1/accounts/{id}/operations` 8 s → 0.2–0.6 s (#281), 0×5xx since; time-local outlier filter live (`venue_vwap` gauges present). **All 34 repo `rules.r1` files applied** (r1 had lagged the repo: 8 stale, 2 missing), promtool ok, reload ok. **Alerts firing: deadman only.**
+- [V] **Backups (Ash go)**: S3 bucket `stellarindex-pgbackrest-r1` (eu-central-1, SSE-S3, public blocked, lifecycle abort-mpu 1d + expire 28d), least-privilege IAM user, AWS Budgets $30 tag-scoped + $50 account-wide (alerts to Ash). Secrets in the r1 vault; local inventory wired (repo2 retention 1 full / 7 d ≈ $12–17/mo). **Not yet applied on r1** — waits for #272 (template) + #294 (no ClickHouse restart on users.d apply) to merge. ZFS rolling snapshots (3 d CH / 7 d PG, 2 TiB min-free guard, fail-closed) → #295. Status-page backup panel + `/v1/diagnostics/backups` + `backup_offsite_stale` alert → #293. **Correction**: the AWS Public Blockchain dataset is complete (1,003 partitions, 0..64.19M); no Deep-Archive duplicate needed — ADR-0043 wording amendment + weekly completeness monitor → #287.
+- [V] **Design §10 amended (Ash)**: composite XLM/USD × USD/GBP corroborates/refutes single-venue freezes on the current bucket, never VWAP/source_count; leg-breadth + leg-dispersion guards; 2 % release band → #288 (verified, protected class).
+- [V] ClickHouse drop-size guard: r1's 1 TiB was a hand edit never in ansible → #286 merged (pin 50 GiB + live verify; apply pending: remove the hand file first).
+- Open lane (all verified): #248 #249 #250 #251 #252 #253 #254 #258 #256 #246 #263 #265 #266–#274 #280 #287 #288 #293 #294 #295. r1 applies pending after merges: ops_batch enable, pgBackRest repo2, ZFS snapshots, drop-guard.
+- Progress: Wave A 88% · B ~80% · C 100% · D early ~70% · overall ~58%.
+
 ### ⚠️ DEPLOY GAP found + patched — config changes do NOT ship with binary deploys (2026-08-25)
 
 **Class (important, pre-launch-relevant):** `gh workflow run deploy.yml -f binaries=…`
@@ -3058,8 +3066,10 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
    cannot fix the affected accounts). Use the ALREADY-PROVEN D2
    script, not a bespoke ch-backfill:**
    ```
-   run-heavy-job.sh d2-p63 /usr/local/sbin/d2-ordinal-reproject.sh 63 63
-   run-heavy-job.sh d2-p38 /usr/local/sbin/d2-ordinal-reproject.sh 38 38
+   # ZFS snapshot of data/clickhouse first, then the explicit ack
+   # (docs/operations/clickhouse-destructive-ddl.md)
+   D2_FORCE_DROP=yes run-heavy-job.sh d2-p63 /usr/local/sbin/d2-ordinal-reproject.sh 63 63
+   D2_FORCE_DROP=yes run-heavy-job.sh d2-p38 /usr/local/sbin/d2-ordinal-reproject.sh 38 38
    ```
    Recomputing an already-ordinaled range is idempotent (the D2 doc
    proves the formula reproduces live-written ordinals EXACTLY above
@@ -3700,3 +3710,35 @@ are obsolete — repo has been public since 2026-07-03):
 
 _Update this file in the same commit as any change that lands or
 invalidates an item. One plan; no forks._
+
+## Addendum — 2026-08-29 morning (06:00–08:30Z)
+
+Lane state (serial, main-green after every squash): merged #304 #280 #268 #269 #274 #293 #300; open and green, in order: #271 → #295 → #287 → #303 → #307 → #305 → #261 → #252 → #253 → #254 → #262 → #246 → #297 → #256 → #285; #237 (legal) is Ash-only.
+
+Production (r1):
+- `--tags stellarindex` applied: era keys (`soroban_genesis_ledger`, `movements_floor_ledger`) + unit/timer drift; indexer/aggregator/api restarted, healthz/readyz 200. Tag-limited runs need `-e ansible_python_interpreter=/usr/bin/python3`.
+- 06:04Z galexie restart incident (config apply via `--tags users,minio,galexie` fired the restart handler that `--check` did not show): ~11 min export delay, no data loss (contiguous). Fix #307 (restart only on effective input change + fail-closed probe + `force_handlers`), verifier PASS.
+- Alerts firing: `deadmansswitch` (informational), `oracle_unknown_symbols` and `completeness_incomplete{source=reflector-fx}` — same root cause (VES/XAU rejected by the canonical allow-list → 362 of 5,760 oracle_updates dropped over [64161414, 64174128]). Fix #300 merged; still needed: cut release, deploy, replay reflector-fx from 64161414 under `run-heavy-job.sh`, re-run `compute-completeness`, verify `complete=true`. No silencing.
+
+Testnet:
+- Backfill OOM-killed by its own transient-unit `MemoryMax=5G` at ledger 2,254,083 and auto-restarted from `--start 2`, which re-applies every ledger in captive core (skip-existing-files ≠ skip-existing-work). Relaunched from `--start 2254080` (archive contiguous through 2,254,079) with `MemoryMax=8G` and `EnvironmentFile=/etc/default/galexie-backfill` (the live `/etc/default/galexie` creds are denied on `galexie-archive`). Follow-ups: backfill wrapper must compute a resume point on restart; monitor must alert on the progress counter going backwards; `galexie-backfill-status` has an unbound `now_epoch` (line 112).
+
+Progress: Wave A 100% · Wave B ~88% · Wave C ~80% · Wave D 0% · overall ≈ 69%.
+
+## Addendum — 2026-08-29 midday (08:30–10:45Z)
+
+Process change (Ash): the second session files issues only; findings are remediated in one monolithic batch (fixer→verifier per issue, one integration branch, one PR, CI once). Squashes may be batched where logical; main's post-batch CI validates the batch and a red is bisected + fixed forward.
+
+Shipped:
+- **v0.49.0** tagged at `1613a97f`, built (11 assets), deployed to r1 (run 33245533733, `migrations_skip=true` — zero new migrations since v0.48.0), verified served: indexer/aggregator/api v0.49.0, healthz/readyz 200, galexie untouched.
+- reflector-fx: `projector-replay -from 64161414 -write` (replay window verified); full-range verdict then showed `expected=1181064 served=1083238 Δ=97826` over [61602787, 64177164] (the VES/XAU drop spans months) → `projector-replay -from 61602787 -write` applied 10:35Z (~3.5 h; monitored). Then `compute-completeness -source reflector-fx` → expect `complete=true` → alert clears. `unknown_symbols` increments stopped after the deploy (its 25 h window self-clears).
+- Main CI: the single serial `integration tests (Docker)` job (20.5 min of a 23-min run) is now a 4-way shard matrix behind an aggregate job of the same name (#314, verified; 22.5 → 11 min critical path).
+- Deploy: #268's directory-`copy` migrations sync stalled the v0.49.0 deploy >16 min (controller-side, r1 untouched); cancelled, re-run with migrations_skip; #318 restores a single archive transfer + explicit safe prune (verified; r1 dir == repo 291/291).
+- Merged: #285 #253 #246 #252 #307 #318 #314 #320 #313 #309 + morning set. Fixed forward: main red on `af5a9d1d` (#303 rule tests vs #297 rule text + stale Postman) → #320.
+- Alerts: `gap_detector_silent` fired 09:55Z after the aggregator restart (CounterVec absent until first scan; seeded schedule defers it) — cleared itself 10:00Z; #323 pre-registers the series so it cannot recur.
+
+Open lane: #261 (mapped-flag contract now implemented on the API side), #265 + #270 (rule-test text drift, fixed/fixing), #254 #256 #295 #323 (refreshed, CI), #288 (composite §10), #237 (Ash).
+
+Testnet backfill: resumed from 2,254,080 after the 5G-cap OOM; ~56% at 10:30Z, 0 restarts.
+
+Progress: Wave A 100% · Wave B ~92% · Wave C ~85% · Wave D 0% · overall ≈ 73%.

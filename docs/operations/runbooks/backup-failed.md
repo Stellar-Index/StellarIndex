@@ -1,21 +1,21 @@
 ---
 title: Runbook — backup-failed
-last_verified: 2026-08-28
+last_verified: 2026-08-29
 status: living
 severity: P1
 ---
 
-# Runbook — `stellarindex_timescale_backup_failed` / `_backup_none_24h`
+# Runbook — `stellarindex_timescale_backup_failed` / `_backup_none_24h` / `stellarindex_pgbackrest_backup_metrics_absent` / `_backup_unit_failed`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alerts | `stellarindex_timescale_backup_none_24h` (no completed backup in > 24 h, `severity: page`, **SEV-1**) / `stellarindex_timescale_backup_failed` (> 25 h, `severity: ticket`). Both `for: 5m`. **The page fires first**; the ticket follows one hour later. |
+| Alerts | `stellarindex_timescale_backup_none_24h` (no completed backup in > 24 h, `severity: page`, **SEV-1**) / `stellarindex_timescale_backup_failed` (> 25 h, `severity: ticket`). Both `for: 5m`. **The page fires first**; the ticket follows one hour later. `stellarindex_pgbackrest_backup_metrics_absent` (`severity: page`, `for: 15m`): the exporter is up but reports NO real stanza, so the two freshness alerts are structurally blind — treat as "backup state unknown", same urgency as `_none_24h`. `stellarindex_pgbackrest_backup_unit_failed` (`severity: ticket`, `for: 5m`): `pgbackrest-backup.service` exited non-zero — the early, causal signal. |
 | Severity | P1 (`_backup_none_24h`) / ticket (`_backup_failed`) |
 | Detected by | `configs/prometheus/rules.r1/storage.yml` (the file r1 actually loads — `prometheus.r1.yml` `rule_files: /etc/prometheus/rules.r1/*.yml`; `deploy/monitoring/rules/storage.yml` is the multi-host source copy, identical at HEAD). Metric: `pgbackrest_backup_since_last_completion_seconds{stanza!~"all-stanzas.*"}` from woblerr `pgbackrest_exporter`, job `pgbackrest_exporter`, `localhost:9854`, unit `pgbackrest_exporter.service`, `--collect.interval=600` (up to 10 min metric lag). |
-| Scheduler | `pgbackrest-backup.timer` → `pgbackrest-backup.service` → `/usr/local/bin/pgbackrest-backup.sh` (`User=postgres`), daily `02:00 UTC` + ≤ 15 min jitter, `Persistent=true`; full Sunday / diff Mon–Sat. Installed by `configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml`. |
-| Repos | `repo1` = `/var/lib/pgbackrest` — local ZFS dataset `data/pgbackrest`, **same pool as the DB**, postgres-owned 0750, `repo1-retention-full=2`. `repo2` (offsite S3) is **NOT provisioned** on r1 (`pgbackrest_offsite_ack: true`; see `docs/operations/off-site-backup-plan.md`). pgBackRest does not use MinIO. |
+| Scheduler | `pgbackrest-backup.timer` → `pgbackrest-backup.service` → `/usr/local/bin/pgbackrest-backup.sh` (`User=postgres`), daily `02:00 UTC` + ≤ 15 min jitter, `Persistent=true`; full Sunday / diff Mon–Sat, **one `--repo=N` backup per repo in `pgbackrest.conf` (repo1 then repo2)** — pgBackRest's `backup` is single-repo and writes only repo1 without `--repo`. A repo failure does not skip the next repo; the unit exits with the first non-zero rc. Per-repo textfile metrics `stellarindex_pgbackrest_backup_{last_success_unix,last_rc,duration_seconds}{repo}`. Installed by `configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml`. |
+| Repos | `repo1` = `/var/lib/pgbackrest` — local ZFS dataset `data/pgbackrest`, **same pool as the DB**, postgres-owned 0750, `repo1-retention-full=2`. `repo2` = offsite S3, **LIVE on r1 since 2026-08-29** (`pgbackrest.conf.j2`, `repo2-retention-full=1` / `-diff=7`, aes-256-cbc; see `docs/operations/off-site-backup-plan.md`). pgBackRest does not use MinIO. |
 | Typical MTTR | 30 min – 4 h |
 | Impact | Increasing RPO. Our declared RPO is 5 min (held by continuous WAL archiving to repo1); at 24 h without a backup we are 288× over. If the primary dies in this window, we lose everything after the last good backup — and repo1 shares the primary's pool, so a pool loss loses both. |
 
@@ -23,6 +23,15 @@ severity: P1
 
 - `_backup_none_24h`: `min by (stanza)(pgbackrest_backup_since_last_completion_seconds{stanza!~"all-stanzas.*"}) > 24 * 3600` for 5 m; pages directly.
 - `_backup_failed`: same expression `> 25 * 3600` for 5 m; ticket.
+- `_metrics_absent`: `up{job="pgbackrest_exporter"} == 1 unless on (instance)
+  pgbackrest_backup_since_last_completion_seconds{stanza!~"all-stanzas.*"}`
+  for 15 m; page. Both `min by (stanza)(...)` alerts above evaluate to an
+  EMPTY vector when that series is missing and can never fire, so an
+  exporter that is up with zero stanzas would otherwise let backups stop
+  silently for weeks (audit 2026-08-28, backup-restore-1).
+- `_unit_failed`: `node_systemd_unit_state{name="pgbackrest-backup.service",state="failed"} == 1`
+  for 5 m; ticket. Covers exit 127 (pgbackrest binary missing) and any
+  backup error, ~24 h before the freshness alerts would.
 - Cadence is **one backup per day** (02:00 UTC), so ONE failed or skipped
   nightly run pages ~24 h after the previous backup's stop time. There is
   no "missed one of many cycles" tier in practice — the two alerts are one
@@ -58,6 +67,10 @@ sudo -u postgres psql -Atc "SELECT now(), pg_is_in_recovery();"
 
 # Is the exporter emitting the metric the alert reads? (If not, see exporter-down.md.)
 curl -s http://127.0.0.1:9854/metrics | grep pgbackrest_backup_since_last_completion_seconds
+
+# WHICH repo failed last night? The wrapper's per-repo textfile metrics
+# (rc per repo; last_success_unix is carried forward across failed runs).
+cat /var/lib/node_exporter/textfile_collector/pgbackrest_backup.prom
 ```
 
 ## Typical root causes
@@ -69,8 +82,11 @@ curl -s http://127.0.0.1:9854/metrics | grep pgbackrest_backup_since_last_comple
    `find /var/lib/pgbackrest /var/log/pgbackrest /var/spool/pgbackrest -not -user postgres`.
    - Mitigation: free space (see `zfs-pool-full.md` / `db-disk-full.md`);
      `chown -R postgres:postgres` the stray files.
-   - Forward note: S3 credential / bucket-policy failures only apply to
-     `repo2`, which is not provisioned on r1 yet.
+   - S3 credential / bucket-policy / endpoint failures only affect
+     `repo2` — `stellarindex_pgbackrest_backup_last_rc{repo="2"}` non-zero
+     while `{repo="1"}` is 0. repo1 keeps landing, so the 24 h alerts stay
+     green; `stellarindex_backup_offsite_stale` (`backup-offsite-stale.md`)
+     is the signal for a repo2 that keeps failing.
 
 2. **Primary resource pressure** — backup can't get a backup
    slot / buffer. Rare but has happened during heavy write
@@ -94,15 +110,43 @@ curl -s http://127.0.0.1:9854/metrics | grep pgbackrest_backup_since_last_comple
    (pgbackrest not installed — the testnet/futurenet shape). A missing
    timer is a documented past root cause of `_backup_none_24h`.
 
-## Mitigation
+## Mitigation — `stellarindex_pgbackrest_backup_metrics_absent`
+
+The exporter answers scrapes but `pgbackrest info` gives it nothing to
+report. Find out which of the three shapes it is, then fall through to
+the mitigation below once a backup series exists again:
+
+```sh
+curl -s http://127.0.0.1:9854/metrics | grep -E '^pgbackrest_(exporter_status|stanza_status|backup_since_last_completion_seconds)'
+journalctl -u pgbackrest_exporter.service -n 50 --no-pager
+# Exactly what the exporter sees — run AS THE EXPORTER USER, not postgres/root:
+sudo -u pgbackrest_exporter pgbackrest --stanza=stellarindex info --output=json
+stat -c '%U:%G %a' /etc/pgbackrest/pgbackrest.conf /var/lib/pgbackrest
+command -v pgbackrest || echo "pgbackrest NOT installed"
+```
+
+| Shape | Fix |
+| ----- | --- |
+| `pgbackrest` not installed (unit exits 127; testnet/futurenet shape) | Install pgbackrest and create the stanza, or set `pgbackrest_backup_enabled=false` for the host so the exporter and timer are removed together |
+| Permission denied on `pgbackrest.conf` / repo (managed conf is `postgres:postgres 0640`, repo `0750`; the exporter runs as its own `pgbackrest_exporter` user) | Make the conf group-readable by the exporter user (add it to the `postgres` group) — verify with the `sudo -u pgbackrest_exporter … info` line above |
+| Stanza error in `pgbackrest info` | Fix the stanza (`stanza-create` / repo cipher / lock files) as for `_backup_failed` below |
+
+While this alert is firing the freshness alerts say nothing; do not read
+their silence as "backups are fine". Verification: the `curl` line shows
+`pgbackrest_backup_since_last_completion_seconds{stanza="stellarindex",…}`
+and the alert resolves within ~15 min.
+
+## Mitigation — `stellarindex_timescale_backup_*`
 
 - [ ] Step 1 — immediate: run a manual backup to verify the
       system works. **NEVER run pgbackrest as root** — it leaves
       root-owned lock/log/manifest files in the postgres-owned repo and
       breaks subsequent timer runs:
       ```sh
-      sudo -u postgres pgbackrest --stanza=stellarindex --type=diff backup
+      sudo -u postgres pgbackrest --stanza=stellarindex --repo=1 --type=diff backup
+      sudo -u postgres pgbackrest --stanza=stellarindex --repo=2 --type=diff backup
       ```
+      `backup` is single-repo: without `--repo` only repo1 is written.
 - [ ] Step 2 — if manual works: investigate scheduler.
       ```sh
       systemctl list-timers pgbackrest-backup.timer --all
@@ -113,18 +157,20 @@ curl -s http://127.0.0.1:9854/metrics | grep pgbackrest_backup_since_last_comple
       (space, permissions, version/cipher, primary access).
 - [ ] Step 4 — for `_backup_none_24h`: **declare SEV-1**. This is
       an RPO breach. r1 has **no replica**; the only other safety net is
-      continuous WAL archiving into the same repo1. Confirm
-      `pg_stat_archiver.failed_count` is not rising and
-      `last_archived_time` is recent, and confirm the pool is not near
-      full (`zfs-pool-full.md`). An RPO breach here has no offsite
-      fallback (`off-site-backup-plan.md`, status proposed).
+      continuous WAL archiving into repo1 AND repo2 (`archive-push`
+      fans out to every repo). Confirm `pg_stat_archiver.failed_count`
+      is not rising and `last_archived_time` is recent, and confirm the
+      pool is not near full (`zfs-pool-full.md`). The offsite fallback is
+      repo2 (`off-site-backup-plan.md`, live 2026-08-29) — check its own
+      freshness with `pgbackrest info --repo=2` before relying on it.
 - [ ] Step 5 — once healthy, take a full backup (not differential)
       to establish a known-good restore point (the timer's next full is
       Sunday):
       ```sh
-      sudo -u postgres pgbackrest --stanza=stellarindex --type=full backup
+      sudo -u postgres pgbackrest --stanza=stellarindex --repo=1 --type=full backup
+      sudo -u postgres pgbackrest --stanza=stellarindex --repo=2 --type=full backup
       ```
-      Note `repo1-retention-full=2`: an extra full expires the oldest
+      Note `repo1-retention-full=2` (and `repo2-retention-full=1`): an extra full expires the oldest
       chain. Make sure the restore drill (`restore-drill-stale.md`) has
       validated the newest chain before relying on it.
 - [ ] Verification: `sudo -u postgres pgbackrest --stanza=stellarindex info`
@@ -145,8 +191,11 @@ curl -s http://127.0.0.1:9854/metrics | grep pgbackrest_backup_since_last_comple
 - **Exporter down** — the alerts go `no_data`-blind rather than
   false-firing; that gap is covered by
   `stellarindex_pgbackrest_exporter_down` (`rules.r1/meta.yml`,
-  `exporter-down.md`). If the exporter was down across 02:00, the
-  metric can read stale for up to 10 min after it returns.
+  `exporter-down.md`), and the exporter-UP-but-no-stanza gap by
+  `stellarindex_pgbackrest_backup_metrics_absent` (this runbook). If the
+  exporter was down across 02:00, the metric can read stale for up to
+  10 min after it returns. `_metrics_absent` deliberately does not fire
+  while `up == 0`, so the two never double-page.
 - **First backup after a repo re-create** (`pgbackrest-encryption.md`)
   legitimately resets the age series; the alerts resolve on the first
   completed backup.
@@ -161,7 +210,8 @@ curl -s http://127.0.0.1:9854/metrics | grep pgbackrest_backup_since_last_comple
 - `timescale-primary-down.md` — Patroni failover procedure for a topology
   NOT deployed on single-host r1; primary must be reachable to take backups.
 - `docs/operations/pgbackrest-encryption.md` — repo cipher / re-create procedure.
-- `docs/operations/off-site-backup-plan.md` — repo2 (offsite) plan, status proposed.
+- `docs/operations/off-site-backup-plan.md` — repo2 (offsite S3), live on r1 2026-08-29.
+- `backup-offsite-stale.md` — `stellarindex_backup_offsite_stale`, the repo2-specific staleness page.
 - `docs/adr/0043-backup-and-restore-strategy.md`.
 - HA plan §3.3 "Backup" reality check + §8: `docs/architecture/ha-plan.md`.
 
@@ -174,6 +224,16 @@ curl -s http://127.0.0.1:9854/metrics | grep pgbackrest_backup_since_last_comple
 
 ## Changelog
 
+- 2026-08-28 — added `stellarindex_pgbackrest_backup_metrics_absent`
+  (page) + `stellarindex_pgbackrest_backup_unit_failed` (ticket) and their
+  mitigation section (audit finding backup-restore-1: the `min by
+  (stanza)` freshness alerts evaluate over an empty vector — never fire —
+  when the exporter is up with zero stanzas, and `exporter_down` checks
+  `up` alone). Promtool coverage: `deploy/monitoring/rule-tests/storage-backup_test.yml`.
+- 2026-08-29 — repo2 (S3) live on r1. Wrapper now runs one `--repo=N`
+  backup per configured repo (pgBackRest `backup` is single-repo; the
+  old no-`--repo` form silently wrote repo1 only) + per-repo textfile
+  metrics; manual commands carry `--repo=`.
 - 2026-08-28 — re-verified against HEAD. Alert tiering corrected (page at
   24 h fires BEFORE the ticket at 25 h; one daily cycle, not hourly);
   rule path → `rules.r1/storage.yml`; MinIO/S3 checks removed (repo1 is

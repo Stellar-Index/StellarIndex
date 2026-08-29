@@ -1,0 +1,874 @@
+---
+# promtool unit tests for the storage alert family in
+# ../rules/storage.yml.
+#
+#   promtool test rules deploy/monitoring/rule-tests/storage_test.yml
+#
+# Coverage note: stellarindex_config_assertions_stale is pinned by
+# config-assertions_test.yml; everything else in storage.yml is covered
+# here. Several of these exprs reference series that are inert or absent
+# on r1 today (see the F-1329 blocks in the rule file) — that is exactly
+# why they get promtool tests: the expr's logic is validated against
+# synthetic input so the rule is proven able to fire the day its
+# producer lands.
+#
+# LABEL SHAPES ARE POST-SCRAPE (see ops-job_test.yml's header):
+#   job="postgres_exporter"    pg_* series
+#   job="node_exporter"        node_* + textfile-emitted stellarindex_* series
+#   job="redis_exporter"       redis_* series
+#   job="pgbackrest_exporter"  pgbackrest_* series
+#   job="stellarindex_indexer" the indexer's own ping counter
+#
+# Deliberately lives OUTSIDE `deploy/monitoring/rules/` — everything in
+# that directory is globbed by `promtool check rules`,
+# lint-rule-structure.py and lint-metric-refs.sh, all of which require a
+# top-level `groups:` key that a unit-test file does not have.
+
+rule_files:
+  - ../rules/storage.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ══ stellarindex_timescale_primary_down ═══════════════════════════
+  - interval: 1m
+    name: an unreachable postgres primary pages within a minute
+    input_series:
+      - series: 'pg_up{job="postgres_exporter",instance="r1:9187"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_timescale_primary_down
+        exp_alerts:
+          - exp_labels:
+              job: postgres_exporter
+              instance: r1:9187
+              severity: page
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale-primary-down.md
+              summary: "TimescaleDB primary is down (SEV-1)"
+              description: |
+                Postgres primary r1:9187 has been unreachable for
+                30+ s. Writes are blocked everywhere. Patroni should auto-failover
+                within 60 s — if not, follow the manual-failover path in the
+                runbook.
+
+  - interval: 1m
+    name: a reachable postgres primary raises nothing
+    input_series:
+      - series: 'pg_up{job="postgres_exporter",instance="r1:9187"}'
+        values: '1+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_timescale_primary_down
+        exp_alerts: []
+
+  # ══ stellarindex_postgres_ping_failing (F-0151) ═══════════════════
+  # The threshold is deliberately `> 0`: the probe ticks once per 60s,
+  # so 3 failures/min = 0.05/s is a fully-wedged pool.
+  - interval: 1m
+    name: a failing pool ping pages after 2m
+    input_series:
+      - series: 'stellarindex_postgres_ping_total{job="stellarindex_indexer",instance="r1:9100",outcome="error"}'
+        values: '0+3x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_postgres_ping_failing
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              outcome: error
+              severity: page
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres-ping-failing.md
+              summary: "Indexer postgres pool ping failing (F-0151)"
+              description: |
+                The indexer's resilience-ping goroutine is reporting
+                sustained Postgres ping failures (rate 0.05/s
+                over the last 5 m). The pool's 30 min lifetime
+                safety-net will refresh dead conns automatically, but
+                until then writes are likely stalled. Check the
+                primary postgres unit and the indexer journal for the
+                `pool may be wedged` log line.
+
+  - interval: 1m
+    name: a flat zero-seeded ping-error counter raises nothing
+    input_series:
+      - series: 'stellarindex_postgres_ping_total{job="stellarindex_indexer",instance="r1:9100",outcome="error"}'
+        values: '0+0x10'
+      - series: 'stellarindex_postgres_ping_total{job="stellarindex_indexer",instance="r1:9100",outcome="ok"}'
+        values: '0+1x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_postgres_ping_failing
+        exp_alerts: []
+
+  # ══ stellarindex_timescale_replica_lag ════════════════════════════
+  - interval: 1m
+    name: a lagging sync replica tickets
+    input_series:
+      - series: 'pg_replication_lag_seconds{job="postgres_exporter",instance="r1:9187"}'
+        values: '12+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_timescale_replica_lag
+        exp_alerts:
+          - exp_labels:
+              job: postgres_exporter
+              instance: r1:9187
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/replica-lag.md
+              summary: "Postgres sync replica lagging 12s"
+              description: |
+                Replica r1:9187 is more than 5 s behind the primary
+                for 2+ minutes. If this is the sync replica, writes on the primary
+                are being held back until it catches up — look for saturation on
+                the replica.
+
+  - interval: 1m
+    name: a near-threshold replica lag raises nothing
+    input_series:
+      - series: 'pg_replication_lag_seconds{job="postgres_exporter",instance="r1:9187"}'
+        values: '4+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_timescale_replica_lag
+        exp_alerts: []
+
+  # ══ stellarindex_timescale_lock_table_pressure (F-1251) ═══════════
+  # NOTE: these fixtures give all three metrics an IDENTICAL label set
+  # so the unqualified division matches 1:1. The real postgres_exporter
+  # emits pg_locks_count with per-mode (and datname) labels that the
+  # expr neither aggregates nor joins away — see the review note in the
+  # PR for this file.
+  - interval: 1m
+    name: a lock table past 70 percent tickets
+    input_series:
+      - series: 'pg_locks_count{job="postgres_exporter",instance="r1:9187"}'
+        values: '10000+0x15'
+      - series: 'pg_settings_max_locks_per_transaction{job="postgres_exporter",instance="r1:9187"}'
+        values: '64+0x15'
+      - series: 'pg_settings_max_connections{job="postgres_exporter",instance="r1:9187"}'
+        values: '200+0x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_timescale_lock_table_pressure
+        exp_alerts:
+          - exp_labels:
+              job: postgres_exporter
+              instance: r1:9187
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/pg-conns-saturated.md
+              summary: "Postgres lock-table > 70% saturated (P3)"
+              description: |
+                Lock-table utilisation is 78.12%.
+                The next sustained ingest spike risks SQLSTATE 53200
+                ("out of shared memory") and dropped INSERTs — the
+                2026-05-06 SEV-3 class. Bump
+                `postgres_max_locks_per_transaction` in the archival-node
+                role and reapply.
+
+  - interval: 1m
+    name: a lock table at 62 percent raises nothing
+    input_series:
+      - series: 'pg_locks_count{job="postgres_exporter",instance="r1:9187"}'
+        values: '8000+0x15'
+      - series: 'pg_settings_max_locks_per_transaction{job="postgres_exporter",instance="r1:9187"}'
+        values: '64+0x15'
+      - series: 'pg_settings_max_connections{job="postgres_exporter",instance="r1:9187"}'
+        values: '200+0x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_timescale_lock_table_pressure
+        exp_alerts: []
+
+  # ══ stellarindex_timescale_disk_full / _disk_warning ══════════════
+  # ── firing tier split: 5% free pages, 15% free only tickets ───────
+  - interval: 1m
+    name: a postgres volume at 5 percent free pages
+    input_series:
+      - series: 'node_filesystem_avail_bytes{job="node_exporter",instance="r1:9100",mountpoint="/var/lib/postgresql"}'
+        values: '5e9+0x20'
+      - series: 'node_filesystem_size_bytes{job="node_exporter",instance="r1:9100",mountpoint="/var/lib/postgresql"}'
+        values: '100e9+0x20'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_timescale_disk_full
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              mountpoint: /var/lib/postgresql
+              severity: page
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/db-disk-full.md
+              summary: "Postgres disk 5% free (SEV-1)"
+              description: |
+                Postgres data volume on r1:9100 has < 10 % free.
+                WAL will refuse to write once full, halting all writes. Act now.
+
+  - interval: 1m
+    name: a postgres volume at 15 percent free tickets but does not page
+    input_series:
+      - series: 'node_filesystem_avail_bytes{job="node_exporter",instance="r1:9100",mountpoint="/var/lib/postgresql"}'
+        values: '15e9+0x20'
+      - series: 'node_filesystem_size_bytes{job="node_exporter",instance="r1:9100",mountpoint="/var/lib/postgresql"}'
+        values: '100e9+0x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_timescale_disk_full
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: stellarindex_timescale_disk_warning
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              mountpoint: /var/lib/postgresql
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/db-disk-full.md
+              summary: "Postgres disk 15% free"
+              description: |
+                Postgres data volume on r1:9100 under 20 %. Plan
+                retention tuning / vacuum / compression policy review. Hard page
+                fires at 10 %.
+
+  - interval: 1m
+    name: a postgres volume at 25 percent free raises nothing
+    input_series:
+      - series: 'node_filesystem_avail_bytes{job="node_exporter",instance="r1:9100",mountpoint="/var/lib/postgresql"}'
+        values: '25e9+0x20'
+      - series: 'node_filesystem_size_bytes{job="node_exporter",instance="r1:9100",mountpoint="/var/lib/postgresql"}'
+        values: '100e9+0x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_timescale_disk_full
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: stellarindex_timescale_disk_warning
+        exp_alerts: []
+
+  # ══ stellarindex_node_root_disk_full / _warning ═══════════════════
+  - interval: 1m
+    name: a root filesystem at 5 percent free pages
+    input_series:
+      - series: 'node_filesystem_avail_bytes{job="node_exporter",instance="r1:9100",mountpoint="/"}'
+        values: '5e9+0x20'
+      - series: 'node_filesystem_size_bytes{job="node_exporter",instance="r1:9100",mountpoint="/"}'
+        values: '100e9+0x20'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_node_root_disk_full
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              mountpoint: /
+              severity: page
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
+              summary: "Root filesystem on r1:9100 5% free (SEV-1)"
+              description: |
+                Root FS (/) under 10 % free on r1:9100.
+                Redis can't snapshot once full; with the default
+                stop-writes-on-bgsave-error=yes that blocks every cache
+                write, blocking aggregator VWAP refresh, surfacing as
+                `/v1/price` 404s on rewritten / triangulated /
+                stablecoin-proxy pairs (incident 2026-05-10).
+
+  - interval: 1m
+    name: a root filesystem at 15 percent free tickets but does not page
+    input_series:
+      - series: 'node_filesystem_avail_bytes{job="node_exporter",instance="r1:9100",mountpoint="/"}'
+        values: '15e9+0x20'
+      - series: 'node_filesystem_size_bytes{job="node_exporter",instance="r1:9100",mountpoint="/"}'
+        values: '100e9+0x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_node_root_disk_full
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: stellarindex_node_root_disk_warning
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              mountpoint: /
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
+              summary: "Root filesystem on r1:9100 15% free"
+              description: |
+                Root FS (/) under 20 % on r1:9100.
+                Investigate /var/log + /tmp + /var/cache before this
+                grows into the page-tier alert.
+
+  - interval: 1m
+    name: a root filesystem at 25 percent free raises nothing
+    input_series:
+      - series: 'node_filesystem_avail_bytes{job="node_exporter",instance="r1:9100",mountpoint="/"}'
+        values: '25e9+0x20'
+      - series: 'node_filesystem_size_bytes{job="node_exporter",instance="r1:9100",mountpoint="/"}'
+        values: '100e9+0x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_node_root_disk_full
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: stellarindex_node_root_disk_warning
+        exp_alerts: []
+
+  # ══ stellarindex_node_root_disk_filling_fast ══════════════════════
+  # ── firing: the 2026-06-11 log-flood shape, ~2 GB/min ─────────────
+  # 100 GB root, 40 GB free and draining 2 GB/min: the 10m linear
+  # trend crosses zero within 30 min while free is already under 50%.
+  - interval: 1m
+    name: a fast-draining root filesystem pages before it is full
+    input_series:
+      - series: 'node_filesystem_avail_bytes{job="node_exporter",instance="r1:9100",mountpoint="/"}'
+        values: '40e9-2e9x15'
+      - series: 'node_filesystem_size_bytes{job="node_exporter",instance="r1:9100",mountpoint="/"}'
+        values: '100e9+0x15'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: stellarindex_node_root_disk_filling_fast
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              mountpoint: /
+              severity: page
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk-filling-fast.md
+              summary: "Root filesystem on r1:9100 trending to FULL within 30 min"
+              description: |
+                Root FS (/) on r1:9100 is filling fast enough
+                to reach 0 bytes within 30 minutes (10m linear trend). This
+                is the log-flood signature (2026-05-10 / 2026-05-13 /
+                2026-06-11 class): find the writer NOW —
+                `du -xs /var/log/* /tmp | sort -rh | head` — and see the
+                runbook for the CH log-wedge kill sequence.
+
+  # ── guard: a slow leak's trend does not cross zero in 30 min ──────
+  - interval: 1m
+    name: a slow leak under 50 percent free raises nothing
+    input_series:
+      - series: 'node_filesystem_avail_bytes{job="node_exporter",instance="r1:9100",mountpoint="/"}'
+        values: '40e9-0.1e9x15'
+      - series: 'node_filesystem_size_bytes{job="node_exporter",instance="r1:9100",mountpoint="/"}'
+        values: '100e9+0x15'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: stellarindex_node_root_disk_filling_fast
+        exp_alerts: []
+
+  # ── guard: the avail<50% arm keeps a roomy disk from paging ───────
+  # Same 4 GB/min drain rate, but free space is still above half the
+  # disk — the trend arm is true, the headroom arm suppresses it.
+  - interval: 1m
+    name: a fast trend on a still-roomy disk is suppressed by the headroom guard
+    input_series:
+      - series: 'node_filesystem_avail_bytes{job="node_exporter",instance="r1:9100",mountpoint="/"}'
+        values: '90e9-4e9x20'
+      - series: 'node_filesystem_size_bytes{job="node_exporter",instance="r1:9100",mountpoint="/"}'
+        values: '100e9+0x20'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: stellarindex_node_root_disk_filling_fast
+        exp_alerts: []
+
+  # ══ stellarindex_config_assertion_failed ══════════════════════════
+  - interval: 1m
+    name: a reverted guard config tickets after two hourly runs
+    input_series:
+      - series: 'stellarindex_config_assertion_ok{job="node_exporter",instance="r1:9100",assertion="rsyslog-suppression"}'
+        values: '0+0x90'
+    alert_rule_test:
+      - eval_time: 75m
+        alertname: stellarindex_config_assertion_failed
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              assertion: rsyslog-suppression
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/config-assertion-failed.md
+              summary: "Guard config rsyslog-suppression is missing or reverted on r1:9100"
+              description: |
+                config-assertions.sh found rsyslog-suppression absent or
+                content-reverted for two consecutive hourly runs. Each
+                assertion is a load-bearing incident fix (root-fill loop
+                guards, public-edge firewall, redis cap, CS-010 supply
+                config). See the runbook for the per-assertion restore
+                recipe and docs/operations/r1-ansible-drift-2026-07-03.md
+                for why this class exists.
+
+  - interval: 1m
+    name: a passing guard config raises nothing
+    input_series:
+      - series: 'stellarindex_config_assertion_ok{job="node_exporter",instance="r1:9100",assertion="rsyslog-suppression"}'
+        values: '1+0x90'
+    alert_rule_test:
+      - eval_time: 75m
+        alertname: stellarindex_config_assertion_failed
+        exp_alerts: []
+
+  # ══ stellarindex_redis_writes_blocked ═════════════════════════════
+  - interval: 1m
+    name: a failing redis bgsave pages within minutes
+    input_series:
+      - series: 'redis_rdb_last_bgsave_status{job="redis_exporter",instance="r1:9121"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_redis_writes_blocked
+        exp_alerts:
+          - exp_labels:
+              job: redis_exporter
+              instance: r1:9121
+              severity: page
+              team: stellarindex
+              component: cache
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
+              summary: "Redis BGSAVE failing on r1:9121 (SEV-1) — writes blocked"
+              description: |
+                Redis BGSAVE on r1:9121 has been failing
+                for 1+ minute. With the default
+                stop-writes-on-bgsave-error=yes, every Redis write is
+                being rejected — aggregator VWAP cache stops refreshing,
+                `/v1/price` 404s on rewritten/triangulated/proxy pairs
+                (incident 2026-05-10). Free disk on the Redis volume
+                (typically `/`), then `redis-cli BGSAVE` to clear the
+                stop-writes block.
+
+  - interval: 1m
+    name: a healthy redis bgsave raises nothing
+    input_series:
+      - series: 'redis_rdb_last_bgsave_status{job="redis_exporter",instance="r1:9121"}'
+        values: '1+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_redis_writes_blocked
+        exp_alerts: []
+
+  # ══ stellarindex_timescale_connections_saturated ══════════════════
+  # per-datname activity counts summed to 170 of max_connections=200.
+  - interval: 1m
+    name: a connection pool past 80 percent tickets
+    input_series:
+      - series: 'pg_stat_activity_count{job="postgres_exporter",instance="r1:9187",datname="stellarindex",state="active"}'
+        values: '100+0x15'
+      - series: 'pg_stat_activity_count{job="postgres_exporter",instance="r1:9187",datname="postgres",state="idle"}'
+        values: '70+0x15'
+      - series: 'pg_settings_max_connections{job="postgres_exporter",instance="r1:9187"}'
+        values: '200+0x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_timescale_connections_saturated
+        exp_alerts:
+          - exp_labels:
+              instance: r1:9187
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/pg-conns-saturated.md
+              summary: "Postgres connection pool 85% used"
+              description: |
+                > 80 % of max_connections in use for 5+ minutes. PgBouncer should
+                be smoothing this; check that the pool is healthy + sized right.
+
+  - interval: 1m
+    name: a connection pool at 75 percent raises nothing
+    input_series:
+      - series: 'pg_stat_activity_count{job="postgres_exporter",instance="r1:9187",datname="stellarindex",state="active"}'
+        values: '150+0x15'
+      - series: 'pg_settings_max_connections{job="postgres_exporter",instance="r1:9187"}'
+        values: '200+0x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_timescale_connections_saturated
+        exp_alerts: []
+
+  # ══ stellarindex_timescale_cagg_stale ═════════════════════════════
+  # Producer is the timescale-jobs-probe timer; synthetic series here.
+  # prices_1m refreshes every 60s → the 5x line is 300s.
+  - interval: 1m
+    name: a cagg 5x past its refresh interval tickets
+    input_series:
+      - series: 'stellarindex_cagg_last_refresh_unix{job="node_exporter",instance="r1:9100",cagg="prices_1m"}'
+        values: '0+0x20'
+      - series: 'stellarindex_cagg_refresh_interval_seconds{job="node_exporter",instance="r1:9100",cagg="prices_1m"}'
+        values: '60+0x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: stellarindex_timescale_cagg_stale
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              cagg: prices_1m
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cagg-stale.md
+              summary: "Continuous aggregate prices_1m hasn't refreshed"
+              description: |
+                Refresh for prices_1m is 5× its configured interval
+                overdue. API reads from this CAGG will return stale data until it
+                refreshes; check timescaledb job-scheduler health.
+
+  - interval: 1m
+    name: a freshly-refreshing cagg raises nothing
+    input_series:
+      - series: 'stellarindex_cagg_last_refresh_unix{job="node_exporter",instance="r1:9100",cagg="prices_1m"}'
+        values: '0+60x20'
+      - series: 'stellarindex_cagg_refresh_interval_seconds{job="node_exporter",instance="r1:9100",cagg="prices_1m"}'
+        values: '60+0x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: stellarindex_timescale_cagg_stale
+        exp_alerts: []
+
+  # ══ stellarindex_timescale_compression_lag ════════════════════════
+  # for: 24h — the series must stay non-zero for a full day.
+  - interval: 1m
+    name: uncompressed old chunks are informational after a day
+    input_series:
+      - series: 'stellarindex_uncompressed_chunks_older_than_7d{job="node_exporter",instance="r1:9100"}'
+        values: '3+0x1500'
+    alert_rule_test:
+      - eval_time: 1450m
+        alertname: stellarindex_timescale_compression_lag
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              severity: informational
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/compression-lag.md
+              summary: "3 chunks older than 7d are still uncompressed"
+              description: |
+                Compression policy should run on chunks older than 7 days. If some
+                aren't compressed, the timescaledb job scheduler may be misfiring.
+
+  - interval: 1m
+    name: zero uncompressed old chunks raise nothing
+    input_series:
+      - series: 'stellarindex_uncompressed_chunks_older_than_7d{job="node_exporter",instance="r1:9100"}'
+        values: '0+0x1500'
+    alert_rule_test:
+      - eval_time: 1450m
+        alertname: stellarindex_timescale_compression_lag
+        exp_alerts: []
+
+  # ══ stellarindex_timescale_backup_failed / _backup_none_24h ═══════
+  # ── both tiers fire past 25h ──────────────────────────────────────
+  - interval: 1m
+    name: a stanza without a backup for 26h trips both tiers
+    input_series:
+      - series: 'pgbackrest_backup_since_last_completion_seconds{job="pgbackrest_exporter",instance="r1:9188",stanza="db",backup_type="full"}'
+        values: '95000+0x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_timescale_backup_failed
+        exp_alerts:
+          - exp_labels:
+              stanza: db
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
+              summary: "pgBackRest stanza db last backup 1d 2h 23m 20s ago"
+              description: |
+                Backup has missed at least one expected daily cycle (no completed
+                full/diff/incr in > 25 h). Check pgBackRest logs + MinIO connectivity.
+      - eval_time: 10m
+        alertname: stellarindex_timescale_backup_none_24h
+        exp_alerts:
+          - exp_labels:
+              stanza: db
+              severity: page
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
+              summary: "No successful Postgres backup in > 24 h (SEV-1)"
+              description: |
+                RPO breach. At 24h+ without a backup we exceed the documented
+                5-min RPO target by 288×. Escalate immediately.
+
+  # ── the 24h/25h band: page fires, ticket does not ─────────────────
+  - interval: 1m
+    name: a backup 24h30m old pages but does not yet ticket the 25h tier
+    input_series:
+      - series: 'pgbackrest_backup_since_last_completion_seconds{job="pgbackrest_exporter",instance="r1:9188",stanza="db",backup_type="full"}'
+        values: '88200+0x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_timescale_backup_failed
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: stellarindex_timescale_backup_none_24h
+        exp_alerts:
+          - exp_labels:
+              stanza: db
+              severity: page
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
+              summary: "No successful Postgres backup in > 24 h (SEV-1)"
+              description: |
+                RPO breach. At 24h+ without a backup we exceed the documented
+                5-min RPO target by 288×. Escalate immediately.
+
+  # ── guard: min-by-stanza — a fresh incr satisfies the stanza ──────
+  - interval: 1m
+    name: a fresh incremental backup silences a stale full for the same stanza
+    input_series:
+      - series: 'pgbackrest_backup_since_last_completion_seconds{job="pgbackrest_exporter",instance="r1:9188",stanza="db",backup_type="full"}'
+        values: '95000+0x15'
+      - series: 'pgbackrest_backup_since_last_completion_seconds{job="pgbackrest_exporter",instance="r1:9188",stanza="db",backup_type="incr"}'
+        values: '3000+0x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_timescale_backup_failed
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: stellarindex_timescale_backup_none_24h
+        exp_alerts: []
+
+  # ── guard: the exporter's aggregate pseudo-stanzas are excluded ───
+  - interval: 1m
+    name: a stale all-stanzas pseudo-row raises nothing
+    input_series:
+      - series: 'pgbackrest_backup_since_last_completion_seconds{job="pgbackrest_exporter",instance="r1:9188",stanza="all-stanzas",backup_type="full"}'
+        values: '95000+0x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_timescale_backup_failed
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: stellarindex_timescale_backup_none_24h
+        exp_alerts: []
+
+  # ══ stellarindex_ch_schema_snapshot_stale (ADR-0043) ══════════════
+  - interval: 5m
+    name: a schema snapshot older than 36h tickets
+    input_series:
+      - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter",instance="r1:9100"}'
+        values: '0+0x450'
+    alert_rule_test:
+      - eval_time: 2200m
+        alertname: stellarindex_ch_schema_snapshot_stale
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-schema-restore.md
+              summary: "ClickHouse schema snapshot has recorded no full capture in > 36 h (daily timer)"
+              description: |
+                ch-schema-snapshot.timer (daily, 03:40 UTC) has not
+                completed a full capture in over 36 h — one missed cycle
+                plus slack — or has never completed one. The ClickHouse
+                lake's ONLY backup is this metadata copy (ADR-0043 §2.1);
+                while it is stale, every DDL change since the last good
+                snapshot is unprotected and a re-derive would rebuild
+                against a schema that no longer matches production.
+                The script stamps last_success ONLY on a clean run and
+                rewrites the textfile each run, so every-run-failed /
+                never-ran shows up as an ABSENT series, not an old one —
+                both shapes fire this alert.
+                Check `systemctl status ch-schema-snapshot.service` and
+                run `/usr/local/bin/ch-schema-snapshot.sh` by hand — it
+                refuses to write an empty or partial snapshot, so a
+                failure here usually means ClickHouse was unreachable or a
+                SHOW CREATE errored.
+
+  - interval: 5m
+    name: a daily-refreshed schema snapshot raises nothing
+    input_series:
+      - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter",instance="r1:9100"}'
+        values: '0+300x450'
+    alert_rule_test:
+      - eval_time: 2200m
+        alertname: stellarindex_ch_schema_snapshot_stale
+        exp_alerts: []
+
+  # ══ stellarindex_ch_schema_snapshot_offsite_stale ═════════════════
+  - interval: 5m
+    name: an offsite snapshot push failing for 3 days tickets
+    input_series:
+      - series: 'stellarindex_ch_schema_snapshot_offsite_last_success_unix{job="node_exporter",instance="r1:9100"}'
+        values: '0+0x890'
+    alert_rule_test:
+      - eval_time: 4360m
+        alertname: stellarindex_ch_schema_snapshot_offsite_stale
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-schema-restore.md
+              summary: "ClickHouse schema snapshot has not reached offsite storage in > 72 h"
+              description: |
+                The daily schema snapshot is being written locally but its
+                offsite push has been failing for 3+ days — or has never
+                succeeded since the target was configured — so the only
+                copy of the lake's DDL now lives on the same pool as the
+                lake (CS-111's failure shape, one layer down). Check the
+                `mc` alias/credentials for ch_schema_snapshot_mc_target
+                and the remote's quota.
+
+  - interval: 5m
+    name: a succeeding offsite push raises nothing
+    input_series:
+      - series: 'stellarindex_ch_schema_snapshot_offsite_last_success_unix{job="node_exporter",instance="r1:9100"}'
+        values: '0+300x890'
+    alert_rule_test:
+      - eval_time: 4360m
+        alertname: stellarindex_ch_schema_snapshot_offsite_stale
+        exp_alerts: []
+
+  # ══ stellarindex_nvme_wear_high ═══════════════════════════════════
+  - interval: 1m
+    name: an nvme past 80 percent rated endurance tickets after 1h
+    input_series:
+      - series: 'nvme_percentage_used_ratio{job="node_exporter",instance="r1:9100",device="nvme0n1"}'
+        values: '0.9+0x80'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: stellarindex_nvme_wear_high
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              device: nvme0n1
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/nvme-smart.md
+              summary: "NVMe nvme0n1 at 90% rated write endurance"
+              description: |
+                Rated endurance consumed on nvme0n1. Not urgent at
+                80%, deliberately: replacing a drive here is a planned
+                operation, so this is a procurement trigger, not an incident.
+
+  - interval: 1m
+    name: an nvme at 75 percent endurance raises nothing
+    input_series:
+      - series: 'nvme_percentage_used_ratio{job="node_exporter",instance="r1:9100",device="nvme0n1"}'
+        values: '0.75+0x80'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: stellarindex_nvme_wear_high
+        exp_alerts: []
+
+  # ══ stellarindex_nvme_spare_low ═══════════════════════════════════
+  - interval: 1m
+    name: an nvme eating its spare pool pages after 30m
+    input_series:
+      - series: 'nvme_available_spare_ratio{job="node_exporter",instance="r1:9100",device="nvme0n1"}'
+        values: '0.1+0x45'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: stellarindex_nvme_spare_low
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              device: nvme0n1
+              severity: page
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/nvme-smart.md
+              summary: "NVMe nvme0n1 spare blocks down to 10%"
+              description: |
+                The drive is consuming its reserve block pool, which is a
+                late-stage wear signal — unlike percentage_used this one moves
+                shortly before failure.
+
+  - interval: 1m
+    name: an nvme with a healthy spare pool raises nothing
+    input_series:
+      - series: 'nvme_available_spare_ratio{job="node_exporter",instance="r1:9100",device="nvme0n1"}'
+        values: '0.25+0x45'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: stellarindex_nvme_spare_low
+        exp_alerts: []
+
+  # ══ stellarindex_nvme_media_errors ════════════════════════════════
+  - interval: 1m
+    name: climbing nvme media errors ticket
+    input_series:
+      - series: 'nvme_media_errors_total{job="node_exporter",instance="r1:9100",device="nvme0n1"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_nvme_media_errors
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              device: nvme0n1
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/nvme-smart.md
+              summary: "NVMe nvme0n1 reported 15 new media errors in 24h"
+              description: |
+                Uncorrected media errors on a ZFS member. ZFS will surface
+                corruption on scrub, but the drive reporting them first is the
+                earlier signal.
+
+  - interval: 1m
+    name: a flat media-error counter raises nothing
+    input_series:
+      - series: 'nvme_media_errors_total{job="node_exporter",instance="r1:9100",device="nvme0n1"}'
+        values: '7+0x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_nvme_media_errors
+        exp_alerts: []

@@ -1,0 +1,1109 @@
+---
+# promtool unit tests for the core ingestion alert family in
+# ../rules/ingestion.yml.
+#
+#   promtool test rules deploy/monitoring/rule-tests/ingestion-core_test.yml
+#
+# Coverage note: this file covers every ingestion.yml alert NOT already
+# tested elsewhere —
+#   * stellarindex_ingestion_oracle_unknown_symbols is pinned by
+#     ingestion_test.yml,
+#   * stellarindex_ops_job_heartbeat_stale / _no_progress are pinned by
+#     ops-job_test.yml.
+#
+# Each alert gets (a) a firing case with synthetic series advanced past
+# its `for:`, (b) a near-threshold case that must stay silent, and
+# (c) where the expr carries a join / allow-list / `and` guard, a case
+# exercising that guard specifically.
+#
+# LABEL SHAPES ARE POST-SCRAPE (see ops-job_test.yml's header): indexer
+# series carry job="stellarindex_indexer", the aggregator's gap-detector
+# series job="stellarindex_aggregator".
+#
+# Deliberately lives OUTSIDE `deploy/monitoring/rules/` — everything in
+# that directory is globbed by `promtool check rules`,
+# lint-rule-structure.py and lint-metric-refs.sh, all of which require a
+# top-level `groups:` key that a unit-test file does not have.
+
+rule_files:
+  - ../rules/ingestion.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ══ stellarindex_ingestion_source_stopped ═════════════════════════
+  # ── firing: an allow-listed high-volume source goes flat ──────────
+  - interval: 1m
+    name: a stopped high-volume source tickets after 15m
+    input_series:
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="binance"}'
+        values: '5000+0x30'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="binance"}'
+        values: '1+0x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_ingestion_source_stopped
+        exp_alerts:
+          - exp_labels:
+              source: binance
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
+              summary: "Source binance has stopped ingesting"
+              description: |
+                No events from source binance in the last 30 minutes,
+                sustained for ≥ 15 min. The source is configured
+                as enabled in ingestion.enabled_sources.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
+
+  # ── near-threshold: a still-flowing source stays silent ───────────
+  - interval: 1m
+    name: a flowing high-volume source raises nothing
+    input_series:
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="binance"}'
+        values: '5000+10x30'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="binance"}'
+        values: '1+0x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_ingestion_source_stopped
+        exp_alerts: []
+
+  # ── guard: the enabled==1 join suppresses a disabled source ───────
+  - interval: 1m
+    name: a stopped but disabled source raises nothing
+    input_series:
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="binance"}'
+        values: '5000+0x30'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="binance"}'
+        values: '0+0x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_ingestion_source_stopped
+        exp_alerts: []
+
+  # ── guard: the allow-list excludes low-volume Soroban sources ─────
+  # phoenix is NOT in the F-1208 per-source-class list of this alert; a
+  # flat 20 minutes on phoenix must be judged by the 24h low-volume
+  # sibling, not this one.
+  - interval: 1m
+    name: a briefly-quiet low-volume source is not in the tight alerts allow-list
+    input_series:
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="phoenix"}'
+        values: '40+0x30'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="phoenix"}'
+        values: '1+0x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_ingestion_source_stopped
+        exp_alerts: []
+
+  # ══ stellarindex_ingestion_source_stopped_low_volume_dex ══════════
+  # ── firing: phoenix silent across the whole trailing 24h window ───
+  - interval: 1m
+    name: a silent low-volume dex tickets after its 30m for
+    input_series:
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="phoenix"}'
+        values: '40+0x50'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="phoenix"}'
+        values: '1+0x50'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_ingestion_source_stopped_low_volume_dex
+        exp_alerts:
+          - exp_labels:
+              source: phoenix
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
+              summary: "Low-volume Soroban DEX phoenix silent 24+ hours"
+              description: |
+                For low-volume Soroban DEXes this is unusual but not
+                necessarily an outage — check the contract on
+                stellar.expert before paging the indexer team.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
+
+  # ── near-threshold: one event inside the 24h window silences it ───
+  - interval: 1m
+    name: a single event inside the trailing day keeps the low-volume dex silent
+    input_series:
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="phoenix"}'
+        values: '40+0x10 41+0x40'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="phoenix"}'
+        values: '1+0x50'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_ingestion_source_stopped_low_volume_dex
+        exp_alerts: []
+
+  # ══ stellarindex_ingestion_source_stopped_daily_publisher ═════════
+  # ── firing: band silent across the trailing 30h window ───────────
+  - interval: 1m
+    name: a silent daily publisher tickets after its 1h for
+    input_series:
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="band"}'
+        values: '12+0x80'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="band"}'
+        values: '1+0x80'
+    alert_rule_test:
+      - eval_time: 75m
+        alertname: stellarindex_ingestion_source_stopped_daily_publisher
+        exp_alerts:
+          - exp_labels:
+              source: band
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
+              summary: "Daily publisher band silent 30+ hours"
+              description: |
+                ECB publishes daily; Band publishes on relayer push
+                (also roughly daily). 30h gives a one-day buffer plus
+                ample slack for upstream cadence variation.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
+
+  # ── near-threshold: one relay push inside the window silences it ──
+  - interval: 1m
+    name: a daily publisher that published within the window stays silent
+    input_series:
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="band"}'
+        values: '12+0x30 13+0x50'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="band"}'
+        values: '1+0x80'
+    alert_rule_test:
+      - eval_time: 75m
+        alertname: stellarindex_ingestion_source_stopped_daily_publisher
+        exp_alerts: []
+
+  # ══ stellarindex_ingestion_all_sources_stopped ════════════════════
+  # ── firing: every source flat pages within minutes ────────────────
+  - interval: 1m
+    name: total ingestion silence pages
+    input_series:
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="binance"}'
+        values: '5000+0x15'
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="sdex"}'
+        values: '9000+0x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_ingestion_all_sources_stopped
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/all-ingestion-down.md
+              summary: "All ingestion sources have stopped (SEV-1)"
+              description: |
+                No events from any source in the last 3 minutes. API data will go
+                stale within 60 s. This is a P1 — check shared upstream (Galexie/MinIO lake)
+                or shared storage (Timescale) before restarting the indexer.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/all-ingestion-down.md
+
+  # ── guard: ONE living source keeps the fleet-wide sum non-zero ────
+  - interval: 1m
+    name: a single living source suppresses the total-outage page
+    input_series:
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="binance"}'
+        values: '5000+0x15'
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="sdex"}'
+        values: '9000+10x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_ingestion_all_sources_stopped
+        exp_alerts: []
+
+  # ══ stellarindex_ingestion_cursor_stuck ═══════════════════════════
+  # ── firing: cursor frozen while the source is enabled ─────────────
+  - interval: 1m
+    name: a frozen cursor on an enabled source tickets
+    input_series:
+      - series: 'stellarindex_cursor_last_ledger{job="stellarindex_indexer",instance="r1:9100",source="sdex"}'
+        values: '58000000+0x20'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="sdex"}'
+        values: '1+0x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_ingestion_cursor_stuck
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              source: sdex
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cursor-stuck.md
+              summary: "Cursor for sdex not advancing"
+              description: |
+                The persisted cursor hasn't moved in 5 minutes while the source is
+                enabled. Typical cause: indexer consumed events but UpsertCursor
+                failed silently, or the indexer's cursor-persist path is wedged.
+
+  # ── near-threshold: an advancing cursor stays silent ──────────────
+  - interval: 1m
+    name: an advancing cursor raises nothing
+    input_series:
+      - series: 'stellarindex_cursor_last_ledger{job="stellarindex_indexer",instance="r1:9100",source="sdex"}'
+        values: '58000000+10x20'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="sdex"}'
+        values: '1+0x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_ingestion_cursor_stuck
+        exp_alerts: []
+
+  # ── guard: the enabled==1 join suppresses a disabled source ───────
+  - interval: 1m
+    name: a frozen cursor on a disabled source raises nothing
+    input_series:
+      - series: 'stellarindex_cursor_last_ledger{job="stellarindex_indexer",instance="r1:9100",source="sdex"}'
+        values: '58000000+0x20'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="sdex"}'
+        values: '0+0x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_ingestion_cursor_stuck
+        exp_alerts: []
+
+  # ══ stellarindex_ingestion_orphan_events ══════════════════════════
+  # ── firing: 30 orphans/min is well above the 10/min line ──────────
+  - interval: 1m
+    name: a sustained orphan stream is informational after 15m
+    input_series:
+      - series: 'stellarindex_source_orphan_events_total{job="stellarindex_indexer",instance="r1:9100",source="soroswap"}'
+        values: '0+30x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: stellarindex_ingestion_orphan_events
+        exp_alerts:
+          - exp_labels:
+              source: soroswap
+              severity: informational
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/orphan-events.md
+              summary: "Source soroswap orphan events 500m/sec"
+              description: |
+                Source soroswap has events arriving without their
+                correlation partner (Soroswap swap-without-sync, Phoenix
+                incomplete 8-field swap) at a rate above 10/min sustained
+                15 min. Likely a page-boundary issue in the RPC subscription
+                or a contract-schema shift we haven't accounted for.
+
+  # ── near-threshold: 6/min sits under the 10/min line ──────────────
+  - interval: 1m
+    name: a below-threshold orphan trickle raises nothing
+    input_series:
+      - series: 'stellarindex_source_orphan_events_total{job="stellarindex_indexer",instance="r1:9100",source="soroswap"}'
+        values: '0+6x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: stellarindex_ingestion_orphan_events
+        exp_alerts: []
+
+  # ══ stellarindex_ingestion_decode_error ═══════════════════════════
+  # ── firing: 2 decode errors/sec ───────────────────────────────────
+  - interval: 1m
+    name: a sustained decode-error storm is informational after 5m
+    input_series:
+      - series: 'stellarindex_source_decode_errors_total{job="stellarindex_indexer",instance="r1:9100",source="sdex"}'
+        values: '0+120x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: stellarindex_ingestion_decode_error
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              source: sdex
+              severity: informational
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/decode-errors.md
+              summary: "Decode errors on sdex at 2/sec"
+              description: |
+                Source sdex failed to decode > 1 event/sec for 5+
+                minutes. Usually a contract-event-schema change or a regression
+                in the decoder.
+
+  # ── near-threshold: 0.5/sec sits under the 1/sec line ─────────────
+  - interval: 1m
+    name: a below-threshold decode-error rate raises nothing
+    input_series:
+      - series: 'stellarindex_source_decode_errors_total{job="stellarindex_indexer",instance="r1:9100",source="sdex"}'
+        values: '0+30x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: stellarindex_ingestion_decode_error
+        exp_alerts: []
+
+  # ══ stellarindex_ingestion_discovery_drops ════════════════════════
+  - interval: 1m
+    name: continuing discovery drops are informational after 10m
+    input_series:
+      - series: 'stellarindex_discovery_dropped_hits_total{job="stellarindex_indexer",instance="r1:9100"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_ingestion_discovery_drops
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              severity: informational
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/discovery-drops.md
+              summary: "Discovery sink is dropping hits"
+              description: |
+                The SEP-41 discovery sink dropped at least one hit in the last
+                10 minutes and continued doing so for 10 minutes. This does not
+                stall the main ingest path, but discovery coverage is degrading
+                under recorder pressure or buffer saturation.
+
+  - interval: 1m
+    name: a flat discovery-drop counter raises nothing
+    input_series:
+      - series: 'stellarindex_discovery_dropped_hits_total{job="stellarindex_indexer",instance="r1:9100"}'
+        values: '7+0x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_ingestion_discovery_drops
+        exp_alerts: []
+
+  # ══ stellarindex_ingestion_persist_drop ═══════════════════════════
+  # ── firing: a money-flow kind trips the sensitive tripwire ────────
+  - interval: 1m
+    name: a low-rate defindex vault-flow persist drop tickets
+    input_series:
+      - series: 'stellarindex_source_insert_errors_total{job="stellarindex_indexer",instance="r1:9100",source="defindex",kind="defindex_flow_vault"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_ingestion_persist_drop
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              source: defindex
+              kind: defindex_flow_vault
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/insert-errors.md
+              summary: "Persist drops on defindex/defindex_flow_vault (any rate)"
+              description: |
+                A soroswap-router or defindex persist write failed for
+                defindex/defindex_flow_vault in the last 15 minutes.
+                These are DEX-swap / vault-flow rows — even a low-rate drop
+                matters, and this path was previously counter-less (the drop
+                was log-only and invisible). If the write went through the
+                projector it is retried (watch stellarindex_projector_events_
+                decoded_total{outcome="sink_retry"}); if it went through the
+                dispatcher drain the row was dropped. Check Timescale health
+                and the poison-row logs.
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/insert-errors.md
+
+  # ── guard: the kind regex excludes non-money-flow kinds ───────────
+  # A slow trickle of kind="trade" errors belongs to the coarse
+  # insert_errors alert (and only above 0.1/s) — the sensitive
+  # tripwire must not fire on it.
+  - interval: 1m
+    name: a non-money-flow kind does not trip the sensitive tripwire
+    input_series:
+      - series: 'stellarindex_source_insert_errors_total{job="stellarindex_indexer",instance="r1:9100",source="sdex",kind="trade"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_ingestion_persist_drop
+        exp_alerts: []
+
+  # ══ stellarindex_ingestion_discovery_record_failures ══════════════
+  - interval: 1m
+    name: continuing discovery recorder failures are informational after 10m
+    input_series:
+      - series: 'stellarindex_discovery_record_failures_total{job="stellarindex_indexer",instance="r1:9100"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_ingestion_discovery_record_failures
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              severity: informational
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/discovery-drops.md
+              summary: "Discovery recorder writes are failing"
+              description: |
+                The discovery async sink's Recorder.Record write failed at
+                least once in the last 10 minutes and kept failing for 10
+                minutes. discovered_assets stops growing while this persists —
+                usually a Postgres outage or a discovered_assets schema/constraint
+                problem. Best-effort by design (the contract re-appears on a
+                later event), so this is a coverage-degradation signal, not
+                data loss.
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/discovery-drops.md
+
+  - interval: 1m
+    name: a flat discovery-record-failure counter raises nothing
+    input_series:
+      - series: 'stellarindex_discovery_record_failures_total{job="stellarindex_indexer",instance="r1:9100"}'
+        values: '3+0x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_ingestion_discovery_record_failures
+        exp_alerts: []
+
+  # ══ stellarindex_ingestion_ch_live_sink_drops (+ _sustained) ══════
+  # ── firing: the dual-sink keeps dropping ledger extracts ──────────
+  - interval: 1m
+    name: continuing ch live-sink drops ticket after 10m
+    input_series:
+      - series: 'stellarindex_ch_live_sink_ledgers_total{job="stellarindex_indexer",instance="r1:9100",outcome="dropped"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_ingestion_ch_live_sink_drops
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              outcome: dropped
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-live-sink-drops.md
+              summary: "ClickHouse live-sink is dropping ledger extracts"
+              description: |
+                The real-time CH dual-sink dropped at least one whole ledger
+                extract in the last 10 minutes and kept doing so for 10
+                minutes. Drops are healed by the ch-live-catchup timer, so
+                this is "the heal path is being exercised abnormally" —
+                check CH health and sink buffer pressure before the lake
+                tail integrity degrades (ADR-0041).
+
+  # ── guard: healthy outcomes don't count as drops ──────────────────
+  - interval: 1m
+    name: a busy but healthy ch live-sink raises nothing
+    input_series:
+      - series: 'stellarindex_ch_live_sink_ledgers_total{job="stellarindex_indexer",instance="r1:9100",outcome="ok"}'
+        values: '0+12x40'
+      - series: 'stellarindex_ch_live_sink_ledgers_total{job="stellarindex_indexer",instance="r1:9100",outcome="dropped"}'
+        values: '0+0x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_ingestion_ch_live_sink_drops
+        exp_alerts: []
+
+  # ── firing: an hour of continuous drops escalates to a page ───────
+  - interval: 1m
+    name: an hour of continuous ch live-sink drops pages
+    input_series:
+      - series: 'stellarindex_ch_live_sink_ledgers_total{job="stellarindex_indexer",instance="r1:9100",outcome="dropped"}'
+        values: '0+1x150'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: stellarindex_ingestion_ch_live_sink_drops_sustained
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              outcome: dropped
+              severity: page
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-live-sink-drops.md
+              summary: "ClickHouse live-sink drops sustained for 1h — heal path losing the race"
+              description: |
+                Ledger extracts have been dropping continuously for an hour.
+                ch-live-catchup is either down or cannot keep up; the
+                certified-lake tail (the coverage claim's substrate) is at
+                risk. Treat as data-loss-risk (ADR-0041).
+
+  # ── near-threshold: a single healed blip leaves the 1h window ─────
+  # One drop at t=5m, clean afterwards. By t=90m the step has left the
+  # trailing 1h window, so the sustained page has resolved.
+  - interval: 1m
+    name: a single healed drop does not sustain the page
+    input_series:
+      - series: 'stellarindex_ch_live_sink_ledgers_total{job="stellarindex_indexer",instance="r1:9100",outcome="dropped"}'
+        values: '0 0 0 0 0 1+0x145'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: stellarindex_ingestion_ch_live_sink_drops_sustained
+        exp_alerts: []
+
+  # ══ stellarindex_ingestion_trade_insert_backpressure ══════════════
+  # ── firing: the sink retries continuously for 10m ─────────────────
+  - interval: 1m
+    name: sustained trade-insert retries ticket
+    input_series:
+      - series: 'stellarindex_trade_insert_retries_total{job="stellarindex_indexer",instance="r1:9100",outcome="retry"}'
+        values: '0+6x30'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_ingestion_trade_insert_backpressure
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/trade-insert-backpressure.md
+              summary: "Trade sink retrying under backpressure — Postgres write path blocked"
+              description: |
+                The trade sink has been retrying infrastructure-classified
+                insert failures (connection refused/reset, PG restarting) for
+                ≥ 10 min. The on-chain ledger cursor is HELD (not advancing)
+                until the writes land — nothing is dropped, but the served
+                tier is frozen and external (CEX/FX) price freshness is
+                degrading (watch stellarindex_trade_insert_buffer_depth).
+                Almost always a Postgres outage/restart.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/trade-insert-backpressure.md
+
+  # ── guard: only outcome="retry" counts ────────────────────────────
+  - interval: 1m
+    name: a healthy retry-free sink raises nothing
+    input_series:
+      - series: 'stellarindex_trade_insert_retries_total{job="stellarindex_indexer",instance="r1:9100",outcome="retry"}'
+        values: '4+0x30'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_ingestion_trade_insert_backpressure
+        exp_alerts: []
+
+  # ══ stellarindex_ingestion_insert_errors ══════════════════════════
+  # ── firing: 12 errors/min = 0.2/s crosses the 0.1/s line ─────────
+  - interval: 1m
+    name: a sustained insert-error rate above the coarse line tickets
+    input_series:
+      - series: 'stellarindex_source_insert_errors_total{job="stellarindex_indexer",instance="r1:9100",source="sdex",kind="trade"}'
+        values: '0+12x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: stellarindex_ingestion_insert_errors
+        exp_alerts:
+          - exp_labels:
+              source: sdex
+              kind: trade
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/insert-errors.md
+              summary: "Insert errors on sdex/trade at 0.2/sec"
+              description: |
+                Source sdex failed to persist trade
+                events (>6/min sustained for 5 min). Storage layer is rejecting
+                writes — usually Timescale outage, disk-full, or a schema
+                mismatch after a migration.
+
+                Post-2026-07-06 (ADR-0041), INFRASTRUCTURE faults no longer
+                drop — they retry with backpressure (see
+                trade_insert_backpressure). So a firing here means GENUINE
+                loss: a permanent data fault (kind=trade) or external-buffer
+                overflow (kind=dropped). Escalate quickly if the rate is high.
+
+  # ── near-threshold: 3/min = 0.05/s stays under the line ───────────
+  - interval: 1m
+    name: a below-threshold insert-error trickle raises nothing
+    input_series:
+      - series: 'stellarindex_source_insert_errors_total{job="stellarindex_indexer",instance="r1:9100",source="sdex",kind="trade"}'
+        values: '0+3x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: stellarindex_ingestion_insert_errors
+        exp_alerts: []
+
+  # ══ stellarindex_ingestion_trade_buffer_drop ══════════════════════
+  # ── firing: any kind="dropped" increase is permanent loss ─────────
+  - interval: 1m
+    name: a slow trickle of external buffer drops tickets
+    input_series:
+      - series: 'stellarindex_source_insert_errors_total{job="stellarindex_indexer",instance="r1:9100",source="kraken",kind="dropped"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_ingestion_trade_buffer_drop
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              source: kraken
+              kind: dropped
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/trade-insert-backpressure.md
+              summary: "External trade(s) permanently dropped on kraken — buffer overflow or data fault during backpressure"
+              description: |
+                stellarindex_source_insert_errors_total{source="kraken",kind="dropped"}
+                incremented: at least one external (CEX/FX) trade was
+                permanently dropped — either the bounded retry buffer
+                overflowed while Postgres was unreachable (see
+                stellarindex_ingestion_trade_insert_backpressure) or a
+                permanent data fault surfaced during per-row isolation. This
+                IS genuine, unrecoverable loss for that trade (vendor-
+                refillable, not lake-refillable). Any nonzero rate needs eyes —
+                the coarse stellarindex_ingestion_insert_errors alert only
+                trips above 0.1/s fleet-wide and can miss a slow trickle.
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/trade-insert-backpressure.md
+
+  # ── guard: other kinds don't count as buffer drops ────────────────
+  - interval: 1m
+    name: non-dropped kinds do not trip the buffer-drop tripwire
+    input_series:
+      - series: 'stellarindex_source_insert_errors_total{job="stellarindex_indexer",instance="r1:9100",source="kraken",kind="trade"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_ingestion_trade_buffer_drop
+        exp_alerts: []
+
+  # ══ stellarindex_ingestion_duplicate_flood ════════════════════════
+  # ── firing: 1 dup/sec with zero new rows for 10m ──────────────────
+  - interval: 1m
+    name: a duplicates-only insert stream tickets
+    input_series:
+      - series: 'stellarindex_trade_insert_outcome_total{job="stellarindex_indexer",instance="r1:9100",source="sdex",outcome="duplicate"}'
+        values: '0+60x40'
+      - series: 'stellarindex_trade_insert_outcome_total{job="stellarindex_indexer",instance="r1:9100",source="sdex",outcome="new"}'
+        values: '9000+0x40'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: stellarindex_ingestion_duplicate_flood
+        exp_alerts:
+          - exp_labels:
+              source: sdex
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
+              summary: "Source sdex producing duplicates only (cursor replay or stuck-tip)"
+              description: |
+                Source sdex has been attempting >0.5
+                inserts/sec for ≥10 min but EVERY attempt hits
+                `ON CONFLICT DO NOTHING` — no new rows are landing in
+                the trades hypertable. The indexer cursor advances but
+                the data underneath it is stale.
+
+                Likely root causes: cursor-state corruption (cursor
+                jumped past data without persisting), a stale event
+                channel feeding the sink from an old replay loop, or a
+                back-pressure event that lost in-flight events.
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
+
+  # ── guard: interleaved new rows silence it ────────────────────────
+  - interval: 1m
+    name: duplicates with interleaved new rows raise nothing
+    input_series:
+      - series: 'stellarindex_trade_insert_outcome_total{job="stellarindex_indexer",instance="r1:9100",source="sdex",outcome="duplicate"}'
+        values: '0+60x40'
+      - series: 'stellarindex_trade_insert_outcome_total{job="stellarindex_indexer",instance="r1:9100",source="sdex",outcome="new"}'
+        values: '9000+6x40'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: stellarindex_ingestion_duplicate_flood
+        exp_alerts: []
+
+  # ── near-threshold: 0.4 dup/sec sits under the 0.5/s line ─────────
+  - interval: 1m
+    name: a below-threshold duplicate rate raises nothing
+    input_series:
+      - series: 'stellarindex_trade_insert_outcome_total{job="stellarindex_indexer",instance="r1:9100",source="sdex",outcome="duplicate"}'
+        values: '0+24x40'
+      - series: 'stellarindex_trade_insert_outcome_total{job="stellarindex_indexer",instance="r1:9100",source="sdex",outcome="new"}'
+        values: '9000+0x40'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: stellarindex_ingestion_duplicate_flood
+        exp_alerts: []
+
+  # ── DOCUMENTED LIMITATION, not an endorsement: the `and on (source)
+  # … == 0` join needs the outcome="new" child to EXIST. After a
+  # process restart a source that has produced only duplicates never
+  # creates that child (WithLabelValues is call-site-seeded per
+  # source), so the alert stays silent in exactly its target scenario.
+  # This case pins the current behaviour so a fix flips it visibly.
+  - interval: 1m
+    name: KNOWN GAP an absent outcome-new child silences the duplicate-flood alert
+    input_series:
+      - series: 'stellarindex_trade_insert_outcome_total{job="stellarindex_indexer",instance="r1:9100",source="sdex",outcome="duplicate"}'
+        values: '0+60x40'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: stellarindex_ingestion_duplicate_flood
+        exp_alerts: []
+
+  # ══ stellarindex_dex_trade_unit_ratio_detected ════════════════════
+  # ── firing: 2/min unit-ratio at 2/3 of the source's flow ──────────
+  - interval: 1m
+    name: a dominant unit-ratio stream tickets
+    input_series:
+      - series: 'stellarindex_dex_trade_unit_ratio_total{job="stellarindex_indexer",instance="r1:9100",source="phoenix"}'
+        values: '0+2x60'
+      - series: 'stellarindex_trade_inserts_total{job="stellarindex_indexer",instance="r1:9100",source="phoenix",usd_populated="true"}'
+        values: '0+3x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_dex_trade_unit_ratio_detected
+        exp_alerts:
+          - exp_labels:
+              source: phoenix
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-trade-unit-ratio.md
+              summary: "Source phoenix producing a sustained stream of unit-ratio (1:1) trades"
+              description: |
+                Source phoenix has landed > 25 on-chain DEX
+                trades with base_amount == quote_amount in the last 30
+                minutes. An occasional equal-value cross-asset fill is
+                normal; a sustained stream at this rate is the signature
+                of the 2026-07-07 Phoenix decoder field-mapping bug that
+                silently collapsed every trade's price to 1:1 for months.
+
+                Check the source's recent trades ratio distribution, then
+                the decoder's amount field mapping against the contract's
+                event definition.
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-trade-unit-ratio.md
+
+  # ── guard: the fraction arm — busy parity morning, 2% of flow ─────
+  # The 2026-07-31 sdex wrapper-morning shape: 60 unit-ratio trades in
+  # 30m would trip the old absolute threshold, but they are 2% of the
+  # source's flow so the >50% arm must keep it silent.
+  - interval: 1m
+    name: unit-ratio trades at a small fraction of flow raise nothing
+    input_series:
+      - series: 'stellarindex_dex_trade_unit_ratio_total{job="stellarindex_indexer",instance="r1:9100",source="sdex"}'
+        values: '0+2x60'
+      - series: 'stellarindex_trade_inserts_total{job="stellarindex_indexer",instance="r1:9100",source="sdex",usd_populated="true"}'
+        values: '0+100x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_dex_trade_unit_ratio_detected
+        exp_alerts: []
+
+  # ── guard: the min-volume arm — 100% unit-ratio but tiny flow ─────
+  - interval: 1m
+    name: a tiny all-unit-ratio flow stays under the 25-trade floor
+    input_series:
+      - series: 'stellarindex_dex_trade_unit_ratio_total{job="stellarindex_indexer",instance="r1:9100",source="comet"}'
+        values: '0+0.5x60'
+      - series: 'stellarindex_trade_inserts_total{job="stellarindex_indexer",instance="r1:9100",source="comet",usd_populated="true"}'
+        values: '0+0.5x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_dex_trade_unit_ratio_detected
+        exp_alerts: []
+
+  # ══ stellarindex_ingestion_source_insert_stale ════════════════════
+  # ── firing, normal branch: sdex insert timestamp frozen >1h ───────
+  - interval: 1m
+    name: a normal source with a frozen insert timestamp tickets after 1h
+    input_series:
+      - series: 'stellarindex_source_last_insert_unix{job="stellarindex_indexer",instance="r1:9100",source="sdex"}'
+        values: '0+0x90'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="sdex"}'
+        values: '1+0x90'
+    alert_rule_test:
+      - eval_time: 75m
+        alertname: stellarindex_ingestion_source_insert_stale
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              source: sdex
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
+              summary: "Source sdex hasn't landed a new row in >1h"
+              description: |
+                stellarindex_source_last_insert_unix{source="sdex"}
+                hasn't advanced in over an hour while the source is
+                still enabled. Same root-cause cluster as the
+                duplicate-flood alert; the timestamp-shape signal
+                catches low-volume sources whose insert rate sits
+                under the rate-shape alert's 0.5/s threshold.
+
+                Cross-check stellarindex_source_last_event_unix — if the
+                dispatcher is still matching events, the gap is the
+                stuck-tip diagnostic (cursor advances, data doesn't).
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
+
+  # ── near-threshold: an advancing insert timestamp is silent ───────
+  - interval: 1m
+    name: an advancing insert timestamp raises nothing
+    input_series:
+      - series: 'stellarindex_source_last_insert_unix{job="stellarindex_indexer",instance="r1:9100",source="sdex"}'
+        values: '0+60x90'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="sdex"}'
+        values: '1+0x90'
+    alert_rule_test:
+      - eval_time: 75m
+        alertname: stellarindex_ingestion_source_insert_stale
+        exp_alerts: []
+
+  # ── guard: the sparse-source carve-out (unless-branch) ────────────
+  # phoenix at 2h stale would trip the 1h arm; the `unless` hands it
+  # to the 24h arm, which is not yet breached.
+  - interval: 1m
+    name: a 2h-quiet sparse source is carved out of the 1h budget
+    input_series:
+      - series: 'stellarindex_source_last_insert_unix{job="stellarindex_indexer",instance="r1:9100",source="phoenix"}'
+        values: '0+0x125'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="phoenix"}'
+        values: '1+0x125'
+    alert_rule_test:
+      - eval_time: 120m
+        alertname: stellarindex_ingestion_source_insert_stale
+        exp_alerts: []
+
+  # ── firing, sparse branch: phoenix quiet past its 24h budget ──────
+  - interval: 1m
+    name: a sparse source quiet past 24h tickets on the second arm
+    input_series:
+      - series: 'stellarindex_source_last_insert_unix{job="stellarindex_indexer",instance="r1:9100",source="phoenix"}'
+        values: '0+0x1460'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="phoenix"}'
+        values: '1+0x1460'
+    alert_rule_test:
+      - eval_time: 1455m
+        alertname: stellarindex_ingestion_source_insert_stale
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              source: phoenix
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
+              summary: "Source phoenix hasn't landed a new row in >1h"
+              description: |
+                stellarindex_source_last_insert_unix{source="phoenix"}
+                hasn't advanced in over an hour while the source is
+                still enabled. Same root-cause cluster as the
+                duplicate-flood alert; the timestamp-shape signal
+                catches low-volume sources whose insert rate sits
+                under the rate-shape alert's 0.5/s threshold.
+
+                Cross-check stellarindex_source_last_event_unix — if the
+                dispatcher is still matching events, the gap is the
+                stuck-tip diagnostic (cursor advances, data doesn't).
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
+
+  # ══ stellarindex_ingest_gap_detected ══════════════════════════════
+  # ── firing: a 5000-ledger contiguous hole pages ───────────────────
+  - interval: 1m
+    name: a sustained data-derived gap pages
+    input_series:
+      - series: 'stellarindex_ingest_gap_max_size_ledgers{job="stellarindex_aggregator",instance="r1:9102",source="soroswap",table="trades"}'
+        values: '5000+0x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_ingest_gap_detected
+        exp_alerts:
+          - exp_labels:
+              source: soroswap
+              severity: page
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detected.md
+              summary: "Data-coverage gap of 5000 ledgers in source=soroswap"
+              description: |
+                max by (source) (stellarindex_ingest_gap_max_size_ledgers{source="soroswap"})
+                = 5000 ledgers — a contiguous block of soroswap
+                ingest is missing in one of its per-source hypertables.
+                Cursor inventory may read fine; this alert reads the data
+                tables directly.
+
+                Resolve via:
+                  stellarindex-ops find-data-gaps --config /etc/stellarindex.toml --source soroswap --output text
+                for per-source diagnosis, then for Soroban-derived sources:
+                  stellarindex-ops projector-replay --source <name> --from F  (per-source projection cursor rewind; ADR-0032)
+                For non-projected sources (sdex / soroban-events):
+                  stellarindex-ops backfill --source <name> --from F --to T
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detected.md
+
+  # ── near-threshold: an 800-ledger gap sits under the 1000 floor ───
+  - interval: 1m
+    name: a sub-floor gap raises nothing
+    input_series:
+      - series: 'stellarindex_ingest_gap_max_size_ledgers{job="stellarindex_aggregator",instance="r1:9102",source="soroswap",table="trades"}'
+        values: '800+0x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_ingest_gap_detected
+        exp_alerts: []
+
+  # ══ stellarindex_ingest_gap_detector_silent ═══════════════════════
+  # ── firing, staleness arm: last success frozen >8h ────────────────
+  - interval: 1m
+    name: a gap-detector target with a frozen success stamp tickets
+    input_series:
+      - series: 'stellarindex_ingest_gap_detector_last_success_unix{job="stellarindex_aggregator",instance="r1:9102",source="sdex",table="trades"}'
+        values: '0+0x500'
+      - series: 'stellarindex_ingest_gap_detector_runs_total{job="stellarindex_aggregator",instance="r1:9102",source="sdex",table="trades",outcome="error"}'
+        values: '0+1x500'
+    alert_rule_test:
+      - eval_time: 495m
+        alertname: stellarindex_ingest_gap_detector_silent
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_aggregator
+              instance: r1:9102
+              source: sdex
+              table: trades
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+              summary: "Data-gap detector hasn't scanned sdex/trades successfully in >8h (above the 6h sdex/soroban scan cadence)"
+              description: |
+                The aggregator's data-gap detector goroutine appears
+                stuck or absent for a target. Without it the operator-facing
+                `stellarindex_ingest_gap_max_size_ledgers` gauge stops
+                updating — gauges read stale value until restart.
+
+                Three clauses: (1) the per-target last-success stamp is
+                older than 8h; (2) the runs_total metric is absent for 15m
+                (aggregator fully down); (3) the target has errored both now
+                and 8h ago and has had NO last-success stamp in 8h — a
+                scan that has never once succeeded in this process life
+                (no cursor row → nothing to re-emit) produces no stamp for
+                clause 1 to age, and its error counter satisfies clause 2's
+                "runs_total present", so before 2026-08-28 that target
+                never fired anything.
+
+                Likely causes: aggregator binary crash-looping; Postgres
+                connection-pool exhaustion causing every scan to hit the
+                per-target Go timeout / SQL statement_timeout and increment
+                outcome=error; deploy regression that removed the worker
+                wiring. Grep the aggregator log for
+                `gap-detector: scan failed` (a non-ok outcome is logged
+                loudly with elapsed_s so a timeout is unmistakable).
+
+                Cross-check: aggregator service `active`?
+                postgres_exporter targets `up`?
+                `stellarindex_ingest_gap_detector_runs_total{outcome="error"}`
+                climbing?
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+
+  # ── firing, absent arm: the detector metric family disappears ─────
+  # Only an unrelated series exists, so absent_over_time() fires with
+  # an empty label set — the "aggregator down" shape.
+  - interval: 1m
+    name: a fully-absent gap-detector metric tickets on the absent arm
+    input_series:
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="sdex"}'
+        values: '1+0x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_ingest_gap_detector_silent
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+              summary: "Data-gap detector hasn't scanned / successfully in >8h (above the 6h sdex/soroban scan cadence)"
+              description: |
+                The aggregator's data-gap detector goroutine appears
+                stuck or absent for a target. Without it the operator-facing
+                `stellarindex_ingest_gap_max_size_ledgers` gauge stops
+                updating — gauges read stale value until restart.
+
+                Three clauses: (1) the per-target last-success stamp is
+                older than 8h; (2) the runs_total metric is absent for 15m
+                (aggregator fully down); (3) the target has errored both now
+                and 8h ago and has had NO last-success stamp in 8h — a
+                scan that has never once succeeded in this process life
+                (no cursor row → nothing to re-emit) produces no stamp for
+                clause 1 to age, and its error counter satisfies clause 2's
+                "runs_total present", so before 2026-08-28 that target
+                never fired anything.
+
+                Likely causes: aggregator binary crash-looping; Postgres
+                connection-pool exhaustion causing every scan to hit the
+                per-target Go timeout / SQL statement_timeout and increment
+                outcome=error; deploy regression that removed the worker
+                wiring. Grep the aggregator log for
+                `gap-detector: scan failed` (a non-ok outcome is logged
+                loudly with elapsed_s so a timeout is unmistakable).
+
+                Cross-check: aggregator service `active`?
+                postgres_exporter targets `up`?
+                `stellarindex_ingest_gap_detector_runs_total{outcome="error"}`
+                climbing?
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+
+  # ── guard: restart with no scan due (2026-08-29 09:55Z r1 false-fire)
+  # The seeded schedule (persisted scan cursor) defers every scan for
+  # hours after a deploy restart, so no Inc() runs; until the process
+  # pre-registered the runs_total series at 0 the whole family was
+  # absent and the absent_over_time[15m] clause read "no scan due yet"
+  # as "detector dead". Series present at 0 for 30m + a fresh
+  # last_success stamp (re-emitted from the cursor) must stay silent.
+  - interval: 1m
+    name: a restarted detector with runs_total pre-registered at 0 and no scan due raises nothing
+    input_series:
+      - series: 'stellarindex_ingest_gap_detector_last_success_unix{job="stellarindex_aggregator",instance="r1:9102",source="sdex",table="trades"}'
+        values: '0+0x40'
+      - series: 'stellarindex_ingest_gap_detector_runs_total{job="stellarindex_aggregator",instance="r1:9102",source="sdex",table="trades",outcome="ok"}'
+        values: '0+0x40'
+      - series: 'stellarindex_ingest_gap_detector_runs_total{job="stellarindex_aggregator",instance="r1:9102",source="sdex",table="trades",outcome="error"}'
+        values: '0+0x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_ingest_gap_detector_silent
+        exp_alerts: []
+
+  # ── guard: a healthy detector (fresh stamp + live counter) ────────
+  - interval: 1m
+    name: a healthy gap detector raises nothing
+    input_series:
+      - series: 'stellarindex_ingest_gap_detector_last_success_unix{job="stellarindex_aggregator",instance="r1:9102",source="sdex",table="trades"}'
+        values: '0+60x60'
+      - series: 'stellarindex_ingest_gap_detector_runs_total{job="stellarindex_aggregator",instance="r1:9102",source="sdex",table="trades",outcome="ok"}'
+        values: '0+1x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_ingest_gap_detector_silent
+        exp_alerts: []

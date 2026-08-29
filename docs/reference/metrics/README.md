@@ -96,6 +96,30 @@ approach the [genesis, tip] span; sparse-by-design sources (Blend
 auctions, CCTP) are naturally lower because the contract doesn't
 emit per ledger.
 
+**Count source per target.** For every target the numerator is
+`COUNT(DISTINCT ledger)` over the target's own hypertable, EXCEPT
+`source="soroban-events"`, which since 2026-08-28 reads the
+`ledger_ingest_log` census instead (`COUNT(*) WHERE
+soroban_event_count > 0` over the scan window — a PK range scan).
+`soroban_events` has no index on `ledger`; the generic count was a
+556 s full scan of a 257 GB hypertable per cycle and took r1's
+serving path down. The census is the indexer's LCM-derived record of
+"this ledger carried >= 1 eligible contract event", written
+post-enqueue (after `ProcessLedger` returns, before the sink drains —
+not a rows-in-Postgres marker), and equals the observed-row count by
+the ADR-0033 Claim 3 invariant; a divergence is a persistence
+shortfall that `stellarindex-ops verify` reconciliation surfaces, not
+this gauge. Two honest edges: a sink-writer halt makes this density
+read *high* (census >0, rows absent) while the `_gap_*` gauges stay
+observed-row-based; and `stellarindex-ops backfill` does not populate
+`ledger_ingest_log`, so a range repaired without `census-backfill`
+(ADR-0033 recovery §1) reads density 0 for soroban-events.
+The gap gauges for that target (`..._gap_*`) still come from a scan
+of `soroban_events` itself. Same gauge, same
+`source_coverage_snapshots` row, same `density_pct` in
+`/v1/diagnostics/ingestion` — only the source of the number differs
+(`GapDetectorTarget.DistinctLedgerCountSQL`).
+
 ### `stellarindex_ingest_gap_detector_tip_ledger`
 
 Gauge (no labels).
@@ -2830,6 +2854,18 @@ hitting the 90 s top bucket, which is the hard budget, not headroom.
 
 ## Changelog
 
+- 2026-08-29 — added the per-repo nightly pgBackRest wrapper metrics
+  (`stellarindex_pgbackrest_backup_last_success_unix{repo}`,
+  `stellarindex_pgbackrest_backup_last_rc{repo}`,
+  `stellarindex_pgbackrest_backup_duration_seconds{repo}`), emitted by
+  `pgbackrest-backup.sh` (ansible-managed,
+  `configs/ansible/roles/archival-node/templates/pgbackrest-backup.sh.j2`)
+  into the node_exporter textfile collector — NOT Go-declared, same
+  textfile-only convention as the `stellar_stack_probe` family below.
+  `last_success_unix` is carried forward across a failed run so a
+  failing repo2 shows as an ageing timestamp rather than a vanished
+  series. Added when repo2 (S3) went live on r1 and the wrapper turned
+  out to back up only repo1 (pgBackRest `backup` is single-repo).
 - 2026-08-11 — removed the Stripe metrics
   (`stellarindex_stripe_platform_sync_errors_total`,
   `stellarindex_stripe_dead_letters_open`) and the

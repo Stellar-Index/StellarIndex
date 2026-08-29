@@ -49,8 +49,12 @@ if [[ -x /usr/local/bin/mc && -n "${AWS_ENDPOINT_URL:-}" ]]; then
   trap 'rm -rf "$MC_ALIAS_DIR"' EXIT
   export MC_CONFIG_DIR="$MC_ALIAS_DIR"
 
-  if /usr/local/bin/mc alias set live "$AWS_ENDPOINT_URL" \
-       "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" >/dev/null 2>&1; then
+  # Keys go in on stdin (mc reads ACCESSKEY then SECRETKEY, one per line,
+  # when they are omitted from argv) so the bucket-writer secret never
+  # sits in /proc/<pid>/cmdline — this runs on EVERY galexie restart
+  # (secret-on-argv, scripts/ci/lint-ansible-tasks.sh).
+  if printf '%s\n%s\n' "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" \
+       | /usr/local/bin/mc alias set live "$AWS_ENDPOINT_URL" >/dev/null 2>&1; then
     # List all chunk-dirs at top, find the highest-numbered LCM inside
     # the latest chunk. Filenames look like FC43AFEC--62672915.xdr.zst;
     # the integer after `--` is the ledger sequence.

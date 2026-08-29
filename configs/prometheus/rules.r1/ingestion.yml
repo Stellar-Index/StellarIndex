@@ -142,7 +142,7 @@ groups:
           summary: "All ingestion sources have stopped (SEV-1)"
           description: |
             No events from any source in the last 3 minutes. API data will go
-            stale within 60 s. This is a P1 — check shared upstream (stellar-rpc)
+            stale within 60 s. This is a P1 — check shared upstream (Galexie/MinIO lake)
             or shared storage (Timescale) before restarting the indexer.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/all-ingestion-down.md
 
@@ -161,8 +161,7 @@ groups:
           description: |
             The persisted cursor hasn't moved in 5 minutes while the source is
             enabled. Typical cause: indexer consumed events but UpsertCursor
-            failed silently, or the orchestrator's cursor-persister goroutine
-            is wedged.
+            failed silently, or the indexer's cursor-persist path is wedged.
 
       - alert: stellarindex_ingestion_orphan_events
         expr: sum by (source) (rate(stellarindex_source_orphan_events_total[10m])) > 10/60
@@ -582,15 +581,38 @@ groups:
               stellarindex-ops find-data-gaps --config /etc/stellarindex.toml --source {{ $labels.source }} --output text
             for per-source diagnosis, then either
               stellarindex-ops projector-replay --source <name> --from F  (per-source projection cursor rewind; ADR-0032)
-              stellarindex-ops <source>-backfill --from F --to T     (if only one source is short)
+              stellarindex-ops backfill --source <name> --from F --to T   (if only one source is short)
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detected.md
 
+      # 2026-08-28 (found verifying PR #258): the absent_over_time clause
+      # is satisfied by the ERROR outcome of runs_total just as well as
+      # the ok one, and a target that has never once succeeded in this
+      # process life (no cursor row → nothing re-emits the stamp) has NO
+      # last_success series for the staleness clause to age. Such a
+      # target — soroban_events failing every 6h cycle on
+      # statement_timeout — fired NOTHING. Third clause: the target's
+      # error counter is present now AND 8h ago (so a fresh process's
+      # first failed scan doesn't ticket; identical labels across a
+      # restart, so the previous process's errors count) and no
+      # last_success stamp has been seen for that (source, table) in 8h.
+      # Presence rather than increase(): the heavy targets retry every
+      # 6h, so the error counter is as rate()-hostile as the ok one.
       - alert: stellarindex_ingest_gap_detector_silent
         expr: |
           (time() - stellarindex_ingest_gap_detector_last_success_unix) > 28800
           OR
           absent_over_time(stellarindex_ingest_gap_detector_runs_total[15m]) == 1
+          OR
+          (
+            (
+              stellarindex_ingest_gap_detector_runs_total{outcome="error"} > 0
+              and on (source, table)
+              stellarindex_ingest_gap_detector_runs_total{outcome="error"} offset 8h > 0
+            )
+            unless on (source, table)
+            count_over_time(stellarindex_ingest_gap_detector_last_success_unix[8h])
+          )
         for: 10m
         labels:
           severity: ticket
@@ -611,7 +633,12 @@ groups:
             to rate() — that false-fired for >7h even though every scan
             succeeded (incident 2026-07-06). The 8h staleness threshold
             sits above the 6h cadence; the absent_over_time[15m] clause
-            still catches an aggregator fully down within 15m.
+            still catches an aggregator fully down within 15m. The third
+            clause (error counter present now and 8h ago, no last-success
+            stamp seen in 8h) covers a target that has never once succeeded
+            in this process life: it has no stamp for clause 1 to age and
+            its error counter satisfies clause 2's "runs_total present",
+            so before 2026-08-28 it fired nothing.
 
             Likely causes: aggregator binary crash-looping; Postgres
             connection-pool exhaustion causing every scan to hit the
