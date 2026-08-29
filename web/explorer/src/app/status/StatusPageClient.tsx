@@ -133,6 +133,12 @@ type IngestionSnapshot = Omit<
       // shortfall — see the "reconciling" branch below.
       completeness_complete?: boolean;
       completeness_lake_complete?: boolean;
+      // Evolving: the REAL age of the row's data (web-status-4). The gap
+      // detector (30 min cadence) stamps `coverage_snapshot_at`; the daily
+      // compute-completeness timer stamps `completeness_computed_at`.
+      // `backfill_coverage_as_of` is only the API's assembly time.
+      coverage_snapshot_at?: string;
+      completeness_computed_at?: string;
     }
   >;
   sources: Array<
@@ -147,6 +153,28 @@ type IngestionSnapshot = Omit<
     }
   >;
 };
+
+// RegionIngestion — one region's /v1/diagnostics/ingestion snapshot PLUS
+// the envelope's honesty metadata. The server sets `flags.stale` when a
+// critical reader failed during the build (zero-valued fields) or when the
+// background refresher preserved a last-known-good snapshot after a
+// degraded rebuild; it relies on the client honouring the flag for the
+// response to be honest (diagnostics_ingestion.go ingestionFlags). Dropping
+// it rendered "Lag from tip 0s" in green for a failed cursor read
+// (web-status-1).
+interface RegionIngestion {
+  snapshot: IngestionSnapshot;
+  stale: boolean;
+  /** Envelope `as_of`; '' when the server omitted it. */
+  asOf: string;
+}
+
+// Consecutive failed /v1/status polls before this page stops trusting the
+// retained last-known snapshot for its headline verdict. Same value as
+// DegradedBanner's FAILURE_THRESHOLD (components/nav/DegradedBanner.tsx) so
+// the nav strip, the sidebar pill and this page flip together — one
+// transient blip is ridden out, a real outage lands within two polls.
+const STATUS_FEED_UNREACHABLE_AFTER = 2;
 
 // Public-facing endpoints we surface on the status page.
 // Not auto-derived from the OpenAPI spec because not every
@@ -438,6 +466,15 @@ export default function StatusPageClient({
   const status = statusQ.data?.status ?? null;
   const asOf = statusQ.data?.asOf ?? '';
   const error = statusQ.data?.error ?? null;
+  const consecutiveFailures = statusQ.data?.consecutiveFailures ?? 0;
+  // The feed keeps the last-known snapshot through failures so the tiles
+  // below can still show it — but the HEADLINE verdict must not be derived
+  // from a snapshot we can no longer refresh (WB-04: a fetch we could not
+  // complete is absence-of-signal, not an all-clear). Pre-fix an open tab
+  // read "All systems operational" with a green pulse for the whole
+  // outage (web-status-2).
+  const feedUnreachable =
+    error !== null && consecutiveFailures >= STATUS_FEED_UNREACHABLE_AFTER;
   const loading = statusQ.isPending;
   // Seed the static (auth / streaming) endpoints once via the lazy
   // initializer — they never get a fetch fired against them, so their
@@ -466,7 +503,7 @@ export default function StatusPageClient({
   // independently — a r2 outage shouldn't block r1's panel from
   // refreshing.
   const [ingestionByRegion, setIngestionByRegion] = useState<
-    Record<string, IngestionSnapshot | null>
+    Record<string, RegionIngestion | null>
   >({});
 
   // Per-region ingestion snapshot. One fetch per region per
@@ -483,11 +520,22 @@ export default function StatusPageClient({
           { cache: 'no-store' },
         );
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const env = (await res.json()) as { data: IngestionSnapshot };
+        const env = (await res.json()) as {
+          data: IngestionSnapshot;
+          as_of?: string;
+          flags?: { stale?: boolean };
+        };
         if (cancelled) return;
         setIngestionByRegion((prev) => ({
           ...prev,
-          [region.name]: env.data,
+          [region.name]: {
+            snapshot: env.data,
+            // Fail closed: `flags` is a required EnvelopeMeta member, so an
+            // absent flag is a contract breach we read as "cannot vouch for
+            // freshness", never as an all-clear.
+            stale: env.flags?.stale !== false,
+            asOf: env.as_of ?? '',
+          },
         }));
       } catch {
         if (cancelled) return;
@@ -604,11 +652,13 @@ export default function StatusPageClient({
         : [],
     [status, ingestionByRegion],
   );
-  const effectiveOverall: ServiceStatus = CURRENT_NETWORK.pricing
-    ? (status?.overall ?? 'unknown')
-    : status
-      ? worstStatus(displayServices)
-      : 'unknown';
+  const effectiveOverall: ServiceStatus = feedUnreachable
+    ? 'unknown'
+    : CURRENT_NETWORK.pricing
+      ? (status?.overall ?? 'unknown')
+      : status
+        ? worstStatus(displayServices)
+        : 'unknown';
   const overallTone = useMemo(
     () => toneFor(effectiveOverall),
     [effectiveOverall],
@@ -616,17 +666,19 @@ export default function StatusPageClient({
 
   return (
     <Container className="max-w-5xl space-y-8 py-10">
-      <PageHead />
+      <PageHead error={error} asOf={asOf} />
       <StatusNotices />
-      <OverallBanner status={effectiveOverall} tone={overallTone} />
+      {/* The unreachable notice sits ABOVE the headline so the verdict is
+          never read without its caveat. */}
       {error && (
         <Card className="border-bad-300 bg-bad-50 text-bad-700 px-4 py-3 text-sm">
           Status feed unreachable: {error}.{' '}
           {status
-            ? 'Showing the last known snapshot below.'
+            ? `Showing the last known snapshot below${asOf ? ` (from ${formatRelative(asOf)})` : ''}.`
             : 'No snapshot has been received yet — independent endpoint probes below still show live results, and past incidents are loaded from the build-time corpus.'}
         </Card>
       )}
+      <OverallBanner status={effectiveOverall} tone={overallTone} />
       {loading && !status && !error && (
         <Card className="text-ink-faint px-4 py-8 text-center text-sm">
           Loading status…
@@ -662,7 +714,7 @@ export default function StatusPageClient({
   );
 }
 
-function PageHead() {
+function PageHead({ error, asOf }: { error: string | null; asOf: string }) {
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div>
@@ -675,10 +727,22 @@ function PageHead() {
           public-endpoint matrix — probed independently from your browser.
         </p>
       </div>
-      <div className="text-ink-muted flex items-center gap-2 text-sm whitespace-nowrap">
-        <span className="animate-pulse-dot bg-ok-500 inline-block h-2 w-2 rounded-full" />
-        Live · refreshed every 30 s
-      </div>
+      {/* The pulse is a liveness claim: it only pulses green while the
+          latest poll succeeded. During an outage it goes grey and says how
+          old the snapshot below actually is. */}
+      {error === null ? (
+        <div className="text-ink-muted flex items-center gap-2 text-sm whitespace-nowrap">
+          <span className="animate-pulse-dot bg-ok-500 inline-block h-2 w-2 rounded-full" />
+          Live · refreshed every 30 s
+        </div>
+      ) : (
+        <div className="text-bad-700 flex items-center gap-2 text-sm whitespace-nowrap">
+          <span className="bg-ink-faint inline-block h-2 w-2 rounded-full" />
+          {asOf
+            ? `Status feed unreachable · last successful poll ${formatRelative(asOf)}`
+            : 'Status feed unreachable · no successful poll yet'}
+        </div>
+      )}
     </div>
   );
 }
@@ -740,11 +804,18 @@ function OverallBanner({
 // StatusNotices renders the operator-authored banners from
 // GET /v1/status/notices at the top of the page — a maintenance window
 // or ongoing-incident announcement is the first thing a visitor should
-// see. It polls independently on the standard cadence and, per the
-// page's "never render broken" contract (WB-02), collapses to nothing
-// on an empty list OR any fetch/parse error.
+// see. It polls independently on the standard cadence and collapses to
+// nothing on an empty list. A fetch/parse FAILURE keeps the last-known
+// notices and marks them (WB-04 — mirrors useStatus): the endpoint fails
+// during exactly the outage an operator's notice announces, and clearing
+// on error blanked the banner from every open tab for the whole window
+// (web-status-6). Only a successful (possibly empty) response clears it.
 function StatusNotices() {
   const [notices, setNotices] = useState<StatusNotice[]>([]);
+  // Latest poll failure; null while the latest poll succeeded.
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  // Wall-clock of the last successful poll, for the stale marker.
+  const [fetchedAt, setFetchedAt] = useState<string>('');
 
   useEffect(() => {
     let cancelled = false;
@@ -763,9 +834,12 @@ function StatusNotices() {
         setNotices(
           (env.data?.notices ?? []).filter((n) => n.status === 'active'),
         );
-      } catch {
+        setFetchError(null);
+        setFetchedAt(new Date().toISOString());
+      } catch (err) {
         if (cancelled) return;
-        setNotices([]);
+        // Keep the last-known notices; surface the failure alongside them.
+        setFetchError(err instanceof Error ? err.message : 'Network error');
       }
     }
     poll();
@@ -783,6 +857,13 @@ function StatusNotices() {
       {notices.map((n) => (
         <NoticeBanner key={n.id} notice={n} />
       ))}
+      {fetchError !== null && (
+        <p className="text-warn-700 text-xs">
+          Notices feed unreachable ({fetchError}) — showing the last notices
+          received{fetchedAt ? ` ${formatRelative(fetchedAt)}` : ''}; they may
+          have been updated or resolved since.
+        </p>
+      )}
     </section>
   );
 }
@@ -833,10 +914,17 @@ const LEAN_INGEST_STALE_SECS = 180;
 
 function leanServices(
   services: ServiceEntry[],
-  ingestion: Record<string, IngestionSnapshot | null>,
+  ingestion: Record<string, RegionIngestion | null>,
 ): ServiceEntry[] {
+  // Only MEASURED lags vote. A stale (server-degraded / preserved) snapshot
+  // or an unmeasured tip (latest_ledger 0 — the cursors reader failed or
+  // no ledgerstream cursor exists) would otherwise contribute a 0 s lag
+  // and flip the indexer to "ok" during the very stall this detects.
   const lags = Object.values(ingestion)
-    .map((s) => s?.ledger?.lag_seconds)
+    .filter((r): r is RegionIngestion => r != null && !r.stale)
+    .map((r) => r.snapshot.ledger)
+    .filter((l) => l != null && l.latest_ledger > 0)
+    .map((l) => l.lag_seconds)
     .filter((l): l is number => typeof l === 'number');
   const freshestLag = lags.length ? Math.min(...lags) : null;
   return services
@@ -891,7 +979,9 @@ function ServiceCard({ service }: { service: ServiceEntry }) {
   // Treat a pre-2000 timestamp as "never reported" rather than a real age.
   const seenAt = service.last_seen ? new Date(service.last_seen) : null;
   const validSeen =
-    seenAt != null && !Number.isNaN(seenAt.getTime()) && seenAt.getFullYear() > 2000;
+    seenAt != null &&
+    !Number.isNaN(seenAt.getTime()) &&
+    seenAt.getFullYear() > 2000;
   // On the lean nets the indexer posts no heartbeat, so last_seen is epoch-0
   // even though leanServices() has already derived its true health from live
   // ingestion. Don't render the contradictory "Not reporting" under a green
@@ -925,7 +1015,8 @@ function LatencyStrip({ latency }: { latency: StatusResponse['latency'] }) {
   // breach bars) under a "0-min window". A zero/absent window means NOT
   // MEASURED, not a real 0ms measurement — pass null so the cells show '—'.
   const measured = (latency?.window_secs ?? 0) > 0;
-  const cell = (v: number | null | undefined) => (measured ? (v ?? null) : null);
+  const cell = (v: number | null | undefined) =>
+    measured ? (v ?? null) : null;
   return (
     <section>
       <SectionHead
@@ -1456,13 +1547,13 @@ function IngestionRegions({
   snapshots,
 }: {
   regions: RegionDef[];
-  snapshots: Record<string, IngestionSnapshot | null>;
+  snapshots: Record<string, RegionIngestion | null>;
 }) {
   return (
     <section className="space-y-4">
       <SectionHead>Ingestion</SectionHead>
       {regions.map((r) => (
-        <RegionPanel key={r.name} region={r} snapshot={snapshots[r.name]} />
+        <RegionPanel key={r.name} region={r} ingestion={snapshots[r.name]} />
       ))}
     </section>
   );
@@ -1470,10 +1561,10 @@ function IngestionRegions({
 
 function RegionPanel({
   region,
-  snapshot,
+  ingestion,
 }: {
   region: RegionDef;
-  snapshot: IngestionSnapshot | null | undefined;
+  ingestion: RegionIngestion | null | undefined;
 }) {
   // Subscribe unconditionally (hooks can't be conditional) — the
   // result is null until the first SSE event lands, and LedgerCard
@@ -1495,7 +1586,7 @@ function RegionPanel({
       ? liveLedger.data
       : null;
 
-  if (!snapshot) {
+  if (!ingestion) {
     return (
       <Card className="text-ink-faint p-4 text-sm">
         Waiting for first ingestion snapshot from{' '}
@@ -1503,14 +1594,22 @@ function RegionPanel({
       </Card>
     );
   }
+  const { snapshot, stale, asOf } = ingestion;
   return (
     <Card className="space-y-3 p-5">
-      <RegionHeader region={region} snapshot={snapshot} />
+      <RegionHeader
+        region={region}
+        snapshot={snapshot}
+        stale={stale}
+        asOf={asOf}
+      />
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-        <LedgerCard ledger={snapshot.ledger} live={liveFresh} />
+        <LedgerCard ledger={snapshot.ledger} live={liveFresh} stale={stale} />
         {/* FX-backfill is aggregator-derived (fiat quotes) — 0 on the lean
             nets. Show it only where the aggregator runs. */}
-        {CURRENT_NETWORK.pricing && <FXBackfillCard fx={snapshot.fx_backfill} />}
+        {CURRENT_NETWORK.pricing && (
+          <FXBackfillCard fx={snapshot.fx_backfill} />
+        )}
         <SupplyCard supply={snapshot.supply} />
       </div>
       {/* Backfill-coverage + source-health enumerate the full oracle/DEX-adapter
@@ -1535,9 +1634,13 @@ function RegionPanel({
 function RegionHeader({
   region,
   snapshot,
+  stale,
+  asOf,
 }: {
   region: RegionDef;
   snapshot: IngestionSnapshot;
+  stale: boolean;
+  asOf: string;
 }) {
   const v = snapshot.version;
   const commitShort = v.commit ? v.commit.slice(0, 7) : '—';
@@ -1552,6 +1655,15 @@ function RegionHeader({
           {snapshot.region.deployment}
         </span>
         <span className="text-ink-muted text-xs">· {region.label}</span>
+        {stale && (
+          <span
+            className="bg-warn-50 text-warn-700 rounded-sm px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase"
+            title="The API flagged this snapshot stale (flags.stale): a critical reader failed during the build, or this is a preserved last-known-good snapshot. Zero-valued fields are absent measurements, not readings."
+          >
+            stale · server degraded
+            {asOf ? ` · as of ${formatRelative(asOf)}` : ''}
+          </span>
+        )}
       </div>
       <div
         className="text-ink-faint font-mono text-xs"
@@ -1574,9 +1686,11 @@ function RegionHeader({
 function LedgerCard({
   ledger,
   live,
+  stale,
 }: {
   ledger: IngestionSnapshot['ledger'];
   live: LiveLedger | null;
+  stale: boolean;
 }) {
   // The SSE stream (when connected AND fresh) carries a fresher tip
   // than the 30s snapshot — prefer it for the ledger number + lag,
@@ -1585,15 +1699,35 @@ function LedgerCard({
   // stream is unavailable, disconnected, OR has gone stale (the
   // caller passes null once the last event ages past the staleness
   // window).
+  //
+  // Honesty (web-status-1): a fresh SSE frame is an independent, trusted
+  // measurement. The SNAPSHOT is only a measurement when the server did
+  // not flag it stale AND it carries a tip — `latest_ledger: 0` with
+  // `lag_seconds: 0` is what a failed cursors/network-stats reader (or a
+  // missing ledgerstream cursor) leaves behind, and pre-fix it painted a
+  // best-possible "0s" in green. Unmeasured renders '—', never a tone.
+  const snapshotMeasured = !stale && ledger.latest_ledger > 0;
   const latestLedger = live?.latest_ledger ?? ledger.latest_ledger;
   const lagSeconds = live?.lag_seconds ?? ledger.lag_seconds;
-  const lagTone =
-    lagSeconds < 15 ? 'ok' : lagSeconds < 60 ? 'warn' : ('bad' as const);
+  const lagMeasured = live != null || snapshotMeasured;
+  const lagTone = !lagMeasured
+    ? ('unmeasured' as const)
+    : lagSeconds < 15
+      ? ('ok' as const)
+      : lagSeconds < 60
+        ? ('warn' as const)
+        : ('bad' as const);
   const lagColor = {
     ok: 'text-ok-700',
     warn: 'text-warn-700',
     bad: 'text-bad-700',
+    unmeasured: 'text-ink-muted',
   }[lagTone];
+  // Snapshot-only counters: a zero on a stale snapshot is an absent
+  // measurement, not a reading. (A SERVED zero on a fresh snapshot stays a
+  // zero — that is a real, alarming number.)
+  const countValue = (n: number) =>
+    stale && n === 0 ? '—' : n.toLocaleString('en-US');
   return (
     <Panel
       title="Live ledger"
@@ -1608,12 +1742,17 @@ function LedgerCard({
     >
       <Row
         label="Latest ledger"
-        value={latestLedger.toLocaleString('en-US')}
+        value={
+          live != null || latestLedger > 0
+            ? latestLedger.toLocaleString('en-US')
+            : '—'
+        }
+        valueClass={live == null && stale ? 'text-ink-muted' : undefined}
         mono
       />
       <Row
         label="Lag from tip"
-        value={`${lagSeconds}s`}
+        value={lagMeasured ? `${lagSeconds}s` : '—'}
         valueClass={lagColor}
         mono
       />
@@ -1631,11 +1770,13 @@ function LedgerCard({
       />
       <Row
         label="Markets (24h)"
-        value={ledger.markets_count_24h.toLocaleString('en-US')}
+        value={countValue(ledger.markets_count_24h)}
+        valueClass={stale ? 'text-ink-muted' : undefined}
       />
       <Row
         label="Assets indexed"
-        value={ledger.assets_indexed.toLocaleString('en-US')}
+        value={countValue(ledger.assets_indexed)}
+        valueClass={stale ? 'text-ink-muted' : undefined}
       />
     </Panel>
   );
@@ -1688,6 +1829,32 @@ function SupplyCard({ supply }: { supply: IngestionSnapshot['supply'] }) {
   );
 }
 
+// Per-axis staleness for the coverage table (web-status-4). The header's
+// `backfill_coverage_as_of` is the API's per-request ASSEMBLY time (it
+// reads "4s ago" forever); the figures come from rows with their own
+// cadence. Two missed cycles = stale:
+//   - gap detector → `coverage_snapshot_at`, every 30 min
+//     (internal/storage/timescale/gap_detector.go GapDetectorInterval);
+//   - compute-completeness → `completeness_computed_at`, the daily 05:30 UTC
+//     systemd timer (configs/ansible … compute-completeness.timer.j2).
+const COVERAGE_SNAPSHOT_STALE_MS = 2 * 30 * 60_000;
+const COMPLETENESS_STALE_MS = 2 * 24 * 3_600_000;
+
+// coverageDataAge — which timestamp the row's DISPLAYED figure is dated by,
+// and whether it is older than its axis allows. A verified (`ran`) row shows
+// the completeness verdict, so it is dated by the verifier's run; an
+// unverified row shows the gap-detector figure.
+function coverageDataAge(
+  r: IngestionSnapshot['backfill_coverage'][number],
+  ran: boolean,
+): { at: string | undefined; stale: boolean } {
+  const at = ran ? r.completeness_computed_at : r.coverage_snapshot_at;
+  const ageS = snapshotAgeSeconds(at);
+  if (ageS == null) return { at, stale: false };
+  const limitMs = ran ? COMPLETENESS_STALE_MS : COVERAGE_SNAPSHOT_STALE_MS;
+  return { at, stale: ageS * 1000 > limitMs };
+}
+
 function BackfillCoverageTable({
   rows,
   asOf,
@@ -1699,23 +1866,33 @@ function BackfillCoverageTable({
     return (
       <div className="border-warn-300 bg-warn-50 text-warn-700 rounded-lg border p-3 text-xs">
         Coverage snapshot pending — first refresh runs ~30s after process start,
-        then every 5 min.
+        then every 30 min.
       </div>
     );
   }
   const onChain = rows.filter((r) => r.applies);
   const offChain = rows.filter((r) => !r.applies);
+  // The OLDEST on-chain row's data age — the honest headline freshness of
+  // the table, shown alongside (not instead of) the assembly time.
+  const oldestDataAt = onChain
+    .map((r) => coverageDataAge(r, r.completeness_pct != null).at)
+    .filter((t): t is string => snapshotAgeSeconds(t) != null)
+    .sort((a, b) => new Date(a).getTime() - new Date(b).getTime())[0];
   return (
     <div>
       <div className="mb-2 flex items-baseline justify-between">
         <h3 className="text-ink-faint text-[11px] font-semibold tracking-wider uppercase">
           Ingest coverage — genesis → tip
         </h3>
-        {asOf && (
-          <span className="text-ink-faint text-[10px]">
-            snapshot {formatRelative(asOf)}
-          </span>
-        )}
+        <span className="text-ink-faint text-[10px]">
+          {oldestDataAt && (
+            <>
+              oldest data {formatRelative(oldestDataAt)}
+              {asOf ? ' · ' : ''}
+            </>
+          )}
+          {asOf && <>assembled {formatRelative(asOf)}</>}
+        </span>
       </div>
       <p className="text-ink-faint mb-2 text-[11px]">
         <strong>Coverage</strong> = verified completeness (ADR-0033). A green %
@@ -1737,6 +1914,7 @@ function BackfillCoverageTable({
               <th className="px-3 py-2 text-right font-medium">Earliest</th>
               <th className="px-3 py-2 text-right font-medium">Latest</th>
               <th className="px-3 py-2 text-right font-medium">Coverage</th>
+              <th className="px-3 py-2 text-right font-medium">Data age</th>
               <th className="px-3 py-2 text-right font-medium">Entries</th>
             </tr>
           </thead>
@@ -1767,6 +1945,11 @@ function BackfillCoverageTable({
               // statement from "we may be missing history", and the one
               // the status page previously could not make (C6-046).
               const lakeComplete = r.completeness_lake_complete === true;
+              // The age of the figure this row DISPLAYS. An aged verdict
+              // (web-status-4) must not keep the green verified tone: a
+              // days-old complete=true says nothing about a source that
+              // stalled since.
+              const age = coverageDataAge(r, ran);
               const pct =
                 (ran
                   ? (r.completeness_pct as number)
@@ -1774,13 +1957,15 @@ function BackfillCoverageTable({
                 100;
               const tone = !ran
                 ? ('pending' as const)
-                : !reconciled
-                  ? ('warn' as const)
-                  : pct >= 99
-                    ? 'ok'
-                    : pct >= 50
-                      ? 'warn'
-                      : ('bad' as const);
+                : age.stale
+                  ? ('pending' as const)
+                  : !reconciled
+                    ? ('warn' as const)
+                    : pct >= 99
+                      ? 'ok'
+                      : pct >= 50
+                        ? 'warn'
+                        : ('bad' as const);
               const colors = {
                 ok: 'bg-ok-500 text-ok-700',
                 warn: 'bg-warn-500 text-warn-700',
@@ -1811,7 +1996,19 @@ function BackfillCoverageTable({
                     }
                   >
                     {ran && reconciled ? (
-                      <div className="inline-flex items-center justify-end gap-2">
+                      <div
+                        className="inline-flex items-center justify-end gap-2"
+                        title={
+                          age.stale
+                            ? 'Verified verdict is older than two compute-completeness cycles — the source may have stalled since. Treat as unverified until the verifier re-runs.'
+                            : undefined
+                        }
+                      >
+                        {age.stale && (
+                          <span className="bg-line text-warn-700 rounded-sm px-1 py-0.5 text-[10px] tracking-wide uppercase">
+                            stale
+                          </span>
+                        )}
                         <div className="bg-surface-subtle h-1.5 w-16 overflow-hidden rounded-full">
                           <div
                             className={`h-full ${colors[tone].split(' ')[0]}`}
@@ -1851,6 +2048,16 @@ function BackfillCoverageTable({
                       </span>
                     )}
                   </td>
+                  <td
+                    className={`tnum px-3 py-2 text-right ${age.stale ? 'text-warn-700' : 'text-ink-muted'}`}
+                    title={
+                      ran
+                        ? 'When compute-completeness last verified this source (daily timer).'
+                        : 'When the gap detector last measured this source (30 min cadence).'
+                    }
+                  >
+                    {age.at ? formatRelative(age.at) : '—'}
+                  </td>
                   <td className="tnum text-ink-muted px-3 py-2 text-right">
                     {r.entries.toLocaleString('en-US')}
                   </td>
@@ -1862,7 +2069,7 @@ function BackfillCoverageTable({
                 <td className="px-3 py-2 font-mono">{r.source}</td>
                 <td
                   className="px-3 py-2 text-right text-[10px] italic"
-                  colSpan={4}
+                  colSpan={5}
                 >
                   off-chain — no Stellar ledger context
                 </td>

@@ -264,6 +264,31 @@ against.
   wrapper, extracted from the ansible task). See
   `docs/operations/clickhouse-ops-batch-profile.md`.
 
+- **Status page rendered stale / unreachable state as fresh green
+  (web-status-1/2/4/6, audit 2026-08-28).** `/status` (a) dropped the
+  `/v1/diagnostics/ingestion` envelope's `flags.stale`, so a failed
+  cursors/network-stats read (zero-valued fields) painted "Lag from tip
+  0s" in green and "Latest ledger 0" — and on the lean nets fed a 0 s
+  lag into the indexer roll-up; (b) kept "All systems operational" and
+  a pulsing green "Live" for as long as a tab stayed open during a total
+  API outage, because the headline was derived from the retained
+  last-known snapshot with no regard for the poll error; (c) labelled
+  the coverage table with `backfill_coverage_as_of` (the API's
+  per-request assembly time, "4s ago" forever) while the completeness
+  verdicts it shows are dated by a daily timer, and claimed the detector
+  runs "every 5 min" (it is 30 min); (d) blanked operator notices the
+  moment the notices endpoint failed — the exact window a notice
+  announces. Now: stale snapshots carry a "stale · server degraded"
+  badge, unmeasured zeros render "—" and never vote in the lean-net
+  roll-up; after two failed polls (the DegradedBanner threshold) the
+  headline is "Status unknown", the pulse goes grey and reads "last
+  successful poll <age>", and the unreachable card sits above the
+  headline; each coverage row shows its real data age (30 min axis for
+  the gap detector, daily axis for compute-completeness) and an aged
+  verdict loses the green verified tone; notices are retained through
+  a failed poll with a "notices feed unreachable" marker and cleared
+  only by a successful response. Red-proof tests in
+  `web/explorer/src/app/status/StatusPageClient.test.tsx`.
 - **`pgbackrest.conf` template task printed the backup cipher passphrases
   and repo2 S3 key pair on `--check --diff`.** The task rendering
   `pgbackrest.conf.j2` had no `diff: false`, and the header comment
