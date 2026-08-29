@@ -522,6 +522,13 @@ jobs:
         # fixtures extract the shipped wrapper out of the ansible task and
         # run it. No network, no ansible, no systemd (non-root exec path).
         run: ./scripts/ci/run-heavy-job-test.sh
+      - name: zfs-snapshot job self-test
+        # Rolling ZFS snapshots (2026-08-29): retention, the min-free
+        # guard's prune-oldest-first / never-the-newest / skip-and-report
+        # behaviour, and the never-destroy-a-non-auto-snapshot invariant,
+        # run against a file-backed `zfs`/`zpool` stub. No network, no
+        # ansible, no real pool.
+        run: ./scripts/ci/zfs-snapshot-test.sh
       - name: pgbackrest-backup wrapper self-test
         # 2026-08-29 (repo2 = S3 live on r1): pgBackRest's `backup` is
         # single-repo — with no --repo it writes ONLY repo1, so the nightly

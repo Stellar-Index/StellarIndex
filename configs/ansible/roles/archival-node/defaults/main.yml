@@ -1165,6 +1165,30 @@ stellarindex_watched_sep41_contracts:
   - CDIKURWHYS4FFTR5KOQK6MBFZA2K3E26WGBQI6PXBYWZ4XIOPJHDFJKP
   - CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV
 
+# ─── Rolling ZFS snapshots (decision 2026-08-29; tag `zfs-snapshots`) ──
+# Daily crash-consistent snapshots of the ClickHouse lake and Postgres
+# datasets so a logical fault (bad migration, DROP, bad re-derive) is a
+# clone-and-copy instead of a multi-day rebuild. Runbook:
+# docs/operations/runbooks/zfs-snapshots.md. Only `auto-*` snapshots
+# are ever pruned; operator/manual snapshots are never touched.
+zfs_snapshots_enabled: true
+# Dataset names are relative to zfs_data_pool_name. Retention is in
+# days. ClickHouse merges churn ~250 GB/day of parts, so each retained
+# day pins ~250 GB; Postgres churn is small, so it keeps a week.
+zfs_snapshot_datasets:
+  - name: "clickhouse"
+    retention_days: 3
+  - name: "postgres"
+    retention_days: 7
+# Hard guardrail: below this much pool free space the job prunes the
+# oldest auto snapshots (never a dataset's newest one) and, if still
+# below, SKIPS the snapshot and emits stellarindex_zfs_snapshot_guard_skipped=1.
+# 2 TiB = 2199023255552. Alert thresholds (2.5 TiB ticket / 1.5 TiB
+# page) live in deploy/monitoring/rules/zfs-snapshots.yml.
+zfs_snapshot_min_free_bytes: 2199023255552
+# 01:45 UTC: before pgbackrest-backup (02:00) and the ch-schema-snapshot
+# (03:40), so the day's snapshot predates the day's other ops jobs.
+zfs_snapshot_on_calendar: "*-*-* 01:45:00 UTC"
 # pgBackRest repo2 (off-site S3) retention — deliberately LEAN (ADR-0043
 # amendment 2026-08-29): one full + 7 days of diffs/WAL ≈ 460–670 GB in
 # S3 Standard ≈ $12–17/month. Raising these multiplies storage cost
