@@ -41,7 +41,10 @@ drill_scratch`, a flag `ch-backfill` has never declared, so
 failure was recorded as a generic re-derive failure under `| tail -5`.
 The drill now preflights its own invocation against the binary and
 refuses to start (exit 2, precondition) on drift;
-`scripts/ops/restore-drill-test.sh` pins the same contract in CI.
+`scripts/ops/restore-drill-test.sh` pins the same contract in CI;
+`scripts/ops/restore-drill-run-test.sh` drives the script through its
+abort paths (capacity refusal, restore failure, recovery failure) with
+shimmed host tools and pins evidence + metric on every path.
 
 ## 2026-07-03 restore drill (repo1) — first drill series
 
