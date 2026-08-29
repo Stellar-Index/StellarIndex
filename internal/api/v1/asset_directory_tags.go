@@ -32,10 +32,12 @@ import (
 //     page. The row and its warning fields stay — we refuse to rank a
 //     flagged asset, we never hide it.
 //
-// Raw trade surfaces stay visible. Best-effort: a nil reader, an unlisted issuer (the common
-// case), or a lookup failure just leaves the fields omitted and never
-// fails the asset response — a directory outage must not take the asset
-// surface down with it (the suppression fails OPEN too).
+// Raw trade surfaces stay visible.
+//
+// Best-effort: a nil reader, an unlisted issuer (the common case), or a
+// lookup failure just leaves the fields omitted and never fails the asset
+// response — a directory outage must not take the asset surface down with
+// it (the suppression fails OPEN too, and so does the ranking demotion).
 
 // stampIssuerDirectory copies one curated directory label onto the
 // detail. Tags are set only when non-empty so an unlabelled entry
@@ -107,13 +109,14 @@ func (s *Server) fillIssuerDirectoryTags(ctx context.Context, rows []AssetDetail
 // suppressScamIssuerPricing withholds an asset's published PRICE claim on
 // the payload when its issuer carries a scam-class directory tag
 // (malicious/unsafe/fraud/scam/hack/phishing — pricingguard classifier):
-// price_usd, market_cap_usd, fdv_usd, and the price-derived change_* are
-// nulled, while circulating_supply (a raw chain fact) and the scam
-// warning fields are kept. This is the payload-side twin of the
-// reader-seam pricingguard.ScamGate (which withholds /v1/price and every
-// reader-backed surface); together they ensure a scam issuer publishes
-// neither a price nor a market cap. Fails OPEN — an unlisted/untagged
-// issuer is left untouched. Idempotent + nil-safe.
+// price_usd, market_cap_usd, fdv_usd, the price-derived change_*, and the
+// price_history_* SERIES are nulled, while circulating_supply (a raw
+// chain fact) and the scam warning fields are kept. This is the
+// payload-side twin of the reader-seam pricingguard.ScamGate (which
+// withholds /v1/price and every reader-backed surface); together they
+// ensure a scam issuer publishes neither a price nor a market cap. Fails
+// OPEN — an unlisted/untagged issuer is left untouched. Idempotent +
+// nil-safe.
 func suppressScamIssuerPricing(d *AssetDetail) {
 	if d == nil || !pricingguard.IsDirectoryScamFlagged(d.IssuerDirectoryTags) {
 		return
@@ -124,4 +127,29 @@ func suppressScamIssuerPricing(d *AssetDetail) {
 	d.Change1hPct = nil
 	d.Change24hPct = nil
 	d.Change7dPct = nil
+	// The withheld number must not come back as a PICTURE of itself: the
+	// last bucket of price_history_* IS the price we just refused to
+	// publish. Measured on r1 2026-08-29 — the flagged JFKBANK2 and RIO
+	// details served price_usd: null next to 24 hourly + 7 daily priced
+	// points, and the flagged listing rows drew a full sparkline beside
+	// their "—" price cell.
+	withholdPriceSeriesWhenUnpriced(d)
+}
+
+// withholdPriceSeriesWhenUnpriced drops the price_history_* series from a
+// payload whose headline price is NOT published — whatever withheld it
+// (scam-issuer suppression, the thin-market substance gate) or however
+// it came to be missing. A price series is the price over time; serving
+// one beside a null price_usd both leaks the withheld value and makes
+// the payload self-contradictory.
+//
+// The listing's own sparkline attach applies the same rule before the
+// read ([sparkline7dEligible]) so a gated row is never even looked up;
+// this is the detail-path (and post-suppression) enforcement.
+func withholdPriceSeriesWhenUnpriced(d *AssetDetail) {
+	if d == nil || d.PriceUSD != nil {
+		return
+	}
+	d.PriceHistory24h = nil
+	d.PriceHistory7d = nil
 }
