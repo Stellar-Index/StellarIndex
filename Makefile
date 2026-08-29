@@ -149,6 +149,20 @@ test-integration-build: ## Compile integration tests without running them (no Do
 # scenarios/lib/env.js, so direct `k6 run` cannot bypass it.
 PROM_OUT ?= experimental-prometheus-rw
 
+# Placeholder __ENV values for the compile-only check below. `k6 archive`
+# does NOT pass system environment variables into the script (unlike
+# `k6 run`, which includes them by default), so the scenarios' init-time
+# guard in scenarios/lib/env.js throws "K6_TARGET is required" and the
+# check fails even when the operator HAS exported the real values —
+# k6-weekly run 30542038490 (2026-07-30), the only time this target has
+# ever run in CI, died exactly there (#316). Seeding them explicitly is
+# what makes the target's "no target needed" promise true.
+# Unreachable by construction: .invalid is RFC-2606 reserved and never
+# resolves, `k6 archive` issues no requests, and neither value is a
+# production host, so env.js's prod-target refusal keeps its meaning.
+LOAD_CHECK_TARGET ?= https://k6-compile-check.invalid/v1
+LOAD_CHECK_KEY ?= k6-archive-compile-check-not-a-key
+
 .PHONY: test-load-guard
 test-load-guard:
 	@if [ -z "$$K6_TARGET" ]; then \
@@ -205,7 +219,11 @@ test-load-spike: test-load-guard ## Run the 10× spike scenario (5 min). Posts A
 .PHONY: test-load-check
 test-load-check: ## Compile-check all k6 scenarios without running them (no target needed)
 	@for s in test/load/scenarios/[0-9]*.js; do \
-	  echo "=== $$s ==="; k6 archive --quiet -O /dev/null $$s || exit $$?; \
+	  echo "=== $$s ==="; \
+	  k6 archive --quiet -O /dev/null \
+	    -e K6_TARGET=$(LOAD_CHECK_TARGET) \
+	    -e STELLARINDEX_LOAD_API_KEY=$(LOAD_CHECK_KEY) \
+	    $$s || exit $$?; \
 	done
 
 .PHONY: test-chaos

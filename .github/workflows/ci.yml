@@ -478,6 +478,18 @@ jobs:
         # ci-health.yml (watches `ci.yml`) and reconciliation-health.yml
         # (watches `ansible-drift.yml`) call. No network, no token.
         run: ./scripts/ci/check-main-ci-health-test.sh
+      - name: check-sla-evidence self-test
+        # #316: k6-weekly.yml's scheduled path exited 0 with a `::notice::`
+        # whenever the load-target secrets were unset, so four months of
+        # scheduled runs concluded `success` with every real step `skipped`
+        # and no sla-proof-<date>.md ever landed — the SLA-evidence feed was
+        # a permanently-green no-op. These fixtures pin the verdict (no
+        # target = rc 1, no recent proof = rc 2, healthy = rc 0, and the
+        # procedure/template files are not evidence) plus the k6-weekly
+        # wiring that consumes it. The workflow itself runs weekly against
+        # secrets that do not exist, so this is the only place it is
+        # exercised on a PR. No network, no k6, no token.
+        run: ./scripts/ci/check-sla-evidence-test.sh
       - name: check-public-dataset self-test
         # backup-restore-6 (audit-2026-08-29): fixtures for the
         # aws-public-blockchain drift verdict public-dataset-check.yml
