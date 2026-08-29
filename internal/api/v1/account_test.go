@@ -307,12 +307,10 @@ func TestAccountKeysCreate_ScopedCallerCannotExceed(t *testing.T) {
 		Scopes:     []string{"account"},
 	}, store)
 
-	body := strings.NewReader(`{"label":"x","scopes":["admin"]}`)
-	resp, err := http.Post(ts.URL+"/v1/account/keys", "application/json", body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
+	// The subject is operator-tier, so the admin-write X-Reason contract
+	// applies (api-security-1); supply it so this test keeps exercising
+	// the scope clamp rather than the reason gate.
+	resp := doWithReason(t, http.MethodPost, ts.URL+"/v1/account/keys", "scope clamp test", `{"label":"x","scopes":["admin"]}`)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", resp.StatusCode)
 	}

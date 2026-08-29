@@ -103,6 +103,15 @@ type OracleReading struct {
 	// Observer is the on-chain account that published the update
 	// (typically a Reflector relayer). Empty when unknown.
 	Observer string `json:"observer,omitempty"`
+
+	// Mapped is false when Asset is a `raw:<symbol>` row — an
+	// oracle-published symbol recorded verbatim because it maps to
+	// no canonical asset (oracle capture-totality design). Such rows
+	// are reference-only: orientation-unknown, never compared or
+	// aggregated. /v1/oracle/streams omits them unless
+	// include_unmapped=true; /v1/oracle/latest returns one only when
+	// asked for it by its exact `raw:` key.
+	Mapped bool `json:"mapped"`
 }
 
 // handleOracleLatest serves GET /v1/oracle/latest?asset=<id>&source=<name>.
@@ -196,12 +205,21 @@ func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, rows, Flags{})
 }
 
-// handleOracleStreams serves GET /v1/oracle/streams.
+// handleOracleStreams serves GET /v1/oracle/streams[?include_unmapped=true].
 //
 // Returns one row per (source, asset, quote) triple — the latest
-// observation each oracle has published in the trailing 7d. No
-// query parameters; the catalogue is small enough (~100s of rows
-// at peak) that a full dump is the simplest contract.
+// observation each oracle has published in the trailing 7d. The
+// catalogue is small enough (~100s of rows at peak) that a full
+// dump is the simplest contract.
+//
+// include_unmapped (default false) adds the `raw:<symbol>` rows the
+// record layer keeps for oracle symbols that map to no canonical
+// asset (mapped:false on the wire). The default keeps the public
+// row set unchanged for existing API consumers; the explorer's
+// /oracles page is the intended opt-in (it shows totality with an
+// "unmapped" badge — see docs/design/oracle-capture-totality-design.md
+// §5). The storage read is unfiltered either way — a raw row must
+// never be silently dropped between the table and this boundary.
 //
 // Empty array + 200 when no oracles have published recently or no
 // OracleReader is wired — consistent with /v1/oracle/latest's
@@ -248,9 +266,13 @@ func (s *Server) handleOracleStreams(w http.ResponseWriter, r *http.Request) {
 	// purposes, but they're not oracles and shouldn't appear on the
 	// /oracles page. The class is a registry fact, not a per-row
 	// flag in the table — filter at the wire boundary.
+	includeUnmapped := r.URL.Query().Get("include_unmapped") == "true"
 	rows := make([]OracleReading, 0, len(updates))
 	for _, u := range updates {
 		if external.Lookup(u.Source).Class != external.ClassOracle {
+			continue
+		}
+		if !includeUnmapped && !u.Asset.IsMapped() {
 			continue
 		}
 		rows = append(rows, oracleReadingFrom(u))
@@ -272,6 +294,7 @@ func oracleReadingFrom(u canonical.OracleUpdate) OracleReading {
 		Decimals:   u.Decimals,
 		Confidence: u.Confidence,
 		Observer:   u.Observer,
+		Mapped:     u.Asset.IsMapped(),
 	}
 }
 

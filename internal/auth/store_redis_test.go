@@ -293,3 +293,47 @@ func TestRedisStore_CreateThenLookup_isFullAccess(t *testing.T) {
 		t.Fatalf("unexpected permission entries on a full-access mint: %+v / %+v", sub.AllowPermissions, sub.DenyPermissions)
 	}
 }
+
+// TestRedisAPIKeyStore_CreatePropagatesEmailVerifiedAt — api-security-2
+// (audit 2026-08-28): the self-service rotation path passes the parent's
+// verification stamp; the store must persist it so the validator's
+// Subject carries it and RequireEmailVerified lets the child through.
+// Proven red on origin/main: CreateAPIKeyRequest had no EmailVerifiedAt
+// and the looked-up Subject's stamp was zero.
+func TestRedisAPIKeyStore_CreatePropagatesEmailVerifiedAt(t *testing.T) {
+	store, mr, now := newTestStore(t)
+	verifiedAt := now.Add(-48 * time.Hour)
+	rec, plaintext, err := store.Create(context.Background(), CreateAPIKeyRequest{
+		Identifier:      "signup-0123456789abcdef",
+		Label:           "rotated",
+		Tier:            TierAPIKey,
+		EmailVerifiedAt: verifiedAt,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if !rec.EmailVerifiedAt.Equal(verifiedAt) {
+		t.Fatalf("record EmailVerifiedAt = %v, want %v", rec.EmailVerifiedAt, verifiedAt)
+	}
+
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	v := NewRedisAPIKeyValidator(rdb, WithClock(fixedClock(now)))
+	sub, err := v.Lookup(context.Background(), plaintext)
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if !sub.EmailVerifiedAt.Equal(verifiedAt) {
+		t.Fatalf("Subject.EmailVerifiedAt = %v, want %v (a zero stamp on a signup-* child is a permanent 403)",
+			sub.EmailVerifiedAt, verifiedAt)
+	}
+
+	// Zero in → zero out: the store copies, never invents, the stamp.
+	rec2, _, err := store.Create(context.Background(), CreateAPIKeyRequest{Identifier: "signup-fedcba9876543210"})
+	if err != nil {
+		t.Fatalf("Create (unverified): %v", err)
+	}
+	if !rec2.EmailVerifiedAt.IsZero() {
+		t.Fatalf("unverified Create EmailVerifiedAt = %v, want zero", rec2.EmailVerifiedAt)
+	}
+}

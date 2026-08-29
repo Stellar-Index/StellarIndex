@@ -48,6 +48,18 @@
       (docs/operations/clickhouse-destructive-ddl.md), never a raised limit.
   tags: [clickhouse, clickhouse-drop-guard]
 
+# 2026-08-29 (r1 measured): the 1 TiB limits came from a HAND-WRITTEN
+# /etc/clickhouse-server/config.d/zz-partition-drop-limit.xml (D2 REPLACE
+# PARTITION, 2026-07-23) that was never in this role. It sorts AFTER
+# si-drop-guard.xml and would silently win, so the guard removes it.
+# The role's own guard file is the only carrier of these two settings.
+- name: Remove the hand-written drop-size override that would shadow the guard
+  ansible.builtin.file:
+    path: /etc/clickhouse-server/config.d/zz-partition-drop-limit.xml
+    state: absent
+  when: clickhouse_drop_guard_enabled | default(true) | bool
+  tags: [clickhouse, clickhouse-drop-guard]
+
 - name: Pin ClickHouse max_table_size_to_drop / max_partition_size_to_drop
   when: clickhouse_drop_guard_enabled | default(true) | bool
   ansible.builtin.copy:

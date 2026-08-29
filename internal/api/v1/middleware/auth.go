@@ -157,12 +157,19 @@ func Auth(opts AuthOptions) Middleware {
 // are static public documentation the RFC 9457 `type` URIs point at — a 401
 // on those makes every error response's own documentation link unreachable.
 //
+// /v1/livez/lake is the lake-critical LB probe (ADR-0050): the OpenAPI
+// contract declares it `security: []` alongside healthz/readyz, and it reads
+// no caller input, so it belongs here too. It was added (#119) after this
+// list was written and missed it — under `apikey`/`sep10` mode every
+// uncredentialed probe 401'd, which is exactly the SEC-01 class this list
+// exists to prevent (api-security-3, audit 2026-08-28).
+//
 // Deliberately an exact-match list, not a prefix match: a prefix rule ("/v1/health…")
 // is how an exemption silently widens to cover a route added next to it later.
 // The one prefix here, /errors/, is scoped to a static docs handler.
 func isUnauthenticatedInfraPath(path string) bool {
 	switch path {
-	case "/v1/healthz", "/v1/readyz", "/v1/version", "/metrics", "/robots.txt", "/":
+	case "/v1/healthz", "/v1/readyz", "/v1/livez/lake", "/v1/version", "/metrics", "/robots.txt", "/":
 		return true
 	}
 	// /errors/{slug} and /errors/ — the RFC 9457 problem-type documentation
