@@ -217,7 +217,10 @@ func TestDecode_OrderPreservingAlignment_DisambiguatesSharedMedians(t *testing.T
 		{"crypto:USDC", "fiat:USD"},
 		{"crypto:EUROC", "fiat:EUR"}, // the EUROC/EUR feed — EUR-quoted
 		{"rwa:iBENJI", "fiat:USD"},
-		{"crypto:SolvBTC.BBN_FUNDAMENTAL", "fiat:USD"},
+		// Quote corrected by D8 (2026-08-29): this fixture's price is
+		// exactly 1.00000000, a NAV ratio against SolvBTC — not a
+		// $1.00 price. See feeds.go for the derivation.
+		{"crypto:SolvBTC.BBN_FUNDAMENTAL", "crypto:SolvBTC"},
 	}
 	for i, want := range wantPairs {
 		if got := out[i].Asset.String(); got != want.asset {
