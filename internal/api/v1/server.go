@@ -303,6 +303,7 @@ type Server struct {
 	archiveReportPath    string
 	regionName           string
 	regionDeployment     string
+	statusServices       []string
 	dashboardAuth        DashboardAuthMounter
 	dashboardKeys        DashboardAuthMounter
 	dashboardWebhooks    DashboardAuthMounter
@@ -1070,6 +1071,14 @@ type Options struct {
 	RegionName       string
 	RegionDeployment string
 
+	// StatusServices names the BACKGROUND services this deployment
+	// runs, and therefore the only ones /v1/status reports a heartbeat
+	// for and rolls `overall` up from. Empty defaults to
+	// {"indexer","aggregator"} — the pubnet shape, unchanged. The lean
+	// test nets run no aggregator, and before #328 its permanent
+	// "unknown" pinned overall at "degraded" forever.
+	StatusServices []string
+
 	// DashboardAuth, when non-nil, mounts the customer-dashboard
 	// magic-link auth flow (POST /v1/auth/login + GET /v1/auth/callback
 	// + POST /v1/auth/logout). Production wiring is a
@@ -1311,6 +1320,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		archiveReportPath:      opts.ArchiveReportPath,
 		regionName:             valueOr(opts.RegionName, "unknown"),
 		regionDeployment:       valueOr(opts.RegionDeployment, "production"),
+		statusServices:         statusServicesOr(opts.StatusServices),
 		dashboardAuth:          opts.DashboardAuth,
 		dashboardKeys:          opts.DashboardKeys,
 		dashboardWebhooks:      opts.DashboardWebhooks,
@@ -1385,6 +1395,31 @@ func valueOr(s, fallback string) string {
 		return fallback
 	}
 	return s
+}
+
+// defaultStatusServices is the pubnet shape of [Options.StatusServices]:
+// the background services a full deployment runs. /v1/status reports a
+// heartbeat for exactly these (plus the in-process "api" entry) and
+// rolls `overall` up from them.
+var defaultStatusServices = []string{"indexer", "aggregator"}
+
+// statusServicesOr normalises Options.StatusServices: nil/empty falls
+// back to the pubnet pair, so every existing caller (and every test
+// that constructs a bare Options) keeps today's behaviour. The slice is
+// copied so a caller's backing array can't be mutated through the
+// Server, and the result is never nil — a deployment that runs NO
+// background service still reports (and rolls up) its own "api" entry.
+func statusServicesOr(names []string) []string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if n = strings.TrimSpace(n); n != "" {
+			out = append(out, n)
+		}
+	}
+	if len(out) == 0 {
+		return append([]string(nil), defaultStatusServices...)
+	}
+	return out
 }
 
 // durationOr returns d when it is positive, else fallback. Used to back

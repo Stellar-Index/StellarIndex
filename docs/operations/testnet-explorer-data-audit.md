@@ -1,5 +1,30 @@
 # Test-net explorer data audit (testnet + futurenet)
 
+> **Status (2026-08-29, issue #328).** This doc is the working queue, not a
+> completion record — read the per-item stamps before trusting a verdict.
+> Landed since the 2026-08-27 revision below:
+>
+> | Item | State |
+> | --- | --- |
+> | Pricing-gate broadening, native-accounts ranking, `/liquidity-pools` surfacing | **DONE** (#203) |
+> | XLM supply | **DONE** (#249) |
+> | Explorer API base URL per network | **DONE** (#274) |
+> | `/markets`, `/insights`, `/anomalies`, `/divergences`, `/mev` route gating (nav + search + sitemap + hub cards + the pages themselves) | **DONE** (#328) — one shared table, `web/explorer/src/lib/network-routes.ts` |
+> | `/assets` directory + home "Top assets" USD columns | **DONE** (#328) |
+> | Home network strip's USD tiles + their `/markets` links | **DONE** (#328) |
+> | `hasAssets` / `hasSdexActivity` capability flags (futurenet) | **DONE** (#328) — plus `hasBridges`; `lib/networks.ts` |
+> | `/v1/status` counting an intentionally-absent aggregator as degraded | **DONE** (#328) — `[api] status_services` |
+> | `"deployment": "production"` on the test-net API | **DONE** (#328) — `[region] deployment`; the doc's inventory diagnosis below was WRONG, it was a Go literal at `cmd/stellarindex-api/main.go` |
+> | Test-net **indexer heartbeat** unwired (`/v1/status` still degraded) | **OPEN** — ops/Prometheus, not code. Live probe 2026-08-29: `services[indexer].last_seen = 0001-01-01`, latency all zeros ⇒ the API's status backend answers nothing on testnet |
+> | Mainnet reference registries on test nets: `/v1/sources`, `/v1/assets/verified` + the collision stamp, `/v1/external/assets`, `/v1/aggregators` | **OPEN** — see the API-side queue at the end; each is a SHARED primitive with many consumers and needs its own change |
+> | `/v1/markets` pair set from the empty `prices_1d` CAGG | **OPEN** (low priority — the explorer no longer offers `/markets` on lean nets) |
+>
+> The client-side symptom suppressions (`DegradedBanner` returning null and the
+> Sidebar's `degraded → ok` coercion on `!pricing`) are deliberately still in
+> place: the indexer heartbeat really is missing there, so removing them today
+> would replace a false green with a permanent amber. Drop them in the same
+> change that wires the heartbeat.
+
 Audit of every data surface the explorer exposes, against what the lean test
 nets actually have. **Verdict key: KEEP** (chain-native data present, works),
 **FIX** (data exists but the surface is USD/pricing-biased or mis-plumbed so it
@@ -103,8 +128,13 @@ testnet homepage via `HomeTopMarkets`, so the homepage shows a visibly empty
 ## Already done (this campaign)
 
 - Nav filtered: Protocols, Oracles, Insights, External group hidden on test nets.
-- Price **stream** (`/v1/price/tip/stream`) gated off (`CURRENT_NETWORK.pricing`)
-  — but this is only the stream; the non-stream USD paths above are NOT yet gated.
+- Price **stream** (`/v1/price/tip/stream`) gated off (`CURRENT_NETWORK.pricing`).
+- **(2026-08-29, #328)** The non-stream USD paths listed above WERE gated in
+  #203's squash — the "NOT yet gated" clause on the line above was already
+  stale the day it landed. What remained, and is now done, is the *route*
+  layer: nav, search, sitemap, hub card grids and the pages themselves all read
+  ONE table (`web/explorer/src/lib/network-routes.ts`) instead of four
+  hand-maintained hidden-href sets that had drifted apart.
 
 ## Implementation plan (post-adversarial)
 
@@ -179,8 +209,13 @@ network. Findings beyond the API probes above:
 1. Gate the mainnet reference registries on test nets: `/v1/sources`,
    `/v1/assets/verified` (+ the per-asset `unverified_warning`/collision stamp),
    `/v1/external/assets`, `/v1/aggregators`.
-2. Status `overall` computation: don't mark an intentionally-absent aggregator
-   as degraded; wire the test-net indexer heartbeat.
+2. ~~Status `overall` computation: don't mark an intentionally-absent
+   aggregator as degraded~~ — **DONE 2026-08-29 (#328)**: `[api]
+   status_services` declares the background services a deployment runs, and
+   `/v1/status` reports + rolls up exactly those. The test-net inventories drop
+   `aggregator` (they already set `run_aggregator: false`). Wiring the test-net
+   **indexer heartbeat** is still open and is what keeps testnet at
+   `overall: degraded` today.
 3. Accounts directory native-balance ranking on no-pricing nets.
 4. Markets listing source (`prices_1d` CAGG empty on lean nets → use
    `prices_1m`/`pools`) — lower priority, explorer reads `/v1/pools` directly.
@@ -221,6 +256,10 @@ Remaining (API-side, decision-ready):
   an intentionally-absent service as degraded, + wiring the test-net indexer
   heartbeat.
 - **"PRODUCTION" deployment tag** on the test-net ingestion panel comes from the
-  API's `region.deployment` field (the test-net inventory copied r1's
-  `deployment = production`); fix in the testnet/futurenet inventory region
-  config.
+  API's `region.deployment` field. ~~the test-net inventory copied r1's
+  `deployment = production`~~ — **that diagnosis was wrong** (there was no such
+  inventory key). It was the string literal `RegionDeployment: "production"` at
+  the `v1.Options` construction site in `cmd/stellarindex-api/main.go`.
+  **FIXED 2026-08-29 (#328):** the tier is now `[region] deployment` in config,
+  defaulting to `"production"` (pubnet byte-identical) with the test-net
+  inventories setting `testnet` / `futurenet`.

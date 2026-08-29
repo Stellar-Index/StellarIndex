@@ -31,6 +31,11 @@
 region_id:           ""
 region_name:         "FSN1"
 home_domain:         "stellarindex.io"
+# Tier label the API reports in /v1/status's `region.deployment` block.
+# Pubnet is "production"; the lean test-net inventories override to
+# "testnet" / "futurenet" so api.testnet.stellarindex.io stops telling
+# the explorer's status page that a test net is PRODUCTION (#328).
+region_deployment:   "production"
 
 # Minimum RAM the preflight requires (MB). Default = the pubnet archival-node
 # spec (32 GB, ~30000 MB usable). A low-traffic testnet/futurenet VM overrides

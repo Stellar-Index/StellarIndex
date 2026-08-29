@@ -23,6 +23,7 @@ import {
 } from '@/components/ui';
 import { formatCompact, formatPriceSmall } from '@/lib/format';
 import { isSafePublicImageUrl } from '@/lib/safe-domain';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 /**
  * HomeTopAssets — the top 10 assets ranked by trailing-24h trading
@@ -39,19 +40,24 @@ import { isSafePublicImageUrl } from '@/lib/safe-domain';
  * the same TanStack cadence as the rest of the home page.
  */
 export function HomeTopAssets() {
+  // #328: ranking and half the columns are USD-derived. On a net with no
+  // aggregator every price/volume is null, so the grid ranked ten assets
+  // by a column of nulls and rendered four "—" columns. Rank by the
+  // chain-native observation count there and drop the priced columns.
+  const pricing = CURRENT_NETWORK.pricing;
   const { data, isLoading, isError } = useCoins(
     10,
     undefined,
     undefined,
     undefined,
-    'volume_24h_usd_desc',
-    { sparkline: true },
+    pricing ? 'volume_24h_usd_desc' : 'observation_count_desc',
+    { sparkline: pricing },
   );
   const { data: nativeCoin } = useNativeCoin({ sparkline: true });
   const { data: verifiedSlugs } = useVerifiedSlugs();
   useLedgerFollow(['/v1/assets']);
 
-  const coins = rankTopAssets(nativeCoin, data?.coins);
+  const coins = rankTopAssets(nativeCoin, data?.coins, pricing);
 
   return (
     <section className="space-y-3">
@@ -61,9 +67,9 @@ export function HomeTopAssets() {
             Top assets by activity
           </h2>
           <p className="text-ink-body text-sm">
-            Ranked by trailing-24h trading volume across every venue we ingest —
-            native XLM included. Volume sums every (base, quote) pair the asset
-            trades in.
+            {pricing
+              ? 'Ranked by trailing-24h trading volume across every venue we ingest — native XLM included. Volume sums every (base, quote) pair the asset trades in.'
+              : 'Ranked by observed on-chain trade count — native XLM included. This network runs no price aggregator, so the USD columns are omitted rather than served empty.'}
           </p>
         </div>
         <Link href="/assets" className="text-brand-600 text-sm hover:underline">
@@ -87,10 +93,10 @@ export function HomeTopAssets() {
               <TR className="hover:bg-transparent">
                 <Th>#</Th>
                 <Th>Asset</Th>
-                <Th align="right">Price</Th>
-                <Th align="right">24h %</Th>
-                <Th align="right">24h volume</Th>
-                <Th align="right">24h chart</Th>
+                {pricing && <Th align="right">Price</Th>}
+                {pricing && <Th align="right">24h %</Th>}
+                {pricing && <Th align="right">24h volume</Th>}
+                {pricing && <Th align="right">24h chart</Th>}
                 <Th align="right">Observations</Th>
               </TR>
             </THead>
@@ -99,7 +105,7 @@ export function HomeTopAssets() {
                 !data &&
                 Array.from({ length: 8 }).map((_, i) => (
                   <TR key={`sk-${i}`} className="hover:bg-transparent">
-                    <Td colSpan={7}>
+                    <Td colSpan={pricing ? 7 : 3}>
                       <Skeleton className="h-5 w-full" />
                     </Td>
                   </TR>
@@ -109,6 +115,7 @@ export function HomeTopAssets() {
                   key={coin.asset_id}
                   coin={coin}
                   rank={idx + 1}
+                  pricing={pricing}
                   // Withhold the badge from ticker-collision look-alikes:
                   // COALESCE(slug, code) makes an impersonator's slug the
                   // verified code, so gate on the per-row API flag too.
@@ -130,10 +137,12 @@ function Row({
   coin,
   rank,
   verified,
+  pricing,
 }: {
   coin: Coin;
   rank: number;
   verified: boolean;
+  pricing: boolean;
 }) {
   const price = parseDec(coin.price_usd);
   const volume = parseDec(coin.volume_24h_usd);
@@ -173,28 +182,38 @@ function Row({
           <span className="text-ink-muted text-[11px]">{coin.slug}</span>
         </Link>
       </Td>
-      <Td align="right">
-        {price != null ? (
-          <span className="text-ink font-mono">${formatPriceSmall(price)}</span>
-        ) : (
-          <Dash />
-        )}
-      </Td>
-      <Td align="right">
-        <ChangePct raw={coin.change_24h_pct} />
-      </Td>
-      <Td align="right">
-        {volume != null ? (
-          <span className="text-ink-body font-mono">
-            ${formatCompact(volume)}
-          </span>
-        ) : (
-          <Dash />
-        )}
-      </Td>
-      <Td align="right">
-        <RowSparkline points={coin.price_history_24h} />
-      </Td>
+      {pricing && (
+        <Td align="right">
+          {price != null ? (
+            <span className="text-ink font-mono">
+              ${formatPriceSmall(price)}
+            </span>
+          ) : (
+            <Dash />
+          )}
+        </Td>
+      )}
+      {pricing && (
+        <Td align="right">
+          <ChangePct raw={coin.change_24h_pct} />
+        </Td>
+      )}
+      {pricing && (
+        <Td align="right">
+          {volume != null ? (
+            <span className="text-ink-body font-mono">
+              ${formatCompact(volume)}
+            </span>
+          ) : (
+            <Dash />
+          )}
+        </Td>
+      )}
+      {pricing && (
+        <Td align="right">
+          <RowSparkline points={coin.price_history_24h} />
+        </Td>
+      )}
       <Td align="right">
         <span className="text-ink-body font-mono">
           {formatCompact(coin.observation_count)}
@@ -217,14 +236,20 @@ function parseDec(s: string | null | undefined): number | null {
 function rankTopAssets(
   native: Coin | null | undefined,
   listed: Coin[] | undefined,
+  pricing: boolean,
 ): Coin[] {
   const rows = [...(listed ?? [])];
   if (native && !rows.some((c) => c.asset_id === native.asset_id)) {
     rows.push(native);
   }
-  rows.sort(
-    (a, b) =>
-      (parseDec(b.volume_24h_usd) ?? 0) - (parseDec(a.volume_24h_usd) ?? 0),
+  // #328: the re-rank has to use the SAME measure the request asked the
+  // API to order by. Re-sorting by USD volume on a net that has none put
+  // every row at 0 and left the order to sort stability — a "top assets
+  // by activity" grid whose ranking was arbitrary.
+  rows.sort((a, b) =>
+    pricing
+      ? (parseDec(b.volume_24h_usd) ?? 0) - (parseDec(a.volume_24h_usd) ?? 0)
+      : (b.observation_count ?? 0) - (a.observation_count ?? 0),
   );
   return rows.slice(0, 10);
 }
