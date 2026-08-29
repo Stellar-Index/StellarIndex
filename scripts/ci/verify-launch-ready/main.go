@@ -21,6 +21,12 @@
 // Post-launch (L7.*) is reported but ignored from the gating
 // computation — those rows are explicitly deferred.
 //
+// A backlog whose frontmatter declares it superseded/retired is
+// reported but NEVER certified: the rows still parse, but their
+// statuses are frozen history, so a verdict computed from them is a
+// false green that gets more confident the staler the document gets.
+// See [supersession].
+//
 // Exit codes:
 //
 //	0 — Engineering and ops/validation tiers are ready
@@ -28,6 +34,12 @@
 //	    code side.
 //	1 — At least one L1-L5 row is in a non-ready state.
 //	2 — The backlog couldn't be parsed (corrupt file).
+//	3 — The backlog is retired (frontmatter `status: superseded
+//	    …`); no readiness verdict is possible from it.
+//
+// (`go run` collapses any non-zero status to 1 — build the binary if
+// a caller needs to tell 1 / 2 / 3 apart. The stderr line always
+// names the reason.)
 //
 // Usage:
 //
@@ -71,6 +83,17 @@ type Row struct {
 // Captures: 1=ID. The full row contents we'll split by `|`.
 var rowRE = regexp.MustCompile(`^\|\s*(L\d+\.\w+)\s*\|`)
 
+// supersededRE matches a frontmatter `status:` line whose value opens
+// with "superseded" / "retired" — the repo's established supersession
+// marker (see docs/operations/launch-todo.md's frontmatter).
+var supersededRE = regexp.MustCompile(`(?i)^status:\s*((?:superseded|retired)\b.*)$`)
+
+// exitRetired is returned when the backlog document is retired. It is
+// deliberately NOT one of the existing codes: 1 already means "rows are
+// not ready" and 2 means "corrupt file", and callers have assigned
+// those meanings. "There is no verdict to give" is a third state.
+const exitRetired = 3
+
 func main() {
 	path := flag.String("path", "docs/architecture/launch-readiness-backlog.md",
 		"Path to the launch-readiness backlog markdown file.")
@@ -90,13 +113,75 @@ func main() {
 		os.Exit(2)
 	}
 
+	retired, err := supersession(*path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "verify-launch-ready: read %s: %v\n", *path, err)
+		os.Exit(2)
+	}
+
 	skip := parseSkipIDs(*skipIDs)
-	report(rows, *listAll, skip)
+	report(rows, *listAll, skip, retired)
+
+	if retired != "" {
+		fmt.Fprintf(os.Stderr,
+			"verify-launch-ready: %s is retired (%s) — refusing to emit a readiness verdict from frozen rows.\n",
+			*path, retired)
+		fmt.Fprintf(os.Stderr,
+			"  Point -path at the current readiness document, or read the successor named in this doc's supersession banner.\n")
+		os.Exit(exitRetired)
+	}
 
 	if !engineeringReadyWithSkip(rows, skip) {
 		os.Exit(1)
 	}
 	os.Exit(0)
+}
+
+// supersession reports the frontmatter `status:` value of a backlog
+// document when that status declares the document superseded or
+// retired, and "" when the document is still current. Only the leading
+// YAML frontmatter block is consulted, so prose that merely discusses
+// supersession cannot retire a live doc.
+//
+// Why this is a hard gate rather than a warning: this CLI's entire
+// output is a launch verdict, and a verdict computed from a frozen
+// document is a FALSE green that grows more confident the staler the
+// document gets — every row keeps its last-written ✅ forever while
+// the real launch gate moves elsewhere. Issue #321: the scheduled
+// launch-readiness workflow certified "Engineering surface ready"
+// every Wednesday against a backlog whose last row-status change was
+// 2026-05-13 and which contained none of the actual launch blockers.
+func supersession(path string) (string, error) {
+	data, err := os.ReadFile(path) //nolint:gosec // path is a CLI flag by design
+	if err != nil {
+		return "", err
+	}
+	fm, ok := frontmatter(string(data))
+	if !ok {
+		return "", nil
+	}
+	for _, line := range strings.Split(fm, "\n") {
+		if m := supersededRE.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
+			return strings.TrimSpace(m[1]), nil
+		}
+	}
+	return "", nil
+}
+
+// frontmatter returns the YAML frontmatter block of a markdown
+// document — the text between the leading `---` fence and its closing
+// `---` — and whether one was present.
+func frontmatter(doc string) (string, bool) {
+	const fence = "---\n"
+	if !strings.HasPrefix(doc, fence) {
+		return "", false
+	}
+	rest := doc[len(fence):]
+	end := strings.Index(rest, "\n"+fence)
+	if end < 0 {
+		return "", false
+	}
+	return rest[:end], true
 }
 
 // parseSkipIDs turns a comma-separated flag value into a set.
@@ -271,11 +356,15 @@ func surfaceLabel(s string) string {
 	return s
 }
 
-func report(rows []Row, listAll bool, skip map[string]struct{}) {
+func report(rows []Row, listAll bool, skip map[string]struct{}, retired string) {
 	bySurface := groupBySurface(rows)
 
 	fmt.Println(bold("Stellar Index — Launch Readiness Check"))
 	fmt.Println(strings.Repeat("=", 40))
+	if retired != "" {
+		fmt.Println(red(bold("RETIRED DOCUMENT — " + retired)))
+		fmt.Println("The rows below are frozen history, not current status.")
+	}
 	if len(skip) > 0 {
 		fmt.Printf("(skipping %d row(s) for gating: %s)\n",
 			len(skip), strings.Join(sortedKeys(skip), ", "))
@@ -293,7 +382,7 @@ func report(rows []Row, listAll bool, skip map[string]struct{}) {
 	if listAll {
 		printRows(bold("All rows:"), rows)
 	}
-	printVerdict(rows, skip)
+	printVerdict(rows, skip, retired)
 }
 
 // sortedKeys returns the keys of a string set in deterministic order.
@@ -378,16 +467,27 @@ func printRows(header string, rows []Row) {
 	fmt.Println()
 }
 
-func printVerdict(rows []Row, skip map[string]struct{}) {
+func printVerdict(rows []Row, skip map[string]struct{}, retired string) {
+	fmt.Println(verdictLine(rows, skip, retired))
+}
+
+// verdictLine renders the closing verdict. A retired document yields
+// NO readiness verdict at all — not a green one, and not a red one
+// either: red would read as "rows are failing", when the truth is that
+// the document stopped tracking reality and its rows mean nothing.
+func verdictLine(rows []Row, skip map[string]struct{}, retired string) string {
+	if retired != "" {
+		return red(bold("✗ No verdict — this backlog is retired: "+retired)) + "\n" +
+			"  Its row statuses are frozen history. Read the successor named in\n" +
+			"  the document's supersession banner for current launch status."
+	}
 	if engineeringReadyWithSkip(rows, skip) {
 		if len(skip) > 0 {
-			fmt.Println(green(bold("✓ Engineering surface ready (subset gate) — pending operator cutover.")))
-		} else {
-			fmt.Println(green(bold("✓ Engineering surface ready — pending operator cutover.")))
+			return green(bold("✓ Engineering surface ready (subset gate) — pending operator cutover."))
 		}
-		return
+		return green(bold("✓ Engineering surface ready — pending operator cutover."))
 	}
-	fmt.Println(red(bold("✗ Engineering surface NOT ready — see blocking rows above.")))
+	return red(bold("✗ Engineering surface NOT ready — see blocking rows above."))
 }
 
 // ─── ANSI helpers ──────────────────────────────────────────────

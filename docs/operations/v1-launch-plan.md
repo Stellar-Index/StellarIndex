@@ -3707,6 +3707,33 @@ are obsolete — repo has been public since 2026-07-03):
 - `dex_nonstandard_decimals_detected` firing is informational detection
   working (aquarius C-tokens), not the master plan's "cleared" claim nor a
   regression of the AdjustPrice normalization work.
+- **Two planning inventories retired 2026-08-29 (issue #321) — this plan is
+  now the only launch ledger.**
+  - `docs/architecture/launch-readiness-backlog.md` (the L-numbered tracker):
+    zero rows added since 2026-05-13 and none of the real W-gate in it, while
+    every L1–L5 row kept its last-written ✅ — so the weekly
+    `launch-readiness.yml` workflow republished *"✓ Engineering surface ready"*
+    over a frozen document. Workflow deleted;
+    `scripts/ci/verify-launch-ready` now refuses to emit a verdict for a doc
+    whose frontmatter says `status: superseded` (exit 3). Its still-open rows
+    carry here: **L4.14–L4.17 + L5.8 → W9** (gated on **D2**), **L5.6 → W6.2**,
+    **L6.4 → §2.8**, **L6.6/L6.7 → W6.7**. The company page's public "roadmap
+    to v1" link now points at this file.
+  - `docs/operations/open-fixes-inventory-2026-08-08.md` (the defect-side
+    companion): 24 of its 35 rows were done and never struck — rows 1 and 19
+    closed on the day it was compiled (`d1cd18ac`, `a1c5c2e5`), rows 2 and 5
+    two days later (`f75ab4b2`, `ef278218`). Still-open threads carry here:
+    **#7 → W8-13** (needs the decision), **#12 residual (r1
+    `[supply].sac_wrappers`) → W2 + an r1 config confirm**, **#14 → W5.4**,
+    **#15 → W8-12**, **#18 residual (MinBatchLimit wedge) → W8-9**, **#22
+    residual → W6.5**, **#31/#34 → `audit-remediation-operator-actions.md`**,
+    **#33 → §3 [OP] 2**, **#35 → D10**. Row **#32** (the two pending
+    `--tags caddy` config changes) is presumed applied but has no apply
+    record — confirm once, then strike.
+  - **Untracked and in no plan** (re-measure or drop): `changesummary` 25%
+    silent failures + `d30` NULL; VWAP volume-unit window dependence + the
+    24 h VWAP blending 6.43 h/21.39 h legs; `lint-actions-pinning` being a
+    no-op on push-to-main.
 
 _Update this file in the same commit as any change that lands or
 invalidates an item. One plan; no forks._

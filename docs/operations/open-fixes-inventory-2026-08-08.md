@@ -1,5 +1,49 @@
 # Open fixes inventory — 2026-08-08
 
+> **⛔ SUPERSEDED 2026-08-29 by
+> [`v1-launch-plan.md`](v1-launch-plan.md)** (issue #321). **Frozen — do not
+> read a numbered row below as open work.** The file's own protocol ("an item
+> leaves the list only when its fix is deployed and verified on r1") was
+> abandoned the week it was compiled: the last edit was 2026-08-09 and rows
+> kept closing without ever being struck. Verified first-hand at
+> `0f13aa14`:
+>
+> | Row | Closed by | Still reads as open here |
+> |---|---|---|
+> | 1 — post-P23 all-asset movement archive ("the single biggest user-visible gap") | `d1cd18ac`, 2026-08-08 (`ch-cap67-movements`) | yes |
+> | 2 — contracts census cost | `f75ab4b2`, 2026-08-10 (day-keyed `contracts_census_daily`) | yes |
+> | 5 — refresh-gate per-key-class fairness (the "Remaining" half) | `ef278218`, 2026-08-10 (`TryAcquireClass`) | yes |
+> | 19 — comet migration-0059 double-count armed | `a1c5c2e5`, 2026-08-08 (migration 0137) | yes |
+> | 26 — `/v1/readyz` unlimited pool exhaustion (half of the row) | `a1c5c2e5`, 2026-08-08 (single-flight + 1 s cache) | yes |
+>
+> Rows 1 and 19 were closed on **the same day this file was compiled**. The
+> full row-by-row reconciliation against `origin/main` — 24 done, 3
+> superseded, 5 open, 3 partial of 35 — is in **issue #321**, which is where
+> the per-row evidence lives; it is deliberately not restated here, because a
+> second hand-maintained copy of it is the defect this banner closes.
+>
+> **The threads that are genuinely still open, and where they now live:**
+>
+> | Was | Now tracked as |
+> |---|---|
+> | 7 — per-account deep trade history (CH account-keyed mirror vs accept the bounded horizon) | **W8 item 13** (`accounts/{g}/trades` windowing) — needs the decision, not just the code |
+> | 12 residual — r1 `[supply].sac_wrappers` for USDC/AQUA (the code shipped; the r1 config has no landing evidence, so the "53.5% of USDC volume invisible" headline is not closed) | **W2** (asset identity) + an r1 config confirm |
+> | 14 — SEP-41 genesis rollup resets (12 of 13 remain) | **W5.4** — gated on the `ops_batch` ClickHouse profile on r1 |
+> | 15 — LP reserve/trustline backfill path | **W8 item 12** — design decision outstanding |
+> | 18 residual — `MinBatchLimit` wedge (replay-block itself is fixed; the wedge fix is undesigned) | **W8 item 9** |
+> | 22 residual — sub-$100M base-unresolvable prints stay unchallenged (accepted residual per the 2026-08-25 W8 reconciliation) | **W6.5** — sign it onto the accepted-risk list |
+> | 31 — Cloudflare zone cache rule / orange-cloud + purge | `audit-remediation-operator-actions.md` (unchecked) |
+> | 32 — `ansible-playbook --tags caddy` for the two pending config changes | presumed applied (SSE works; ansible-drift would page) but **no apply record was codified** — needs one confirm, then strike |
+> | 33 — CoinGecko Pro purchase | `v1-launch-plan.md` §3 `[OP]` item 2 |
+> | 34 — GCP SA key rotation | `audit-remediation-operator-actions.md` CS-001 (checkbox still unchecked) |
+> | 35 — privacy/GDPR review | decision **D10** — reduced to a documentation sign-off |
+>
+> **Sub-claims that fell out of tracking entirely** and are in no plan: 20b/20c
+> (`changesummary` 25% silent failures, `d30` NULL), 24a/24b (VWAP volume-unit
+> window dependence, 24 h VWAP blending 6.43 h/21.39 h legs), 29b
+> (actions-pinning no-op on push-to-main). Each needs a **re-measure or an
+> explicit drop** — they are currently neither fixed nor tracked.
+
 Compiled on operator request ("we need to fix all of them"): every known
 sidelined item from the 2026-08-03/04 cold-audit sweep, the 2026-08-07/08
 site audits, and session findings — deduplicated, with what already
@@ -142,8 +186,9 @@ observations alias fan-in (v0.30.0); /ledgers dead-Suspense fix
 
 ## Working order
 
-Tier 1 items 1–5 next (site loading is the active complaint), then Tier
-2 money-correctness in listed order. Each fix = one unit, committed +
-released per the session cadence; [VERIFY] items get re-measured before
-work. This file is updated as items close — an item leaves the list only
-when its fix is deployed and verified on r1, not when merged.
+_(Frozen 2026-08-09. The protocol below was never honoured — see the
+supersession banner at the top.)_ Tier 1 items 1–5 next (site loading is the
+active complaint), then Tier 2 money-correctness in listed order. Each fix =
+one unit, committed + released per the session cadence; [VERIFY] items get
+re-measured before work. This file is updated as items close — an item leaves
+the list only when its fix is deployed and verified on r1, not when merged.

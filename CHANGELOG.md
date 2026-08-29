@@ -152,6 +152,40 @@ against.
 
 ### Changed
 
+- **The two frozen planning inventories are retired, and
+  `verify-launch-ready` can no longer certify a retired document
+  (#321).** `docs/architecture/launch-readiness-backlog.md` had gained
+  zero rows since 2026-05-13 and contained none of the actual v1 gate
+  (W6.1 paging, W6.3 rotations, W4 backups, the W8 correctness
+  backlog, ToS/Privacy #237), yet every L1–L5 row still carried its
+  last-written ✅ — so the weekly `launch-readiness.yml` workflow
+  republished *"✓ Engineering surface ready"* over a document that had
+  stopped tracking reality, and got more confident the staler it got.
+  The doc is now formally superseded by `docs/operations/v1-launch-plan.md`
+  (frontmatter `status: superseded` + a banner mapping its still-open
+  rows: L4.14–L4.17 + L5.8 → W9 gated on D2, L5.6 → W6.2, L6.4 → §2.8,
+  L6.6/L6.7 → W6.7), `.github/workflows/launch-readiness.yml` is
+  deleted, and `scripts/ci/verify-launch-ready` now reads the
+  frontmatter and emits **no verdict at all** (new exit code 3) for any
+  document declaring itself superseded/retired — a retired doc's rows
+  are history, and neither a green nor a red computed from them means
+  anything. The prior 2026-07-24 staleness banner was itself wrong
+  twice over (it claimed the gate was unwired the day *after* it was
+  wired in `068ec709`, and named a "current source of truth" that was
+  superseded on 2026-07-27); both corrections are recorded in the new
+  banner. `docs/operations/open-fixes-inventory-2026-08-08.md` is
+  superseded on the same terms: 24 of its 35 rows were done and never
+  struck — rows 1 and 19 closed on the day it was compiled
+  (`d1cd18ac`, `a1c5c2e5`), rows 2 and 5 two days later (`f75ab4b2`,
+  `ef278218`) — and its genuinely-open threads are carried into the
+  launch plan's §5. The public company page's "roadmap that gets us to
+  v1" link now points at `v1-launch-plan.md` instead of the retired
+  backlog. Tests: `TestRealBacklog_IsRetired`,
+  `TestVerdictLine_RetiredDocNeverCertifiesReady`,
+  `TestSupersession_ReadsFrontmatterOnly`, and a company-page case
+  pinning the roadmap href (red-proof: the pre-fix binary run against
+  the now-retired doc still printed "✓ Engineering surface ready
+  (subset gate)" and exited 0).
 - **ADR-0043 §2 amended (2026-08-29):** "two independent raw-LCM
   archives" now explicitly = our recent range + the AWS Public
   Blockchain dataset; dependency accepted and monitored rather than
