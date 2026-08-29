@@ -1968,6 +1968,21 @@ composite to count at all; the FX leg reads 1 (one provider,
 `massive`). Also carried in `composite_meta.composite_leg_sources` and
 the freeze reason string.
 
+### `stellarindex_aggregator_composite_reference_leg_dispersion_bps`
+
+Gauge, labels `pair`, `window`, `leg`.
+
+Max |venue VWAP − leg VWAP| / leg VWAP in basis points across the
+venues printing a priced composite-reference leg on the last evaluated
+bucket (venue VWAPs over the same post-filter survivor slice the leg
+VWAP came from). Above `[aggregate.composite_reference]
+leg_dispersion_bps` (default = `tolerance_bps`, 75) the leg cannot
+corroborate — `composite_unavailable: leg_dispersion=…bps` — because
+two venues only count as two when they agree: a dominant venue plus a
+dust print 3 % off is one opinion and an artefact (verifier advisory A1,
+2026-08-29). Also carried in the freeze reason as
+`composite_leg_dispersion_bps={…}`.
+
 ### `stellarindex_aggregator_composite_freeze_suppressed_total`
 
 Counter, no labels.

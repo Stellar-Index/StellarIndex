@@ -148,17 +148,19 @@ const releaseAgreementMaxPct = 5.0
 //     construction — triangulationDivergencePct takes it as input).
 //     NOTE: the PRIOR-TICK chain sample cannot fire mid-freeze —
 //     routeTarget records no composite for a target frozen this tick
-//     and samples go stale in ~2 ticks, far shorter than any hold. Since
-//     2026-08-29 the CURRENT-BUCKET composite reference
-//     (composite_reference.go) feeds the same two fields for allow-
-//     listed single-venue targets, so this lens IS live mid-freeze
-//     there: the candidate is compared against a composite rebuilt from
-//     this tick's multi-venue leg and a fresh FX snap, which a held
-//     venue-specific manipulation cannot satisfy. It stays correct BY
-//     CONSTRUCTION (fresh-candidate-relative); do not repurpose it
-//     without re-checking that property.
-//     For every other pair the cross-oracle median below remains the
-//     operative release lens.
+//     and samples go stale in ~2 ticks, far shorter than any hold — so
+//     for every pair WITHOUT a resolved current-bucket reference the
+//     cross-oracle median below is the operative release lens.
+//   - the CURRENT-BUCKET composite reference (composite_reference.go,
+//     2026-08-29), for allow-listed single-venue targets whose reference
+//     RESOLVED this bucket. It replaces the triangulation lens above
+//     (it is the same sample) but is read against its OWN, tighter band
+//     ([CompositeReferenceConfig.ReleaseBandPct], default 2 %): the
+//     shared 5 % band would release a held +4 % venue-specific offset
+//     that the 75-bps fire band had correctly refused to corroborate.
+//     A reference that resolved and disagrees beyond the band holds the
+//     streak at zero; the cross-oracle lens may still release on its
+//     own reading, exactly as for every other pair.
 //   - the cross-oracle reference median, compared against the fresh
 //     candidate HERE — deliberately not the cached DivergencePct, which
 //     mid-freeze was computed against the pinned served price and
@@ -167,8 +169,13 @@ const releaseAgreementMaxPct = 5.0
 // No lens reading ⇒ false ⇒ the streak holds at zero and the ladder
 // escalates to an operator, matching the pre-shadow-comparator posture
 // for uncorroboratable pairs.
-func releaseCorroborated(c confidenceComputation, candidate *big.Rat) bool {
-	if c.TriangulationChecked && math.Abs(c.TriangulationDivergencePct) <= releaseAgreementMaxPct {
+func releaseCorroborated(c confidenceComputation, candidate *big.Rat, ref compositeReference, compositeBandPct float64) bool {
+	switch {
+	case ref.resolved():
+		if ref.divergencePct <= compositeBandPct {
+			return true
+		}
+	case c.TriangulationChecked && math.Abs(c.TriangulationDivergencePct) <= releaseAgreementMaxPct:
 		return true
 	}
 	if crossOracleMedian := c.CrossOracleMedian; crossOracleMedian > 0 && candidate != nil {
@@ -248,7 +255,8 @@ func (o *Orchestrator) stepPhase2Freeze(
 		sig.ZScore = input.ZScore
 		sig.Fires = phase2FreezeFires(input, o.cfg.Phase2Thresholds)
 		sig.Corroborated = corroborated(conf.Score.Factors)
-		sig.ReleaseCorroborated = releaseCorroborated(conf, vwap)
+		sig.ReleaseCorroborated = releaseCorroborated(conf, vwap, compositeRef,
+			o.cfg.CompositeReference.withDefaults().ReleaseBandPct)
 		// `sources=` stays the REAL count whatever the composite says —
 		// the reference changes the verdict, never the independence
 		// claim (composite_reference.go invariants).

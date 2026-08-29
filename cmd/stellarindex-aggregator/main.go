@@ -373,6 +373,8 @@ func run(cfgPath string, dryRun bool) error {
 			"tolerance_bps", cfg.Aggregate.CompositeReference.ToleranceBps,
 			"min_leg_sources", cfg.Aggregate.CompositeReference.MinLegSources,
 			"fx_max_age_hours", cfg.Aggregate.CompositeReference.FXMaxAgeHours,
+			"leg_dispersion_bps", cfg.Aggregate.CompositeReference.LegDispersionBps,
+			"release_band_pct", cfg.Aggregate.CompositeReference.ReleaseBandPct,
 			"chains", len(triangulations))
 	}
 	if len(triangulations) > 0 {
@@ -1825,11 +1827,13 @@ func buildCompositeReference(cfg config.AggregateConfig) (orchestrator.Composite
 		return orchestrator.CompositeReferenceConfig{}, err
 	}
 	return orchestrator.CompositeReferenceConfig{
-		Enabled:       cfg.CompositeReference.Enabled,
-		Targets:       targets,
-		ToleranceBps:  cfg.CompositeReference.ToleranceBps,
-		MinLegSources: cfg.CompositeReference.MinLegSources,
-		FXMaxAge:      time.Duration(cfg.CompositeReference.FXMaxAgeHours) * time.Hour,
+		Enabled:          cfg.CompositeReference.Enabled,
+		Targets:          targets,
+		ToleranceBps:     cfg.CompositeReference.ToleranceBps,
+		MinLegSources:    cfg.CompositeReference.MinLegSources,
+		FXMaxAge:         time.Duration(cfg.CompositeReference.FXMaxAgeHours) * time.Hour,
+		LegDispersionBps: cfg.CompositeReference.LegDispersionBps,
+		ReleaseBandPct:   cfg.CompositeReference.ReleaseBandPct,
 	}, nil
 }
 

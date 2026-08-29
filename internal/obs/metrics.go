@@ -155,6 +155,7 @@ func registerFreezeLifecycleMetrics() {
 		// (2026-08-29) — freeze-decision metrics, so they live here.
 		AggregatorCompositeCorroboration,
 		AggregatorCompositeReferenceLegSources,
+		AggregatorCompositeReferenceLegDispersionBps,
 		AggregatorCompositeFreezeSuppressedTotal,
 	)
 }
@@ -3032,6 +3033,20 @@ var AggregatorCompositeReferenceLegSources = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_aggregator_composite_reference_leg_sources",
 		Help: "Distinct sources behind each composite-reference leg on the last evaluated bucket, per (pair, window, leg).",
+	},
+	[]string{"pair", "window", "leg"},
+)
+
+// AggregatorCompositeReferenceLegDispersionBps — max |venue VWAP − leg
+// VWAP| / leg VWAP in basis points across the venues on a priced
+// composite-reference leg, last evaluated bucket. Above
+// composite_reference.leg_dispersion_bps the leg cannot corroborate
+// (`composite_unavailable: leg_dispersion=…`): two venues only count
+// as two when they agree.
+var AggregatorCompositeReferenceLegDispersionBps = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_aggregator_composite_reference_leg_dispersion_bps",
+		Help: "Venue dispersion (max |venue VWAP - leg VWAP| / leg VWAP, bps) of each priced composite-reference leg on the last evaluated bucket, per (pair, window, leg).",
 	},
 	[]string{"pair", "window", "leg"},
 )

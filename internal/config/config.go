@@ -1164,11 +1164,13 @@ type AggregateConfig struct {
 // boundary (cmd/stellarindex-aggregator) maps it, the same way it maps
 // the triangulation table.
 type CompositeReferenceConfig struct {
-	Enabled       bool     `toml:"enabled" doc:"Master switch. Default ON for the targets allow-list below; set false to restore the pre-2026-08-29 freeze-and-auto-release posture for every pair without editing the list." default:"true"`
-	Targets       []string `toml:"targets" doc:"Allow-list of structurally single-venue target pairs (canonical wire form) the composite reference may corroborate. Each must also have an [[aggregate.triangulations]] row — its legs ARE the reference. A target with >= 2 real venues on a bucket is never evaluated regardless of this list." default:"[\"crypto:XLM/fiat:GBP\",\"crypto:XLM/fiat:EUR\"]"`
-	ToleranceBps  int      `toml:"tolerance_bps" doc:"Maximum |direct - composite| / composite, in basis points, for the composite to CORROBORATE the direct print. 0 = default (75). Must be in (0, 10000]." default:"75"`
-	MinLegSources int      `toml:"min_leg_sources" doc:"Minimum distinct real exchange venues each priced (crypto/USD) leg must carry on the CURRENT bucket for the composite to count; a single-venue leg cannot corroborate (reason: composite_unavailable: leg_sources=N). 0 = default (2)." default:"2"`
-	FXMaxAgeHours int      `toml:"fx_max_age_hours" doc:"Staleness budget for the FX leg's fx_quotes snap (bucket age at evaluation). fx_quotes buckets are DAILY and the feed pauses over market closes, so this mirrors the Chainlink FX feed budget (76h), not the 6h poll-liveness alert. The FX leg must also come from the FX source class (massive) — never an oracle. 0 = default (76)." default:"76"`
+	Enabled          bool     `toml:"enabled" doc:"Master switch. Default ON for the targets allow-list below; set false to restore the pre-2026-08-29 freeze-and-auto-release posture for every pair without editing the list." default:"true"`
+	Targets          []string `toml:"targets" doc:"Allow-list of structurally single-venue target pairs (canonical wire form) the composite reference may corroborate. Each must also have an [[aggregate.triangulations]] row — its legs ARE the reference. A target with >= 2 real venues on a bucket is never evaluated regardless of this list." default:"[\"crypto:XLM/fiat:GBP\",\"crypto:XLM/fiat:EUR\"]"`
+	ToleranceBps     int      `toml:"tolerance_bps" doc:"Maximum |direct - composite| / composite, in basis points, for the composite to CORROBORATE the direct print. 0 = default (75). Must be in (0, 10000]." default:"75"`
+	MinLegSources    int      `toml:"min_leg_sources" doc:"Minimum distinct real exchange venues each priced (crypto/USD) leg must carry on the CURRENT bucket for the composite to count; a single-venue leg cannot corroborate (reason: composite_unavailable: leg_sources=N). 0 = default (2)." default:"2"`
+	LegDispersionBps int      `toml:"leg_dispersion_bps" doc:"Leg-dispersion guard: every venue's own bucket VWAP on a priced (crypto/USD) leg must be within this many basis points of the leg VWAP for the leg to corroborate; otherwise composite_unavailable: leg_dispersion=… (fail-closed). Two venues only count as two when they agree — a dominant venue plus a dust print 3% off is one opinion. 0 = tolerance_bps." default:"0"`
+	ReleaseBandPct   float64  `toml:"release_band_pct" doc:"Mid-hold auto-release agreement band (%) between the fresh candidate and the current-bucket composite for a target whose reference resolved on the bucket. Dedicated and tighter than the shared 5% cross-oracle band, which would release a held +4% venue-specific offset. 0 = default (2.0)." default:"2.0"`
+	FXMaxAgeHours    int      `toml:"fx_max_age_hours" doc:"Staleness budget for the FX leg's fx_quotes snap (bucket age at evaluation). fx_quotes buckets are DAILY and the feed pauses over market closes, so this mirrors the Chainlink FX feed budget (76h), not the 6h poll-liveness alert. The FX leg must also come from the FX source class (massive) — never an oracle. 0 = default (76)." default:"76"`
 }
 
 // TriangulationChainConfig is one row of the triangulation table.
@@ -1835,6 +1837,8 @@ func Default() Config {
 				ToleranceBps:  75,
 				MinLegSources: 2,
 				FXMaxAgeHours: 76,
+				// leg_dispersion_bps 0 = tolerance_bps.
+				ReleaseBandPct: 2.0,
 			},
 		},
 		Anomaly:      defaultAnomalyConfig(),

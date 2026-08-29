@@ -91,6 +91,22 @@ type CompositeReferenceConfig struct {
 	// market closes, so this mirrors the Chainlink FX feed budget (76h)
 	// rather than the 6h poll-liveness alert.
 	FXMaxAge time.Duration
+
+	// LegDispersionBps is the leg-dispersion guard (verifier advisory A1,
+	// 2026-08-29): every venue's own bucket VWAP on a priced leg must be
+	// within this many bps of the leg VWAP, else the leg cannot
+	// corroborate (`composite_unavailable: leg_dispersion=…`). A leg
+	// where one venue dominates and a dust print on another sits 3 % off
+	// is not two agreeing venues. 0 = ToleranceBps.
+	LegDispersionBps int
+
+	// ReleaseBandPct is the mid-hold RELEASE agreement band for a target
+	// whose reference resolved on the bucket (advisory A2): the fresh
+	// candidate must sit within this % of the current-bucket composite
+	// for the auto-unfreeze streak to advance — dedicated and tighter
+	// than the shared cross-oracle band (releaseAgreementMaxPct, 5 %),
+	// which a held +4 % venue-specific offset would satisfy. 0 = default.
+	ReleaseBandPct float64
 }
 
 const (
@@ -113,6 +129,13 @@ const (
 	// Monday-morning read of Friday's bucket is ~72h old and still
 	// valid; a feed that missed Monday is stale by Tuesday.
 	DefaultCompositeReferenceFXMaxAge = 76 * time.Hour
+
+	// DefaultCompositeReferenceReleaseBandPct — 2 %. A genuine repricing
+	// lands the venue back within low single digits of the composite; a
+	// held venue-specific offset the 2026-08-24 corroborated-release
+	// panel measured (~5–40 %) never does, and neither does the +4 %
+	// offset the shared 5 % band would have waved through.
+	DefaultCompositeReferenceReleaseBandPct = 2.0
 )
 
 // withDefaults fills zero-valued tunables. Enabled and Targets are
@@ -126,6 +149,12 @@ func (c CompositeReferenceConfig) withDefaults() CompositeReferenceConfig {
 	}
 	if c.FXMaxAge <= 0 {
 		c.FXMaxAge = DefaultCompositeReferenceFXMaxAge
+	}
+	if c.LegDispersionBps <= 0 {
+		c.LegDispersionBps = c.ToleranceBps
+	}
+	if c.ReleaseBandPct <= 0 {
+		c.ReleaseBandPct = DefaultCompositeReferenceReleaseBandPct
 	}
 	return c
 }
@@ -166,6 +195,52 @@ var compositeVerdicts = []compositeVerdict{
 type legRef struct {
 	price   *big.Rat
 	sources int
+
+	// dispersion is max |venueVWAP − legVWAP| / legVWAP across the
+	// distinct venues in the survivor slice (exact Rat; nil when fewer
+	// than two venues). The leg-dispersion guard reads it.
+	dispersion *big.Rat
+}
+
+// legDispersion computes the leg-dispersion statistic for one
+// published bucket: each venue's own VWAP over the post-filter
+// survivor trades (the same slice and the same normalisation the leg
+// VWAP came from), measured against the leg VWAP. nil when the bucket
+// has fewer than two venues (nothing to disperse) or a venue VWAP
+// cannot be computed.
+func (o *Orchestrator) legDispersion(pair canonical.Pair, trades []canonical.Trade, vwap *big.Rat) *big.Rat {
+	if vwap == nil || vwap.Sign() <= 0 {
+		return nil
+	}
+	byVenue := make(map[string][]canonical.Trade)
+	for _, tr := range trades {
+		byVenue[tr.Source] = append(byVenue[tr.Source], tr)
+	}
+	if len(byVenue) < 2 {
+		return nil
+	}
+	worst := new(big.Rat)
+	for _, venueTrades := range byVenue {
+		venueVWAP, err := o.computeNormalizedVWAP(venueTrades, pair)
+		if err != nil || venueVWAP == nil || venueVWAP.Sign() <= 0 {
+			return nil
+		}
+		dev := new(big.Rat).Sub(venueVWAP, vwap)
+		dev.Abs(dev).Quo(dev, vwap)
+		if dev.Cmp(worst) > 0 {
+			worst = dev
+		}
+	}
+	return worst
+}
+
+// ratBps renders a ratio as basis points (float, for reporting only).
+func ratBps(r *big.Rat) float64 {
+	if r == nil {
+		return 0
+	}
+	f, _ := r.Float64()
+	return f * 10_000
 }
 
 // compositeReference is the evaluated reference for one (target,
@@ -186,6 +261,10 @@ type compositeReference struct {
 	// distinct source count behind it on this bucket (FX legs: the
 	// number of distinct FX providers in the snap, normally 1).
 	legSources map[string]int
+
+	// legDispersionBps maps each priced leg to its venue dispersion in
+	// bps (see legRef.dispersion); absent for FX legs.
+	legDispersionBps map[string]float64
 
 	// unavailable names why the reference could not be evaluated
 	// (e.g. "leg_sources=1", "fx_stale", "leg_not_refreshed"). Empty
@@ -216,17 +295,42 @@ func (r compositeReference) legSourcesString() string {
 	return "{" + strings.Join(parts, ",") + "}"
 }
 
+// legDispersionString renders legDispersionBps deterministically:
+// `{crypto:XLM/fiat:USD:12.5}`; empty string when nothing was measured.
+func (r compositeReference) legDispersionString() string {
+	if len(r.legDispersionBps) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(r.legDispersionBps))
+	for k := range r.legDispersionBps {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s:%.1f", k, r.legDispersionBps[k]))
+	}
+	return " composite_leg_dispersion_bps={" + strings.Join(parts, ",") + "}"
+}
+
+// resolved reports whether the reference produced a composite on this
+// bucket (corroborated or refuted) — the readings that may stand in
+// for the prior-tick chain sample and drive the release lens.
+func (r compositeReference) resolved() bool {
+	return r.verdict == compositeVerdictCorroborated || r.verdict == compositeVerdictRefuted
+}
+
 // reasonSuffix is appended to the phase-2 freeze reason so
 // freeze_events.detail->>'reason' and the `freeze engaged` log carry
 // the basis, the agreement measured and how strong each leg was.
 func (r compositeReference) reasonSuffix() string {
 	switch r.verdict {
 	case compositeVerdictUnavailable:
-		return fmt.Sprintf(" corroboration_basis=%s composite_unavailable: %s composite_leg_sources=%s",
-			corroborationBasisVenue, r.unavailable, r.legSourcesString())
+		return fmt.Sprintf(" corroboration_basis=%s composite_unavailable: %s composite_leg_sources=%s%s",
+			corroborationBasisVenue, r.unavailable, r.legSourcesString(), r.legDispersionString())
 	case compositeVerdictCorroborated, compositeVerdictRefuted:
-		return fmt.Sprintf(" corroboration_basis=%s composite_%s divergence_pct=%.3f composite_leg_sources=%s",
-			r.basis(), string(r.verdict), r.divergencePct, r.legSourcesString())
+		return fmt.Sprintf(" corroboration_basis=%s composite_%s divergence_pct=%.3f composite_leg_sources=%s%s",
+			r.basis(), string(r.verdict), r.divergencePct, r.legSourcesString(), r.legDispersionString())
 	default:
 		return ""
 	}
@@ -281,8 +385,9 @@ func (o *Orchestrator) recordLegRef(pair canonical.Pair, window time.Duration, v
 		o.tickLegRefs[window] = make(map[string]legRef, len(o.cfg.Pairs))
 	}
 	o.tickLegRefs[window][pair.String()] = legRef{
-		price:   new(big.Rat).Set(vwap), // defensive copy, as recordEdgeQuote
-		sources: distinctSourceCount(trades),
+		price:      new(big.Rat).Set(vwap), // defensive copy, as recordEdgeQuote
+		sources:    distinctSourceCount(trades),
+		dispersion: o.legDispersion(pair, trades, vwap),
 	}
 }
 
@@ -319,7 +424,9 @@ func (o *Orchestrator) resolveCompositeReference(
 	direct *big.Rat,
 ) compositeReference {
 	cfg := o.cfg.CompositeReference.withDefaults()
-	ref := compositeReference{verdict: compositeVerdictUnavailable, legSources: map[string]int{}}
+	ref := compositeReference{
+		verdict: compositeVerdictUnavailable, legSources: map[string]int{}, legDispersionBps: map[string]float64{},
+	}
 	chain, ok := o.chainForTarget(pair)
 	if !ok {
 		ref.unavailable = "no_chain"
@@ -332,6 +439,9 @@ func (o *Orchestrator) resolveCompositeReference(
 	composite := big.NewRat(1, 1)
 	for _, leg := range chain.Legs {
 		price, sources, why := o.referenceLeg(ctx, leg, window, now, cfg)
+		if lr, ok := o.tickLegRefs[window][leg.String()]; ok && !isFXLeg(leg) && lr.dispersion != nil {
+			ref.legDispersionBps[leg.String()] = ratBps(lr.dispersion)
+		}
 		if sources > 0 {
 			// Recorded even when the leg is the reason the reference is
 			// unavailable (a thin leg), so the operator sees HOW thin.
@@ -393,6 +503,12 @@ func (o *Orchestrator) referenceLeg(
 		if lr.sources < cfg.MinLegSources {
 			return nil, lr.sources, fmt.Sprintf("leg_sources=%d", lr.sources)
 		}
+		// Leg-dispersion guard (A1): two venues only count as two when
+		// they AGREE. A dominant venue plus a dust print 3 % off is one
+		// opinion and an artefact, and the artefact can be the attacker's.
+		if lr.dispersion != nil && lr.dispersion.Cmp(big.NewRat(int64(cfg.LegDispersionBps), 10_000)) > 0 {
+			return nil, lr.sources, fmt.Sprintf("leg_dispersion=%.1fbps", ratBps(lr.dispersion))
+		}
 		return lr.price, lr.sources, ""
 	}
 	if o.cfg.FXStore == nil {
@@ -439,6 +555,9 @@ func (o *Orchestrator) emitCompositeReference(pair canonical.Pair, window time.D
 	for leg, n := range ref.legSources {
 		obs.AggregatorCompositeReferenceLegSources.WithLabelValues(pair.String(), window.String(), leg).Set(float64(n))
 	}
+	for leg, bps := range ref.legDispersionBps {
+		obs.AggregatorCompositeReferenceLegDispersionBps.WithLabelValues(pair.String(), window.String(), leg).Set(bps)
+	}
 	attrs := []any{
 		"pair", pair.String(),
 		"window", window.String(),
@@ -446,6 +565,7 @@ func (o *Orchestrator) emitCompositeReference(pair canonical.Pair, window time.D
 		"basis", ref.basis(),
 		"divergence_pct", ref.divergencePct,
 		"leg_sources", ref.legSourcesString(),
+		"leg_dispersion_bps", strings.TrimPrefix(ref.legDispersionString(), " composite_leg_dispersion_bps="),
 	}
 	if ref.unavailable != "" {
 		attrs = append(attrs, "unavailable", ref.unavailable)

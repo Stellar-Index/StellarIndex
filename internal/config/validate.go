@@ -737,6 +737,14 @@ func (c CompositeReferenceConfig) validate(a AggregateConfig) error {
 		return fmt.Errorf("%w: aggregate.composite_reference.min_leg_sources must be >= 0 (0 = default), got %d",
 			ErrInvalidConfig, c.MinLegSources)
 	}
+	if c.LegDispersionBps < 0 || c.LegDispersionBps > 10_000 {
+		return fmt.Errorf("%w: aggregate.composite_reference.leg_dispersion_bps must be in [0,10000] (0 = tolerance_bps), got %d",
+			ErrInvalidConfig, c.LegDispersionBps)
+	}
+	if c.ReleaseBandPct < 0 || c.ReleaseBandPct > 100 {
+		return fmt.Errorf("%w: aggregate.composite_reference.release_band_pct must be in [0,100] (0 = default), got %v",
+			ErrInvalidConfig, c.ReleaseBandPct)
+	}
 	if c.FXMaxAgeHours < 0 {
 		return fmt.Errorf("%w: aggregate.composite_reference.fx_max_age_hours must be >= 0 (0 = default), got %d",
 			ErrInvalidConfig, c.FXMaxAgeHours)

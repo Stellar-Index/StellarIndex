@@ -39,6 +39,10 @@ type compositeRefScenario struct {
 	// base): 10_000_000 = 0.10 (flat), 15_000_000 = 0.15 (moved +50%
 	// with the venue).
 	legPriceT2 int64
+	// legSecondVenueQuoteT2, when non-zero, is the quote every leg venue
+	// AFTER the first prints on ticks 2+3 — a venue disagreement on the
+	// leg (A1 leg-dispersion guard).
+	legSecondVenueQuoteT2 int64
 	// fxObservedAge is how old the FX snap is at evaluation.
 	fxObservedAge time.Duration
 	// fxSource is the FX snap's provider label.
@@ -106,8 +110,12 @@ func runCompositeRefScenario(t *testing.T, sc compositeRefScenario) compositeRef
 
 	setTrades := func(legQuote, targetQuote int64, ts time.Time) {
 		leg := make([]canonical.Trade, 0, len(sc.legSources))
-		for _, src := range sc.legSources {
-			leg = append(leg, makeTradeOn(t, xlmUSD, src, 100_000_000, legQuote, ts))
+		for i, src := range sc.legSources {
+			q := legQuote
+			if i > 0 && sc.legSecondVenueQuoteT2 != 0 && legQuote != 10_000_000 {
+				q = sc.legSecondVenueQuoteT2
+			}
+			leg = append(leg, makeTradeOn(t, xlmUSD, src, 100_000_000, q, ts))
 		}
 		target := make([]canonical.Trade, 0, len(sc.targetSources))
 		for _, src := range sc.targetSources {
@@ -470,5 +478,172 @@ func TestCompositeReference_RefreshOrderPutsLegsFirst(t *testing.T) {
 		if !got[i].Base.Equal(want[i].Base) || !got[i].Quote.Equal(want[i].Quote) {
 			t.Fatalf("mechanism on: order = %v, want %v", got, want)
 		}
+	}
+}
+
+// TestCompositeReference_LegDispersionCannotCorroborate (A1) — XLM/USD
+// has two venues on the bucket, but they DISAGREE: Kraken 0.15 and
+// Coinbase 0.1545 (+3 %). The leg VWAP sits 150 bps from each venue,
+// above leg_dispersion_bps (= tolerance, 75), so two venues do not
+// count as two: the reference is UNAVAILABLE, the single-venue spike
+// still freezes, and the dispersion is in the reason. The agreeing
+// two-venue case is TestCompositeReference_MarketWideMoveDoesNotFreeze.
+func TestCompositeReference_LegDispersionCannotCorroborate(t *testing.T) {
+	res := runCompositeRefScenario(t, compositeRefScenario{
+		legSources:            []string{"kraken", "coinbase"},
+		legPriceT2:            15_000_000,
+		legSecondVenueQuoteT2: 15_450_000, // +3 % on the second venue
+		fxObservedAge:         time.Hour,
+		fxSource:              "massive",
+		targetSources:         []string{"soroswap"},
+		enabled:               true,
+	})
+	assertUnavailableFroze(t, res, "composite_unavailable: leg_dispersion=")
+	reason := res.marker.marks[0].decision.Reason
+	if !strings.Contains(reason, "composite_leg_dispersion_bps={crypto:XLM/fiat:USD:1") {
+		t.Errorf("reason %q should carry the leg dispersion (~148 bps)", reason)
+	}
+	if g := testutil.ToFloat64(obs.AggregatorCompositeReferenceLegDispersionBps.WithLabelValues(
+		res.xlmGBP.String(), res.window.String(), res.xlmUSD.String())); g < 100 || g > 200 {
+		t.Errorf("composite_reference_leg_dispersion_bps{leg=XLM/USD} = %v, want ~148", g)
+	}
+}
+
+// TestCompositeReference_LegDispersionBoundary pins the guard on the
+// evaluator: dispersion at the band corroborates, just above it does
+// not, and the leg VWAP / sources are otherwise identical.
+func TestCompositeReference_LegDispersionBoundary(t *testing.T) {
+	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
+	usdGBP := mkPair(t, "fiat", "USD", "fiat", "GBP")
+	xlmGBP := mkPair(t, "crypto", "XLM", "fiat", "GBP")
+	window := time.Minute
+	now := time.Now().UTC()
+	fx := &fakeFXStore{quote: big.NewRat(80, 100), observedAt: now.Add(-time.Hour), source: "massive"}
+	o := New(nil, nil, Config{
+		Windows:            []time.Duration{window},
+		Triangulations:     []TriangulationChain{{Target: xlmGBP, Legs: []canonical.Pair{xlmUSD, usdGBP}}},
+		FXStore:            fx,
+		CompositeReference: CompositeReferenceConfig{Enabled: true, Targets: []canonical.Pair{xlmGBP}},
+	})
+	for _, tc := range []struct {
+		name       string
+		dispersion *big.Rat
+		want       compositeVerdict
+	}{
+		{"none", nil, compositeVerdictCorroborated},
+		{"at_75bps", big.NewRat(75, 10_000), compositeVerdictCorroborated},
+		{"at_76bps", big.NewRat(76, 10_000), compositeVerdictUnavailable},
+		{"3pct", big.NewRat(300, 10_000), compositeVerdictUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o.tickLegRefs = map[time.Duration]map[string]legRef{
+				window: {xlmUSD.String(): {price: big.NewRat(10, 100), sources: 2, dispersion: tc.dispersion}},
+			}
+			ref := o.resolveCompositeReference(context.Background(), xlmGBP, window, now, big.NewRat(8, 100))
+			if ref.verdict != tc.want {
+				t.Errorf("verdict %q (unavailable=%q), want %q", ref.verdict, ref.unavailable, tc.want)
+			}
+			if tc.want == compositeVerdictUnavailable && !strings.HasPrefix(ref.unavailable, "leg_dispersion=") {
+				t.Errorf("unavailable = %q, want leg_dispersion=…", ref.unavailable)
+			}
+		})
+	}
+}
+
+// TestLegDispersion_MeasuresWorstVenue pins the statistic itself on the
+// survivor slice: equal-size prints at 0.15 and 0.1545 give a leg VWAP
+// of 0.15225 and a worst venue deviation of 0.00225/0.15225 ≈ 147.8 bps.
+func TestLegDispersion_MeasuresWorstVenue(t *testing.T) {
+	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
+	o := New(nil, nil, Config{})
+	now := time.Now()
+	trades := []canonical.Trade{
+		makeTradeOn(t, xlmUSD, "kraken", 100_000_000, 15_000_000, now),
+		makeTradeOn(t, xlmUSD, "coinbase", 100_000_000, 15_450_000, now),
+	}
+	vwap, err := o.computeNormalizedVWAP(trades, xlmUSD)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := ratBps(o.legDispersion(xlmUSD, trades, vwap))
+	if got < 147.7 || got > 147.9 {
+		t.Errorf("dispersion = %.3f bps, want ≈147.8", got)
+	}
+	if o.legDispersion(xlmUSD, trades[:1], vwap) != nil {
+		t.Error("single-venue slice must report no dispersion (nil)")
+	}
+}
+
+// TestCompositeReference_ReleaseBandHoldsVenueOffset (A2) — after a
+// venue-specific freeze, the venue settles at a HELD +4 % offset from
+// the (flat) composite: calm per-tick returns, but the dedicated 2 %
+// composite release band refuses it, so the hold is kept past the
+// initial 30 min. When the venue genuinely comes back to within 2 %
+// the streak earns the auto-release. With the shared 5 % band the
+// +4 % offset would have released (red proof).
+func TestCompositeReference_ReleaseBandHoldsVenueOffset(t *testing.T) {
+	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
+	usdGBP := mkPair(t, "fiat", "USD", "fiat", "GBP")
+	xlmGBP := mkPair(t, "crypto", "XLM", "fiat", "GBP")
+	window := time.Minute
+	clock := time.Now().UTC()
+
+	store := &mockStore{perPair: map[string][]canonical.Trade{}}
+	cache, _ := newTestRedis(t)
+	marker := &recordingFreezeMarker{}
+	fx := &fakeFXStore{quote: big.NewRat(80, 100), observedAt: clock.Add(-time.Hour), source: "massive"}
+	o := New(store, cache, Config{
+		Pairs:          []canonical.Pair{xlmUSD, xlmGBP},
+		Windows:        []time.Duration{window},
+		Interval:       time.Hour,
+		Triangulations: []TriangulationChain{{Target: xlmGBP, Legs: []canonical.Pair{xlmUSD, usdGBP}}},
+		FXStore:        fx,
+		FreezeWriter:   marker,
+		Baselines: stubBaselineSource{
+			multi:      baseline.MultiBaseline{Day30: &baseline.Baseline{Median: 0, MAD: 0.01, N: 100_000}},
+			computedAt: clock,
+		},
+		CompositeReference: CompositeReferenceConfig{Enabled: true, Targets: []canonical.Pair{xlmGBP}},
+	})
+	o.clock = func() time.Time { return clock }
+	stateKey := xlmGBP.String() + ":" + window.String()
+	tick := func(targetQuote int64) {
+		t.Helper()
+		ts := clock.Add(-10 * time.Second)
+		store.perPair[xlmUSD.String()] = []canonical.Trade{
+			makeTradeOn(t, xlmUSD, "kraken", 100_000_000, 10_000_000, ts),
+			makeTradeOn(t, xlmUSD, "coinbase", 100_000_000, 10_000_000, ts),
+		}
+		store.perPair[xlmGBP.String()] = []canonical.Trade{
+			makeTradeOn(t, xlmGBP, "soroswap", 100_000_000, targetQuote, ts),
+		}
+		if err := o.Tick(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		clock = clock.Add(time.Minute)
+	}
+	active := func() bool { return o.freezeStates[stateKey].Active() }
+
+	tick(8_000_000)  // warm: 0.08 == composite
+	tick(12_000_000) // venue-specific +50 % → refuted → freeze
+	if !active() {
+		t.Fatal("setup: the venue-specific spike did not freeze")
+	}
+	clock = clock.Add(31 * time.Minute) // past the 30-min initial hold
+	for i := 0; i < 5; i++ {
+		tick(8_320_000) // held +4 % vs composite 0.08 — calm, but venue-specific
+	}
+	if !active() {
+		t.Fatal("held +4 % venue-specific offset AUTO-RELEASED — the composite release band (2 %) must refuse it")
+	}
+	if st := o.freezeStates[stateKey]; st.UnfreezeStreak != 0 {
+		t.Errorf("unfreeze streak = %d on a +4 %% offset, want 0", st.UnfreezeStreak)
+	}
+	for i := 0; i < 4; i++ {
+		tick(8_120_000) // genuine move back to +1.5 % — inside the band
+	}
+	if active() {
+		t.Fatal("venue back within 2 % of the composite did NOT auto-release — the positive path is broken, " +
+			"so the negative assertion above is vacuous")
 	}
 }

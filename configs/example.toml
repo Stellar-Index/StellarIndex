@@ -250,6 +250,8 @@ enabled          = true
 targets          = ["crypto:XLM/fiat:GBP", "crypto:XLM/fiat:EUR"]
 tolerance_bps    = 75    # |direct - composite| / composite, basis points
 min_leg_sources  = 2     # distinct real venues the crypto/USD leg needs on the bucket
+leg_dispersion_bps = 0   # every leg venue's VWAP must be within this of the leg VWAP; 0 = tolerance_bps
+release_band_pct = 2.0   # mid-hold auto-release band vs the composite (tighter than the shared 5%)
 fx_max_age_hours = 76    # fx_quotes buckets are daily + pause over market closes (Chainlink FX precedent)
 
 # ──────────────────────────────────────────────────────────────────

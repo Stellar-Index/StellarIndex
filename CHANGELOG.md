@@ -48,7 +48,18 @@ against.
   multi-venue differential, exact-Rat tolerance boundary, refresh
   order) plus the unchanged
   `TestRouterFreeze_TwoRoutesSuppressSingleSourceFreeze` 3-tick control
-  (#246).
+  (#246). Verifier advisories (same day): **A1** leg-dispersion guard —
+  every venue's own bucket VWAP on the crypto/USD leg must be within
+  `leg_dispersion_bps` (default = `tolerance_bps`) of the leg VWAP,
+  else `composite_unavailable: leg_dispersion=…` (two venues only count
+  as two when they agree; gauge
+  `stellarindex_aggregator_composite_reference_leg_dispersion_bps`);
+  **A2** the mid-hold release lens for a resolved reference uses a
+  dedicated `release_band_pct` (default 2.0), not the shared 5 %
+  cross-oracle band — a held +4 % venue-specific offset no longer
+  auto-releases (`TestCompositeReference_ReleaseBandHoldsVenueOffset`,
+  `…_LegDispersionCannotCorroborate`, `…_LegDispersionBoundary`,
+  `TestLegDispersion_MeasuresWorstVenue`).
 
 - **Oracle capture-totality PR-2 — decoders record unmapped symbols
   as `raw:` rows.** The Reflector (dex/cex/fx), RedStone and Band

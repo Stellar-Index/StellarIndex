@@ -45,10 +45,14 @@ either can emit `ActionFreeze`:
    `composite_refuted` = the deep XLM/USD × USD/GBP composite did NOT
    move with the venue → lean "venue-specific" (manipulation or a venue
    artifact). `composite_unavailable: <cause>` = the reference could
-   not be built (thin XLM/USD leg, FX snap stale / not FX-class, leg not
+   not be built (thin XLM/USD leg, leg venues disagreeing —
+   `leg_dispersion=…bps`, FX snap stale / not FX-class, leg not
    refreshed) → the freeze fired on the venue's own print exactly as
-   before; check `stellarindex_aggregator_composite_corroboration` and
-   `..._composite_reference_leg_sources`. A bucket the composite
+   before; check `stellarindex_aggregator_composite_corroboration`,
+   `..._composite_reference_leg_sources` and
+   `..._composite_reference_leg_dispersion_bps`. Mid-hold, a resolved
+   reference releases only within `release_band_pct` (2 %) of the
+   composite — a venue parked at +4 % stays frozen and walks the ladder. A bucket the composite
    CORROBORATED never reaches this runbook — it is not frozen; it
    increments `stellarindex_aggregator_composite_freeze_suppressed_total`
    and logs `phase2 freeze suppressed`. `sources=` is always the real
