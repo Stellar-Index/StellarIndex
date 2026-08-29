@@ -1,6 +1,6 @@
 ---
 title: Runbook — zfs-degraded
-last_verified: 2026-08-28
+last_verified: 2026-08-29
 status: current
 severity: P1
 ---
@@ -17,13 +17,16 @@ severity: P1
 | Typical MTTR | 30 min – hours (resilver time depends on data size) |
 | Impact | The `data` pool is **raidz1 — SINGLE parity**. It tolerates exactly ONE drive failure, so at DEGRADED there is **ZERO remaining redundancy**: one FAULTED drive IS the edge, and any second failure (or an unrecoverable read error during resilver) means data loss. Reads and writes still serve while DEGRADED — do not mistake that for margin. |
 
-> TODO(ash): `zpool status data` on r1 to settle raidz1 (asserted by
-> both rule trees' descriptions and `docs/architecture/ha-plan.md`
-> "4× 7.68 TB NVMe, raidz1") vs the ansible default `raidz2`
-> (`configs/ansible/roles/archival-node/defaults/main.yml:80`
-> `zfs_data_pool_type: "raidz2"` — which a pool created before /
-> outside the role would not reflect). Either way this runbook must
-> not promise two-failure tolerance.
+> **Settled 2026-08-29 (#289): raidz1.** The ansible *default* is
+> raidz2, but that default describes a fresh archival node, never r1 —
+> r1's inventory pins `zfs_data_pool_type: "raidz1"`, matching the
+> 2026-07-17 live review ("ZFS raidz1 (single parity, NOT raidz2)",
+> `docs/audit/audit-2026-07-16/go-live-master-plan.md` §5) and commit
+> `ca2f4748`. Capacity settles it without host access too: the ~16.8 TB
+> live footprint measured that day does not fit the ~13.85 TB a
+> second parity drive would leave. `scripts/ci/lint-docs.sh` §18 now
+> lints every r1-scoped file against the inventory, so this cannot
+> drift back. This runbook must never promise two-failure tolerance.
 
 ## Symptoms
 
@@ -135,12 +138,17 @@ ssh root@136.243.90.96 'zpool status data | grep -A5 resilver'
 
 ## Changelog
 
+- 2026-08-29 — the raidz1-vs-raidz2 TODO is **settled: raidz1** (#289).
+  r1's inventory now pins `zfs_data_pool_type: "raidz1"` and is the
+  linted authority (`scripts/ci/lint-docs.sh` §18); the role's raidz2
+  default is documented as fresh-node-only. Nothing in the procedure
+  below changes — it was already written for single parity.
 - 2026-08-28 — re-verified against HEAD. Pool is raidz1 (single
   parity), not raidz2: at DEGRADED there is zero remaining
   redundancy, so the "verify remaining margin" step became escalate
   immediately + quiesce heavy writers + treat resilver as a race
-  (TODO(ash) left to settle raidz1 vs the ansible raidz2 default on
-  the host). Metric expr replaced with the real
+  (the raidz1-vs-raidz2-default question that left open was settled
+  on 2026-08-29, above). Metric expr replaced with the real
   `node_zfs_zpool_state{state=~"degraded|..."}` (F-1329 repoint;
   lowercase states, `zpool` label, `for: 60s`). Pool name `tank` →
   `data`, vdev `raidz2-0` → `raidz1-0`; "failover-to-replica" → the

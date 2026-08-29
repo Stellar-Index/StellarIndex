@@ -698,6 +698,10 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			"ttl", cachekeys.CatalogueListTTL.String())
 	}
 
+	// Who this deployment says it is on /v1/status. Both halves were
+	// hardcoded before #328 — see statusIdentity.
+	statusRegion, statusDeployment, statusServices := statusIdentity(cfg)
+
 	// Status backend — points /v1/status at a local Prometheus when
 	// configured. Empty URL leaves the endpoint serving an
 	// in-process surface (region label + uptime only).
@@ -1371,8 +1375,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		RequestTimeout:       cfg.API.RequestTimeout,
 		StatusBackend:        statusBackend,
 		ArchiveReportPath:    cfg.API.ArchiveReportPath,
-		RegionName:           cfg.Region.ID,
-		RegionDeployment:     "production",
+		RegionName:           statusRegion,
+		RegionDeployment:     statusDeployment,
+		StatusServices:       statusServices,
 		DashboardAuth:        nilOrMounter(dashboardBundle.auth),
 		DashboardKeys:        nilOrMounter(dashboardBundle.keys),
 		DashboardWebhooks:    nilOrMounter(dashboardBundle.webhooks),
@@ -4256,6 +4261,24 @@ func touchUsageMiddlewareOrNil(keys platform.APIKeyStore, rdb redis.UniversalCli
 	}
 	debouncer := auth.NewRedisTouchDebouncer(rdb, 0)
 	return middleware.TouchUsage(keys, debouncer, logger.With("component", "touch-usage"))
+}
+
+// statusIdentity projects the operator's config onto the three
+// /v1/status identity inputs: the region label, the deployment TIER,
+// and the background services whose heartbeats the roll-up judges.
+//
+// #328: both of the last two were hardcoded at the Options
+// construction site — `RegionDeployment: "production"` and, inside the
+// handler, a literal {"indexer","aggregator"} service list. On the lean
+// test nets that meant api.testnet.stellarindex.io answered /v1/status
+// with `"deployment":"production"` (the explorer's status page tagged a
+// test net PRODUCTION) and pinned `overall` at "degraded" forever
+// waiting on an aggregator that deployment deliberately does not run
+// (inventory `run_aggregator: false`). Both are operator facts about
+// the deployment, so both come from config; the pubnet defaults
+// ("production", indexer+aggregator) keep r1's wire contract identical.
+func statusIdentity(cfg config.Config) (region, deployment string, services []string) {
+	return cfg.Region.ID, cfg.Region.Deployment, cfg.API.StatusServices
 }
 
 // usageReaderOrNil returns a v1.UsageReader bound to `c` when

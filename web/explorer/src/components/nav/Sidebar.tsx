@@ -36,7 +36,8 @@ import { cn } from '@/lib/cn';
 import { useDialog } from '@/lib/useDialog';
 import { StellarMark } from '@/components/StellarMark';
 import { NetworkSwitcher } from './NetworkSwitcher';
-import { CURRENT_NETWORK, CURRENT_NETWORK_ID } from '@/lib/networks';
+import { availableRoutes } from '@/lib/network-routes';
+import { CURRENT_NETWORK } from '@/lib/networks';
 import { SearchModal } from './SearchModal';
 
 type NavItem = {
@@ -91,29 +92,22 @@ const NAV: NavGroup[] = [
   },
 ];
 
-// The lean test-net explorers (SDEX-only, no aggregator/pricing) carry no
-// oracles, aggregator-derived insights, or external CEX/FX markets/assets —
-// hide those rail surfaces so the nav reflects what the network actually has.
-// The whole External group drops once it is empty.
+// Which rail surfaces a network actually has is declared ONCE, in
+// lib/network-routes (#328): the rail's own hidden-href set had drifted
+// from the footer's, from search's and from the sitemap's, so /anomalies,
+// /divergences and /mev were gated in some and not others. The whole
+// External group drops once every item in it is filtered out.
 //
-// /protocols is deliberately NOT hidden. Measured 2026-08-27 on both test nets:
+// /protocols is deliberately NOT gated. Measured 2026-08-27 on both test nets:
 // blend has 3 contracts and 2 factories there, while soroswap / aquarius /
 // phoenix / comet / defindex / sorocredit are all 0. Those zeros come from
 // on-chain contract DISCOVERY (independent of stellarindex_enabled_sources), so
 // they are a genuine absence rather than a config artifact — but blend is real
 // data, and hiding the whole page to suppress the empty rows threw it away.
 // ProtocolsIndex filters the zero-count rows on lean nets instead.
-const TESTNET_HIDDEN_HREFS = new Set([
-  '/oracles',
-  '/insights',
-  '/exchanges',
-  '/external/assets',
-]);
-
 function navForNetwork(groups: NavGroup[]): NavGroup[] {
-  if (CURRENT_NETWORK_ID === 'mainnet') return groups;
   return groups
-    .map((g) => ({ ...g, items: g.items.filter((it) => !TESTNET_HIDDEN_HREFS.has(it.href)) }))
+    .map((g) => ({ ...g, items: availableRoutes(g.items) }))
     .filter((g) => g.items.length > 0);
 }
 

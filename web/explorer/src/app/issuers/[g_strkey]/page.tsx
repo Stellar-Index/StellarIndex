@@ -12,6 +12,7 @@ import { formatCompact, formatPriceSmall, formatRelative } from '@/lib/format';
 import { isSafeHomeDomain } from '@/lib/safe-domain';
 import { ogImageFor } from '@/lib/seo';
 import { StellarExpertLink } from '@/components/StellarExpertLink';
+import { routeAvailable } from '@/lib/network-routes';
 import { CURRENT_NETWORK, stellarChainEntityUrl } from '@/lib/networks';
 
 /**
@@ -207,6 +208,13 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
   // Sum per-asset 24h USD volume from the parallel /v1/coins?issuer= fetch.
   // null/missing volumes drop out cleanly; the panel renders "—" when
   // every asset row had no recent USD-priced trade.
+  // #328: every USD figure on this page — the "24h volume" tile and the
+  // Price / 24h % / 24h volume / Market cap columns of the issued-asset
+  // table — comes from the aggregator. On a net that runs none they are
+  // all null, so the issuer page showed a dash tile above a table that was
+  // more than half em-dashes. Hide them; the chain-native columns
+  // (circulating supply, observations, first-seen ledger) stay.
+  const pricing = CURRENT_NETWORK.pricing;
   let totalVolume24hUSD = 0;
   let anyVolume = false;
   for (const a of assets ?? []) {
@@ -316,10 +324,12 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
         >
           <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
             <Stat label="Assets" value={assets ? String(assets.length) : '—'} />
-            <Stat
-              label="24h volume"
-              value={anyVolume ? `$${formatCompact(totalVolume24hUSD)}` : '—'}
-            />
+            {pricing && (
+              <Stat
+                label="24h volume"
+                value={anyVolume ? `$${formatCompact(totalVolume24hUSD)}` : '—'}
+              />
+            )}
             <Stat
               label="Total observations"
               value={totalObs != null ? formatCompact(totalObs) : '—'}
@@ -443,10 +453,10 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
               <thead>
                 <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
                   <Th>Code</Th>
-                  <Th align="right">Price</Th>
-                  <Th align="right">24h %</Th>
-                  <Th align="right">24h volume</Th>
-                  <Th align="right">Market cap</Th>
+                  {pricing && <Th align="right">Price</Th>}
+                  {pricing && <Th align="right">24h %</Th>}
+                  {pricing && <Th align="right">24h volume</Th>}
+                  {pricing && <Th align="right">Market cap</Th>}
                   <Th align="right">Circulating</Th>
                   <Th align="right">Observations</Th>
                   <Th align="right">First seen</Th>
@@ -467,26 +477,36 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
                         <span className="text-ink-muted ml-2 font-mono text-[11px]">
                           {a.slug}
                         </span>
-                        <Link
-                          href={`/markets?asset=${encodeURIComponent(a.asset_id)}`}
-                          className="text-brand-600 ml-2 text-[11px] hover:underline"
-                          title={`All markets for ${a.code}`}
-                        >
-                          markets →
-                        </Link>
+                        {routeAvailable('/markets') && (
+                          <Link
+                            href={`/markets?asset=${encodeURIComponent(a.asset_id)}`}
+                            className="text-brand-600 ml-2 text-[11px] hover:underline"
+                            title={`All markets for ${a.code}`}
+                          >
+                            markets →
+                          </Link>
+                        )}
                       </Td>
-                      <Td align="right">
-                        <PriceCell raw={coin?.price_usd} />
-                      </Td>
-                      <Td align="right">
-                        <ChangeCell raw={coin?.change_24h_pct} />
-                      </Td>
-                      <Td align="right">
-                        <UsdVolumeCell raw={coin?.volume_24h_usd} />
-                      </Td>
-                      <Td align="right">
-                        <UsdVolumeCell raw={coin?.market_cap_usd} />
-                      </Td>
+                      {pricing && (
+                        <Td align="right">
+                          <PriceCell raw={coin?.price_usd} />
+                        </Td>
+                      )}
+                      {pricing && (
+                        <Td align="right">
+                          <ChangeCell raw={coin?.change_24h_pct} />
+                        </Td>
+                      )}
+                      {pricing && (
+                        <Td align="right">
+                          <UsdVolumeCell raw={coin?.volume_24h_usd} />
+                        </Td>
+                      )}
+                      {pricing && (
+                        <Td align="right">
+                          <UsdVolumeCell raw={coin?.market_cap_usd} />
+                        </Td>
+                      )}
                       <Td align="right">
                         <span className="font-mono tabular-nums">
                           {/* Scale by the asset's OWN decimals — the old

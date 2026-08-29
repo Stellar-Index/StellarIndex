@@ -21,11 +21,13 @@ export default function HomePage() {
   // render empty grids / retry-storm the pricing endpoints. Hide them there;
   // the chain-native panels below stay.
   const pricing = CURRENT_NETWORK.pricing;
-  // Futurenet is contracts-only (0 assets, 0 SDEX trades) — its "Top assets"
-  // grid and "Recent trades" feed are genuinely empty there, so hide them.
+  // "Top assets" needs the network to HAVE issued assets. That was an
+  // `id === 'futurenet'` special case living on the homepage alone (#328),
+  // so the nav still offered the same empty /assets + /sdex surfaces; the
+  // fact is now a NetworkInfo capability every surface reads.
   // (Recent trades also seeds pairs from the empty /v1/markets on testnet, so
   // gate it on pricing; the contracts/ledgers/accounts surfaces stay on both.)
-  const isFuturenet = CURRENT_NETWORK.id === 'futurenet';
+  const hasAssets = CURRENT_NETWORK.hasAssets;
   return (
     <Container className="space-y-12 py-10 sm:py-14">
       <header className="max-w-3xl space-y-5">
@@ -107,7 +109,7 @@ export default function HomePage() {
         </Link>
       </section>
 
-      {!isFuturenet && <HomeTopAssets />}
+      {hasAssets && <HomeTopAssets />}
 
       {pricing && <HomeCurrencies />}
 

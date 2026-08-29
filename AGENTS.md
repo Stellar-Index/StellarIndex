@@ -1,7 +1,10 @@
 # AGENTS.md — Stellar Index
 
-> Generic AI-agent orientation file. This repo's full map lives in
-> [CLAUDE.md](CLAUDE.md) (same content, Claude-convention naming).
+> Generic AI-agent orientation file — a short digest, not a second
+> map. The full repo orientation (layout, invariants, task recipes,
+> footguns) lives in [CLAUDE.md](CLAUDE.md), which is the source of
+> truth wherever the two overlap; the overlapping command block below
+> is copied from it verbatim and CI enforces that (lint-docs §18a).
 > Use whichever your agent scaffolding prefers.
 
 ## Docs index
@@ -39,12 +42,12 @@ Short form:
 ## Quick-start commands
 
 ```sh
-make help              # list every target
-make dev               # docker-compose up the full stack
-make lint              # gofumpt + golangci-lint (architectural import boundaries: `make lint-imports`)
-make test              # unit tests with race
-make verify            # canonical pre-push gate (fmt, vet, lint, docs, test) — short of integration + load + chaos
-make docs-all          # regenerate reference docs from OpenAPI + struct tags + obs/*.go metric Name: fields
+make help              # list all targets
+make dev               # docker-compose up the local dependency stack (TimescaleDB + Redis + MinIO); the app binaries run on the host, and there is no API/ClickHouse service in the compose file
+make lint              # golangci-lint (gofumpt runs as a golangci formatter; architectural import boundaries enforced by scripts/ci/lint-imports.sh)
+make test              # unit tests (fast; ~2 min)
+make verify            # canonical pre-push gate (fmt, vet, lint, docs, vuln, test) — run this before every push
+make docs-all          # regenerate docs/reference/ from OpenAPI + struct tags (the metrics reference is hand-edited; drift-guarded by lint-docs, not generated)
 ```
 
 ## No orphan work — the contract

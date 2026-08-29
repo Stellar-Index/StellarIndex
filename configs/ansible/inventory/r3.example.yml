@@ -14,8 +14,9 @@
 #   - postgres + galexie-live (rolling ~30 days) + captive-core
 #     state + OS sit on local NVMe (RAID-1 = ~1.92 TB usable).
 #   - ZFS mirror across the 2 NVMes (single-drive failure tolerance —
-#     acceptable for an async DR replica; r1's raidz2 is the
-#     two-drive-tolerance integrity leader).
+#     acceptable for an async DR replica; r1's raidz1 carries the same
+#     single-drive margin and leads on verification coverage, not
+#     parity).
 #   - Verify-archive Tier A + D run weekly here; Tier B + E
 #     delegated to r1.
 
@@ -45,7 +46,7 @@ all:
     zfs_data_devices:
       - /dev/disk/by-id/nvme-VULTR_NVME_SERIAL0    # replace
       - /dev/disk/by-id/nvme-VULTR_NVME_SERIAL1    # replace
-    zfs_data_pool_type:  "mirror"      # 2-drive mirror, NOT raidz2
+    zfs_data_pool_type:  "mirror"      # 2-drive mirror; not the role default
     zfs_data_pool_name:  "data"
 
     # ───── Roles colocated on this host ────────────────────────────

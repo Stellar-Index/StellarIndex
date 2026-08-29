@@ -143,7 +143,7 @@ scrape_configs:
 
   # MinIO cluster metrics — Bearer-token auth (per the bucket-level
   # `mc admin prometheus generate` output), so the operator wires
-  # the bearer token via a bearer_token_file rendered by ansible.
+  # the bearer token into a bearer_token_file BY HAND.
   # Path differs from /metrics (the v2 path).
   - job_name: minio
     metrics_path: /minio/v2/metrics/cluster
@@ -152,8 +152,12 @@ scrape_configs:
         labels:
           host: r1
           service: minio
-    # Bearer token rendered by ansible into /etc/prometheus/minio.token
-    # — operator step. Until that file exists this job 401s; the
-    # absence-of-series surfaces via meta.yml and the operator gets
-    # a clear "wire the token" signal.
+    # /etc/prometheus/minio.token is an OPERATOR-MINTED file: no ansible
+    # task owns it (verified 2026-08-29 — 09-minio.yml never mentions it;
+    # the gap is tracked in docs/operations/credential-rotation.md and the
+    # minio-metrics-403 runbook). Until the file exists this job 401s; the
+    # absence-of-series surfaces via meta.yml
+    # (stellarindex_minio_exporter_down, page) and the operator gets a
+    # clear "wire the token" signal.
+    # Procedure: docs/operations/runbooks/minio-metrics-403.md
     bearer_token_file: /etc/prometheus/minio.token

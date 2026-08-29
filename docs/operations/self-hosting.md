@@ -98,7 +98,7 @@ node ([r1-deployment-state.md](r1-deployment-state.md),
 |---|---|
 | SDF history archive mirror (`stellar-archivist mirror`, genesis→tip) | **~7.0 TB** |
 | Galexie historical ledger-meta mirror (`galexie-archive`, 974 partitions as of 2026-04-26) | **~4.76 TB** |
-| r1's total ZFS pool (raidz2, 4× 7.68 TB NVMe) | ~13.3 TB usable |
+| r1's total ZFS pool (raidz1 — single parity, 4× 7.68 TB NVMe) | ~18.3 TB (~16.8 TiB) usable |
 | r1's RAM | 192 GB DDR5 ECC |
 
 The [hardware spec doc](../architecture/infrastructure/archival-node-spec.md)

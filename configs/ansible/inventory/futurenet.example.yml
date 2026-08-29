@@ -21,6 +21,8 @@ all:
     region_id:           "futurenet"
     region_name:         "FSN-futurenet"
     home_domain:         "stellarindex.io"
+    # /v1/status region.deployment — this is NOT production (#328).
+    region_deployment:   "futurenet"
     archival_node_min_ram_mb: 18000
 
     # ── THE network switch ──

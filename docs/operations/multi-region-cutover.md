@@ -101,8 +101,9 @@ L4.14 ✅ when these all pass + the row in
    ~$25/mo for 5 TB. Set `r3.yml`'s
    `galexie_archive_endpoint` to the bucket URL.
 3. **ZFS mirror across the 2 NVMes** — single-drive failure
-   tolerance, acceptable for an async DR replica (R1's
-   raidz2 is the integrity leader).
+   tolerance, acceptable for an async DR replica. R1 is the
+   integrity leader by verification coverage, not by parity: its
+   own pool is raidz1, the same single-drive margin.
 
 ### Deploy
 

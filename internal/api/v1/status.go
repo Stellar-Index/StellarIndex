@@ -479,14 +479,11 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	if s.statusBackend == nil {
 		// No metrics backend wired — return the in-process surface.
-		// Indexer + aggregator heartbeats are unknown, and so is the
+		// Every background heartbeat is unknown, and so is the
 		// incidents signal: with no Alertmanager query, zero counts
 		// are absence-of-signal, not an all-clear.
 		out.IncidentsStatus = incidentsStatusUnknown
-		out.Services = append(out.Services,
-			StatusService{Name: "indexer", Status: "unknown"},
-			StatusService{Name: "aggregator", Status: "unknown"},
-		)
+		out.Services = append(out.Services, unknownServices(s.statusServices)...)
 		out.Overall = rollupOverall(out.Services, false, false, false)
 		writeJSON(w, out, Flags{Stale: out.Overall != "ok"})
 		return
@@ -514,25 +511,12 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	go func() { defer wg.Done(); incidents, incErr = s.statusBackend.Incidents(ctx) }()
 	wg.Wait()
 
-	// Indexer + aggregator heartbeats. A heartbeat older than
-	// 60 s flags the service down. If the metrics backend is
-	// unreachable, the heartbeat is "unknown".
-	now := time.Now().UTC()
-	staleAfter := 60 * time.Second
-	for _, name := range []string{"indexer", "aggregator"} {
-		svc := StatusService{Name: name, Status: "unknown"}
-		if hbErr == nil {
-			if t, ok := hb[name]; ok && !t.IsZero() {
-				svc.LastSeen = t
-				if now.Sub(t) <= staleAfter {
-					svc.Status = "ok"
-				} else {
-					svc.Status = "down"
-				}
-			}
-		}
-		out.Services = append(out.Services, svc)
+	// Background-service heartbeats — the services this deployment
+	// declares it runs (s.statusServices; #328).
+	if hbErr != nil {
+		hb = nil
 	}
+	out.Services = append(out.Services, heartbeatServices(s.statusServices, hb)...)
 
 	if latErr == nil {
 		out.Latency = latency
@@ -573,6 +557,49 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	// every per-service entry.
 	writeJSON(w, out, Flags{Stale: out.Overall != "ok"})
 }
+
+// unknownServices projects the deployment's declared background-service
+// list onto all-unknown entries, for the no-metrics-backend surface: we
+// have no signal about any of them, which rollupOverall turns into a
+// non-"ok" overall rather than a silent all-clear.
+func unknownServices(names []string) []StatusService {
+	out := make([]StatusService, 0, len(names))
+	for _, name := range names {
+		out = append(out, StatusService{Name: name, Status: "unknown"})
+	}
+	return out
+}
+
+// heartbeatServices grades each DECLARED background service against the
+// heartbeat map. A heartbeat older than statusHeartbeatStaleAfter flags
+// the service down; a missing (or zero) heartbeat — including the whole
+// map being nil because the query failed — leaves it "unknown", which is
+// partial visibility rather than an all-clear.
+//
+// Only the declared services are graded (#328): a service this deployment
+// does not run has no heartbeat by design, and reporting it forever
+// "unknown" pinned `overall` at "degraded" on every lean test net.
+func heartbeatServices(names []string, hb map[string]time.Time) []StatusService {
+	now := time.Now().UTC()
+	out := make([]StatusService, 0, len(names))
+	for _, name := range names {
+		svc := StatusService{Name: name, Status: "unknown"}
+		if t, ok := hb[name]; ok && !t.IsZero() {
+			svc.LastSeen = t
+			if now.Sub(t) <= statusHeartbeatStaleAfter {
+				svc.Status = "ok"
+			} else {
+				svc.Status = "down"
+			}
+		}
+		out = append(out, svc)
+	}
+	return out
+}
+
+// statusHeartbeatStaleAfter is how old a background service's heartbeat
+// may be before /v1/status calls it down.
+const statusHeartbeatStaleAfter = 60 * time.Second
 
 // rollupOverall computes the customer-facing `overall` field from
 // the per-service rollup plus the two cross-cutting signals
