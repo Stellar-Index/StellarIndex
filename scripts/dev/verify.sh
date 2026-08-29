@@ -39,6 +39,7 @@ fi
 
 echo "=== Format ==="        && make fmt
 echo "=== Vet ==="           && make vet
+echo "=== golangci config schema ===" && go run ./scripts/ci/lint-golangci-config
 echo "=== Lint ==="          && make lint
 echo "=== Docs ==="          && ./scripts/ci/lint-docs.sh
 echo "=== Imports ==="       && ./scripts/ci/lint-imports.sh

@@ -41,6 +41,7 @@ require (
 	github.com/go-webauthn/webauthn v0.17.4
 	github.com/google/uuid v1.6.0
 	github.com/prometheus/client_model v0.6.2
+	github.com/xeipuuv/gojsonschema v1.2.0 // JSON-Schema validation for scripts/ci/lint-golangci-config (offline .golangci.yml check, #317); already in the graph via go-stellar-sdk
 	go.uber.org/goleak v1.3.0
 	golang.org/x/crypto v0.55.0
 	golang.org/x/tools v0.49.0
@@ -168,6 +169,8 @@ require (
 	github.com/tklauser/go-sysconf v0.4.0 // indirect
 	github.com/tklauser/numcpus v0.12.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
+	github.com/xeipuuv/gojsonpointer v0.0.0-20180127040702-4e3ac2762d5f // indirect
+	github.com/xeipuuv/gojsonreference v0.0.0-20180127040603-bd5ef7bd5415 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect

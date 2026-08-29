@@ -358,6 +358,31 @@ against.
   + the DB-backed integration test now asserts the pooled conn's cap is
   untouched after a restamp and that TimescaleDB honours the `SET LOCAL`
   form inside the transaction. (#312)
+- **The required `lint` check no longer downloads a JSON schema from
+  golangci-lint.run on every PR.** `golangci/golangci-lint-action`
+  defaults `verify: true`, which runs `golangci-lint config verify` —
+  and that command fetches
+  `https://golangci-lint.run/jsonschema/golangci.v2.11.jsonschema.json`
+  before it can validate anything. On 2026-08-28 the fetch died with
+  `read: connection reset by peer` and took a REQUIRED check red on a
+  diff containing no Go (PR #275); a rerun passed. Reproduced locally
+  against v2.11.4 with the network blocked (`HTTPS_PROXY` to a dead
+  port): `compile schema: failing loading "…golangci.v2.11.jsonschema
+  .json" … connection refused`, exit 3. The schema check is NOT
+  dropped — golangci-lint's own loader silently ignores unknown keys
+  (a top-level `runn:` block is accepted by `golangci-lint run` and
+  rejected only by `config verify`), so losing it would mean a
+  misspelt setting is a lint rule that quietly stops applying. Instead
+  the schema is vendored (`scripts/ci/golangci.v2.11.jsonschema.json`,
+  byte-identical to the site's copy) and validated offline by a new
+  `scripts/ci/lint-golangci-config` gate wired into the `lint` job,
+  `make lint-golangci-config` and `verify.sh`. The gate also enforces
+  its own preconditions: every golangci-lint-action step must set
+  `verify: false` (so the fetch cannot silently return), ci.yml and
+  the Makefile must pin the same release, and that release must have a
+  vendored schema (a bump without a re-vendor fails rather than
+  validating against a stale copy). Fails loudly if the action step
+  disappears, so it can never pass vacuously. (#317)
 - **Gap detector pre-registers `runs_total` at 0 so a restart cannot read
   as a dead detector.** `stellarindex_ingest_gap_detector_runs_total` is a
   CounterVec that only materialises a series on first `Inc()`, and since
