@@ -353,7 +353,7 @@ export default async function PairPage({ params }: { params: Params }) {
       'OHLC',
     ],
     variableMeasured: ['VWAP', 'OHLC', 'trade volume', '24h price change'],
-    contentUrl: `https://api.stellarindex.io/v1/chart?asset=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}&timeframe=24h&granularity=1h`,
+    contentUrl: `${CURRENT_NETWORK.apiBaseUrl}/v1/chart?asset=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}&timeframe=24h&granularity=1h`,
   });
   return (
     <Container className="space-y-6 py-8">
