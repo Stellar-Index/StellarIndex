@@ -6,7 +6,29 @@ RFROM=$1; RTO=$2; STATE=$3; PAR=${4:-4}
 LOG=/var/log/phaseD-backfill.log
 FLOOR_KB=524288000   # 500 GiB floor
 mkdir -p "$(dirname "$STATE")"; touch "$STATE"
-set -a; . /etc/default/stellarindex-ops 2>/dev/null; . /etc/default/stellarindex 2>/dev/null; set +a
+# Read a systemd EnvironmentFile VERBATIM — never `.`/source it. Its
+# values are unquoted (that is what systemd wants), so the shell would
+# expand `$`, split on `;`/`&`/`|`/whitespace and eat quotes inside a
+# secret: the services keep working while this path gets a mangled DSN
+# (deploy-ansible-secrets-5). Same reader as run-heavy-job.sh.
+# usage: load_env_file FILE [export]
+load_env_file() {
+  local line
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      [A-Za-z_]*=*)
+        if [ "${2:-}" = export ]; then
+          export "${line?}"
+        else
+          printf -v "${line%%=*}" '%s' "${line#*=}"
+        fi
+        ;;
+    esac
+  done < "$1"
+}
+for f in /etc/default/stellarindex-ops /etc/default/stellarindex; do
+  [ -r "$f" ] && load_env_file "$f" export
+done
 OPS=/usr/local/bin/stellarindex-ops
 echo "$(date -u +%FT%TZ) RANGE_START [$RFROM,$RTO] par=$PAR state=$STATE" >> "$LOG"
 w=$RFROM

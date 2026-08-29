@@ -186,9 +186,10 @@ is small for OpenNext) — nothing suggesting a cold-start problem.
 
 ## Non-issues (checked, fine)
 
-- **`NEXT_PUBLIC_API_BASE_URL`**: inlined via the `env` block at build
-  time exactly as today; server-side fetches resolve the same constant
-  (`src/api/client.ts`). Runtime-configurable API base (via a Worker
+- **`NEXT_PUBLIC_API_BASE_URL`**: inlined by Next from the build
+  environment (NOT via the `env` block — a default there shadowed the
+  per-network fallback; see `src/lib/next-config-env.test.ts`);
+  server-side fetches resolve the same constant (`src/api/client.ts`). Runtime-configurable API base (via a Worker
   env var) is optional Stage-2 nicety, not required.
 - **Trailing-slash routing**: `trailingSlash: true` kept; canonical
   URLs identical to the static site.

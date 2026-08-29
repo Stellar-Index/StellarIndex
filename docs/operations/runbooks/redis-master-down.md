@@ -1,25 +1,47 @@
 ---
 title: Runbook — redis-master-down
-last_verified: 2026-05-03
-status: ratified (Sentinel-driven failover is the default after `redis-sentinel` ansible role landed)
+last_verified: 2026-08-29
+status: current (r1 is single-node Redis — Sentinel topology is the future multi-host shape)
 severity: P1
 ---
 
 # Runbook — `stellarindex_redis_master_down`
+
+> **r1 deployment posture (re-verified 2026-08-29).** On r1 there is
+> ONE Debian-packaged `redis-server` running on the archival host —
+> no Sentinel, no replicas, no `cache-01..03` hosts. The
+> `redis-sentinel` ansible role exists in the repo but is NOT
+> applied to archival nodes (see the comment in
+> `configs/ansible/roles/archival-node/tasks/15-log-discipline.yml`
+> — "the redis-sentinel role is the future HA-cluster shape, NOT
+> applied to archival nodes"). `redis_up == 0` therefore means THAT
+> instance is down; there is nothing to fail over to. Diagnose:
+>
+> ```sh
+> ssh root@136.243.90.96 "systemctl status redis-server --no-pager | head -15"
+> ssh root@136.243.90.96 "journalctl -u redis-server -n 100 --no-pager"
+> ```
+>
+> Restart: `ssh root@136.243.90.96 systemctl restart redis-server`.
+> The Sentinel sections below describe the FUTURE multi-host shape
+> (ADR-0024 / ha-plan §3.4) and are kept for that rollout.
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
 | Alert | `stellarindex_redis_master_down` |
-| Severity | P1 (page — SEV-1) |
-| Detected by | `deploy/monitoring/rules/cache.yml` |
+| Severity | P1 (`severity: page` — SEV-1) |
+| Detected by | `configs/prometheus/rules.r1/cache.yml` (group `stellarindex.cache`, `severity: page`, `for: 30s`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/cache.yml`. |
 | Typical MTTR | 1–15 min (Sentinel-driven failover: < 1 min; manual: longer) |
 | Impact | Hot-path cache for `/v1/price` gone. Rate-limiter fails open (no throttling). Clients still get served via Timescale fallback with `stale=true` and increased latency — so not an outage, but a **degraded SLA** + **no rate-limiting** (fail-open abuse window). |
 
 ## Symptoms
 
-- `redis_up{role="master"} == 0` for ≥ 30 s on some shard.
+- `redis_up == 0` for ≥ 30 s. (The pre-F-1329 expr
+  `redis_up{role="master"} == 0` was DEAD — `redis_exporter` emits
+  no `role` label, so it matched no series; the rule now watches
+  bare `redis_up`, the exporter's could-I-reach-the-server signal.)
 - API latency rises (cache miss → Timescale path).
 - `stellarindex_ratelimit_fail_open_total` counter jumps — this
   metric is the deliberate "Redis outage" signal (fail-open by
@@ -29,11 +51,15 @@ severity: P1
 
 ## Quick diagnosis (≤ 5 min)
 
-Redis runs as `redis-server.service` + `redis-sentinel.service` on
-three bare-metal hosts `cache-01..03` (per the `redis-sentinel`
-ansible role; ADR-0008 §3.4). Per-host primary role is in the
-inventory's `redis_role` var; current role at runtime comes from
-Sentinel.
+**On r1:** single instance — the two commands in the banner above
+are the whole diagnosis. Everything below in this section is the
+**future multi-host shape** (not deployed anywhere today).
+
+In the multi-host topology Redis runs as `redis-server.service` +
+`redis-sentinel.service` on three bare-metal hosts `cache-01..03`
+(per the `redis-sentinel` ansible role; ADR-0024 / ADR-0008 §3.4).
+Per-host primary role is in the inventory's `redis_role` var;
+current role at runtime comes from Sentinel.
 
 ```sh
 # Is it a single instance or the whole shard?
@@ -80,9 +106,10 @@ ssh root@cache-01 "systemctl status redis-sentinel --no-pager | head -10"
 
 ## Mitigation
 
-### A. Automatic Sentinel failover — the happy path
+### A. Automatic Sentinel failover — the happy path (multi-host only)
 
-After the `redis-sentinel` ansible role landed, this is the
+In the future multi-host topology (the `redis-sentinel` role
+applied to dedicated cache hosts — NOT r1), this is the
 **default** path. Sentinel's `down-after-milliseconds=5000` +
 `failover-timeout=60000` mean a primary failure typically
 recovers in 15–30 s without operator intervention. The
@@ -94,7 +121,8 @@ primary automatically — no app restart required.
       `redis-cli -h cache-01 -p 26379 -a "$REDIS_PASSWORD" \
        SENTINEL get-master-addr-by-name stellarindex-r1-cache`
       returns the current primary; `stellarindex_redis_sentinel_primary`
-      gauge sums to 1 across hosts when steady-state.
+      gauge (multi-host only; absent on r1) sums to 1 across hosts
+      when steady-state.
 - [ ] Step 2 — verify clients reconnected. API + aggregator logs
       should show `redis configured mode=sentinel` at startup;
       after failover, look for "redis: reconnected" or absence
@@ -124,8 +152,9 @@ sentinels.
 - [ ] Step 4 — verify the promoted replica is caught up:
       `redis-cli info replication` on the new primary should
       show every follower's `lag` column at 0–1.
-- [ ] Verification: `redis_up{role="master"} == 1` (single
-      instance), `stellarindex_redis_sentinel_primary` sums to 1
+- [ ] Verification: `redis_up == 1` on every instance,
+      `stellarindex_redis_sentinel_primary` (multi-host only;
+      absent on r1) sums to 1
       across hosts, API logs show "redis: reconnected",
       `ratelimit_fail_open_total` rate drops to zero (it's
       cumulative — watch the rate, not the gauge).
@@ -137,9 +166,10 @@ sentinels.
 - Rate-limit counters are stored in Redis with ~1 min TTL. A
   failover resets them to zero; clients who were throttled get a
   fresh quota. Acceptable.
-- API keys / SEP-10 session tokens (when they land) must not live
-  only in Redis — always back by Timescale. See `internal/auth/`
-  when implemented.
+- API keys / SEP-10 session tokens must not live only in Redis —
+  they are backed by Timescale (see `internal/auth/` +
+  `internal/platform/`). A Redis outage costs cache warmth, not
+  credentials.
 
 ## Root cause analysis
 
@@ -170,6 +200,8 @@ sentinels.
 - `redis-replication.md` — replicas not following.
 - HA plan §3.4: `docs/architecture/ha-plan.md` (Redis topology,
   fail-open rationale).
+- ADR-0024 — `docs/adr/0024-redis-ha-via-sentinel.md` (the future
+  Sentinel topology).
 - ADR-0007 (key schema) — `docs/adr/0007-redis-cache-schema.md`.
 
 ## Changelog
@@ -181,3 +213,12 @@ sentinels.
   `redis-server.service` / `redis-sentinel.service` shape that
   the `redis-sentinel` ansible role actually deploys (ADR-0008
   §3.4).
+- 2026-08-29 — re-verified against HEAD: r1-reality banner (one
+  Debian-packaged redis-server, no Sentinel — the redis-sentinel
+  role is NOT applied to archival nodes), dead pre-F-1329 expr
+  `redis_up{role="master"}` replaced with the real `redis_up == 0`
+  rule, Sentinel sections marked as the future multi-host shape,
+  `stellarindex_redis_sentinel_primary` marked multi-host-only,
+  auth-token "when they land" hedge dropped (they landed),
+  dual-tree Detected-by, ADR-0024 cited. Status "ratified" →
+  current.

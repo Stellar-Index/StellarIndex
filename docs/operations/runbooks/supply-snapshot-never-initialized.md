@@ -1,7 +1,7 @@
 ---
 title: Runbook — supply-snapshot-never-initialized
-last_verified: 2026-05-08
-status: ratified
+last_verified: 2026-08-29
+status: current
 severity: P3
 ---
 
@@ -11,8 +11,9 @@ severity: P3
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellarindex_supply_snapshot_never_initialized` (P3, ticket) |
-| Detected by | `deploy/monitoring/rules/supply-snapshot.yml` |
+| Alert | `stellarindex_supply_snapshot_never_initialized` (P3, `severity: ticket`) |
+| Detected by | `configs/prometheus/rules.r1/supply-snapshot.yml` (group `stellarindex.supply_snapshot`, `absent_over_time(...[36h]) == 1`, `for: 5m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/supply-snapshot.yml`. |
+| Shares this runbook | `stellarindex_aggregator_supply_refresh_never_initialized` (`configs/prometheus/rules.r1/supply-refresh.yml` + multi-host twin; `severity: ticket`, `absent_over_time(stellarindex_aggregator_supply_refresh_total{outcome="ok"}[36h]) == 1`, `for: 5m`) — its `runbook_url` deliberately routes HERE; per-alert detail in [aggregator-supply-refresh-never-initialized.md](aggregator-supply-refresh-never-initialized.md). |
 | Typical MTTR | 10 min (one-shot operator action) |
 | Impact | `/v1/assets/{id}` F2 fields (circulating / total / max / market_cap_usd / fdv_usd) render as `null` for every asset. |
 
@@ -68,12 +69,24 @@ both simultaneously.
 ```sh
 sudo cp deploy/systemd/supply-snapshot.{service,timer} /etc/systemd/system/
 sudo systemctl daemon-reload
+
+# CRITICAL — wire the textfile output BEFORE starting. The shipped
+# unit defaults `Environment=TEXTFILE_OUTPUT=` (EMPTY — no metrics
+# emit at all). Started as-is, the snapshot writes to Postgres but
+# never publishes stellarindex_supply_snapshot_last_success_timestamp,
+# so this alert NEVER clears and the verify grep below fails on a
+# perfectly working writer. Create the override first:
+cat <<'EOF' | sudo tee /etc/default/supply-snapshot
+TEXTFILE_OUTPUT=/var/lib/node_exporter/textfile_collector/supply_snapshot.prom
+EOF
+
 sudo systemctl enable --now supply-snapshot.timer
 
 # Verify the unit fires immediately (one-off):
 sudo systemctl start supply-snapshot.service
 sudo journalctl -u supply-snapshot.service --no-pager -n 50
-# Expect: a "wrote snapshot for asset XLM" log line + zero exit.
+# Expect: `Wrote snapshot for asset_key=XLM ledger=<N> basis=<...>`
+# + zero exit.
 
 # Verify the metric appears (once node_exporter rescrapes the .prom):
 curl -s http://localhost:9100/metrics | grep stellarindex_supply_snapshot_last_success_timestamp
@@ -99,14 +112,20 @@ curl -s http://localhost:9465/metrics | grep stellarindex_aggregator_supply_refr
 # Expect at least one outcome="ok" line per watched asset_key.
 ```
 
-This silences `_never_initialized` AND populates the goroutine-path
-metrics tracked by
-[supply-refresh-stalled.md](supply-refresh-stalled.md). Note that
-the textfile-path `_stale` alert WILL stay silent on Path B unless
-the timer is also installed — that's expected; per
-[supply-snapshot-stale.md §"Two refresh paths exist"](supply-snapshot-stale.md),
-silence the `_stale` alert when the deployment uses Path B
-exclusively.
+Path B does NOT silence THIS alert. Nothing but the ops-CLI
+textfile writer (Path A) emits
+`stellarindex_supply_snapshot_last_success_timestamp`, so the
+textfile-path `_never_initialized` alert KEEPS firing under Path B
+alone. What Path B clears is its sibling,
+`stellarindex_aggregator_supply_refresh_never_initialized`
+(which deliberately routes its `runbook_url` to this page — see
+At a glance), and it populates the goroutine-path metrics tracked
+by [supply-refresh-stalled.md](supply-refresh-stalled.md). If the
+deployment intentionally runs Path B exclusively, silence the
+textfile-path `_never_initialized` alert. The textfile-path
+`_stale` alert cannot fire on Path B (its series is absent —
+`_stale` requires the metric to have existed) — no silence needed
+for it.
 
 ## Why neither path is the default
 
@@ -154,3 +173,18 @@ curl -s 'https://api.stellarindex.io/v1/assets/native' | jq '.data.circulating_s
   `[supply].strict_freshness_required` is enabled.
 - [docs/architecture/supply-pipeline.md](../../architecture/supply-pipeline.md) — the three-algorithm design.
 - [docs/adr/0011-supply-algorithm.md](../../adr/0011-supply-algorithm.md) — original ADR.
+
+## Changelog
+
+- 2026-08-29 — re-verified against HEAD (Wave I). Path A now
+  creates `/etc/default/supply-snapshot` with `TEXTFILE_OUTPUT=`
+  set BEFORE starting — the shipped unit defaults it EMPTY, so the
+  as-written sequence never emitted the metric, the alert never
+  cleared, and the verify grep failed on a working writer. Log
+  line corrected to the real
+  `Wrote snapshot for asset_key=XLM ledger=<N> basis=<...>`.
+  Path B section rewritten: it does NOT silence this alert (only
+  the timer path emits `last_success_timestamp`); it clears the
+  sibling `stellarindex_aggregator_supply_refresh_never_initialized`,
+  whose `runbook_url` routes here — now cross-linked both ways.
+  Detected-by made dual-tree. Status promoted ratified → current.

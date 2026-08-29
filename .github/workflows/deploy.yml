@@ -216,10 +216,22 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           BINARIES: ${{ inputs.binaries }}
+          HEALTH_GRACE: ${{ inputs.health_grace_seconds }}
         run: |
           set -euo pipefail
           if ! echo "$VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?(\+[A-Za-z0-9.-]+)?$'; then
             echo "::error::Version '$VERSION' must match SemVer vX.Y.Z[-prerelease][+build]"
+            exit 1
+          fi
+          # deploy-ansible-input-8: health_grace_seconds is a `type: string`
+          # input (GitHub's `number` typing is UI/API-side and `gh workflow
+          # run -f` bypasses it), and it is spliced into
+          # `-e "health_grace_seconds=${HEALTH_GRACE}"`. ansible parses that
+          # k=v form on WHITESPACE, so a value like
+          # `15 backup_freshness_skip=true` would inject a second extra-var
+          # and silently skip the backup-freshness gate. Digits only.
+          if ! [[ "$HEALTH_GRACE" =~ ^[0-9]{1,4}$ ]]; then
+            echo "::error::health_grace_seconds '$HEALTH_GRACE' must be 1-4 digits (seconds); anything else could inject extra-vars into ansible-playbook -e"
             exit 1
           fi
           # Reject empty / whitespace-only binary list early
@@ -263,6 +275,16 @@ jobs:
         run: |
           set -euo pipefail
           jump=""
+          # backup_gate: does this host have a pgBackRest stellarindex
+          # stanza for deploy-binary.yml's backup-freshness gate to read?
+          # r1 does; the test-net VMs never get pgbackrest at all
+          # (18-pgbackrest-backup.yml), so on them the fail-closed gate
+          # could only exit 1 and the workflow could never apply schema
+          # there (deploy-ansible-deploy-2). Passed as -e because the
+          # ad-hoc `-i host,` inventory does not load the role's
+          # inventory vars. Anything not r1 that grows a stanza flips
+          # this to true here, deliberately.
+          backup_gate="true"
           case "$REGION" in
             r1)
               host="${R1_HOST}"
@@ -278,11 +300,13 @@ jobs:
               host="${TESTNET_HOST}"
               user="${TESTNET_USER:-root}"
               jump="${TESTNET_SSH_JUMP}"
+              backup_gate="false"
               ;;
             futurenet)
               host="${FUTURENET_HOST}"
               user="${FUTURENET_USER:-root}"
               jump="${FUTURENET_SSH_JUMP}"
+              backup_gate="false"
               ;;
             *)
               echo "::error::Region '$REGION' has no inventory mapping"
@@ -307,8 +331,9 @@ jobs:
             echo "host=$host"
             echo "user=$user"
             echo "jump=$jump"
+            echo "backup_gate=$backup_gate"
           } >> "$GITHUB_OUTPUT"
-          echo "Target: $user@$host${jump:+ (via $jump)}"
+          echo "Target: $user@$host${jump:+ (via $jump)} backup-freshness gate: $backup_gate"
 
       - name: Download release binaries
         # F-1298 (wave 126): inputs through `env:`.
@@ -539,31 +564,34 @@ jobs:
         run: |
           python3 -m pip install 'pip==24.3.1'
           python3 -m pip install 'ansible-core==2.18.4'
-          # F-1220 (codex audit-2026-05-12): the deploy-binary playbook
-          # uses `ansible.posix.synchronize` to stage the new binary
-          # before atomic install. `ansible-core` ships only the
-          # bundled collections; `ansible.posix` lives in Galaxy and
-          # must be installed separately. requirements.yml is the
-          # source of truth for ALL collection pins (posix,
-          # community.*).
+          # `ansible-core` ships only the bundled collections; anything
+          # from Galaxy must be installed separately, and requirements.yml
+          # is the source of truth for ALL collection pins (posix,
+          # community.*). deploy-binary.yml itself is builtin-only since
+          # deploy-ansible-deploy-2 (it used ansible.posix.synchronize for
+          # the migrations dir, which cannot follow the test-net ProxyJump);
+          # the install stays so the deploy runner matches the role's pins.
           ansible-galaxy collection install -r configs/ansible/requirements.yml
 
       - name: Run deploy playbook
         # F-1298 (wave 126): inputs through `env:`. Note that
         # `ansible-playbook -e "key=$VAR"` STILL needs care —
-        # ansible-playbook itself parses that string. The
+        # ansible-playbook itself parses that string, splitting
+        # the k=v form on whitespace into MULTIPLE vars. The
         # validation regex on `version` (in the Validate step
-        # above) and the `[a-zA-Z0-9-]+` regex on per-binary
-        # entries (also above) guarantee these values can't
-        # carry shell metacharacters. health_grace_seconds is
-        # type=number per the workflow_dispatch schema so
-        # GitHub itself enforces the type before substitution.
+        # above), the `[a-zA-Z0-9-]+` regex on per-binary
+        # entries and the `^[0-9]{1,4}$` regex on
+        # health_grace_seconds (deploy-ansible-input-8 — it is a
+        # `type: string` input; GitHub does NOT enforce a number
+        # type for `gh workflow run -f`) guarantee none of these
+        # values can carry whitespace or shell metacharacters.
         env:
           ANSIBLE_HOST_KEY_CHECKING: 'True'
           ANSIBLE_FORCE_COLOR: '1'
           DEPLOY_HOST: ${{ steps.region.outputs.host }}
           DEPLOY_USER: ${{ steps.region.outputs.user }}
           DEPLOY_JUMP: ${{ steps.region.outputs.jump }}
+          BACKUP_GATE: ${{ steps.region.outputs.backup_gate }}
           VERSION: ${{ inputs.version }}
           BINARIES: ${{ inputs.binaries }}
           HEALTH_GRACE: ${{ inputs.health_grace_seconds }}
@@ -590,6 +618,7 @@ jobs:
             -e "local_dist_dir=$GITHUB_WORKSPACE/dist" \
             -e "health_grace_seconds=${HEALTH_GRACE}" \
             -e "migrations_skip=${MIGRATIONS_SKIP}" \
+            -e "pgbackrest_backup_enabled=${BACKUP_GATE}" \
             configs/ansible/playbooks/deploy-binary.yml
 
       - name: Config-apply gate

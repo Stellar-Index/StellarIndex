@@ -65,6 +65,34 @@ q()   { $CH --max_execution_time 3600 \
             --max_threads "$D2_THREADS" \
             -q "$1"; }
 
+# Destructive-DDL size guard (docs/operations/clickhouse-destructive-ddl.md).
+# REPLACE PARTITION drops the target partition and DROP TABLE drops the
+# ~550 GiB stage — both are refused by max_partition/table_size_to_drop
+# (50 GiB, pinned by ansible 21-clickhouse-drop-guard.yml) unless
+# /var/lib/clickhouse/flags/force_drop_table exists. The flag is
+# consumed by ONE oversize drop, and left in place if the drop was
+# under the limit — so it is touched immediately before each guarded
+# statement and removed right after, never left armed. Require the
+# operator to say so up front (a ZFS snapshot of data/clickhouse first
+# is the procedure) rather than fail hours in on the first REPLACE.
+CH_FLAGS_DIR="${CH_FLAGS_DIR:-/var/lib/clickhouse/flags}"
+if [ "${D2_FORCE_DROP:-}" != "yes" ]; then
+  echo "refusing: D2 replaces partitions of stellar.ledger_entry_changes and drops a >50 GiB stage." >&2
+  echo "Take a ZFS snapshot of data/clickhouse, then re-run with D2_FORCE_DROP=yes" >&2
+  echo "(docs/operations/clickhouse-destructive-ddl.md)." >&2
+  exit 1
+fi
+# guarded_ddl "<statement>" — arm the force flag for exactly this statement.
+guarded_ddl() {
+  # belt-and-braces: a SIGTERM between touch and rm must not leave the flag armed
+  trap 'rm -f "$CH_FLAGS_DIR/force_drop_table"' EXIT
+  touch "$CH_FLAGS_DIR/force_drop_table"; chown clickhouse:clickhouse "$CH_FLAGS_DIR/force_drop_table" 2>/dev/null || true
+  log "force_drop_table armed for: $1"
+  local rc=0; q "$1" || rc=$?
+  rm -f "$CH_FLAGS_DIR/force_drop_table"
+  return $rc
+}
+
 for P in $(seq "$FIRST" "$LAST"); do
   if grep -qx "$P" "$STATE"; then log "partition $P already done — skipping"; continue; fi
 
@@ -89,7 +117,7 @@ for P in $(seq "$FIRST" "$LAST"); do
   # measured in 38-54; refuse rather than silently mishandle them if that changes.
   if [ "$SRC_SEED" != "0" ]; then log "ABORT: $SRC_SEED seed rows in partition $P — not handled by this script"; exit 1; fi
 
-  q "DROP TABLE IF EXISTS $STAGE"
+  guarded_ddl "DROP TABLE IF EXISTS $STAGE"
   q "CREATE TABLE $STAGE AS stellar.ledger_entry_changes"
 
   for (( CLO=LO; CLO<=HI; CLO+=CHUNK )); do
@@ -148,8 +176,8 @@ for P in $(seq "$FIRST" "$LAST"); do
   if [ "$STG_CENSUS" != "$SRC_CENSUS" ]; then log "ABORT p$P: census rows lost — REFUSING to replace"; exit 1; fi
   if [ "$BAD_LEDGERS" != "0" ]; then log "ABORT p$P: $BAD_LEDGERS ledgers with non-contiguous ordinals — REFUSING"; exit 1; fi
 
-  q "ALTER TABLE stellar.ledger_entry_changes REPLACE PARTITION $P FROM $STAGE"
-  q "DROP TABLE $STAGE"
+  guarded_ddl "ALTER TABLE stellar.ledger_entry_changes REPLACE PARTITION $P FROM $STAGE"
+  guarded_ddl "DROP TABLE $STAGE"
   echo "$P" >> "$STATE"
   log "partition $P DONE + verified"
 done

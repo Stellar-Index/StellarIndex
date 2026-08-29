@@ -49,6 +49,25 @@ q()   { $CH --max_execution_time 3600 \
             --max_threads "$D3_THREADS" \
             -q "$1"; }
 
+# Destructive-DDL size guard (docs/operations/clickhouse-destructive-ddl.md):
+# the DROP TABLE of ledger_entries_current_old / _v2 is refused above
+# max_table_size_to_drop (50 GiB, ansible 21-clickhouse-drop-guard.yml)
+# unless /var/lib/clickhouse/flags/force_drop_table exists. Armed for
+# exactly one statement and removed right after (the server only consumes
+# it when the drop was oversize; an unconsumed flag would silently permit
+# the NEXT big drop). Only the phases that already demand an explicit
+# D3_FORCE_DROP_* acknowledgement call this — never silently.
+CH_FLAGS_DIR="${CH_FLAGS_DIR:-/var/lib/clickhouse/flags}"
+guarded_ddl() {
+  # belt-and-braces: a SIGTERM between touch and rm must not leave the flag armed
+  trap 'rm -f "$CH_FLAGS_DIR/force_drop_table"' EXIT
+  touch "$CH_FLAGS_DIR/force_drop_table"; chown clickhouse:clickhouse "$CH_FLAGS_DIR/force_drop_table" 2>/dev/null || true
+  log "force_drop_table armed for: $1"
+  local rc=0; q "$1" || rc=$?
+  rm -f "$CH_FLAGS_DIR/force_drop_table"
+  return $rc
+}
+
 BASE_COLS="entry_type, key_xdr, account_id, asset, balance, change_type, ledger_seq, close_time, entry_xdr, intra_ledger_seq"
 
 phase="${1:?phase: probe-ordinals|setup|reproject|verify|cutover|finalize|rollback-precutover}"
@@ -155,15 +174,18 @@ cutover)
 
 finalize)
   if [ "${D3_FORCE_DROP_OLD:-}" != "yes" ]; then
-    log "refusing: set D3_FORCE_DROP_OLD=yes to drop ledger_entries_current_old"; exit 1
+    log "refusing: take a ZFS snapshot of data/clickhouse, then set D3_FORCE_DROP_OLD=yes to drop ledger_entries_current_old"; exit 1
   fi
-  q "DROP TABLE stellar.ledger_entries_current_old SYNC"
+  guarded_ddl "DROP TABLE stellar.ledger_entries_current_old SYNC"
   log "old table dropped"
   ;;
 
 rollback-precutover)
+  if [ "${D3_FORCE_DROP_V2:-}" != "yes" ]; then
+    log "refusing: set D3_FORCE_DROP_V2=yes to drop ledger_entries_current_v2 (v1 is still serving; nothing is lost by waiting)"; exit 1
+  fi
   q "DROP TABLE IF EXISTS stellar.ledger_entries_current_v2_mv"
-  q "DROP TABLE IF EXISTS stellar.ledger_entries_current_v2 SYNC"
+  guarded_ddl "DROP TABLE IF EXISTS stellar.ledger_entries_current_v2 SYNC"
   log "v2 dropped; v1 never stopped serving"
   ;;
 

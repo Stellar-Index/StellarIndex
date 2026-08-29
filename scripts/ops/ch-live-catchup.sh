@@ -17,9 +17,29 @@
 # contiguous-completeness watermark, so a hole stalls the projector until THIS
 # script heals it — never silent loss.
 set -uo pipefail
-set -a; . /etc/default/stellarindex-ops; set +a
+# Read a systemd EnvironmentFile VERBATIM — never `.`/source it. Its
+# values are unquoted (that is what systemd wants), so the shell would
+# expand `$`, split on `;`/`&`/`|`/whitespace and eat quotes inside a
+# secret: the services keep working while this path gets a mangled DSN
+# (deploy-ansible-secrets-5). Same reader as run-heavy-job.sh.
+# usage: load_env_file FILE [export]
+load_env_file() {
+  local line
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      [A-Za-z_]*=*)
+        if [ "${2:-}" = export ]; then
+          export "${line?}"
+        else
+          printf -v "${line%%=*}" '%s' "${line#*=}"
+        fi
+        ;;
+    esac
+  done < "$1"
+}
+load_env_file /etc/default/stellarindex-ops export
 # Optional ops-user credentials (STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD,
-# e.g. from /etc/default/stellarindex-ops). Handed to clickhouse-client via its
+# from /etc/default/stellarindex-ops). Handed to clickhouse-client via its
 # CLICKHOUSE_USER/CLICKHOUSE_PASSWORD env — never argv, which ps and the journal
 # would show. Unset ⇒ nothing exported; the default user exactly as before.
 if [ -n "${STELLARINDEX_CLICKHOUSE_OPS_USER:-}" ]; then
