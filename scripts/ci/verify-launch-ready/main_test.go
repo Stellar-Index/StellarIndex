@@ -225,6 +225,13 @@ func TestEngineeringReady_SkipFlipsVerdict(t *testing.T) {
 // produce a green verdict against the real backlog. If a NEW
 // engineering-tier blocker is introduced this test fails — that's
 // the intended regression signal.
+//
+// NB (issue #321): the backlog is now RETIRED, so this arithmetic is
+// no longer the CLI's answer — [verdictLine] short-circuits it and the
+// tool emits no verdict at all (see
+// TestVerdictLine_RetiredDocNeverCertifiesReady). The assertion below
+// is unchanged and still guards the parser + gating maths; it is not
+// a statement that the project is launch-ready.
 func TestRealBacklog_SingleRegionPosture(t *testing.T) {
 	const path = "../../../docs/architecture/launch-readiness-backlog.md"
 	rows, err := parseFile(path)
@@ -239,5 +246,119 @@ func TestRealBacklog_SingleRegionPosture(t *testing.T) {
 			ids = append(ids, b.ID+"="+b.Status)
 		}
 		t.Errorf("single-region posture should be ready; remaining blockers: %v", ids)
+	}
+}
+
+// TestSupersession_ReadsFrontmatterOnly — a document whose frontmatter
+// declares it superseded/retired is detected; a live one is not; and a
+// body that merely TALKS about supersession must not retire a live doc
+// (the launch plan itself lists the docs it supersedes in its prose).
+func TestSupersession_ReadsFrontmatterOnly(t *testing.T) {
+	cases := []struct {
+		name string
+		doc  string
+		want string
+	}{
+		{
+			name: "live document",
+			doc:  "---\ntitle: X\nstatus: living document\n---\n\n| L1.1 | a | ✅ |\n",
+			want: "",
+		},
+		{
+			name: "superseded with successor",
+			doc:  "---\ntitle: X\nstatus: superseded — see docs/operations/v1-launch-plan.md\n---\n\n| L1.1 | a | ✅ |\n",
+			want: "superseded — see docs/operations/v1-launch-plan.md",
+		},
+		{
+			name: "retired spelling",
+			doc:  "---\nstatus: RETIRED (2026-08-29)\n---\n\nbody\n",
+			want: "RETIRED (2026-08-29)",
+		},
+		{
+			name: "body mention does not retire a live doc",
+			doc:  "---\nstatus: active\n---\n\nstatus: superseded by nothing\n",
+			want: "",
+		},
+		{
+			name: "no frontmatter at all",
+			doc:  "# Heading\n\nstatus: superseded\n",
+			want: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "backlog.md")
+			if err := os.WriteFile(path, []byte(tc.doc), 0o644); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			got, err := supersession(path)
+			if err != nil {
+				t.Fatalf("supersession: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("supersession = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestVerdictLine_RetiredDocNeverCertifiesReady — the regression this
+// whole change exists for (#321). Rows that are ALL ✅ would otherwise
+// produce "✓ Engineering surface ready"; once the source document is
+// retired, the tool must emit no readiness verdict at all and must name
+// the retirement instead. A frozen document's rows are history, and a
+// green computed from history is a false green.
+func TestVerdictLine_RetiredDocNeverCertifiesReady(t *testing.T) {
+	rows := []Row{
+		{ID: "L1.1", Status: "✅", Surface: "L1"},
+		{ID: "L2.1", Status: "✅", Surface: "L2"},
+		{ID: "L3.1", Status: "✅", Surface: "L3"},
+		{ID: "L4.1", Status: "✅", Surface: "L4"},
+		{ID: "L5.1", Status: "✅", Surface: "L5"},
+	}
+	// Sanity: these rows really are "ready" by the gating maths, so the
+	// assertion below cannot pass vacuously.
+	if !engineeringReady(rows) {
+		t.Fatal("fixture rows should be engineering-ready; test would be vacuous")
+	}
+
+	live := verdictLine(rows, nil, "")
+	if !strings.Contains(live, "Engineering surface ready") {
+		t.Errorf("live doc verdict = %q, want the ready verdict", live)
+	}
+
+	retired := verdictLine(rows, nil, "superseded — see docs/operations/v1-launch-plan.md")
+	if strings.Contains(retired, "Engineering surface ready") {
+		t.Errorf("retired doc still certified readiness: %q", retired)
+	}
+	if !strings.Contains(retired, "No verdict") {
+		t.Errorf("retired doc verdict = %q, want an explicit no-verdict line", retired)
+	}
+	if !strings.Contains(retired, "docs/operations/v1-launch-plan.md") {
+		t.Errorf("retired doc verdict %q does not name the successor", retired)
+	}
+}
+
+// TestRealBacklog_IsRetired — the shipped document must actually carry
+// the supersession marker, and must name a successor that exists. This
+// is what stops the L-numbered backlog quietly becoming a live gate
+// again: un-retiring it re-arms the false green, and this test is the
+// tripwire.
+func TestRealBacklog_IsRetired(t *testing.T) {
+	const path = "../../../docs/architecture/launch-readiness-backlog.md"
+	got, err := supersession(path)
+	if err != nil {
+		t.Fatalf("supersession: %v", err)
+	}
+	if got == "" {
+		t.Fatalf("%s is not marked superseded — a frozen backlog that still "+
+			"certifies readiness is the #321 false green", path)
+	}
+	const successor = "docs/operations/v1-launch-plan.md"
+	if !strings.Contains(got, successor) {
+		t.Errorf("frontmatter status %q does not name the successor %q", got, successor)
+	}
+	if _, err := os.Stat(filepath.Join("../../..", successor)); err != nil {
+		t.Errorf("named successor %s does not exist: %v", successor, err)
 	}
 }

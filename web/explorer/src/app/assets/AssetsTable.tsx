@@ -24,6 +24,7 @@ import {
   THead,
 } from '@/components/ui';
 import { useDebouncedValue } from '@/lib/useDebouncedValue';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 /**
  * /assets directory table — the CMC/CoinGecko-style global asset
@@ -103,12 +104,17 @@ export function AssetsTable({
 
   const limit = parseLimit(limitParam);
 
+  // #328: every USD column below (price, the three change windows, market
+  // cap, 24h volume, the 7d price sparkline) is aggregator-derived. On a
+  // net with no aggregator they are ALL null, so the directory rendered
+  // six dashes per row and paid for a 7d price series that does not exist.
+  const pricing = CURRENT_NETWORK.pricing;
   const { data, isLoading, isError, error } = useAssets(
     assetClass,
     limit,
     cursor,
     queryParam || undefined,
-    { sparkline7d: true },
+    { sparkline7d: pricing },
     endpoint,
   );
 
@@ -133,12 +139,16 @@ export function AssetsTable({
   const sortColumns: SortColumn<Coin, string>[] = [
     { key: 'asset', value: (c) => c.code ?? c.slug, initialDir: 'asc' },
     { key: 'class', value: (c) => c.kind ?? c.type, initialDir: 'asc' },
-    { key: 'price', value: (c) => parseDec(c.price_usd) },
-    { key: 'change_1h', value: (c) => parseDec(c.change_1h_pct) },
-    { key: 'change_24h', value: (c) => parseDec(c.change_24h_pct) },
-    { key: 'change_7d', value: (c) => parseDec(c.change_7d_pct) },
-    { key: 'market_cap', value: (c) => parseDec(c.market_cap_usd) },
-    { key: 'volume', value: (c) => parseDec(c.volume_24h_usd) },
+    ...(pricing
+      ? ([
+          { key: 'price', value: (c) => parseDec(c.price_usd) },
+          { key: 'change_1h', value: (c) => parseDec(c.change_1h_pct) },
+          { key: 'change_24h', value: (c) => parseDec(c.change_24h_pct) },
+          { key: 'change_7d', value: (c) => parseDec(c.change_7d_pct) },
+          { key: 'market_cap', value: (c) => parseDec(c.market_cap_usd) },
+          { key: 'volume', value: (c) => parseDec(c.volume_24h_usd) },
+        ] satisfies SortColumn<Coin, string>[])
+      : []),
     { key: 'circulating', value: (c) => parseDec(c.circulating_supply) },
   ];
   // Default: leave the API's incoming order (market-cap-ish rank) until the
@@ -219,54 +229,58 @@ export function AssetsTable({
                   onSort={toggle}
                   ariaSort={ariaSort}
                 />
-                <SortableTh
-                  label="Price"
-                  sortKey="price"
-                  sort={sort}
-                  onSort={toggle}
-                  ariaSort={ariaSort}
-                  align="right"
-                />
-                <SortableTh
-                  label="1h %"
-                  sortKey="change_1h"
-                  sort={sort}
-                  onSort={toggle}
-                  ariaSort={ariaSort}
-                  align="right"
-                />
-                <SortableTh
-                  label="24h %"
-                  sortKey="change_24h"
-                  sort={sort}
-                  onSort={toggle}
-                  ariaSort={ariaSort}
-                  align="right"
-                />
-                <SortableTh
-                  label="7d %"
-                  sortKey="change_7d"
-                  sort={sort}
-                  onSort={toggle}
-                  ariaSort={ariaSort}
-                  align="right"
-                />
-                <SortableTh
-                  label="Market cap"
-                  sortKey="market_cap"
-                  sort={sort}
-                  onSort={toggle}
-                  ariaSort={ariaSort}
-                  align="right"
-                />
-                <SortableTh
-                  label="Volume 24h"
-                  sortKey="volume"
-                  sort={sort}
-                  onSort={toggle}
-                  ariaSort={ariaSort}
-                  align="right"
-                />
+                {pricing && (
+                  <>
+                    <SortableTh
+                      label="Price"
+                      sortKey="price"
+                      sort={sort}
+                      onSort={toggle}
+                      ariaSort={ariaSort}
+                      align="right"
+                    />
+                    <SortableTh
+                      label="1h %"
+                      sortKey="change_1h"
+                      sort={sort}
+                      onSort={toggle}
+                      ariaSort={ariaSort}
+                      align="right"
+                    />
+                    <SortableTh
+                      label="24h %"
+                      sortKey="change_24h"
+                      sort={sort}
+                      onSort={toggle}
+                      ariaSort={ariaSort}
+                      align="right"
+                    />
+                    <SortableTh
+                      label="7d %"
+                      sortKey="change_7d"
+                      sort={sort}
+                      onSort={toggle}
+                      ariaSort={ariaSort}
+                      align="right"
+                    />
+                    <SortableTh
+                      label="Market cap"
+                      sortKey="market_cap"
+                      sort={sort}
+                      onSort={toggle}
+                      ariaSort={ariaSort}
+                      align="right"
+                    />
+                    <SortableTh
+                      label="Volume 24h"
+                      sortKey="volume"
+                      sort={sort}
+                      onSort={toggle}
+                      ariaSort={ariaSort}
+                      align="right"
+                    />
+                  </>
+                )}
                 <SortableTh
                   label="Circulating"
                   sortKey="circulating"
@@ -275,14 +289,14 @@ export function AssetsTable({
                   ariaSort={ariaSort}
                   align="right"
                 />
-                <Th align="right">7d chart</Th>
+                {pricing && <Th align="right">7d chart</Th>}
               </tr>
             </THead>
             <TBody>
               {isLoading && (
                 <tr>
                   <td
-                    colSpan={11}
+                    colSpan={pricing ? 11 : 4}
                     className="text-ink-muted py-12 text-center text-sm"
                   >
                     Loading…
@@ -306,6 +320,7 @@ export function AssetsTable({
                       !coin.unverified_ticker_collision
                     }
                     basePath={basePath}
+                    pricing={pricing}
                   />
                 ))}
             </TBody>
@@ -361,15 +376,18 @@ function FilterBar({
   return (
     <div className="space-y-3">
       {classOptions && (
-      <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span className="text-ink-muted">Asset type:</span>
-        <Segmented
-          ariaLabel="Asset type"
-          options={classOptions.map((opt) => ({ label: opt.label, value: opt.value }))}
-          value={assetClass}
-          onChange={(v) => onAssetClassChange(v as AssetClassFilter)}
-        />
-      </div>
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-ink-muted">Asset type:</span>
+          <Segmented
+            ariaLabel="Asset type"
+            options={classOptions.map((opt) => ({
+              label: opt.label,
+              value: opt.value,
+            }))}
+            value={assetClass}
+            onChange={(v) => onAssetClassChange(v as AssetClassFilter)}
+          />
+        </div>
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -407,11 +425,13 @@ function AssetRow({
   rank,
   verified,
   basePath,
+  pricing,
 }: {
   coin: Coin;
   rank: number;
   verified: boolean;
   basePath: string;
+  pricing: boolean;
 }) {
   const price = parseDec(coin.price_usd);
   const marketCapRaw = parseDec(coin.market_cap_usd);
@@ -480,55 +500,67 @@ function AssetRow({
       <Td>
         <ClassBadge cls={coin.class} />
       </Td>
-      <Td align="right">
-        {price != null ? (
-          <span className="text-ink font-mono tabular-nums">
-            ${formatPriceSmall(price)}
-            {/* Declared-peg provenance (price_basis=declared_peg): the
+      {pricing && (
+        <Td align="right">
+          {price != null ? (
+            <span className="text-ink font-mono tabular-nums">
+              ${formatPriceSmall(price)}
+              {/* Declared-peg provenance (price_basis=declared_peg): the
                 server filled this price from an operator-declared 1:1
                 fiat peg × the current FX rate because no market price
                 survived the substance gate — annotate it so a peg-based
                 figure is never presented as a market observation. */}
-            {coin.price_basis === 'declared_peg' && (
-              <span
-                className="text-ink-muted ml-1 text-[10px] font-sans uppercase tracking-wider"
-                title="Declared 1:1 fiat peg × current FX rate — not a market-observed price"
-              >
-                pegged
-              </span>
-            )}
-          </span>
-        ) : (
-          <Dash />
-        )}
-      </Td>
-      <Td align="right">
-        <ChangePct raw={coin.change_1h_pct} />
-      </Td>
-      <Td align="right">
-        <ChangePct raw={coin.change_24h_pct} />
-      </Td>
-      <Td align="right">
-        <ChangePct raw={coin.change_7d_pct} />
-      </Td>
-      <Td align="right">
-        {marketCap != null ? (
-          <span className="text-ink-body font-mono tabular-nums">
-            ${formatCompact(marketCap)}
-          </span>
-        ) : (
-          <Dash title="Awaiting circulating supply via SEP-1 / on-chain observer" />
-        )}
-      </Td>
-      <Td align="right">
-        {volume != null ? (
-          <span className="text-ink-body font-mono tabular-nums">
-            ${formatCompact(volume)}
-          </span>
-        ) : (
-          <Dash />
-        )}
-      </Td>
+              {coin.price_basis === 'declared_peg' && (
+                <span
+                  className="text-ink-muted ml-1 font-sans text-[10px] tracking-wider uppercase"
+                  title="Declared 1:1 fiat peg × current FX rate — not a market-observed price"
+                >
+                  pegged
+                </span>
+              )}
+            </span>
+          ) : (
+            <Dash />
+          )}
+        </Td>
+      )}
+      {pricing && (
+        <Td align="right">
+          <ChangePct raw={coin.change_1h_pct} />
+        </Td>
+      )}
+      {pricing && (
+        <Td align="right">
+          <ChangePct raw={coin.change_24h_pct} />
+        </Td>
+      )}
+      {pricing && (
+        <Td align="right">
+          <ChangePct raw={coin.change_7d_pct} />
+        </Td>
+      )}
+      {pricing && (
+        <Td align="right">
+          {marketCap != null ? (
+            <span className="text-ink-body font-mono tabular-nums">
+              ${formatCompact(marketCap)}
+            </span>
+          ) : (
+            <Dash title="Awaiting circulating supply via SEP-1 / on-chain observer" />
+          )}
+        </Td>
+      )}
+      {pricing && (
+        <Td align="right">
+          {volume != null ? (
+            <span className="text-ink-body font-mono tabular-nums">
+              ${formatCompact(volume)}
+            </span>
+          ) : (
+            <Dash />
+          )}
+        </Td>
+      )}
       <Td align="right">
         {supply != null ? (
           <span className="text-ink-body font-mono tabular-nums">
@@ -538,9 +570,11 @@ function AssetRow({
           <Dash title="Awaiting issuer SEP-1 fixed_number / on-chain mint observer" />
         )}
       </Td>
-      <Td align="right">
-        <RowSparkline points={coin.price_history_7d} />
-      </Td>
+      {pricing && (
+        <Td align="right">
+          <RowSparkline points={coin.price_history_7d} />
+        </Td>
+      )}
     </TR>
   );
 }

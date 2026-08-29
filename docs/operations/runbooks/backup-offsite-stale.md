@@ -27,6 +27,14 @@ severity: P3
   repo 2)** in red ("beyond SLO") with the real age, or grey ("no
   off-site repository reported") when repo2 has never been written.
   Same 8-day SLO, same series, read through `/v1/diagnostics/backups`.
+- A grey **"stamp from the future"** on that row is a DIFFERENT fault and
+  this alert does not fire for it: the newest repo2 backup label parses to
+  a time ahead of the API's clock (host clock skew, or a corrupt label),
+  so the API reports `age_seconds` negative with verdict `unknown` rather
+  than rewarding it with a fresh `0`. The rule reads series PRESENCE, not
+  label times, so it stays silent while the real copy may be any age.
+  Check `timedatectl` / `chronyc tracking` on the archival node and the
+  `backup_name` labels in step 4 below.
 
 ## Quick diagnosis (≤ 5 min)
 

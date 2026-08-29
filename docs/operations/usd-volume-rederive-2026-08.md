@@ -245,9 +245,11 @@ What it does (per `internal/ops/chops/usd_volume_restamp.go`):
   reports 0 — idempotent;
 - leaves NULL rows alone unless `-fill-null` (a coverage change, opt-in);
 - walks `-from..-to` (inclusive UTC days, never today) oldest → newest in
-  `-slice` windows (default 1h) on a dedicated session with
-  `timescaledb.max_tuples_decompressed_per_dml_transaction = 0` — the
-  2026-07-30 lesson, no manual GUC step;
+  `-slice` windows (default 1h), each window one transaction with
+  `SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0`
+  — the 2026-07-30 lesson, no manual GUC step. LOCAL, so Postgres unwinds
+  the lifted cap at COMMIT and it can never ride the pooled connection
+  into a later statement (#312);
 - dry-run by default; `-write` applies; ch-backfill-style heartbeat
   (`ops_job="usd-volume-restamp"`, the standing stall alerts apply).
 

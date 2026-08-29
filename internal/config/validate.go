@@ -867,6 +867,21 @@ func (a APIConfig) validate() error {
 			"the SQL-side backstop only works as defense-in-depth when it fires AFTER the app-layer deadline",
 			ErrInvalidConfig, a.ServingStatementTimeout, a.RequestTimeout)
 	}
+	// #328: an unknown name in status_services is a service that can
+	// never be reported down — /v1/status would look for a heartbeat
+	// key Prometheus never publishes and hold `overall` at degraded
+	// forever, which reads exactly like the bug this list exists to
+	// fix. Reject the typo at boot rather than serve a permanently
+	// mis-rolled status page.
+	for i, raw := range a.StatusServices {
+		switch strings.ToLower(strings.TrimSpace(raw)) {
+		case "indexer", "aggregator":
+			// ok
+		default:
+			return fmt.Errorf("%w: api.status_services[%d] %q must be one of: indexer, aggregator",
+				ErrInvalidConfig, i, raw)
+		}
+	}
 	return nil
 }
 

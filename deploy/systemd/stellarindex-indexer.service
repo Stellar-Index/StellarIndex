@@ -50,16 +50,29 @@ Type=simple
 User=stellarindex
 Group=stellarindex
 WorkingDirectory=/var/lib/stellarindex
-# NOTE (2026-08-28): this reference unit sources the SAME env file that
-# interactive stellarindex-ops runs source. Do NOT put
+# The ops-batch ClickHouse identity must never reach this daemon. This
+# reference unit sources the SAME env file the interactive and
+# timer-driven stellarindex-ops jobs source, and
+# docs/operations/clickhouse-ops-batch-profile.md prescribes writing
 # STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD (the low-priority
-# `ops_batch` ClickHouse identity, docs/operations/
-# clickhouse-ops-batch-profile.md) in it on a deploy/systemd self-host —
-# this service would demote its own ClickHouse reads/writes to the
-# batch tier. Export the pair in the batch job's shell instead. (The
-# ansible-managed hosts keep the service env in /etc/default/stellarindex
-# and reserve -ops for batch jobs, so the split is structural there.)
+# `ops_batch` identity) into exactly that file. Those two vars demote
+# every ClickHouse connection this binary opens
+# (internal/storage/clickhouse/ops_auth.go) to the batch tier — here
+# the LIVE ledger sink (clickhouse.NewLiveSink -> Open) every ledger is
+# written through, plus the signer-tagger's lake reader — i.e. the
+# exact inverse of the 2026-08-28 r1 incident the profile exists to
+# prevent. A comment can only ask; UnsetEnvironment= enforces it:
+# systemd applies it AFTER every Environment=/EnvironmentFile=, so the
+# pair cannot reach this daemon whatever the operator puts in the file
+# (needs systemd >= 235 — the Ubuntu 22.04/24.04 deploy targets ship
+# 249/255, and an older systemd ignores an unknown key with a warning
+# rather than failing the unit). The batch one-shots that share the
+# file (verify-archive-tier-*, ch-live-catchup) deliberately do NOT
+# strip it — that is where the identity belongs. Both halves are pinned
+# by TestOpsBatchIdentityNeverReachesLiveDaemons
+# (internal/storage/clickhouse/ops_auth_systemd_test.go).
 EnvironmentFile=-/etc/default/stellarindex-ops
+UnsetEnvironment=STELLARINDEX_CLICKHOUSE_OPS_USER STELLARINDEX_CLICKHOUSE_OPS_PASSWORD
 
 ExecStart=/usr/local/bin/stellarindex-indexer -config /etc/stellarindex.toml
 ExecStop=/bin/kill -TERM $MAINPID

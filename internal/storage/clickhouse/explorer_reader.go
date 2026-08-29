@@ -913,6 +913,29 @@ func accountTransactionsQuery(hasCursor bool) string {
 	// and the hydration pass repeats LIMIT 1 BY as belt-and-braces
 	// against duplicate lake parts.
 	//
+	// The KEYSET MERGE carries `LIMIT 1 BY` TOO, and it has to run BEFORE
+	// the merge's own LIMIT (#290). The two arms legitimately overlap:
+	// a tx the account SOURCED can also carry it as a NON-source
+	// participant of one of that tx's operations (an op with its own
+	// source_account naming the tx's source — batch/sponsored txs), so
+	// both arms emit the SAME (ledger_seq, tx_index) key. With the dedupe
+	// only in the hydration pass, every such key ate TWO of the merge's
+	// LIMIT slots and the page came back SHORT — and the handler emits
+	// next_cursor ONLY on a full page (internal/api/v1/explorer/
+	// accounts.go, the documented `absent on the last page` contract), so
+	// a client's history walk stopped there with older txs unreached:
+	// SILENT TRUNCATION, not a cosmetic short page. Deduping at the merge
+	// makes the keyset exactly min(limit, distinct keys older than the
+	// cursor) — which is what "a short page means end of history" needs
+	// in order to be true.
+	//
+	// The other way a page could be short — a key resolving to no
+	// stellar.transactions row — cannot happen: Sink.Flush sends
+	// transactions BEFORE operations/participants and stellar.ledgers
+	// last (its ORDERING note), and ops_by_source is an MV fed by those
+	// same inserts, so every key either arm can resolve already has its
+	// hydration row durable.
+	//
 	// The arms page the ACCOUNT-KEYED tables directly (same rewrite as
 	// accountOperationsQuery, 2026-08-28): resolving `(ledger_seq,
 	// tx_index) IN (SELECT … FROM ops_by_source WHERE source_account = ?)`
@@ -931,7 +954,7 @@ func accountTransactionsQuery(hasCursor bool) string {
 		    (SELECT ledger_seq, tx_index FROM stellar.operation_participants
 		       WHERE account = ?` + cursorClause + `
 		       ORDER BY ledger_seq DESC, tx_index DESC LIMIT 1 BY ledger_seq, tx_index LIMIT ?)
-		  ) ORDER BY ledger_seq DESC, tx_index DESC LIMIT ?)
+		  ) ORDER BY ledger_seq DESC, tx_index DESC LIMIT 1 BY ledger_seq, tx_index LIMIT ?)
 		ORDER BY ledger_seq DESC, tx_index DESC LIMIT 1 BY ledger_seq, tx_index LIMIT ?` + explorerScanSettings
 }
 
@@ -1067,6 +1090,16 @@ func accountOperationsQuery(hasCursor, hasBound bool) string {
 	// key table (both are ReplacingMergeTree) before the arm's LIMIT, and
 	// the top-N-union invariant above holds unchanged since each arm's
 	// keys are exactly the rows the old arm resolved.
+	//
+	// The merge below needs NO cross-arm dedupe (unlike
+	// accountTransactionsQuery's, #290): these arms are disjoint at op
+	// granularity — an op is sourced by the account XOR carries it as a
+	// non-source participant, because operationParticipantRows excludes
+	// the op's own resolved source (pinned by
+	// TestOperationParticipantRows_SkipsSource). The full-history walk
+	// asserts every non-final page of this listing is FULL
+	// (test/integration/account_operations_pk_pruning_test.go), which is
+	// what would catch a violation of that invariant.
 	return `SELECT ` + opCols + ` FROM stellar.operations
 		WHERE (ledger_seq, tx_index, op_index) IN (
 		  SELECT ledger_seq, tx_index, op_index FROM (

@@ -93,14 +93,28 @@ groups:
       # role now templates max_locks_per_transaction = 4096
       # (819,200 entries — permanent growth headroom). This alert
       # fires at 70% saturation so we get warning long before any
-      # future bump is forced. Depends on postgres_exporter (not
-      # currently scraped on R1 — see configs/prometheus/rules.r1/
-      # README.md "remaining files NOT shipped"; the alert lights
-      # up when the exporter lands.)
+      # future bump is forced. postgres_exporter HAS been scraped
+      # on R1 since F-0152 closed (2026-05-27, job
+      # `postgres_exporter` on :9187) — the stale "not currently
+      # scraped" note this block used to carry is what let the
+      # broken join below go unnoticed.
+      #
+      # #301: `pg_locks_count` is NOT a single series. The
+      # exporter's built-in `pg_locks` collector emits one sample
+      # per (datname, mode) — eight lock modes × every database —
+      # so the old unqualified `pg_locks_count / (...)` had no
+      # right-hand label set to match and evaluated to the empty
+      # vector on every tick: the SEV-3 guard was silently dead.
+      # Sum the modes/databases into a per-instance total and join
+      # `on (instance)` against the single-series settings gauges,
+      # the same shape the sibling `_connections_saturated` was
+      # corrected to in 1bcd6a9e. The lock table is one
+      # cluster-wide shared-memory arena, so summing across
+      # databases as well as modes is the correct numerator.
       - alert: stellarindex_timescale_lock_table_pressure
         expr: |
-          pg_locks_count
-            / (pg_settings_max_locks_per_transaction * pg_settings_max_connections)
+          sum by (instance) (pg_locks_count)
+            / on (instance) (pg_settings_max_locks_per_transaction * pg_settings_max_connections)
             > 0.7
         for: 5m
         labels:

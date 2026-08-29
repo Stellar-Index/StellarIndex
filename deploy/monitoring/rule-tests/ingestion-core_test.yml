@@ -742,17 +742,53 @@ tests:
         alertname: stellarindex_ingestion_duplicate_flood
         exp_alerts: []
 
-  # ── DOCUMENTED LIMITATION, not an endorsement: the `and on (source)
-  # … == 0` join needs the outcome="new" child to EXIST. After a
-  # process restart a source that has produced only duplicates never
-  # creates that child (WithLabelValues is call-site-seeded per
-  # source), so the alert stays silent in exactly its target scenario.
-  # This case pins the current behaviour so a fix flips it visibly.
+  # ── the post-restart shape (#302): a source whose ONLY inserts since
+  # process start were duplicates never creates the outcome="new" child
+  # (WithLabelValues is call-site-seeded per source, and `source` is
+  # config-dependent so internal/obs does not pre-seed it). The old
+  # `and on (source) … == 0` join needed that child to EXIST, so the
+  # alert was silent in exactly its target scenario. `unless on (source)
+  # … > 0` treats absent and zero alike. Red on the pre-fix rule
+  # (got: []).
   - interval: 1m
-    name: KNOWN GAP an absent outcome-new child silences the duplicate-flood alert
+    name: an absent outcome-new child still tickets after a restart
     input_series:
       - series: 'stellarindex_trade_insert_outcome_total{job="stellarindex_indexer",instance="r1:9100",source="sdex",outcome="duplicate"}'
         values: '0+60x40'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: stellarindex_ingestion_duplicate_flood
+        exp_alerts:
+          - exp_labels:
+              source: sdex
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
+              summary: "Source sdex producing duplicates only (cursor replay or stuck-tip)"
+              description: |
+                Source sdex has been attempting >0.5
+                inserts/sec for ≥10 min but EVERY attempt hits
+                `ON CONFLICT DO NOTHING` — no new rows are landing in
+                the trades hypertable. The indexer cursor advances but
+                the data underneath it is stale.
+
+                Likely root causes: cursor-state corruption (cursor
+                jumped past data without persisting), a stale event
+                channel feeding the sink from an old replay loop, or a
+                back-pressure event that lost in-flight events.
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
+
+  # ── guard on the same shape: `unless` must not become an
+  # unconditional fire. Absent outcome="new" child AND a 0.4/s
+  # duplicate rate (under the 0.5/s line) stays silent.
+  - interval: 1m
+    name: an absent outcome-new child under the rate threshold raises nothing
+    input_series:
+      - series: 'stellarindex_trade_insert_outcome_total{job="stellarindex_indexer",instance="r1:9100",source="sdex",outcome="duplicate"}'
+        values: '0+24x40'
     alert_rule_test:
       - eval_time: 25m
         alertname: stellarindex_ingestion_duplicate_flood

@@ -774,6 +774,15 @@ type RegionConfig struct {
 	ID         string `toml:"id" doc:"Short region identifier, lowercase (r1/r2/r3)." default:"r1"`
 	Name       string `toml:"name" doc:"Human-readable region name (London, Ashburn, …)." default:"London"`
 	HomeDomain string `toml:"home_domain" doc:"DNS home domain for this org (used in stellar.toml + SCP quorum sub-quorum)." default:"stellarindex.io"`
+	// Deployment is the tier label /v1/status reports in
+	// `region.deployment` (and the ingestion diagnostics echo). It was
+	// hardcoded "production" in cmd/stellarindex-api, so the lean
+	// test-net deployments served `"deployment": "production"` from
+	// api.testnet.stellarindex.io and the explorer's status page tagged
+	// a test net PRODUCTION (#328). Defaulting to "production" keeps
+	// pubnet's wire contract byte-identical; the test-net inventories
+	// set "testnet" / "futurenet".
+	Deployment string `toml:"deployment" doc:"Deployment tier this node reports in /v1/status's region block (production / testnet / futurenet / staging). Purely a label — nothing keys behaviour off it." default:"production"`
 }
 
 // StellarConfig points a Stellar Index binary at the stellar-core +
@@ -1249,8 +1258,22 @@ type APIConfig struct {
 	SEP10                          SEP10Config     `toml:"sep10" doc:"SEP-10 Web Auth — server signing seed, JWT secret, TTLs. Active when auth_mode=sep10 OR when /v1/auth/sep10/* endpoints are exposed."`
 	Streaming                      StreamingConfig `toml:"streaming" doc:"Closed-bucket SSE fanout — pairs the API binary republishes to the streaming Hub on every new closed prices_1m bucket. Empty Pairs leaves /v1/price/stream returning 503; Hub still constructs so subscribers can connect (and immediately drop) without a panic."`
 	PrometheusURL                  string          `toml:"prometheus_url" doc:"Prometheus HTTP API root (e.g. http://localhost:9090) backing /v1/status. Empty leaves /v1/status serving an in-process surface (uptime + region only)." default:""`
-	ArchiveReportPath              string          `toml:"archive_report_path" doc:"Filesystem path of the archive-completeness daemon's latest JSON report (the -output-file of 'stellarindex-ops archive-completeness verify'; the systemd unit writes /var/lib/galexie/last-completeness-report.json). Backs GET /v1/diagnostics/archive. The endpoint 404s while the file doesn't exist yet and 503s when this is empty." default:"/var/lib/galexie/last-completeness-report.json"`
-	Dashboard                      DashboardConfig `toml:"dashboard" doc:"Customer dashboard auth flow — passwordless email login (6-digit code + magic link) + cookie sessions backing the in-site dashboard at stellarindex.io/account. Empty leaves /v1/auth/{login,callback,verify-code,logout} returning 503."`
+	// StatusServices names the BACKGROUND services this deployment
+	// actually runs, and therefore the ones /v1/status reports a
+	// heartbeat for and rolls `overall` up from. ("api" is always
+	// reported — it is the process answering the request.)
+	//
+	// #328: the list was hardcoded to indexer+aggregator, so the lean
+	// test nets — which deliberately run NO aggregator (inventory
+	// `run_aggregator: false`) — reported it forever "unknown", and the
+	// mixed known/unknown branch of the roll-up pinned overall at
+	// "degraded" permanently. A status page that is red by construction
+	// trains its readers to ignore it. Dropping a service here is an
+	// explicit operator assertion that it is not deployed; leaving the
+	// default in place keeps pubnet's behaviour byte-identical.
+	StatusServices    []string        `toml:"status_services" doc:"Background services whose heartbeats /v1/status reports and rolls up (subset of: indexer, aggregator). Drop one only on a deployment that genuinely does not run it — a service omitted here can never be reported down." default:"[\"indexer\",\"aggregator\"]"`
+	ArchiveReportPath string          `toml:"archive_report_path" doc:"Filesystem path of the archive-completeness daemon's latest JSON report (the -output-file of 'stellarindex-ops archive-completeness verify'; the systemd unit writes /var/lib/galexie/last-completeness-report.json). Backs GET /v1/diagnostics/archive. The endpoint 404s while the file doesn't exist yet and 503s when this is empty." default:"/var/lib/galexie/last-completeness-report.json"`
+	Dashboard         DashboardConfig `toml:"dashboard" doc:"Customer dashboard auth flow — passwordless email login (6-digit code + magic link) + cookie sessions backing the in-site dashboard at stellarindex.io/account. Empty leaves /v1/auth/{login,callback,verify-code,logout} returning 503."`
 }
 
 // DashboardConfig wires the passwordless email login flow (6-digit
@@ -1720,6 +1743,9 @@ func defaultAPIConfig() APIConfig {
 		// the handler degrades to 404 while the file doesn't exist, so
 		// the default is harmless on hosts without the daemon.
 		ArchiveReportPath: "/var/lib/galexie/last-completeness-report.json",
+		// Pubnet runs both; the lean test-net inventories drop
+		// "aggregator" (#328).
+		StatusServices: []string{"indexer", "aggregator"},
 		SEP10: SEP10Config{
 			SeedEnv:       "STELLARINDEX_SEP10_SEED",
 			JWTSecretEnv:  "STELLARINDEX_SEP10_JWT_SECRET",
@@ -1751,6 +1777,7 @@ func Default() Config {
 			ID:         "r1",
 			Name:       "London",
 			HomeDomain: "stellarindex.io",
+			Deployment: "production",
 		},
 		Stellar: StellarConfig{
 			Network:           "pubnet",

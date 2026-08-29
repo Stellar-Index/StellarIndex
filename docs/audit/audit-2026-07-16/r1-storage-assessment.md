@@ -1,5 +1,18 @@
 # R1 disk / storage assessment (2026-07-16)
 
+> ⛔ **CORRECTION (2026-08-29, #289) — do not cite this file for the
+> pool topology.** Every "raidz2 / 13.85 TB usable" claim below is an
+> inference from the then-current docs (which themselves derived
+> usable capacity *from* the raidz2 assumption), not an observation:
+> this assessment states in its own first line that it had **no live
+> r1 access**. The live review the very next day settled it —
+> **raidz1**, single parity, ~18.3 TB usable
+> (`go-live-master-plan.md` §5 in this same directory: "corrected
+> from the earlier snapshot-based assessment"; commit `ca2f4748`).
+> The rest of this file — drive serials, dual-duty layout, the
+> expansion history — stands. Kept unedited as the trace of how the
+> wrong topology propagated.
+
 First-pass from repo config + docs — **no live r1 access during the Phase-0 freeze**, so every "current" number is a doc snapshot (mostly `storage-considerations.md`, last_verified 2026-05-20) and the live checks at the end are `[OP]`. Where the doc is stale I say so.
 
 ## TL;DR (the two things that matter)

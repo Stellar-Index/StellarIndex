@@ -152,6 +152,40 @@ against.
 
 ### Changed
 
+- **The two frozen planning inventories are retired, and
+  `verify-launch-ready` can no longer certify a retired document
+  (#321).** `docs/architecture/launch-readiness-backlog.md` had gained
+  zero rows since 2026-05-13 and contained none of the actual v1 gate
+  (W6.1 paging, W6.3 rotations, W4 backups, the W8 correctness
+  backlog, ToS/Privacy #237), yet every L1–L5 row still carried its
+  last-written ✅ — so the weekly `launch-readiness.yml` workflow
+  republished *"✓ Engineering surface ready"* over a document that had
+  stopped tracking reality, and got more confident the staler it got.
+  The doc is now formally superseded by `docs/operations/v1-launch-plan.md`
+  (frontmatter `status: superseded` + a banner mapping its still-open
+  rows: L4.14–L4.17 + L5.8 → W9 gated on D2, L5.6 → W6.2, L6.4 → §2.8,
+  L6.6/L6.7 → W6.7), `.github/workflows/launch-readiness.yml` is
+  deleted, and `scripts/ci/verify-launch-ready` now reads the
+  frontmatter and emits **no verdict at all** (new exit code 3) for any
+  document declaring itself superseded/retired — a retired doc's rows
+  are history, and neither a green nor a red computed from them means
+  anything. The prior 2026-07-24 staleness banner was itself wrong
+  twice over (it claimed the gate was unwired the day *after* it was
+  wired in `068ec709`, and named a "current source of truth" that was
+  superseded on 2026-07-27); both corrections are recorded in the new
+  banner. `docs/operations/open-fixes-inventory-2026-08-08.md` is
+  superseded on the same terms: 24 of its 35 rows were done and never
+  struck — rows 1 and 19 closed on the day it was compiled
+  (`d1cd18ac`, `a1c5c2e5`), rows 2 and 5 two days later (`f75ab4b2`,
+  `ef278218`) — and its genuinely-open threads are carried into the
+  launch plan's §5. The public company page's "roadmap that gets us to
+  v1" link now points at `v1-launch-plan.md` instead of the retired
+  backlog. Tests: `TestRealBacklog_IsRetired`,
+  `TestVerdictLine_RetiredDocNeverCertifiesReady`,
+  `TestSupersession_ReadsFrontmatterOnly`, and a company-page case
+  pinning the roadmap href (red-proof: the pre-fix binary run against
+  the now-retired doc still printed "✓ Engineering surface ready
+  (subset gate)" and exited 0).
 - **ADR-0043 §2 amended (2026-08-29):** "two independent raw-LCM
   archives" now explicitly = our recent range + the AWS Public
   Blockchain dataset; dependency accepted and monitored rather than
@@ -233,6 +267,248 @@ against.
   `scripts/ops/archive-cross-check.sh` is flagged as design-intent in
   `multi-region-topology.md`. **Requires an ansible apply
   (`--tags ops-jobs`) on r1 — a binary-only deploy ships this dead.**
+- **r1's ZFS `data` pool is raidz1 everywhere, and a lint keeps it that
+  way.** The pool is SINGLE parity — live-verified 2026-07-17 and
+  corroborated by arithmetic that needs no host access (the ~16.8 TB
+  footprint measured that day cannot fit the ~13.85 TB two parity drives
+  would leave on these four devices) — but the 2026-07-17 correction only
+  ever reached the two rule trees and two runbooks. `r1-deployment-state`,
+  `self-hosting`, `storage-considerations`, `multi-region-topology`,
+  `multi-region-cutover`, `r3-deployment-state`, `lcm-cache-tiering`,
+  ADR-0016, ADR-0027 and the ansible per-region comment all still said
+  raidz2, i.e. promised an operator a second drive of failure margin that
+  does not exist and sized capacity plans off a usable figure ~4.5 TB too
+  low. Sharpest of them: `configs/ansible/inventory/r1.example.yml` said
+  `zfs_data_pool_type: "raidz2"`, so a rebuild from the codified inventory
+  would have laid down a pool too small for r1's own data. That value is
+  now `raidz1` and is the machine-readable authority `scripts/ci/lint-docs.sh`
+  §18 lints every r1-scoped file against (paragraph-level: naming another
+  raidz level is allowed only alongside the live one, so dated history
+  survives and bare contradictions do not). The role DEFAULT stays raidz2
+  — deliberately, it is the right shape for a *fresh* archival node — and
+  now says so. The `TODO(ash)` in `zfs-degraded.md` is closed with the
+  evidence rather than another ssh request. Dated decision records
+  (ADR-0016/0027, the superseded first-node runbook, the 2026-07-16 audit
+  assessment that inferred raidz2 from docs while stating it had no live
+  access) keep their text and carry inline corrections. (#289)
+- **Account transaction history no longer truncates itself: the keyset
+  merge dedupes the two arms BEFORE taking its LIMIT.**
+  `/v1/accounts/{g_strkey}/transactions` resolves its page keys from a
+  `UNION ALL` of the sourced (`stellar.ops_by_source`) and participant
+  (`stellar.operation_participants`) arms, and a tx the account SOURCED
+  that ALSO carries it as a non-source participant of one of its
+  operations is emitted by BOTH arms. The merge took its `LIMIT ?` over
+  those still-duplicated rows and only the hydration pass deduped, so
+  every overlapping tx cost a page slot: the page came back SHORT while
+  older history remained, and the handler emits `next_cursor` only on a
+  FULL page (the documented "absent on the last page" contract), so a
+  client's history walk stopped there with older transactions
+  unreached. Measured on the live-ClickHouse fixture (600 txs, page
+  size 7): the pre-fix query served 100 non-final short pages out of
+  101 — a walker stopped on page 1 having seen 6 of 600 txs — the fixed
+  query serves 86 full pages and 0 short ones. `LIMIT 1 BY ledger_seq,
+  tx_index` now runs at the merge too, making the keyset exactly
+  `min(limit, distinct keys older than the cursor)`; rows and their
+  order are unchanged (the integration walk keeps the pre-fix SQL as a
+  differential oracle over the whole history, and now requires it to
+  still produce a short page so the fullness assertion cannot go
+  vacuous). The sibling operations listing needs no such dedupe — its
+  arms are disjoint at op granularity because participants exclude
+  their op's own source — and a key cannot hydrate to nothing either,
+  since `Sink.Flush` writes transactions before operations and
+  participants. (#290)
+
+- **The `ops_batch` ClickHouse identity can no longer reach a live
+  daemon on a `deploy/systemd` self-host.** The three reference units
+  (`stellarindex-{indexer,aggregator,api}.service`) source
+  `/etc/default/stellarindex-ops` — the indexer for its MinIO creds, the
+  API for its SEP-10 seed — and
+  `docs/operations/clickhouse-ops-batch-profile.md` prescribes writing
+  `STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD` into exactly that file.
+  Since #243 those two vars set the identity of every ClickHouse
+  connection `internal/storage/clickhouse` opens, so a self-hoster
+  following the doc demoted the LIVE ledger sink
+  (`NewLiveSink` → `Open`) and the aggregator's supply readers
+  (`NewExplorerReader`) to the lowest-priority batch tier — the precise
+  inverse of the 2026-08-28 r1 incident the profile exists to prevent.
+  The only guard was a unit-file comment (`config-assertions.sh`'s third
+  leg checks `/etc/default/stellarindex`, which does not exist on such a
+  host). Each live-daemon unit now carries
+  `UnsetEnvironment=STELLARINDEX_CLICKHOUSE_OPS_USER
+  STELLARINDEX_CLICKHOUSE_OPS_PASSWORD`, which systemd applies after
+  every `Environment=`/`EnvironmentFile=` (systemd ≥ 235; the Ubuntu
+  22.04/24.04 targets ship 249/255), so the guarantee holds whatever the
+  operator puts in the file. The batch one-shots that share the file
+  (`verify-archive-tier-*`, `ch-schema-*`, `restore-drill`) deliberately
+  do NOT strip it. `TestOpsBatchIdentityNeverReachesLiveDaemons` resolves
+  the environment each unit in `deploy/systemd/` and the archival-node
+  role would hand its process, feeds it to `opsAuthFrom` and pins both
+  halves — CH `default` for the live daemons, `ops_batch` for the batch
+  units — so neither direction can drift. Ansible-managed hosts were
+  never affected (their daemons read `/etc/default/stellarindex`) and
+  nothing about r1's rendered units changes. (#292)
+- **`stellarindex_ingestion_duplicate_flood` can fire in its own target
+  scenario.** The rule joined `rate(...{outcome="duplicate"}[10m]) > 0.5`
+  with `and on (source) rate(...{outcome="new"}[10m]) == 0`, and an
+  `and` join needs the right-hand series to EXIST.
+  `stellarindex_trade_insert_outcome_total` is call-site-seeded
+  (`WithLabelValues` on the trade-insert path) and its `source` label is
+  config-dependent, so internal/obs does not pre-seed it — a source
+  whose every insert since process start hit the conflict path never
+  creates the `outcome="new"` child, the join matched nothing, and the
+  alert stayed silent in exactly the post-restart cursor-replay flood it
+  exists for. Now `unless on (source) rate(...{outcome="new"}[10m]) > 0`,
+  which reads an absent child and a zero rate identically (the
+  absent-series idiom already used by the `insert_stale` sibling). Both
+  rule trees. The promtool case that pinned the gap as a KNOWN GAP now
+  asserts the alert fires, with a companion guard proving a
+  below-threshold duplicate rate with the same absent child stays silent
+  (red on the pre-fix rule: `got:[]`). (#302)
+- **`/v1/livez/lake` single-flighted, and its 503 no longer publishes the
+  ClickHouse endpoint (#310, audit 2026-08-29).** #266 gave the ADR-0050
+  lake-route LB probe readyz's infra exemptions — no auth, no anonymous
+  rate limit — but readyz's safety under those exemptions comes from its
+  single-flight cache, which this route never had: every anonymous
+  request ran a fresh `LakeTipLedger` query against ClickHouse under a 5s
+  timeout, so unmetered concurrent probes amplified straight onto the
+  lake, worst exactly when the lake was already struggling. Concurrent
+  callers now share ONE ping round per second (`livezLakeTTL`, the same
+  budget as readyz; `as_of` reports when the lake was actually pinged),
+  and the round runs on a detached context so one prober's disconnect
+  can't cancel it for everyone. The 503 body's `data.detail` is now a
+  fixed operator hint instead of `err.Error()` — which on the real
+  checker is a dial error naming the ClickHouse host:port, served
+  unauthenticated during an outage; the underlying error goes to the
+  server log (once per round). OpenAPI 503 contract + the generated
+  Postman/TS mirrors updated to match. Tests:
+  `TestLivezLake_SingleFlightSharesOnePingPerRound` (25 probes → 1 ping;
+  pre-fix 25), `TestLivezLake_UnreadyBodyDoesNotEchoPingError` (body
+  scrubbed, log still carries it), `TestLivezLake_RoundRefreshesAfterTTL`
+  (a recovered lake is not pinned 503), `TestLivezLake_AbsentLakeFailsClosed`.
+
+- **A future-dated backup stamp no longer renders a green "fresh" row on
+  the status page.** `freshnessVerdict`
+  (`internal/api/v1/diagnostics_backups.go`) clamped a negative age to
+  `age_seconds: 0` for display and then judged the SLO on the *clamped*
+  value — `*age > slo` is false for any negative — so a forward-skewed
+  host clock or a corrupt future-dated pgBackRest label painted an
+  arbitrarily stale backup `"ok"` with a 0-second age, and the panel's
+  roll-up went fully green (its own comment already said "don't reward
+  it"). A stamp past `backupClockSkewTolerance` (1 min — these ages
+  cross clocks, so ordinary NTP divergence on a genuinely fresh item
+  still floors to 0) is now `"unknown"` carrying its RAW negative age
+  for diagnosis, which also drags `freshness.overall` and `flags.stale`
+  off all-clear. The Backups panel names that state ("stamp from the
+  future") instead of an ambiguous grey "no data", and its client-side
+  repositories caption stopped clamping the same future stamp up into
+  "0s ago" (`Math.max(0, …)` — the identical bug, one layer up).
+  Regression tests: `TestBuildBackupsSnapshot_FutureDatedOffsite` (an
+  8 d 14 h future-dated repo2 label read `ok` / `0 s` / overall `ok`
+  before the fix) + `BackupsPanel.test.tsx`. (#311)
+- **`usd-volume-restamp`'s lifted decompression cap can no longer ride the
+  pooled connection out of the call.** `RestampExactTierUSDVolume` raised
+  `timescaledb.max_tuples_decompressed_per_dml_transaction = 0` with a
+  session-level `SET` on a borrowed `*sql.Conn`, and its comment claimed
+  that was "session-scoped … must not leak into the pool's serving
+  connections". Mechanically it was the opposite: `Conn.Close` returns the
+  connection TO the pool and pgx v5 stdlib's default `ResetSession` is a
+  no-op (it pings and discards a conn left mid-transaction; it issues no
+  `DISCARD ALL`/`RESET ALL`), so the lifted cap persisted on that pooled
+  connection for the process lifetime and any later DML landing on it
+  would have run uncapped — harmless only because `stellarindex-ops` is a
+  one-shot whose pool never serves the API. The restamp now runs its
+  window in ONE explicit transaction with `SET LOCAL`, the same tx-scoped
+  GUC discipline as `FindPerSourceLedgerGaps` /
+  `SEP41SupplyEventKindResum`: Postgres unwinds it at COMMIT/ROLLBACK, so
+  it cannot escape even on the error path. Behaviour of the write itself
+  is unchanged (same predicate, same identity, same INV-3 generation
+  guard). Unit test
+  (`TestRestampExactTierUSDVolume_DecompressionCapNeverEscapesTheTransaction`,
+  a GUC-scoping driver fake that also models pgx's no-op session reset)
+  + the DB-backed integration test now asserts the pooled conn's cap is
+  untouched after a restamp and that TimescaleDB honours the `SET LOCAL`
+  form inside the transaction. (#312)
+- **The required `lint` check no longer downloads a JSON schema from
+  golangci-lint.run on every PR.** `golangci/golangci-lint-action`
+  defaults `verify: true`, which runs `golangci-lint config verify` —
+  and that command fetches
+  `https://golangci-lint.run/jsonschema/golangci.v2.11.jsonschema.json`
+  before it can validate anything. On 2026-08-28 the fetch died with
+  `read: connection reset by peer` and took a REQUIRED check red on a
+  diff containing no Go (PR #275); a rerun passed. Reproduced locally
+  against v2.11.4 with the network blocked (`HTTPS_PROXY` to a dead
+  port): `compile schema: failing loading "…golangci.v2.11.jsonschema
+  .json" … connection refused`, exit 3. The schema check is NOT
+  dropped — golangci-lint's own loader silently ignores unknown keys
+  (a top-level `runn:` block is accepted by `golangci-lint run` and
+  rejected only by `config verify`), so losing it would mean a
+  misspelt setting is a lint rule that quietly stops applying. Instead
+  the schema is vendored (`scripts/ci/golangci.v2.11.jsonschema.json`,
+  byte-identical to the site's copy) and validated offline by a new
+  `scripts/ci/lint-golangci-config` gate wired into the `lint` job,
+  `make lint-golangci-config` and `verify.sh`. The gate also enforces
+  its own preconditions: every golangci-lint-action step must set
+  `verify: false` (so the fetch cannot silently return), ci.yml and
+  the Makefile must pin the same release, and that release must have a
+  vendored schema (a bump without a re-vendor fails rather than
+  validating against a stale copy). Fails loudly if the action step
+  disappears, so it can never pass vacuously. (#317)
+- **The MEV liquidation-cascade path stops treating unmapped `raw:`
+  oracle rows as evidence — a squash merge had silently reverted the
+  guard.** `af5a9d1d` (#305, a pgBackRest ansible change whose base
+  predated `2ce680f3`) landed a tree that removed PR #248's oracle
+  capture-totality consumer guards and DELETED their tests. From that
+  merge until now, `OracleUpdatesForMEVScan` no longer carried
+  `AND asset NOT LIKE 'raw:%'` and `buildCascadeCandidate` no longer
+  called `oracleRefIsMapped`, so the one `oracle_updates` consumer with
+  NO asset keying — for the cascade correlator, any oracle row inside a
+  fill's ledger bracket is evidence — was again fed the
+  orientation-unknown `raw:<symbol>` rows the totality design records
+  verbatim. Both guards are restored verbatim, together with the two
+  deleted regression tests (`mev_shape_test.go`, `cascade_raw_test.go`)
+  and a behavioural assertion on the statement the store actually issues
+  (`TestOracleUpdatesForMEVScan_ExcludesRawRowsFromTheIssuedSQL`), which
+  survives a refactor away from the query const. Red-proven against
+  `origin/main`'s own files at `0f13aa14`: twelve `raw:NOTACOIN` rows
+  and no mapped row at all minted a complete `liquidation_cascade`
+  event naming four real accounts on the public `/v1/mev` feed.
+  **Still reverted by the same merge and deliberately NOT restored
+  here** — each needs its own change, and the v0.48.0 entry describing
+  them is ahead of the code until then: `internal/divergence/oracle.go`'s
+  unmapped-row refusal (+ its `oracle_raw_test.go`); the
+  `-- totality: includes unmapped` markers and the "Unmapped feeds" KPI
+  in `internal/storage/timescale/{oracle,bespoke_oracle,diagnostics,
+  protocol_stats}.go` (+ the `bespoke_oracle_shape_test.go` assertion);
+  the repo guard `TestOracleUpdatesQueriesDeclareRawRowPolicy`
+  (`oracle_updates_query_guard_test.go`); and
+  `test/integration/oracle_raw_consumers_test.go`.
+- **`ListMEVEvents`' doc comment claimed a cap it does not apply.** It
+  said "limit is capped at 500"; an out-of-range limit actually falls
+  back to the 50-row default, which is the package's convention
+  (`ListIssuers`, `ListFreezeEvents`, `ListDivergenceLatest`) and is
+  unreachable from `/v1/mev` anyway (`parseExplorerLimit` 400s an
+  out-of-range `?limit=`). Comment corrected to the real contract and
+  pinned by `TestListMEVEvents_LimitNormalisation`; behaviour unchanged.
+- **Agent-orientation docs re-swept against HEAD; the two claims a
+  machine can re-derive are now CI-enforced (`lint-docs.sh` §18,
+  issue #326).** CLAUDE.md's repo map still located the shipped status
+  page at `web/status/` — it lives in the explorer at
+  `web/explorer/src/app/status/` (stellarindex.io/status) and
+  `web/status/` is a redirect-only Cloudflare Pages stub 301-ing to it
+  — and AGENTS.md still carried the `make dev` ("docker-compose up the
+  full stack"; `dev.yaml` has only Timescale/Redis/MinIO) and
+  `make docs-all` ("+ obs/*.go metric Name: fields"; `docs-metrics` is
+  an explicit no-op) descriptions that #259 had already corrected in
+  CLAUDE.md. New §18a asserts AGENTS.md's quick-start block is a
+  VERBATIM subset of CLAUDE.md's — duplicated prose is what drifts, so
+  shorten by dropping a line, never by rewording one — and §18b asserts
+  that an orientation doc naming `web/status` also names where the page
+  actually lives, self-disarming if the stub redirect ever goes away.
+  Also documented, from the code: the oracle capture-totality bullet
+  (reflector/redstone/band record an unmapped symbol VERBATIM as a
+  record-layer `raw:<symbol>` row instead of dropping the slot), and a
+  note that an explicit issues-only / one-batch-PR agreement overrides
+  CLAUDE.md's default long-session commit→merge→next cadence.
 - **RedStone SolvBTC NAV feeds are quoted in their reserve asset, not
   `fiat:USD` (D8).** `SolvBTC_FUNDAMENTAL` and
   `SolvBTC.BBN_FUNDAMENTAL` publish net asset value as a RATIO

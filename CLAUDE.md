@@ -152,7 +152,7 @@ development. If one does, it's a bug.
 │   └── healthchecks/             per-binary heartbeat + 5-min API smoke timers (Healthchecks.io)
 ├── openapi/                   stellar-index.v1.yaml — source of truth for API
 ├── examples/                  curl scripts + Postman collection (auto-gen) for the public API
-├── deploy/                    docker-compose (dev), systemd (production unit files), monitoring (Prometheus rules — multi-host), clickhouse/ (tier-1 lake DDL, ADR-0034), comms/ (customer-facing incident/launch templates). The shipped status-page lives at `web/status/` (Cloudflare Pages static export); earlier scaffolds were retired (F-1211 / wave 57).
+├── deploy/                    docker-compose (dev), systemd (production unit files), monitoring (Prometheus rules — multi-host), clickhouse/ (tier-1 lake DDL, ADR-0034), comms/ (customer-facing incident/launch templates). The shipped status page lives in the EXPLORER at `web/explorer/src/app/status/` (served at stellarindex.io/status; postmortems at `status/incident/[slug]`, loaded at build time from `internal/incidents/data/*.md` by `web/explorer/src/lib/incidents.ts`). `web/status/` is now a redirect-only Cloudflare Pages stub that 301s status.stellarindex.io there (`web/status/public/_redirects`, web/status/README.md); earlier scaffolds were retired (F-1211 / wave 57).
 ├── web/explorer/              Next.js 16 static-export explorer rendered at stellarindex.io (Cloudflare Pages); see web/explorer/CLAUDE.md for the frontend/design brief
 ├── scripts/                   dev/ops/ci helpers (incl. ci/lint-docs.sh, dev/r1-smoke.sh)
 ├── test/                      integration / fixtures (build tag: integration), load (k6), chaos
@@ -390,6 +390,27 @@ linked design doc has the full detail.
   event (`ErrAmbiguousSubset`) — honest-blind beats misattributed.
   Any new decoder that needs tx args follows the same
   `events.Event.OpArgs` pattern.
+- **Oracle decoders never DROP an unmapped symbol.** Since the
+  capture-totality change (PR-2, #247) reflector / redstone / band
+  record a symbol or feed_id that maps to no canonical asset
+  VERBATIM as a `raw:<symbol>` row (`canonical.AssetOracleRaw`,
+  `internal/canonical/asset_raw.go`) instead of skipping the slot —
+  which is also what keeps the synthetic `op_index` stable, since it
+  is derived from the vector POSITION. Raw rows are RECORD-layer
+  only: `Pair.Validate` refuses one as a pair leg, `supply.AssetKey`
+  refuses one as a supply key, and nothing in the interpretation
+  layer (VWAP, divergence) may read one — scans over
+  `oracle_updates` that don't key by canonical asset must filter on
+  `Asset.IsMapped()` / `asset NOT LIKE 'raw:%'`.
+  `/v1/oracle/streams` omits them unless `include_unmapped=true`
+  (every reading carries a `mapped` discriminator; `/v1/oracle/latest`
+  returns one only when asked for by its exact `raw:` key).
+  `stellarindex_source_unknown_symbols_total` still counts them —
+  it now means "recorded as raw", a mapping gap for the allow-list
+  owner, and `stellarindex_ingestion_oracle_unknown_symbols` tickets
+  on it. Widening the allow-list re-derives the same PK and promotes
+  `raw:X` → `crypto:X` in place on replay, so no capture is lost.
+  Design: docs/design/oracle-capture-totality-design.md.
 - **Post-P23 (Whisk, mainnet 2025-09-03) every classic asset
   movement emits a unified transfer/mint/burn event with a 4th
   `sep0011_asset` topic.** Our decoder handles both event SHAPES —
@@ -799,6 +820,14 @@ shared files.
 The one exception: if the user is actively reviewing mid-session
 and explicitly says "don't merge yet, I want to see the whole thing
 first." Otherwise, merge.
+
+This is the DEFAULT, not a law of nature: if your session runs under
+an explicit agreement to the contrary — e.g. the issues-only /
+one-batch-PR arrangement recorded in the launch plan's process
+addenda (`docs/operations/v1-launch-plan.md`) — that agreement
+overrides the cadence above. Everything else still applies, "no
+orphan work" above all: an issue filed instead of a PR is fine, a
+pushed branch nobody can see is not.
 
 ---
 

@@ -96,8 +96,9 @@ Runtime on a clean Hetzner EX63: ~15 minutes for config, then
    present, no conflicting services.
 2. **Kernel** — sysctl profile for high-fd services + network
    buffers; swap tuned for DB workload.
-3. **ZFS** — installs `zfsutils-linux`, creates the `data` raidz2
-   pool across 4 NVMe drives, creates per-workload datasets with
+3. **ZFS** — installs `zfsutils-linux`, creates the `data` pool in
+   the inventory's `zfs_data_pool_type` topology (role default
+   `raidz2`; r1 pins `raidz1`), creates per-workload datasets with
    workload-tuned `recordsize` + `compression=zstd`.
 4. **Postgres 15** — PGDG repo, tuned for the indexer's NUMERIC-
    heavy ledger-meta workload (was originally tuned for stellar-

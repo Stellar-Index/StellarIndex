@@ -5,6 +5,8 @@ import { Panel } from '@/components/reveal';
 
 import { AnomaliesFeed } from './AnomaliesFeed';
 
+import { NetworkUnavailable } from '@/components/NetworkUnavailable';
+import { routeAvailable } from '@/lib/network-routes';
 import { Container } from '@/components/ui';
 export const metadata: Metadata = {
   title: 'Anomalies — freeze and outlier timeline',
@@ -47,6 +49,18 @@ const REASONS: { name: string; trigger: string; meaning: string }[] = [
 ];
 
 export default function AnomaliesPage() {
+  // #328: aggregator-derived feed — empty by construction on a network
+  // with no aggregator. Nav/search/sitemap no longer offer it there, but
+  // a direct URL or an old bookmark still lands here, and an empty table
+  // with no explanation reads as an outage.
+  if (!routeAvailable('/anomalies')) {
+    return (
+      <Container className="space-y-6 py-8">
+        <NetworkUnavailable href="/anomalies" />
+      </Container>
+    );
+  }
+
   return (
     <Container className="space-y-6 py-8">
       <header className="space-y-2">

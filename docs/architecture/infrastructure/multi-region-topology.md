@@ -283,7 +283,8 @@ agreement.
 
 ### 7.1 R1 (Frankfurt, Hetzner) — full local mirror
 
-- Local MinIO single-node on raidz2 across 4 × 7.68 TB NVMe.
+- Local MinIO single-node on raidz1 (single parity — one drive of
+  tolerance) across 4 × 7.68 TB NVMe.
 - `galexie-live/`: ingested by R1's own captive-core galexie.
 - `galexie-archive/`: full local mirror, ~4.76 TB, sourced
   initially from `s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet/`
@@ -320,9 +321,10 @@ agreement.
   OS: local NVMe.
 - `/srv/history-archive`: NOT mirrored locally — same trust model
   as R2. Tier A + D run on weekly cron.
-- **RAID-1, not raidz2** — single-drive failure tolerance. Acceptable
-  for an async DR replica because multi-drive failures are
-  recoverable via the bring-up recipe (~half day).
+- **RAID-1 (2-way mirror)** — single-drive failure tolerance, the
+  same margin r1's raidz1 carries. Acceptable for an async DR replica
+  because multi-drive failures are recoverable via the bring-up
+  recipe (~half day).
 
 ### 7.4 Trust model + drift detection (defence-in-depth)
 

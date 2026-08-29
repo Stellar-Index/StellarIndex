@@ -37,6 +37,7 @@ import {
   stroopsToXlm,
 } from '../explorer-shared';
 import { shortAssetText } from '@/lib/asset-label';
+import { availableRoutes } from '@/lib/network-routes';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
 const LineChart = dynamic(
@@ -921,12 +922,18 @@ const DEEPER: { href: string; title: string; blurb: string }[] = [
 ];
 
 function DigDeeper() {
+  // #328: half these cards (MEV / Anomalies / Divergences / Lending /
+  // Oracles) are aggregator outputs with no data on a lean test net. The
+  // rail already hid their /insights hub there — this grid still offered
+  // them, which is exactly the "gating lives in the component" failure
+  // the shared route table exists to end.
+  const cards = availableRoutes(DEEPER);
   return (
     <Panel
       title="Dig deeper"
       bodyClassName="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4"
     >
-      {DEEPER.map((d) => (
+      {cards.map((d) => (
         <Link
           key={d.href}
           href={d.href}

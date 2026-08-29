@@ -105,6 +105,13 @@ export interface paths {
          *     Point lake-route load-balancer monitors here and pricing
          *     monitors at `/v1/readyz` (ADR-0050 §7.3 — the per-tier health
          *     split the multi-region design requires).
+         *
+         *     The route is unauthenticated (`security: []`) and exempt from
+         *     the anonymous rate limiter so probes always answer. Verdicts are
+         *     therefore single-flighted with a 1-second result cache: probing
+         *     faster than that (or probing concurrently) is safe but returns
+         *     the same shared round — `as_of` is the moment the lake was
+         *     actually pinged, up to 1 s ago.
          */
         get: operations["getLakeLiveness"];
         put?: never;
@@ -5320,13 +5327,13 @@ export interface components {
         /** @description One item's age judged against its SLO. */
         BackupFreshnessVerdict: {
             /**
-             * @description `ok` age ≤ SLO; `stale` age > SLO; `unknown` no data.
+             * @description `ok` age ≤ SLO; `stale` age > SLO; `unknown` no data, or a stamp from the future (see `age_seconds`).
              * @enum {string}
              */
             status: "ok" | "stale" | "unknown";
             /**
              * Format: int64
-             * @description Age at snapshot time; null when unknown.
+             * @description Age at snapshot time; null when there is no data. NEGATIVE when the stamp sits in the future of the API's clock beyond ordinary skew (a skewed host clock, or a corrupt future-dated backup label): such a stamp bounds nothing about the item's real age, so `status` is `unknown` and the raw negative value is reported for diagnosis rather than clamped into a fresh `0`.
              */
             age_seconds: number | null;
             /**
@@ -7324,11 +7331,16 @@ export interface operations {
                 };
             };
             /**
-             * @description The lake is unreachable (`data.status` = `lake-unready`,
-             *     with the ping error in `data.detail`) or this deployment has
-             *     no ClickHouse wired at all (`lake-absent`). Either way, do
-             *     not route lake traffic here; pricing routes may still be
-             *     healthy — check `/v1/readyz`.
+             * @description The lake is unreachable (`data.status` = `lake-unready`) or
+             *     this deployment has no ClickHouse wired at all
+             *     (`lake-absent`). Either way, do not route lake traffic here;
+             *     pricing routes may still be healthy — check `/v1/readyz`.
+             *
+             *     `data.detail` is a FIXED operator hint, never the underlying
+             *     driver error — the route is public and unmetered, so it must
+             *     not publish connection detail (host, port, credentials path)
+             *     to anonymous callers while the lake is in trouble. The real
+             *     ping error is logged by the API server.
              */
             503: {
                 headers: {
@@ -7339,7 +7351,7 @@ export interface operations {
                      * @example {
                      *       "data": {
                      *         "status": "lake-unready",
-                     *         "detail": "dial tcp 127.0.0.1:9300: connect: connection refused"
+                     *         "detail": "clickhouse ping failed — see the API server log for the underlying error"
                      *       },
                      *       "as_of": "2026-08-21T22:40:00Z"
                      *     }

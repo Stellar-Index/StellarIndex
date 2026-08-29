@@ -720,7 +720,7 @@ older `### D — Decisions only Ash can make` table further down, **this is righ
 | **D2** | **ACCEPTED-RISK + tested restore at v1.** Single box per region; multi-region ratified (ADR-0050) but deferred post-v1 with the reasoning in `docs/architecture/multi-region-ha.md` §0c. | Ash, "trust your recommendations" |
 | **D3** | **SIGNED OFF.** ClickHouse posture = ADR-0043 §2.1 schema+state snapshot + re-derive, plus the rolling ZFS snapshots that went live 2026-08-29. Do NOT resurrect full-lake copies. | Ash, explicit |
 | **D4** | **BUILD ALL THREE.** Order-book depth (#337), DEX TVL (#338), per-token oracle pages (#336). No retraction of site copy. | Ash, explicit |
-| **D5** | **ACCEPTED.** Served-tier retention/serve-window: document the current projection-scoped windows per source as the v1 contract. Verified retention today: `trades` 90 d, `prices_1m` 30 d, `prices_15m` 30 d, `oracle_updates` 90 d, `api_usage_events` 12 mo; **no retention policy on hourly-and-above aggregates → indefinite**, which matches what the architecture doc promises. | Ash, "trust your recommendations" |
+| **D5** | **ACCEPTED — but the basis I first recorded was WRONG and is corrected here.** Nothing in the served tier is pruned except `api_usage_events` (12 months, migration 0027). Migration **0031** removed retention from `trades`, `prices_1m` and `prices_15m`; **0040** removed it from `oracle_updates`; migration 0116 documents that the only surviving `add_retention_policy` in the tree is `api_usage_events`, verified against r1's live `timescaledb_information.jobs` on 2026-07-25 — re-verified 2026-08-29 (one registered retention job: api_usage_events, last success 08-28). Live data confirms it: `trades` holds 2018-07-01→now (738,248,187 rows), `oracle_updates` 2025-09-09→now. **So the v1 contract is 'we retain everything we index', not a set of windows.** My first draft of this row listed 30/90-day windows as the contract; that would have published a false and self-harming limit. The real limits worth stating to customers are COVERAGE, not retention: on-chain SDEX trades begin 2026-03-12 (see #349), CEX series begin 2018-07-01 (Kraken) and 2026-05-05 (Binance/Coinbase/Bitstamp). | Ash, "trust your recommendations"; corrected 2026-08-29 |
 | **D6** | **ACCEPTED as documented-unfillable.** Genesis edge [2 → 287,404]; recover via op-replay if ever needed. | Ash, "trust your recommendations" |
 | **D8** | **OVERRIDDEN → FIX FOR v1** (was: post-v1). The `*_FUNDAMENTAL` RedStone feeds publish a NAV ratio in BTC but are registered `quote=fiat:USD`, so `/v1/oracle/streams` serves `crypto:SolvBTC.BBN_FUNDAMENTAL = $1.00` for a token worth ~$78,313. Contained (RedStone is `IncludeInVWAP=false`, so no published price is wrong) but publicly visible with `mapped=true`. Fix in flight. | Ash, explicit |
 | **D9** | **DROPPED.** Stripe C3-081 reconcile closed as a formal DROP citing ADR-0049 (anon/free/partner access model). | Ash, "trust your recommendations" |
@@ -3734,6 +3734,33 @@ are obsolete — repo has been public since 2026-07-03):
 - `dex_nonstandard_decimals_detected` firing is informational detection
   working (aquarius C-tokens), not the master plan's "cleared" claim nor a
   regression of the AdjustPrice normalization work.
+- **Two planning inventories retired 2026-08-29 (issue #321) — this plan is
+  now the only launch ledger.**
+  - `docs/architecture/launch-readiness-backlog.md` (the L-numbered tracker):
+    zero rows added since 2026-05-13 and none of the real W-gate in it, while
+    every L1–L5 row kept its last-written ✅ — so the weekly
+    `launch-readiness.yml` workflow republished *"✓ Engineering surface ready"*
+    over a frozen document. Workflow deleted;
+    `scripts/ci/verify-launch-ready` now refuses to emit a verdict for a doc
+    whose frontmatter says `status: superseded` (exit 3). Its still-open rows
+    carry here: **L4.14–L4.17 + L5.8 → W9** (gated on **D2**), **L5.6 → W6.2**,
+    **L6.4 → §2.8**, **L6.6/L6.7 → W6.7**. The company page's public "roadmap
+    to v1" link now points at this file.
+  - `docs/operations/open-fixes-inventory-2026-08-08.md` (the defect-side
+    companion): 24 of its 35 rows were done and never struck — rows 1 and 19
+    closed on the day it was compiled (`d1cd18ac`, `a1c5c2e5`), rows 2 and 5
+    two days later (`f75ab4b2`, `ef278218`). Still-open threads carry here:
+    **#7 → W8-13** (needs the decision), **#12 residual (r1
+    `[supply].sac_wrappers`) → W2 + an r1 config confirm**, **#14 → W5.4**,
+    **#15 → W8-12**, **#18 residual (MinBatchLimit wedge) → W8-9**, **#22
+    residual → W6.5**, **#31/#34 → `audit-remediation-operator-actions.md`**,
+    **#33 → §3 [OP] 2**, **#35 → D10**. Row **#32** (the two pending
+    `--tags caddy` config changes) is presumed applied but has no apply
+    record — confirm once, then strike.
+  - **Untracked and in no plan** (re-measure or drop): `changesummary` 25%
+    silent failures + `d30` NULL; VWAP volume-unit window dependence + the
+    24 h VWAP blending 6.43 h/21.39 h legs; `lint-actions-pinning` being a
+    no-op on push-to-main.
 
 _Update this file in the same commit as any change that lands or
 invalidates an item. One plan; no forks._

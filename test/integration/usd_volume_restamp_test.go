@@ -135,6 +135,26 @@ func TestUSDVolumeRestamp_ExactTierRepair(t *testing.T) {
 		t.Fatalf("dry-run candidates with FillNull = %d, %v; want 2", n, err)
 	}
 
+	// ── GUC hygiene (#312): pin the pool to ONE connection, so the conn
+	// the restamp borrows IS the conn every later statement lands on.
+	// `Conn.Close`/`Tx.Commit` return it to the pool and pgx v5 stdlib
+	// resets nothing on reuse, so a SESSION-level cap lift would still be
+	// in force below.
+	store.DB().SetMaxOpenConns(1)
+	capSetting := func(t *testing.T) string {
+		t.Helper()
+		var v string
+		if err := store.DB().QueryRowContext(ctx,
+			`SELECT current_setting('timescaledb.max_tuples_decompressed_per_dml_transaction')`).Scan(&v); err != nil {
+			t.Fatalf("read decompression cap: %v", err)
+		}
+		return v
+	}
+	capBaseline := capSetting(t)
+	if capBaseline == "0" {
+		t.Fatalf("fixture: decompression cap already lifted (%q) before the restamp ran", capBaseline)
+	}
+
 	// ── apply ──
 	n, err := store.RestampExactTierUSDVolume(ctx, params(false))
 	if err != nil {
@@ -143,6 +163,39 @@ func TestUSDVolumeRestamp_ExactTierRepair(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("restamped %d row(s), want 1", n)
 	}
+
+	// 0. the lifted cap did NOT ride the connection back into the pool.
+	if got := capSetting(t); got != capBaseline {
+		t.Errorf("after the restamp the pooled connection carries max_tuples_decompressed_per_dml_transaction = %q, want the untouched default %q — a later DML on this conn would run uncapped (#312)", got, capBaseline)
+	}
+	// …and this TimescaleDB really does honour the transaction-scoped form
+	// the restamp relies on: visible for the rest of the transaction,
+	// unwound by COMMIT.
+	func() {
+		tx, err := store.DB().BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		defer func() { _ = tx.Rollback() }()
+		if _, err := tx.ExecContext(ctx, "SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0"); err != nil {
+			t.Fatalf("SET LOCAL decompression cap: %v", err)
+		}
+		var inTx string
+		if err := tx.QueryRowContext(ctx,
+			`SELECT current_setting('timescaledb.max_tuples_decompressed_per_dml_transaction')`).Scan(&inTx); err != nil {
+			t.Fatalf("read cap in tx: %v", err)
+		}
+		if inTx != "0" {
+			t.Errorf("SET LOCAL cap inside the transaction = %q, want \"0\" — the restamp's DML would abort on compressed chunks", inTx)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("commit: %v", err)
+		}
+	}()
+	if got := capSetting(t); got != capBaseline {
+		t.Errorf("cap after COMMIT = %q, want %q", got, capBaseline)
+	}
+	store.DB().SetMaxOpenConns(0)
 
 	// 1. SQL identity == Go formula == what the insert path writes.
 	want, ok := timescale.ExactTierUSDVolume(group.Tier, group.Decimals, "1250000000", "10000000000")
