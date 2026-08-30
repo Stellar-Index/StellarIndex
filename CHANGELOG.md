@@ -231,6 +231,25 @@ against.
 
 ### Fixed
 
+- **A percent-encoded slash forged the SSE exemption, so 13 routes could
+  be asked to run with no request deadline at all** (wave-D
+  UNAUTH-DOS-4). `RequestTimeout` exempts streaming endpoints by the
+  `/stream` path suffix, but tested that suffix against `r.URL.Path` —
+  the *decoded* path — while Go's mux routes on the escaped form. Those
+  disagree exactly when a wildcard segment contains `%2F`:
+  `GET /v1/assets/native%2Fstream` routes to the ordinary
+  `/v1/assets/{asset_id}` handler while its decoded path ends `/stream`.
+  The exemption now keys on `r.URL.EscapedPath()`, which is what the mux
+  itself routes on, so the two cannot disagree about what a request is.
+
+  Guarded by a sweep that enumerates the routes from `server.go` rather
+  than listing them: the forgery worked against every trailing-wildcard
+  route, and new ones are added regularly, so a hand-written table would
+  pin today's routes and miss tomorrow's. It found 13 pre-fix, and
+  checks the converse too — genuine SSE routes must *keep* their
+  exemption, since a fix that bounded the streams would be worse than
+  the bug.
+
 - **The `/assets` "#" column restarted at 1 on every cursor page**
   (wave-D EXR-06), so the 101st asset was labelled `#1` under a header
   that reads as a global rank. The counter is per-page, and cursor
