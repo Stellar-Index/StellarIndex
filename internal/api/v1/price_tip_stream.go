@@ -165,7 +165,29 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 		// (contextcheck): the shared compute loop outlives any single
 		// connection — it stops via the registry's refcount + linger, not
 		// via this request's cancellation.
-		topic, releaseProducer := s.acquireTipProducer(asset, quote, window) //nolint:contextcheck
+		topic, releaseProducer, ok := s.acquireTipProducer(asset, quote, window) //nolint:contextcheck
+		if !ok {
+			// At the producer ceiling and this pair has none running
+			// (wave-D UNAUTH-DOS-1). Refuse rather than fall through to
+			// the per-connection loop below: that path is the unbounded
+			// compute the ceiling exists to prevent, so falling back
+			// would make the cap decorative.
+			//
+			// 503 + Retry-After, not 429: the client is not at fault and
+			// nothing about retrying the same request is invalid — the
+			// server is at capacity for NEW pairs, and a viewer of an
+			// already-watched pair is still served normally.
+			s.logger.Warn("tip producer ceiling reached — refusing stream",
+				"asset", asset.String(), "quote", quote.String(), "window", window,
+				"running", s.tipProducers.running(),
+				"refused_total", s.tipProducers.refusedCount())
+			w.Header().Set("Retry-After", "30")
+			writeProblem(w, r,
+				"https://api.stellarindex.io/errors/capacity",
+				"Stream capacity reached", http.StatusServiceUnavailable,
+				"too many distinct price-tip streams are active; retry shortly")
+			return
+		}
 		defer releaseProducer()
 		sub, cancelSub := s.hub.Subscribe([]string{topic}, streaming.LastEventIDFrom(r))
 		defer cancelSub()
