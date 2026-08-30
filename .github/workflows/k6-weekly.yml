@@ -1,35 +1,82 @@
 name: k6-weekly
 
-# Weekly canonical mixed-realistic run against staging — the
-# regression alarm for the Freighter SLA p95 ≤ 200 ms claim
-# (Task #74 Wave 4; the artefact this generates is the input to
-# Task #77's monthly proof-of-SLA report).
+# Weekly canonical mixed-realistic run — the regression alarm for the
+# Freighter SLA p95 ≤ 200 ms claim (Task #74 Wave 4; the artefact it
+# generates is the input to Task #77's monthly proof-of-SLA report,
+# docs/operations/sla-proof-procedure.md).
 #
-# Schedule: Sundays 02:00 UTC. Off-peak for staging traffic so a
+# Schedule: Sundays 02:00 UTC. Off-peak for the target's traffic so a
 # legitimate latency regression isn't masked by routine load.
 #
-# Secrets required (configured in repo settings → Secrets):
-#   - K6_TARGET_STAGING       — https://api.staging.stellarindex.io/v1
-#   - STELLARINDEX_LOAD_API_KEY — load-test API key (vault-minted)
-#   - ALERTMANAGER_URL_STAGING — https://alertmanager.staging…/
-#                                (used by the spike scenario; the
-#                                weekly only runs mixed-realistic
-#                                so this is unused but documented
-#                                here for the manual-dispatch path)
+# 2026-08-29 (#316) — this workflow was a permanently-green no-op. With
+# the target secrets unset the scheduled path printed `::notice::` and
+# exited 0, so every scheduled run since the cron was restored concluded
+# `success` with `Install k6`, `Compile-check all scenarios` and `Run
+# scenario` all `skipped` (runs 30733884244, 31292354359, 31922897932,
+# 32614013429) — and no docs/operations/sla-proof-<YYYY-MM-DD>.md has
+# ever landed. Three structural changes:
 #
-# Manual dispatch supports running any single scenario via the
-# `scenario` input — useful for re-running a regression-investigation
-# without waiting for next Sunday.
+#   1. The scenario compile-check is its own job with NO secret and NO
+#      target dependency, and it also runs on `pull_request`. It used to
+#      sit behind the secrets gate, so `make test-load-check` ran exactly
+#      once ever — 2026-07-30 run 30542038490 — where it FAILED: `k6
+#      archive` does not pass system env vars into __ENV (unlike `k6
+#      run`), so scenarios/lib/env.js threw "K6_TARGET is required" even
+#      with the secrets present. Fixed in the Makefile target, which now
+#      seeds placeholder __ENV values explicitly.
+#   2. The scenarios themselves had to be MADE to compile before the gate
+#      could be made mandatory. 04-batch.js and 06-mixed-realistic.js used
+#      object spread (`{ ...headers }`) from the day they were written
+#      (dc145698, 2026-05-01); the pinned k6 0.50.0 transpiles with babel,
+#      which parses array spread but not object spread, so `k6 archive`
+#      died with "Unexpected token" — and 06-mixed-realistic.js is the
+#      DEFAULT scenario this schedule runs. Both are now Object.assign
+#      merges, verified against a real k6 v0.50.0: all 9 scenarios archive
+#      clean, and the mixed scenario executes end-to-end. The version pin
+#      is deliberately unchanged: 0.50.0 is the binary that captured the
+#      historical AC2 evidence (p95 54.4 ms), so the measuring instrument
+#      stays comparable.
+#   3. A scheduled run that cannot produce evidence no longer reports
+#      success. scripts/ci/check-sla-evidence.sh is the decision core;
+#      a non-zero verdict opens/updates a tracking issue (the
+#      reconciliation-health.yml pattern) and fails the run. Silence and
+#      success are no longer the same signal. The two jobs are INDEPENDENT
+#      (no `needs:`) so that neither can silence the other.
+#
+# Deliberately NOT done: pointing the run at r1. r1 is the single
+# production host, test/load/scenarios/lib/env.js refuses production
+# targets by design, and mixed-realistic is a 300 rps / 10 min soak.
+# Restoring the feed means provisioning a production-shaped target, not
+# load-testing production.
+#
+# History of the target secret, so nobody re-derives it: the org
+# migration ate the original secrets (the workflow "had failed SILENTLY"
+# — docs/operations/v1-launch-plan.md, 2026-07-30 ~14:40Z), the load key
+# was re-minted, and K6_TARGET_STAGING was then deliberately deleted
+# again "so the weekly cron keeps its designed skip-until-staging
+# behavior" — i.e. the green no-op was a conscious park, not an
+# accident. #316 is about the park being INVISIBLE: parked and healthy
+# looked identical from the outside. The park is now visible (a
+# tracking issue + a red run) instead of silent. Two ways out, both
+# legitimate: provision a production-shaped target, or retire this
+# workflow.
+#
+# Secrets (repo settings → Secrets) — K6_TARGET_STAGING is UNSET, which
+# is exactly what the tracking issue reports:
+#   - K6_TARGET_STAGING         — e.g. https://api.staging.stellarindex.io/v1
+#   - STELLARINDEX_LOAD_API_KEY — load-test API key (vault-minted)
+#   - K6_PROMETHEUS_RW_SERVER_URL — remote-write sink for the run's metrics
+#   - ALERTMANAGER_URL_STAGING  — used by the spike scenario only; the
+#                                 weekly runs mixed-realistic, so it
+#                                 matters on the manual-dispatch path
+#
+# Manual dispatch supports running any single scenario via the `scenario`
+# input — useful for re-running a regression investigation without
+# waiting for next Sunday.
 
 on:
-  # Weekly SLA-evidence run — restored 2026-07-06 (was disabled under
-  # the Actions spending cap, Task #50; the cap has since eased). Kept
-  # cheap: one ≤30-min job a week. The scheduled path SKIPS GRACEFULLY
-  # (green, with a notice) when the staging secrets aren't configured,
-  # so re-enabling can't reintroduce the weekly red-badge noise if
-  # staging is down or the secrets aren't minted yet. Manual dispatch
-  # still hard-errors on missing secrets (an operator running it wants
-  # the failure to be loud).
+  # Weekly SLA-evidence run — restored 2026-07-06 (was disabled under the
+  # Actions spending cap, Task #50). Kept cheap: one ≤30-min job a week.
   schedule:
     - cron: '0 2 * * 0'   # 02:00 UTC every Sunday
   workflow_dispatch:
@@ -38,56 +85,106 @@ on:
         description: 'Scenario file under test/load/scenarios/ (default: 06-mixed-realistic.js)'
         required: false
         default: '06-mixed-realistic.js'
+  # Scenario syntax is gated on any PR that can break it. This path needs
+  # no secrets and no target, so it is the one leg of this workflow that
+  # can run continuously — previously a scenario syntax error could sit
+  # undetected indefinitely.
+  pull_request:
+    paths:
+      - 'test/load/**'
+      - 'Makefile'
+      - '.github/workflows/k6-weekly.yml'
+      - 'scripts/ci/check-sla-evidence.sh'
 
 permissions:
   contents: read
 
 jobs:
-  run:
+  scenario-compile:
+    name: k6 scenario compile-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install k6
+        uses: grafana/setup-k6-action@db07bd9765aac508ef18982e52ab937fe633a065  # v1
+        with:
+          k6-version: '0.50.0'
+
+      - name: Compile-check all scenarios
+        # No `if:` — this is the whole point of #316. The compile gate must
+        # not be conditional on secrets that do not exist.
+        run: make test-load-check
+
+  sla-run:
+    name: weekly SLA evidence run
+    # Deliberately NO `needs: scenario-compile`. The two jobs answer
+    # different questions and must not gate each other: `needs:` would let
+    # a scenario syntax error SKIP the evidence verdict, the sla-evidence
+    # tracking issue and the ::error:: — i.e. exactly the mechanism #316
+    # exists to guarantee would silently not run, and the operator would be
+    # pointed at a babel parse error instead of at the missing target.
+    # Both jobs run in parallel on the schedule; either one going red is a
+    # real, separately-actionable signal.
+    #
+    # A PR gets the compile gate only: there is nothing to load-test from a
+    # pull request, and the secrets aren't available to one anyway.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
     env:
       K6_TARGET: ${{ secrets.K6_TARGET_STAGING }}
       STELLARINDEX_LOAD_API_KEY: ${{ secrets.STELLARINDEX_LOAD_API_KEY }}
       K6_PROMETHEUS_RW_SERVER_URL: ${{ secrets.K6_PROMETHEUS_RW_SERVER_URL }}
       SCENARIO: ${{ inputs.scenario || '06-mixed-realistic.js' }}
+      ISSUE_LABEL: sla-evidence
+      ISSUE_TITLE: "SLA evidence: the weekly k6 proof run is producing no evidence"
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Check secrets are configured
-        id: secrets
+      - name: Assess the SLA evidence feed
+        id: gate
+        # Deterministic, offline verdict (unit-tested by
+        # scripts/ci/check-sla-evidence-test.sh). rc 0 = healthy,
+        # 1 = no target (skip the run), 2 = no recent proof report (run
+        # anyway — a stale report must not block the run that refreshes it).
+        # This step never fails: the issue + fail steps below need to run.
         run: |
-          if [ -n "$K6_TARGET" ] && [ -n "$STELLARINDEX_LOAD_API_KEY" ]; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          # Missing secrets. On a scheduled run this is a no-op (the
-          # weekly badge stays green) so restoring the cron can't page
-          # anyone before staging is wired up; on manual dispatch it is
-          # a hard error so an operator sees why nothing ran.
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            echo "::notice::K6_TARGET_STAGING / STELLARINDEX_LOAD_API_KEY not set — skipping the scheduled SLA run until staging secrets are minted."
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "::error::K6_TARGET_STAGING and STELLARINDEX_LOAD_API_KEY secrets are required."
-          exit 1
+          set -euo pipefail
+          set +e
+          report="$(./scripts/ci/check-sla-evidence.sh 2>&1)"
+          rc=$?
+          set -e
+          echo "$report"
+          # `if`, not `&&`: under `set -e` a false `[ ]` test at the head of
+          # an && list aborts the step.
+          target_ready=true
+          if [ "$rc" -eq 1 ]; then target_ready=false; fi
+          {
+            echo "verdict_rc=${rc}"
+            echo "target_ready=${target_ready}"
+            echo "report<<REPORT_EOF"
+            echo "$report"
+            echo "REPORT_EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Install k6
-        if: steps.secrets.outputs.ready == 'true'
+        if: steps.gate.outputs.target_ready == 'true'
         uses: grafana/setup-k6-action@db07bd9765aac508ef18982e52ab937fe633a065  # v1
         with:
           k6-version: '0.50.0'
 
-      - name: Compile-check all scenarios
-        if: steps.secrets.outputs.ready == 'true'
-        run: make test-load-check
-
       - name: Run scenario
-        if: steps.secrets.outputs.ready == 'true'
+        if: steps.gate.outputs.target_ready == 'true'
         run: |
           k6 run \
             --out experimental-prometheus-rw \
@@ -104,3 +201,55 @@ jobs:
             test/load/reports/
           if-no-files-found: ignore
           retention-days: 30
+
+      - name: Open or update the tracking issue (no SLA evidence)
+        # `always() && gate succeeded && ...`, not the implicit success():
+        # a failing `Run scenario` step must not suppress the report. The
+        # gate step never fails by design, so gating on its outcome means
+        # "the verdict was actually computed" (an aborted checkout leaves
+        # verdict_rc empty, which would otherwise read as non-zero).
+        if: always() && steps.gate.outcome == 'success' && steps.gate.outputs.verdict_rc != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REPORT: ${{ steps.gate.outputs.report }}
+        run: |
+          set -euo pipefail
+          # Ensure the label exists (idempotent).
+          gh label create "$ISSUE_LABEL" --color B60205 \
+            --description "the weekly k6 SLA-evidence feed is not producing evidence" 2>/dev/null || true
+
+          body="$(printf '%s\n\n---\n_Auto-managed by the k6-weekly workflow (run %s). Closes automatically once a scheduled run executes against a configured target AND a dated proof report is inside the freshness window (docs/operations/sla-proof-procedure.md)._\n' \
+            "$REPORT" "${GITHUB_RUN_ID:-?}")"
+
+          existing="$(gh issue list --label "$ISSUE_LABEL" --state open \
+            --json number --jq '.[0].number' || true)"
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            gh issue comment "$existing" --body "$body"
+            echo "Updated existing sla-evidence issue #$existing."
+          else
+            gh issue create --title "$ISSUE_TITLE" --label "$ISSUE_LABEL" --body "$body"
+            echo "Opened new sla-evidence issue."
+          fi
+
+      - name: Close the tracking issue (evidence feed healthy)
+        if: steps.gate.outputs.verdict_rc == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for n in $(gh issue list --label "$ISSUE_LABEL" --state open \
+              --json number --jq '.[].number' || true); do
+            gh issue close "$n" --comment "The k6 SLA-evidence feed is producing evidence again — k6-weekly closing automatically."
+            echo "Closed sla-evidence issue #$n."
+          done
+
+      - name: Fail the run when no SLA evidence was produced
+        if: always() && steps.gate.outcome == 'success' && steps.gate.outputs.verdict_rc != '0'
+        # The defect this replaces (#316): the scheduled run exited 0 with
+        # every real step skipped, so a badge asserting "the SLA alarm ran"
+        # was green for months while nothing measured anything.
+        run: |
+          echo "::error::No SLA evidence was produced by this run (check-sla-evidence rc=${{ steps.gate.outputs.verdict_rc }}) — see the sla-evidence tracking issue."
+          exit 1
