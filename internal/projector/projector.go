@@ -93,6 +93,14 @@ const PerSourceTimeout = 60 * time.Second
 // unchanged; this only makes the terminal stall observable/alertable.
 const WedgeCycles = 5
 
+// ReplayWindowRefreshInterval is how often the projector re-reads the
+// operator-recorded projection dirty windows (migration 0125) to republish
+// obs.ProjectorReplayWindowActive. One tiny SELECT for ALL sources per
+// refresh (not per source per cycle), matched to the 30s evaluation
+// interval of the `stellarindex.projector` alert group so the gauge is
+// never more than one rule evaluation stale.
+const ReplayWindowRefreshInterval = 30 * time.Second
+
 // SinkFunc is the per-event handler the projector calls after
 // successful decode. `internal/pipeline/sink.go::HandleEvent` is the
 // production wiring (it persists the decoded event to its per-source
@@ -136,6 +144,13 @@ type eventStore interface {
 	StreamSorobanEvents(ctx context.Context, from, to uint32,
 		contractIDs, topic0Syms, excludeTopic0Syms []string,
 		fn func(row sorobanevents.Row) error) error
+	// ProjectionDirtyWindows reads the operator-recorded rewind windows
+	// (migration 0125) so the projector can publish
+	// obs.ProjectorReplayWindowActive — the discriminator that tells an
+	// INTENDED replay lag apart from a real one. Read-only here: the
+	// windows are written by the ops tools and cleared by
+	// compute-completeness; the projector never mutates them.
+	ProjectionDirtyWindows(ctx context.Context) (map[string]timescale.ProjectionDirtyWindow, error)
 }
 
 // Source describes one protocol's projection target. The
@@ -207,6 +222,15 @@ type Projector struct {
 	// source-agnostic, so the switch is seamless. Empty = legacy
 	// soroban_events read.
 	chAddr string
+
+	// cursorMu guards lastCursor: the last cursor position each source
+	// observed at the top of its cycle, published by cycleOneSource and
+	// read by the single replay-window watcher. Keeping it in memory is
+	// what makes the watcher ONE query per refresh instead of a cursor
+	// read per source, and it is the position the watcher compares
+	// against a recorded rewind window's to_ledger.
+	cursorMu   sync.Mutex
+	lastCursor map[string]uint32
 }
 
 // SetClickHouseSource switches the projector to read forward events from the
@@ -251,6 +275,14 @@ func (p *Projector) Run(ctx context.Context) error {
 	}
 
 	var wg sync.WaitGroup
+	// One shared watcher for every source: publishes
+	// obs.ProjectorReplayWindowActive so the lag alert can tell an
+	// operator-initiated rewind apart from a real fall-behind.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		p.watchReplayWindows(ctx)
+	}()
 	for _, src := range p.registry.Sources {
 		wg.Add(1)
 		go func(src Source) {
@@ -260,6 +292,121 @@ func (p *Projector) Run(ctx context.Context) error {
 	}
 	wg.Wait()
 	return ctx.Err()
+}
+
+// watchReplayWindows republishes obs.ProjectorReplayWindowActive every
+// [ReplayWindowRefreshInterval] until ctx is cancelled. Runs once for the
+// whole projector (not per source): the underlying read returns every
+// source's window in one query.
+func (p *Projector) watchReplayWindows(ctx context.Context) {
+	t := time.NewTicker(ReplayWindowRefreshInterval)
+	defer t.Stop()
+	// Publish immediately: this first pass is also what SEEDS the series
+	// at 0 for every registered source, so the alert reads a real
+	// "no replay in progress" zero from process start rather than "no
+	// data" (an absent series is itself a silence). Deliberately owned by
+	// the watcher rather than each source goroutine — two writers of the
+	// same series at startup would race, and the loser could park the
+	// flag at a stale 0 for a whole refresh interval.
+	p.refreshReplayWindows(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			p.refreshReplayWindows(ctx)
+		}
+	}
+}
+
+// refreshReplayWindows sets obs.ProjectorReplayWindowActive for every
+// registered source: 1 while that source's cursor is inside an
+// operator-recorded projector-replay rewind ([replayWindowCovers] holds
+// the exact bound), 0 otherwise.
+//
+// FAIL OPEN toward alerting (the deliberate asymmetry): a read error, an
+// un-observed cursor, a window written by any tool other than
+// projector-replay, or a cursor outside the recorded rewind all publish
+// 0 — never 1. The gauge's ONLY job is to suppress a lag ticket, so every
+// uncertainty must resolve to "do not suppress".
+func (p *Projector) refreshReplayWindows(ctx context.Context) {
+	windows, err := p.store.ProjectionDirtyWindows(ctx)
+	if err != nil {
+		for _, src := range p.registry.Sources {
+			obs.ProjectorReplayWindowActive.WithLabelValues(src.Name).Set(0)
+		}
+		p.logger.Warn("projector: read projection dirty windows failed; replay-window lag suppression disarmed",
+			"err", err)
+		return
+	}
+	for _, src := range p.registry.Sources {
+		active := 0.0
+		if w, ok := windows[src.Name]; ok {
+			if cursor, seen := p.observedCursor(src.Name); seen && replayWindowCovers(w, cursor) {
+				active = 1
+			}
+		}
+		obs.ProjectorReplayWindowActive.WithLabelValues(src.Name).Set(active)
+	}
+}
+
+// replayWindowCovers reports whether an OPERATOR REWIND ON RECORD explains
+// this source's cursor position — the only state in which a replay's
+// intended lag may excuse stellarindex_projector_lag_high.
+//
+// Three bounds, each closing a way the excuse could outlive its cause. A
+// suppression is only ever as good as the proof it stays narrow:
+//
+//  1. PROVENANCE. Only a `projector-replay` window counts
+//     ([timescale.ProjectionDirtyWindow.IsProjectorReplay]). The table's
+//     other writer, `projected-rebuild -write`, never rewinds the live
+//     cursor and its recorded range routinely COVERS that cursor's own
+//     position: `-to` defaults to the live cursor (equal), and
+//     `-allow-live-overlap` bypasses the one-writer guard so the range can
+//     sit wholly above it (exercised on r1 2026-07-27). Either shape would
+//     otherwise pin the flag at 1 while the source's projector is HELD — a
+//     sink-retry hold, a poison hold, a wedge — which is precisely the
+//     state the lag ticket exists to catch, and there would be no operator
+//     rewind on record to explain the silence.
+//  2. UPPER BOUND, EXCLUSIVE. The flag clears the instant the cursor
+//     regains the pre-rewind position (`to_ledger`); the remaining
+//     catch-up from there is ordinary forward lag. Exclusive rather than
+//     inclusive because the dirty row survives until compute-completeness
+//     re-verifies the range (up to a day later), so a projector wedged
+//     exactly AT to_ledger — replay finished, cursor stuck — must stay
+//     alertable.
+//  3. LOWER BOUND. `projector-replay` parks the cursor at from_ledger-1
+//     (internal/ops/ingest/projector.go: rewindTo = target-1), so a cursor
+//     below that was not put there by this recorded rewind and has no
+//     recorded excuse.
+func replayWindowCovers(w timescale.ProjectionDirtyWindow, cursor uint32) bool {
+	if !w.IsProjectorReplay() {
+		return false
+	}
+	// uint64 so a from_ledger of 0 cannot underflow the -1.
+	return uint64(cursor)+1 >= uint64(w.From) && cursor < w.To
+}
+
+// recordCursor publishes a source's cursor position for the replay-window
+// watcher. Called at the top of every cycle, so a source whose cursor is
+// HELD (a sink retry loop) keeps reporting the same position — which is
+// exactly what the paired stalled-replay alert keys off.
+func (p *Projector) recordCursor(source string, lastLedger uint32) {
+	p.cursorMu.Lock()
+	defer p.cursorMu.Unlock()
+	if p.lastCursor == nil {
+		p.lastCursor = make(map[string]uint32)
+	}
+	p.lastCursor[source] = lastLedger
+}
+
+// observedCursor returns the last cursor position recorded for source, and
+// whether any cycle has recorded one yet this process life.
+func (p *Projector) observedCursor(source string) (uint32, bool) {
+	p.cursorMu.Lock()
+	defer p.cursorMu.Unlock()
+	v, ok := p.lastCursor[source]
+	return v, ok
 }
 
 // processEventSafely runs one raw lake row through a source's decoder + sink
@@ -489,6 +636,10 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		// soroban_events.ledger BETWEEN $1 AND $2 is inclusive on
 		// both ends so adding 1 here avoids reprocessing the seam.
 		fromLedger = cursor.LastLedger + 1
+		// Publish the position for the replay-window watcher (see
+		// [refreshReplayWindows]). Recorded from the READ, not the
+		// commit, so a held cursor keeps reporting its true position.
+		p.recordCursor(src.Name, cursor.LastLedger)
 	}
 
 	// Upper bound: live tip from ledgerstream. Without a tip we

@@ -50,7 +50,9 @@ func (d *Decoder) Matches(ev events.Event) bool {
 
 // Decode implements [dispatcher.Decoder]. Returns zero or more
 // UpdateEvent wrappers — one per (feed_id, price) entry in the
-// event's updated_feeds vector after unknown-feed skips.
+// event's updated_feeds vector, minus the slots decodeWritePrices
+// drops (non-positive price, or a feed_id the record layer cannot
+// represent even as raw:).
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	closedAt, err := ev.EventClosedAt()
 	if err != nil {

@@ -193,6 +193,36 @@ groups:
             the RedStone feed registry needs extending, and the affected
             ledgers need a replay once it is. See the runbook.
 
+      # #291: a slot whose feed_id the record layer cannot represent at
+      # all (empty / >64 bytes / a byte outside printable ASCII) is
+      # DROPPED — not even a raw: row lands. Its own alert, not a fold
+      # into the unknown-symbols one above: that alert's remedy is
+      # "extend the registry, then promote the raw rows in place", and
+      # there are no raw rows here to promote — this needs the registry
+      # entry AND a replay. Only RedStone can realistically fire it
+      # (feed_ids are ScString; Reflector/Band symbols are ScSymbol).
+      # Same 25h/30m shape as its sibling so a daily-cadence oracle
+      # cannot flap it.
+      - alert: stellarindex_ingestion_oracle_unrepresentable_symbols
+        expr: sum by (source) (increase(stellarindex_source_unrepresentable_symbols_total[25h])) > 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-unknown-symbols.md
+          summary: "Oracle {{ $labels.source }} published a feed_id the record layer cannot store"
+          description: |
+            stellarindex_source_unrepresentable_symbols_total{source="{{ $labels.source }}"}
+            increased in the trailing 25 h. The decoder met a symbol /
+            feed_id that fails even the permissive raw: validator (empty,
+            >64 bytes, or a byte outside printable ASCII), so that slot
+            was dropped with NO row written — unlike the unknown-symbols
+            case, there is no raw: row to promote later. Closing it needs
+            a feed-registry / allow-list entry AND a replay of the
+            affected ledgers. See the runbook.
+
       - alert: stellarindex_ingestion_discovery_drops
         expr: increase(stellarindex_discovery_dropped_hits_total[10m]) > 0
         for: 10m

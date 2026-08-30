@@ -628,7 +628,17 @@ genuinely unstarted. **The money-adjacent event body shape is NOT derivable
 in-repo (do-not-invent discipline); unblock = one contract-scoped r1-lake read
 of a dfees `value` blob, then the code is mechanical.**
 
-**W5.3 — [C]** Pre-2026-07-23 USD-volume re-stamp.
+**W5.3 — ✅ DONE 2026-08-30 (verified NO-OP).** Pre-2026-07-23 USD-volume
+re-stamp. `usd-volume-restamp` dry runs on r1 report **0 rows to restamp**
+across 42,997 (2026-05), 46,261 (2026-06) and 33,026 (2026-07-01..22)
+exact-tier group-days, Σ|Δ| = 0.00000000 USD — the exact-tier `usd_volume`
+is already correct for the whole window, so no corrective write was needed
+or made. The tool's acceptance check (`verify-usd-volume -days 90`) reports
+193 violations, but every one is the coarse `XLM-BASE BOUND` on ESTIMATED
+tiers, not an exact-tier error — tracked separately as issue #372 (thin SDEX
+pairs; ratios cluster 1.3–1.7, which intraday-vs-daily-VWAP spread may fully
+explain, plus one 43× under-valuation that it does not). Do not calibrate a
+threshold before separating those two, per the tool's own C6-118 warning.
 
 **W5.4 — [C]** Reset the 13 supply rollups (EURC done 2026-08-05).
 
@@ -778,6 +788,25 @@ is a lightweight documentation sign-off, not open work.
 ---
 
 ### W8 — Correctness backlog [C — RECONCILED 2026-08-25, see box below]
+
+> **NEEDS-DATA re-verified LIVE on r1, 2026-08-30 (04:1xZ).** Three of the five
+> are closed on measurement, not on assertion:
+> - **13b `account_activity` watermark — AT TIP.** `max(ledger_seq)` =
+>   64,188,512 against a lake tip of 64,188,513 and a network tip of
+>   64,188,513, i.e. one ledger behind live. Closed.
+> - **14b archive chmod — codified.** `04-users.yml` sets
+>   `/srv/history-archive` 0755; nothing to measure. Closed.
+> - **1c XLM 2.11× — explained AND fixed.** The ledger header's `total_coins`
+>   counts the 2019 burn account; `/v1/assets/native` excludes it. Not a data
+>   bug, a captioning one — and the caption shipped in #250, pinned by
+>   `LedgerView.test.tsx` asserting "ledger header · includes the 2019 burn".
+>   Closed.
+> - **8c / 8d confidence data-halves — BLOCKED ON ASH.** These two have **no
+>   definition anywhere in the repo**; they exist only in the private audit
+>   mirror. They cannot be measured, reproduced or closed by anyone working
+>   from this repository. Ash to supply the definitions or drop the items —
+>   they are the only NEEDS-DATA entries still open, and the only thing
+>   standing between W8 and fully closed.
 
 > **✅ RECONCILED 2026-08-25 (autonomous run, two independent read-only
 > passes over HEAD ~7ce2d213 — full table in the private audit mirror

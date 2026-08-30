@@ -2,6 +2,7 @@
 
 import { useIssuerLookup, useSACWrappers } from '@/api/hooks';
 import { isRawOracleAsset, rawOracleSymbol } from '@/lib/asset-label';
+import { truncateMiddle } from '@/lib/format';
 
 /**
  * AssetLabel — single shared component for rendering a canonical
@@ -117,7 +118,7 @@ export function AssetLabel({
     // Unresolved SAC — truncate the C-strkey and tooltip the full value.
     return (
       <span className="font-mono text-[11px]" title={canonical}>
-        {canonical.slice(0, 6)}…{canonical.slice(-4)}
+        {truncateMiddle(canonical, 6, 4)}
       </span>
     );
   }
@@ -137,7 +138,7 @@ export function AssetLabel({
     if (canonical.length > 16) {
       return (
         <span className="font-mono text-[11px]" title={canonical}>
-          {canonical.slice(0, 8)}…{canonical.slice(-4)}
+          {truncateMiddle(canonical, 8, 4)}
         </span>
       );
     }
@@ -178,7 +179,7 @@ export function AssetLabel({
         className="font-mono text-[10px] text-ink-muted"
         title={issuer}
       >
-        {issuer.length > 12 ? `${issuer.slice(0, 6)}…${issuer.slice(-4)}` : issuer}
+        {issuer.length > 12 ? truncateMiddle(issuer, 6, 4) : issuer}
       </div>
     </div>
   );

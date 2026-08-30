@@ -43,12 +43,6 @@ func registerAppMetrics() {
 		IngestGapDetectorRunsTotal,
 		IngestGapDetectorDurationSeconds,
 		IngestGapDetectorLastSuccessUnix,
-		ProjectorLagLedgers,
-		ProjectorRunsTotal,
-		ProjectorEventsDecoded,
-		ProjectorCycleDurationSeconds,
-		ProjectorWedged,
-		APICacheOpsTotal,
 
 		SourceEventsTotal,
 		SourceLastEventUnix,
@@ -97,8 +91,6 @@ func registerAppMetrics() {
 		AggregatorWindowTruncatedTotal,
 		AggregatorStreamPublishTotal,
 		AnomalyWarnTotal,
-		APIStreamSubscribeTotal,
-		APICORSDecisionsTotal,
 		CustomerWebhookDeliveryAttemptsTotal,
 		CustomerWebhookFanoutFailuresTotal,
 		AggregatorDroppedTradesTotal,
@@ -129,8 +121,42 @@ func registerAppMetrics() {
 
 		MarketsSkippedRowsTotal,
 	)
+	registerProjectorMetrics()
+	registerAPIServingMetrics()
 	registerFreezeLifecycleMetrics()
 	registerAppMetricsTail()
+}
+
+// registerProjectorMetrics registers the ADR-0032 projector family — lag,
+// cycle outcomes, decoded events, cycle latency, and the two operator-facing
+// flags (wedge + replay window). Peeled off [registerAppMetrics] for the same
+// reason [registerFreezeLifecycleMetrics] was: the set only grows, and the
+// funlen ceiling is what forces the split rather than a silently ever-longer
+// function.
+func registerProjectorMetrics() {
+	Registry.MustRegister(
+		ProjectorLagLedgers,
+		ProjectorRunsTotal,
+		ProjectorEventsDecoded,
+		ProjectorCycleDurationSeconds,
+		ProjectorWedged,
+		ProjectorReplayWindowActive,
+	)
+}
+
+// registerAPIServingMetrics registers the API serving-path family — the
+// read-path caches, the per-row sparkline result counter, the stream
+// subscription counter, and the CORS decision counter. Peeled off
+// [registerAppMetrics] for the same reason as the freeze-lifecycle group:
+// the set only grows, and the funlen ceiling is what forces the split
+// rather than a silently ever-longer function.
+func registerAPIServingMetrics() {
+	Registry.MustRegister(
+		APICacheOpsTotal,
+		APISparkline7dRowsTotal,
+		APIStreamSubscribeTotal,
+		APICORSDecisionsTotal,
+	)
 }
 
 // registerFreezeLifecycleMetrics registers the ADR-0019 freeze-lifecycle
@@ -166,6 +192,16 @@ func registerFreezeLifecycleMetrics() {
 // registerAppMetrics).
 func registerAppMetricsTail() {
 	Registry.MustRegister(
+		// Source-family counter (#291). It belongs beside
+		// SourceUnknownSymbolsTotal in [registerAppMetrics] and is
+		// registered here only because that function already sat exactly
+		// on the funlen ceiling, so one more line made it lint-red —
+		// the "or registerAppMetricsTail(), whichever keeps funlen happy"
+		// branch of docs/contributing/add-metric.md. Registration, not
+		// placement, is what puts it on /metrics: see
+		// TestHandler_ExposesMetrics, which scrapes for this name.
+		SourceUnrepresentableSymbolsTotal,
+
 		MEVDetectRunsTotal,
 		MEVEventsInsertedTotal,
 		MEVDetectDurationSeconds,
@@ -750,6 +786,66 @@ var ProjectorWedged = prometheus.NewGaugeVec(
 	[]string{"source"},
 )
 
+// ProjectorReplayWindowActive flags that a source's projector cursor is
+// still INSIDE an operator-recorded projection dirty window — i.e. a
+// `stellarindex-ops projector-replay` deliberately rewound the cursor and
+// it has not yet climbed back to where it was. 1 = inside the recorded
+// rewind, 0 = outside it (the normal state).
+//
+// Why it exists (2026-08-29, reflector-fx): a replay is an INTENDED lag.
+// The 2,574,496-ledger rewind that repaired the VES/XAU served-row deficit
+// put `stellarindex_projector_lag_high` into a ~4h ticket that carried no
+// information the operator did not already have — and, worse, MASKED a
+// genuine lag on that same source for the whole window. This gauge is the
+// discriminator the lag rule joins against (`unless … == 1`), so the
+// expected lag is silent while the replay is climbing and the paired
+// `stellarindex_projector_replay_stalled` rule tickets if it STOPS
+// climbing (the failure that actually matters during a replay).
+//
+// THREE bounds keep the excuse narrow — a suppression is only ever as
+// good as the proof it stays narrow (projector.replayWindowCovers holds
+// them):
+//
+//  1. PROVENANCE. Only a window written by `projector-replay` counts. The
+//     table's other writer, `projected-rebuild -write`, does NOT keep its
+//     range below the live cursor: `-to` defaults to the live cursor, its
+//     one-writer guard admits `liveLastLedger >= to` (equality), and
+//     `-allow-live-overlap` bypasses the guard entirely (used on r1
+//     2026-07-27). A rebuild window therefore routinely covers the
+//     cursor's own position, and keying on the cursor alone would hold
+//     this flag at 1 while a source is HELD there — the exact state the
+//     lag ticket exists to catch, with no operator rewind on record to
+//     explain the silence.
+//  2. UPPER BOUND, EXCLUSIVE. Deliberately NOT "a dirty window row
+//     exists": the row survives until compute-completeness re-verifies the
+//     range (up to a day later). The flag clears the moment the cursor
+//     REGAINS the window's `to_ledger` (its pre-rewind position); a
+//     projector wedged exactly at that ledger has finished replaying and
+//     stays fully alertable.
+//  3. LOWER BOUND. `projector-replay` parks the cursor at
+//     `from_ledger`-1, so a cursor below that was not put there by this
+//     recorded rewind.
+//
+// Known residual (accepted, bounded): the table holds ONE row per source
+// and the upsert WIDENS it (LEAST/GREATEST) while keeping the newest
+// reason, so a replay recorded while a rebuild window is still pending
+// yields a replay-reasoned row whose `to_ledger` may be the rebuild's.
+// The flag then expires at that higher ledger instead of the replay's own
+// pre-rewind position. It is still provenance-gated, still cursor-bounded
+// and still expires; it needs both tools pending on the SAME source at
+// once.
+//
+// Fails OPEN toward alerting: if the dirty-window read errors the gauge is
+// forced to 0 for every source, so a monitoring-side failure can never
+// silence a real lag ticket.
+var ProjectorReplayWindowActive = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_projector_replay_window_active",
+		Help: "1 while a source's projector cursor is inside an operator-recorded projector-replay rewind window (intended lag); 0 otherwise. Suppresses stellarindex_projector_lag_high and arms stellarindex_projector_replay_stalled.",
+	},
+	[]string{"source"},
+)
+
 // HTTPRequestSuccessDuration is the success-only twin of
 // HTTPRequestDuration: same buckets / labels, but the middleware
 // only records into this histogram when the response status is NOT
@@ -1116,6 +1212,37 @@ var ExternalFXBaselineHealedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_external_fx_baseline_healed_total",
 		Help: "FX sanity-band baselines re-pointed at an agreeing history majority that refuted them, per source. Each increment is one poisoned/stale baseline self-corrected.",
+	},
+	[]string{"source"},
+)
+
+// SourceUnrepresentableSymbolsTotal — per-source counter of oracle
+// asset slots DROPPED because the published symbol / feed id cannot be
+// held even by the record layer's verbatim `raw:` namespace: empty,
+// longer than 64 bytes, or carrying a byte outside printable ASCII
+// 0x21–0x7E (canonical.NewOracleRawAsset / validateRawSymbol).
+//
+// Deliberately NOT folded into SourceUnknownSymbolsTotal. That counter
+// means "recorded as raw:<symbol>" — the row exists and a later
+// allow-list / feed-registry entry promotes it in place. A slot on THIS
+// counter is a HOLE: nothing was written, so closing it needs the
+// registry entry AND a replay of the affected ledgers. Sharing one
+// series would send operators hunting for raw rows that do not exist.
+//
+// Only an ScString-keyed oracle can reach it in practice: RedStone
+// feed_ids are `ScString` (arbitrary bytes, unbounded length), while
+// Reflector/Band symbols are `ScSymbol`. Refusal is per-SLOT, not
+// per-event (#291): write_prices batches every updated feed into one
+// event, so refusing the event would take all ~19 feeds dark — the
+// inverse of the oracle capture-totality goal.
+//
+// Alert consumer: `stellarindex_ingestion_oracle_unrepresentable_symbols`
+// (deploy/monitoring/rules/ingestion.yml + the R1 overlay; runbook
+// docs/operations/runbooks/oracle-unknown-symbols.md).
+var SourceUnrepresentableSymbolsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_source_unrepresentable_symbols_total",
+		Help: "Oracle asset slots dropped because the published symbol/feed id cannot be represented even as a raw: asset; each increment is a row the record layer could not write.",
 	},
 	[]string{"source"},
 )
@@ -3902,3 +4029,16 @@ func ObserveExplorerSWRRefresh(cache string, start time.Time, err error) {
 	ExplorerSWRRefreshTotal.WithLabelValues(cache, outcome).Inc()
 	ExplorerSWRRefreshDurationSeconds.WithLabelValues(cache, outcome).Observe(time.Since(start).Seconds())
 }
+
+// Alert idea: `rate(stellarindex_api_sparkline7d_rows_total{result=
+// "empty"}[15m]) / rate(stellarindex_api_sparkline7d_rows_total[15m])
+// > 0.5` sustained 30 min means half the priced rows on the directory
+// render an empty chart — a lookup-key or pricing-pipeline regression,
+// not a quiet market.
+var APISparkline7dRowsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_api_sparkline7d_rows_total",
+		Help: "Priced listing rows for which a 7d sparkline was requested, by result (served|empty).",
+	},
+	[]string{"result"},
+)

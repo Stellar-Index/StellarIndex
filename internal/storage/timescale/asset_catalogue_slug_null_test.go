@@ -35,8 +35,8 @@ func TestCatalogueSlugProjection_FallsBackToAssetID(t *testing.T) {
 	// Both the LIST projection and the single-row lookup share the
 	// defect and the fix; assert on each rendering the store uses.
 	for name, sql := range map[string]string{
-		"list":          listAssetsBaseSelectSQL(""),
-		"list_pushdown": listAssetsBaseSelectSQL("ca.asset_id IN ('native')"),
+		"list":          listAssetsBaseSelectSQL("", AssetsOrderVolume24hUSDDesc),
+		"list_pushdown": listAssetsBaseSelectSQL("ca.asset_id IN ('native')", AssetsOrderVolume24hUSDDesc),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if strings.Contains(sql, "COALESCE(ca.slug, ca.code)") {

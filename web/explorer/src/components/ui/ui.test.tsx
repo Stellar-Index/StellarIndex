@@ -81,9 +81,18 @@ describe('ui primitives — render + semantics', () => {
     }
   });
 
-  it('Mono truncates a long identifier head…tail', () => {
+  it('Mono truncates a long identifier head…tail and keeps the full value on hover', () => {
     render(<Mono value="GABCDEFGHIJKLMNOP" truncate copy={false} />);
-    expect(screen.getByText('GABCDE…MNOP')).toBeInTheDocument();
+    const elided = screen.getByText('GABCDE…MNOP');
+    expect(elided).toBeInTheDocument();
+    // #356: a truncated identifier must never be the only copy of itself
+    // on the page — the full value round-trips through the title.
+    expect(elided).toHaveAttribute('title', 'GABCDEFGHIJKLMNOP');
+  });
+
+  it('Mono adds no title when nothing was elided', () => {
+    render(<Mono value="GABCD" truncate copy={false} />);
+    expect(screen.getByText('GABCD')).not.toHaveAttribute('title');
   });
 
   it('Table primitives render a semantic table', () => {

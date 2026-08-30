@@ -2,6 +2,7 @@ package redstone
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -144,7 +145,21 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 	for i, pd := range prices {
 		entry, err := resolveFeedEntry(attributed[i])
 		if err != nil {
-			return nil, fmt.Errorf("%w: updated_feeds[%d] feed_id %q: %w", ErrMalformedPayload, i, attributed[i], err)
+			// The feed_id is off the registry AND the record layer
+			// cannot hold it verbatim. Drop THIS SLOT, not the event
+			// (#291): RedStone feed_ids are ScString — arbitrary
+			// bytes, unbounded length — unlike the ScSymbol sources
+			// this branch was copied from, so the refusal is
+			// genuinely reachable; and write_prices batches EVERY
+			// updated feed into one event, so an event-level refusal
+			// would take all ~19 feeds dark until a code change. That
+			// is strictly worse than the pre-totality skip and the
+			// inverse of capture-totality. Same granularity rule the
+			// rest of this file follows: refuse the smallest unit
+			// that is actually unusable (cf. ErrAmbiguousSubset,
+			// which refuses one event and not the source).
+			noteUnrepresentableFeed(e, i, attributed[i], err)
+			continue
 		}
 		if pd.Price.Sign() <= 0 {
 			// Redstone publishes non-zero prices by construction —
@@ -189,11 +204,13 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 		out = append(out, u)
 	}
 	if len(out) == 0 {
-		// Only reachable when EVERY attributed entry was non-positive:
-		// since the oracle capture-totality change an unregistered
-		// feed_id is a raw row, not a skip, so an all-unknown batch
-		// no longer lands here. Surfaces to the dispatcher as a
-		// decode error counter bump.
+		// Only reachable when EVERY attributed entry was non-positive
+		// or unrepresentable: since the oracle capture-totality change
+		// an unregistered feed_id is a raw row, not a skip, so an
+		// all-unknown batch no longer lands here. Surfaces to the
+		// dispatcher as a decode error counter bump — correct, because
+		// a batch that produced no row IS undecoded, and the
+		// honest-blind completeness accounting must see it.
 		return nil, ErrEmptyUpdates
 	}
 	return out, nil
@@ -224,6 +241,34 @@ func resolveFeedEntry(feedID string) (feedEntry, error) {
 	return entry, nil
 }
 
+// noteUnrepresentableFeed records the one case resolveFeedEntry can
+// fail: a feed_id off the registry that the raw validator also
+// refuses (empty / >64 bytes / a byte outside printable ASCII
+// 0x21-0x7E). The slot is a HOLE — nothing is written for it — so it
+// gets its OWN counter rather than SourceUnknownSymbolsTotal, whose
+// contract is "recorded verbatim as raw:<symbol>". Conflating them
+// would point the operator at raw rows that do not exist; the fix for
+// this slot is a feeds.go registry entry (a registry hit never reaches
+// the raw validator) AND a replay of the affected ledgers.
+//
+// The WARN log carries the identity the counter cannot. feed_id is
+// unvalidated relayer-supplied bytes — a log-injection vector per the
+// oracle-capture-totality design's Risks — but it is passed as a slog
+// ATTRIBUTE, and both handlers obs.NewLogger installs (Text, JSON)
+// escape a value that needs it, so the line stays structured.
+func noteUnrepresentableFeed(e *events.Event, slot int, feedID string, err error) {
+	obs.SourceUnrepresentableSymbolsTotal.WithLabelValues(SourceName).Inc()
+	slog.Warn("redstone: dropping slot with unrepresentable feed_id",
+		"source", SourceName,
+		"contract_id", e.ContractID,
+		"ledger", e.Ledger,
+		"tx_hash", e.TxHash,
+		"slot", slot,
+		"feed_id", feedID,
+		"err", err,
+	)
+}
+
 // rawFeedEntry builds the record-layer entry for a feed_id that is
 // NOT in feedRegistry: the full on-wire feed_id verbatim as a
 // canonical.AssetOracleRaw base, quoted in the fiat the id's
@@ -237,8 +282,10 @@ func resolveFeedEntry(feedID string) (feedEntry, error) {
 // raw row is never compared (see canonical.Asset.IsMapped).
 //
 // The only error is a feed_id the raw validator cannot represent
-// (empty / >64 bytes / non printable ASCII); the caller refuses the
-// event as malformed rather than persisting something unrepresentable.
+// (empty / >64 bytes / non printable ASCII) — reachable here, unlike
+// on the ScSymbol sources, because RedStone feed_ids are ScString.
+// The caller drops that ONE SLOT rather than persisting something
+// unrepresentable; see noteUnrepresentableFeed.
 func rawFeedEntry(feedID string) (feedEntry, error) {
 	base, err := canonical.NewOracleRawAsset(feedID)
 	if err != nil {
