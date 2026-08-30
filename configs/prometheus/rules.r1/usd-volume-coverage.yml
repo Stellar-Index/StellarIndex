@@ -30,9 +30,22 @@ groups:
       # fx_quotes, or a new quote asset entirely. Threshold sits just under 1
       # so ordinary counter/scrape raggedness cannot flap it.
       - alert: stellarindex_cex_usd_volume_coverage_low
+        # The `or … * 0` is load-bearing, not defensive style. The
+        # usd_volume_populated="yes" child is only created by the first
+        # PRICED insert (obs.TradeInsertsTotal.WithLabelValues(...).Inc(),
+        # no zero pre-initialisation), so at 100% NULL coverage the
+        # numerator series does not exist, the division drops that source
+        # entirely, and the alert goes SILENT at exactly its worst case —
+        # total pricing failure (wave-D ALERT-04). Substituting an
+        # explicit zero for a source present in the denominator makes
+        # 0/N = 0 and the alert fire.
         expr: |
           (
-            sum by (source) (increase(stellarindex_trade_inserts_total{source=~"binance|kraken|bitstamp|coinbase|massive|exchangeratesapi|polygon-forex|ecb",usd_volume_populated="yes"}[1h]))
+            (
+              sum by (source) (increase(stellarindex_trade_inserts_total{source=~"binance|kraken|bitstamp|coinbase|massive|exchangeratesapi|polygon-forex|ecb",usd_volume_populated="yes"}[1h]))
+              or
+              sum by (source) (increase(stellarindex_trade_inserts_total{source=~"binance|kraken|bitstamp|coinbase|massive|exchangeratesapi|polygon-forex|ecb"}[1h])) * 0
+            )
             /
             sum by (source) (increase(stellarindex_trade_inserts_total{source=~"binance|kraken|bitstamp|coinbase|massive|exchangeratesapi|polygon-forex|ecb"}[1h]))
           ) < 0.999
@@ -71,9 +84,18 @@ groups:
       # assumed 1e7 would be a silent money bug, strictly worse than a NULL).
       # 99.5% is the operator bar; the residual should be dust-scale tokens only.
       - alert: stellarindex_onchain_usd_volume_coverage_low
+        # `or vector(0)` for the same reason as the CEX arm above: with
+        # no priced insert in the window the numerator is the EMPTY
+        # vector, not zero, so the ratio yields nothing and total pricing
+        # failure is the one case this alert cannot see (wave-D
+        # ALERT-04). vector(0) rather than the `* 0` form because this
+        # arm aggregates without `by`, so there is no label set to carry.
         expr: |
           (
-            sum (increase(stellarindex_trade_inserts_total{source=~"sdex|soroswap|aquarius|phoenix|comet",usd_volume_populated="yes"}[6h]))
+            (
+              sum (increase(stellarindex_trade_inserts_total{source=~"sdex|soroswap|aquarius|phoenix|comet",usd_volume_populated="yes"}[6h]))
+              or vector(0)
+            )
             /
             sum (increase(stellarindex_trade_inserts_total{source=~"sdex|soroswap|aquarius|phoenix|comet"}[6h]))
           ) < 0.995
