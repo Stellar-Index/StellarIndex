@@ -64,6 +64,21 @@ Environment=VERIFY_ARCHIVE_WORKERS=12
 Environment=VERIFY_ARCHIVE_MAX_RUNTIME=16h
 Environment=VERIFY_ARCHIVE_STATE_FILE=/var/lib/stellarindex/verify-archive-state.json
 Environment=VERIFY_ARCHIVE_SAFETY_OVERLAP=5000
+# P1-page export path (issue #282). The mismatch counter
+# `stellarindex_verify_archive_mismatches_total` — the metric the
+# `stellarindex_stellar_archive_divergence` page (severity: page)
+# selects — used to leave the process ONLY through the opt-in
+# `-metrics-listen` HTTP endpoint, which this unit never passed and
+# which nothing scrapes (prometheus.r1.yml has no verify-archive job,
+# and a one-shot job is gone between scrapes anyway). The P1 therefore
+# had no producer and a real chain break surfaced only as the
+# severity-TICKET `stellarindex_verify_archive_unit_failed`.
+# `-textfile-output` writes the counter into node_exporter's
+# textfile_collector dir (cumulative across runs, zero-seeded, and
+# `tier`-labelled so tier-a and tier-b never expose the same series
+# through the one node_exporter target) — the same pattern
+# archive-completeness, supply-snapshot and sla-probe already use.
+Environment=VERIFY_ARCHIVE_TEXTFILE=/var/lib/node_exporter/textfile_collector/verify_archive_tier_b.prom
 Environment=VERIFY_ARCHIVE_ROOT=/srv/history-archive
 
 # Incremental scheme (shared with Tier A): -from-last-verified reads the
@@ -83,7 +98,8 @@ ExecStart=/usr/local/bin/stellarindex-ops verify-archive \
   -max-runtime ${VERIFY_ARCHIVE_MAX_RUNTIME} \
   -state-file ${VERIFY_ARCHIVE_STATE_FILE} \
   -from-last-verified \
-  -safety-overlap ${VERIFY_ARCHIVE_SAFETY_OVERLAP}
+  -safety-overlap ${VERIFY_ARCHIVE_SAFETY_OVERLAP} \
+  -textfile-output ${VERIFY_ARCHIVE_TEXTFILE}
 
 User=root
 
@@ -95,6 +111,12 @@ NoNewPrivileges=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
+
+# The textfile_collector dir is stellarindex-owned
+# (10-observability.yml) and lives under /var, which ProtectSystem=full
+# already leaves writable; listed explicitly so the write surface this
+# unit needs is stated rather than inferred.
+ReadWritePaths=/var/lib/node_exporter/textfile_collector
 
 # With Type=notify + WatchdogSec=1h, TimeoutStartSec only governs the time
 # the binary has to send READY=1 (fires immediately on startup). The walk
