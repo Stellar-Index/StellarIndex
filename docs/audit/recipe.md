@@ -25,7 +25,9 @@
   projector.go:480-700); INV-6 BatchInsertTrades now Validates; INV-7 all three decimals
   gaps CLOSED (+ a deliberate non-closed-bucket `/v1/price/tip` carve-out, ADR-0018); INV-10
   rate-limit is HYBRID (transient=fail-open, sustained-dwell=fail-closed 503). (5) **Traps
-  8 (retentionStart), 13 (isSafeImageURL→isSafePublicImageUrl host-validated), 14 (query
+  8 (retentionStart), 13 (isSafeImageURL→isSafePublicImageUrl host-validated — was applied
+  at only 2 of 3 `<img>` sites until wave-D EXR-05; all three now, and the site set is
+  derived from source by `web/explorer/src/lib/trust-surface-guards.test.ts`), 14 (query
   timeouts on /ohlc/twap/vwap) are RESOLVED**; **banner-claim (9) "46 vitest never run in
   CI" is now FALSE** (a28c5535 wired `pnpm test`); **CORS default is now `[]`** not `["*"]`.
   (6) **NEW hot surfaces** (audit hardest, RFC-6): the pricing rate-router

@@ -231,6 +231,31 @@ against.
 
 ### Fixed
 
+- **A scam-flagged asset outside the pre-rendered top 500 showed no scam
+  warning at all** (wave-D EXR-01). `/assets/[slug]` has two render
+  paths: the build-time pre-render for the top 500, and a client shell
+  (`AssetPathView`) for everything else. Both fetch the same
+  `/v1/assets/{id}` payload, carrying the same `issuer_directory_tags`
+  and `issuer_scam_reason` — but the banner ("Do not trust this asset,
+  establish trustlines, or execute the prices below…") was inlined in
+  the pre-rendered page only, and the shell simply ignored those fields.
+  The path serving the long tail, which is where a scam token actually
+  sits, was the one rendering without the warning. The banner is now one
+  shared `AssetScamCallout` mounted by both paths.
+
+  Also closes **EXR-05** / part of #335: `AssetSwap`'s `TokenIcon`
+  rendered an issuer-controlled image URL without the SEC-10
+  `isSafePublicImageUrl` host check that the other two `<img>` sites
+  apply.
+
+  Both were the same failure mode — a trust-critical rendering
+  obligation enforced by convention at some call sites and silently
+  absent at one — so both are now pinned by a new guard pack,
+  `src/lib/trust-surface-guards.test.ts`, which enumerates the call
+  sites from `src/` at test time. A fourth `<img>` site or a third asset
+  view fails on the day it is written. Both guards were verified red
+  against the pre-fix tree, each naming its offending file.
+
 - **One extra path segment defeated the price-withholding gates**
   (wave-D MSP-01). `/v1/price` correctly returned
   `errors/price-withheld` for a directory-flagged scam issuer or a
