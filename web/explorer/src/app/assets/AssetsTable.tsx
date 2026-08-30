@@ -322,7 +322,18 @@ export function AssetsTable({
                   <AssetRow
                     key={coin.asset_id}
                     coin={coin}
-                    rank={idx + 1}
+                    // Only on page 1. The counter is per-PAGE, and
+                    // cursor pagination keeps no depth — so on page 2
+                    // it restarted at 1 and re-labelled the 101st asset
+                    // "#1" under a header that reads as a global rank
+                    // (wave-D EXR-06). Deriving it as depth*limit+i is
+                    // NOT the fix: suppressCatalogueTwins and
+                    // foldAliasTwins drop rows post-query, so pages
+                    // under-fill (measured 81/96/99/96 at limit=100)
+                    // and that arithmetic would print a DIFFERENT wrong
+                    // number. A rank the data cannot back is better
+                    // omitted than guessed.
+                    rank={cursor ? null : idx + 1}
                     // Badge "verified" ONLY for the real verified row.
                     // The listing serves COALESCE(slug, code) AS slug, so
                     // a NULL-slug impersonator emits the verified asset's
@@ -442,7 +453,7 @@ function AssetRow({
   pricing,
 }: {
   coin: Coin;
-  rank: number;
+  rank: number | null;
   verified: boolean;
   basePath: string;
   pricing: boolean;
@@ -481,7 +492,7 @@ function AssetRow({
   return (
     <TR>
       <Td>
-        <span className="text-ink-faint tnum">{rank}</span>
+        <span className="text-ink-faint tnum">{rank ?? ''}</span>
       </Td>
       <Td>
         <Link

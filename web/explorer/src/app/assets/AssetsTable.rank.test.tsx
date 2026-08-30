@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -71,10 +71,19 @@ const assets: Coin[] = [
   } as unknown as Coin,
 ];
 
+// Mutable so a test can put the table on a cursor-paginated page. The
+// mock previously hardcoded '' — which is why nothing caught the rank
+// column restarting at 1 on page 2 (EXR-06): every test ran on page 1.
+let searchParams = new URLSearchParams('');
+
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(''),
+  useSearchParams: () => searchParams,
 }));
+
+afterEach(() => {
+  searchParams = new URLSearchParams('');
+});
 
 vi.mock('@/api/hooks', async () => {
   const actual =
@@ -158,5 +167,37 @@ describe('AssetsTable long-identifier truncation (#356)', () => {
     expect(elided).toBeInTheDocument();
     expect(elided).toHaveAttribute('title', SOROBAN_ID);
     expect(screen.queryByText(SOROBAN_ID)).toBeNull();
+  });
+});
+
+// The "#" column is a per-PAGE counter, but cursor pagination keeps no
+// depth in the URL — only the opaque cursor. So on page 2 the counter
+// restarted at 1 and re-labelled the 101st asset "#1" under a header
+// that reads as a global rank (wave-D EXR-06).
+//
+// Suppression, not arithmetic: depth*limit+i would print a DIFFERENT
+// wrong number, because suppressCatalogueTwins and foldAliasTwins drop
+// rows post-query so pages under-fill (measured 81/96/99/96 at
+// limit=100). A rank the data cannot back is better omitted than
+// guessed.
+describe('AssetsTable rank column across cursor pages (EXR-06)', () => {
+  function rankCells(): string[] {
+    return screen
+      .getAllByRole('row')
+      .slice(1) // header
+      .map((tr) => tr.querySelectorAll('td')[0]?.textContent?.trim() ?? '');
+  }
+
+  it('numbers the rows on the unpaginated first page', () => {
+    renderTable();
+    expect(rankCells()[0]).toBe('1');
+  });
+
+  it('renders no rank once the user has paged past the first', () => {
+    // Any non-empty cursor means "not page 1", which is all the URL
+    // carries — there is no page number to recover.
+    searchParams = new URLSearchParams('cursor=opaque-page-2-cursor');
+    renderTable();
+    expect(rankCells().every((c) => c === '')).toBe(true);
   });
 });
