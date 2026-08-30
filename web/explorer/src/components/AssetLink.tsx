@@ -13,16 +13,32 @@ import { isRawOracleAsset, normalizeColonForm, shortAssetText } from '@/lib/asse
 export { shortAssetText };
 
 /**
- * assetSlug maps a canonical asset_id to the SHORT slug that
- * /assets/[slug] actually pre-renders under static export.
+ * assetSlug maps a canonical asset_id to the slug /assets/[slug] should
+ * be linked under.
  *
- * CRITICAL: long-form ids (`USDC-GA5Z…`, raw SAC `C…`) are NOT in
- * generateStaticParams (it indexes by short slug to keep the route
- * count sane), so linking to them hard-404s. We therefore link to the
- * short code/ticker form (`/assets/USDC`, `/assets/BTC`, `/assets/XLM`)
- * which is pre-rendered for every verified currency + the top ~500
- * assets — i.e. everything that shows up in these tables. Returns null
- * when there's no safe linkable slug (the caller renders a plain label).
+ * It returns the FULL canonical id for a classic asset, not the bare
+ * code. The bare code is ambiguous: every USDC-alike shares
+ * `/assets/USDC`, so a link built from the code can resolve to a
+ * DIFFERENT issuer's asset than the row the user clicked — including
+ * resolving a scam issuer's token to the legitimate one's page, or the
+ * reverse (wave-D EXR-02).
+ *
+ * This mirrors the decision already recorded for market pairs at
+ * app/markets/[pair]/page.tsx (AM-09), and for the same reason:
+ * generateStaticParams emits canonical `asset_id` routes for exactly
+ * the same asset set as the short slugs (see the `cache.byAssetId` loop
+ * there), so the canonical form never links worse and always links
+ * precisely. Anything outside the pre-rendered set falls to the client
+ * shell under BOTH spellings.
+ *
+ * The docstring here used to assert the opposite — that long-form ids
+ * "hard-404" because generateStaticParams indexes only by short slug.
+ * That stopped being true when asset_id routes were added (audit
+ * 2026-06-19); the comment outlived the constraint.
+ *
+ * Returns null when there's no safe linkable slug (the caller renders a
+ * plain label). Display labels are unaffected: callers keep using
+ * shortAssetText, which is a separate, deliberately-short helper.
  */
 export function assetSlug(canonical: string | undefined | null): string | null {
   if (!canonical) return null;
@@ -42,7 +58,8 @@ export function assetSlug(canonical: string | undefined | null): string | null {
     // Bare code (rare) — link only if it's a plausible asset code.
     return canonical.length <= 12 ? canonical : null;
   }
-  return canonical.slice(0, dashIx) || null;
+  // The full `CODE-GISSUER…` id, not `canonical.slice(0, dashIx)`.
+  return canonical;
 }
 
 /**
@@ -67,10 +84,10 @@ export function AssetLink({
   if (!slug && canonical && /^C[A-Za-z0-9]{55}$/.test(canonical)) {
     const resolved = sacMap?.[canonical];
     if (resolved === 'native') slug = 'native';
-    else if (resolved) {
-      const i = resolved.indexOf('-');
-      slug = i === -1 ? resolved : resolved.slice(0, i);
-    }
+    // The wrapped classic asset's FULL id, for the same reason as
+    // assetSlug above — truncating here to the bare code re-introduces
+    // the issuer ambiguity on the SAC path specifically.
+    else if (resolved) slug = resolved;
   }
 
   if (!slug) return <AssetLabel canonical={canonical} />;
@@ -85,10 +102,16 @@ export function AssetLink({
 }
 
 /**
- * AssetText — compact single-line asset code linked to its asset page
- * (safe short slug). For dense analytics feeds (anomalies / divergence
- * / MEV) where the full AssetLabel would bloat the row. Renders plain
- * text when there's no safe route.
+ * AssetText — compact single-line asset code linked to its asset page.
+ * For dense analytics feeds (anomalies / divergence / MEV) where the
+ * full AssetLabel would bloat the row. Renders plain text when there's
+ * no safe route.
+ *
+ * The LABEL stays short (shortAssetText) — these rows are dense by
+ * design, and widening the visible text to a 56-char canonical id would
+ * blow out every cell and chart legend that uses it. Only the href
+ * carries the full id, with the canonical id in `title` so the issuer
+ * is recoverable on hover without spending row width on it.
  */
 export function AssetText({
   canonical,
@@ -103,6 +126,7 @@ export function AssetText({
   return (
     <Link
       href={`/assets/${encodeURIComponent(slug)}`}
+      title={canonical ?? undefined}
       className={cn(
         'hover:text-brand-600 transition-colors hover:underline',
         className,
