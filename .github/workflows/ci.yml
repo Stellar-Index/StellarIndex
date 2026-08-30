@@ -337,6 +337,19 @@ jobs:
         run: |
           bash scripts/ops/restore-drill-test.sh
           bash scripts/ops/restore-drill-run-test.sh
+      - name: ClickHouse ops-credential contract
+        # Pins that every scripts/ops script passing credentials to
+        # clickhouse-client does so via its environment, never argv
+        # (which `ps` and the journal would expose). Fully stubbed —
+        # never reaches a real lake.
+        #
+        # Wired into CI 2026-08-30 because it was NOT: it lived only in
+        # scripts/dev/verify.sh, so when #286 gave d2-ordinal-reproject
+        # a destructive-DDL acknowledgement that exits before its first
+        # query, the contract test started failing and shipped anyway.
+        # A gate only the local pre-push hook runs is a gate that rots
+        # unobserved — main sat red on `make verify` until wave D.
+        run: bash scripts/ops/ch-ops-user-test.sh
       - name: Restore trusted gate scripts from the base ref
         # CID-03 (audit-2026-07-23): every step below runs from the
         # PR-head checkout, including the SCRIPT FILES themselves — so
