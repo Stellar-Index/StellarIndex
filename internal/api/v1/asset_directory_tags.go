@@ -133,23 +133,38 @@ func suppressScamIssuerPricing(d *AssetDetail) {
 	// details served price_usd: null next to 24 hourly + 7 daily priced
 	// points, and the flagged listing rows drew a full sparkline beside
 	// their "—" price cell.
+	//
+	// ATH is nulled by the same call. An all-time HIGH is a USD price
+	// claim drawn from the same USD-quoted CAGG as price_usd, so serving
+	// `"ath": {"usd": "0.0091"}` next to `"price_usd": null` hands a
+	// client a published dollar valuation for a token the platform
+	// decided must publish none — and an anchor to expect value from,
+	// which is the legitimacy transfer this gate exists to prevent
+	// (wave-D MSP-05).
 	withholdPriceSeriesWhenUnpriced(d)
 }
 
-// withholdPriceSeriesWhenUnpriced drops the price_history_* series from a
-// payload whose headline price is NOT published — whatever withheld it
-// (scam-issuer suppression, the thin-market substance gate) or however
-// it came to be missing. A price series is the price over time; serving
-// one beside a null price_usd both leaks the withheld value and makes
-// the payload self-contradictory.
+// withholdPriceSeriesWhenUnpriced drops every derived PRICE-OVER-TIME
+// claim from a payload that may not publish a price series — whatever
+// the reason (scam-issuer suppression, the thin-market substance gate,
+// a declared peg, or simply having no price at all). A price series is
+// the price over time and an all-time high is one point of it; serving
+// either beside a null price_usd both leaks the withheld value and
+// makes the payload self-contradictory.
 //
-// The listing's own sparkline attach applies the same rule before the
-// read ([sparkline7dEligible]) so a gated row is never even looked up;
-// this is the detail-path (and post-suppression) enforcement.
+// It shares [priceSeriesPublishable] with the listing's sparkline
+// attach, rather than restating the rule. The two DID restate it, and
+// drifted: this function tested only `PriceUSD != nil` while
+// [sparkline7dEligible] also excluded declared-peg rows, so a
+// declared-peg asset was refused a sparkline on /v1/assets and served a
+// full price_history_24h/7d on /v1/assets/{id} — the dust series the
+// listing had just declined to draw (wave-D MSP-04). One predicate,
+// two callers, no drift.
 func withholdPriceSeriesWhenUnpriced(d *AssetDetail) {
-	if d == nil || d.PriceUSD != nil {
+	if d == nil || priceSeriesPublishable(d) {
 		return
 	}
 	d.PriceHistory24h = nil
 	d.PriceHistory7d = nil
+	d.ATH = nil
 }
