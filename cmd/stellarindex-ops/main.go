@@ -328,7 +328,7 @@ Subcommands:
                           print per-venue first-trade/update samples. Exits
                           early once every enabled venue has emitted at
                           least one output. No DB, no Timescale, no cursors.
-  verify-archive -config PATH [-bucket NAME] [-from N] [-to N] [-tier MODE] [-archive-root PATH] [-peers URLs] [-peer-samples N] [-archivist-bin BIN] [-archivist-url URL] [-archivist-timeout DUR] [-fail-on-missed] [-max-runtime DUR] [-workers N] [-resume-from-hash HEX] [-metrics-listen ADDR] [-state-file PATH] [-from-last-verified] [-safety-overlap N]
+  verify-archive -config PATH [-bucket NAME] [-from N] [-to N] [-tier MODE] [-archive-root PATH] [-peers URLs] [-peer-samples N] [-archivist-bin BIN] [-archivist-url URL] [-archivist-timeout DUR] [-fail-on-missed] [-max-runtime DUR] [-workers N] [-resume-from-hash HEX] [-metrics-listen ADDR] [-textfile-output PATH] [-state-file PATH] [-from-last-verified] [-safety-overlap N]
                           Verify a galexie bucket at one or more tiers:
                             chain      (Tier A) — chain-link hash integrity:
                                        each ledger N's PreviousLedgerHash
@@ -365,6 +365,15 @@ Subcommands:
                                        after archive-completeness has
                                        been run and the cross-anchor
                                        archive is provably complete.
+                          -textfile-output: write the per-reason mismatch
+                                       counter into node_exporter's
+                                       textfile_collector dir (cumulative
+                                       across runs, zero-seeded). This is
+                                       the export path the P1
+                                       stellarindex_stellar_archive_divergence
+                                       page reads on r1; without it the
+                                       counter dies with the process
+                                       (issue #282).
                           Exit 0 = clean; 1 = first break with details.
   archive-completeness <mode> [flags]
                           Completeness check + repair across the dual-archive

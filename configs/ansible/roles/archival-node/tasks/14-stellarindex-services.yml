@@ -784,6 +784,17 @@
 # pubnet ONLY — see verify_archive_tier_b_enabled in defaults/main.yml for
 # the full rationale and the observed testnet mismatch.
 - name: Install + enable verify-archive-tier-b (networks with a correct anchor)
+  # Tagged for the same reason as the tier-a install above (:697): the
+  # ops-job units must be renderable WITHOUT a full archival-node run,
+  # because a full run can restart galexie and a galexie restart is a
+  # ~9-minute mainnet cold catchup. Tier B was left untagged when that
+  # tag was introduced, so `--tags ops-jobs` — the apply procedure
+  # docs/operations/runbooks/archive-divergence.md prescribes — rendered
+  # tier-a's unit and silently skipped tier-b's, leaving the checkpoint
+  # tier's `-textfile-output` export path (#282) permanently unwired
+  # while the confirm step still read green. Untagged behaviour is
+  # unchanged: a plain run still includes this block.
+  tags: [ops-jobs]
   when: verify_archive_tier_b_enabled | bool
   block:
     - name: Install verify-archive-tier-b unit + timer
@@ -809,6 +820,13 @@
 # what it stops templating, so remove it explicitly. Idempotent on a net
 # that never had it.
 - name: Remove verify-archive-tier-b where its anchor is not network-correct
+  # Tagged alongside the install block above so `--tags ops-jobs`
+  # converges tier-b to the network-correct state on EITHER branch. A
+  # tag that only ever installs and never removes is a half-tag: on a
+  # net where the anchor is wrong it would leave the units on disk and
+  # the timer enabled, which is exactly the drift this block exists to
+  # undo.
+  tags: [ops-jobs]
   when: not (verify_archive_tier_b_enabled | bool)
   block:
     - name: Stop + disable verify-archive-tier-b timer and service

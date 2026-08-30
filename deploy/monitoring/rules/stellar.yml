@@ -27,12 +27,25 @@
 #     listed in scripts/ci/lint-metric-refs.sh as a known-inert
 #     stellarindex_* reference (allowlisted there) until a publish-error
 #     emitter is added. r1 doesn't publish a history archive anyway.
-#   - stellarindex_stellar_archive_divergence is ACTIVE on r1: it now
-#     references `stellarindex_verify_archive_mismatches_total{reason=~"chain|sequence|checkpoint"}`
-#     (internal/obs/metrics.go) — the counter the verify-archive Tier-D
-#     job emits per chunk_idx + reason. The previous expr pointed at
-#     `stellarindex_archive_divergence_total`, a name nothing emits
-#     (F-1329); repointed 2026-06-11.
+#   - stellarindex_stellar_archive_divergence is ACTIVE on r1: it
+#     references `stellarindex_verify_archive_mismatches_total`, the
+#     counter the verify-archive chain/checkpoint walk increments
+#     (internal/ops/archive/verify_archive_chunks.go) per reason
+#     (chain|sequence|checkpoint). The expr pointed at
+#     `stellarindex_archive_divergence_total`, a name nothing emits,
+#     until the 2026-06-11 F-1329 repoint.
+#
+#     Issue #282 (2026-08-29): that repoint fixed the metric NAME but
+#     not the EXPORT PATH. The counter only ever left the process via
+#     the opt-in `-metrics-listen` endpoint, which the tier-a/tier-b
+#     units did not pass and prometheus.r1.yml has no job for — so the
+#     P1 still had no producer and a real chain break surfaced only as
+#     the severity-TICKET `stellarindex_verify_archive_unit_failed`.
+#     The units now pass `-textfile-output` and the counter reaches
+#     Prometheus through node_exporter's textfile collector
+#     (internal/ops/archive/verify_archive_textfile.go): cumulative
+#     across runs, zero-seeded on all three reasons, labelled by
+#     `tier`. Covered by deploy/monitoring/rule-tests/stellar_test.yml.
 
 groups:
   - name: stellarindex.stellar
@@ -100,9 +113,22 @@ groups:
       - alert: stellarindex_stellar_archive_divergence
         # F-1329: repointed from the never-emitted
         # `stellarindex_archive_divergence_total` to the real counter the
-        # verify-archive Tier-D job emits. `reason` ∈ {chain|sequence|checkpoint};
-        # any non-zero increase over a recent window is a hard correctness signal.
-        expr: increase(stellarindex_verify_archive_mismatches_total[1h]) > 0
+        # verify-archive walk emits. `reason` ∈ {chain|sequence|checkpoint};
+        # any non-zero increase over a recent window is a hard correctness
+        # signal.
+        #
+        # 26h window, NOT 1h (issue #282). The producer is a NIGHTLY
+        # systemd timer (verify-archive-tier-a 03:23 UTC, tier-b 04:37
+        # UTC) that writes its counter once per run through the
+        # node_exporter textfile collector. Against a 1h lookback the
+        # step is visible for one hour out of every twenty-four, so a
+        # SEV-1 correctness page would self-resolve before a European
+        # morning operator ever saw it. 26h = the 24h cadence + the
+        # timer's 10-min jitter + cushion, the same idiom
+        # archive-completeness.yml uses for its daily job: the page
+        # stays up until at least the next scheduled run, and a
+        # divergence that persists re-arms it every night.
+        expr: increase(stellarindex_verify_archive_mismatches_total[26h]) > 0
         for: 0s
         labels:
           severity: page

@@ -1,0 +1,128 @@
+---
+# promtool unit tests for `stellarindex_stellar_archive_divergence`
+# (the P1 archive-correctness page in ../rules/stellar.yml).
+#
+#   promtool test rules deploy/monitoring/rule-tests/stellar_test.yml
+#
+# Issue #282. The alert had TWO independent reasons it could not page
+# on r1, and fixing only the first (2026-06-11, F-1329 — it selected
+# `stellarindex_archive_divergence_total`, a name nothing emits) left
+# the second in place:
+#
+#   1. NO PRODUCER. `stellarindex_verify_archive_mismatches_total`
+#      only ever left the verify-archive process through the opt-in
+#      `-metrics-listen` HTTP endpoint, which the tier-a/tier-b units
+#      did not pass and prometheus.r1.yml has no scrape job for. The
+#      units now pass `-textfile-output`, so node_exporter's textfile
+#      collector serves the counter
+#      (internal/ops/archive/verify_archive_textfile.go).
+#   2. A ONE-HOUR LOOKBACK ON A NIGHTLY PRODUCER. Even with the
+#      textfile wired, `increase(...[1h])` made the step visible for
+#      one hour out of every twenty-four — a SEV-1 page that
+#      self-resolves before the operator's morning. The window is now
+#      26h (24h cadence + the timer's 10-min jitter + cushion).
+#
+# LABEL SHAPES HERE ARE POST-SCRAPE, ON PURPOSE — the same reasoning
+# as ops-job_test.yml. A textfile is scraped through node_exporter
+# with `honor_labels` unset, so Prometheus substitutes its own
+# `job="node_exporter"` / `instance="r1:9100"`. `tier` and `reason`
+# are non-reserved, so they survive verbatim. A fixture that skips
+# the scrape is a test of the emitter's intent, not of the alert.
+#
+# Deliberately lives OUTSIDE `deploy/monitoring/rules/` — see the
+# header of archive-completeness_test.yml.
+
+rule_files:
+  - ../rules/stellar.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── A clean archive must never page ──────────────────────────────
+  # The emitter zero-seeds all three reasons on every run, so a host
+  # that has never seen a mismatch still carries the series. That
+  # presence is what makes the counter usable by increase(); it must
+  # not, by itself, alert.
+  - interval: 1m
+    name: a zero-seeded clean host stays silent for days
+    input_series:
+      - series: 'stellarindex_verify_archive_mismatches_total{job="node_exporter",instance="r1:9100",tier="chain",reason="chain"}'
+        values: '0+0x2400'
+      - series: 'stellarindex_verify_archive_mismatches_total{job="node_exporter",instance="r1:9100",tier="chain",reason="sequence"}'
+        values: '0+0x2400'
+      - series: 'stellarindex_verify_archive_mismatches_total{job="node_exporter",instance="r1:9100",tier="chain",reason="checkpoint"}'
+        values: '0+0x2400'
+    alert_rule_test:
+      - eval_time: 10h
+        alertname: stellarindex_stellar_archive_divergence
+        exp_alerts: []
+      - eval_time: 40h
+        alertname: stellarindex_stellar_archive_divergence
+        exp_alerts: []
+
+  # ── The nightly run that finds a chain break ─────────────────────
+  # One tier-a run at t=10h01m folds a chain break into the cumulative
+  # textfile total: the counter steps 0 → 1 and then stays flat until
+  # the NEXT nightly run 24h later. That flatness is the whole point:
+  # against the old `[1h]` lookback the second assertion below fails
+  # (increase() over a window containing only the post-step samples is
+  # 0), which is exactly how a SEV-1 archive-divergence page went
+  # unseen between one night's run and the next morning.
+  - interval: 1m
+    name: a nightly chain break pages immediately and is still paging a day later
+    input_series:
+      - series: 'stellarindex_verify_archive_mismatches_total{job="node_exporter",instance="r1:9100",tier="chain",reason="chain"}'
+        values: '0+0x600 1+0x1800'
+      - series: 'stellarindex_verify_archive_mismatches_total{job="node_exporter",instance="r1:9100",tier="chain",reason="sequence"}'
+        values: '0+0x2400'
+      - series: 'stellarindex_verify_archive_mismatches_total{job="node_exporter",instance="r1:9100",tier="chain",reason="checkpoint"}'
+        values: '0+0x2400'
+    alert_rule_test:
+      # t = 10h05m — four minutes after the run wrote its textfile.
+      # `for: 0s`: there is no such thing as a transient divergence.
+      - eval_time: 605m
+        alertname: stellarindex_stellar_archive_divergence
+        exp_alerts: &chain_break_alert
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: stellar
+              job: node_exporter
+              instance: r1:9100
+              tier: chain
+              reason: chain
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-divergence.md
+              summary: "Archive hash divergence detected (SEV-1)"
+              description: |
+                Our published archive's bucket hash differs from at least one
+                reference archive (SDF/LOBSTR/Satoshipay). This is a correctness
+                signal — investigate immediately. If unresolved, delist the
+                affected checkpoints.
+      # t = 34h — ~24h after the step, i.e. the page is still up when
+      # the next nightly run is due. THIS is the assertion the 1h
+      # window fails.
+      - eval_time: 2040m
+        alertname: stellarindex_stellar_archive_divergence
+        exp_alerts: *chain_break_alert
+
+  # ── Why the emitter zero-seeds ───────────────────────────────────
+  # A counter series that first APPEARS at 1 and then stays flat has
+  # no earlier sample to subtract from, so increase() is 0 and the
+  # page never fires — no matter how wide the window. This pins the
+  # emitter's zero-seeding contract (F-0033 / C4-038, "absence reads
+  # as health") from the ALERT's side: drop the seeding and this test
+  # keeps passing while the previous one is the only thing left
+  # standing between a divergence and silence.
+  - interval: 1m
+    name: an unseeded counter that appears at one cannot page
+    input_series:
+      - series: 'stellarindex_verify_archive_mismatches_total{job="node_exporter",instance="r1:9100",tier="chain",reason="chain"}'
+        values: '_x600 1+0x1800'
+    alert_rule_test:
+      - eval_time: 605m
+        alertname: stellarindex_stellar_archive_divergence
+        exp_alerts: []
+      - eval_time: 2040m
+        alertname: stellarindex_stellar_archive_divergence
+        exp_alerts: []

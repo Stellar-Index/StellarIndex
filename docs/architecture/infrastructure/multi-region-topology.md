@@ -155,6 +155,16 @@ policy) — SDF's Tier-1 Orgs doc is the reference shape.
 
 ### 4.2 Archive cross-check specifics
 
+> **NOT IMPLEMENTED — design intent for the 3-region build-out.**
+> `scripts/ops/archive-cross-check.sh` does not exist and nothing
+> emits `stellarindex_archive_divergence_total`; the alerts-catalog
+> repeated that claim as fact until issue #282. What DOES run today
+> is single-region: the verify-archive tier-a/tier-b timers on r1,
+> which publish `stellarindex_verify_archive_mismatches_total`
+> through node_exporter's textfile collector and feed the P1
+> `stellarindex_stellar_archive_divergence` page. See
+> [runbooks/archive-divergence.md](../../operations/runbooks/archive-divergence.md).
+
 `scripts/ops/archive-cross-check.sh` — runs hourly from an `ops-01`
 host in each region:
 
