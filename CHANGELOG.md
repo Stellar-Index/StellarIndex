@@ -231,6 +231,22 @@ against.
 
 ### Fixed
 
+- **`make verify` was red on `main`, and CI could not see it.** The
+  ClickHouse ops-credential contract (`scripts/ops/ch-ops-user-test.sh`)
+  has been failing since #286 gave `d2-ordinal-reproject.sh` a
+  destructive-DDL acknowledgement (`D2_FORCE_DROP`) that exits *before*
+  the script's first query — so the harness never got a stubbed
+  `clickhouse-client` invocation to assert on, and reported
+  `clickhouse-client was never invoked`. The canonical pre-push gate has
+  therefore been failing for every contributor who ran it. The harness
+  now acknowledges the guard (safe: the stub fails the first, read-only,
+  query, so the script bails long before any `REPLACE PARTITION` or
+  `DROP`, and `CH_FLAGS_DIR` is redirected away from the real flags
+  directory). Root cause of the *silence*, now also fixed: this contract
+  ran only in `scripts/dev/verify.sh` and in no CI job, so it shipped
+  red — it is now wired into the ops self-test step alongside the
+  restore-drill contracts. 15/15 passing.
+
 - **Runbook re-verification wave K: eight alert runbooks re-derived
   against HEAD (7 broken, 1 stale), plus a lint so the worst class
   cannot recur.** `ledgerstream-tier-both-missing.md` — a P1 page —

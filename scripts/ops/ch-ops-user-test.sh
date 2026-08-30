@@ -71,6 +71,15 @@ run() {
     D2_STATE="$TMP/state/d2.$mode" D3_STATE="$TMP/state/d3.$mode"
     STATE="$TMP/state/st.$mode" LOG="$TMP/backfill.log"
     HOST=stub-host INTERVAL=0 DRIVER_PAT=no-such-driver-$$
+    # D2 refuses to start without an explicit destructive-DDL
+    # acknowledgement (#286) — it exits BEFORE its first query, so
+    # without this the credential contract below never gets a stub
+    # invocation to assert on. Acknowledging is safe here: the stubbed
+    # clickhouse-client fails the first (read-only) query, so the script
+    # bails long before any REPLACE PARTITION or DROP. CH_FLAGS_DIR is
+    # redirected so a future code path can never touch the real
+    # /var/lib/clickhouse/flags.
+    D2_FORCE_DROP=yes CH_FLAGS_DIR="$TMP/flags"
   )
   # TO is the monitor's required range end; the seed script resolves its
   # own TO from the lake, so only the monitor may see it pre-set.
