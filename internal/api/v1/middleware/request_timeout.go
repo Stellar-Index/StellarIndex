@@ -36,7 +36,19 @@ import (
 func RequestTimeout(d time.Duration) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if d <= 0 || isStreamingPath(r.URL.Path) {
+			// EscapedPath, not Path. The mux routes on the escaped
+			// form, but r.URL.Path is DECODED — so
+			// /v1/assets/native%2Fstream decodes to a path ending
+			// "/stream" while still routing to the ordinary
+			// /v1/assets/{asset_id} handler. Keying the exemption on the
+			// decoded form let any trailing-wildcard route forge it and
+			// run with NO deadline at all (wave-D UNAUTH-DOS-4).
+			//
+			// Deliberately not "move the check after the mux": that would
+			// mean moving RequestTimeout INSIDE the mux, reopening the
+			// C3-102 pre-handler-stack gap this middleware's placement
+			// exists to close.
+			if d <= 0 || isStreamingPath(r.URL.EscapedPath()) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -52,6 +64,11 @@ func RequestTimeout(d time.Duration) Middleware {
 // suffix-based (not an exact allow-list) so a new SSE route inherits the
 // exclusion without a second edit here — every SSE endpoint in this API
 // already follows the suffix convention.
+//
+// MUST be called with the ESCAPED path. A decoded path lets a percent-
+// encoded slash inside a wildcard segment forge the suffix; the escaped
+// form is what the mux itself routes on, so keying on it means the
+// exemption and the router cannot disagree about what a request is.
 func isStreamingPath(p string) bool {
 	return strings.HasSuffix(p, "/stream")
 }
