@@ -263,6 +263,25 @@ against.
   promtool coverage; there is now a test file for both, including
   full-coverage controls so the fix cannot over-fire. Proven red against
   the pre-fix rules — both cases returned no alert whatsoever.
+- **A scam-flagged issuer still published an all-time-high dollar price,
+  and a declared-peg asset still served the price series the listing
+  refused** (wave-D MSP-05 / MSP-04). `suppressScamIssuerPricing` nulled
+  six fields but not `ath`, so a directory-flagged token returned
+  `"price_usd": null` next to `"ath": {"usd": "0.0091"}` — a published
+  USD valuation, from the same USD-quoted CAGG, for an asset the
+  platform had just decided must publish none. Separately, the listing's
+  sparkline rule and the detail path's series suppression asserted the
+  same product question in two places and drifted: the listing excluded
+  declared-peg rows, the detail path did not, so `/v1/assets` drew no
+  sparkline while `/v1/assets/{id}` served a full
+  `price_history_24h`/`_7d` charted from the dust market the substance
+  gate had refused.
+
+  Both paths now share one predicate, `priceSeriesPublishable`, which
+  answers "may this payload carry a derived price-over-time claim?" for
+  sparklines, `price_history_*` and `ath` alike. The peg price itself is
+  untouched — the peg is the published claim; only the market series
+  charted beside it goes.
 
 - **A percent-encoded slash forged the SSE exemption, so 13 routes could
   be asked to run with no request deadline at all** (wave-D
