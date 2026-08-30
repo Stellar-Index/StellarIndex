@@ -58,7 +58,7 @@ import (
 //     starts from ledger 2).
 //   - to: 0 = unbounded. For a bounded verify of a specific range
 //     set both -from and -to.
-func verifyArchive(args []string) error { //nolint:funlen,gocognit,gocyclo // linear diagnostic; splitting reduces readability
+func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocyclo // linear diagnostic; splitting reduces readability
 	fs := flag.NewFlagSet("verify-archive", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	bucketOverride := fs.String("bucket", "", "Override bucket name (default: storage.s3_bucket_archive, then s3_bucket_live)")
@@ -108,6 +108,14 @@ func verifyArchive(args []string) error { //nolint:funlen,gocognit,gocyclo // li
 			"let operators dashboard the bottleneck during multi-hour "+
 			"sweeps rather than guessing from log tails. Empty (default) "+
 			"disables the endpoint.")
+	textfileOutput := fs.String("textfile-output", "",
+		"Path to write the mismatch counter as a Prometheus textfile "+
+			"(node_exporter textfile_collector format), e.g. "+
+			"/var/lib/node_exporter/textfile_collector/verify_archive_tier_a.prom. "+
+			"This is the export path the P1 stellarindex_stellar_archive_divergence "+
+			"page reads on r1 — -metrics-listen cannot serve it because the "+
+			"process exits between scrapes (issue #282). Empty (default) = "+
+			"no emit.")
 	stateFile := fs.String("state-file", "",
 		"Path to a JSON state file persisting LastVerifiedLedger per "+
 			"tier across runs (e.g. /var/lib/stellarindex/verify-archive-state.json). "+
@@ -207,6 +215,30 @@ func verifyArchive(args []string) error { //nolint:funlen,gocognit,gocyclo // li
 		}
 		defer stop()
 		fmt.Fprintf(os.Stderr, "verify-archive: metrics on http://%s/metrics\n", *metricsListen)
+	}
+
+	// Durable metrics for the deployed (systemd-timer) shape. Written
+	// on EVERY exit path, success or failure: a mismatch aborts the
+	// walk with an error, and that is precisely the run whose counter
+	// the P1 page needs to see. A run that fails for an unrelated
+	// reason (context deadline, S3 outage) contributes zero
+	// increments and just re-emits the carried-forward totals, so it
+	// cannot false-page. See verify_archive_textfile.go.
+	if *textfileOutput != "" {
+		defer func() {
+			if werr := writeVerifyArchiveTextfile(*textfileOutput, *tier, collectVerifyArchiveMismatches()); werr != nil {
+				fmt.Fprintf(os.Stderr, "verify-archive: write textfile %s: %v\n", *textfileOutput, werr)
+				// Never mask the verification error with the
+				// bookkeeping one — but a run that cannot publish its
+				// divergence signal has failed at its job, so surface
+				// it when nothing else did.
+				if retErr == nil {
+					retErr = fmt.Errorf("write textfile %s: %w", *textfileOutput, werr)
+				}
+				return
+			}
+			fmt.Fprintf(os.Stderr, "verify-archive: mismatch metrics written to %s\n", *textfileOutput)
+		}()
 	}
 
 	// Incremental run support — when -state-file is set, read prior

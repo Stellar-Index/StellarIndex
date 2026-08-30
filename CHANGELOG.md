@@ -283,6 +283,70 @@ against.
   `-write` — the wrapper is the COMMIT path, so a dry run under it is
   always a bug. The gated-subcommand set is derived from the Go
   source. Both checks verified red against the pre-fix runbook text.
+- **The P1 archive-divergence page can actually fire: verify-archive now
+  exports its mismatch counter through node_exporter** (#282).
+  `stellarindex_stellar_archive_divergence` (severity `page`) selects
+  `stellarindex_verify_archive_mismatches_total`, which the chain /
+  checkpoint walk increments — but the counter's only export path was the
+  opt-in `-metrics-listen` HTTP endpoint, which neither
+  `verify-archive-tier-a` nor `-tier-b` passed and
+  `configs/prometheus/prometheus.r1.yml` has no scrape job for (a one-shot
+  job is gone between scrapes anyway). The metric had no producer in the
+  deployed topology, so a genuine archive-correctness event opened a P3
+  ticket (`stellarindex_verify_archive_unit_failed`) and paged nobody; the
+  2026-06-11 F-1329 repoint had fixed the metric NAME but not the export
+  path. New `-textfile-output PATH` flag writes the counter into
+  node_exporter's textfile_collector dir, wired into both units (ansible
+  templates + the `deploy/systemd` reference copies) with per-unit `.prom`
+  files. Three properties make it usable by `increase()`: totals are
+  CUMULATIVE across runs (a clean run re-emits, never resets), all three
+  `reason` values are ZERO-SEEDED on every run (a series that first appears
+  at 1 and stays flat yields `increase() == 0` — the same F-0033 /
+  C4-038 "absence reads as health" trap as the gap-detector fix below),
+  and the series is labelled by `tier` rather than `chunk_idx` (a per-run
+  worker slot with no cross-run meaning, and two units exposing an
+  identical label set through one node_exporter target is a duplicate-
+  metric scrape error). The rule's lookback also widened `1h → 26h`:
+  against a NIGHTLY producer a 1h window showed the step for one hour in
+  twenty-four, so a SEV-1 correctness page self-resolved before the
+  morning. Pinned by `deploy/monitoring/rule-tests/stellar_test.yml`
+  (fires immediately AND is still firing 24h later — the assertion the 1h
+  window fails), `verify_archive_textfile_test.go` (seeding, accumulation,
+  tier isolation, atomic rename) and `verify_archive_unit_wiring_test.go`
+  (the deployed units must wire an export path — the Go↔systemd seam
+  `lint-metric-refs.sh` cannot see). Runbook, alerts-catalog and metrics
+  reference corrected; the never-existent producer
+  `scripts/ops/archive-cross-check.sh` is flagged as design-intent in
+  `multi-region-topology.md`. **Requires an ansible apply
+  (`--tags ops-jobs`) on r1 — a binary-only deploy ships this dead.**
+  Adversarial verification then found the apply procedure delivered only
+  HALF the fix and its confirm step read green anyway, so three further
+  corrections land with it: (1) the tier-b install/remove blocks in
+  `14-stellarindex-services.yml` were the only verify-archive tasks
+  without `tags: [ops-jobs]` (they sit in their own
+  `verify_archive_tier_b_enabled` conditional, added after the tag was
+  introduced), so the documented apply rendered tier-a's unit and
+  silently skipped tier-b's — leaving the CHECKPOINT tier, the
+  cross-archive anchor the page's own summary describes, permanently
+  unwired; they are tagged now and pinned by
+  `TestVerifyArchiveUnits_ReachableUnderOpsJobsTag`. (2) The runbook's
+  confirm is fail-CLOSED on a half-apply: it loops over both tiers and
+  exits non-zero naming the missing one, instead of showing `tier="chain"`
+  at 0 and deferring the other with "once tier-b has run". (3) The two
+  divergence checks that run OUTSIDE the per-chunk walk — cross-chunk
+  boundaries (`stitchChunks`, ~11 per 12-worker run) and the cross-run
+  resume seam (`checkResumeFromHash`) — returned their errors without
+  incrementing the counter, so a break landing on a chunk boundary still
+  paged nobody; both now increment under the same `reason` taxonomy
+  (`TestStitchChunks_BoundaryBreakIsPageable`,
+  `TestCheckResumeFromHash_MismatchIsPageable`, which also pins that a
+  malformed `-resume-from-hash` — operator input, not divergence — must
+  NOT move a severity-page counter). The runbook gained a **Known blind
+  spots** section for what is still uncovered: Tier D / Tier E emit no
+  metric at all, and the first run on a host with no `.prom` file yet
+  publishes a series that appears at its final value, so a break found by
+  that very first run reads `increase() == 0` until the next run — which
+  is why the apply procedure now primes both units by hand.
 - **The 7d chart column on `/assets` is back for the assets that matter
   — and a withheld price no longer gets published as a picture of
   itself.** Rows 1–11 of the directory (XLM, USDC, PYUSD, EURC, AQUA,
