@@ -59,6 +59,7 @@ echo "=== Completeness-staleness calibration ===" && ./scripts/ci/lint-completen
 echo "=== Integration-shard partition self-test ===" && ./scripts/ci/integration-shard-test.sh
 echo "=== Deploy-protection self-test ===" && ./scripts/ci/check-deploy-protection-test.sh
 echo "=== Main-CI-health decision-core self-test ===" && ./scripts/ci/check-main-ci-health-test.sh
+echo "=== SLA-evidence decision-core + k6-weekly wiring self-test ===" && ./scripts/ci/check-sla-evidence-test.sh
 echo "=== Public-dataset drift-verdict self-test ===" && ./scripts/ci/check-public-dataset-test.sh
 echo "=== Ansible task lint (pipefail/bash, secret-on-argv) ===" && ./scripts/ci/lint-ansible-tasks.sh
 echo "=== Ansible task lint self-test ===" && ./scripts/ci/lint-ansible-tasks-test.sh

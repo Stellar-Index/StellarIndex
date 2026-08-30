@@ -23,6 +23,38 @@ type DirectoryEntry struct {
 	Source  string
 }
 
+// DirectoryScamFlagTags is THE curated-directory tag vocabulary that
+// marks an address as scam-class. It lives here — next to the
+// account_directory table it reads from — because it now has THREE
+// consumers that must not drift:
+//
+//  1. pricingguard.IsDirectoryScamFlagged (the price/market-cap
+//     withholding gate + the API payload suppression),
+//  2. the /v1/assets listing SQL, which ranks a flagged issuer's
+//     assets BELOW every unflagged one (listingRankTierExpr), and
+//  3. the explorer's DIRECTORY_SCAM_FLAG_TAGS in
+//     web/explorer/src/lib/directory-tags.ts, which draws the
+//     "⚠ Flagged" pill.
+//
+// Keeping one Go list means "shows a Flagged pill", "has its price
+// withheld" and "is demoted in the ranking" can never disagree —
+// a split between those three is exactly the drift that let a
+// pill-bearing scam token rank #12 on the /assets page (#356).
+// Matched case-insensitively; the frontend list is pinned equal by
+// pricingguard's TestScamFlagTagSet_MatchesFrontend.
+//
+// Lowercase-ASCII by construction — mustSQLTextArrayLiteral (which
+// inlines this list into the listing's ORDER BY) rejects anything
+// else at package-init time.
+var DirectoryScamFlagTags = []string{
+	"malicious",
+	"unsafe",
+	"fraud",
+	"scam",
+	"hack",
+	"phishing",
+}
+
 // directoryUpsertChunk bounds the multi-row upsert: 500 rows × 5
 // params = 2500 placeholders, well under Postgres's 65535 bind-param
 // cap while keeping the full 18.5k-entry sync to ~40 round trips.

@@ -15,6 +15,12 @@ export { truncateMiddle } from '@/lib/format';
 /**
  * Mono renders a monospace identifier (address / hash / contract id) with an
  * optional inline copy button. Use `truncate` to shorten long strkeys.
+ *
+ * When the value is actually shortened, the FULL value goes on the
+ * rendered span's `title` so hover reveals it, and the copy button still
+ * copies the full value — a truncated identifier must never be the only
+ * copy of itself on the page (#356). `title` is omitted when nothing was
+ * elided, so an untruncated id doesn't grow a redundant tooltip.
  */
 export function Mono({
   value,
@@ -39,7 +45,9 @@ export function Mono({
         className,
       )}
     >
-      <span className="break-all">{display}</span>
+      <span className="break-all" title={display === value ? undefined : value}>
+        {display}
+      </span>
       {copy && <CopyButton value={value} />}
     </span>
   );

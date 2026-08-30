@@ -159,6 +159,47 @@ But a failing run **does** require either a fix or an explicit
 "why we're shipping anyway" annotation in the launch-readiness
 backlog.
 
+## Automation (`k6-weekly`)
+
+[`.github/workflows/k6-weekly.yml`](../../.github/workflows/k6-weekly.yml)
+is the scheduled half of this procedure. What it does:
+
+- **Scenario compile-check** (`make test-load-check`) runs as its own
+  job on every trigger, including a `pull_request` touching
+  `test/load/**`. It needs no target and no secrets. Making it
+  mandatory first required fixing the scenarios: `04-batch.js` and
+  `06-mixed-realistic.js` merged headers with object spread, which the
+  pinned k6 (0.50.0, babel) cannot parse, so the canonical proof
+  scenario had never compiled — invisible for as long as the gate sat
+  behind secrets that do not exist. Header merges now use
+  `Object.assign`.
+- **The Sunday 02:00 UTC run** consults
+  [`scripts/ci/check-sla-evidence.sh`](../../scripts/ci/check-sla-evidence.sh)
+  first. No target secrets → nothing runs (rc 1). No
+  `sla-proof-<YYYY-MM-DD>.md` inside the 45-day window in
+  `docs/operations/` → the run still executes, but the feed is
+  incomplete (rc 2). Either verdict opens (or comments on) an
+  `sla-evidence` tracking issue **and fails the run**; the issue
+  closes itself once a run executes against a configured target and a
+  dated proof report is inside the window.
+- **The two jobs do not gate each other.** The evidence run carries no
+  `needs:` on the compile job, and its issue/fail steps run with
+  `always()`. Both are deliberate: a scenario syntax error, or a k6 run
+  that dies mid-soak, must not skip the verdict and leave the operator
+  looking at a parse error instead of at the missing target.
+
+Until 2026-08-29 (#316) an unconfigured target printed a `::notice::`
+and exited **green**, so every scheduled run since the cron was
+restored reported success with `Install k6` / `Compile-check` / `Run
+scenario` all skipped — and no `sla-proof-<date>.md` has ever landed.
+A green badge for an alarm that has never measured anything is worse
+than no badge.
+
+The workflow deliberately does **not** point at production:
+`test/load/scenarios/lib/env.js` refuses production hosts, and
+mixed-realistic is a 300 rps × 10 min soak against a single
+production host.
+
 ## What if staging isn't available?
 
 If staging access is delayed (vendor / DNS / paperwork), the

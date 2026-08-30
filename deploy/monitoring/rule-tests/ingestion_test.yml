@@ -451,3 +451,44 @@ tests:
           ledgers need a replay once it is. See the runbook.
 
           '
+- interval: 1m
+  name: a flat unrepresentable-symbol counter does not ticket
+  input_series:
+  - series: stellarindex_source_unrepresentable_symbols_total{job="stellarindex_indexer",instance="r1:9100",source="redstone"}
+    values: 3+0x1700
+  alert_rule_test:
+  - eval_time: 1600m
+    alertname: stellarindex_ingestion_oracle_unrepresentable_symbols
+    exp_alerts: []
+- interval: 1m
+  name: a redstone feed_id the record layer cannot store tickets separately from unknown-symbols
+  input_series:
+  - series: stellarindex_source_unrepresentable_symbols_total{job="stellarindex_indexer",instance="r1:9100",source="redstone"}
+    values: 0+0x4 1+0x4 2+0x4 3+0x4 4+0x4 5+0x4 6+0x4 7+0x4 8+0x4 9+0x4 10+0x4 11+0x4 12+0x4
+  alert_rule_test:
+  - eval_time: 60m
+    alertname: stellarindex_ingestion_oracle_unrepresentable_symbols
+    exp_alerts:
+    - exp_labels:
+        source: redstone
+        severity: ticket
+        team: stellarindex
+        component: ingestion
+      exp_annotations:
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-unknown-symbols.md
+        summary: Oracle redstone published a feed_id the record layer cannot store
+        description: |
+          stellarindex_source_unrepresentable_symbols_total{source="redstone"}
+          increased in the trailing 25 h. The decoder met a symbol /
+          feed_id that fails even the permissive raw: validator (empty,
+          >64 bytes, or a byte outside printable ASCII), so that slot
+          was dropped with NO row written — unlike the unknown-symbols
+          case, there is no raw: row to promote later. Closing it needs
+          a feed-registry / allow-list entry AND a replay of the
+          affected ledgers. See the runbook.
+  # The two counters are independent series: a dropped (unstorable)
+  # slot must NOT masquerade as a recorded raw: row, which is exactly
+  # the operator confusion #291's separate counter exists to prevent.
+  - eval_time: 60m
+    alertname: stellarindex_ingestion_oracle_unknown_symbols
+    exp_alerts: []

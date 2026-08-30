@@ -3,6 +3,7 @@ package timescale
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // ProjectionDirtyWindow is one source's pending re-reconcile obligation
@@ -28,6 +29,58 @@ type ProjectionDirtyWindow struct {
 	// reconcile; only the below-cursor range needs the forced re-check.
 	To     uint32
 	Reason string
+}
+
+// Reason is PROVENANCE, not prose. Two tools write this table and they are
+// not interchangeable to every reader:
+//
+//   - `projector-replay` RE-WINDS the live projector cursor, so the lag its
+//     window covers is an INTENDED lag (issue #325).
+//   - `projected-rebuild -write` never touches the live cursor, and its
+//     recorded range may legally sit AT it (`-to` defaults to the live
+//     cursor) or ABOVE it (`-allow-live-overlap` bypasses the one-writer
+//     guard entirely — exercised on r1 2026-07-27).
+//
+// The constructors and the predicate below are the ONE place the format
+// lives, so a reader can tell the two apart without matching a free-form
+// string in three packages. The prefixes reproduce byte-for-byte what the
+// shipped binaries have written since migration 0125, so rows ALREADY in
+// the table classify correctly (pinned by
+// TestProjectionDirtyWindowReasonIsStableAcrossReleases).
+const (
+	reasonProjectorReplayPrefix  = "projector-replay rewind "
+	reasonProjectedRebuildPrefix = "projected-rebuild -write "
+)
+
+// ProjectorReplayReason is the Reason `stellarindex-ops projector-replay`
+// stamps on the window it records before rewinding a source's cursor from
+// fromCursor (its pre-rewind position, which becomes the window's To) to
+// toTarget (the rewind target, which becomes its From).
+func ProjectorReplayReason(fromCursor, toTarget uint32) string {
+	return fmt.Sprintf("%s%d -> %d", reasonProjectorReplayPrefix, fromCursor, toTarget)
+}
+
+// ProjectedRebuildReason is the Reason `stellarindex-ops projected-rebuild
+// -write` stamps on the window covering the range it is about to rewrite.
+func ProjectedRebuildReason(from, to uint32) string {
+	return fmt.Sprintf("%s[%d,%d]", reasonProjectedRebuildPrefix, from, to)
+}
+
+// IsProjectorReplay reports whether this window was recorded by
+// `projector-replay` — the only writer that rewinds the live projector
+// cursor, and therefore the only one whose window can EXPLAIN lag.
+//
+// Read by the projector's replay-window watcher (issue #325): a
+// `projected-rebuild` window must never raise
+// stellarindex_projector_replay_window_active, because its range routinely
+// covers the live cursor's own position and would then hold the lag
+// ticket suppressed while the source is HELD — exactly the state the
+// ticket exists to catch.
+//
+// Unknown/empty reasons answer false: the flag's only power is to SUPPRESS
+// an alert, so anything unrecognised must leave it armed.
+func (w ProjectionDirtyWindow) IsProjectorReplay() bool {
+	return strings.HasPrefix(w.Reason, reasonProjectorReplayPrefix)
 }
 
 // RecordProjectionDirtyWindow records (or widens) a source's dirty window.

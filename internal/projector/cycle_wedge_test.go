@@ -34,6 +34,25 @@ type fakeStore struct {
 	tipLedger       uint32 // last_ledger for ("ledgerstream", "")
 	rows            []sorobanevents.Row
 	upserts         int
+
+	// dirtyWindows / dirtyErr back ProjectionDirtyWindows — the
+	// operator-recorded projector-replay rewind windows the
+	// replay-window watcher reads (see replay_window_test.go).
+	dirtyWindows map[string]timescale.ProjectionDirtyWindow
+	dirtyErr     error
+}
+
+func (f *fakeStore) ProjectionDirtyWindows(_ context.Context) (map[string]timescale.ProjectionDirtyWindow, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.dirtyErr != nil {
+		return nil, f.dirtyErr
+	}
+	out := make(map[string]timescale.ProjectionDirtyWindow, len(f.dirtyWindows))
+	for k, v := range f.dirtyWindows {
+		out[k] = v
+	}
+	return out, nil
 }
 
 func (f *fakeStore) GetCursor(_ context.Context, source, _ string) (timescale.Cursor, error) {

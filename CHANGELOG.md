@@ -295,6 +295,40 @@ against.
   publishes a series that appears at its final value, so a break found by
   that very first run reads `increase() == 0` until the next run — which
   is why the apply procedure now primes both units by hand.
+- **The 7d chart column on `/assets` is back for the assets that matter
+  — and a withheld price no longer gets published as a picture of
+  itself.** Rows 1–11 of the directory (XLM, USDC, PYUSD, EURC, AQUA,
+  yXLM, SHX, VELO, BLND, PHO, yUSDC) rendered `—` in the 7D CHART column
+  while the unverified long tail below them charted fine. Those eleven
+  are exactly the catalogue-projected rows, whose wire `asset_id` is the
+  catalogue SLUG (`projectCatalogueRow` sets `AssetID = vc.Slug`), so the
+  listing asked `GetAssetsPriceHistory7dBatch` for a series under `xlm` /
+  `aqua` — ids that can never match a `prices_1m` row. The batch query
+  answered with its `want × days` skeleton: seven buckets, every price
+  null, indistinguishable on the wire from "this asset has never traded",
+  which is why it shipped unnoticed. The series now keys on the row's
+  Stellar twin `asset_id` — the SAME id its `price_usd` and
+  `change_7d_pct` already come from (`fillCatalogueStatsForPage`,
+  `fillGlobalPriceFromOnChain`) — so the chart and the price can no
+  longer disagree about whether data exists. `?include=sparkline7d` is
+  also honoured on the default `/v1/assets` listing, where it had been a
+  silent no-op (the parameter was wired only into the catalogue/classic
+  phases, so the issue's own repro returned a byte-identical response
+  with and without it). Two honesty rules go with it, in both directions:
+  a row with no published price gets no chart and is not even looked up —
+  the scam-issuer suppression and the thin-market substance gate both
+  leave `price_usd` nil before the attach runs — and on the asset DETAIL
+  payload `price_history_24h` / `price_history_7d` are dropped whenever
+  the headline price is withheld (measured on r1 2026-08-29: the flagged
+  JFKBANK2 and RIO details served `price_usd: null` beside 24 hourly and
+  7 daily *priced* points, and their listing rows drew a full sparkline
+  next to a `—` price cell; the last bucket of a price series IS the
+  number being withheld). New counter
+  `stellarindex_api_sparkline7d_rows_total{result="served"|"empty"}` plus
+  a once-per-request warn when every priced row on a page comes back
+  empty: a map hit from the batch reader is not evidence of data, and
+  nothing anywhere reported the dead column. (#355)
+
 - **r1's ZFS `data` pool is raidz1 everywhere, and a lint keeps it that
   way.** The pool is SINGLE parity — live-verified 2026-07-17 and
   corroborated by arithmetic that needs no host access (the ~16.8 TB
@@ -537,6 +571,25 @@ against.
   record-layer `raw:<symbol>` row instead of dropping the slot), and a
   note that an explicit issues-only / one-batch-PR agreement overrides
   CLAUDE.md's default long-session commit→merge→next cadence.
+- **One unrepresentable RedStone `feed_id` no longer discards the entire
+  `write_prices` batch.** Since the oracle capture-totality change an
+  unregistered feed_id becomes a `raw:<feed_id>` row, and the raw
+  validator's refusal (empty / > 64 bytes / a byte outside printable
+  ASCII `0x21-0x7E`) escalated to `ErrMalformedPayload` for the WHOLE
+  event. The "impossible for an `ScSymbol`" justification was copied
+  from the Reflector/Band paths, but RedStone feed_ids arrive as
+  `ScString` — arbitrary bytes, unbounded length — and `write_prices`
+  batches every updated feed into one event, so a single bad feed_id
+  took all ~19 feeds dark until a code change: strictly worse than the
+  pre-totality per-entry skip and the inverse of the totality goal.
+  The decoder now drops that ONE slot (surviving feeds keep their
+  original `op_index`) and records it on the new
+  `stellarindex_source_unrepresentable_symbols_total{source}` counter
+  plus a WARN naming the slot — deliberately NOT the unknown-symbols
+  counter, whose contract is "recorded as `raw:`" and which would send
+  operators hunting for rows that do not exist. New alert
+  `stellarindex_ingestion_oracle_unrepresentable_symbols` (both rule
+  trees, promtool scenarios) and a runbook section. (#291)
 - **RedStone SolvBTC NAV feeds are quoted in their reserve asset, not
   `fiat:USD` (D8).** `SolvBTC_FUNDAMENTAL` and
   `SolvBTC.BBN_FUNDAMENTAL` publish net asset value as a RATIO
@@ -571,6 +624,42 @@ against.
   observed values are correct and unchanged, only the label was
   wrong. Any corrective relabel is a separate, operator-run data
   change.
+- **An operator-initiated projector replay is no longer a multi-hour lag
+  ticket that also masks a real lag (#325).**
+  `stellarindex_projector_lag_high` fired on r1 at 10:24Z on 2026-08-29
+  for the whole ~4h of the reflector-fx replay that rewound the cursor
+  2,574,496 ledgers ON PURPOSE (the VES/XAU served-row deficit, Δ=97,826)
+  — it told the operator nothing they had not just done, and any genuine
+  lag on that source was indistinguishable from it for the duration. The
+  replay tool already records the rewind (`projection_dirty_windows`,
+  migration 0125), so the projector now publishes
+  `stellarindex_projector_replay_window_active{source}` (1 while the
+  cursor is inside a recorded window and still below its pre-rewind
+  position, refreshed every 30s from ONE query for all sources) and the
+  lag rule carries `unless … == 1`. Not a silence: the new
+  `stellarindex_projector_replay_stalled` tickets when a replay STOPS
+  advancing (lag still over the same 256-ledger bound `lag_high` uses and
+  not falling for 15 min inside the window, for 5 min), the excuse
+  expires with the catch-up rather than with the day-long dirty-window
+  row, a dirty-window read error publishes 0 for every source (fail open
+  toward alerting), and an indexer that publishes no flag leaves the lag
+  rule exactly as it was. The flag is gated on the recorded window's
+  PROVENANCE (`timescale.ProjectionDirtyWindow.IsProjectorReplay`, one
+  shared definition of the `reason` format for both writers): the same
+  table is also written by `projected-rebuild -write`, whose range is NOT
+  bounded below the live cursor (`-to` defaults to it, the one-writer
+  guard admits `liveLastLedger >= to`, and `-allow-live-overlap` bypasses
+  the guard — used on r1 2026-07-27), so a cursor-only bound would have
+  suppressed the lag ticket for a source HELD at such a window with no
+  operator rewind on record. The cursor bound is exclusive at the top, so
+  a projector wedged exactly at its pre-rewind ledger stays alertable. Go
+  tests (`internal/projector/replay_window_test.go`, 11 cases incl. both
+  rebuild-window probe shapes, both cursor boundaries and the fail-open;
+  `internal/storage/timescale/projection_dirty_window_reason_test.go`
+  pins the `reason` format byte-for-byte so rows already in the table
+  classify correctly) + promtool cases (normal lag fires / climbing
+  replay silent / stalled replay fires / caught-up source inside a window
+  raises nothing / flag absent still fires).
 - **Gap detector pre-registers `runs_total` at 0 so a restart cannot read
   as a dead detector.** `stellarindex_ingest_gap_detector_runs_total` is a
   CounterVec that only materialises a series on first `Inc()`, and since

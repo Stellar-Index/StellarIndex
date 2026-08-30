@@ -138,7 +138,7 @@ func projectorReplay(args []string) error {
 		Source: *source,
 		From:   target,
 		To:     currentLedger,
-		Reason: fmt.Sprintf("projector-replay rewind %d -> %d", currentLedger, target),
+		Reason: timescale.ProjectorReplayReason(currentLedger, target),
 	}); err != nil {
 		return fmt.Errorf("record dirty window (refusing to rewind without it — the completeness verifier would carry a stale claim over the rewritten range): %w", err)
 	}

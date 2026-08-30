@@ -13,6 +13,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -721,8 +722,9 @@ func (s *Server) handleAssetListFromAssets(
 	cursor string,
 	limit int,
 ) {
-	// AGT-06: this path's cursor is the raw `<observation_count>:<asset_id>`
-	// shape ListAssetsExt emits (see the Next: fmt.Sprintf below) — reject a
+	// AGT-06: this path's cursor is the raw
+	// `<rank_tier>:<observation_count>:<asset_id>` shape
+	// timescale.EncodeAssetsCursor emits below — reject a
 	// malformed one up front instead of letting it silently fall through to
 	// the keyset predicate's degenerate (0, "") case, which matches no rows
 	// and looks like a quiet end-of-pagination rather than the client error
@@ -782,11 +784,21 @@ func (s *Server) handleAssetListFromAssets(
 	// Curated third-party issuer label (account_directory) — one batch
 	// query for the page's issuer set (no N+1). DISPLAY-ONLY; additive.
 	s.fillIssuerDirectoryTags(r.Context(), out)
+	// LAST, after every price producer and both gates — the sparkline
+	// attaches only to rows that still publish a price. This path served
+	// `include=sparkline7d` as a silent no-op until #355: the parameter
+	// was honoured on the catalogue/classic phases only, so
+	// `/v1/assets?include=sparkline7d` (no asset_class) returned a
+	// byte-identical response with and without it.
+	s.attachSparkline7dIfRequested(r, out)
 	env := Envelope{Data: out, Flags: Flags{}}
 	if hasMore && len(out) > 0 {
-		last := rows[len(rows)-1]
+		// Keyset cursor from the RAW last row, encoded by the store so it
+		// carries every ORDER BY key (rank tier first — #356), not just the
+		// observation count. Encoding fewer keys than the ORDER BY ranks on
+		// skips or repeats rows across pages.
 		env.Pagination = &Pagination{
-			Next: fmt.Sprintf("%d:%s", last.ObservationCount, last.AssetID),
+			Next: timescale.EncodeAssetsCursor(rows[len(rows)-1], timescale.AssetsOrderObservationCountDesc),
 		}
 	}
 	writeEnvelope(w, env)
@@ -1819,6 +1831,13 @@ func (s *Server) onChainListingPriceUSD(ctx context.Context, assetID string) *st
 	return row.PriceUSD
 }
 
+// assetTypeGlobal is [AssetDetail.Type] on a catalogue-projected listing
+// row (see [projectCatalogueRow]). Those rows are keyed by catalogue
+// SLUG rather than by a Stellar asset_id, which is why anything reading
+// on-chain data for them has to resolve the Stellar twin first — see
+// [Server.seriesAssetIDForRow].
+const assetTypeGlobal = "global"
+
 // projectCatalogueRow maps a catalogue entry to the listing's
 // AssetDetail wire shape. NO issuer / contract_id / home_domain
 // / sep1_status — those are Stellar-asset-specific and belong
@@ -1828,7 +1847,7 @@ func projectCatalogueRow(vc *currency.VerifiedCurrency) AssetDetail {
 	d := AssetDetail{
 		Kind:       "stellar_asset",
 		AssetID:    vc.Slug,
-		Type:       "global",
+		Type:       assetTypeGlobal,
 		Code:       vc.Ticker,
 		Decimals:   vc.SupplyDecimals,
 		Sep1Status: "not_applicable",
@@ -2042,8 +2061,9 @@ func (s *Server) serveClassicUnifiedPage(w http.ResponseWriter, r *http.Request,
 // to return just the 11-row catalogue tail regardless of limit,
 // making the curated sliver look like the asset universe).
 func (s *Server) fetchClassicUnifiedRows(w http.ResponseWriter, r *http.Request, limit int, innerCursor string) ([]AssetDetail, string, bool) {
-	// AGT-06: this phase's cursor is the `<vol_or_blank>:<asset_id>` shape
-	// this function itself emits below — reject a malformed one (e.g. a
+	// AGT-06: this phase's cursor is the
+	// `<rank_tier>:<vol_or_blank>:<asset_id>` shape this function itself
+	// emits below — reject a malformed one (e.g. a
 	// hand-edited or truncated cursor) with 400 rather than letting it
 	// silently fall through to a keyset predicate that matches no rows.
 	if err := timescale.ValidateAssetsCursor(innerCursor, timescale.AssetsOrderVolume24hUSDDesc); err != nil {
@@ -2109,17 +2129,16 @@ func (s *Server) fetchClassicUnifiedRows(w http.ResponseWriter, r *http.Request,
 	s.attachSparkline7dIfRequested(r, out)
 	nextInner := ""
 	if hasMore && len(out) > 0 {
-		last := rows[len(rows)-1]
-		// Volume24hUSDDesc cursor shape: <sort_vol_or_blank>:<asset_id>.
-		// The prefix is the §4-B concentration-adjusted SORT key
-		// (SortVolume24hUSD), NOT the raw volume — the keyset cursor must
-		// encode the same value the ORDER BY ranks on, or pagination skips
-		// or repeats rows. The raw Volume24hUSD stays the visible payload.
-		sortVolStr := ""
-		if last.SortVolume24hUSD != nil {
-			sortVolStr = *last.SortVolume24hUSD
-		}
-		nextInner = sortVolStr + ":" + last.AssetID
+		// Volume24hUSDDesc cursor shape:
+		// <rank_tier>:<sort_vol_or_blank>:<asset_id>. Every field is a key
+		// the ORDER BY ranks on — the leading rank tier (#356: flagged /
+		// unpriced rows sort below rankable ones) and then the §4-B
+		// concentration-adjusted SORT volume (SortVolume24hUSD), NOT the raw
+		// volume. The keyset cursor must encode the same values the ORDER BY
+		// ranks on, or pagination skips or repeats rows. The raw
+		// Volume24hUSD stays the visible payload. Built from the RAW last
+		// row, before the alias/twin folds trimmed `out`.
+		nextInner = timescale.EncodeAssetsCursor(rows[len(rows)-1], timescale.AssetsOrderVolume24hUSDDesc)
 	}
 	return out, nextInner, true
 }
@@ -2345,6 +2364,13 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// keeping circulating_supply + the scam warning. This deliberately
 	// overturns the historical display-only invariant (2026-08-25).
 	suppressScamIssuerPricing(&detail)
+
+	// …and the same rule for every OTHER reason the headline price is
+	// absent — the thin-market substance gate upstream, or an asset that
+	// simply never priced. price_history_* is the price over time; the
+	// last bucket IS the withheld number. Runs after every producer and
+	// every suppressor, so nothing can re-publish the series below it.
+	withholdPriceSeriesWhenUnpriced(&detail)
 
 	// Verified-currency overlay (R-018 Phase 1.1) — attaches the
 	// `unverified_warning` body + flips flags.unverified_ticker_collision
@@ -2974,18 +3000,65 @@ func (s *Server) resolveSACToClassic(ctx context.Context, contractID string) (ca
 }
 
 // attachSparkline7dIfRequested honours ?include=sparkline7d on the
-// unified listing (AM-03: the explorer's directory requested it since
-// the coins→assets dissolution and the server silently ignored it —
-// a dead chart column on every row). One batch read for the page.
+// listing (AM-03: the explorer's directory requested it since the
+// coins→assets dissolution and the server silently ignored it — a dead
+// chart column on every row). One batch read for the page.
+//
+// Two rules, both learned from #355 — every verified top-of-page asset
+// (XLM, USDC, PYUSD, EURC, AQUA, yXLM, SHX, VELO, BLND, PHO, yUSDC)
+// rendered "—" in the chart column while the unverified long tail below
+// it charted fine:
+//
+//  1. The series keys on the row's STELLAR asset id, never on its wire
+//     asset_id. A catalogue row carries the catalogue SLUG there
+//     ([projectCatalogueRow] sets AssetID = vc.Slug), so "xlm" / "aqua"
+//     matched no prices_1m row — and the batch query's want × days CROSS
+//     JOIN still returned its 7 buckets per requested id, every one with
+//     a NULL price, which on the wire is indistinguishable from "this
+//     asset has never traded". Resolve the Stellar twin the SAME way the
+//     row's price and change_7d_pct already do
+//     ([Server.fillCatalogueStatsForPage] and
+//     [Server.fillGlobalPriceFromOnChain] both key on
+//     vc.StellarEntry().AssetID), so the chart and the price can never
+//     disagree about whether data exists.
+//
+//  2. No published price ⇒ no chart. A row whose price the substance
+//     gate ([Server.applySubstanceGateToListing]) or the scam-issuer
+//     suppression ([suppressScamIssuerPricing]) withheld arrives here
+//     with PriceUSD nil; drawing its series would republish, as a
+//     picture, the very number we declined to publish as a number (r1
+//     2026-08-29: the flagged JFKBANK2 / RIO rows served price_usd null
+//     beside a full 7-point chart). A declared-peg price is excluded for
+//     the same reason — it is an operator declaration, and the market
+//     series behind it is the dust the gate rejected (see
+//     [Server.fillDeclaredPegPricesInListing]).
+//
+// Every listing phase runs this (catalogue, classic, and the plain
+// AssetsReader listing), so it must stay safe on a page that mixes
+// catalogue and classic rows.
 func (s *Server) attachSparkline7dIfRequested(r *http.Request, rows []AssetDetail) {
 	if s.assetsReader == nil || !strings.Contains(r.URL.Query().Get("include"), "sparkline7d") {
 		return
 	}
+	// Series asset_id → the page rows that render it. A catalogue row and
+	// (on a mixed page) its classic twin resolve to the same id, so one
+	// lookup can feed several rows.
+	rowsByID := make(map[string][]int, len(rows))
 	ids := make([]string, 0, len(rows))
+	eligible := 0
 	for i := range rows {
-		if rows[i].AssetID != "" {
-			ids = append(ids, rows[i].AssetID)
+		if !sparkline7dEligible(&rows[i]) {
+			continue
 		}
+		id := s.seriesAssetIDForRow(&rows[i])
+		if id == "" {
+			continue
+		}
+		eligible++
+		if _, seen := rowsByID[id]; !seen {
+			ids = append(ids, id)
+		}
+		rowsByID[id] = append(rowsByID[id], i)
 	}
 	if len(ids) == 0 {
 		return
@@ -2995,11 +3068,80 @@ func (s *Server) attachSparkline7dIfRequested(r *http.Request, rows []AssetDetai
 		s.logger.Warn("sparkline7d batch", "err", err)
 		return
 	}
-	for i := range rows {
-		if h, ok := hist[rows[i].AssetID]; ok {
-			rows[i].PriceHistory7d = assetPointsToWire(h)
+	served := 0
+	for id, idx := range rowsByID {
+		points := hist[id]
+		if !hasPricedPoint(points) {
+			// A map hit alone means nothing here — the reader returns a
+			// bucket skeleton for every id it was asked about. Count what
+			// the chart column can actually draw.
+			obs.APISparkline7dRowsTotal.WithLabelValues("empty").Add(float64(len(idx)))
+			continue
+		}
+		obs.APISparkline7dRowsTotal.WithLabelValues("served").Add(float64(len(idx)))
+		served += len(idx)
+		wire := assetPointsToWire(points)
+		for _, i := range idx {
+			rows[i].PriceHistory7d = wire
 		}
 	}
+	if served == 0 {
+		// One line per request, never per asset, and only when EVERY
+		// priced row on the page came back without a single price point.
+		// That is the shape of a broken lookup key (#355), not of a quiet
+		// market — and its absence is exactly why a dead chart column
+		// shipped unnoticed. Per-row detail lives on the
+		// stellarindex_api_sparkline7d_rows_total counter.
+		s.logger.Warn("sparkline7d: no priced row on this page has a 7d series",
+			"requested_ids", len(ids), "priced_rows", eligible)
+	}
+}
+
+// sparkline7dEligible reports whether a listing row may publish a price
+// SERIES: only rows that publish a market price do. PriceUSD is nil by
+// the time this runs for every row the substance gate or the
+// scam-issuer suppression withheld (both run before the attach on every
+// listing phase), so this one predicate covers both gates — plus the
+// simply-priceless rows, which have nothing to chart anyway.
+func sparkline7dEligible(d *AssetDetail) bool {
+	return d.PriceUSD != nil && d.PriceBasis != priceBasisDeclaredPeg
+}
+
+// seriesAssetIDForRow resolves the asset_id whose on-chain price series
+// backs a listing row.
+//
+// Catalogue rows (type "global") carry the catalogue SLUG as their wire
+// asset_id, so their series — like their price and their change pills —
+// must be read under the Stellar twin's id. A catalogue entry with no
+// Stellar issuance (fiat currencies, reference-only coins) has no
+// on-chain series at all and returns "" so it is never requested.
+func (s *Server) seriesAssetIDForRow(d *AssetDetail) string {
+	if d.Type != assetTypeGlobal {
+		return d.AssetID
+	}
+	vc, ok := s.verifiedCurrencies.LookupBySlug(d.Slug)
+	if !ok {
+		return ""
+	}
+	entry := vc.StellarEntry()
+	if entry == nil {
+		return ""
+	}
+	return entry.AssetID
+}
+
+// hasPricedPoint reports whether a series carries at least one bucket
+// with an actual price. GetAssetsPriceHistory7dBatch returns a bucket
+// skeleton (7 days, null price) for every id it is asked about — present
+// in the map is NOT the same as "has data", and conflating the two is
+// what let #355 render a chart column of dashes for the top of the page.
+func hasPricedPoint(pts []timescale.AssetPricePoint) bool {
+	for i := range pts {
+		if pts[i].P != nil && *pts[i].P != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // suppressCatalogueTwins drops classic rows whose asset_id belongs to

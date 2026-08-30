@@ -121,8 +121,10 @@ var (
 	// Oracle capture-totality (PR-2): a feed_id outside the ADR-0028
 	// registry is no longer a reason either — it is recorded verbatim
 	// as a `raw:<feed_id>` row (canonical.AssetOracleRaw), so an
-	// all-unknown batch decodes to rows. The only remaining path is
-	// every attributed price being non-positive.
+	// all-unknown batch decodes to rows. Two paths remain: every
+	// attributed price non-positive, or every feed_id unrepresentable
+	// even as a raw asset (#291 — those slots are dropped one at a
+	// time, so only an ALL-unrepresentable batch lands here).
 	ErrEmptyUpdates = errors.New("redstone: empty updated_feeds vector")
 
 	// ErrMissingOpArgs — the event arrived without InvokeContract

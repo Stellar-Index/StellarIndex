@@ -124,6 +124,18 @@ an outage — let it run unless lag exceeds a few hours.
 - After a soroban-events landing-zone backfill, projector lag spikes
   while it catches up to the newly-written rows. Same as cold-start —
   let it drain.
+- An OPERATOR-INITIATED `projector-replay` rewind no longer reaches this
+  alert at all (issue #325): the replay tool records the rewind window,
+  the projector publishes
+  `stellarindex_projector_replay_window_active{source}=1` while the
+  cursor is climbing back through it, and the rule carries `unless … ==
+  1`. So if this alert IS firing, no recorded `projector-replay` rewind
+  explains it — treat the lag as real. (A pending `projected-rebuild`
+  window does NOT excuse lag: the flag is gated on the recorded window's
+  `reason`, precisely so a source held at a rebuild's range stays
+  alertable.) The mirror-image signal for a replay that has stopped
+  climbing is `stellarindex_projector_replay_stalled`
+  ([projector-replay](projector-replay.md)).
 
 ## Related
 
@@ -154,6 +166,10 @@ an outage — let it run unless lag exceeds a few hours.
   sibling projector alerts and their runbooks; replaced the non-SQL
   `SELECT … FROM stellarindex_projector_runs_total` and the pprof capture
   (no pprof endpoint exists) with real PromQL.
+- 2026-08-29 — issue #325: the lag rule gained an `unless
+  stellarindex_projector_replay_window_active == 1` arm, so an
+  operator-initiated replay is no longer a ~4h ticket that also masks a
+  genuine lag on the same source.
 - 2026-06-12 — F-1330: fix diagnosis SQL (`ingestion_cursors` not
   `source_cursors`; `last_updated` not `updated_at`); config file is
   `/etc/stellarindex.toml` not `r1.toml`.
