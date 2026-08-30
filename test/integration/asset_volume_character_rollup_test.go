@@ -25,6 +25,15 @@ const (
 	goodIssuer = "GA2XZLXNLAL26VBCA2OESAIMXTRH5GXKLHYZMDGNCR2SYS5QZWWNBLCK"
 	washIssuer = "GA3GJGKCUKPOPL6NYPMSBK7LMFYNW7SJMAJ7ZGWR3KGSHJWJHQRQZA3L"
 	realIssuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+
+	// Three more issuers so the listing tests can seed rows that TIE on
+	// the sort keys. Distinct issuers (not one issuer with three codes)
+	// because the tie-break is on the full asset_id, and sharing an
+	// issuer would leave the codes as the only varying part — a weaker
+	// exercise of the keyset walk than the real long tail.
+	tieIssuerA = "GBXF3MBQLVQIVLY72WFA5F6RSI3GHK365KBKPBRAHSXVLRE4KY4GDJXP"
+	tieIssuerB = "GDH6SHBRFUIPGMSBALDYRMWQA4XCH7VMZUFZ3H3YAHTF2HQFNW2KKV23"
+	tieIssuerC = "GDCQNKPZUBHITG6V3S25OS53K2BD4OGZHORUGF4KLEQ7BXV36YFLZ36T"
 )
 
 func mustClassicID(t *testing.T, code, issuer string) string {
