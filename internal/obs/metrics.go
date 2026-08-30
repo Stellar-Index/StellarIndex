@@ -445,6 +445,24 @@ func seedBoundedLabelSeries() {
 // seedBoundedLabelSeriesTail continues seedBoundedLabelSeries — split
 // for the same gocognit ceiling that split registerAppMetrics.
 func seedBoundedLabelSeriesTail() {
+	// Both divergence guards (stellarindex_divergence_no_reference and
+	// _refresh_error_dominant) compare a FAILURE outcome's rate against
+	// the `ok` outcome's rate. Without seeding, a process that has never
+	// had a successful refresh has no `ok` child at all, the comparison
+	// is the empty vector, and BOTH alerts are silent in exactly the
+	// total-outage case they exist to catch — CoinGecko and Chainlink
+	// both unreachable, the aggregator restarted during the outage (as
+	// deploys routinely do), so `ok` is never registered while
+	// flags.divergence_warning serves frozen and a live depeg goes
+	// unflagged (wave-D ALERT-06). This was the one alert-referenced
+	// outcome counter missing from this list.
+	//
+	// Values mirror internal/aggregate/orchestrator/divergence_refresh.go
+	// exactly: no_vwap, parse_error, the refresh_error/no_reference pair,
+	// and ok.
+	for _, outcome := range []string{"ok", "no_vwap", "parse_error", "refresh_error", "no_reference"} {
+		DivergenceRefreshTotal.WithLabelValues(outcome)
+	}
 	// v0.21.4 background cache workers. Seeded so the DEX-TVL /
 	// order-book failure-rate queries read a real zero (not "no data")
 	// from process start; the load_* pair matters most — a process

@@ -282,6 +282,37 @@ against.
   sparklines, `price_history_*` and `ath` alike. The peg price itself is
   untouched — the peg is the published claim; only the market series
   charted beside it goes.
+- **Two more alerts that could not fire** (wave-D ALERT-03, ALERT-06),
+  both instances of the same class as #389/#390 — an expression nothing
+  evaluated against what the emitter can actually produce.
+
+  `stellarindex_external_poller_error_rate_high` summed
+  `rate(…{outcome="success"}) + rate(…{outcome="error"})` with no
+  matcher. PromQL's one-to-one matching compares the full label
+  signature and `outcome` differs on every candidate pair, so the `+`
+  yielded the empty vector unconditionally: the alert could not fire at
+  any error rate. Now `sum without (outcome)` joined with
+  `ignoring(outcome)`, which keeps `job`/`instance` for the annotation.
+  The `success|error` selector is deliberate — a third outcome,
+  `skipped` (post-429 cooldown), is excluded on purpose, and summing all
+  outcomes instead would leave the alert dead during throttling, the
+  exact incident shape it exists for.
+
+  `stellarindex_divergence_no_reference` and
+  `…_refresh_error_dominant` compare a failure outcome's rate against
+  the `ok` outcome's, but `stellarindex_divergence_refresh_total` was
+  the one alert-referenced outcome counter missing from
+  `seedBoundedLabelSeries`. A counter child does not exist until its
+  first increment, so an aggregator that had never completed a
+  successful refresh — every reference unreachable and the process
+  restarted mid-outage, as deploys routinely cause — had no `ok` series,
+  making both comparisons empty and both alerts silent while
+  `flags.divergence_warning` served frozen and a live depeg went
+  unflagged.
+
+  The seed guard derives its subject set from the emitter source, so a
+  new outcome added without a matching seed fails on the day it is
+  written.
 
 - **A percent-encoded slash forged the SSE exemption, so 13 routes could
   be asked to run with no request deadline at all** (wave-D

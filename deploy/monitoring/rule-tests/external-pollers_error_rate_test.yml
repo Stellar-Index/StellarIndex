@@ -1,0 +1,62 @@
+# external-poller error rate — the unfireable denominator (wave-D
+# ALERT-03).
+#
+# The denominator summed two selectors that differ in the `outcome`
+# label with no matcher. PromQL one-to-one matching compares the FULL
+# label signature, so the `+` yielded the empty vector unconditionally
+# and this alert could not fire at ANY error rate.
+#
+# The firing case below carries a THIRD outcome, `skipped` (post-429
+# cooldown), at 40/min against 9 errors and 1 success. That shape is
+# load-bearing: `skipped` is excluded from the ratio on purpose, and a
+# "fix" that summed all outcomes would compute 0.15/0.833 = 0.18 and
+# stay silent at a true 90% error rate — dead during throttling, which
+# is the exact incident shape this rule family exists for.
+
+rule_files:
+- ../rules/external-pollers.yml
+evaluation_interval: 1m
+tests:
+- interval: 1m
+  name: a poller failing 90% of polls alerts even while throttled
+  input_series:
+  - series: stellarindex_external_poller_polls_total{job="stellarindex_indexer",instance="r1:9101",source="coingecko",outcome="error"}
+    values: 0+9x120
+  - series: stellarindex_external_poller_polls_total{job="stellarindex_indexer",instance="r1:9101",source="coingecko",outcome="success"}
+    values: 0+1x120
+  - series: stellarindex_external_poller_polls_total{job="stellarindex_indexer",instance="r1:9101",source="coingecko",outcome="skipped"}
+    values: 0+40x120
+  alert_rule_test:
+  - eval_time: 90m
+    alertname: stellarindex_external_poller_error_rate_high
+    exp_alerts:
+    - exp_labels:
+        job: stellarindex_indexer
+        instance: r1:9101
+        source: coingecko
+        severity: informational
+        team: stellarindex
+        component: external-poller
+      exp_annotations:
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-poller-error-rate-high.md
+        summary: external poller coingecko error rate > 50 % (15 min)
+        description: 'More than half of recent coingecko polls returned
+
+          an error. Data is still flowing on the success rate, but
+
+          something''s degrading — investigate before it tips into
+
+          full staleness.
+
+          '
+- interval: 1m
+  name: a healthy poller does not alert
+  input_series:
+  - series: stellarindex_external_poller_polls_total{job="stellarindex_indexer",instance="r1:9101",source="coingecko",outcome="error"}
+    values: 0+1x120
+  - series: stellarindex_external_poller_polls_total{job="stellarindex_indexer",instance="r1:9101",source="coingecko",outcome="success"}
+    values: 0+9x120
+  alert_rule_test:
+  - eval_time: 90m
+    alertname: stellarindex_external_poller_error_rate_high
+    exp_alerts: []

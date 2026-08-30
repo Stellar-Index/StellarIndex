@@ -196,13 +196,34 @@ groups:
       # >50% of attempts return non-nil err. Lower severity than
       # the staleness alert because at least *some* data is flowing.
       - alert: stellarindex_external_poller_error_rate_high
+        # The denominator was `rate(…{outcome="success"}) +
+        # rate(…{outcome="error"})` with no matcher. PromQL's default
+        # one-to-one matching compares the FULL label signature, and
+        # `outcome` differs on every candidate pair, so the `+` yielded
+        # the empty vector unconditionally — the division was empty, the
+        # comparison was empty, and this alert could never fire at any
+        # error rate (wave-D ALERT-03).
+        #
+        # `sum without (outcome)` collapses the two children into one
+        # series, and `ignoring(outcome)` lets the numerator match it
+        # while KEEPING job/instance — which the annotation's
+        # {{ $labels.source }} and the per-target identity depend on.
+        #
+        # The `success|error` selector is deliberate, not a shorthand for
+        # "all outcomes". There is a third value, `skipped` (a poller in
+        # post-429 cooldown), and the runbook records that it is excluded
+        # on purpose: a throttled poller must not dilute the ratio.
+        # Summing ALL outcomes instead would make this alert dead during
+        # throttling — the exact incident shape it exists for — which is
+        # worse than the status quo, because it would look fixed.
         expr: |
           (
             rate(stellarindex_external_poller_polls_total{outcome="error"}[15m])
             /
-            (
-              rate(stellarindex_external_poller_polls_total{outcome="success"}[15m])
-              + rate(stellarindex_external_poller_polls_total{outcome="error"}[15m])
+            ignoring(outcome) (
+              sum without (outcome) (
+                rate(stellarindex_external_poller_polls_total{outcome=~"success|error"}[15m])
+              )
             )
           ) > 0.5
         for: 15m
