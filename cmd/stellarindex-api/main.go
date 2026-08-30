@@ -1275,7 +1275,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Explorer:           explorerReader,
 		Volume:             storeVolumeReader{s: store},
 		Change24h:          storeChange24hReader{s: store, pegs: usdPegs},
-		PriceAt:            storePriceAtReader{s: store},
+		PriceAt:            storePriceAtReader{s: store, substance: substanceGate, scam: scamGate},
 		ChangeSummary:      store,
 		AssetsReader:       cachedAssetsReader,
 		Issuers:            cachedIssuersReader,
@@ -3221,8 +3221,7 @@ func (g globalPriceReader) LatestVWAP(ctx context.Context, base, quote canonical
 	// degrade to "no data" here — the caller falls through to its
 	// aggregator tier, whose orchestrator applies its own min-USD-volume
 	// floor.
-	if !g.substance.Allowed(ctx, base, quote, "asset_headline") ||
-		g.scam.Withheld(ctx, base, "asset_headline") {
+	if priceWithheld(ctx, g.substance, g.scam, base, quote, "asset_headline") {
 		return "", time.Time{}, 0, nil, false, nil
 	}
 	// Same raw-CAGG serving-sanity guard as /v1/price
@@ -3435,6 +3434,36 @@ func convertHistoryPoints(rows []timescale.HistoryPoint) []v1.HistoryPoint {
 // stale=false for the ~250k dormant/delisted long-tail).
 const defaultVWAPFreshness = 15 * time.Minute
 
+// priceWithheld is THE withholding chokepoint for every price-serving
+// read seam (MSP cluster, wave D). The scam/substance decision was
+// previously inlined at storePriceReader only, which is exactly how it
+// came to leak at /v1/price/at, /v1/price/changes and friends: a new
+// seam had no obligation to remember it. Every seam that serves a
+// number derived from a closed VWAP bucket routes through here, and
+// TestPriceServingSeamsAreGated enumerates those seams so a new
+// ungated one fails CI rather than shipping.
+//
+// Routing through one function is also what keeps the two gates
+// SYMMETRIC. Hand-written call sites drifted apart: the last-trade arm
+// of LatestPrice consulted substance but not scam, so an operator who
+// set disable_substance_gate=true to widen pricing coverage silently
+// also un-withheld every directory-flagged issuer (MSP-07). Callers
+// cannot make that mistake here — there is one expression, and
+// TestWithholdingGatesAreSpelledOnlyAtTheChokepoint fails if a future
+// call site spells either gate out again.
+//
+// Both gates are nil-receiver safe (nil == allow-everything), so an
+// operator who disabled [pricing_guard] keeps today's behaviour.
+func priceWithheld(
+	ctx context.Context,
+	substance *pricingguard.SubstanceGate,
+	scam *pricingguard.ScamGate,
+	base, quote canonical.Asset,
+	surface string,
+) bool {
+	return !substance.Allowed(ctx, base, quote, surface) || scam.Withheld(ctx, base, surface)
+}
+
 type storePriceReader struct {
 	s             *timescale.Store
 	vwapFreshness time.Duration               // 0 → defaultVWAPFreshness
@@ -3510,8 +3539,7 @@ func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 		// whose entire history (baseline included) is attacker-authored
 		// (2026-08-04 valuation incident). ErrPriceWithheld deliberately
 		// bypasses the handler's fallback chain — see its doc comment.
-		if !r.substance.Allowed(ctx, asset, quote, "price_read") ||
-			r.scam.Withheld(ctx, asset, "price_read") {
+		if priceWithheld(ctx, r.substance, r.scam, asset, quote, "price_read") {
 			return v1.PriceSnapshot{}, nil, false, v1.ErrPriceWithheld
 		}
 		served, lowConfidence := pricingguard.GuardServedVWAP1mConfidence(ctx, r.s, r.logger, pair, row)
@@ -3556,14 +3584,21 @@ func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 	if len(trades) == 0 {
 		return v1.PriceSnapshot{}, nil, false, v1.ErrPriceNotFound
 	}
-	// Thin-market substance gate, last-trade arm: a pair with no closed
-	// 1m bucket in the 400-day window by definition has no trailing
-	// substance, so for an on-chain pair this withholds. That is the
-	// intended policy — "the last trade was P" for a substanceless
-	// market is exactly the manipulable claim the gate exists to stop
-	// (the raw trade stays visible on /v1/observations). Off-chain
-	// pairs (never substance-gated) keep the last-trade fallback.
-	if !r.substance.Allowed(ctx, asset, quote, "price_read") {
+	// Withholding gate, last-trade arm: a pair with no closed 1m bucket
+	// inside the gate window by definition has no trailing substance, so
+	// for an on-chain pair this withholds. That is the intended policy —
+	// "the last trade was P" for a substanceless market is exactly the
+	// manipulable claim the gate exists to stop (the raw trade stays
+	// visible on /v1/observations). Off-chain pairs (never
+	// substance-gated) keep the last-trade fallback.
+	//
+	// This arm consults BOTH gates via the chokepoint. It previously
+	// spelled out substance only, so `disable_substance_gate=true` — an
+	// operator relaxing the thin-market floor to diagnose a coverage
+	// complaint — silently also published a directory-flagged issuer's
+	// last trade as its price, reversing a separate owner-level trust
+	// decision the operator never touched (wave-D MSP-07).
+	if priceWithheld(ctx, r.substance, r.scam, asset, quote, "price_read") {
 		return v1.PriceSnapshot{}, nil, false, v1.ErrPriceWithheld
 	}
 	// decimals=7 matches Stellar's default stroop scale. A future
@@ -3592,8 +3627,7 @@ func (r storePriceReader) RecentClosedSnapshots(ctx context.Context, asset, quot
 	// Thin-market substance gate: a snapshot SERIES is an aggregated
 	// price claim per bucket, and the SEP-40 oracle surface is the last
 	// place a substanceless market's rate belongs.
-	if !r.substance.Allowed(ctx, asset, quote, "oracle") ||
-		r.scam.Withheld(ctx, asset, "oracle") {
+	if priceWithheld(ctx, r.substance, r.scam, asset, quote, "oracle") {
 		return nil, v1.ErrPriceWithheld
 	}
 	out := make([]v1.PriceSnapshot, len(rows))
@@ -4897,11 +4931,25 @@ func (r *fxHistoryReader) SourceEntryCounts(ctx context.Context) (map[string]int
 // (prices_1m → … → prices_1d) whose nearest at-or-before bucket is
 // within maxStaleness. sql.ErrNoRows translates to the sentinel so
 // the handler can 404 (or null a horizon) honestly.
-type storePriceAtReader struct{ s *timescale.Store }
+// MSP-01/MSP-02 (wave D): this seam reads the SAME prices_1m closed
+// buckets as storePriceReader.LatestPrice, so it must carry the SAME
+// withholding gates — otherwise one extra path segment (/v1/price/at,
+// /v1/price/changes) republishes every price /v1/price refuses. The
+// gates live here, at the reader seam, rather than in each handler:
+// both leaking routes call PriceAt, so gating once covers both and any
+// future PriceAt consumer inherits it. See priceWithheld().
+type storePriceAtReader struct {
+	s         *timescale.Store
+	substance *pricingguard.SubstanceGate // nil → no thin-market gate
+	scam      *pricingguard.ScamGate      // nil → no scam-issuer gate
+}
 
 func (r storePriceAtReader) PriceAt(
 	ctx context.Context, pair canonical.Pair, ts time.Time, maxStaleness time.Duration,
 ) (string, time.Time, int, error) {
+	if priceWithheld(ctx, r.substance, r.scam, pair.Base, pair.Quote, "price_at") {
+		return "", time.Time{}, 0, v1.ErrPriceWithheld
+	}
 	row, err := r.s.ClosedVWAPAtOrBefore(ctx, pair, ts, maxStaleness)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
