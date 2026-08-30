@@ -231,6 +231,55 @@ the alert reads a real zero rather than "no data". Drives the
 `stellarindex_projector_wedged` alert (ticket; manual remediation — raise
 the per-cycle budget or decompress the range). See ADR-0032.
 
+### `stellarindex_projector_replay_window_active`
+
+Gauge, labels `source`.
+
+`1` while the source's projector cursor is still INSIDE an
+operator-recorded `projector-replay` rewind window (the
+`projection_dirty_windows` row migration 0125 added, written by the
+replay tool before it rewinds); `0` otherwise. Published by ONE projector
+goroutine (not per source) every `ReplayWindowRefreshInterval` (30s) from
+a single query; its first pass runs at startup, which is also what seeds
+`0` for every registered source so the alert reads a real zero rather
+than "no data".
+
+The discriminator between an INTENDED lag and a real one (issue #325):
+`stellarindex_projector_lag_high` carries `unless
+stellarindex_projector_replay_window_active == 1`, so the ~4h ticket a
+2.5M-ledger rewind used to raise — which told the operator nothing and
+masked any genuine lag on the same source — is excused, while
+`stellarindex_projector_replay_stalled` fires if the replay stops
+advancing inside that window.
+
+Three bounds keep the excuse narrow:
+
+1. **Provenance.** Only a window written by `projector-replay` counts
+   (the `reason` column). `projected-rebuild -write` records into the
+   same table but never rewinds the live cursor, and its range is **not**
+   kept below that cursor: `-to` defaults to the live cursor, its
+   one-writer guard admits `liveLastLedger >= to` (equality), and
+   `-allow-live-overlap` bypasses the guard entirely (used on r1
+   2026-07-27). Without the provenance gate, a source HELD at such a
+   window's ledger — a sink-retry hold, a poison hold, a wedge — would
+   have its lag ticket suppressed with no operator rewind on record.
+2. **Cursor, exclusive at the top.** The flag clears the moment the
+   cursor regains its pre-rewind position, not when the dirty-window row
+   is finally cleared by `compute-completeness` (up to a day later); a
+   projector wedged exactly AT that ledger stays alertable. The lower
+   bound is `from_ledger - 1`, where the replay parks the cursor.
+3. **Fail open.** A dirty-window read error publishes `0` for every
+   source, so a monitoring-side failure can never silence a real lag
+   ticket.
+
+Known residual: the table holds one row per source and the upsert widens
+it (`LEAST`/`GREATEST`) while keeping the newest `reason`, so a replay
+recorded while a `projected-rebuild` window is still pending inherits the
+higher `to_ledger` and the flag expires there rather than at the replay's
+own pre-rewind position. Still provenance-gated, still cursor-bounded,
+still expiring — and it needs both tools pending on the same source at
+once.
+
 ### `http_request_success_duration_seconds`
 
 Histogram, labels `method`, `route`.
@@ -401,6 +450,37 @@ while r1 carried 7,794 dropped Reflector slots. Once the oracle
 decoders record unmapped slots verbatim as `raw:<symbol>` rows
 (`canonical.AssetOracleRaw`, oracle capture-totality design) the counter
 keeps incrementing — a raw row is still a mapping gap to close.
+
+### `stellarindex_source_unrepresentable_symbols_total`
+
+Counter, label `source`.
+
+Oracle asset slots **dropped** because the published symbol / feed-id
+cannot be held even by the record layer's verbatim `raw:` namespace:
+empty, longer than 64 bytes, or carrying a byte outside printable
+ASCII `0x21-0x7E` (`canonical.NewOracleRawAsset`).
+
+Deliberately separate from `stellarindex_source_unknown_symbols_total`.
+That counter means "recorded as `raw:<symbol>`" — the row exists and a
+later allow-list / feed-registry entry promotes it in place. This one
+is a **hole**: nothing was written, so closing it needs the registry
+entry *and* a replay of the affected ledgers. One shared series would
+send operators hunting for raw rows that do not exist.
+
+Only an ScString-keyed oracle can reach it in practice: RedStone
+feed_ids are `ScString` (arbitrary bytes, unbounded length) while
+Reflector / Band symbols are `ScSymbol`. The refusal is per-SLOT, not
+per-event (#291) — `write_prices` batches every updated feed into one
+event, so an event-level refusal would take all ~19 RedStone feeds
+dark until a code change, the inverse of oracle capture-totality. The
+dropped slot's identity is in the accompanying WARN log line
+(`redstone: dropping slot with unrepresentable feed_id`).
+
+Alert: `stellarindex_ingestion_oracle_unrepresentable_symbols` (any
+per-source increase over a trailing 25 h, sustained 30 min — same
+window as its unknown-symbols sibling so a daily-cadence oracle cannot
+flap) → runbook
+[oracle-unknown-symbols](../../operations/runbooks/oracle-unknown-symbols.md).
 
 ### `stellarindex_source_orphan_events_total`
 

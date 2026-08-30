@@ -9,9 +9,20 @@ groups:
     interval: 30s
     rules:
 
+      # The `unless` arm (issue #325, 2026-08-29) excuses the ONE lag that
+      # is intended: an operator-initiated `stellarindex-ops
+      # projector-replay` rewind (the reflector-fx replay of 2026-08-29
+      # rewound 2,574,496 ledgers on purpose and ticketed for ~4h while
+      # masking any genuine lag on the same source). The flag is 1 only
+      # while the cursor is inside the RECORDED window and below its
+      # pre-rewind position, and the sibling replay_stalled rule below
+      # fires if the replay stops advancing — so this is a discriminator,
+      # not a silence.
       - alert: stellarindex_projector_lag_high
         expr: |
           max by (source) (stellarindex_projector_lag_ledgers) > 256
+          unless
+          max by (source) (stellarindex_projector_replay_window_active) == 1
         for: 10m
         labels:
           severity: ticket
@@ -28,6 +39,51 @@ groups:
             increasingly diverge from the raw store.
 
             Runbook: docs/operations/runbooks/projector-lag.md
+
+      # Mirror of the rule in deploy/monitoring/rules/projector.yml (the
+      # wave-96 monitoring-rules CI dual-validation pattern). The other half
+      # of the #325 replay pair: with the lag rule excused during a replay,
+      # THIS rule is what keeps the window covered — a stuck replay leaves
+      # the served-row deficit it was started to repair wide open. "Not
+      # climbing" is read off the lag gauge: a healthy replay's lag falls
+      # every 5s cycle, so the current sample sitting AT the 15m maximum
+      # means the cursor has stopped (or the tip is outrunning it). `for: 5m`
+      # rides out the rewind instant itself, which momentarily satisfies the
+      # same equality. The `> 256` LAG FLOOR is the same bound lag_high
+      # uses, and is load-bearing: without it `max_over_time(lag[15m]) <=
+      # lag` is trivially true at lag 0, so a fully caught-up healthy source
+      # would ticket as a stalled replay whenever its window flag was 1.
+      - alert: stellarindex_projector_replay_stalled
+        expr: |
+          (max by (source) (stellarindex_projector_replay_window_active) == 1)
+          and
+          (max by (source) (stellarindex_projector_lag_ledgers) > 256)
+          and
+          (max by (source) (max_over_time(stellarindex_projector_lag_ledgers[15m]))
+            <= max by (source) (stellarindex_projector_lag_ledgers))
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: projector
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-replay.md
+          summary: "Projector replay for {{ $labels.source }} has STOPPED advancing"
+          description: |
+            An operator-initiated projector-replay is in progress for
+            {{ $labels.source }} (the cursor is still inside the recorded
+            rewind window) and its lag is still over the 256-ledger
+            lag_high bound but has not fallen for 15+ minutes — the cursor
+            is stalled or the live tip is outrunning it, so the replay will
+            never finish on its own. The served-row deficit the replay was
+            started to repair is still open.
+
+            Check `stellarindex_projector_wedged` and the
+            `runs_total{outcome="error"|"sink_retry"}` rates for this source
+            first — a floored window or a held sink is the usual cause — and
+            follow the replay runbook's decompress-first pre-flight.
+
+            Runbook: docs/operations/runbooks/projector-replay.md
 
       - alert: stellarindex_projector_error_rate_high
         expr: |

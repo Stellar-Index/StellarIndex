@@ -47,6 +47,24 @@ The `make test-load*` targets enforce a non-production guard
 (refuses to run if `K6_TARGET` mentions production hostnames).
 Direct `k6 run` skips the guard — be careful.
 
+### Language level (what the pinned k6 can parse)
+
+k6 is pinned to **0.50.0** (`.github/workflows/k6-weekly.yml`; the
+same binary that captured the historical AC2 evidence). 0.50
+transpiles scenarios with babel, which parses **array** spread
+(`[...a, ...b]`) but **not object** spread — `{ ...headers, X: 1 }`
+fails `k6 archive` with `SyntaxError: Unexpected token`. Merge
+objects with `Object.assign({}, headers, { ... })`.
+
+This is not hypothetical: `04-batch.js` and `06-mixed-realistic.js`
+shipped object spread on 2026-05-01 and had never compiled, because
+the compile gate sat inside the weekly workflow behind secrets that
+do not exist (#316). `make test-load-check` now runs unconditionally
+on every PR touching `test/load/**`, and
+`scripts/ci/check-sla-evidence-test.sh` additionally asserts the
+scenarios statically so the fast lane catches a relapse without k6
+installed.
+
 ### Smoke-checking the scenarios (catch silent rot)
 
 The scenarios encode real API contracts: every `asset`/`quote` in
