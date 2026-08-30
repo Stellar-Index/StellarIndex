@@ -61,9 +61,17 @@ groups:
             than a real market move.
 
       - alert: stellarindex_oracle_stale
+        # `on (source) group_left()`, not a bare comparison. The two
+        # metrics carry DIFFERENT label sets — last_update_unix is
+        # {source, asset}, resolution_seconds is {source} — and a
+        # vector-to-vector op with no on()/ignoring() requires them to be
+        # IDENTICAL. Without the join this alert matched nothing in
+        # production and could never fire, for any oracle, ever
+        # (wave-D ALERT-02). group_left keeps the per-asset cardinality
+        # of the left side, so one silent asset still tickets.
         expr: |
           (time() - stellarindex_oracle_last_update_unix)
-            > 10 * stellarindex_oracle_resolution_seconds
+            > on (source) group_left() (10 * stellarindex_oracle_resolution_seconds)
         for: 2m
         labels:
           severity: ticket

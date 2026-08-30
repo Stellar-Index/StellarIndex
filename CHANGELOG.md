@@ -231,6 +231,24 @@ against.
 
 ### Fixed
 
+- **`stellarindex_oracle_stale` could never fire, for any oracle** —
+  and its test passed anyway (wave-D ALERT-02). The rule compared
+  `stellarindex_oracle_last_update_unix` (labels `{source, asset}`)
+  against `stellarindex_oracle_resolution_seconds` (labels `{source}`)
+  with no `on()`/`ignoring()`. A vector-to-vector operation requires
+  *identical* label sets, so no pair ever matched and a silent oracle
+  raised nothing. Now joined with `on (source) group_left()`, which
+  keeps the left side's per-asset cardinality so one silent asset still
+  tickets.
+
+  The promtool case covering it was green only because it fabricated an
+  `asset` label on the resolution series — a label the emitter is
+  structurally incapable of producing (`WithLabelValues` with two
+  arguments on a one-label vector panics). With a realistic series the
+  rule returns nothing at all, which is what the corrected test now
+  proves. A second case pins the fan-out, so a regression to a bare
+  comparison fails rather than silently matching nothing.
+
 - **A percent-encoded slash forged the SSE exemption, so 13 routes could
   be asked to run with no request deadline at all** (wave-D
   UNAUTH-DOS-4). `RequestTimeout` exempts streaming endpoints by the
