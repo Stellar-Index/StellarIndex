@@ -347,40 +347,148 @@ if [ -d deploy/monitoring/rules ] && [ -f docs/operations/alerts-catalog.md ]; t
     done
 fi
 
-# ─── 11. Runbook body references to `stellarindex_source_*` metrics ─────────
+# ─── 11. Runbook body references to obs-owned metric namespaces ─────────────
 #
-# Narrow rule: only `stellarindex_source_*` (the namespace fully
-# owned by internal/obs/metrics.go). External-exporter metrics
-# (stellarindex_stellar_core_*, pgbackrest_*, etc.) are intentionally
-# out of scope — those live in node-side exporters we don't control.
+# Narrow rule: only the `stellarindex_*` namespaces fully owned by
+# internal/obs/metrics.go (see RUNBOOK_METRIC_PREFIXES). External-
+# exporter metrics (stellarindex_stellar_core_*, pgbackrest_*, …) and
+# namespaces the vendored SDK also writes into
+# (stellarindex_ledgerstream_* — the BufferedStorageBackend registers
+# its own buffer_* series under that prefix) are deliberately OUT of
+# scope: nothing in this repo declares their names, so enforcing them
+# would be all false positives.
 #
 # Caught `stellarindex_source_last_event_age_seconds` drift on
 # 2026-04-23 — runbook referenced a metric name that never existed.
+#
+# Widened 2026-08-29 (runbook re-verification wave K, issue #315).
+# ledgerstream-tier-both-missing.md — a P1 page — told responders to
+# read `stellarindex_indexer_ledger_lag_seconds` and
+# `stellarindex_backfill_cursor` for months. Neither has ever been
+# registered, so the documented triage for a P1 was "grep for a series
+# that cannot exist". The `_source_`-only rule could not see either.
+# A prefix here is a PROMISE that internal/obs is the only writer of
+# that TIME-SERIES namespace; add one only when that is true, never to
+# launder a name that has no producer. Each alternative needs its
+# trailing `_`, which is also what keeps the multi-host SCRAPE-JOB
+# label `job="stellarindex_indexer"` (no trailing underscore) out of
+# scope — lint-metric-refs.sh skips job matchers for the same reason.
+#
+# The promise is about METRICS, not about the `stellarindex_` word:
+# ansible's inventory namespace overlaps it (today exactly one
+# collision, `stellarindex_backfill_from_ledger` in
+# configs/ansible/roles/archival-node/defaults/main.yml, already cited
+# by docs/operations/{testnet-futurenet-reset-runbook,archival-node-
+# bringup}.md — both outside runbooks/, so §11 is green today). A
+# runbook that legitimately names such a var would otherwise red CI as
+# a false positive, so declared ansible variables are subtracted from
+# the token set below. That set is DERIVED from the repo, not an
+# allowlist: a phantom metric name is not an ansible variable, so it
+# cannot be used to launder one (`stellarindex_backfill_cursor` — the
+# gauge that motivated this widening — is still caught).
+
+RUNBOOK_METRIC_PREFIXES='stellarindex_(source|cursor|indexer|backfill|trade|postgres_ping)_'
 
 echo "Checking runbook metric-name freshness..."
 if [ -d docs/operations/runbooks ] && [ -f internal/obs/metrics.go ]; then
   # Build the allowed set: names registered in obs.metrics.go +
-  # alert names in Prometheus rules (runbooks use either). `|| true`
-  # because under set -e + pipefail, grep returning 1 for no-match
-  # would kill the whole script — we explicitly want an empty set
-  # if no matches.
+  # alert names in Prometheus rules, BOTH trees (runbooks use either).
+  # `|| true` because under set -e + pipefail, grep returning 1 for
+  # no-match would kill the whole script — we explicitly want an empty
+  # set if no matches.
   allowed=$(mktemp)
   {
-    (grep -hE 'Name:[[:space:]]*"stellarindex_source_[a-z_]+"' internal/obs/metrics.go 2>/dev/null || true) | \
-      sed -E 's|.*"(stellarindex_source_[a-z_]+)".*|\1|'
-    (grep -rhE '^[[:space:]]*-[[:space:]]*alert:[[:space:]]*stellarindex_source_' deploy/monitoring/rules/ 2>/dev/null || true) | \
+    (grep -hE "Name:[[:space:]]*\"${RUNBOOK_METRIC_PREFIXES}[a-z0-9_]+\"" internal/obs/metrics.go 2>/dev/null || true) | \
+      sed -E 's|.*"(stellarindex_[a-z0-9_]+)".*|\1|'
+    (grep -rhE "^[[:space:]]*-[[:space:]]*alert:[[:space:]]*${RUNBOOK_METRIC_PREFIXES}" deploy/monitoring/rules/ configs/prometheus/rules.r1/ 2>/dev/null || true) | \
       sed -E 's|.*alert:[[:space:]]*||'
   } | sort -u > "$allowed"
 
-  # Extract every stellarindex_source_* token from runbook bodies.
-  (grep -rhoE 'stellarindex_source_[a-z_]+' docs/operations/runbooks/ 2>/dev/null || true) | \
+  # Ansible inventory variables that share the prefix namespace — not
+  # metrics, and not phantoms either (see the note above). Declared as
+  # `name:` at column 0 in a role's defaults/vars, which is how ansible
+  # itself declares them.
+  notmetrics=$(mktemp)
+  (grep -rhoE "^${RUNBOOK_METRIC_PREFIXES}[a-z0-9_]+" configs/ansible/ 2>/dev/null || true) | \
+    sort -u > "$notmetrics"
+
+  # Extract every in-scope metric token from runbook bodies. Histogram
+  # child series (_bucket/_sum/_count) resolve to their parent.
+  (grep -rhoE "${RUNBOOK_METRIC_PREFIXES}[a-z0-9_]+" docs/operations/runbooks/ 2>/dev/null || true) | \
+    sed -E 's/_(bucket|sum|count)$//' | \
     sort -u | while IFS= read -r metric; do
       [ -z "$metric" ] && continue
+      if grep -qxF "$metric" "$notmetrics"; then continue; fi
       if ! grep -qxF "$metric" "$allowed"; then
         err "runbook references unknown metric '$metric' (not in internal/obs or rules/)"
       fi
     done
-  rm -f "$allowed"
+  rm -f "$allowed" "$notmetrics"
+fi
+
+# ─── 11b. A runbook's heavy-job command must actually write ────────────────
+#
+# `/usr/local/sbin/run-heavy-job.sh` is r1's COMMIT wrapper: it takes
+# the per-job singleton flock, the MemoryMax=20G scope and the
+# ClickHouse ops_batch identity because the payload is about to do real
+# work. Nothing about a preview needs any of that — so a write-gated
+# stellarindex-ops subcommand invoked under the wrapper without
+# `-write` is, without exception, a bug in the runbook.
+#
+# This is the class this file exists to stop being repeatable. The
+# shared gate (internal/ops/opsutil/opsutil.go) makes DRY RUN the
+# default: `DryRun() { return !*write }`. rehydrate-galexie-archive
+# then buckets every not-in-hot path as `copied` in dry-run mode
+# WITHOUT asking cold whether it holds the object, so a commit step
+# missing `-write` logs `"rehydrate complete" … copied=N
+# missing_in_cold=0 errors=0` and exits 0 — a success-shaped report
+# having rehydrated nothing, handed to a responder mid-P1. The same
+# omission on projector-replay rewinds no projector. Both shipped in
+# the first cut of the wave-K runbook fixes (issue #315) and were
+# caught by review, not by CI.
+#
+# The gated set is DERIVED from the source (files that register the
+# shared gate or their own `-write` bool, keyed by the flagset name,
+# which is the subcommand name) so a new gated subcommand is covered
+# the day it lands. Scope is docs/operations/runbooks/ — the surface an
+# operator copy-pastes from under pressure. Wrapper invocations
+# elsewhere in docs/ are out of scope here; see §11's note on why this
+# file stays narrow.
+
+echo "Checking runbook heavy-job commands pass -write..."
+if [ -d docs/operations/runbooks ] && [ -d internal/ops ]; then
+  gated=$(mktemp)
+  # `|| true` on both greps: no-match is exit 1, which set -e + pipefail
+  # would turn into a script abort rather than an empty set.
+  for gf in $(grep -rlE 'opsutil\.RegisterWriteGate\(|Bool\("write"' \
+                --include='*.go' internal/ops cmd/stellarindex-ops 2>/dev/null || true); do
+    case "$gf" in *_test.go) continue ;; esac
+    (grep -ohE 'flag\.NewFlagSet\("[a-z0-9-]+"' "$gf" 2>/dev/null || true) | \
+      sed -E 's|.*"(.*)"|\1|'
+  done | sort -u > "$gated"
+
+  for rb in docs/operations/runbooks/*.md; do
+    [ -f "$rb" ] || continue
+    # Join backslash-continued shell lines so a multi-line invocation is
+    # matched as one command — the wrapper form is always continued.
+    # awk, not the sed `:a;/\\$/N;ta` idiom: the awk form behaves
+    # identically under BSD awk (dev laptops) and gawk (CI runners).
+    joined=$(awk '{ while (sub(/\\$/, "")) { if ((getline nxt) > 0) { $0 = $0 " " nxt } else { break } } print }' "$rb")
+    while IFS= read -r sub; do
+      [ -z "$sub" ] && continue
+      # `|| true`: a no-match grep exits 1, which under set -e +
+      # pipefail would abort the whole lint instead of meaning "clean".
+      offenders=$(printf '%s\n' "$joined" | \
+        grep -E "run-heavy-job\.sh.*stellarindex-ops[[:space:]]+${sub}([[:space:]]|\$)" | \
+        grep -vE '(^|[[:space:]])-{1,2}write([[:space:]]|$)' || true)
+      [ -z "$offenders" ] && continue
+      printf '%s\n' "$offenders" | while IFS= read -r bad; do
+        [ -z "$bad" ] && continue
+        err "$rb: heavy-job command runs write-gated '$sub' without -write — it is a DRY RUN and will report success having written nothing: ${bad}"
+      done
+    done < "$gated"
+  done
+  rm -f "$gated"
 fi
 
 # ─── 12. Every runbook referenced from alerts-catalog must exist ────────────

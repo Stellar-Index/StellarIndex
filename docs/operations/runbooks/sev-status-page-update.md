@@ -1,11 +1,11 @@
 ---
 title: SEV status-page update
-last_verified: 2026-05-13
+last_verified: 2026-08-29
 status: living doc
 related:
   - docs/operations/sev-playbook.md
   - internal/incidents/data/_template.md
-  - web/status/
+  - web/explorer/src/app/status/
 ---
 
 # SEV status-page update
@@ -15,15 +15,26 @@ Every SEV that meets the visibility threshold below MUST be
 posted to `stellarindex.io/status`; this runbook is the binding
 how-to.
 
-F-1211 (codex audit-2026-05-12): the prior version of this
-runbook pointed at a `deploy/status-page/cstate/...` workflow
-that no longer exists — the status page is now a custom
-Next.js static export at `web/status/`, hosted on Cloudflare
-Pages, that renders incidents from
-`internal/incidents/data/<YYYY-MM-DD>-<slug>.md` files
-embedded into the API binary at build time. This runbook is
-rewritten around that path so a SEV operator following it
-top-to-bottom no longer hits a dead-end.
+**Where the page actually lives (2026-08-29).** The status page is
+part of the **explorer**: `web/explorer/src/app/status/page.tsx`
+(index) plus `web/explorer/src/app/status/incident/[slug]/page.tsx`
+(per-incident), with the build-time loader at
+`web/explorer/src/lib/incidents.ts` reading
+`internal/incidents/data/<YYYY-MM-DD>-<slug>.md` straight from the
+repo. One site, unified nav, served at `stellarindex.io/status`.
+
+`web/status/` is now a **redirect-only stub** — a Cloudflare Pages
+project (`stellarindex-status`) still bound to
+`status.stellarindex.io` whose `public/_redirects` 301s every path to
+`https://stellarindex.io/status/:splat`. Its workflow
+(`.github/workflows/status-page.yml`) is `workflow_dispatch`-only and
+rebuilds that stub; editing anything under `web/status/` will NOT
+change what customers see. See `web/status/README.md`.
+
+(History: F-1211 (codex audit-2026-05-12) retired an even older
+`deploy/status-page/cstate/...` workflow. The corpus location —
+`internal/incidents/data/` — has been stable throughout; only the
+renderer moved.)
 
 ## When to post
 
@@ -130,10 +141,15 @@ gh pr create --title "incident: ${DATE}-${SLUG}" --body ""
 gh pr merge --squash --auto
 ```
 
-The `web/status` Cloudflare Pages deploy fires automatically on
+The **explorer's** Cloudflare Pages git integration auto-deploys on
 the merge into `main` and renders the new incident at
-`stellarindex.io/status` within a minute or two. Verify the
-incident lands on the index page before stepping away.
+`stellarindex.io/status` within a minute or two (the loader reads the
+corpus at build time, so a rebuild is what publishes it). Verify the
+incident lands on the index page before stepping away. If the git
+integration is paused, the manual fallback is
+`gh workflow run explorer-deploy.yml --ref main -f network=mainnet -f environment=production`
+— `status-page.yml` rebuilds the redirect stub only and will not
+publish an incident.
 
 ### 5 — Customer webhook fan-out (optional but expected)
 
@@ -143,7 +159,7 @@ fan out the `incident.sev1` webhook so dashboard subscribers
 get a callback. F-1249 (codex audit-2026-05-12) on R1:
 
 ```sh
-ssh root@r1 -- /usr/local/bin/stellarindex-ops emit-incident \
+ssh root@136.243.90.96 -- /usr/local/bin/stellarindex-ops emit-incident \
   -config /etc/stellarindex.toml \
   -slug ${DATE}-${SLUG} \
   -event sev1
@@ -153,7 +169,7 @@ When the SEV closes, after the same merge + deploy cycle
 flips the corpus's `status: resolved`:
 
 ```sh
-ssh root@r1 -- /usr/local/bin/stellarindex-ops emit-incident \
+ssh root@136.243.90.96 -- /usr/local/bin/stellarindex-ops emit-incident \
   -config /etc/stellarindex.toml \
   -slug ${DATE}-${SLUG} \
   -event resolved
@@ -175,8 +191,8 @@ git add ... && git commit -m "incident: ${DATE}-${SLUG} update HH:MM" && \
   git push && gh pr merge --squash --auto
 ```
 
-The Cloudflare Pages deploy re-runs and the new row appears
-on the page on the next refresh.
+The explorer's Cloudflare Pages deploy re-runs and the new row
+appears on the page on the next refresh.
 
 ## Resolution
 
@@ -212,9 +228,26 @@ git, full stop.
   call rotation, severity definitions.
 - [`internal/incidents/data/_template.md`](../../../internal/incidents/data/_template.md)
   — the canonical incident frontmatter + body shape.
-- [`web/status/`](../../../web/status/) — the Next.js static-
-  export status-page source (incidents render from
-  `incidents.ts` which build-time-loads the corpus).
+- [`web/explorer/src/app/status/`](../../../web/explorer/src/app/status/)
+  — the live status page (index + `incident/[slug]`), rendered from
+  [`web/explorer/src/lib/incidents.ts`](../../../web/explorer/src/lib/incidents.ts),
+  which build-time-loads the corpus.
+- [`web/status/`](../../../web/status/) — the redirect-only
+  Cloudflare Pages stub kept alive for `status.stellarindex.io`;
+  not the page customers read.
 - [`internal/incidents/incidents.go`](../../../internal/incidents/incidents.go)
   — the `go:embed` loader that bakes the corpus into the API
   binary for `/v1/incidents`.
+
+## Changelog
+
+- 2026-05-13 — rewritten around the `internal/incidents/data/`
+  corpus after F-1211 retired the `deploy/status-page/cstate/…`
+  workflow.
+- 2026-08-29 — re-verified against HEAD (runbook re-verification
+  wave K). The page moved off `web/status/` (now a redirect-only
+  Cloudflare Pages stub whose dispatch-only workflow cannot publish
+  an incident) onto the explorer at `web/explorer/src/app/status/`;
+  every pointer, both deploy sentences and the frontmatter `related:`
+  entry updated, and the same drift fixed in CLAUDE.md's tree map.
+  Host shapes → r1's IP.
