@@ -208,3 +208,38 @@ func TestRecentClosedVWAP1mCombinedQueryShape(t *testing.T) {
 		t.Error("combined query must return newest-first")
 	}
 }
+
+// TestRecentClosedVWAP1mForPairQueryShape extends the sargability guard
+// to the SEP-40 prices() passthrough read (wave-D UNAUTH-DOS-3).
+//
+// This query used `bucket + INTERVAL '1 minute' <= now()` — a function
+// on the indexed column, so the planner can neither use the bucket index
+// nor prune chunks at plan time. Its sibling
+// [recentClosedVWAP1mCombinedTemplate] already had the sargable form.
+//
+// It drifted because it was an inline `const q` inside the function
+// body: the guards above assert over PACKAGE-LEVEL templates, so an
+// in-function query is invisible to them however careful the author.
+// Hoisting it is what makes this test possible at all, and is the
+// durable half of the fix.
+func TestRecentClosedVWAP1mForPairQueryShape(t *testing.T) {
+	q := recentClosedVWAP1mForPairQuery
+
+	if !strings.Contains(q, "bucket <= now() - INTERVAL") {
+		t.Error("query missing the sargable `bucket <= now() - INTERVAL` upper bound")
+	}
+	if strings.Contains(q, "bucket + INTERVAL") {
+		t.Error("query uses the non-sargable `bucket + INTERVAL` form " +
+			"(function on the indexed column) — the planner cannot use the " +
+			"bucket index or prune chunks at plan time")
+	}
+	// Newest-first with a row cap: this is the closed-bucket SERIES read,
+	// and reversing the order or dropping the LIMIT would walk the whole
+	// hypertable for a pair.
+	if !strings.Contains(q, "ORDER BY bucket DESC") {
+		t.Error("query must return newest buckets first")
+	}
+	if !strings.Contains(q, "LIMIT $3") {
+		t.Error("query must cap the row walk")
+	}
+}

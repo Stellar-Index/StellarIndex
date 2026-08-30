@@ -249,6 +249,36 @@ against.
   checks the converse too — genuine SSE routes must *keep* their
   exemption, since a fix that bounded the streams would be worse than
   the bug.
+- **The SEP-40 `prices()` closed-bucket read was not sargable** (wave-D
+  UNAUTH-DOS-3): it applied a function to the indexed column
+  (`bucket + INTERVAL '1 minute' <= now()`), so the planner could
+  neither use the bucket index nor prune chunks at plan time. Rewritten
+  to `bucket <= now() - INTERVAL '1 minute'` — semantically identical,
+  no change to what is served. Its sibling combined-direction template
+  already had the correct form.
+
+  It drifted because it was an inline `const q` inside the function
+  body, invisible to the package's existing sargability guards, which
+  assert over package-level templates. Hoisting it is the durable half
+  of the fix and is what makes a guard possible at all.
+
+  Deliberately *not* given a literal lower bound or the 14-day existence
+  gate its neighbours use: both change what a documented public endpoint
+  serves (a dormant asset's last N closed buckets becoming an empty
+  array), which is an owner decision rather than a query-shape fix.
+
+### Changed
+
+- **Corrected the `/v1/price/batch` fan-out comment** (wave-D
+  UNAUTH-DOS-2). It claimed 16-wide parallelism stays "well inside the
+  DB connection pool's headroom even with several batches in flight",
+  which does not hold for a 1000-id POST batch. The constant itself is
+  unchanged and should not be lowered as a throughput control: narrowing
+  it removes zero database work while lengthening how long each request
+  holds its connections, re-creating the regression it was raised to
+  fix. The bound that matters is the rate limiter, and charging it per
+  id rather than per request is the sound way to close the
+  amplification.
 
 - **The `/assets` "#" column restarted at 1 on every cursor page**
   (wave-D EXR-06), so the 101st asset was labelled `#1` under a header

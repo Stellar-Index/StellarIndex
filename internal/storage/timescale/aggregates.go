@@ -777,19 +777,40 @@ type Vwap1mRow struct {
 // endpoint) distinguishes "no observations" from "asset unknown"
 // by combining this with an asset-existence check.
 //
-// limit is the caller's responsibility to clamp; this method
-// assumes a sane bound and doesn't second-guess.
-func (s *Store) RecentClosedVWAP1mForPair(ctx context.Context, p canonical.Pair, limit int) ([]Vwap1mRow, error) {
-	const q = `
+// recentClosedVWAP1mForPairQuery is the single-direction, newest-first
+// closed-bucket read behind the SEP-40 prices() passthrough.
+//
+// `bucket <= now() - INTERVAL '1 minute'`, NOT `bucket + INTERVAL
+// '1 minute' <= now()`. The two are semantically identical, but the
+// second applies a function to the indexed column, so the planner cannot
+// use the bucket index or prune chunks at plan time and the read
+// degrades on a large prices_1m (wave-D UNAUTH-DOS-3). Its sargable
+// sibling [recentClosedVWAP1mCombinedTemplate] already had the right
+// form.
+//
+// Hoisted to a package-level const for the same reason: the sargability
+// regression tests in closed_vwap_at_test.go assert over the package's
+// query templates, and an inline `const q` inside the function body is
+// invisible to them — which is exactly how this one drifted.
+//
+// Deliberately NOT given a literal lower bound or the 14-day existence
+// gate its neighbours use: both would change what a documented public
+// endpoint SERVES (a dormant asset's last N closed buckets becoming an
+// empty array), which is an owner decision, not a query-shape fix.
+const recentClosedVWAP1mForPairQuery = `
         SELECT bucket, base_asset, quote_asset, vwap::text, trade_count, sources
           FROM prices_1m
          WHERE base_asset = $1
            AND quote_asset = $2
-           AND bucket + INTERVAL '1 minute' <= now()
+           AND bucket <= now() - INTERVAL '1 minute'
          ORDER BY bucket DESC
          LIMIT $3
     `
-	rows, err := s.db.QueryContext(ctx, q,
+
+// limit is the caller's responsibility to clamp; this method
+// assumes a sane bound and doesn't second-guess.
+func (s *Store) RecentClosedVWAP1mForPair(ctx context.Context, p canonical.Pair, limit int) ([]Vwap1mRow, error) {
+	rows, err := s.db.QueryContext(ctx, recentClosedVWAP1mForPairQuery,
 		p.Base.String(), p.Quote.String(), limit,
 	)
 	if err != nil {
