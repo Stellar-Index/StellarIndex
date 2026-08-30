@@ -17,10 +17,8 @@ import {
 } from '@/lib/format';
 import { serializeJsonLd, datasetJsonLd, ogImageFor } from '@/lib/seo';
 import { CURRENT_NETWORK } from '@/lib/networks';
-import {
-  scamFlagTags,
-} from '@/lib/directory-tags';
-import { Badge, Breadcrumbs, Callout, Container } from '@/components/ui';
+import { Badge, Breadcrumbs, Container } from '@/components/ui';
+import { AssetScamCallout } from './AssetScamCallout';
 import { AssetClientFallback } from './AssetClientFallback';
 import { AssetPathView } from './AssetPathView';
 import { AssetSidebar } from './AssetSidebar';
@@ -835,19 +833,19 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
     contentUrl: `${CURRENT_NETWORK.apiBaseUrl}/v1/assets/${encodeURIComponent(coin.slug)}`,
   });
   // §3 scam-label surfacing — curated third-party directory flags on the
-  // issuer (account_directory / stellar-expert public directory). These are
-  // DISPLAY-ONLY: they decide only whether to render a warning banner, and
-  // never gate price or verification.
-  const flaggedDirTags = scamFlagTags(coin.issuer_directory_tags);
-  // Warning consolidation (2026-08-25): issuer_scam_reason (the curated
-  // stellar.expert scam list) and the directory scam-tags
-  // (issuer_directory_tags, the SAME public directory) were rendering as
-  // two near-duplicate banners here, plus a third "Known scam issuer" note
-  // inside IssuerPanel — three restatements of one finding from one source.
-  // Merge them into a single primary "malicious asset" banner; the distinct
-  // ticker-collision notice (a different fact) stays separate below.
-  const scamReason = coin.issuer_scam_reason?.trim() || null;
-  const isMaliciousAsset = Boolean(scamReason) || flaggedDirTags.length > 0;
+  // issuer (account_directory / stellar-expert public directory). Their
+  // consolidation into ONE banner (2026-08-25: issuer_scam_reason and the
+  // directory scam-tags are the same finding from the same source, and
+  // were rendering as two near-duplicate banners plus a third note in
+  // IssuerPanel) now lives in AssetScamCallout, shared with the client
+  // shell — see that component for why it must not be inlined again. The
+  // distinct ticker-collision notice (a different fact) stays separate
+  // below.
+  //
+  // These tags are no longer display-only, and this comment used to say
+  // they were: since 2026-08-25 the server also withholds price + market
+  // cap for a flagged issuer (pricingguard.ScamGate) and ranks the asset
+  // last (#356). lib/directory-tags.ts documents both exceptions.
   return (
     <Container className="space-y-8 py-8 sm:py-10">
       <script
@@ -912,36 +910,11 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
             the curated scam reason, the community directory attribution, and
             the directory-source link — all one finding from stellar.expert,
             no longer three overlapping banners. */}
-        {isMaliciousAsset && (
-          <Callout
-            tone="bad"
-            title={scamReason ? 'Known scam asset' : 'Flagged by community directory'}
-          >
-            {scamReason && <p>{scamReason}.</p>}
-            <p className={scamReason ? 'mt-1' : undefined}>
-              Flagged by the stellar.expert community directory
-              {flaggedDirTags.length > 0 && (
-                <>
-                  {' '}
-                  as{' '}
-                  <strong className="font-semibold">
-                    {flaggedDirTags.join(', ')}
-                  </strong>
-                </>
-              )}
-              {coin.issuer_directory_domain && (
-                <> ({coin.issuer_directory_domain})</>
-              )}
-              .
-            </p>
-            <p className="mt-1 font-medium">
-              Do not trust this asset, establish trustlines, or execute the
-              prices below as if they reflected an honest market. StellarIndex
-              relays this third-party directory flag; it does not imply the
-              asset is safe.
-            </p>
-          </Callout>
-        )}
+        <AssetScamCallout
+          directoryTags={coin.issuer_directory_tags}
+          scamReason={coin.issuer_scam_reason}
+          directoryDomain={coin.issuer_directory_domain}
+        />
         {/* The verified catalogue is a MAINNET curation; on the lean test nets
             it leaks in and stamps genuine test-net assets (e.g. testnet USDC) as
             "ticker collision" impostors of mainnet issuers that don't exist

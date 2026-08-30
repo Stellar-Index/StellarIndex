@@ -10,6 +10,7 @@ import { useCoins } from '@/api/hooks';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { formatSubunitPrice } from '@/lib/format';
 import { cn } from '@/lib/cn';
+import { isSafePublicImageUrl } from '@/lib/safe-domain';
 
 /**
  * AssetSwap — the asset page's swap/convert widget. Two stacked amount
@@ -292,7 +293,14 @@ function SwapRow({
 function TokenIcon({ token, size = 22 }: { token: SwapToken; size?: number }) {
   const [broken, setBroken] = useState(false);
   const dim = { width: size, height: size };
-  if (token.image && !broken) {
+  // SEC-10: host-validated, https-only — the same gate SidebarAssetIcon
+  // and HomeTopAssets apply. Scheme-only validation lets a hostile
+  // issuer's SEP-1 image URL point every viewer's browser at an
+  // arbitrary (including private/internal) host. This was the third of
+  // three <img> sites and the only one without the predicate; the guard
+  // in lib/trust-surface-guards.test.ts now derives that set from source
+  // so a fourth site cannot repeat it (wave-D EXR-05, issue #335).
+  if (token.image && isSafePublicImageUrl(token.image) && !broken) {
     return (
       // eslint-disable-next-line @next/next/no-img-element
       <img
