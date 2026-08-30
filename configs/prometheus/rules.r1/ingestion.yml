@@ -131,7 +131,33 @@ groups:
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
 
       - alert: stellarindex_ingestion_all_sources_stopped
-        expr: sum(rate(stellarindex_source_events_total[5m])) == 0
+        # Two branches, and the second is what makes this a P1 that
+        # STAYS a P1.
+        #
+        # `sum(rate(...))` over a series that has STOPPED behaves in two
+        # phases. While the dead process's last samples are still inside
+        # the 5m window, rate() is 0 and the alert fires correctly at
+        # t+3m. Then the samples age out, the series vanishes, and
+        # sum(rate()) over nothing is the EMPTY VECTOR — not zero. The
+        # alert stops matching and Alertmanager sends a RESOLVED for a
+        # SEV-1 while ingestion is still completely down, which reads to
+        # a responder as "it fixed itself" (wave-D ALERT-01).
+        #
+        # absent_over_time takes over at exactly the point rate() gives
+        # up — both use a 5m window — so the two branches hand over
+        # without a gap, and the page persists until events actually
+        # resume. It also covers the case rate() never sees at all: the
+        # indexer already being down when Prometheus starts, or
+        # Prometheus restarting mid-outage.
+        #
+        # No new paging scenario: the rate branch ALREADY pages after 3m
+        # of zero events, so any restart longer than `for: 3m` pages
+        # today. What changes is that the page no longer lies about
+        # recovery.
+        expr: |
+          sum(rate(stellarindex_source_events_total[5m])) == 0
+          or
+          absent_over_time(stellarindex_source_events_total[5m])
         for: 3m
         labels:
           severity: page
