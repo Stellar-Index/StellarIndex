@@ -138,6 +138,28 @@ var rankFixture = []rankAsset{
 	{code: "NOPRC", issuer: washIssuer, volUSD: "200000", obsCount: 1000},
 }
 
+// tieFixture adds rows that TIE on both sort keys, which rankFixture
+// deliberately does not: every row above has a distinct obsCount and a
+// distinct volUSD, so a walk over it never crosses a tie and never
+// exercises the keyset predicate's tie-break half. That is why the
+// pagination walk passed for months while the observation-count arm
+// compared `(observation_count, asset_id) < ($n, $m)` — a same-direction
+// row constructor against a mixed-direction ORDER BY, which on a tie
+// re-selects rows already served and skips the rest (wave-D KP-1/RD-01).
+//
+// Kept SEPARATE from rankFixture rather than appended to it:
+// TestAssetsListing_FlaggedAndUnpricedDemotion asserts exact six-element
+// orderings against that var and would break for no benefit.
+//
+// The tie rows are PRICED on purpose. The volume order carries an
+// unpriced→tier-1 arm, so unpriced tie rows would be split across rank
+// tiers and the volume tie-break would go unexercised.
+var tieFixture = append(append([]rankAsset{}, rankFixture...),
+	rankAsset{code: "TIEDA", issuer: tieIssuerA, volUSD: "7500", priceUSD: "0.75", obsCount: 2500},
+	rankAsset{code: "TIEDB", issuer: tieIssuerB, volUSD: "7500", priceUSD: "0.75", obsCount: 2500},
+	rankAsset{code: "TIEDC", issuer: tieIssuerC, volUSD: "7500", priceUSD: "0.75", obsCount: 2500},
+)
+
 func listRankOrder(t *testing.T, ctx context.Context, store *timescale.Store, order timescale.AssetsOrder, limit int) []timescale.AssetRow {
 	t.Helper()
 	rows, err := store.ListAssetsExt(ctx, timescale.ListAssetsOptions{Order: order, Limit: limit})
@@ -261,7 +283,10 @@ func TestAssetsListing_KeysetPaginationCoversEveryRow(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	db := store.DB()
 
-	seedRankFixture(t, ctx, db, rankFixture)
+	// tieFixture, not rankFixture: the walk must cross a TIE in the sort
+	// key, which is where a mixed-direction keyset predicate goes wrong
+	// and where the long tail actually lives. See tieFixture's comment.
+	seedRankFixture(t, ctx, db, tieFixture)
 
 	for _, tc := range []struct {
 		name  string

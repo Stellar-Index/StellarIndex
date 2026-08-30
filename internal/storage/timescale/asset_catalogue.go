@@ -1201,10 +1201,22 @@ func assetsCursorPredicate(order AssetsOrder, argEnd int) string {
 			tier, argEnd-2, tier, argEnd-2,
 			adjustedVolume24hExpr, argEnd-1, adjustedVolume24hExpr, argEnd-1, argEnd)
 	}
+	// Mixed-direction tuple compare, spelled out for the same reason as
+	// the volume arm above: observation_count is ranked DESC but asset_id
+	// ASC, and SQL's row-constructor compare is SAME-direction on every
+	// element. `(observation_count, asset_id) < ($n, $m)` therefore reads
+	// as "…AND asset_id < $m" on a tie, selecting rows the walk has
+	// ALREADY served while skipping the ones it has not. On any tie in
+	// observation_count — and ties are the norm in the long tail, where
+	// most assets share a small observation_count — a plain
+	// `GET /v1/assets` walk served some rows twice, never served others,
+	// and then reported has_more=false as if it were complete
+	// (wave-D KP-1 / RD-01, reproduced against real Postgres).
 	return fmt.Sprintf(
 		"(%s > $%d::int OR (%s = $%d::int AND "+
-			"(ca.observation_count, ca.asset_id) < ($%d, $%d)))",
-		tier, argEnd-2, tier, argEnd-2, argEnd-1, argEnd)
+			"(ca.observation_count < $%d OR "+
+			"(ca.observation_count = $%d AND ca.asset_id > $%d))))",
+		tier, argEnd-2, tier, argEnd-2, argEnd-1, argEnd-1, argEnd)
 }
 
 func assetsOrderBy(order AssetsOrder) string {

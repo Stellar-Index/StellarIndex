@@ -259,6 +259,29 @@ against.
   `/v1/chart` remain ungated. The raw-trade surfaces are documented as
   deliberately visible (`pricingguard/scam.go`), and which quote sets
   constitute a "price claim" is the open scope question in #366.
+- **`GET /v1/assets` silently truncated its own pagination on any tie**
+  (wave-D KP-1 / RD-01 — the same bug found twice, independently). The
+  keyset cursor predicate for the default observation-count ordering
+  compared `(observation_count, asset_id) < ($n, $m)` — a SQL row
+  constructor, which compares every element in the *same* direction —
+  against an `ORDER BY observation_count DESC, ca.asset_id ASC`, which is
+  mixed-direction. On a tie in `observation_count` the tie-break half
+  therefore read as `asset_id < $m`, re-selecting rows the walk had
+  already served while skipping the ones it had not. A client paging the
+  full asset list received some assets twice, never received others, and
+  was then told `has_more: false` as though the walk had completed. Ties
+  are the norm in the long tail, where most assets share a small
+  observation count. The volume ordering always spelled the comparison
+  out correctly; only this arm was wrong.
+
+  The existing pagination regression test could not catch it: its fixture
+  gives every row a distinct observation count *and* a distinct volume,
+  so the walk never crossed a tie. It now also seeds rows that tie on
+  both sort keys. A source-derived unit invariant additionally asserts
+  that any ordering whose `ORDER BY` breaks ties on `asset_id ASC`
+  resumes with `asset_id > $n` and uses no row constructor — so a third
+  ordering added later is covered on the day it is written, rather than
+  when someone notices missing rows.
 
 - **`make verify` was red on `main`, and CI could not see it.** The
   ClickHouse ops-credential contract (`scripts/ops/ch-ops-user-test.sh`)
