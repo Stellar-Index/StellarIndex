@@ -1428,8 +1428,22 @@ func (s *Server) parsePriceBatchQuote(w http.ResponseWriter, r *http.Request, ra
 // 1000 (POST) asset_ids, each a LatestPrice + fallback-chain DB
 // round-trip; resolving them serially put p99 at the 10s handler
 // ceiling. 16-wide parallelism collapses a 100-id batch to ~7
-// rounds while staying well inside the DB connection pool's
-// headroom even with several batches in flight.
+// rounds.
+//
+// The value is deliberate and MEASURED — do not lower it as a
+// throughput control. Narrowing it removes zero database work (the same
+// round-trips still happen, just more serially), while lengthening the
+// wall-clock time each request holds its connections and pushing batch
+// p99 back toward the deadline — i.e. re-creating the exact regression
+// this constant was raised to fix (wave-D UNAUTH-DOS-2).
+//
+// What the old comment overstated was the headroom: it claimed 16-wide
+// stays "well inside the DB connection pool's headroom even with several
+// batches in flight", which does not hold for a 1000-id POST batch at
+// ~2 round-trips per id. The bound that actually matters there is the
+// rate limiter, and charging it PER ID rather than per request is the
+// sound way to close the amplification — a capacity decision, not a
+// constant to quietly shrink.
 const priceBatchConcurrency = 16
 
 // batchRowResult is the per-id outcome computed by resolveBatchRow.
