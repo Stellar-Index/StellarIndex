@@ -231,6 +231,23 @@ against.
 
 ### Fixed
 
+- **The `/assets` "#" column restarted at 1 on every cursor page**
+  (wave-D EXR-06), so the 101st asset was labelled `#1` under a header
+  that reads as a global rank. The counter is per-page, and cursor
+  pagination keeps only the opaque cursor in the URL — there is no page
+  depth to recover. The rank is now shown only on the unpaginated first
+  page.
+
+  Deliberately suppression rather than arithmetic: deriving
+  `depth * limit + i` would print a *different* wrong number, because
+  `suppressCatalogueTwins` and `foldAliasTwins` drop rows after the
+  query so pages under-fill (measured 81/96/99/96 at `limit=100`). A
+  rank the data cannot back is better omitted than guessed.
+
+  The test mock hardcoded an empty query string, so every existing case
+  ran on page 1 — which is why nothing caught this. It is now settable,
+  and a case pins the paged behaviour.
+
 - **Every asset link pointed at the bare CODE, so a link could resolve
   to a different issuer's asset than the row clicked** (wave-D EXR-02).
   `assetSlug` truncated a canonical `CODE-GISSUER…` id at the dash, and
