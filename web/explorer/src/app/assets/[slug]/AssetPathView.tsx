@@ -10,6 +10,7 @@ import { Breadcrumbs, EmptyState, Skeleton } from '@/components/ui';
 import { useLastPathSegment } from '@/lib/useLastPathSegment';
 import type { Envelope } from '@/app/explorer-shared';
 
+import { AssetScamCallout } from './AssetScamCallout';
 import { LiveAssetPrice, type PriceProvenance } from './LiveAssetPrice';
 import { formatCompact } from '@/lib/format';
 
@@ -27,6 +28,16 @@ interface AssetShellDetail {
   price_basis?: 'declared_peg' | 'transitive';
   unverified_ticker_collision?: boolean;
   unverified_warning?: { note?: string } | null;
+  /**
+   * Curated third-party issuer-directory flags. The payload has always
+   * carried these — the shell simply ignored them, so a scam-flagged
+   * asset outside the pre-rendered top-500 rendered with no warning
+   * while the pre-rendered page showed a full "do not trust this asset"
+   * banner (wave-D EXR-01).
+   */
+  issuer_directory_tags?: string[] | null;
+  issuer_directory_domain?: string | null;
+  issuer_scam_reason?: string | null;
 }
 
 /**
@@ -138,6 +149,15 @@ export function AssetPathView() {
         source={asExample('/v1/assets/{id}', { id: slug })}
         bodyClassName="space-y-3"
       >
+        {/* Before the price, deliberately: this shell serves the long
+            tail (only the top-500 assets are pre-rendered), which is
+            exactly where a scam token sits. Renders nothing when the
+            asset carries no scam-class flag. */}
+        <AssetScamCallout
+          directoryTags={d.issuer_directory_tags}
+          scamReason={d.issuer_scam_reason}
+          directoryDomain={d.issuer_directory_domain}
+        />
         {/* Seed from the detail response we ALREADY hold. Passing null
             here threw away a price the page had in hand: /v1/price
             answers for DIRECT markets only, so every two-hop asset —
