@@ -231,6 +231,58 @@ against.
 
 ### Fixed
 
+- **Runbook re-verification wave K: eight alert runbooks re-derived
+  against HEAD (7 broken, 1 stale), plus a lint so the worst class
+  cannot recur.** `ledgerstream-tier-both-missing.md` — a P1 page —
+  told responders to "pull the missing range from R2 or R3's mirror"
+  with `rehydrate-galexie-archive … --source vultr`. There is no peer
+  selector and never has been: the command only ever reads the
+  CONFIGURED cold tier (`storage.s3_cold_*`), so during an AWS Open
+  Data outage — the exact scenario the step sat under — it cannot
+  route around anything. Its `-write` fail-closed note was correct
+  (the shared `opsutil` write gate makes dry run the default) and is
+  kept, now with the trap that motivated the re-verification spelled
+  out: a dry run buckets every not-in-hot path as `copied` WITHOUT
+  asking cold whether it holds the object, so a forgotten `-write`
+  logs `copied=N missing_in_cold=0 errors=0` and exits 0 — a
+  success-shaped report having rehydrated nothing. It also cited two
+  gauges that have never been registered.
+  `postgres-ping-failing.md` still documented the `> 0.5/s` threshold
+  that was unreachable by 30× at the 60 s probe cadence (corrected to
+  `> 0` in both rule trees on 2026-08-04) and a
+  `trade_inserts_total{outcome="error"}` label that does not exist.
+  `source-stopped.md` described ONE 30 m × 15 m alert; the shipped
+  shape is the F-1208 three-way split (high-volume 30 m/15 m,
+  low-volume DEX 24 h/30 m, daily publisher 30 h/1 h) all sharing one
+  `runbook_url`. `external-poller-stale.md` blanket-claimed "30
+  minutes", misdescribing the 12 h ECB rule by 24×.
+  `ingestion-duplicate-flood.md` still said `ON CONFLICT DO NOTHING`
+  (INV-3 / migration 0109 made it a generation-guarded `DO UPDATE`, so
+  a corrective re-derive now reproduces the alert's exact signature)
+  and used `-sources`, which does not parse (`-source`, singular,
+  comma-separated).
+  `decode-errors.md` asserted a pre-P23 operations+effects fallback
+  that has never existed, a pre-ADR-0035/0040 comet topic-only match,
+  and a redstone length-mismatch that refuses without recovery.
+  `sev-status-page-update.md` still pointed at `web/status/`, now a
+  redirect-only stub — the live page is the explorer's
+  `web/explorer/src/app/status/` (CLAUDE.md's copy of the same drift
+  is fixed by #326, above). `exporter-down.md`
+  attributed r1's exporters to the redis-sentinel role, which r1 never
+  runs. Guard: `lint-docs.sh` §11's runbook metric-name check was
+  scoped to `stellarindex_source_*` only, so both phantom gauges above
+  were invisible to CI; it now covers every obs-owned namespace a
+  runbook cites (`source`/`cursor`/`indexer`/`backfill`/`trade`/`postgres_ping`)
+  and resolves histogram `_bucket`/`_sum`/`_count` children (ansible
+  inventory variables sharing the namespace are subtracted, derived
+  from `configs/ansible/`, so a runbook naming
+  `stellarindex_backfill_from_ledger` can't red CI as a false
+  positive). A second guard, §11b, fails CI on any
+  `run-heavy-job.sh … stellarindex-ops <sub>` invocation in a runbook
+  where `<sub>` registers the shared write gate but the command omits
+  `-write` — the wrapper is the COMMIT path, so a dry run under it is
+  always a bug. The gated-subcommand set is derived from the Go
+  source. Both checks verified red against the pre-fix runbook text.
 - **The P1 archive-divergence page can actually fire: verify-archive now
   exports its mismatch counter through node_exporter** (#282).
   `stellarindex_stellar_archive_divergence` (severity `page`) selects
