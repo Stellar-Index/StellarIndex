@@ -231,6 +231,33 @@ against.
 
 ### Fixed
 
+- **Every asset link pointed at the bare CODE, so a link could resolve
+  to a different issuer's asset than the row clicked** (wave-D EXR-02).
+  `assetSlug` truncated a canonical `CODE-GISSUER…` id at the dash, and
+  `/assets/USDC` is shared by every USDC-alike — so a link built from a
+  scam issuer's row could land on the legitimate asset's page, or the
+  reverse. `AssetLink` and `AssetText` now link the full canonical id,
+  as `/markets/[pair]` already did for the same reason (AM-09).
+
+  The docstring justifying the truncation ("long-form ids are NOT in
+  generateStaticParams … so linking to them hard-404s") had outlived its
+  constraint: canonical `asset_id` routes are emitted for exactly the
+  same asset set as the short slugs, and anything outside that set falls
+  to the client shell under both spellings — so the canonical form never
+  links worse and always links precisely.
+
+  Display labels are unchanged: `shortAssetText` stays short, because
+  these are dense analytics rows and a 56-char id would blow out every
+  cell and chart legend. `AssetText` carries the canonical id in `title`
+  instead, so the issuer is recoverable on hover without spending row
+  width.
+
+  Guarded three ways: the repo-walk pack gains a rule against building
+  an `/assets/` href from a code-truncated id, and `assetSlug` — which
+  decides where every asset reference in the explorer points, and had no
+  behavioural test at all — now has one, including the property that two
+  issuers sharing a code get different links. All proven red pre-fix.
+
 - **A scam-flagged asset outside the pre-rendered top 500 showed no scam
   warning at all** (wave-D EXR-01). `/assets/[slug]` has two render
   paths: the build-time pre-render for the top 500, and a client shell
