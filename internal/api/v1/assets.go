@@ -3104,6 +3104,33 @@ func (s *Server) attachSparkline7dIfRequested(r *http.Request, rows []AssetDetai
 // listing phase), so this one predicate covers both gates — plus the
 // simply-priceless rows, which have nothing to chart anyway.
 func sparkline7dEligible(d *AssetDetail) bool {
+	return priceSeriesPublishable(d)
+}
+
+// priceSeriesPublishable is the ONE rule for whether a payload may carry
+// a derived price-over-time claim — a sparkline, a price_history_*
+// series, or an all-time high.
+//
+// Two rules, both load-bearing:
+//
+//   - PriceUSD != nil. Nil by the time this runs for every row the
+//     substance gate or the scam-issuer suppression withheld, so this
+//     covers both gates plus the simply-priceless rows, which have
+//     nothing to chart anyway.
+//   - not a declared peg. A peg-priced row's headline comes from the
+//     declared peg, not from its own market, so charting its market
+//     history beside that number states a provenance the price does not
+//     have — and the market being charted is the dust market the
+//     substance gate refused.
+//
+// Shared with [withholdPriceSeriesWhenUnpriced] deliberately. These were
+// two predicates asserting the same rule, and they drifted: the listing
+// excluded declared-peg rows and the detail path did not, so the detail
+// page served the series the listing declined to draw (wave-D MSP-04).
+func priceSeriesPublishable(d *AssetDetail) bool {
+	if d == nil {
+		return false
+	}
 	return d.PriceUSD != nil && d.PriceBasis != priceBasisDeclaredPeg
 }
 
