@@ -160,3 +160,54 @@ func TestSplitAssetsCursor_LegacyTwoFieldCursorResumesInTierZero(t *testing.T) {
 		t.Error("non-numeric rank tier must be rejected")
 	}
 }
+
+// TestAssetsCursorPredicate_MixedDirectionKeysetIsSpelledOut is the class
+// guard for wave-D KP-1 / RD-01.
+//
+// Every /v1/assets ordering is MIXED-direction: the sort key descends,
+// asset_id ascends to break ties deterministically. SQL's row-constructor
+// comparison — `(a, b) < ($1, $2)` — is SAME-direction on every element,
+// so using it here reads as "…AND asset_id < $2" on a tie. That selects
+// rows the walk has already served and skips the ones it has not: a plain
+// `GET /v1/assets` walk served some assets twice, never served others, and
+// then reported has_more=false as if the walk were complete.
+//
+// The volume arm always spelled the comparison out correctly; the
+// observation-count arm used the row constructor. The bug was therefore
+// not a missing abstraction — it was one arm of one function disagreeing
+// with its own sibling — so the durable fix is this invariant rather than
+// a shared helper (markets and pools already use the expanded form; a
+// helper across them would be churn on correct code).
+//
+// Derived from source, so a THIRD ordering added later is covered on the
+// day it is written rather than when someone notices missing rows.
+//
+// Proven red: restoring `(ca.observation_count, ca.asset_id) < ($2, $3)`
+// fails this test naming AssetsOrderObservationCountDesc.
+func TestAssetsCursorPredicate_MixedDirectionKeysetIsSpelledOut(t *testing.T) {
+	t.Parallel()
+	for _, order := range []AssetsOrder{AssetsOrderVolume24hUSDDesc, AssetsOrderObservationCountDesc} {
+		orderBy := assetsOrderBy(order)
+		if !strings.HasSuffix(orderBy, "ca.asset_id ASC") {
+			// Not a mixed-direction tie-break — this invariant does not apply.
+			continue
+		}
+		pred := assetsCursorPredicate(order, 3)
+
+		// A row-constructor compare cannot express mixed directions.
+		if strings.Contains(pred, ", ca.asset_id) <") || strings.Contains(pred, ", ca.asset_id) >") {
+			t.Errorf("order %v: keyset predicate uses a row-constructor compare %q, but the "+
+				"ORDER BY is mixed-direction (%q). A row constructor compares every element in "+
+				"the SAME direction, so on a tie in the sort key this re-selects rows already "+
+				"served and skips the rest — silent truncation, reported as has_more=false. "+
+				"Spell the comparison out: (key < $n OR (key = $n AND ca.asset_id > $m)).",
+				order, pred, orderBy)
+		}
+
+		// The tie-break half must walk asset_id FORWARD, matching ASC.
+		if !strings.Contains(pred, "ca.asset_id > $") {
+			t.Errorf("order %v: ORDER BY breaks ties on ca.asset_id ASC, so the keyset predicate "+
+				"must resume with `ca.asset_id > $n`; got %q", order, pred)
+		}
+	}
+}
