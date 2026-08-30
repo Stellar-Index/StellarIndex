@@ -22,6 +22,7 @@ func TestHandler_ExposesMetrics(t *testing.T) {
 	obs.SourceLastEventUnix.WithLabelValues("_warmup").Set(0)
 	obs.SourceEnabled.WithLabelValues("_warmup").Set(0)
 	obs.SourceDecodeErrorsTotal.WithLabelValues("_warmup").Inc()
+	obs.SourceUnrepresentableSymbolsTotal.WithLabelValues("_warmup").Inc()
 	obs.SourceOrphanEventsTotal.WithLabelValues("_warmup").Inc()
 	obs.SourceInsertErrorsTotal.WithLabelValues("_warmup", "trade").Inc()
 	obs.RateLimitFailOpenTotal.Inc()
@@ -57,6 +58,15 @@ func TestHandler_ExposesMetrics(t *testing.T) {
 		"stellarindex_source_last_event_unix",
 		"stellarindex_source_enabled",
 		"stellarindex_source_decode_errors_total",
+		// #291. This entry is the ONLY check that the counter is
+		// actually REGISTERED. The redstone decoder test asserts its
+		// value with testutil.ToFloat64, which reads the Collector
+		// directly and never consults obs.Registry — so dropping the
+		// MustRegister line (e.g. to quiet funlen) would keep every
+		// other test green while the metric vanished from /metrics and
+		// stellarindex_ingestion_oracle_unrepresentable_symbols became
+		// an alert that can never fire.
+		"stellarindex_source_unrepresentable_symbols_total",
 		"stellarindex_source_orphan_events_total",
 		"stellarindex_source_insert_errors_total",
 		"stellarindex_ratelimit_fail_open_total",
