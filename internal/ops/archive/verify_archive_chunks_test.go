@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 
@@ -303,7 +304,7 @@ func TestStitchChunks_BoundaryBreakIsPageable(t *testing.T) {
 
 			// …and out through the export path the units use.
 			path := filepath.Join(t.TempDir(), "verify_archive_tier_a.prom")
-			if err := writeVerifyArchiveTextfile(path, "chain", totals); err != nil {
+			if err := writeVerifyArchiveTextfile(path, "chain", totals, true, time.Now()); err != nil {
 				t.Fatalf("write textfile: %v", err)
 			}
 			for _, reason := range verifyArchiveMismatchReasons {

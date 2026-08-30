@@ -56,16 +56,36 @@ groups:
             data. Cross-region trust model degrades after 48h without a
             clean run (see stellarindex_verify_archive_run_stale).
 
-      # Staleness: when did the timer last finish cleanly? Computed
-      # from the unit's `ActiveEnterTimestamp` on the timer (last
-      # successful Activate event). 36h = 24h cadence + 12h cushion.
+      # Staleness: when did verification last SUCCEED?
+      #
+      # Reads stellarindex_verify_archive_last_success_unix, which the
+      # verify-archive binary writes to its node_exporter textfile and
+      # advances ONLY on a clean exit (internal/ops/archive/
+      # verify_archive_textfile.go). A failed run carries the prior
+      # value forward.
+      #
+      # It used to read node_systemd_timer_last_trigger_seconds — when
+      # the TIMER last FIRED, independent of the triggered service's
+      # exit status. So a job that failed every single night kept the
+      # gauge perfectly fresh, and this page was defeated by exactly the
+      # scenario it exists for. The comment here claimed the metric was
+      # the timer's ActiveEnterTimestamp / "last successful Activate";
+      # it was neither (wave-D ALERT-10).
+      #
+      # The `> 0` guard is retained deliberately: a host that has never
+      # completed a run emits an explicit 0, and 0 would otherwise read
+      # as "stale since 1970" on first install. That preserves today's
+      # behaviour for a fresh host; making a never-verified host page is
+      # a separate operator decision.
+      #
+      # 36h = 24h cadence + 12h cushion.
       - alert: stellarindex_verify_archive_run_stale
         expr: |
           (
             time()
             -
-            (node_systemd_timer_last_trigger_seconds{
-              name="verify-archive-tier-a.timer"
+            (stellarindex_verify_archive_last_success_unix{
+              tier="chain"
             } > 0)
           ) > (36 * 3600)
         for: 10m
@@ -128,8 +148,8 @@ groups:
           (
             time()
             -
-            (node_systemd_timer_last_trigger_seconds{
-              name="verify-archive-tier-b.timer"
+            (stellarindex_verify_archive_last_success_unix{
+              tier="checkpoint"
             } > 0)
           ) > (36 * 3600)
         for: 10m
