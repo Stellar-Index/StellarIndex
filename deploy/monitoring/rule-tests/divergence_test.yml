@@ -101,6 +101,41 @@ tests:
                 a bad ingest (wrong decimals, stale source contributing) rather
                 than a real market move.
 
+  # ── NOT firing: one source, TWO assets, only one of them silent ───
+  # The join is group_left() on {source}: the single {source} resolution
+  # series must fan out to every {source, asset} left-hand series. If it
+  # ever regresses to a bare comparison this case goes empty along with
+  # the firing case above; if it regresses to a many-to-one without
+  # group_left, promtool fails on the match itself.
+  - interval: 1m
+    name: a fresh asset on a source with a stale sibling does not ticket
+    input_series:
+      - series: 'stellarindex_oracle_last_update_unix{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex",asset="XLM"}'
+        values: '0+0x60'
+      - series: 'stellarindex_oracle_last_update_unix{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex",asset="USDC"}'
+        values: '0+60x60'
+      - series: 'stellarindex_oracle_resolution_seconds{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex"}'
+        values: '300+0x60'
+    alert_rule_test:
+      - eval_time: 55m
+        alertname: stellarindex_oracle_stale
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_aggregator
+              instance: r1:9102
+              source: reflector-dex
+              asset: XLM
+              severity: ticket
+              team: stellarindex
+              component: divergence
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-stale.md
+              summary: "Oracle reflector-dex stale for XLM"
+              description: |
+                reflector-dex hasn't published a price for XLM
+                in > 10× its resolution. May be legitimate (oracle paused) or a
+                signal of oracle failure — check the oracle's own status page.
+
   # ══ stellarindex_oracle_stale ═════════════════════════════════════
   # ── firing: no publish for >10x the oracle's 300s resolution ──────
   - interval: 1m
@@ -108,7 +143,14 @@ tests:
     input_series:
       - series: 'stellarindex_oracle_last_update_unix{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex",asset="XLM"}'
         values: '0+0x60'
-      - series: 'stellarindex_oracle_resolution_seconds{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex",asset="XLM"}'
+      # NO asset label. stellarindex_oracle_resolution_seconds is declared
+      # with []string{"source"} (internal/obs/metrics.go), so a series
+      # carrying `asset` cannot exist in production — WithLabelValues would
+      # panic. This test used to fabricate it, which is the only reason the
+      # broken join ever went green: the rule joins {source,asset} against
+      # {source} with no on(), so real series never match and the alert
+      # could not fire at all (wave-D ALERT-02).
+      - series: 'stellarindex_oracle_resolution_seconds{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex"}'
         values: '300+0x60'
     alert_rule_test:
       - eval_time: 55m
