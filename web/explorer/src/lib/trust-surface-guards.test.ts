@@ -28,6 +28,16 @@ import { describe, expect, it } from 'vitest';
 
 const SRC = join(__dirname, '..');
 
+/**
+ * Remove block and line comments, so a guard matching on code idioms
+ * cannot be tripped (or silenced) by prose. Deliberately crude — it is
+ * good enough to keep a doc comment from reading as code, and a guard
+ * that needs a real parser is a guard aimed at the wrong thing.
+ */
+function stripComments(body: string): string {
+  return body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+}
+
 /** Every non-test source file under src/, as [repo-relative path, contents]. */
 function sourceFiles(): Array<[string, string]> {
   const out: Array<[string, string]> = [];
@@ -84,6 +94,32 @@ describe('trust-surface guards', () => {
       if (body === undefined) return true;
       return !body.includes('AssetScamCallout');
     });
+    expect(offenders).toEqual([]);
+  });
+
+  it('no /assets/ href is built from a code-truncated canonical id', () => {
+    // A classic asset_id is CODE-GISSUER…, and the bare code is
+    // AMBIGUOUS: every USDC-alike shares /assets/USDC. A link built by
+    // slicing at the dash can therefore land the user on a DIFFERENT
+    // issuer's asset than the row they clicked — including resolving a
+    // scam issuer's token to the legitimate one's page, or the reverse
+    // (wave-D EXR-02). markets/[pair] already took this decision
+    // (AM-09); AssetLink was the straggler.
+    //
+    // Matches the truncation idiom rather than the href, because the
+    // slug is usually computed a few lines above the <Link>. Display
+    // helpers are unaffected: shortAssetText is a deliberately short
+    // LABEL and is not routed through here.
+    const truncation = /\.slice\(\s*0\s*,\s*(dashIx|i|idx|dash)\s*\)/;
+    const offenders = sourceFiles()
+      .filter(([path]) => /AssetLink|assetSlug/.test(path))
+      // Strip comments first. A guard that a COMMENT can trip is a guard
+      // people learn to work around by rewording prose, which is how a
+      // guard stops meaning anything — and this one tripped on the very
+      // comment explaining the fix.
+      .filter(([, body]) => truncation.test(stripComments(body)))
+      .map(([path]) => path)
+      .sort();
     expect(offenders).toEqual([]);
   });
 });
