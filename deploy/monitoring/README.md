@@ -72,8 +72,8 @@ make monitoring-check
 # which runs:
 promtool check rules deploy/monitoring/rules/*.yml
 
-# Alert-rule unit tests are planned but not wired in this repo yet.
-# There is currently no checked-in test/monitoring/ tree.
+# Rule-firing unit tests (promtool test rules) — 22 test files:
+promtool test rules deploy/monitoring/rule-tests/*.yml
 ```
 
 CI runs `promtool check rules` on every PR via the `monitoring-rules`
@@ -81,10 +81,24 @@ job in [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)
 (installs `promtool` from the official Prometheus release, then
 runs `make monitoring-check`). Rule-file syntax errors fail the
 PR; a doc-only drift check on alert/runbook references runs in
-parallel via `scripts/ci/lint-docs.sh`. `promtool test rules`
-(rule-firing unit tests) is not wired — there is no
-`test/monitoring/` tree yet; that's a follow-up if rule logic
-ever grows complex enough to need behavioural tests.
+parallel via `scripts/ci/lint-docs.sh`.
+
+`promtool test rules` **is** wired: `make monitoring-check` runs it
+over `deploy/monitoring/rule-tests/*.yml`, and CI runs the same
+target. New behavioural cases go in that directory — **not** in a
+`test/monitoring/` tree, which does not exist.
+
+This paragraph previously said the opposite ("planned but not wired…
+no checked-in `test/monitoring/` tree… place future tests under
+`test/monitoring/`"). All four claims were false while 22 test files
+ran in CI from a different path, so a contributor following this
+README would have written a rule test into a directory nothing
+executes (wave-D ALERT-08).
+
+Note what those tests do and do not cover: they load
+`deploy/monitoring/rules/`, so the R1 overlay at
+`configs/prometheus/rules.r1/` is covered only transitively, by
+`lint-rule-equivalence` proving the two trees equivalent.
 
 Run `make monitoring-check` locally before pushing to skip a
 round-trip on rule-syntax errors.
@@ -94,11 +108,20 @@ round-trip on rule-syntax errors.
 Per [repo-hygiene-plan.md §16](../../docs/architecture/repo-hygiene-plan.md#16-observability-discipline):
 
 1. Expose the metric in `internal/obs/*.go` (Prometheus registry).
-2. Add the rule to the appropriate file under `rules/`.
+2. Add the rule to the appropriate file under `rules/` **and** its
+   twin under `configs/prometheus/rules.r1/` — `lint-rule-equivalence`
+   fails the build if the two trees drift.
 3. Write the runbook at `docs/operations/runbooks/<name>.md` (copy
    `_template.md`).
 4. Add a row to `docs/operations/alerts-catalog.md`.
-5. If/when the repo adds rule tests, place them under `test/monitoring/`.
+5. Add a promtool case under `deploy/monitoring/rule-tests/`, asserting
+   the alert FIRES on the failure it names and stays quiet otherwise.
+   Not optional and not "if/when": four alerts in the wave-D audit were
+   structurally unable to fire — an empty vector where a zero was
+   assumed, or a label set that never matched — and every one of them
+   passed `promtool check rules`, which only checks that an expression
+   parses. A firing case is the only thing that distinguishes a working
+   alert from a well-formed one.
 
 All five in one PR. The `scripts/ci/lint-docs.sh` script fails the
 build if any rule's `runbook_url` points at a missing runbook
