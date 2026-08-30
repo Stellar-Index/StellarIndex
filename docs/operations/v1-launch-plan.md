@@ -628,7 +628,17 @@ genuinely unstarted. **The money-adjacent event body shape is NOT derivable
 in-repo (do-not-invent discipline); unblock = one contract-scoped r1-lake read
 of a dfees `value` blob, then the code is mechanical.**
 
-**W5.3 — [C]** Pre-2026-07-23 USD-volume re-stamp.
+**W5.3 — ✅ DONE 2026-08-30 (verified NO-OP).** Pre-2026-07-23 USD-volume
+re-stamp. `usd-volume-restamp` dry runs on r1 report **0 rows to restamp**
+across 42,997 (2026-05), 46,261 (2026-06) and 33,026 (2026-07-01..22)
+exact-tier group-days, Σ|Δ| = 0.00000000 USD — the exact-tier `usd_volume`
+is already correct for the whole window, so no corrective write was needed
+or made. The tool's acceptance check (`verify-usd-volume -days 90`) reports
+193 violations, but every one is the coarse `XLM-BASE BOUND` on ESTIMATED
+tiers, not an exact-tier error — tracked separately as issue #372 (thin SDEX
+pairs; ratios cluster 1.3–1.7, which intraday-vs-daily-VWAP spread may fully
+explain, plus one 43× under-valuation that it does not). Do not calibrate a
+threshold before separating those two, per the tool's own C6-118 warning.
 
 **W5.4 — [C]** Reset the 13 supply rollups (EURC done 2026-08-05).
 
