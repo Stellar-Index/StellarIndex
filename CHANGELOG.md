@@ -382,6 +382,35 @@ against.
   stale-inert check then flagged **7** metrics wrongly listed as inert,
   including the galexie-catchup and stellar-stack-version probes; all
   seven are removed. `KNOWN_INERT` means "no producer" again.
+- **A promtool fixture could assert against a series production cannot
+  emit, go green, and certify an alert that could not fire.** That is
+  not hypothetical: `stellarindex_oracle_stale` was unfireable for every
+  oracle while its test passed, because the fixture wrote
+  `stellarindex_oracle_resolution_seconds{…,asset="XLM"}` and that
+  metric is declared with one label — `WithLabelValues` with two
+  arguments panics. `lint-rule-structure` now checks every rule-test
+  `series:` label set against what the emitter can actually produce.
+
+  The declared set is the union over *every* emitter shape, not just the
+  Go vector: `verify-archive` declares `{chunk_idx, reason}` in-process
+  but production scrapes its node_exporter textfile, which carries
+  `{tier, reason}` — checking against the Go declaration alone flags
+  correct tests. Labels attached by the scrape (`job`, `instance`, and
+  r1's static `binary`) are read from the scrape config rather than
+  hardcoded, so a new target label does not turn the lint into a source
+  of false failures.
+
+  It found two real violations: a second copy of the `asset="XLM"`
+  fabrication, in a negative case that passed either way — which is
+  exactly why it survived when the firing one was corrected — and three
+  `stellarindex_trade_inserts_total{usd_populated="true"}` fixtures
+  inventing both a wrong label name and wrong values
+  (`usd_volume_populated`, `yes`/`no`).
+
+  A rule-test *coverage-percentage* gate was considered and rejected: it
+  would have caught none of this wave's unfireable alerts, and it
+  creates pressure to shrink a baseline by writing more fixtures — the
+  mechanism that produced the false greens in the first place.
 
 ### Changed
 

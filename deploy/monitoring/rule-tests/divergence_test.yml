@@ -178,7 +178,10 @@ tests:
     input_series:
       - series: 'stellarindex_oracle_last_update_unix{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex",asset="XLM"}'
         values: '0+60x60'
-      - series: 'stellarindex_oracle_resolution_seconds{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex",asset="XLM"}'
+      # No asset label — see the firing case above. This negative case
+      # passed either way (it asserts nothing fires), which is precisely
+      # why the fabrication survived here after being removed there.
+      - series: 'stellarindex_oracle_resolution_seconds{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex"}'
         values: '300+0x60'
     alert_rule_test:
       - eval_time: 55m

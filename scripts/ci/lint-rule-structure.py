@@ -17,7 +17,7 @@ A missing label silently mis-routes a page (drops to the catch-all route or
 loses team ownership); a missing annotation renders a blank page body. These
 are non-empty presence checks; record rules are exempt (they carry neither).
 """
-import glob, os, sys
+import glob, os, re, sys
 try:
     import yaml
 except ImportError:
@@ -91,6 +91,140 @@ for d in DIRS:
                         if val is None or (isinstance(val, str) and not val.strip()):
                             err(path, f"alert '{name}' missing/empty required annotation `{key}` "
                                       f"(page templates render {sorted(REQUIRED_ALERT_ANNOTATIONS)})")
+
+# ─────────────────────────────────────────────────────────────────────
+# Rule-TEST label realism (wave-D ALERT-02 / ALERT-11).
+#
+# promtool test rules asserts a rule's behaviour against series the
+# FIXTURE invents. Nothing checks those series are shapes production can
+# actually emit — so a test can assert against an impossible label set,
+# go green, and certify an alert that cannot fire.
+#
+# That is not hypothetical. stellarindex_oracle_stale compared
+# {source, asset} against {source} with no on(), so it matched nothing
+# and could never fire for any oracle. Its promtool case passed anyway,
+# because the fixture wrote
+# stellarindex_oracle_resolution_seconds{...,asset="XLM"} — and that
+# metric is declared []string{"source"}, so WithLabelValues with two
+# arguments would panic. The test asserted against a series the emitter
+# is structurally incapable of producing.
+#
+# A coverage-percentage gate was considered and rejected: it would have
+# caught neither that bug nor the empty-vector ones, and it creates
+# pressure to shrink a baseline by writing more fixtures — the exact
+# mechanism that produced the false green. Checking fixtures against the
+# emitter's DECLARED labels attacks the defect directly.
+DECL_RE = re.compile(
+    r'Name:\s*"(stellarindex_[a-z0-9_]+)"(.*?)\[\]string\{([^}]*)\}',
+    re.S,
+)
+# Labels attached by the SCRAPE, not by the emitter. A fixture must be
+# allowed to set these even though no Go declaration lists them.
+#
+# `job`/`instance` are Prometheus built-ins. The rest are read from the
+# scrape config's static_configs `labels:` blocks rather than hardcoded —
+# r1 stamps `binary: stellarindex-{indexer,api,aggregator}` on every
+# target, so a fixture carrying `binary=` is realistic, and a lint that
+# called it bogus would be wrong about 19 existing cases. Deriving them
+# means a new target label added tomorrow does not turn this lint into a
+# source of false failures.
+def scrape_attached_labels():
+    out = {"job", "instance"}
+    for path in ("configs/prometheus/prometheus.r1.yml",):
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path, encoding="utf-8") as fh:
+                cfg = yaml.safe_load(fh) or {}
+        except Exception:
+            continue
+        for sc in cfg.get("scrape_configs") or []:
+            for static in sc.get("static_configs") or []:
+                out.update((static.get("labels") or {}).keys())
+    return out
+
+
+SCRAPE_LABELS = scrape_attached_labels()
+SERIES_RE = re.compile(r'^\s*-\s*series:\s*[\'"]?([a-zA-Z_:][a-zA-Z0-9_:]*)\{([^}]*)\}')
+
+
+# A metric can have MORE THAN ONE emitter with different label sets, and
+# the scraped one is not always the Go CounterVec. verify-archive is the
+# worked example: the in-process vec declares {chunk_idx, reason}, but
+# what production actually scrapes is the node_exporter TEXTFILE the
+# binary renders, which carries {tier, reason}. Checking fixtures against
+# the Go declaration alone flags correct tests as bogus — the first draft
+# of this lint did exactly that on five stellar_test.yml lines.
+#
+# So the declared set is the UNION over every emitter shape: the Go
+# declaration, plus any `metric{label=...}` literal written by a textfile
+# renderer (Go fmt strings, shell probes, inline ansible content blocks,
+# checked-in .prom files).
+EMITTED_LITERAL_DIRS = (
+    "internal", "cmd", "scripts", "configs/healthchecks",
+    "configs/ansible/roles/archival-node/files",
+    "configs/ansible/roles/archival-node/tasks",
+)
+LABEL_KEY_RE = re.compile(r'([a-zA-Z_][a-zA-Z0-9_]*)\s*=')
+
+
+def declared_label_sets():
+    """metric name -> set(label names any emitter can produce)."""
+    out = {}
+    for path in glob.glob("internal/obs/*.go"):
+        with open(path, encoding="utf-8") as fh:
+            body = fh.read()
+        for name, _between, labels in DECL_RE.findall(body):
+            names = {l.strip().strip('"') for l in labels.split(",") if l.strip()}
+            # Union, never overwrite: narrowing invents violations.
+            out.setdefault(name, set()).update(names)
+    if not out:
+        return out
+
+    # Second pass: union in labels from rendered `metric{...}` literals.
+    lit_res = {m: re.compile(re.escape(m) + r'\{([^}\n]*)\}') for m in out}
+    for root in EMITTED_LITERAL_DIRS:
+        for dirpath, _dirs, files in os.walk(root):
+            for fn in files:
+                if not fn.endswith((".go", ".sh", ".prom", ".yml", ".yaml")):
+                    continue
+                fp = os.path.join(dirpath, fn)
+                try:
+                    with open(fp, encoding="utf-8", errors="ignore") as fh:
+                        body = fh.read()
+                except OSError:
+                    continue
+                for metric, rx in lit_res.items():
+                    if metric not in body:
+                        continue
+                    for blob in rx.findall(body):
+                        out[metric].update(LABEL_KEY_RE.findall(blob))
+    return out
+
+
+declared = declared_label_sets()
+if declared:
+    for path in sorted(glob.glob("deploy/monitoring/rule-tests/*.yml")):
+        with open(path, encoding="utf-8") as fh:
+            for lineno, line in enumerate(fh, 1):
+                m = SERIES_RE.match(line)
+                if not m:
+                    continue
+                metric, labelblob = m.group(1), m.group(2)
+                if metric not in declared:
+                    continue  # not an obs-declared metric (node_*, textfile, …)
+                used = {
+                    kv.split("=", 1)[0].strip()
+                    for kv in labelblob.split(",")
+                    if "=" in kv
+                }
+                bogus = sorted(used - declared[metric] - SCRAPE_LABELS)
+                if bogus:
+                    err(f"{path}:{lineno}",
+                        f"fixture series for `{metric}` sets label(s) {bogus} that the "
+                        f"emitter does not declare (declared: {sorted(declared[metric]) or 'none'}). "
+                        f"Production cannot produce this series — WithLabelValues would panic — "
+                        f"so any assertion built on it certifies behaviour that cannot occur.")
 
 if bad:
     print(f"lint-rule-structure: {bad} problem(s) found", file=sys.stderr)
