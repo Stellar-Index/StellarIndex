@@ -789,6 +789,25 @@ is a lightweight documentation sign-off, not open work.
 
 ### W8 — Correctness backlog [C — RECONCILED 2026-08-25, see box below]
 
+> **NEEDS-DATA re-verified LIVE on r1, 2026-08-30 (04:1xZ).** Three of the five
+> are closed on measurement, not on assertion:
+> - **13b `account_activity` watermark — AT TIP.** `max(ledger_seq)` =
+>   64,188,512 against a lake tip of 64,188,513 and a network tip of
+>   64,188,513, i.e. one ledger behind live. Closed.
+> - **14b archive chmod — codified.** `04-users.yml` sets
+>   `/srv/history-archive` 0755; nothing to measure. Closed.
+> - **1c XLM 2.11× — explained AND fixed.** The ledger header's `total_coins`
+>   counts the 2019 burn account; `/v1/assets/native` excludes it. Not a data
+>   bug, a captioning one — and the caption shipped in #250, pinned by
+>   `LedgerView.test.tsx` asserting "ledger header · includes the 2019 burn".
+>   Closed.
+> - **8c / 8d confidence data-halves — BLOCKED ON ASH.** These two have **no
+>   definition anywhere in the repo**; they exist only in the private audit
+>   mirror. They cannot be measured, reproduced or closed by anyone working
+>   from this repository. Ash to supply the definitions or drop the items —
+>   they are the only NEEDS-DATA entries still open, and the only thing
+>   standing between W8 and fully closed.
+
 > **✅ RECONCILED 2026-08-25 (autonomous run, two independent read-only
 > passes over HEAD ~7ce2d213 — full table in the private audit mirror
 > `w8-reconciliation-2026-08-25.md`).** Of 26 sub-items:
