@@ -248,6 +248,21 @@ against.
   rule returns nothing at all, which is what the corrected test now
   proves. A second case pins the fan-out, so a regression to a bare
   comparison fails rather than silently matching nothing.
+- **Both usd_volume coverage alerts went silent at exactly 100% NULL —
+  their worst case** (wave-D ALERT-04). Each divides a "priced" counter
+  by a "total" counter, but the `usd_volume_populated="yes"` child is
+  created only by the first *priced* insert (there is no zero
+  pre-initialisation). So when a source prices nothing at all, that
+  series does not exist, an aggregation over it is the empty vector
+  rather than zero, and the division yields no sample: total pricing
+  failure was the one condition these alerts could not see. Partial
+  failure fired correctly, which is why it was never noticed.
+
+  Both arms now substitute an explicit zero for a source present in the
+  denominator, so 0/N = 0 and the alert fires. Neither alert had *any*
+  promtool coverage; there is now a test file for both, including
+  full-coverage controls so the fix cannot over-fire. Proven red against
+  the pre-fix rules — both cases returned no alert whatsoever.
 
 - **A percent-encoded slash forged the SSE exemption, so 13 routes could
   be asked to run with no request deadline at all** (wave-D

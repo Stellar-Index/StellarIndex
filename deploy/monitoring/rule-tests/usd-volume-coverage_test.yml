@@ -1,0 +1,71 @@
+# usd-volume coverage — the 100%-NULL blindness (wave-D ALERT-04).
+#
+# Both coverage alerts divide a "priced" counter by a "total" counter.
+# The usd_volume_populated="yes" child is created only by the first
+# PRICED insert (obs.TradeInsertsTotal.WithLabelValues(...).Inc(), with
+# no zero pre-initialisation), so when a source prices NOTHING that
+# child never exists. An aggregation over a missing series is the EMPTY
+# vector, not zero — the division yields no sample, and the alert is
+# silent at exactly the case it exists to catch.
+#
+# These cases seed ONLY the usd_volume_populated="no" child, which is
+# what total pricing failure actually looks like on the wire. They are
+# red against the pre-fix rules (no alert produced at all).
+
+rule_files:
+- ../rules/usd-volume-coverage.yml
+evaluation_interval: 1m
+tests:
+- interval: 1m
+  name: an external exchange pricing NOTHING still tickets
+  input_series:
+  - series: stellarindex_trade_inserts_total{job="stellarindex_indexer",instance="r1:9101",source="binance",usd_volume_populated="no"}
+    values: 0+10x120
+  alert_rule_test:
+  - eval_time: 100m
+    alertname: stellarindex_cex_usd_volume_coverage_low
+    exp_alerts:
+    - exp_labels:
+        source: binance
+        severity: ticket
+        team: stellarindex
+        component: usd-volume-coverage
+      exp_annotations:
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/usd-volume-coverage-plan.md
+        summary: External exchange binance is inserting trades with NULL usd_volume
+        description: "binance priced only 0% of its trades\nover the last hour; the bar for external exchanges is 100%.\n\nEvery off-chain quote should resolve: fiat:USD and USD-pegged stablecoins via\ntier 1, and any other fiat via fx_quotes (tier 2a). A drop here almost always\nmeans the venue began quoting in a currency fx_quotes does not carry, or in a\nnew asset the peg list does not recognise.\n\nFind the offending pairs:\n  SELECT quote_asset, base_asset, count(*) FROM trades\n   WHERE source = 'binance' AND usd_volume IS NULL\n     AND ts > now() - interval '1 hour'\n   GROUP BY 1,2 ORDER BY count DESC LIMIT 20;\n\nIf the quote is a fiat ticker, check it exists in fx_quotes. If it is an asset,\nit needs a peg-list entry or a market to bridge through.\n\nPlan + measurements: docs/operations/usd-volume-coverage-plan.md\n"
+- interval: 1m
+  name: an external exchange pricing everything is quiet
+  input_series:
+  - series: stellarindex_trade_inserts_total{job="stellarindex_indexer",instance="r1:9101",source="binance",usd_volume_populated="yes"}
+    values: 0+10x120
+  alert_rule_test:
+  - eval_time: 100m
+    alertname: stellarindex_cex_usd_volume_coverage_low
+    exp_alerts: []
+- interval: 1m
+  name: on-chain sources pricing NOTHING still ticket
+  input_series:
+  - series: stellarindex_trade_inserts_total{job="stellarindex_indexer",instance="r1:9101",source="sdex",usd_volume_populated="no"}
+    values: 0+10x600
+  alert_rule_test:
+  - eval_time: 500m
+    alertname: stellarindex_onchain_usd_volume_coverage_low
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        team: stellarindex
+        component: usd-volume-coverage
+      exp_annotations:
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/usd-volume-coverage-plan.md
+        summary: On-chain usd_volume coverage is below the 99.5% bar
+        description: "On-chain sources priced only 0% of their trades\nover the last 6 hours, against a 99.5% bar.\n\nAggregated across venues deliberately: a single thin venue (comet, phoenix)\ncan have a handful of trades in a window, and a per-source ratio there is\nnoise rather than signal.\n\nExpected causes, cheapest first:\n  - The XLM bridge lost its anchor — check XLM/USD exists in prices_1m; if\n    that is missing, tiers 3b and 4b both fail at once and coverage collapses\n    rather than degrades.\n  - A newly active token with no XLM market and no pegged counterparty.\n  - prices_1m materialisation fell behind, so bridge legs are absent within\n    the 24h bridge-freshness window.\n\nFind the offending pairs:\n  SELECT base_asset, quote_asset, count(*) FROM trades\n   WHERE usd_volume IS NULL AND ts > now() - interval '6 hours'\n     AND source IN ('sdex','soroswap','aquarius','phoenix','comet')\n   GROUP BY 1,2 ORDER BY count DESC LIMIT 20;\n\nA residual of obscure tokenised assets (gold/equity wrappers) and pure\nSEP-41/SEP-41 pairs is EXPECTED and is not a regression.\n\nPlan + measurements: docs/operations/usd-volume-coverage-plan.md\n"
+- interval: 1m
+  name: on-chain sources pricing everything are quiet
+  input_series:
+  - series: stellarindex_trade_inserts_total{job="stellarindex_indexer",instance="r1:9101",source="sdex",usd_volume_populated="yes"}
+    values: 0+10x600
+  alert_rule_test:
+  - eval_time: 500m
+    alertname: stellarindex_onchain_usd_volume_coverage_low
+    exp_alerts: []
