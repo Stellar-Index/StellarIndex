@@ -231,6 +231,35 @@ against.
 
 ### Fixed
 
+- **One extra path segment defeated the price-withholding gates**
+  (wave-D MSP-01). `/v1/price` correctly returned
+  `errors/price-withheld` for a directory-flagged scam issuer or a
+  market too thin to aggregate — while `/v1/price/at` and
+  `/v1/price/changes` published the identical closed-bucket VWAP,
+  because `storePriceAtReader` carried neither gate. Every
+  price-serving read seam now routes through a single chokepoint,
+  `priceWithheld()`, which is the only place in the binary where either
+  gate is spelled.
+
+  The same change closes **MSP-07**: the last-trade arm of
+  `LatestPrice` consulted the thin-market gate but not the scam gate,
+  so an operator setting `pricing_guard.disable_substance_gate=true` to
+  diagnose a pricing-coverage complaint silently also un-withheld every
+  directory-flagged issuer's last trade — reversing a separate,
+  owner-level trust decision they never touched.
+
+  Two AST guards pin this, both proven red against the pre-fix state:
+  one enumerates the price-serving seams and fails when a seam does not
+  route through the chokepoint; the other fails on any
+  `substance.Allowed`/`scam.Withheld` call outside it. The second is
+  the one that catches MSP-07 — a seam can call the chokepoint on one
+  arm and still hand-roll half the decision on another.
+
+  Deliberately unchanged: `/v1/twap`, `/v1/vwap`, `/v1/ohlc` and
+  `/v1/chart` remain ungated. The raw-trade surfaces are documented as
+  deliberately visible (`pricingguard/scam.go`), and which quote sets
+  constitute a "price claim" is the open scope question in #366.
+
 - **`make verify` was red on `main`, and CI could not see it.** The
   ClickHouse ops-credential contract (`scripts/ops/ch-ops-user-test.sh`)
   has been failing since #286 gave `d2-ordinal-reproject.sh` a
