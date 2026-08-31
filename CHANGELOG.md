@@ -617,6 +617,41 @@ against.
   misdescribes the accepted grammar, is refuted: the comment cites
   `api-design.md` §3 specifically and is accurate about that document.
 
+- **Canonical `rwa:` assets linked to pages that do not exist** (wave-D
+  SI-OC-02). ADR-0028 ids like `rwa:XAU` fell through to the bare-code
+  branch, producing `/assets/rwa%3AXAU` — the API 404s on the prefixed
+  id and 400s on the bare code, so *both* spellings are dead. They now
+  render as a plain label with the full id in the tooltip, unlinked.
+
+  Deliberately not "strip the prefix like `fiat:`/`crypto:`": that would
+  produce `/assets/XAU`, `/assets/BENJI`, which the API rejects — one
+  dead link swapped for another, plus the loss of the namespace signal.
+  Real per-asset RWA pages are separate work.
+
+### Reviewed, no change
+
+- **CV-2** (oracle reconcile netting). The finding reads an unwired
+  `vintageBoundary` field as a live hole; the history is the reverse.
+  It shipped and changed behaviour, then was retired because its only
+  subject was upgraded to a *stronger* position — strict per-ledger with
+  no netting, proven over 12.5M ledgers with zero mismatches. The
+  remaining oracle netting is a recorded, deliberately-deferred decision
+  (F6 / C2-16) with a register entry, a rationale and a superseding
+  design doc. The implied fix — setting a boundary on the four oracle
+  sources — is not actionable: no cutover ledger for the legacy backfill
+  exists anywhere in the repo, and guessing one too low re-opens the
+  false-positive class the deferral exists to avoid.
+
+- **CV-4** (recognition claim unfalsifiable for the sep41 sources). The
+  mechanical observation is right, but the remedy would be actively
+  harmful. Lifting the topic exclusion cannot create a falsifiable
+  check — every watched contract maps back to a sep41 source, so the
+  guaranteed gaps would pin `recognition_ok=false` and therefore
+  `complete=false` *permanently*, while every non-watched SAC's shapes
+  flood the unattributed bucket. The exclusion's justification is also a
+  structural truth about the dispatcher this function builds, not the
+  stale deployment observation the finding assumes.
+
 ### Changed
 
 - **`/v1/assets` now rejects a malformed catalogue cursor instead of
