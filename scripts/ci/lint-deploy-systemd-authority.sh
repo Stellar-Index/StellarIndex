@@ -37,6 +37,15 @@ checked=0
 
 [ -d "$DIR" ] || { echo "lint-deploy-systemd-authority: $DIR missing"; exit 2; }
 
+# Units genuinely installed FROM deploy/systemd, parsed per-task.
+authoritative=$(python3 "$(dirname "$0")/deploy-systemd-authoritative.py" "$ROLE")
+if [ -z "$authoritative" ]; then
+  echo "lint-deploy-systemd-authority: the authoritative set came back EMPTY —" >&2
+  echo "  the task shape changed and this lint would classify every unit as an" >&2
+  echo "  orphan or a template. Fix the parser, do not delete the check." >&2
+  exit 1
+fi
+
 declared=""
 [ -f "$ORPHANS" ] && declared=$(grep -vE '^\s*#|^\s*$' "$ORPHANS" | sed -E 's/\s*#.*//; s/\s+$//')
 
@@ -45,9 +54,23 @@ for f in "$DIR"/*.service "$DIR"/*.timer; do
   b=$(basename "$f")
   checked=$((checked + 1))
 
-  # AUTHORITATIVE: named in a task that copies out of deploy/systemd.
-  if grep -rq -- "- $b\$" "$ROLE"/tasks/*.yml 2>/dev/null &&
-     grep -rq 'deploy/systemd/{{ item }}' "$ROLE"/tasks/*.yml 2>/dev/null; then
+  # AUTHORITATIVE: named in the loop of a task that COPIES/TEMPLATES a
+  # src under deploy/systemd — both facts about the SAME task.
+  #
+  # This used to be two INDEPENDENT greps: "does `- <unit>` appear as a
+  # list item anywhere in tasks/" and "does the string
+  # `deploy/systemd/{{ item }}` appear anywhere in tasks/". The second is
+  # a repo-wide constant — one unrelated task in 15-log-discipline.yml
+  # satisfies it for every unit — so classification collapsed to the
+  # first, which matches ANY YAML list item. Adding a unit to an
+  # `ansible.builtin.systemd` ENABLE loop (installing nothing) was enough
+  # to pass as authoritative: precisely the "enable a unit you don't
+  # install" footgun this lint exists to name, and which the header
+  # itself describes.
+  #
+  # The set is computed by deploy-systemd-authoritative.py, which parses
+  # the task YAML instead of grepping it.
+  if printf '%s\n' "$authoritative" | grep -qxF "$b"; then
     continue
   fi
   # REFERENCE: the role templates the same unit itself.

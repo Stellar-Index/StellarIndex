@@ -537,6 +537,8 @@ jobs:
         # looked live. These fixtures pin that comment-only mentions do
         # NOT satisfy is_emitted while real Name:/bare-metric lines do.
         run: ./scripts/ci/lint-metric-refs-test.sh
+      - name: lint-unit-failed-baseline self-test
+        run: ./scripts/ci/lint-unit-failed-baseline-test.sh
       - name: deploy/systemd authority
         # deploy/systemd/ is MIXED authority: ansible installs
         # config-assertions.{service,timer} straight out of it, while
