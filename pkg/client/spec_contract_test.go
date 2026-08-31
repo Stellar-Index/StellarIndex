@@ -504,3 +504,85 @@ func TestSDKSchemasMatchSpec(t *testing.T) {
 		_ = fmt.Sprintf("%v", exc)
 	}
 }
+
+// TestCoveredOperationsBindToRealMethods closes the wave-D F-SDK-10
+// gap: nothing tied coveredOperations to the code it claims to
+// describe.
+//
+// TestSDKCoversSpec reconciles the TABLE against the OpenAPI spec, so
+// it catches an endpoint the SDK forgot. It cannot catch the table
+// drifting from the SDK: rename a Client method, or delete one, and
+// the table keeps naming the old identifier while the reconciliation
+// stays green — declared-but-not-enforced, the same shape as the rest
+// of that finding's unit.
+//
+// This binds it in both directions:
+//
+//   - every `sdkMethod` in the table must resolve on *Client, so a
+//     rename or deletion fails here rather than rotting silently;
+//   - every exported *Client method must appear in the table or in the
+//     explicit exemption set below, so a NEW method cannot be added
+//     without deciding whether it is a spec operation.
+//
+// The second direction is the load-bearing one. Without it the table
+// only ever describes the subset someone remembered to add to it.
+func TestCoveredOperationsBindToRealMethods(t *testing.T) {
+	t.Parallel()
+
+	clientType := reflect.TypeOf(&Client{})
+
+	// notSpecOperations are exported *Client methods that are
+	// deliberately NOT spec operations. Add an entry only with the
+	// reason it does not correspond to an HTTP operation.
+	notSpecOperations := map[string]string{
+		"Close": "releases the HTTP client's idle connections; no request",
+	}
+
+	// Direction 1: every tabled method must exist.
+	for _, op := range coveredOperations {
+		if op.sdkMethod == "" {
+			t.Errorf("coveredOperations has an entry with an empty sdkMethod (%s %s)",
+				op.method, op.path)
+			continue
+		}
+		if _, ok := clientType.MethodByName(op.sdkMethod); !ok {
+			t.Errorf("coveredOperations names Client.%s (%s %s), which does not exist — "+
+				"the table has drifted from the code. TestSDKCoversSpec cannot catch "+
+				"this: it reconciles the table against the SPEC, not against the SDK.",
+				op.sdkMethod, op.method, op.path)
+		}
+	}
+
+	// Direction 2: every exported method must be accounted for.
+	tabled := make(map[string]bool, len(coveredOperations))
+	for _, op := range coveredOperations {
+		tabled[op.sdkMethod] = true
+	}
+	var unaccounted []string
+	for i := 0; i < clientType.NumMethod(); i++ {
+		name := clientType.Method(i).Name
+		if tabled[name] {
+			continue
+		}
+		if _, ok := notSpecOperations[name]; ok {
+			continue
+		}
+		unaccounted = append(unaccounted, name)
+	}
+	sort.Strings(unaccounted)
+	for _, name := range unaccounted {
+		t.Errorf("Client.%s is exported but appears in neither coveredOperations nor "+
+			"notSpecOperations. Add it to the table if it calls a spec operation, or "+
+			"to notSpecOperations with the reason it does not — an unlisted method is "+
+			"a spec operation nobody decided about.", name)
+	}
+
+	// A guard is worth only what it checks.
+	if len(coveredOperations) == 0 {
+		t.Fatal("coveredOperations is empty — this guard has gone vacuous")
+	}
+	if clientType.NumMethod() == 0 {
+		t.Fatal("*Client has no exported methods — reflection found nothing, so " +
+			"direction 2 checked nothing")
+	}
+}
