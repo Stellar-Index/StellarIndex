@@ -15,6 +15,18 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/v1/issuers` cold-filled on every cache expiry.** It had no prewarm
+  at all while `CachedIssuersReader`'s TTL is 5 minutes, so the slot
+  expired every 5 minutes and the next caller paid the full cold fill —
+  measured on r1 1.212s cold vs 0.129s warm. At production's ~0.08 rps
+  most requests arrive after the TTL has lapsed, so the cold path was
+  near the common case rather than a startup-only cost, surfacing as
+  recurring multi-second latency spikes. Now warmed on `prewarmLight`'s
+  60s cadence (5x inside the TTL) for the limits real callers actually
+  request. ([#447](https://github.com/Stellar-Index/StellarIndex/pull/447))
+
 ## [v0.53.0] — 2026-08-31
 
 ### Added
